@@ -55,14 +55,21 @@ Skills live in `~/.agents/skills/`. Each skill is a `SKILL.md` file with frontma
 
 ## Screenshots
 
-> Screenshots are added as the project evolves. Contributions welcome.
+**Hybrid retrieval** — three queries, three different intents, three different result sets:
 
-| Screenshot | Description |
-|---|---|
-| `assets/screenshots/skill-invocation.png` | Claude invoking the `tdd` skill via `/tdd` |
-| `assets/screenshots/retrieval-output.png` | `retrieve.py` ranked results for a query |
-| `assets/screenshots/manifest-structure.png` | `manifest.json` after a full rebuild |
-| `assets/screenshots/chroma-populated.png` | ChromaDB collections after initial setup |
+![Retrieval output](assets/screenshots/retrieval-output.png)
+
+**ChromaDB populated** — 22 vectors across two collections after initial setup:
+
+![ChromaDB collections](assets/screenshots/chroma-populated.png)
+
+**Manifest structure** — the flat index that drives tag-based routing:
+
+![Manifest structure](assets/screenshots/manifest-structure.png)
+
+**Setup complete** — what a fresh install looks like on macOS ARM:
+
+![Setup complete](assets/screenshots/setup-complete.png)
 
 ---
 
