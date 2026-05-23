@@ -81,7 +81,7 @@ No GPU required — but GPU is used automatically if available. See [GPU Acceler
 ## Quick Start
 
 ```bash
-git clone https://github.com/your-username/marvin.git
+git clone https://github.com/G-Eskayo/marvin.git
 cd marvin
 chmod +x setup.sh
 ./setup.sh
