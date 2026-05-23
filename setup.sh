@@ -62,6 +62,37 @@ ensure_homebrew() {
 }
 
 # =============================================================
+# 3. GPU DETECTION (informational — Ollama handles this automatically)
+# =============================================================
+detect_gpu() {
+    local gpu_info="CPU (no GPU detected)"
+
+    case "$OS" in
+        macos-arm)
+            gpu_info="Apple Silicon Metal + Neural Engine (automatic)"
+            ;;
+        macos-x86)
+            if system_profiler SPDisplaysDataType 2>/dev/null | grep -qi "amd\|radeon\|nvidia"; then
+                gpu_info="Discrete GPU detected — Ollama will use Metal if supported"
+            else
+                gpu_info="Intel integrated graphics (CPU fallback)"
+            fi
+            ;;
+        linux|wsl2)
+            if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null; then
+                local gpu_name
+                gpu_name=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
+                gpu_info="NVIDIA: $gpu_name — CUDA acceleration automatic"
+            elif command -v rocminfo &>/dev/null; then
+                gpu_info="AMD GPU with ROCm — acceleration automatic"
+            fi
+            ;;
+    esac
+
+    log "GPU: $gpu_info"
+}
+
+# =============================================================
 # 3. OLLAMA
 # =============================================================
 install_ollama() {
@@ -316,6 +347,7 @@ main() {
     print_banner
 
     detect_os
+    detect_gpu
     ensure_homebrew
     install_ollama
     find_python
