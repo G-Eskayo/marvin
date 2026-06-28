@@ -1,11 +1,14 @@
 # Python
 __pycache__/
+**/__pycache__/
 *.py[cod]
+**/*.pyc
 *.egg-info/
 .eggs/
 dist/
 build/
 *.egg
+**/.pytest_cache/
 
 # Virtual environments
 venv/
@@ -30,8 +33,20 @@ desktop.ini
 
 # Secrets / personal config
 .env
+*.env
+.env.*
+.env*
 *.local
+.credentials.json
+.claude.json
+settings.local.json
+*_token*
+*_secret*
+*_key*
 
-# Generated (these live in ~/.claude/ not the repo)
+# Personal runtime data (lives in ~/.claude/, not the repo)
 manifest.json
 chroma/
+projects/
+history.jsonl
+handoffs/
