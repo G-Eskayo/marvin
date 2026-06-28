@@ -73,6 +73,59 @@ def collection_for(tags):
     return "general"
 
 
+def sync_collection(client, cname, coll_entries) -> tuple[int, int, int]:
+    """Upsert changed entries and prune deleted ones. Returns (embedded, skipped, removed)."""
+    collection = client.get_or_create_collection(
+        name=cname,
+        metadata={"hnsw:space": "cosine"},
+    )
+    existing = collection.get(include=["metadatas"])
+    existing_by_id = {
+        eid: existing["metadatas"][i]
+        for i, eid in enumerate(existing["ids"])
+    }
+    current_ids: set[str] = set()
+    embedded = skipped = 0
+
+    for entry in coll_entries:
+        path = resolve_path(entry["path"])
+        doc_id = entry["path"]
+        current_ids.add(doc_id)
+
+        if not path.exists():
+            print(f"  WARN: file not found: {path}", file=sys.stderr)
+            continue
+
+        doc_text = build_doc_text(path, entry.get("tags", []))
+        h = content_hash(doc_text)
+
+        if doc_id in existing_by_id and existing_by_id[doc_id].get("content_hash") == h:
+            skipped += 1
+            continue
+
+        vector = embed(doc_text)
+        if vector is None:
+            continue
+
+        metadata: dict = {
+            "path": entry["path"],
+            "name": entry.get("name", ""),
+            "tags": " ".join(entry.get("tags", [])),
+            "content_hash": h,
+        }
+        if entry.get("calls"):
+            metadata["calls"] = " ".join(entry["calls"])
+
+        collection.upsert(ids=[doc_id], embeddings=[vector], documents=[doc_text], metadatas=[metadata])
+        embedded += 1
+
+    stale = set(existing_by_id) - current_ids
+    if stale:
+        collection.delete(ids=list(stale))
+
+    return embedded, skipped, len(stale)
+
+
 def main():
     if not MANIFEST_PATH.exists():
         print("  WARN: manifest.json not found — skipping embeddings", file=sys.stderr)
@@ -84,7 +137,6 @@ def main():
         print("  INFO: manifest index is empty — nothing to embed", file=sys.stderr)
         return
 
-    # Check Ollama is reachable before importing chromadb (avoids slow import on failure)
     try:
         import requests
         requests.get("http://localhost:11434/", timeout=3)
@@ -97,76 +149,19 @@ def main():
         return
 
     import chromadb
-
     client = chromadb.PersistentClient(path=str(CHROMA_PATH))
 
-    # Group entries by collection
-    by_collection = {}
+    by_collection: dict[str, list] = {}
     for entry in entries:
         cname = collection_for(entry.get("tags", []))
         by_collection.setdefault(cname, []).append(entry)
 
-    total_embedded = 0
-    total_skipped = 0
-    total_removed = 0
-
+    total_embedded = total_skipped = total_removed = 0
     for cname, coll_entries in by_collection.items():
-        collection = client.get_or_create_collection(
-            name=cname,
-            metadata={"hnsw:space": "cosine"},
-        )
-
-        existing = collection.get(include=["metadatas"])
-        existing_by_id = {
-            eid: existing["metadatas"][i]
-            for i, eid in enumerate(existing["ids"])
-        }
-
-        current_ids = set()
-
-        for entry in coll_entries:
-            path = resolve_path(entry["path"])
-            doc_id = entry["path"]
-            current_ids.add(doc_id)
-
-            if not path.exists():
-                print(f"  WARN: file not found: {path}", file=sys.stderr)
-                continue
-
-            doc_text = build_doc_text(path, entry.get("tags", []))
-            h = content_hash(doc_text)
-
-            # Skip if hash unchanged
-            if doc_id in existing_by_id and existing_by_id[doc_id].get("content_hash") == h:
-                total_skipped += 1
-                continue
-
-            vector = embed(doc_text)
-            if vector is None:
-                continue
-
-            metadata = {
-                "path": entry["path"],
-                "name": entry.get("name", ""),
-                "tags": " ".join(entry.get("tags", [])),
-                "content_hash": h,
-            }
-            if entry.get("calls"):
-                metadata["calls"] = " ".join(entry["calls"])
-
-            collection.upsert(
-                ids=[doc_id],
-                embeddings=[vector],
-                documents=[doc_text],
-                metadatas=[metadata],
-            )
-            total_embedded += 1
-
-        # Prune deleted entries
-        stale = set(existing_by_id.keys()) - current_ids
-        if stale:
-            collection.delete(ids=list(stale))
-            total_removed += len(stale)
+        e, s, r = sync_collection(client, cname, coll_entries)
+        total_embedded += e
+        total_skipped += s
+        total_removed += r
 
     print(
         f"  Embeddings: {total_embedded} updated, {total_skipped} unchanged, "

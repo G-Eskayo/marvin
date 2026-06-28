@@ -58,41 +58,43 @@ def embed_query(query):
         return None
 
 
+def _query_collection(client, cname, query_vector, threshold):
+    try:
+        col = client.get_collection(cname)
+    except Exception:
+        return []
+    n = col.count()
+    if n == 0:
+        return []
+    res = col.query(
+        query_embeddings=[query_vector],
+        n_results=min(TOP_K * 2, n),
+        include=["metadatas", "distances", "documents"],
+    )
+    return [
+        {
+            "path": meta["path"],
+            "name": meta.get("name", ""),
+            "tags": meta.get("tags", "").split(),
+            "score": round(1.0 - dist, 4),
+            "source": "semantic",
+        }
+        for meta, dist in zip(res["metadatas"][0], res["distances"][0])
+        if 1.0 - dist >= threshold
+    ]
+
+
 def semantic_search(query_vector, threshold):
     try:
         import chromadb
         client = chromadb.PersistentClient(path=str(CHROMA_PATH))
-        results = []
-
-        for cname in ALL_COLLECTIONS:
-            try:
-                collection = client.get_collection(cname)
-            except Exception:
-                continue
-            count = collection.count()
-            if count == 0:
-                continue
-            res = collection.query(
-                query_embeddings=[query_vector],
-                n_results=min(TOP_K * 2, count),
-                include=["metadatas", "distances", "documents"],
-            )
-            for i, _ in enumerate(res["ids"][0]):
-                # cosine distance → similarity
-                score = 1.0 - res["distances"][0][i]
-                if score >= threshold:
-                    meta = res["metadatas"][0][i]
-                    results.append({
-                        "path": meta["path"],
-                        "name": meta.get("name", ""),
-                        "tags": meta.get("tags", "").split(),
-                        "score": round(score, 4),
-                        "source": "semantic",
-                    })
-
+        results = [
+            hit
+            for cname in ALL_COLLECTIONS
+            for hit in _query_collection(client, cname, query_vector, threshold)
+        ]
         results.sort(key=lambda x: x["score"], reverse=True)
         return results[:TOP_K]
-
     except Exception as e:
         print(f"  WARN: semantic search error: {e}", file=sys.stderr)
         return []
@@ -137,27 +139,35 @@ def rrf_merge(semantic, bm25_enhanced, k=60):
     return [m["doc"] for m in merged[:TOP_K]]
 
 
+def _entry_tag_words(entry) -> set[str]:
+    return {
+        word
+        for t in entry.get("tags", [])
+        for word in t.replace(":", " ").replace("-", " ").split()
+    }
+
+
 def tag_fallback(query):
     if not MANIFEST_PATH.exists():
         return []
     manifest = json.loads(MANIFEST_PATH.read_text())
     query_words = set(query.lower().split())
-    results = []
-    for entry in manifest.get("index", []):
-        tag_words = set()
-        for t in entry.get("tags", []):
-            tag_words.update(t.replace(":", " ").replace("-", " ").split())
-        overlap = len(query_words & tag_words)
-        if overlap > 0:
-            results.append({
-                "path": entry["path"],
-                "name": entry.get("name", ""),
-                "tags": entry.get("tags", []),
-                "score": round(overlap / max(len(query_words), 1), 4),
-                "source": "tags",
-            })
-    results.sort(key=lambda x: x["score"], reverse=True)
-    return results[:TOP_K]
+    n_query = max(len(query_words), 1)
+    scored = [
+        (len(query_words & _entry_tag_words(e)), e)
+        for e in manifest.get("index", [])
+    ]
+    return [
+        {
+            "path": e["path"],
+            "name": e.get("name", ""),
+            "tags": e.get("tags", []),
+            "score": round(overlap / n_query, 4),
+            "source": "tags",
+        }
+        for overlap, e in sorted(scored, key=lambda x: -x[0])[:TOP_K]
+        if overlap > 0
+    ]
 
 
 def retrieve(query, intent=None):

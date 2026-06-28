@@ -44,6 +44,18 @@ def find_memory_dirs() -> list[Path]:
     return dirs
 
 
+def _read_inline_array(raw: str) -> list[str]:
+    return [v.strip().strip("\"'") for v in raw.split(",")]
+
+
+def _read_block_list(lines: list[str], start: int) -> tuple[list[str], int]:
+    items, j = [], start
+    while j < len(lines) and re.match(r'^\s+-\s+', lines[j]):
+        items.append(re.sub(r'^\s+-\s+', '', lines[j]).strip().strip("\"'"))
+        j += 1
+    return items, j
+
+
 def parse_frontmatter(path: Path) -> dict:
     try:
         text = path.read_text(encoding="utf-8")
@@ -53,54 +65,32 @@ def parse_frontmatter(path: Path) -> dict:
 
     if not text.startswith("---"):
         return {}
-
     end = text.find("\n---", 3)
     if end == -1:
         return {}
 
-    fm_text = text[3:end].strip()
-    result = {}
-    lines = fm_text.split("\n")
+    result: dict = {}
+    lines = text[3:end].strip().split("\n")
     i = 0
-
     while i < len(lines):
         line = lines[i]
         if not line.strip() or line.strip().startswith("#"):
             i += 1
             continue
-
-        # key: [inline, array]
         m = re.match(r'^([\w-]+):\s*\[(.+)\]\s*$', line)
         if m:
-            key, raw = m.group(1), m.group(2)
-            result[key] = [v.strip().strip("\"'") for v in raw.split(",")]
+            result[m.group(1)] = _read_inline_array(m.group(2))
             i += 1
             continue
-
-        # key: (block list follows)
         m = re.match(r'^([\w-]+):\s*$', line)
         if m:
-            key = m.group(1)
-            items, j = [], i + 1
-            while j < len(lines) and re.match(r'^\s+-\s+', lines[j]):
-                items.append(re.sub(r'^\s+-\s+', '', lines[j]).strip().strip("\"'"))
-                j += 1
-            result[key] = items
-            i = j
+            result[m.group(1)], i = _read_block_list(lines, i + 1)
             continue
-
-        # key: scalar value (may be followed by block list)
         m = re.match(r'^([\w-]+):\s+(.+)$', line)
         if m:
-            key, val = m.group(1), m.group(2).strip()
-            items, j = [], i + 1
-            while j < len(lines) and re.match(r'^\s+-\s+', lines[j]):
-                items.append(re.sub(r'^\s+-\s+', '', lines[j]).strip().strip("\"'"))
-                j += 1
-            result[key] = items if items else val
-            i = j
+            items, i = _read_block_list(lines, i + 1)
+            result[m.group(1)] = items if items else m.group(2).strip()
             continue
-
         i += 1
 
     return result
