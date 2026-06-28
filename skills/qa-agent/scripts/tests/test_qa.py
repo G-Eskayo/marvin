@@ -13,7 +13,7 @@ import pytest
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 
-from qa_scan import detect_stack, extract_dependencies, extract_imports, extract_markers
+from qa_scan import detect_stack, extract_dependencies, extract_imports, extract_markers, analyze_python_file
 from qa_capture import build_entry
 from qa_query import filter_results
 
@@ -149,3 +149,52 @@ def test_filter_results_no_filter():
     ]
     filtered = filter_results(results, category=None)
     assert len(filtered) == 2
+
+
+# ── complexity analysis ───────────────────────────────────────────────────────
+
+def test_nested_loop_flagged():
+    src = "def f(items):\n    for x in items:\n        for y in items:\n            pass\n"
+    p = make_project({"main.py": src})
+    issues = analyze_python_file(p / "main.py")
+    kinds = [i["kind"] for i in issues]
+    assert "complexity" in kinds
+
+
+def test_linear_search_in_loop_flagged():
+    src = "def f(items, vals):\n    for x in items:\n        idx = vals.index(x)\n"
+    p = make_project({"main.py": src})
+    issues = analyze_python_file(p / "main.py")
+    assert any(i["kind"] == "complexity" and "index" in i["msg"] for i in issues)
+
+
+def test_large_function_flagged():
+    body = "def big():\n" + "    x = 1\n" * 45
+    p = make_project({"main.py": body})
+    issues = analyze_python_file(p / "main.py")
+    assert any(i["kind"] == "kiss" for i in issues)
+
+
+def test_too_many_params_flagged():
+    src = "def f(a, b, c, d, e, g):\n    pass\n"
+    p = make_project({"main.py": src})
+    issues = analyze_python_file(p / "main.py")
+    assert any(i["kind"] == "kiss" and "parameters" in i["msg"] for i in issues)
+
+
+def test_static_method_candidate_flagged():
+    src = (
+        "class Foo:\n"
+        "    def compute(self, x):\n"
+        "        return x * 2\n"
+    )
+    p = make_project({"main.py": src})
+    issues = analyze_python_file(p / "main.py")
+    assert any(i["kind"] == "oop" and "compute" in i["msg"] for i in issues)
+
+
+def test_clean_function_no_flags():
+    src = "def f(a, b):\n    return a + b\n"
+    p = make_project({"main.py": src})
+    issues = analyze_python_file(p / "main.py")
+    assert issues == []

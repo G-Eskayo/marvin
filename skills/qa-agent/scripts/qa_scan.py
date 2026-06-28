@@ -23,6 +23,128 @@ SKIP_EXT  = {".pyc", ".pyo", ".map", ".min.js", ".min.css", ".lock"}
 
 MARKER_RE = re.compile(r"#\s*(TODO|FIXME|HACK|BUG|XXX|NOTE)\s*:?\s*(.+)", re.IGNORECASE)
 
+# ── complexity + principles analysis ─────────────────────────────────────────
+
+class ComplexityVisitor(ast.NodeVisitor):
+    """Walk an AST and collect complexity signals."""
+
+    def __init__(self):
+        self.issues: list[dict] = []
+        self._loop_depth = 0
+        self._nesting_depth = 0
+
+    def _issue(self, kind: str, msg: str, line: int, suggestion: str = ""):
+        self.issues.append({"kind": kind, "msg": msg, "line": line, "suggestion": suggestion})
+
+    # ── nested loops → O(n²) or worse ────────────────────────────────────────
+    def visit_For(self, node):
+        self._loop_depth += 1
+        if self._loop_depth >= 2:
+            self._issue(
+                "complexity",
+                f"Nested loop at line {node.lineno} — likely O(n²) or worse.",
+                node.lineno,
+                "Consider dict/set lookup, sorting + two-pointer, or vectorised ops.",
+            )
+        self.generic_visit(node)
+        self._loop_depth -= 1
+
+    def visit_While(self, node):
+        self._loop_depth += 1
+        if self._loop_depth >= 2:
+            self._issue(
+                "complexity",
+                f"Nested while-loop at line {node.lineno} — likely O(n²) or worse.",
+                node.lineno,
+                "Restructure with a single pass or auxiliary data structure.",
+            )
+        self.generic_visit(node)
+        self._loop_depth -= 1
+
+    # ── linear search inside a loop → O(n²) ──────────────────────────────────
+    def visit_Call(self, node):
+        if self._loop_depth >= 1:
+            if isinstance(node.func, ast.Attribute):
+                if node.func.attr in ("index", "find", "count", "remove"):
+                    self._issue(
+                        "complexity",
+                        f"list.{node.func.attr}() inside a loop at line {node.lineno} — O(n²).",
+                        node.lineno,
+                        "Build a dict/set before the loop for O(1) lookup.",
+                    )
+        self.generic_visit(node)
+
+    # ── UNIX / KISS: large functions ──────────────────────────────────────────
+    def visit_FunctionDef(self, node):
+        length = (node.end_lineno or node.lineno) - node.lineno
+        if length > 40:
+            self._issue(
+                "kiss",
+                f"Function '{node.name}' at line {node.lineno} is {length} lines long.",
+                node.lineno,
+                "UNIX principle: do one thing. Extract sub-functions for each logical step.",
+            )
+        # KISS: too many parameters
+        n_args = len(node.args.args) + len(node.args.posonlyargs)
+        if n_args > 5:
+            self._issue(
+                "kiss",
+                f"Function '{node.name}' at line {node.lineno} takes {n_args} parameters.",
+                node.lineno,
+                "KISS: group related args into a dataclass/dict, or split the function.",
+            )
+        self._nesting_depth += 1
+        self.generic_visit(node)
+        self._nesting_depth -= 1
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    # ── OOP: methods that never use self → potential static ───────────────────
+    def visit_ClassDef(self, node):
+        for item in ast.walk(node):
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if not item.args.args:
+                    continue
+                first_arg = item.args.args[0].arg
+                if first_arg != "self":
+                    continue
+                uses_self = any(
+                    isinstance(n, ast.Name) and n.id == "self"
+                    for n in ast.walk(item)
+                    if n is not item.args.args[0]
+                )
+                if not uses_self and item.name not in ("__init__", "__new__", "__class_getitem__"):
+                    self._issue(
+                        "oop",
+                        f"Method '{item.name}' in class '{node.name}' (line {item.lineno}) "
+                        f"never uses self — consider @staticmethod or moving it out.",
+                        item.lineno,
+                        "OOP: static methods signal the method doesn't belong to instance state.",
+                    )
+        self.generic_visit(node)
+
+
+def analyze_python_file(path: Path) -> list[dict]:
+    """Return complexity/principles issues for a single .py file."""
+    try:
+        tree = ast.parse(path.read_text(errors="replace"))
+    except SyntaxError:
+        return []
+    visitor = ComplexityVisitor()
+    visitor.visit(tree)
+    for issue in visitor.issues:
+        issue["file"] = str(path)
+    return visitor.issues
+
+
+def analyze_complexity(project: Path) -> list[dict]:
+    """Run complexity + principles analysis across all Python files."""
+    all_issues = []
+    for f in _iter_files(project):
+        if f.suffix == ".py":
+            all_issues.extend(analyze_python_file(f))
+    return all_issues
+
 
 # ── stack detection ───────────────────────────────────────────────────────────
 
@@ -231,6 +353,28 @@ def scan(project: Path, dry_run: bool = False) -> list[dict]:
             category,
             tags=f"{m['marker'].lower()},marker",
             confidence="low",
+        )
+
+    # complexity + principles (UNIX, KISS, OOP)
+    complexity_issues = analyze_complexity(project)
+    kind_to_tags = {
+        "complexity": "complexity,performance,optimization",
+        "kiss":       "kiss,unix-principle,readability",
+        "oop":        "oop,static-method,refactor",
+    }
+    for issue in complexity_issues:
+        rel_file = Path(issue["file"]).relative_to(project) if Path(issue["file"]).is_absolute() else issue["file"]
+        doc = (
+            f"[{issue['kind'].upper()}] {issue['msg']} "
+            f"(file: {rel_file}) "
+            f"Suggestion: {issue['suggestion']}"
+        )
+        add(
+            doc,
+            "anti-pattern",
+            tags=kind_to_tags.get(issue["kind"], issue["kind"]),
+            language="python",
+            confidence="medium",
         )
 
     return entries
