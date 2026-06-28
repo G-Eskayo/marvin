@@ -28,11 +28,41 @@ Do NOT create a skill when:
 - The approach is unverified (one success ≠ a pattern)
 - See [quality-filter.md](quality-filter.md) for the full gate criteria
 
+## ISF Annotation Framework
+
+Every self-improve run **must** classify what it observed into one or more of these three categories before proceeding:
+
+| Category | What it captures | Purpose |
+|----------|-----------------|---------|
+| **I — Improve** | New pattern or approach discovered; what changed and how it was achieved | Encode the gain so it compounds |
+| **S — Sustain** | What succeeded and why; how to repeat it reliably | Prevent regression; don't lose what works |
+| **F — Failure** | Where it failed, what roadblock was hit, what path was taken | Avoid repeating; short-circuit dead ends |
+
+Write the ISF annotation first, before drafting or updating any skill. If you cannot classify the observation into at least one category, it is not worth codifying.
+
+**Annotation format** (append to the relevant skill's `retrospective.md`, creating it if absent):
+
+```markdown
+## YYYY-MM-DD — <task or context>
+**I:** <what improved and how>  
+**S:** <what worked and how to repeat it>  
+**F:** <what failed, the roadblock, the path taken>
+```
+
+Omit any line that has nothing to say. At least one line must be present.
+
+Also append a one-line summary to `~/.agents/retrospective-log.md` (cross-skill pattern index):
+```
+YYYY-MM-DD | <skill-name> | I/S/F | <one-line summary>
+```
+
+---
+
 ## Process
 
 ### 1. Identify the pattern
 
-State clearly:
+Apply the ISF framework above. Then state clearly:
 - What task type or situation triggered this
 - What the reusable insight or approach is
 - How many times this has come up (or strong prediction it will)
@@ -72,6 +102,17 @@ This:
 - Read the newly wired skill back to confirm it makes sense
 - Check the CLAUDE.md routing table entry is accurate
 - If updating: confirm the change addresses the failure without breaking existing use cases
+
+## Skill Co-occurrence Patterns
+
+After each multi-skill session, check: did two or more skills fire in sequence? If yes:
+- Does a scenario file already exist in `~/.agents/scenarios/` for this combination?
+- If yes: does the session confirm, extend, or contradict it? Update accordingly.
+- If no and the combination recurred or is clearly likely to recur: create a new scenario file.
+
+Scenario file format: trigger, skill sequence with arrows, handoff points table, failure modes, known companions.
+
+This is how the system learns its own workflow patterns — not from prescription but from observed use.
 
 ## Domains
 

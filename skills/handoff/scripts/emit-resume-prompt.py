@@ -1,37 +1,50 @@
 #!/usr/bin/env python3
-"""PostToolUse hook: after Write/Edit, print a terse resume-prompt reminder.
-
-Keeps the prompt cache warm by emitting a single line that tells a resuming
-agent where to look for the handoff document. Does nothing if no recent
-handoff exists (within 7 days).
+"""PostToolUse hook: when a handoff doc is written to ~/.claude/handoffs/, extract
+its '## Resume prompt' section and print a paste-ready block. Deterministic — fires
+even if the model forgets to surface it (the 'wire it as a hook, don't trust prose'
+principle). Never errors the originating tool: any failure exits silently.
 """
-from __future__ import annotations
+import json
+import re
 import sys
-from datetime import datetime, timezone, timedelta
 from pathlib import Path
-
-HANDOFFS_DIR = Path.home() / ".claude" / "handoffs"
-MAX_AGE = timedelta(days=7)
 
 
 def main() -> None:
-    if not HANDOFFS_DIR.exists():
-        return
-
-    candidates = sorted(HANDOFFS_DIR.glob("handoff-*.md"), reverse=True)
-    if not candidates:
-        return
-
-    latest = candidates[0]
     try:
-        mtime = datetime.fromtimestamp(latest.stat().st_mtime, tz=timezone.utc)
-    except OSError:
+        payload = json.load(sys.stdin)
+    except Exception:
         return
 
-    if datetime.now(timezone.utc) - mtime > MAX_AGE:
+    if payload.get("tool_name", "") not in ("Write", "Edit", "MultiEdit"):
+        return
+    fp = (payload.get("tool_input") or {}).get("file_path", "")
+    if not fp:
         return
 
-    print(f"[handoff] Last saved: {latest.name} — paste resume prompt to restore context.", file=sys.stderr)
+    p = Path(fp)
+    handoff_dir = Path.home() / ".claude" / "handoffs"
+    try:
+        in_handoffs = handoff_dir.resolve() in [d.resolve() for d in p.parents]
+    except Exception:
+        in_handoffs = False
+    if not in_handoffs or p.suffix.lower() != ".md":
+        return
+
+    try:
+        text = p.read_text(errors="ignore")
+    except Exception:
+        return
+
+    m = re.search(r"##\s*Resume prompt\s*\n(.*)$", text, re.DOTALL | re.IGNORECASE)
+    body = (m.group(1) if m else "").strip().strip("-").strip()
+    if not body:
+        body = f"Continue from handoff: {fp}"
+
+    bar = "=" * 64
+    print(f"\n{bar}\n📋 RESUME PROMPT — paste into your next session to continue:\n{bar}")
+    print(body)
+    print(f"{bar}\n(source: {fp})")
 
 
 if __name__ == "__main__":

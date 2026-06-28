@@ -23,8 +23,9 @@ Run without being asked when any of these are true:
 
 Save to `~/.claude/handoffs/handoff-YYYY-MM-DD-HH-MM.md` using the current timestamp.
 
-After saving, tell the user:
-> Handoff saved to `~/.claude/handoffs/handoff-[timestamp].md`. Start a new session and paste the resume prompt at the top of that file to continue.
+After saving, you MUST do both:
+1. Tell the user: `Handoff saved to ~/.claude/handoffs/handoff-[timestamp].md`.
+2. **Output the full Resume prompt as a fenced, copy-paste code block directly in the chat** — never make the user open the file to find it. A `PostToolUse` hook (`emit-resume-prompt.py`) also prints it automatically as a backstop, but you must surface it yourself too.
 
 ## Document Structure
 

@@ -6,13 +6,25 @@ tags: [intent:retrieve, intent:index, intent:load, type:skill]
 
 # Index — Pull the Right Boxes
 
-`~/.claude/manifest.json` is the unified index for all skills AND knowledge files.
-Each entry has `name`, `path`, `tags[]`, and optionally `calls[]`.
-Tags use `namespace:value` format — `domain:`, `intent:`, `type:`.
-
 Pull exactly the boxes the task needs. Nothing else.
 
-## Pattern
+## Primary: hybrid retrieval engine
+
+`retrieve.py` is the real engine — semantic (ChromaDB + Ollama) + BM25 keyword, merged via RRF, with intent-aware thresholds. Use it first.
+
+**MUST run via the venv interpreter** — bare `python3` lacks the deps and silently degrades to tag matching:
+
+```bash
+~/.agents/venv/bin/python ~/.agents/skills/self-improve/scripts/retrieve.py "<task description>" --intent <intent>
+```
+
+`--intent` tunes precision/recall: `debug`/`fix`/`diagnose` (precise), `create`/`ideate`/`brainstorm` (recall), `plan`/`research`/`tdd` (mid). Omit if unsure. Add `--json` for structured output.
+
+Then load the returned paths. Check each loaded skill's `calls:` and load those too if the task needs them.
+
+## Fallback: manual manifest matching
+
+If the engine prints `INFO: ... tag fallback` or returns nothing, match by hand:
 
 1. **Read the request** — extract 2–4 keywords describing the task
 2. **Read `~/.claude/manifest.json`** — scan the `index[]` array
@@ -20,6 +32,8 @@ Pull exactly the boxes the task needs. Nothing else.
 4. **Load those files** — read each matched `path`
 5. **Check `calls`** — if a loaded skill declares `calls: [x, y]`, load those too if the task needs them
 6. **Proceed** with only what's relevant
+
+`~/.claude/manifest.json` is the unified index for all skills AND knowledge files. Each entry has `name`, `path`, `tags[]`, and optionally `calls[]`. Tags use `namespace:value` — `domain:`, `intent:`, `type:`.
 
 ## Tag Namespaces
 
@@ -65,7 +79,7 @@ When creating a new skill or memory file:
 2. Add `calls: [skill-name, ...]` if it depends on other skills
 3. The PostToolUse hook runs `rebuild-manifest.py` automatically
 
-To rebuild manually:
+To rebuild manually (use the venv interpreter — same dep requirement as retrieve.py):
 ```
-python3 ~/.agents/skills/self-improve/scripts/rebuild-manifest.py
+~/.agents/venv/bin/python ~/.agents/skills/self-improve/scripts/rebuild-manifest.py
 ```
