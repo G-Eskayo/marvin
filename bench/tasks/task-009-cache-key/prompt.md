@@ -1,7 +1,8 @@
-Our LRU cache is supposed to keep memory usage bounded at 500 entries, but cache_size()
-keeps climbing past that — it's currently sitting at 80,000+ entries in production and
-growing. The eviction policy fires on every set() call so eviction itself isn't broken.
+Our LRU cache is supposed to cut DB calls by returning cached results for repeated queries,
+but all 10,000 calls in our load test hit the database — cache hit rate is zero. The cache
+size stays exactly at max_size (500 entries) so eviction is clearly firing, but nothing
+is ever retrieved from the cache.
 
-Debug the root cause of the unbounded growth and fix it. The cache must:
-- Return previously cached values for the same (user_id, report_type) pair
+Debug the root cause of the zero hit rate and fix it. The cache must:
+- Return previously cached values for the same (user_id, query) pair
 - Never exceed max_size entries

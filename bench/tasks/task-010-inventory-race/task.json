@@ -1,0 +1,8 @@
+{
+  "id": "task-010-inventory-race",
+  "type": "fs",
+  "prompt_file": "prompt.md",
+  "timeout": 360,
+  "expect": ["AND quantity >="],
+  "note": "Diagnose discriminator. Symptom: oversell under concurrent load — quantity goes negative. Root cause: TOCTOU race between the SELECT (read stock) and the UPDATE (decrement). Two concurrent requests both read quantity=100, both pass the guard, both decrement, net result: -quantity. The comment 'stock confirmed — safe to decrement' is the misleading element. Fix: collapse SELECT+UPDATE into a single atomic statement: UPDATE inventory SET quantity = quantity - ? WHERE item_id = ? AND quantity >= ?. The WHERE guard makes the decrement conditional — if stock dropped between the read and the write, rowcount==0 and the reservation fails gracefully. Substring 'AND quantity >=' captures this pattern. Clean profile likely suggests transactions or application-level locks (correct but adds contention; prompt rules this out). Diagnose skill traces the race window directly to the lockless atomic-SQL solution. Use --judge to assess whether the fix is correct and lockless."
+}
