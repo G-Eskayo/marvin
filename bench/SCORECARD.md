@@ -1,6 +1,6 @@
 # MARVIN Bench — Scorecard
 
-> Last updated: 2026-06-30 (Runs 1–5, 7 tasks, 3 profiles)
+> Last updated: 2026-06-30 (Runs 1–6, 10 tasks, 3 profiles)
 
 The honest summary of what the bench has actually proven. Gains and setbacks carry equal weight here — both matter.
 
@@ -98,7 +98,23 @@ Partial mitigation: the lean profile. But lean requires the user to explicitly c
 
 ---
 
-### 4. QA task discriminator gap
+### 4. Hard coding tasks — all profiles still tie at 1.00
+
+Three hard tasks were specifically designed to split profiles: a hidden semantic bug (`discard` removes all occurrences, not one), an LRU zero-hit-rate via unstable timestamp key, and a TOCTOU oversell race. All three profiles passed all three tasks with LLM judge grading.
+
+| Task | clean | lean | marvin | Winner |
+|------|-------|------|--------|--------|
+| 008 SortedList discard bug | 1.00 pass, 117k tok | 1.00 pass, 97k tok | 1.00 pass, 102k tok | **lean** (efficiency) |
+| 009 LRU cache key | pass (judge), 90k tok | pass (judge), 115k tok | pass (judge), 98k tok | **clean** (efficiency) |
+| 010 TOCTOU race | 1.00 pass, 72k tok | 1.00 pass, 75k tok | 1.00 pass, 78k tok | **clean** (efficiency) |
+
+These bugs are textbook patterns in Claude's training data. Modern Claude knows TOCTOU, unstable cache keys, and list-mutation semantics cold — no skill invocation or memory needed. MARVIN's TDD and diagnose discriminators loaded context but produced no correctness gain. **Clean is cheapest on all three.**
+
+**What this means:** MARVIN's skill routing does not improve outcomes on well-known bug patterns. Its advantage remains strictly in recall (task-002) and navigation (task-007). Designing tasks that genuinely require MARVIN's capabilities requires out-of-distribution knowledge — not just harder bugs.
+
+---
+
+### 5. QA task discriminator gap
 
 Most "does memory help?" QA tasks turned out to be answerable by file-reading too. If the answer is in any file the model can read, all profiles score 1.00 — so the task proves nothing about memory. Only task-002 (answer is in a session-injected memory index, never written to disk) is a true discriminator so far.
 
@@ -119,6 +135,9 @@ Example failure: the original task-007 asked about a WeasyPrint issue documented
 | **005-date-validator** | fs / code | Semantic bug (impossible calendar dates) | All correct. MARVIN: +7% tokens, no quality gain |
 | **006-email-lookup** | fs / code | Shared helper with opposite caller semantics | All correct. MARVIN: +8% tokens, no quality gain |
 | **007-dyld-recall** | qa / navigational | Bench self-knowledge (file-findable) | All correct. **MARVIN: 52% fewer tokens, 3× fewer tool calls** |
+| **008-sorted-list** | fs / code | Hidden semantic bug (discard removes all, not first) | All correct (LLM judge). Lean cheapest: 97k. MARVIN: 102k (+5% vs lean). TDD discriminator **did not split profiles** |
+| **009-cache-key** | fs / code | LRU cache zero hit rate (unstable timestamp key) | All correct (LLM judge). **Clean cheapest: 90k**. MARVIN: 98k (+9%). Diagnose skill loaded extra context with no correctness gain |
+| **010-inventory-race** | fs / code | TOCTOU oversell race (SELECT then UPDATE) | All correct (LLM judge). Clean: 72k, lean: 75k, MARVIN: 78k (+9%). TOCTOU is in training distribution — no discriminator gap |
 
 ---
 
@@ -160,9 +179,9 @@ These are known gaps in what the bench currently proves. Results so far are dire
 
 | Gap | Why it matters | Roadmap item |
 |-----|----------------|--------------|
-| **LLM-judge grading** | Substring matching passes wrong answers that contain the expected string; fails correct answers that use a different method name. Semantic correctness is not assessed. | `[build]` H — LLM-judge grading |
-| **Hard/ambiguous tasks** | All current coding tasks score 1.00 across all profiles. We can't show where MARVIN's skill routing *earns* its cost vs lean if the tasks are never hard enough to differentiate. | `[build]` H — Hard/ambiguous task design |
-| **Isolated-memory QA** | Current QA tasks can all be answered by reading files on disk. A clean profile that reads the right file scores 1.00 with no memory at all. True discriminators need file access restricted for clean/lean. | `[build]` H — Isolated-memory QA task type |
-| **Variance (repeat runs)** | All results are N=1. A ±15% variance on token count is plausible from sampling. Don't trust magnitudes until N≥5 per condition. | `[build]` H — Repeat runs + variance reporting |
-| **Cross-model** | All runs use the same model. MARVIN's recall gains may shrink on smarter models that navigate well without memory. | `[build]` G — Cross-model bench extension |
-| **Automatic profile routing** | Profile selection is currently manual friction. Solving this is the key to capturing the lean-vs-marvin savings without requiring the user to think about it. | `[decision]` H — Automatic profile routing |
+| **LLM-judge grading** | ✅ Shipped (Run 6). `--judge` flag available. | `[done]` H |
+| **Hard/ambiguous tasks** | ⚠️ 3 designed + run (008/009/010) — all profiles tied 1.00. Textbook bugs are insufficient. True discriminator requires out-of-distribution knowledge. | `[build]` H — harder OOD tasks needed |
+| **Isolated-memory QA** | ❌ Not built. File-access restricted workdir needed so clean/lean cannot read the answer. Current QA tasks all answerable from disk. | `[build]` H — Isolated-memory QA task type |
+| **Variance (repeat runs)** | ✅ Shipped (Run 5). `--repeat N` available. Not yet applied to hard tasks. | `[done]` H |
+| **Cross-model** | ❌ Not built. `--model` flag not yet added. MARVIN gains may shrink on smarter models. | `[build]` G — Cross-model bench extension |
+| **Automatic profile routing** | ❌ Not built. Manual profile selection is friction. | `[decision]` H — Automatic profile routing |
