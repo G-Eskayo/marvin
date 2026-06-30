@@ -45,6 +45,8 @@ Always active for dev work (writing or modifying code): `tdd` + `grill-with-docs
 1. Check `~/.claude/handoffs/` — if ≤7 days old, read silently and restore context
 2. Check `~/.claude/suggestions.md` — mention count if pending
 3. Load `~/.claude/lexicon.md`
+4. Check `~/.claude/improvement-queue.md` — mention count of queued items if file exists ("N improvements queued")
+5. Check `~/.claude/daily-digest/` — if today's digest exists, mention it ("today's digest ready — ask to see it")
 
 ## Context Switch Protocol
 
