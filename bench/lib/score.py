@@ -1,10 +1,10 @@
 """Scoring helpers for the four metrics: token/context cost, turn/tool
 efficiency, task correctness, memory/recall quality.
 
-Correctness & recall are graded against a task's rubric. v0 uses cheap,
-deterministic substring/file checks; set "judge": true on a task to additionally
-emit a prompt for an LLM judge (wired separately) — kept out of the hot path so
-runs stay reproducible and free to re-score.
+Correctness & recall are graded against a task's rubric.
+- v0 (always active): deterministic substring/file checks via score_correctness().
+- v1 (opt-in via --judge): LLM semantic grading via judge_run() in bench.py.
+  LLM judge supplements substring grading; substring score is always computed.
 """
 from __future__ import annotations
 import json
