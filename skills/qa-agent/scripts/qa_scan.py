@@ -146,6 +146,198 @@ def analyze_complexity(project: Path) -> list[dict]:
     return all_issues
 
 
+# ── quality: verbosity · naming · logic · comment quality ────────────────────
+
+class QualityVisitor(ast.NodeVisitor):
+    """Detect verbosity, naming, and logic anti-patterns via AST."""
+
+    GENERIC_PARAMS = frozenset({
+        "data", "result", "res", "temp", "tmp", "ret", "retval",
+        "foo", "bar", "baz", "stuff", "thing", "obj", "val", "info",
+    })
+
+    def __init__(self):
+        self.issues: list[dict] = []
+        self._file = ""
+
+    def _issue(self, kind: str, msg: str, line: int, suggestion: str = ""):
+        self.issues.append({"kind": kind, "msg": msg, "line": line,
+                            "suggestion": suggestion, "file": self._file})
+
+    # ── == True/False and == None / != None ──────────────────────────────────
+    def visit_Compare(self, node):
+        for op, comp in zip(node.ops, node.comparators):
+            if isinstance(comp, ast.Constant):
+                if type(comp.value) is bool and isinstance(op, (ast.Eq, ast.NotEq)):
+                    self._issue(
+                        "verbosity",
+                        f"Comparison to `{comp.value!r}` at line {node.lineno} — use truthiness directly.",
+                        node.lineno,
+                        "`if flag:` / `if not flag:` — never `if flag == True:`.",
+                    )
+                elif comp.value is None and isinstance(op, (ast.Eq, ast.NotEq)):
+                    op_str = "==" if isinstance(op, ast.Eq) else "!="
+                    fix = "is" if isinstance(op, ast.Eq) else "is not"
+                    self._issue(
+                        "style",
+                        f"`{op_str} None` at line {node.lineno} — use `{fix} None` (PEP 8 E711).",
+                        node.lineno,
+                        f"Replace with `{fix} None`.",
+                    )
+        # len(x) == 0 and len(x) != 0
+        if (isinstance(node.left, ast.Call)
+                and isinstance(node.left.func, ast.Name)
+                and node.left.func.id == "len"
+                and len(node.ops) == 1
+                and isinstance(node.comparators[0], ast.Constant)
+                and node.comparators[0].value == 0):
+            op = node.ops[0]
+            if isinstance(op, (ast.Eq, ast.NotEq)):
+                alt = "not seq" if isinstance(op, ast.Eq) else "seq"
+                self._issue(
+                    "verbosity",
+                    f"`len(...) {'==' if isinstance(op, ast.Eq) else '!='} 0` at line {node.lineno} — use truthiness.",
+                    node.lineno,
+                    f"Use `{alt}` — empty containers are falsy in Python.",
+                )
+        self.generic_visit(node)
+
+    # ── not not x double-negation ────────────────────────────────────────────
+    def visit_UnaryOp(self, node):
+        if (isinstance(node.op, ast.Not)
+                and isinstance(node.operand, ast.UnaryOp)
+                and isinstance(node.operand.op, ast.Not)):
+            self._issue(
+                "verbosity",
+                f"Double negation `not not ...` at line {node.lineno}.",
+                node.lineno,
+                "Use `bool(x)` or rely on truthiness directly.",
+            )
+        self.generic_visit(node)
+
+    # ── if True: / if False: unconditional dead code ─────────────────────────
+    def visit_If(self, node):
+        if isinstance(node.test, ast.Constant) and node.test.value in (True, False):
+            self._issue(
+                "logic",
+                f"`if {node.test.value}:` is an unconditional branch at line {node.lineno} — dead code.",
+                node.lineno,
+                "Remove the condition or delete the dead branch.",
+            )
+        self.generic_visit(node)
+
+    # ── generic parameter names ───────────────────────────────────────────────
+    def visit_FunctionDef(self, node):
+        for arg in node.args.args + node.args.posonlyargs:
+            if arg.arg in self.GENERIC_PARAMS:
+                self._issue(
+                    "naming",
+                    f"Generic parameter name `{arg.arg}` in `{node.name}()` at line {node.lineno}.",
+                    node.lineno,
+                    "Name the parameter after its role, not its type or a placeholder.",
+                )
+        self.generic_visit(node)
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+
+# ── comment quality (text-based) ──────────────────────────────────────────────
+
+_FILLER_RE = re.compile(
+    r"\b(basically|simply|just|literally|obviously|clearly|easily|quickly)\b",
+    re.IGNORECASE,
+)
+_VAGUE_RE = re.compile(
+    r"#\s*(fix\s*this|temp|not\s*sure|idk|unclear|figure\s*out|whatever|handles?\s+stuff)",
+    re.IGNORECASE,
+)
+_BARE_MARKER_RE = re.compile(r"#\s*(TODO|FIXME|HACK|BUG)\s*$", re.IGNORECASE)
+
+
+def analyze_comment_quality(path: Path) -> list[dict]:
+    """Scan source lines for comment quality issues: vague markers, filler words,
+    bare TODOs with no description, and uninformative inline comments."""
+    issues: list[dict] = []
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except OSError:
+        return []
+
+    for lineno, line in enumerate(lines, 1):
+        stripped = line.strip()
+
+        # bare marker with no body
+        if _BARE_MARKER_RE.match(stripped):
+            marker = _BARE_MARKER_RE.match(stripped).group(1).upper()
+            issues.append({
+                "kind": "comment",
+                "msg": f"Bare `{marker}` with no description at line {lineno}.",
+                "line": lineno,
+                "suggestion": "Add context: what needs doing and why.",
+                "file": str(path),
+            })
+            continue
+
+        # vague / unhelpful markers
+        if _VAGUE_RE.match(stripped):
+            body = stripped.lstrip("#").strip()
+            issues.append({
+                "kind": "comment",
+                "msg": f"Vague comment `{body[:60]}` at line {lineno}.",
+                "line": lineno,
+                "suggestion": "Be specific: what is wrong and what the correct behaviour is.",
+                "file": str(path),
+            })
+            continue
+
+        # filler words anywhere in a comment line
+        if stripped.startswith("#"):
+            body = stripped.lstrip("#").strip()
+            m = _FILLER_RE.search(body)
+            if m:
+                issues.append({
+                    "kind": "verbosity",
+                    "msg": f"Filler word `{m.group(1)}` in comment at line {lineno}: `{body[:80]}`",
+                    "line": lineno,
+                    "suggestion": "Remove the filler — state the fact directly.",
+                    "file": str(path),
+                })
+
+        # inline comment that is too short to be useful
+        # use " #" (space before hash) to avoid matching # inside strings
+        if " #" in line and not stripped.startswith("#"):
+            inline = line[line.rfind(" #") + 2:].strip()
+            # require at least one word character — filters out punctuation-only noise
+            if 0 < len(inline) < 5 and re.search(r"[a-zA-Z0-9]", inline) \
+                    and not inline.startswith(("noqa", "type:", "fmt:")):
+                issues.append({
+                    "kind": "comment",
+                    "msg": f"Uninformative inline comment `# {inline}` at line {lineno}.",
+                    "line": lineno,
+                    "suggestion": "Explain WHY, not what — or remove it.",
+                    "file": str(path),
+                })
+
+    return issues
+
+
+def analyze_quality(project: Path) -> list[dict]:
+    """Run verbosity, naming, logic, and comment-quality checks across all Python files."""
+    all_issues: list[dict] = []
+    for f in _iter_files(project):
+        if f.suffix == ".py":
+            try:
+                tree = ast.parse(f.read_text(errors="replace"))
+            except SyntaxError:
+                continue
+            visitor = QualityVisitor()
+            visitor._file = str(f)
+            visitor.visit(tree)
+            all_issues.extend(visitor.issues)
+            all_issues.extend(analyze_comment_quality(f))
+    return all_issues
+
+
 # ── stack detection ───────────────────────────────────────────────────────────
 
 def detect_stack(project: Path) -> list[str]:
@@ -382,6 +574,30 @@ def scan(project: Path, dry_run: bool = False) -> list[dict]:
             tags=kind_to_tags.get(issue["kind"], issue["kind"]),
             language="python",
             confidence="medium",
+        )
+
+    # quality: verbosity, naming, logic, comment quality
+    quality_issues = analyze_quality(project)
+    quality_kind_to_tags = {
+        "verbosity": "verbosity,style,conciseness",
+        "style":     "style,pep8",
+        "naming":    "naming,readability",
+        "logic":     "logic,dead-code",
+        "comment":   "comment,documentation",
+    }
+    for issue in quality_issues:
+        rel_file = Path(issue["file"]).relative_to(project) if Path(issue["file"]).is_absolute() else issue["file"]
+        doc = (
+            f"[{issue['kind'].upper()}] {issue['msg']} "
+            f"(file: {rel_file}) "
+            f"Suggestion: {issue['suggestion']}"
+        )
+        add(
+            doc,
+            "anti-pattern",
+            tags=quality_kind_to_tags.get(issue["kind"], issue["kind"]),
+            language="python",
+            confidence="low",
         )
 
     return entries
