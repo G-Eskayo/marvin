@@ -24,6 +24,7 @@ Skills at `~/.agents/skills/`. Auto-invoke by reading `SKILL.md` when triggers m
 | `self-optimize` | **Auto every 3–5 sessions** or when CLAUDE.md >80 lines / routing table >20 entries. Append to `~/.claude/suggestions.md`, never implement without approval. |
 | `index` | Match task keywords to `~/.claude/manifest.json` tags → load only relevant skill files. Use at task start to avoid speculative full-skill loads. |
 | `qa-agent` | "qa", "scan project", "best practices for X", "what worked/failed". Query KB before unfamiliar library work. |
+| `improve` | "show improvement queue", "what should I fix", "show digest", "run daily digest", "brainstorm improvements" |
 | `paper-dive` | `/paper-dive`, drop a PDF path or paper URL, "walk me through this paper", "help me understand this" |
 
 Skills invokable as slash commands: `/tdd`, `/diagnose`, `/zoom-out`, etc.
