@@ -85,19 +85,24 @@ def run_once(task: dict, profile: str) -> dict:
 
 def fmt_table(task_id: str, rows: list[dict]) -> str:
     cols = [("profile", 8), ("cost_usd", 10), ("total_tokens", 13),
-            ("num_turns", 6), ("tool_calls", 6), ("wall_s", 7), ("correct", 8)]
+            ("num_turns", 6), ("tool_calls", 6), ("wall_s", 7), ("correct", 8),
+            ("tok/ok", 10), ("tools/ok", 9)]
     head = "  ".join(name.ljust(w) for name, w in cols)
     lines = [f"\n=== {task_id} ===", head, "-" * len(head)]
     for r in rows:
         c = r.get("correctness", {}).get("score")
+        fully_correct = c == 1.0
         cell = {
-            "profile": r["profile"],
-            "cost_usd": f"${r['cost_usd']:.4f}",
+            "profile":      r["profile"],
+            "cost_usd":     f"${r['cost_usd']:.4f}",
             "total_tokens": str(r["total_tokens"]),
-            "num_turns": str(r["num_turns"]),
-            "tool_calls": str(r["tool_calls"]),
-            "wall_s": str(r["wall_s"]),
-            "correct": ("n/a" if c is None else f"{c:.2f}"),
+            "num_turns":    str(r["num_turns"]),
+            "tool_calls":   str(r["tool_calls"]),
+            "wall_s":       str(r["wall_s"]),
+            "correct":      ("n/a" if c is None else f"{c:.2f}"),
+            # efficiency-when-correct: only meaningful when the answer is right
+            "tok/ok":       str(r["total_tokens"]) if fully_correct else "-",
+            "tools/ok":     str(r["tool_calls"])   if fully_correct else "-",
         }
         lines.append("  ".join(cell[name].ljust(w) for name, w in cols))
     return "\n".join(lines)
