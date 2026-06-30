@@ -3,6 +3,6 @@
   "type": "fs",
   "prompt_file": "prompt.md",
   "timeout": 300,
-  "expect": ["datetime", "strptime"],
-  "note": "Semantic bug in date validator — manual range checks accept impossible dates (Feb 31, Apr 31). The obvious wrong fix patches more manual logic; the correct fix delegates to datetime.strptime. Tests whether model uses the right stdlib call vs over-engineering a manual solution. Graded on: datetime imported AND strptime used."
+  "expect": ["datetime.date"],
+  "note": "Semantic bug in date validator — manual range checks accept impossible dates (Feb 31, Apr 31). Correct fix delegates to datetime.date — either datetime.date(y, m, d) constructor or datetime.date.fromisoformat(). Both are correct; both contain 'datetime.date'. Manual-patch wrong answer does not. Run 4: scored 0.50 (grading miss: 'strptime' too specific, and 'date(' missed fromisoformat). Fixed to single string 'datetime.date'."
 }

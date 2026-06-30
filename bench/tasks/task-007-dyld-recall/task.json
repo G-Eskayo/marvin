@@ -4,6 +4,6 @@
   "prompt_file": "prompt.md",
   "cwd": "/Users/gileskayo",
   "timeout": 180,
-  "expect": ["DYLD_LIBRARY_PATH", "opt/homebrew"],
-  "note": "Cross-skill memory recall: tests whether MARVIN's memory of the resume-tailor implementation (the macOS re-exec trick: set DYLD_LIBRARY_PATH=/opt/homebrew/lib before WeasyPrint loads libgobject) is retrievable. Clean and lean profiles have no memory of this and will hallucinate or say they don't know. Harder than task-002-recall because the answer requires implementation-level detail from a specific project, not just a concept name. Expected correct answer: DYLD_LIBRARY_PATH=/opt/homebrew/lib, needed so WeasyPrint can find Pango/GLib shared libs that Homebrew installs outside the default dyld search path."
+  "expect": ["176", "215"],
+  "note": "Bench self-knowledge recall. Correct answer: output tokens — clean 176 vs marvin 215 — showed caveman mode made marvin MORE verbose than base, anti-correlated with goal. These numbers are in RESULTS.md (~/.agents/bench/RESULTS.md or ~/marvin-bench/RESULTS.md) which is readable by all profiles; the discriminator is whether the model finds and reads that specific file. Redesigned from original DYLD_LIBRARY_PATH version (Run 4: all 3 profiles scored 1.00 because render_pdf.py is a trivially findable file). New version still findable via file read — see task-008 for a true isolation approach. Expect: both token counts must appear."
 }

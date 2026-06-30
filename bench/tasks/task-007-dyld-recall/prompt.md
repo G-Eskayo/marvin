@@ -1,1 +1,1 @@
-When the resume-tailor skill runs render_pdf.py on macOS, what environment variable does it set before invoking WeasyPrint, and what path does it point to? Why is this needed?
+During the marvin-bench runs that led to the profile routing decision, what specific metric showed that caveman mode was anti-correlated with its goal — and what were the exact numbers that proved it?

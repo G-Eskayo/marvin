@@ -3,6 +3,6 @@
   "type": "fs",
   "prompt_file": "prompt.md",
   "timeout": 300,
-  "expect": ["find_user_by_email", "return None"],
-  "note": "Shared-helper extraction with opposite caller semantics: add_user checks presence to REJECT, add_order checks presence to ALLOW. Naive extraction produces a helper that only handles one case. Correct extraction returns the user dict or None and lets callers branch. Graded on: helper exists AND returns None for not-found case (required for both callers to work correctly without special-casing inside the helper)."
+  "expect": ["find_user_by_email", ", None)"],
+  "note": "Shared-helper extraction with opposite caller semantics: add_user checks presence to REJECT, add_order checks presence to ALLOW. Correct extraction returns the user dict or None and lets callers branch. Graded on: helper exists AND uses None as sentinel/return value. Pattern ', None)' matches both 'next(..., None)' and 'return None' — accepts both idiomatic Python approaches. Run 4: all profiles scored 0.50 due to grading miss ('return None' too literal vs next() sentinel pattern); actual code was correct. Fixed grading string."
 }
