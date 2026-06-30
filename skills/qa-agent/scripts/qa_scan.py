@@ -284,12 +284,19 @@ def store_entries(entries: list[dict], dry_run: bool = False) -> int:
     client = chromadb.PersistentClient(path=str(CHROMA_PATH))
     col = client.get_or_create_collection(COLLECTION)
     existing = set(col.get()["ids"])
-    new = [e for e in entries if e["id"] not in existing]
-    if new:
+    seen: set[str] = set()
+    new = []
+    for e in entries:
+        if e["id"] not in existing and e["id"] not in seen:
+            seen.add(e["id"])
+            new.append(e)
+    BATCH = 500
+    for i in range(0, len(new), BATCH):
+        chunk = new[i:i + BATCH]
         col.add(
-            documents=[e["document"] for e in new],
-            metadatas=[e["metadata"] for e in new],
-            ids=[e["id"] for e in new],
+            documents=[e["document"] for e in chunk],
+            metadatas=[e["metadata"] for e in chunk],
+            ids=[e["id"] for e in chunk],
         )
     return len(new)
 
@@ -384,11 +391,19 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Scan a project into qa-knowledge")
     ap.add_argument("project", help="path to project directory")
     ap.add_argument("--dry-run", action="store_true", help="print entries without storing")
+    ap.add_argument("--max-files", type=int, default=200,
+                    help="max source files to scan (default 200; use 0 for unlimited)")
     args = ap.parse_args()
 
     project = Path(args.project)
     if not project.exists():
         sys.exit(f"project not found: {project}")
+
+    if args.max_files > 0:
+        # Warn if project is large
+        file_count = sum(1 for _ in _iter_files(project))
+        if file_count > args.max_files:
+            print(f"Note: project has {file_count} files; scanning first {args.max_files}. Use --max-files 0 to scan all.", file=sys.stderr)
 
     entries = scan(project, dry_run=args.dry_run)
 

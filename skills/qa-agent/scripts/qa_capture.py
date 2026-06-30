@@ -31,6 +31,8 @@ def build_entry(
     project: str = "manual",
     language: str = "all",
     source: str = "manual",
+    domain: str = "",
+    outcome: str = "",
 ) -> dict:
     entry_id = "qa-" + hashlib.sha256(content.encode()).hexdigest()[:16]
     return {
@@ -44,6 +46,8 @@ def build_entry(
             "library": library,
             "tags": tags,
             "confidence": confidence,
+            "domain": domain,
+            "outcome": outcome,
             "created_at": datetime.now(timezone.utc).isoformat(),
         },
     }
@@ -74,6 +78,10 @@ def main() -> None:
     ap.add_argument("--confidence", default="medium", choices=["high", "medium", "low"])
     ap.add_argument("--project",    default="manual")
     ap.add_argument("--language",   default="all")
+    ap.add_argument("--domain",     default="",
+                    help="knowledge domain: python-agents|aws-cloud|bench-harness|data-pipeline|web-backend|devtools|ml-ops|all")
+    ap.add_argument("--outcome",    default="",
+                    help="what happened when this was applied (free text)")
     args = ap.parse_args()
 
     entry = build_entry(
@@ -84,6 +92,8 @@ def main() -> None:
         confidence=args.confidence,
         project=args.project,
         language=args.language,
+        domain=args.domain,
+        outcome=args.outcome,
     )
 
     is_new = store_entry(entry)

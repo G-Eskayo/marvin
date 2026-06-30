@@ -41,8 +41,18 @@ Each finding stored as a ChromaDB entry with metadata.
   --content "Always use PersistentClient for ChromaDB — EphemeralClient loses data on restart" \
   --category anti-pattern \
   --library chromadb \
-  --tags "chromadb,persistence"
+  --tags "chromadb,persistence" \
+  --domain python-agents \
+  --outcome "prevents silent KB data loss on restart"
 ```
+
+### 4 — Lateral (cross-domain) query
+```
+# Find patterns from domains OTHER than aws-cloud that are relevant to "idempotent deduplication"
+~/.agents/venv/bin/python ~/.agents/skills/qa-agent/scripts/qa_query.py \
+  "idempotent deduplication" --lateral aws-cloud
+```
+Lateral mode excludes the specified domain and surfaces transferable patterns from other domains. This is the D4 cross-domain synthesis retrieval path.
 
 ---
 
@@ -75,7 +85,11 @@ ChromaDB collection: `qa-knowledge`
 | library | library name if applicable |
 | tags | comma-separated keywords |
 | confidence | `high` · `medium` · `low` |
+| domain | `python-agents` · `aws-cloud` · `bench-harness` · `data-pipeline` · `web-backend` · `devtools` · `ml-ops` · `all` |
+| outcome | free text — what happened when this was applied |
 | created_at | ISO timestamp |
+
+`domain` and `outcome` are the handles for cross-domain synthesis (D4). Use `--lateral <domain>` in queries to retrieve patterns from other domains ranked by relevance — the creative retrieval path.
 
 ---
 
