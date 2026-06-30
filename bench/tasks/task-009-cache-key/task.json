@@ -1,0 +1,8 @@
+{
+  "id": "task-009-cache-key",
+  "type": "fs",
+  "prompt_file": "prompt.md",
+  "timeout": 360,
+  "expect": [],
+  "note": "Diagnose discriminator. Symptom: cache grows past max_size despite eviction firing. Red herring: eviction logic looks correct (popitem fires on every set). Root cause: _make_key() appends time.time() — every key is unique, so the cache never hits, every call inserts a new entry, eviction keeps it at max_size (500) not unbounded... wait, actually with this code it WILL evict but will also NEVER hit. The real symptom is: cache hit rate is zero (every call is a miss + insert + evict). The prompt says 'growing past 500' which would need the eviction check to use >= not > and the check on len before popitem. Actual bug: _make_key timestamp means zero hit rate — always misses, always inserts, always evicts. Fix: remove time.time() from _make_key so keys are stable. No good positive substring for the fix (fix removes something). MUST use --judge. Judge assesses: does the fix produce stable cache keys so repeated calls for same (user_id, report_type) return the cached value?"
+}

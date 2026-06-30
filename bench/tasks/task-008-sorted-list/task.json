@@ -1,0 +1,8 @@
+{
+  "id": "task-008-sorted-list",
+  "type": "fs",
+  "prompt_file": "prompt.md",
+  "timeout": 360,
+  "expect": ["bisect"],
+  "note": "TDD discriminator. Two visible O(n) performance bugs in add() and find() — both profiles will fix these using bisect. One hidden semantic bug: discard() removes ALL occurrences; docstring says 'first occurrence'. Clean profile fixes perf, leaves discard (the list comprehension looks 'already fast'). MARVIN's TDD always-on writes duplicate-handling tests and discovers the semantic bug. Substring 'bisect' confirms perf was addressed. Judge grading assesses whether discard correctly removes only one occurrence when duplicates exist. MUST run with --judge for full discrimination."
+}

@@ -25,6 +25,7 @@ Skills at `~/.agents/skills/`. Auto-invoke by reading `SKILL.md` when triggers m
 | `index` | Match task keywords to `~/.claude/manifest.json` tags → load only relevant skill files. Use at task start to avoid speculative full-skill loads. |
 | `qa-agent` | "qa", "scan project", "best practices for X", "what worked/failed". Query KB before unfamiliar library work. |
 | `improve` | "show improvement queue", "what should I fix", "show digest", "run daily digest", "brainstorm improvements" |
+| `research-colony` | "show research digest", "what's new in AI", "any new papers", "run research colony", "fetch research" |
 | `paper-dive` | `/paper-dive`, drop a PDF path or paper URL, "walk me through this paper", "help me understand this" |
 
 Skills invokable as slash commands: `/tdd`, `/diagnose`, `/zoom-out`, etc.
@@ -48,6 +49,7 @@ Always active for dev work (writing or modifying code): `tdd` + `grill-with-docs
 3. Load `~/.claude/lexicon.md`
 4. Check `~/.claude/improvement-queue.md` — mention count of queued items if file exists ("N improvements queued")
 5. Check `~/.claude/daily-digest/` — if today's digest exists, mention it ("today's digest ready — ask to see it")
+6. Check `~/.claude/research-digest/` — if today's research digest exists, mention it ("research digest ready — N items found")
 
 ## Context Switch Protocol
 
