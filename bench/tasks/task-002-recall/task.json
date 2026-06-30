@@ -1,0 +1,9 @@
+{
+  "id": "task-002-recall",
+  "type": "qa",
+  "prompt_file": "prompt.md",
+  "cwd": "/Users/gileskayo",
+  "timeout": 180,
+  "expect": ["tag matching"],
+  "note": "Memory discriminator targeting a MEMORY.md index one-liner (injected directly, no file read needed, not derivable from disk). The phrase 'tag matching' is MARVIN's own term for the silent degradation. Clean profile cannot know it."
+}

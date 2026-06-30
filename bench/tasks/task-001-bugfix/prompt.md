@@ -1,0 +1,1 @@
+The file stats.py has a bug: median() returns the wrong value for even-length lists, and it mutates the caller's input. Fix both issues in place. Keep the function signature the same. Then briefly state what was wrong.

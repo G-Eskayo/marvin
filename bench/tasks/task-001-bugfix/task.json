@@ -1,0 +1,8 @@
+{
+  "id": "task-001-bugfix",
+  "type": "fs",
+  "prompt_file": "prompt.md",
+  "timeout": 300,
+  "expect": ["def median", "sorted", "n // 2"],
+  "note": "Filesystem correctness + cost task. A real off-by-one / even-length bug in median(). Measures marginal token cost of the MARVIN setup on identical hands-on work."
+}

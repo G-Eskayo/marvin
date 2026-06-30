@@ -1,0 +1,7 @@
+# Never commit credentials or run artifacts
+profiles/clean/
+profiles/marvin/
+results/*.json
+results/*.jsonl
+__pycache__/
+*.pyc

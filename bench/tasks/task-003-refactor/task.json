@@ -1,0 +1,8 @@
+{
+  "id": "task-003-refactor",
+  "type": "fs",
+  "prompt_file": "prompt.md",
+  "timeout": 400,
+  "expect": ["def is_valid_email", "validators"],
+  "note": "Multi-file fs task. Duplicated email-validation logic across two files must be extracted into a shared module. Measures correctness AND MARVIN's marginal token/turn cost on larger hands-on work (the place skill-routing overhead, if any, shows up)."
+}

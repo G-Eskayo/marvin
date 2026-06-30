@@ -1,0 +1,1 @@
+/Users/gileskayo/.claude-lean/CLAUDE.md

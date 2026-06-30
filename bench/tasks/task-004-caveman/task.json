@@ -1,0 +1,8 @@
+{
+  "id": "task-004-caveman",
+  "type": "qa",
+  "prompt_file": "prompt.md",
+  "cwd": "/Users/gileskayo",
+  "timeout": 120,
+  "note": "Behavioral task, no correctness rubric. MARVIN's CLAUDE.md enforces 'caveman mode' (drop articles/filler). Signal = output_tokens: marvin should be materially terser than clean for the same question. Tests whether a style optimization actually changes output economics."
+}

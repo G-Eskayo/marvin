@@ -1,0 +1,1 @@
+Both order.py and user.py contain the same duplicated email-validation logic. Extract it into a new shared module validators.py exposing a function `is_valid_email(email)`, then update both order.py and user.py to import and use it instead of their inline copies. Keep behavior identical.
