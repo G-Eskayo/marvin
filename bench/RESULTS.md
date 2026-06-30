@@ -81,6 +81,26 @@ Token counts:
 Claude Code 2.x stores credentials per-config-dir path using SHA256-prefixed keychain entries (`Claude Code-credentials-<sha256[:8]>`). A failed auth attempt writes a BLANK keychain entry that poisons all future attempts for that path — `.credentials.json` is never read again once a path-specific entry exists. Fix: delete the poisoned keychain entry (`security delete-generic-password -s "Claude Code-credentials-<hash>"`). setup.sh should check for and delete blank entries before materializing credentials.
 
 ### Next bench priorities
-- Add harder/ambiguous coding tasks where MARVIN skill routing might earn its cost vs lean.
+- ~~Add harder/ambiguous coding tasks where MARVIN skill routing might earn its cost vs lean.~~ — done in tasks 005–007.
 - Add LLM-judge grading for semantic correctness (current substring grading is v0).
-- Fix setup.sh: detect and delete blank path-specific keychain entries before materializing.
+- ~~Fix setup.sh: detect and delete blank path-specific keychain entries before materializing.~~ — done in Run 3.
+
+---
+
+## Task Suite v2 — Added 2026-06-30
+
+Three harder edge-case tasks added. Designed to surface failure modes invisible in the clean v1 suite.
+
+| Task | Type | Edge case | What fails | Correct grading signal |
+|------|------|-----------|------------|------------------------|
+| task-005-date-validator | fs | Semantic bug with misleading obvious fix | Model patches manual range logic instead of using datetime.strptime — produces more complex, still-wrong code | `datetime` + `strptime` both appear |
+| task-006-email-lookup | fs | Shared helper with opposite caller semantics | Naive extraction creates a helper that only handles one case; callers silently break | `find_user_by_email` + `return None` |
+| task-007-dyld-recall | qa | Cross-skill implementation memory recall | Clean/lean hallucinate or abstain; answer requires knowing render_pdf.py re-exec trick from resume-tailor project | `DYLD_LIBRARY_PATH` + `opt/homebrew` |
+
+### Why these are harder than v1
+
+- **task-005**: The obvious fix (add per-month day caps: `if month == 2 and day > 29`) is a local patch that still fails on leap-year Feb 29 edge cases and April/June/September/November 31. Models that reach for the fast fix produce code that looks correct but isn't. The only robust answer is delegating to `datetime.strptime`.
+
+- **task-006**: Both caller functions contain identical list comprehension code, but they use the result in opposite ways. A helper that returns `True/False` forces callers to re-implement the comprehension internally to distinguish "which user". A helper that returns the user or `None` is the only design that lets both callers stay clean. This tests whether the model chooses the right abstraction not just any working abstraction.
+
+- **task-007**: Harder than task-002-recall because the answer is implementation-level detail (an environment variable name + path from a specific file in a specific project), not a concept. MARVIN's ChromaDB memory must surface `render_pdf.py`'s macOS re-exec trick. Clean/lean have no way to know; they'll say "LD_LIBRARY_PATH" (Linux convention) or refuse to guess.

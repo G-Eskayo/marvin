@@ -1,0 +1,9 @@
+{
+  "id": "task-007-dyld-recall",
+  "type": "qa",
+  "prompt_file": "prompt.md",
+  "cwd": "/Users/gileskayo",
+  "timeout": 180,
+  "expect": ["DYLD_LIBRARY_PATH", "opt/homebrew"],
+  "note": "Cross-skill memory recall: tests whether MARVIN's memory of the resume-tailor implementation (the macOS re-exec trick: set DYLD_LIBRARY_PATH=/opt/homebrew/lib before WeasyPrint loads libgobject) is retrievable. Clean and lean profiles have no memory of this and will hallucinate or say they don't know. Harder than task-002-recall because the answer requires implementation-level detail from a specific project, not just a concept name. Expected correct answer: DYLD_LIBRARY_PATH=/opt/homebrew/lib, needed so WeasyPrint can find Pango/GLib shared libs that Homebrew installs outside the default dyld search path."
+}

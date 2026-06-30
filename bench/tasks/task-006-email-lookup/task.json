@@ -1,0 +1,8 @@
+{
+  "id": "task-006-email-lookup",
+  "type": "fs",
+  "prompt_file": "prompt.md",
+  "timeout": 300,
+  "expect": ["find_user_by_email", "return None"],
+  "note": "Shared-helper extraction with opposite caller semantics: add_user checks presence to REJECT, add_order checks presence to ALLOW. Naive extraction produces a helper that only handles one case. Correct extraction returns the user dict or None and lets callers branch. Graded on: helper exists AND returns None for not-found case (required for both callers to work correctly without special-casing inside the helper)."
+}

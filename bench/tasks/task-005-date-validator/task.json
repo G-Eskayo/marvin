@@ -1,0 +1,8 @@
+{
+  "id": "task-005-date-validator",
+  "type": "fs",
+  "prompt_file": "prompt.md",
+  "timeout": 300,
+  "expect": ["datetime", "strptime"],
+  "note": "Semantic bug in date validator — manual range checks accept impossible dates (Feb 31, Apr 31). The obvious wrong fix patches more manual logic; the correct fix delegates to datetime.strptime. Tests whether model uses the right stdlib call vs over-engineering a manual solution. Graded on: datetime imported AND strptime used."
+}

@@ -1,0 +1,1 @@
+Both `add_user` and `add_order` in db.py contain an identical linear search through the db list to check for an email. Extract this into a shared helper function `find_user_by_email(db, email)` that both functions call. Keep all existing behavior and error messages identical.
