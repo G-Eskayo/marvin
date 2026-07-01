@@ -208,4 +208,4 @@ These are known gaps in what the bench currently proves. Results so far are dire
 | **Isolated-memory QA** | ✅ Shipped (Run 7). task-011: MEMORY.md one-liner loaded at session start, "do NOT search files", 0 tool calls all profiles. clean 0.00, lean 0.00, marvin 1.00 at +627 token cost. | `[done]` H |
 | **Variance (repeat runs)** | ✅ Shipped (Run 5). `--repeat N` available. Not yet applied to hard tasks. | `[done]` H |
 | **Cross-model** | ✅ Shipped (Run 8). `--model` flag added. Haiku run: memory wins hold, navigational gap *grows* on weaker models, ~60% cost reduction. MARVIN is MORE valuable on Haiku, not less. | `[done]` G |
-| **Automatic profile routing** | ❌ Not built. Manual profile selection is friction. | `[decision]` H — Automatic profile routing |
+| **Automatic profile routing** | ✅ Shipped. `route` script + shell aliases (claude-recall/code/arch/research) + CLAUDE.md session-start step 7 auto-suggests optimal profile on first message. | `[done]` H |

@@ -73,13 +73,22 @@ mindmap
         Desktop and Downloads
         7-day grace period
     Bench
-      10 tasks
+      11 tasks
       3 profiles
         clean baseline
         lean low-overhead
         marvin full stack
-      flags repeat N and judge
+      flags repeat N judge model
+      cross-model Haiku vs Sonnet
       SCORECARD gains and losses
+    Routing
+      route script keyword classifier
+      shell aliases
+        claude-recall marvin haiku
+        claude-code lean sonnet
+        claude-research marvin haiku
+        claude-arch marvin sonnet
+      session-start auto-suggest
     Hooks on every save
       rebuild-manifest
       emit-resume-prompt
@@ -143,13 +152,42 @@ Three launchd cron jobs run without intervention:
 10 tasks run across three profiles with four metrics: token cost, tool efficiency, task correctness (substring + LLM judge), and recall quality.
 
 ```bash
-python3 bench/bench.py bench/tasks/*                  # full suite, both profiles
-python3 bench/bench.py bench/tasks/* --repeat 5       # mean ± σ across 5 runs
-python3 bench/bench.py bench/tasks/* --judge          # LLM semantic grading
-python3 bench/bench.py bench/tasks/* --profiles lean  # specific profile only
+python3 bench/bench.py bench/tasks/*                                # full suite
+python3 bench/bench.py bench/tasks/* --repeat 5                     # mean ± σ
+python3 bench/bench.py bench/tasks/* --judge                        # LLM grading
+python3 bench/bench.py bench/tasks/* --profiles lean                # one profile
+python3 bench/bench.py bench/tasks/* --model claude-haiku-4-5-20251001  # swap model
 ```
 
 See [`bench/SCORECARD.md`](bench/SCORECARD.md) for honest results — gains *and* setbacks at equal weight.
+
+### Automatic Profile + Model Routing
+
+The `route` script classifies a task description and maps it to the proven-optimal profile + model combination from bench data.
+
+```bash
+route "what were the bench results last session?"
+# intent:   recall
+# profile:  marvin
+# model:    claude-haiku-4-5-20251001
+# savings:  ~60% vs MARVIN + Sonnet
+# launch:   CLAUDE_CONFIG_DIR=~/.claude claude --model claude-haiku-4-5-20251001
+# alias:    claude-recall
+```
+
+| Alias | Profile | Model | Use for | Evidence |
+|-------|---------|-------|---------|----------|
+| `claude-recall` | marvin | haiku | Memory/session history | bench Run 8: 1.00 vs 0.00 at ~60% cost |
+| `claude-research` | marvin | haiku | arXiv, papers, synthesis | haiku sufficient for text synthesis |
+| `claude-code` | lean | sonnet | Self-contained coding tasks | bench Runs 2–6: 9-10% cheaper, same quality |
+| `claude-arch` | marvin | sonnet | Design, architecture, planning | full reasoning required |
+
+```bash
+# Install aliases into ~/.zshrc
+bash ~/.agents/skills/route/install.sh && source ~/.zshrc
+```
+
+Session-start auto-routing: CLAUDE.md step 7 analyses the first message and surfaces the suggestion once if ≥2 routing keywords match.
 
 ### PostToolUse Hooks
 Four hooks fire on every Write or Edit:

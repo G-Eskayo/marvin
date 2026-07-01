@@ -27,6 +27,7 @@ Skills at `~/.agents/skills/`. Auto-invoke by reading `SKILL.md` when triggers m
 | `improve` | "show improvement queue", "what should I fix", "show digest", "run daily digest", "brainstorm improvements" |
 | `research-colony` | "show research digest", "what's new in AI", "any new papers", "run research colony", "fetch research" |
 | `paper-dive` | `/paper-dive`, drop a PDF path or paper URL, "walk me through this paper", "help me understand this" |
+| `route` | "which profile should I use", "should I use haiku", "route this task", "which model is best for" |
 
 Skills invokable as slash commands: `/tdd`, `/diagnose`, `/zoom-out`, etc.
 
@@ -50,6 +51,12 @@ Always active for dev work (writing or modifying code): `tdd` + `grill-with-docs
 4. Check `~/.claude/improvement-queue.md` — mention count of queued items if file exists ("N improvements queued")
 5. Check `~/.claude/daily-digest/` — if today's digest exists, mention it ("today's digest ready — ask to see it")
 6. Check `~/.claude/research-digest/` — if today's research digest exists, mention it ("research digest ready — N items found")
+7. **Auto-route**: if the first user message clearly signals a specific task type (≥2 routing keywords), surface one routing suggestion — only once, only at session start:
+   - recall/memory → "This looks like a **recall** task — `claude-recall` (marvin + haiku) handles it at ~60% of this session's cost."
+   - coding (no recall) → "This looks like a **coding** task — `claude-code` (lean + sonnet) saves ~9% tokens."
+   - research/paper → "This looks like a **research** task — `claude-research` (marvin + haiku) is ~60% cheaper for synthesis."
+   - architecture/design/mixed → current profile is correct, say nothing.
+   Routing keywords: recall="recall,remember,from memory,last session,bench result,we built"; coding="fix,implement,debug,bug,error,refactor"; research="research,paper,arxiv,summarize,what is".
 
 ## Context Switch Protocol
 
