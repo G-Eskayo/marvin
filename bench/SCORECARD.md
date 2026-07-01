@@ -8,7 +8,15 @@ The honest summary of what the bench has actually proven. Gains and setbacks car
 
 ## Verdict
 
-MARVIN wins on **knowledge and navigation**. It loses (token cost, no quality gain) on **mechanical coding**. One optimization (caveman mode) actively backfired and was removed. Profile routing — using a stripped-down "lean" config for coding and the full MARVIN config for recall/research — recovers most of the downside.
+MARVIN wins on **knowledge and navigation**. It loses (token cost, no quality gain) on **mechanical coding**. One optimization (caveman mode) actively backfired and was removed.
+
+Twelve bench runs have produced three concrete cost levers:
+
+1. **Profile routing** — lean for coding (saves 9%), marvin for recall/research. Now automatic via the `route` script and CLAUDE.md session-start step 7.
+2. **Cross-model routing** — marvin + Haiku costs 60% less than marvin + Sonnet with identical recall quality. MARVIN's advantage *grows* on weaker models (Run 8).
+3. **Local/zero-cost runner** — qwen2.5:14b + RAG context injection achieves semantic parity with Haiku on recall tasks at $0.00 (Run 12). Exact-phrase parity still requires Haiku.
+
+Combined: the cheapest viable recall path is now local 14B + RAG → $0.00. The cheapest exact-phrase path is Haiku + marvin → ~$0.02. Sonnet + marvin (~$0.05) is only needed for tasks requiring both full reasoning and exact recall.
 
 ---
 
@@ -257,11 +265,19 @@ python3 bench.py tasks/*
 # run one task
 python3 bench.py tasks/task-002-recall
 
-# run specific profiles only
-python3 bench.py tasks/* --profiles clean,marvin
+# run with LLM judge + specific profiles
+python3 bench.py tasks/* --profiles clean,marvin --judge
+
+# swap Claude model (cross-model comparison)
+python3 bench.py tasks/* --model claude-haiku-4-5-20251001
+
+# run against local Ollama model (zero API cost, QA tasks only)
+python3 bench.py tasks/task-002-recall tasks/task-011-qa-recall \
+  --runner ollama --ollama-model qwen2.5:14b \
+  --profiles clean,marvin --context rag --judge
 ```
 
-Results print a comparison table and save to `results/<task>-<timestamp>.json`. Full run history with findings is in [`RESULTS.md`](RESULTS.md).
+Results print a comparison table and save to `results/<task>-<timestamp>.json`.
 
 ---
 
@@ -277,3 +293,4 @@ These are known gaps in what the bench currently proves. Results so far are dire
 | **Variance (repeat runs)** | ✅ Shipped (Run 5). `--repeat N` available. Not yet applied to hard tasks. | `[done]` H |
 | **Cross-model** | ✅ Shipped (Run 8). `--model` flag added. Haiku run: memory wins hold, navigational gap *grows* on weaker models, ~60% cost reduction. MARVIN is MORE valuable on Haiku, not less. | `[done]` G |
 | **Automatic profile routing** | ✅ Shipped. `route` script + shell aliases (claude-recall/code/arch/research) + CLAUDE.md session-start step 7 auto-suggests optimal profile on first message. | `[done]` H |
+| **Local/zero-cost runner** | ✅ Shipped (Runs 9–12). `--runner ollama --context {full,rag}`. 7B + full injection: fails jargon tasks (training priors dominate). 14B + RAG: first config to achieve semantic parity (judge pass) at $0.00. Exact-phrase parity still requires Haiku. | `[done]` |
