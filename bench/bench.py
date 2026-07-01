@@ -11,6 +11,8 @@ Usage:
     python3 bench.py tasks/* --repeat 3 --judge     # both
     python3 bench.py tasks/* --model claude-haiku-4-5-20251001  # swap model
     python3 bench.py tasks/* --model claude-haiku-4-5-20251001 --profiles clean,marvin
+    python3 bench.py tasks/task-002-recall --runner ollama --ollama-model qwen2.5:7b
+    python3 bench.py tasks/task-002-recall --runner ollama --ollama-model qwen2.5:7b --profiles clean,marvin --judge
 
 Each task runs identically through every profile; results land in results/ and a
 comparison table prints to stdout. Run profiles/setup.sh first.
@@ -26,6 +28,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -37,6 +40,122 @@ PROFILES = {
     "marvin": ROOT / "profiles" / "marvin",          # symlink overlay of ~/.claude (rich)
     "lean":   ROOT / "profiles" / "lean",            # symlink overlay of ~/.claude-lean (no memory overhead)
 }
+
+OLLAMA_BASE = "http://localhost:11434"
+
+
+def _load_marvin_context() -> str:
+    """Load MEMORY.md + all linked memory files for Ollama context injection.
+
+    Scans ~/.claude/projects/ for the first MEMORY.md found. Loads the index
+    and all .md files it links to (via markdown link syntax).
+    Returns empty string if no memory dir found.
+    """
+    projects_dir = Path.home() / ".claude" / "projects"
+    memory_index: Path | None = None
+    if projects_dir.exists():
+        for candidate in sorted(projects_dir.rglob("MEMORY.md")):
+            memory_index = candidate
+            break
+    if not memory_index or not memory_index.exists():
+        return ""
+
+    memory_dir = memory_index.parent
+    index_text = memory_index.read_text()
+    parts = ["# MARVIN Memory — injected context\n\n" + index_text]
+
+    for m in re.finditer(r'\[.*?\]\((\S+\.md)\)', index_text):
+        fpath = memory_dir / m.group(1)
+        if fpath.exists():
+            try:
+                parts.append(f"## {m.group(1)}\n\n{fpath.read_text()}")
+            except OSError:
+                pass
+
+    return "\n\n---\n\n".join(parts)
+
+
+def _ollama_available(model: str) -> tuple[bool, str]:
+    """Return (ok, error_message). Checks server is up and model is pulled."""
+    try:
+        with urllib.request.urlopen(f"{OLLAMA_BASE}/api/tags", timeout=5) as resp:
+            data = json.loads(resp.read())
+    except Exception as exc:
+        return False, f"Ollama server not responding ({exc}). Start with: ollama serve"
+    available = [m["name"] for m in data.get("models", [])]
+    # accept exact match or prefix (e.g. "qwen2.5:7b" matches "qwen2.5:7b-instruct-q4_K_M")
+    if not any(a == model or a.startswith(model.split(":")[0]) for a in available):
+        return False, (f"Model '{model}' not found. Available: {available}\n"
+                       f"Pull with: ollama pull {model}")
+    return True, ""
+
+
+def run_once_ollama(task: dict, profile: str, ollama_model: str) -> dict | None:
+    """Run a QA task against a local Ollama model via /api/chat.
+
+    profile=clean  → raw task prompt, no context (control: can the model answer cold?)
+    profile=marvin → MEMORY.md + all memory files as system message (the test)
+    profile=lean   → same as clean (lean's value is CLAUDE.md instructions, irrelevant here)
+
+    Returns None for fs tasks (tool use not supported).
+    """
+    if task.get("type") == "fs":
+        return None  # caller prints skip
+
+    system_content = ""
+    if profile == "marvin":
+        system_content = _load_marvin_context()
+
+    messages: list[dict] = []
+    if system_content:
+        messages.append({"role": "system", "content": system_content})
+    messages.append({"role": "user", "content": task["prompt"]})
+
+    payload = json.dumps({
+        "model": ollama_model,
+        "messages": messages,
+        "stream": False,
+        "options": {"temperature": 0},
+    }).encode()
+    req = urllib.request.Request(
+        f"{OLLAMA_BASE}/api/chat",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    t0 = time.time()
+    try:
+        with urllib.request.urlopen(req, timeout=task.get("timeout", 300)) as resp:
+            data = json.loads(resp.read())
+    except Exception as exc:
+        return {
+            "profile": profile, "model": ollama_model, "runner": "ollama",
+            "result_text": "", "spawn_error": str(exc),
+            "wall_s": round(time.time() - t0, 1),
+            "cost_usd": 0.0, "total_tokens": 0, "num_turns": 1, "tool_calls": 0,
+            "correctness": {"score": 0.0},
+        }
+    wall = time.time() - t0
+
+    result_text = (data.get("message") or {}).get("content", "")
+    prompt_tokens = data.get("prompt_eval_count", 0)
+    gen_tokens = data.get("eval_count", 0)
+
+    return {
+        "profile":       profile,
+        "model":         ollama_model,
+        "runner":        "ollama",
+        "result_text":   result_text,
+        "wall_s":        round(wall, 1),
+        "cost_usd":      0.0,
+        "total_tokens":  prompt_tokens + gen_tokens,
+        "num_turns":     1,
+        "tool_calls":    0,
+        "correctness":   score_correctness(task, result_text, None),
+        "_prompt_tokens": prompt_tokens,
+        "_gen_tokens":    gen_tokens,
+    }
 
 
 def load_task(task_dir: Path) -> dict:
@@ -293,15 +412,27 @@ def main() -> None:
     ap.add_argument("--model", default=None, metavar="MODEL",
                     help="model ID passed to claude (e.g. claude-haiku-4-5-20251001); "
                          "default = Claude Code's configured default")
+    ap.add_argument("--runner", default="claude", choices=["claude", "ollama"],
+                    help="execution backend: 'claude' (default) or 'ollama' (local model)")
+    ap.add_argument("--ollama-model", default="qwen2.5:7b", metavar="MODEL",
+                    help="Ollama model to use with --runner ollama (default: qwen2.5:7b)")
     args = ap.parse_args()
 
     # derive short display name for headers / filenames
     _MODEL_SHORT = None
-    if args.model:
+    if args.runner == "ollama":
+        _MODEL_SHORT = args.ollama_model.replace(":", "-")
+    elif args.model:
         _MODEL_SHORT = next(
             (m for m in ("haiku", "sonnet", "opus", "fable") if m in args.model.lower()),
             args.model.split("-")[1] if "-" in args.model else args.model,
         )
+
+    # pre-flight check for ollama runner
+    if args.runner == "ollama":
+        ok, err = _ollama_available(args.ollama_model)
+        if not ok:
+            sys.exit(err)
 
     profiles = args.profiles.split(",")
     for p in profiles:
@@ -320,7 +451,18 @@ def main() -> None:
         all_raw: list[dict] = []
 
         for profile in profiles:
-            if args.repeat == 1:
+            if args.runner == "ollama":
+                run = run_once_ollama(task, profile, args.ollama_model)
+                if run is None:
+                    print(f"  skip {task['id']} @ {profile} [ollama] — fs tasks require tool use")
+                    continue
+                print(f"running {task['id']} @ {profile} [ollama/{args.ollama_model}] ...", flush=True)
+                if args.judge:
+                    print(f"  judging {task['id']} @ {profile} ...", flush=True)
+                    run["judge_correctness"] = judge_run(task, run)
+                rows.append(run)
+                all_raw.append(run)
+            elif args.repeat == 1:
                 print(f"running {task['id']} @ {profile} ...", flush=True)
                 run = run_once(task, profile, capture_snapshot=args.judge, model=args.model)
                 if args.judge:
@@ -341,14 +483,24 @@ def main() -> None:
                 all_raw.extend(profile_runs)
                 rows.append(aggregate_runs(profile_runs))
 
-        display_id = f"{task['id']} [{_MODEL_SHORT}]" if _MODEL_SHORT else task["id"]
+        if not rows:
+            print(f"  (all profiles skipped for {task['id']} — nothing to display)")
+            continue
+
+        runner_tag = f"ollama/{args.ollama_model}" if args.runner == "ollama" else None
+        display_id = task["id"]
+        if runner_tag:
+            display_id = f"{task['id']} [{runner_tag}]"
+        elif _MODEL_SHORT:
+            display_id = f"{task['id']} [{_MODEL_SHORT}]"
         print(fmt_table(display_id, rows, show_judge=args.judge))
 
         stamp = time.strftime("%Y%m%d-%H%M%S")
         model_tag = f"-{_MODEL_SHORT}" if _MODEL_SHORT else ""
         out = ROOT / "results" / f"{task['id']}{model_tag}-{stamp}.json"
         out.write_text(json.dumps(
-            {"task": task["id"], "model": args.model or "default",
+            {"task": task["id"], "runner": args.runner,
+             "model": args.ollama_model if args.runner == "ollama" else (args.model or "default"),
              "repeat": args.repeat, "judge": args.judge, "runs": all_raw},
             indent=2, default=str,
         ))
