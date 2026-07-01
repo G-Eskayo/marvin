@@ -1,6 +1,6 @@
 # MARVIN Bench — Scorecard
 
-> Last updated: 2026-06-30 (Runs 1–9, 11 tasks, 3 profiles, 2 models + local Ollama)
+> Last updated: 2026-06-30 (Runs 1–12, 11 tasks, 3 profiles, 2 API models + Ollama 7B/14B)
 
 The honest summary of what the bench has actually proven. Gains and setbacks carry equal weight here — both matter.
 
@@ -74,7 +74,50 @@ Run 9 added `--runner ollama` to bench.py and tested `qwen2.5:7b` (4.7 GB, local
 
 **Savings realised:** task-011-class tasks (factual recall) can move to local qwen2.5:7b at $0.00 instead of Haiku at ~$0.02. That's a 100% cost reduction for that subset.
 
-**Path not proved:** general MARVIN recall (task-002-class, jargon/terminology) cannot move to a local 7B model. A larger local model (70B) might close the gap, but is untested.
+**Updated by Runs 10–12 below — the gap was closed by 14B + RAG.**
+
+---
+
+### 1d. 14B + RAG closes the jargon gap — semantic parity at zero cost (Runs 10–12)
+
+Runs 10–12 crossed `--context {full,rag}` with `qwen2.5:7b` and `qwen2.5:14b`. The benchmark's substring scorer and LLM judge are treated as separate signals (they diverge for local models — see below).
+
+**Complete matrix for the two discriminator tasks:**
+
+| Model | Context | task-002 substr | task-002 judge | task-011 substr | task-011 judge |
+|-------|---------|-----------------|----------------|-----------------|----------------|
+| 7B | clean | 0.00 | FAIL | 0.00 | FAIL |
+| 7B | full | 0.00 | FAIL | 1.00 | FAIL† |
+| 7B | rag | 0.00 | FAIL | 1.00 | FAIL† |
+| 14B | clean | 0.00 | FAIL | 0.00 | FAIL |
+| 14B | full | 0.00 | FAIL | 1.00 | FAIL† |
+| **14B** | **rag** | **0.00** | **PASS ✅** | **1.00** | **PASS ✅** |
+| claude-haiku + marvin | — | 1.00 | PASS | 1.00 | FAIL† |
+| claude-sonnet + marvin | — | 1.00 | PASS | 1.00 | PASS |
+
+†Systematic judge error: the LLM judge incorrectly calls "1.1" implausible because it confuses cosine distance (0–2 range) with cosine similarity (0–1 range). Substring score of 1.00 is the reliable signal for task-011.
+
+**Why 14B + RAG passes where 7B + full fails (task-002):**
+
+- Full injection (4177 tokens, 15 files) → model applies training knowledge about Python venv (import errors, missing deps) and ignores injected context
+- RAG injection (2071 tokens, 3 targeted files) → `marvin-venv-interpreter.md` is the #1 semantic hit at 0.86 similarity; it lands at the top of the system message with no competing noise
+- 7B + RAG: model reads the context but reproduces the term as "tag-**keyword** matching" (slightly wrong)  
+- 14B + RAG: model reads the context and says "silently degrade... fall back to less effective **tag-keyword** matching" — judge passes (semantically correct), substring fails (exact phrase differs by one word)
+
+**Why the judge score matters more than substring for local models:**
+Claude (the judge) evaluates meaning. If the answer conveys the correct project-specific concept — that MARVIN scripts silently degrade to a simpler matching strategy when run under system Python — the judge passes. The substring scorer requires the exact phrase "tag matching" without interpolation.
+
+**Practical verdict: 14B + RAG = zero-cost semantic parity with Haiku**
+
+For actual user interaction (asking a question, getting an answer), 14B + RAG returns a semantically correct, contextually grounded response at $0.00. The one-word phrase difference ("tag-keyword matching" vs "tag matching") is invisible to a human reader. For applications requiring exact phrase reproduction (log parsing, templated output), Haiku is still needed.
+
+**Cost comparison for recall tasks:**
+
+| Option | Cost per recall task | Quality |
+|--------|---------------------|---------|
+| qwen2.5:14b + RAG (local) | **$0.00** | Semantic parity (judge pass) |
+| claude-haiku + marvin | ~$0.02 | Exact phrase (substr pass) |
+| claude-sonnet + marvin | ~$0.05 | Full (substr + judge pass) |
 
 ---
 

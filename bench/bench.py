@@ -34,6 +34,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "lib"))
 from score import parse_stream, score_correctness  # noqa: E402
+from memory_rag import query_memory  # noqa: E402
 
 PROFILES = {
     "clean":  ROOT / "profiles" / "clean",           # base Claude Code (control)
@@ -90,12 +91,15 @@ def _ollama_available(model: str) -> tuple[bool, str]:
     return True, ""
 
 
-def run_once_ollama(task: dict, profile: str, ollama_model: str) -> dict | None:
+def run_once_ollama(task: dict, profile: str, ollama_model: str,
+                    context_mode: str = "full") -> dict | None:
     """Run a QA task against a local Ollama model via /api/chat.
 
-    profile=clean  → raw task prompt, no context (control: can the model answer cold?)
-    profile=marvin → MEMORY.md + all memory files as system message (the test)
-    profile=lean   → same as clean (lean's value is CLAUDE.md instructions, irrelevant here)
+    profile=clean  → no context injection (control)
+    profile=marvin → context injection, mode controlled by context_mode:
+                       "full" — dump all MEMORY.md + linked files (~4000 tok)
+                       "rag"  — top-3 semantically relevant passages (~300 tok)
+    profile=lean   → same as clean (lean's value is CLAUDE.md, irrelevant here)
 
     Returns None for fs tasks (tool use not supported).
     """
@@ -104,7 +108,10 @@ def run_once_ollama(task: dict, profile: str, ollama_model: str) -> dict | None:
 
     system_content = ""
     if profile == "marvin":
-        system_content = _load_marvin_context()
+        if context_mode == "rag":
+            system_content = query_memory(task["prompt"], n_results=3)
+        else:
+            system_content = _load_marvin_context()
 
     messages: list[dict] = []
     if system_content:
@@ -152,7 +159,8 @@ def run_once_ollama(task: dict, profile: str, ollama_model: str) -> dict | None:
         "total_tokens":  prompt_tokens + gen_tokens,
         "num_turns":     1,
         "tool_calls":    0,
-        "correctness":   score_correctness(task, result_text, None),
+        "correctness":    score_correctness(task, result_text, None),
+        "context_mode":   context_mode if profile == "marvin" else "none",
         "_prompt_tokens": prompt_tokens,
         "_gen_tokens":    gen_tokens,
     }
@@ -416,6 +424,10 @@ def main() -> None:
                     help="execution backend: 'claude' (default) or 'ollama' (local model)")
     ap.add_argument("--ollama-model", default="qwen2.5:7b", metavar="MODEL",
                     help="Ollama model to use with --runner ollama (default: qwen2.5:7b)")
+    ap.add_argument("--context", default="full", choices=["full", "rag"],
+                    help="context injection mode for marvin profile with --runner ollama: "
+                         "'full' = dump all memory files (default), "
+                         "'rag' = top-3 semantically relevant passages")
     args = ap.parse_args()
 
     # derive short display name for headers / filenames
@@ -452,11 +464,12 @@ def main() -> None:
 
         for profile in profiles:
             if args.runner == "ollama":
-                run = run_once_ollama(task, profile, args.ollama_model)
+                run = run_once_ollama(task, profile, args.ollama_model, args.context)
                 if run is None:
                     print(f"  skip {task['id']} @ {profile} [ollama] — fs tasks require tool use")
                     continue
-                print(f"running {task['id']} @ {profile} [ollama/{args.ollama_model}] ...", flush=True)
+                ctx_label = f"/{args.context}" if profile == "marvin" else ""
+                print(f"running {task['id']} @ {profile}{ctx_label} [ollama/{args.ollama_model}] ...", flush=True)
                 if args.judge:
                     print(f"  judging {task['id']} @ {profile} ...", flush=True)
                     run["judge_correctness"] = judge_run(task, run)
@@ -487,7 +500,8 @@ def main() -> None:
             print(f"  (all profiles skipped for {task['id']} — nothing to display)")
             continue
 
-        runner_tag = f"ollama/{args.ollama_model}" if args.runner == "ollama" else None
+        runner_tag = (f"ollama/{args.ollama_model}/{args.context}"
+                      if args.runner == "ollama" else None)
         display_id = task["id"]
         if runner_tag:
             display_id = f"{task['id']} [{runner_tag}]"
