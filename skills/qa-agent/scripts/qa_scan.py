@@ -17,6 +17,10 @@ from pathlib import Path
 CHROMA_PATH = Path.home() / ".claude" / "chroma"
 COLLECTION  = "qa-knowledge"
 
+# infer_pattern_type lives in qa_capture so all scripts share the same logic
+sys.path.insert(0, str(Path(__file__).parent))
+from qa_capture import infer_pattern_type  # noqa: E402
+
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "env",
              ".tox", "dist", "build", ".next", ".nuxt", "coverage", "target"}
 SKIP_EXT  = {".pyc", ".pyo", ".map", ".min.js", ".min.css", ".lock"}
@@ -547,21 +551,23 @@ def scan(project: Path, dry_run: bool = False) -> list[dict]:
     def add(document: str, category: str, **meta):
         library = meta.pop("library", "")
         tags    = meta.pop("tags", "")
-        domain  = meta.pop("domain", infer_domain(name, document, library, tags))
+        domain       = meta.pop("domain", infer_domain(name, document, library, tags))
+        pattern_type = meta.pop("pattern_type", infer_pattern_type(document, tags, category))
         entries.append({
             "id": _make_id(document),
             "document": document,
             "metadata": {
-                "category":   category,
-                "source":     "project-scan",
-                "project":    name,
-                "created_at": now,
-                "language":   meta.pop("language", "all"),
-                "library":    library,
-                "tags":       tags,
-                "confidence": meta.pop("confidence", "medium"),
-                "domain":     domain,
-                "outcome":    meta.pop("outcome", ""),
+                "category":    category,
+                "source":      "project-scan",
+                "project":     name,
+                "created_at":  now,
+                "language":    meta.pop("language", "all"),
+                "library":     library,
+                "tags":        tags,
+                "confidence":  meta.pop("confidence", "medium"),
+                "domain":      domain,
+                "outcome":     meta.pop("outcome", ""),
+                "pattern_type": pattern_type,
                 **meta,
             },
         })

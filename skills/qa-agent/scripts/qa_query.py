@@ -83,12 +83,13 @@ def main() -> None:
     for i, r in enumerate(results, 1):
         m = r["metadata"]
         tags = f"  tags=[{m.get('tags','').replace(',', ', ')}]" if m.get("tags") else ""
-        domain_str = f"  domain={m['domain']}" if m.get("domain") else ""
-        outcome_str = f"\n   outcome: {m['outcome']}" if m.get("outcome") else ""
+        domain_str  = f"  domain={m['domain']}"               if m.get("domain")       else ""
+        ptype_str   = f"  pattern={m['pattern_type']}"         if m.get("pattern_type") else ""
+        outcome_str = f"\n   outcome: {m['outcome']}"          if m.get("outcome")      else ""
         print(f"{i}. [{m.get('category','?')}] {r['document']}")
         relevance = 1 / (1 + r["distance"])
         print(f"   project={m.get('project','?')}  confidence={m.get('confidence','?')}"
-              f"  relevance={relevance:.2f}{domain_str}{tags}{outcome_str}")
+              f"  relevance={relevance:.2f}{domain_str}{ptype_str}{tags}{outcome_str}")
         print()
 
 

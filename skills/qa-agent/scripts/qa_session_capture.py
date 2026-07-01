@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from qa_capture import build_entry, store_entry
+from qa_capture import build_entry, store_entry, infer_pattern_type
 
 HANDOFF_DIR = Path.home() / ".claude" / "handoffs"
 
@@ -124,14 +124,17 @@ def main() -> None:
     project = extract_project(text)
     stored = 0
     for decision in decisions:
+        category = infer_category(decision)
+        tags     = f"handoff,auto-capture,{project}"
         entry = build_entry(
             content=decision,
-            category=infer_category(decision),
+            category=category,
             domain=infer_domain(decision),
+            pattern_type=infer_pattern_type(decision, tags, category),
             project=project,
             source="session",
             confidence="medium",
-            tags=f"handoff,auto-capture,{project}",
+            tags=tags,
             outcome="",
         )
         if store_entry(entry):
