@@ -9,6 +9,8 @@ Usage:
     python3 bench.py tasks/* --repeat 5             # 5 runs each; reports mean ± σ
     python3 bench.py tasks/* --judge                # LLM-judge semantic grading
     python3 bench.py tasks/* --repeat 3 --judge     # both
+    python3 bench.py tasks/* --model claude-haiku-4-5-20251001  # swap model
+    python3 bench.py tasks/* --model claude-haiku-4-5-20251001 --profiles clean,marvin
 
 Each task runs identically through every profile; results land in results/ and a
 comparison table prints to stdout. Run profiles/setup.sh first.
@@ -44,7 +46,7 @@ def load_task(task_dir: Path) -> dict:
     return cfg
 
 
-def run_once(task: dict, profile: str, capture_snapshot: bool = False) -> dict:
+def run_once(task: dict, profile: str, capture_snapshot: bool = False, model: str | None = None) -> dict:
     config_dir = PROFILES[profile]
     is_fs = task.get("type") == "fs"
 
@@ -62,6 +64,8 @@ def run_once(task: dict, profile: str, capture_snapshot: bool = False) -> dict:
 
     cmd = ["claude", "-p", task["prompt"],
            "--output-format", "stream-json", "--verbose"]
+    if model:
+        cmd += ["--model", model]
     if is_fs:
         cmd += ["--permission-mode", "bypassPermissions"]
 
@@ -81,6 +85,7 @@ def run_once(task: dict, profile: str, capture_snapshot: bool = False) -> dict:
     parsed["correctness"] = score_correctness(task, parsed["result_text"],
                                               workdir if is_fs else None)
     parsed["profile"] = profile
+    parsed["model"] = model or "default"
     if proc.returncode != 0 and not parsed.get("result_text"):
         parsed["spawn_error"] = proc.stderr[-500:]
 
@@ -285,7 +290,18 @@ def main() -> None:
                     help="run each profile N times; report mean ± σ (default 1)")
     ap.add_argument("--judge", action="store_true",
                     help="add LLM-judge semantic grading alongside substring grading")
+    ap.add_argument("--model", default=None, metavar="MODEL",
+                    help="model ID passed to claude (e.g. claude-haiku-4-5-20251001); "
+                         "default = Claude Code's configured default")
     args = ap.parse_args()
+
+    # derive short display name for headers / filenames
+    _MODEL_SHORT = None
+    if args.model:
+        _MODEL_SHORT = next(
+            (m for m in ("haiku", "sonnet", "opus", "fable") if m in args.model.lower()),
+            args.model.split("-")[1] if "-" in args.model else args.model,
+        )
 
     profiles = args.profiles.split(",")
     for p in profiles:
@@ -306,7 +322,7 @@ def main() -> None:
         for profile in profiles:
             if args.repeat == 1:
                 print(f"running {task['id']} @ {profile} ...", flush=True)
-                run = run_once(task, profile, capture_snapshot=args.judge)
+                run = run_once(task, profile, capture_snapshot=args.judge, model=args.model)
                 if args.judge:
                     print(f"  judging {task['id']} @ {profile} ...", flush=True)
                     run["judge_correctness"] = judge_run(task, run)
@@ -317,7 +333,7 @@ def main() -> None:
                 for i in range(args.repeat):
                     print(f"running {task['id']} @ {profile} [{i+1}/{args.repeat}] ...",
                           flush=True)
-                    run = run_once(task, profile, capture_snapshot=args.judge)
+                    run = run_once(task, profile, capture_snapshot=args.judge, model=args.model)
                     if args.judge:
                         print(f"  judging [{i+1}/{args.repeat}] ...", flush=True)
                         run["judge_correctness"] = judge_run(task, run)
@@ -325,12 +341,15 @@ def main() -> None:
                 all_raw.extend(profile_runs)
                 rows.append(aggregate_runs(profile_runs))
 
-        print(fmt_table(task["id"], rows, show_judge=args.judge))
+        display_id = f"{task['id']} [{_MODEL_SHORT}]" if _MODEL_SHORT else task["id"]
+        print(fmt_table(display_id, rows, show_judge=args.judge))
 
         stamp = time.strftime("%Y%m%d-%H%M%S")
-        out = ROOT / "results" / f"{task['id']}-{stamp}.json"
+        model_tag = f"-{_MODEL_SHORT}" if _MODEL_SHORT else ""
+        out = ROOT / "results" / f"{task['id']}{model_tag}-{stamp}.json"
         out.write_text(json.dumps(
-            {"task": task["id"], "repeat": args.repeat, "judge": args.judge, "runs": all_raw},
+            {"task": task["id"], "model": args.model or "default",
+             "repeat": args.repeat, "judge": args.judge, "runs": all_raw},
             indent=2, default=str,
         ))
         print(f"saved {out}")

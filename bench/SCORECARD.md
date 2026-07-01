@@ -1,6 +1,6 @@
 # MARVIN Bench — Scorecard
 
-> Last updated: 2026-06-30 (Runs 1–7, 11 tasks, 3 profiles)
+> Last updated: 2026-06-30 (Runs 1–8, 11 tasks, 3 profiles, 2 models)
 
 The honest summary of what the bench has actually proven. Gains and setbacks carry equal weight here — both matter.
 
@@ -27,6 +27,29 @@ Task: *"What specifically goes wrong when MARVIN scripts run under system Python
 Only MARVIN could answer this because the answer (`tag matching` — its own term for the silent degradation) exists only in memory, not in any file on disk. Base Claude Code has no access to session history or the injected memory index. **Cost difference: near zero** (18,418 vs 18,998 tokens total).
 
 **What this means:** MARVIN's memory layer provides answers that clean Claude Code literally cannot produce — at essentially no extra cost on recall tasks.
+
+---
+
+### 1b. MARVIN advantage grows on weaker models (Haiku cross-model run)
+
+Run 8 repeated the three recall discriminator tasks with `--model claude-haiku-4-5-20251001`.
+
+| Task | Profile | Sonnet result | Haiku result |
+|------|---------|---------------|--------------|
+| task-002 | clean | 0.00 | 0.00 |
+| task-002 | marvin | **1.00** | **1.00** |
+| task-007 | clean | 1.00 (slow) | **0.00 FAIL** — didn't search at all |
+| task-007 | marvin | 1.00 | **1.00** |
+| task-011 | clean | 0.00 | 0.00 |
+| task-011 | marvin | **1.00** | **1.00** |
+
+**Memory wins hold on Haiku** — task-002 and task-011 show the same clean gap at near-zero overhead.
+
+**Navigational gap grows on Haiku** — on Sonnet, clean navigated slowly but correctly on task-007. On Haiku, clean didn't search at all (1 turn, 0 tool calls, FAIL). MARVIN still retrieved the answer correctly (2 turns, 1 tool call, PASS).
+
+**Cost is ~60% lower** — Haiku recall tasks cost ~$0.02 vs ~$0.05 on Sonnet, with the same MARVIN advantage.
+
+**Strategic implication:** MARVIN is *more* valuable on cheaper, weaker models than on Sonnet. The optimal routing for recall tasks is MARVIN + Haiku: full capability at ~60% of the Sonnet cost. MARVIN + Sonnet is only needed for tasks requiring complex reasoning alongside recall.
 
 ---
 
@@ -184,5 +207,5 @@ These are known gaps in what the bench currently proves. Results so far are dire
 | **Hard/ambiguous tasks** | ⚠️ 3 designed + run (008/009/010) — all profiles tied 1.00. Textbook bugs are insufficient. True discriminator requires out-of-distribution knowledge. | `[build]` H — harder OOD tasks needed |
 | **Isolated-memory QA** | ✅ Shipped (Run 7). task-011: MEMORY.md one-liner loaded at session start, "do NOT search files", 0 tool calls all profiles. clean 0.00, lean 0.00, marvin 1.00 at +627 token cost. | `[done]` H |
 | **Variance (repeat runs)** | ✅ Shipped (Run 5). `--repeat N` available. Not yet applied to hard tasks. | `[done]` H |
-| **Cross-model** | ❌ Not built. `--model` flag not yet added. MARVIN gains may shrink on smarter models. | `[build]` G — Cross-model bench extension |
+| **Cross-model** | ✅ Shipped (Run 8). `--model` flag added. Haiku run: memory wins hold, navigational gap *grows* on weaker models, ~60% cost reduction. MARVIN is MORE valuable on Haiku, not less. | `[done]` G |
 | **Automatic profile routing** | ❌ Not built. Manual profile selection is friction. | `[decision]` H — Automatic profile routing |
