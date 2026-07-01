@@ -1,6 +1,6 @@
 # MARVIN Bench — Scorecard
 
-> Last updated: 2026-06-30 (Runs 1–8, 11 tasks, 3 profiles, 2 models)
+> Last updated: 2026-06-30 (Runs 1–9, 11 tasks, 3 profiles, 2 models + local Ollama)
 
 The honest summary of what the bench has actually proven. Gains and setbacks carry equal weight here — both matter.
 
@@ -50,6 +50,31 @@ Run 8 repeated the three recall discriminator tasks with `--model claude-haiku-4
 **Cost is ~60% lower** — Haiku recall tasks cost ~$0.02 vs ~$0.05 on Sonnet, with the same MARVIN advantage.
 
 **Strategic implication:** MARVIN is *more* valuable on cheaper, weaker models than on Sonnet. The optimal routing for recall tasks is MARVIN + Haiku: full capability at ~60% of the Sonnet cost. MARVIN + Sonnet is only needed for tasks requiring complex reasoning alongside recall.
+
+---
+
+### 1c. Local model context injection — works for facts, fails for jargon (Run 9)
+
+Run 9 added `--runner ollama` to bench.py and tested `qwen2.5:7b` (4.7 GB, local, $0.00 per run) against the two memory discriminator tasks. Profile=marvin injects the full MEMORY.md + all linked memory files as a system message.
+
+| Task | Profile | Result | Judge | What happened |
+|------|---------|--------|-------|---------------|
+| task-011 (cosine threshold = 1.1) | clean | 0.00 | FAIL | fabricated numbers (45, 18, 40%, 0.8) |
+| task-011 (cosine threshold = 1.1) | **marvin** | **1.00** | **pass** | found and reported 1.1 from injected context |
+| task-002 ("tag matching") | clean | 0.00 | FAIL | generic "import errors / missing deps" answer |
+| task-002 ("tag matching") | **marvin** | **0.00** | **FAIL** | still gave generic Python venv answer — context ignored |
+
+**Why task-011 works:** the answer is a specific number (1.1) that the model can't plausibly hallucinate. There's no training knowledge to compete — it either finds it in context or makes something up. Context wins.
+
+**Why task-002 fails:** the answer requires using the project-specific term "tag matching." The model's training knowledge about Python venv issues (import errors, missing dependencies) is strong and plausible. When asked "what goes wrong?", it applies its training knowledge and completely ignores the injected context's project-specific terminology.
+
+**The pattern:**
+- Specific facts (numbers, thresholds, dates) → context injection works → local model viable at $0.00
+- Project-specific jargon that competes with training knowledge → context injection fails → Haiku remains cheapest viable option
+
+**Savings realised:** task-011-class tasks (factual recall) can move to local qwen2.5:7b at $0.00 instead of Haiku at ~$0.02. That's a 100% cost reduction for that subset.
+
+**Path not proved:** general MARVIN recall (task-002-class, jargon/terminology) cannot move to a local 7B model. A larger local model (70B) might close the gap, but is untested.
 
 ---
 
