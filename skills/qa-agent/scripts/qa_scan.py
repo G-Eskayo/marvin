@@ -21,6 +21,48 @@ SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "env",
              ".tox", "dist", "build", ".next", ".nuxt", "coverage", "target"}
 SKIP_EXT  = {".pyc", ".pyo", ".map", ".min.js", ".min.css", ".lock"}
 
+# ── domain inference ──────────────────────────────────────────────────────────
+
+_PROJECT_DOMAIN: dict[str, str] = {
+    "marvin-bench":          "bench-harness",
+    "marvin":                "python-agents",
+    ".agents":               "python-agents",
+    "hermes-agent":          "python-agents",
+    "resume-tailor":         "python-agents",
+    "charter":               "aws-cloud",
+    "charter-cost-platform": "aws-cloud",
+}
+
+_CONTENT_DOMAIN_KEYWORDS: dict[str, list[str]] = {
+    "bench-harness":  ["bench", "benchmark", "profile", "lean", "recall",
+                       "token", "scoring", "grading", "task-00", "marvin profile"],
+    "aws-cloud":      ["aws", "lambda", "s3", "eventbridge", "neptune", "bedrock",
+                       "ecs", "aurora", "iam", "cloudtrail", "cloudwatch", "sns", "sqs"],
+    "python-agents":  ["chromadb", "claude", "skill", "hook", "venv", "agent",
+                       "memory", "retrieval", "embedding", "marvin", "ollama", "nomic"],
+    "devtools":       ["git", "github", "keychain", "gitignore", "setup.sh",
+                       "launchd", "plist", "zshrc", "alias"],
+    "data-pipeline":  ["pipeline", "etl", "ingestion", "idempotent", "batch",
+                       "dedup", "jsonl", "hash"],
+    "web-backend":    ["fastapi", "flask", "api", "rest", "endpoint",
+                       "pydantic", "openapi", "http", "router"],
+    "ml-ops":         ["llm", "fine-tun", "training", "inference", "classification",
+                       "embedding model", "quantization", "vllm", "tensorrt"],
+}
+
+
+def infer_domain(project_name: str, document: str,
+                 library: str = "", tags: str = "") -> str:
+    """Return best-guess domain from project name, then content keywords."""
+    for key, domain in _PROJECT_DOMAIN.items():
+        if key.lower() in project_name.lower():
+            return domain
+    text = f"{document} {library} {tags}".lower()
+    scores = {d: sum(1 for kw in kws if kw in text)
+              for d, kws in _CONTENT_DOMAIN_KEYWORDS.items()}
+    best = max(scores, key=scores.get)
+    return best if scores[best] > 0 else ""
+
 MARKER_RE = re.compile(r"#\s*(TODO|FIXME|HACK|BUG|XXX|NOTE)\s*:?\s*(.+)", re.IGNORECASE)
 
 # ── complexity + principles analysis ─────────────────────────────────────────
@@ -503,18 +545,23 @@ def scan(project: Path, dry_run: bool = False) -> list[dict]:
     entries: list[dict] = []
 
     def add(document: str, category: str, **meta):
+        library = meta.pop("library", "")
+        tags    = meta.pop("tags", "")
+        domain  = meta.pop("domain", infer_domain(name, document, library, tags))
         entries.append({
             "id": _make_id(document),
             "document": document,
             "metadata": {
-                "category": category,
-                "source": "project-scan",
-                "project": name,
+                "category":   category,
+                "source":     "project-scan",
+                "project":    name,
                 "created_at": now,
-                "language": meta.pop("language", "all"),
-                "library": meta.pop("library", ""),
-                "tags": meta.pop("tags", ""),
+                "language":   meta.pop("language", "all"),
+                "library":    library,
+                "tags":       tags,
                 "confidence": meta.pop("confidence", "medium"),
+                "domain":     domain,
+                "outcome":    meta.pop("outcome", ""),
                 **meta,
             },
         })
