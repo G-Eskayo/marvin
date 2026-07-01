@@ -1,0 +1,9 @@
+{
+  "id": "task-011-qa-recall",
+  "type": "qa",
+  "cwd": "/Users/gileskayo",
+  "prompt_file": "prompt.md",
+  "timeout": 180,
+  "expect": ["1.1"],
+  "note": "Isolated-memory recall discriminator. Same mechanism as task-002: answer is in MEMORY.md one-liner loaded at session start, not derivable from disk without guidance. Marvin: MEMORY.md entry 'research-colony-first-run' is in context — 29 items, 10 correlated (34%), threshold 1.1. Clean: no CLAUDE.md, no MEMORY.md loading, cannot answer. Prompt says 'do NOT search files'. Expect substring '1.1' (the cosine threshold) — a specific MARVIN-internal value not guessable from training. Use --judge. Judge assesses: does the response give 29 fetched, 10 correlated, 34%, and threshold 1.1 correctly?"
+}

@@ -1,6 +1,6 @@
 # MARVIN Bench — Scorecard
 
-> Last updated: 2026-06-30 (Runs 1–6, 10 tasks, 3 profiles)
+> Last updated: 2026-06-30 (Runs 1–7, 11 tasks, 3 profiles)
 
 The honest summary of what the bench has actually proven. Gains and setbacks carry equal weight here — both matter.
 
@@ -135,6 +135,7 @@ Example failure: the original task-007 asked about a WeasyPrint issue documented
 | **005-date-validator** | fs / code | Semantic bug (impossible calendar dates) | All correct. MARVIN: +7% tokens, no quality gain |
 | **006-email-lookup** | fs / code | Shared helper with opposite caller semantics | All correct. MARVIN: +8% tokens, no quality gain |
 | **007-dyld-recall** | qa / navigational | Bench self-knowledge (file-findable) | All correct. **MARVIN: 52% fewer tokens, 3× fewer tool calls** |
+| **011-qa-recall** | qa / memory | Answer in MEMORY.md only — research colony first-run stats | **MARVIN wins: 1.00 vs 0.00 for clean + lean. Delta: +627 tokens. Zero tool calls all profiles.** |
 | **008-sorted-list** | fs / code | Hidden semantic bug (discard removes all, not first) | All correct (LLM judge). Lean cheapest: 97k. MARVIN: 102k (+5% vs lean). TDD discriminator **did not split profiles** |
 | **009-cache-key** | fs / code | LRU cache zero hit rate (unstable timestamp key) | All correct (LLM judge). **Clean cheapest: 90k**. MARVIN: 98k (+9%). Diagnose skill loaded extra context with no correctness gain |
 | **010-inventory-race** | fs / code | TOCTOU oversell race (SELECT then UPDATE) | All correct (LLM judge). Clean: 72k, lean: 75k, MARVIN: 78k (+9%). TOCTOU is in training distribution — no discriminator gap |
@@ -181,7 +182,7 @@ These are known gaps in what the bench currently proves. Results so far are dire
 |-----|----------------|--------------|
 | **LLM-judge grading** | ✅ Shipped (Run 6). `--judge` flag available. | `[done]` H |
 | **Hard/ambiguous tasks** | ⚠️ 3 designed + run (008/009/010) — all profiles tied 1.00. Textbook bugs are insufficient. True discriminator requires out-of-distribution knowledge. | `[build]` H — harder OOD tasks needed |
-| **Isolated-memory QA** | ❌ Not built. File-access restricted workdir needed so clean/lean cannot read the answer. Current QA tasks all answerable from disk. | `[build]` H — Isolated-memory QA task type |
+| **Isolated-memory QA** | ✅ Shipped (Run 7). task-011: MEMORY.md one-liner loaded at session start, "do NOT search files", 0 tool calls all profiles. clean 0.00, lean 0.00, marvin 1.00 at +627 token cost. | `[done]` H |
 | **Variance (repeat runs)** | ✅ Shipped (Run 5). `--repeat N` available. Not yet applied to hard tasks. | `[done]` H |
 | **Cross-model** | ❌ Not built. `--model` flag not yet added. MARVIN gains may shrink on smarter models. | `[build]` G — Cross-model bench extension |
 | **Automatic profile routing** | ❌ Not built. Manual profile selection is friction. | `[decision]` H — Automatic profile routing |
