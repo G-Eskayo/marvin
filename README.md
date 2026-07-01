@@ -3,7 +3,7 @@
 > *"I could calculate your chances of survival, but you won't like it."*
 > — Marvin, The Hitchhiker's Guide to the Galaxy
 
-**MARVIN** is an open-source memory, routing, and skills layer for [Claude Code](https://claude.ai/code). Where Claude starts every session cold, MARVIN gives it persistent memory, 25 structured skills, autonomous background agents, and a self-measuring bench — so it finds the right knowledge, applies the right skill, and gets measurably better over time.
+**MARVIN** is an open-source memory, routing, and skills layer for [Claude Code](https://claude.ai/code). Where Claude starts every session cold, MARVIN gives it persistent memory, 26 structured skills, autonomous background agents, a self-measuring bench, and automatic profile + model routing — so it finds the right knowledge, applies the right skill, runs on the cheapest viable model, and gets measurably better over time.
 
 Named after the Hitchhiker's Guide's brilliant, underutilised android. This project is about making sure that brain gets used.
 
@@ -20,6 +20,7 @@ mindmap
       ChromaDB vector store
         qa-knowledge
         research-feed
+        marvin-memory RAG index
       Auto-memory
         user profiles
         feedback rules
@@ -80,6 +81,9 @@ mindmap
         marvin full stack
       flags repeat N judge model
       cross-model Haiku vs Sonnet
+      Ollama runner zero API cost
+        full context injection
+        RAG targeted retrieval
       SCORECARD gains and losses
     Routing
       route script keyword classifier
@@ -100,7 +104,7 @@ mindmap
 
 ## Skills — Complete List
 
-All 25 skills, their triggers, and what they do:
+All 26 skills, their triggers, and what they do:
 
 | Skill | Trigger | What it does |
 |-------|---------|-------------|
@@ -129,6 +133,7 @@ All 25 skills, their triggers, and what they do:
 | `to-issues` | (activated by setup-matt-pocock-skills) | Converts tasks/TODOs into GitHub issues |
 | `to-prd` | (activated by setup-matt-pocock-skills) | Drafts a product requirements document from a feature description |
 | `resume-tailor` | "Tailor my resume", "apply for X" | Tailors master resume to a job description; local-only, never commits |
+| `route` | "which profile should I use", "should I use haiku", "route this task" | Keyword-classifies the task → outputs optimal profile + model + shell alias; `--launch` execs claude directly |
 
 ---
 
@@ -137,7 +142,7 @@ All 25 skills, their triggers, and what they do:
 ### Memory
 Four persistent memory types across sessions: **user** (role, preferences, expertise), **feedback** (corrections and confirmed approaches), **project** (goals, deadlines, constraints), **reference** (pointers to external systems). Stored as Markdown files, indexed in ChromaDB for semantic retrieval.
 
-Two ChromaDB collections: `qa-knowledge` (lessons learned from all past sessions) and `research-feed` (external research, populated daily by the research colony).
+Three ChromaDB collections: `qa-knowledge` (lessons learned from all past sessions), `research-feed` (external research, populated daily by the research colony), and `marvin-memory` (auto-memory files indexed for RAG retrieval in the Ollama runner).
 
 ### Autonomous Agents
 Three launchd cron jobs run without intervention:
@@ -149,15 +154,28 @@ Three launchd cron jobs run without intervention:
 | **File organiser** | Daily | Sorts Desktop + Downloads into `~/Documents` buckets; 7-day grace period keeps new items visible |
 
 ### marvin-bench — objective A/B testing
-10 tasks run across three profiles with four metrics: token cost, tool efficiency, task correctness (substring + LLM judge), and recall quality.
+11 tasks across three profiles (clean / lean / marvin) with four metrics: token cost, tool efficiency, task correctness (substring + LLM judge), and recall quality. Supports cross-model runs and a zero-cost local Ollama runner.
 
 ```bash
-python3 bench/bench.py bench/tasks/*                                # full suite
-python3 bench/bench.py bench/tasks/* --repeat 5                     # mean ± σ
-python3 bench/bench.py bench/tasks/* --judge                        # LLM grading
-python3 bench/bench.py bench/tasks/* --profiles lean                # one profile
-python3 bench/bench.py bench/tasks/* --model claude-haiku-4-5-20251001  # swap model
+python3 bench/bench.py bench/tasks/*                                       # full suite
+python3 bench/bench.py bench/tasks/* --repeat 5                            # mean ± σ
+python3 bench/bench.py bench/tasks/* --judge                               # LLM grading
+python3 bench/bench.py bench/tasks/* --profiles lean                       # one profile
+python3 bench/bench.py bench/tasks/* --model claude-haiku-4-5-20251001     # swap model
+
+# local Ollama runner (zero API cost, QA tasks only)
+python3 bench/bench.py bench/tasks/task-002-recall \
+  --runner ollama --ollama-model qwen2.5:14b \
+  --profiles clean,marvin --context rag --judge
 ```
+
+**Proven cost hierarchy from 12 bench runs:**
+
+| Option | Cost | Quality |
+|--------|------|---------|
+| Local `qwen2.5:14b` + RAG | **$0.00** | Semantic parity — judge passes, human can't tell the difference |
+| `claude-haiku` + marvin | ~$0.02 | Exact-phrase parity — substring matches |
+| `claude-sonnet` + marvin | ~$0.05 | Full reasoning + exact recall |
 
 See [`bench/SCORECARD.md`](bench/SCORECARD.md) for honest results — gains *and* setbacks at equal weight.
 
@@ -182,8 +200,18 @@ route "what were the bench results last session?"
 | `claude-code` | lean | sonnet | Self-contained coding tasks | bench Runs 2–6: 9-10% cheaper, same quality |
 | `claude-arch` | marvin | sonnet | Design, architecture, planning | full reasoning required |
 
+For zero-cost recall, skip the API aliases entirely and run local:
+
 ```bash
-# Install aliases into ~/.zshrc
+# zero-cost recall via local Ollama (semantic parity, bench Run 12)
+ollama pull qwen2.5:14b
+python3 bench/bench.py tasks/task-002-recall \
+  --runner ollama --ollama-model qwen2.5:14b \
+  --profiles marvin --context rag
+```
+
+```bash
+# Install API-model aliases into ~/.zshrc
 bash ~/.agents/skills/route/install.sh && source ~/.zshrc
 ```
 
@@ -237,10 +265,12 @@ chmod +x setup.sh
 
 Open Claude Code and start a new session. MARVIN loads silently.
 
-Install the autonomous agents:
+Install the autonomous agents and routing aliases:
 ```bash
 bash ~/.agents/skills/improve/install.sh          # daily digest at 08:30
 bash ~/.agents/skills/research-colony/install.sh  # research colony at 09:00
+bash ~/.agents/skills/route/install.sh            # claude-recall / claude-code / claude-arch aliases
+source ~/.zshrc
 ```
 
 ---
@@ -249,23 +279,28 @@ bash ~/.agents/skills/research-colony/install.sh  # research colony at 09:00
 
 ```
 ~/.agents/
-├── skills/                        ← 25 skill SKILL.md files + scripts
+├── skills/                        ← 26 skill SKILL.md files + scripts
 │   ├── self-improve/scripts/      ← manifest rebuild, embeddings, retrieval
 │   ├── improve/scripts/           ← improvement sweep, daily digest, cron
 │   ├── research-colony/scripts/   ← source monitor, correlate, digest, cron
-│   └── qa-agent/scripts/          ← QA scanner, session capture, KB query
+│   ├── qa-agent/scripts/          ← QA scanner, session capture, KB query
+│   └── route/scripts/             ← keyword classifier + launcher
+│       └── route.py               ← route "task" [--launch] [--table]
 ├── bench/                         ← marvin-bench A/B harness
-│   ├── bench.py
-│   ├── tasks/                     ← 10 tasks (task-001 … task-010)
+│   ├── bench.py                   ← --runner {claude,ollama} --context {full,rag}
+│   ├── lib/
+│   │   ├── score.py               ← stream parser + correctness scorer
+│   │   └── memory_rag.py          ← ChromaDB RAG retrieval for Ollama runner
+│   ├── tasks/                     ← 11 tasks (task-001 … task-011)
 │   ├── SCORECARD.md
 │   └── profiles/                  ← clean / lean / marvin config dirs
-└── venv/                          ← Python virtualenv (chromadb, rank_bm25)
+└── venv/                          ← Python virtualenv (chromadb, rank_bm25, ollama)
 
 ~/.claude/
-├── CLAUDE.md                      ← Global instructions + routing table
+├── CLAUDE.md                      ← Global instructions + routing table (step 7: auto-route)
 ├── lexicon.md                     ← Shared vocabulary
 ├── manifest.json                  ← Generated tag index (do not edit)
-├── chroma/                        ← ChromaDB (qa-knowledge + research-feed)
+├── chroma/                        ← ChromaDB (qa-knowledge + research-feed + marvin-memory)
 ├── handoffs/                      ← Session resume prompts
 ├── daily-digest/                  ← YYYY-MM-DD.md brainstorm digests
 ├── research-digest/               ← YYYY-MM-DD.md research colony digests
