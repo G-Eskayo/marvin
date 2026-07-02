@@ -1,10 +1,10 @@
 ---
-name: self-optimize
+name: architecture-review
 description: Autonomously reviews the agent system architecture (skills, CLAUDE.md, lexicon, handoffs, scripts) and generates actionable optimization suggestions queued for user authorization. Run regularly — after every 3–5 sessions, when CLAUDE.md grows significantly, when a skill feels slow or redundant, or when routing table gets noisy. Never implements without approval. Focuses on: token reduction, retrieval speed, file organization, pipeline logic, reliability, robustness.
 tags: [intent:optimize, intent:review, intent:meta, type:skill]
 ---
 
-# Self-Optimize
+# Architecture Review
 
 Architectural review of the agent system itself. Generate suggestions → queue → wait for authorization → implement.
 
@@ -55,7 +55,7 @@ Append to `~/.claude/suggestions.md`:
 After writing to the queue, surface new suggestions:
 
 > **[N] new optimization suggestion(s) queued.**
-> Run `/self-optimize review` to see them, or I'll show them now.
+> Run `/architecture-review review` to see them, or I'll show them now.
 
 Don't dump the full list unprompted — respect caveman mode.
 
@@ -83,7 +83,7 @@ Do not queue:
 
 ## Review Subcommand
 
-When invoked as `/self-optimize review`:
+When invoked as `/architecture-review review`:
 - Read `~/.claude/suggestions.md`
 - Show all `pending` items in compact form
 - Ask: "Approve any? (by title or 'all')"
