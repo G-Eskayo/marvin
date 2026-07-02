@@ -30,7 +30,7 @@
         <key>HOME</key>
         <string>/Users/gileskayo</string>
         <key>PATH</key>
-        <string>/usr/local/bin:/usr/bin:/bin:/Users/gileskayo/.agents/venv/bin</string>
+        <string>/Users/gileskayo/.local/bin:/usr/local/bin:/usr/bin:/bin:/Users/gileskayo/.agents/venv/bin</string>
     </dict>
 
     <key>KeepAlive</key>
