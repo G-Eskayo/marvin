@@ -47,18 +47,21 @@ def pulse(skill: str) -> None:
 
 
 def main() -> None:
+    skip_pulses = "--nodes-only" in sys.argv
     print("MARVIN brain-map showcase — local only, no tokens, nothing real touched.")
-    print("Watch the desktop (or the artifact) for ~30 seconds.\n")
+    print(("Watch for the grow/shrink animation — ~6 seconds.\n" if skip_pulses
+           else "Watch the desktop (or the artifact) for ~30 seconds.\n"))
 
     # DesktopLive tracks its read position in demo-events.jsonl by line
     # count, not content — resetting the file each run keeps repeat "test
     # it" invocations from growing it forever with events already consumed.
     DEMO_EVENTS_PATH.write_text("", encoding="utf-8")
 
-    print("1/3 — activity pulses across categories (camera should ease toward each in turn):")
-    for skill in PULSE_SEQUENCE:
-        pulse(skill)
-        time.sleep(3.0)
+    if not skip_pulses:
+        print("1/3 — activity pulses across categories (camera should ease toward each in turn):")
+        for skill in PULSE_SEQUENCE:
+            pulse(skill)
+            time.sleep(3.0)
 
     print("\n2/3 — synthetic node creation (grow-in animation, not a real skill):")
     append(DEMO_EVENTS_PATH, {
