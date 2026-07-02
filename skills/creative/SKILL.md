@@ -59,6 +59,20 @@ Creative work improves through iteration, not polish. A rough but surprising ide
 
 Don't over-explain creative choices. If it needs a paragraph of justification, it isn't working.
 
+## Cross-Domain Pattern Synthesis (technical/engineering problems only)
+
+For a **technical design problem** — architecture decisions, pipeline design, tooling choices, "how should we build/solve X" — run this before step 4 (Generate divergent options):
+
+```bash
+~/.agents/venv/bin/python ~/.agents/skills/creative/scripts/cross_domain_synthesis.py "<problem statement>"
+```
+
+This queries the `qa-knowledge` KB's lateral mode: it infers the problem's own domain, then returns 2–3 mechanisms from OTHER domains — patterns that worked somewhere unrelated, with their stored outcome. For each mechanism returned, ask "how could this combine with the problem at hand?" and generate one candidate approach per mechanism. These become additional divergent directions alongside step 4's normal ones — combinations a same-domain search would never surface.
+
+Skip this entirely for naming, storytelling, or prose/branding work — the KB holds code/infrastructure patterns, not narrative ones, and forcing it there produces noise instead of signal (verified: querying it with a naming prompt returns irrelevant bench-harness results with no domain match).
+
+Principle: **creativity here is not randomness, it's combinatorial retrieval from a well-tagged pattern store** — the quality of the cross-domain idea is bounded by the quality of the KB, so trust the KB's `confidence`/`relevance` fields over a mechanism that merely sounds interesting.
+
 ## Quality Standards
 
 Good creative output:
