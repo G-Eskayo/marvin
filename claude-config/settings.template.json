@@ -6,7 +6,19 @@
         "hooks": [
           {
             "type": "command",
-            "command": "{{VENV_PYTHON}} {{SCRIPTS_DIR}}/rebuild-manifest.py"
+            "command": "{{VENV_PYTHON}} {{SKILLS_DIR}}/self-improve/scripts/rebuild-manifest.py"
+          },
+          {
+            "type": "command",
+            "command": "{{VENV_PYTHON}} {{SKILLS_DIR}}/handoff/scripts/emit-resume-prompt.py"
+          },
+          {
+            "type": "command",
+            "command": "{{VENV_PYTHON}} {{SKILLS_DIR}}/qa-agent/scripts/qa_session_capture.py"
+          },
+          {
+            "type": "command",
+            "command": "{{VENV_PYTHON}} {{SKILLS_DIR}}/improve/scripts/improvement_sweep.py"
           }
         ]
       }

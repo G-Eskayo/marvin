@@ -265,16 +265,18 @@ configure_claude() {
 
 configure_hook() {
     local settings="$CLAUDE_DIR/settings.local.json"
-    local hook_cmd="$VENV_PYTHON $SCRIPTS_DIR/rebuild-manifest.py"
 
     if [[ -f "$settings" ]]; then
-        warn "settings.local.json exists — add the hook manually if needed:"
-        warn "  Hook command: $hook_cmd"
+        warn "settings.local.json exists — add these 4 PostToolUse hooks manually if needed:"
+        warn "  $VENV_PYTHON $SKILLS_DIR/self-improve/scripts/rebuild-manifest.py"
+        warn "  $VENV_PYTHON $SKILLS_DIR/handoff/scripts/emit-resume-prompt.py"
+        warn "  $VENV_PYTHON $SKILLS_DIR/qa-agent/scripts/qa_session_capture.py"
+        warn "  $VENV_PYTHON $SKILLS_DIR/improve/scripts/improvement_sweep.py"
         warn "  See: $MARVIN_DIR/claude-config/settings.template.json"
     else
-        sed "s|{{VENV_PYTHON}}|$VENV_PYTHON|g; s|{{SCRIPTS_DIR}}|$SCRIPTS_DIR|g" \
+        sed "s|{{VENV_PYTHON}}|$VENV_PYTHON|g; s|{{SKILLS_DIR}}|$SKILLS_DIR|g" \
             "$MARVIN_DIR/claude-config/settings.template.json" > "$settings"
-        log "Installed settings.local.json with PostToolUse hook"
+        log "Installed settings.local.json with all 4 PostToolUse hooks"
     fi
 }
 

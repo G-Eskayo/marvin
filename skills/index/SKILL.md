@@ -2,6 +2,7 @@
 name: index
 description: Context retrieval using the manifest index. Pull only the files relevant to the current task — no full context load. Use at the start of any task to identify which boxes to open. Consult ~/.claude/manifest.json to match task keywords to tags, then read only those files.
 tags: [intent:retrieve, intent:index, intent:load, type:skill]
+calls: [self-improve]
 ---
 
 # Index — Pull the Right Boxes

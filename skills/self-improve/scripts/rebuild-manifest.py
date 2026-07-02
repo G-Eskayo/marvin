@@ -34,6 +34,44 @@ ON_SESSION_START = [
 TAG_PATTERN = re.compile(r'^[a-z][a-z0-9-]*:[a-z][a-z0-9-]*$')
 
 
+def _hook_should_skip() -> bool:
+    """When invoked as a PostToolUse hook (JSON payload piped on stdin),
+    only rebuild if the edited file actually affects the manifest's output
+    — a SKILL.md or a project memory .md file. Found 2026-07-02: unlike the
+    other three PostToolUse hooks on the same Write|Edit matcher
+    (emit-resume-prompt.py, qa_session_capture.py, improvement_sweep.py,
+    all of which filter to their relevant path before doing real work),
+    this one had no filtering at all — full rebuild + chained embeddings
+    rebuild on every single Write/Edit anywhere in any project.
+    Returns False (never skip) when run directly with no piped JSON, so
+    `python rebuild-manifest.py` from the CLI still always does a full
+    rebuild, matching this script's documented dual-mode use."""
+    if sys.stdin.isatty():
+        return False
+    try:
+        payload = json.load(sys.stdin)
+    except Exception:
+        return False  # couldn't parse — rebuild anyway, safer than silently skipping
+
+    if payload.get("tool_name", "") not in ("Write", "Edit", "MultiEdit"):
+        return True
+    fp = (payload.get("tool_input") or {}).get("file_path", "")
+    if not fp:
+        return True
+
+    p = Path(fp)
+    try:
+        if p.name == "SKILL.md" and SKILLS_DIR.resolve() in [d.resolve() for d in p.parents]:
+            return False
+        if (p.suffix.lower() == ".md" and p.parent.name == "memory"
+                and PROJECTS_DIR.resolve() in [d.resolve() for d in p.parents]):
+            return False
+    except Exception:
+        return False  # path resolution failed — rebuild anyway, don't silently skip
+
+    return True
+
+
 def find_memory_dirs() -> list[Path]:
     dirs = []
     if PROJECTS_DIR.exists():
@@ -179,6 +217,9 @@ def scan_memory() -> list[dict]:
 
 
 def main():
+    if _hook_should_skip():
+        return
+
     print("Rebuilding manifest.json...", file=sys.stderr)
 
     index = scan_skills() + scan_memory()
