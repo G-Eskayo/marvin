@@ -18,8 +18,11 @@ let htmlPath: String = {
     if CommandLine.arguments.count > 1 {
         return CommandLine.arguments[1]
     }
-    let scriptDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-    return scriptDir.deletingLastPathComponent().appendingPathComponent("index.html").path
+    // #filePath is a compile-time constant and shouldn't depend on how the
+    // binary is later launched — but it did resolve differently under
+    // launchd vs. a manual shell run (root "/" instead of the real compile
+    // path). Using NSHomeDirectory() directly instead of trusting it.
+    return NSHomeDirectory() + "/.agents/brain-map/index.html"
 }()
 
 let plainFileURL = URL(fileURLWithPath: htmlPath)
@@ -43,10 +46,14 @@ final class DesktopWebView: WKWebView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
+let activityURL = readAccessDir.appendingPathComponent("activity.jsonl")
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var windows: [NSWindow] = []
     var lastMTime: Date?
     var reloadTimer: Timer?
+    var activityTimer: Timer?
+    var lastActivityLineCount = 0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory) // no Dock icon, no menu bar
@@ -79,10 +86,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         lastMTime = mtime()
+        lastActivityLineCount = currentActivityLines().count
         // Cheap poll (a single stat() call), not continuous work — reload
         // only actually happens when brain-map/generate.py has run again.
         reloadTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             self?.checkForUpdate()
+        }
+        // Faster poll for activity — reads only the small activity.jsonl,
+        // pushed into the page directly via evaluateJavaScript rather than
+        // relying on the page's own fetch() (unreliable for file:// origins
+        // across WebKit versions — see template.html's comment on this).
+        activityTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            self?.checkForActivity()
         }
     }
 
@@ -95,6 +110,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         lastMTime = m
         for window in windows {
             (window.contentView as? WKWebView)?.loadFileURL(fileURL, allowingReadAccessTo: readAccessDir)
+        }
+    }
+
+    func currentActivityLines() -> [String] {
+        guard let text = try? String(contentsOf: activityURL, encoding: .utf8) else { return [] }
+        return text.split(separator: "\n").map(String.init)
+    }
+
+    func checkForActivity() {
+        let lines = currentActivityLines()
+        guard lines.count > lastActivityLineCount else {
+            if lines.count < lastActivityLineCount { lastActivityLineCount = lines.count } // file was trimmed/rotated
+            return
+        }
+        let newLines = lines[lastActivityLineCount...]
+        lastActivityLineCount = lines.count
+        for line in newLines {
+            guard let data = line.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let skill = obj["skill"] as? String else { continue }
+            let escaped = skill.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
+            let js = "if (window.triggerActivity) window.triggerActivity('\(escaped)');"
+            for window in windows {
+                (window.contentView as? WKWebView)?.evaluateJavaScript(js, completionHandler: nil)
+            }
         }
     }
 }

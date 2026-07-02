@@ -245,6 +245,16 @@ def main():
     if embeddings_script.exists():
         subprocess.run([sys.executable, str(embeddings_script)], check=False)
 
+    # Chain: regenerate the brain-map graph — this hook already correctly
+    # detects "a SKILL.md or memory file changed" (see _hook_should_skip),
+    # so it's the natural trigger rather than a dedicated 6th hook. A brand
+    # new skill still needs a manual category added to brain-map/
+    # enrichment.json's skill_categories (generate.py warns and omits it
+    # otherwise) — that's a deliberate judgment call, not something to guess.
+    brainmap_script = Path.home() / ".agents" / "brain-map" / "generate.py"
+    if brainmap_script.exists():
+        subprocess.run([sys.executable, str(brainmap_script)], check=False)
+
 
 if __name__ == "__main__":
     main()
