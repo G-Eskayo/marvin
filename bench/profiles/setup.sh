@@ -49,7 +49,16 @@ purge_blank_entry "$HERE/lean"
 # --- clean profile ---
 CLEAN="$HERE/clean"
 rm -rf "$CLEAN"; mkdir -p "$CLEAN"
-echo '{}' > "$CLEAN/settings.json"
+cat > "$CLEAN/settings.json" <<'JSON'
+{
+  "permissions": {
+    "allow": [
+      "Bash(~/.agents/venv/bin/python ~/.agents/skills/qa-agent/scripts/qa_query.py:*)",
+      "Bash(/Users/gileskayo/.agents/venv/bin/python /Users/gileskayo/.agents/skills/qa-agent/scripts/qa_query.py:*)"
+    ]
+  }
+}
+JSON
 printf '%s' "$CRED" > "$CLEAN/.credentials.json"; chmod 600 "$CLEAN/.credentials.json"
 # minimal account marker: strip everything except identity/onboarding
 python3 - "$HOME/.claude.json" "$CLEAN/.claude.json" <<'PY'

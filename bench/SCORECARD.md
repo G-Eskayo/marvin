@@ -1,6 +1,6 @@
 # MARVIN Bench — Scorecard
 
-> Last updated: 2026-06-30 (Runs 1–12, 11 tasks, 3 profiles, 2 API models + Ollama 7B/14B)
+> Last updated: 2026-07-02 (Runs 1–16, 14 tasks, 3 profiles, 2 API models + Ollama 7B/14B, plus select_model.py)
 
 The honest summary of what the bench has actually proven. Gains and setbacks carry equal weight here — both matter.
 
@@ -8,7 +8,7 @@ The honest summary of what the bench has actually proven. Gains and setbacks car
 
 ## Verdict
 
-MARVIN wins on **knowledge and navigation**. It loses (token cost, no quality gain) on **mechanical coding**. One optimization (caveman mode) actively backfired and was removed.
+MARVIN wins on **knowledge and navigation**. It loses (token cost, no quality gain) on **mechanical coding**. One optimization (caveman mode) appeared to backfire in Run 1, but a properly-isolated retest (Run 16) found the original test was confounded — caveman mode works as designed (72.8% output-token reduction, zero quality loss) when explicitly triggered, its current opt-in-only state. See Setback 2.
 
 Twelve bench runs have produced three concrete cost levers:
 
@@ -17,6 +17,10 @@ Twelve bench runs have produced three concrete cost levers:
 3. **Local/zero-cost runner** — qwen2.5:14b + RAG context injection achieves semantic parity with Haiku on recall tasks at $0.00 (Run 12). Exact-phrase parity still requires Haiku.
 
 Combined: the cheapest viable recall path is now local 14B + RAG → $0.00. The cheapest exact-phrase path is Haiku + marvin → ~$0.02. Sonnet + marvin (~$0.05) is only needed for tasks requiring both full reasoning and exact recall.
+
+**Open question as of Run 13:** the "lean is cheapest for mechanical coding" rule (Runs 2–3, Setback 3) did not hold on the two newest hard tasks (012/013) — lean was the *most expensive* profile on both, not marvin. Single run each; treat as unconfirmed until repeated (a repeat attempt in Run 15 hit the account's session limit mid-sweep before a clean signal emerged — needs a re-run with headroom, now easier thanks to Run 15's quota preflight). If it holds, the profile-routing recommendation for coding tasks needs revisiting.
+
+**New in Run 15: `select_model.py`** — an ascending-cost model-selection sweep (Ollama 7B → 14B → Haiku → Sonnet, locks in the first candidate to hit N≥3 consecutive substr+judge passes). Its first two real runs independently reconfirmed the cross-model finding above (Haiku ≈ Sonnet on recall) via a completely different code path, after two additional judge bugs it surfaced were fixed — see Setback 8.
 
 ---
 
@@ -176,16 +180,25 @@ The overhead is the always-loaded CLAUDE.md + skill routing table + memory index
 
 ---
 
-### 2. Caveman mode backfired — removed
+### 2. Caveman mode "backfired" — REVISED 2026-07-02, was likely a confound, not a real finding
 
-The "caveman mode: always active" instruction in CLAUDE.md was supposed to reduce output verbosity. The bench showed it did the opposite:
+Original finding: the "caveman mode: always active" instruction in CLAUDE.md appeared to increase output verbosity instead of reducing it:
 
 | Profile | Output tokens (task-004) |
 |---------|--------------------------|
 | clean   | **176**                  |
 | marvin  | **215** (+22%)           |
 
-MARVIN produced 22% *more* output than base Claude Code on an identical question. Anti-correlated with its stated goal. **Caveman mode has been removed from CLAUDE.md.**
+**This comparison was methodologically confounded.** It compared `marvin` (caveman always-on + full CLAUDE.md skill-routing table + lexicon + memory index) against `clean` (nothing) — two profiles differing in far more than caveman mode alone. It couldn't isolate whether caveman's compression mechanism worked; it measured general marvin-profile overhead, with any caveman effect swamped by everything else marvin carries.
+
+**Retest 2026-07-02 (Run 16), same prompt, held profile constant (marvin vs. marvin), only varied whether caveman was explicitly triggered — the valid isolation of the actual variable:**
+
+| Variant | Mean output tokens | Judge pass |
+|---------|--------------------|-----------|
+| baseline (marvin, no trigger) | **1207** (n=3: 1024, 1288, 1308) | 3/3 |
+| caveman (marvin, explicit trigger) | **328** (n=3: 361, 310, 312) | 3/3 |
+
+**72.8% reduction, zero correctness loss (judge-verified on all 6 runs) — matches the skill's claimed "~75%."** Caveman mode works as designed when explicitly triggered (its current opt-in-only state, unchanged from the original fix). The original "backfired"/"anti-correlated" conclusion does not hold up under a properly isolated test — it was very likely an artifact of comparing profiles with multiple confounded differences, not a real finding about the compression mechanism. **Caveman mode remains opt-in-only in CLAUDE.md (correct, unaffected by this correction) — only the "the mechanism itself is broken" narrative is retracted.**
 
 ---
 
@@ -223,6 +236,50 @@ Example failure: the original task-007 asked about a WeasyPrint issue documented
 
 ---
 
+### 6. Skill-registration gap — "documented" ≠ "invocable" (Run 13)
+
+task-014-kb-lookup initially scored 0.00 on **all three profiles**, including marvin — not a memory result, an infrastructure bug. `qa-agent` (like most of the ~20 skills in `~/.agents/skills/`) is only documented in CLAUDE.md's routing table; it was never registered as an actual Claude Code Skill. The model's `Skill(skill: "qa-agent")` call failed with `Unknown skill: qa-agent` on every profile, and the task prompt's "don't read files" constraint blocked the one fallback (reading `SKILL.md` to learn `qa_query.py`'s syntax directly).
+
+**Fix:** added `~/.claude/commands/qa-agent.md`, a thin wrapper matching the pattern of the one skill that already worked (`paper-dive`). Added only where `marvin` symlinks from (`~/.claude/commands/`) — not to the `lean` profile's config — so the fix doesn't accidentally give lean skill access it isn't meant to have.
+
+Re-run confirmed the fix restored the intended discriminator: **clean 0.00, lean 0.00, marvin 1.00** (verified clean's real skill list has no `qa-agent` — its refusal to fabricate is correct behavior, not a bug).
+
+**Standing gap:** the other ~19 skills are unaudited and likely have the same problem — documented in CLAUDE.md, invisible to the `Skill` tool, silently unusable in any context where the model can't just read the SKILL.md file itself.
+
+---
+
+### 7. LLM judge was not profile-isolated — fixed (Run 13 found, Run 14 fixed)
+
+`judge_run()` called `claude -p` for grading with no `CLAUDE_CONFIG_DIR` override — it always ran under the live default profile (currently `~/.claude`, i.e. marvin-equivalent). During task-014 debugging, the judge's FAIL rationale for the clean/lean runs claimed "the qa-agent skill was explicitly listed as invocable in this session" — false for those isolated profiles, verified directly. The judge was reasoning from its own tool list, not the graded session's.
+
+The numeric scores held up under manual verification (0.00/0.00/1.00 was correct even with the bug) — only the rationale text was unreliable.
+
+**Fixed in Run 14:** `judge_run()` now pins `CLAUDE_CONFIG_DIR` to the `clean` profile, strips inherited `CLAUDE_CODE_*` env vars, runs with `--permission-mode bypassPermissions`, and the judge prompt explicitly instructs it not to assume tool/skill access beyond what the response demonstrates. Re-verified against task-014: rationale for clean/lean now correctly critiques them for not attempting `ToolSearch`/`Skill`, with zero claims about environment they didn't have. **Note: the `bypassPermissions` choice made here caused a follow-up bug — see Setback 8.**
+
+**Related fragility bug found while fixing this:** `profiles/setup.sh` unconditionally overwrote `clean/settings.json` back to `{}` on every rebuild, silently destroying any permission edits (like the `qa_query.py` allowlist) made directly to the profile directory after the fact — this actually bit us mid-session when an unrelated `/login` triggered a rebuild. Fixed by encoding the permission into `setup.sh`'s template itself. **General lesson: `setup.sh` is the only durable source of truth for profile config — anything edited directly in `profiles/*/` will vanish on the next rebuild.**
+
+---
+
+### 8. LLM judge was leaking again (own filesystem, then no ground truth) — fixed (Run 15)
+
+Building `select_model.py` (see below) surfaced two more judge bugs, both now fixed:
+
+**8a. The "isolated" judge used its own tool access to check the wrong environment.** Run 14's fix gave the judge `--permission-mode bypassPermissions` so it wouldn't hang on approval gates — but the judge then actually *used* that Bash access. On a fully correct Haiku response (exact phrase match), it failed the run with: *"the memory directory available in this environment is empty, so no such context actually existed."* It had gone and checked its OWN clean/memory-less profile's filesystem, and wrongly projected that finding onto the candidate's (different, marvin-profile) session. **Fixed:** swapped `--permission-mode bypassPermissions` for `--tools ""` — the judge now has zero tool access, period. Verified by re-judging the exact flagged response: now scores 1.0 with an accurate rationale.
+
+**8b. The judge had no ground truth, so "is this correct?" collapsed into "does this sound fabricated?" — and flip-flopped on identical-quality answers.** Across 3 repeats of the same model (task-002-recall), one correct response passed as "grounded," an equally-correct repeat failed as "fabrication." The judge prompt never included the task's actual expected answer, so there was nothing to verify against — it was reacting to how confident/specific the phrasing sounded, which is noise, not signal. **Fixed:** `judge_run()` now passes `task["expect"]` (the same ground-truth phrase list the deterministic substring scorer already uses) into the judge prompt, instructed to grade content-match against it and never attempt fabrication-detection. Verified by re-judging every previously flip-flopped response (qwen 7B, Haiku, two `default` repeats) — all now consistently score 1.0, matching their actual correctness.
+
+**General lesson:** an "isolated" judge with tool access is a footgun — it will use those tools to check something, just not the thing you want. Zero tools is the safer default. And a judge grading "correctness" without the ground-truth answer in its prompt isn't really grading correctness at all — pass known ground truth whenever it exists.
+
+---
+
+### 9. "Ran out of tokens fast" was the harness, not a model swap (Run 15)
+
+User suspected two sessions burning through tokens unusually fast meant Claude Code had silently switched to Fable 5 (a real, pricier promo model referenced in the account's own cached notice: *"Fable 5 draws down usage faster than Opus 4.8"*). Checked every result JSON and every live session init event — all reported `claude-sonnet-5`, never fable. **Actual cause, confirmed directly** (`"You've hit your session limit · resets 12pm (America/Denver)"`): the bench harness spawns a full separate `claude -p` session per candidate run, doubled by `--judge`, all against the same account-wide 5-hour Pro-plan quota the interactive session also draws from — a `--repeat 3` sweep across the 3-profile suite is dozens of billed sessions in one command. Fixed structurally: `aggregate_runs` now tags and excludes `infra_error` runs (rate-limit/auth failures) from scoring instead of counting them as real 0.00s, the `--repeat` loop stops a profile early on the first infra error, and `main()` now runs a quota preflight (`_check_quota()`) before starting, aborting immediately if the account is already at its limit.
+
+**Lesson:** diagnose fast token/session drain by checking `rate_limit_info` / the literal error text before assuming a model regression.
+
+---
+
 ## Task Suite
 
 | Task | Type | Tests | Current finding |
@@ -238,6 +295,20 @@ Example failure: the original task-007 asked about a WeasyPrint issue documented
 | **008-sorted-list** | fs / code | Hidden semantic bug (discard removes all, not first) | All correct (LLM judge). Lean cheapest: 97k. MARVIN: 102k (+5% vs lean). TDD discriminator **did not split profiles** |
 | **009-cache-key** | fs / code | LRU cache zero hit rate (unstable timestamp key) | All correct (LLM judge). **Clean cheapest: 90k**. MARVIN: 98k (+9%). Diagnose skill loaded extra context with no correctness gain |
 | **010-inventory-race** | fs / code | TOCTOU oversell race (SELECT then UPDATE) | All correct (LLM judge). Clean: 72k, lean: 75k, MARVIN: 78k (+9%). TOCTOU is in training distribution — no discriminator gap |
+| **012-protocol-mismatch** | fs / code | Multi-file invariant trap (encoder/decoder version bump) | All correct (judge). Clean cheapest: 279k tok. **Lean +61%, MARVIN +58%** — lean was NOT the efficient profile this run |
+| **013-lru-cache-bug** | fs / code | Deceptive endorsed comment hides broken `move_to_end` | All correct (judge). Clean: 153k, MARVIN: 165k (+8%, close). **Lean: 293k (+91%)** — lean was the expensive outlier |
+| **014-kb-lookup** | qa / memory | Answer only in qa-knowledge ChromaDB, not on disk | **MARVIN wins: 1.00 vs 0.00 for clean + lean**, and at 1/3 the cost (2 tool calls vs 6). Required registering `qa-agent` as a real Skill first — see Setback 6 |
+
+---
+
+## Model-Selection Sweep (`select_model.py`, Run 15)
+
+Separate from the clean/lean/marvin profile comparison above: given one task, sweeps candidate models cheapest-first and locks in the first to score N≥3 consecutive substr+judge passes.
+
+| Task | Locked-in model | Notes |
+|------|------------------|-------|
+| **014-kb-lookup** | `claude:default` (Sonnet) | Not a fair Ollama read — task needs the `qa-agent` Skill via Bash, which the Ollama runner can't invoke at all (context-injection only). 7B/14B failing here = missing capability path, not weakness. |
+| **002-recall** | `claude:claude-haiku-4-5-20251001` | 3/3 clean passes after fixing two judge bugs (Setback 8). 7B/14B failed on exact substring (paraphrase gap) though content was semantically right. Independently reconfirms Run 8 (Haiku ≈ Sonnet on recall, ~60% cost) via a different code path. |
 
 ---
 

@@ -42,6 +42,22 @@ PROFILES = {
     "lean":   ROOT / "profiles" / "lean",            # symlink overlay of ~/.claude-lean (no memory overhead)
 }
 
+# Substrings that mean "this run never actually attempted the task" — an
+# account-level rate/session limit or a stale credential, not a real
+# correctness failure. Runs matching these must never be scored as 0.00; they
+# get flagged as infra errors and excluded from the correctness aggregate so a
+# quota outage can't masquerade as a MARVIN-vs-clean finding.
+INFRA_ERROR_MARKERS = (
+    "hit your session limit",
+    "not logged in",
+    "please run /login",
+)
+
+
+def _is_infra_error(result_text: str) -> bool:
+    t = (result_text or "").lower()
+    return any(m in t for m in INFRA_ERROR_MARKERS)
+
 OLLAMA_BASE = "http://localhost:11434"
 
 
@@ -74,6 +90,29 @@ def _load_marvin_context() -> str:
                 pass
 
     return "\n\n---\n\n".join(parts)
+
+
+def _check_quota() -> dict | None:
+    """One cheap claude -p call to read the account's current rate_limit_info
+    off the stream-json output. Returns None if it couldn't be determined
+    (treated as 'proceed, unknown' rather than blocking)."""
+    try:
+        proc = subprocess.run(
+            ["claude", "-p", "ok", "--output-format", "stream-json", "--verbose",
+             "--permission-mode", "bypassPermissions"],
+            capture_output=True, text=True, timeout=30,
+        )
+    except Exception:
+        return None
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if not line.startswith('{"type":"rate_limit_event"'):
+            continue
+        try:
+            return json.loads(line).get("rate_limit_info")
+        except Exception:
+            continue
+    return None
 
 
 def _ollama_available(model: str) -> tuple[bool, str]:
@@ -195,6 +234,14 @@ def run_once(task: dict, profile: str, capture_snapshot: bool = False, model: st
         cmd += ["--model", model]
     if is_fs:
         cmd += ["--permission-mode", "bypassPermissions"]
+    # Tasks that need file-read blocking to actually hold (memory-only
+    # discriminators — the answer must ONLY be reachable via a skill/tool, not
+    # disk) can set task.json's "disallow_tools". A prose "don't read files"
+    # instruction in the prompt is not enforceable — Read isn't gated by the
+    # Bash permission system and a model can just use it anyway. See
+    # marvin-bench-harness memory / task-014's compromise, Run 15.
+    if task.get("disallow_tools"):
+        cmd += ["--disallowedTools", ",".join(task["disallow_tools"])]
 
     env = {**os.environ, "CLAUDE_CONFIG_DIR": str(config_dir)}
     # strip inherited Claude Code session vars so the child starts clean
@@ -209,8 +256,11 @@ def run_once(task: dict, profile: str, capture_snapshot: bool = False, model: st
 
     parsed = parse_stream(proc.stdout)
     parsed["wall_s"] = round(wall, 1)
-    parsed["correctness"] = score_correctness(task, parsed["result_text"],
-                                              workdir if is_fs else None)
+    parsed["infra_error"] = _is_infra_error(parsed.get("result_text"))
+    parsed["correctness"] = (
+        {"score": None, "matched": [], "missed": []} if parsed["infra_error"]
+        else score_correctness(task, parsed["result_text"], workdir if is_fs else None)
+    )
     parsed["profile"] = profile
     parsed["model"] = model or "default"
     if proc.returncode != 0 and not parsed.get("result_text"):
@@ -234,17 +284,51 @@ def run_once(task: dict, profile: str, capture_snapshot: bool = False, model: st
 
 def judge_run(task: dict, run: dict) -> dict:
     """Call claude as an LLM judge to semantically grade a completed run.
-    Uses the system claude (no CLAUDE_CONFIG_DIR restriction) — inherits the
-    user's default profile (richest available judge).
+    Pinned to the `clean` profile's CLAUDE_CONFIG_DIR AND given zero tools
+    (`--tools ""`) so the judge has no skills/memory/tools of its own — it
+    grades strictly from the task prompt and the candidate's transcribed
+    response, never its own environment.
+    (Previously ran under the live default profile, which let the judge's own
+    tool/skill list leak into its rationale — e.g. claiming a skill was
+    "available in this session" for a run that never had it. See
+    marvin-bench-harness memory, Run 13. Then, after pinning to `clean` with
+    `--permission-mode bypassPermissions`, a second leak appeared: the judge
+    used Bash to check ITS OWN clean/memory-less filesystem and wrongly
+    rejected a correct answer with "the memory directory in this environment
+    is empty" — confusing its own empty environment for the candidate's real
+    one. `--tools ""` closes this off entirely: the judge can't invoke
+    anything, so it can only reason from the text it's handed. See Run 15.)
+
+    Also passes task['expect'] (the same ground-truth phrase list the
+    deterministic substring scorer uses) when present, and instructs the
+    judge to grade content-match against it rather than guess at whether the
+    response is "fabricated." Without a ground truth to check against, the
+    judge has no way to tell a correct-but-specific answer from a
+    confident-sounding hallucination — it was instead reacting to how
+    specific/confident the phrasing *sounded*, which flipped its verdict
+    on near-identical-quality answers across repeats (e.g. run 1 "grounded",
+    run 2 of the same candidate "fabrication", no change in actual accuracy).
+    See Run 15.
     Returns a correctness dict with score 0.0 or 1.0 + rationale.
     """
     snapshot = run.get("workdir_snapshot", "")
+    expect = task.get("expect") or []
     judge_prompt = (
         "You are grading whether a coding assistant correctly completed a task.\n\n"
         f"TASK PROMPT:\n{task['prompt']}\n\n"
         f"ASSISTANT RESPONSE:\n{run.get('result_text') or '(empty)'}\n\n"
         + (f"FILES IN WORKDIR AFTER RUN:\n{snapshot}\n\n" if snapshot else "")
+        + (f"GROUND-TRUTH PHRASE(S) THE ANSWER SHOULD CONVEY: {expect}\n"
+           "Grade content-match against these — verbatim or clearly equivalent wording "
+           "both count as correct. Do NOT try to guess whether the assistant genuinely "
+           "retrieved this from memory versus already knew it, and do NOT penalize extra "
+           "specific detail beyond what's listed here as suspected fabrication — that is "
+           "normal elaboration. Grade only whether the core content matches.\n\n"
+           if expect else "")
         + "Did the assistant correctly and completely implement what the task asked?\n"
+        "Grade only what is shown above. Do not assume the assistant had access to any "
+        "tool, skill, or MCP server unless its response demonstrates using it — you do "
+        "not share its environment and cannot know what was available to it.\n"
         "Reply with exactly two lines:\n"
         "VERDICT: PASS\n"
         "REASON: one sentence\n\n"
@@ -253,10 +337,15 @@ def judge_run(task: dict, run: dict) -> dict:
         "REASON: one sentence explaining the specific gap"
     )
 
+    judge_env = {**os.environ, "CLAUDE_CONFIG_DIR": str(PROFILES["clean"])}
+    for k in list(judge_env):
+        if k.startswith("CLAUDE_CODE_") or k in ("CLAUDECODE", "CLAUDE_EFFORT"):
+            judge_env.pop(k, None)
+
     try:
         proc = subprocess.run(
-            ["claude", "-p", judge_prompt, "--output-format", "text"],
-            capture_output=True, text=True, timeout=90
+            ["claude", "-p", judge_prompt, "--output-format", "text", "--tools", ""],
+            capture_output=True, text=True, timeout=90, env=judge_env
         )
         text = proc.stdout.strip()
     except Exception as exc:
@@ -279,16 +368,31 @@ def judge_run(task: dict, run: dict) -> dict:
 def aggregate_runs(runs: list[dict]) -> dict:
     """Reduce N repeated runs into a summary row with mean + stddev fields.
     The raw runs are preserved in _raw for JSON export.
+
+    Runs flagged infra_error (hit an account rate/session limit, or a stale
+    credential) never attempted the task — they're excluded from cost/token/
+    correctness stats so a quota outage can't read as a real 0.00 finding.
     """
     n = len(runs)
     agg: dict = {"profile": runs[0]["profile"], "_n": n, "_raw": runs}
+    agg["_n_infra_error"] = sum(1 for r in runs if r.get("infra_error"))
+
+    ok_runs = [r for r in runs if not r.get("infra_error")]
+    if not ok_runs:
+        agg["all_infra_error"] = True
+        for field in ("cost_usd", "total_tokens", "num_turns", "tool_calls", "wall_s"):
+            agg[field] = 0.0
+            agg[field + "_std"] = 0.0
+        agg["correctness"] = {"score": None}
+        agg["_n_correct"] = 0
+        return agg
 
     for field in ("cost_usd", "total_tokens", "num_turns", "tool_calls", "wall_s"):
-        vals = [r[field] for r in runs]
+        vals = [r[field] for r in ok_runs]
         agg[field] = _stat.mean(vals)
-        agg[field + "_std"] = _stat.stdev(vals) if n > 1 else 0.0
+        agg[field + "_std"] = _stat.stdev(vals) if len(vals) > 1 else 0.0
 
-    scores = [(r.get("correctness") or {}).get("score") or 0.0 for r in runs]
+    scores = [(r.get("correctness") or {}).get("score") or 0.0 for r in ok_runs]
     agg["correctness"] = {"score": _stat.mean(scores)}
     agg["_n_correct"] = sum(1 for s in scores if s == 1.0)
 
@@ -330,7 +434,7 @@ def fmt_table(task_id: str, rows: list[dict], show_judge: bool = False) -> str:
 def _fmt_single(task_id: str, rows: list[dict], show_judge: bool) -> str:
     judge_col = [("judge", 6)] if show_judge else []
     cols = ([("profile", 8), ("cost_usd", 10), ("total_tokens", 13),
-              ("num_turns", 6), ("tool_calls", 6), ("wall_s", 7), ("correct", 8)]
+              ("num_turns", 6), ("tool_calls", 6), ("wall_s", 7), ("correct", 10)]
             + judge_col
             + [("tok/ok", 10), ("tools/ok", 9)])
     head = "  ".join(name.ljust(w) for name, w in cols)
@@ -346,7 +450,8 @@ def _fmt_single(task_id: str, rows: list[dict], show_judge: bool) -> str:
             "num_turns":    str(r["num_turns"]),
             "tool_calls":   str(r["tool_calls"]),
             "wall_s":       str(r["wall_s"]),
-            "correct":      ("n/a" if c is None else f"{c:.2f}"),
+            "correct":      ("INFRA-ERR" if r.get("infra_error") else
+                              "n/a" if c is None else f"{c:.2f}"),
             "judge":        ("n/a" if jc is None else ("pass" if jc == 1.0 else "FAIL")),
             "tok/ok":       str(r["total_tokens"]) if fully_correct else "-",
             "tools/ok":     str(r["tool_calls"])   if fully_correct else "-",
@@ -366,7 +471,7 @@ def _fmt_multi(task_id: str, rows: list[dict], show_judge: bool) -> str:
     judge_col = [("judge", 10)] if show_judge else []
     cols = ([("profile", 8), ("cost_usd", 18), ("total_tokens", 18),
               ("num_turns", 12), ("tool_calls", 12), ("wall_s", 12),
-              ("correct", 10)]
+              ("correct", 16)]
             + judge_col
             + [("tok/ok", 18), ("tools/ok", 12)])
     head = "  ".join(name.ljust(w) for name, w in cols)
@@ -397,7 +502,9 @@ def _fmt_multi(task_id: str, rows: list[dict], show_judge: bool) -> str:
             "num_turns":    _ms(r["num_turns"], r["num_turns_std"], ".1f"),
             "tool_calls":   _ms(r["tool_calls"], r["tool_calls_std"], ".1f"),
             "wall_s":       _ms(r["wall_s"], r["wall_s_std"], ".1f"),
-            "correct":      (f"n/a" if c is None else f"{n_ok}/{n}={c:.2f}"),
+            "correct":      (f"INFRA-ERR({r.get('_n_infra_error', 0)}/{n})"
+                              if r.get("all_infra_error")
+                              else "n/a" if c is None else f"{n_ok}/{n}={c:.2f}"),
             "judge":        ("n/a" if jc is None else f"{j_n_pass}/{n}={jc:.2f}"),
             "tok/ok":       tok_ok,
             "tools/ok":     tools_ok,
@@ -453,6 +560,35 @@ def main() -> None:
     if "clean" in profiles and not PROFILES["clean"].exists():
         sys.exit("clean profile missing — run profiles/setup.sh first")
 
+    # pre-flight quota check (claude runner only — ollama is local/free).
+    # Every candidate run is a full separate `claude -p` session, and --judge
+    # doubles that with a grading session; a --repeat N run across the full
+    # suite can be dozens of sessions against the SAME account-wide 5-hour
+    # limit this interactive session also draws from. Warn with an estimate,
+    # and abort early if the account is already at/over its limit instead of
+    # burning through a run that will fail partway (see marvin-bench-harness
+    # memory, Run 13/14 — this is exactly how two sessions ran out early).
+    if args.runner == "claude":
+        n_valid_tasks = sum(1 for t in args.tasks if (Path(t) / "task.json").exists())
+        est = n_valid_tasks * len(profiles) * args.repeat * (2 if args.judge else 1)
+        print(f"preflight: ~{est} claude session(s) planned "
+              f"(tasks={n_valid_tasks} x profiles={len(profiles)} x repeat={args.repeat}"
+              f"{' x 2 [judge]' if args.judge else ''})", flush=True)
+        quota = _check_quota()
+        if quota is None:
+            print("preflight: could not determine account quota — proceeding anyway", flush=True)
+        else:
+            status = quota.get("status")
+            reset_s = quota.get("resetsAt")
+            reset_str = (time.strftime("%H:%M %Z", time.localtime(reset_s))
+                         if reset_s else "unknown")
+            print(f"preflight: quota status={status} "
+                  f"type={quota.get('rateLimitType')} resets={reset_str}", flush=True)
+            if status != "allowed":
+                sys.exit(f"aborting — account is already at its "
+                         f"{quota.get('rateLimitType')} limit (resets {reset_str}); "
+                         f"re-run after that, or narrow --profiles/--repeat.")
+
     for task_path in args.tasks:
         task_dir = Path(task_path)
         if not (task_dir / "task.json").exists():
@@ -478,23 +614,37 @@ def main() -> None:
             elif args.repeat == 1:
                 print(f"running {task['id']} @ {profile} ...", flush=True)
                 run = run_once(task, profile, capture_snapshot=args.judge, model=args.model)
-                if args.judge:
+                if run.get("infra_error"):
+                    print(f"  ! infra error (rate/session limit or auth) — skipping judge, "
+                          f"not scored as a real failure", flush=True)
+                elif args.judge:
                     print(f"  judging {task['id']} @ {profile} ...", flush=True)
                     run["judge_correctness"] = judge_run(task, run)
                 rows.append(run)
                 all_raw.append(run)
             else:
                 profile_runs = []
+                stop_repeat = False
                 for i in range(args.repeat):
                     print(f"running {task['id']} @ {profile} [{i+1}/{args.repeat}] ...",
                           flush=True)
                     run = run_once(task, profile, capture_snapshot=args.judge, model=args.model)
+                    if run.get("infra_error"):
+                        print(f"  ! infra error (rate/session limit or auth) on repeat "
+                              f"{i+1}/{args.repeat} — stopping this profile early, "
+                              f"not scoring as a real failure", flush=True)
+                        profile_runs.append(run)
+                        stop_repeat = True
+                        break
                     if args.judge:
                         print(f"  judging [{i+1}/{args.repeat}] ...", flush=True)
                         run["judge_correctness"] = judge_run(task, run)
                     profile_runs.append(run)
                 all_raw.extend(profile_runs)
                 rows.append(aggregate_runs(profile_runs))
+                if stop_repeat:
+                    print(f"  (stopped after infra error — remaining profiles/tasks "
+                          f"will likely hit the same wall)", flush=True)
 
         if not rows:
             print(f"  (all profiles skipped for {task['id']} — nothing to display)")

@@ -1,0 +1,8 @@
+{
+  "id": "task-013-lru-cache-bug",
+  "type": "fs",
+  "prompt_file": "prompt.md",
+  "timeout": 300,
+  "expect": ["move_to_end"],
+  "note": "Deceptive comment trap. The comment 'Access order maintained by OrderedDict — no explicit update needed' is the misleading element: it is false. Python's OrderedDict tracks insertion order by default, not access order. The get() method must call self._cache.move_to_end(key) after a cache hit to refresh the item's position to the 'most recently used' end; without it, the dict evicts by insertion order (MRU, not LRU). The colleague's code review explicitly endorsed the broken line. Clean profile: the comment + review endorsement may cause the model to look for the bug elsewhere (concurrency, capacity handling, edge cases) or to accept that get() is fine. MARVIN with always-on TDD writes the concrete test sequence from the prompt first, watches it fail, and traces the failure to get(). The single discriminating fix is calling move_to_end(key) inside get() — substring 'move_to_end' only appears in the correct fix. Use --judge to assess whether the described eviction sequence now produces the correct result."
+}

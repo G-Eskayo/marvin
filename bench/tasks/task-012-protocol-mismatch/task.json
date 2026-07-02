@@ -1,0 +1,8 @@
+{
+  "id": "task-012-protocol-mismatch",
+  "type": "fs",
+  "prompt_file": "prompt.md",
+  "timeout": 360,
+  "expect": ["fromisoformat", "{1, 2, 3}"],
+  "note": "Multi-file invariant trap. Encoder and decoder share a protocol contract: SUPPORTED_VERSIONS in decoder.py must list every version encoder.py can emit, and the timestamp parsing must match the encoding format. Version 3 changes ts from int (Unix) to str (ISO 8601). Correct fix updates BOTH files: encoder.py bumps PROTOCOL_VERSION to 3 and uses datetime.isoformat(); decoder.py adds 3 to SUPPORTED_VERSIONS and switches fromtimestamp() to fromisoformat() for v3 events. Naive fix (clean profile): only updates encoder.py — existing tests still pass (they don't test v3), but decode() will raise ValueError on any v3 event (version not in SUPPORTED_VERSIONS) and then fail to parse the ISO string even if that check were removed. expect=['fromisoformat', '{1, 2, 3}']: fromisoformat appears only in a correct decoder.py update; {1, 2, 3} only after SUPPORTED_VERSIONS is extended. Score 0.50 if one is updated, 1.00 if both. MARVIN with always-on TDD writes a v3 round-trip test first, which fails on decode(), surfacing both invariants. Use --judge to verify the fix is actually correct and backward-compatible."
+}
