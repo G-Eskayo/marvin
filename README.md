@@ -28,13 +28,13 @@ mindmap
         reference pointers
       Lexicon
       Handoff and resume
-    Skills 25 total
+    Skills 26 total
       Quality
         diagnose
+        grill-with-docs preferred default
+        grill-me fallback no project
         tdd
         qa-agent
-        grill-me
-        grill-with-docs
         improve-codebase-architecture
       Research
         research
@@ -48,10 +48,11 @@ mindmap
         handoff
         index
         self-improve
-        self-optimize
+        architecture-review
         write-a-skill
         caveman
         lexicon
+        route
       Project
         setup-matt-pocock-skills
         triage
@@ -59,6 +60,17 @@ mindmap
         to-prd
         resume-tailor
         research-colony
+    Live Architecture Map
+      3D dendrite tree of the real graph
+        generated from manifest.json live
+        gold synapses are real calls and hooks
+      DesktopLive Swift wallpaper
+        window pinned to desktop level
+        no dock icon no menu bar item
+        survives restart via launchd
+      Activity pulses
+        skill fires camera eases to it
+        node create or remove animates in place
     Autonomous Agents
       Daily digest 08h30
         feature combinations
@@ -74,7 +86,7 @@ mindmap
         Desktop and Downloads
         7-day grace period
     Bench
-      11 tasks
+      14 tasks
       3 profiles
         clean baseline
         lean low-overhead
@@ -93,11 +105,14 @@ mindmap
         claude-research marvin haiku
         claude-arch marvin sonnet
       session-start auto-suggest
-    Hooks on every save
-      rebuild-manifest
-      emit-resume-prompt
-      qa-session-capture
-      improvement-sweep
+    Hooks
+      On skill or memory file save
+        rebuild-manifest path scoped
+        emit-resume-prompt
+        qa-session-capture
+        improvement-sweep
+      On any skill invocation
+        skill-activity feeds live map
 ```
 
 ---
@@ -111,8 +126,8 @@ All 26 skills, their triggers, and what they do:
 | `diagnose` | Bug reported, broken/throwing/failing, perf regression | Root-cause analysis — traces symptom → cause → fix |
 | `tdd` | "TDD", "red-green-refactor", test-first | Writes failing tests first, then drives implementation to pass |
 | `qa-agent` | "qa", "scan project", "best practices for X" | AST + text quality scan; appends lessons to ChromaDB `qa-knowledge` |
-| `grill-me` | "Grill me", stress-test a plan | Devil's advocate — challenges assumptions and finds hidden failure modes |
-| `grill-with-docs` | Stress-test plan against project docs | Same as grill-me but cross-references actual docs and ADRs |
+| `grill-with-docs` | **Preferred default** for any grilling request when a project exists | Devil's advocate that also cross-references actual docs/ADRs and updates them live — a strict superset of grill-me |
+| `grill-me` | Fallback only — no project/repo to attach docs to | Devil's advocate — challenges assumptions and finds hidden failure modes |
 | `improve-codebase-architecture` | "Improve architecture", "reduce coupling" | Structural refactor with an eye on testability and cohesion |
 | `research` | "Research X", investigate claim, evaluate technology | Tiered source lookup: arXiv → Semantic Scholar → official docs → web |
 | `paper-dive` | `/paper-dive`, PDF path or paper URL | Walks through a research paper — findings, method, relevance to MARVIN |
@@ -123,7 +138,7 @@ All 26 skills, their triggers, and what they do:
 | `handoff` | Auto before context switch or topic shift | Writes a resume prompt to `~/.claude/handoffs/`; surfaces it as a code block |
 | `index` | Task start (auto) | Matches task keywords to `manifest.json` tags to load only relevant skills |
 | `self-improve` | Explicit `/self-improve` request | Identifies a pattern worth preserving and writes it to memory |
-| `self-optimize` | Auto every 3–5 sessions or when CLAUDE.md > 80 lines | Audits CLAUDE.md for bloat; appends suggestions to `~/.claude/suggestions.md` |
+| `architecture-review` | Auto every 3–5 sessions or when CLAUDE.md > 80 lines | Audits CLAUDE.md for bloat; appends suggestions to `~/.claude/suggestions.md` (renamed from `self-optimize` — was too easily confused with `self-improve`) |
 | `write-a-skill` | "Create a new skill", "write a skill" | Scaffolds a new `SKILL.md` with correct frontmatter and routing entry |
 | `caveman` | "Caveman mode", "less tokens", `/caveman` | Switches to minimal-prose responses for token-tight situations |
 | `lexicon` | New concept crystallises, "add to lexicon" | Adds a term + definition to `~/.claude/lexicon.md` |
@@ -153,8 +168,19 @@ Three launchd cron jobs run without intervention:
 | **Research colony** | 09:00 | `~/.claude/research-digest/YYYY-MM-DD.md` — directly relevant, lateral finds, tools/repos, skip list |
 | **File organiser** | Daily | Sorts Desktop + Downloads into `~/Documents` buckets; 7-day grace period keeps new items visible |
 
+### Live Architecture Map
+
+MARVIN's actual structure, rendered — not a diagram someone drew once and forgot to update. `brain-map/generate.py` builds a 3D dendrite tree live from `manifest.json` (structure) merged with a small hand-maintained file (prose, non-skill nodes, hook/cron wiring), regenerated automatically by the `rebuild-manifest` hook whenever a skill actually changes. Branches are structure; gold threads are the *real* wiring — `calls:` declarations, hook chains, and at least one dependency that existed in code but was never declared in frontmatter until this caught it.
+
+`DesktopLive` (a ~150-line Swift binary, no Xcode project needed) renders the same file as actual desktop wallpaper — a window pinned to the desktop level via public `NSWindow`/`CGWindowLevelForKey` API, no Dock icon, no menu-bar item, mouse events pass through to your real desktop. A `skill-activity` hook pulses the corresponding node and eases the camera toward it every time a skill actually fires; nodes grow in and shrink out when the graph itself changes, instead of the whole thing flashing on reload.
+
+```bash
+bash ~/.agents/brain-map/install.sh   # compiles DesktopLive, installs as a login-persistent launchd agent
+~/.agents/venv/bin/python ~/.agents/brain-map/demo.py   # local, zero-token showcase — no real skill calls, nothing real touched
+```
+
 ### marvin-bench — objective A/B testing
-11 tasks across three profiles (clean / lean / marvin) with four metrics: token cost, tool efficiency, task correctness (substring + LLM judge), and recall quality. Supports cross-model runs and a zero-cost local Ollama runner.
+14 tasks across three profiles (clean / lean / marvin) with four metrics: token cost, tool efficiency, task correctness (substring + LLM judge), and recall quality. Includes an ascending-cost model-selection sweep (select_model.py) and harder discriminator tasks (012–014) where profiles actually diverge. Supports cross-model runs and a zero-cost local Ollama runner.
 
 ```bash
 python3 bench/bench.py bench/tasks/*                                       # full suite
@@ -217,15 +243,21 @@ bash ~/.agents/skills/route/install.sh && source ~/.zshrc
 
 Session-start auto-routing: CLAUDE.md step 7 analyses the first message and surfaces the suggestion once if ≥2 routing keywords match.
 
-### PostToolUse Hooks
-Four hooks fire on every Write or Edit:
+### Hooks
+Four fire on every Write/Edit, each filtering to its own relevant path (not literally every save — `rebuild-manifest` used to fire unconditionally on any file anywhere until that was found and scoped):
 
-| Hook | What it does |
-|------|-------------|
-| `rebuild-manifest` | Keeps `manifest.json` tag index current |
-| `emit-resume-prompt` | Writes session resume prompt to `~/.claude/handoffs/` |
-| `qa-session-capture` | Appends lessons to `qa-knowledge` ChromaDB |
-| `improvement-sweep` | Scans changed project; appends top 5 issues to `improvement-queue.md` |
+| Hook | Fires on | What it does |
+|------|----------|-------------|
+| `rebuild-manifest` | A `SKILL.md` or memory file changes | Keeps `manifest.json` current; also regenerates the live architecture map |
+| `emit-resume-prompt` | A handoff doc is written | Writes session resume prompt to `~/.claude/handoffs/` |
+| `qa-session-capture` | A handoff doc is written | Appends lessons to `qa-knowledge` ChromaDB |
+| `improvement-sweep` | A handoff doc is written | Scans changed project; appends top 5 issues to `improvement-queue.md` |
+
+A fifth fires on skill invocation, not file changes:
+
+| Hook | Fires on | What it does |
+|------|----------|-------------|
+| `skill-activity` | Any skill actually runs | Feeds the live architecture map's activity pulses |
 
 ---
 
@@ -270,6 +302,7 @@ Install the autonomous agents and routing aliases:
 bash ~/.agents/skills/improve/install.sh          # daily digest at 08:30
 bash ~/.agents/skills/research-colony/install.sh  # research colony at 09:00
 bash ~/.agents/skills/route/install.sh            # claude-recall / claude-code / claude-arch aliases
+bash ~/.agents/brain-map/install.sh               # live architecture map as desktop wallpaper (needs Swift, macOS only)
 source ~/.zshrc
 ```
 
@@ -291,9 +324,15 @@ source ~/.zshrc
 │   ├── lib/
 │   │   ├── score.py               ← stream parser + correctness scorer
 │   │   └── memory_rag.py          ← ChromaDB RAG retrieval for Ollama runner
-│   ├── tasks/                     ← 11 tasks (task-001 … task-011)
+│   ├── tasks/                     ← 14 tasks (task-001 … task-014)
+│   ├── select_model.py            ← ascending-cost sweep, locks in cheapest model that passes N>=3
 │   ├── SCORECARD.md
 │   └── profiles/                  ← clean / lean / marvin config dirs
+├── brain-map/                     ← live 3D architecture map + desktop-wallpaper renderer
+│   ├── generate.py                ← manifest.json + enrichment.json → index.html + tree-data.json
+│   ├── DesktopLive/main.swift     ← desktop-level WKWebView, no dock icon, no menu bar
+│   ├── demo.py                    ← zero-token local showcase, nothing real touched
+│   └── install.sh                 ← compiles DesktopLive, installs as a login-persistent agent
 └── venv/                          ← Python virtualenv (chromadb, rank_bm25, ollama)
 
 ~/.claude/
