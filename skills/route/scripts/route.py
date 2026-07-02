@@ -63,9 +63,14 @@ INTENTS: dict[str, dict] = {
             "lint", "format", "deploy", "migrate", "make it work", "failing",
             "broken", "bug", "unittest", "test suite", "edit this file",
         ],
-        "why": "Mechanical coding — no recall overhead. "
-               "Lean saves 9–10% tokens vs MARVIN (bench Runs 2–6).",
-        "savings": "~9% vs MARVIN + Sonnet",
+        "why": "Mechanical coding — no recall overhead, keeps TDD/grill quality defaults. "
+               "Lean saves ~9-10% tokens vs MARVIN on SIMPLE coding tasks (bench Runs 2-6). "
+               "CAVEAT (Run 15, N=3): on harder tasks (012/013) this doesn't hold reliably — "
+               "lean beat marvin on one, lost to marvin on the other, both with high variance. "
+               "Clean was cheapest on both, but lacks lean's TDD/grill quality benefit (Run 5). "
+               "Lean is still the default here for the quality tradeoff, not a guaranteed "
+               "cost win on hard tasks.",
+        "savings": "~9-10% vs MARVIN + Sonnet on simple coding tasks; not reliable on hard tasks",
     },
     "architecture": {
         "profile":    "marvin",

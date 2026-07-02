@@ -14,7 +14,7 @@ Auto-routes tasks to the optimal profile + model combination based on bench-vali
 |--------|---------|-------|---------|-------------|
 | recall | marvin | claude-haiku-4-5-20251001 | ~60% | Memory/session history retrieval |
 | research | marvin | claude-haiku-4-5-20251001 | ~60% | arXiv, papers, synthesis, ChromaDB queries |
-| coding | lean | default (Sonnet) | ~9% | Self-contained coding tasks with no memory dependency |
+| coding | lean | default (Sonnet) | ~9% on simple tasks; unreliable on hard tasks (Run 15) | Self-contained coding tasks with no memory dependency |
 | architecture | marvin | default (Sonnet) | baseline | Design decisions, planning, trade-off analysis |
 
 ## Triggers
@@ -66,5 +66,7 @@ source ~/.zshrc
 |---------|--------|
 | MARVIN wins recall (1.00 vs 0.00) at ~+600 token overhead | bench Run 7, task-002 + task-011 |
 | MARVIN + Haiku wins recall identically, 60% cheaper | bench Run 8, Haiku cross-model |
-| Lean saves 9–10% on coding tasks with zero quality gap | bench Runs 2–6, tasks 001/003/005/006 |
+| Lean saves 9–10% on SIMPLE coding tasks with zero quality gap | bench Runs 2–6, tasks 001/003/005/006 |
+| On HARD coding tasks lean is NOT reliably cheaper than marvin — flips per task, high variance; clean is cheapest on both but lacks lean's TDD/grill quality benefit | bench Run 15 (N=3), tasks 012/013 |
 | Haiku fails navigational recall without MARVIN | bench Run 8, task-007 |
+| Haiku matches Sonnet on recall independently confirmed via a second method | bench Run 15, `select_model.py` sweep on task-002-recall |
