@@ -73,6 +73,8 @@ Each hypothesis must be **falsifiable**: state the prediction it makes.
 
 If you cannot state the prediction, the hypothesis is a vibe — discard or sharpen it.
 
+**Check Stack Overflow for the specific error signature** (exact exception message, stack trace shape, or symptom) before finalizing the ranked list — not instead of it. If the signature matches a well-corroborated SO answer (accepted, high-voted, version-consistent with your stack), fold it in as a ranked hypothesis with a note on its source; it doesn't skip Phase 1/2 or get treated as confirmed until it survives your own feedback loop. A generic search for the bug's *symptom* rather than its exact signature is usually noise — narrow the query to what makes this failure specific.
+
 **Show the ranked list to the user before testing.** They often have domain knowledge that re-ranks instantly ("we just deployed a change to #3"), or know hypotheses they've already ruled out. Cheap checkpoint, big time saver. Don't block on it — proceed with your ranking if the user is AFK.
 
 ## Phase 4 — Instrument

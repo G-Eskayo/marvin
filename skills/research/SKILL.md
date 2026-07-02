@@ -14,6 +14,24 @@ No claim is treated as objectively true. Every finding is assigned a confidence 
 
 See [epistemic-framework.md](epistemic-framework.md) for confidence tier definitions.
 
+## Source Priority
+
+Two different question types need two different source ladders — don't apply the academic ladder to a practical question or vice versa.
+
+**Scientific/academic claims** (does X cause Y, what does the evidence say, evaluate this theory):
+1. Science Hub (scihub.org) — open-access journals, society partners
+2. Semantic Scholar (semanticscholar.org) — 200M+ papers, public API
+3. arXiv (arxiv.org) — CS/math/physics/ML preprints, public API
+4. Official documentation / authoritative technical sources (AWS docs, Anthropic docs, RFCs)
+5. General web — last resort only, when 1–4 don't cover the topic
+
+**Practical/implementation questions** (how do I do X in library Y, what does this error mean, is this the idiomatic way to use Z):
+1. **Stack Overflow** (stackoverflow.com) — canonical crowd-sourced source for debugging, library usage, and best-practice questions. Prefer accepted/highest-voted answers; check the answer's date against the library's current version (SO answers rot as APIs change). Not peer-reviewed — corroborate with official docs before treating an SO answer as authoritative for anything load-bearing.
+2. Official documentation
+3. General web
+
+Always surface which tier/source answered. Don't present a general web result as authoritative when a higher tier covers the topic.
+
 ## Process
 
 ### 1. Frame the question precisely
