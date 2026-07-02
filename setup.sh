@@ -208,6 +208,32 @@ install_deps() {
     "$VENV_PYTHON" -m pip install --upgrade pip --quiet
     "$VENV_PYTHON" -m pip install chromadb rank_bm25 requests --quiet
     log "chromadb, rank_bm25, requests installed"
+
+    # resume-tailor's deps — this was missing entirely until a fresh-machine
+    # setup was actually attempted and it silently left the skill non-functional.
+    if [[ "$OS" == "macos-arm" || "$OS" == "macos-x86" ]]; then
+        if ! brew list pango &>/dev/null; then
+            info "Installing Pango (WeasyPrint's PDF rendering dependency)..."
+            brew install pango
+        fi
+    fi
+    "$VENV_PYTHON" -m pip install weasyprint markdown-it-py pdfminer.six python-docx beautifulsoup4 --quiet
+    log "weasyprint, markdown-it-py, pdfminer.six, python-docx, beautifulsoup4 installed (resume-tailor)"
+}
+
+# resume-tailor is its own repo, gitignored from marvin's — a plain clone of
+# marvin never brings it along, so install_skills() below would silently
+# skip it (nothing to copy from $MARVIN_DIR/skills/resume-tailor).
+clone_resume_tailor() {
+    local dest="$SKILLS_DIR/resume-tailor"
+    if [[ -d "$dest" ]]; then
+        log "resume-tailor already present — skipping clone"
+        return
+    fi
+    info "Cloning resume-tailor..."
+    git clone --quiet https://github.com/G-Eskayo/resume-tailor.git "$dest"
+    log "resume-tailor cloned to $dest"
+    warn "Master resume is personal and never lives in git — create ~/.claude/resume/master.md yourself (see resume-tailor's README)"
 }
 
 # =============================================================
@@ -356,6 +382,7 @@ main() {
     setup_venv
     install_deps
     install_skills
+    clone_resume_tailor
     configure_claude
     initial_setup
     start_ollama
