@@ -8,8 +8,8 @@ Skills at `~/.agents/skills/`. Auto-invoke by reading `SKILL.md` when triggers m
 |-------|---------|
 | `diagnose` | Bug reported, "debug/diagnose this", broken/throwing/failing, perf regression |
 | `tdd` | "TDD", "red-green-refactor", test-first development, integration tests |
-| `grill-me` | "Grill me", stress-test a plan, challenge my design |
-| `grill-with-docs` | Stress-test plan against project docs, sharpen terminology, update ADRs |
+| `grill-with-docs` | **Preferred default for any grilling request** — "grill me", stress-test a plan, challenge my design — whenever a project/repo exists. Sharpens against docs, updates CONTEXT.md/ADRs live; strictly a superset of `grill-me`. |
+| `grill-me` | Fallback only when there's no project/repo to attach docs to (pure abstract/conceptual planning), or user explicitly asks to skip doc-tracking |
 | `zoom-out` | Unfamiliar with code area, need higher-level architectural map |
 | `improve-codebase-architecture` | Improve architecture, refactor, reduce coupling, increase testability |
 | `prototype` | Prototype, mock up UI, "try a few designs", "let me play with it" |
@@ -21,7 +21,7 @@ Skills at `~/.agents/skills/`. Auto-invoke by reading `SKILL.md` when triggers m
 | `research` | Research topic, investigate claim, evaluate technology or theory |
 | `creative` | Creative work, ideation, "be creative", "surprise me" |
 | `lexicon` | New concept crystallises, term recurs with stable meaning, "add to lexicon" |
-| `self-optimize` | **Auto every 3–5 sessions** or when CLAUDE.md >80 lines / routing table >20 entries. Append to `~/.claude/suggestions.md`, never implement without approval. |
+| `architecture-review` | **Auto every 3–5 sessions** or when CLAUDE.md >80 lines / routing table >20 entries. Append to `~/.claude/suggestions.md`, never implement without approval. |
 | `index` | Match task keywords to `~/.claude/manifest.json` tags → load only relevant skill files. Use at task start to avoid speculative full-skill loads. |
 | `qa-agent` | "qa", "scan project", "best practices for X", "what worked/failed". Query KB before unfamiliar library work. |
 | `improve` | "show improvement queue", "what should I fix", "show digest", "run daily digest", "brainstorm improvements" |

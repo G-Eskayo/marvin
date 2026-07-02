@@ -1,6 +1,6 @@
 ---
 name: grill-me
-description: Interview the user relentlessly about a plan or design until reaching shared understanding, resolving each branch of the decision tree. Use when user wants to stress-test a plan, get grilled on their design, or mentions "grill me".
+description: Interview the user relentlessly about a plan or design until reaching shared understanding, resolving each branch of the decision tree. Fallback only — prefer grill-with-docs (a strict superset) whenever a project/repo exists to attach docs to; use this alone only for doc-less/abstract planning or an explicit request to skip doc-tracking.
 tags: [intent:plan, intent:challenge, intent:design, intent:stress-test, type:skill]
 ---
 

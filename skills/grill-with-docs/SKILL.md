@@ -1,17 +1,15 @@
 ---
 name: grill-with-docs
-description: Grilling session that challenges your plan against the existing domain model, sharpens terminology, and updates documentation (CONTEXT.md, ADRs) inline as decisions crystallise. Use when user wants to stress-test a plan against their project's language and documented decisions.
+description: Grilling session that challenges your plan against the existing domain model, sharpens terminology, and updates documentation (CONTEXT.md, ADRs) inline as decisions crystallise. Preferred default for any grilling request whenever a project/repo exists — a strict superset of grill-me. Use grill-me alone only when there's no codebase to attach docs to.
 tags: [intent:plan, intent:challenge, domain:architecture, intent:design, type:skill]
 calls: [grill-me, lexicon]
 ---
 
 <what-to-do>
 
-Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.
+Run `grill-me`'s interview process in full (loaded via `calls: [grill-me]` above — read that file and follow it). One difference: ask each question one at a time and **wait for feedback before continuing**, rather than moving at grill-me's own pace — resolved answers here also update project docs live (below), so a faster back-to-back pace would outrun that.
 
-Ask the questions one at a time, waiting for feedback on each question before continuing.
-
-If a question can be answered by exploring the codebase, explore the codebase instead.
+Everything below is additive on top of grill-me's process, not a replacement for it.
 
 </what-to-do>
 
