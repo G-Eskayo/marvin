@@ -1,0 +1,112 @@
+{
+  "_comment": "Hand-maintained supplement to ~/.claude/manifest.json for brain-map/generate.py. manifest.json is the live source for the skill list and calls: edges; everything here is data manifest.json doesn't and shouldn't capture (prose, non-skill nodes, hook/cron wiring, category grouping, expandable sub-forests).",
+
+  "root": { "id": "MARVIN", "desc": "Memory, routing, and skills layer for Claude Code" },
+
+  "structural": [
+    {
+      "id": "Memory", "cat": "memory", "desc": "Persistent context across sessions",
+      "children": [
+        {
+          "id": "qa-knowledge", "cat": "memory", "desc": "ChromaDB — patterns/anti-patterns/worked/failed, tagged by domain",
+          "expandable": true,
+          "children": [
+            { "id": "qa_scan.py", "cat": "memory", "desc": "Scans a project on demand, extracts patterns" },
+            { "id": "qa_query.py", "cat": "memory", "desc": "Lateral + direct retrieval — creative's cross-domain synthesis reads this" },
+            { "id": "qa_capture.py", "cat": "memory", "desc": "Manual pattern capture; shared by the session-capture hook" }
+          ]
+        },
+        { "id": "research-feed", "cat": "memory", "desc": "ChromaDB — arXiv/GitHub/HN items, deduped by URL hash" },
+        { "id": "lexicon.md", "cat": "memory", "desc": "Shared vocabulary, loaded every session" },
+        { "id": "manifest.json", "cat": "memory", "desc": "Auto-generated skill index — this graph's real source of truth" }
+      ]
+    },
+    {
+      "id": "Infrastructure", "cat": "infra", "desc": "The hooks wiring everything else together",
+      "children": [
+        { "id": "rebuild-manifest.py", "cat": "infra", "desc": "Rebuilds manifest.json from skill frontmatter — now path-scoped, not unconditional" },
+        { "id": "emit-resume-prompt.py", "cat": "infra", "desc": "Hook: prints the resume prompt on handoff-doc writes" },
+        { "id": "qa_session_capture.py", "cat": "infra", "desc": "Hook: extracts decisions from handoffs into qa-knowledge" },
+        { "id": "improvement_sweep.py", "cat": "infra", "desc": "Hook: scans the handoff's project, queues top issues" }
+      ]
+    },
+    {
+      "id": "Autonomous Agents", "cat": "agents", "desc": "Run on a schedule, without being invoked",
+      "children": [
+        {
+          "id": "daily-digest", "cat": "agents", "desc": "Cron 08:30 — brainstorms feature combos, trim candidates, wild ideas",
+          "expandable": true,
+          "children": [
+            { "id": "reads: qa-knowledge", "cat": "agents", "desc": "part of its assembled context" },
+            { "id": "reads: roadmap + handoffs", "cat": "agents", "desc": "part of its assembled context" },
+            { "id": "writes: daily-digest/*.md", "cat": "agents", "desc": "the actual output — was silently broken until tonight" }
+          ]
+        },
+        {
+          "id": "research-colony", "cat": "agents", "desc": "Cron 09:00 — source_monitor → correlate → digest",
+          "expandable": true,
+          "children": [
+            { "id": "source_monitor.py", "cat": "agents", "desc": "fetches arXiv CS.AI/CS.LG/CS.MA, GitHub, HN" },
+            { "id": "correlate.py", "cat": "agents", "desc": "cross-refs against qa-knowledge, cosine distance < 1.1" },
+            { "id": "research_digest.py", "cat": "agents", "desc": "synthesizes into Directly Relevant / Lateral / Tools / Skip" }
+          ]
+        }
+      ]
+    }
+  ],
+
+  "skills_trunk_desc": "structured capabilities",
+
+  "skill_categories": {
+    "diagnose": "quality", "tdd": "quality", "qa-agent": "quality", "grill-me": "quality",
+    "grill-with-docs": "quality", "improve-codebase-architecture": "quality",
+    "research": "research", "paper-dive": "research", "zoom-out": "research",
+    "creative": "creation", "prototype": "creation", "improve": "creation",
+    "handoff": "continuity", "index": "continuity", "self-improve": "continuity",
+    "architecture-review": "continuity", "write-a-skill": "continuity", "caveman": "continuity", "route": "continuity",
+    "lexicon": "continuity",
+    "setup-matt-pocock-skills": "project", "triage": "project", "to-issues": "project",
+    "to-prd": "project", "resume-tailor": "project"
+  },
+
+  "category_order": ["quality", "research", "creation", "continuity", "project"],
+  "category_labels": {
+    "quality": "Quality", "research": "Research", "creation": "Creation",
+    "continuity": "Continuity", "project": "Project"
+  },
+
+  "skill_desc_overrides": {
+    "grill-me": "Relentless Socratic interview — now the fallback",
+    "grill-with-docs": "grill-me + live CONTEXT.md/ADR updates — the preferred default",
+    "architecture-review": "Reviews the whole system — renamed from self-optimize tonight"
+  },
+
+  "synapse_labels": {
+    "grill-with-docs->grill-me": "calls grill-me's interview process, then layers doc-updates on top",
+    "grill-with-docs->lexicon": "calls lexicon to resolve/record terms as they crystallize",
+    "improve-codebase-architecture->zoom-out": "calls zoom-out for the initial map before finding deepening opportunities",
+    "index->self-improve": "runs self-improve's retrieve.py + rebuild-manifest.py under the hood",
+    "qa-agent->self-improve": "calls self-improve to turn QA-observed patterns into new/updated skills",
+    "self-improve->lexicon": "calls lexicon — step 1 of its own process",
+    "self-improve->write-a-skill": "calls write-a-skill's process when authoring a brand-new skill",
+    "tdd->diagnose": "calls diagnose when a red test needs root-causing, not just a fix",
+    "to-prd->to-issues": "calls to-issues once the PRD is synthesized",
+    "triage->to-issues": "calls to-issues once an item is triaged"
+  },
+
+  "extra_synapses": [
+    { "a": "creative", "b": "qa-agent", "label": "imports qa_query.py directly for cross-domain synthesis — real, but never declared in frontmatter", "type": "undeclared" },
+    { "a": "handoff", "b": "emit-resume-prompt.py", "label": "PostToolUse hook fires on every handoff-doc write", "type": "hook" },
+    { "a": "handoff", "b": "qa_session_capture.py", "label": "PostToolUse hook fires on every handoff-doc write", "type": "hook" },
+    { "a": "handoff", "b": "improvement_sweep.py", "label": "PostToolUse hook fires on every handoff-doc write", "type": "hook" },
+    { "a": "qa_session_capture.py", "b": "qa-knowledge", "label": "writes extracted decisions into qa-knowledge", "type": "hook" },
+    { "a": "improvement_sweep.py", "b": "improve", "label": "feeds improve's improvement-queue.md", "type": "hook" },
+    { "a": "rebuild-manifest.py", "b": "manifest.json", "label": "rewrites manifest.json on every relevant SKILL.md/memory edit", "type": "hook" },
+    { "a": "improve", "b": "daily-digest", "label": "owns and triggers the daily-digest cron", "type": "hook" },
+    { "a": "daily-digest", "b": "qa-knowledge", "label": "reads qa-knowledge as part of its assembled context", "type": "hook" },
+    { "a": "research-colony", "b": "qa-knowledge", "label": "correlate.py cross-refs today's finds against qa-knowledge", "type": "hook" },
+    { "a": "research-colony", "b": "research-feed", "label": "source_monitor.py writes here, correlate.py reads it back", "type": "hook" }
+  ],
+
+  "synapse_label_fallback": "declared calls: dependency"
+}

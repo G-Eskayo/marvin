@@ -1,3 +1,9 @@
+---
+name: research-colony
+description: Autonomous research agent that monitors arXiv, GitHub, and HN daily, cross-references findings against MARVIN's knowledge base, and synthesises a digest. Use when the user wants today's research digest, what's new in AI/research, or wants the colony run/fetched manually.
+tags: [intent:research, intent:monitor, intent:digest, type:agent]
+---
+
 # Research Colony Skill
 
 Autonomous research agent that monitors arXiv, GitHub, and HN daily, cross-references findings against MARVIN's knowledge base, and synthesises a digest.
