@@ -189,16 +189,20 @@
   /*__SYNAPSES_END__*/
 
   // ── flatten + index ──────────────────────────────────────────────────
-  var byId = {}, allNodes = [], branches = [];
+  var byId = {}, allNodes = [], branches = [], synapseDegree = {};
   function indexTree(node, parent) {
     node.parent = parent || null;
     byId[node.id] = node;
     node.children.forEach(function (c) { indexTree(c, node); });
   }
-  indexTree(tree, null);
-  synapses = synapses.filter(function (s) { return byId[s.a] && byId[s.b]; });
-  var synapseDegree = {};
-  synapses.forEach(function (s) { synapseDegree[s.a] = (synapseDegree[s.a] || 0) + 1; synapseDegree[s.b] = (synapseDegree[s.b] || 0) + 1; });
+  function indexAll() {
+    byId = {};
+    indexTree(tree, null);
+    synapses = synapses.filter(function (s) { return byId[s.a] && byId[s.b]; });
+    synapseDegree = {};
+    synapses.forEach(function (s) { synapseDegree[s.a] = (synapseDegree[s.a] || 0) + 1; synapseDegree[s.b] = (synapseDegree[s.b] || 0) + 1; });
+  }
+  indexAll();
 
   // ── vector helpers ───────────────────────────────────────────────────
   function vAdd(a, b) { return { x: a.x + b.x, y: a.y + b.y, z: a.z + b.z }; }
@@ -254,6 +258,91 @@
       layoutBranch(kid, kidPos, kidDir, depth + 1);
     });
   }
+
+  // ── grow/shrink on real change — creation/removal animates instead of
+  // popping. relayout() wraps layout() with a before/after id diff: newly
+  // appeared nodes get a birth timestamp (render loop eases their scale/
+  // alpha in), newly vanished nodes are frozen at their last position and
+  // kept in dyingNodes just long enough to ease out, instead of vanishing
+  // the instant they leave the tree. The very first layout (page load)
+  // skips this — nothing to diff against yet, and a simultaneous "bloom"
+  // of the whole tree is a different effect from a single real change. ──
+  var dyingNodes = []; // {node, removedAt}
+  var BIRTH_MS = 550, DEATH_MS = 550;
+
+  function relayout(animate) {
+    var oldIds = {};
+    allNodes.forEach(function (nd) { oldIds[nd.id] = nd; });
+
+    layout();
+
+    if (!animate) return;
+    var now = performance.now();
+    var newIds = {};
+    allNodes.forEach(function (nd) {
+      newIds[nd.id] = true;
+      if (!oldIds[nd.id]) nd._bornAt = now;
+    });
+    Object.keys(oldIds).forEach(function (id) {
+      if (!newIds[id]) dyingNodes.push({ node: oldIds[id], removedAt: now });
+    });
+  }
+
+  function birthFactor(nd) {
+    if (!nd._bornAt) return 1;
+    var t = (performance.now() - nd._bornAt) / BIRTH_MS;
+    return t >= 1 ? 1 : Math.max(0, t);
+  }
+
+  // Swaps in a freshly-generated tree/synapses (real regeneration — a skill
+  // was added/edited/removed) without a page reload. Preserves which
+  // expandable nodes were open, then animates the diff the same way
+  // relayout() does for expand/collapse, so a real change reads as "this
+  // grew a branch" instead of the whole graph flashing back into existence.
+  function updateTreeData(newTree, newSynapses) {
+    var expandState = {};
+    (function walk(n) {
+      if (n.expandable) expandState[n.id] = n.expanded;
+      n.children.forEach(walk);
+    })(tree);
+    (function applyState(n) {
+      if (n.expandable && expandState.hasOwnProperty(n.id)) n.expanded = expandState[n.id];
+      n.children.forEach(applyState);
+    })(newTree);
+
+    tree = newTree;
+    synapses = newSynapses;
+    indexAll();
+    relayout(true);
+  }
+  window.updateTreeData = updateTreeData;
+
+  // Single-node add/remove for the demo script (demo.py via DesktopLive's
+  // demo-events.jsonl channel) — a lighter-weight sibling of updateTreeData
+  // for showing the grow/shrink animation without regenerating anything
+  // real. Demo nodes are tagged _demo so they're unmistakable if one were
+  // ever left behind.
+  function demoAddNode(node, parentId) {
+    var parent = byId[parentId];
+    if (!parent || byId[node.id]) return;
+    node.children = node.children || [];
+    node.expandable = false; node.expanded = true;
+    node._demo = true;
+    parent.children.push(node);
+    indexAll();
+    relayout(true);
+  }
+  function demoRemoveNode(nodeId) {
+    var node = byId[nodeId];
+    if (!node || !node.parent) return;
+    var parent = node.parent;
+    parent.children = parent.children.filter(function (c) { return c.id !== nodeId; });
+    indexAll();
+    relayout(true);
+  }
+  window.demoAddNode = demoAddNode;
+  window.demoRemoveNode = demoRemoveNode;
+
   layout();
 
   // ── camera ───────────────────────────────────────────────────────────
@@ -543,7 +632,7 @@
     if (hovered) {
       if (hovered.expandable) {
         hovered.expanded = !hovered.expanded;
-        layout();
+        relayout(true);
       }
       selected = selected === hovered.id ? null : hovered.id;
       if (selected) { selNote.classList.add("show"); document.getElementById("sel-name").textContent = selected; }
@@ -640,9 +729,12 @@
       var depthT = Math.max(0.35, Math.min(1.5, p.scale / 1));
       var baseR = nd.id === "MARVIN" ? 8 : hasChildren ? 6 : 3.6;
       var synDeg = synapseDegree[nd.id] || 0;
-      var r = (baseR + synDeg * 0.7) * depthT;
+      var bf = birthFactor(nd); // 0..1, eases a newly-created node in instead of popping
+      var r = (baseR + synDeg * 0.7) * depthT * bf;
       var color = CAT[nd.cat].color;
       var pulse = pulseIntensityOf(nd.id);
+
+      if (r < 0.4) return; // still basically zero-sized — nothing to draw yet
 
       if (pulse > 0) {
         // expanding ripple — the node's own "just fired" signal
@@ -656,7 +748,7 @@
       ctx.beginPath();
       ctx.arc(p.sx, p.sy, r + pulse * 2, 0, Math.PI * 2);
       ctx.fillStyle = dim ? "rgba(137,135,129,0.25)" : (pulse > 0 ? "rgba(" + SYNAPSE_COLOR + ",1)" : color);
-      ctx.globalAlpha = dim ? 0.4 : Math.min(1, 0.6 + depthT * 0.4 + pulse * 0.4);
+      ctx.globalAlpha = bf * (dim ? 0.4 : Math.min(1, 0.6 + depthT * 0.4 + pulse * 0.4));
       ctx.fill();
 
       if (nd.expandable) {
@@ -674,14 +766,33 @@
       ctx.globalAlpha = 1;
 
       var alwaysLabel = nd.depth <= 2; // MARVIN, the 4 trunks, and the 5 skill sub-categories
-      if (alwaysLabel || r > 6 || isSel || isHover || isConn || pulse > 0.1) {
+      if (bf > 0.4 && (alwaysLabel || r > 6 || isSel || isHover || isConn || pulse > 0.1)) {
         ctx.font = (alwaysLabel || pulse > 0.1 ? "600 " : "400 ") + Math.max(9, (alwaysLabel ? 11.5 : 10) * Math.min(1, depthT)) + "px ui-monospace, 'SF Mono', Menlo, Consolas, monospace";
-        var la = dim ? 0.3 : Math.min(1, 0.6 + depthT * 0.4 + pulse * 0.4);
+        var la = bf * (dim ? 0.3 : Math.min(1, 0.6 + depthT * 0.4 + pulse * 0.4));
         ctx.fillStyle = pulse > 0.1 ? "rgba(" + SYNAPSE_COLOR + "," + la + ")" : alwaysLabel ? "rgba(255,255,255," + la + ")" : "rgba(195,194,183," + la + ")";
         ctx.textAlign = "center";
         ctx.fillText(nd.id, p.sx, p.sy - r - 6);
       }
     });
+
+    // dying nodes — frozen at their last real position, shrinking/fading
+    // out instead of vanishing the instant they leave the tree
+    if (dyingNodes.length) {
+      var now2 = performance.now();
+      dyingNodes = dyingNodes.filter(function (d) { return now2 - d.removedAt < DEATH_MS; });
+      dyingNodes.forEach(function (d) {
+        var t = (now2 - d.removedAt) / DEATH_MS;
+        var shrink = 1 - t;
+        var p = project(d.node); // frozen position, no sway — it's leaving, not living
+        var baseR = d.node.id === "MARVIN" ? 8 : d.node.children.length ? 6 : 3.6;
+        var r = baseR * Math.max(0.35, Math.min(1.5, p.scale)) * shrink;
+        if (r < 0.4) return;
+        ctx.beginPath();
+        ctx.arc(p.sx, p.sy, r, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(" + SYNAPSE_COLOR + "," + (shrink * 0.7) + ")";
+        ctx.fill();
+      });
+    }
 
     requestAnimationFrame(draw);
   }

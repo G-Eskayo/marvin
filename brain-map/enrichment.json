@@ -95,7 +95,8 @@
   },
 
   "extra_synapses": [
-    { "a": "creative", "b": "qa-agent", "label": "imports qa_query.py directly for cross-domain synthesis — real, but never declared in frontmatter", "type": "undeclared" },
+    { "a": "qa-agent", "b": "qa-knowledge", "label": "qa_scan.py/qa_capture.py write scan results and manual captures here — qa-agent's core purpose, previously missing from this graph entirely", "type": "hook" },
+    { "a": "creative", "b": "qa-knowledge", "label": "cross_domain_synthesis.py directly imports qa_query.py and reads this — not a qa-agent invocation, bypasses it entirely; never declared in frontmatter", "type": "undeclared" },
     { "a": "handoff", "b": "emit-resume-prompt.py", "label": "PostToolUse hook fires on every handoff-doc write", "type": "hook" },
     { "a": "handoff", "b": "qa_session_capture.py", "label": "PostToolUse hook fires on every handoff-doc write", "type": "hook" },
     { "a": "handoff", "b": "improvement_sweep.py", "label": "PostToolUse hook fires on every handoff-doc write", "type": "hook" },

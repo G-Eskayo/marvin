@@ -25,6 +25,10 @@ MANIFEST_PATH = Path.home() / ".claude" / "manifest.json"
 ENRICHMENT_PATH = HERE / "enrichment.json"
 TEMPLATE_PATH = HERE / "template.html"
 OUTPUT_PATH = HERE / "index.html"
+# Plain-JSON sidecar of the same data embedded in index.html — DesktopLive
+# reads this instead of scraping JS out of the HTML, since Swift has a real
+# JSON decoder and regex-extracting a <script> block is fragile by nature.
+TREE_DATA_PATH = HERE / "tree-data.json"
 
 SKILLS_DIR = Path.home() / ".agents" / "skills"
 
@@ -180,6 +184,9 @@ def main() -> None:
     )
 
     OUTPUT_PATH.write_text(template, encoding="utf-8")
+    TREE_DATA_PATH.write_text(
+        json.dumps({"tree": tree, "synapses": synapses}, ensure_ascii=False), encoding="utf-8"
+    )
     n_skills = len(manifest["index"])
     print(f"Generated {OUTPUT_PATH} — {n_skills} skills, {len(synapses)} synapses")
 
