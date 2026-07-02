@@ -322,6 +322,20 @@
   // for showing the grow/shrink animation without regenerating anything
   // real. Demo nodes are tagged _demo so they're unmistakable if one were
   // ever left behind.
+  // A node quietly appearing under whichever branch happened to be off-
+  // camera is easy to miss entirely — direct user feedback after the first
+  // version had no camera movement on create/remove, only on activity.
+  // Reuses the exact same camera-ease + pulse-ripple triggerActivity
+  // already uses, so "look here, something changed" reads identically
+  // whether it's a real pulse or a create/destroy event.
+  function nudgeCameraAndPulse(node) {
+    activePulses.push({ id: node.id, start: performance.now(), duration: 3200 });
+    if (!dragging) {
+      cameraTargetNode = node;
+      cameraEaseUntil = performance.now() + 4200;
+    }
+  }
+
   function demoAddNode(node, parentId) {
     var parent = byId[parentId];
     if (!parent || byId[node.id]) return;
@@ -331,10 +345,12 @@
     parent.children.push(node);
     indexAll();
     relayout(true);
+    nudgeCameraAndPulse(node);
   }
   function demoRemoveNode(nodeId) {
     var node = byId[nodeId];
     if (!node || !node.parent) return;
+    nudgeCameraAndPulse(node); // camera turns to it before it shrinks away
     var parent = node.parent;
     parent.children = parent.children.filter(function (c) { return c.id !== nodeId; });
     indexAll();
@@ -427,11 +443,7 @@
   function triggerActivity(skillId) {
     var node = byId[skillId];
     if (!node) return;
-    activePulses.push({ id: skillId, start: performance.now(), duration: 3200 });
-    if (!dragging) {
-      cameraTargetNode = node;
-      cameraEaseUntil = performance.now() + 4200;
-    }
+    nudgeCameraAndPulse(node);
     // exposed for DesktopLive: fetch() to a local file from a file://-loaded
     // WKWebView isn't guaranteed to work across WebKit versions, so the
     // Swift host pushes activity directly via evaluateJavaScript instead of
