@@ -74,6 +74,17 @@ def extract_project(text: str) -> str:
     return "session"
 
 
+def extract_outcome(decision: str) -> str:
+    """Best-effort: handoff decision bullets commonly follow a
+    'decision — consequence' shape (em-dash separator), e.g. 'X is
+    inherently necessary — not worth touching'. Only trust that
+    unambiguous separator — an empty outcome beats a wrong guess."""
+    for sep in (" — ", " -- "):
+        if sep in decision:
+            return decision.split(sep, 1)[1].strip()
+    return ""
+
+
 def extract_decisions(text: str) -> list[str]:
     """Extract bullet points from ## Key decisions made section."""
     m = re.search(r"##\s*Key decisions made\s*\n(.*?)(?=\n##|\Z)", text,
@@ -135,7 +146,7 @@ def main() -> None:
             source="session",
             confidence="medium",
             tags=tags,
-            outcome="",
+            outcome=extract_outcome(decision),
         )
         if store_entry(entry):
             stored += 1
