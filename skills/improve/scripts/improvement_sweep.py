@@ -16,8 +16,15 @@ from pathlib import Path
 HANDOFF_DIR   = Path.home() / ".claude" / "handoffs"
 QUEUE_FILE    = Path.home() / ".claude" / "improvement-queue.md"
 QA_SCRIPTS    = Path.home() / ".agents" / "skills" / "qa-agent" / "scripts"
+SAFETY_MONITOR_SCRIPTS = Path.home() / ".agents" / "skills" / "safety-monitor" / "scripts"
 
 sys.path.insert(0, str(QA_SCRIPTS))
+sys.path.insert(0, str(SAFETY_MONITOR_SCRIPTS))
+try:
+    from verify import pass_or_quarantine
+    _SAFETY_MONITOR_AVAILABLE = True
+except ImportError:
+    _SAFETY_MONITOR_AVAILABLE = False
 
 
 # ── project path resolution ────────────────────────────────────────────────────
@@ -99,7 +106,9 @@ def format_issue(entry: dict) -> str:
 
 # ── queue writer ───────────────────────────────────────────────────────────────
 
-def append_to_queue(project_name: str, issues: list[dict]) -> None:
+def append_to_queue(project_name: str, issues: list[dict]) -> bool:
+    """Returns True if the block was appended, False if safety-monitor
+    quarantined it instead (garbled/mismatched entry — see rubrics/improvement_sweep.md)."""
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     lines = [f"\n---\n## {date_str} — {project_name}\n"]
     for issue in issues:
@@ -110,11 +119,20 @@ def append_to_queue(project_name: str, issues: list[dict]) -> None:
     )
     block = "\n".join(lines)
 
+    # No LLM generates this content (it's a deterministic regex/sort over the
+    # scan output), so there's no hallucination risk in the generative sense —
+    # what this actually catches is an extraction bug: a [KIND] tag that
+    # doesn't match its message, a garbled/truncated fragment, or a malformed
+    # file path.
+    if _SAFETY_MONITOR_AVAILABLE and not pass_or_quarantine(block, loop_name="improvement_sweep"):
+        return False
+
     if not QUEUE_FILE.exists():
         QUEUE_FILE.write_text("# Improvement Queue\n\n" + block)
     else:
         existing = QUEUE_FILE.read_text()
         QUEUE_FILE.write_text(existing + block)
+    return True
 
 
 # ── main ───────────────────────────────────────────────────────────────────────
@@ -162,12 +180,18 @@ def main() -> None:
         return
 
     try:
-        append_to_queue(project_name, issues)
-        print(
-            f"\n[improve] {len(issues)} improvement(s) queued for '{project_name}' "
-            f"→ ~/.claude/improvement-queue.md",
-            flush=True,
-        )
+        if append_to_queue(project_name, issues):
+            print(
+                f"\n[improve] {len(issues)} improvement(s) queued for '{project_name}' "
+                f"→ ~/.claude/improvement-queue.md",
+                flush=True,
+            )
+        else:
+            print(
+                f"\n[improve] {len(issues)} improvement(s) for '{project_name}' "
+                f"quarantined by safety-monitor — see ~/.claude/quarantine.md",
+                flush=True,
+            )
     except Exception:
         return
 
