@@ -10,6 +10,14 @@ from pathlib import Path
 DIGEST_DIR = Path.home() / ".claude" / "research-digest"
 CACHE_DIR = Path.home() / ".claude" / "research-feed"
 CHROMA_PATH = Path.home() / ".claude" / "chroma"
+SAFETY_MONITOR_SCRIPTS = Path.home() / ".agents" / "skills" / "safety-monitor" / "scripts"
+
+sys.path.insert(0, str(SAFETY_MONITOR_SCRIPTS))
+try:
+    from verify import pass_or_quarantine
+    _SAFETY_MONITOR_AVAILABLE = True
+except ImportError:
+    _SAFETY_MONITOR_AVAILABLE = False
 
 
 def _resolve_claude_bin() -> str:
@@ -143,11 +151,26 @@ def generate() -> Path | None:
         print(f"[colony] claude call failed: {proc.stderr[:200]}", file=sys.stderr)
         return None
 
+    body = proc.stdout.strip()
+
+    # Score the synthesised digest before it ships — the actual failure mode
+    # this guards is a relevance claim that doesn't survive reading the
+    # summary carefully (e.g. a training technique claimed to transfer to a
+    # system that only orchestrates a hosted model over an API).
+    if _SAFETY_MONITOR_AVAILABLE and not pass_or_quarantine(body, loop_name="research_colony"):
+        print(f"[colony] digest quarantined by safety-monitor — see ~/.claude/quarantine.md",
+              file=sys.stderr)
+        body = (
+            "_Quarantined by safety-monitor before shipping — flagged as risky "
+            "against the research_colony rubric. See `~/.claude/quarantine.md` "
+            "for the full text and to approve/modify/deny._"
+        )
+
     DIGEST_DIR.mkdir(parents=True, exist_ok=True)
     out_path.write_text(
         f"# Research Digest — {today}\n\n"
         f"*{len(all_items)} items fetched · {len(correlated)} correlated*\n\n"
-        + proc.stdout.strip()
+        + body
         + "\n"
     )
     print(f"[colony] research digest written → {out_path}", file=sys.stderr)

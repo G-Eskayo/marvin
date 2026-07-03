@@ -47,8 +47,15 @@ def _resolve_claude_bin() -> str:
     )
 RESULTS_MD   = Path.home() / "marvin-bench" / "RESULTS.md"
 QA_SCRIPTS   = Path.home() / ".agents" / "skills" / "qa-agent" / "scripts"
+SAFETY_MONITOR_SCRIPTS = Path.home() / ".agents" / "skills" / "safety-monitor" / "scripts"
 
 sys.path.insert(0, str(QA_SCRIPTS))
+sys.path.insert(0, str(SAFETY_MONITOR_SCRIPTS))
+try:
+    from verify import pass_or_quarantine
+    _SAFETY_MONITOR_AVAILABLE = True
+except ImportError:
+    _SAFETY_MONITOR_AVAILABLE = False
 
 TODAY = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 OUT_FILE = DIGEST_DIR / f"{TODAY}.md"
@@ -271,6 +278,19 @@ def main() -> None:
 
     print("[daily-digest] Calling claude...", flush=True)
     content = call_claude(prompt)
+
+    # Score the brainstormed content before it ships — a confident, specific
+    # sounding claim about a file/skill/metric that doesn't exist is the
+    # actual failure mode this guards, not just factual disagreement. Skip
+    # verifying a known call_claude() failure string — nothing to catch there.
+    already_failed = content.startswith("(claude call failed:")
+    if _SAFETY_MONITOR_AVAILABLE and not already_failed and not pass_or_quarantine(content, loop_name="daily_digest"):
+        print("[daily-digest] content quarantined by safety-monitor — see ~/.claude/quarantine.md", flush=True)
+        content = (
+            "_Quarantined by safety-monitor before shipping — flagged as risky "
+            "against the daily_digest rubric. See `~/.claude/quarantine.md` for "
+            "the full text and to approve/modify/deny._"
+        )
 
     header = (
         f"# MARVIN Daily Digest — {TODAY}\n\n"
