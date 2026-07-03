@@ -25,7 +25,7 @@ SKILL_TAGS = {
     "research":                     {"tags": ["intent:research", "intent:investigate", "intent:evaluate", "intent:learn", "type:skill"]},
     "self-improve":                 {"tags": ["intent:improve", "intent:learn", "intent:codify", "intent:meta", "type:skill"],
                                      "calls": ["lexicon", "write-a-skill"]},
-    "self-optimize":                {"tags": ["intent:optimize", "intent:review", "intent:meta", "type:skill"]},
+    "architecture-review":          {"tags": ["intent:optimize", "intent:review", "intent:meta", "type:skill"]},
     "setup-matt-pocock-skills":     {"tags": ["intent:setup", "intent:initialize", "intent:configure", "type:skill"]},
     "tdd":                          {"tags": ["domain:testing", "intent:test", "intent:tdd", "intent:build", "type:skill"],
                                      "calls": ["diagnose"]},

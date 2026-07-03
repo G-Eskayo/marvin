@@ -352,11 +352,14 @@ print_banner() {
 }
 
 print_summary() {
+    local skill_count
+    skill_count=$(find "$SKILLS_DIR" -mindepth 1 -maxdepth 1 -type d -exec test -e "{}/SKILL.md" \; -print 2>/dev/null | wc -l | tr -d ' ')
+
     echo ""
     echo -e "${GREEN}${BOLD}  Setup complete.${NC}"
     echo ""
     echo -e "  What was installed:"
-    echo -e "  ${BLUE}~/.agents/skills/${NC}     — 20 AI skills"
+    echo -e "  ${BLUE}~/.agents/skills/${NC}     — $skill_count AI skills"
     echo -e "  ${BLUE}~/.agents/venv/${NC}        — Python virtualenv"
     echo -e "  ${BLUE}~/.claude/CLAUDE.md${NC}    — Global Claude instructions"
     echo -e "  ${BLUE}~/.claude/lexicon.md${NC}   — Shared vocabulary"
