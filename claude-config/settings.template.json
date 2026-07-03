@@ -19,6 +19,19 @@
           {
             "type": "command",
             "command": "{{VENV_PYTHON}} {{SKILLS_DIR}}/improve/scripts/improvement_sweep.py"
+          },
+          {
+            "type": "command",
+            "command": "{{VENV_PYTHON}} {{SKILLS_DIR}}/self-improve/scripts/background_review.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{VENV_PYTHON}} {{AGENTS_DIR}}/brain-map/scripts/skill_activity.py"
           }
         ]
       }

@@ -1,6 +1,6 @@
 ---
 name: self-improve
-description: Meta-skill that runs autonomously after every non-trivial task — no user prompt needed. Observes patterns, failures, and recurring approaches, then creates or updates skills that pass a 3-gate quality filter (recurrence, evidence, value). Auto-wires new skills into commands and routing table via wire-skill.sh.
+description: Meta-skill that runs autonomously after every non-trivial task — no user prompt needed. Observes patterns, failures, and recurring approaches, then creates or updates skills that pass a 3-gate quality filter (recurrence, evidence, value). Auto-wires new skills into commands and routing table directly (Write + Edit, no script).
 tags: [intent:improve, intent:learn, intent:codify, intent:meta, type:skill]
 calls: [lexicon, write-a-skill]
 ---
@@ -87,15 +87,17 @@ If it fails any gate, write a brief note on why and stop. Not every pattern is w
 
 ### 4. Auto-wire the skill
 
-Run the wiring script to symlink the new skill and add it to the routing table:
+No script for this — `~/.claude/commands/*.md` files are plain content files, not symlinks (verified against every existing one). Do both directly:
 
-```bash
-~/.agents/skills/self-improve/scripts/wire-skill.sh <skill-name> "<trigger description>"
-```
+1. Write `~/.claude/commands/<skill-name>.md` with exactly this template:
+   ```
+   Invoke the <skill-name> skill. Read `~/.agents/skills/<skill-name>/SKILL.md` and follow its protocol.
 
-This:
-- Symlinks `~/.agents/skills/<skill-name>/SKILL.md` → `~/.claude/commands/<skill-name>.md`
-- Appends the skill to the routing table in `~/.claude/CLAUDE.md`
+   $ARGUMENTS
+   ```
+2. Edit `~/.claude/CLAUDE.md`'s routing table to append a row for the new skill.
+
+(This step used to point at `scripts/wire-skill.sh` — that file never existed. Caught 2026-07-03 while building the background reviewer below.)
 
 ### 5. Validate
 

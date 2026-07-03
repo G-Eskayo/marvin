@@ -17,7 +17,7 @@ Skills at `~/.agents/skills/`. Auto-invoke by reading `SKILL.md` when triggers m
 | `caveman` | "Caveman mode", "less tokens", "be brief", `/caveman` |
 | `write-a-skill` | "Create/write a new skill" |
 | `setup-matt-pocock-skills` | First use in new repo. Activates: triage, to-issues, to-prd. |
-| `self-improve` | Pattern worth preserving, explicit `/self-improve` request |
+| `self-improve` | Pattern worth preserving, explicit `/self-improve` request. Also runs automatically in the background after every handoff (tool-restricted reviewer, no user prompt needed). |
 | `research` | Research topic, investigate claim, evaluate technology or theory |
 | `creative` | Creative work, ideation, "be creative", "surprise me" |
 | `lexicon` | New concept crystallises, term recurs with stable meaning, "add to lexicon" |
@@ -39,9 +39,9 @@ Load `~/.claude/lexicon.md` every session. Apply defined terms without explanati
 
 Always active for dev work (writing or modifying code): `tdd` + `grill-with-docs`. Off with "skip tdd" / "skip grill" / "no tests".
 
-## Self-Optimization
+## Architecture Review Queue
 
-`~/.claude/suggestions.md` = pending queue. Check every session; surface count only ("N suggestions pending"). Never implement without explicit approval.
+`~/.claude/suggestions.md` = pending queue (fed by the `architecture-review` skill). Check every session; surface count only ("N suggestions pending"). Never implement without explicit approval.
 
 ## Session Start
 

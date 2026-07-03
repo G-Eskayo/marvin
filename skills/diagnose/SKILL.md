@@ -77,6 +77,10 @@ If you cannot state the prediction, the hypothesis is a vibe — discard or shar
 
 **Show the ranked list to the user before testing.** They often have domain knowledge that re-ranks instantly ("we just deployed a change to #3"), or know hypotheses they've already ruled out. Cheap checkpoint, big time saver. Don't block on it — proceed with your ranking if the user is AFK.
 
+**MARVIN-specific gotcha classes** — check these early when the symptom fits, before deeper instrumentation:
+- *Script works manually, fails/no-ops silently under launchd or cron*: the scheduled job's PATH doesn't include the interactive shell's additions. A script that shells out to a CLI (e.g. `claude`) can resolve to nothing and have its error swallowed into the very output it's supposed to produce — confirmed 2026-07-02, where this masked a broken daily-digest cron for days because the "digest" was literally the error string.
+- *A hook fires on unrelated files/edits repo-wide*: Claude Code hook matchers key on tool name (Write/Edit), not path — they do not scope by file location unless the hook script does its own path filtering. Confirmed 2026-07-02 on `rebuild-manifest.py`, which ran on every Write/Edit anywhere until path-scoped explicitly.
+
 ## Phase 4 — Instrument
 
 Each probe must map to a specific prediction from Phase 3. **Change one variable at a time.**

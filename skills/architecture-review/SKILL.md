@@ -16,8 +16,8 @@ Review these systems:
 - `~/.claude/CLAUDE.md` — routing table, instructions, verbosity
 - `~/.claude/lexicon.md` — term drift, redundancy, coverage
 - `~/.agents/skills/*/SKILL.md` — size, clarity, overlap between skills
-- `~/.claude/commands/` — broken symlinks, stale entries
-- `~/.agents/skills/self-improve/scripts/wire-skill.sh` — reliability, edge cases
+- `~/.claude/commands/` — stale or missing wrapper files (plain content files, not symlinks — verify against `~/.agents/skills/`)
+- `~/.agents/skills/self-improve/scripts/background_review.py` — reliability, edge cases
 - `~/.claude/handoffs/` — old handoffs to archive or prune
 - `~/.claude/suggestions.md` — stale pending items to flag
 
@@ -95,6 +95,6 @@ Ranked by value:
 1. **Token reduction** — shorter SKILL.md files, compressed routing descriptions, deduplicated instructions
 2. **Retrieval speed** — routing table accuracy (fewer false positives), skill descriptions that match faster
 3. **Organization** — related skills grouped, dead files removed, naming consistent
-4. **Pipeline logic** — wire-skill.sh robustness, handoff flow, session-start checks
-5. **Reliability** — broken symlinks, missing dirs, scripts that fail silently
+4. **Pipeline logic** — background_review.py robustness, handoff flow, session-start checks
+5. **Reliability** — hardcoded/stale counts, scripts referenced but not present, scripts that fail silently
 6. **Robustness** — graceful degradation when files missing, fallback behavior documented

@@ -307,18 +307,26 @@ configure_claude() {
 
 configure_hook() {
     local settings="$CLAUDE_DIR/settings.local.json"
+    local template="$MARVIN_DIR/claude-config/settings.template.json"
+    # Count from the template itself rather than hardcoding a number here —
+    # a hardcoded "4" already went stale once (found 2026-07-02) when a 5th
+    # hook was added and this string wasn't updated.
+    local hook_count
+    hook_count=$(grep -c '"command"' "$template")
 
     if [[ -f "$settings" ]]; then
-        warn "settings.local.json exists — add these 4 PostToolUse hooks manually if needed:"
+        warn "settings.local.json exists — add these $hook_count PostToolUse hooks manually if needed:"
         warn "  $VENV_PYTHON $SKILLS_DIR/self-improve/scripts/rebuild-manifest.py"
         warn "  $VENV_PYTHON $SKILLS_DIR/handoff/scripts/emit-resume-prompt.py"
         warn "  $VENV_PYTHON $SKILLS_DIR/qa-agent/scripts/qa_session_capture.py"
         warn "  $VENV_PYTHON $SKILLS_DIR/improve/scripts/improvement_sweep.py"
-        warn "  See: $MARVIN_DIR/claude-config/settings.template.json"
+        warn "  $VENV_PYTHON $SKILLS_DIR/self-improve/scripts/background_review.py"
+        warn "  $VENV_PYTHON $AGENTS_DIR/brain-map/scripts/skill_activity.py  (matcher: Skill, not Write|Edit)"
+        warn "  See: $template"
     else
-        sed "s|{{VENV_PYTHON}}|$VENV_PYTHON|g; s|{{SKILLS_DIR}}|$SKILLS_DIR|g" \
-            "$MARVIN_DIR/claude-config/settings.template.json" > "$settings"
-        log "Installed settings.local.json with all 4 PostToolUse hooks"
+        sed "s|{{VENV_PYTHON}}|$VENV_PYTHON|g; s|{{SKILLS_DIR}}|$SKILLS_DIR|g; s|{{AGENTS_DIR}}|$AGENTS_DIR|g" \
+            "$template" > "$settings"
+        log "Installed settings.local.json with all $hook_count PostToolUse hooks"
     fi
 }
 
