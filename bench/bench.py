@@ -238,7 +238,7 @@ def run_once(task: dict, profile: str, capture_snapshot: bool = False, model: st
     # discriminators — the answer must ONLY be reachable via a skill/tool, not
     # disk) can set task.json's "disallow_tools". A prose "don't read files"
     # instruction in the prompt is not enforceable — Read isn't gated by the
-    # Bash permission system and a model can just use it anyway. See
+    # Bash permission system and a model can use it anyway. See
     # marvin-bench-harness memory / task-014's compromise, Run 15.
     if task.get("disallow_tools"):
         cmd += ["--disallowedTools", ",".join(task["disallow_tools"])]

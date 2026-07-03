@@ -28,7 +28,7 @@ class SortedList:
 
     def discard(self, value):
         """Remove the first occurrence of value. Does nothing if value is absent."""
-        # bug: removes ALL occurrences, not just the first
+        # bug: removes ALL occurrences, not the first
         self._data = [x for x in self._data if x != value]
 
     def __len__(self):
