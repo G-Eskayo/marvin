@@ -7,7 +7,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/gileskayo/.agents/brain-map/DesktopLive/DesktopLive</string>
+        <string>/Users/gileskayo/.agents/brain-map/DesktopLive/DesktopLive.app/Contents/MacOS/DesktopLive</string>
     </array>
 
     <key>RunAtLoad</key>

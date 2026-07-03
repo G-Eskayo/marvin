@@ -14,7 +14,37 @@ echo "→ Generating the graph from the live manifest..."
 ~/.agents/venv/bin/python "$BRAIN_MAP_DIR/generate.py"
 
 echo "→ Compiling DesktopLive..."
-( cd "$BRAIN_MAP_DIR/DesktopLive" && swiftc -O main.swift -o DesktopLive )
+APP_BUNDLE="$BRAIN_MAP_DIR/DesktopLive/DesktopLive.app"
+APP_BIN_DIR="$APP_BUNDLE/Contents/MacOS"
+mkdir -p "$APP_BIN_DIR"
+( cd "$BRAIN_MAP_DIR/DesktopLive" && swiftc -O main.swift -o "$APP_BIN_DIR/DesktopLive" )
+
+# A bare binary (no .app bundle) leaves LSUIElement/accessory status to a
+# runtime NSApp.setActivationPolicy() call inside applicationDidFinishLaunching
+# — which runs *after* the OS has already registered the process, so there's
+# a real window where it can flash into the Dock/menu bar (seen live on two
+# machines). Info.plist's LSUIElement is read before the app's own code runs
+# at all, closing that gap for good.
+cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>DesktopLive</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.marvin.desktoplive</string>
+    <key>CFBundleName</key>
+    <string>DesktopLive</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>LSUIElement</key>
+    <true/>
+</dict>
+</plist>
+PLIST
 
 # Unload first if already installed (allows re-install)
 if launchctl list | grep -q "com.marvin.desktoplive"; then

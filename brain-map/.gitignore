@@ -3,4 +3,5 @@ tree-data.json
 activity.jsonl
 demo-events.jsonl
 DesktopLive/DesktopLive
+DesktopLive/DesktopLive.app
 *.log
