@@ -20,6 +20,12 @@
         <integer>30</integer>
     </dict>
 
+    <!-- Pin cwd: call_claude() runs a real agentic session that reads repo
+         files to ground the digest, so an unpinned/default cwd changes what
+         it finds and how long that takes. -->
+    <key>WorkingDirectory</key>
+    <string>/Users/gileskayo/marvin</string>
+
     <key>StandardOutPath</key>
     <string>/Users/gileskayo/.claude/logs/daily-digest.log</string>
     <key>StandardErrorPath</key>

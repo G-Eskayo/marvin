@@ -172,15 +172,21 @@ One specific improvement actionable in under 2 hours with immediate impact. Name
 
 
 def call_claude(prompt: str) -> str:
+    # Runs a full agentic session (CLAUDE.md discovery, tool use), not a scoped
+    # completion — it genuinely reads repo files to ground the digest, which is
+    # why this routinely takes 90-120s+. Found 2026-07-03: the old 120s cap was
+    # tight enough that a normal run timed out; timeout raised to give headroom.
     try:
         claude_bin = _resolve_claude_bin()
         proc = subprocess.run(
             [claude_bin, "-p", prompt, "--output-format", "text"],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True, text=True, timeout=240,
         )
-        return proc.stdout.strip()
     except Exception as exc:
         return f"(claude call failed: {exc})"
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return f"(claude call failed: {proc.stderr[:200] or 'empty output, rc=' + str(proc.returncode)})"
+    return proc.stdout.strip()
 
 
 # ── main ───────────────────────────────────────────────────────────────────────
