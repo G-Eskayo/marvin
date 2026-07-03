@@ -57,7 +57,19 @@ def is_append_only_extension(older: list[str], newer: list[str]) -> tuple[bool, 
 
 
 def main() -> int:
-    repo = Path(sys.argv[1]).expanduser() if len(sys.argv) > 1 else Path.home() / ".agents"
+    if len(sys.argv) > 1:
+        repo = Path(sys.argv[1]).expanduser()
+    else:
+        # On a machine where ~/.agents is a deployed copy rather than the
+        # repo itself, retrospective-log.md there is a symlink into the
+        # real clone (see setup.sh's deploy_retrospective_log) — follow it
+        # to the actual repo root instead of failing.
+        default = Path.home() / ".agents"
+        target_file = default / FILE_REL_PATH
+        if target_file.is_symlink():
+            repo = target_file.resolve().parent
+        else:
+            repo = default
     if not (repo / ".git").exists():
         print(f"error: {repo} is not a git repo root", file=sys.stderr)
         return 2

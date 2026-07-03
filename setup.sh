@@ -285,14 +285,25 @@ deploy_brain_map() {
 # push+pull between machines merges each one's learned patterns into the
 # same shared file — the cheapest real cross-machine context sharing
 # available, so it's worth not silently skipping.
+#
+# Symlink, not copy, when $MARVIN_DIR != $AGENTS_DIR (i.e. this clone isn't
+# ~/.agents itself, the deployed-copy case). A plain copy here was found
+# live on a second machine to silently defeat both the cross-machine
+# sharing above AND the integrity checker (verify_retrospective_integrity.py
+# needs an actual git-tracked file, not a detached copy sitting outside any
+# repo) — the reviewer would keep appending to a file that never made it
+# back into git at all.
 deploy_retrospective_log() {
     local dest="$AGENTS_DIR/retrospective-log.md"
-    if [[ -f "$dest" ]]; then
+    if [[ -f "$dest" || -L "$dest" ]]; then
         log "retrospective-log.md already present — skipping"
         return
     fi
-    cp "$MARVIN_DIR/retrospective-log.md" "$dest"
-    log "Deployed retrospective-log.md"
+    if [[ "$MARVIN_DIR" == "$AGENTS_DIR" ]]; then
+        return  # same directory — nothing to deploy, it's already the tracked file
+    fi
+    ln -s "$MARVIN_DIR/retrospective-log.md" "$dest"
+    log "Symlinked retrospective-log.md -> $MARVIN_DIR/retrospective-log.md"
 }
 
 # =============================================================
