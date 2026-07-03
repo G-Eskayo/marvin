@@ -262,6 +262,22 @@ install_skills() {
     log "Skills: $installed installed, $skipped already present"
 }
 
+# brain-map/ lives at the top level of this repo, not under skills/, so
+# install_skills() above never copies it — found by actually running this
+# script on a second machine: install.sh assumed ~/.agents/brain-map already
+# existed and failed with "No such file or directory".
+deploy_brain_map() {
+    local dest="$AGENTS_DIR/brain-map"
+    if [[ -d "$dest" ]]; then
+        log "brain-map already present at $dest — skipping"
+        return
+    fi
+    info "Deploying brain-map to $dest..."
+    cp -r "$MARVIN_DIR/brain-map" "$dest"
+    chmod +x "$dest/install.sh"
+    log "brain-map deployed — run bash $dest/install.sh to compile and install it (macOS only)"
+}
+
 # =============================================================
 # 7. CLAUDE CONFIGURATION
 # =============================================================
@@ -386,6 +402,7 @@ main() {
     install_deps
     install_skills
     clone_resume_tailor
+    deploy_brain_map
     configure_claude
     initial_setup
     start_ollama
