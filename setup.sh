@@ -278,6 +278,23 @@ deploy_brain_map() {
     log "brain-map deployed — run bash $dest/install.sh to compile and install it (macOS only)"
 }
 
+# retrospective-log.md is the same story as brain-map — a top-level file
+# install_skills() never touches. It's also load-bearing now: the
+# background reviewer hook (self-improve/scripts/background_review.py)
+# appends to it after every handoff, and since it's git-tracked, a
+# push+pull between machines merges each one's learned patterns into the
+# same shared file — the cheapest real cross-machine context sharing
+# available, so it's worth not silently skipping.
+deploy_retrospective_log() {
+    local dest="$AGENTS_DIR/retrospective-log.md"
+    if [[ -f "$dest" ]]; then
+        log "retrospective-log.md already present — skipping"
+        return
+    fi
+    cp "$MARVIN_DIR/retrospective-log.md" "$dest"
+    log "Deployed retrospective-log.md"
+}
+
 # =============================================================
 # 7. CLAUDE CONFIGURATION
 # =============================================================
@@ -411,6 +428,7 @@ main() {
     install_skills
     clone_resume_tailor
     deploy_brain_map
+    deploy_retrospective_log
     configure_claude
     initial_setup
     start_ollama
