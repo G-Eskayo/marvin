@@ -30,6 +30,16 @@ AGENTS_DIR = Path.home() / ".agents"
 SELF_IMPROVE_DIR = AGENTS_DIR / "skills" / "self-improve"
 LOCK_FILE = SELF_IMPROVE_DIR / ".background_review.lock"
 LOG_FILE = SELF_IMPROVE_DIR / ".background_review.log"
+RETRO_LOG = AGENTS_DIR / "retrospective-log.md"
+SAFETY_MONITOR_SCRIPTS = AGENTS_DIR / "skills" / "safety-monitor" / "scripts"
+
+sys.path.insert(0, str(SAFETY_MONITOR_SCRIPTS))
+try:
+    from verify import verify, quarantine  # noqa: E402
+    from calibrate import get_tau  # noqa: E402
+    _SAFETY_MONITOR_AVAILABLE = True
+except ImportError:
+    _SAFETY_MONITOR_AVAILABLE = False
 
 # Handoffs can fire more than once in a very active session — without a
 # cooldown, each would spawn its own concurrent `claude -p` review, racing
@@ -82,6 +92,42 @@ Handoff to review:
 """
 
 
+def _verify_and_reconcile(before: str, log) -> None:
+    """Post-hoc check on what the review actually appended to the append-only
+    retrospective-log.md — the reviewer itself has Write/Edit and no
+    verification gate, so this is the only check between it and a permanent,
+    git-tracked line. Reverting an unflagged append here is safe: it happens
+    before any git commit, and verify_retrospective_integrity.py only checks
+    the working tree against the last *commit*, not against this script."""
+    after = RETRO_LOG.read_text() if RETRO_LOG.exists() else ""
+    if after == before:
+        log.write("VERIFY: no new retrospective-log.md entry — nothing to check\n")
+        return
+    if not after.startswith(before):
+        log.write("VERIFY: retrospective-log.md changed non-additively — leaving "
+                   "as-is for verify_retrospective_integrity.py to catch\n")
+        return
+
+    new_lines = after[len(before):].strip()
+    if not new_lines:
+        return
+
+    if not _SAFETY_MONITOR_AVAILABLE:
+        log.write(f"VERIFY: safety-monitor unavailable, appended unchecked: {new_lines!r}\n")
+        return
+
+    score = verify(new_lines, loop_name="self_improve")
+    tau = get_tau("self_improve")
+    if score >= tau:
+        RETRO_LOG.write_text(before)
+        quarantine(new_lines, score, "self_improve", tau,
+                   reason="flagged before landing in retrospective-log.md; append reverted")
+        log.write(f"VERIFY: QUARANTINED (score {score:.2f} >= tau {tau:.2f}), "
+                  f"reverted append, see ~/.claude/quarantine.md\n")
+    else:
+        log.write(f"VERIFY: passed (score {score:.2f} < tau {tau:.2f})\n")
+
+
 def run_review(handoff_content: str) -> None:
     """Runs synchronously — only ever called from the already-detached
     relaunch below, so blocking here doesn't stall the interactive session.
@@ -97,6 +143,7 @@ def run_review(handoff_content: str) -> None:
         return
 
     prompt = REVIEW_PROMPT_TEMPLATE.format(handoff_content=handoff_content)
+    before = RETRO_LOG.read_text() if RETRO_LOG.exists() else ""
 
     with LOG_FILE.open("a") as log:
         log.write(f"\n=== run {datetime.now(timezone.utc).isoformat()} ===\n")
@@ -116,6 +163,8 @@ def run_review(handoff_content: str) -> None:
             stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
         )
         log.write(f"=== end (exit {proc.returncode}) ===\n")
+        if proc.returncode == 0:
+            _verify_and_reconcile(before, log)
 
 
 def main() -> None:
