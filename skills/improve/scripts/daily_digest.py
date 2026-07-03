@@ -8,6 +8,7 @@ Run via launchd daily or manually:
 Output: ~/.claude/daily-digest/YYYY-MM-DD.md
 """
 from __future__ import annotations
+import re
 import shutil
 import subprocess
 import sys
@@ -81,7 +82,6 @@ def recent_handoffs_summary() -> str:
                 continue
             text = f.read_text(errors="ignore")
             # extract first 300 chars of "What we were working on" section
-            import re
             m = re.search(r"##\s*What we were working on\s*\n(.*?)(?=\n##|\Z)",
                           text, re.DOTALL | re.IGNORECASE)
             snippet = m.group(1).strip()[:300] if m else text[:300]
@@ -134,6 +134,61 @@ def improvement_queue_summary() -> str:
     return "\n".join(lines[-20:])
 
 
+REVIEWER_LOG = Path.home() / ".agents" / "skills" / "self-improve" / ".background_review.log"
+FAILURE_SIGNATURES = (
+    "Not logged in", "has not been trusted", "START_FAILED",
+    "claude call failed", "Traceback (most recent call last)",
+)
+
+
+def reviewer_health_summary() -> str:
+    """Computed directly from the log, not via an LLM guess at "does this
+    look healthy" — these hooks are built to fail silently on purpose (so a
+    broken one never interrupts an interactive session), which means
+    without this, nobody would ever find out. Parses background_review.py's
+    "=== run <ts> ===" / "=== end (exit N) ===" markers into individual
+    runs and classifies each by real exit status, not vibes."""
+    if not REVIEWER_LOG.exists():
+        return "No background-reviewer log yet — either no handoff has been written, or the hook has never fired."
+
+    text = REVIEWER_LOG.read_text(errors="ignore")
+    runs = re.split(r"\n(?===[ ]run\s)", text)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+
+    total, failed, failure_details = 0, 0, []
+    for run in runs:
+        m = re.search(r"=== run (\S+) ===", run)
+        if not m:
+            continue
+        try:
+            ts = datetime.fromisoformat(m.group(1))
+        except ValueError:
+            continue
+        if ts < cutoff:
+            continue
+        total += 1
+
+        end_m = re.search(r"=== end \(exit (-?\d+)\) ===", run)
+        exit_code = int(end_m.group(1)) if end_m else None
+        hit_signature = next((sig for sig in FAILURE_SIGNATURES if sig in run), None)
+
+        if exit_code is None:
+            failed += 1
+            failure_details.append(f"{ts.strftime('%m-%d %H:%M')}: never completed (no end marker — killed, crashed, or still running)")
+        elif exit_code != 0 or hit_signature:
+            failed += 1
+            reason = hit_signature or f"exit code {exit_code}"
+            failure_details.append(f"{ts.strftime('%m-%d %H:%M')}: {reason}")
+
+    if total == 0:
+        return "No background-reviewer runs in the last 7 days."
+
+    summary = f"{total} run(s) in the last 7 days, {total - failed} succeeded, {failed} failed."
+    if failure_details:
+        summary += "\nFailures:\n" + "\n".join(f"  - {d}" for d in failure_details[:5])
+    return summary
+
+
 # ── claude call ────────────────────────────────────────────────────────────────
 
 DIGEST_PROMPT_TEMPLATE = """You are MARVIN's daily improvement analyst. Your job is to review the state of the MARVIN agent system and generate a focused, actionable daily digest.
@@ -154,6 +209,9 @@ North-star goal: MINIMIZE token usage while MAXIMIZING capability and quality.
 
 --- IMPROVEMENT QUEUE (recent) ---
 {queue}
+
+--- BACKGROUND REVIEWER HEALTH (last 7 days) ---
+{reviewer_health}
 
 Generate today's digest. Be specific — reference actual files, skills, metrics, and roadmap sections where relevant. Keep each item to 2–3 sentences.
 
@@ -200,12 +258,15 @@ def main() -> None:
 
     print("[daily-digest] Assembling context...", flush=True)
 
+    reviewer_health = reviewer_health_summary()
+
     prompt = DIGEST_PROMPT_TEMPLATE.format(
         roadmap=roadmap_summary(),
         handoffs=recent_handoffs_summary(),
         qa_kb=qa_kb_summary(),
         bench=bench_summary(),
         queue=improvement_queue_summary(),
+        reviewer_health=reviewer_health,
     )
 
     print("[daily-digest] Calling claude...", flush=True)
@@ -217,7 +278,13 @@ def main() -> None:
         f"{datetime.now(timezone.utc).strftime('%H:%M UTC')}\n\n"
     )
 
-    OUT_FILE.write_text(header + content + "\n")
+    # Written directly, not through the LLM — the whole point is a number
+    # you can trust without wondering if it got paraphrased. This is the
+    # part of the digest that actually answers "how would I know if it
+    # failed," since these hooks are built to fail silently on purpose.
+    health_section = f"## System Health\n\n{reviewer_health}\n\n---\n\n"
+
+    OUT_FILE.write_text(header + health_section + content + "\n")
     print(f"[daily-digest] Written to {OUT_FILE}", flush=True)
 
 

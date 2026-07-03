@@ -80,6 +80,7 @@ If you cannot state the prediction, the hypothesis is a vibe — discard or shar
 **MARVIN-specific gotcha classes** — check these early when the symptom fits, before deeper instrumentation:
 - *Script works manually, fails/no-ops silently under launchd or cron*: the scheduled job's PATH doesn't include the interactive shell's additions. A script that shells out to a CLI (e.g. `claude`) can resolve to nothing and have its error swallowed into the very output it's supposed to produce — confirmed 2026-07-02, where this masked a broken daily-digest cron for days because the "digest" was literally the error string.
 - *A hook fires on unrelated files/edits repo-wide*: Claude Code hook matchers key on tool name (Write/Edit), not path — they do not scope by file location unless the hook script does its own path filtering. Confirmed 2026-07-02 on `rebuild-manifest.py`, which ran on every Write/Edit anywhere until path-scoped explicitly.
+- *Derived state (manifest, index, cache) goes stale after a raw deletion*: hooks only fire on tool calls (Write/Edit), not on `rm` or other out-of-band filesystem changes — a manual `rm` on a tracked file leaves derived state pointing at something that no longer exists until a manual resync runs. Confirmed 2026-07-02: `manifest.json` stayed stale after deleting a skill file, with no hook to catch it.
 
 ## Phase 4 — Instrument
 

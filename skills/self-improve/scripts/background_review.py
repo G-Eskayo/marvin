@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 HANDOFF_DIR = Path.home() / ".claude" / "handoffs"
@@ -81,7 +82,49 @@ Handoff to review:
 """
 
 
+def run_review(handoff_content: str) -> None:
+    """Runs synchronously — only ever called from the already-detached
+    relaunch below, so blocking here doesn't stall the interactive session.
+    Writes clear start/end markers with real exit status so daily_digest.py
+    can parse actual success/failure counts instead of guessing from raw
+    output."""
+    try:
+        claude_bin = _resolve_claude_bin()
+    except FileNotFoundError as exc:
+        with LOG_FILE.open("a") as log:
+            log.write(f"\n=== run {datetime.now(timezone.utc).isoformat()} ===\n")
+            log.write(f"START_FAILED: {exc}\n")
+        return
+
+    prompt = REVIEW_PROMPT_TEMPLATE.format(handoff_content=handoff_content)
+
+    with LOG_FILE.open("a") as log:
+        log.write(f"\n=== run {datetime.now(timezone.utc).isoformat()} ===\n")
+        log.flush()
+        proc = subprocess.run(
+            [
+                claude_bin, "-p", prompt,
+                "--tools", "Read,Write,Edit",
+                # No TTY here to approve anything, and none of Read/Write/
+                # Edit needs approving anyway — Bash/WebFetch/Agent are
+                # simply not in the toolset above, which is the actual
+                # safety boundary. Without this the run just stalls
+                # waiting on a prompt no one can answer (confirmed live).
+                "--permission-mode", "bypassPermissions",
+                "--output-format", "text",
+            ],
+            stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+        )
+        log.write(f"=== end (exit {proc.returncode}) ===\n")
+
+
 def main() -> None:
+    if len(sys.argv) > 1 and sys.argv[1] == "--run-review":
+        # Relaunched-and-detached mode (see below) — read the handoff
+        # content back from the path passed as argv[2] and actually run.
+        run_review(Path(sys.argv[2]).read_text(errors="ignore"))
+        return
+
     try:
         payload = json.load(sys.stdin)
     except Exception:
@@ -105,38 +148,22 @@ def main() -> None:
     if _cooldown_active():
         return
 
-    try:
-        handoff_content = p.read_text(errors="ignore")
-    except Exception:
+    if not p.exists():
         return
 
-    try:
-        claude_bin = _resolve_claude_bin()
-    except FileNotFoundError:
-        return
-
-    prompt = REVIEW_PROMPT_TEMPLATE.format(handoff_content=handoff_content)
-
+    # Relaunch this same script, detached, with --run-review — that copy
+    # runs run_review() synchronously (safe, since it's not blocking this
+    # hook process) so it can write real start/end/exit-status markers to
+    # the log. Spawning `claude` directly here (the original approach)
+    # meant nothing after Popen() ever ran, so the log had no way to know
+    # whether a launch actually succeeded.
     try:
         LOCK_FILE.write_text(str(time.time()))
-        with LOG_FILE.open("a") as log:
-            subprocess.Popen(
-                [
-                    claude_bin, "-p", prompt,
-                    "--tools", "Read,Write,Edit",
-                    # No TTY here to approve anything, and none of Read/Write/
-                    # Edit needs approving anyway — Bash/WebFetch/Agent are
-                    # simply not in the toolset above, which is the actual
-                    # safety boundary. Without this the run just stalls
-                    # waiting on a prompt no one can answer (confirmed live).
-                    "--permission-mode", "bypassPermissions",
-                    "--output-format", "text",
-                ],
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-                start_new_session=True,  # detach fully — outlives this hook process
-            )
+        subprocess.Popen(
+            [sys.executable, str(Path(__file__).resolve()), "--run-review", str(p)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+            start_new_session=True,  # detach fully — outlives this hook process
+        )
         print("[self-improve] background review launched", flush=True)
     except Exception:
         return
