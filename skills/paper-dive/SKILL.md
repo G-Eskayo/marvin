@@ -138,6 +138,18 @@ Run `scripts/fetch_related.py` with the paper's DOI or title+keywords. Returns:
 
 Sources queried in order: Semantic Scholar API -> arXiv -> scihub.org
 
+### `/paper-graph [--depth N]`
+Recursive citation-graph traversal, building a persistent knowledge base rooted at the current
+paper (or `--slug` session's DOI). Run `scripts/paper_graph.py --slug [session-slug] --depth N`
+(default depth 2). Follows both directions — references (backward, primary-source backbone) and
+citations (forward, situational context, including likely rebuttals via a `result`-intent
+bypass) — ordered by relevance to the seed via a blended SPECTER2 + nomic-embed score, not plain
+breadth/depth-first order. Stores every paper found in the shared `paper-knowledge` ChromaDB
+collection (`~/.claude/chroma`), deduplicated across all past investigations, not just within one
+run. If the traversal's cost ceiling is reached before it naturally runs out of relevant papers to
+find, it pauses and asks whether to keep going rather than silently stopping.
+Design record: `~/.agents/docs/adr/0007`–`0011`.
+
 ### `/challenge`
 Switch to stress-test mode. The skill actively finds holes:
 - What is the weakest assumption in the paper?
