@@ -24,16 +24,24 @@ handoff, and memory systems are directly shaped by studying Hermes.
 
 ---
 
-### [Matt Pocock's Agent Skills](https://github.com/mattpocock/agent-skills)
+### [Matt Pocock's Skills](https://github.com/mattpocock/skills)
 **Standard:** [agentskills.io](https://agentskills.io)
 
 The engineering skill set installed in `skills/` originates from Matt Pocock's
-agent-skills system and the `agentskills.io` open standard. Skills including
+`skills` repo (previous link here pointed at a repo that doesn't exist —
+corrected 2026-07-07) and the `agentskills.io` open standard. Skills authored
+by Matt Pocock and used here under the agentskills.io open standard:
 `tdd`, `diagnose`, `grill-with-docs`, `zoom-out`, `handoff`, `self-improve`,
-`improve-codebase-architecture`, `prototype`, `research`, and `write-a-skill`
-were authored by Matt Pocock and are used here under the agentskills.io open
-standard. MARVIN extends this base with new skills (`qa-agent`, `caveman`,
-`index`, `lexicon`, `self-optimize`) and wires the system into Claude Code.
+`improve-codebase-architecture`, `prototype`, `research`, `write-a-skill`,
+`to-issues`, `to-prd`, `triage`, `grill-me`, and `setup-matt-pocock-skills`
+(the last five were verified directly against his repo 2026-07-07 — a real
+gap in this list before that, not previously credited here). Several were
+adapted/wired into MARVIN's own workflow beyond their original form —
+`self-improve` and `handoff` in particular gained real MARVIN-specific
+infrastructure (ChromaDB-backed quality gates, retrospective logging,
+session-continuity wiring) not present in the originals. MARVIN extends this
+base with new skills (`qa-agent`, `caveman`, `index`, `lexicon`,
+`self-optimize`) and wires the system into Claude Code.
 
 ---
 
