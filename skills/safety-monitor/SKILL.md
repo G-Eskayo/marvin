@@ -33,6 +33,8 @@ before it writes its output. Nothing runs on a schedule yet.
 | `scripts/calibrate.py` | `get_tau(loop_name) -> float`; `calibrate(...)` recomputes tau from labeled data; `record_label(loop_name, score, label)` for when a review workflow exists to call it |
 | `scripts/rubrics/daily_digest.md` | Rubric for `improve/scripts/daily_digest.py`'s output |
 | `scripts/rubrics/research_colony.md` | Rubric for `research-colony/scripts/research_digest.py`'s output |
+| `scripts/rubrics/self_improve.md` | Rubric for the retrospective-log.md line `background_review.py` appends |
+| `scripts/rubrics/improvement_sweep.md` | Rubric for `improvement_sweep.py`'s queue entries — checks extraction coherence (tag/message/path mismatch), not hallucination, since this loop has no LLM call |
 
 A rubric must exist for a loop before `verify()` can score it — `verify()`
 raises (and fails open, returning 0.0 / "pass") if `rubrics/<loop_name>.md`
@@ -49,13 +51,27 @@ is missing. Add a new rubric before wiring a new loop in.
   workflow starts calling it — `calibrate()` uses `DEFAULT_TAU` (0.3) until
   then.
 
-## Integration (not yet done)
+## Integration status
 
-Wiring this into `daily_digest.py` / `research_digest.py` is a small diff
-per `ARCHITECTURE.md`'s "Integration points" section — wrap the existing
-write call in `pass_or_quarantine(artifact, loop_name="...")` and only
-write on `True`. Neither script has been edited to call this yet; that's
-the next step once this mechanism itself is reviewed.
+All four loops from `SOURCES.md` are wired in:
+
+- `background_review.py` (self_improve) — wired first, since it's the
+  highest-blast-radius one (writes directly to the git-tracked, append-only
+  `retrospective-log.md`). Verification is post-hoc: snapshot the log before
+  the review runs, diff after, score the new line(s), revert the append +
+  quarantine if flagged.
+- `daily_digest.py` and `research_digest.py` — wrapped the same way as each
+  other: `pass_or_quarantine(content, loop_name="...")` right before the
+  write; on `False`, a short quarantine notice is written in place of the
+  real content so the day's output file still exists (no retry-loop burning
+  a fresh `claude` call on every re-run) but is clearly marked incomplete.
+- `improvement_sweep.py` — same `pass_or_quarantine()` wrap, but this loop
+  has no LLM call at all (its content is a deterministic regex/sort over a
+  static-analysis scan), so `rubrics/improvement_sweep.md` checks extraction
+  coherence (a `[KIND]` tag mismatched with its message, a garbled fragment,
+  a malformed path) rather than hallucination. On quarantine, the block is
+  simply not appended — no stub needed, since the next handoff produces a
+  fresh (different) block rather than re-running the same one.
 
 ## Manual invocation / smoke test
 
@@ -82,7 +98,8 @@ cat ~/.claude/quarantine.md
   (FR6) but not yet added to `~/.claude/CLAUDE.md`'s checklist.
 - No `/quarantine` review command yet — `record_label()` exists but nothing
   calls it, so `calibrate()` will sit on `DEFAULT_TAU` indefinitely until
-  one is built.
-- `daily_digest.py` and `research_digest.py` are not wired to call
-  `pass_or_quarantine()` — this skill is built and smoke-tested standalone,
-  not yet integrated into the loops it's meant to guard.
+  one is built. Expect over-flagging until then — confirmed in testing that
+  even a well-constructed, genuinely generalizable retrospective-log entry
+  scored above tau; that's the documented cold-start conservatism, not a bug,
+  but it's a real cost until real labels exist.
+- OTR/drift audit (`otr_log.py`, `drift_report.py`) still not built — Phase 3.
