@@ -33,14 +33,25 @@ corrected 2026-07-07) and the `agentskills.io` open standard. Skills authored
 by Matt Pocock and used here under the agentskills.io open standard:
 `tdd`, `diagnose`, `grill-with-docs`, `zoom-out`, `handoff`, `self-improve`,
 `improve-codebase-architecture`, `prototype`, `research`, `write-a-skill`,
-`to-issues`, `to-prd`, `triage`, `grill-me`, and `setup-matt-pocock-skills`
-(the last five were verified directly against his repo 2026-07-07 — a real
-gap in this list before that, not previously credited here). Several were
-adapted/wired into MARVIN's own workflow beyond their original form —
+`to-issues`, `to-prd`, `triage`, `grill-me`, `setup-matt-pocock-skills`, and
+`caveman` (the last six were verified directly against his repo 2026-07-07 —
+a real gap in this list before that, not previously credited here). Several
+were adapted/wired into MARVIN's own workflow beyond their original form —
 `self-improve` and `handoff` in particular gained real MARVIN-specific
 infrastructure (ChromaDB-backed quality gates, retrospective logging,
-session-continuity wiring) not present in the originals. MARVIN extends this
-base with new skills (`qa-agent`, `caveman`, `index`, `lexicon`,
+session-continuity wiring) not present in the originals.
+
+**A note on `caveman` specifically**: it no longer exists in Matt Pocock's
+current repo. His own changeset removing it states it "was a duplicate of
+another skill I was testing and was never meant to be public" — meaning it
+was never an intentional public release on his end, not simply a skill he
+later retired (contrast `zoom-out`, removed from his repo only because it
+"went unused in practice," no quality concern implied). MARVIN's version is
+essentially verbatim — only the frontmatter description was changed, to
+reference MARVIN's own bench verification (Run 16, N=3). Flagged here in
+full rather than smoothed over, in the same spirit as this whole document.
+
+MARVIN extends this base with new skills (`qa-agent`, `index`, `lexicon`,
 `self-optimize`) and wires the system into Claude Code.
 
 ---
