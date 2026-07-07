@@ -83,6 +83,16 @@ skills and memory layer plug into.
 
 ---
 
+### [markdown-it-py](https://github.com/executablebooks/markdown-it-py) & [pdfminer.six](https://github.com/pdfminer/pdfminer.six)
+**License:** MIT
+
+Used by `resume-tailor` (Markdown→HTML conversion) and `paper-dive`
+(PDF text extraction). Already credited at the skill level in
+`resume-tailor`'s own README/architecture docs; added here 2026-07-07 for
+completeness at the project level, found during a full repo-reference audit.
+
+---
+
 ### [FastMCP](https://github.com/jlowin/fastmcp)
 **License:** MIT
 
