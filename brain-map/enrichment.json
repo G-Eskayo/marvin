@@ -17,6 +17,14 @@
           ]
         },
         { "id": "research-feed", "cat": "memory", "desc": "ChromaDB — arXiv/GitHub/HN items, deduped by URL hash" },
+        {
+          "id": "paper-knowledge", "cat": "memory", "desc": "ChromaDB — citation-graph traversal results, deduped across investigations",
+          "expandable": true,
+          "children": [
+            { "id": "paper_graph.py", "cat": "memory", "desc": "Greedy best-first traversal, blended SPECTER2+nomic-embed scoring, now its own repo" },
+            { "id": "fetch_neighbors_from_s2", "cat": "memory", "desc": "References+citations from Semantic Scholar, asymmetric caps + result-intent bypass" }
+          ]
+        },
         { "id": "lexicon.md", "cat": "memory", "desc": "Shared vocabulary, loaded every session" },
         { "id": "manifest.json", "cat": "memory", "desc": "Auto-generated skill index — this graph's real source of truth" }
       ]
@@ -64,7 +72,7 @@
     "creative": "creation", "prototype": "creation", "improve": "creation",
     "handoff": "continuity", "index": "continuity", "self-improve": "continuity",
     "architecture-review": "continuity", "write-a-skill": "continuity", "caveman": "continuity", "route": "continuity",
-    "lexicon": "continuity",
+    "lexicon": "continuity", "safety-monitor": "continuity",
     "setup-matt-pocock-skills": "project", "triage": "project", "to-issues": "project",
     "to-prd": "project", "resume-tailor": "project"
   },
@@ -106,7 +114,8 @@
     { "a": "improve", "b": "daily-digest", "label": "owns and triggers the daily-digest cron", "type": "hook" },
     { "a": "daily-digest", "b": "qa-knowledge", "label": "reads qa-knowledge as part of its assembled context", "type": "hook" },
     { "a": "research-colony", "b": "qa-knowledge", "label": "correlate.py cross-refs today's finds against qa-knowledge", "type": "hook" },
-    { "a": "research-colony", "b": "research-feed", "label": "source_monitor.py writes here, correlate.py reads it back", "type": "hook" }
+    { "a": "research-colony", "b": "research-feed", "label": "source_monitor.py writes here, correlate.py reads it back", "type": "hook" },
+    { "a": "paper-dive", "b": "paper-knowledge", "label": "paper_graph.py's /paper-graph mode writes and reads here — added 2026-07-08, previously missing from this graph entirely (same gap class as qa-agent above)", "type": "hook" }
   ],
 
   "synapse_label_fallback": "declared calls: dependency"

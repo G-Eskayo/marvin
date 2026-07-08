@@ -37,12 +37,21 @@ TAG_PATTERN = re.compile(r'^[a-z][a-z0-9-]*:[a-z][a-z0-9-]*$')
 def _hook_should_skip() -> bool:
     """When invoked as a PostToolUse hook (JSON payload piped on stdin),
     only rebuild if the edited file actually affects the manifest's output
-    — a SKILL.md or a project memory .md file. Found 2026-07-02: unlike the
-    other three PostToolUse hooks on the same Write|Edit matcher
-    (emit-resume-prompt.py, qa_session_capture.py, improvement_sweep.py,
-    all of which filter to their relevant path before doing real work),
-    this one had no filtering at all — full rebuild + chained embeddings
-    rebuild on every single Write/Edit anywhere in any project.
+    — anything inside a skill's own directory, or a project memory .md file.
+    Found 2026-07-02: unlike the other three PostToolUse hooks on the same
+    Write|Edit matcher (emit-resume-prompt.py, qa_session_capture.py,
+    improvement_sweep.py, all of which filter to their relevant path before
+    doing real work), this one had no filtering at all — full rebuild +
+    chained embeddings rebuild on every single Write/Edit anywhere in any
+    project.
+    Broadened 2026-07-08: the first fix only allowed a literal SKILL.md
+    write to trigger a rebuild, so a whole new capability could ship inside
+    a skill (new scripts, tests, docs — e.g. paper_graph.py and 12 ADRs for
+    paper-dive's citation-graph mode) without the brain-map ever refreshing,
+    unless SKILL.md's own prose happened to change too. Confirmed via
+    tree-data.json's mtime silently freezing at the last real SKILL.md edit
+    despite hours of substantial work after it. Now any file under a skill's
+    own directory counts, not just SKILL.md specifically.
     Returns False (never skip) when run directly with no piped JSON, so
     `python rebuild-manifest.py` from the CLI still always does a full
     rebuild, matching this script's documented dual-mode use."""
@@ -61,8 +70,8 @@ def _hook_should_skip() -> bool:
 
     p = Path(fp)
     try:
-        if p.name == "SKILL.md" and SKILLS_DIR.resolve() in [d.resolve() for d in p.parents]:
-            return False
+        if SKILLS_DIR.resolve() in [d.resolve() for d in p.parents]:
+            return False  # anything inside a skill's own directory, not just SKILL.md itself
         if (p.suffix.lower() == ".md" and p.parent.name == "memory"
                 and PROJECTS_DIR.resolve() in [d.resolve() for d in p.parents]):
             return False
