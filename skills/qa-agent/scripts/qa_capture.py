@@ -16,6 +16,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+from machine_profile import machine_label  # noqa: E402
+
 CHROMA_PATH = Path.home() / ".claude" / "chroma"
 COLLECTION  = "qa-knowledge"
 VALID_CATEGORIES = {"pattern", "anti-pattern", "library", "tool", "worked", "failed", "config"}
@@ -101,6 +104,11 @@ def build_entry(
             "outcome":      outcome,
             "pattern_type": pattern_type or infer_pattern_type(content, tags, category),
             "created_at":   datetime.now(timezone.utc).isoformat(),
+            # ChromaDB's $gt filter only accepts int/float, not ISO strings —
+            # this numeric twin of created_at is what incremental sync
+            # (dump_collection.py --since) actually filters on.
+            "created_epoch": datetime.now(timezone.utc).timestamp(),
+            "source_machine": machine_label(),
         },
     }
 

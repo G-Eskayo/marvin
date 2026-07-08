@@ -139,7 +139,15 @@ def generate() -> Path | None:
     try:
         claude_bin = _resolve_claude_bin()
         proc = subprocess.run(
-            [claude_bin, "-p", prompt, "--output-format", "text"],
+            # Write/Edit blocked: same bug as daily_digest.py (found
+            # 2026-07-06) — without this, the model tries to persist the
+            # digest itself via the Write tool, gets silently denied (no TTY
+            # to approve a permission prompt), and narrates that failure
+            # into the digest body instead of returning plain text. This
+            # script's own file write below is the only thing that should
+            # ever write the file.
+            [claude_bin, "-p", prompt, "--output-format", "text",
+             "--disallowedTools", "Write,Edit"],
             capture_output=True,
             text=True,
             timeout=120,

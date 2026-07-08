@@ -8,6 +8,9 @@ from datetime import date, timedelta, timezone, datetime
 from pathlib import Path
 from urllib.request import urlopen, Request
 
+sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+from machine_profile import machine_label  # noqa: E402
+
 CHROMA_PATH = Path.home() / ".claude" / "chroma"
 CACHE_DIR = Path.home() / ".claude" / "research-feed"
 
@@ -139,6 +142,7 @@ def store_items(items: list[dict]) -> int:
                 "tags": item["tags"],
                 "correlated": "false",
                 "matched_topics": "",
+                "source_machine": machine_label(),
             },
         })
 

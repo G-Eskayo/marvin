@@ -21,6 +21,9 @@ COLLECTION  = "qa-knowledge"
 sys.path.insert(0, str(Path(__file__).parent))
 from qa_capture import infer_pattern_type  # noqa: E402
 
+sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+from machine_profile import machine_label  # noqa: E402
+
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "env",
              ".tox", "dist", "build", ".next", ".nuxt", "coverage", "target"}
 SKIP_EXT  = {".pyc", ".pyo", ".map", ".min.js", ".min.css", ".lock"}
@@ -568,6 +571,8 @@ def scan(project: Path, dry_run: bool = False) -> list[dict]:
                 "domain":      domain,
                 "outcome":     meta.pop("outcome", ""),
                 "pattern_type": pattern_type,
+                "created_epoch": datetime.now(timezone.utc).timestamp(),
+                "source_machine": machine_label(),
                 **meta,
             },
         })

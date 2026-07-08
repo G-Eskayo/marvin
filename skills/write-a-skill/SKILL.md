@@ -116,3 +116,4 @@ After drafting, verify:
 - [ ] Consistent terminology
 - [ ] Concrete examples included
 - [ ] References one level deep
+- [ ] If the skill claims to "run automatically" / "no user prompt needed": is there a real enforcement mechanism (hook, cron, log) behind that claim, not just the description asserting it? Confirmed 2026-07-03 — `self-improve`'s own autonomy claim went unexercised for weeks until a PostToolUse hook was actually wired in; the prose alone never fired it.
