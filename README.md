@@ -140,7 +140,7 @@ That misdiagnosed adapter warning turned out to be a genuine, confirmed, previou
 
 Compared Qwen2.5-3B vs Llama-3.2-3B on `leaderboard_mmlu_pro` (N=200) for MARVIN's own voice-interface offline-mode decision — not by vibes, and not by trusting either vendor's self-reported numbers. `mlx_lm.server`'s OpenAI-compatible API doesn't support the `echo` parameter loglikelihood-based tasks need, so this required building a custom in-process `lm-eval` adapter (`bench/lib/mlx_lm_eval_adapter.py`, `bench/run_mlx_model_comparison.py`) that computes log-probabilities directly from MLX model logits — cross-checked against an independent step-by-step computation before trusting it.
 
-**Qwen2.5-3B: 32.5% accuracy** — matching, almost exactly, HuggingFace's own independently-measured Open LLM Leaderboard number for the same model, a strong signal the custom adapter is measuring correctly. **Llama-3.2-3B: [PENDING — run in progress].**
+**Qwen2.5-3B: 32.5% accuracy** — matching, almost exactly, HuggingFace's own independently-measured Open LLM Leaderboard number for the same model, a strong signal the custom adapter is measuring correctly. **Llama-3.2-3B: 23.5% accuracy** — a clear, decisive 9-point gap on the same real 200-question test, resolving MARVIN's voice-interface offline-mode model choice with actual evidence instead of a guess.
 
 ---
 
