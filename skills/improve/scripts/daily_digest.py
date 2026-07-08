@@ -244,7 +244,16 @@ def call_claude(prompt: str) -> str:
     try:
         claude_bin = _resolve_claude_bin()
         proc = subprocess.run(
-            [claude_bin, "-p", prompt, "--output-format", "text"],
+            # Read/Grep/Bash stay available — that's the deliberate agentic
+            # grounding this relies on (see comment above). Write/Edit are
+            # blocked: found 2026-07-06, without this the model attempts to
+            # persist the digest itself via the Write tool, gets silently
+            # denied (no TTY to approve a permission prompt), and narrates
+            # that failure into the digest body instead of returning plain
+            # text — this script's own OUT_FILE.write_text() below is the
+            # only thing that should ever write the file.
+            [claude_bin, "-p", prompt, "--output-format", "text",
+             "--disallowedTools", "Write,Edit"],
             capture_output=True, text=True, timeout=240,
         )
     except Exception as exc:
