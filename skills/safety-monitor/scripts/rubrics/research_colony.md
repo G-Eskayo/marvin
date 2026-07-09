@@ -22,6 +22,11 @@ Score LOW (near 0.00) when the relevance claim is modest, appropriately
 hedged where the connection is speculative, and actually follows from the
 summary text given.
 
-You do not have access to the full paper — score based on whether the
-claimed connection is a reasonable, honestly-hedged read of the summary
-provided, not on facts outside it.
+The real arXiv/GitHub/HN items this digest was synthesized from are provided
+below as source data, if available — check each relevance claim against the
+actual item it cites, don't guess. A claim that's a fair, honest read of the
+cited item is grounded, not risky. Only score high when a claim actively
+overreaches what the cited item's own summary supports, not merely because
+you'd otherwise have no way to check it. If no source data is provided,
+score based on whether the claimed connection is internally plausible and
+appropriately hedged, not on unfamiliarity alone.

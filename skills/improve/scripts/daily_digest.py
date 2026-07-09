@@ -21,6 +21,9 @@ DIGEST_DIR   = CLAUDE_DIR / "daily-digest"
 ROADMAP      = CLAUDE_DIR / "marvin-roadmap.md"
 HANDOFFS_DIR = CLAUDE_DIR / "handoffs"
 
+sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+from notify import notify  # noqa: E402
+
 
 def _resolve_claude_bin() -> str:
     """launchd's environment doesn't source .zshrc/.zprofile, so PATH may not
@@ -202,6 +205,8 @@ DIGEST_PROMPT_TEMPLATE = """You are MARVIN's daily improvement analyst. Your job
 
 North-star goal: MINIMIZE token usage while MAXIMIZING capability and quality.
 
+Prioritization lens (Gil's direction, 2026-07-08): when candidates compete for attention, weight compounding leverage — does this item make multiple *future* items cheaper, faster, or newly possible — above standalone value, even over a bigger one-off win. A foundation that makes the next three builds easier beats a bigger isolated win.
+
 --- ROADMAP STATUS ---
 {roadmap}
 
@@ -221,6 +226,16 @@ North-star goal: MINIMIZE token usage while MAXIMIZING capability and quality.
 {reviewer_health}
 
 Generate today's digest. Be specific — reference actual files, skills, metrics, and roadmap sections where relevant. Keep each item to 2–3 sentences.
+
+Return ONLY the digest content below, as your final response text. Do not
+attempt to write, save, or persist it yourself — not via Write, Edit, Bash,
+or any other tool. A separate process handles saving your response; trying
+to do it yourself will fail (no permission prompt is available in this
+context) and produce a broken digest that narrates the failure instead of
+containing real content.
+
+## Compounding Move
+Among everything in the roadmap and improvement queue right now, the single item whose main justification is what it unlocks or accelerates afterward — not its own standalone value. Name the specific future items it sets up and how, not just that it's "foundational."
 
 ## Feature Combinations
 Two existing capabilities that would multiply in value if connected or merged. Explain the mechanism, not just the idea.
@@ -293,8 +308,9 @@ def main() -> None:
     # actual failure mode this guards, not just factual disagreement. Skip
     # verifying a known call_claude() failure string — nothing to catch there.
     already_failed = content.startswith("(claude call failed:")
-    if _SAFETY_MONITOR_AVAILABLE and not already_failed and not pass_or_quarantine(content, loop_name="daily_digest"):
+    if _SAFETY_MONITOR_AVAILABLE and not already_failed and not pass_or_quarantine(content, loop_name="daily_digest", source_context=prompt):
         print("[daily-digest] content quarantined by safety-monitor — see ~/.claude/quarantine.md", flush=True)
+        notify("MARVIN daily-digest quarantined", "Today's digest was flagged for review — check ~/.claude/quarantine.md")
         content = (
             "_Quarantined by safety-monitor before shipping — flagged as risky "
             "against the daily_digest rubric. See `~/.claude/quarantine.md` for "

@@ -74,7 +74,8 @@
     "architecture-review": "continuity", "write-a-skill": "continuity", "caveman": "continuity", "route": "continuity",
     "lexicon": "continuity", "safety-monitor": "continuity",
     "setup-matt-pocock-skills": "project", "triage": "project", "to-issues": "project",
-    "to-prd": "project", "resume-tailor": "project"
+    "to-prd": "project", "resume-tailor": "project",
+    "audit": "quality", "project-ai-development-theory": "research", "reference-mcp": "research"
   },
 
   "category_order": ["quality", "research", "creation", "continuity", "project"],
@@ -86,7 +87,9 @@
   "skill_desc_overrides": {
     "grill-me": "Relentless Socratic interview — now the fallback",
     "grill-with-docs": "grill-me + live CONTEXT.md/ADR updates — the preferred default",
-    "architecture-review": "Reviews the whole system — renamed from self-optimize tonight"
+    "architecture-review": "Reviews the whole system — renamed from self-optimize tonight",
+    "project-ai-development-theory": "Open thread — what's the developmental stage after tools→skills, via a psychology lens",
+    "reference-mcp": "MCP protocol knowledge base — architecture, transports, auth, extensions, debugging, registry"
   },
 
   "synapse_labels": {

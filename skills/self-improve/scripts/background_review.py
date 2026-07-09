@@ -25,6 +25,9 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+from hook_errors import log_hook_error  # noqa: E402
+
 HANDOFF_DIR = Path.home() / ".claude" / "handoffs"
 AGENTS_DIR = Path.home() / ".agents"
 SELF_IMPROVE_DIR = AGENTS_DIR / "skills" / "self-improve"
@@ -176,7 +179,8 @@ def main() -> None:
 
     try:
         payload = json.load(sys.stdin)
-    except Exception:
+    except Exception as e:
+        log_hook_error("background_review", "parsing stdin payload", e)
         return
 
     if payload.get("tool_name") not in ("Write", "Edit", "MultiEdit"):
@@ -189,7 +193,8 @@ def main() -> None:
     p = Path(fp)
     try:
         in_handoffs = HANDOFF_DIR.resolve() in [d.resolve() for d in p.parents]
-    except Exception:
+    except Exception as e:
+        log_hook_error("background_review", f"resolving path {fp}", e)
         return
     if not in_handoffs or p.suffix.lower() != ".md":
         return
@@ -214,7 +219,8 @@ def main() -> None:
             start_new_session=True,  # detach fully — outlives this hook process
         )
         print("[self-improve] background review launched", flush=True)
-    except Exception:
+    except Exception as e:
+        log_hook_error("background_review", "spawning detached review subprocess", e)
         return
 
 

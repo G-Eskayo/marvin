@@ -19,13 +19,14 @@ NETWORK_PATH = Path.home() / ".claude" / "marvin-network.json"
 
 def _run(cmd: list[str]) -> str:
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=10).stdout.strip()
+        out = subprocess.run(cmd, capture_output=True, timeout=10).stdout
+        return out.decode("utf-8", errors="replace").strip()
     except Exception:
         return ""
 
 
 def _hardware_uuid() -> str:
-    out = _run(["ioreg", "-d2", "-c", "IOPlatformExpertDevice"])
+    out = _run(["/usr/sbin/ioreg", "-d2", "-c", "IOPlatformExpertDevice"])
     for line in out.splitlines():
         if "IOPlatformUUID" in line:
             return line.split('"')[3]
@@ -33,7 +34,7 @@ def _hardware_uuid() -> str:
 
 
 def _serial() -> str:
-    out = _run(["ioreg", "-l"])
+    out = _run(["/usr/sbin/ioreg", "-l"])
     for line in out.splitlines():
         if "IOPlatformSerialNumber" in line:
             return line.split('"')[3]
@@ -60,7 +61,7 @@ def _label(hw_model: str) -> str:
 
 
 def build_profile() -> dict:
-    hw_model = _run(["sysctl", "-n", "hw.model"])
+    hw_model = _run(["/usr/sbin/sysctl", "-n", "hw.model"])
     claude_path = _run(["bash", "-lc", "readlink -f $(which claude) 2>/dev/null || which claude"])
     venv_python = str(Path.home() / ".agents" / "venv" / "bin" / "python")
 
@@ -76,7 +77,7 @@ def build_profile() -> dict:
 
     return {
         "label": _label(hw_model),
-        "hostname": _run(["scutil", "--get", "ComputerName"]),
+        "hostname": _run(["/usr/sbin/scutil", "--get", "ComputerName"]),
         "hardware_uuid": _hardware_uuid(),
         "serial": _serial(),
         "hw_model": hw_model,

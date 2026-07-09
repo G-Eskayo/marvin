@@ -20,8 +20,8 @@ HERE = Path(__file__).parent
 ACTIVITY_PATH = HERE / "activity.jsonl"
 DEMO_EVENTS_PATH = HERE / "demo-events.jsonl"
 
-# Spread across categories so the showcase visits most of the tree, not just
-# one corner — one real, currently-existing node id per category.
+# Spread across categories so the showcase visits most of the tree —
+# one real, currently-existing node id per category.
 PULSE_SEQUENCE = [
     "diagnose",       # quality
     "research",       # research
@@ -36,9 +36,9 @@ DEMO_NODE_ID = "demo-showcase-node"
 DEMO_NODE_PARENT = "Quality"
 
 
-def append(path: Path, obj: dict) -> None:
+def append(path: Path, event: dict) -> None:
     with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(obj) + "\n")
+        f.write(json.dumps(event) + "\n")
 
 
 def pulse(skill: str) -> None:

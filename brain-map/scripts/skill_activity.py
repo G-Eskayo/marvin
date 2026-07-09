@@ -13,6 +13,9 @@ import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+from hook_errors import log_hook_error  # noqa: E402
+
 ACTIVITY_PATH = Path.home() / ".agents" / "brain-map" / "activity.jsonl"
 MAX_LINES = 500  # trim on write — this is a live-activity feed, not a log archive
 
@@ -20,7 +23,8 @@ MAX_LINES = 500  # trim on write — this is a live-activity feed, not a log arc
 def main() -> None:
     try:
         payload = json.load(sys.stdin)
-    except Exception:
+    except Exception as e:
+        log_hook_error("skill_activity", "parsing stdin payload", e)
         return
 
     if payload.get("tool_name", "") != "Skill":
@@ -39,7 +43,8 @@ def main() -> None:
         lines.append(entry)
         lines = lines[-MAX_LINES:]
         ACTIVITY_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    except Exception:
+    except Exception as e:
+        log_hook_error("skill_activity", f"writing activity log to {ACTIVITY_PATH}", e)
         return
 
 

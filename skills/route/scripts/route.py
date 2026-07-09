@@ -238,7 +238,7 @@ def main() -> None:
     elif args.task:
         intent, hits = classify(args.task)
     else:
-        # no task given and no explicit flag — just show the table
+        # no task given and no explicit flag — show the table
         print_table_proper()
         return
 

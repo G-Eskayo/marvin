@@ -12,6 +12,9 @@ CACHE_DIR = Path.home() / ".claude" / "research-feed"
 CHROMA_PATH = Path.home() / ".claude" / "chroma"
 SAFETY_MONITOR_SCRIPTS = Path.home() / ".agents" / "skills" / "safety-monitor" / "scripts"
 
+sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+from notify import notify  # noqa: E402
+
 sys.path.insert(0, str(SAFETY_MONITOR_SCRIPTS))
 try:
     from verify import pass_or_quarantine
@@ -165,9 +168,10 @@ def generate() -> Path | None:
     # this guards is a relevance claim that doesn't survive reading the
     # summary carefully (e.g. a training technique claimed to transfer to a
     # system that only orchestrates a hosted model over an API).
-    if _SAFETY_MONITOR_AVAILABLE and not pass_or_quarantine(body, loop_name="research_colony"):
+    if _SAFETY_MONITOR_AVAILABLE and not pass_or_quarantine(body, loop_name="research_colony", source_context=prompt):
         print(f"[colony] digest quarantined by safety-monitor — see ~/.claude/quarantine.md",
               file=sys.stderr)
+        notify("MARVIN research-colony quarantined", "Today's research digest was flagged for review — check ~/.claude/quarantine.md")
         body = (
             "_Quarantined by safety-monitor before shipping — flagged as risky "
             "against the research_colony rubric. See `~/.claude/quarantine.md` "

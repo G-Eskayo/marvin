@@ -38,20 +38,20 @@ def synthesize(problem: str, n: int = 3, domain: str | None = None) -> dict:
             "results": results}
 
 
-def print_human(data: dict) -> None:
-    if data["domain"]:
-        print(f"problem domain (inferred): {data['domain']}")
-        print(f"showing top {len(data['results'])} transferable pattern(s) from OTHER domains\n")
+def print_human(synthesis: dict) -> None:
+    if synthesis["domain"]:
+        print(f"problem domain (inferred): {synthesis['domain']}")
+        print(f"showing top {len(synthesis['results'])} transferable pattern(s) from OTHER domains\n")
     else:
         print("could not infer a domain for this problem — showing general top matches "
               "(not guaranteed cross-domain)\n")
 
-    if not data["results"]:
+    if not synthesis["results"]:
         print("No results in qa-knowledge. Run qa_scan.py on some projects first, "
               "or this problem may be too novel for the current KB.")
         return
 
-    for i, r in enumerate(data["results"], 1):
+    for i, r in enumerate(synthesis["results"], 1):
         m = r["metadata"]
         domain_str  = f"  domain={m['domain']}"       if m.get("domain")       else ""
         ptype_str   = f"  pattern={m['pattern_type']}" if m.get("pattern_type") else ""

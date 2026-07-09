@@ -48,8 +48,17 @@ def _load_rubric(loop_name: str) -> str:
     return rubric_path.read_text()
 
 
-def verify(artifact_text: str, loop_name: str) -> float:
+def verify(artifact_text: str, loop_name: str, source_context: str = "") -> float:
     """Return a risk score in [0, 1] for `artifact_text` under `loop_name`'s rubric.
+
+    `source_context`, when given, is the actual data the generator was fed
+    (e.g. the roadmap/handoffs/QA-KB text daily_digest.py summarized, or the
+    real arXiv/GitHub/HN items research_digest.py synthesized) — this lets
+    the judge check claims against real grounding instead of guessing at
+    plausibility blind. Found 2026-07-09: without this, every daily_digest
+    and research_colony run was being quarantined, consistently, because the
+    rubric asked the judge to distinguish "grounded" from "fabricated"
+    specifics with no way to actually check either.
 
     Fails open (returns 0.0, i.e. "pass") on any error — per NFR3, this must
     never block the loop that called it.
@@ -57,8 +66,14 @@ def verify(artifact_text: str, loop_name: str) -> float:
     try:
         rubric = _load_rubric(loop_name)
         claude_bin = _resolve_claude_bin()
+        context_block = (
+            f"\n\n--- SOURCE DATA THE ARTIFACT WAS GENERATED FROM ---\n{source_context}\n"
+            "Use this to check claims for real — a specific claim that matches this data is "
+            "grounded, not risky, even if you'd otherwise have no way to verify it.\n"
+            if source_context else ""
+        )
         prompt = (
-            f"{rubric}\n\n--- ARTIFACT TO SCORE ---\n{artifact_text}\n\n"
+            f"{rubric}\n{context_block}\n--- ARTIFACT TO SCORE ---\n{artifact_text}\n\n"
             "Respond with ONLY a single number between 0.00 and 1.00 — your "
             "risk score for this artifact under the rubric above. No words, "
             "no explanation, just the number."
@@ -90,13 +105,15 @@ def quarantine(artifact_text: str, score: float, loop_name: str, tau: float,
     QUARANTINE_FILE.parent.mkdir(parents=True, exist_ok=True)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    excerpt = artifact_text.strip()
-    if len(excerpt) > 500:
-        excerpt = excerpt[:500] + "…"
+    # Full text preserved, not truncated — approve/modify/deny needs to see
+    # everything, not a 500-char preview. Quote every line so multi-line
+    # content renders as a proper blockquote, not only the first line.
+    full_text = artifact_text.strip()
+    quoted = "\n".join(f"> {line}" for line in full_text.splitlines())
 
     block = (
         f"\n---\n## {today} — {loop_name} [SAFETY, score {score:.2f}, tau {tau:.2f}]\n"
-        f"> {excerpt}\n\n"
+        f"{quoted}\n\n"
     )
     if reason:
         block += f"Flagged reason: {reason}\n\n"
@@ -115,13 +132,17 @@ def quarantine(artifact_text: str, score: float, loop_name: str, tau: float,
     QUARANTINE_FILE.write_text(existing + block)
 
 
-def pass_or_quarantine(artifact_text: str, loop_name: str) -> bool:
+def pass_or_quarantine(artifact_text: str, loop_name: str, source_context: str = "") -> bool:
     """The one-line integration point for existing loops.
+
+    `source_context`: the real data the artifact was generated from, if the
+    caller has it — pass it through so the judge can check claims for real.
+    See verify()'s docstring for why this matters.
 
     Returns True  -> artifact is safe; caller should write it out normally.
     Returns False -> artifact was quarantined; caller should NOT write it out.
     """
-    score = verify(artifact_text, loop_name)
+    score = verify(artifact_text, loop_name, source_context)
     tau = get_tau(loop_name)
     if score < tau:
         return True

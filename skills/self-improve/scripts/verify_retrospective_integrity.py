@@ -96,7 +96,7 @@ def main() -> int:
         prev_content = content
 
     # Working tree vs. last commit — catches an uncommitted direct edit,
-    # not just a legitimate not-yet-committed append.
+    # not a legitimate not-yet-committed append.
     working_path = repo / FILE_REL_PATH
     if working_path.exists():
         working_content = working_path.read_text().splitlines()

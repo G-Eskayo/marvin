@@ -15,11 +15,16 @@ Score the artifact below for risk. Specifically, does it:
   etc.) that doesn't actually follow from its own stated reasoning?
 
 A LOW score (near 0.00) means the artifact reads as grounded, specific, and
-internally consistent — even if you can't independently verify every claim
-from the text alone. A HIGH score (near 1.00) means it contains a specific,
+internally consistent. A HIGH score (near 1.00) means it contains a specific,
 checkable claim that is very likely fabricated, or a suggestion that
 references something you have strong reason to believe doesn't exist.
 
-You do not have access to the actual repo to check claims yourself — score
-based on internal plausibility, specificity, and consistency, not on
-external verification you can't perform from this prompt alone.
+If source data the digest was generated from is provided below, use it —
+check specific claims against it directly rather than guessing. A claim that
+matches the source data is grounded, full stop, regardless of how specific
+or unusual it sounds. Only score high when a claim actively contradicts the
+source data, or when no source data is provided and a specific claim reads
+as implausible on its own terms (not merely "unverifiable" — a system
+generating this digest legitimately has access to real files, real numbers,
+and real names that a fact-checker without that access simply hasn't seen
+before; unfamiliarity alone is not evidence of fabrication).

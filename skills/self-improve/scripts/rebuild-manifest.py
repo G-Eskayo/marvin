@@ -14,6 +14,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+from hook_errors import log_hook_error  # noqa: E402
+
 HOME = Path.home()
 MANIFEST_PATH = HOME / ".claude" / "manifest.json"
 SKILLS_DIR = HOME / ".agents" / "skills"
@@ -59,7 +62,8 @@ def _hook_should_skip() -> bool:
         return False
     try:
         payload = json.load(sys.stdin)
-    except Exception:
+    except Exception as e:
+        log_hook_error("rebuild-manifest", "parsing stdin payload", e)
         return False  # couldn't parse — rebuild anyway, safer than silently skipping
 
     if payload.get("tool_name", "") not in ("Write", "Edit", "MultiEdit"):
@@ -75,7 +79,8 @@ def _hook_should_skip() -> bool:
         if (p.suffix.lower() == ".md" and p.parent.name == "memory"
                 and PROJECTS_DIR.resolve() in [d.resolve() for d in p.parents]):
             return False
-    except Exception:
+    except Exception as e:
+        log_hook_error("rebuild-manifest", f"resolving path {fp}", e)
         return False  # path resolution failed — rebuild anyway, don't silently skip
 
     return True

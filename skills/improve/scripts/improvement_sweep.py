@@ -18,6 +18,9 @@ QUEUE_FILE    = Path.home() / ".claude" / "improvement-queue.md"
 QA_SCRIPTS    = Path.home() / ".agents" / "skills" / "qa-agent" / "scripts"
 SAFETY_MONITOR_SCRIPTS = Path.home() / ".agents" / "skills" / "safety-monitor" / "scripts"
 
+sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+from hook_errors import log_hook_error  # noqa: E402
+
 sys.path.insert(0, str(QA_SCRIPTS))
 sys.path.insert(0, str(SAFETY_MONITOR_SCRIPTS))
 try:
@@ -140,7 +143,8 @@ def append_to_queue(project_name: str, issues: list[dict]) -> bool:
 def main() -> None:
     try:
         payload = json.load(sys.stdin)
-    except Exception:
+    except Exception as e:
+        log_hook_error("improvement_sweep", "parsing stdin payload", e)
         return
 
     if payload.get("tool_name") not in ("Write", "Edit", "MultiEdit"):
@@ -153,14 +157,16 @@ def main() -> None:
     p = Path(fp)
     try:
         in_handoffs = HANDOFF_DIR.resolve() in [d.resolve() for d in p.parents]
-    except Exception:
+    except Exception as e:
+        log_hook_error("improvement_sweep", f"resolving path {fp}", e)
         return
     if not in_handoffs or p.suffix.lower() != ".md":
         return
 
     try:
         text = p.read_text(errors="ignore")
-    except Exception:
+    except Exception as e:
+        log_hook_error("improvement_sweep", f"reading handoff {p}", e)
         return
 
     project_name = extract_project(text)
@@ -172,7 +178,8 @@ def main() -> None:
     try:
         from qa_scan import scan
         entries = scan(project_path)
-    except Exception:
+    except Exception as e:
+        log_hook_error("improvement_sweep", f"scanning project {project_path}", e)
         return
 
     issues = top_issues(entries, limit=5)
@@ -192,7 +199,8 @@ def main() -> None:
                 f"quarantined by safety-monitor — see ~/.claude/quarantine.md",
                 flush=True,
             )
-    except Exception:
+    except Exception as e:
+        log_hook_error("improvement_sweep", f"writing queue/quarantine for {project_name}", e)
         return
 
 
