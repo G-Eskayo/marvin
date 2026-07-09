@@ -16,6 +16,7 @@
     --cat-project:   #e66767; /* red */
     --cat-agents:    #d55181; /* magenta */
     --cat-infra:     #d95926; /* orange */
+    --cat-cross-machine: #2fb6c4; /* teal */
   }
   * { box-sizing: border-box; }
   html, body {
@@ -173,7 +174,8 @@
     continuity: { label: "Continuity",       brain: "Meta-cognitive-like — self-monitoring",          color: "#9085e9" },
     project:    { label: "Project",          brain: "Motor/output-like — task execution",             color: "#e66767" },
     agents:     { label: "Autonomous Agents",brain: "Autonomic-like — runs without invocation",       color: "#d55181" },
-    infra:      { label: "Infrastructure",   brain: "White-matter-like — wiring between regions",     color: "#d95926" }
+    infra:      { label: "Infrastructure",   brain: "White-matter-like — wiring between regions",     color: "#d95926" },
+    "cross-machine": { label: "Cross-Machine Network", brain: "Corpus-callosum-like — bridges the two physical hemispheres", color: "#2fb6c4" }
   };
   var SYNAPSE_COLOR = "255,214,102"; // reserved — never a categorical hue, "electrical" gold
 
@@ -495,7 +497,7 @@
   }
 
   // ── legend / filters ─────────────────────────────────────────────────
-  var LEGEND_CATS = ["memory", "quality", "research", "creation", "continuity", "project", "agents", "infra"];
+  var LEGEND_CATS = ["memory", "quality", "research", "creation", "continuity", "project", "agents", "infra", "cross-machine"];
   var activeCats = {};
   LEGEND_CATS.forEach(function (k) { activeCats[k] = true; });
   var legendEl = document.getElementById("legend");
