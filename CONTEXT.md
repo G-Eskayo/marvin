@@ -2,7 +2,26 @@
 
 Domain terms only. No implementation details — see `docs/adr/` for decisions and rationale.
 
-## Intent-vs-reality audit agent (built 2026-07-09 as the `audit` skill)
+## Code sync (in design, 2026-07-09 — distinct from cross_machine_merge.py's data sync)
+
+- **Code sync**: keeping `~/.agents` (the git-tracked skills/lib/docs tree) identical across
+  MARVIN's known machines via git commit/push/pull — distinct from **data sync**
+  (`cross_machine_merge.py`), which unifies *runtime output* (qa-knowledge, research-feed,
+  digests) via SSH/ChromaDB transfer, not git. The two solve structurally different problems
+  (one machine's code should be everyone's code; one machine's *findings* should be everyone's
+  findings, but by union/merge, not overwrite) and are not meant to share a mechanism.
+- **Bidirectional**: either machine can commit and push — no single "authoritative" machine for
+  code, unlike data sync's fixed merge authority (always the stationary machine). Chosen because
+  the actual goal is "work on either machine, it doesn't matter which" (the "one computer, two
+  machines" vision), not because work is currently split evenly — as of today nearly everything
+  happens on the Mac Mini, but the design shouldn't assume that stays true.
+- **Scoped commit exception**: an explicit, narrow carve-out from the standing "never commit
+  without being asked" rule (`CLAUDE.md`'s Git Safety Protocol) — automatic commit+push is
+  permitted, but *only* for `~/.agents`, in service of not having to manually remember to push
+  after every session. Not a general loosening of the rule elsewhere.
+- **Sync-log transparency**: every auto-commit, auto-push, and auto-pull writes to
+  `~/.claude/sync-log.md`, checked at session start — mirrors the existing `auto-fix-log.md`
+  pattern (autonomous action, no approval gate, but nothing happens silently).
 
 - **Intent-vs-reality audit**: comparing documented intent (docstrings, ADRs, roadmap `[decision]`/
   `[research]` markers, memory) against actual current system state to find gaps nobody's reported

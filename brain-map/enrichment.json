@@ -1,5 +1,5 @@
 {
-  "_comment": "Hand-maintained supplement to ~/.claude/manifest.json for brain-map/generate.py. manifest.json is the live source for the skill list and calls: edges; everything here is data manifest.json doesn't and shouldn't capture (prose, non-skill nodes, hook/cron wiring, category grouping, expandable sub-forests).",
+  "_comment": "Hand-maintained supplement to ~/.claude/manifest.json for brain-map/generate.py. manifest.json is the live source for the skill list and calls: edges. Autonomous Agents, Infrastructure, and Cross-Machine Network trunks are now ALSO live-derived (from launchd plists, settings.local.json hooks, and marvin-network.json respectively — see ADRs 0018/0019/0020) with this file supplying only optional overrides + the handful of nodes with no live source at all (Memory's ChromaDB/hook nodes, exo, task-dispatch).",
 
   "root": { "id": "MARVIN", "desc": "Memory, routing, and skills layer for Claude Code" },
 
@@ -30,36 +30,16 @@
       ]
     },
     {
-      "id": "Infrastructure", "cat": "infra", "desc": "The hooks wiring everything else together",
-      "children": [
-        { "id": "rebuild-manifest.py", "cat": "infra", "desc": "Rebuilds manifest.json from skill frontmatter — now path-scoped, not unconditional" },
-        { "id": "emit-resume-prompt.py", "cat": "infra", "desc": "Hook: prints the resume prompt on handoff-doc writes" },
-        { "id": "qa_session_capture.py", "cat": "infra", "desc": "Hook: extracts decisions from handoffs into qa-knowledge" },
-        { "id": "improvement_sweep.py", "cat": "infra", "desc": "Hook: scans the handoff's project, queues top issues" }
-      ]
+      "id": "Infrastructure", "cat": "infra", "desc": "The hooks wiring everything else together — live-derived from settings.local.json, see ADR 0019",
+      "children": []
     },
     {
-      "id": "Autonomous Agents", "cat": "agents", "desc": "Run on a schedule, without being invoked",
-      "children": [
-        {
-          "id": "daily-digest", "cat": "agents", "desc": "Cron 08:30 — brainstorms feature combos, trim candidates, wild ideas",
-          "expandable": true,
-          "children": [
-            { "id": "reads: qa-knowledge", "cat": "agents", "desc": "part of its assembled context" },
-            { "id": "reads: roadmap + handoffs", "cat": "agents", "desc": "part of its assembled context" },
-            { "id": "writes: daily-digest/*.md", "cat": "agents", "desc": "the actual output — was silently broken until tonight" }
-          ]
-        },
-        {
-          "id": "research-colony", "cat": "agents", "desc": "Cron 09:00 — source_monitor → correlate → digest",
-          "expandable": true,
-          "children": [
-            { "id": "source_monitor.py", "cat": "agents", "desc": "fetches arXiv CS.AI/CS.LG/CS.MA, GitHub, HN" },
-            { "id": "correlate.py", "cat": "agents", "desc": "cross-refs against qa-knowledge, cosine distance < 1.1" },
-            { "id": "research_digest.py", "cat": "agents", "desc": "synthesizes into Directly Relevant / Lateral / Tools / Skip" }
-          ]
-        }
-      ]
+      "id": "Autonomous Agents", "cat": "agents", "desc": "Run on a schedule, without being invoked — live-derived from launchd, see ADR 0018",
+      "children": []
+    },
+    {
+      "id": "Cross-Machine Network", "cat": "cross-machine", "desc": "Registered machines + distributed-systems primitives — see ADR 0020",
+      "children": []
     }
   ],
 
@@ -92,6 +72,61 @@
     "reference-mcp": "MCP protocol knowledge base — architecture, transports, auth, extensions, debugging, registry"
   },
 
+  "agent_overrides": {
+    "daily-digest": {
+      "id": "daily-digest", "cat": "agents", "desc": "Cron 08:30 — brainstorms feature combos, trim candidates, wild ideas",
+      "expandable": true,
+      "children": [
+        { "id": "reads: qa-knowledge", "cat": "agents", "desc": "part of its assembled context" },
+        { "id": "reads: roadmap + handoffs", "cat": "agents", "desc": "part of its assembled context" },
+        { "id": "writes: daily-digest/*.md", "cat": "agents", "desc": "the actual output — was silently broken until tonight" }
+      ]
+    },
+    "research-colony": {
+      "id": "research-colony", "cat": "agents", "desc": "Cron 09:00 — source_monitor → correlate → digest",
+      "expandable": true,
+      "children": [
+        { "id": "source_monitor.py", "cat": "agents", "desc": "fetches arXiv CS.AI/CS.LG/CS.MA, GitHub, HN" },
+        { "id": "correlate.py", "cat": "agents", "desc": "cross-refs against qa-knowledge, cosine distance < 1.1" },
+        { "id": "research_digest.py", "cat": "agents", "desc": "synthesizes into Directly Relevant / Lateral / Tools / Skip" }
+      ]
+    }
+  },
+
+  "hook_overrides": {
+    "rebuild-manifest.py": {
+      "id": "rebuild-manifest.py", "cat": "infra",
+      "desc": "Rebuilds manifest.json from skill frontmatter — now path-scoped, not unconditional; also chains a brain-map regenerate"
+    },
+    "emit-resume-prompt.py": {
+      "id": "emit-resume-prompt.py", "cat": "infra",
+      "desc": "Hook: prints the resume prompt on handoff-doc writes"
+    },
+    "qa_session_capture.py": {
+      "id": "qa_session_capture.py", "cat": "infra",
+      "desc": "Hook: extracts decisions from handoffs into qa-knowledge"
+    },
+    "improvement_sweep.py": {
+      "id": "improvement_sweep.py", "cat": "infra",
+      "desc": "Hook: scans the handoff's project, queues top issues"
+    }
+  },
+
+  "cross_machine_network": {
+    "extra_nodes": [
+      {
+        "id": "exo", "cat": "cross-machine",
+        "desc": "Distributed LLM inference across registered devices over Tailscale — fully working 2026-07-08",
+        "expandable": false, "expanded": true, "children": []
+      },
+      {
+        "id": "task-dispatch", "cat": "cross-machine",
+        "desc": "General fan-out/merge dispatch primitive (lib/task_dispatch.py) — research-colony's cross-machine merge trigger runs on it",
+        "expandable": false, "expanded": true, "children": []
+      }
+    ]
+  },
+
   "synapse_labels": {
     "grill-with-docs->grill-me": "calls grill-me's interview process, then layers doc-updates on top",
     "grill-with-docs->lexicon": "calls lexicon to resolve/record terms as they crystallize",
@@ -118,7 +153,9 @@
     { "a": "daily-digest", "b": "qa-knowledge", "label": "reads qa-knowledge as part of its assembled context", "type": "hook" },
     { "a": "research-colony", "b": "qa-knowledge", "label": "correlate.py cross-refs today's finds against qa-knowledge", "type": "hook" },
     { "a": "research-colony", "b": "research-feed", "label": "source_monitor.py writes here, correlate.py reads it back", "type": "hook" },
-    { "a": "paper-dive", "b": "paper-knowledge", "label": "paper_graph.py's /paper-graph mode writes and reads here — added 2026-07-08, previously missing from this graph entirely (same gap class as qa-agent above)", "type": "hook" }
+    { "a": "paper-dive", "b": "paper-knowledge", "label": "paper_graph.py's /paper-graph mode writes and reads here — added 2026-07-08, previously missing from this graph entirely (same gap class as qa-agent above)", "type": "hook" },
+    { "a": "cross-machine-merge", "b": "task-dispatch", "label": "migrated to task-dispatch's fan-out/merge primitive, event-driven instead of purely cron-timed", "type": "hook" },
+    { "a": "cross-machine-merge", "b": "Cross-Machine Network", "label": "syncs qa-knowledge/research-feed across every device registered here", "type": "hook" }
   ],
 
   "synapse_label_fallback": "declared calls: dependency"

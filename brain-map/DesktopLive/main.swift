@@ -49,6 +49,11 @@ final class DesktopWebView: WKWebView {
 let activityURL = readAccessDir.appendingPathComponent("activity.jsonl")
 let demoEventsURL = readAccessDir.appendingPathComponent("demo-events.jsonl")
 let treeDataURL = readAccessDir.appendingPathComponent("tree-data.json")
+// Cross-Machine Network liveness — read directly rather than through a
+// generate.py regeneration cycle, so a disconnect shows up within one poll
+// interval instead of waiting for the next full graph rebuild (see ADR 0020).
+let networkURL = URL(fileURLWithPath: NSHomeDirectory() + "/.claude/marvin-network.json")
+let tailscaleBinary = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var windows: [NSWindow] = []
@@ -56,8 +61,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var reloadTimer: Timer?
     var activityTimer: Timer?
     var demoTimer: Timer?
+    var livenessTimer: Timer?
     var lastActivityLineCount = 0
     var lastDemoLineCount = 0
+    var lastDeviceOnline: [String: Bool] = [:]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory) // no Dock icon, no menu bar
@@ -110,6 +117,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         demoTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             self?.checkForDemoEvents()
         }
+        // Slower poll than activity/demo — shells out to a real process
+        // (tailscale status) rather than reading a small local file, so it's
+        // not free the way the others are. 18s keeps a disconnect visible
+        // within one poll interval without running it constantly.
+        livenessTimer = Timer.scheduledTimer(withTimeInterval: 18, repeats: true) { [weak self] _ in
+            self?.checkDeviceLiveness()
+        }
+        checkDeviceLiveness() // don't wait 18s for the first status on launch
     }
 
     func mtime() -> Date? {
@@ -190,6 +205,74 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 js = "if (window.demoRemoveNode) window.demoRemoveNode('\(escaped)');"
             }
             guard !js.isEmpty else { continue }
+            for window in windows {
+                (window.contentView as? WKWebView)?.evaluateJavaScript(js, completionHandler: nil)
+            }
+        }
+    }
+
+    // marvin-network.json's "devices" dict maps a device id (e.g.
+    // "macbook-pro-1") to registration info including tailscale_hostname —
+    // read fresh each poll (cheap, small file) so a newly-registered device
+    // picks up liveness with no restart.
+    func loadDevices() -> [String: String] {
+        guard let data = try? Data(contentsOf: networkURL),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let devices = obj["devices"] as? [String: Any] else { return [:] }
+        var out: [String: String] = [:]
+        for (id, info) in devices {
+            if let info = info as? [String: Any], let host = info["tailscale_hostname"] as? String {
+                out[host] = id
+            }
+        }
+        return out
+    }
+
+    func runTailscaleStatus() -> [String: Any]? {
+        guard FileManager.default.fileExists(atPath: tailscaleBinary) else { return nil }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: tailscaleBinary)
+        process.arguments = ["status", "--json"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
+    // tailscale's DNSName is "<hostname>.<tailnet-id>.ts.net." —
+    // marvin-network.json only stores the bare hostname prefix (we don't
+    // otherwise track the tailnet id), so match on that instead of the
+    // full DNS name.
+    func hostnamePrefix(_ dnsName: String) -> String {
+        String(dnsName.split(separator: ".").first ?? "")
+    }
+
+    func checkDeviceLiveness() {
+        let devices = loadDevices()
+        guard !devices.isEmpty, let status = runTailscaleStatus() else { return }
+
+        var seen: [String: Bool] = [:]
+        if let selfInfo = status["Self"] as? [String: Any], let dns = selfInfo["DNSName"] as? String {
+            // This machine is rendering the graph right now, so it's online
+            // by definition even if the field is ever missing/false.
+            seen[hostnamePrefix(dns)] = (selfInfo["Online"] as? Bool) ?? true
+        }
+        if let peers = status["Peer"] as? [String: Any] {
+            for (_, v) in peers {
+                guard let peer = v as? [String: Any], let dns = peer["DNSName"] as? String else { continue }
+                seen[hostnamePrefix(dns)] = (peer["Online"] as? Bool) ?? false
+            }
+        }
+
+        for (host, deviceId) in devices {
+            let online = seen[host] ?? false
+            if lastDeviceOnline[deviceId] == online { continue } // unchanged — skip the JS call
+            lastDeviceOnline[deviceId] = online
+            let escaped = deviceId.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
+            let js = "if (window.setDeviceStatus) window.setDeviceStatus('\(escaped)', \(online));"
             for window in windows {
                 (window.contentView as? WKWebView)?.evaluateJavaScript(js, completionHandler: nil)
             }

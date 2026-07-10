@@ -305,7 +305,7 @@ def main() -> None:
 
     # Score the brainstormed content before it ships — a confident, specific
     # sounding claim about a file/skill/metric that doesn't exist is the
-    # actual failure mode this guards, not just factual disagreement. Skip
+    # actual failure mode this guards, not factual disagreement. Skip
     # verifying a known call_claude() failure string — nothing to catch there.
     already_failed = content.startswith("(claude call failed:")
     if _SAFETY_MONITOR_AVAILABLE and not already_failed and not pass_or_quarantine(content, loop_name="daily_digest", source_context=prompt):

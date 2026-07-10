@@ -361,6 +361,21 @@
   window.demoAddNode = demoAddNode;
   window.demoRemoveNode = demoRemoveNode;
 
+  // Live device liveness (Cross-Machine Network trunk) — DesktopLive polls
+  // `tailscale status --json` itself (~every 15-20s, see main.swift) and
+  // pushes changes straight in, the same "small file/signal pushed via
+  // evaluateJavaScript" pattern as activity/demo above. Only nudges the
+  // camera on an actual state flip, not every poll, so a steady-state
+  // connection doesn't tug the view every 15s.
+  function setDeviceStatus(id, online) {
+    var node = byId[id];
+    if (!node) return;
+    var changed = node.online !== online;
+    node.online = online;
+    if (changed) nudgeCameraAndPulse(node);
+  }
+  window.setDeviceStatus = setDeviceStatus;
+
   layout();
 
   // ── camera ───────────────────────────────────────────────────────────
@@ -612,15 +627,20 @@
       var catInfo = CAT[hovered.cat];
       var syns = synapsesOf(hovered.id);
       var expandHint = hovered.expandable ? (hovered.expanded ? "click to collapse its forest" : "click to reveal its forest") : "";
+      // hovered.online is only set on Cross-Machine Network device nodes,
+      // pushed live by DesktopLive's tailscale poll (see setDeviceStatus) —
+      // undefined for every other node, so this is a no-op elsewhere.
+      var liveStatus = hovered.online === undefined ? "" : (hovered.online ? "● online" : "○ offline");
+      var descText = [hovered.desc, liveStatus].filter(Boolean).join(" — ");
       tooltip.innerHTML =
         '<div class="name mono"></div><div class="cat"></div>' +
-        (hovered.desc ? '<div class="desc"></div>' : "") +
+        (descText ? '<div class="desc"></div>' : "") +
         (syns.length ? '<div class="edges"></div>' : "") +
         (expandHint ? '<div class="edges" style="border-top:none;padding-top:0;margin-top:2px;font-style:italic;"></div>' : "");
       var parts = tooltip.querySelectorAll(".name, .cat, .desc, .edges");
       tooltip.querySelector(".name").textContent = hovered.id;
       tooltip.querySelector(".cat").textContent = mode === "brain" ? catInfo.brain : catInfo.label;
-      if (hovered.desc) tooltip.querySelector(".desc").textContent = hovered.desc;
+      if (descText) tooltip.querySelector(".desc").textContent = descText;
       var edgeEls = tooltip.querySelectorAll(".edges");
       var idx = 0;
       if (syns.length) {
@@ -745,7 +765,7 @@
       var synDeg = synapseDegree[nd.id] || 0;
       var bf = birthFactor(nd); // 0..1, eases a newly-created node in instead of popping
       var r = (baseR + synDeg * 0.7) * depthT * bf;
-      var color = CAT[nd.cat].color;
+      var color = nd.online === false ? "#5a5a5a" : CAT[nd.cat].color;
       var pulse = pulseIntensityOf(nd.id);
 
       if (r < 0.4) return; // still basically zero-sized — nothing to draw yet
