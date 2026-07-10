@@ -27,8 +27,13 @@ asked" rule, limited to these two repos, made in exchange for real
 transparency: every push/pull writes to ~/.claude/sync-log.md (checked at
 session start, mirroring auto-fix-log.md's existing "autonomous but never
 silent" pattern) — including runs against ~/.claude itself, which logs to a
-file inside the very repo it's syncing; that's fine, it's just another
-tracked markdown file growing over time, no different in kind from any other.
+file inside the very repo it's syncing. That self-reference caused a real
+recurring friction the first time both machines pushed regularly: a log
+entry written *after* a commit is, by construction, uncommitted content by
+the time the next pull stashes it — meaning nearly every cycle produced an
+avoidable stash-pop conflict on sync-log.md alone. push() now writes its log
+entry *before* committing (optimistically, describing the commit about to
+happen) so it's swept into the same commit instead of trailing.
 
 Non-overlapping changes auto-merge (git's own merge machinery). Genuine
 conflicts fail loud — merge aborted, tree left clean, logged clearly — and get
@@ -86,11 +91,26 @@ def _merge_remote(repo: Path) -> tuple[bool, str]:
 def push(repo: Path) -> None:
     label = machine_label()
     status = _git(repo, ["status", "--porcelain"])
-    if not status.strip():
-        _log(repo, "push", "nothing to commit")
+    all_changed = [line[3:].strip() for line in status.splitlines() if line.strip()]
+    # sync-log.md itself doesn't count — otherwise its own last entry (written
+    # after a prior push, per the pre-log write below, still lands one line
+    # after the commit it describes) would make every push think there's
+    # real work to do, and would make "nothing to commit" impossible to ever
+    # detect once the log has grown at all.
+    real_changes = [f for f in all_changed if f != LOG_PATH.name]
+    if not real_changes:
         return
 
-    changed_files = [line[3:].strip() for line in status.splitlines() if line.strip()]
+    # Write the log entry BEFORE committing, not after — so it's swept into
+    # the same commit by the git add -A below instead of trailing as fresh
+    # dirty content that the next pull has to stash-and-repop (this was
+    # generating a real, avoidable stash-pop conflict on almost every cycle
+    # once both machines were pushing regularly — see ADR 0021's addendum).
+    # Optimistic: written before we know push will actually succeed, so a
+    # genuine failure still trails (rare; acceptable).
+    _log(repo, "push", f"committed + pushed {len(real_changes)} file(s)", real_changes)
+
+    changed_files = [line[3:].strip() for line in _git(repo, ["status", "--porcelain"]).splitlines() if line.strip()]
     _git(repo, ["add", "-A"])
     msg = f"auto-sync ({label}): {len(changed_files)} file(s) changed\n\n" + "\n".join(f"- {f}" for f in changed_files[:20])
     commit_ok, commit_out = _git_ok(repo, ["commit", "-m", msg])
@@ -100,8 +120,7 @@ def push(repo: Path) -> None:
 
     push_ok, push_out = _git_ok(repo, ["push", "origin", "main"])
     if push_ok:
-        _log(repo, "push", f"committed + pushed {len(changed_files)} file(s)", changed_files)
-        notify("MARVIN code-sync", f"Pushed {len(changed_files)} file(s) from {label} [{repo.name}]")
+        notify("MARVIN code-sync", f"Pushed {len(real_changes)} file(s) from {label} [{repo.name}]")
         return
 
     # Rejected, most likely non-fast-forward — merge the remote's new commits
