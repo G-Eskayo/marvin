@@ -76,7 +76,7 @@ def push() -> None:
         _log("push", "nothing to commit")
         return
 
-    changed_files = [line[3:].strip() for line in status.strip().splitlines()]
+    changed_files = [line[3:].strip() for line in status.splitlines() if line.strip()]
     _git(["add", "-A"])
     msg = f"auto-sync ({label}): {len(changed_files)} file(s) changed\n\n" + "\n".join(f"- {f}" for f in changed_files[:20])
     commit_ok, commit_out = _git_ok(["commit", "-m", msg])
