@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """PostToolUse hook: when a handoff doc is written to ~/.claude/handoffs/,
-trigger code_sync.py's push — session/topic-switch moments are the natural
-checkpoint for "commit and push whatever's changed in ~/.agents." See
+trigger code_sync.py's push for both synced repos (~/.agents and ~/.claude)
+— session/topic-switch moments are the natural checkpoint for "commit and
+push whatever's changed," and the handoff doc itself is content inside
+~/.claude that this same write just changed. See
 docs/adr/0021-bidirectional-code-sync-scoped-commit-exception.md.
 
 Same file-matching logic as emit-resume-prompt.py (deliberately duplicated,
@@ -38,10 +40,11 @@ def main() -> None:
 
     venv_python = Path.home() / ".agents" / "venv" / "bin" / "python"
     code_sync = Path.home() / ".agents" / "lib" / "code_sync.py"
-    try:
-        subprocess.run([str(venv_python), str(code_sync), "push"], timeout=60, capture_output=True)
-    except Exception:
-        pass
+    for repo in (Path.home() / ".agents", Path.home() / ".claude"):
+        try:
+            subprocess.run([str(venv_python), str(code_sync), "push", str(repo)], timeout=60, capture_output=True)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
