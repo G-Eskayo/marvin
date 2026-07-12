@@ -172,9 +172,13 @@ def check_repo_integrity(display_name: str, rel_path: str) -> list[str]:
     repo = HOME / rel_path
     if not (repo / ".git").exists():
         return []
-    files = subprocess.run(
+    # sorted(set(...)): during an active unresolved merge, `git ls-files`
+    # lists a conflicted path once per stage (base/ours/theirs) — found via
+    # this exact check reporting "sync-log.md, sync-log.md, sync-log.md" on
+    # a real conflict.
+    files = sorted(set(subprocess.run(
         ["git", "-C", str(repo), "ls-files"], capture_output=True, text=True
-    ).stdout.splitlines()
+    ).stdout.splitlines()))
     broken = []
     for f in files:
         path = repo / f
