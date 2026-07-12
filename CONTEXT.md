@@ -2,14 +2,16 @@
 
 Domain terms only. No implementation details — see `docs/adr/` for decisions and rationale.
 
-## Code sync (in design, 2026-07-09 — distinct from cross_machine_merge.py's data sync)
+## Code sync (built 2026-07-09/12 — distinct from cross_machine_merge.py's data sync)
 
-- **Code sync**: keeping `~/.agents` (the git-tracked skills/lib/docs tree) identical across
-  MARVIN's known machines via git commit/push/pull — distinct from **data sync**
+- **Code sync**: keeping a git repo identical across MARVIN's known machines via git
+  commit/push/pull, run through `code_sync.py` — distinct from **data sync**
   (`cross_machine_merge.py`), which unifies *runtime output* (qa-knowledge, research-feed,
   digests) via SSH/ChromaDB transfer, not git. The two solve structurally different problems
   (one machine's code should be everyone's code; one machine's *findings* should be everyone's
-  findings, but by union/merge, not overwrite) and are not meant to share a mechanism.
+  findings, but by union/merge, not overwrite) and are not meant to share a mechanism. Two repos
+  use it: `~/.agents` (GitHub remote) and `~/.claude` (a curated, allow-listed subset — memory,
+  CLAUDE.md, commands, handoffs, shared backlogs — self-hosted remote, see below).
 - **Bidirectional**: either machine can commit and push — no single "authoritative" machine for
   code, unlike data sync's fixed merge authority (always the stationary machine). Chosen because
   the actual goal is "work on either machine, it doesn't matter which" (the "one computer, two
@@ -17,11 +19,23 @@ Domain terms only. No implementation details — see `docs/adr/` for decisions a
   happens on the Mac Mini, but the design shouldn't assume that stays true.
 - **Scoped commit exception**: an explicit, narrow carve-out from the standing "never commit
   without being asked" rule (`CLAUDE.md`'s Git Safety Protocol) — automatic commit+push is
-  permitted, but *only* for `~/.agents`, in service of not having to manually remember to push
-  after every session. Not a general loosening of the rule elsewhere.
+  permitted, but *only* for the two synced repos, in service of not having to manually remember
+  to push after every session. Not a general loosening of the rule elsewhere.
 - **Sync-log transparency**: every auto-commit, auto-push, and auto-pull writes to
   `~/.claude/sync-log.md`, checked at session start — mirrors the existing `auto-fix-log.md`
   pattern (autonomous action, no approval gate, but nothing happens silently).
+- **Self-hosted sync** (`~/.claude` specifically): no third-party remote — Gil's direction was
+  unambiguous ("always go with the more secure approach when it comes to sensitive information").
+  A bare git repo on Mac Mini (`~/.claude-sync.git`), reached over Tailscale/SSH like git worked
+  before hosted services existed. `~/.agents` keeps its GitHub remote (skill code, lower
+  sensitivity); `~/.claude` holds personal memory and would otherwise put `.claude.json`-adjacent
+  content at third-party risk.
+- **Conflict-marker guard**: `push()` scans every changed file for literal `<<<<<<<`/`=======`/
+  `>>>>>>>` lines before committing, and refuses (logs + notifies, commits nothing) if any are
+  found. Exists because a stash-pop conflict can leave markers sitting in a working-tree file, and
+  without this check the *next* automated push — including an unattended daily cron — would
+  commit and propagate that corruption with nobody watching. See [[0022]] for the real incident
+  that motivated this.
 
 - **Intent-vs-reality audit**: comparing documented intent (docstrings, ADRs, roadmap `[decision]`/
   `[research]` markers, memory) against actual current system state to find gaps nobody's reported
