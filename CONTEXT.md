@@ -2,6 +2,21 @@
 
 Domain terms only. No implementation details — see `docs/adr/` for decisions and rationale.
 
+## Session continuity (in design, 2026-07-12)
+
+- **Session bridge**: every Claude Code session's transcript includes a `bridge-session` entry
+  (`bridgeSessionId`, matching the `claude.ai/code/session_...` URL format) — real, but confirmed
+  by direct test to be a one-way link for the web/mobile monitoring view only. It is **not** a
+  mechanism the CLI itself uses to resume a session cross-machine: `claude --resume <id>` and
+  `claude agents --json` were both tested from MacBook Pro against a session that only exists on
+  Mac Mini — both came back empty/not-found, purely local-file/local-process lookups. Ruled out as
+  a shortcut; genuine custom automation is needed for cross-machine continuity.
+- **Session transcript**: the local, per-session `.jsonl` file under
+  `~/.claude/projects/<slugified-cwd>/<session-id>.jsonl` — deliberately excluded from `~/.claude`
+  code sync (90MB+ of raw, private, per-session history; see [[0022]]'s `.gitignore` scope).
+  Distinct from a **handoff doc** (`~/.claude/handoffs/*.md`), a hand-authored summary + resume
+  prompt, which *is* synced.
+
 ## Code sync (built 2026-07-09/12 — distinct from cross_machine_merge.py's data sync)
 
 - **Code sync**: keeping a git repo identical across MARVIN's known machines via git
