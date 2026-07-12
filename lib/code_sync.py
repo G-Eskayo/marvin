@@ -226,6 +226,15 @@ def pull(repo: Path) -> None:
             notify("MARVIN code-sync CONFLICT", f"WIP restore conflicted after pull [{repo.name}] — check sync-log.md")
             return
 
+    if before == after and not stashed:
+        # Genuinely nothing happened — no merge, no WIP involved. Not worth
+        # a log entry: logging (and self-flushing) a pure no-op just to have
+        # something to say produced a real, avoidable failure mode — two
+        # machines pulling close together would each generate their own
+        # "nothing happened" commit, hand it to the other, which pulls it,
+        # logs *that* as its own no-op, and so on indefinitely.
+        return
+
     suffix = " (local WIP restored)" if stashed else ""
     if before == after:
         _log(repo, "pull", f"already up to date{suffix}")
