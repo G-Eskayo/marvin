@@ -108,6 +108,29 @@ def _log(repo: Path, action: str, summary: str, files: list[str] | None = None) 
         f.write("\n".join(lines) + "\n")
 
 
+def _flush_log(repo: Path) -> None:
+    """Commit + push a sync-log.md-only diff immediately, bypassing push()'s
+    normal "is there real work to do" gate (which deliberately excludes
+    log-only diffs there, to stop the log endlessly re-triggering itself).
+    pull() calls this right after logging its own outcome, so that entry
+    doesn't sit as trailing dirty content for the *next* pull to stash and
+    fail to cleanly re-pop — the exact self-inflicted conflict loop found
+    repeatedly in production (see ADR 0022). Only acts if sync-log.md is the
+    *only* thing dirty; leaves anything else for a real push() to handle."""
+    status = _git(repo, ["status", "--porcelain"])
+    changed = [line[3:].strip() for line in status.splitlines() if line.strip()]
+    if changed != [LOG_PATH.name]:
+        return
+    commit_ok, _ = _git_ok(repo, ["commit", "-am", f"auto-sync ({machine_label()}): sync-log.md"])
+    if not commit_ok:
+        return
+    push_ok, _ = _git_ok(repo, ["push", "origin", "main"])
+    if not push_ok:
+        clean, _ = _merge_remote(repo)
+        if clean:
+            _git_ok(repo, ["push", "origin", "main"])
+
+
 def _merge_remote(repo: Path) -> tuple[bool, str]:
     """Fetch + merge origin/main. On conflict, aborts the merge (tree left
     clean, nothing partially applied) rather than attempting resolution."""
@@ -208,6 +231,7 @@ def pull(repo: Path) -> None:
         _log(repo, "pull", f"already up to date{suffix}")
     else:
         _log(repo, "pull", f"merged {before[:8]}..{after[:8]}{suffix}")
+    _flush_log(repo)
 
 
 def main() -> None:
