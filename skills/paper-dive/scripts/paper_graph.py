@@ -15,17 +15,31 @@ import heapq
 from pathlib import Path
 
 
-def _get_with_retry(url: str, params: dict, timeout: int, max_retries: int = 4):
+def _get_with_retry(url: str, params: dict, timeout: int, max_retries: int = 8):
+    """Unauthenticated S2 access is a 1000 req/s pool shared across every anonymous caller on the
+    internet, not a per-user quota — a 429 here is transient global contention, not us exceeding
+    anything. An API key's introductory tier (1 RPS) isn't meaningfully better than this pool for
+    our actual volume (~1-2 calls per seed paper), so riding out contention with longer backoff is
+    the right fix, not chasing a key. S2_API_KEY is still honored if set, for whenever a real one
+    with a higher approved tier exists."""
+    import os
+    import random
     import time
     import requests
 
+    headers = {}
+    api_key = os.environ.get("S2_API_KEY")
+    if api_key:
+        headers["x-api-key"] = api_key
+
     for attempt in range(max_retries):
-        resp = requests.get(url, params=params, timeout=timeout)
+        resp = requests.get(url, params=params, headers=headers, timeout=timeout)
         if resp.status_code != 429:
             resp.raise_for_status()
             return resp
         if attempt < max_retries - 1:
-            time.sleep(2 ** attempt)  # 1s, 2s, 4s, ...
+            backoff = min(2 ** attempt, 60)  # 1s, 2s, 4s, ... capped at 60s
+            time.sleep(backoff + random.uniform(0, 1))  # jitter — avoid lockstep retries against a shared pool
     resp.raise_for_status()  # exhausted retries — surface the final 429 as an error
 
 

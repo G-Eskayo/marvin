@@ -40,8 +40,20 @@ conflicts fail loud — merge aborted, tree left clean, logged clearly — and g
 resolved by whichever live session next notices the log entry, the same way
 manual resolution already works today. No automated conflict resolver exists
 (deliberately not built ahead of a single real case — see ADR 0021).
+
+Found the hard way, 2026-07-12: a stash-pop conflict leaves literal
+`<<<<<<<`/`=======`/`>>>>>>>` markers sitting in working-tree files. Without a
+check, the *next* automated push() doesn't know or care — it just `git add
+-A`s and commits whatever's on disk, markers included, and pushes that
+broken content as if it were legitimate. The other machine then pulls the
+corruption, and if it also auto-pushes, can commit its own broken
+"resolution" on top — compounding across autonomous cycles with nobody
+watching, exactly what happened overnight while this file's own conflict
+sat unresolved through several 22:00 cron backstop runs. push() now refuses
+to commit if any changed file still contains conflict markers.
 """
 from __future__ import annotations
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -53,6 +65,25 @@ from notify import notify  # noqa: E402
 
 DEFAULT_REPO = Path.home() / ".agents"
 LOG_PATH = Path.home() / ".claude" / "sync-log.md"
+CONFLICT_MARKER_RE = re.compile(r"^(<{7}|={7}|>{7})(?: |$)", re.MULTILINE)
+
+
+def _files_with_conflict_markers(repo: Path, files: list[str]) -> list[str]:
+    """Which of these files still contain literal git conflict markers —
+    catches a prior stash-pop/merge conflict that never got resolved before
+    something (a live session or an autonomous cron) tried to commit anyway."""
+    broken = []
+    for f in files:
+        path = repo / f
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(errors="ignore")
+        except Exception:
+            continue
+        if CONFLICT_MARKER_RE.search(text):
+            broken.append(f)
+    return broken
 
 
 def _git(repo: Path, args: list[str]) -> str:
@@ -99,6 +130,12 @@ def push(repo: Path) -> None:
     # detect once the log has grown at all.
     real_changes = [f for f in all_changed if f != LOG_PATH.name]
     if not real_changes:
+        return
+
+    broken = _files_with_conflict_markers(repo, all_changed)
+    if broken:
+        _log(repo, "push", f"REFUSING to commit — conflict markers found in {len(broken)} file(s), needs manual resolution before this push can proceed:", broken)
+        notify("MARVIN code-sync CONFLICT", f"Refusing to commit broken content [{repo.name}] — check sync-log.md")
         return
 
     # Write the log entry BEFORE committing, not after — so it's swept into
