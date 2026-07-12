@@ -11,10 +11,24 @@ Only scans bytes appended since the last run (tracked in a state file) so
 old, already-seen failures don't re-trigger forever and log files with no
 per-line timestamps still work. Writes ~/.claude/logs/cron-health.md,
 which CLAUDE.md's session-start check reads.
+
+Also checks code_sync.py's two synced repos (~/.agents, ~/.claude), added
+2026-07-12 after a real incident (see ADR 0022): everything that went wrong
+— a machine silently never being a real git clone, conflict markers
+propagating through unattended cron cycles — was discovered by accident,
+days after it started, while doing unrelated work. Two checks close that
+gap: **convergence** (is every known machine actually at the same commit
+for each repo — an SSH-based check, since divergence is inherently a
+cross-machine question, unlike the log-scanning JOBS checks above) and
+**integrity** (does any tracked file in this machine's own copy contain
+literal git conflict markers — local-only, since each machine's own
+cron-health run already covers itself, no need to reach across SSH twice).
 """
 from __future__ import annotations
 import json
 import re
+import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -22,9 +36,20 @@ HOME = Path.home()
 STATE_PATH = HOME / ".claude" / "logs" / ".cron-health-state.json"
 OUTPUT_PATH = HOME / ".claude" / "logs" / "cron-health.md"
 
+sys.path.insert(0, str(HOME / ".agents" / "lib"))
+from machine_profile import remote_devices  # noqa: E402
+
 FAILURE_PATTERN = re.compile(
     r"failed|error|traceback|denied|timed out|exception", re.IGNORECASE
 )
+CONFLICT_MARKER_RE = re.compile(r"^(<{7}|={7}|>{7})(?: |$)", re.MULTILINE)
+SSH_OPTS = ["-o", "ConnectTimeout=5", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"]
+
+# name -> path relative to $HOME, for the two repos code_sync.py keeps in sync
+SYNCED_REPOS = {
+    "~/.agents": ".agents",
+    "~/.claude": ".claude",
+}
 
 # name -> (scheduled HH:MM, [log paths to scan])
 JOBS = {
@@ -106,6 +131,66 @@ def check_job(name: str, scheduled: str, log_paths: list[str], state: dict, now:
     return None
 
 
+def check_repo_convergence(display_name: str, rel_path: str) -> list[str]:
+    """Is every other known machine's HEAD the same as this machine's, for
+    this repo? Divergence means code_sync.py's push/pull cycle has stalled
+    somewhere — a hook not firing, a machine offline for days, a conflict
+    sitting unresolved — the exact class of thing that went unnoticed for a
+    week before ADR 0021/0022."""
+    repo = HOME / rel_path
+    if not (repo / ".git").exists():
+        return []
+    local_head = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True
+    ).stdout.strip()
+    if not local_head:
+        return []
+
+    problems = []
+    for device_id, info in remote_devices().items():
+        host = info.get("tailscale_hostname")
+        if not host:
+            continue
+        result = subprocess.run(
+            ["ssh", *SSH_OPTS, host, f"git -C {rel_path} rev-parse HEAD"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            problems.append(f"**{display_name} convergence**: couldn't reach {device_id} to compare — {result.stderr.strip()[:150] or 'offline or unreachable'}")
+            continue
+        remote_head = result.stdout.strip()
+        if remote_head and remote_head != local_head:
+            problems.append(f"**{display_name} convergence**: {device_id} is at `{remote_head[:8]}`, this machine is at `{local_head[:8]}` — a push/pull cycle may be stalled")
+    return problems
+
+
+def check_repo_integrity(display_name: str, rel_path: str) -> list[str]:
+    """Does any tracked file in this machine's copy contain literal git
+    conflict markers? Local only — catches corruption from an unresolved
+    stash-pop/merge conflict before an automated push can propagate it, per
+    the incident in ADR 0022."""
+    repo = HOME / rel_path
+    if not (repo / ".git").exists():
+        return []
+    files = subprocess.run(
+        ["git", "-C", str(repo), "ls-files"], capture_output=True, text=True
+    ).stdout.splitlines()
+    broken = []
+    for f in files:
+        path = repo / f
+        try:
+            text = path.read_text(errors="ignore")
+        except Exception:
+            continue
+        if CONFLICT_MARKER_RE.search(text):
+            broken.append(f)
+    if broken:
+        sample = ", ".join(broken[:5])
+        more = f" (+{len(broken) - 5} more)" if len(broken) > 5 else ""
+        return [f"**{display_name} integrity**: {len(broken)} file(s) with literal conflict markers{more} — `{sample}`"]
+    return []
+
+
 def main() -> None:
     now = datetime.now().astimezone()
     state = _load_state()
@@ -114,6 +199,9 @@ def main() -> None:
         result = check_job(name, scheduled, log_paths, state, now)
         if result:
             problems.append(result)
+    for display_name, rel_path in SYNCED_REPOS.items():
+        problems.extend(check_repo_convergence(display_name, rel_path))
+        problems.extend(check_repo_integrity(display_name, rel_path))
     _save_state(state)
 
     ts = now.isoformat()
