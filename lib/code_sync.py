@@ -51,6 +51,20 @@ corruption, and if it also auto-pushes, can commit its own broken
 watching, exactly what happened overnight while this file's own conflict
 sat unresolved through several 22:00 cron backstop runs. push() now refuses
 to commit if any changed file still contains conflict markers.
+
+Two more things tuned the same day, both about pull()'s own logging:
+pull() no longer logs (or stashes) a pure no-op — nothing merged, no local
+WIP involved — since logging one just to have said something produced its
+own failure mode (two machines pulling close together each generate a
+"nothing happened" entry, hand it to the other, which logs *that* as its own
+no-op, forever). And pull()'s entry for a *real* merge is deliberately left
+to trail rather than self-committed immediately — an earlier attempt to
+self-flush it caused a worse problem: committing+pushing immediately hands
+the other machine a new commit to merge, which logs and flushes its own
+entry about *that* merge, which this machine then merges and flushes again —
+two machines pulling from each other never reach a quiet fixed point. Left
+to trail instead; the next real push() (on either machine, from actual work)
+sweeps it up naturally, same as any other pending local change.
 """
 from __future__ import annotations
 import re
@@ -106,29 +120,6 @@ def _log(repo: Path, action: str, summary: str, files: list[str] | None = None) 
             lines.append(f"- ...and {len(files) - 20} more")
     with LOG_PATH.open("a") as f:
         f.write("\n".join(lines) + "\n")
-
-
-def _flush_log(repo: Path) -> None:
-    """Commit + push a sync-log.md-only diff immediately, bypassing push()'s
-    normal "is there real work to do" gate (which deliberately excludes
-    log-only diffs there, to stop the log endlessly re-triggering itself).
-    pull() calls this right after logging its own outcome, so that entry
-    doesn't sit as trailing dirty content for the *next* pull to stash and
-    fail to cleanly re-pop — the exact self-inflicted conflict loop found
-    repeatedly in production (see ADR 0022). Only acts if sync-log.md is the
-    *only* thing dirty; leaves anything else for a real push() to handle."""
-    status = _git(repo, ["status", "--porcelain"])
-    changed = [line[3:].strip() for line in status.splitlines() if line.strip()]
-    if changed != [LOG_PATH.name]:
-        return
-    commit_ok, _ = _git_ok(repo, ["commit", "-am", f"auto-sync ({machine_label()}): sync-log.md"])
-    if not commit_ok:
-        return
-    push_ok, _ = _git_ok(repo, ["push", "origin", "main"])
-    if not push_ok:
-        clean, _ = _merge_remote(repo)
-        if clean:
-            _git_ok(repo, ["push", "origin", "main"])
 
 
 def _merge_remote(repo: Path) -> tuple[bool, str]:
@@ -240,7 +231,13 @@ def pull(repo: Path) -> None:
         _log(repo, "pull", f"already up to date{suffix}")
     else:
         _log(repo, "pull", f"merged {before[:8]}..{after[:8]}{suffix}")
-    _flush_log(repo)
+    # Deliberately NOT self-flushed (tried it, reverted — see git history):
+    # committing+pushing this entry immediately creates a new commit for the
+    # *other* machine to merge, which logs and flushes *its own* entry about
+    # that merge, which this machine then merges and flushes again — two
+    # machines pulling from each other never reach a quiet fixed point. Left
+    # to trail instead; the next real push() (on either machine) sweeps it
+    # up naturally, same as any other pending local change.
 
 
 def main() -> None:
