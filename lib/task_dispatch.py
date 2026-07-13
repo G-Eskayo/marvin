@@ -135,7 +135,18 @@ def _build_wrapper_script(command: str, task_id: str, task_label: str) -> str:
     crashes, not just on clean exit) clears the state file and deletes its
     own /tmp script file. Self-deleting a running script is safe on
     Unix/macOS: rm just unlinks the directory entry, the already-open file
-    stays readable to the running interpreter until it exits."""
+    stays readable to the running interpreter until it exits.
+
+    Also exports CLAUDE_CODE_OAUTH_TOKEN from ~/.claude/.oauth-token on
+    whichever machine actually runs this (local or remote — $HOME expands at
+    runtime there, not where this string is built), if that file exists.
+    Dispatched commands run in a non-interactive shell (no .zshrc/.zprofile
+    sourced), so the normal keychain-backed login can't render its
+    interactive confirmation dialog and fails with "Not logged in" — found
+    2026-07-12/13 testing cross-machine claude -p dispatch for real, same
+    root cause as the DarkWake auth bug. The token file is deliberately
+    outside code_sync's ~/.claude scope (its .gitignore never allow-lists
+    it) — this file never leaves the machine it's created on."""
     started_at = datetime.now(timezone.utc).isoformat()
     busy_json = json.dumps({"busy": True, "task": task_label, "task_id": task_id, "started_at": started_at})
     idle_json = json.dumps({"busy": False})
@@ -147,6 +158,9 @@ DISPATCH_STATE_EOF
 trap 'rm -f "$0"; cat > {DISPATCH_STATE_PATH} << 'DISPATCH_IDLE_EOF'
 {idle_json}
 DISPATCH_IDLE_EOF' EXIT
+if [ -f "$HOME/.claude/.oauth-token" ]; then
+  export CLAUDE_CODE_OAUTH_TOKEN="$(cat "$HOME/.claude/.oauth-token")"
+fi
 {command}
 """
 
