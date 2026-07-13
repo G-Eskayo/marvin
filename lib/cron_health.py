@@ -81,6 +81,10 @@ JOBS = {
         "03:00",
         [".claude/organize/agent.out.log", ".claude/organize/agent.err.log"],
     ),
+    "code-sync-push": (
+        "22:00",
+        [".claude/sync-log.md"],
+    ),
 }
 
 GRACE_MINUTES = 30
