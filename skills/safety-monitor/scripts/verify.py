@@ -74,13 +74,23 @@ def verify(artifact_text: str, loop_name: str, source_context: str = "") -> floa
         )
         prompt = (
             f"{rubric}\n{context_block}\n--- ARTIFACT TO SCORE ---\n{artifact_text}\n\n"
-            "Respond with ONLY a single number between 0.00 and 1.00 — your "
-            "risk score for this artifact under the rubric above. No words, "
-            "no explanation, just the number."
+            "You have no tool access and cannot read any files — judge only "
+            "from the rubric, source data, and artifact text above. Respond "
+            "with ONLY a single number between 0.00 and 1.00 — your risk "
+            "score for this artifact under the rubric above. No words, no "
+            "explanation, just the number."
         )
+        # --tools "": without this, the rubric's own "does it reference
+        # something that doesn't exist" framing invites haiku to go read
+        # files itself (source_context above already gives it what it needs)
+        # — measured live 2026-07-13: 113s with default tool access (it
+        # actually explored the repo) vs ~50s with tools off, against a
+        # 60s timeout that had already been silently failing open a few
+        # times. Timeout raised to 120s to give real margin even in the
+        # clean case, which alone measured close to 60s with no slack.
         proc = subprocess.run(
-            [claude_bin, "-p", prompt, "--model", "haiku", "--output-format", "text"],
-            capture_output=True, text=True, timeout=60,
+            [claude_bin, "-p", prompt, "--model", "haiku", "--output-format", "text", "--tools", ""],
+            capture_output=True, text=True, timeout=120,
         )
         if proc.returncode != 0 or not proc.stdout.strip():
             print(f"[safety-monitor] verify() failed open for '{loop_name}': "

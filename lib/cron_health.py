@@ -244,6 +244,41 @@ def check_organize_sync() -> list[str]:
     return problems
 
 
+def _archive_previous_latest() -> str:
+    """Pulls the previous run's "## Latest" block down into "## History"
+    before this run overwrites it. Previously cron-health.md was fully
+    overwritten every run, so a past incident (like the 2026-07-13
+    safety-monitor timeout, seen twice before anyone noticed) was only
+    reconstructable by grepping raw log byte-offsets — there was no
+    retained record of what an earlier run had actually flagged. Returns
+    the full existing History section text (untouched) plus the old
+    Latest block prepended as its newest entry, ready to splice into the
+    new file.
+
+    Handles three shapes of an existing file: none yet (fresh install),
+    the pre-history single-run format ("# Cron health — {ts}\\n\\n{body}"),
+    and this function's own new format — so the file that already existed
+    the day this shipped isn't silently discarded."""
+    if not OUTPUT_PATH.exists():
+        return ""
+    old_text = OUTPUT_PATH.read_text()
+    marker = "\n## History\n"
+    if "## Latest — " not in old_text:
+        if marker in old_text:
+            return old_text.split(marker, 1)[1].lstrip("\n")
+        # Legacy single-run format: "# Cron health — {ts}\n\n{body}"
+        header, _, old_body = old_text.partition("\n\n")
+        old_ts = header.removeprefix("# Cron health — ").strip()
+        if not old_ts:
+            return ""
+        return f"### {old_ts}\n{old_body.strip()}\n"
+    latest_block = old_text.split("## Latest — ", 1)[1].split(marker, 1)[0]
+    old_ts, _, old_body = latest_block.partition("\n\n")
+    new_entry = f"### {old_ts}\n{old_body.strip()}\n\n"
+    rest = old_text.split(marker, 1)[1].lstrip("\n") if marker in old_text else ""
+    return f"{new_entry}{rest}"
+
+
 def main() -> None:
     now = datetime.now().astimezone()
     state = _load_state()
@@ -256,14 +291,13 @@ def main() -> None:
         problems.extend(check_repo_convergence(display_name, rel_path))
         problems.extend(check_repo_integrity(display_name, rel_path))
     problems.extend(check_organize_sync())
+
+    history = _archive_previous_latest()
     _save_state(state)
 
     ts = now.isoformat()
-    if problems:
-        body = "\n".join(f"- {p}" for p in problems)
-        OUTPUT_PATH.write_text(f"# Cron health — {ts}\n\n{body}\n")
-    else:
-        OUTPUT_PATH.write_text(f"# Cron health — {ts}\n\nAll monitored jobs ran cleanly.\n")
+    body = "\n".join(f"- {p}" for p in problems) if problems else "All monitored jobs ran cleanly."
+    OUTPUT_PATH.write_text(f"# Cron health\n\n## Latest — {ts}\n\n{body}\n\n## History\n\n{history}")
 
 
 if __name__ == "__main__":
