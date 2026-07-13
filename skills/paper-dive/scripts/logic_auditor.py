@@ -13,13 +13,16 @@ competing-ideas-surface tool, see ADR 0001).
 
 Model choice validated 2026-07-13 against all 15 real seed abstracts (see
 the design doc's "Model" section): qwen2.5:14b for classification and layer
-2 (formal inference-validity), qwen2.5:3b for layer 1 (Toulmin/type-adaptive
-extraction) -- bigger was NOT monotonically better across these tasks (7b
-was a real regression for classification), so each stage was validated on
-its own rather than assuming one model size fits everything.
+2 (formal inference-validity), qwen2.5:3b for layer-1 extraction, qwen2.5:7b
+for layer-1 judgment -- model size was validated per task, never assumed:
+7b was a real regression for classification but the fix for judgment (3b
+produced literal single-word non-answers there), and 3b that was fine for
+extraction produced the same kind of garbage on judgment. No single size
+fits every stage.
 """
 from __future__ import annotations
 import json
+import re
 import urllib.request
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
@@ -198,6 +201,121 @@ def extract_all(papers: dict[str, tuple[str, str, str]], chat_fn=None) -> dict[s
     return {
         slug: extract_structure(title, abstract, paper_type, chat_fn=chat_fn)
         for slug, (title, abstract, paper_type) in papers.items()
+    }
+
+
+# ── Layer 1, step 2: type-adaptive consistency judgment ─────────────────────
+# Model: qwen2.5:7b, validated 2026-07-13 against all 15 real extractions.
+# 3b produced genuine garbage on this harder reasoning task -- confirmed via
+# raw response inspection, not just parsing artifacts: e.g. the entire
+# response for one paper was literally "FINDING: WARRANT", no content at
+# all, plus repeated field-label bleed-through (echoing "QUALIFIER: ..."
+# mid-finding) and frequent fake findings confirming things were fine
+# instead of reporting real issues. 7b fixed all of it cleanly -- no
+# truncation, no bleed-through, substantive well-reasoned findings, correct
+# "(no findings)" on papers with genuinely strong support. Notably the
+# mirror image of the classifier result (7b was a regression there) --
+# reinforces that model size must be validated per-task, not assumed.
+JUDGMENT_MODEL = "qwen2.5:7b"
+
+_GENERAL_FALLACY_CHECKLIST = (
+    "hasty generalization, circular reasoning, false dichotomy, unfalsifiable claims, "
+    "survivorship bias, p-hacking/multiple-comparisons"
+)
+
+_JUDGMENT_PROMPTS = {
+    "empirical": """Below is a Toulmin-model extraction of an empirical paper's argument (CLAIM/GROUNDS/WARRANT/QUALIFIER) -- judge the EXTRACTION below, not any paper you may know of with a similar topic. Check specifically:
+- Does the QUALIFIER accurately reflect how strong the GROUNDS actually are (not overclaiming beyond what the grounds support, not underclaiming either)?
+- Does the WARRANT commit a recognizable fallacy -- correlation treated as causation, an unaddressed confound, cherry-picked examples?
+- General fallacy checklist: {fallacies}
+
+CLAIM: {claim}
+GROUNDS: {grounds}
+WARRANT: {warrant}
+QUALIFIER: {qualifier}
+
+Only output a FINDING line for an actual problem -- never to confirm something checks out fine. If a check passes, simply say nothing about it; do not write a FINDING line like "the qualifier is accurate" or "no fallacy found." List each real issue you find, one per line, each starting with "FINDING:". If you find no issues at all, respond with exactly "NONE" and nothing else.""",
+
+    "survey": """Below is an extraction of a survey/SoK paper's argument (TAXONOMY/COVERAGE/CLAIMED_GAPS) -- judge the EXTRACTION below, not any paper you may know of with a similar topic. Check specifically:
+- Is the TAXONOMY internally consistent -- no categories presented as mutually exclusive that could actually overlap, no coverage claimed as exhaustive that isn't?
+- Are the CLAIMED_GAPS actually supported by the stated COVERAGE, or just asserted without connection to what was reviewed?
+- General fallacy checklist: {fallacies}
+
+TAXONOMY: {taxonomy}
+COVERAGE: {coverage}
+CLAIMED_GAPS: {claimed_gaps}
+
+Only output a FINDING line for an actual problem -- never to confirm something checks out fine. If a check passes, simply say nothing about it; do not write a FINDING line like "the qualifier is accurate" or "no fallacy found." List each real issue you find, one per line, each starting with "FINDING:". If you find no issues at all, respond with exactly "NONE" and nothing else.""",
+
+    "benchmark": """Below is an extraction of a benchmark/dataset paper's argument (MEASURES/CONSTRUCT_VALIDITY_EVIDENCE/SCOPE) -- judge the EXTRACTION below, not any paper you may know of with a similar topic. Check specifically:
+- Is the CONSTRUCT_VALIDITY_EVIDENCE actual evidence that the benchmark measures what it claims, or is construct validity merely assumed/asserted?
+- General fallacy checklist: {fallacies}
+
+MEASURES: {measures}
+CONSTRUCT_VALIDITY_EVIDENCE: {construct_validity_evidence}
+SCOPE: {scope}
+
+Only output a FINDING line for an actual problem -- never to confirm something checks out fine. If a check passes, simply say nothing about it; do not write a FINDING line like "the qualifier is accurate" or "no fallacy found." List each real issue you find, one per line, each starting with "FINDING:". If you find no issues at all, respond with exactly "NONE" and nothing else.""",
+
+    "conceptual": """Below is an extraction of a conceptual/framework paper's argument (STRUCTURAL_CLAIMS/KEY_DEFINITIONS/INTERNAL_DEPENDENCIES) -- judge the EXTRACTION below, not any paper you may know of with a similar topic. Check specifically:
+- Do the STRUCTURAL_CLAIMS and INTERNAL_DEPENDENCIES actually hold together, or does any part contradict another?
+- General fallacy checklist: {fallacies}
+
+STRUCTURAL_CLAIMS: {structural_claims}
+KEY_DEFINITIONS: {key_definitions}
+INTERNAL_DEPENDENCIES: {internal_dependencies}
+
+Only output a FINDING line for an actual problem -- never to confirm something checks out fine. If a check passes, simply say nothing about it; do not write a FINDING line like "the qualifier is accurate" or "no fallacy found." List each real issue you find, one per line, each starting with "FINDING:". If you find no issues at all, respond with exactly "NONE" and nothing else.""",
+}
+
+
+_FINDING_SPLIT_RE = re.compile(r"FINDING:\s*", re.IGNORECASE)
+
+
+def _parse_findings(response: str) -> list[str]:
+    """qwen2.5:3b doesn't reliably put one FINDING per line -- seen live
+    2026-07-13 running multiple together on one line, separated only by the
+    next "FINDING:" marker rather than a newline. Splits on every occurrence
+    of the marker anywhere in the text instead of assuming one per line.
+    Also drops any resulting item that's just a stray "NONE" (also seen
+    live: an extra trailing "FINDING: NONE" instead of the bare NONE
+    response) -- a real finding is never literally the word "none"."""
+    response = response.strip()
+    if not response or response.upper() == "NONE":
+        return []
+    pieces = _FINDING_SPLIT_RE.split(response)[1:]  # [0] is any preamble before the first marker
+    return [p.strip() for p in pieces if p.strip() and p.strip().upper() != "NONE"]
+
+
+def judge_extraction(extraction: dict[str, str], paper_type: str, chat_fn=None) -> list[str]:
+    """Judges a type-adaptive extraction (from extract_structure) against its
+    type-specific rubric plus the general fallacy checklist. Reads the
+    EXTRACTION, never the raw abstract directly -- per the visible-extraction
+    principle, judgment happens against the reviewable intermediate artifact,
+    not straight from source text. Returns a list of specific findings, never
+    a bare score; an empty list means no issues found."""
+    if paper_type not in _JUDGMENT_PROMPTS:
+        raise ValueError(f"unknown paper_type {paper_type!r} -- expected one of {PAPER_TYPES}")
+
+    chat_fn = chat_fn or (lambda messages: ollama_chat(JUDGMENT_MODEL, messages))
+    # extract_structure can legitimately omit a field the model never returned
+    # (see its docstring) -- fill any gap so .format() doesn't KeyError on a
+    # missing extraction rather than surfacing it as a finding-worthy gap.
+    # extraction's own keys are already lowercase (what _parse_fields produces).
+    fields = {
+        name.lower(): extraction.get(name.lower(), "(not extracted)")
+        for name in EXTRACTION_FIELDS[paper_type]
+    }
+    prompt = _JUDGMENT_PROMPTS[paper_type].format(fallacies=_GENERAL_FALLACY_CHECKLIST, **fields)
+    response = chat_fn([{"role": "user", "content": prompt}])
+    return _parse_findings(response)
+
+
+def judge_all(papers: dict[str, tuple[dict, str]], chat_fn=None) -> dict[str, list[str]]:
+    """papers: {slug: (extraction_dict, paper_type)}. Returns {slug: findings_list}."""
+    return {
+        slug: judge_extraction(extraction, paper_type, chat_fn=chat_fn)
+        for slug, (extraction, paper_type) in papers.items()
     }
 
 

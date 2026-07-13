@@ -18,6 +18,9 @@ from logic_auditor import (
     extract_structure,
     extract_all,
     EXTRACTION_FIELDS,
+    _parse_findings,
+    judge_extraction,
+    judge_all,
 )
 
 
@@ -218,3 +221,151 @@ def test_extract_all_routes_each_paper_by_its_own_type():
 
 def test_extract_all_handles_empty_input():
     assert extract_all({}, chat_fn=lambda m: "") == {}
+
+
+# ── _parse_findings ──────────────────────────────────────────────────────────
+
+def test_parse_findings_extracts_each_finding_line():
+    response = "FINDING: the qualifier overclaims relative to a single-task result\nFINDING: possible cherry-picking in the examples cited\n"
+    assert _parse_findings(response) == [
+        "the qualifier overclaims relative to a single-task result",
+        "possible cherry-picking in the examples cited",
+    ]
+
+
+def test_parse_findings_returns_empty_list_for_none_response():
+    assert _parse_findings("NONE") == []
+    assert _parse_findings("  none  \n") == []
+
+
+def test_parse_findings_returns_empty_list_for_blank_response():
+    assert _parse_findings("") == []
+    assert _parse_findings("   \n  ") == []
+
+
+def test_parse_findings_ignores_preamble_before_the_first_marker():
+    response = "Here is my analysis:\nFINDING: a real issue\n"
+    assert _parse_findings(response) == ["a real issue"]
+
+
+def test_parse_findings_splits_multiple_findings_crammed_onto_one_line():
+    # real qwen2.5:3b behavior, seen live 2026-07-13: doesn't always put one
+    # FINDING per line -- sometimes runs several together separated only by
+    # the next "FINDING:" marker, not a newline.
+    response = "FINDING: the warrant has an unaddressed confound. FINDING: no hasty generalization. FINDING: no false dichotomy."
+    assert _parse_findings(response) == [
+        "the warrant has an unaddressed confound.",
+        "no hasty generalization.",
+        "no false dichotomy.",
+    ]
+
+
+def test_parse_findings_filters_out_stray_none_captured_as_a_finding():
+    # real qwen2.5:3b behavior, seen live: occasionally emits "FINDING: NONE"
+    # as an extra trailing item instead of using the bare NONE response.
+    response = "FINDING: a real issue\nFINDING: NONE\n"
+    assert _parse_findings(response) == ["a real issue"]
+
+
+# ── judge_extraction (type-adaptive consistency judgment) ──────────────────
+
+def test_judge_extraction_empirical_returns_findings_list():
+    def fake_chat(messages):
+        return "FINDING: qualifier overclaims relative to the grounds\n"
+
+    extraction = {"claim": "c", "grounds": "g", "warrant": "w", "qualifier": "q"}
+    result = judge_extraction(extraction, "empirical", chat_fn=fake_chat)
+    assert result == ["qualifier overclaims relative to the grounds"]
+
+
+def test_judge_extraction_survey_returns_findings_list():
+    def fake_chat(messages):
+        return "FINDING: claimed gaps aren't supported by the stated coverage\n"
+
+    extraction = {"taxonomy": "t", "coverage": "c", "claimed_gaps": "g"}
+    result = judge_extraction(extraction, "survey", chat_fn=fake_chat)
+    assert result == ["claimed gaps aren't supported by the stated coverage"]
+
+
+def test_judge_extraction_benchmark_returns_findings_list():
+    def fake_chat(messages):
+        return "FINDING: construct validity is assumed, not evidenced\n"
+
+    extraction = {"measures": "m", "construct_validity_evidence": "e", "scope": "s"}
+    result = judge_extraction(extraction, "benchmark", chat_fn=fake_chat)
+    assert result == ["construct validity is assumed, not evidenced"]
+
+
+def test_judge_extraction_conceptual_returns_findings_list():
+    def fake_chat(messages):
+        return "FINDING: two structural claims contradict each other\n"
+
+    extraction = {"structural_claims": "s", "key_definitions": "d", "internal_dependencies": "i"}
+    result = judge_extraction(extraction, "conceptual", chat_fn=fake_chat)
+    assert result == ["two structural claims contradict each other"]
+
+
+def test_judge_extraction_returns_empty_list_when_no_issues_found():
+    def fake_chat(messages):
+        return "NONE"
+
+    extraction = {"claim": "c", "grounds": "g", "warrant": "w", "qualifier": "q"}
+    assert judge_extraction(extraction, "empirical", chat_fn=fake_chat) == []
+
+
+def test_judge_extraction_rejects_unknown_type():
+    with pytest.raises(ValueError, match="unknown"):
+        judge_extraction({}, "unknown", chat_fn=lambda m: "")
+
+
+def test_judge_extraction_handles_a_missing_field_without_crashing():
+    # extract_structure can legitimately omit a field (see its docstring) --
+    # judgment must not KeyError, and must still see the fields that ARE present.
+    captured = {}
+
+    def fake_chat(messages):
+        captured["prompt"] = messages[0]["content"]
+        return "NONE"
+
+    extraction = {"claim": "a real claim", "grounds": "real grounds"}  # warrant, qualifier missing
+    judge_extraction(extraction, "empirical", chat_fn=fake_chat)
+    assert "a real claim" in captured["prompt"]
+    assert "real grounds" in captured["prompt"]
+    assert "(not extracted)" in captured["prompt"]
+
+
+def test_judge_extraction_includes_extraction_fields_in_prompt_not_raw_abstract():
+    # visible extraction principle: judgment reads the EXTRACTION, not the source text directly
+    captured = {}
+
+    def fake_chat(messages):
+        captured["prompt"] = messages[0]["content"]
+        return "NONE"
+
+    extraction = {"claim": "a very specific claim text", "grounds": "specific grounds text", "warrant": "w", "qualifier": "q"}
+    judge_extraction(extraction, "empirical", chat_fn=fake_chat)
+    assert "a very specific claim text" in captured["prompt"]
+    assert "specific grounds text" in captured["prompt"]
+
+
+# ── judge_all ────────────────────────────────────────────────────────────────
+
+def test_judge_all_judges_each_paper_by_its_own_type():
+    def fake_chat(messages):
+        prompt = messages[0]["content"]
+        if "GROUNDS" in prompt or "grounds" in prompt.lower():
+            return "FINDING: empirical issue\n"
+        return "FINDING: survey issue\n"
+
+    papers = {
+        "seed-a": ({"claim": "c", "grounds": "g", "warrant": "w", "qualifier": "q"}, "empirical"),
+        "seed-b": ({"taxonomy": "t", "coverage": "c", "claimed_gaps": "g"}, "survey"),
+    }
+    result = judge_all(papers, chat_fn=fake_chat)
+
+    assert result["seed-a"] == ["empirical issue"]
+    assert result["seed-b"] == ["survey issue"]
+
+
+def test_judge_all_handles_empty_input():
+    assert judge_all({}, chat_fn=lambda m: "") == {}
