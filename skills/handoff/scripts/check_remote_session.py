@@ -115,14 +115,18 @@ def main() -> None:
     if not result.ok:
         return  # fail quiet — same as any other SSH-unreachable case elsewhere in MARVIN
 
-    # Pull to get the freshly-pushed handoff, then surface it.
-    before = sorted((Path.home() / ".claude" / "handoffs").glob("*.md")) if (Path.home() / ".claude" / "handoffs").is_dir() else []
+    # Pull to get the freshly-pushed handoff, then surface it. Deliberately
+    # not a before/after filename diff — generate_handoff_from_transcript.py
+    # names files with only minute granularity, so two escalations inside
+    # the same UTC minute overwrite the same filename; a "which names are
+    # new" comparison misses that as a real update. Since we're already past
+    # the freshness gate above, we know a generation just happened — just
+    # take whichever handoff has the newest mtime right now.
     subprocess.run([VENV_PYTHON, CODE_SYNC, "pull", str(Path.home() / ".claude")], capture_output=True)
-    after_dir = Path.home() / ".claude" / "handoffs"
-    after = sorted(after_dir.glob("*.md")) if after_dir.is_dir() else []
-    new_files = [f for f in after if f not in before]
-    if new_files:
-        _surface_resume_prompt(max(new_files, key=lambda p: p.stat().st_mtime))
+    handoffs_dir = Path.home() / ".claude" / "handoffs"
+    handoffs = list(handoffs_dir.glob("*.md")) if handoffs_dir.is_dir() else []
+    if handoffs:
+        _surface_resume_prompt(max(handoffs, key=lambda p: p.stat().st_mtime))
 
     state[device_id] = freshest["mtime"]
     _save_state(state)
