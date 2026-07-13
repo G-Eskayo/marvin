@@ -27,6 +27,9 @@ from logic_auditor import (
     RELIABILITY_LEVELS,
     compute_reliability_signal,
     compute_all_reliability_signals,
+    needs_second_look,
+    build_audit_report,
+    render_markdown,
 )
 
 
@@ -566,3 +569,129 @@ def test_compute_all_reliability_signals_combines_per_paper():
 
 def test_compute_all_reliability_signals_handles_empty_input():
     assert compute_all_reliability_signals({}, {}) == {}
+
+
+# ── needs_second_look (task 17) ─────────────────────────────────────────────
+
+def test_needs_second_look_true_for_low():
+    assert needs_second_look({"level": "low", "findings": []}) is True
+
+
+def test_needs_second_look_true_for_very_low():
+    assert needs_second_look({"level": "very-low", "findings": []}) is True
+
+
+def test_needs_second_look_false_for_high():
+    assert needs_second_look({"level": "high", "findings": []}) is False
+
+
+def test_needs_second_look_false_for_moderate():
+    assert needs_second_look({"level": "moderate", "findings": []}) is False
+
+
+# ── build_audit_report (task 18) ────────────────────────────────────────────
+
+def _sample_report_inputs():
+    titles = {"seed-a": "Seed A Title", "seed-b": "Seed B Title"}
+    paper_types = {"seed-a": "empirical", "seed-b": "benchmark"}
+    extractions = {
+        "seed-a": {"claim": "c", "grounds": "g", "warrant": "w", "qualifier": "q"},
+        "seed-b": {"measures": "m", "construct_validity_evidence": "e", "scope": "s"},
+    }
+    layer1_findings = {"seed-a": [], "seed-b": ["construct validity assumed, not evidenced"]}
+    layer2_results = {
+        "seed-a": {"p": "p", "q": "q", "reasoning_type": "inductive", "argument_form": "f", "validity": "strong"},
+        "seed-b": {"p": "p2", "q": "q2", "reasoning_type": "inductive", "argument_form": "f2", "validity": "strong"},
+    }
+    return titles, paper_types, extractions, layer1_findings, layer2_results
+
+
+def test_build_audit_report_includes_one_entry_per_slug_in_given_order():
+    titles, paper_types, extractions, layer1_findings, layer2_results = _sample_report_inputs()
+    report = build_audit_report(
+        ["seed-b", "seed-a"], titles, paper_types, extractions, layer1_findings, layer2_results
+    )
+    assert [e["slug"] for e in report] == ["seed-b", "seed-a"]
+
+
+def test_build_audit_report_entry_has_all_expected_fields():
+    titles, paper_types, extractions, layer1_findings, layer2_results = _sample_report_inputs()
+    report = build_audit_report(
+        ["seed-a"], titles, paper_types, extractions, layer1_findings, layer2_results
+    )
+    entry = report[0]
+    assert entry["title"] == "Seed A Title"
+    assert entry["paper_type"] == "empirical"
+    assert entry["layer1_extraction"] == {"claim": "c", "grounds": "g", "warrant": "w", "qualifier": "q"}
+    assert entry["layer2"]["reasoning_type"] == "inductive"
+    assert entry["reliability_level"] == "high"
+    assert entry["reliability_findings"] == []
+    assert entry["needs_second_look"] is False
+
+
+def test_build_audit_report_flags_low_reliability_papers():
+    titles, paper_types, extractions, layer1_findings, layer2_results = _sample_report_inputs()
+    report = build_audit_report(
+        ["seed-b"], titles, paper_types, extractions, layer1_findings, layer2_results
+    )
+    entry = report[0]
+    assert entry["reliability_level"] == "moderate"  # 1 finding
+    assert entry["needs_second_look"] is False  # moderate isn't flagged, only low/very-low
+
+
+def test_build_audit_report_handles_empty_slug_list():
+    titles, paper_types, extractions, layer1_findings, layer2_results = _sample_report_inputs()
+    assert build_audit_report([], titles, paper_types, extractions, layer1_findings, layer2_results) == []
+
+
+# ── render_markdown ──────────────────────────────────────────────────────────
+
+def test_render_markdown_includes_title_type_and_reliability():
+    report = [{
+        "slug": "seed-a",
+        "title": "Seed A Title",
+        "paper_type": "empirical",
+        "layer1_extraction": {"claim": "c", "grounds": "g", "warrant": "w", "qualifier": "q"},
+        "layer1_findings": [],
+        "layer2": {"p": "p", "q": "q", "reasoning_type": "inductive", "argument_form": "f", "validity": "strong"},
+        "reliability_level": "high",
+        "reliability_findings": [],
+        "needs_second_look": False,
+    }]
+    md = render_markdown(report)
+    assert "Seed A Title" in md
+    assert "empirical" in md
+    assert "high" in md
+
+
+def test_render_markdown_flags_needs_second_look_papers_visibly():
+    report = [{
+        "slug": "seed-b",
+        "title": "Seed B Title",
+        "paper_type": "benchmark",
+        "layer1_extraction": {"measures": "m", "construct_validity_evidence": "e", "scope": "s"},
+        "layer1_findings": ["construct validity assumed"],
+        "layer2": {"p": "p", "q": "q", "reasoning_type": "inductive", "argument_form": "f", "validity": "strong"},
+        "reliability_level": "low",
+        "reliability_findings": ["construct validity assumed"],
+        "needs_second_look": True,
+    }]
+    md = render_markdown(report)
+    assert "construct validity assumed" in md
+    assert "⚠" in md  # visible flag for needs_second_look
+
+
+def test_render_markdown_handles_no_findings_gracefully():
+    report = [{
+        "slug": "seed-a",
+        "title": "Seed A Title",
+        "paper_type": "empirical",
+        "layer1_extraction": {"claim": "c", "grounds": "g", "warrant": "w", "qualifier": "q"},
+        "layer1_findings": [],
+        "layer2": {"p": "p", "q": "q", "reasoning_type": "inductive", "argument_form": "f", "validity": "strong"},
+        "reliability_level": "high",
+        "reliability_findings": [],
+        "needs_second_look": False,
+    }]
+    md = render_markdown(report)
+    assert "no findings" in md.lower() or "none" in md.lower()
