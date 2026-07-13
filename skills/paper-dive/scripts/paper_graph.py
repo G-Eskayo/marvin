@@ -76,7 +76,14 @@ def is_known(doi: str, collection) -> bool:
 
 
 def record_paper(collection, doi: str, abstract: str, discovered_via: dict | None) -> None:
-    metadata = {"doi": doi}
+    import time
+
+    # created_epoch (not created_at) matches dump_collection.py's --since
+    # filter, which needs a numeric field for ChromaDB's $gt comparator
+    # (ISO-8601 strings aren't supported) -- same field name qa-knowledge
+    # uses, so cross_machine_merge.py's incremental sync pattern works here
+    # unmodified.
+    metadata = {"doi": doi, "created_epoch": time.time()}
     if discovered_via is not None:
         metadata["parent_doi"] = discovered_via["parent_doi"]
         metadata["edge_type"] = discovered_via["edge_type"]

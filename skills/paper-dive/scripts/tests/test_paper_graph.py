@@ -3,6 +3,7 @@
 """
 from __future__ import annotations
 import sys
+import time
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parents[1]
@@ -111,6 +112,21 @@ def test_record_paper_makes_it_known(tmp_path):
     )
 
     assert is_known("10.5678/new", collection) is True
+
+
+def test_record_paper_stamps_created_epoch(tmp_path):
+    # cross_machine_merge.py's incremental sync filters on this field via
+    # dump_collection.py's --since -- without it, every sync re-transfers
+    # the whole collection instead of just what's new.
+    client = chromadb.PersistentClient(path=str(tmp_path))
+    collection = client.get_or_create_collection("paper-knowledge")
+
+    before = time.time()
+    record_paper(collection, doi="10.5678/timed", abstract="abstract", discovered_via=None)
+    after = time.time()
+
+    meta = collection.get(ids=["10.5678/timed"])["metadatas"][0]
+    assert before <= meta["created_epoch"] <= after
 
 
 # ── diminishing_returns ───────────────────────────────────────────────────────
