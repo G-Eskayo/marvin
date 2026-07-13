@@ -10,7 +10,15 @@ sys.path.insert(0, str(SCRIPTS))
 
 import pytest
 
-from logic_auditor import classify_paper_type, classify_all, PAPER_TYPES
+from logic_auditor import (
+    classify_paper_type,
+    classify_all,
+    PAPER_TYPES,
+    _parse_fields,
+    extract_structure,
+    extract_all,
+    EXTRACTION_FIELDS,
+)
 
 
 # ── classify_paper_type ──────────────────────────────────────────────────────
@@ -101,3 +109,112 @@ def test_classify_all_classifies_every_paper_in_the_input_dict():
 
 def test_classify_all_handles_empty_input():
     assert classify_all({}, chat_fn=lambda messages: "empirical") == {}
+
+
+# ── _parse_fields (shared line-based parser for all extraction types) ──────
+
+def test_parse_fields_extracts_single_line_values():
+    response = "CLAIM: models degrade in the middle\nGROUNDS: two tasks measured\n"
+    result = _parse_fields(response, ["CLAIM", "GROUNDS"])
+    assert result == {"claim": "models degrade in the middle", "grounds": "two tasks measured"}
+
+
+def test_parse_fields_accumulates_multiline_values_until_next_field():
+    response = (
+        "CLAIM: models degrade\nin the middle of long contexts\n"
+        "GROUNDS: two tasks were measured\n"
+    )
+    result = _parse_fields(response, ["CLAIM", "GROUNDS"])
+    assert result["claim"] == "models degrade\nin the middle of long contexts"
+    assert result["grounds"] == "two tasks were measured"
+
+
+def test_parse_fields_is_case_insensitive_on_labels():
+    response = "claim: something\nGrounds: something else\n"
+    result = _parse_fields(response, ["CLAIM", "GROUNDS"])
+    assert result == {"claim": "something", "grounds": "something else"}
+
+
+def test_parse_fields_missing_field_is_absent_not_empty_string():
+    response = "CLAIM: something\n"
+    result = _parse_fields(response, ["CLAIM", "GROUNDS"])
+    assert result == {"claim": "something"}
+    assert "grounds" not in result
+
+
+# ── extract_structure (routes to type-appropriate extraction) ──────────────
+
+def test_extract_structure_empirical_uses_toulmin_fields():
+    def fake_chat(messages):
+        return "CLAIM: c\nGROUNDS: g\nWARRANT: w\nQUALIFIER: q\n"
+
+    result = extract_structure("Title", "Abstract", "empirical", chat_fn=fake_chat)
+    assert result == {"claim": "c", "grounds": "g", "warrant": "w", "qualifier": "q"}
+
+
+def test_extract_structure_survey_uses_taxonomy_fields():
+    def fake_chat(messages):
+        return "TAXONOMY: t\nCOVERAGE: c\nCLAIMED_GAPS: g\n"
+
+    result = extract_structure("Title", "Abstract", "survey", chat_fn=fake_chat)
+    assert result == {"taxonomy": "t", "coverage": "c", "claimed_gaps": "g"}
+
+
+def test_extract_structure_benchmark_uses_construct_validity_fields():
+    def fake_chat(messages):
+        return "MEASURES: m\nCONSTRUCT_VALIDITY_EVIDENCE: e\nSCOPE: s\n"
+
+    result = extract_structure("Title", "Abstract", "benchmark", chat_fn=fake_chat)
+    assert result == {"measures": "m", "construct_validity_evidence": "e", "scope": "s"}
+
+
+def test_extract_structure_conceptual_uses_structural_claim_fields():
+    def fake_chat(messages):
+        return "STRUCTURAL_CLAIMS: s\nKEY_DEFINITIONS: d\nINTERNAL_DEPENDENCIES: i\n"
+
+    result = extract_structure("Title", "Abstract", "conceptual", chat_fn=fake_chat)
+    assert result == {"structural_claims": "s", "key_definitions": "d", "internal_dependencies": "i"}
+
+
+def test_extract_structure_rejects_unknown_type():
+    with pytest.raises(ValueError, match="unknown"):
+        extract_structure("Title", "Abstract", "unknown", chat_fn=lambda m: "")
+
+
+def test_extract_structure_includes_title_and_abstract_in_prompt():
+    captured = {}
+
+    def fake_chat(messages):
+        captured["prompt"] = messages[0]["content"]
+        return "CLAIM: c\nGROUNDS: g\nWARRANT: w\nQUALIFIER: q\n"
+
+    extract_structure("My Title", "My abstract", "empirical", chat_fn=fake_chat)
+    assert "My Title" in captured["prompt"]
+    assert "My abstract" in captured["prompt"]
+
+
+def test_extraction_fields_covers_all_four_types():
+    assert set(EXTRACTION_FIELDS) == PAPER_TYPES
+
+
+# ── extract_all ──────────────────────────────────────────────────────────────
+
+def test_extract_all_routes_each_paper_by_its_own_type():
+    def fake_chat(messages):
+        prompt = messages[0]["content"]
+        if "GROUNDS" in prompt:
+            return "CLAIM: c\nGROUNDS: g\nWARRANT: w\nQUALIFIER: q\n"
+        return "TAXONOMY: t\nCOVERAGE: c\nCLAIMED_GAPS: g\n"
+
+    papers = {
+        "seed-a": ("Title A", "Abstract A", "empirical"),
+        "seed-b": ("Title B", "Abstract B", "survey"),
+    }
+    result = extract_all(papers, chat_fn=fake_chat)
+
+    assert result["seed-a"]["claim"] == "c"
+    assert result["seed-b"]["taxonomy"] == "t"
+
+
+def test_extract_all_handles_empty_input():
+    assert extract_all({}, chat_fn=lambda m: "") == {}
