@@ -51,6 +51,18 @@ SYNCED_REPOS = {
     "~/.claude": ".claude",
 }
 
+# organize/'s classification code, folded from its own disconnected nested
+# git repo into ~/.claude's allow-list (2026-07-13) after the whole
+# directory vanished from one machine without a trace. See
+# check_organize_sync() for why this needs its own check.
+ORGANIZE_TRACKED_FILES = (
+    "organize/tidy_common.py",
+    "organize/tidy_agent.py",
+    "organize/sort_desktop.py",
+    "organize/find_file.py",
+    "organize/triage_iceberg.py",
+)
+
 # name -> (scheduled HH:MM, [log paths to scan])
 JOBS = {
     "daily-digest": (
@@ -195,6 +207,39 @@ def check_repo_integrity(display_name: str, rel_path: str) -> list[str]:
     return []
 
 
+def check_organize_sync() -> list[str]:
+    """Neither check above would have caught the 2026-07-13 incident:
+    check_repo_convergence only compares HEAD, which a deleted-but-
+    uncommitted file doesn't move, and check_repo_integrity's read_text()
+    silently skips a file that's gone missing rather than flagging it. This
+    checks the specific failure mode directly — a tracked organize/ file
+    deleted or edited locally without being committed, so it can't reach
+    the other machine at all until someone notices by hand."""
+    repo = HOME / ".claude"
+    if not (repo / ".git").exists():
+        return []
+    problems = []
+    deleted = subprocess.run(
+        ["git", "-C", str(repo), "ls-files", "-d", "--", "organize/"],
+        capture_output=True, text=True,
+    ).stdout.splitlines()
+    if deleted:
+        problems.append(
+            f"**organize/ sync**: {len(deleted)} tracked file(s) missing from disk — "
+            f"`{', '.join(deleted)}` — won't reach the other machine until restored and committed"
+        )
+    modified = subprocess.run(
+        ["git", "-C", str(repo), "diff", "--name-only", "--", "organize/"],
+        capture_output=True, text=True,
+    ).stdout.splitlines()
+    if modified:
+        problems.append(
+            f"**organize/ sync**: {len(modified)} tracked file(s) locally modified but not committed — "
+            f"`{', '.join(modified)}` — won't sync to other machines until committed"
+        )
+    return problems
+
+
 def main() -> None:
     now = datetime.now().astimezone()
     state = _load_state()
@@ -206,6 +251,7 @@ def main() -> None:
     for display_name, rel_path in SYNCED_REPOS.items():
         problems.extend(check_repo_convergence(display_name, rel_path))
         problems.extend(check_repo_integrity(display_name, rel_path))
+    problems.extend(check_organize_sync())
     _save_state(state)
 
     ts = now.isoformat()
