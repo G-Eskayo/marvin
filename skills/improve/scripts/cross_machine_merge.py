@@ -230,6 +230,60 @@ def sync_qa_knowledge(remote_id: str, host: str, sync_state: dict) -> None:
     print(f"{LOG_PREFIX} qa-knowledge: imported {len(new_ids)} new entry(ies) from {remote_id} (cursor now {max_epoch})", file=sys.stderr)
 
 
+def sync_paper_knowledge(remote_id: str, host: str, sync_state: dict) -> None:
+    """Identical shape to sync_qa_knowledge -- same deterministic-set-union-
+    by-id item sync, same incremental cursor via created_epoch. Added
+    2026-07-13 once paper_graph.py's record_paper() started stamping that
+    field (previously only qa-knowledge had it, so this collection was
+    silently uncovered by the .gitignore's claim that 'chroma/' is already
+    handled by this script -- it wasn't, for this specific collection)."""
+    cursor = sync_state.get(remote_id, {}).get("paper-knowledge", {}).get("last_synced_epoch", 0)
+
+    remote_dump = ssh_run(host, f"{VENV_PYTHON} {DUMP_SCRIPT} paper-knowledge --since {cursor}", timeout=60)
+    if remote_dump is None:
+        print(f"{LOG_PREFIX} could not dump {remote_id}'s paper-knowledge — skipping", file=sys.stderr)
+        return
+
+    try:
+        remote_data = json.loads(remote_dump)
+    except json.JSONDecodeError:
+        print(f"{LOG_PREFIX} {remote_id}'s paper-knowledge dump malformed — skipping", file=sys.stderr)
+        return
+
+    if not remote_data["ids"]:
+        print(f"{LOG_PREFIX} paper-knowledge already in sync with {remote_id} (cursor={cursor})", file=sys.stderr)
+        return
+
+    try:
+        import chromadb
+    except ImportError:
+        print(f"{LOG_PREFIX} chromadb not installed — skipping paper-knowledge sync", file=sys.stderr)
+        return
+
+    client = chromadb.PersistentClient(path=str(CHROMA_PATH))
+    col = client.get_or_create_collection("paper-knowledge")
+    existing_ids = set(col.get()["ids"])
+
+    new_ids, new_docs, new_metas, max_epoch = [], [], [], cursor
+    for i, rid in enumerate(remote_data["ids"]):
+        meta = remote_data["metadatas"][i]
+        max_epoch = max(max_epoch, meta.get("created_epoch", 0))
+        if rid in existing_ids:
+            continue
+        new_ids.append(rid)
+        new_docs.append(remote_data["documents"][i])
+        new_metas.append(meta)
+
+    if new_ids:
+        col.add(documents=new_docs, metadatas=new_metas, ids=new_ids)
+
+    sync_state.setdefault(remote_id, {})["paper-knowledge"] = {
+        "last_synced_epoch": max_epoch,
+        "last_synced_at": datetime.now(timezone.utc).isoformat(),
+    }
+    print(f"{LOG_PREFIX} paper-knowledge: imported {len(new_ids)} new entry(ies) from {remote_id} (cursor now {max_epoch})", file=sys.stderr)
+
+
 # ── LLM-generated merge (desktop-kind authority only) ───────────────────────
 
 def profile_blurb(profile: dict) -> str:
@@ -343,6 +397,7 @@ def main() -> None:
 
         sync_research_feed(host)
         sync_qa_knowledge(remote_id, host, sync_state)
+        sync_paper_knowledge(remote_id, host, sync_state)
 
         if we_are_authority:
             run_merge_authority(remote_id, host, own_profile)
