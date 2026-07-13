@@ -113,9 +113,37 @@ _specter2_model = None
 _specter2_tokenizer = None
 
 
+def _check_huggingface_reachable() -> None:
+    """Fails fast with an actionable message instead of a ~60s timeout
+    followed by a raw traceback -- found live 2026-07-13 when
+    huggingface.co was TLS-reset on Gil's work network (SNI-level
+    filtering: DNS + TCP succeed, handshake gets reset) while
+    api.semanticscholar.org worked fine from the same machine. Reuses
+    recorded history first so a second attempt on a known-bad network
+    doesn't even need to re-check live."""
+    import sys
+
+    sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+    from network_reachability import known_status, check_and_record, current_network_id
+
+    status = known_status("huggingface.co")
+    if status is None:
+        status = check_and_record("huggingface.co")
+    if not status:
+        raise RuntimeError(
+            "huggingface.co is unreachable on this network "
+            f"({current_network_id()}) -- SPECTER2 embeddings need it to "
+            "download model weights. This looks network-specific, not "
+            "machine-specific (see network_reachability.py's docstring for "
+            "the 2026-07-13 incident this guards against) -- try a "
+            "different network, e.g. run this on gils-mac-mini."
+        )
+
+
 def _load_specter2():
     global _specter2_model, _specter2_tokenizer
     if _specter2_model is None:
+        _check_huggingface_reachable()
         from transformers import AutoTokenizer
         from adapters import AutoAdapterModel
 

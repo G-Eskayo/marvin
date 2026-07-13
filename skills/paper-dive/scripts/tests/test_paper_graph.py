@@ -24,7 +24,12 @@ from paper_graph import (
     run_paper_graph,
     _get_with_retry,
     _s2_id,
+    _check_huggingface_reachable,
 )
+
+LIB = Path.home() / ".agents" / "lib"
+sys.path.insert(0, str(LIB))
+import network_reachability  # noqa: E402
 
 
 # ── _s2_id (DOI vs arXiv ID namespace detection) ────────────────────────────
@@ -576,3 +581,35 @@ def test_run_paper_graph_skips_recording_already_known_papers(tmp_path):
         relevance_floor=0.5,
         fetch_fn=fake_fetch,
     )
+
+
+# ── _check_huggingface_reachable (fail fast on a known-bad network) ────────
+
+def test_check_huggingface_reachable_passes_silently_when_known_reachable(monkeypatch):
+    monkeypatch.setattr(network_reachability, "known_status", lambda domain: True)
+    monkeypatch.setattr(
+        network_reachability, "check_and_record",
+        lambda domain: pytest.fail("should not live-check when history already says reachable"),
+    )
+    _check_huggingface_reachable()  # should not raise
+
+
+def test_check_huggingface_reachable_raises_when_known_blocked(monkeypatch):
+    monkeypatch.setattr(network_reachability, "known_status", lambda domain: False)
+    monkeypatch.setattr(network_reachability, "current_network_id", lambda: "work-net")
+    with pytest.raises(RuntimeError, match="huggingface.co is unreachable"):
+        _check_huggingface_reachable()
+
+
+def test_check_huggingface_reachable_live_checks_when_no_history_yet(monkeypatch):
+    monkeypatch.setattr(network_reachability, "known_status", lambda domain: None)
+    monkeypatch.setattr(network_reachability, "check_and_record", lambda domain: True)
+    _check_huggingface_reachable()  # should not raise
+
+
+def test_check_huggingface_reachable_raises_when_live_check_fails(monkeypatch):
+    monkeypatch.setattr(network_reachability, "known_status", lambda domain: None)
+    monkeypatch.setattr(network_reachability, "check_and_record", lambda domain: False)
+    monkeypatch.setattr(network_reachability, "current_network_id", lambda: "work-net")
+    with pytest.raises(RuntimeError, match="huggingface.co is unreachable"):
+        _check_huggingface_reachable()
