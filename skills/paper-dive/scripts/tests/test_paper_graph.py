@@ -23,7 +23,27 @@ from paper_graph import (
     fetch_neighbors_by_search,
     run_paper_graph,
     _get_with_retry,
+    _s2_id,
 )
+
+
+# ── _s2_id (DOI vs arXiv ID namespace detection) ────────────────────────────
+
+def test_s2_id_prefixes_bare_doi():
+    assert _s2_id("10.1234/example") == "DOI:10.1234/example"
+
+
+def test_s2_id_prefixes_bare_arxiv_id():
+    assert _s2_id("2503.03704") == "ARXIV:2503.03704"
+
+
+def test_s2_id_prefixes_bare_arxiv_id_with_version_suffix():
+    assert _s2_id("2503.03704v2") == "ARXIV:2503.03704v2"
+
+
+def test_s2_id_passes_through_already_prefixed_identifiers():
+    assert _s2_id("DOI:10.1234/example") == "DOI:10.1234/example"
+    assert _s2_id("ARXIV:2503.03704") == "ARXIV:2503.03704"
 
 
 # ── select_candidates ────────────────────────────────────────────────────────
@@ -319,7 +339,11 @@ def test_fetch_neighbors_from_s2_shapes_references_and_citations(monkeypatch):
     s2_payload = {
         "references": [
             {"title": "Foundational Paper", "abstract": "an early paper", "externalIds": {"DOI": "10.1/ref-a"}},
-            {"title": "No DOI Paper", "abstract": "skip me", "externalIds": {}},  # no DOI — should be skipped
+            # No DOI, arXiv-only preprint — falls back to ArXiv id rather than
+            # being skipped, since most of this project's own citations are
+            # exactly this shape (recent AI-safety arXiv preprints).
+            {"title": "ArXiv-Only Paper", "abstract": "no DOI, arxiv only", "externalIds": {"ArXiv": "2503.03704"}},
+            {"title": "No Identifier Paper", "abstract": "skip me", "externalIds": {}},  # neither — still skipped
         ],
         "citations": [
             {
@@ -337,7 +361,7 @@ def test_fetch_neighbors_from_s2_shapes_references_and_citations(monkeypatch):
         ],
     }
 
-    def fake_get(url, params=None, timeout=None):
+    def fake_get(url, params=None, timeout=None, headers=None):
         return _FakeResponse(s2_payload)
 
     monkeypatch.setattr("requests.get", fake_get)
@@ -354,7 +378,7 @@ def test_fetch_neighbors_from_s2_shapes_references_and_citations(monkeypatch):
     )
 
     ref_dois = {c["doi"] for c in result["references"]}
-    assert ref_dois == {"10.1/ref-a"}  # no-DOI paper skipped
+    assert ref_dois == {"10.1/ref-a", "2503.03704"}  # arXiv-only kept, no-identifier paper skipped
 
     cite_by_doi = {c["doi"]: c for c in result["citations"]}
     assert cite_by_doi["10.1/cite-a"]["intent"] == "result"
@@ -368,11 +392,12 @@ def test_fetch_neighbors_by_search_shapes_results_as_references_only(monkeypatch
     s2_payload = {
         "data": [
             {"title": "A Related Paper", "abstract": "on the same topic", "externalIds": {"DOI": "10.1/found-a"}},
-            {"title": "No DOI Result", "abstract": "no doi here", "externalIds": {}},  # skipped
+            {"title": "ArXiv-Only Result", "abstract": "no DOI, arxiv only", "externalIds": {"ArXiv": "2605.15338"}},
+            {"title": "No Identifier Result", "abstract": "no id here", "externalIds": {}},  # skipped
         ]
     }
 
-    def fake_get(url, params=None, timeout=None):
+    def fake_get(url, params=None, timeout=None, headers=None):
         return _FakeResponse(s2_payload)
 
     monkeypatch.setattr("requests.get", fake_get)
@@ -388,8 +413,29 @@ def test_fetch_neighbors_by_search_shapes_results_as_references_only(monkeypatch
         embed_fn=fake_embed_paper,
     )
 
-    assert {c["doi"] for c in result["references"]} == {"10.1/found-a"}
+    assert {c["doi"] for c in result["references"]} == {"10.1/found-a", "2605.15338"}
     assert result["citations"] == []  # an unindexed seed has no discoverable citations
+
+
+def test_fetch_neighbors_from_s2_uses_arxiv_prefix_for_arxiv_shaped_seed(monkeypatch):
+    captured_urls = []
+
+    def fake_get(url, params=None, timeout=None, headers=None):
+        captured_urls.append(url)
+        return _FakeResponse({"references": [], "citations": []})
+
+    monkeypatch.setattr("requests.get", fake_get)
+
+    def fake_embed_paper(text, specter2_fn=None, nomic_fn=None):
+        return {"specter2": [1.0, 0.0], "nomic": [1.0, 0.0]}
+
+    fetch_neighbors_from_s2(
+        doi="2503.03704",
+        seed_embeddings={"specter2": [1.0, 0.0], "nomic": [1.0, 0.0]},
+        embed_fn=fake_embed_paper,
+    )
+
+    assert captured_urls == ["https://api.semanticscholar.org/graph/v1/paper/ARXIV:2503.03704"]
 
 
 def test_run_paper_graph_uses_search_for_unpublished_seed(tmp_path):
@@ -443,7 +489,7 @@ def test_get_with_retry_retries_on_429_then_succeeds(monkeypatch):
         def json(self):
             return {"ok": True}
 
-    def fake_get(url, params=None, timeout=None):
+    def fake_get(url, params=None, timeout=None, headers=None):
         calls["count"] += 1
         return FakeResp(429) if calls["count"] == 1 else FakeResp(200)
 
@@ -465,7 +511,7 @@ def test_get_with_retry_gives_up_after_max_retries(monkeypatch):
         def raise_for_status(self):
             raise requests.exceptions.HTTPError(response=self)
 
-    monkeypatch.setattr("requests.get", lambda url, params=None, timeout=None: FakeResp())
+    monkeypatch.setattr("requests.get", lambda url, params=None, timeout=None, headers=None: FakeResp())
     monkeypatch.setattr("time.sleep", lambda seconds: None)
 
     with pytest.raises(requests.exceptions.HTTPError):

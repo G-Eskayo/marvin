@@ -12,7 +12,27 @@ works fine under 4.57.6 despite that declared constraint; the pin is kept at
 """
 from __future__ import annotations
 import heapq
+import re
 from pathlib import Path
+
+_ARXIV_ID_RE = re.compile(r"^\d{4}\.\d{4,5}(v\d+)?$")
+
+
+def _s2_id(identifier: str) -> str:
+    """Semantic Scholar's paper endpoint accepts several ID namespaces (DOI:,
+    ARXIV:, CorpusId:...) under the same /paper/{id} path. Most of this
+    project's own related-work citations are arXiv preprints (e.g.
+    "2503.03704") with no formal DOI at all — recent AI-safety papers
+    especially — so assuming DOI: unconditionally silently fails or (worse,
+    see _shape_and_score) silently drops exactly the population this paper
+    cites most. Detects the bare arXiv YYMM.NNNNN[vN] shape and prefixes
+    accordingly instead of assuming DOI; passes through an already-prefixed
+    identifier unchanged."""
+    if identifier.startswith(("DOI:", "ARXIV:", "CorpusId:")):
+        return identifier
+    if _ARXIV_ID_RE.match(identifier):
+        return f"ARXIV:{identifier}"
+    return f"DOI:{identifier}"
 
 
 def _get_with_retry(url: str, params: dict, timeout: int, max_retries: int = 8):
@@ -144,7 +164,13 @@ S2_PAPER_BASE = "https://api.semanticscholar.org/graph/v1/paper"
 def _shape_and_score(papers: list[dict], seed_embeddings: dict, embed_fn, is_citation: bool) -> list[dict]:
     candidates = []
     for p in papers:
-        doi = (p.get("externalIds") or {}).get("DOI")
+        external_ids = p.get("externalIds") or {}
+        # DOI preferred (more universal/stable), but most AI-safety papers this
+        # project actually cites are arXiv-only preprints with no formal DOI —
+        # falling back to ArXiv here (rather than skipping) is what makes
+        # traversal actually cover that population instead of silently
+        # dropping it. See _s2_id() for how this gets re-prefixed on lookup.
+        doi = external_ids.get("DOI") or external_ids.get("ArXiv")
         abstract = p.get("abstract") or p.get("title") or ""
         if not doi or not abstract:
             continue
@@ -164,7 +190,7 @@ def fetch_neighbors_from_s2(doi: str, seed_embeddings: dict, embed_fn=None) -> d
         "references.title,references.abstract,references.externalIds,"
         "citations.title,citations.abstract,citations.externalIds,citations.intents"
     )
-    resp = _get_with_retry(f"{S2_PAPER_BASE}/DOI:{doi}", params={"fields": fields}, timeout=15)
+    resp = _get_with_retry(f"{S2_PAPER_BASE}/{_s2_id(doi)}", params={"fields": fields}, timeout=15)
     data = resp.json()
     time.sleep(0.5)  # rate-limit courtesy, same pattern as fetch_related.py
 
@@ -326,7 +352,7 @@ SESSION_DIR = Path.home() / ".claude" / "paper-sessions"
 
 
 def _fetch_seed_abstract(doi: str) -> str:
-    resp = _get_with_retry(f"{S2_PAPER_BASE}/DOI:{doi}", params={"fields": "title,abstract"}, timeout=15)
+    resp = _get_with_retry(f"{S2_PAPER_BASE}/{_s2_id(doi)}", params={"fields": "title,abstract"}, timeout=15)
     data = resp.json()
     return data.get("abstract") or data.get("title") or ""
 
