@@ -24,6 +24,9 @@ from logic_auditor import (
     check_inference_validity,
     check_inference_validity_all,
     INFERENCE_FIELDS,
+    RELIABILITY_LEVELS,
+    compute_reliability_signal,
+    compute_all_reliability_signals,
 )
 
 
@@ -470,3 +473,96 @@ def test_check_inference_validity_reasoning_type_falls_back_to_unknown():
 
     result = check_inference_validity("Title", "Abstract", chat_fn=fake_chat)
     assert result["reasoning_type"] == "unknown"
+
+
+# ── compute_reliability_signal (rollup) ──────────────────────────────────────
+
+_CLEAN_LAYER2 = {"reasoning_type": "inductive", "validity": "strong -- well supported"}
+
+
+def test_reliability_levels_ordered_best_to_worst():
+    assert RELIABILITY_LEVELS == ["high", "moderate", "low", "very-low"]
+
+
+def test_zero_findings_and_clean_layer2_is_high():
+    result = compute_reliability_signal([], _CLEAN_LAYER2)
+    assert result["level"] == "high"
+    assert result["findings"] == []
+
+
+def test_one_finding_is_moderate():
+    result = compute_reliability_signal(["a minor issue"], _CLEAN_LAYER2)
+    assert result["level"] == "moderate"
+
+
+def test_two_to_three_findings_is_low():
+    result = compute_reliability_signal(["issue 1", "issue 2"], _CLEAN_LAYER2)
+    assert result["level"] == "low"
+    result = compute_reliability_signal(["issue 1", "issue 2", "issue 3"], _CLEAN_LAYER2)
+    assert result["level"] == "low"
+
+
+def test_four_or_more_findings_is_very_low():
+    result = compute_reliability_signal(["1", "2", "3", "4"], _CLEAN_LAYER2)
+    assert result["level"] == "very-low"
+
+
+def test_deductive_invalid_floors_a_clean_paper_to_low_not_high():
+    layer2 = {"reasoning_type": "deductive", "validity": "invalid (affirming the consequent)"}
+    result = compute_reliability_signal([], layer2)
+    assert result["level"] == "low"
+
+
+def test_deductive_invalid_does_not_improve_an_already_worse_paper():
+    layer2 = {"reasoning_type": "deductive", "validity": "invalid (denying the antecedent)"}
+    result = compute_reliability_signal(["1", "2", "3", "4"], layer2)
+    assert result["level"] == "very-low"  # floor is a minimum badness, not a cap upward
+
+
+def test_deductive_invalid_adds_its_own_finding():
+    layer2 = {"reasoning_type": "deductive", "validity": "invalid (affirming the consequent)"}
+    result = compute_reliability_signal([], layer2)
+    assert any("invalid" in f.lower() for f in result["findings"])
+
+
+def test_deductive_valid_does_not_floor_or_add_a_finding():
+    layer2 = {"reasoning_type": "deductive", "validity": "valid (modus ponens)"}
+    result = compute_reliability_signal([], layer2)
+    assert result["level"] == "high"
+    assert result["findings"] == []
+
+
+def test_inductive_weak_adds_a_finding_but_does_not_hard_floor():
+    # weak inductive support is a finding like any other (contributes to the
+    # count-based level), not the same automatic floor as a formal deductive
+    # failure -- per the design doc, the floor rule is specific to FORMAL
+    # inference-validity failures.
+    layer2 = {"reasoning_type": "inductive", "validity": "weak -- overreaches the evidence"}
+    result = compute_reliability_signal([], layer2)
+    assert result["level"] == "moderate"  # 1 finding (the layer-2 one), not floored to low
+    assert any("weak" in f.lower() for f in result["findings"])
+
+
+def test_unknown_reasoning_type_does_not_crash_or_floor():
+    layer2 = {"reasoning_type": "unknown", "validity": "unclear"}
+    result = compute_reliability_signal([], layer2)
+    assert result["level"] == "high"
+
+
+def test_missing_layer2_fields_does_not_crash():
+    result = compute_reliability_signal(["an issue"], {})
+    assert result["level"] == "moderate"
+
+
+# ── compute_all_reliability_signals ─────────────────────────────────────────
+
+def test_compute_all_reliability_signals_combines_per_paper():
+    layer1 = {"seed-a": [], "seed-b": ["issue"]}
+    layer2 = {"seed-a": _CLEAN_LAYER2, "seed-b": _CLEAN_LAYER2}
+    result = compute_all_reliability_signals(layer1, layer2)
+    assert result["seed-a"]["level"] == "high"
+    assert result["seed-b"]["level"] == "moderate"
+
+
+def test_compute_all_reliability_signals_handles_empty_input():
+    assert compute_all_reliability_signals({}, {}) == {}

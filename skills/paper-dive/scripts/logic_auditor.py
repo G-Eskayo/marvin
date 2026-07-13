@@ -388,6 +388,83 @@ def check_inference_validity_all(papers: dict[str, tuple[str, str]], chat_fn=Non
     }
 
 
+# ── Reliability signal rollup ────────────────────────────────────────────────
+# Combines layer 1 (type-adaptive judgment) findings and layer 2 (formal
+# inference-validity) into the one common comparable output across all
+# paper types, per docs/logic-auditor-design.md's "Reliability signal"
+# section. A categorical rating, not a blended numeric score -- a numeric
+# average would imply layer 1 and layer 2 findings are commensurable and
+# averageable, which they aren't (a formal-validity failure and a weak-
+# warrant finding are different KINDS of problems). No calibration data
+# exists yet for the count thresholds below; this is a deliberately simple,
+# transparent v1 -- a living design already flagged as expected to evolve
+# once real use surfaces better information (see the grill session).
+
+RELIABILITY_LEVELS = ["high", "moderate", "low", "very-low"]  # best to worst
+
+
+def _level_from_finding_count(n: int) -> str:
+    if n == 0:
+        return "high"
+    if n == 1:
+        return "moderate"
+    if n <= 3:
+        return "low"
+    return "very-low"
+
+
+def _worse_of(a: str, b: str) -> str:
+    return a if RELIABILITY_LEVELS.index(a) >= RELIABILITY_LEVELS.index(b) else b
+
+
+def compute_reliability_signal(layer1_findings: list[str], layer2_result: dict) -> dict:
+    """layer1_findings: from judge_extraction. layer2_result: from
+    check_inference_validity. Returns {"level": one of RELIABILITY_LEVELS,
+    "findings": full list from both layers}.
+
+    Floor rule: a FORMAL inference-validity failure (deductive reasoning
+    assessed invalid) floors the level at "low" -- a minimum badness, not a
+    cap; a paper that's already worse than "low" from its own layer-1
+    findings stays at that worse level. Weak INDUCTIVE support is not the
+    same thing -- per the design doc, the floor is specific to formal
+    validity failures, since inductive evidential strength is a matter of
+    degree, not a strict logic bug. A weak-inductive result is folded in as
+    an ordinary finding instead, contributing to the count-based level like
+    any other."""
+    findings = list(layer1_findings)
+
+    reasoning_type = layer2_result.get("reasoning_type", "unknown")
+    validity = layer2_result.get("validity", "")
+    validity_lower = validity.lower()
+
+    is_formal_failure = reasoning_type == "deductive" and "invalid" in validity_lower
+    is_weak_inductive = reasoning_type == "inductive" and "weak" in validity_lower
+
+    if is_formal_failure:
+        findings.append(f"Layer 2: deductive argument assessed invalid -- {validity}")
+    elif is_weak_inductive:
+        findings.append(f"Layer 2: inductive support assessed weak -- {validity}")
+
+    level = _level_from_finding_count(len(findings))
+    if is_formal_failure:
+        level = _worse_of(level, "low")
+
+    return {"level": level, "findings": findings}
+
+
+def compute_all_reliability_signals(
+    layer1_findings: dict[str, list[str]], layer2_results: dict[str, dict]
+) -> dict[str, dict]:
+    """layer1_findings: {slug: findings_list} from judge_all.
+    layer2_results: {slug: inference_check_dict} from check_inference_validity_all.
+    Returns {slug: {"level": ..., "findings": [...]}}."""
+    slugs = set(layer1_findings) | set(layer2_results)
+    return {
+        slug: compute_reliability_signal(layer1_findings.get(slug, []), layer2_results.get(slug, {}))
+        for slug in slugs
+    }
+
+
 if __name__ == "__main__":
     import argparse
 
