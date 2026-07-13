@@ -21,6 +21,9 @@ from logic_auditor import (
     _parse_findings,
     judge_extraction,
     judge_all,
+    check_inference_validity,
+    check_inference_validity_all,
+    INFERENCE_FIELDS,
 )
 
 
@@ -369,3 +372,101 @@ def test_judge_all_judges_each_paper_by_its_own_type():
 
 def test_judge_all_handles_empty_input():
     assert judge_all({}, chat_fn=lambda m: "") == {}
+
+
+# ── Layer 2: formal inference-validity check ────────────────────────────────
+
+def test_check_inference_validity_parses_deductive_response():
+    def fake_chat(messages):
+        return (
+            "P: models degrade when relevant info is in the middle\n"
+            "Q: current models do not robustly use long-context information\n"
+            "REASONING_TYPE: deductive\n"
+            "ARGUMENT_FORM: P, if P then Q, therefore Q\n"
+            "VALIDITY: valid (modus ponens)\n"
+        )
+
+    result = check_inference_validity("Title", "Abstract", chat_fn=fake_chat)
+    assert result["reasoning_type"] == "deductive"
+    assert result["validity"] == "valid (modus ponens)"
+    assert result["p"] == "models degrade when relevant info is in the middle"
+    assert result["q"] == "current models do not robustly use long-context information"
+
+
+def test_check_inference_validity_parses_inductive_response():
+    def fake_chat(messages):
+        return (
+            "P: 3,000 hours of red teaming found no universal jailbreak\n"
+            "Q: Constitutional Classifiers are an effective defense\n"
+            "REASONING_TYPE: inductive\n"
+            "ARGUMENT_FORM: strong empirical evidence from extensive red-teaming\n"
+            "VALIDITY: strong -- large, adversarial evaluation effort\n"
+        )
+
+    result = check_inference_validity("Title", "Abstract", chat_fn=fake_chat)
+    assert result["reasoning_type"] == "inductive"
+    assert result["validity"] == "strong -- large, adversarial evaluation effort"
+
+
+def test_check_inference_validity_includes_title_and_abstract_in_prompt():
+    captured = {}
+
+    def fake_chat(messages):
+        captured["prompt"] = messages[0]["content"]
+        return "P: p\nQ: q\nREASONING_TYPE: deductive\nARGUMENT_FORM: f\nVALIDITY: valid\n"
+
+    check_inference_validity("My Title", "My abstract text", chat_fn=fake_chat)
+    assert "My Title" in captured["prompt"]
+    assert "My abstract text" in captured["prompt"]
+
+
+def test_check_inference_validity_asks_for_deductive_vs_inductive_classification():
+    # the design doc's follow-up: classify reasoning type BEFORE the verdict,
+    # rather than forcing everything through one valid/invalid binary
+    captured = {}
+
+    def fake_chat(messages):
+        captured["prompt"] = messages[0]["content"]
+        return "P: p\nQ: q\nREASONING_TYPE: deductive\nARGUMENT_FORM: f\nVALIDITY: valid\n"
+
+    check_inference_validity("Title", "Abstract", chat_fn=fake_chat)
+    assert "deductive" in captured["prompt"].lower()
+    assert "inductive" in captured["prompt"].lower()
+
+
+def test_inference_fields_is_the_five_expected_fields():
+    assert INFERENCE_FIELDS == ["P", "Q", "REASONING_TYPE", "ARGUMENT_FORM", "VALIDITY"]
+
+
+def test_check_inference_validity_all_processes_each_paper():
+    def fake_chat(messages):
+        return "P: p\nQ: q\nREASONING_TYPE: deductive\nARGUMENT_FORM: f\nVALIDITY: valid\n"
+
+    papers = {
+        "seed-a": ("Title A", "Abstract A"),
+        "seed-b": ("Title B", "Abstract B"),
+    }
+    result = check_inference_validity_all(papers, chat_fn=fake_chat)
+    assert set(result) == {"seed-a", "seed-b"}
+    assert result["seed-a"]["reasoning_type"] == "deductive"
+
+
+def test_check_inference_validity_all_handles_empty_input():
+    assert check_inference_validity_all({}, chat_fn=lambda m: "") == {}
+
+
+def test_check_inference_validity_normalizes_reasoning_type_casing():
+    # real qwen2.5:14b output varies casing: "Inductive", "INDUCTIVE", "inductive"
+    def fake_chat(messages):
+        return "P: p\nQ: q\nREASONING_TYPE: INDUCTIVE\nARGUMENT_FORM: f\nVALIDITY: strong\n"
+
+    result = check_inference_validity("Title", "Abstract", chat_fn=fake_chat)
+    assert result["reasoning_type"] == "inductive"
+
+
+def test_check_inference_validity_reasoning_type_falls_back_to_unknown():
+    def fake_chat(messages):
+        return "P: p\nQ: q\nREASONING_TYPE: not sure honestly\nARGUMENT_FORM: f\nVALIDITY: strong\n"
+
+    result = check_inference_validity("Title", "Abstract", chat_fn=fake_chat)
+    assert result["reasoning_type"] == "unknown"

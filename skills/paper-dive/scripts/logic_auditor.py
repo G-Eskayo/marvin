@@ -319,6 +319,75 @@ def judge_all(papers: dict[str, tuple[dict, str]], chat_fn=None) -> dict[str, li
     }
 
 
+# ── Layer 2: formal inference-validity check ────────────────────────────────
+# Model: qwen2.5:14b, validated in the design's spot-check (task 11) --
+# 3b/7b both got the inferential direction backwards on a real test case
+# (treated evidence as a conclusion derived from the claim, rather than the
+# evidence FOR the claim); 14b got it right on every test case and showed
+# unprompted awareness of the deductive-vs-inductive distinction. Type-
+# agnostic, unlike layer 1 -- operates directly on title+abstract, not
+# routed through extract_structure's per-type extraction, since the
+# inferential move being checked here is a different, universal question
+# ("does the conclusion follow from the premises") independent of what kind
+# of argument the paper makes.
+INFERENCE_MODEL = "qwen2.5:14b"
+
+INFERENCE_FIELDS = ["P", "Q", "REASONING_TYPE", "ARGUMENT_FORM", "VALIDITY"]
+
+INFERENCE_PROMPT = """Below is an academic paper's title and abstract. Identify its single most important inferential move -- the step where it goes from evidence/premises to its conclusion. Symbolize it into propositions (P, Q, etc.), using the paper's own actual premises and conclusion -- do not invent an inference that isn't there.
+
+First classify whether this move is DEDUCTIVE (the conclusion is claimed to follow necessarily and with certainty from the premises, as a matter of pure logical form) or INDUCTIVE (the conclusion is supported by evidence but doesn't follow with logical necessity -- a matter of degree, common in empirical science). Most empirical papers are inductive; treat DEDUCTIVE as the exception, not the default.
+
+Then:
+- If DEDUCTIVE: state the argument form explicitly (e.g. "P, if P then Q, therefore Q") and assess VALID (a recognized valid form like modus ponens) or INVALID (a recognized fallacy like affirming the consequent or denying the antecedent).
+- If INDUCTIVE: state what evidence supports the conclusion, and assess STRONG (the evidence genuinely supports the conclusion, appropriately hedged) or WEAK (the conclusion overreaches what the evidence can support).
+
+Judge only whether the conclusion follows from the stated premises -- not whether the premises themselves are true.
+
+Title: {title}
+Abstract: {abstract}
+
+Respond in exactly this format:
+P: <what you're calling P, in the paper's own terms>
+Q: <what you're calling Q, in the paper's own terms>
+REASONING_TYPE: <deductive or inductive>
+ARGUMENT_FORM: <the explicit form for deductive, or a brief description of the evidential support for inductive>
+VALIDITY: <for deductive: valid/invalid + named form or fallacy. for inductive: strong/weak + brief reason>"""
+
+
+_REASONING_TYPES = {"deductive", "inductive"}
+
+
+def check_inference_validity(title: str, abstract: str, chat_fn=None) -> dict[str, str]:
+    """Symbolizes the paper's key inferential move and checks the argument's
+    FORM -- does the conclusion follow from the stated premises -- never
+    whether the premises are true (that's layer 1's job). Visible
+    extraction: the symbolization (P, Q, reasoning type) is always part of
+    the returned result, not hidden behind a bare verdict.
+
+    reasoning_type is normalized the same way classify_paper_type normalizes
+    paper type -- real qwen2.5:14b output varies casing ("Inductive",
+    "INDUCTIVE", "inductive"), and task 16's rollup needs to branch on this
+    value reliably, not match free text."""
+    chat_fn = chat_fn or (lambda messages: ollama_chat(INFERENCE_MODEL, messages))
+    prompt = INFERENCE_PROMPT.format(title=title, abstract=abstract)
+    response = chat_fn([{"role": "user", "content": prompt}])
+    result = _parse_fields(response, INFERENCE_FIELDS)
+
+    raw_type = result.get("reasoning_type", "").strip().lower()
+    found = [t for t in _REASONING_TYPES if t in raw_type]
+    result["reasoning_type"] = found[0] if len(found) == 1 else "unknown"
+    return result
+
+
+def check_inference_validity_all(papers: dict[str, tuple[str, str]], chat_fn=None) -> dict[str, dict]:
+    """papers: {slug: (title, abstract)}. Returns {slug: inference_check_dict}."""
+    return {
+        slug: check_inference_validity(title, abstract, chat_fn=chat_fn)
+        for slug, (title, abstract) in papers.items()
+    }
+
+
 if __name__ == "__main__":
     import argparse
 
