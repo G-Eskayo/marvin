@@ -19,6 +19,7 @@ Run standalone to preview what a session would see:
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -169,6 +170,11 @@ def check_auto_fix_log() -> str | None:
 
 
 def check_sync_log() -> str | None:
+    """Latest sync-log entry in the last 24h, for visibility only. Whether a
+    conflict is CURRENTLY open is decided by check_git_conflicts() against
+    live git state, not by scanning log prose — a log line saying CONFLICT
+    can be hours-stale once resolved, and stays in the 24h window looking
+    like an open problem long after `git stash pop` actually cleared it."""
     f = CLAUDE_DIR / "sync-log.md"
     if not f.exists():
         return None
@@ -180,13 +186,49 @@ def check_sync_log() -> str | None:
               if (dt := _parse_iso(ts)) and dt >= cutoff]
     if not recent:
         return None
-    conflict = any("CONFLICT" in body for _, _, body in recent)
     ts, header, body = recent[-1]
     first_line = body.splitlines()[0] if body else ""
-    line = f"code-sync ({ts}) {header}: {first_line}"
-    if conflict:
-        line = "**code-sync CONFLICT — needs a live session to resolve, check ~/.claude/sync-log.md**\n" + line
-    return line
+    return f"code-sync ({ts}) {header}: {first_line}"
+
+
+def check_git_conflicts() -> str | None:
+    """Live git state for the synced repos — authoritative, unlike scanning
+    sync-log.md prose (see check_sync_log). Flags an unresolved merge
+    (conflict markers in `git status` or a live MERGE_HEAD) and any stash
+    left behind by a failed WIP-restore, since that's exactly how code_sync's
+    stash-then-pull-then-pop dance leaves local work stranded."""
+    findings = []
+    for repo in (CLAUDE_DIR, HOME / ".agents"):
+        if not (repo / ".git").exists():
+            continue
+        try:
+            status = subprocess.run(
+                ["git", "-C", str(repo), "status", "--porcelain=v1"],
+                capture_output=True, text=True, timeout=10,
+            ).stdout
+        except Exception as exc:
+            log_hook_error(HOOK_NAME, f"git status {repo}", exc)
+            continue
+        conflict_codes = {"UU", "AA", "DD", "AU", "UA", "UD", "DU"}
+        has_conflict = (repo / ".git" / "MERGE_HEAD").exists() or any(
+            line[:2] in conflict_codes for line in status.splitlines()
+        )
+        if has_conflict:
+            findings.append(f"**{repo} has an unresolved merge conflict right now** — needs a live session to fix")
+
+        try:
+            stash = subprocess.run(
+                ["git", "-C", str(repo), "stash", "list"],
+                capture_output=True, text=True, timeout=10,
+            ).stdout
+        except Exception as exc:
+            log_hook_error(HOOK_NAME, f"git stash list {repo}", exc)
+            continue
+        n_stash = len([l for l in stash.splitlines() if l.strip()])
+        if n_stash:
+            findings.append(f"{repo} has {n_stash} stash(es) left over from a code-sync WIP restore — check `git -C {repo} stash list`")
+
+    return "\n".join(findings) if findings else None
 
 
 def _check_digest(label: str, dirpath: Path) -> str | None:
@@ -219,6 +261,7 @@ def main() -> None:
         _safe(check_cron_health),
         _safe(check_auto_fix_log),
         _safe(check_sync_log),
+        _safe(check_git_conflicts),
         _safe(check_daily_digest),
         _safe(check_research_digest),
     ) if n]
