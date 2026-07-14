@@ -1,0 +1,1607 @@
+<title>MARVIN — 3D Architecture Map</title>
+<style>
+  .viz-root {
+    --surface-1: #1a1a19;
+    --page-plane: #0d0d0d;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --gridline: #2c2c2a;
+    --border: rgba(255,255,255,0.10);
+    --cat-memory:    #3987e5; /* blue */
+    --cat-quality:   #199e70; /* aqua */
+    --cat-research:  #c98500; /* yellow */
+    --cat-creation:  #008300; /* green */
+    --cat-continuity:#9085e9; /* violet */
+    --cat-project:   #e66767; /* red */
+    --cat-agents:    #d55181; /* magenta */
+    --cat-infra:     #d95926; /* orange */
+    --cat-cross-machine: #2fb6c4; /* teal */
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; overflow: hidden;
+    background:
+      radial-gradient(ellipse 90% 70% at 50% 45%, #17181a 0%, var(--page-plane) 62%, #060606 100%);
+    font-family: -apple-system, system-ui, "Segoe UI", sans-serif;
+    color: var(--text-primary);
+  }
+  .mono { font-family: ui-monospace, "SF Mono", "Menlo", "Consolas", monospace; }
+  #stage { position: fixed; inset: 0; }
+  canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+  canvas:active { cursor: grabbing; }
+
+  #chrome { position: fixed; inset: 0; pointer-events: none; }
+  #chrome > * { pointer-events: auto; }
+  /* Wallpaper mode (DesktopLive, ?wallpaper=1): pure canvas, no UI at all —
+     nothing here is clickable once the window ignores mouse events at the
+     OS level, so leaving it visible just reads as a stray leftover window. */
+  body.wallpaper-mode #chrome { display: none; }
+
+  header {
+    position: absolute; top: 0; left: 0; right: 0;
+    padding: 20px 24px 14px;
+    background: linear-gradient(to bottom, rgba(13,13,13,0.94), rgba(13,13,13,0));
+  }
+  header .wordmark {
+    display: flex; align-items: baseline; gap: 9px; margin-bottom: 5px;
+  }
+  header h1 {
+    margin: 0; font-size: 13px; font-weight: 600; letter-spacing: 2.5px;
+    text-transform: uppercase; color: var(--text-primary);
+  }
+  header .subtitle {
+    font-size: 12px; color: var(--text-muted); letter-spacing: 0.2px;
+  }
+  header p { margin: 0; font-size: 12.5px; color: var(--text-secondary); max-width: 540px; line-height: 1.55; }
+  header code {
+    font-size: 11px; background: rgba(255,255,255,0.07); padding: 1px 5px; border-radius: 3px;
+  }
+
+  #legend {
+    position: absolute; top: 90px; left: 24px;
+    background: rgba(26,26,25,0.72); backdrop-filter: blur(6px);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 11px 12px; font-size: 11.5px; min-width: 176px;
+  }
+  #legend .row {
+    display: flex; align-items: center; gap: 8px; padding: 4px 3px;
+    border-radius: 4px; cursor: pointer; user-select: none;
+  }
+  #legend .row:hover { background: rgba(255,255,255,0.06); }
+  #legend .row.off { opacity: 0.32; }
+  #legend .swatch { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+  #legend .label { color: var(--text-secondary); letter-spacing: 0.1px; }
+  #legend .row.off .label { color: var(--text-muted); }
+  #legend .count { margin-left: auto; color: var(--text-muted); font-variant-numeric: tabular-nums; font-size: 10px; }
+
+  #mode-toggle {
+    position: absolute; top: 90px; right: 24px;
+    background: rgba(26,26,25,0.72); backdrop-filter: blur(6px);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 3px; font-size: 10.5px; display: flex; gap: 2px;
+  }
+  #mode-toggle button {
+    background: transparent; border: none; color: var(--text-secondary);
+    padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 10.5px;
+    letter-spacing: 0.3px; font-family: inherit;
+  }
+  #mode-toggle button.active { background: rgba(255,255,255,0.10); color: var(--text-primary); }
+  #mode-caption {
+    position: absolute; top: 134px; right: 24px; max-width: 228px;
+    font-size: 10.5px; color: var(--text-muted); text-align: right; line-height: 1.55;
+    display: none;
+  }
+  #mode-caption.show { display: block; }
+
+  #tooltip {
+    position: absolute; display: none; max-width: 260px;
+    background: rgba(26,26,25,0.92); backdrop-filter: blur(6px);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 10px 12px; font-size: 12px; line-height: 1.45; pointer-events: none;
+    box-shadow: 0 10px 28px rgba(0,0,0,0.5);
+  }
+  #tooltip .name { font-weight: 600; color: var(--text-primary); font-size: 12px; letter-spacing: 0.1px; }
+  #tooltip .cat { color: var(--text-secondary); font-size: 10px; margin: 2px 0 6px; letter-spacing: 0.3px; text-transform: uppercase; }
+  #tooltip .desc { color: var(--text-secondary); font-family: -apple-system, system-ui, sans-serif; }
+  #tooltip .edges { margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--border); color: var(--text-muted); font-size: 10px; line-height: 1.5; }
+
+  footer {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    padding: 12px 24px 18px; text-align: center;
+    background: linear-gradient(to top, rgba(13,13,13,0.94), rgba(13,13,13,0));
+    font-size: 10.5px; color: var(--text-muted); letter-spacing: 0.15px;
+  }
+  footer b { color: var(--text-secondary); font-weight: 500; }
+  #selection-note {
+    position: absolute; bottom: 50px; left: 50%; transform: translateX(-50%);
+    font-size: 11px; color: var(--text-secondary); background: rgba(26,26,25,0.92);
+    backdrop-filter: blur(6px);
+    border: 1px solid var(--border); border-radius: 999px; padding: 5px 8px 5px 14px;
+    display: none;
+  }
+  #selection-note.show { display: block; }
+  #selection-note button {
+    background: none; border: none; color: var(--cat-project); cursor: pointer;
+    font-family: inherit; font-size: 11px; margin-left: 8px; padding: 3px 6px;
+  }
+</style>
+
+<div class="viz-root" id="stage">
+  <canvas id="c"></canvas>
+  <div id="chrome">
+    <header>
+      <div class="wordmark">
+        <h1 class="mono">MARVIN</h1>
+        <span class="subtitle">— the mind map, in the dimension it actually needs</span>
+      </div>
+      <p>The quiet branches are structure — category → skill, dendrite from cell body. The gold pulses are the real wiring: <code>calls:</code> declarations, one undeclared dependency, and the hook/cron chain found during tonight's system audit. Rings mark nodes with their own forest — click to open. Drag to rotate, scroll to zoom, click any node or gold thread for what it actually does.</p>
+    </header>
+
+    <div id="legend"></div>
+
+    <div id="mode-toggle">
+      <button id="mode-skill" class="active mono">SKILL CATEGORIES</button>
+      <button id="mode-brain" class="mono">BRAIN ANALOGY</button>
+    </div>
+    <div id="mode-caption">Illustrative functional analogy, not literal neuroscience — a lens for asking "what's this cluster's job, and what's it missing a connection to?"</div>
+
+    <div id="tooltip"></div>
+    <div id="selection-note">Showing connections for <b id="sel-name" class="mono"></b><button id="sel-clear">clear ✕</button></div>
+
+    <footer class="mono">branches = structure &nbsp;·&nbsp; gold = real wiring (solid <b>calls:</b> · <b>– –</b> undeclared · <b>····</b> hook/cron) &nbsp;·&nbsp; dashed ring = click to open its forest</footer>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var REDUCE_MOTION = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // Wallpaper mode: DesktopLive loads this file with ?wallpaper=1. Strips all
+  // interactive chrome (it can't be clicked anyway — the window ignores mouse
+  // events at the OS level) so it reads as background, not a stray app window.
+  var WALLPAPER = /[?&]wallpaper=1\b/.test(location.search);
+  if (WALLPAPER) document.body.classList.add("wallpaper-mode");
+
+  // ── palette ──────────────────────────────────────────────────────────
+  var CAT = {
+    root:       { label: "MARVIN",           brain: "The whole system",                              color: "#c3c2b7" },
+    memory:     { label: "Memory",           brain: "Hippocampus-like — storage & retrieval",         color: "#3987e5" },
+    "skills-trunk": { label: "Skills",       brain: "Cortex-like — the general capability set",       color: "#c3c2b7" },
+    quality:    { label: "Quality",          brain: "Prefrontal-like — evaluation & error-checking",  color: "#199e70" },
+    research:   { label: "Research",         brain: "Sensory/associative-like — external intake",     color: "#c98500" },
+    creation:   { label: "Creation",         brain: "Generative-like — idea production",              color: "#008300" },
+    continuity: { label: "Continuity",       brain: "Meta-cognitive-like — self-monitoring",          color: "#9085e9" },
+    project:    { label: "Project",          brain: "Motor/output-like — task execution",             color: "#e66767" },
+    agents:     { label: "Autonomous Agents",brain: "Autonomic-like — runs without invocation",       color: "#d55181" },
+    infra:      { label: "Infrastructure",   brain: "White-matter-like — wiring between regions",     color: "#d95926" },
+    "cross-machine": { label: "Cross-Machine Network", brain: "Corpus-callosum-like — bridges the two physical hemispheres", color: "#2fb6c4" }
+  };
+  var SYNAPSE_COLOR = "255,214,102"; // reserved — never a categorical hue, "electrical" gold
+
+  // ── data: generated by brain-map/generate.py from manifest.json (live
+  // skill list + calls:) merged with enrichment.json (descriptions, non-
+  // skill nodes, hook/cron wiring — nothing manifest.json captures).
+  // Do not hand-edit this block — edit enrichment.json and regenerate.
+  /*__TREE_START__*/
+  var tree = {
+  "id": "MARVIN",
+  "cat": "root",
+  "desc": "Memory, routing, and skills layer for Claude Code",
+  "expandable": false,
+  "expanded": true,
+  "children": [
+    {
+      "id": "Memory",
+      "cat": "memory",
+      "desc": "Persistent context across sessions",
+      "expandable": false,
+      "children": [
+        {
+          "id": "qa-knowledge",
+          "cat": "memory",
+          "desc": "ChromaDB — patterns/anti-patterns/worked/failed, tagged by domain",
+          "expandable": true,
+          "children": [
+            {
+              "id": "qa_scan.py",
+              "cat": "memory",
+              "desc": "Scans a project on demand, extracts patterns",
+              "expandable": false,
+              "children": [],
+              "expanded": true
+            },
+            {
+              "id": "qa_query.py",
+              "cat": "memory",
+              "desc": "Lateral + direct retrieval — creative's cross-domain synthesis reads this",
+              "expandable": false,
+              "children": [],
+              "expanded": true
+            },
+            {
+              "id": "qa_capture.py",
+              "cat": "memory",
+              "desc": "Manual pattern capture; shared by the session-capture hook",
+              "expandable": false,
+              "children": [],
+              "expanded": true
+            }
+          ],
+          "expanded": false
+        },
+        {
+          "id": "research-feed",
+          "cat": "memory",
+          "desc": "ChromaDB — arXiv/GitHub/HN items, deduped by URL hash",
+          "expandable": false,
+          "children": [],
+          "expanded": true
+        },
+        {
+          "id": "paper-knowledge",
+          "cat": "memory",
+          "desc": "ChromaDB — citation-graph traversal results, deduped across investigations",
+          "expandable": true,
+          "children": [
+            {
+              "id": "paper_graph.py",
+              "cat": "memory",
+              "desc": "Greedy best-first traversal, blended SPECTER2+nomic-embed scoring, now its own repo",
+              "expandable": false,
+              "children": [],
+              "expanded": true
+            },
+            {
+              "id": "fetch_neighbors_from_s2",
+              "cat": "memory",
+              "desc": "References+citations from Semantic Scholar, asymmetric caps + result-intent bypass",
+              "expandable": false,
+              "children": [],
+              "expanded": true
+            }
+          ],
+          "expanded": false
+        },
+        {
+          "id": "lexicon.md",
+          "cat": "memory",
+          "desc": "Shared vocabulary, loaded every session",
+          "expandable": false,
+          "children": [],
+          "expanded": true
+        },
+        {
+          "id": "manifest.json",
+          "cat": "memory",
+          "desc": "Auto-generated skill index — this graph's real source of truth",
+          "expandable": false,
+          "children": [],
+          "expanded": true
+        }
+      ],
+      "expanded": true
+    },
+    {
+      "id": "Skills",
+      "cat": "skills-trunk",
+      "desc": "30 structured capabilities",
+      "expandable": false,
+      "expanded": true,
+      "children": [
+        {
+          "id": "Quality",
+          "cat": "quality",
+          "desc": "",
+          "expandable": false,
+          "expanded": true,
+          "children": [
+            {
+              "id": "audit",
+              "cat": "quality",
+              "desc": "Reactive background investigation comparing documented intent (docstrings, ADRs, roadmap markers) against actual system state to find gaps nobody's reported yet.",
+              "children": [],
+              "expandable": false,
+              "expanded": true
+            },
+            {
+              "id": "diagnose",
+              "cat": "quality",
+              "desc": "Disciplined diagnosis loop for hard bugs and performance regressions.",
+              "children": [],
+              "expandable": false,
+              "expanded": true
+            },
+            {
+              "id": "grill-me",
+              "cat": "quality",
+              "desc": "Relentless Socratic interview — now the fallback",
+              "children": [],
+              "expandable": false,
+              "expanded": true
+            },
+            {
+              "id": "grill-with-docs",
+              "cat": "quality",
+              "desc": "grill-me + live CONTEXT.md/ADR updates — the preferred default",
+              "children": [],
+              "expandable": false,
+              "expanded": true
+            },
+            {
+              "id": "improve-codebase-architecture",
+              "cat": "quality",
+              "desc": "Find deepening opportunities in a codebase, informed by the domain language in CONTEXT.md and the decisions in docs/adr/.",
+              "children": [],
+              "expandable": false,
+              "expanded": true
+            },
+            {
+              "id": "qa-agent",
+              "cat": "quality",
+              "desc": "QA code agent — scans projects and captures session learnings into a searchable best-practices ChromaDB.",
+              "children": [],
+              "expandable": false,
+              "expanded": true
+            },
+            {
+              "id": "tdd",
+              "cat": "quality",
+              "desc": "Test-driven development with red-green-refactor loop.",
+              "children": [],
+              "expandable": false,
+              "expanded": true
+            }
+          ]
+        },
+        {
+          "id": "Research",
+          "cat": "research",
+          "desc": "",
+          "expandable": false,
+          "expanded": true,
+          "children": [
+            {
+              "id": "paper-dive",
+              "cat": "research",
+              "desc": "Socratic reading partner for scientific papers.",
+              "children": [],
+              "expandable": false,
+              "expanded": true
+            },
+            {
+              "id": "project-ai-development-theory",
+              "cat": "research",
+              "desc": "Open thread — what's the developmental stage after tools→skills, via a psychology lens",
+              "children": [],
+              "expandable": false,
+              "expanded": true
+            },
+            {
+              "id": "reference-mcp",
+              "cat": "research",
+              "desc": "MCP protocol knowledge base — architecture, transports, auth, extensions, debugging, registry",
+              "children": [],
+              "expandable": false,
+              "expanded": true
+            },
+            {
+              "id": "research",
+              "cat": "research",
+              "desc": "Deep research with epistemic rigor — triangulates sources, tiers confidence levels, separates facts from interpretations, and steelmans competing views.",
+              "children": [],
+              "expandable": false,
+              "expanded": true
+            },
+            {
+              "id": "zoom-out",
+              "cat": "research",
+              "desc": "Tell the agent to zoom out and give broader context or a higher-level perspective.",
+              "children": [],
+              "expandable": false,
+              "expanded": true
+            }
+          ]
+        },
+        {
+          "id": "Creation",
+          "cat": "creation",
+          "desc": "",
+          "expandable": false,
+          "expanded": true,
+          "children": [
+            {
+              "id": "creative",
+              "cat": "creation",
+              "desc": "Creative work that escapes safe, predictable, or generic outputs through constraint-based thinking, unexpected angles, and iterative divergence.",
+              "children": [],
+              "expandable": false,
+              "expanded": true
+            },
+            {
+              "id": "improve",
+              "cat": "creation",
+              "desc": "Continuous improvement agent.",
+              "children": [],
+              "expandable": false,
+              "expanded": true
+            },
+            {
+              "id": "prototype",
+              "cat": "creation",
+              "desc": "Build a throwaway prototype to flesh out a design before committing to it.",
+              "children": [],
+              "expandable": false,
+              "expanded": true
+            }
+          ]
+        },
+        {
+          "id": "Continuity",
+          "cat": "continuity",
+          "desc": "",
+          "expandable": false,
+          "expanded": true,
+          "children": [
+            {
+              "id": "caveman",
+              "cat": "continuity",
+              "desc": ">",
+              "children": [],
+              "expandable": false,
+              "expanded": true
+            },
+            {
+              "id": "handoff",
+              "cat": "continuity",
+              "desc": "Produce a structured handoff document before any context switch, topic change, or when a fresh model would improve outputs.",
+              "children": [],
+              "expandable": false,
+              "expanded": true
+            },
+            {
+              "id": "index",
+              "cat": "continuity",
+              "desc": "Context retrieval using the manifest index.",
+              "children": [],
+              "expandable": false,
+              "expanded": true
+            },
+            {
+              "id": "lexicon",
+              "cat": "continuity",
+              "desc": "Add, update, or review entries in the shared lexicon at ~/.claude/lexicon.md.",
+              "children": [],
+              "expandable": false,
+              "expanded": true
+            },
+            {
+              "id": "route",
+              "cat": "continuity",
+              "desc": "Classify a task and surface the optimal Claude profile + model routing decision",
+              "children": [],
+              "expandable": false,
+              "expanded": true
+            },
+            {
+              "id": "safety-monitor",
+              "cat": "continuity",
+              "desc": "Calibrated verifier that scores an autonomous loop's output for risk (fabricated references, unsupported claims) before it ships, quarantining flagged artifacts for review instead of blocking the loop.",
+              "children": [],
+              "expandable": false,
+              "expanded": true
+            },
+            {
+              "id": "self-improve",
+              "cat": "continuity",
+              "desc": "Meta-skill that runs autonomously after every non-trivial task — no user prompt needed.",
+              "children": [],
+              "expandable": false,
+              "expanded": true
+            },
+            {
+              "id": "write-a-skill",
+              "cat": "continuity",
+              "desc": "Create new agent skills with proper structure, progressive disclosure, and bundled resources.",
+              "children": [],
+              "expandable": false,
+              "expanded": true
+            }
+          ]
+        },
+        {
+          "id": "Project",
+          "cat": "project",
+          "desc": "",
+          "expandable": false,
+          "expanded": true,
+          "children": [
+            {
+              "id": "resume-tailor",
+              "cat": "project",
+              "desc": "Maintain a master resume and generate tailored 1-page application packages from job descriptions.",
+              "children": [],
+              "expandable": false,
+              "expanded": true
+            },
+            {
+              "id": "setup-matt-pocock-skills",
+              "cat": "project",
+              "desc": "Sets up an `## Agent skills` block in AGENTS.md/CLAUDE.md and `docs/agents/` so the engineering skills know this repo's issue tracker (GitHub or local markdown), triage label vocabulary, and domain doc layout.",
+              "children": [],
+              "expandable": false,
+              "expanded": true
+            },
+            {
+              "id": "to-issues",
+              "cat": "project",
+              "desc": "Break a plan, spec, or PRD into independently-grabbable issues on the project issue tracker using tracer-bullet vertical slices.",
+              "children": [],
+              "expandable": false,
+              "expanded": true
+            },
+            {
+              "id": "to-prd",
+              "cat": "project",
+              "desc": "Turn the current conversation context into a PRD and publish it to the project issue tracker.",
+              "children": [],
+              "expandable": false,
+              "expanded": true
+            },
+            {
+              "id": "triage",
+              "cat": "project",
+              "desc": "Triage issues through a state machine driven by triage roles.",
+              "children": [],
+              "expandable": false,
+              "expanded": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "Infrastructure",
+      "cat": "infra",
+      "desc": "The hooks wiring everything else together — live-derived from settings.local.json, see ADR 0019",
+      "expandable": false,
+      "children": [
+        {
+          "id": "background_review.py",
+          "cat": "infra",
+          "desc": "Hook (PostToolUse: Write|Edit) — PostToolUse hook: when a handoff doc is written, spawn a tool-restricted background review that actually runs self-improve's process, instead of relying on the main conversation thread remembering to do it inline.",
+          "expandable": false,
+          "expanded": true,
+          "children": []
+        },
+        {
+          "id": "check_remote_session.py",
+          "cat": "infra",
+          "desc": "Hook (SessionStart) — SessionStart hook: arrival-triggered, on-demand session continuity.",
+          "expandable": false,
+          "expanded": true,
+          "children": []
+        },
+        {
+          "id": "emit-resume-prompt.py",
+          "cat": "infra",
+          "desc": "Hook: prints the resume prompt on handoff-doc writes",
+          "expandable": false,
+          "children": [],
+          "expanded": true
+        },
+        {
+          "id": "improvement_sweep.py",
+          "cat": "infra",
+          "desc": "Hook: scans the handoff's project, queues top issues",
+          "expandable": false,
+          "children": [],
+          "expanded": true
+        },
+        {
+          "id": "qa_session_capture.py",
+          "cat": "infra",
+          "desc": "Hook: extracts decisions from handoffs into qa-knowledge",
+          "expandable": false,
+          "children": [],
+          "expanded": true
+        },
+        {
+          "id": "rebuild-manifest.py",
+          "cat": "infra",
+          "desc": "Rebuilds manifest.json from skill frontmatter — now path-scoped, not unconditional; also chains a brain-map regenerate",
+          "expandable": false,
+          "children": [],
+          "expanded": true
+        },
+        {
+          "id": "skill_activity.py",
+          "cat": "infra",
+          "desc": "Hook (PostToolUse: Skill) — PostToolUse hook (matcher: Skill): appends {skill, ts} to ~/.agents/brain-map/activity.jsonl whenever a skill actually fires.",
+          "expandable": false,
+          "expanded": true,
+          "children": []
+        },
+        {
+          "id": "trigger_code_sync.py",
+          "cat": "infra",
+          "desc": "Hook (PostToolUse: Write|Edit) — PostToolUse hook: when a handoff doc is written to ~/.claude/handoffs/, trigger code_sync.py's push for both synced repos (~/.agents and ~/.claude) — session/topic-switch moments are the natural checkpoint for \"commit and push whatever's changed,\" and the handoff doc itself is content inside ~/.claude that this same write just changed.",
+          "expandable": false,
+          "expanded": true,
+          "children": []
+        }
+      ],
+      "expanded": true
+    },
+    {
+      "id": "Autonomous Agents",
+      "cat": "agents",
+      "desc": "Run on a schedule, without being invoked — live-derived from launchd, see ADR 0018",
+      "expandable": false,
+      "children": [
+        {
+          "id": "architecture-review",
+          "cat": "agents",
+          "desc": "Cron 11:30 — Real trigger automation for architecture-review, finally built 2026-07-09.",
+          "expandable": false,
+          "expanded": true,
+          "children": []
+        },
+        {
+          "id": "auto-fix",
+          "cat": "agents",
+          "desc": "Cron 11:00 — Autonomous low-risk cosmetic auto-fixer for MARVIN's own codebase.",
+          "expandable": false,
+          "expanded": true,
+          "children": []
+        },
+        {
+          "id": "code-sync-push",
+          "cat": "agents",
+          "desc": "Cron 22:00",
+          "expandable": false,
+          "expanded": true,
+          "children": []
+        },
+        {
+          "id": "cron-health",
+          "cat": "agents",
+          "desc": "Cron 10:00 — Daily watcher for MARVIN's launchd cron jobs.",
+          "expandable": false,
+          "expanded": true,
+          "children": []
+        },
+        {
+          "id": "cross-machine-merge",
+          "cat": "agents",
+          "desc": "Cron 09:30 — Reconcile MARVIN's daily outputs across Gil's registered machines (~/.claude/marvin-network.json).",
+          "expandable": false,
+          "expanded": true,
+          "children": []
+        },
+        {
+          "id": "daily-digest",
+          "cat": "agents",
+          "desc": "Cron 08:30 — brainstorms feature combos, trim candidates, wild ideas",
+          "expandable": true,
+          "children": [
+            {
+              "id": "reads: qa-knowledge",
+              "cat": "agents",
+              "desc": "part of its assembled context",
+              "expandable": false,
+              "children": [],
+              "expanded": true
+            },
+            {
+              "id": "reads: roadmap + handoffs",
+              "cat": "agents",
+              "desc": "part of its assembled context",
+              "expandable": false,
+              "children": [],
+              "expanded": true
+            },
+            {
+              "id": "writes: daily-digest/*.md",
+              "cat": "agents",
+              "desc": "the actual output — was silently broken until tonight",
+              "expandable": false,
+              "children": [],
+              "expanded": true
+            }
+          ],
+          "expanded": false
+        },
+        {
+          "id": "process-quarantine-reviews",
+          "cat": "agents",
+          "desc": "Cron 20:00 — Closes the loop calibrate.py's record_label() was always meant to have.",
+          "expandable": false,
+          "expanded": true,
+          "children": []
+        },
+        {
+          "id": "research-colony",
+          "cat": "agents",
+          "desc": "Cron 09:00 — source_monitor → correlate → digest",
+          "expandable": true,
+          "children": [
+            {
+              "id": "source_monitor.py",
+              "cat": "agents",
+              "desc": "fetches arXiv CS.AI/CS.LG/CS.MA, GitHub, HN",
+              "expandable": false,
+              "children": [],
+              "expanded": true
+            },
+            {
+              "id": "correlate.py",
+              "cat": "agents",
+              "desc": "cross-refs against qa-knowledge, cosine distance < 1.1",
+              "expandable": false,
+              "children": [],
+              "expanded": true
+            },
+            {
+              "id": "research_digest.py",
+              "cat": "agents",
+              "desc": "synthesizes into Directly Relevant / Lateral / Tools / Skip",
+              "expandable": false,
+              "children": [],
+              "expanded": true
+            }
+          ],
+          "expanded": false
+        }
+      ],
+      "expanded": true
+    },
+    {
+      "id": "Cross-Machine Network",
+      "cat": "cross-machine",
+      "desc": "Registered machines + distributed-systems primitives — see ADR 0020",
+      "expandable": false,
+      "children": [
+        {
+          "id": "mac-mini-1",
+          "cat": "cross-machine",
+          "desc": "desktop — added 2026-07-06 — gils-mac-mini",
+          "expandable": false,
+          "expanded": true,
+          "children": []
+        },
+        {
+          "id": "macbook-pro-1",
+          "cat": "cross-machine",
+          "desc": "laptop — added 2026-07-06 — c02f52gpq05ps-macbook-pro",
+          "expandable": false,
+          "expanded": true,
+          "children": []
+        },
+        {
+          "id": "exo",
+          "cat": "cross-machine",
+          "desc": "Distributed LLM inference across registered devices over Tailscale — fully working 2026-07-08",
+          "expandable": false,
+          "children": [],
+          "expanded": true
+        },
+        {
+          "id": "task-dispatch",
+          "cat": "cross-machine",
+          "desc": "General fan-out/merge dispatch primitive (lib/task_dispatch.py) — research-colony's cross-machine merge trigger runs on it",
+          "expandable": false,
+          "children": [],
+          "expanded": true
+        }
+      ],
+      "expanded": true
+    }
+  ]
+};
+  /*__TREE_END__*/
+  /*__SYNAPSES_START__*/
+  var synapses = [
+  {
+    "a": "grill-with-docs",
+    "b": "grill-me",
+    "label": "calls grill-me's interview process, then layers doc-updates on top",
+    "type": "calls"
+  },
+  {
+    "a": "grill-with-docs",
+    "b": "lexicon",
+    "label": "calls lexicon to resolve/record terms as they crystallize",
+    "type": "calls"
+  },
+  {
+    "a": "improve-codebase-architecture",
+    "b": "zoom-out",
+    "label": "calls zoom-out for the initial map before finding deepening opportunities",
+    "type": "calls"
+  },
+  {
+    "a": "index",
+    "b": "self-improve",
+    "label": "runs self-improve's retrieve.py + rebuild-manifest.py under the hood",
+    "type": "calls"
+  },
+  {
+    "a": "qa-agent",
+    "b": "self-improve",
+    "label": "calls self-improve to turn QA-observed patterns into new/updated skills",
+    "type": "calls"
+  },
+  {
+    "a": "self-improve",
+    "b": "lexicon",
+    "label": "calls lexicon — step 1 of its own process",
+    "type": "calls"
+  },
+  {
+    "a": "self-improve",
+    "b": "write-a-skill",
+    "label": "calls write-a-skill's process when authoring a brand-new skill",
+    "type": "calls"
+  },
+  {
+    "a": "tdd",
+    "b": "diagnose",
+    "label": "calls diagnose when a red test needs root-causing, not just a fix",
+    "type": "calls"
+  },
+  {
+    "a": "to-prd",
+    "b": "to-issues",
+    "label": "calls to-issues once the PRD is synthesized",
+    "type": "calls"
+  },
+  {
+    "a": "triage",
+    "b": "to-issues",
+    "label": "calls to-issues once an item is triaged",
+    "type": "calls"
+  },
+  {
+    "a": "qa-agent",
+    "b": "qa-knowledge",
+    "label": "qa_scan.py/qa_capture.py write scan results and manual captures here — qa-agent's core purpose, previously missing from this graph entirely",
+    "type": "hook"
+  },
+  {
+    "a": "creative",
+    "b": "qa-knowledge",
+    "label": "cross_domain_synthesis.py directly imports qa_query.py and reads this — not a qa-agent invocation, bypasses it entirely; never declared in frontmatter",
+    "type": "undeclared"
+  },
+  {
+    "a": "handoff",
+    "b": "emit-resume-prompt.py",
+    "label": "PostToolUse hook fires on every handoff-doc write",
+    "type": "hook"
+  },
+  {
+    "a": "handoff",
+    "b": "qa_session_capture.py",
+    "label": "PostToolUse hook fires on every handoff-doc write",
+    "type": "hook"
+  },
+  {
+    "a": "handoff",
+    "b": "improvement_sweep.py",
+    "label": "PostToolUse hook fires on every handoff-doc write",
+    "type": "hook"
+  },
+  {
+    "a": "qa_session_capture.py",
+    "b": "qa-knowledge",
+    "label": "writes extracted decisions into qa-knowledge",
+    "type": "hook"
+  },
+  {
+    "a": "improvement_sweep.py",
+    "b": "improve",
+    "label": "feeds improve's improvement-queue.md",
+    "type": "hook"
+  },
+  {
+    "a": "rebuild-manifest.py",
+    "b": "manifest.json",
+    "label": "rewrites manifest.json on every relevant SKILL.md/memory edit",
+    "type": "hook"
+  },
+  {
+    "a": "improve",
+    "b": "daily-digest",
+    "label": "owns and triggers the daily-digest cron",
+    "type": "hook"
+  },
+  {
+    "a": "daily-digest",
+    "b": "qa-knowledge",
+    "label": "reads qa-knowledge as part of its assembled context",
+    "type": "hook"
+  },
+  {
+    "a": "research-colony",
+    "b": "qa-knowledge",
+    "label": "correlate.py cross-refs today's finds against qa-knowledge",
+    "type": "hook"
+  },
+  {
+    "a": "research-colony",
+    "b": "research-feed",
+    "label": "source_monitor.py writes here, correlate.py reads it back",
+    "type": "hook"
+  },
+  {
+    "a": "paper-dive",
+    "b": "paper-knowledge",
+    "label": "paper_graph.py's /paper-graph mode writes and reads here — added 2026-07-08, previously missing from this graph entirely (same gap class as qa-agent above)",
+    "type": "hook"
+  },
+  {
+    "a": "cross-machine-merge",
+    "b": "task-dispatch",
+    "label": "migrated to task-dispatch's fan-out/merge primitive, event-driven instead of purely cron-timed",
+    "type": "hook"
+  },
+  {
+    "a": "cross-machine-merge",
+    "b": "Cross-Machine Network",
+    "label": "syncs qa-knowledge/research-feed across every device registered here",
+    "type": "hook"
+  }
+];
+  /*__SYNAPSES_END__*/
+
+  // ── flatten + index ──────────────────────────────────────────────────
+  var byId = {}, allNodes = [], branches = [], synapseDegree = {};
+  function indexTree(node, parent) {
+    node.parent = parent || null;
+    byId[node.id] = node;
+    node.children.forEach(function (c) { indexTree(c, node); });
+  }
+  function indexAll() {
+    byId = {};
+    indexTree(tree, null);
+    synapses = synapses.filter(function (s) { return byId[s.a] && byId[s.b]; });
+    synapseDegree = {};
+    synapses.forEach(function (s) { synapseDegree[s.a] = (synapseDegree[s.a] || 0) + 1; synapseDegree[s.b] = (synapseDegree[s.b] || 0) + 1; });
+  }
+  indexAll();
+
+  // ── vector helpers ───────────────────────────────────────────────────
+  function vAdd(a, b) { return { x: a.x + b.x, y: a.y + b.y, z: a.z + b.z }; }
+  function vScale(a, s) { return { x: a.x * s, y: a.y * s, z: a.z * s }; }
+  function vCross(a, b) { return { x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x }; }
+  function vNorm(a) { var l = Math.sqrt(a.x * a.x + a.y * a.y + a.z * a.z) || 1; return { x: a.x / l, y: a.y / l, z: a.z / l }; }
+
+  // ── radial tree layout (dendrite-style, recomputed on expand/collapse) ──
+  var SEG = [150, 105, 72, 46, 32];
+  var CONE = [0, 0.85, 0.68, 0.55, 0.5];
+
+  function visibleChildren(node) {
+    if (node.expandable && !node.expanded) return [];
+    return node.children;
+  }
+
+  function layout() {
+    allNodes = []; branches = [];
+    tree.x = 0; tree.y = 0; tree.z = 0; tree.depth = 0;
+    allNodes.push(tree);
+    var kids = visibleChildren(tree);
+    var n = kids.length;
+    kids.forEach(function (kid, i) {
+      var golden = Math.PI * (3 - Math.sqrt(5));
+      var yv = n > 1 ? 1 - (i / (n - 1)) * 2 : 0;
+      var r = Math.sqrt(Math.max(0, 1 - yv * yv));
+      var theta = golden * i;
+      var dir = vNorm({ x: Math.cos(theta) * r, y: yv, z: Math.sin(theta) * r });
+      var pos = vScale(dir, SEG[0]);
+      branches.push({ from: tree, to: kid, depth: 0 });
+      layoutBranch(kid, pos, dir, 1);
+    });
+  }
+
+  function layoutBranch(node, pos, dir, depth) {
+    node.x = pos.x; node.y = pos.y; node.z = pos.z; node.depth = depth;
+    allNodes.push(node);
+    var kids = visibleChildren(node);
+    if (!kids.length) return;
+    var up = Math.abs(dir.y) < 0.99 ? { x: 0, y: 1, z: 0 } : { x: 1, y: 0, z: 0 };
+    var u = vNorm(vCross(up, dir)), v = vNorm(vCross(dir, u));
+    var cone = CONE[Math.min(depth, CONE.length - 1)];
+    var seg = SEG[Math.min(depth, SEG.length - 1)];
+    kids.forEach(function (kid, i) {
+      var phi = (i / kids.length) * Math.PI * 2 + depth * 0.9;
+      var localAngle = cone * (0.5 + 0.5 * ((i % 3) / 2));
+      var kidDir = vNorm(vAdd(
+        vScale(dir, Math.cos(localAngle)),
+        vScale(vAdd(vScale(u, Math.cos(phi)), vScale(v, Math.sin(phi))), Math.sin(localAngle))
+      ));
+      var kidPos = vAdd(pos, vScale(kidDir, seg));
+      branches.push({ from: node, to: kid, depth: depth });
+      layoutBranch(kid, kidPos, kidDir, depth + 1);
+    });
+  }
+
+  // ── grow/shrink on real change — creation/removal animates instead of
+  // popping. relayout() wraps layout() with a before/after id diff: newly
+  // appeared nodes get a birth timestamp (render loop eases their scale/
+  // alpha in), newly vanished nodes are frozen at their last position and
+  // kept in dyingNodes just long enough to ease out, instead of vanishing
+  // the instant they leave the tree. The very first layout (page load)
+  // skips this — nothing to diff against yet, and a simultaneous "bloom"
+  // of the whole tree is a different effect from a single real change. ──
+  var dyingNodes = []; // {node, removedAt}
+  var BIRTH_MS = 550, DEATH_MS = 550;
+
+  function relayout(animate) {
+    var oldIds = {};
+    allNodes.forEach(function (nd) { oldIds[nd.id] = nd; });
+
+    layout();
+
+    if (!animate) return;
+    var now = performance.now();
+    var newIds = {};
+    allNodes.forEach(function (nd) {
+      newIds[nd.id] = true;
+      if (!oldIds[nd.id]) nd._bornAt = now;
+    });
+    Object.keys(oldIds).forEach(function (id) {
+      if (!newIds[id]) dyingNodes.push({ node: oldIds[id], removedAt: now });
+    });
+  }
+
+  function birthFactor(nd) {
+    if (!nd._bornAt) return 1;
+    var t = (performance.now() - nd._bornAt) / BIRTH_MS;
+    return t >= 1 ? 1 : Math.max(0, t);
+  }
+
+  // Swaps in a freshly-generated tree/synapses (real regeneration — a skill
+  // was added/edited/removed) without a page reload. Preserves which
+  // expandable nodes were open, then animates the diff the same way
+  // relayout() does for expand/collapse, so a real change reads as "this
+  // grew a branch" instead of the whole graph flashing back into existence.
+  function updateTreeData(newTree, newSynapses) {
+    var expandState = {};
+    (function walk(n) {
+      if (n.expandable) expandState[n.id] = n.expanded;
+      n.children.forEach(walk);
+    })(tree);
+    (function applyState(n) {
+      if (n.expandable && expandState.hasOwnProperty(n.id)) n.expanded = expandState[n.id];
+      n.children.forEach(applyState);
+    })(newTree);
+
+    tree = newTree;
+    synapses = newSynapses;
+    indexAll();
+    relayout(true);
+  }
+  window.updateTreeData = updateTreeData;
+
+  // Single-node add/remove for the demo script (demo.py via DesktopLive's
+  // demo-events.jsonl channel) — a lighter-weight sibling of updateTreeData
+  // for showing the grow/shrink animation without regenerating anything
+  // real. Demo nodes are tagged _demo so they're unmistakable if one were
+  // ever left behind.
+  // A node quietly appearing under whichever branch happened to be off-
+  // camera is easy to miss entirely — direct user feedback after the first
+  // version had no camera movement on create/remove, only on activity.
+  // Reuses the exact same camera-ease + pulse-ripple triggerActivity
+  // already uses, so "look here, something changed" reads identically
+  // whether it's a real pulse or a create/destroy event.
+  function nudgeCameraAndPulse(node) {
+    activePulses.push({ id: node.id, start: performance.now(), duration: 3200 });
+    if (!dragging) {
+      cameraTargetNode = node;
+      cameraEaseUntil = performance.now() + 4200;
+    }
+  }
+
+  function demoAddNode(node, parentId) {
+    var parent = byId[parentId];
+    if (!parent || byId[node.id]) return;
+    node.children = node.children || [];
+    node.expandable = false; node.expanded = true;
+    node._demo = true;
+    parent.children.push(node);
+    indexAll();
+    relayout(true);
+    nudgeCameraAndPulse(node);
+  }
+  function demoRemoveNode(nodeId) {
+    var node = byId[nodeId];
+    if (!node || !node.parent) return;
+    nudgeCameraAndPulse(node); // camera turns to it before it shrinks away
+    var parent = node.parent;
+    parent.children = parent.children.filter(function (c) { return c.id !== nodeId; });
+    indexAll();
+    relayout(true);
+  }
+  window.demoAddNode = demoAddNode;
+  window.demoRemoveNode = demoRemoveNode;
+
+  // Live device liveness (Cross-Machine Network trunk) — DesktopLive polls
+  // `tailscale status --json` itself (~every 15-20s, see main.swift) and
+  // pushes changes straight in, the same "small file/signal pushed via
+  // evaluateJavaScript" pattern as activity/demo above. Only nudges the
+  // camera on an actual state flip, not every poll, so a steady-state
+  // connection doesn't tug the view every 15s.
+  function setDeviceStatus(id, online) {
+    var node = byId[id];
+    if (!node) return;
+    var changed = node.online !== online;
+    node.online = online;
+    if (changed) nudgeCameraAndPulse(node);
+  }
+  window.setDeviceStatus = setDeviceStatus;
+
+  layout();
+
+  // ── camera ───────────────────────────────────────────────────────────
+  var canvas = document.getElementById("c");
+  var ctx = canvas.getContext("2d");
+  var W, H, DPR;
+  var focal;
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = canvas.clientWidth; H = canvas.clientHeight;
+    canvas.width = W * DPR; canvas.height = H * DPR;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    // Scale the projection to the actual viewport instead of a fixed
+    // constant — the fixed value was tuned for a small artifact preview
+    // pane and looked mis-sized/off-center at real desktop resolutions.
+    focal = Math.min(W, H) * 0.85;
+  }
+  window.addEventListener("resize", resize);
+  resize();
+
+  var yaw = 0.6, pitch = -0.2, camDist = 480;
+  var dragging = false, moved = false, lastX = 0, lastY = 0;
+  var autoRotate = WALLPAPER || !REDUCE_MOTION;
+
+  canvas.addEventListener("mousedown", function (ev) {
+    dragging = true; moved = false; autoRotate = false; lastX = ev.clientX; lastY = ev.clientY;
+  });
+  window.addEventListener("mouseup", function () { dragging = false; });
+  window.addEventListener("mousemove", function (ev) {
+    if (!dragging) return;
+    if (Math.abs(ev.clientX - lastX) > 2 || Math.abs(ev.clientY - lastY) > 2) moved = true;
+    yaw += (ev.clientX - lastX) * 0.006;
+    pitch += (ev.clientY - lastY) * 0.006;
+    pitch = Math.max(-1.4, Math.min(1.4, pitch));
+    lastX = ev.clientX; lastY = ev.clientY;
+  });
+  canvas.addEventListener("wheel", function (ev) {
+    ev.preventDefault();
+    camDist = Math.max(120, Math.min(1300, camDist + ev.deltaY * 0.55));
+  }, { passive: false });
+
+  function project(p) {
+    var cy = Math.cos(yaw), sy = Math.sin(yaw);
+    var cp = Math.cos(pitch), sp = Math.sin(pitch);
+    var x1 = p.x * cy - p.z * sy;
+    var z1 = p.x * sy + p.z * cy;
+    var y2 = p.y * cp - z1 * sp;
+    var z2 = p.y * sp + z1 * cp;
+    var camZ = z2 + camDist;
+    var f = focal / Math.max(camZ, 30);
+    return { sx: W / 2 + x1 * f, sy: H / 2 + y2 * f, depth: camZ, scale: f };
+  }
+
+  // ── organic idle motion — a gentle per-node sway on top of the fixed
+  // tree position, so it reads as alive even with no recent activity.
+  // Small enough not to fight the layout; consistent between rendering
+  // and hit-testing since both read CURRENT_ELAPSED from the same frame. ──
+  var CURRENT_ELAPSED = 0;
+  function swayedPos(nd) {
+    if (nd.id === "MARVIN") return nd; // anchor point stays put
+    var phase = (nd.id.charCodeAt(0) * 7 + nd.id.length * 13 + nd.depth * 5) % 100;
+    var amt = WALLPAPER ? 3.2 : 2;
+    return {
+      x: nd.x + Math.sin(CURRENT_ELAPSED * 0.35 + phase) * amt,
+      y: nd.y + Math.cos(CURRENT_ELAPSED * 0.29 + phase * 1.4) * amt,
+      z: nd.z + Math.sin(CURRENT_ELAPSED * 0.22 + phase * 0.8) * amt
+    };
+  }
+  function projectNode(nd) { return project(swayedPos(nd)); }
+
+  // ── activity — live signal from skill_activity.py's PostToolUse hook.
+  // Polls a small local file (cheap: one fetch of a file that's usually a
+  // few KB), not a socket/websocket — matches the rest of this system's
+  // "poll cheaply, don't hold a connection open" pattern (see DesktopLive's
+  // mtime check). Drives both the pulse rings and the camera nudge. ──
+  var ACTIVITY_URL = "./activity.jsonl";
+  var lastSeenTs = Date.now() / 1000; // don't replay history on load
+  var activePulses = []; // {id, start, duration}
+  var cameraTargetNode = null, cameraEaseUntil = 0;
+  var wasAutoRotating = autoRotate;
+
+  function triggerActivity(skillId) {
+    var node = byId[skillId];
+    if (!node) return;
+    nudgeCameraAndPulse(node);
+    // exposed for DesktopLive: fetch() to a local file from a file://-loaded
+    // WKWebView isn't guaranteed to work across WebKit versions, so the
+    // Swift host pushes activity directly via evaluateJavaScript instead of
+    // relying on this page's own fetch-based poll below (kept as a harmless
+    // fallback for when this file is opened in a normal browser/artifact).
+  }
+
+  function pollActivity() {
+    fetch(ACTIVITY_URL + "?_=" + Date.now())
+      .then(function (r) { return r.ok ? r.text() : ""; })
+      .then(function (text) {
+        if (!text) return;
+        text.trim().split("\n").filter(Boolean).forEach(function (line) {
+          try {
+            var entry = JSON.parse(line);
+            if (entry.ts > lastSeenTs) { lastSeenTs = entry.ts; triggerActivity(entry.skill); }
+          } catch (e) { /* malformed line — skip, don't break polling */ }
+        });
+      })
+      .catch(function () { /* file may not exist yet — fine, just no activity so far */ });
+  }
+  // In wallpaper mode DesktopLive pushes activity via evaluateJavaScript
+  // instead (see triggerActivity above) — polling here too would risk a
+  // double-pulse on the same entry if file:// fetch happens to also work.
+  window.triggerActivity = triggerActivity;
+  if (!WALLPAPER) setInterval(pollActivity, 3000);
+
+  // yaw/pitch that puts a given node at screen-center, derived directly
+  // from project()'s own rotation order (solve x1=0, then y2=0).
+  function facingAngles(nd) {
+    var fy = Math.atan2(nd.x, nd.z);
+    var z1 = nd.x * Math.sin(fy) + nd.z * Math.cos(fy);
+    var fp = Math.atan2(nd.y, z1 || 0.001);
+    return { yaw: fy, pitch: Math.max(-1.2, Math.min(1.2, fp)) };
+  }
+
+  // 0..1, eased in then out over a pulse's duration; sweeps activePulses
+  // clean of anything expired as a side effect (called once per frame).
+  function pulseIntensityOf(id) {
+    var now = performance.now(), best = 0;
+    activePulses = activePulses.filter(function (p) { return now - p.start < p.duration; });
+    activePulses.forEach(function (p) {
+      if (p.id !== id) return;
+      var t = (now - p.start) / p.duration;
+      var v = t < 0.15 ? t / 0.15 : 1 - (t - 0.15) / 0.85;
+      best = Math.max(best, v);
+    });
+    return best;
+  }
+
+  // ── legend / filters ─────────────────────────────────────────────────
+  var LEGEND_CATS = ["memory", "quality", "research", "creation", "continuity", "project", "agents", "infra", "cross-machine"];
+  var activeCats = {};
+  LEGEND_CATS.forEach(function (k) { activeCats[k] = true; });
+  var legendEl = document.getElementById("legend");
+  var mode = "skill";
+
+  function countByCat(k) {
+    return allNodesFlat().filter(function (nd) { return nd.cat === k; }).length;
+  }
+  function allNodesFlat() {
+    var out = [];
+    (function walk(n) { out.push(n); n.children.forEach(walk); })(tree);
+    return out;
+  }
+
+  function renderLegend() {
+    legendEl.innerHTML = "";
+    LEGEND_CATS.forEach(function (k) {
+      var row = document.createElement("div");
+      row.className = "row" + (activeCats[k] ? "" : " off");
+      var sw = document.createElement("div");
+      sw.className = "swatch";
+      sw.style.background = CAT[k].color;
+      var label = document.createElement("div");
+      label.className = "label";
+      label.textContent = mode === "brain" ? CAT[k].brain.split(" — ")[0] : CAT[k].label;
+      var count_el = document.createElement("div");
+      count_el.className = "count mono";
+      count_el.textContent = countByCat(k);
+      row.appendChild(sw); row.appendChild(label); row.appendChild(count_el);
+      row.addEventListener("click", function () { activeCats[k] = !activeCats[k]; renderLegend(); });
+      legendEl.appendChild(row);
+    });
+  }
+  renderLegend();
+
+  document.getElementById("mode-skill").addEventListener("click", function () {
+    mode = "skill";
+    document.getElementById("mode-skill").classList.add("active");
+    document.getElementById("mode-brain").classList.remove("active");
+    document.getElementById("mode-caption").classList.remove("show");
+    renderLegend();
+  });
+  document.getElementById("mode-brain").addEventListener("click", function () {
+    mode = "brain";
+    document.getElementById("mode-brain").classList.add("active");
+    document.getElementById("mode-skill").classList.remove("active");
+    document.getElementById("mode-caption").classList.add("show");
+    renderLegend();
+  });
+
+  // ── hover / select / expand ──────────────────────────────────────────
+  var hovered = null, selected = null, hoveredSynapse = null;
+  var tooltip = document.getElementById("tooltip");
+  var selNote = document.getElementById("selection-note");
+
+  function synapsesOf(id) {
+    return synapses.filter(function (s) { return s.a === id || s.b === id; });
+  }
+  function categoryOf(catAncestryVisible) { return catAncestryVisible; }
+
+  function pickAt(mx, my) {
+    var best = null, bestD = 24, bestSyn = null, bestSynD = 14;
+    allNodes.forEach(function (nd) {
+      if (nd.cat !== "root" && nd.cat !== "skills-trunk" && !activeCats[nd.cat]) return;
+      var p = projectNode(nd);
+      var d = Math.hypot(p.sx - mx, p.sy - my);
+      var isBranch = nd.children.length > 0;
+      var hit = (isBranch ? 9 : 6) * Math.max(0.5, p.scale / 1) + 10;
+      if (d < hit && d < bestD) { best = nd; bestD = d; }
+    });
+    if (!best) {
+      synapses.forEach(function (s) {
+        var na = byId[s.a], nb = byId[s.b];
+        var pa = projectNode(na), pb = projectNode(nb);
+        var mid = curveMid(pa, pb);
+        var segs = [[pa, mid], [mid, pb]];
+        segs.forEach(function (seg) {
+          var d = distToSegment(mx, my, seg[0].sx, seg[0].sy, seg[1].sx, seg[1].sy);
+          if (d < bestSynD) { bestSynD = d; bestSyn = s; }
+        });
+      });
+    }
+    return { node: best, synapse: bestSyn };
+  }
+  function distToSegment(px, py, x1, y1, x2, y2) {
+    var dx = x2 - x1, dy = y2 - y1;
+    var len2 = dx * dx + dy * dy || 1;
+    var t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / len2));
+    var cx = x1 + t * dx, cy = y1 + t * dy;
+    return Math.hypot(px - cx, py - cy);
+  }
+  function curveMid(pa, pb) {
+    var mx = (pa.sx + pb.sx) / 2, my = (pa.sy + pb.sy) / 2;
+    var dx = pb.sx - pa.sx, dy = pb.sy - pa.sy;
+    var len = Math.hypot(dx, dy) || 1;
+    var nx = -dy / len, ny = dx / len;
+    var bow = Math.min(70, len * 0.28);
+    return { sx: mx + nx * bow, sy: my + ny * bow };
+  }
+
+  canvas.addEventListener("mousemove", function (ev) {
+    if (dragging) { tooltip.style.display = "none"; return; }
+    var rect = canvas.getBoundingClientRect();
+    var mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
+    var pick = pickAt(mx, my);
+    hovered = pick.node; hoveredSynapse = pick.synapse;
+
+    if (hovered) {
+      tooltip.style.display = "block";
+      tooltip.style.left = (mx + 16) + "px";
+      tooltip.style.top = (my + 12) + "px";
+      var catInfo = CAT[hovered.cat];
+      var syns = synapsesOf(hovered.id);
+      var expandHint = hovered.expandable ? (hovered.expanded ? "click to collapse its forest" : "click to reveal its forest") : "";
+      // hovered.online is only set on Cross-Machine Network device nodes,
+      // pushed live by DesktopLive's tailscale poll (see setDeviceStatus) —
+      // undefined for every other node, so this is a no-op elsewhere.
+      var liveStatus = hovered.online === undefined ? "" : (hovered.online ? "● online" : "○ offline");
+      var descText = [hovered.desc, liveStatus].filter(Boolean).join(" — ");
+      tooltip.innerHTML =
+        '<div class="name mono"></div><div class="cat"></div>' +
+        (descText ? '<div class="desc"></div>' : "") +
+        (syns.length ? '<div class="edges"></div>' : "") +
+        (expandHint ? '<div class="edges" style="border-top:none;padding-top:0;margin-top:2px;font-style:italic;"></div>' : "");
+      var parts = tooltip.querySelectorAll(".name, .cat, .desc, .edges");
+      tooltip.querySelector(".name").textContent = hovered.id;
+      tooltip.querySelector(".cat").textContent = mode === "brain" ? catInfo.brain : catInfo.label;
+      if (descText) tooltip.querySelector(".desc").textContent = descText;
+      var edgeEls = tooltip.querySelectorAll(".edges");
+      var idx = 0;
+      if (syns.length) {
+        edgeEls[idx].textContent = syns.length + " synaptic connection" + (syns.length > 1 ? "s" : "") + " — click to trace";
+        idx++;
+      }
+      if (expandHint) edgeEls[idx].textContent = expandHint;
+    } else if (hoveredSynapse) {
+      tooltip.style.display = "block";
+      tooltip.style.left = (mx + 16) + "px";
+      tooltip.style.top = (my + 12) + "px";
+      tooltip.innerHTML = '<div class="name mono"></div><div class="cat"></div><div class="desc"></div>';
+      tooltip.querySelector(".name").textContent = hoveredSynapse.a + " → " + hoveredSynapse.b;
+      tooltip.querySelector(".cat").textContent = hoveredSynapse.type === "undeclared" ? "REAL, UNDECLARED IN FRONTMATTER" : hoveredSynapse.type === "hook" ? "HOOK / CRON WIRING" : "DECLARED calls:";
+      tooltip.querySelector(".desc").textContent = hoveredSynapse.label;
+    } else {
+      tooltip.style.display = "none";
+    }
+  });
+
+  canvas.addEventListener("click", function () {
+    if (moved) return; // was a drag, not a click
+    if (hovered) {
+      if (hovered.expandable) {
+        hovered.expanded = !hovered.expanded;
+        relayout(true);
+      }
+      selected = selected === hovered.id ? null : hovered.id;
+      if (selected) { selNote.classList.add("show"); document.getElementById("sel-name").textContent = selected; }
+      else selNote.classList.remove("show");
+    } else if (!hoveredSynapse) {
+      selected = null; selNote.classList.remove("show");
+    }
+  });
+  document.getElementById("sel-clear").addEventListener("click", function () {
+    selected = null; selNote.classList.remove("show");
+  });
+
+  // ── render loop ──────────────────────────────────────────────────────
+  var t0 = performance.now();
+
+  function draw(now) {
+    ctx.clearRect(0, 0, W, H);
+    var elapsed = (now - t0) / 1000;
+    CURRENT_ELAPSED = elapsed;
+
+    if (cameraTargetNode && now < cameraEaseUntil && !dragging) {
+      var target = facingAngles(cameraTargetNode);
+      yaw += (target.yaw - yaw) * 0.045;
+      pitch += (target.pitch - pitch) * 0.045;
+    } else {
+      if (cameraTargetNode && now >= cameraEaseUntil) cameraTargetNode = null;
+      if (autoRotate && !dragging) yaw += 0.0008;
+    }
+
+    var selSyn = selected ? synapsesOf(selected) : [];
+    var selPartners = {};
+    selSyn.forEach(function (s) { selPartners[s.a] = true; selPartners[s.b] = true; });
+
+    // structural branches — neutral, tapering by depth
+    branches.forEach(function (br) {
+      if (br.to.cat !== "root" && br.to.cat !== "skills-trunk" && !activeCats[br.to.cat]) return;
+      var pa = projectNode(br.from), pb = projectNode(br.to);
+      var dim = selected && !(selPartners[br.from.id] || selPartners[br.to.id] || br.from.id === selected || br.to.id === selected) && (br.depth > 1);
+      ctx.beginPath();
+      ctx.moveTo(pa.sx, pa.sy);
+      ctx.lineTo(pb.sx, pb.sy);
+      ctx.strokeStyle = "rgba(195,194,183," + (dim ? 0.08 : 0.4 - br.depth * 0.04) + ")";
+      ctx.lineWidth = Math.max(0.6, 3.2 - br.depth * 0.6);
+      ctx.stroke();
+    });
+
+    // synapses — glowing curves, distinct from structure
+    synapses.forEach(function (s) {
+      var na = byId[s.a], nb = byId[s.b];
+      if ((na.cat !== "root" && !activeCats[na.cat]) || (nb.cat !== "root" && !activeCats[nb.cat])) return;
+      if (!allNodes.includes(na) || !allNodes.includes(nb)) return;
+      var pa = projectNode(na), pb = projectNode(nb);
+      var mid = curveMid(pa, pb);
+      var isSelRelated = selected && (s.a === selected || s.b === selected);
+      var dim = selected && !isSelRelated;
+      var isHov = hoveredSynapse === s;
+      var pulse = Math.max(pulseIntensityOf(s.a), pulseIntensityOf(s.b));
+
+      ctx.beginPath();
+      ctx.moveTo(pa.sx, pa.sy);
+      ctx.quadraticCurveTo(mid.sx, mid.sy, pb.sx, pb.sy);
+      ctx.setLineDash(s.type === "undeclared" ? [3, 4] : s.type === "hook" ? [1, 4] : []);
+      var alpha = dim ? 0.08 : (isHov || isSelRelated ? 0.85 : 0.35) + pulse * 0.5;
+      ctx.strokeStyle = "rgba(" + SYNAPSE_COLOR + "," + Math.min(1, alpha) + ")";
+      ctx.lineWidth = (isHov || isSelRelated ? 2 : 1.1) + pulse * 1.8;
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      if (!REDUCE_MOTION && !dim) {
+        var speed = 0.18 + pulse * 0.7; // signal travels faster while "live"
+        var tt = (elapsed * speed + (s.a.length * 13 % 100) / 100) % 1;
+        var pt = quadPoint(pa, mid, pb, tt);
+        ctx.beginPath();
+        ctx.arc(pt.sx, pt.sy, (isHov ? 3 : 2) + pulse * 2, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(" + SYNAPSE_COLOR + "," + (dim ? 0 : Math.min(1, 0.9 + pulse)) + ")";
+        ctx.fill();
+      }
+    });
+
+    // nodes, depth-sorted far→near
+    var visible = allNodes.filter(function (nd) { return nd.cat === "root" || nd.cat === "skills-trunk" || activeCats[nd.cat]; });
+    var projected = visible.map(function (nd) { return { nd: nd, p: projectNode(nd) }; });
+    projected.sort(function (a, b) { return b.p.depth - a.p.depth; });
+
+    projected.forEach(function (item) {
+      var nd = item.nd, p = item.p;
+      var isSel = selected === nd.id;
+      var isConn = selPartners[nd.id];
+      var isHover = hovered === nd.id;
+      var dim = selected && !isSel && !isConn && nd.id !== "MARVIN";
+      var isBranch = nd.children.length > 0 && (!nd.expandable || nd.expanded) || nd.depth <= 1;
+      var hasChildren = nd.children.length > 0;
+
+      var depthT = Math.max(0.35, Math.min(1.5, p.scale / 1));
+      var baseR = nd.id === "MARVIN" ? 8 : hasChildren ? 6 : 3.6;
+      var synDeg = synapseDegree[nd.id] || 0;
+      var bf = birthFactor(nd); // 0..1, eases a newly-created node in instead of popping
+      var r = (baseR + synDeg * 0.7) * depthT * bf;
+      var color = nd.online === false ? "#5a5a5a" : CAT[nd.cat].color;
+      var pulse = pulseIntensityOf(nd.id);
+
+      if (r < 0.4) return; // still basically zero-sized — nothing to draw yet
+
+      if (pulse > 0) {
+        // expanding ripple — the node's own "just fired" signal
+        ctx.beginPath();
+        ctx.arc(p.sx, p.sy, r + 3 + pulse * 22, 0, Math.PI * 2);
+        ctx.strokeStyle = "rgba(" + SYNAPSE_COLOR + "," + (pulse * 0.6) + ")";
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+
+      ctx.beginPath();
+      ctx.arc(p.sx, p.sy, r + pulse * 2, 0, Math.PI * 2);
+      ctx.fillStyle = dim ? "rgba(137,135,129,0.25)" : (pulse > 0 ? "rgba(" + SYNAPSE_COLOR + ",1)" : color);
+      ctx.globalAlpha = bf * (dim ? 0.4 : Math.min(1, 0.6 + depthT * 0.4 + pulse * 0.4));
+      ctx.fill();
+
+      if (nd.expandable) {
+        ctx.beginPath();
+        ctx.arc(p.sx, p.sy, r + 4, 0, Math.PI * 2);
+        ctx.strokeStyle = "rgba(255,255,255," + (nd.expanded ? 0.5 : 0.28) + ")";
+        ctx.setLineDash(nd.expanded ? [] : [2, 3]);
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      if (isSel || isHover) {
+        ctx.lineWidth = 2; ctx.strokeStyle = "#ffffff"; ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+
+      var alwaysLabel = nd.depth <= 2; // MARVIN, the 4 trunks, and the 5 skill sub-categories
+      if (bf > 0.4 && (alwaysLabel || r > 6 || isSel || isHover || isConn || pulse > 0.1)) {
+        ctx.font = (alwaysLabel || pulse > 0.1 ? "600 " : "400 ") + Math.max(9, (alwaysLabel ? 11.5 : 10) * Math.min(1, depthT)) + "px ui-monospace, 'SF Mono', Menlo, Consolas, monospace";
+        var la = bf * (dim ? 0.3 : Math.min(1, 0.6 + depthT * 0.4 + pulse * 0.4));
+        ctx.fillStyle = pulse > 0.1 ? "rgba(" + SYNAPSE_COLOR + "," + la + ")" : alwaysLabel ? "rgba(255,255,255," + la + ")" : "rgba(195,194,183," + la + ")";
+        ctx.textAlign = "center";
+        ctx.fillText(nd.id, p.sx, p.sy - r - 6);
+      }
+    });
+
+    // dying nodes — frozen at their last real position, shrinking/fading
+    // out instead of vanishing the instant they leave the tree
+    if (dyingNodes.length) {
+      var now2 = performance.now();
+      dyingNodes = dyingNodes.filter(function (d) { return now2 - d.removedAt < DEATH_MS; });
+      dyingNodes.forEach(function (d) {
+        var t = (now2 - d.removedAt) / DEATH_MS;
+        var shrink = 1 - t;
+        var p = project(d.node); // frozen position, no sway — it's leaving, not living
+        var baseR = d.node.id === "MARVIN" ? 8 : d.node.children.length ? 6 : 3.6;
+        var r = baseR * Math.max(0.35, Math.min(1.5, p.scale)) * shrink;
+        if (r < 0.4) return;
+        ctx.beginPath();
+        ctx.arc(p.sx, p.sy, r, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(" + SYNAPSE_COLOR + "," + (shrink * 0.7) + ")";
+        ctx.fill();
+      });
+    }
+
+    requestAnimationFrame(draw);
+  }
+  function quadPoint(p0, p1, p2, t) {
+    var u = 1 - t;
+    return {
+      sx: u * u * p0.sx + 2 * u * t * p1.sx + t * t * p2.sx,
+      sy: u * u * p0.sy + 2 * u * t * p1.sy + t * t * p2.sy
+    };
+  }
+  requestAnimationFrame(draw);
+})();
+</script>
