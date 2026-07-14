@@ -9,7 +9,11 @@ Named after the Hitchhiker's Guide's brilliant, underutilised android. This proj
 
 > **North star:** minimise token cost, maximise capability and quality. Every component earns its place through measurement, not intuition.
 
-**[→ Explore the live 3D architecture map](https://g-eskayo.github.io/marvin/)** — this isn't a diagram someone drew once. It's MARVIN's actual structure: every skill, every hook, every real `calls:` wire, rendered as a rotatable 3D tree straight from the same `manifest.json` that drives retrieval. The hosted version below is a point-in-time snapshot; on the machine it actually runs on, it regenerates itself and pulses live every time a skill fires. Drag to rotate, scroll to zoom, click a node.
+<p align="center">
+  <img src="assets/screenshots/brain-map-demo.gif" alt="MARVIN's live 3D architecture map, rotating, with skill nodes pulsing gold as activity fires" width="720">
+</p>
+
+This isn't a diagram someone drew once and forgot to update — it's MARVIN's actual structure, generated straight from the same `manifest.json` that drives retrieval. Quiet branches are structure (category → skill, like a dendrite off a cell body); the gold pulses are real wiring — a skill actually firing, or a `calls:` edge between two parts of the system. It runs and rotates on its own; nothing to click here. This capture is a recorded loop — the real version lives at `~/.agents/brain-map/` and only runs on a machine that has MARVIN installed, which is exactly what the [Build Your Own MARVIN](#build-your-own-marvin) section below walks you through.
 
 ---
 
