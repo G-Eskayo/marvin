@@ -3,11 +3,13 @@
 > *"I could calculate your chances of survival, but you won't like it."*
 > — Marvin, The Hitchhiker's Guide to the Galaxy
 
-**MARVIN** is an open-source memory, routing, and skills layer for [Claude Code](https://claude.ai/code). Where Claude starts every session cold, MARVIN gives it persistent memory, 26 structured skills, autonomous background agents, a self-measuring bench, and automatic profile + model routing — so it finds the right knowledge, applies the right skill, runs on the cheapest viable model, and gets measurably better over time.
+**MARVIN** is an open-source memory, routing, and skills layer for [Claude Code](https://claude.ai/code). Where Claude starts every session cold, MARVIN gives it persistent memory, 27 structured skills, autonomous background agents, a self-measuring bench, and automatic profile + model routing — so it finds the right knowledge, applies the right skill, runs on the cheapest viable model, and gets measurably better over time.
 
 Named after the Hitchhiker's Guide's brilliant, underutilised android. This project is about making sure that brain gets used.
 
 > **North star:** minimise token cost, maximise capability and quality. Every component earns its place through measurement, not intuition.
+
+**[→ Explore the live 3D architecture map](https://g-eskayo.github.io/marvin/)** — this isn't a diagram someone drew once. It's MARVIN's actual structure: every skill, every hook, every real `calls:` wire, rendered as a rotatable 3D tree straight from the same `manifest.json` that drives retrieval. The hosted version below is a point-in-time snapshot; on the machine it actually runs on, it regenerates itself and pulses live every time a skill fires. Drag to rotate, scroll to zoom, click a node.
 
 ---
 
@@ -28,7 +30,7 @@ mindmap
         reference pointers
       Lexicon
       Handoff and resume
-    Skills 26 total
+    Skills 27 total
       Quality
         diagnose
         grill-with-docs preferred default
@@ -36,6 +38,7 @@ mindmap
         tdd
         qa-agent
         improve-codebase-architecture
+        audit intent vs reality
       Research
         research
         paper-dive
@@ -85,6 +88,10 @@ mindmap
       File organiser daily
         Desktop and Downloads
         7-day grace period
+      Safety monitor
+        scores autonomous output for risk
+        quarantines flagged artifacts
+        never blocks the loop itself
     Bench
       14 tasks
       3 profiles
@@ -146,11 +153,12 @@ Compared Qwen2.5-3B vs Llama-3.2-3B on `leaderboard_mmlu_pro` (N=200) for MARVIN
 
 ## Skills — Complete List
 
-All 26 skills, their triggers, and what they do:
+All 27 skills, their triggers, and what they do:
 
 | Skill | Trigger | What it does |
 |-------|---------|-------------|
 | `diagnose` | Bug reported, broken/throwing/failing, perf regression | Root-cause analysis — traces symptom → cause → fix |
+| `audit` | A verification question can't be confidently answered, or docs/ADRs say one thing and the system does another | Compares documented intent against actual state to find gaps nobody's reported yet — distinct from `diagnose`, which needs a known symptom to start from |
 | `tdd` | "TDD", "red-green-refactor", test-first | Writes failing tests first, then drives implementation to pass |
 | `qa-agent` | "qa", "scan project", "best practices for X" | AST + text quality scan; appends lessons to ChromaDB `qa-knowledge` |
 | `grill-with-docs` | **Preferred default** for any grilling request when a project exists | Devil's advocate that also cross-references actual docs/ADRs and updates them live — a strict superset of grill-me |
@@ -174,7 +182,7 @@ All 26 skills, their triggers, and what they do:
 | `triage` | (activated by setup-matt-pocock-skills) | Triages issues and priorities for a project |
 | `to-issues` | (activated by setup-matt-pocock-skills) | Converts tasks/TODOs into GitHub issues |
 | `to-prd` | (activated by setup-matt-pocock-skills) | Drafts a product requirements document from a feature description |
-| `resume-tailor` | "Tailor my resume", "apply for X" | Tailors master resume to a job description; local-only, never commits |
+| [`resume-tailor`](https://github.com/G-Eskayo/resume-tailor) | "Tailor my resume", "apply for X" | Tailors master resume to a job description; local-only, never commits. **Now its own repo** — see link. |
 | `route` | "which profile should I use", "should I use haiku", "route this task" | Keyword-classifies the task → outputs optimal profile + model + shell alias; `--launch` execs claude directly |
 
 ---
@@ -195,7 +203,11 @@ Three launchd cron jobs run without intervention:
 | **Research colony** | 09:00 | `~/.claude/research-digest/YYYY-MM-DD.md` — directly relevant, lateral finds, tools/repos, skip list |
 | **File organiser** | Daily | Sorts Desktop + Downloads into `~/Documents` buckets; 7-day grace period keeps new items visible |
 
+Every autonomous loop's output is scored by `safety-monitor` before it ships — a calibrated verifier that checks generated artifacts for risk (fabricated references, unsupported claims) and quarantines anything flagged for human review instead of blocking the loop outright. It's infrastructure, not a slash-command skill — it doesn't trigger on a request, it watches the loops that already run unattended.
+
 ### Live Architecture Map
+
+**[Explore it live →](https://g-eskayo.github.io/marvin/)** (public snapshot; the real thing regenerates on every skill change and only runs on the machine it's installed on).
 
 MARVIN's actual structure, rendered — not a diagram someone drew once and forgot to update. `brain-map/generate.py` builds a 3D dendrite tree live from `manifest.json` (structure) merged with a small hand-maintained file (prose, non-skill nodes, hook/cron wiring), regenerated automatically by the `rebuild-manifest` hook whenever a skill actually changes. Branches are structure; gold threads are the *real* wiring — `calls:` declarations, hook chains, and at least one dependency that existed in code but was never declared in frontmatter until this caught it.
 
@@ -313,7 +325,13 @@ Skills live in `~/.agents/skills/`. Each is a `SKILL.md` with YAML frontmatter t
 
 ---
 
-## Quick Start
+## Build Your Own MARVIN
+
+This whole repo is one person's answer to a specific problem: Claude Code starts every session cold, and re-explaining yourself every time is a tax nobody should have to pay forever. MARVIN is what happens when you stop treating that as normal — memory that persists, skills that get selected instead of guessed at, a live map of the thing so it's never a black box, and a bench that keeps every claim about "better" honest with a number.
+
+None of it is proprietary and none of it is specific to this machine. It's a `git clone` and a shell script. The sections below walk through what you end up with and in what order, so you can build the same thing — or fork it and make it yours.
+
+**1. Get the base layer running.**
 
 ```bash
 git clone https://github.com/G-Eskayo/marvin.git
@@ -322,9 +340,10 @@ chmod +x setup.sh
 ./setup.sh
 ```
 
-Open Claude Code and start a new session. MARVIN loads silently.
+Open Claude Code and start a new session. MARVIN loads silently — no separate app, no separate process, just skills and memory a session can now reach.
 
-Install the autonomous agents and routing aliases:
+**2. Turn on the parts that work while you're not there.**
+
 ```bash
 bash ~/.agents/skills/improve/install.sh          # daily digest at 08:30
 bash ~/.agents/skills/research-colony/install.sh  # research colony at 09:00
@@ -333,13 +352,23 @@ bash ~/.agents/brain-map/install.sh               # live architecture map as des
 source ~/.zshrc
 ```
 
+Each of these is optional and independent — take the digest and skip the wallpaper, or the other way around. Nothing here needs the others to work.
+
+**3. See it, don't just trust it.**
+
+[The live map](https://g-eskayo.github.io/marvin/) is the fastest way to check that a fresh install actually did what it claims — every skill you just installed shows up as a node, every real hook chain as a gold thread. If a skill you added isn't there, `~/.agents/brain-map/generate.py` will tell you why.
+
+**4. Add what you actually need, verify it against your own record instead of vibes.**
+
+New skill = a `SKILL.md` with frontmatter, dropped in `~/.agents/skills/`. New claim about "this is better now" = a bench task, run against `clean`/`lean`/`marvin` profiles, so the number exists before the claim does. That loop — build, measure, keep only what earns its place — is the actual mechanism, not the skill count.
+
 ---
 
 ## What Gets Installed
 
 ```
 ~/.agents/
-├── skills/                        ← 26 skill SKILL.md files + scripts
+├── skills/                        ← 27 skill SKILL.md files + scripts
 │   ├── self-improve/scripts/      ← manifest rebuild, embeddings, retrieval
 │   ├── improve/scripts/           ← improvement sweep, daily digest, cron
 │   ├── research-colony/scripts/   ← source monitor, correlate, digest, cron
