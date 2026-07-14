@@ -92,6 +92,17 @@ cat ~/.claude/quarantine.md
 - "wire safety-monitor into X", "review quarantine", "show quarantine queue"
 - Session start: if `~/.claude/quarantine.md` exists with unresolved items, mention the count (not yet wired into the session-start checklist — see below)
 
+## Known gotchas
+
+- `verify()`'s subagent call is `--tools ""` plus an explicit "you have no
+  tool access" line in the prompt — both are load-bearing, not either alone.
+  A rubric that asks "does this reference something that doesn't exist"
+  invites haiku to go check by exploring the filesystem even when
+  `source_context` already has what it needs, which measured 113s vs ~50-58s
+  and blew through the old 60s timeout. See `retrospective.md` (2026-07-13)
+  and the inline comment in `scripts/verify.py`. Keep this in mind for any
+  new rubric-based subagent call, not just this one.
+
 ## Known gaps (tracked, not silently assumed fixed)
 
 - Session-start check for `quarantine.md` is described in `REQUIREMENTS.md`
