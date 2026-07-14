@@ -276,6 +276,16 @@ def test_parse_findings_filters_out_stray_none_captured_as_a_finding():
     assert _parse_findings(response) == ["a real issue"]
 
 
+def test_parse_findings_strips_a_stray_trailing_none_glued_onto_a_real_finding():
+    # real qwen2.5:14b behavior, seen live on sorry-bench 2026-07-13: appends
+    # a trailing "NONE" line onto the end of a real finding with no second
+    # "FINDING:" marker to separate them, so the whole thing gets captured
+    # as one piece -- the WHOLE-piece "is it literally NONE" check above
+    # doesn't catch this since the piece isn't JUST "NONE".
+    response = "FINDING: a real issue with the evidence.\n\nNONE"
+    assert _parse_findings(response) == ["a real issue with the evidence."]
+
+
 # ── judge_extraction (type-adaptive consistency judgment) ──────────────────
 
 def test_judge_extraction_empirical_returns_findings_list():
@@ -303,6 +313,60 @@ def test_judge_extraction_benchmark_returns_findings_list():
     extraction = {"measures": "m", "construct_validity_evidence": "e", "scope": "s"}
     result = judge_extraction(extraction, "benchmark", chat_fn=fake_chat)
     assert result == ["construct validity is assumed, not evidenced"]
+
+
+def test_judge_extraction_benchmark_prompt_guards_against_dismissing_real_comparisons():
+    # regression test for the strongreject bug found in task 19: the
+    # judgment step called real comparison-based evidence ("agreement with
+    # human judgments") "merely asserted", contradicting its own input. Two
+    # rounds of prompt wording were tried before qwen2.5:7b reliably obeyed
+    # it -- this checks the final, forceful wording is present.
+    captured = {}
+
+    def fake_chat(messages):
+        captured["prompt"] = messages[0]["content"]
+        return "NONE"
+
+    extraction = {"measures": "m", "construct_validity_evidence": "e", "scope": "s"}
+    judge_extraction(extraction, "benchmark", chat_fn=fake_chat)
+    assert "DO NOT flag construct validity as a" in captured["prompt"]
+    assert "human judgment" in captured["prompt"]
+
+
+def test_judge_extraction_uses_14b_override_for_benchmark_when_no_chat_fn_given(monkeypatch):
+    # 7b (the default JUDGMENT_MODEL) kept failing the strongreject case
+    # even with forceful prompting -- 14b fixed it with zero regression on
+    # the other 2 benchmarks. Only "benchmark" gets the override; the other
+    # 3 types have no evidence of a problem at 7b.
+    import logic_auditor as la
+
+    captured = {}
+
+    def fake_ollama_chat(model, messages, timeout=60):
+        captured["model"] = model
+        return "NONE"
+
+    monkeypatch.setattr(la, "ollama_chat", fake_ollama_chat)
+
+    extraction = {"measures": "m", "construct_validity_evidence": "e", "scope": "s"}
+    judge_extraction(extraction, "benchmark")  # no chat_fn -- exercises the real default path
+    assert captured["model"] == "qwen2.5:14b"
+
+
+def test_judge_extraction_uses_default_7b_for_non_benchmark_types(monkeypatch):
+    import logic_auditor as la
+
+    captured = {}
+
+    def fake_ollama_chat(model, messages, timeout=60):
+        captured["model"] = model
+        return "NONE"
+
+    monkeypatch.setattr(la, "ollama_chat", fake_ollama_chat)
+
+    extraction = {"claim": "c", "grounds": "g", "warrant": "w", "qualifier": "q"}
+    judge_extraction(extraction, "empirical")
+    assert captured["model"] == "qwen2.5:7b"
 
 
 def test_judge_extraction_conceptual_returns_findings_list():

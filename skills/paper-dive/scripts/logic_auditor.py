@@ -218,6 +218,21 @@ def extract_all(papers: dict[str, tuple[str, str, str]], chat_fn=None) -> dict[s
 # reinforces that model size must be validated per-task, not assumed.
 JUDGMENT_MODEL = "qwen2.5:7b"
 
+# benchmark judgment specifically needs 14b, not the 7b default -- found
+# 2026-07-13 reviewing flagged results (task 19): 7b called StrongREJECT's
+# construct-validity evidence "merely asserted" even though its own
+# extraction already states real comparison-based evidence ("achieves
+# state-of-the-art agreement with human judgments"), and kept doing so
+# even after two rounds of more forceful prompt wording -- the model was
+# overriding explicit instructions with its own second-order skepticism
+# about whether human-judgment agreement should count. 14b followed the
+# instruction correctly on the first try, with zero regression on the
+# other 2 benchmarks (jailbreakbench, sorry-bench correctly still flagged,
+# since their own evidence genuinely has no comparison at all). The other
+# 3 paper types stay on 7b -- no evidence of a problem there, no reason to
+# pay for a bigger model where the cheaper one already works.
+JUDGMENT_MODEL_OVERRIDES = {"benchmark": "qwen2.5:14b"}
+
 _GENERAL_FALLACY_CHECKLIST = (
     "hasty generalization, circular reasoning, false dichotomy, unfalsifiable claims, "
     "survivorship bias, p-hacking/multiple-comparisons"
@@ -249,6 +264,16 @@ Only output a FINDING line for an actual problem -- never to confirm something c
 
     "benchmark": """Below is an extraction of a benchmark/dataset paper's argument (MEASURES/CONSTRUCT_VALIDITY_EVIDENCE/SCOPE) -- judge the EXTRACTION below, not any paper you may know of with a similar topic. Check specifically:
 - Is the CONSTRUCT_VALIDITY_EVIDENCE actual evidence that the benchmark measures what it claims, or is construct validity merely assumed/asserted?
+
+IMPORTANT: if CONSTRUCT_VALIDITY_EVIDENCE mentions ANY comparison to human judgment, ground
+truth, or an existing benchmark/gold-standard measure, DO NOT flag construct validity as a
+finding at all -- treat that comparison as sufficient evidence, full stop, even if you personally
+think agreement-with-human-judgment has its own epistemic limits as a validation method. That
+second-order concern is out of scope here; do not raise it. Only flag construct validity as
+assumed/asserted when the evidence describes NO comparison of any kind -- e.g. reasoning from
+design features alone (a taxonomy's granularity, a defined threat model) with nothing checked
+against any external criterion.
+
 - General fallacy checklist: {fallacies}
 
 MEASURES: {measures}
@@ -279,12 +304,27 @@ def _parse_findings(response: str) -> list[str]:
     of the marker anywhere in the text instead of assuming one per line.
     Also drops any resulting item that's just a stray "NONE" (also seen
     live: an extra trailing "FINDING: NONE" instead of the bare NONE
-    response) -- a real finding is never literally the word "none"."""
+    response) -- a real finding is never literally the word "none". And
+    strips a stray trailing "NONE" line glued onto the end of a real
+    finding with no second "FINDING:" marker to separate them (seen live
+    on qwen2.5:14b's sorry-bench output) -- the whole-piece check above
+    doesn't catch this since the piece isn't JUST "NONE", it's a real
+    finding with "NONE" appended after it."""
     response = response.strip()
     if not response or response.upper() == "NONE":
         return []
     pieces = _FINDING_SPLIT_RE.split(response)[1:]  # [0] is any preamble before the first marker
-    return [p.strip() for p in pieces if p.strip() and p.strip().upper() != "NONE"]
+    cleaned = []
+    for piece in pieces:
+        piece = piece.strip()
+        if not piece or piece.upper() == "NONE":
+            continue
+        lines = piece.splitlines()
+        if lines and lines[-1].strip().upper() == "NONE":
+            piece = "\n".join(lines[:-1]).strip()
+        if piece:
+            cleaned.append(piece)
+    return cleaned
 
 
 def judge_extraction(extraction: dict[str, str], paper_type: str, chat_fn=None) -> list[str]:
@@ -297,7 +337,9 @@ def judge_extraction(extraction: dict[str, str], paper_type: str, chat_fn=None) 
     if paper_type not in _JUDGMENT_PROMPTS:
         raise ValueError(f"unknown paper_type {paper_type!r} -- expected one of {PAPER_TYPES}")
 
-    chat_fn = chat_fn or (lambda messages: ollama_chat(JUDGMENT_MODEL, messages))
+    if chat_fn is None:
+        model = JUDGMENT_MODEL_OVERRIDES.get(paper_type, JUDGMENT_MODEL)
+        chat_fn = lambda messages: ollama_chat(model, messages)
     # extract_structure can legitimately omit a field the model never returned
     # (see its docstring) -- fill any gap so .format() doesn't KeyError on a
     # missing extraction rather than surfacing it as a finding-worthy gap.
