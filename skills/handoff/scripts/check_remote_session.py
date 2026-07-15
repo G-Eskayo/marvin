@@ -120,8 +120,8 @@ def main() -> None:
     # names files with only minute granularity, so two escalations inside
     # the same UTC minute overwrite the same filename; a "which names are
     # new" comparison misses that as a real update. Since we're already past
-    # the freshness gate above, we know a generation just happened — just
-    # take whichever handoff has the newest mtime right now.
+    # the freshness gate above, we know a generation happened — take
+    # whichever handoff has the newest mtime right now.
     subprocess.run([VENV_PYTHON, CODE_SYNC, "pull", str(Path.home() / ".claude")], capture_output=True)
     handoffs_dir = Path.home() / ".claude" / "handoffs"
     handoffs = list(handoffs_dir.glob("*.md")) if handoffs_dir.is_dir() else []

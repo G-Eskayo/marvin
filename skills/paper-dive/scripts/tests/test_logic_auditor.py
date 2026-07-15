@@ -280,8 +280,8 @@ def test_parse_findings_strips_a_stray_trailing_none_glued_onto_a_real_finding()
     # real qwen2.5:14b behavior, seen live on sorry-bench 2026-07-13: appends
     # a trailing "NONE" line onto the end of a real finding with no second
     # "FINDING:" marker to separate them, so the whole thing gets captured
-    # as one piece -- the WHOLE-piece "is it literally NONE" check above
-    # doesn't catch this since the piece isn't JUST "NONE".
+    # as one piece -- the WHOLE-piece "is it exactly NONE" check above
+    # doesn't catch this since the piece isn't only "NONE".
     response = "FINDING: a real issue with the evidence.\n\nNONE"
     assert _parse_findings(response) == ["a real issue with the evidence."]
 

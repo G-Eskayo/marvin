@@ -207,8 +207,8 @@ def extract_all(papers: dict[str, tuple[str, str, str]], chat_fn=None) -> dict[s
 # ── Layer 1, step 2: type-adaptive consistency judgment ─────────────────────
 # Model: qwen2.5:7b, validated 2026-07-13 against all 15 real extractions.
 # 3b produced genuine garbage on this harder reasoning task -- confirmed via
-# raw response inspection, not just parsing artifacts: e.g. the entire
-# response for one paper was literally "FINDING: WARRANT", no content at
+# raw response inspection, not parsing artifacts alone: e.g. the entire
+# response for one paper was "FINDING: WARRANT", no content at
 # all, plus repeated field-label bleed-through (echoing "QUALIFIER: ..."
 # mid-finding) and frequent fake findings confirming things were fine
 # instead of reporting real issues. 7b fixed all of it cleanly -- no
@@ -512,7 +512,7 @@ def compute_all_reliability_signals(
 # -- no approve/modify/deny workflow. This tool's output is closer to a
 # research assistant's annotated notes for Gil to read while drafting, not
 # an autonomous loop shipping unattended (what quarantine was built for).
-# Just flags low/very-low results for a deliberate second read, rather than
+# Flags low/very-low results for a deliberate second read, rather than
 # trusting the categorical call outright. Kept as its own small function
 # (composable on top of compute_reliability_signal) rather than folded into
 # the rollup itself, per the same build-small-primitives principle used

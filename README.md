@@ -211,9 +211,7 @@ Every autonomous loop's output is scored by `safety-monitor` before it ships —
 
 ### Live Architecture Map
 
-**[Explore it live →](https://g-eskayo.github.io/marvin/)** (public snapshot; the real thing regenerates on every skill change and only runs on the machine it's installed on).
-
-MARVIN's actual structure, rendered — not a diagram someone drew once and forgot to update. `brain-map/generate.py` builds a 3D dendrite tree live from `manifest.json` (structure) merged with a small hand-maintained file (prose, non-skill nodes, hook/cron wiring), regenerated automatically by the `rebuild-manifest` hook whenever a skill actually changes. Branches are structure; gold threads are the *real* wiring — `calls:` declarations, hook chains, and at least one dependency that existed in code but was never declared in frontmatter until this caught it.
+The rotating capture at the top of this README is this section — MARVIN's actual structure, rendered — not a diagram someone drew once and forgot to update. `brain-map/generate.py` builds a 3D dendrite tree live from `manifest.json` (structure) merged with a small hand-maintained file (prose, non-skill nodes, hook/cron wiring), regenerated automatically by the `rebuild-manifest` hook whenever a skill actually changes. Branches are structure; gold threads are the *real* wiring — `calls:` declarations, hook chains, and at least one dependency that existed in code but was never declared in frontmatter until this caught it.
 
 `DesktopLive` (a ~150-line Swift binary, no Xcode project needed) renders the same file as actual desktop wallpaper — a window pinned to the desktop level via public `NSWindow`/`CGWindowLevelForKey` API, no Dock icon, no menu-bar item, mouse events pass through to your real desktop. A `skill-activity` hook pulses the corresponding node and eases the camera toward it every time a skill actually fires; nodes grow in and shrink out when the graph itself changes, instead of the whole thing flashing on reload.
 

@@ -117,7 +117,7 @@ def test_record_paper_makes_it_known(tmp_path):
 def test_record_paper_stamps_created_epoch(tmp_path):
     # cross_machine_merge.py's incremental sync filters on this field via
     # dump_collection.py's --since -- without it, every sync re-transfers
-    # the whole collection instead of just what's new.
+    # the whole collection instead of only what's new.
     client = chromadb.PersistentClient(path=str(tmp_path))
     collection = client.get_or_create_collection("paper-knowledge")
 
