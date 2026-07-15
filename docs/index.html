@@ -1,6 +1,6 @@
 <title>MARVIN — 3D Architecture Map</title>
 <style>
-  .viz-root {
+  :root, .viz-root {
     --surface-1: #1a1a19;
     --page-plane: #0d0d0d;
     --text-primary: #ffffff;
@@ -575,14 +575,6 @@
           "children": []
         },
         {
-          "id": "check_remote_session.py",
-          "cat": "infra",
-          "desc": "Hook (SessionStart) — SessionStart hook: arrival-triggered, on-demand session continuity.",
-          "expandable": false,
-          "expanded": true,
-          "children": []
-        },
-        {
           "id": "emit-resume-prompt.py",
           "cat": "infra",
           "desc": "Hook: prints the resume prompt on handoff-doc writes",
@@ -613,6 +605,14 @@
           "expandable": false,
           "children": [],
           "expanded": true
+        },
+        {
+          "id": "session_start_report.py",
+          "cat": "infra",
+          "desc": "Hook (SessionStart) — SessionStart hook: deterministic replacement for the CLAUDE.md session-start checklist.",
+          "expandable": false,
+          "expanded": true,
+          "children": []
         },
         {
           "id": "skill_activity.py",

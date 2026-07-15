@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 sys.path.insert(0, str(Path.home() / ".agents" / "skills" / "safety-monitor" / "scripts"))
 
 from hook_errors import log_hook_error  # noqa: E402
+import machine_profile  # noqa: E402
 
 HOME = Path.home()
 CLAUDE_DIR = HOME / ".claude"
@@ -56,6 +57,33 @@ def _safe(fn):
     except Exception as exc:
         log_hook_error(HOOK_NAME, fn.__name__, exc)
         return None
+
+
+def _git_short_head(repo: Path) -> str:
+    if not (repo / ".git").exists():
+        return "?"
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=10,
+        )
+        return out.stdout.strip() or "?"
+    except Exception as exc:
+        log_hook_error(HOOK_NAME, "_git_short_head", exc)
+        return "?"
+
+
+def check_identity() -> str:
+    """A single, verifiable line proving this session is actually running
+    with MARVIN's infrastructure wired in — not just prose claiming to be
+    MARVIN. Every field is checkable against live state (git log, ls
+    ~/.claude/commands) rather than a static greeting string, so it can't
+    silently go stale the way a hardcoded banner could."""
+    machine = machine_profile.machine_label()
+    agents_head = _git_short_head(HOME / ".agents")
+    claude_head = _git_short_head(CLAUDE_DIR)
+    skills = len(list((CLAUDE_DIR / "commands").glob("*.md")))
+    return f"MARVIN active — {machine} · agents@{agents_head} · claude@{claude_head} · {skills} skills wired"
 
 
 def check_handoff() -> str | None:
@@ -250,6 +278,7 @@ def check_research_digest() -> str | None:
 
 
 def main() -> None:
+    identity = _safe(check_identity) or "MARVIN active — identity check failed, see hook-errors.log"
     handoff = _safe(check_handoff)
     lexicon = _safe(load_lexicon)
 
@@ -266,7 +295,7 @@ def main() -> None:
         _safe(check_research_digest),
     ) if n]
 
-    sections = []
+    sections = [identity]
     if notes:
         sections.append("## Session-start checklist\n\n" + "\n".join(f"- {n}" for n in notes))
     else:

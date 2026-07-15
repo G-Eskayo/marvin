@@ -10,10 +10,14 @@ Named after the Hitchhiker's Guide's brilliant, underutilised android. This proj
 > **North star:** minimise token cost, maximise capability and quality. Every component earns its place through measurement, not intuition.
 
 <p align="center">
-  <img src="assets/screenshots/brain-map-demo.gif" alt="MARVIN's live 3D architecture map, rotating, with skill nodes pulsing gold as activity fires" width="720">
+  <img src="assets/screenshots/brain-map-demo.gif" alt="MARVIN's live 3D architecture map, rotating, with skill nodes pulsing gold as activity fires" width="480">
 </p>
 
-This isn't a diagram someone drew once and forgot to update — it's MARVIN's actual structure, generated straight from the same `manifest.json` that drives retrieval. Quiet branches are structure (category → skill, like a dendrite off a cell body); the gold pulses are real wiring — a skill actually firing, or a `calls:` edge between two parts of the system. It runs and rotates on its own; nothing to click here. This capture is a recorded loop — the real version lives at `~/.agents/brain-map/` and only runs on a machine that has MARVIN installed, which is exactly what the [Build Your Own MARVIN](#build-your-own-marvin) section below walks you through.
+This isn't a diagram someone drew once and forgot to update — it's MARVIN's actual structure, generated straight from the same `manifest.json` that drives retrieval, one node per skill/hook/memory type.
+
+**How to read it:** each dot's color groups it into a category (memory, quality, research, agents, and so on); quiet grey branches are structure — category → skill, like a dendrite off a cell body. The gold pulses are the *real* wiring: a skill actually firing right now, or a `calls:` edge between two parts of the system that isn't just implied by folder layout. It rotates and lights up entirely on its own — there's nothing to click here, this is a recorded loop.
+
+The real thing runs and regenerates live on any machine with MARVIN installed — open `~/.agents/brain-map/index.html` yourself once you've followed [Build Your Own MARVIN](#build-your-own-marvin) below, and drag it, zoom it, click a node.
 
 ---
 
@@ -358,7 +362,7 @@ Each of these is optional and independent — take the digest and skip the wallp
 
 **3. See it, don't just trust it.**
 
-[The live map](https://g-eskayo.github.io/marvin/) is the fastest way to check that a fresh install actually did what it claims — every skill you just installed shows up as a node, every real hook chain as a gold thread. If a skill you added isn't there, `~/.agents/brain-map/generate.py` will tell you why.
+Open `~/.agents/brain-map/index.html` in a browser (or let `install.sh` put it on your desktop as wallpaper) and it's the fastest way to check a fresh install actually did what it claims — every skill you just installed shows up as a node, every real hook chain as a gold thread. If a skill you added isn't there, `~/.agents/brain-map/generate.py` will tell you why.
 
 **4. Add what you actually need, verify it against your own record instead of vibes.**
 

@@ -1,6 +1,6 @@
 <title>MARVIN — 3D Architecture Map</title>
 <style>
-  .viz-root {
+  :root, .viz-root {
     --surface-1: #1a1a19;
     --page-plane: #0d0d0d;
     --text-primary: #ffffff;
@@ -360,6 +360,9 @@
   }
   window.demoAddNode = demoAddNode;
   window.demoRemoveNode = demoRemoveNode;
+  // Read-only, for capturing an exact seamless rotation loop externally
+  // (e.g. README GIF generation) without disturbing autoRotate/easing.
+  window.getYaw = function () { return yaw; };
 
   // Live device liveness (Cross-Machine Network trunk) — DesktopLive polls
   // `tailscale status --json` itself (~every 15-20s, see main.swift) and
