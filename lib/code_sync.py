@@ -52,6 +52,18 @@ watching, exactly what happened overnight while this file's own conflict
 sat unresolved through several 22:00 cron backstop runs. push() now refuses
 to commit if any changed file still contains conflict markers.
 
+Found the hard way again, 2026-07-14/15: a WIP-restore conflict (pull()'s
+stash-pop failure path, logged as "restoring local WIP conflicted") leaves
+the stash sitting there un-popped and says so in the log — but nothing
+actually stopped the *next* run from trying anyway. Every subsequent
+push()/pull() on that machine kept failing silently into sync-log.md for a
+day and a half, only surfacing the next morning via cron_health.py's daily
+snapshot. Both push() and pull() now call _stuck_from_previous_run() first
+and refuse to proceed (no new stash on top of an old one, no commit while
+mid-merge) until a live session resolves it by hand — the same class of fix
+as the conflict-marker check above, just for the state a run leaves behind
+instead of the content it's about to commit.
+
 Two more things tuned the same day, both about pull()'s own logging:
 pull() no longer logs (or stashes) a pure no-op — nothing merged, no local
 WIP involved — since logging one just to have said something produced its
@@ -110,6 +122,32 @@ def _git_ok(repo: Path, args: list[str]) -> tuple[bool, str]:
     return result.returncode == 0, (result.stdout + result.stderr)
 
 
+CONFLICT_STATUS_CODES = {"UU", "AA", "DD", "AU", "UA", "UD", "DU"}
+
+
+def _stuck_from_previous_run(repo: Path) -> str | None:
+    """Is this repo already broken from a run that never finished — a live
+    merge conflict, or a stash left behind by a failed WIP-restore? If so,
+    every git operation below (stash, commit, merge) either compounds the
+    mess or silently no-ops, so callers must bail before touching anything.
+    Same detection logic as session_start_report.py's check_git_conflicts(),
+    duplicated rather than imported so code_sync.py has no dependency on the
+    hook script — this needs to run standalone from cron/hooks too."""
+    status = _git(repo, ["status", "--porcelain=v1"])
+    has_conflict = (repo / ".git" / "MERGE_HEAD").exists() or any(
+        line[:2] in CONFLICT_STATUS_CODES for line in status.splitlines()
+    )
+    if has_conflict:
+        return "an unresolved merge conflict is already sitting in the working tree"
+
+    stash = _git(repo, ["stash", "list"])
+    n_stash = len([line for line in stash.splitlines() if line.strip()])
+    if n_stash:
+        return f"{n_stash} stash(es) left over from a previous failed WIP-restore (`git stash list`)"
+
+    return None
+
+
 def _log(repo: Path, action: str, summary: str, files: list[str] | None = None) -> None:
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(timezone.utc).isoformat()
@@ -135,6 +173,13 @@ def _merge_remote(repo: Path) -> tuple[bool, str]:
 
 def push(repo: Path) -> None:
     label = machine_label()
+
+    stuck = _stuck_from_previous_run(repo)
+    if stuck:
+        _log(repo, "push", f"REFUSING to run — {stuck}, needs manual resolution before push can proceed")
+        notify("MARVIN code-sync CONFLICT", f"Stuck from a previous run [{repo.name}] — check sync-log.md")
+        return
+
     status = _git(repo, ["status", "--porcelain"])
     all_changed = [line[3:].strip() for line in status.splitlines() if line.strip()]
     # sync-log.md itself doesn't count — otherwise its own last entry (written
@@ -192,6 +237,12 @@ def push(repo: Path) -> None:
 
 
 def pull(repo: Path) -> None:
+    stuck = _stuck_from_previous_run(repo)
+    if stuck:
+        _log(repo, "pull", f"REFUSING to run — {stuck}, needs manual resolution before pull can proceed")
+        notify("MARVIN code-sync CONFLICT", f"Stuck from a previous run [{repo.name}] — check sync-log.md")
+        return
+
     status = _git(repo, ["status", "--porcelain"])
     stashed = False
     if status.strip():
