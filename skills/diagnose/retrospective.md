@@ -1,5 +1,9 @@
 # Diagnose — Retrospective
 
+## 2026-07-17 — Motion physics deploy to brain-map/DesktopLive (pulses, camera nudges, fitScale)
+**I:** Confirmed gotcha class (second occurrence, matches an earlier camera-rotation bug): a JS animation library's high-level `animate()` relies on `requestAnimationFrame`, which is suspended for windows rendered at the desktop-wallpaper level, even while a separate native (Swift `NSTimer`-driven) loop keeps ticking. Fix is the same both times — call the library's low-level `spring()` generator directly and sample it manually from the existing native loop, never the high-level rAF-based helper.
+**S:** Verification-by-measurement (yaw-delta comparison for the camera fix, frame-by-frame spring-curve sampling for pulse intensity, pixel-bounds convergence for `fitScale`) caught what visual inspection alone would have missed, and gave a concrete way to confirm the fix rather than "looks right." Worth repeating for any wallpaper-mode animation work.
+
 ## 2026-07-07 — MLX on-device model benchmark (Qwen2.5-3B vs Llama-3.2-3B)
 **I:** Learned to distrust "OpenAI-compatible" as a binary label. Before wiring an eval harness (or any client) to a local model server over its OpenAI-compatible HTTP API, check which specific params it implements — compatibility is usually partial, not full.
 **F:** Built a benchmark around `mlx_lm.server` + `lm-eval`'s `local-completions` backend assuming standard OpenAI-completions compatibility. `leaderboard_mmlu_pro` needs `echo` (echoed prompt log-probs) to score log-likelihood; `mlx_lm.server` doesn't implement `echo` at all, and no pre-built MLX adapter for `lm-eval` exists either. The whole server-based approach was a dead end — confirmed only after building it, not before. Fix was to drop the HTTP server entirely and write a small in-process `lm-eval` `LM` subclass wrapping `mlx-lm` directly.
