@@ -260,10 +260,10 @@ def analyze_python_file(path: Path) -> list[dict]:
     return visitor.issues
 
 
-def analyze_complexity(project: Path) -> list[dict]:
+def analyze_complexity(project: Path, max_files: int = 0) -> list[dict]:
     """Run complexity + principles analysis across all Python files."""
     all_issues = []
-    for f in _iter_files(project):
+    for f in _iter_files(project, max_files):
         if f.suffix == ".py":
             all_issues.extend(analyze_python_file(f))
     return all_issues
@@ -444,10 +444,10 @@ def analyze_comment_quality(path: Path) -> list[dict]:
     return issues
 
 
-def analyze_quality(project: Path) -> list[dict]:
+def analyze_quality(project: Path, max_files: int = 0) -> list[dict]:
     """Run verbosity, naming, logic, and comment-quality checks across all Python files."""
     all_issues: list[dict] = []
-    for f in _iter_files(project):
+    for f in _iter_files(project, max_files):
         if f.suffix == ".py":
             try:
                 tree = ast.parse(f.read_text(errors="replace"))
@@ -463,7 +463,7 @@ def analyze_quality(project: Path) -> list[dict]:
 
 # ── stack detection ───────────────────────────────────────────────────────────
 
-def detect_stack(project: Path) -> list[str]:
+def detect_stack(project: Path, max_files: int = 0) -> list[str]:
     stack = []
     if (project / "requirements.txt").exists() or \
        (project / "pyproject.toml").exists() or \
@@ -480,7 +480,7 @@ def detect_stack(project: Path) -> list[str]:
     if not stack:
         # fallback: count source files
         exts = {}
-        for f in _iter_files(project):
+        for f in _iter_files(project, max_files):
             exts[f.suffix] = exts.get(f.suffix, 0) + 1
         mapping = {".py": "python", ".js": "javascript", ".ts": "typescript",
                    ".go": "go", ".rs": "rust", ".java": "java", ".rb": "ruby"}
@@ -578,10 +578,15 @@ def extract_markers(project: Path) -> list[dict]:
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
-def _iter_files(project: Path):
+def _iter_files(project: Path, max_files: int = 0):
+    """Yield project files, capped at max_files (0 = unlimited)."""
+    n = 0
     for f in project.rglob("*"):
+        if max_files and n >= max_files:
+            return
         if f.is_file() and not any(part in SKIP_DIRS for part in f.parts) \
                 and f.suffix not in SKIP_EXT:
+            n += 1
             yield f
 
 
