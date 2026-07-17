@@ -72,6 +72,69 @@ def infer_domain(project_name: str, document: str,
 
 MARKER_RE = re.compile(r"#\s*(TODO|FIXME|HACK|BUG|XXX|NOTE)\s*:?\s*(.+)", re.IGNORECASE)
 
+# ── KISS/UNIX structural analysis ─────────────────────────────────────────────
+# Line count says nothing about whether a function is simple — a 60-line
+# straight-line sequence (e.g. test assertions) is simpler than a 15-line
+# function with five nested branches and three unrelated concerns. So KISS
+# ("could this logic be simpler for the same result") is approximated by
+# cyclomatic complexity (branch/path count), and UNIX ("do one thing") is
+# approximated by how many distinct concern categories a function touches.
+
+_CONCERN_MAP: dict[str, str] = {
+    "open": "io", "Path": "io",
+    "requests": "network", "httpx": "network", "aiohttp": "network",
+    "urlopen": "network", "socket": "network", "urllib": "network",
+    "subprocess": "process", "Popen": "process", "os": "process",
+    "json": "serialize", "yaml": "serialize", "pickle": "serialize",
+    "logging": "log", "logger": "log",
+    "threading": "concurrency", "asyncio": "concurrency", "multiprocessing": "concurrency",
+    "re": "text",
+}
+_IO_METHODS = frozenset({"read", "write", "readlines", "writelines", "close"})
+
+
+def _call_root_name(call: ast.Call) -> str | None:
+    """First identifier of a call chain: requests.get(...) -> 'requests'."""
+    f = call.func
+    if isinstance(f, ast.Name):
+        return f.id
+    if isinstance(f, ast.Attribute):
+        base = f
+        while isinstance(base, ast.Attribute):
+            base = base.value
+        return base.id if isinstance(base, ast.Name) else None
+    return None
+
+
+def _analyze_function_body(node) -> dict:
+    """Single-pass structural read of a function: cyclomatic complexity +
+    concern categories touched. Does not descend into nested function/class
+    definitions — those are separate units and shouldn't inflate the parent's
+    score."""
+    state = {"complexity": 1, "concerns": set()}
+
+    def visit(n):
+        for child in ast.iter_child_nodes(n):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+                continue
+            if isinstance(child, (ast.If, ast.For, ast.AsyncFor, ast.While, ast.ExceptHandler, ast.IfExp)):
+                state["complexity"] += 1
+            elif isinstance(child, ast.BoolOp):
+                state["complexity"] += max(len(child.values) - 1, 0)
+            elif isinstance(child, ast.comprehension):
+                state["complexity"] += len(child.ifs)
+            elif isinstance(child, ast.Call):
+                root = _call_root_name(child)
+                if root in _CONCERN_MAP:
+                    state["concerns"].add(_CONCERN_MAP[root])
+                if isinstance(child.func, ast.Attribute) and child.func.attr in _IO_METHODS:
+                    state["concerns"].add("io")
+            visit(child)
+
+    visit(node)
+    return state
+
+
 # ── complexity + principles analysis ─────────────────────────────────────────
 
 class ComplexityVisitor(ast.NodeVisitor):
@@ -123,15 +186,26 @@ class ComplexityVisitor(ast.NodeVisitor):
                     )
         self.generic_visit(node)
 
-    # ── UNIX / KISS: large functions ──────────────────────────────────────────
+    # ── UNIX / KISS: tangled logic or mixed concerns ──────────────────────────
     def visit_FunctionDef(self, node):
+        stats = _analyze_function_body(node)
         length = (node.end_lineno or node.lineno) - node.lineno
-        if length > 40:
+        if stats["complexity"] > 10:
             self._issue(
                 "kiss",
-                f"Function '{node.name}' at line {node.lineno} is {length} lines long.",
+                f"Function '{node.name}' at line {node.lineno} has cyclomatic complexity "
+                f"{stats['complexity']} ({length} lines).",
                 node.lineno,
-                "UNIX principle: do one thing. Extract sub-functions for each logical step.",
+                "KISS: can the same result be reached with fewer independent paths — "
+                "guard clauses instead of nested branches, or split by branch into helpers?",
+            )
+        if len(stats["concerns"]) >= 3:
+            self._issue(
+                "kiss",
+                f"Function '{node.name}' at line {node.lineno} mixes concerns: "
+                f"{', '.join(sorted(stats['concerns']))}.",
+                node.lineno,
+                "UNIX: do one thing. Separate I/O/network/process orchestration from the core logic.",
             )
         # KISS: too many parameters
         n_args = len(node.args.args) + len(node.args.posonlyargs)
@@ -524,7 +598,15 @@ def store_entries(entries: list[dict], dry_run: bool = False) -> int:
     import chromadb
     client = chromadb.PersistentClient(path=str(CHROMA_PATH))
     col = client.get_or_create_collection(COLLECTION)
-    existing = set(col.get()["ids"])
+    existing: set[str] = set()
+    PAGE = 5000
+    offset = 0
+    while True:
+        page = col.get(limit=PAGE, offset=offset, include=[])["ids"]
+        if not page:
+            break
+        existing.update(page)
+        offset += len(page)
     seen: set[str] = set()
     new = []
     for e in entries:
@@ -544,14 +626,17 @@ def store_entries(entries: list[dict], dry_run: bool = False) -> int:
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
-def scan(project: Path, dry_run: bool = False) -> list[dict]:
+def scan(project: Path, dry_run: bool = False, skip_categories: set[str] | None = None) -> list[dict]:
     project = project.resolve()
     name = project.name
     now = datetime.now(timezone.utc).isoformat()
+    skip_categories = skip_categories or set()
 
     entries: list[dict] = []
 
     def add(document: str, category: str, **meta):
+        if category in skip_categories:
+            return
         library = meta.pop("library", "")
         tags    = meta.pop("tags", "")
         domain       = meta.pop("domain", infer_domain(name, document, library, tags))
@@ -667,11 +752,15 @@ def main() -> None:
     ap.add_argument("--dry-run", action="store_true", help="print entries without storing")
     ap.add_argument("--max-files", type=int, default=200,
                     help="max source files to scan (default 200; use 0 for unlimited)")
+    ap.add_argument("--skip-categories", default="",
+                    help="comma-separated categories to exclude, e.g. anti-pattern")
     args = ap.parse_args()
 
     project = Path(args.project)
     if not project.exists():
         sys.exit(f"project not found: {project}")
+
+    skip_categories = {c.strip() for c in args.skip_categories.split(",") if c.strip()}
 
     if args.max_files > 0:
         # Warn if project is large
@@ -679,7 +768,7 @@ def main() -> None:
         if file_count > args.max_files:
             print(f"Note: project has {file_count} files; scanning first {args.max_files}. Use --max-files 0 to scan all.", file=sys.stderr)
 
-    entries = scan(project, dry_run=args.dry_run)
+    entries = scan(project, dry_run=args.dry_run, skip_categories=skip_categories)
 
     if args.dry_run:
         for e in entries:

@@ -429,26 +429,32 @@
     }
   }
 
-  function demoAddNode(node, parentId) {
+  // Shared by the demo channel AND live device-liveness below — one node
+  // add/remove path instead of two near-duplicates.
+  function addNodeToTree(node, parentId, tagDemo) {
     var parent = byId[parentId];
-    if (!parent || byId[node.id]) return;
+    if (!parent || byId[node.id]) return false;
     node.children = node.children || [];
     node.expandable = false; node.expanded = true;
-    node._demo = true;
+    if (tagDemo) node._demo = true;
     parent.children.push(node);
     indexAll();
     relayout(true);
     nudgeCameraAndPulse(node);
+    return true;
   }
-  function demoRemoveNode(nodeId) {
+  function removeNodeFromTree(nodeId) {
     var node = byId[nodeId];
-    if (!node || !node.parent) return;
+    if (!node || !node.parent) return false;
     nudgeCameraAndPulse(node); // camera turns to it before it shrinks away
     var parent = node.parent;
     parent.children = parent.children.filter(function (c) { return c.id !== nodeId; });
     indexAll();
     relayout(true);
+    return true;
   }
+  function demoAddNode(node, parentId) { addNodeToTree(node, parentId, true); }
+  function demoRemoveNode(nodeId) { removeNodeFromTree(nodeId); }
   window.demoAddNode = demoAddNode;
   window.demoRemoveNode = demoRemoveNode;
   // Read-only, for capturing an exact seamless rotation loop externally
@@ -459,15 +465,36 @@
   // Live device liveness (Cross-Machine Network trunk) — DesktopLive polls
   // `tailscale status --json` itself (~every 15-20s, see main.swift) and
   // pushes changes straight in, the same "small file/signal pushed via
-  // evaluateJavaScript" pattern as activity/demo above. Only nudges the
-  // camera on an actual state flip, not every poll, so a steady-state
-  // connection doesn't tug the view every 15s.
+  // evaluateJavaScript" pattern as activity/demo above.
+  //
+  // Changed 2026-07-17 from "grey the node out" to "remove it from the
+  // tree" on going offline (shrink-out via the same dying-node animation
+  // demoRemoveNode uses), restoring it (grow-in) on reconnect — Gil's
+  // call: "we know what devices should be there, so if we see any pop up
+  // that's odd" is a stronger signal than a greyed-but-still-present node,
+  // and inverts cleanly into an intrusion-detection-style read (an
+  // unexpected device appearing is the anomaly, not a known one going
+  // quiet). offlineDeviceCache snapshots the exact node + parent id at the
+  // moment it's removed, so reconnecting restores precisely what was
+  // there rather than reconstructing a guessed-at replacement.
+  var offlineDeviceCache = {}; // id -> {node, parentId}
   function setDeviceStatus(id, online) {
+    if (online) {
+      var cached = offlineDeviceCache[id];
+      if (cached) {
+        delete offlineDeviceCache[id];
+        addNodeToTree(cached.node, cached.parentId, false);
+        return;
+      }
+      var node = byId[id];
+      if (node && node.online === false) { node.online = true; nudgeCameraAndPulse(node); }
+      return;
+    }
     var node = byId[id];
-    if (!node) return;
-    var changed = node.online !== online;
-    node.online = online;
-    if (changed) nudgeCameraAndPulse(node);
+    if (!node || node.online === false) return; // unknown or already offline
+    node.online = false;
+    offlineDeviceCache[id] = { node: node, parentId: node.parent ? node.parent.id : null };
+    removeNodeFromTree(id);
   }
   window.setDeviceStatus = setDeviceStatus;
 
@@ -1006,6 +1033,10 @@
       var synDeg = synapseDegree[nd.id] || 0;
       var bf = birthFactor(nd); // 0..1, eases a newly-created node in instead of popping
       var r = (baseR + synDeg * 0.7) * depthT * bf;
+      // Should be unreachable in normal operation — setDeviceStatus() now
+      // removes an offline device from the tree entirely (shrink-out)
+      // rather than leaving it greyed in place. Kept as a defensive
+      // fallback only, not the live behavior.
       var color = nd.online === false ? "#5a5a5a" : CAT[nd.cat].color;
       var pulse = pulseIntensityOf(nd.id);
 

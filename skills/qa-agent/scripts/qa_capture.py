@@ -118,8 +118,7 @@ def store_entry(entry: dict) -> bool:
     import chromadb
     client = chromadb.PersistentClient(path=str(CHROMA_PATH))
     col = client.get_or_create_collection(COLLECTION)
-    existing = set(col.get()["ids"])
-    if entry["id"] in existing:
+    if col.get(ids=[entry["id"]], include=[])["ids"]:
         return False
     col.add(
         documents=[entry["document"]],

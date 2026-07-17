@@ -122,7 +122,14 @@ def store_items(items: list[dict]) -> int:
 
     client = chromadb.PersistentClient(path=str(CHROMA_PATH))
     col = client.get_or_create_collection("research-feed")
-    existing = set(col.get()["ids"])
+    existing: set[str] = set()
+    offset = 0
+    while True:
+        page = col.get(limit=5000, offset=offset, include=[])["ids"]
+        if not page:
+            break
+        existing.update(page)
+        offset += len(page)
 
     today = date.today().isoformat()
     new = []

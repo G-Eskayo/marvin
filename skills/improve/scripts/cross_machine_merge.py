@@ -153,7 +153,14 @@ def sync_research_feed(host: str) -> None:
 
     client = chromadb.PersistentClient(path=str(CHROMA_PATH))
     col = client.get_or_create_collection("research-feed")
-    existing_ids = set(col.get()["ids"])
+    existing_ids: set[str] = set()
+    offset = 0
+    while True:
+        page = col.get(limit=5000, offset=offset, include=[])["ids"]
+        if not page:
+            break
+        existing_ids.update(page)
+        offset += len(page)
 
     new_docs, new_metas, new_ids = [], [], []
     for item in missing:
@@ -205,7 +212,14 @@ def sync_qa_knowledge(remote_id: str, host: str, sync_state: dict) -> None:
 
     client = chromadb.PersistentClient(path=str(CHROMA_PATH))
     col = client.get_or_create_collection("qa-knowledge")
-    existing_ids = set(col.get()["ids"])
+    existing_ids: set[str] = set()
+    offset = 0
+    while True:
+        page = col.get(limit=5000, offset=offset, include=[])["ids"]
+        if not page:
+            break
+        existing_ids.update(page)
+        offset += len(page)
 
     new_ids, new_docs, new_metas, max_epoch = [], [], [], cursor
     for i, rid in enumerate(remote_data["ids"]):
@@ -262,7 +276,14 @@ def sync_paper_knowledge(remote_id: str, host: str, sync_state: dict) -> None:
 
     client = chromadb.PersistentClient(path=str(CHROMA_PATH))
     col = client.get_or_create_collection("paper-knowledge")
-    existing_ids = set(col.get()["ids"])
+    existing_ids: set[str] = set()
+    offset = 0
+    while True:
+        page = col.get(limit=5000, offset=offset, include=[])["ids"]
+        if not page:
+            break
+        existing_ids.update(page)
+        offset += len(page)
 
     new_ids, new_docs, new_metas, max_epoch = [], [], [], cursor
     for i, rid in enumerate(remote_data["ids"]):
