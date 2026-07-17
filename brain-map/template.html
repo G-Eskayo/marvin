@@ -415,7 +415,16 @@
   var W, H, DPR;
   var focal;
   function resize() {
-    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    // Capped lower in wallpaper mode specifically — this is ambient
+    // background content viewed from normal distance, not something being
+    // inspected up close, and the full canvas (clearRect + ~75 nodes +
+    // synapses + 4 separate shadowBlur passes) is genuinely expensive at 2x
+    // DPR on a Retina display. 1.5 cuts total pixel count by ~44% relative
+    // to 2x with no meaningful visible loss at wallpaper viewing distance.
+    // Normal/browser mode keeps full 2x sharpness since it's actively
+    // being looked at up close. Confirmed 2026-07-17 alongside a live lag
+    // report on both machines.
+    DPR = Math.min(window.devicePixelRatio || 1, WALLPAPER ? 1.5 : 2);
     W = canvas.clientWidth; H = canvas.clientHeight;
     canvas.width = W * DPR; canvas.height = H * DPR;
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
@@ -522,7 +531,7 @@
   // assume a fixed screen size. Toggle SHOW_BOUNDS and regenerate to turn
   // on/off; default false — this is a verification aid, not a permanent UI
   // element. Added 2026-07-17 for a live before/after check on both machines.
-  var SHOW_BOUNDS = true;
+  var SHOW_BOUNDS = false;
   function drawBoundsOverlay() {
     ctx.save();
     ctx.strokeStyle = "rgba(255,0,0,0.65)";
@@ -790,10 +799,25 @@
   // ── render loop ──────────────────────────────────────────────────────
   var t0 = performance.now();
 
+  var lastFrameTime = null;
   function draw(now) {
     ctx.clearRect(0, 0, W, H);
     var elapsed = (now - t0) / 1000;
     CURRENT_ELAPSED = elapsed;
+
+    // Real elapsed time since the last actual draw() call, not an assumed
+    // frame interval — both yaw auto-rotate and the fitScale containment
+    // response below are rate-per-second, not rate-per-call, specifically
+    // so they stay consistent regardless of what frame rate is actually
+    // achieved (rAF at 60Hz/120Hz in a browser tab, or DesktopLive's Swift
+    // timer at whatever it's tuned to). Confirmed 2026-07-17: the previous
+    // fixed-per-call yaw increment made auto-rotate visibly slow down
+    // whenever the achieved frame rate dropped under load — the exact
+    // symptom reported alongside general lag. Clamped to 100ms so a stall
+    // (tab backgrounded, a dropped frame) doesn't cause one big jump/lerp
+    // snap on the next call.
+    var dt = lastFrameTime === null ? 0 : Math.min(0.1, (now - lastFrameTime) / 1000);
+    lastFrameTime = now;
 
     if (cameraTargetNode && now < cameraEaseUntil && !dragging) {
       var target = facingAngles(cameraTargetNode);
@@ -801,10 +825,23 @@
       pitch += (target.pitch - pitch) * 0.045;
     } else {
       if (cameraTargetNode && now >= cameraEaseUntil) cameraTargetNode = null;
-      if (autoRotate && !dragging) yaw += 0.0008;
+      if (autoRotate && !dragging) yaw += 0.048 * dt; // ≈ same visual speed as the original 0.0008/call at a 60fps reference
     }
 
-    if (WALLPAPER) fitScale += (computeTargetFitScale() - fitScale) * 0.05;
+    // Asymmetric response: snap DOWN fast when a node/curve needs
+    // containing (a leaf node swinging near the camera during rotation can
+    // spike its projected position in a single frame via the 1/camZ
+    // perspective term — a slow symmetric lerp couldn't react in time,
+    // letting exactly the farthest-radius nodes — the skills leaves, being
+    // both the most numerous and furthest from center — visibly clip past
+    // the boundary on every rotation, confirmed 2026-07-17 by live report).
+    // Relax back UP slowly so the zoom level doesn't visibly pulse/breathe
+    // once the spike passes.
+    if (WALLPAPER) {
+      var targetFit = computeTargetFitScale();
+      var fitRatePerSec = targetFit < fitScale ? 9 : 1.1;
+      fitScale += (targetFit - fitScale) * Math.min(1, fitRatePerSec * dt);
+    }
 
     var selSyn = selected ? synapsesOf(selected) : [];
     var selPartners = {};

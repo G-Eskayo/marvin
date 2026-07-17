@@ -137,9 +137,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // isn't subject to that throttling, same reasoning as activityTimer/
         // demoTimer/livenessTimer above. template.html skips its own rAF
         // self-scheduling in wallpaper mode specifically so this is the only
-        // driver — never run both, since yaw advances by a fixed per-call
-        // delta rather than by elapsed time.
-        renderTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+        // driver — never run both: even though yaw/fitScale are now
+        // time-based (real elapsed seconds, not a fixed per-call delta —
+        // see template.html's draw()), a second concurrent driver would
+        // still double-invoke draw() per real frame for no benefit.
+        // 24fps rather than 30: this is slow ambient rotation, not
+        // something needing high frame rate, and cutting 6 evaluateJavaScript
+        // round-trips/sec measurably reduces load — tuned alongside the DPR
+        // cap above for the lag reported on both machines 2026-07-17.
+        renderTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 24.0, repeats: true) { [weak self] _ in
             self?.renderFrame()
         }
     }
