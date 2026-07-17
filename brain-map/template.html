@@ -49,7 +49,19 @@
     background: repeating-linear-gradient(to bottom,
       rgba(0,0,0,0) 0px, rgba(0,0,0,0) 2px,
       rgba(88,166,255,0.028) 3px, rgba(0,0,0,0) 4px);
-    mix-blend-mode: screen;
+    /* mix-blend-mode: screen; — removed 2026-07-17. Confirmed root cause of
+       a white gradient bleeding into the menu bar on the mac-mini
+       (backingScaleFactor 1.0) that never appeared on the MacBook
+       (backingScaleFactor 2.0, identical code otherwise) — isolated by
+       toggling this single property with everything else unchanged, live-
+       verified fixed on the real desktop. Screen blend mode composites
+       against WKWebView's own backdrop, which is transparent/undefined
+       here (drawsBackground=false, set to avoid a white flash before first
+       paint — see main.swift); on this non-Retina rendering path that
+       backdrop apparently isn't treated as transparent black the way
+       Retina compositing handles it, so the blend brightened toward white
+       instead of darkening. The scanline pattern itself stays (still
+       renders, just without the blend mode) since it wasn't the cause. */
   }
 
   #chrome { position: fixed; inset: 0; pointer-events: none; }
