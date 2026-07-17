@@ -180,6 +180,12 @@
   </div>
 </div>
 
+<!-- Vendored locally (not a CDN reference) — this page loads via file://
+     in DesktopLive's WKWebView with no guaranteed network, and a CDN
+     timeout/404 shouldn't be able to blank the wallpaper. See
+     ~/.agents/docs/animation-tools-evaluation.md for why Motion specifically.
+     Exposes a global `Motion` object (Motion.spring, Motion.animate). -->
+<script src="./vendor/motion.12.42.2.js"></script>
 <script>
 (function () {
   "use strict";
@@ -357,8 +363,48 @@
   // Reuses the exact same camera-ease + pulse-ripple triggerActivity
   // already uses, so "look here, something changed" reads identically
   // whether it's a real pulse or a create/destroy event.
+  // Real spring physics (Motion, vendored locally — see vendor/motion.*.js)
+  // for the pulse pop-in, then a second spring settling back to 0 for the
+  // afterglow. Uses Motion.spring()'s manually-sampled generator, NOT the
+  // high-level animate() — animate() drives its own updates via
+  // requestAnimationFrame internally, which is exactly what's suspended in
+  // wallpaper mode (see draw()'s note on WebKit occluded-view throttling);
+  // an animate()-driven pulse would silently never progress there.
+  // updateActivePulses() below samples both generators by hand once per
+  // frame, off the same Swift-timer-driven clock as everything else here.
+  function pulseOnly(node) {
+    activePulses.push({
+      id: node.id,
+      phase: "rise",
+      startTime: performance.now(),
+      gen: Motion.spring({ keyframes: [0, 1], stiffness: 400, damping: 20 }),
+      value: 0
+    });
+  }
+
+  // Advances every active pulse's spring generator by the real elapsed
+  // time, called once per frame (not once per node — pulseIntensityOf()
+  // below is a cheap read of the result, called many times per frame).
+  function updateActivePulses(now) {
+    activePulses = activePulses.filter(function (p) {
+      if (p.phase === "rise") {
+        var sample = p.gen.next(now - p.startTime);
+        p.value = sample.value;
+        if (sample.done) {
+          p.phase = "fade";
+          p.startTime = now;
+          p.gen = Motion.spring({ keyframes: [1, 0], stiffness: 60, damping: 20 });
+        }
+        return true;
+      }
+      var fadeSample = p.gen.next(now - p.startTime);
+      p.value = fadeSample.value;
+      return !fadeSample.done; // false = filtered out, pulse fully settled
+    });
+  }
+
   function nudgeCameraAndPulse(node) {
-    activePulses.push({ id: node.id, start: performance.now(), duration: 4200 });
+    pulseOnly(node);
     if (!dragging) {
       cameraTargetNode = node;
       cameraEaseUntil = performance.now() + 4200;
@@ -482,6 +528,7 @@
   // different node to the edge. Sketched 2026-07-17, implemented same day
   // after a live report of nodes clipping past the bottom of the screen.
   var fitScale = 1;
+  var fitVelocity = 0; // hand-tracked between frames — see the spring update in draw() for why
   // Fraction of the live W/H used as the target ellipse's half-axes — 0.49,
   // not 0.5, only to keep the boundary a hair inside the true pixel edge
   // (floating-point/rounding at an exact 0-or-W/H coordinate would clip a
@@ -568,14 +615,28 @@
   // mtime check). Drives both the pulse rings and the camera nudge. ──
   var ACTIVITY_URL = "./activity.jsonl";
   var lastSeenTs = Date.now() / 1000; // don't replay history on load
-  var activePulses = []; // {id, start, duration}
+  var activePulses = []; // {id, state: {intensity}} — state is mutated in place by Motion, see pulseOnly()
   var cameraTargetNode = null, cameraEaseUntil = 0;
   var wasAutoRotating = autoRotate;
 
+  // "MARVIN" (the root/anchor) is the generic heartbeat skill_activity.py
+  // logs for every non-Skill tool call (Bash, Edit, Read, ...) — widened
+  // 2026-07-17 so the graph shows *some* signal even outside explicit
+  // /skill invocations. But the root sits at the exact origin by design
+  // (see swayedPos above), so facingAngles(root) always resolves to a
+  // fixed {yaw:0, pitch:0} — a degenerate target, not a meaningful
+  // "look here" direction. Routing it through the full nudgeCameraAndPulse
+  // meant nearly every tool call yanked the camera back toward that fixed
+  // angle, fighting the auto-rotate and reading as erratic/random motion
+  // rather than a clear activity signal — confirmed 2026-07-17 by a live
+  // report of exactly this. Real, named-skill activity still gets the full
+  // pulse + camera-nudge treatment, since nudging toward an actual leaf
+  // node's position is meaningful; the generic heartbeat only pulses.
   function triggerActivity(skillId) {
     var node = byId[skillId];
     if (!node) return;
-    nudgeCameraAndPulse(node);
+    if (skillId === "MARVIN") pulseOnly(node);
+    else nudgeCameraAndPulse(node);
     // exposed for DesktopLive: fetch() to a local file from a file://-loaded
     // WKWebView isn't guaranteed to work across WebKit versions, so the
     // Swift host pushes activity directly via evaluateJavaScript instead of
@@ -612,18 +673,13 @@
     return { yaw: fy, pitch: Math.max(-1.2, Math.min(1.2, fp)) };
   }
 
-  // 0..1, eased in then out over a pulse's duration; sweeps activePulses
-  // clean of anything expired as a side effect (called once per frame).
+  // 0..1 — cheap read of whatever updateActivePulses() last computed for
+  // this id. Called once per node/synapse per frame, so the actual spring
+  // sampling happens once per frame in updateActivePulses(), not here.
   function pulseIntensityOf(id) {
-    var now = performance.now(), best = 0;
-    activePulses = activePulses.filter(function (p) { return now - p.start < p.duration; });
+    var best = 0;
     activePulses.forEach(function (p) {
-      if (p.id !== id) return;
-      var t = (now - p.start) / p.duration;
-      // quick bright rise, then a slow exponential afterglow rather than a
-      // linear ramp-down — reads as dimming/lingering, not switching off.
-      var v = t < 0.1 ? t / 0.1 : Math.exp(-4 * (t - 0.1) / 0.9);
-      best = Math.max(best, v);
+      if (p.id === id) best = Math.max(best, p.value);
     });
     return best;
   }
@@ -819,6 +875,8 @@
     var dt = lastFrameTime === null ? 0 : Math.min(0.1, (now - lastFrameTime) / 1000);
     lastFrameTime = now;
 
+    updateActivePulses(now);
+
     if (cameraTargetNode && now < cameraEaseUntil && !dragging) {
       var target = facingAngles(cameraTargetNode);
       yaw += (target.yaw - yaw) * 0.045;
@@ -828,19 +886,31 @@
       if (autoRotate && !dragging) yaw += 0.048 * dt; // ≈ same visual speed as the original 0.0008/call at a 60fps reference
     }
 
-    // Asymmetric response: snap DOWN fast when a node/curve needs
-    // containing (a leaf node swinging near the camera during rotation can
-    // spike its projected position in a single frame via the 1/camZ
-    // perspective term — a slow symmetric lerp couldn't react in time,
-    // letting exactly the farthest-radius nodes — the skills leaves, being
-    // both the most numerous and furthest from center — visibly clip past
-    // the boundary on every rotation, confirmed 2026-07-17 by live report).
-    // Relax back UP slowly so the zoom level doesn't visibly pulse/breathe
-    // once the spike passes.
+    // Real spring physics (Motion) driving fitScale toward whatever
+    // computeTargetFitScale() wants THIS frame, asymmetric via stiffness:
+    // much stiffer when contracting (a node/curve needs containing — see
+    // below) than when relaxing back out, so the zoom doesn't visibly
+    // pulse/breathe once a spike passes. Motion's spring() generator
+    // doesn't expose a way to read back its own instantaneous velocity for
+    // retargeting (the target changes essentially every frame here, since
+    // it's a function of continuous rotation) — so velocity is tracked by
+    // hand between frames and fed into each frame's fresh generator as its
+    // starting condition, which keeps the motion physically continuous
+    // across retargets instead of restarting from rest each time.
     if (WALLPAPER) {
       var targetFit = computeTargetFitScale();
-      var fitRatePerSec = targetFit < fitScale ? 9 : 1.1;
-      fitScale += (targetFit - fitScale) * Math.min(1, fitRatePerSec * dt);
+      // A leaf node swinging near the camera during rotation can spike its
+      // projected position in a single frame via the 1/camZ perspective
+      // term — the farthest-radius nodes (skills leaves, being both the
+      // most numerous and furthest from center) visibly clipped past the
+      // boundary before this asymmetry was added, confirmed 2026-07-17 by
+      // live report.
+      var stiffness = targetFit < fitScale ? 900 : 90;
+      var gen = Motion.spring({ keyframes: [fitScale, targetFit], velocity: fitVelocity, stiffness: stiffness, damping: 30 });
+      var sample = gen.next(dt * 1000); // Motion's generator samples in milliseconds
+      var newFitScale = sample.value;
+      fitVelocity = dt > 0 ? (newFitScale - fitScale) / dt : 0;
+      fitScale = newFitScale;
     }
 
     var selSyn = selected ? synapsesOf(selected) : [];
