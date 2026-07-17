@@ -224,6 +224,9 @@ class ComplexityVisitor(ast.NodeVisitor):
 
     # ── OOP: methods that never use self → potential static ───────────────────
     def visit_ClassDef(self, node):
+        # unittest/pytest class-based tests require self for discovery even
+        # when the test body never touches it — not a real smell.
+        is_test_class = node.name.startswith("Test")
         for item in ast.walk(node):
             if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 if not item.args.args:
@@ -231,12 +234,19 @@ class ComplexityVisitor(ast.NodeVisitor):
                 first_arg = item.args.args[0].arg
                 if first_arg != "self":
                     continue
+                # dunders are always instance-bound by Python convention
+                # regardless of self usage; test_* methods are the same
+                # framework-discovery case as is_test_class above.
+                if item.name.startswith("__") and item.name.endswith("__"):
+                    continue
+                if is_test_class or item.name.startswith("test_"):
+                    continue
                 uses_self = any(
                     isinstance(n, ast.Name) and n.id == "self"
                     for n in ast.walk(item)
                     if n is not item.args.args[0]
                 )
-                if not uses_self and item.name not in ("__init__", "__new__", "__class_getitem__"):
+                if not uses_self:
                     self._issue(
                         "oop",
                         f"Method '{item.name}' in class '{node.name}' (line {item.lineno}) "
@@ -534,10 +544,10 @@ def extract_dependencies(project: Path) -> list[dict]:
 
 # ── import extraction ─────────────────────────────────────────────────────────
 
-def extract_imports(project: Path) -> set[str]:
+def extract_imports(project: Path, max_files: int = 0) -> set[str]:
     """Return set of top-level module names imported across all .py files."""
     modules: set[str] = set()
-    for f in _iter_files(project):
+    for f in _iter_files(project, max_files):
         if f.suffix != ".py":
             continue
         try:
@@ -556,10 +566,10 @@ def extract_imports(project: Path) -> set[str]:
 
 # ── marker extraction ─────────────────────────────────────────────────────────
 
-def extract_markers(project: Path) -> list[dict]:
+def extract_markers(project: Path, max_files: int = 0) -> list[dict]:
     """Return TODO/FIXME/HACK/BUG comments with file + line context."""
     markers = []
-    for f in _iter_files(project):
+    for f in _iter_files(project, max_files):
         if f.suffix in {".py", ".js", ".ts", ".go", ".rs", ".java", ".rb", ".sh"}:
             try:
                 for i, line in enumerate(f.read_text(errors="replace").splitlines(), 1):
@@ -631,7 +641,8 @@ def store_entries(entries: list[dict], dry_run: bool = False) -> int:
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
-def scan(project: Path, dry_run: bool = False, skip_categories: set[str] | None = None) -> list[dict]:
+def scan(project: Path, dry_run: bool = False, skip_categories: set[str] | None = None,
+         max_files: int = 0) -> list[dict]:
     project = project.resolve()
     name = project.name
     now = datetime.now(timezone.utc).isoformat()
@@ -668,7 +679,7 @@ def scan(project: Path, dry_run: bool = False, skip_categories: set[str] | None 
         })
 
     # stack
-    stack = detect_stack(project)
+    stack = detect_stack(project, max_files)
     add(f"Project '{name}' uses stack: {', '.join(stack) or 'unknown'}",
         "config", tags=",".join(stack), language=",".join(stack))
 
@@ -680,7 +691,7 @@ def scan(project: Path, dry_run: bool = False, skip_categories: set[str] | None 
             tags=f"{d['name']},{d['language']}")
 
     # import patterns
-    imports = extract_imports(project)
+    imports = extract_imports(project, max_files)
     stdlib = {"os", "sys", "re", "json", "pathlib", "collections", "itertools",
               "functools", "typing", "datetime", "math", "time", "io", "abc",
               "copy", "enum", "logging", "unittest", "argparse", "subprocess",
@@ -692,7 +703,7 @@ def scan(project: Path, dry_run: bool = False, skip_categories: set[str] | None 
             "pattern", language="python", tags=",".join(sorted(third_party)))
 
     # markers
-    markers = extract_markers(project)
+    markers = extract_markers(project, max_files)
     for m in markers:
         category = "failed" if m["marker"] in ("FIXME", "BUG", "HACK") else "pattern"
         add(
@@ -703,7 +714,7 @@ def scan(project: Path, dry_run: bool = False, skip_categories: set[str] | None 
         )
 
     # complexity + principles (UNIX, KISS, OOP)
-    complexity_issues = analyze_complexity(project)
+    complexity_issues = analyze_complexity(project, max_files)
     kind_to_tags = {
         "complexity": "complexity,performance,optimization",
         "kiss":       "kiss,unix-principle,readability",
@@ -725,7 +736,7 @@ def scan(project: Path, dry_run: bool = False, skip_categories: set[str] | None 
         )
 
     # quality: verbosity, naming, logic, comment quality
-    quality_issues = analyze_quality(project)
+    quality_issues = analyze_quality(project, max_files)
     quality_kind_to_tags = {
         "verbosity": "verbosity,style,conciseness",
         "style":     "style,pep8",
@@ -773,7 +784,8 @@ def main() -> None:
         if file_count > args.max_files:
             print(f"Note: project has {file_count} files; scanning first {args.max_files}. Use --max-files 0 to scan all.", file=sys.stderr)
 
-    entries = scan(project, dry_run=args.dry_run, skip_categories=skip_categories)
+    entries = scan(project, dry_run=args.dry_run, skip_categories=skip_categories,
+                    max_files=args.max_files)
 
     if args.dry_run:
         for e in entries:

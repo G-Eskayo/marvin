@@ -168,11 +168,38 @@ def test_linear_search_in_loop_flagged():
     assert any(i["kind"] == "complexity" and "index" in i["msg"] for i in issues)
 
 
-def test_large_function_flagged():
+def test_long_but_simple_function_not_flagged():
+    # A long, purely linear function (no branches) is not a KISS violation —
+    # length alone says nothing about whether the logic could be simpler.
     body = "def big():\n" + "    x = 1\n" * 45
     p = make_project({"main.py": body})
     issues = analyze_python_file(p / "main.py")
-    assert any(i["kind"] == "kiss" for i in issues)
+    assert not any(i["kind"] == "kiss" and "complexity" in i["msg"] for i in issues)
+
+
+def test_high_complexity_function_flagged():
+    lines = ["def tangled(x):"]
+    for i in range(12):
+        lines.append(f"    if x == {i}:")
+        lines.append(f"        x += {i}")
+    body = "\n".join(lines) + "\n"
+    p = make_project({"main.py": body})
+    issues = analyze_python_file(p / "main.py")
+    assert any(i["kind"] == "kiss" and "complexity" in i["msg"] for i in issues)
+
+
+def test_mixed_concerns_function_flagged():
+    src = (
+        "def do_everything(path):\n"
+        "    import requests, subprocess, json\n"
+        "    data = requests.get('http://x').json()\n"
+        "    subprocess.run(['echo', 'hi'])\n"
+        "    with open(path) as f:\n"
+        "        f.write(json.dumps(data))\n"
+    )
+    p = make_project({"main.py": src})
+    issues = analyze_python_file(p / "main.py")
+    assert any(i["kind"] == "kiss" and "mixes concerns" in i["msg"] for i in issues)
 
 
 def test_too_many_params_flagged():
@@ -198,3 +225,25 @@ def test_clean_function_no_flags():
     p = make_project({"main.py": src})
     issues = analyze_python_file(p / "main.py")
     assert issues == []
+
+
+def test_dunder_method_not_flagged_as_static_candidate():
+    src = (
+        "class Foo:\n"
+        "    def __str__(self):\n"
+        "        return 'foo'\n"
+    )
+    p = make_project({"main.py": src})
+    issues = analyze_python_file(p / "main.py")
+    assert not any(i["kind"] == "oop" for i in issues)
+
+
+def test_test_class_method_not_flagged_as_static_candidate():
+    src = (
+        "class TestFoo:\n"
+        "    def test_bar(self):\n"
+        "        assert 1 == 1\n"
+    )
+    p = make_project({"main.py": src})
+    issues = analyze_python_file(p / "main.py")
+    assert not any(i["kind"] == "oop" for i in issues)
