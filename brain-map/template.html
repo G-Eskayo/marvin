@@ -405,7 +405,13 @@
         if (sample.done) {
           p.phase = "fade";
           p.startTime = now;
-          p.gen = Motion.spring({ keyframes: [1, 0], stiffness: 60, damping: 20 });
+          // stiffness 60 measured out to a ~2.5s fade — well short of the
+          // 4200ms camera-ease duration in nudgeCameraAndPulse, so the
+          // camera was still visibly moving toward a node for ~1.7s after
+          // its pulse had already faded to nothing: exactly the "why did
+          // it move, nothing lit up" report from 2026-07-17. Slowed to
+          // comfortably outlast the full camera move.
+          p.gen = Motion.spring({ keyframes: [1, 0], stiffness: 18, damping: 18 });
         }
         return true;
       }
