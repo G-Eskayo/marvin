@@ -1,12 +1,21 @@
 #!/usr/bin/env python3
-"""PostToolUse hook (matcher: Skill): appends {skill, ts} to
-~/.agents/brain-map/activity.jsonl whenever a skill actually fires.
+"""PostToolUse hook (no matcher — fires on every tool): appends {skill, ts}
+to ~/.agents/brain-map/activity.jsonl whenever any tool fires.
 
 This is the live signal source for DesktopLive's pulse/camera-nudge
 animation — the graph reading activity.jsonl is what turns "a picture of
-the structure" into "what's actually running right now". Never blocks or
-errors the originating tool call: any failure exits silently, matching
-the other three PostToolUse hooks in this system.
+the structure" into "what's actually running right now". A Skill call logs
+the specific skill ID, pulsing that node in the tree. Any other tool
+(Bash, Edit, Write, Read, Agent, ...) logs the "MARVIN" root node instead —
+template.html's triggerActivity() looks up the id in the tree and no-ops on
+a miss, so a tool name that isn't a real node would otherwise be silently
+dropped. Widened 2026-07-17: scoped to matcher: Skill alone, real work in a
+session that never invokes a named skill (the common case — most sessions
+are Bash/Edit/Read) left the visualization looking frozen for days despite
+constant activity, which is exactly the "is MARVIN alive" signal this file
+exists to give. Never blocks or errors the originating tool call: any
+failure exits silently, matching the other three PostToolUse hooks in this
+system.
 """
 import json
 import sys
@@ -27,11 +36,15 @@ def main() -> None:
         log_hook_error("skill_activity", "parsing stdin payload", e)
         return
 
-    if payload.get("tool_name", "") != "Skill":
+    tool_name = payload.get("tool_name", "")
+    if not tool_name:
         return
-    skill = (payload.get("tool_input") or {}).get("skill", "")
-    if not skill:
-        return
+    if tool_name == "Skill":
+        skill = (payload.get("tool_input") or {}).get("skill", "")
+        if not skill:
+            return
+    else:
+        skill = "MARVIN"
 
     entry = json.dumps({"skill": skill, "ts": time.time()})
 
