@@ -62,6 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var activityTimer: Timer?
     var demoTimer: Timer?
     var livenessTimer: Timer?
+    var renderTimer: Timer?
     var lastActivityLineCount = 0
     var lastDemoLineCount = 0
     var lastDeviceOnline: [String: Bool] = [:]
@@ -125,6 +126,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.checkDeviceLiveness()
         }
         checkDeviceLiveness() // don't wait 18s for the first status on launch
+
+        // Drives the page's whole animation/rotation loop from the Swift
+        // side instead of letting it self-schedule via requestAnimationFrame.
+        // These windows sit at desktopLevel+1 — permanently behind every
+        // normal window by design — which WebKit's own occluded-view power
+        // saving treats as "not visible" and suspends rAF for, silently
+        // freezing the graph (confirmed 2026-07-17: the render code itself
+        // is correct, draw() just never got called). A plain Swift Timer
+        // isn't subject to that throttling, same reasoning as activityTimer/
+        // demoTimer/livenessTimer above. template.html skips its own rAF
+        // self-scheduling in wallpaper mode specifically so this is the only
+        // driver — never run both, since yaw advances by a fixed per-call
+        // delta rather than by elapsed time.
+        renderTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+            self?.renderFrame()
+        }
+    }
+
+    func renderFrame() {
+        for window in windows {
+            (window.contentView as? WKWebView)?.evaluateJavaScript(
+                "if (window.renderFrame) window.renderFrame(performance.now());", completionHandler: nil)
+        }
     }
 
     func mtime() -> Date? {

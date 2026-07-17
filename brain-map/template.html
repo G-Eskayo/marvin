@@ -875,7 +875,21 @@
       });
     }
 
-    requestAnimationFrame(draw);
+    // Self-schedule via rAF for normal browser/artifact viewing — fine
+    // there since a visible, focused tab isn't power-throttled the way a
+    // desktop-level WKWebView is. In wallpaper mode, skip this: DesktopLive
+    // sits at desktopLevel+1, permanently behind every normal window, which
+    // WebKit's own view treats as occluded — rAF for an occluded WKWebView
+    // gets suspended by the OS almost immediately, silently freezing the
+    // whole animation (confirmed 2026-07-17: draw() renders correctly when
+    // invoked directly, the loop just never got a callback). window.render-
+    // Frame below is DesktopLive's external drive instead — see main.swift's
+    // renderTimer, the same Swift-Timer-instead-of-JS-loop pattern already
+    // used for activity/demo/liveness polling in this app, for the same
+    // reason. Never run both at once: yaw advances by a fixed delta per
+    // call (not by elapsed wall-clock time), so two concurrent drivers
+    // would double the rotation speed.
+    if (!WALLPAPER) requestAnimationFrame(draw);
   }
   function quadPoint(p0, p1, p2, t) {
     var u = 1 - t;
@@ -884,6 +898,7 @@
       sy: u * u * p0.sy + 2 * u * t * p1.sy + t * t * p2.sy
     };
   }
-  requestAnimationFrame(draw);
+  window.renderFrame = draw; // DesktopLive's external per-frame drive (wallpaper mode only, see draw() above)
+  if (!WALLPAPER) requestAnimationFrame(draw);
 })();
 </script>
