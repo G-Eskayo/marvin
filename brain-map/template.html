@@ -487,6 +487,31 @@
     return maxRatio <= 1e-6 ? 1 : Math.min(1, 1 / maxRatio);
   }
 
+  // ── debug-only: draw the actual containment boundary as a visible
+  // semi-transparent ellipse, so it can be checked against the real running
+  // nodes instead of trusting the math blind. Deliberately a flat 2D
+  // screen-space ellipse, not a rotating 3D shape — that's an honest
+  // depiction of what computeTargetFitScale() above actually constrains
+  // (projected screen position, not world-space depth). Radii are W/H
+  // times the same FIT_MARGIN_X/Y fractions used by the real constraint —
+  // computed from the live canvas size every frame, same as the constraint
+  // itself, so this can never drift out of sync with what it's showing or
+  // assume a fixed screen size. Toggle SHOW_BOUNDS and regenerate to turn
+  // on/off; default false — this is a verification aid, not a permanent UI
+  // element. Added 2026-07-17 for a live before/after check on both machines.
+  var SHOW_BOUNDS = true;
+  function drawBoundsOverlay() {
+    ctx.save();
+    ctx.strokeStyle = "rgba(255,0,0,0.65)";
+    ctx.fillStyle = "rgba(255,0,0,0.08)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.ellipse(W / 2, H / 2, W * FIT_MARGIN_X, H * FIT_MARGIN_Y, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
   // ── organic idle motion — a gentle per-node sway on top of the fixed
   // tree position, so it reads as alive even with no recent activity.
   // Small enough not to fight the layout; consistent between rendering
@@ -903,6 +928,8 @@
         ctx.fill();
       });
     }
+
+    if (WALLPAPER && SHOW_BOUNDS) drawBoundsOverlay();
 
     // Self-schedule via rAF for normal browser/artifact viewing — fine
     // there since a visible, focused tab isn't power-throttled the way a
