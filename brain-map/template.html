@@ -456,8 +456,35 @@
     var y2 = p.y * cp - z1 * sp;
     var z2 = p.y * sp + z1 * cp;
     var camZ = z2 + camDist;
-    var f = focal / Math.max(camZ, 30);
+    var f = focal / Math.max(camZ, 30) * (WALLPAPER ? fitScale : 1);
     return { sx: W / 2 + x1 * f, sy: H / 2 + y2 * f, depth: camZ, scale: f };
+  }
+
+  // ── wallpaper-mode containment — keep the rotating tree's silhouette
+  // inside a screen-bound oval so nodes never clip past the edges,
+  // regardless of aspect ratio or which nodes the current rotation happens
+  // to swing out to the silhouette edge. Gated on WALLPAPER only: in
+  // normal/browser mode the user can pan/zoom by hand and occasional
+  // clipping at extreme angles is an acceptable, expected trade-off there.
+  // Only ever scales DOWN from 1 (never zooms in past natural size) — the
+  // goal is "never clips", not "always fills the oval". Lerped toward the
+  // target each frame rather than snapped, so a scale change reads as a
+  // smooth zoom rather than a jarring pop whenever rotation brings a
+  // different node to the edge. Sketched 2026-07-17, implemented same day
+  // after a live report of nodes clipping past the bottom of the screen.
+  var fitScale = 1;
+  var FIT_MARGIN_X = 0.44, FIT_MARGIN_Y = 0.40; // fraction of W/H used as the target ellipse's half-axes
+  function computeTargetFitScale() {
+    var maxRatio = 0;
+    for (var i = 0; i < allNodes.length; i++) {
+      var nd = allNodes[i];
+      if (nd.cat !== "root" && nd.cat !== "skills-trunk" && !activeCats[nd.cat]) continue;
+      var p = project(swayedPos(nd)); // project() already applies the current fitScale — divide it back out
+      var dx = (p.sx - W / 2) / fitScale, dy = (p.sy - H / 2) / fitScale;
+      var ratio = Math.max(Math.abs(dx) / (W * FIT_MARGIN_X), Math.abs(dy) / (H * FIT_MARGIN_Y));
+      if (ratio > maxRatio) maxRatio = ratio;
+    }
+    return maxRatio <= 1e-6 ? 1 : Math.min(1, 1 / maxRatio);
   }
 
   // ── organic idle motion — a gentle per-node sway on top of the fixed
@@ -728,6 +755,8 @@
       if (cameraTargetNode && now >= cameraEaseUntil) cameraTargetNode = null;
       if (autoRotate && !dragging) yaw += 0.0008;
     }
+
+    if (WALLPAPER) fitScale += (computeTargetFitScale() - fitScale) * 0.05;
 
     var selSyn = selected ? synapsesOf(selected) : [];
     var selPartners = {};

@@ -64,7 +64,7 @@ def main():
         start = time.monotonic()
         i = 0
         # unwrap yaw so it's monotonically comparable to target_yaw even
-        # though the page's own yaw value doesn't wrap (it just keeps
+        # though the page's own yaw value doesn't wrap (it keeps
         # increasing/decreasing per the code we read), so this is direct.
         while True:
             elapsed = time.monotonic() - start
