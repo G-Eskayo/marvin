@@ -473,17 +473,40 @@
   // different node to the edge. Sketched 2026-07-17, implemented same day
   // after a live report of nodes clipping past the bottom of the screen.
   var fitScale = 1;
-  var FIT_MARGIN_X = 0.44, FIT_MARGIN_Y = 0.40; // fraction of W/H used as the target ellipse's half-axes
+  // Fraction of the live W/H used as the target ellipse's half-axes — 0.49,
+  // not 0.5, only to keep the boundary a hair inside the true pixel edge
+  // (floating-point/rounding at an exact 0-or-W/H coordinate would clip a
+  // 1px sliver); functionally this is "the screen's own dimensions", not a
+  // fixed size, since W/H are read live from the canvas every frame.
+  var FIT_MARGIN_X = 0.49, FIT_MARGIN_Y = 0.49;
+  function ratioOf(sx, sy) {
+    var dx = (sx - W / 2) / fitScale, dy = (sy - H / 2) / fitScale; // divide out the current fitScale already baked into sx/sy
+    return Math.max(Math.abs(dx) / (W * FIT_MARGIN_X), Math.abs(dy) / (H * FIT_MARGIN_Y));
+  }
   function computeTargetFitScale() {
     var maxRatio = 0;
     for (var i = 0; i < allNodes.length; i++) {
       var nd = allNodes[i];
       if (nd.cat !== "root" && nd.cat !== "skills-trunk" && !activeCats[nd.cat]) continue;
-      var p = project(swayedPos(nd)); // project() already applies the current fitScale — divide it back out
-      var dx = (p.sx - W / 2) / fitScale, dy = (p.sy - H / 2) / fitScale;
-      var ratio = Math.max(Math.abs(dx) / (W * FIT_MARGIN_X), Math.abs(dy) / (H * FIT_MARGIN_Y));
-      if (ratio > maxRatio) maxRatio = ratio;
+      var p = project(swayedPos(nd));
+      var r = ratioOf(p.sx, p.sy);
+      if (r > maxRatio) maxRatio = r;
     }
+    // Synapse curves bow outward from the straight line between their two
+    // nodes (see curveMid()) — up to 70px past both endpoints. Checking
+    // only node positions above missed this entirely: a curve near the
+    // edge could bulge past the boundary with both connected nodes still
+    // safely inside it. Confirmed 2026-07-17 by live report of visible
+    // escapes despite nodes themselves converging correctly.
+    synapses.forEach(function (s) {
+      var na = byId[s.a], nb = byId[s.b];
+      if (!na || !nb) return;
+      if ((na.cat !== "root" && !activeCats[na.cat]) || (nb.cat !== "root" && !activeCats[nb.cat])) return;
+      var pa = project(swayedPos(na)), pb = project(swayedPos(nb));
+      var mid = curveMid(pa, pb);
+      var r = ratioOf(mid.sx, mid.sy);
+      if (r > maxRatio) maxRatio = r;
+    });
     return maxRatio <= 1e-6 ? 1 : Math.min(1, 1 / maxRatio);
   }
 
