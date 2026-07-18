@@ -1,5 +1,9 @@
 # Diagnose — Retrospective
 
+## 2026-07-17 — DesktopLive verification pass (post-Motion deploy)
+**I:** Two new gotcha classes added, both confirmed via live demo run (real `activity.jsonl`/`demo-events.jsonl` triggers, not synthetic): (1) a "cause" animation (pulse) tuned shorter than its "effect" animation (camera move) makes the effect read as unmotivated once the cause fades out mid-move — fix by tuning the cause to outlast the effect, not just roughly match it; (2) widening a shared instrumentation trigger (the generic heartbeat pulse) for one consumer's benefit silently changed behavior for another consumer (camera-nudge) sharing that same signal — fix by splitting consumers onto the specific condition each needs.
+**S:** Live-verifying against real trigger files (not synthetic events) caught the timing mismatch that a synthetic/isolated test of either animation alone would have missed — the bug only shows up when both animations run together in real sequence.
+
 ## 2026-07-17 — Motion physics deploy to brain-map/DesktopLive (pulses, camera nudges, fitScale)
 **I:** Confirmed gotcha class (second occurrence, matches an earlier camera-rotation bug): a JS animation library's high-level `animate()` relies on `requestAnimationFrame`, which is suspended for windows rendered at the desktop-wallpaper level, even while a separate native (Swift `NSTimer`-driven) loop keeps ticking. Fix is the same both times — call the library's low-level `spring()` generator directly and sample it manually from the existing native loop, never the high-level rAF-based helper.
 **S:** Verification-by-measurement (yaw-delta comparison for the camera fix, frame-by-frame spring-curve sampling for pulse intensity, pixel-bounds convergence for `fitScale`) caught what visual inspection alone would have missed, and gave a concrete way to confirm the fix rather than "looks right." Worth repeating for any wallpaper-mode animation work.
