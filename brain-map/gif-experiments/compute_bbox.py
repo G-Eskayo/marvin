@@ -20,7 +20,7 @@ def content_bbox(frame_dir, sample_every=10, threshold=42, edge_exclude=0):
             mask[:, :edge_exclude] = False
             mask[:, -edge_exclude:] = False
         ys, xs = np.where(mask)
-        if len(xs) == 0:
+        if not len(xs):
             continue
         x0, x1 = xs.min(), xs.max()
         y0, y1 = ys.min(), ys.max()
