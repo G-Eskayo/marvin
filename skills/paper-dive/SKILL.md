@@ -150,6 +150,13 @@ run. If the traversal's cost ceiling is reached before it naturally runs out of 
 find, it pauses and asks whether to keep going rather than silently stopping.
 Design record: `~/.agents/docs/adr/0007`–`0011`.
 
+**Known gotcha**: the blended SPECTER2 + nomic-embed score ranks by semantic similarity, not
+domain correctness — it will occasionally surface a paper from a completely unrelated field (e.g.
+a medicine-journal DOI turning up in an LLM-security graph) because the embedding happened to land
+close. Treat any result from a visibly different field than the seed paper as a probable
+false positive and flag it for manual verification before citing, rather than trusting the score
+ranking alone. (Observed 2026-07-22 via `build_bibliography.py`, which shares this scoring path.)
+
 ### `/challenge`
 Switch to stress-test mode. The skill actively finds holes:
 - What is the weakest assumption in the paper?
