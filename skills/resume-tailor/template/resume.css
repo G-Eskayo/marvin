@@ -1,0 +1,258 @@
+/* Resume Tailor — WeasyPrint stylesheet
+   Targets post-processed markdown-it HTML output (see render_pdf.py's _annotate_sections
+   and _tag_section_paragraphs): .header/.header-left/.header-right/.name/.title/.contact/
+   .summary/.salutation wrap the raw h1/p tags; h2 = section headers (identical styling
+   for every section — no per-section color exception); .role-header = Experience
+   company/title lines; .entry-title = Projects name/tech-stack lines; p/li = body text.
+   Visual spec: US Letter. Base sizes below are the "full" step of the auto-shrink-to-fit
+   ladder in render_pdf.py — that script layers !important overrides on top of these as
+   needed, it does not touch this file.
+   See docs/design.md §7 and docs/architecture.md ADR-006/007/008/009 for rationale. */
+
+/* No custom @font-face: the previous "Inter" declaration claimed to cover
+   font-weight 100-900 and normal style, but the linked file is a single
+   static regular-weight, non-italic instance. WeasyPrint matched every
+   bold/italic request to that one file anyway (the declared range said it
+   qualified) instead of falling through to a font that actually has bold/
+   italic faces — so every <strong>/<em> in the document silently rendered
+   as plain regular text, discovered 2026-07-02 when checking why bold
+   project titles weren't visually distinct. System fonts have real bold/
+   italic faces and skip a network fetch on first render (offline-safe,
+   faster) — see docs/design.md §9 "Font decision", previously an open
+   item. */
+
+@page {
+  size: letter;
+  margin: 0.6in 0.65in;
+}
+
+/* Full reset */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 10pt;
+  line-height: 1.3;
+  color: #000;
+}
+
+/* ─── ACCENT COLOR ───────────────────────────────────────────────────────
+   Low-stakes aesthetic choice (no strong evidence for "blue = friendlier" —
+   see architecture.md ADR-007). Zero ATS risk: parsers read the text stream,
+   not pixel color. Used sparingly — name + section-header rule only. Body
+   copy stays black for print contrast and to keep the accent from reading
+   as decoration rather than structure. */
+:root {
+  /* WeasyPrint 69 has partial custom-property support; values are also
+     hardcoded below for reliability rather than relied on via var(). */
+}
+
+/* ─── HEADER ─────────────────────────────────────────────────────────────
+   Two-column flex layout (resume): name+title left, contact links right.
+   Bounded exception to the single-column body rule — see ADR-008. The
+   underlying text order in the wrapped HTML stays linear (name → title →
+   contact), so this does not affect ATS text extraction, only visual
+   position. Cover letter uses the same header block classes but in a
+   single-column (non-flex) arrangement — see .cover-header below. */
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 6pt;
+}
+
+.header-left {
+  display: flex;
+  flex-direction: column;
+}
+
+.header-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  text-align: right;
+}
+
+.name {
+  font-size: 20pt;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #1c4b82;
+  margin-bottom: 1pt;
+}
+
+.title {
+  font-size: 9.5pt;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: #000;
+}
+
+.contact {
+  font-size: 8.5pt;
+  color: #000;
+  margin-bottom: 1pt;
+}
+
+/* Cover letter: single-column header, left-aligned, no flex split */
+.header.cover-header {
+  display: block;
+  margin-bottom: 14pt;
+}
+
+.header.cover-header .name {
+  font-size: 13pt;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.header.cover-header .contact {
+  font-size: 11pt;
+  margin-bottom: 0;
+}
+
+/* ─── SUMMARY (resume: first p after .header) ───────────────────────────── */
+
+.summary {
+  font-size: 10pt;
+  line-height: 1.35;
+  margin-bottom: 4pt;
+}
+
+/* ─── SALUTATION (cover letter: "Dear ..." line after .header) ─────────── */
+
+.salutation {
+  margin-bottom: 11pt;
+}
+
+/* ─── SECTION HEADERS (h2) ────────────────────────────────────────────────
+   The only divider mechanism in the document — no manual <hr> in the
+   template (see ADR-009). Applies uniformly to every section, so there's
+   no way for one section to accidentally end up without a break like the
+   old hand-placed-hr approach allowed.
+   Divider uses box-shadow, not border-bottom: WeasyPrint hairline borders
+   can land on different sub-pixel Y-offsets depending on how much content
+   precedes them, rendering some crisper/thinner than others (observed under
+   Soft Skills/Achievements, which had less preceding content than sections
+   like Experience). box-shadow renders as a filled rectangle, not a stroked
+   border, so it isn't subject to that anti-aliasing variance. */
+
+/* Revised 2026-07-02: every h2 gets the same blue accent color — a special
+   color just for PROJECTS read as inconsistent rather than "prioritized"
+   (direct user feedback). One consistent rule for all section headers;
+   Projects' visual priority now comes entirely from .entry-title below
+   (larger/bolder project names), not from singling out its header color. */
+h2 {
+  font-size: 8.5pt;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: #1c4b82;
+  box-shadow: 0 1pt 0 0 #1c4b82;
+  padding-bottom: 2.5pt;
+  margin-top: 8pt;
+  margin-bottom: 3pt;
+}
+
+/* ─── BODY PARAGRAPHS (experience bullets, skill lines, etc.) ─────────── */
+
+p {
+  font-size: 10pt;
+  line-height: 1.3;
+  margin-bottom: 2pt;
+}
+
+p strong {
+  font-weight: 600;
+}
+
+p em {
+  font-style: italic;
+}
+
+/* ─── EXPERIENCE ROLE HEADER (bold company + italic title/dates line) ───
+   One line per company, distinct from body text but subordinate to
+   Projects entry titles — see design.md §7.1 for the bold/italic system. */
+
+.role-header {
+  font-size: 10pt;
+  margin-top: 5pt;
+  margin-bottom: 1.5pt;
+}
+
+.role-header strong {
+  font-weight: 700;
+}
+
+.role-header em {
+  font-style: italic;
+  font-weight: 400;
+  color: #333;
+}
+
+/* ─── PROJECTS ENTRY TITLE (bold project name + italic tech/date subtitle)
+   Largest bold text outside the header/name — Projects is the resume's
+   highest-priority section, this is what makes that legible at a glance
+   instead of reading as one continuous bulleted list. */
+
+.entry-title {
+  font-size: 11pt;
+  font-weight: 700;
+  margin-top: 6pt;
+  margin-bottom: 1.5pt;
+}
+
+.entry-title strong {
+  font-weight: 700;
+}
+
+.entry-title em {
+  font-size: 9pt;
+  font-weight: 400;
+  font-style: italic;
+  color: #333;
+}
+
+/* ─── UNORDERED LISTS (used for training/achievements if formatted as -) */
+
+ul {
+  padding-left: 12pt;
+  margin-bottom: 2pt;
+}
+
+li {
+  font-size: 10pt;
+  line-height: 1.3;
+  margin-bottom: 1.5pt;
+}
+
+li strong {
+  font-weight: 600;
+}
+
+/* ─── COVER LETTER OVERRIDES ─────────────────────────────────────────── */
+
+body.cover-letter {
+  font-size: 11pt;
+  line-height: 1.5;
+}
+
+body.cover-letter p {
+  font-size: 11pt;
+  margin-bottom: 11pt;
+}
+
+/* Fallback divider styling in case a manual <hr> ever appears in content
+   (the standard template no longer includes any — ADR-009) */
+hr {
+  border: none;
+  border-top: 0.5pt solid #1c4b82;
+  margin: 4pt 0;
+}
