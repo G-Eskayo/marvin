@@ -75,10 +75,10 @@ MIN_FILL_RATIO = 0.85
 
 # Below this fraction — and only when the ladder never even needed to shrink
 # below the 13pt ceiling to fit 1 page, i.e. content was never close to
-# overflowing — the gap isn't just "add a bullet," it's a sign master.md may
+# overflowing — the gap isn't "add a bullet," it's a sign master.md may
 # not have enough genuinely JD-relevant, curated content to fill a resume
 # for this role at all. Added 2026-07-02 per user direction: surface that as
-# an honest fit signal, not just a formatting suggestion. Not a hard block —
+# an honest fit signal, not a formatting suggestion. Not a hard block —
 # FR-11 still ignores years-of-experience by design — but worth a stronger
 # flag than "add a project."
 CANDIDACY_FLAG_RATIO = 0.65
