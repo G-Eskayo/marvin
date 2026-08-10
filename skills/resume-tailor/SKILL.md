@@ -183,10 +183,10 @@ Run:
   ~/.claude/resume/tailored/[slug]-[date]/resume.pdf
 ```
 
-**Read stderr, not just stdout.** The renderer's auto-fit (architecture.md ADR-006) prints one of three things worth surfacing to Giles, not silently swallowing:
+**Read stderr, not just stdout.** The renderer's auto-fit (architecture.md ADR-006) prints one of three things worth surfacing to Gil, not silently swallowing:
 - `WARNING: content still spans N pages...` — content overflows even at the smallest legible size. Trim content.
 - `NOTE: page is only ~X% full...` — content is sparse but plausibly fixable. Suggest the next-strongest Project from master.md or expanding an existing entry.
-- `FLAG: page is only ~X% full even at the 13pt ceiling...` — **added 2026-07-02, per explicit user direction.** Content was never close to overflowing at any size in the ladder. Surface this directly and honestly: this isn't a formatting gap, it's a signal that master.md may not have enough genuinely JD-relevant content for this role. Say so plainly and let Giles make the call on whether to proceed — don't pad the resume to hide it, and don't silently proceed as if the sparse output were normal.
+- `FLAG: page is only ~X% full even at the 13pt ceiling...` — **added 2026-07-02, per explicit user direction.** Content was never close to overflowing at any size in the ladder. Surface this directly and honestly: this isn't a formatting gap, it's a signal that master.md may not have enough genuinely JD-relevant content for this role. Say so plainly and let Gil make the call on whether to proceed — don't pad the resume to hide it, and don't silently proceed as if the sparse output were normal.
 
 ### Phase 6: Cover Letter (if requested)
 
@@ -217,7 +217,7 @@ PARAGRAPH 2 — STRONGEST MATCH (4–5 sentences)
   Use the JD's own language where it fits naturally.
 
 PARAGRAPH 3 — UNIQUE ANGLE (3–4 sentences)
-  What Giles brings that a typical candidate doesn't.
+  What Gil brings that a typical candidate doesn't.
   Lead with aerospace + CS crossover if JD has any engineering/systems angle.
   Otherwise: MARVIN (self-directed agentic systems project), cross-disciplinary builder mentality,
   shipped public work.
@@ -235,6 +235,15 @@ Then render:
   ~/.claude/resume/tailored/[slug]-[date]/cover-letter.pdf \
   --cover-letter
 ```
+
+### Phase 6b: Mirror & Open
+
+Gil works in a terminal-based Claude Code session — there is no GUI panel for SendUserFile to render into, and `~/.claude/resume/tailored/` is a hidden dot-folder he can't browse to in Finder. So every render in Phase 5/6 must also be mirrored somewhere visible and opened directly:
+
+1. Copy the rendered PDF(s) to `~/Documents/Career/Resumes/Applications/[Company Name] - [Job Title] - [YYYY-MM-DD].pdf` (and `... cover-letter.pdf` if generated) — `mkdir -p` the folder if needed.
+2. Run `open` on each copied PDF so it appears on screen without Gil having to navigate anywhere.
+
+Do this after every resume/cover-letter render, not just on request.
 
 ### Phase 7: Package Summary
 

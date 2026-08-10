@@ -187,7 +187,7 @@ PARAGRAPH 2 — STRONGEST MATCH (4–5 sentences)
   words, not synthesized-sounding facts.
 
 PARAGRAPH 3 — UNIQUE ANGLE (3–4 sentences)
-  What Giles brings that a typical candidate doesn't.
+  What Gil brings that a typical candidate doesn't.
   Lead with the aerospace + CS crossover when JD has any engineering/systems angle.
   Otherwise: the self-directed MARVIN project, the cross-disciplinary background,
   the builder mentality with shipped public work.
@@ -348,7 +348,7 @@ Ambiguous = same company + overlapping dates but different title or significantl
 
 ## 9. Open Items (resolve before implementation)
 
-- [ ] **Template approved** — Giles reviews §6 sample, confirms or requests changes
+- [ ] **Template approved** — Gil reviews §6 sample, confirms or requests changes
 - [ ] **Resumes uploaded** — format refined to match newer resume style
 - [ ] **Transcript uploaded** — aerospace courses extracted into master
 - [ ] **Location** — confirm city/state for frontmatter header

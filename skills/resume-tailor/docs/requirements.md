@@ -185,7 +185,7 @@ This was direct user feedback 2026-07-02 — sections had drifted into inconsist
 
 The output template is treated as a locked design asset once approved. Workflow:
 1. Prototype samples are shown in the design doc and during development
-2. Giles uploads existing resumes; format is refined to match the newer ones
+2. Gil uploads existing resumes; format is refined to match the newer ones
 3. Explicit approval ("this looks right") locks the template
 4. No template changes without explicit re-approval
 
