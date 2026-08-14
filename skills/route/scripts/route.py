@@ -19,6 +19,9 @@ import os
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+import intent_classify  # noqa: E402
+
 # ── routing table ─────────────────────────────────────────────────────────────
 
 INTENTS: dict[str, dict] = {
@@ -108,6 +111,27 @@ def classify(description: str) -> tuple[str, int]:
     return (best if hits >= MIN_HITS else DEFAULT_INTENT), hits
 
 
+def resolve_intent(description: str, use_embed: bool) -> tuple[str, float | int, str]:
+    """Return (intent, score_or_hits, method). method is one of:
+    'keyword' (default classifier, --embed not set), 'embed' (embedding classifier
+    matched confidently, or reported no_match -> DEFAULT_INTENT), or 'keyword-fallback'
+    (embedding classifier unavailable -- Ollama/ChromaDB unreachable -- fell back to
+    the keyword classifier). See ADR 0023: fixed threshold, flag-gated burn-in, v1.
+    """
+    if not use_embed:
+        intent, hits = classify(description)
+        return intent, hits, "keyword"
+
+    result = intent_classify.classify(description)
+    if result["status"] == "ok":
+        return result["intent"], result["score"], "embed"
+    if result["status"] == "no_match":
+        return DEFAULT_INTENT, 0, "embed"
+
+    intent, hits = classify(description)
+    return intent, hits, "keyword-fallback"
+
+
 # ── display ───────────────────────────────────────────────────────────────────
 
 def _launch_cmd(intent: str) -> str:
@@ -119,9 +143,16 @@ def _launch_cmd(intent: str) -> str:
     return " ".join(parts)
 
 
-def print_routing(intent: str, description: str, hits: int) -> None:
+def print_routing(intent: str, description: str, hits, method: str = "keyword") -> None:
     cfg = INTENTS[intent]
-    reason = "(explicit)" if not description else f"({hits} keyword hits)"
+    if not description:
+        reason = "(explicit)"
+    elif method == "embed":
+        reason = f"(embed match, score {hits})"
+    elif method == "keyword-fallback":
+        reason = f"({hits} keyword hits, embed unavailable)"
+    else:
+        reason = f"({hits} keyword hits)"
     model_str = cfg["model"] or "default (Sonnet)"
     print(f"""
 intent:    {intent}  {reason}
@@ -208,7 +239,7 @@ def launch(intent: str) -> None:
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
-def main() -> None:
+def _build_arg_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         description="Classify a task and route to the optimal Claude profile + model.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -218,9 +249,24 @@ def main() -> None:
     ap.add_argument("--launch", action="store_true", help="exec claude with the routed settings")
     ap.add_argument("--table", action="store_true", help="print the full routing table and exit")
     ap.add_argument("--aliases", action="store_true", help="print shell alias definitions and exit")
+    ap.add_argument(
+        "--keyword", action="store_true",
+        help="use the old keyword classifier instead of the embedding classifier "
+             "(ADR 0023 default since 2026-08-13, bench/RESULTS.md Run 21: 70% "
+             "held-out accuracy vs. keyword's 25%)",
+    )
     # explicit intent overrides
     for intent in INTENTS:
         ap.add_argument(f"--{intent}", action="store_true", help=f"force {intent} routing")
+    return ap
+
+
+def _use_embed(args: argparse.Namespace) -> bool:
+    return not args.keyword
+
+
+def main() -> None:
+    ap = _build_arg_parser()
     args = ap.parse_args()
 
     if args.table:
@@ -234,15 +280,15 @@ def main() -> None:
     # explicit intent flag overrides classifier
     forced = next((i for i in INTENTS if getattr(args, i, False)), None)
     if forced:
-        intent, hits = forced, -1
+        intent, hits, method = forced, -1, "explicit"
     elif args.task:
-        intent, hits = classify(args.task)
+        intent, hits, method = resolve_intent(args.task, use_embed=_use_embed(args))
     else:
         # no task given and no explicit flag — show the table
         print_table_proper()
         return
 
-    print_routing(intent, args.task, hits)
+    print_routing(intent, args.task, hits, method)
 
     if args.launch:
         launch(intent)
