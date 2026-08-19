@@ -106,7 +106,7 @@ def test_no_git_operations_happen_when_not_passing(repo_with_worktree):
 def test_commits_and_pushes_branch_when_passing(repo_with_worktree):
     mrr.raise_mr(
         "G-Eskayo/marvin#1", _passing_result(repo_with_worktree),
-        open_pr=lambda *a: "http://fake-pr", comment_on_ticket=lambda *a: None,
+        open_pr=lambda *a: "http://fake-pr", comment_on_ticket=lambda *a: None, notify=lambda *a: None,
     )
     ls_remote = subprocess.run(
         ["git", "ls-remote", "--heads", "origin", "pipeline/ticket-1"],
@@ -120,7 +120,7 @@ def test_no_error_when_worktree_already_committed(repo_with_worktree):
     _run(["git", "commit", "-q", "-m", "pre-committed"], cwd=repo_with_worktree)
     result = mrr.raise_mr(
         "G-Eskayo/marvin#1", _passing_result(repo_with_worktree),
-        open_pr=lambda *a: "http://fake-pr", comment_on_ticket=lambda *a: None,
+        open_pr=lambda *a: "http://fake-pr", comment_on_ticket=lambda *a: None, notify=lambda *a: None,
     )
     assert result["raised"] is True
 
@@ -138,7 +138,7 @@ def test_open_pr_called_with_ticket_branch_and_comparison(repo_with_worktree):
 
     mrr.raise_mr(
         "G-Eskayo/marvin#1", _passing_result(repo_with_worktree),
-        open_pr=open_pr, comment_on_ticket=lambda *a: None,
+        open_pr=open_pr, comment_on_ticket=lambda *a: None, notify=lambda *a: None,
     )
     assert captured["ticket_ref"] == "G-Eskayo/marvin#1"
     assert captured["branch"] == "pipeline/ticket-1"
@@ -152,6 +152,7 @@ def test_comment_on_ticket_called_with_ticket_and_pr_url(repo_with_worktree):
         "G-Eskayo/marvin#1", _passing_result(repo_with_worktree),
         open_pr=lambda *a: "http://fake-pr-url",
         comment_on_ticket=lambda ticket_ref, pr_url: captured.update(ticket_ref=ticket_ref, pr_url=pr_url),
+        notify=lambda *a: None,
     )
     assert captured["ticket_ref"] == "G-Eskayo/marvin#1"
     assert captured["pr_url"] == "http://fake-pr-url"
@@ -160,11 +161,35 @@ def test_comment_on_ticket_called_with_ticket_and_pr_url(repo_with_worktree):
 def test_returns_raised_true_with_pr_url_on_success(repo_with_worktree):
     result = mrr.raise_mr(
         "G-Eskayo/marvin#1", _passing_result(repo_with_worktree),
-        open_pr=lambda *a: "http://fake-pr-url", comment_on_ticket=lambda *a: None,
+        open_pr=lambda *a: "http://fake-pr-url", comment_on_ticket=lambda *a: None, notify=lambda *a: None,
     )
     assert result["raised"] is True
     assert result["pr_url"] == "http://fake-pr-url"
     assert result["reason"] is None
+
+
+# ── notify hook (G-Eskayo/marvin#5) ─────────────────────────────────────────
+
+def test_notify_called_with_ticket_and_pr_url_on_success(repo_with_worktree):
+    captured = {}
+
+    mrr.raise_mr(
+        "G-Eskayo/marvin#1", _passing_result(repo_with_worktree),
+        open_pr=lambda *a: "http://fake-pr-url", comment_on_ticket=lambda *a: None,
+        notify=lambda ticket_ref, pr_url: captured.update(ticket_ref=ticket_ref, pr_url=pr_url),
+    )
+    assert captured["ticket_ref"] == "G-Eskayo/marvin#1"
+    assert captured["pr_url"] == "http://fake-pr-url"
+
+
+def test_notify_not_called_when_not_passing(repo_with_worktree):
+    calls = []
+    mrr.raise_mr(
+        "G-Eskayo/marvin#1", _failing_result(repo_with_worktree),
+        open_pr=lambda *a: "http://fake", comment_on_ticket=lambda *a: None,
+        notify=lambda *a: calls.append(a),
+    )
+    assert calls == []
 
 
 # ── default gh-backed hooks (mocked subprocess, no real API calls) ──────────
