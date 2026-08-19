@@ -17,8 +17,12 @@ committed) is testable without hitting the real GitHub API.
 """
 from __future__ import annotations
 import subprocess
+import sys
 from pathlib import Path
 from typing import Callable
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from mr_notification import notify_mr_ready as _default_notify_mr_ready  # noqa: E402
 
 
 def _current_branch(worktree_path: Path) -> str:
@@ -82,6 +86,7 @@ def raise_mr(
     execution_result: dict,
     open_pr: Callable[[str, str, dict], str] | None = None,
     comment_on_ticket: Callable[[str, str], None] | None = None,
+    notify: Callable[[str, str], dict] | None = None,
 ) -> dict:
     """Given sandbox_orchestration.execute_ticket's result, raise a PR only
     if verification passed. Returns {"raised", "pr_url", "reason"}."""
@@ -94,11 +99,13 @@ def raise_mr(
 
     open_pr = open_pr or _default_open_pr
     comment_on_ticket = comment_on_ticket or _default_comment_on_ticket
+    notify = notify or _default_notify_mr_ready
 
     worktree_path = execution_result["worktree_path"]
     branch = _commit_and_push(worktree_path, ticket_ref)
 
     pr_url = open_pr(ticket_ref, branch, execution_result["final_comparison"])
     comment_on_ticket(ticket_ref, pr_url)
+    notify(ticket_ref, pr_url)
 
     return {"raised": True, "pr_url": pr_url, "reason": None}
