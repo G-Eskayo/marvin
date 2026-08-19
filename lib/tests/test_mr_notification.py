@@ -13,16 +13,25 @@ import mr_notification as mn  # noqa: E402
 
 def test_sends_desktop_notification_when_raised(monkeypatch):
     desktop_calls = []
-    monkeypatch.setattr(mn, "desktop_notify", lambda title, msg: desktop_calls.append((title, msg)))
+    monkeypatch.setattr(mn, "desktop_notify", lambda title, msg, **kw: desktop_calls.append((title, msg)))
     monkeypatch.setattr(mn, "push_notify", lambda msg: None)
 
     mn.notify_mr_ready("G-Eskayo/marvin#1", "https://github.com/G-Eskayo/marvin/pull/99")
     assert len(desktop_calls) == 1
 
 
+def test_desktop_notification_click_opens_the_pr(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(mn, "desktop_notify", lambda title, msg, **kw: captured.update(kw))
+    monkeypatch.setattr(mn, "push_notify", lambda msg: None)
+
+    mn.notify_mr_ready("G-Eskayo/marvin#1", "https://github.com/G-Eskayo/marvin/pull/99")
+    assert captured.get("open_target") == "https://github.com/G-Eskayo/marvin/pull/99"
+
+
 def test_message_identifies_ticket_and_is_concise(monkeypatch):
     captured = {}
-    monkeypatch.setattr(mn, "desktop_notify", lambda title, msg: captured.update(title=title, msg=msg))
+    monkeypatch.setattr(mn, "desktop_notify", lambda title, msg, **kw: captured.update(title=title, msg=msg))
     monkeypatch.setattr(mn, "push_notify", lambda msg: None)
 
     mn.notify_mr_ready("G-Eskayo/marvin#1", "https://github.com/G-Eskayo/marvin/pull/99")
@@ -32,7 +41,7 @@ def test_message_identifies_ticket_and_is_concise(monkeypatch):
 
 def test_attempts_push_notification_too(monkeypatch):
     push_calls = []
-    monkeypatch.setattr(mn, "desktop_notify", lambda title, msg: None)
+    monkeypatch.setattr(mn, "desktop_notify", lambda title, msg, **kw: None)
     monkeypatch.setattr(mn, "push_notify", lambda msg: push_calls.append(msg))
 
     mn.notify_mr_ready("G-Eskayo/marvin#1", "https://github.com/G-Eskayo/marvin/pull/99")
@@ -41,7 +50,7 @@ def test_attempts_push_notification_too(monkeypatch):
 
 def test_push_notification_failure_does_not_raise_or_block_desktop(monkeypatch):
     desktop_calls = []
-    monkeypatch.setattr(mn, "desktop_notify", lambda title, msg: desktop_calls.append((title, msg)))
+    monkeypatch.setattr(mn, "desktop_notify", lambda title, msg, **kw: desktop_calls.append((title, msg)))
 
     def failing_push(msg):
         raise RuntimeError("simulated failure")
@@ -56,7 +65,7 @@ def test_push_notification_failure_does_not_raise_or_block_desktop(monkeypatch):
 
 
 def test_returns_status_dict(monkeypatch):
-    monkeypatch.setattr(mn, "desktop_notify", lambda title, msg: None)
+    monkeypatch.setattr(mn, "desktop_notify", lambda title, msg, **kw: None)
     monkeypatch.setattr(mn, "push_notify", lambda msg: None)
 
     result = mn.notify_mr_ready("G-Eskayo/marvin#1", "https://github.com/G-Eskayo/marvin/pull/99")

@@ -50,7 +50,7 @@ def notify_mr_ready(ticket_ref: str, pr_url: str) -> dict:
 
     desktop_sent = False
     try:
-        desktop_notify("MARVIN: MR ready for review", message)
+        desktop_notify("MARVIN: MR ready for review", message, open_target=pr_url)
         desktop_sent = True
     except Exception:
         pass
