@@ -171,7 +171,8 @@ def generate() -> Path | None:
     if _SAFETY_MONITOR_AVAILABLE and not pass_or_quarantine(body, loop_name="research_colony", source_context=prompt):
         print(f"[colony] digest quarantined by safety-monitor — see ~/.claude/quarantine.md",
               file=sys.stderr)
-        notify("MARVIN research-colony quarantined", "Today's research digest was flagged for review — check ~/.claude/quarantine.md")
+        notify("MARVIN research-colony quarantined", "Today's research digest was flagged for review — check ~/.claude/quarantine.md",
+               open_target=str(Path.home() / ".claude" / "quarantine.md"))
         body = (
             "_Quarantined by safety-monitor before shipping — flagged as risky "
             "against the research_colony rubric. See `~/.claude/quarantine.md` "

@@ -310,7 +310,8 @@ def main() -> None:
     already_failed = content.startswith("(claude call failed:")
     if _SAFETY_MONITOR_AVAILABLE and not already_failed and not pass_or_quarantine(content, loop_name="daily_digest", source_context=prompt):
         print("[daily-digest] content quarantined by safety-monitor — see ~/.claude/quarantine.md", flush=True)
-        notify("MARVIN daily-digest quarantined", "Today's digest was flagged for review — check ~/.claude/quarantine.md")
+        notify("MARVIN daily-digest quarantined", "Today's digest was flagged for review — check ~/.claude/quarantine.md",
+               open_target=str(Path.home() / ".claude" / "quarantine.md"))
         content = (
             "_Quarantined by safety-monitor before shipping — flagged as risky "
             "against the daily_digest rubric. See `~/.claude/quarantine.md` for "
