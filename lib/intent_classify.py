@@ -75,7 +75,7 @@ REFERENCE_EXAMPLES: dict[str, list[str]] = {
         # digest", "audit turned up"). Examples below sharpen the contrast
         # explicitly (our own past conversations/sessions, not external
         # research; a summary/log artifact, not a code change) rather than
-        # just adding more generic recall phrasing.
+        # adding more generic recall phrasing.
         "What did the last digest or summary say about this?",
         "Did the review we ran turn up anything on this before?",
         "Has this exact question come up in one of our own past conversations?",
@@ -147,7 +147,7 @@ REFERENCE_EXAMPLES: dict[str, list[str]] = {
         # Added Run 24 fast-follow (2026-08-13) -- three specific misses:
         # "add a --seed flag to X.py" losing to architecture (needs a flag
         # request paired explicitly with argument-parser implementation, not
-        # just "add a flag"), "write a unit test for the threshold fallback
+        # only "add a flag"), "write a unit test for the threshold fallback
         # path" losing to recall (needs test-writing paired with "fallback
         # path"/edge-case framing explicitly), "revert that last change, it
         # broke something" losing to recall (needs undo/rollback framed as an
