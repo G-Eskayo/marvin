@@ -177,7 +177,7 @@ def push(repo: Path) -> None:
     stuck = _stuck_from_previous_run(repo)
     if stuck:
         _log(repo, "push", f"REFUSING to run — {stuck}, needs manual resolution before push can proceed")
-        notify("MARVIN code-sync CONFLICT", f"Stuck from a previous run [{repo.name}] — check sync-log.md")
+        notify("MARVIN code-sync CONFLICT", f"Stuck from a previous run [{repo.name}] — check sync-log.md", open_target=str(LOG_PATH))
         return
 
     status = _git(repo, ["status", "--porcelain"])
@@ -194,7 +194,7 @@ def push(repo: Path) -> None:
     broken = _files_with_conflict_markers(repo, all_changed)
     if broken:
         _log(repo, "push", f"REFUSING to commit — conflict markers found in {len(broken)} file(s), needs manual resolution before this push can proceed:", broken)
-        notify("MARVIN code-sync CONFLICT", f"Refusing to commit broken content [{repo.name}] — check sync-log.md")
+        notify("MARVIN code-sync CONFLICT", f"Refusing to commit broken content [{repo.name}] — check sync-log.md", open_target=str(LOG_PATH))
         return
 
     # Write the log entry BEFORE committing, not after — so it's swept into
@@ -224,7 +224,7 @@ def push(repo: Path) -> None:
     clean, merge_output = _merge_remote(repo)
     if not clean:
         _log(repo, "push", f"CONFLICT merging remote after push rejection — local commit preserved, needs manual resolution:\n{merge_output}", changed_files)
-        notify("MARVIN code-sync CONFLICT", f"Push rejected and merge conflicted [{repo.name}] — check sync-log.md")
+        notify("MARVIN code-sync CONFLICT", f"Push rejected and merge conflicted [{repo.name}] — check sync-log.md", open_target=str(LOG_PATH))
         return
 
     retry_ok, retry_out = _git_ok(repo, ["push", "origin", "main"])
@@ -233,14 +233,14 @@ def push(repo: Path) -> None:
         notify("MARVIN code-sync", f"Pushed {len(changed_files)} file(s) from {label} [{repo.name}] (merged first)")
     else:
         _log(repo, "push", f"push failed even after merge retry:\n{retry_out}", changed_files)
-        notify("MARVIN code-sync FAILED", f"Push failed after retry [{repo.name}] — check sync-log.md")
+        notify("MARVIN code-sync FAILED", f"Push failed after retry [{repo.name}] — check sync-log.md", open_target=str(LOG_PATH))
 
 
 def pull(repo: Path) -> None:
     stuck = _stuck_from_previous_run(repo)
     if stuck:
         _log(repo, "pull", f"REFUSING to run — {stuck}, needs manual resolution before pull can proceed")
-        notify("MARVIN code-sync CONFLICT", f"Stuck from a previous run [{repo.name}] — check sync-log.md")
+        notify("MARVIN code-sync CONFLICT", f"Stuck from a previous run [{repo.name}] — check sync-log.md", open_target=str(LOG_PATH))
         return
 
     status = _git(repo, ["status", "--porcelain"])
@@ -256,7 +256,7 @@ def pull(repo: Path) -> None:
         if stashed:
             subprocess.run(["git", "stash", "pop"], cwd=repo, capture_output=True)
         _log(repo, "pull", f"CONFLICT merging origin/main — merge aborted, tree left clean:\n{merge_output}")
-        notify("MARVIN code-sync CONFLICT", f"Pull conflicted [{repo.name}] — check sync-log.md")
+        notify("MARVIN code-sync CONFLICT", f"Pull conflicted [{repo.name}] — check sync-log.md", open_target=str(LOG_PATH))
         return
 
     after = _git(repo, ["rev-parse", "HEAD"]).strip()
@@ -265,7 +265,7 @@ def pull(repo: Path) -> None:
         pop_ok, pop_out = _git_ok(repo, ["stash", "pop"])
         if not pop_ok:
             _log(repo, "pull", f"pulled cleanly, but restoring local WIP conflicted — stash preserved, resolve by hand (`git stash list` / `git stash pop`):\n{pop_out}")
-            notify("MARVIN code-sync CONFLICT", f"WIP restore conflicted after pull [{repo.name}] — check sync-log.md")
+            notify("MARVIN code-sync CONFLICT", f"WIP restore conflicted after pull [{repo.name}] — check sync-log.md", open_target=str(LOG_PATH))
             return
 
     if before == after and not stashed:

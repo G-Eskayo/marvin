@@ -164,6 +164,74 @@ then) — a real, current fragility, not a hypothetical one.
   triggering) and only acts if it hasn't, proceeding with whatever's available, same graceful-
   degradation behavior `cross_machine_merge.py` already has for a genuinely unreachable machine.
 
+## MR pipeline (in design, 2026-08-19)
+
+- **MR pipeline**: the mechanism by which MARVIN's own autonomous/background-initiated work (self-
+  improve sweeps, daily-digest/research-colony findings, anything that currently lands in
+  `suggestions.md`/`quarantine.md`) gets carried through requirements → design → tasks → sandboxed
+  implementation → a pull request, so Gil's review step becomes "approve/adjust/deny a real diff"
+  instead of "approve/adjust/deny a prose suggestion." Explicitly does **not** cover live,
+  interactive coding sessions — those stay direct-to-working-tree, since Gil is already hands-on by
+  definition whenever he's driving the conversation.
+- **Ticket backbone**: the MR pipeline's ticket layer is built on the existing, already-wired-but-
+  never-turned-on GitHub Issues system on the `~/.agents` repo (`G-Eskayo/marvin`), using the
+  `to-prd`/`to-issues`/`triage` skills as-is rather than a new bespoke store — `to-prd`'s User
+  Stories section, `to-issues`'s HITL/AFK tracer-bullet breakdown, and `triage`'s state machine
+  already cover most of what this pipeline needs; it extends rather than replaces them.
+- **Sandbox isolation** (tentative default, not explicitly re-confirmed after the conversation moved
+  to metrics — revisit if this turns out wrong): git worktree isolation (`EnterWorktree`/
+  `ExitWorktree`), not a full VM/container per run. Protects code; does NOT automatically protect
+  shared local state (ChromaDB collections, `settings.json`, launchd/cron) — a given ticket's
+  verification step is responsible for copying/stubbing whatever shared state it actually touches.
+- **Verification / trust mechanism**: before an MR is ever raised, the agent runs inside the sandbox
+  in a tune-and-compare loop against **per-subsystem living metrics files** (formalizing the
+  `bench/RESULTS.md` pattern route.py's classifier work already uses — baseline, change, re-measure,
+  iterate until it's actually better, not just different), indexed from one lightweight central
+  pointer file. This comparison is what makes the MR trustworthy regardless of which model produced
+  the diff — trust lives in the verification step, not in the model tier.
+- **Execution model tier**: flagship Claude models (Sonnet/Opus) handle planning (ticket → PRD →
+  design → tasks); execution of the tasks themselves defaults to **Haiku** for now (same harness,
+  ~60% cheaper, already wired via `route.py`'s routing table) — true local/Ollama-driven execution
+  is deliberately deferred to a v2 effort, since no tool-using harness exists yet that can drive an
+  arbitrary local model through file edits/tests/git (this is the same still-open
+  "model-adaptive harness" `[decision]` already sitting in `marvin-roadmap.md` §D). Not folding that
+  build into this pipeline's critical path.
+- **MR-ready notification**: uses the existing `PushNotification` tool (Remote-Control-connected →
+  pushes to Gil's phone) rather than a new dedicated bot — confirmed by Gil to already fire
+  correctly from cron-triggered background jobs, not just live interactive sessions. No Telegram/
+  WhatsApp bot needed unless this stops being sufficient later.
+- **Approve action**: the MR-approval dashboard is a trigger, not a queue — clicking approve fires
+  an n8n webhook that runs `gh pr merge` directly, no live Claude session required for the merge
+  itself. "Deny"/"adjust" are different in kind (judgment calls, not mechanical actions) and still
+  need their own resolution.
+- **Dashboard hosting, revised**: not Claude Artifacts (cloud-hosted) after all — Gil's direction is
+  a **natively-run app on both machines** (Mac Mini + MacBook Pro), since the metrics data is
+  already local; no reason to round-trip it through the cloud. The MR-review dashboard and the
+  metrics scorecard are converging toward **one app with multiple tabs**, explicitly expected to
+  grow a third tab for MARVIN activity/log detail and evolve into a general MARVIN health-check
+  monitor over time — purely functional (checking on what MARVIN is doing, legible to a lay person).
+  Distinct in purpose from `brain-map` (giving MARVIN a sense of life/growth to watch over time as a
+  companion visualization) — neither replaces the other, but they're allowed to converge or relate
+  as part of the same larger story of MARVIN over time, not walled off from each other by default.
+- **Dashboard tech stack**: Electron + React, matching [[project-finance-os]] (Gil's other native
+  app) — chosen specifically for cross-platform portability as more machines join MARVIN's known
+  devices, e.g. [[project-third-node-kali-hackintosh]]'s deferred Linux node. Portability applies to
+  the UI shell; the data layer underneath (launchd vs. a Linux scheduler, OS-specific paths) would
+  still need real per-OS handling whenever a non-macOS node actually comes online — not solved by
+  the framework choice alone.
+- **Ticket trigger**: `suggestions.md`/`quarantine.md` stay exactly as they are today — the cheap,
+  lightweight pre-ticket triage stage for every raw finding from `self-improve`/`daily_digest`/
+  `research-colony`. Promotion into a real GitHub ticket (which kicks off the full requirements →
+  design → sandbox → MR pipeline) reuses their **existing** priority sort and `tau` calibration as
+  the automated threshold — no new scoring mechanism to build, and no manual per-item "make this a
+  ticket" step, per Gil's direction to automate start-to-finish. Gil's real checkpoint stays the
+  MR-approval dashboard, not a pre-promotion gate.
+- **Guiding framing**: the whole pipeline is explicitly meant to work like the scientific method —
+  suggestion/quarantine finding = hypothesis, sandboxed execution = controlled experiment,
+  metrics-comparison (see Verification/trust mechanism above) = measurement, the MR = the write-up,
+  Gil's approve/deny = peer review. Not just a metaphor — it's the actual justification for why the
+  sandbox and the metrics-comparison step both exist as hard requirements, not nice-to-haves.
+
 ## Citation-graph knowledge base (in design, not yet built)
 
 - **Seed paper**: the paper a citation-graph traversal starts from — all relevance scoring is
