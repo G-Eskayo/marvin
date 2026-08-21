@@ -67,7 +67,7 @@ def test_winner_does_not_release():
 
 
 def test_loser_uses_ticket_claims_existing_release_not_new_mechanism(monkeypatch):
-    # resolve_collision's default release hook should literally be
+    # resolve_collision's default release hook should be
     # ticket_claim.release, not a reimplementation.
     import ticket_claim
     calls = []

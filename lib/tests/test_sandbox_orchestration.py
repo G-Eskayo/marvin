@@ -147,7 +147,7 @@ def test_stops_after_first_passing_comparison(git_repo, metrics_dir):
 
     def measure(wt):
         # first call = baseline, second call = post-executor measurement
-        return {"accuracy": _metric(0.7 if len(executor_calls) == 0 else 0.95)}
+        return {"accuracy": _metric(0.7 if not executor_calls else 0.95)}
 
     def executor(wt, ticket_ref, feedback):
         executor_calls.append(feedback)
