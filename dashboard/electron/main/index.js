@@ -4,7 +4,7 @@ import { existsSync } from 'fs'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { listSubsystems, readHistory, buildIndex } from './metrics.js'
-import { listPipelinePrs, approveMr } from './mr_review.js'
+import { listPipelinePrs, approveMr, fetchTicketContext } from './mr_review.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -23,6 +23,19 @@ async function listOpenPrs() {
     'open',
     '--json',
     'number,title,url,body'
+  ])
+  return JSON.parse(stdout)
+}
+
+async function ghIssueView(issueNumber) {
+  const { stdout } = await execFileAsync('gh', [
+    'issue',
+    'view',
+    String(issueNumber),
+    '--repo',
+    'G-Eskayo/marvin',
+    '--json',
+    'number,title,body'
   ])
   return JSON.parse(stdout)
 }
@@ -75,6 +88,11 @@ function registerMetricsHandlers() {
 
 function registerMrReviewHandlers() {
   ipcMain.handle('mr:list', () => listPipelinePrs(listOpenPrs))
+
+  // Live-fetches the linked ticket's (and its parent PRD's) requirements/
+  // design/tasks for the detail view, per the "link back, don't duplicate"
+  // decision in G-Eskayo/marvin#72's evidence schema (ADR 0024).
+  ipcMain.handle('mr:ticketContext', (_event, ticketRef) => fetchTicketContext(ticketRef, ghIssueView))
 
   // The actual "unambiguous, no risk of accidental merge from a stray click"
   // requirement (G-Eskayo/marvin#11's acceptance criteria) lives here, not in

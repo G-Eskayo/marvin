@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('api', {
     list: () => ipcRenderer.invoke('mr:list'),
     // Confirmation happens in the main process via a native dialog, not here --
     // see the comment on the mr:approve handler for why.
-    approve: (pr) => ipcRenderer.invoke('mr:approve', pr)
+    approve: (pr) => ipcRenderer.invoke('mr:approve', pr),
+    ticketContext: (ticketRef) => ipcRenderer.invoke('mr:ticketContext', ticketRef)
   }
 })
