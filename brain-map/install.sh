@@ -6,6 +6,8 @@ set -euo pipefail
 BRAIN_MAP_DIR="$HOME/.agents/brain-map"
 PLIST_SRC="$BRAIN_MAP_DIR/launchd/com.marvin.desktoplive.plist"
 PLIST_DEST="$HOME/Library/LaunchAgents/com.marvin.desktoplive.plist"
+RESTART_PLIST_SRC="$BRAIN_MAP_DIR/launchd/com.marvin.desktoplive-restart.plist"
+RESTART_PLIST_DEST="$HOME/Library/LaunchAgents/com.marvin.desktoplive-restart.plist"
 LOG_DIR="$HOME/.claude/logs"
 
 mkdir -p "$LOG_DIR"
@@ -55,9 +57,21 @@ fi
 cp "$PLIST_SRC" "$PLIST_DEST"
 launchctl bootstrap "gui/$(id -u)" "$PLIST_DEST"
 
+# Daily restart mitigates a long-uptime fitScale/camera drift bug (live-
+# diagnosed 2026-08-26, root cause not yet nailed down — see
+# ~/.claude/suggestions.md) rather than fixing it outright; unload/reinstall
+# the same way as the main agent above.
+if launchctl list | grep -q "com.marvin.desktoplive-restart"; then
+    launchctl bootout "gui/$(id -u)/com.marvin.desktoplive-restart" 2>/dev/null || true
+fi
+cp "$RESTART_PLIST_SRC" "$RESTART_PLIST_DEST"
+launchctl bootstrap "gui/$(id -u)" "$RESTART_PLIST_DEST"
+
 echo "✓ com.marvin.desktoplive installed."
 echo "  Runs at every login, restarts on crash. Logs → $LOG_DIR/desktoplive*.log"
 echo "  Regenerate the graph after skill changes: ~/.agents/venv/bin/python $BRAIN_MAP_DIR/generate.py"
 echo "  (this now also runs automatically via the rebuild-manifest hook — see architecture.md ADR notes)"
 echo "  Showcase without touching anything real: ~/.agents/venv/bin/python $BRAIN_MAP_DIR/demo.py"
+echo "✓ com.marvin.desktoplive-restart installed (daily 4am kill, KeepAlive above brings it back)."
 echo "  To uninstall: launchctl bootout gui/\$(id -u)/com.marvin.desktoplive && rm $PLIST_DEST"
+echo "                launchctl bootout gui/\$(id -u)/com.marvin.desktoplive-restart && rm $RESTART_PLIST_DEST"

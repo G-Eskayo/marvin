@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.marvin.desktoplive-restart</string>
+
+    <!-- Mitigation for a live-diagnosed 2026-08-26 bug: DesktopLive's fitScale
+         camera drifts to a wrongly zoomed-in/overlapping-labels state after
+         many days of continuous uptime (root cause not yet nailed down — see
+         the scoped suggestion in ~/.claude/suggestions.md). A daily kill is
+         enough: com.marvin.desktoplive's own KeepAlive relaunches it within
+         seconds, and a fresh process reliably renders correctly. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/pkill</string>
+        <string>-f</string>
+        <string>DesktopLive.app/Contents/MacOS/DesktopLive</string>
+    </array>
+
+    <!-- Run every day at 04:00 local time -- quiet hour, nobody's watching -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>4</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/gileskayo/.claude/logs/desktoplive-restart.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/gileskayo/.claude/logs/desktoplive-restart-error.log</string>
+
+    <!-- One-shot daily task, not a long-running process -->
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>
