@@ -104,6 +104,43 @@ export function parseTicketRef(body) {
   return match ? match[1] : null
 }
 
+function parseParentRef(body) {
+  const match = body.match(/##\s*Parent\s*\n+\s*(?:[\w.-]+\/[\w.-]+)?#(\d+)/i)
+  return match ? match[1] : null
+}
+
+// Fetches a ticket's own body (requirements/tasks) and, if it declares a
+// "## Parent", that parent PRD's body too (design/architecture) -- live,
+// via the injected ghIssueView, rather than duplicating either into the
+// PR itself (G-Eskayo/marvin#72's schema deliberately links back to the
+// ticket instead of restating it). Never throws: a missing/inaccessible
+// ticket or parent comes back as `null` in the result rather than
+// propagating the fetch error, so a stale or deleted reference doesn't
+// break the detail view around it.
+export async function fetchTicketContext(ticketRef, ghIssueView) {
+  let ticket = null
+  try {
+    ticket = await ghIssueView(ticketRef)
+  } catch {
+    ticket = null
+  }
+  if (!ticket) {
+    return { ticket: null, parent: null }
+  }
+
+  const parentRef = parseParentRef(ticket.body || '')
+  let parent = null
+  if (parentRef) {
+    try {
+      parent = await ghIssueView(parentRef)
+    } catch {
+      parent = null
+    }
+  }
+
+  return { ticket, parent }
+}
+
 export function parseEvidence(body) {
   const metrics = parseMetricsSection(extractSection(body, EVIDENCE_HEADERS.metrics))
   return {

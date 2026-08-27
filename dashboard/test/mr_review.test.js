@@ -3,6 +3,7 @@ import {
   hasEvidenceSchema,
   parseEvidence,
   parseTicketRef,
+  fetchTicketContext,
   listPipelinePrs,
   approveMr
 } from '../electron/main/mr_review.js'
@@ -178,5 +179,56 @@ describe('approveMr', () => {
     await expect(approveMr('https://x/71', 'http://localhost:7878/approve', post)).rejects.toThrow(
       'Webhook call failed: 500'
     )
+  })
+})
+
+describe('fetchTicketContext', () => {
+  const TICKET_WITH_PARENT_BODY = '## Parent\n\nG-Eskayo/marvin#72\n\n## What to build\n\nDo the thing.'
+  const TICKET_NO_PARENT_BODY = '## What to build\n\nDo the thing, no parent.'
+
+  it('fetches the ticket body when there is no parent reference', async () => {
+    const ghIssueView = vi.fn().mockResolvedValue({ number: 78, title: 'Ticket', body: TICKET_NO_PARENT_BODY })
+    const result = await fetchTicketContext('78', ghIssueView)
+    expect(ghIssueView).toHaveBeenCalledWith('78')
+    expect(ghIssueView).toHaveBeenCalledTimes(1)
+    expect(result.ticket.body).toBe(TICKET_NO_PARENT_BODY)
+    expect(result.parent).toBe(null)
+  })
+
+  it('also fetches the parent when the ticket declares "## Parent"', async () => {
+    const ghIssueView = vi.fn((ref) =>
+      ref === '78'
+        ? Promise.resolve({ number: 78, title: 'Ticket', body: TICKET_WITH_PARENT_BODY })
+        : Promise.resolve({ number: 72, title: 'PRD', body: '## Problem Statement\n\nThe problem.' })
+    )
+    const result = await fetchTicketContext('78', ghIssueView)
+    expect(ghIssueView).toHaveBeenCalledWith('78')
+    expect(ghIssueView).toHaveBeenCalledWith('72')
+    expect(result.ticket.number).toBe(78)
+    expect(result.parent.number).toBe(72)
+    expect(result.parent.body).toContain('Problem Statement')
+  })
+
+  it('returns null ticket and parent, without throwing, when the ticket fetch fails', async () => {
+    const ghIssueView = vi.fn().mockRejectedValue(new Error('gh: issue not found'))
+    const result = await fetchTicketContext('999', ghIssueView)
+    expect(result).toEqual({ ticket: null, parent: null })
+  })
+
+  it('returns a null parent, without throwing, when the parent fetch fails', async () => {
+    const ghIssueView = vi.fn((ref) =>
+      ref === '78'
+        ? Promise.resolve({ number: 78, title: 'Ticket', body: TICKET_WITH_PARENT_BODY })
+        : Promise.reject(new Error('gh: parent issue deleted'))
+    )
+    const result = await fetchTicketContext('78', ghIssueView)
+    expect(result.ticket.number).toBe(78)
+    expect(result.parent).toBe(null)
+  })
+
+  it('returns a null ticket and parent when ghIssueView resolves to a falsy value', async () => {
+    const ghIssueView = vi.fn().mockResolvedValue(null)
+    const result = await fetchTicketContext('78', ghIssueView)
+    expect(result).toEqual({ ticket: null, parent: null })
   })
 })

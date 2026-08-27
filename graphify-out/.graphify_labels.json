@@ -5,7 +5,7 @@
   "3": "cleanup_sweep.py",
   "4": "code_sync.py",
   "5": "fn",
-  "6": "daily_digest.py",
+  "6": "verify.py",
   "7": "Bench Harness Runner",
   "8": "co",
   "9": "route.py",
@@ -26,7 +26,7 @@
   "24": "MARVIN",
   "25": "s",
   "26": "QA-Agent Code Scanner",
-  "27": "main/index.js",
+  "27": "mr_review.js",
   "28": "Cleanup Sweep Tests",
   "29": "QA-Agent Capture",
   "30": "e",
@@ -122,7 +122,7 @@
   "120": "Diagnose — Retrospective",
   "121": "postcss.config.js",
   "122": "retrospective-log.md",
-  "123": "registry_id",
+  "123": "daily_digest.py",
   "124": "to-prd/SKILL.md",
   "125": "7. Architecture Decision Records",
   "126": "tailwind.config.js",
@@ -248,5 +248,9 @@
   "246": "research_colony.md",
   "247": "self_improve.md",
   "248": "zoom-out/SKILL.md",
-  "249": "0025 — Deny action: two dashboard buttons, structured-feedback modal, not a third \"adjust\" button"
+  "249": "0025 — Deny action: two dashboard buttons, structured-feedback modal, not a third \"adjust\" button",
+  "250": "MrReview.jsx",
+  "251": "merge.js",
+  "252": "MR-approval webhook contract",
+  "253": "webhook-server/package.json"
 }
