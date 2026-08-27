@@ -1,21 +1,11 @@
 import { useState } from 'react'
 import MetricsScorecard from '@components/MetricsScorecard.jsx'
+import MrReview from '@components/MrReview.jsx'
 
-// Two tabs, per G-Eskayo/marvin#10's acceptance criteria: this shell plus
-// the metrics tab now, with room for the MR-review tab (G-Eskayo/marvin#11)
-// to be added later without restructuring this file.
 const TABS = [
   { id: 'metrics', label: 'Metrics' },
   { id: 'mr-review', label: 'MR Review' }
 ]
-
-function MrReviewPlaceholder() {
-  return (
-    <div className="flex h-full items-center justify-center text-neutral-500">
-      <p>MR review lands in G-Eskayo/marvin#11.</p>
-    </div>
-  )
-}
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('metrics')
@@ -41,7 +31,7 @@ export default function App() {
         </nav>
       </header>
       <main className="flex-1 overflow-auto">
-        {activeTab === 'metrics' ? <MetricsScorecard /> : <MrReviewPlaceholder />}
+        {activeTab === 'metrics' ? <MetricsScorecard /> : <MrReview />}
       </main>
     </div>
   )

@@ -1,7 +1,31 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog } from 'electron'
 import { join } from 'path'
 import { existsSync } from 'fs'
+import { execFile } from 'child_process'
+import { promisify } from 'util'
 import { listSubsystems, readHistory, buildIndex } from './metrics.js'
+import { listPipelinePrs, approveMr } from './mr_review.js'
+
+const execFileAsync = promisify(execFile)
+
+// Overridable via env for pointing at a real n8n webhook once G-Eskayo/marvin#11's
+// "exact n8n node topology" downstream work exists; defaults to the reference
+// receiver in dashboard/webhook-server/ (see its README for the contract).
+const MR_WEBHOOK_URL = process.env.MARVIN_MR_WEBHOOK_URL || 'http://localhost:7878/approve'
+
+async function listOpenPrs() {
+  const { stdout } = await execFileAsync('gh', [
+    'pr',
+    'list',
+    '--repo',
+    'G-Eskayo/marvin',
+    '--state',
+    'open',
+    '--json',
+    'number,title,url,body'
+  ])
+  return JSON.parse(stdout)
+}
 
 process.env['ELECTRON_DISABLE_SECURITY_WARNINGS'] = 'true'
 
@@ -49,8 +73,39 @@ function registerMetricsHandlers() {
   ipcMain.handle('metrics:history', (_event, subsystem) => readHistory(subsystem))
 }
 
+function registerMrReviewHandlers() {
+  ipcMain.handle('mr:list', () => listPipelinePrs(listOpenPrs))
+
+  // The actual "unambiguous, no risk of accidental merge from a stray click"
+  // requirement (G-Eskayo/marvin#11's acceptance criteria) lives here, not in
+  // the renderer -- a native OS-level confirm dialog can't be spoofed by a
+  // fast double-click the way a custom in-page confirm affordance could.
+  ipcMain.handle('mr:approve', async (_event, { number, url }) => {
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      buttons: ['Cancel', 'Merge PR'],
+      defaultId: 0,
+      cancelId: 0,
+      message: `Merge PR #${number}?`,
+      detail: `This fires the approval webhook and merges ${url} via gh pr merge. This can't be undone from here.`
+    })
+    if (response !== 1) {
+      return { merged: false, cancelled: true }
+    }
+    await approveMr(url, MR_WEBHOOK_URL, (webhookUrl, body) =>
+      fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      })
+    )
+    return { merged: true, cancelled: false }
+  })
+}
+
 app.whenReady().then(() => {
   registerMetricsHandlers()
+  registerMrReviewHandlers()
   createWindow()
 
   app.on('activate', () => {
