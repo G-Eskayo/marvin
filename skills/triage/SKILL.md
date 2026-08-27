@@ -70,7 +70,14 @@ Show counts and a one-line summary per issue. Let the maintainer pick.
 
 4. **Grill (if needed).** If the issue needs fleshing out, run a `/grill-with-docs` session.
 
-5. **Apply the outcome:**
+5. **Check granularity (before marking `ready-for-agent`).** An issue is too coarse if any of these hold:
+   - More than ~4-5 independently-checkable acceptance criteria
+   - Acceptance criteria span more than one subsystem/file-area
+   - The issue mixes a HITL decision (something needing the maintainer's judgment) with AFK implementation work
+
+   If any hold, invoke `to-issues` on this issue instead of proceeding to step 6 — it will split the issue into child issues that each reference this one via the `## Parent` field. Do not close or relabel the parent (`to-issues` already won't touch it): leave it `needs-triage` and post a comment listing the child issue numbers, so it reads as a reference/epic rather than something directly actionable. Triage each child normally on its own next pass.
+
+6. **Apply the outcome:**
    - `ready-for-agent` — post an agent brief comment ([AGENT-BRIEF.md](AGENT-BRIEF.md)).
    - `ready-for-human` — same structure as an agent brief, but note why it can't be delegated (judgment calls, external access, design decisions, manual testing).
    - `needs-info` — post triage notes (template below).
