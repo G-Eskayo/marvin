@@ -1,0 +1,42 @@
+{
+  "name": "marvin-metrics-dashboard",
+  "version": "1.0.0",
+  "description": "MARVIN Metrics Dashboard — whole-system and per-subsystem view onto metrics_registry.py's data (G-Eskayo/marvin#10)",
+  "main": "./out/main/index.js",
+  "author": "Gil Eskayo",
+  "private": true,
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "build:mac": "npm run build && electron-builder --mac",
+    "preview": "electron-vite preview",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "recharts": "^2.12.7"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.19",
+    "electron": "^30.0.0",
+    "electron-builder": "^24.13.3",
+    "electron-vite": "^2.3.0",
+    "postcss": "^8.4.38",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwindcss": "^3.4.4",
+    "vitest": "^2.1.1"
+  },
+  "build": {
+    "appId": "com.gileskayo.marvin-metrics-dashboard",
+    "productName": "MARVIN Metrics",
+    "directories": {
+      "output": "dist"
+    },
+    "mac": {
+      "target": ["dmg", "zip"],
+      "category": "public.app-category.developer-tools"
+    },
+    "files": ["out/**/*"]
+  }
+}
