@@ -189,6 +189,31 @@ def push(repo: Path) -> None:
     # detect once the log has grown at all.
     real_changes = [f for f in all_changed if f != LOG_PATH.name]
     if not real_changes:
+        # Working tree can be clean while HEAD still holds commits that were
+        # never pushed — e.g. a manual conflict-resolution `git commit` made
+        # outside this script. A pure "nothing dirty" check missed this and
+        # silently no-op'd real work.
+        subprocess.run(["git", "fetch", "origin"], cwd=repo, capture_output=True)
+        ahead = _git(repo, ["rev-list", "--count", "origin/main..HEAD"]).strip()
+        if ahead in ("", "0"):
+            return
+        push_ok, push_out = _git_ok(repo, ["push", "origin", "main"])
+        if push_ok:
+            _log(repo, "push", f"pushed {ahead} already-committed change(s) found on a clean working tree")
+            notify("MARVIN code-sync", f"Pushed {ahead} pending commit(s) from {label} [{repo.name}]")
+            return
+        clean, merge_output = _merge_remote(repo)
+        if not clean:
+            _log(repo, "push", f"CONFLICT merging remote while pushing pre-existing commits — needs manual resolution:\n{merge_output}")
+            notify("MARVIN code-sync CONFLICT", f"Push rejected and merge conflicted [{repo.name}] — check sync-log.md", open_target=str(LOG_PATH))
+            return
+        retry_ok, retry_out = _git_ok(repo, ["push", "origin", "main"])
+        if retry_ok:
+            _log(repo, "push", f"pushed {ahead} already-committed change(s) (merged remote changes first)")
+            notify("MARVIN code-sync", f"Pushed pending commit(s) from {label} [{repo.name}] (merged first)")
+        else:
+            _log(repo, "push", f"push failed even after merge retry:\n{retry_out}")
+            notify("MARVIN code-sync FAILED", f"Push failed after retry [{repo.name}] — check sync-log.md", open_target=str(LOG_PATH))
         return
 
     broken = _files_with_conflict_markers(repo, all_changed)
