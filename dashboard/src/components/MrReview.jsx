@@ -54,9 +54,106 @@ function EvidenceTable({ metrics }) {
   )
 }
 
-function PrCard({ pr, onApproved }) {
+// ADR 0025's fixed reason taxonomy -- expected to need revisiting once real
+// denials start happening, per that ADR's own "Consequences" section.
+const DENY_REASONS = [
+  'Design/requirements mismatch',
+  'Insufficient tests',
+  'Evidence missing',
+  'Regression/quality'
+]
+
+function DenyModal({ pr, onClose, onDenied }) {
+  const [selected, setSelected] = useState([])
+  const [comment, setComment] = useState('')
+  const [status, setStatus] = useState('idle') // idle | sending | error
+  const [errorMessage, setErrorMessage] = useState(null)
+
+  function toggleReason(reason) {
+    setSelected((prev) => (prev.includes(reason) ? prev.filter((r) => r !== reason) : [...prev, reason]))
+  }
+
+  async function handleAction(action) {
+    setStatus('sending')
+    setErrorMessage(null)
+    try {
+      const result = await window.api.mr.deny({
+        number: pr.number,
+        url: pr.url,
+        ticketNumber: pr.ticketNumber,
+        action,
+        reasons: selected,
+        comment
+      })
+      if (result.cancelled) {
+        setStatus('idle')
+        return
+      }
+      onDenied(pr.number)
+    } catch (err) {
+      setStatus('error')
+      setErrorMessage(String(err))
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/60 p-4">
+      <div className="w-full max-w-md rounded-lg border border-neutral-800 bg-neutral-900 p-5">
+        <h3 className="mb-1 font-mono text-sm font-semibold text-white">
+          Deny #{pr.number} — {pr.title}
+        </h3>
+        <p className="mb-3 text-xs text-neutral-500">
+          Send feedback tags the ticket for a future re-engagement pass. Drop entirely closes the PR and ticket
+          with no re-engagement expected.
+        </p>
+        <div className="mb-3 flex flex-col gap-1.5">
+          {DENY_REASONS.map((reason) => (
+            <label key={reason} className="flex items-center gap-2 text-sm text-neutral-300">
+              <input type="checkbox" checked={selected.includes(reason)} onChange={() => toggleReason(reason)} />
+              {reason}
+            </label>
+          ))}
+        </div>
+        <textarea
+          value={comment}
+          onChange={(e) => setComment(e.target.value)}
+          placeholder="Optional free-text comment"
+          rows={3}
+          className="mb-3 w-full rounded-md border border-neutral-800 bg-neutral-950 p-2 text-sm text-neutral-200 placeholder:text-neutral-600"
+        />
+        {status === 'error' && <p className="mb-2 text-sm text-red-400">Failed: {errorMessage}</p>}
+        <div className="flex items-center justify-end gap-2">
+          <button
+            onClick={onClose}
+            disabled={status === 'sending'}
+            className="rounded-md px-3 py-1.5 text-sm text-neutral-400 transition-colors hover:text-neutral-200 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => handleAction('drop')}
+            disabled={status === 'sending'}
+            className="rounded-md bg-red-950 px-3 py-1.5 text-sm font-medium text-red-300 transition-colors hover:bg-red-900 disabled:opacity-50"
+          >
+            Drop Entirely
+          </button>
+          <button
+            onClick={() => handleAction('send_feedback')}
+            disabled={status === 'sending'}
+            className="rounded-md bg-amber-700 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-amber-600 disabled:opacity-50"
+          >
+            {status === 'sending' ? 'Sending…' : 'Send Feedback'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function PrCard({ pr, onApproved, onDenied }) {
   const [status, setStatus] = useState('idle') // idle | approving | error
   const [errorMessage, setErrorMessage] = useState(null)
+  const [showDenyModal, setShowDenyModal] = useState(false)
 
   async function handleApprove() {
     setStatus('approving')
@@ -87,16 +184,35 @@ function PrCard({ pr, onApproved }) {
             </p>
           )}
         </div>
-        <button
-          onClick={handleApprove}
-          disabled={status === 'approving'}
-          className="shrink-0 rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
-        >
-          {status === 'approving' ? 'Confirming…' : 'Approve & Merge'}
-        </button>
+        <div className="flex shrink-0 gap-2">
+          <button
+            onClick={() => setShowDenyModal(true)}
+            disabled={status === 'approving'}
+            className="rounded-md border border-neutral-700 px-4 py-1.5 text-sm font-medium text-neutral-300 transition-colors hover:bg-neutral-800 disabled:opacity-50"
+          >
+            Deny
+          </button>
+          <button
+            onClick={handleApprove}
+            disabled={status === 'approving'}
+            className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
+          >
+            {status === 'approving' ? 'Confirming…' : 'Approve & Merge'}
+          </button>
+        </div>
       </div>
       <EvidenceTable metrics={pr.evidence.metrics} />
       {status === 'error' && <p className="mt-2 text-sm text-red-400">Failed: {errorMessage}</p>}
+      {showDenyModal && (
+        <DenyModal
+          pr={pr}
+          onClose={() => setShowDenyModal(false)}
+          onDenied={(number) => {
+            setShowDenyModal(false)
+            onDenied(number)
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -130,7 +246,7 @@ export default function MrReview() {
         {prs.length} pipeline-raised PR{prs.length === 1 ? '' : 's'} awaiting review.
       </p>
       {prs.map((pr) => (
-        <PrCard key={pr.number} pr={pr} onApproved={reload} />
+        <PrCard key={pr.number} pr={pr} onApproved={reload} onDenied={reload} />
       ))}
     </div>
   )

@@ -1,16 +1,16 @@
 # Graph Report - .agents  (2026-08-27)
 
 ## Corpus Check
-- 298 files · ~408,624 words
+- 298 files · ~409,095 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 2731 nodes · 4079 edges · 254 communities (221 shown, 33 thin omitted)
-- Extraction: 97% EXTRACTED · 3% INFERRED · 0% AMBIGUOUS · INFERRED: 115 edges (avg confidence: 0.85)
+- 2734 nodes · 4089 edges · 259 communities (224 shown, 35 thin omitted)
+- Extraction: 97% EXTRACTED · 3% INFERRED · 0% AMBIGUOUS · INFERRED: 116 edges (avg confidence: 0.85)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `7db3f9c9`
+- Built from commit: `c72c37a7`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -21,7 +21,7 @@
 - cleanup_sweep.py
 - code_sync.py
 - fn
-- verify.py
+- daily_digest.py
 - Bench Harness Runner
 - co
 - route.py
@@ -42,7 +42,7 @@
 - MARVIN
 - s
 - QA-Agent Code Scanner
-- mr_review.js
+- main/index.js
 - Cleanup Sweep Tests
 - QA-Agent Capture
 - e
@@ -127,9 +127,10 @@
 - test_ticket_coordination.py
 - Diagnose — Retrospective
 - retrospective-log.md
-- daily_digest.py
+- source_monitor.py
 - to-prd/SKILL.md
 - 7. Architecture Decision Records
+- mr_raiser.py
 - To Tasklist
 - Writing Skills
 - sandbox_orchestration.py
@@ -236,6 +237,11 @@
 - merge.js
 - MR-approval webhook contract
 - webhook-server/package.json
+- notify
+- test_mr_notification.py
+- research_digest.py
+- registry_id
+- test_notify.py
 
 ## God Nodes (most connected - your core abstractions)
 1. `co()` - 35 edges
@@ -246,25 +252,25 @@
 6. `en` - 24 edges
 7. `oo()` - 21 edges
 8. `ke` - 20 edges
-9. `yi()` - 20 edges
+9. `_metric()` - 20 edges
 10. `vl()` - 20 edges
 
 ## Surprising Connections (you probably didn't know these)
+- `main()` --calls--> `notify()`  [INFERRED]
+  skills/improve/scripts/daily_digest.py → lib/notify.py
 - `main()` --calls--> `log_hook_error()`  [INFERRED]
   brain-map/scripts/skill_activity.py → lib/hook_errors.py
 - `main()` --calls--> `log_hook_error()`  [INFERRED]
   skills/improve/scripts/improvement_sweep.py → lib/hook_errors.py
 - `main()` --calls--> `log_hook_error()`  [INFERRED]
   skills/self-improve/scripts/background_review.py → lib/hook_errors.py
-- `main()` --calls--> `load_or_build()`  [INFERRED]
-  skills/improve/scripts/check_and_trigger_merge.py → lib/machine_profile.py
-- `main()` --calls--> `load_or_build()`  [INFERRED]
-  skills/improve/scripts/cross_machine_merge.py → lib/machine_profile.py
+- `process_and_check_quarantine()` --calls--> `process()`  [INFERRED]
+  lib/session_start_report.py → skills/safety-monitor/scripts/process_quarantine_reviews.py
 
 ## Import Cycles
 - None detected.
 
-## Communities (254 total, 33 thin omitted)
+## Communities (259 total, 35 thin omitted)
 
 ### Community 0 - "Network Reachability Checks"
 Cohesion: 0.05
@@ -283,16 +289,16 @@ Cohesion: 0.30
 Nodes (12): _default_list_worktrees(), _default_remove_worktree(), _extract_issue_number(), find_orphaned_worktrees(), find_stale_claims(), datetime, Path, Cron entry point. Runs both sweeps, logs what was removed/released (same… (+4 more)
 
 ### Community 4 - "code_sync.py"
-Cohesion: 0.06
-Nodes (32): _files_with_conflict_markers(), _git(), _git_ok(), _log(), main(), _merge_remote(), pull(), push() (+24 more)
+Cohesion: 0.32
+Nodes (15): _files_with_conflict_markers(), _git(), _git_ok(), _log(), main(), _merge_remote(), pull(), push() (+7 more)
 
 ### Community 5 - "fn"
 Cohesion: 0.10
 Nodes (7): fn(), Fs(), Is(), os(), p, sn(), ti()
 
-### Community 6 - "verify.py"
-Cohesion: 0.05
-Nodes (52): append_to_queue(), extract_project(), find_project_path(), format_issue(), main(), Path, Returns True if the block was appended, False if safety-monitor quarantined it…, top_issues() (+44 more)
+### Community 6 - "daily_digest.py"
+Cohesion: 0.06
+Nodes (48): bench_summary(), call_claude(), improvement_queue_summary(), main(), qa_kb_summary(), Computed directly from the log, not via an LLM guess at "does this look…, launchd's environment doesn't source .zshrc/.zprofile, so PATH may not include…, recent_handoffs_summary() (+40 more)
 
 ### Community 7 - "Bench Harness Runner"
 Cohesion: 0.07
@@ -347,8 +353,8 @@ Cohesion: 0.05
 Nodes (6): en, Gt(), ke, kn(), yn, zt()
 
 ### Community 20 - "task_dispatch.py"
-Cohesion: 0.17
-Nodes (22): _load_registry(), This machine's stable id in marvin-network.json, resolved by matching hardware…, All registered devices that aren't this one, keyed by device id., registry_id(), remote_devices(), _build_wrapper_script(), _candidates(), dispatch() (+14 more)
+Cohesion: 0.21
+Nodes (15): _build_wrapper_script(), dispatch(), DispatchResult, main(), A script that marks the dispatch-state file busy, runs the real command, and on…, Run `command` on an available device. mode: "sync" (wait, capture output) or…, Hostnames Tailscale currently reports as online (not 'offline')., Pick a device to run on. Explicit target skips liveness/load checks on OTHER… (+7 more)
 
 ### Community 21 - "Auto-Route Hook"
 Cohesion: 0.12
@@ -374,9 +380,9 @@ Nodes (11): de(), fe(), ge(), le(), Ls(), me(), pe(), s() (+3 more)
 Cohesion: 0.19
 Nodes (20): analyze_comment_quality(), analyze_complexity(), analyze_quality(), detect_stack(), extract_dependencies(), extract_imports(), extract_markers(), infer_domain() (+12 more)
 
-### Community 27 - "mr_review.js"
-Cohesion: 0.17
-Nodes (20): execFileAsync, listOpenPrs(), registerMetricsHandlers(), registerMrReviewHandlers(), buildIndex(), DEFAULT_METRICS_DIR, latest(), listSubsystems() (+12 more)
+### Community 27 - "main/index.js"
+Cohesion: 0.15
+Nodes (24): execFileAsync, ghIssueView(), ADR-0024, listOpenPrs(), registerMetricsHandlers(), registerMrReviewHandlers(), buildIndex(), DEFAULT_METRICS_DIR (+16 more)
 
 ### Community 28 - "Cleanup Sweep Tests"
 Cohesion: 0.16
@@ -427,8 +433,8 @@ Cohesion: 0.19
 Nodes (13): ai(), animateVisualElement(), dn(), fi(), gi(), La(), ni(), Nn() (+5 more)
 
 ### Community 40 - "cross_machine_merge.py"
-Cohesion: 0.24
-Nodes (15): build_merged(), load_sync_state(), main(), profile_blurb(), Path, Identical shape to sync_qa_knowledge -- same deterministic-set-union- by-id…, Returns stdout on success, None on any failure (unreachable, non-zero exit,…, run_merge_authority() (+7 more)
+Cohesion: 0.26
+Nodes (14): build_merged(), load_sync_state(), main(), profile_blurb(), Path, Identical shape to sync_qa_knowledge -- same deterministic-set-union- by-id…, Returns stdout on success, None on any failure (unreachable, non-zero exit,…, run_merge_authority() (+6 more)
 
 ### Community 41 - "logic_auditor.py"
 Cohesion: 0.14
@@ -630,9 +636,9 @@ Nodes (16): For `ready-for-human` specifically, Structure, What makes a brief du
 Cohesion: 0.22
 Nodes (8): 2026-07-07 — MLX on-device model benchmark (Qwen2.5-3B vs Llama-3.2-3B), 2026-07-14 — Converting the session-start checklist into a deterministic hook, 2026-07-17 — Brain-map reskin (dark gradient silently not rendering), 2026-07-17 — DesktopLive verification pass (post-Motion deploy), 2026-07-17 — Motion physics deploy to brain-map/DesktopLive (pulses, camera nudges, fitScale), 2026-08-26 — killer-sudoku full day (perf tuning + real bugs), 2026-08-26 — killer-sudoku Kotlin port (UI parity + animation/input bugs), Diagnose — Retrospective
 
-### Community 123 - "daily_digest.py"
-Cohesion: 0.29
-Nodes (10): bench_summary(), improvement_queue_summary(), main(), qa_kb_summary(), Computed directly from the log, not via an LLM guess at "does this look…, launchd's environment doesn't source .zshrc/.zprofile, so PATH may not include…, recent_handoffs_summary(), _resolve_claude_bin() (+2 more)
+### Community 123 - "source_monitor.py"
+Cohesion: 0.26
+Nodes (8): correlate(), roadmap_match(), fetch_arxiv(), fetch_github(), fetch_hackernews(), main(), save_raw_cache(), store_items()
 
 ### Community 124 - "to-prd/SKILL.md"
 Cohesion: 0.22
@@ -641,6 +647,10 @@ Nodes (8): Further Notes, Implementation Decisions, Out of Scope, Problem Statem
 ### Community 125 - "7. Architecture Decision Records"
 Cohesion: 0.07
 Nodes (28): 1. System Overview, 2. Directory Structure, 3.1 SKILL.md, 3.2 `scripts/fetch_jd.py`, 3.3 `scripts/extract_text.py`, 3.4 `scripts/render_pdf.py`, 3.5 `template/resume.css`, 3. Component Breakdown (+20 more)
+
+### Community 127 - "mr_raiser.py"
+Cohesion: 0.25
+Nodes (9): notify_mr_ready(), Fire both notification channels for a newly-raised MR. Never raises -- a…, _commit_and_push(), _current_branch(), _default_open_pr(), _format_comparison(), Path, raise_mr() (+1 more)
 
 ### Community 128 - "To Tasklist"
 Cohesion: 0.50
@@ -1018,25 +1028,37 @@ Nodes (3): server, execFileAsync, mergePr()
 Cohesion: 0.40
 Nodes (4): Contract, Deliberately out of scope here, MR-approval webhook contract, Running it
 
+### Community 254 - "notify"
+Cohesion: 0.31
+Nodes (6): _applescript_quote(), notify(), AppleScript double-quoted string escaping — Python's repr() uses Python syntax,…, terminal-notifier's -open wants a URL; accept a local path too., Fire a macOS notification. If open_target (a URL or local file path) is given…, _to_open_url()
+
+### Community 256 - "research_digest.py"
+Cohesion: 0.43
+Nodes (7): _fmt_item(), generate(), load_correlated_from_chroma(), load_today_cache(), Path, launchd's environment doesn't source .zshrc/.zprofile, so PATH may not include…, _resolve_claude_bin()
+
+### Community 257 - "registry_id"
+Cohesion: 0.43
+Nodes (7): _load_registry(), This machine's stable id in marvin-network.json, resolved by matching hardware…, All registered devices that aren't this one, keyed by device id., registry_id(), remote_devices(), _candidates(), All known devices (self + registered remotes) keyed by device_id, each tagged…
+
 ## Knowledge Gaps
-- **689 isolated node(s):** `Cocoa`, `WebKit`, `install.sh script`, `DEFAULT_METRICS_DIR`, `EVIDENCE_HEADERS` (+684 more)
+- **690 isolated node(s):** `ADR-0024`, `EVIDENCE_HEADERS`, `ADR-0024`, `install.sh script`, `install.sh script` (+685 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **33 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **35 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `notify()` connect `code_sync.py` to `daily_digest.py`, `verify.py`?**
-  _High betweenness centrality (0.007) - this node is a cross-community bridge._
-- **Why does `machine_label()` connect `code_sync.py` to `sandbox_orchestration.py`, `ticket_claim.py`, `verify.py`, `machine_profile.py`, `task_dispatch.py`, `QA-Agent Capture`?**
-  _High betweenness centrality (0.005) - this node is a cross-community bridge._
-- **Why does `scan()` connect `QA-Agent Code Scanner` to `SortedList`, `auto_fix.py`, `QA-Agent Capture`, `verify.py`?**
-  _High betweenness centrality (0.003) - this node is a cross-community bridge._
+- **Why does `machine_label()` connect `code_sync.py` to `registry_id`, `sandbox_orchestration.py`, `ticket_claim.py`, `machine_profile.py`, `source_monitor.py`, `QA-Agent Capture`?**
+  _High betweenness centrality (0.004) - this node is a cross-community bridge._
+- **Why does `scan()` connect `QA-Agent Code Scanner` to `SortedList`, `auto_fix.py`, `QA-Agent Capture`, `daily_digest.py`?**
+  _High betweenness centrality (0.004) - this node is a cross-community bridge._
+- **Why does `notify()` connect `notify` to `research_digest.py`, `code_sync.py`, `daily_digest.py`, `mr_raiser.py`?**
+  _High betweenness centrality (0.004) - this node is a cross-community bridge._
 - **Are the 11 inferred relationships involving `e()` (e.g. with `ca()` and `dl()`) actually correct?**
   _`e()` has 11 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 10 inferred relationships involving `n()` (e.g. with `er()` and `ha()`) actually correct?**
   _`n()` has 10 INFERRED edges - model-reasoned connections that need verification._
-- **What connects `Cocoa`, `WebKit`, `install.sh script` to the rest of the system?**
-  _689 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **What connects `ADR-0024`, `EVIDENCE_HEADERS`, `ADR-0024` to the rest of the system?**
+  _690 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Network Reachability Checks` be split into smaller, more focused modules?**
   _Cohesion score 0.05126582278481013 - nodes in this community are weakly interconnected._

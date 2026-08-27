@@ -5,7 +5,8 @@ import {
   parseTicketRef,
   fetchTicketContext,
   listPipelinePrs,
-  approveMr
+  approveMr,
+  denyMr
 } from '../electron/main/mr_review.js'
 
 const PIPELINE_BODY = `Closes G-Eskayo/marvin#42
@@ -152,13 +153,23 @@ describe('listPipelinePrs', () => {
     expect(result.map((pr) => pr.number).sort()).toEqual([42, 75])
   })
 
-  it('attaches parsed evidence to each included PR', async () => {
+  it('attaches parsed evidence and a numeric ticketNumber to each included PR', async () => {
     const listOpenPrs = vi.fn().mockResolvedValue([
       { number: 42, title: 'Pipeline PR', url: 'https://x/42', body: PIPELINE_BODY }
     ])
     const result = await listPipelinePrs(listOpenPrs)
     expect(result[0].evidence.subsystem).toBe('route.py')
     expect(result[0].evidence.testResults.passed).toBe(12)
+    expect(result[0].ticketNumber).toBe(42)
+  })
+
+  it('sets ticketNumber to null when there is no ticket reference', async () => {
+    const noRefBody = PIPELINE_BODY.replace('Closes G-Eskayo/marvin#42\n\n', '')
+    const listOpenPrs = vi.fn().mockResolvedValue([
+      { number: 42, title: 'Pipeline PR', url: 'https://x/42', body: noRefBody }
+    ])
+    const result = await listPipelinePrs(listOpenPrs)
+    expect(result[0].ticketNumber).toBe(null)
   })
 
   it('returns an empty list when there are no open PRs at all', async () => {
@@ -179,6 +190,41 @@ describe('approveMr', () => {
     await expect(approveMr('https://x/71', 'http://localhost:7878/approve', post)).rejects.toThrow(
       'Webhook call failed: 500'
     )
+  })
+})
+
+describe('denyMr', () => {
+  it('posts the deny action, ticket number, reasons, and comment to the webhook', async () => {
+    const post = vi.fn().mockResolvedValue({ ok: true, status: 200 })
+    await denyMr(
+      {
+        prUrl: 'https://x/71',
+        ticketNumber: 42,
+        action: 'send_feedback',
+        reasons: ['Insufficient tests'],
+        comment: 'needs more coverage'
+      },
+      'http://localhost:7878/deny',
+      post
+    )
+    expect(post).toHaveBeenCalledWith('http://localhost:7878/deny', {
+      action: 'send_feedback',
+      pr_url: 'https://x/71',
+      ticket_number: 42,
+      reasons: ['Insufficient tests'],
+      comment: 'needs more coverage'
+    })
+  })
+
+  it('throws when the webhook call fails, so the UI can surface it', async () => {
+    const post = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+    await expect(
+      denyMr(
+        { prUrl: 'https://x/71', ticketNumber: 42, action: 'drop', reasons: [], comment: '' },
+        'http://localhost:7878/deny',
+        post
+      )
+    ).rejects.toThrow('Webhook call failed: 500')
   })
 })
 

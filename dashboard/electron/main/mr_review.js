@@ -10,7 +10,8 @@
 // Approving fires a webhook per the documented contract (see
 // dashboard/webhook-server/README.md) rather than running `gh pr merge`
 // itself -- G-Eskayo/marvin#11 is explicit that the dashboard is a
-// trigger, not the thing that does the merge.
+// trigger, not the thing that does the merge. Denying (ADR 0025) follows
+// the same trigger-not-executor shape, via a second webhook endpoint.
 export const EVIDENCE_HEADERS = {
   metrics: '## Metrics Comparison',
   testResults: '## Test Results',
@@ -155,16 +156,39 @@ export async function listPipelinePrs(listOpenPrs) {
   const prs = await listOpenPrs()
   return prs
     .filter((pr) => hasEvidenceSchema(pr.body))
-    .map((pr) => ({
-      number: pr.number,
-      title: pr.title,
-      url: pr.url,
-      evidence: parseEvidence(pr.body)
-    }))
+    .map((pr) => {
+      const evidence = parseEvidence(pr.body)
+      return {
+        number: pr.number,
+        title: pr.title,
+        url: pr.url,
+        ticketNumber: evidence.ticketRef ? Number(evidence.ticketRef) : null,
+        evidence
+      }
+    })
 }
 
 export async function approveMr(prUrl, webhookUrl, post) {
   const response = await post(webhookUrl, { pr_url: prUrl })
+  if (!response.ok) {
+    throw new Error(`Webhook call failed: ${response.status}`)
+  }
+  return response
+}
+
+// ADR 0025: Deny opens a structured-feedback modal with two terminal
+// actions -- "send_feedback" (comment + release claim + tag for the
+// future review/debug/improve pipeline) or "drop" (close PR + ticket,
+// release claim, no re-engagement expected). Same webhook-trigger shape
+// as approveMr, one endpoint, action carried in the body.
+export async function denyMr({ prUrl, ticketNumber, action, reasons, comment }, webhookUrl, post) {
+  const response = await post(webhookUrl, {
+    action,
+    pr_url: prUrl,
+    ticket_number: ticketNumber,
+    reasons,
+    comment
+  })
   if (!response.ok) {
     throw new Error(`Webhook call failed: ${response.status}`)
   }
