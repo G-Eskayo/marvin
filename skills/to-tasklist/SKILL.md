@@ -19,6 +19,8 @@ Check for a real tracker first (git repo + triage labels, per `setup-matt-pocock
 
 1. **Draft vertical slices** — same tracer-bullet rules as `to-issues`: each task is a thin, end-to-end, independently-completable slice, not a horizontal layer. Group into tracks when the work spans multiple systems (e.g. a track per repo/component touched).
 
+   **Self-check granularity before quizzing** (same check `to-issues` runs). A drafted task is too coarse if any of these hold: more than ~4-5 independently-checkable acceptance criteria; the work spans more than one subsystem/file-area; or it mixes a HITL decision (needs the maintainer's judgment) with AFK-completable work. Split any task matching one of these before step 2.
+
 2. **Quiz the user** — present the numbered breakdown, confirm granularity and dependency order, iterate until approved. Same as `to-issues` step 4.
 
 3. **Write the task list file** — save as `<design-doc-name>-tasks.md` next to the design doc it was derived from (e.g. `docs/features/foo.md` → `docs/features/foo-tasks.md`). Use this format per task:

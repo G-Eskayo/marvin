@@ -32,6 +32,13 @@ Slices may be 'HITL' or 'AFK'. HITL slices require human interaction, such as an
 - Prefer many thin slices over few thick ones
 </vertical-slice-rules>
 
+**Self-check granularity before quizzing the user** (same bar `triage` applies before invoking this skill — check it here too, since this skill also runs standalone against a plan/PRD with no triage pass first). A drafted slice is too coarse if any of these hold:
+- More than ~4-5 independently-checkable acceptance criteria
+- Acceptance criteria span more than one subsystem/file-area
+- The slice mixes a HITL decision (something needing the maintainer's judgment) with AFK implementation work
+
+Split any slice matching one of these before presenting the list in step 4 — don't rely on the user's own "too coarse?" answer to catch what a fixed criterion already would have.
+
 ### 4. Quiz the user
 
 Present the proposed breakdown as a numbered list. For each slice, show:
