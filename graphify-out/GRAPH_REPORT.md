@@ -1,16 +1,16 @@
 # Graph Report - .agents  (2026-08-26)
 
 ## Corpus Check
-- 276 files · ~402,614 words
+- 288 files · ~405,242 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1769 nodes · 3192 edges · 120 communities (96 shown, 24 thin omitted)
-- Extraction: 96% EXTRACTED · 4% INFERRED · 0% AMBIGUOUS · INFERRED: 113 edges (avg confidence: 0.85)
+- 2683 nodes · 4016 edges · 248 communities (216 shown, 32 thin omitted)
+- Extraction: 97% EXTRACTED · 3% INFERRED · 0% AMBIGUOUS · INFERRED: 113 edges (avg confidence: 0.85)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `5cc2463b`
+- Built from commit: `48656087`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -19,29 +19,30 @@
 - motion.12.42.2.js
 - Session-Start Reporting & Hook Errors
 - cleanup_sweep.py
-- Cross-Machine Code Sync
+- code_sync.py
 - fn
 - verify.py
 - Bench Harness Runner
-- co
-- Route Classifier Benchmarks
-- test_metrics_registry.py
+- .getValue
+- route.py
+- test_sandbox_orchestration.py
 - Paper-Dive Argument Mapper
 - Brain-Map Desktop Live App
-- .scheduleResolve
-- test_ticket_coordination.py
+- test_metrics_registry.py
+- .get
 - Paper-Dive Logic Auditor
-- Intent Classification (Route Skill)
+- test_intent_classify.py
+- devDependencies
 - MARVIN Setup Script
 - en
-- Machine Profile & Task Dispatch
+- task_dispatch.py
 - Auto-Route Hook
 - Brain-Map Tree Generator
 - QA-Agent Scan Tests
-- .get
-- ke
+- MARVIN
+- oo
 - QA-Agent Code Scanner
-- $r
+- metrics.js
 - Cleanup Sweep Tests
 - QA-Agent Capture
 - e
@@ -53,14 +54,14 @@
 - Graphify Skill Definition
 - cron_health.py
 - test_ticket_promotion.py
-- ga
+- $r
 - cross_machine_merge.py
 - logic_auditor.py
 - browser_ctl.py
 - LRUCache
 - mn
 - test_mlx_lm_eval_adapter.py
-- yn
+- MetricsScorecard.jsx
 - classify_paper_type
 - SortedList
 - auto_fix.py
@@ -68,17 +69,17 @@
 - ho
 - build_audit_report
 - extract_structure
-- oo
+- s
 - render_pdf.py
 - LRUCache
 - cross_domain_synthesis.py
-- daily_digest.py
+- During the session
 - retrieve.py
 - inventory.py
 - machine_profile.py
 - fetch_related.py
 - rebuild-embeddings.py
-- .updateMotionValue
+- App.jsx
 - main
 - _parse_findings
 - test_cross_machine_merge.py
@@ -109,6 +110,7 @@
 - brain-map/install.sh
 - improve/install.sh
 - research-colony/install.sh
+- Process
 - graphify reference: extra exports and benchmark
 - Agent skills
 - graphify reference: query, path, explain
@@ -119,43 +121,144 @@
 - graphify reference: transcribe video and audio
 - .claude/CLAUDE.md
 - extraction-spec.md
-- ur
+- co
 - Diagnose
+- Triage
+- test_ticket_coordination.py
+- Diagnose — Retrospective
+- retrospective-log.md
+- daily_digest.py
+- to-prd/SKILL.md
+- 7. Architecture Decision Records
+- To Tasklist
+- Writing Skills
 - sandbox_orchestration.py
 - ticket_claim.py
 - ticket_coordination.py
-- Diagnose — Retrospective
-- bl
-- retrospective-log.md
+- Process
+- Design Document — Resume Tailor
+- tdd/SKILL.md
+- 2. Functional Requirements
+- setup-matt-pocock-skills/SKILL.md
+- [TAILOR] — Full Application Package
+- Logic/State-Machine Prototype
+- Resume Tailor
+- Creative
+- Direct inspirations & dependencies
+- n8n platform research
+- Architecture Review
+- QA Code Agent
+- Architecture — Safety & Drift Monitor
+- marvin-bench — results log
+- Safety Monitor
+- Token Optimization Best Practices
+- MARVIN — Context Glossary
+- Animation tools evaluation — 2026-07-17
+- intent_classify.py
+- test_route.py
+- Design — Safety & Drift Monitor
+- compare_route_classifiers.py
+- Run 15 — 2026-07-01 (account session-limit discovery, infra-error handling, quota preflight, select_model.py, two more judge bugs)
+- Context Window Best Practices
+- Claude Code Global Settings
+- Index — Pull the Right Boxes
+- Research Colony Skill
+- Requirements — Safety & Drift Monitor
+- marvin-bench
+- Scenario: Diagnose → Improve
+- Scenario: Research → Design → Build
+- Handoff
+- Route Skill
+- Run 13 — 2026-07-01 (three new discriminator tasks: multi-file invariant, deceptive comment, KB isolation)
+- Run 5 — 2026-06-30 (v2 corrected grading + redesigned task-007)
+- 0001 — Use the Claude Agent SDK, not `remote-control`, as the voice client's backend
+- 0002 — Native iOS app, not a PWA, for the voice client
+- 0003 — Dual-mode architecture: full MARVIN online, degraded local model offline
+- 0004 — Distribute via free Apple ID + AltStore/AltServer, not a paid Developer account
+- 0005 — Plan-and-confirm guardrail for voice-triggered tool execution
+- 0006 — MLX for the offline-mode on-device model, over llama.cpp/GGUF
+- 0007 — Greedy best-first search, not depth-penalized A*, for citation-graph traversal
+- 0008 — Bidirectional traversal (references + citations), asymmetric caps, shared relevance floor with a result-intent bypass
+- 0009 — Store first-discovery edge metadata only, not all paths
+- 0010 — Checkpoint-and-confirm with a diminishing-returns signal, not a flat hard node cap
+- 0011 — Blend SPECTER2 with nomic-embed for relevance scoring, not SPECTER2 alone
+- 0012 — Semantic Scholar rate-limit handling: exponential backoff, no API key (yet)
+- 0013 — Task-dispatch: general primitive, not a cron patch; single-target only for v1
+- 0014 — research-colony fan-out+merge: layer on existing triggers, event-driven completion signal
+- 0015 — Quarantine over-flagging: rubric grounding + the missing review-feedback loop
+- 0016 — Intent-vs-reality audit agent: reuse the Agent tool, don't build dedicated infrastructure
+- 0017 — suggestions.md: priority-ordered backlog, whole-system scope, not TaskList-backed
+- 0018 — Auto-discover brain-map's Autonomous Agents from launchd plists
+- 0019 — Auto-discover brain-map's Infrastructure hooks from settings.local.json
+- 0020 — Add a Cross-Machine Network trunk to brain-map
+- 0021 — Bidirectional code sync via a scoped auto-commit exception
+- 0022 — ~/.claude sync: self-hosted git remote, and a conflict-marker propagation guard
+- 0023 — route.py's keyword classifier: replace with an embedding classifier, phased and flag-gated
+- Session-start checklist
+- Audit
+- Improve Skill
+- Lexicon
+- Run 14 — 2026-07-01 (judge isolation fix + setup.sh durability bug)
+- Security Policy
+- caveman/SKILL.md
+- Sources
+- Self-Improve Retrospective
+- Run 3 — 2026-06-30 (recall task on all 3 profiles — profile routing confirmation)
+- Run 1 — 2026-06-26 (first full suite, single run each)
+- Run 4 — 2026-06-30 (initial v2 run — grading bugs found)
+- Shared Lexicon
+- Issue Tracker
+- Run 2 — 2026-06-28 (profile routing validation)
+- Run 18 — 2026-08-13 (route.py embedding classifier — reference-set expansion, same fixture)
+- Run 19 — 2026-08-13 (grown fixture: 20 → 40 clean items + 8 ambiguous — 85% didn't hold)
+- Run 20 — 2026-08-13 (targeted research reference-set expansion)
+- Run 21 — 2026-08-13 (genuine held-out validation set — first honest read)
+- Run 22 — 2026-08-13 (score-formula bug found + fixed, threshold recalibrated, default flipped)
+- Run 23 — 2026-08-13 (off-topic detection gap, investigated — two hypotheses, both negative)
+- Run 24 — 2026-08-13 (targeted research + coding expansion — real gain, real cost)
+- Run 25 — 2026-08-13 (recall regression fixed, one new small cost surfaced)
+- Run 26 — 2026-08-13 (fresh holdout v2 built — the honest number is 72%, not 87.5%)
+- Run 27 — 2026-08-13 (architecture diagnosed and fixed — large gain, real disclosed cost)
+- Run 28 — 2026-08-13 (coding diagnosed and fixed — clean, zero collateral cost, confirms Run 27's hypothesis)
+- Run 29 — 2026-08-13 (fresh holdout v3 built — 87.5%, independently confirmed)
+- brain-map GIF capture experiments (paused 2026-07-17)
+- Domain Docs
+- Triage Labels
+- Handoff — Retrospective
+- Paper Dive — Retrospective
+- Safety Monitor — Retrospective
+- Retrospective — to-tasklist
+- index.md
+- brain-map/CONTEXT.md
 
 ## God Nodes (most connected - your core abstractions)
 1. `co()` - 35 edges
 2. `e()` - 31 edges
 3. `n()` - 30 edges
 4. `fn()` - 25 edges
-5. `en` - 24 edges
-6. `oo()` - 21 edges
-7. `ke` - 20 edges
-8. `_metric()` - 20 edges
-9. `vl()` - 20 edges
-10. `yi()` - 20 edges
+5. `marvin-bench — results log` - 25 edges
+6. `en` - 24 edges
+7. `oo()` - 21 edges
+8. `ke` - 20 edges
+9. `yi()` - 20 edges
+10. `vl()` - 20 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `main()` --calls--> `log_hook_error()`  [INFERRED]
   brain-map/scripts/skill_activity.py → lib/hook_errors.py
-- `log_hook_error()` --calls--> `main()`  [INFERRED]
-  lib/hook_errors.py → skills/improve/scripts/improvement_sweep.py
-- `log_hook_error()` --calls--> `main()`  [INFERRED]
-  lib/hook_errors.py → skills/self-improve/scripts/background_review.py
-- `process_and_check_quarantine()` --calls--> `process()`  [INFERRED]
-  lib/session_start_report.py → skills/safety-monitor/scripts/process_quarantine_reviews.py
-- `registry_id()` --calls--> `main()`  [INFERRED]
-  lib/machine_profile.py → skills/improve/scripts/cross_machine_merge.py
+- `main()` --calls--> `log_hook_error()`  [INFERRED]
+  skills/improve/scripts/improvement_sweep.py → lib/hook_errors.py
+- `main()` --calls--> `log_hook_error()`  [INFERRED]
+  skills/self-improve/scripts/background_review.py → lib/hook_errors.py
+- `main()` --calls--> `load_or_build()`  [INFERRED]
+  skills/improve/scripts/check_and_trigger_merge.py → lib/machine_profile.py
+- `main()` --calls--> `load_or_build()`  [INFERRED]
+  skills/improve/scripts/cross_machine_merge.py → lib/machine_profile.py
 
 ## Import Cycles
 - None detected.
 
-## Communities (120 total, 24 thin omitted)
+## Communities (248 total, 32 thin omitted)
 
 ### Community 0 - "Network Reachability Checks"
 Cohesion: 0.05
@@ -163,7 +266,7 @@ Nodes (73): _arp_mac(), check_and_record(), check_domain(), current_network_id()
 
 ### Community 1 - "motion.12.42.2.js"
 Cohesion: 0.04
-Nodes (44): adopt(), At(), be(), bi(), collectTargets(), constructor(), Dr(), ec() (+36 more)
+Nodes (48): adopt(), be(), c(), collectTargets(), constructor(), Dr(), ec(), Et() (+40 more)
 
 ### Community 2 - "Session-Start Reporting & Hook Errors"
 Cohesion: 0.07
@@ -173,13 +276,13 @@ Nodes (53): BaseException, main(), log_hook_error(), Shared failure logger for P
 Cohesion: 0.30
 Nodes (12): _default_list_worktrees(), _default_remove_worktree(), _extract_issue_number(), find_orphaned_worktrees(), find_stale_claims(), datetime, Path, Cron entry point. Runs both sweeps, logs what was removed/released (same… (+4 more)
 
-### Community 4 - "Cross-Machine Code Sync"
+### Community 4 - "code_sync.py"
 Cohesion: 0.06
 Nodes (32): _files_with_conflict_markers(), _git(), _git_ok(), _log(), main(), _merge_remote(), pull(), push() (+24 more)
 
 ### Community 5 - "fn"
-Cohesion: 0.12
-Nodes (5): fn(), Fs(), Is(), os(), ti()
+Cohesion: 0.09
+Nodes (19): ai(), animateVisualElement(), dn(), fi(), fn(), Fs(), gi(), Is() (+11 more)
 
 ### Community 6 - "verify.py"
 Cohesion: 0.05
@@ -189,17 +292,17 @@ Nodes (52): append_to_queue(), extract_project(), find_project_path(), format_is
 Cohesion: 0.07
 Nodes (43): aggregate_runs(), _check_quota(), _fmt_multi(), _fmt_single(), fmt_table(), _is_infra_error(), judge_run(), _load_marvin_context() (+35 more)
 
-### Community 8 - "co"
+### Community 8 - ".getValue"
 Cohesion: 0.08
-Nodes (23): ai(), animateVisualElement(), Ao(), ba(), ci(), co(), dn(), Eo() (+15 more)
+Nodes (14): Ao(), ar(), At(), bi(), In(), Je(), Li(), lr() (+6 more)
 
-### Community 9 - "Route Classifier Benchmarks"
-Cohesion: 0.08
-Nodes (22): ArgumentParser, _classify_row(), run_ambiguous(), run_clean(), Genuinely held-out validation fixture v3 for route.py's embedding classifier…, run(), Tests for route.py's --embed flag and keyword-classifier fallback. Run via:…, Namespace (+14 more)
+### Community 9 - "route.py"
+Cohesion: 0.17
+Nodes (16): ArgumentParser, Namespace, _build_arg_parser(), classify(), launch(), _launch_cmd(), main(), print_aliases() (+8 more)
 
-### Community 10 - "test_metrics_registry.py"
-Cohesion: 0.06
-Nodes (50): compare(), _direction(), index(), latest(), _load_snapshots(), _narrative_path(), Path, Recompute, from every per-subsystem JSON file, a subsystem -> latest metrics… (+42 more)
+### Community 10 - "test_sandbox_orchestration.py"
+Cohesion: 0.10
+Nodes (27): compare(), _direction(), index(), latest(), _load_snapshots(), _narrative_path(), Path, Recompute, from every per-subsystem JSON file, a subsystem -> latest metrics… (+19 more)
 
 ### Community 11 - "Paper-Dive Argument Mapper"
 Cohesion: 0.14
@@ -209,23 +312,35 @@ Nodes (27): build_argument_map(), enrich_missing_titles(), extract_core_claim(),
 Cohesion: 0.11
 Nodes (17): Any, Bool, AppDelegate, DesktopWebView, Cocoa, Date, Notification, NSApplicationDelegate (+9 more)
 
-### Community 13 - ".scheduleResolve"
-Cohesion: 0.29
-Nodes (3): Q(), Qe(), tn()
+### Community 13 - "test_metrics_registry.py"
+Cohesion: 0.14
+Nodes (23): _metric(), metrics_dir(), fixture, Tests for metrics_registry.py. Run via: ~/.agents/venv/bin/python -m pytest…, test_compare_all_improved_or_unchanged_is_passing(), test_compare_all_unchanged_is_not_passing(), test_compare_detects_improvement_higher_is_better(), test_compare_detects_improvement_lower_is_better() (+15 more)
+
+### Community 14 - ".get"
+Cohesion: 0.09
+Nodes (24): Al(), As(), cl(), dl(), Es(), fl(), gl(), hl() (+16 more)
 
 ### Community 15 - "Paper-Dive Logic Auditor"
 Cohesion: 0.12
 Nodes (22): judge_all(), judge_extraction(), Judges a type-adaptive extraction (from extract_structure) against its type-…, papers: {slug: (extraction_dict, paper_type)}. Returns {slug: findings_list}., render_markdown(), Tests for logic_auditor.py. Run via: ~/.agents/venv/bin/python -m pytest…, test_judge_all_handles_empty_input(), test_judge_all_judges_each_paper_by_its_own_type() (+14 more)
 
-### Community 16 - "Intent Classification (Route Skill)"
-Cohesion: 0.11
-Nodes (14): build_collection(), classify(), embed_text(), _get_collection(), main(), Embed via Ollama nomic-embed-text. task='query' for classify() input,…, (Re)embed every reference example into the intent-routing collection. Uses…, Return {"status": "ok"|"no_match"|"unavailable", "intent": str|None, "score":… (+6 more)
+### Community 16 - "test_intent_classify.py"
+Cohesion: 0.15
+Nodes (6): _FakeCollection, Tests for intent_classify.py. Run via: ~/.agents/venv/bin/python -m pytest…, test_classify_embeds_the_description_as_a_query_not_a_document(), test_classify_returns_best_matching_intent_when_confident(), test_classify_returns_no_match_when_below_threshold(), test_classify_score_uses_correct_cosine_distance_conversion()
+
+### Community 17 - "devDependencies"
+Cohesion: 0.04
+Nodes (48): autoprefixer, author, build, appId, directories, files, mac, productName (+40 more)
 
 ### Community 18 - "MARVIN Setup Script"
 Cohesion: 0.25
 Nodes (25): build_embeddings(), clone_resume_tailor(), configure_claude(), configure_hook(), deploy_brain_map(), deploy_retrospective_log(), detect_gpu(), detect_os() (+17 more)
 
-### Community 20 - "Machine Profile & Task Dispatch"
+### Community 19 - "en"
+Cohesion: 0.06
+Nodes (5): en, ke, kn(), yn, zt()
+
+### Community 20 - "task_dispatch.py"
 Cohesion: 0.17
 Nodes (22): _load_registry(), This machine's stable id in marvin-network.json, resolved by matching hardware…, All registered devices that aren't this one, keyed by device id., registry_id(), remote_devices(), _build_wrapper_script(), _candidates(), dispatch() (+14 more)
 
@@ -241,21 +356,21 @@ Nodes (22): build_agent_children(), build_device_children(), build_hook_children
 Cohesion: 0.19
 Nodes (22): analyze_python_file(), Return complexity/principles issues for a single .py file., make_project(), Path, Tests for qa-agent scripts. Run via: ~/.agents/venv/bin/python -m pytest…, test_clean_function_no_flags(), test_detect_stack_javascript(), test_detect_stack_multi() (+14 more)
 
-### Community 24 - ".get"
-Cohesion: 0.10
-Nodes (23): Al(), As(), cl(), dl(), Es(), fl(), gl(), hl() (+15 more)
+### Community 24 - "MARVIN"
+Cohesion: 0.04
+Nodes (47): 1. Coding tasks — MARVIN adds ~10% overhead with zero quality gain, 1. Recall — MARVIN knows things the others don't, 1b. MARVIN advantage grows on weaker models (Haiku cross-model run), 1c. Local model context injection — works for facts, fails for jargon (Run 9), 1d. 14B + RAG closes the jargon gap — semantic parity at zero cost (Runs 10–12), 2. Caveman mode "backfired" — REVISED 2026-07-02, was likely a confound, not a real finding, 2. Navigation efficiency — MARVIN finds the answer 3× cheaper, 3. Profile routing — recovers the coding overhead (+39 more)
 
-### Community 25 - "ke"
-Cohesion: 0.15
-Nodes (3): Cn, ke, zt()
+### Community 25 - "oo"
+Cohesion: 0.11
+Nodes (15): ci(), fe(), finalize(), jo(), oo(), p, Qs(), ro() (+7 more)
 
 ### Community 26 - "QA-Agent Code Scanner"
 Cohesion: 0.19
 Nodes (20): analyze_comment_quality(), analyze_complexity(), analyze_quality(), detect_stack(), extract_dependencies(), extract_imports(), extract_markers(), infer_domain() (+12 more)
 
-### Community 27 - "$r"
-Cohesion: 0.07
-Nodes (17): ar(), bo(), br(), cr, ei(), Go(), hi(), Ie() (+9 more)
+### Community 27 - "metrics.js"
+Cohesion: 0.49
+Nodes (6): registerMetricsHandlers(), buildIndex(), DEFAULT_METRICS_DIR, latest(), listSubsystems(), readHistory()
 
 ### Community 28 - "Cleanup Sweep Tests"
 Cohesion: 0.16
@@ -266,8 +381,8 @@ Cohesion: 0.17
 Nodes (18): build_entry(), infer_pattern_type(), main(), Return True if new, False if already existed (dedup by id)., Return best-guess pattern_type from document content and tags., store_entry(), extract_decisions(), extract_outcome() (+10 more)
 
 ### Community 30 - "e"
-Cohesion: 0.08
-Nodes (31): c(), ca(), de(), e(), er(), fr(), ge(), Gr() (+23 more)
+Cohesion: 0.07
+Nodes (25): ca(), Cn, cr, de(), e(), er(), Gr(), Gt() (+17 more)
 
 ### Community 31 - "MR Raiser Tests"
 Cohesion: 0.17
@@ -301,9 +416,9 @@ Nodes (16): _archive_previous_latest(), check_job(), check_organize_sync(), chec
 Cohesion: 0.15
 Nodes (10): _promoting_evaluator(), Tests for ticket_promotion.py. Run via: ~/.agents/venv/bin/python -m pytest…, _skipping_evaluator(), test_creates_ticket_when_evaluator_says_promote(), test_no_manual_approval_step_runs_synchronously_to_completion(), test_reasoning_captured_in_result_and_passed_to_ticket_creator(), test_reasoning_present_even_when_not_promoted(), test_skips_ticket_creation_when_evaluator_says_dont_promote() (+2 more)
 
-### Community 39 - "ga"
-Cohesion: 0.21
-Nodes (6): $a(), ga, Ll(), ol(), reconcileRemovals(), Rr()
+### Community 39 - "$r"
+Cohesion: 0.16
+Nodes (8): bo(), br(), Go(), jn(), $r(), vo(), xo(), Zr()
 
 ### Community 40 - "cross_machine_merge.py"
 Cohesion: 0.24
@@ -324,6 +439,10 @@ Nodes (7): LRUCache, LRU cache for expensive database queries. Evicts the least-
 ### Community 45 - "test_mlx_lm_eval_adapter.py"
 Cohesion: 0.19
 Nodes (9): Returns (summed_logprob, is_greedy) for `continuation` given `context`, using…, score_continuation(), model_and_tokenizer(), fixture, Tests for the in-process MLX loglikelihood adapter. Run via:…, Cross-checks score_continuation's single batched forward pass against a…, test_is_greedy_true_for_actual_argmax_continuation_false_otherwise(), test_logit_slicing_matches_independent_step_by_step_computation() (+1 more)
+
+### Community 46 - "MetricsScorecard.jsx"
+Cohesion: 0.28
+Nodes (3): formatTimestamp(), SubsystemCard(), SubsystemDrilldown()
 
 ### Community 47 - "classify_paper_type"
 Cohesion: 0.14
@@ -349,9 +468,9 @@ Nodes (12): build_audit_report(), needs_second_look(), Assembles the full per-pa
 Cohesion: 0.17
 Nodes (12): extract_all(), extract_structure(), Extracts the type-appropriate structure as a reviewable intermediate artifact…, papers: {slug: (title, abstract, paper_type)}. Returns {slug: extraction_dict}., test_extract_all_handles_empty_input(), test_extract_all_routes_each_paper_by_its_own_type(), test_extract_structure_benchmark_uses_construct_validity_fields(), test_extract_structure_conceptual_uses_structural_claim_fields() (+4 more)
 
-### Community 54 - "oo"
-Cohesion: 0.12
-Nodes (13): fe(), finalize(), jo(), oo(), p, Qs(), ro(), to() (+5 more)
+### Community 54 - "s"
+Cohesion: 0.13
+Nodes (9): $a(), ga, ge(), Ll(), Ls(), ol(), reconcileRemovals(), Rr() (+1 more)
 
 ### Community 55 - "render_pdf.py"
 Cohesion: 0.26
@@ -365,9 +484,9 @@ Nodes (5): LRUCache, LRU (Least Recently Used) cache with a fixed capacity. Item
 Cohesion: 0.27
 Nodes (9): main(), print_human(), Infer the problem's own domain (unless given), then fetch top-N transferable…, synthesize(), filter_results(), main(), query_kb(), test_filter_results_by_category() (+1 more)
 
-### Community 58 - "daily_digest.py"
-Cohesion: 0.29
-Nodes (10): bench_summary(), improvement_queue_summary(), main(), qa_kb_summary(), Computed directly from the log, not via an LLM guess at "does this look…, launchd's environment doesn't source .zshrc/.zprofile, so PATH may not include…, recent_handoffs_summary(), _resolve_claude_bin() (+2 more)
+### Community 58 - "During the session"
+Cohesion: 0.07
+Nodes (24): ADR Format, CONTEXT.md Format, Challenge against the glossary, Cross-reference with code, Discuss concrete scenarios, Domain awareness, During the session, File structure (+16 more)
 
 ### Community 59 - "retrieve.py"
 Cohesion: 0.35
@@ -388,10 +507,6 @@ Nodes (9): arxiv_search(), fmt_paper(), get_requests(), main(), rank_papers(), r
 ### Community 63 - "rebuild-embeddings.py"
 Cohesion: 0.36
 Nodes (9): build_doc_text(), collection_for(), content_hash(), embed(), main(), Upsert changed entries and prune deleted ones. Returns (embedded, skipped,…, resolve_path(), strip_frontmatter() (+1 more)
-
-### Community 64 - ".updateMotionValue"
-Cohesion: 0.25
-Nodes (4): Ae(), sn(), vn(), xn
 
 ### Community 65 - "main"
 Cohesion: 0.47
@@ -461,6 +576,10 @@ Nodes (4): compute_all_reliability_signals(), layer1_findings: {slug: findings_l
 Cohesion: 0.67
 Nodes (3): Call, _call_root_name(), First identifier of a call chain: requests.get(...) -> 'requests'.
 
+### Community 103 - "Process"
+Cohesion: 0.17
+Nodes (11): 1. Gather context, 2. Explore the codebase (optional), 3. Draft vertical slices, 4. Quiz the user, 5. Publish the issues to the issue tracker, Acceptance criteria, Blocked by, Parent (+3 more)
+
 ### Community 105 - "graphify reference: extra exports and benchmark"
 Cohesion: 0.22
 Nodes (8): graphify reference: extra exports and benchmark, Step 6b - Wiki (only if --wiki flag), Step 7 - Neo4j export (only if --neo4j or --neo4j-push flag), Step 7a - FalkorDB export (only if --falkordb or --falkordb-push flag), Step 7b - SVG export (only if --svg flag), Step 7c - GraphML export (only if --graphml flag), Step 7d - MCP server (only if --mcp flag), Step 8 - Token reduction benchmark (only if total_words > 5000)
@@ -485,49 +604,413 @@ Nodes (3): For git commit hook, For native CLAUDE.md integration, graphify refer
 Cohesion: 0.50
 Nodes (3): For --cluster-only, For --update (incremental re-extraction), graphify reference: incremental update and cluster-only
 
+### Community 115 - "co"
+Cohesion: 0.07
+Nodes (13): ba(), bl(), Bs(), co(), ei(), Eo(), gs(), hi() (+5 more)
+
 ### Community 116 - "Diagnose"
 Cohesion: 0.17
 Nodes (11): Diagnose, Iterate on the loop itself, Non-deterministic bugs, Phase 1 — Build a feedback loop, Phase 2 — Reproduce, Phase 3 — Hypothesise, Phase 4 — Instrument, Phase 5 — Fix + regression test (+3 more)
 
-### Community 117 - "sandbox_orchestration.py"
-Cohesion: 0.31
-Nodes (8): _create_worktree(), _default_executor(), execute_ticket(), Path, Real default: a flagship-tier planning call, then a Haiku-tier execution call…, Drive `ticket_ref` through an isolated worktree and a tune-and-compare loop.…, Cron entry point: claim a ticket if capacity allows, then hand it to sandbox…, run_claim_cycle()
-
-### Community 118 - "ticket_claim.py"
-Cohesion: 0.36
-Nodes (6): _claim_label(), claim_next_ticket(), _default_add_claim_label(), _default_list_claimed(), _default_remove_claim_label(), Claim the highest-priority (lowest issue number) unclaimed ready-for-agent…
-
-### Community 119 - "ticket_coordination.py"
-Cohesion: 0.25
-Nodes (6): Release a claim this machine holds, so another machine (or a later cycle) can…, release(), claim_with_coordination(), Check `issue_number` for a same-instant collision (more than one claimed:*…, Claim via ticket_claim.claim_next_ticket (unchanged), then resolve any…, resolve_collision()
+### Community 117 - "Triage"
+Cohesion: 0.11
+Nodes (16): For `ready-for-human` specifically, Structure, What makes a brief durable vs. fragile, Writing Durable Agent Briefs, Consumer rules, Structure, The `.out-of-scope/` Knowledge Base, Invocation (+8 more)
 
 ### Community 120 - "Diagnose — Retrospective"
 Cohesion: 0.22
 Nodes (8): 2026-07-07 — MLX on-device model benchmark (Qwen2.5-3B vs Llama-3.2-3B), 2026-07-14 — Converting the session-start checklist into a deterministic hook, 2026-07-17 — Brain-map reskin (dark gradient silently not rendering), 2026-07-17 — DesktopLive verification pass (post-Motion deploy), 2026-07-17 — Motion physics deploy to brain-map/DesktopLive (pulses, camera nudges, fitScale), 2026-08-26 — killer-sudoku full day (perf tuning + real bugs), 2026-08-26 — killer-sudoku Kotlin port (UI parity + animation/input bugs), Diagnose — Retrospective
 
-### Community 121 - "bl"
+### Community 123 - "daily_digest.py"
+Cohesion: 0.29
+Nodes (10): bench_summary(), improvement_queue_summary(), main(), qa_kb_summary(), Computed directly from the log, not via an LLM guess at "does this look…, launchd's environment doesn't source .zshrc/.zprofile, so PATH may not include…, recent_handoffs_summary(), _resolve_claude_bin() (+2 more)
+
+### Community 124 - "to-prd/SKILL.md"
+Cohesion: 0.22
+Nodes (8): Further Notes, Implementation Decisions, Out of Scope, Problem Statement, Process, Solution, Testing Decisions, User Stories
+
+### Community 125 - "7. Architecture Decision Records"
+Cohesion: 0.07
+Nodes (28): 1. System Overview, 2. Directory Structure, 3.1 SKILL.md, 3.2 `scripts/fetch_jd.py`, 3.3 `scripts/extract_text.py`, 3.4 `scripts/render_pdf.py`, 3.5 `template/resume.css`, 3. Component Breakdown (+20 more)
+
+### Community 128 - "To Tasklist"
+Cohesion: 0.50
+Nodes (3): Process, To Tasklist, When to use this instead of to-issues/to-prd
+
+### Community 129 - "Writing Skills"
+Cohesion: 0.07
+Nodes (25): Evidence gate, Quality Filter, Recurrence gate, Value gate, When a gate fails, 1. Identify the pattern, 2. Apply the quality filter, 3. Draft or update the skill (+17 more)
+
+### Community 130 - "sandbox_orchestration.py"
+Cohesion: 0.31
+Nodes (8): _create_worktree(), _default_executor(), execute_ticket(), Path, Real default: a flagship-tier planning call, then a Haiku-tier execution call…, Drive `ticket_ref` through an isolated worktree and a tune-and-compare loop.…, Cron entry point: claim a ticket if capacity allows, then hand it to sandbox…, run_claim_cycle()
+
+### Community 131 - "ticket_claim.py"
+Cohesion: 0.36
+Nodes (6): _claim_label(), claim_next_ticket(), _default_add_claim_label(), _default_list_claimed(), _default_remove_claim_label(), Claim the highest-priority (lowest issue number) unclaimed ready-for-agent…
+
+### Community 132 - "ticket_coordination.py"
+Cohesion: 0.25
+Nodes (6): Release a claim this machine holds, so another machine (or a later cycle) can…, release(), claim_with_coordination(), Check `issue_number` for a same-instant collision (more than one claimed:*…, Claim via ticket_claim.claim_next_ticket (unchanged), then resolve any…, resolve_collision()
+
+### Community 133 - "Process"
+Cohesion: 0.10
+Nodes (19): Applying tiers, Contested, Epistemic Framework — Confidence Tier Definitions, Established, Speculative, Unknown, 1. Frame the question precisely, 2. Map the space (+11 more)
+
+### Community 134 - "Design Document — Resume Tailor"
+Cohesion: 0.10
+Nodes (19): 1. User Flows, 2. Skill Commands, 3.1 Relevance score, 3.2 Recency score, 3.3 Combined score, 3.4 Aerospace crossover signal, 3. Scoring & Selection Algorithm, 4. Template Slots — revised 2026-07-02 (+11 more)
+
+### Community 135 - "tdd/SKILL.md"
+Cohesion: 0.11
+Nodes (14): Deep Modules, Designing Interfaces for Testability, Mocking Guidelines, Refactor Candidates, 1. Planning, 2. Tracer Bullet, 3. Incremental Loop, 4. Refactor (+6 more)
+
+### Community 136 - "2. Functional Requirements"
+Cohesion: 0.11
+Nodes (18): 1. Purpose, 2.1 Master Resume, 2.2 Company & Role Research, 2.3 Master Resume Updates, 2.3 Tailoring, 2.4 Cover Letter, 2.4 Transcript Parsing, 2.5 Output Package (+10 more)
+
+### Community 137 - "setup-matt-pocock-skills/SKILL.md"
+Cohesion: 0.11
+Nodes (12): Domain Docs, Issue Tracker: GitHub, Issue Tracker: GitLab, Issue Tracker: Local Markdown, 1. Explore, 2. Present findings and ask, 3. Confirm and edit, 4. Write (+4 more)
+
+### Community 138 - "[TAILOR] — Full Application Package"
+Cohesion: 0.12
+Nodes (16): [ADD-TO-MASTER] — Add New Entry, Command Routing, Constants, [MERGE-RESUME] — Merge Uploaded Resume, [PARSE-TRANSCRIPT] — Extract Skills from Academic Transcript, Phase 1: Intake, Phase 2: Research, Phase 3: Tailoring (+8 more)
+
+### Community 139 - "Logic/State-Machine Prototype"
+Cohesion: 0.13
+Nodes (12): Example shape, Logic/State-Machine Prototype, Shape, What NOT to build, Pick a branch, Prototype, Rules that apply to both, When done (+4 more)
+
+### Community 140 - "Resume Tailor"
+Cohesion: 0.14
+Nodes (13): 1. Install system dependency (macOS), 2. Install Python dependencies, 3. Create your master resume, 4. Wire the skill (Claude Code), Commands, How tailoring works, Output, Privacy model (+5 more)
+
+### Community 141 - "Creative"
+Cohesion: 0.15
+Nodes (12): 1. Resist the first idea, 2. Reframe the brief, 3. Apply constraints deliberately, 4. Generate divergent options, 5. Iterate, don't perfect, Creative, Cross-Domain Pattern Synthesis (technical/engineering problems only), Domain-Specific Notes (+4 more)
+
+### Community 142 - "Direct inspirations & dependencies"
+Cohesion: 0.17
+Nodes (11): Acknowledgements, [Anthropic Claude Code](https://github.com/anthropics/claude-code), [ChromaDB — Chroma Core](https://github.com/chroma-core/chroma), Contributing, Direct inspirations & dependencies, [FastMCP](https://github.com/jlowin/fastmcp), [Hermes Agent — NousResearch](https://github.com/NousResearch/hermes-agent), [markdown-it-py](https://github.com/executablebooks/markdown-it-py) & [pdfminer.six](https://github.com/pdfminer/pdfminer.six) (+3 more)
+
+### Community 143 - "n8n platform research"
+Cohesion: 0.18
+Nodes (10): 1. What it is, architecturally, 2. Licensing — most important to get exactly right, 3. Versions, 4. Self-hosting, 5. Debugging, 6. Real-world applications, Caveats, From the n8n MCP tool server directly (synta-mcp) (+2 more)
+
+### Community 144 - "Architecture Review"
+Cohesion: 0.18
+Nodes (10): 1. Audit the system, 2. Generate suggestions, 3. Present to user, 4. On approval, Architecture Review, Optimization Priorities, Review Process, Review Subcommand (+2 more)
+
+### Community 145 - "QA Code Agent"
+Cohesion: 0.18
+Nodes (10): 1 — Scan a project (auto-extract patterns), 2 — Query the knowledge base, 3 — Capture a pattern manually, 4 — Lateral (cross-domain) query, Behaviour rules, Commands, Data schema, QA Code Agent (+2 more)
+
+### Community 146 - "Architecture — Safety & Drift Monitor"
+Cohesion: 0.18
+Nodes (10): Architecture — Safety & Drift Monitor, `calibrate.py` — risk-controlled threshold, Component overview, `drift_report.py` — weekly divergence check, Dual-channel drift audit (`otr_log.py`), File layout, Integration points (diffs to existing files, not rewrites), Session-start integration (+2 more)
+
+### Community 147 - "marvin-bench — results log"
+Cohesion: 0.20
+Nodes (9): Findings from Run 16, Findings from Run 17, marvin-bench — results log, Next bench priorities, Next bench priorities, Run 16 — 2026-07-02 (caveman mode retest — Run 1's finding was confounded), Run 17 — 2026-08-13 (route.py keyword classifier vs. new embedding classifier, ADR 0023), Run 30 — 2026-08-13 (targeted fix: bare "bug in {file}" phrasing losing to recall) (+1 more)
+
+### Community 148 - "Safety Monitor"
+Cohesion: 0.20
+Nodes (9): Integration status, Known gaps (tracked, not silently assumed fixed), Known gotchas, Manual invocation / smoke test, Output files, Safety Monitor, Scripts, Triggers (+1 more)
+
+### Community 149 - "Token Optimization Best Practices"
+Cohesion: 0.22
+Nodes (8): Anti-Patterns, Caching, Chunking for Large Inputs, Context Reuse, Model Routing (highest leverage), Output Discipline, Prompt Design, Token Optimization Best Practices
+
+### Community 150 - "MARVIN — Context Glossary"
+Cohesion: 0.22
+Nodes (8): Citation-graph knowledge base (in design, not yet built), Code sync (built 2026-07-09/12 — distinct from cross_machine_merge.py's data sync), Fan-out + merge (mode 2), first application: research-colony, MARVIN — Context Glossary, MR pipeline (in design, 2026-08-19), Session continuity (in design, 2026-07-12), Task-dispatch (v1 built and tested; mode 2 built and applied to research-colony), Voice client (in design, not yet built)
+
+### Community 151 - "Animation tools evaluation — 2026-07-17"
+Cohesion: 0.22
+Nodes (8): Animation tools evaluation — 2026-07-17, Anime.js — recommended, targeted use, Bklit — catalogued, not usable as-is, Bottom line / recommended next step, `brain-map`'s actual constraint, which shapes every recommendation below, Kokonut UI — catalogued, not usable as-is, Manus (manus.im) — different category entirely, Motion (motion.dev, ex-Framer Motion) — recommended, targeted use
+
+### Community 152 - "intent_classify.py"
+Cohesion: 0.39
+Nodes (8): build_collection(), classify(), embed_text(), _get_collection(), main(), Embed via Ollama nomic-embed-text. task='query' for classify() input,…, (Re)embed every reference example into the intent-routing collection. Uses…, Return {"status": "ok"|"no_match"|"unavailable", "intent": str|None, "score":…
+
+### Community 154 - "Design — Safety & Drift Monitor"
+Cohesion: 0.22
+Nodes (8): Connection to the requested automation pipeline, Design — Safety & Drift Monitor, Open questions / risks, `quarantine.md`, Review command, Rollout plan, Session start, User-facing surface
+
+### Community 155 - "compare_route_classifiers.py"
+Cohesion: 0.39
+Nodes (5): _classify_row(), run_ambiguous(), run_clean(), Genuinely held-out validation fixture v3 for route.py's embedding classifier…, run()
+
+### Community 156 - "Run 15 — 2026-07-01 (account session-limit discovery, infra-error handling, quota preflight, select_model.py, two more judge bugs)"
+Cohesion: 0.25
+Nodes (8): Findings from Run 15, First trustworthy select_model.py results (post judge-fixes), Next bench priorities, "Ran out of tokens fast" — not a Fable 5 model swap, Robustness fixes to bench.py, Run 15 — 2026-07-01 (account session-limit discovery, infra-error handling, quota preflight, select_model.py, two more judge bugs), select_model.py — ascending-cost model-selection sweep, Two more judge bugs found while verifying select_model.py, both fixed
+
+### Community 157 - "Context Window Best Practices"
+Cohesion: 0.25
+Nodes (7): Anti-Patterns, Compression Signals, Context Window Best Practices, Handoff Before Context Switch, Indexing Over Inlining, Skill File Discipline, The Five-Level Loading Hierarchy
+
+### Community 158 - "Claude Code Global Settings"
+Cohesion: 0.25
+Nodes (7): Architecture Review Queue, Claude Code Global Settings, Context Switch Protocol, Development Defaults, Lexicon, Session Start, Skills
+
+### Community 159 - "Index — Pull the Right Boxes"
+Cohesion: 0.25
+Nodes (7): Examples, Fallback: manual manifest matching, Index — Pull the Right Boxes, Keeping the Manifest Current, Manifest Structure, Primary: hybrid retrieval engine, Tag Namespaces
+
+### Community 160 - "Research Colony Skill"
+Cohesion: 0.25
+Nodes (7): ChromaDB collections, Correlation signals, Output files, Research Colony Skill, Running manually, Scripts, Triggers
+
+### Community 161 - "Requirements — Safety & Drift Monitor"
+Cohesion: 0.25
+Nodes (7): Acceptance criteria, Functional requirements, Goals, Non-functional requirements, Non-goals, Problem statement, Requirements — Safety & Drift Monitor
+
+### Community 162 - "marvin-bench"
+Cohesion: 0.29
+Nodes (6): Isolation, Known limitations, marvin-bench, Run, Task format, Why
+
+### Community 164 - "Scenario: Diagnose → Improve"
+Cohesion: 0.29
+Nodes (6): Failure modes, Handoff points, Known companions, Scenario: Diagnose → Improve, Skill sequence, When to use
+
+### Community 165 - "Scenario: Research → Design → Build"
+Cohesion: 0.29
+Nodes (6): Failure modes, Handoff points, Known companions, Scenario: Research → Design → Build, Skill sequence, When to use
+
+### Community 166 - "Handoff"
+Cohesion: 0.29
+Nodes (6): Document Structure, Handoff, On Resume, Rules, Save Location, When to Run Autonomously
+
+### Community 167 - "Route Skill"
+Cohesion: 0.29
+Nodes (6): CLI usage, Evidence base, Install, Route Skill, Routing table (bench-validated), Triggers
+
+### Community 168 - "Run 13 — 2026-07-01 (three new discriminator tasks: multi-file invariant, deceptive comment, KB isolation)"
+Cohesion: 0.33
+Nodes (6): Findings from Run 13, Next bench priorities, Run 13 — 2026-07-01 (three new discriminator tasks: multi-file invariant, deceptive comment, KB isolation), task-012-protocol-mismatch (fs, expect both `fromisoformat` + `{1, 2, 3}` for 1.00), task-013-lru-cache-bug (fs, expect `move_to_end`), task-014-kb-lookup (qa, expect exact phrase `"Context quality matters more than model size"`)
+
+### Community 169 - "Run 5 — 2026-06-30 (v2 corrected grading + redesigned task-007)"
+Cohesion: 0.33
+Nodes (6): Findings from Run 5, Next bench priorities, Run 5 — 2026-06-30 (v2 corrected grading + redesigned task-007), task-005-date-validator (fixed grading: `datetime.date`), task-006-email-lookup (fixed grading: `, None)`), task-007-dyld-recall (redesigned: caveman mode token counts)
+
+### Community 170 - "0001 — Use the Claude Agent SDK, not `remote-control`, as the voice client's backend"
+Cohesion: 0.33
+Nodes (5): 0001 — Use the Claude Agent SDK, not `remote-control`, as the voice client's backend, Consequences, Context, Decision, Status
+
+### Community 171 - "0002 — Native iOS app, not a PWA, for the voice client"
+Cohesion: 0.33
+Nodes (5): 0002 — Native iOS app, not a PWA, for the voice client, Consequences, Context, Decision, Status
+
+### Community 172 - "0003 — Dual-mode architecture: full MARVIN online, degraded local model offline"
+Cohesion: 0.33
+Nodes (5): 0003 — Dual-mode architecture: full MARVIN online, degraded local model offline, Consequences, Context, Decision, Status
+
+### Community 173 - "0004 — Distribute via free Apple ID + AltStore/AltServer, not a paid Developer account"
+Cohesion: 0.33
+Nodes (5): 0004 — Distribute via free Apple ID + AltStore/AltServer, not a paid Developer account, Consequences, Context, Decision, Status
+
+### Community 174 - "0005 — Plan-and-confirm guardrail for voice-triggered tool execution"
+Cohesion: 0.33
+Nodes (5): 0005 — Plan-and-confirm guardrail for voice-triggered tool execution, Consequences, Context, Decision, Status
+
+### Community 175 - "0006 — MLX for the offline-mode on-device model, over llama.cpp/GGUF"
+Cohesion: 0.33
+Nodes (5): 0006 — MLX for the offline-mode on-device model, over llama.cpp/GGUF, Consequences, Context, Decision, Status
+
+### Community 176 - "0007 — Greedy best-first search, not depth-penalized A*, for citation-graph traversal"
+Cohesion: 0.33
+Nodes (5): 0007 — Greedy best-first search, not depth-penalized A*, for citation-graph traversal, Consequences, Context, Decision, Status
+
+### Community 177 - "0008 — Bidirectional traversal (references + citations), asymmetric caps, shared relevance floor with a result-intent bypass"
+Cohesion: 0.33
+Nodes (5): 0008 — Bidirectional traversal (references + citations), asymmetric caps, shared relevance floor with a result-intent bypass, Consequences, Context, Decision, Status
+
+### Community 178 - "0009 — Store first-discovery edge metadata only, not all paths"
+Cohesion: 0.33
+Nodes (5): 0009 — Store first-discovery edge metadata only, not all paths, Consequences, Context, Decision, Status
+
+### Community 179 - "0010 — Checkpoint-and-confirm with a diminishing-returns signal, not a flat hard node cap"
+Cohesion: 0.33
+Nodes (5): 0010 — Checkpoint-and-confirm with a diminishing-returns signal, not a flat hard node cap, Consequences, Context, Decision, Status
+
+### Community 180 - "0011 — Blend SPECTER2 with nomic-embed for relevance scoring, not SPECTER2 alone"
+Cohesion: 0.33
+Nodes (5): 0011 — Blend SPECTER2 with nomic-embed for relevance scoring, not SPECTER2 alone, Consequences, Context, Decision, Status
+
+### Community 181 - "0012 — Semantic Scholar rate-limit handling: exponential backoff, no API key (yet)"
+Cohesion: 0.33
+Nodes (5): 0012 — Semantic Scholar rate-limit handling: exponential backoff, no API key (yet), Consequences, Context, Decision, Status
+
+### Community 182 - "0013 — Task-dispatch: general primitive, not a cron patch; single-target only for v1"
+Cohesion: 0.33
+Nodes (5): 0013 — Task-dispatch: general primitive, not a cron patch; single-target only for v1, Consequences, Context, Decision, Status
+
+### Community 183 - "0014 — research-colony fan-out+merge: layer on existing triggers, event-driven completion signal"
+Cohesion: 0.33
+Nodes (5): 0014 — research-colony fan-out+merge: layer on existing triggers, event-driven completion signal, Consequences, Context, Decision, Status
+
+### Community 184 - "0015 — Quarantine over-flagging: rubric grounding + the missing review-feedback loop"
+Cohesion: 0.33
+Nodes (5): 0015 — Quarantine over-flagging: rubric grounding + the missing review-feedback loop, Consequences, Context, Decision, Status
+
+### Community 185 - "0016 — Intent-vs-reality audit agent: reuse the Agent tool, don't build dedicated infrastructure"
+Cohesion: 0.33
+Nodes (5): 0016 — Intent-vs-reality audit agent: reuse the Agent tool, don't build dedicated infrastructure, Consequences, Context, Decision, Status
+
+### Community 186 - "0017 — suggestions.md: priority-ordered backlog, whole-system scope, not TaskList-backed"
+Cohesion: 0.33
+Nodes (5): 0017 — suggestions.md: priority-ordered backlog, whole-system scope, not TaskList-backed, Consequences, Context, Decision, Status
+
+### Community 187 - "0018 — Auto-discover brain-map's Autonomous Agents from launchd plists"
+Cohesion: 0.33
+Nodes (5): 0018 — Auto-discover brain-map's Autonomous Agents from launchd plists, Consequences, Context, Decision, Status
+
+### Community 188 - "0019 — Auto-discover brain-map's Infrastructure hooks from settings.local.json"
+Cohesion: 0.33
+Nodes (5): 0019 — Auto-discover brain-map's Infrastructure hooks from settings.local.json, Consequences, Context, Decision, Status
+
+### Community 189 - "0020 — Add a Cross-Machine Network trunk to brain-map"
+Cohesion: 0.33
+Nodes (5): 0020 — Add a Cross-Machine Network trunk to brain-map, Consequences, Context, Decision, Status
+
+### Community 190 - "0021 — Bidirectional code sync via a scoped auto-commit exception"
+Cohesion: 0.33
+Nodes (5): 0021 — Bidirectional code sync via a scoped auto-commit exception, Consequences, Context, Decision, Status
+
+### Community 191 - "0022 — ~/.claude sync: self-hosted git remote, and a conflict-marker propagation guard"
+Cohesion: 0.33
+Nodes (5): 0022 — ~/.claude sync: self-hosted git remote, and a conflict-marker propagation guard, Consequences, Context, Decision, Status
+
+### Community 192 - "0023 — route.py's keyword classifier: replace with an embedding classifier, phased and flag-gated"
+Cohesion: 0.33
+Nodes (5): 0023 — route.py's keyword classifier: replace with an embedding classifier, phased and flag-gated, Consequences, Context, Decision, Status
+
+### Community 193 - "Session-start checklist"
+Cohesion: 0.33
+Nodes (5): Editing this checklist, Failure isolation, Session-start checklist, What it checks, per session, What's still prose in CLAUDE.md
+
+### Community 194 - "Audit"
+Cohesion: 0.33
+Nodes (5): Audit, How to dispatch, Output routing, Reporting back to the user, When to trigger
+
+### Community 195 - "Improve Skill"
+Cohesion: 0.33
+Nodes (5): Improve Skill, Install cron, Manual invocation, Session start integration, Triggers (manual invocation)
+
+### Community 196 - "Lexicon"
+Cohesion: 0.33
+Nodes (5): Adding an Entry, Lexicon, Reviewing, Sections, When to Run Autonomously
+
+### Community 197 - "Run 14 — 2026-07-01 (judge isolation fix + setup.sh durability bug)"
 Cohesion: 0.40
-Nodes (4): bl(), Bs(), gs(), update()
+Nodes (5): Findings from Run 14, Next bench priorities, Related bug: `setup.sh` wasn't durable, Run 14 — 2026-07-01 (judge isolation fix + setup.sh durability bug), Verification re-run: task-014-kb-lookup (post judge-fix)
+
+### Community 198 - "Security Policy"
+Cohesion: 0.40
+Nodes (4): Pre-push checklist, Reporting a vulnerability, Security Policy, What must never be committed
+
+### Community 199 - "caveman/SKILL.md"
+Cohesion: 0.40
+Nodes (4): Auto-Clarity Exception, Examples, Persistence, Rules
+
+### Community 200 - "Sources"
+Cohesion: 0.40
+Nodes (4): Confirmed while researching (not from the papers — found by reading the repo), Primary papers, Sources, Why these two combine
+
+### Community 201 - "Self-Improve Retrospective"
+Cohesion: 0.40
+Nodes (4): 2026-07-02 — MARVIN feature-inventory audit + brain-map build, 2026-07-03 — background self-improvement reviewer + integrity checker, 2026-07-08 — Marlin n8n automation (Snorkel contract work), background review, Self-Improve Retrospective
+
+### Community 202 - "Run 3 — 2026-06-30 (recall task on all 3 profiles — profile routing confirmation)"
+Cohesion: 0.50
+Nodes (4): Bug found and fixed, Findings, Next bench priorities, Run 3 — 2026-06-30 (recall task on all 3 profiles — profile routing confirmation)
+
+### Community 203 - "Run 1 — 2026-06-26 (first full suite, single run each)"
+Cohesion: 0.50
+Nodes (4): Caveats, Findings, Run 1 — 2026-06-26 (first full suite, single run each), Strategic implications (each itself A/B-testable here)
+
+### Community 204 - "Run 4 — 2026-06-30 (initial v2 run — grading bugs found)"
+Cohesion: 0.50
+Nodes (4): Run 4 — 2026-06-30 (initial v2 run — grading bugs found), task-005-date-validator, task-006-email-lookup, task-007 original (DYLD_LIBRARY_PATH recall)
+
+### Community 205 - "Shared Lexicon"
+Cohesion: 0.50
+Nodes (3): MCP (Model Context Protocol), Meta, Shared Lexicon
+
+### Community 206 - "Issue Tracker"
+Cohesion: 0.50
+Nodes (3): Consumer rules, Conventions, Issue Tracker
+
+### Community 207 - "Run 2 — 2026-06-28 (profile routing validation)"
+Cohesion: 0.67
+Nodes (3): Findings, Next bench priorities, Run 2 — 2026-06-28 (profile routing validation)
+
+### Community 208 - "Run 18 — 2026-08-13 (route.py embedding classifier — reference-set expansion, same fixture)"
+Cohesion: 0.67
+Nodes (3): Findings from Run 18, Next bench priorities, Run 18 — 2026-08-13 (route.py embedding classifier — reference-set expansion, same fixture)
+
+### Community 209 - "Run 19 — 2026-08-13 (grown fixture: 20 → 40 clean items + 8 ambiguous — 85% didn't hold)"
+Cohesion: 0.67
+Nodes (3): Findings from Run 19, Next bench priorities, Run 19 — 2026-08-13 (grown fixture: 20 → 40 clean items + 8 ambiguous — 85% didn't hold)
+
+### Community 210 - "Run 20 — 2026-08-13 (targeted research reference-set expansion)"
+Cohesion: 0.67
+Nodes (3): Findings from Run 20, Next bench priorities, Run 20 — 2026-08-13 (targeted research reference-set expansion)
+
+### Community 211 - "Run 21 — 2026-08-13 (genuine held-out validation set — first honest read)"
+Cohesion: 0.67
+Nodes (3): Findings from Run 21, Next bench priorities, Run 21 — 2026-08-13 (genuine held-out validation set — first honest read)
+
+### Community 212 - "Run 22 — 2026-08-13 (score-formula bug found + fixed, threshold recalibrated, default flipped)"
+Cohesion: 0.67
+Nodes (3): Findings from Run 22, Next bench priorities, Run 22 — 2026-08-13 (score-formula bug found + fixed, threshold recalibrated, default flipped)
+
+### Community 213 - "Run 23 — 2026-08-13 (off-topic detection gap, investigated — two hypotheses, both negative)"
+Cohesion: 0.67
+Nodes (3): Findings from Run 23, Next bench priorities, Run 23 — 2026-08-13 (off-topic detection gap, investigated — two hypotheses, both negative)
+
+### Community 214 - "Run 24 — 2026-08-13 (targeted research + coding expansion — real gain, real cost)"
+Cohesion: 0.67
+Nodes (3): Findings from Run 24, Next bench priorities, Run 24 — 2026-08-13 (targeted research + coding expansion — real gain, real cost)
+
+### Community 215 - "Run 25 — 2026-08-13 (recall regression fixed, one new small cost surfaced)"
+Cohesion: 0.67
+Nodes (3): Findings from Run 25, Next bench priorities, Run 25 — 2026-08-13 (recall regression fixed, one new small cost surfaced)
+
+### Community 216 - "Run 26 — 2026-08-13 (fresh holdout v2 built — the honest number is 72%, not 87.5%)"
+Cohesion: 0.67
+Nodes (3): Findings from Run 26, Next bench priorities, Run 26 — 2026-08-13 (fresh holdout v2 built — the honest number is 72%, not 87.5%)
+
+### Community 217 - "Run 27 — 2026-08-13 (architecture diagnosed and fixed — large gain, real disclosed cost)"
+Cohesion: 0.67
+Nodes (3): Findings from Run 27, Next bench priorities, Run 27 — 2026-08-13 (architecture diagnosed and fixed — large gain, real disclosed cost)
+
+### Community 218 - "Run 28 — 2026-08-13 (coding diagnosed and fixed — clean, zero collateral cost, confirms Run 27's hypothesis)"
+Cohesion: 0.67
+Nodes (3): Findings from Run 28, Next bench priorities, Run 28 — 2026-08-13 (coding diagnosed and fixed — clean, zero collateral cost, confirms Run 27's hypothesis)
+
+### Community 219 - "Run 29 — 2026-08-13 (fresh holdout v3 built — 87.5%, independently confirmed)"
+Cohesion: 0.67
+Nodes (3): Findings from Run 29, Next bench priorities, Run 29 — 2026-08-13 (fresh holdout v3 built — 87.5%, independently confirmed)
 
 ## Knowledge Gaps
-- **68 isolated node(s):** `Retrospective Log`, `Ways to construct one — try them in roughly this order`, `Iterate on the loop itself`, `Non-deterministic bugs`, `When you genuinely cannot build a loop` (+63 more)
+- **674 isolated node(s):** `Cocoa`, `WebKit`, `install.sh script`, `DEFAULT_METRICS_DIR`, `name` (+669 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **24 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **32 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `mn()` connect `mn` to `motion.12.42.2.js`, `fn`, `.scheduleResolve`, `yn`, `.get`?**
-  _High betweenness centrality (0.009) - this node is a cross-community bridge._
-- **Why does `notify()` connect `Cross-Machine Code Sync` to `daily_digest.py`, `verify.py`?**
-  _High betweenness centrality (0.009) - this node is a cross-community bridge._
+- **Why does `machine_label()` connect `code_sync.py` to `sandbox_orchestration.py`, `ticket_claim.py`, `verify.py`, `machine_profile.py`, `task_dispatch.py`, `QA-Agent Capture`?**
+  _High betweenness centrality (0.005) - this node is a cross-community bridge._
 - **Why does `scan()` connect `QA-Agent Code Scanner` to `SortedList`, `auto_fix.py`, `QA-Agent Capture`, `verify.py`?**
-  _High betweenness centrality (0.008) - this node is a cross-community bridge._
+  _High betweenness centrality (0.004) - this node is a cross-community bridge._
+- **Why does `notify()` connect `code_sync.py` to `daily_digest.py`, `verify.py`?**
+  _High betweenness centrality (0.003) - this node is a cross-community bridge._
 - **Are the 11 inferred relationships involving `e()` (e.g. with `ca()` and `dl()`) actually correct?**
   _`e()` has 11 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 10 inferred relationships involving `n()` (e.g. with `er()` and `ha()`) actually correct?**
   _`n()` has 10 INFERRED edges - model-reasoned connections that need verification._
-- **What connects `Retrospective Log`, `Ways to construct one — try them in roughly this order`, `Iterate on the loop itself` to the rest of the system?**
-  _68 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **What connects `Cocoa`, `WebKit`, `install.sh script` to the rest of the system?**
+  _674 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Network Reachability Checks` be split into smaller, more focused modules?**
   _Cohesion score 0.05126582278481013 - nodes in this community are weakly interconnected._
