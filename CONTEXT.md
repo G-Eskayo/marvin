@@ -204,6 +204,15 @@ then) — a real, current fragility, not a hypothetical one.
   an n8n webhook that runs `gh pr merge` directly, no live Claude session required for the merge
   itself. "Deny"/"adjust" are different in kind (judgment calls, not mechanical actions) and still
   need their own resolution.
+- **PR evidence schema**: every MR-pipeline PR — whether autonomously raised by `mr_raiser.py` or
+  manually raised via a live ticket-pickup session — follows one fixed, structured body format
+  (metrics comparison, test results, dev-environment evidence, links back to the originating
+  ticket's requirements/design rather than duplicating them into the PR itself), so the dashboard's
+  MR-review detail view has exactly one shape to parse regardless of how a PR came to exist. v1
+  requires every section present on every PR. A later iteration is expected to make section
+  requirements *adaptive per-ticket* — e.g. a future n8n classifier node deciding a pure backend
+  ticket doesn't need dev-environment evidence — but that's explicitly deferred, not designed now:
+  build the fixed structure first, make it adaptive later.
 - **Dashboard hosting, revised**: not Claude Artifacts (cloud-hosted) after all — Gil's direction is
   a **natively-run app on both machines** (Mac Mini + MacBook Pro), since the metrics data is
   already local; no reason to round-trip it through the cloud. The MR-review dashboard and the
