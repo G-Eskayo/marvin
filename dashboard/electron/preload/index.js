@@ -8,5 +8,11 @@ contextBridge.exposeInMainWorld('api', {
     index: () => ipcRenderer.invoke('metrics:index'),
     subsystems: () => ipcRenderer.invoke('metrics:subsystems'),
     history: (subsystem) => ipcRenderer.invoke('metrics:history', subsystem)
+  },
+  mr: {
+    list: () => ipcRenderer.invoke('mr:list'),
+    // Confirmation happens in the main process via a native dialog, not here --
+    // see the comment on the mr:approve handler for why.
+    approve: (pr) => ipcRenderer.invoke('mr:approve', pr)
   }
 })
