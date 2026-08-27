@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import MrDetail from './MrDetail.jsx'
 
 function EmptyState() {
   return (
@@ -26,7 +27,8 @@ function VerdictBadge({ verdict }) {
   )
 }
 
-function EvidenceTable({ metrics }) {
+// Exported so MrDetail.jsx can render the same table without duplicating it.
+export function EvidenceTable({ metrics }) {
   if (metrics.length === 0) {
     return <p className="text-sm text-neutral-500">No metrics table attached.</p>
   }
@@ -150,7 +152,7 @@ function DenyModal({ pr, onClose, onDenied }) {
   )
 }
 
-function PrCard({ pr, onApproved, onDenied }) {
+function PrCard({ pr, onApproved, onDenied, onSelect }) {
   const [status, setStatus] = useState('idle') // idle | approving | error
   const [errorMessage, setErrorMessage] = useState(null)
   const [showDenyModal, setShowDenyModal] = useState(false)
@@ -175,9 +177,12 @@ function PrCard({ pr, onApproved, onDenied }) {
     <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-4">
       <div className="mb-2 flex items-center justify-between gap-3">
         <div>
-          <h3 className="font-mono text-sm font-semibold text-white">
+          <button
+            onClick={() => onSelect(pr)}
+            className="text-left font-mono text-sm font-semibold text-white hover:underline"
+          >
             #{pr.number} — {pr.title}
-          </h3>
+          </button>
           {pr.evidence.subsystem && (
             <p className="text-xs text-neutral-500">
               {pr.evidence.subsystem} <VerdictBadge verdict={pr.evidence.verdict} />
@@ -220,6 +225,7 @@ function PrCard({ pr, onApproved, onDenied }) {
 export default function MrReview() {
   const [prs, setPrs] = useState(null)
   const [error, setError] = useState(null)
+  const [selected, setSelected] = useState(null)
 
   function reload() {
     window.api.mr
@@ -229,6 +235,18 @@ export default function MrReview() {
   }
 
   useEffect(reload, [])
+
+  // A denied/approved PR stops being an open PR, so its detail view no
+  // longer has anything to show -- same reasoning as returning to the list
+  // rather than a broken drill-down.
+  function reloadAndReturnToList() {
+    setSelected(null)
+    reload()
+  }
+
+  if (selected) {
+    return <MrDetail pr={selected} onBack={() => setSelected(null)} />
+  }
 
   if (error) {
     return <div className="flex h-full items-center justify-center text-red-400">Failed to load MRs: {error}</div>
@@ -243,10 +261,17 @@ export default function MrReview() {
   return (
     <div className="flex flex-col gap-4 p-6">
       <p className="text-sm text-neutral-500">
-        {prs.length} pipeline-raised PR{prs.length === 1 ? '' : 's'} awaiting review.
+        {prs.length} pipeline-raised PR{prs.length === 1 ? '' : 's'} awaiting review. Click a title for the full
+        detail view.
       </p>
       {prs.map((pr) => (
-        <PrCard key={pr.number} pr={pr} onApproved={reload} onDenied={reload} />
+        <PrCard
+          key={pr.number}
+          pr={pr}
+          onApproved={reloadAndReturnToList}
+          onDenied={reloadAndReturnToList}
+          onSelect={setSelected}
+        />
       ))}
     </div>
   )
