@@ -39,6 +39,24 @@ PLAN_TIMEOUT_S = 300
 EXEC_TIMEOUT_S = 900
 
 
+# ADR 0030: headless `-p` calls have no TTY, so anything not pre-authorized
+# hard-denies instead of prompting -- `dontAsk` + an explicit allowlist keeps
+# each phase on a tight, auditable leash (not `bypassPermissions`, which
+# would also drop protection for file/network access that has nothing to do
+# with this repo and would never show up in the eventual PR diff for
+# review). git commit/push/`gh pr create` are deliberately absent from
+# either list -- those run as plain `subprocess.run()` calls from
+# `mr_raiser.py`, not from inside a nested Claude session, so they were
+# never subject to this wall to begin with.
+_PLAN_ALLOWED_TOOLS = "Read,Grep,Glob,Bash(gh issue view*),Bash(gh issue list*)"
+_EXEC_ALLOWED_TOOLS = (
+    "Read,Edit,Write,"
+    "Bash(git status*),"
+    "Bash(~/.agents/venv/bin/python -m pytest*),"
+    "Bash(npm test*),Bash(npm install*),Bash(npx vitest run*)"
+)
+
+
 def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | None) -> str:
     """Real default: a flagship-tier planning call, then a Haiku-tier
     execution call inside the worktree. Mocked in tests -- never invoked
@@ -56,7 +74,7 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
         )
     plan_result = subprocess.run(
         ["claude", "-p", plan_prompt, "--model", FLAGSHIP_MODEL,
-         "--allowedTools", "Read,Grep,Glob,Bash(gh issue view*),Bash(gh issue list*)"],
+         "--permission-mode", "dontAsk", "--allowedTools", _PLAN_ALLOWED_TOOLS],
         cwd=worktree_path, capture_output=True, text=True, timeout=PLAN_TIMEOUT_S,
     )
     plan = plan_result.stdout
@@ -64,7 +82,7 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
     exec_prompt = f"Implement this plan in the current working tree:\n\n{plan}"
     subprocess.run(
         ["claude", "-p", exec_prompt, "--model", HAIKU_MODEL,
-         "--permission-mode", "acceptEdits"],
+         "--permission-mode", "dontAsk", "--allowedTools", _EXEC_ALLOWED_TOOLS],
         cwd=worktree_path, timeout=EXEC_TIMEOUT_S,
     )
     return plan
