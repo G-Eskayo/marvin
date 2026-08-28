@@ -90,16 +90,21 @@ scp "$PROMPT_FILE" "${TARGET_HOST}:~/dispatch_issue${ISSUE_NUMBER}_prompt.md"
 WRAPPER_FILE=$(mktemp)
 cat > "$WRAPPER_FILE" <<EOF
 #!/bin/zsh
-export PATH="\$HOME/.local/bin:\$PATH"
+export PATH="\$HOME/.local/bin:/opt/homebrew/bin:\$PATH"
 set -e
 cd ~/.agents
 git checkout main
 git pull origin main
 git checkout -b ${BRANCH_NAME}
 
+# ADR 0030: non-interactive -p has no TTY, so anything not pre-authorized
+# hard-denies rather than prompting -- dontAsk + an explicit allowlist,
+# not bypassPermissions (this worktree isn't container-isolated).
+
 claude -p "\$(cat ~/dispatch_issue${ISSUE_NUMBER}_prompt.md)" \\
   --model claude-sonnet-5 \\
-  --permission-mode acceptEdits \\
+  --permission-mode dontAsk \\
+  --allowedTools "Read,Edit,Write,Bash(git *),Bash(gh *),Bash(~/.agents/venv/bin/python -m pytest*),Bash(npm test*),Bash(npm install*),Bash(npx vitest run*)" \\
   > ~/dispatch_issue${ISSUE_NUMBER}.log 2>&1
 
 echo "EXIT_CODE: \$?" >> ~/dispatch_issue${ISSUE_NUMBER}.log
