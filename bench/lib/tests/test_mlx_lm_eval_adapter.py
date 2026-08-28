@@ -14,6 +14,7 @@ LIB = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(LIB))
 
 import pytest
+pytest.importorskip("lm_eval")
 from mlx_lm_eval_adapter import score_continuation
 
 
