@@ -111,6 +111,11 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
 
 
 def blended_score(seed_embeddings: dict, candidate_embeddings: dict, specter2_weight: float = 0.5) -> float:
+    """Weighted blend of SPECTER2 (citation-graph-aware) and nomic-embed (pure topical
+    similarity), per ADR 0011 -- not SPECTER2 alone. Hedges against SPECTER2's documented
+    citation-clique bias, which can under-rank a topically-relevant cross-camp rebuttal or
+    competing paper that doesn't cite/get cited within the seed's own citation community.
+    specter2_weight=0.5 is a starting point (ADR 0011: not yet empirically tuned)."""
     specter2_sim = _cosine_similarity(seed_embeddings["specter2"], candidate_embeddings["specter2"])
     nomic_sim = _cosine_similarity(seed_embeddings["nomic"], candidate_embeddings["nomic"])
     return specter2_weight * specter2_sim + (1 - specter2_weight) * nomic_sim

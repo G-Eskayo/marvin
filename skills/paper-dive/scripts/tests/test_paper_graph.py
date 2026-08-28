@@ -26,6 +26,8 @@ from paper_graph import (
     _get_with_retry,
     _s2_id,
     _check_huggingface_reachable,
+    _cosine_similarity,
+    _shape_and_score,
 )
 
 LIB = Path.home() / ".agents" / "lib"
@@ -331,6 +333,48 @@ def test_blended_score_actually_blends_both_sources():
 
 
 # ── embed_paper (injected backends — no real model calls in the fast suite) ─
+
+def test_blended_score_rescues_cross_camp_rebuttal_specter2_alone_would_drop():
+    # ADR 0011's scenario: a competing/rebuttal paper from a different citation
+    # community. SPECTER2 (citation-clique-aware) under-ranks it below the
+    # relevance floor; nomic-embed (pure topical similarity) correctly reads it
+    # as on-topic. The blend, not SPECTER2 alone, is what survives the cap.
+    relevance_floor = 0.65
+    seed = {"specter2": [1.0, 0.0], "nomic": [1.0, 0.0]}
+    rebuttal = {
+        "specter2": [0.5, 0.8660254037844386],  # cos = 0.5 -- below floor alone
+        "nomic": [0.9, 0.4358898943540674],  # cos = 0.9 -- clearly on-topic
+    }
+
+    specter2_only_score = _cosine_similarity(seed["specter2"], rebuttal["specter2"])
+    blended = blended_score(seed, rebuttal, specter2_weight=0.5)
+
+    assert specter2_only_score < relevance_floor  # SPECTER2 alone would drop it
+    assert blended == pytest.approx(0.7)
+    assert blended >= relevance_floor  # the blend survives the cap
+
+
+def test_shape_and_score_selects_cross_camp_rebuttal_that_specter2_alone_would_cap_out(monkeypatch):
+    # End-to-end through the real selection path (_shape_and_score -> select_candidates),
+    # not just the raw blended_score number -- confirms the rebuttal actually survives
+    # relevance-floor filtering in the traversal, matching issue #24's acceptance criterion.
+    seed_embeddings = {"specter2": [1.0, 0.0], "nomic": [1.0, 0.0]}
+
+    def fake_embed(abstract):
+        return {"specter2": [0.5, 0.8660254037844386], "nomic": [0.9, 0.4358898943540674]}
+
+    papers = [{
+        "title": "Rebuttal from a rival research tradition",
+        "abstract": "disputes the seed's findings from an independently-derived angle",
+        "externalIds": {"DOI": "10.1/rebuttal"},
+    }]
+
+    candidates = _shape_and_score(papers, seed_embeddings, fake_embed, is_citation=False)
+    assert candidates[0]["score"] == pytest.approx(0.7)
+
+    selected = select_candidates(candidates, top_k=5, relevance_floor=0.65)
+    assert [c["doi"] for c in selected] == ["10.1/rebuttal"]
+
 
 def test_embed_paper_wires_injected_backends_into_expected_shape():
     result = embed_paper(
