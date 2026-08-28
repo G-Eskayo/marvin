@@ -57,12 +57,25 @@ def _format_comparison(comparison: dict) -> str:
     return "\n".join(lines)
 
 
-def _default_open_pr(ticket_ref: str, branch: str, comparison: dict) -> str:
+def _format_test_results(test_results: dict | None) -> str:
+    if not test_results or test_results.get("total") is None:
+        return "Not available."
+    return (
+        f"**Suite**: {test_results['suite']}\n"
+        f"**Passed**: {test_results['passed']}\n"
+        f"**Failed**: {test_results['failed']}\n"
+        f"**Total**: {test_results['total']}"
+    )
+
+
+def _default_open_pr(ticket_ref: str, branch: str, comparison: dict, test_results: dict | None = None) -> str:
     body = (
         f"Closes {ticket_ref}\n\n"
-        f"Autonomously implemented and verified by the MR pipeline. "
-        f"Metrics comparison (evidence this change is genuinely better, not just different):\n\n"
-        f"{_format_comparison(comparison)}"
+        f"Autonomously implemented and verified by the MR pipeline.\n\n"
+        f"## Metrics Comparison\n\n"
+        f"{_format_comparison(comparison)}\n\n"
+        f"## Test Results\n\n"
+        f"{_format_test_results(test_results)}"
     )
     result = subprocess.run(
         ["gh", "pr", "create", "--title", f"Implement {ticket_ref}", "--body", body,
@@ -84,12 +97,17 @@ def _default_comment_on_ticket(ticket_ref: str, pr_url: str) -> None:
 def raise_mr(
     ticket_ref: str,
     execution_result: dict,
-    open_pr: Callable[[str, str, dict], str] | None = None,
+    test_results: dict | None = None,
+    open_pr: Callable[[str, str, dict, dict | None], str] | None = None,
     comment_on_ticket: Callable[[str, str], None] | None = None,
     notify: Callable[[str, str], dict] | None = None,
 ) -> dict:
     """Given sandbox_orchestration.execute_ticket's result, raise a PR only
-    if verification passed. Returns {"raised", "pr_url", "reason"}."""
+    if verification passed. `test_results` is caller-supplied (e.g. from
+    evidence_capture.capture_test_results against the same worktree
+    execute_ticket already produced) -- this function only formats it into
+    the PR body, it doesn't know how to run a project's tests itself.
+    Returns {"raised", "pr_url", "reason"}."""
     if not execution_result["passing"]:
         return {
             "raised": False,
@@ -104,7 +122,7 @@ def raise_mr(
     worktree_path = execution_result["worktree_path"]
     branch = _commit_and_push(worktree_path, ticket_ref)
 
-    pr_url = open_pr(ticket_ref, branch, execution_result["final_comparison"])
+    pr_url = open_pr(ticket_ref, branch, execution_result["final_comparison"], test_results)
     comment_on_ticket(ticket_ref, pr_url)
     notify(ticket_ref, pr_url)
 
