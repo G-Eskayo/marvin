@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Evidence capture for the MR pipeline (G-Eskayo/marvin#72, ADR 0024).
 
-Captures real test-suite results (`capture_test_results`, this ticket --
-G-Eskayo/marvin#76). Dev-environment screenshot evidence for UI-touching
-tickets (`capture_dev_evidence`) is G-Eskayo/marvin#77's addition to this
-same module -- not built here.
+Captures real test-suite results (`capture_test_results`,
+G-Eskayo/marvin#76) and, for UI-touching tickets, dev-environment
+screenshot evidence (`ticket_touches_ui`/`capture_dev_evidence`,
+G-Eskayo/marvin#77).
 
 Kept as its own module rather than folded into
 `sandbox_orchestration.execute_ticket`, whose own tune-and-compare-loop
@@ -13,14 +13,15 @@ calls into this module directly with the worktree path `execute_ticket`
 already returned, rather than `execute_ticket` absorbing capture logic it
 has no reason to know about.
 
-`parse_test_output` is split out from `capture_test_results` as pure
-string-parsing, independently testable against fixture output without a
-real subprocess run.
+`parse_test_output` is split out from `capture_test_results`, and
+`ticket_touches_ui` from `capture_dev_evidence`, as pure logic
+independently testable without a real subprocess run.
 """
 from __future__ import annotations
 import re
 import subprocess
 from pathlib import Path
+from typing import Callable
 
 
 def parse_test_output(suite: str, output: str) -> dict:
@@ -63,3 +64,68 @@ def capture_test_results(worktree_path: Path, test_command: list[str]) -> dict:
         test_command, cwd=worktree_path, capture_output=True, text=True,
     )
     return parse_test_output(" ".join(test_command), result.stdout + result.stderr)
+
+
+# UI-associated path prefixes for dev-evidence gating (ADR 0024). A direct
+# check on the diff, not a general classifier -- the one narrow built-in
+# exception to "every evidence section always required" in v1.
+UI_PATH_PREFIXES = ("dashboard/src/", "dashboard/electron/")
+
+
+def _is_ui_path(changed_file: str) -> bool:
+    return any(changed_file.startswith(prefix) for prefix in UI_PATH_PREFIXES)
+
+
+def ticket_touches_ui(worktree_path: Path, base_branch: str = "main") -> bool:
+    """True if this ticket's diff (against base_branch) includes any file
+    under a UI-associated path."""
+    result = subprocess.run(
+        ["git", "diff", "--name-only", f"{base_branch}...HEAD"],
+        cwd=worktree_path, capture_output=True, text=True,
+    )
+    return any(_is_ui_path(f) for f in result.stdout.splitlines())
+
+
+def _default_capture_screenshot(worktree_path: Path) -> str:
+    """Real default: builds the dashboard and drives it headlessly via
+    dashboard/scripts/capture_screenshot.mjs (playwright-core +
+    Playwright's _electron launcher -- same pattern as the `run` skill's
+    Electron driver examples), saving the screenshot into the worktree
+    itself so it rides along in mr_raiser._commit_and_push's existing
+    `git add -A` rather than needing a separate upload mechanism. Returns
+    the screenshot's path relative to worktree_path, suitable for a
+    PR-body markdown image reference."""
+    dashboard_dir = worktree_path / "dashboard"
+    relative_output = Path("docs") / "evidence" / f"{worktree_path.name}.png"
+    output_path = worktree_path / relative_output
+
+    subprocess.run(["npm", "install"], cwd=dashboard_dir, check=True, capture_output=True)
+    subprocess.run(["npm", "run", "build"], cwd=dashboard_dir, check=True, capture_output=True)
+    subprocess.run(
+        ["node", "scripts/capture_screenshot.mjs", str(output_path)],
+        cwd=dashboard_dir, check=True, capture_output=True,
+    )
+    return str(relative_output)
+
+
+def capture_dev_evidence(
+    worktree_path: Path,
+    touches_ui: bool,
+    capture_screenshot: Callable[[Path], str] | None = None,
+) -> dict:
+    """For a UI-touching ticket, drive the app headlessly and capture a
+    screenshot; for a non-UI ticket, return the explicit N/A case rather
+    than a fabricated or omitted one (ADR 0024). Always returns a dict --
+    never None -- so mr_raiser's formatting has exactly one shape to
+    handle, with `na` distinguishing "legitimately not applicable" from
+    a populated result."""
+    if not touches_ui:
+        return {"na": True, "reason": "no UI"}
+
+    capture_screenshot = capture_screenshot or _default_capture_screenshot
+    screenshot_path = capture_screenshot(worktree_path)
+    return {
+        "na": False,
+        "screenshot_path": screenshot_path,
+        "description": "Live screenshot captured from the running app.",
+    }
