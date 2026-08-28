@@ -1,16 +1,16 @@
 # Graph Report - .agents  (2026-08-27)
 
 ## Corpus Check
-- 298 files · ~408,624 words
+- 290 files · ~406,234 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 2731 nodes · 4079 edges · 254 communities (221 shown, 33 thin omitted)
-- Extraction: 97% EXTRACTED · 3% INFERRED · 0% AMBIGUOUS · INFERRED: 115 edges (avg confidence: 0.85)
+- 2697 nodes · 4030 edges · 250 communities (219 shown, 31 thin omitted)
+- Extraction: 97% EXTRACTED · 3% INFERRED · 0% AMBIGUOUS · INFERRED: 114 edges (avg confidence: 0.85)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `7db3f9c9`
+- Built from commit: `3b7914f3`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -21,7 +21,7 @@
 - cleanup_sweep.py
 - code_sync.py
 - fn
-- verify.py
+- daily_digest.py
 - Bench Harness Runner
 - co
 - route.py
@@ -42,7 +42,7 @@
 - MARVIN
 - s
 - QA-Agent Code Scanner
-- mr_review.js
+- main/index.js
 - Cleanup Sweep Tests
 - QA-Agent Capture
 - e
@@ -127,7 +127,7 @@
 - test_ticket_coordination.py
 - Diagnose — Retrospective
 - retrospective-log.md
-- daily_digest.py
+- registry_id
 - to-prd/SKILL.md
 - 7. Architecture Decision Records
 - To Tasklist
@@ -232,10 +232,6 @@
 - index.md
 - brain-map/CONTEXT.md
 - 0025 — Deny action: two dashboard buttons, structured-feedback modal, not a third "adjust" button
-- MrReview.jsx
-- merge.js
-- MR-approval webhook contract
-- webhook-server/package.json
 
 ## God Nodes (most connected - your core abstractions)
 1. `co()` - 35 edges
@@ -264,7 +260,7 @@
 ## Import Cycles
 - None detected.
 
-## Communities (254 total, 33 thin omitted)
+## Communities (250 total, 31 thin omitted)
 
 ### Community 0 - "Network Reachability Checks"
 Cohesion: 0.05
@@ -283,16 +279,16 @@ Cohesion: 0.30
 Nodes (12): _default_list_worktrees(), _default_remove_worktree(), _extract_issue_number(), find_orphaned_worktrees(), find_stale_claims(), datetime, Path, Cron entry point. Runs both sweeps, logs what was removed/released (same… (+4 more)
 
 ### Community 4 - "code_sync.py"
-Cohesion: 0.06
-Nodes (32): _files_with_conflict_markers(), _git(), _git_ok(), _log(), main(), _merge_remote(), pull(), push() (+24 more)
+Cohesion: 0.05
+Nodes (40): _files_with_conflict_markers(), _git(), _git_ok(), _log(), main(), _merge_remote(), pull(), push() (+32 more)
 
 ### Community 5 - "fn"
 Cohesion: 0.10
 Nodes (7): fn(), Fs(), Is(), os(), p, sn(), ti()
 
-### Community 6 - "verify.py"
+### Community 6 - "daily_digest.py"
 Cohesion: 0.05
-Nodes (52): append_to_queue(), extract_project(), find_project_path(), format_issue(), main(), Path, Returns True if the block was appended, False if safety-monitor quarantined it…, top_issues() (+44 more)
+Nodes (55): bench_summary(), call_claude(), improvement_queue_summary(), main(), qa_kb_summary(), Computed directly from the log, not via an LLM guess at "does this look…, launchd's environment doesn't source .zshrc/.zprofile, so PATH may not include…, recent_handoffs_summary() (+47 more)
 
 ### Community 7 - "Bench Harness Runner"
 Cohesion: 0.07
@@ -347,8 +343,8 @@ Cohesion: 0.05
 Nodes (6): en, Gt(), ke, kn(), yn, zt()
 
 ### Community 20 - "task_dispatch.py"
-Cohesion: 0.17
-Nodes (22): _load_registry(), This machine's stable id in marvin-network.json, resolved by matching hardware…, All registered devices that aren't this one, keyed by device id., registry_id(), remote_devices(), _build_wrapper_script(), _candidates(), dispatch() (+14 more)
+Cohesion: 0.21
+Nodes (15): _build_wrapper_script(), dispatch(), DispatchResult, main(), A script that marks the dispatch-state file busy, runs the real command, and on…, Run `command` on an available device. mode: "sync" (wait, capture output) or…, Hostnames Tailscale currently reports as online (not 'offline')., Pick a device to run on. Explicit target skips liveness/load checks on OTHER… (+7 more)
 
 ### Community 21 - "Auto-Route Hook"
 Cohesion: 0.12
@@ -374,9 +370,9 @@ Nodes (11): de(), fe(), ge(), le(), Ls(), me(), pe(), s() (+3 more)
 Cohesion: 0.19
 Nodes (20): analyze_comment_quality(), analyze_complexity(), analyze_quality(), detect_stack(), extract_dependencies(), extract_imports(), extract_markers(), infer_domain() (+12 more)
 
-### Community 27 - "mr_review.js"
-Cohesion: 0.17
-Nodes (20): execFileAsync, listOpenPrs(), registerMetricsHandlers(), registerMrReviewHandlers(), buildIndex(), DEFAULT_METRICS_DIR, latest(), listSubsystems() (+12 more)
+### Community 27 - "main/index.js"
+Cohesion: 0.35
+Nodes (9): execFileAsync, listOpenPrs(), registerMetricsHandlers(), registerMrReviewHandlers(), buildIndex(), DEFAULT_METRICS_DIR, latest(), listSubsystems() (+1 more)
 
 ### Community 28 - "Cleanup Sweep Tests"
 Cohesion: 0.16
@@ -427,8 +423,8 @@ Cohesion: 0.19
 Nodes (13): ai(), animateVisualElement(), dn(), fi(), gi(), La(), ni(), Nn() (+5 more)
 
 ### Community 40 - "cross_machine_merge.py"
-Cohesion: 0.24
-Nodes (15): build_merged(), load_sync_state(), main(), profile_blurb(), Path, Identical shape to sync_qa_knowledge -- same deterministic-set-union- by-id…, Returns stdout on success, None on any failure (unreachable, non-zero exit,…, run_merge_authority() (+7 more)
+Cohesion: 0.26
+Nodes (14): build_merged(), load_sync_state(), main(), profile_blurb(), Path, Identical shape to sync_qa_knowledge -- same deterministic-set-union- by-id…, Returns stdout on success, None on any failure (unreachable, non-zero exit,…, run_merge_authority() (+6 more)
 
 ### Community 41 - "logic_auditor.py"
 Cohesion: 0.14
@@ -630,9 +626,9 @@ Nodes (16): For `ready-for-human` specifically, Structure, What makes a brief du
 Cohesion: 0.22
 Nodes (8): 2026-07-07 — MLX on-device model benchmark (Qwen2.5-3B vs Llama-3.2-3B), 2026-07-14 — Converting the session-start checklist into a deterministic hook, 2026-07-17 — Brain-map reskin (dark gradient silently not rendering), 2026-07-17 — DesktopLive verification pass (post-Motion deploy), 2026-07-17 — Motion physics deploy to brain-map/DesktopLive (pulses, camera nudges, fitScale), 2026-08-26 — killer-sudoku full day (perf tuning + real bugs), 2026-08-26 — killer-sudoku Kotlin port (UI parity + animation/input bugs), Diagnose — Retrospective
 
-### Community 123 - "daily_digest.py"
-Cohesion: 0.29
-Nodes (10): bench_summary(), improvement_queue_summary(), main(), qa_kb_summary(), Computed directly from the log, not via an LLM guess at "does this look…, launchd's environment doesn't source .zshrc/.zprofile, so PATH may not include…, recent_handoffs_summary(), _resolve_claude_bin() (+2 more)
+### Community 123 - "registry_id"
+Cohesion: 0.43
+Nodes (7): _load_registry(), This machine's stable id in marvin-network.json, resolved by matching hardware…, All registered devices that aren't this one, keyed by device id., registry_id(), remote_devices(), _candidates(), All known devices (self + registered remotes) keyed by device_id, each tagged…
 
 ### Community 124 - "to-prd/SKILL.md"
 Cohesion: 0.22
@@ -1010,33 +1006,25 @@ Nodes (3): Findings from Run 29, Next bench priorities, Run 29 — 2026-08-13 (f
 Cohesion: 0.33
 Nodes (5): 0025 — Deny action: two dashboard buttons, structured-feedback modal, not a third "adjust" button, Consequences, Context, Decision, Status
 
-### Community 251 - "merge.js"
-Cohesion: 0.53
-Nodes (3): server, execFileAsync, mergePr()
-
-### Community 252 - "MR-approval webhook contract"
-Cohesion: 0.40
-Nodes (4): Contract, Deliberately out of scope here, MR-approval webhook contract, Running it
-
 ## Knowledge Gaps
-- **689 isolated node(s):** `Cocoa`, `WebKit`, `install.sh script`, `DEFAULT_METRICS_DIR`, `EVIDENCE_HEADERS` (+684 more)
+- **682 isolated node(s):** `Cocoa`, `WebKit`, `install.sh script`, `DEFAULT_METRICS_DIR`, `name` (+677 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **33 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **31 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `notify()` connect `code_sync.py` to `daily_digest.py`, `verify.py`?**
-  _High betweenness centrality (0.007) - this node is a cross-community bridge._
-- **Why does `machine_label()` connect `code_sync.py` to `sandbox_orchestration.py`, `ticket_claim.py`, `verify.py`, `machine_profile.py`, `task_dispatch.py`, `QA-Agent Capture`?**
+- **Why does `scan()` connect `QA-Agent Code Scanner` to `SortedList`, `auto_fix.py`, `QA-Agent Capture`, `daily_digest.py`?**
   _High betweenness centrality (0.005) - this node is a cross-community bridge._
-- **Why does `scan()` connect `QA-Agent Code Scanner` to `SortedList`, `auto_fix.py`, `QA-Agent Capture`, `verify.py`?**
+- **Why does `machine_label()` connect `code_sync.py` to `sandbox_orchestration.py`, `ticket_claim.py`, `machine_profile.py`, `registry_id`, `QA-Agent Capture`?**
+  _High betweenness centrality (0.004) - this node is a cross-community bridge._
+- **Why does `notify()` connect `code_sync.py` to `daily_digest.py`?**
   _High betweenness centrality (0.003) - this node is a cross-community bridge._
 - **Are the 11 inferred relationships involving `e()` (e.g. with `ca()` and `dl()`) actually correct?**
   _`e()` has 11 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 10 inferred relationships involving `n()` (e.g. with `er()` and `ha()`) actually correct?**
   _`n()` has 10 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `Cocoa`, `WebKit`, `install.sh script` to the rest of the system?**
-  _689 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _682 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Network Reachability Checks` be split into smaller, more focused modules?**
   _Cohesion score 0.05126582278481013 - nodes in this community are weakly interconnected._
