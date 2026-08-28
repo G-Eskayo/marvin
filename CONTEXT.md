@@ -235,11 +235,50 @@ then) — a real, current fragility, not a hypothetical one.
   the automated threshold — no new scoring mechanism to build, and no manual per-item "make this a
   ticket" step, per Gil's direction to automate start-to-finish. Gil's real checkpoint stays the
   MR-approval dashboard, not a pre-promotion gate.
+- **Build-type ticket**: a ticket implementing something that didn't exist before (a new feature,
+  tab, flag) — there is no prior baseline to improve on. Distinct from a **tunable-subsystem
+  ticket** (e.g. improving route.py's classifier accuracy), where a real before/after metrics
+  comparison is the natural verification. A build-type ticket's "passing" gate is mechanical
+  (tests pass, build is clean, nothing else regressed) rather than a metrics-improvement
+  comparison — resolved 2026-08-28 to keep `metrics_registry.compare()`'s single interface
+  (verdict must be "improved" to pass) usable for both cases without forking it, by feeding it a
+  trivial pass/fail-shaped metric for build-type tickets rather than adding a second code path.
+- **MARVIN quality/usage tracking** (separate open thread, not part of the MR pipeline): ambient
+  tracking of how well MARVIN performs and how much it's actually used across *every* Claude Code
+  session — not just headless ticket runs. Explicitly distinct from a build-type ticket's
+  passing gate (one PR's tests vs. MARVIN's overall behavior). Nothing collects this data today.
+  See [[project-marvin-tool-invocation-metrics]] (memory) — the same idea, raised independently
+  during an earlier Instagram-triage session the same day. Deserves its own dedicated design pass,
+  not a tangent inside the MR pipeline's build.
+- **MARVIN version**: one combined semver identity for the whole `~/.agents` repo (not per
+  component — the dashboard app's own `package.json` version is separate, not yet reconciled with
+  this), read from a root `VERSION` file. Bump type comes from the merged ticket's labels
+  (`enhancement` → MINOR, `breaking-change` → MAJOR, neither → PATCH), not from a human decision at
+  merge time — resolved 2026-08-28 specifically because Gil wants something a human recognizes as
+  a version, not a raw commit SHA. A `CHANGELOG.md` entry (title + PR link, human-readable) is
+  generated alongside every bump.
+- **Ticket design doc / task list**: the planning artifact a ticket's execution phase produces
+  before writing any code — grounded in the current state of the files it expects to touch (read
+  fresh, not guessed), covering the ticket's "What to build" and every acceptance criterion. A
+  task list is derived from it, and execution works from that task list rather than a raw prose
+  plan. Both are committed as files inside the ticket's own worktree/branch — part of the PR diff,
+  reviewed by the same merge-time gates as the code (see [[0029]]) — not written direct to
+  `CONTEXT.md`/`docs/adr/` the way a live grilling session does it. Resolves issue #69's question
+  ("design the designing"), scoped specifically to `ready-for-agent` tickets.
 - **Guiding framing**: the whole pipeline is explicitly meant to work like the scientific method —
   suggestion/quarantine finding = hypothesis, sandboxed execution = controlled experiment,
   metrics-comparison (see Verification/trust mechanism above) = measurement, the MR = the write-up,
   Gil's approve/deny = peer review. Not just a metaphor — it's the actual justification for why the
   sandbox and the metrics-comparison step both exist as hard requirements, not nice-to-haves.
+
+## Dashboard app — Files tab (in design, 2026-08-27)
+
+- **Files tab**: a read-only viewer tab in the MARVIN dashboard (`~/.agents/dashboard`, alongside
+  the already-shipped Metrics and MR Review tabs) for browsing files MARVIN produces as
+  deliverables. Not a general filesystem browser and not an editor — those were both explicitly
+  ruled out early. Kept as its own tab rather than folding into the planned "MARVIN activity/log"
+  progress view (G-Eskayo/marvin#82) — the two serve different jobs: the Files tab shows *what
+  MARVIN produced*, the activity tab (not yet built) shows *what MARVIN is doing*.
 
 ## Citation-graph knowledge base (in design, not yet built)
 
