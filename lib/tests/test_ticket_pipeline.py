@@ -116,7 +116,10 @@ def test_main_claims_and_dispatches_oldest_unclaimed(monkeypatch):
     assert kwargs["mode"] == "async"
     assert "agent/issue-20" in args[0]
     assert "claude -p" in args[0]
-    assert "--permission-mode acceptEdits" in args[0]
+    assert "--permission-mode dontAsk" in args[0]
+    assert "--allowedTools" in args[0]
+    assert "gh *" in args[0]
+    assert "pytest" in args[0]
 
 
 def test_main_releases_claim_if_dispatch_fails(monkeypatch):

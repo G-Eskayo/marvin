@@ -124,6 +124,20 @@ at anything risky. Never force-push, delete, or touch branches/PRs outside
 this ticket's scope."""
 
 
+# ADR 0030: non-interactive -p has no TTY, so anything not pre-authorized
+# hard-denies rather than prompting -- dontAsk + an explicit allowlist, not
+# bypassPermissions (this checkout isn't container-isolated). This whole
+# function is superseded by G-Eskayo/marvin#95 (driving execute_ticket +
+# raise_mr instead), which moves git/gh work to plain subprocess calls
+# outside any nested Claude session -- kept working here in the meantime
+# so dispatch isn't broken until #95 lands.
+_WRAPPER_ALLOWED_TOOLS = (
+    "Read,Edit,Write,Bash(git *),Bash(gh *),"
+    "Bash(~/.agents/venv/bin/python -m pytest*),"
+    "Bash(npm test*),Bash(npm install*),Bash(npx vitest run*)"
+)
+
+
 def _build_wrapper_command(issue_number: int, branch_name: str, prompt: str) -> str:
     prompt_path = f"/tmp/ticket_{issue_number}_prompt.md"
     return (
@@ -131,7 +145,8 @@ def _build_wrapper_command(issue_number: int, branch_name: str, prompt: str) -> 
         f"cd ~/.agents && "
         f"git checkout main && git pull origin main && "
         f"git checkout -b {branch_name} && "
-        f'claude -p "$(cat {prompt_path})" --model claude-sonnet-5 --permission-mode acceptEdits '
+        f'claude -p "$(cat {prompt_path})" --model claude-sonnet-5 '
+        f'--permission-mode dontAsk --allowedTools "{_WRAPPER_ALLOWED_TOOLS}" '
         f"> ~/dispatch_issue{issue_number}.log 2>&1; "
         f'echo "EXIT_CODE: $?" >> ~/dispatch_issue{issue_number}.log; '
         f"rm -f {prompt_path}"
