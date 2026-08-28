@@ -279,6 +279,48 @@ def test_traverse_continues_past_ceiling_when_checkpoint_says_continue():
     assert {n["doi"] for n in result} == {"seed", "n1", "n2", "n3"}
 
 
+def test_traverse_checkpoint_receives_accurate_queue_state():
+    # ADR 0010 requires the checkpoint to report queue state (not just pause silently) so
+    # continue/stop is an informed decision -- this pins down exactly what gets reported.
+    graph = {
+        "seed": {
+            "references": [
+                {"doi": "n1", "score": 0.9, "intent": None},
+                {"doi": "n2", "score": 0.85, "intent": None},
+                {"doi": "n3", "score": 0.8, "intent": None},
+            ],
+            "citations": [],
+        },
+        "n1": {"references": [], "citations": []},
+        "n2": {"references": [], "citations": []},
+        "n3": {"references": [], "citations": []},
+    }
+
+    def fake_fetch(doi):
+        return graph[doi]
+
+    seen_states = []
+
+    def spy_checkpoint(state):
+        seen_states.append(state)
+        return "stop"
+
+    traverse(
+        seed_doi="seed",
+        fetch_fn=fake_fetch,
+        max_depth=2,
+        references_top_k=10,
+        citations_top_k=5,
+        relevance_floor=0.5,
+        cost_ceiling=1,
+        on_checkpoint=spy_checkpoint,
+    )
+
+    # ceiling=1 is hit right after n1 is accepted (seed + n1 = 2 nodes so far), with n1
+    # itself still sitting in the queue unexpanded, and n2 not yet checked against the ceiling
+    assert seen_states == [{"nodes_so_far": 2, "queue_size": 1}]
+
+
 def test_traverse_stops_early_via_diminishing_returns_without_hitting_ceiling():
     # scores hover right at the floor from the very first hop — should self-terminate
     # long before the (deliberately generous) cost_ceiling would ever matter.
