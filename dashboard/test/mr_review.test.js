@@ -22,6 +22,16 @@ describe('isPipelinePr', () => {
     expect(isPipelinePr('Closes #70\n\nBuilt manually in a live session.')).toBe(false)
   })
 
+  it('recognizes a ticket-dispatched PR that closes an issue and has a Test plan section, even without the mr_raiser marker', () => {
+    const body = `## Summary\n\nCloses #24. Some real change.\n\n## Test plan\n\n- [x] pytest passed`
+    expect(isPipelinePr(body)).toBe(true)
+  })
+
+  it('still rejects a PR with only a Test plan section but no issue reference', () => {
+    const body = `## Summary\n\nGeneral cleanup, not tied to a ticket.\n\n## Test plan\n\n- [x] pytest passed`
+    expect(isPipelinePr(body)).toBe(false)
+  })
+
   it('rejects a non-string body without throwing', () => {
     expect(isPipelinePr(null)).toBe(false)
     expect(isPipelinePr(undefined)).toBe(false)
