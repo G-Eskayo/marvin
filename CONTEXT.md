@@ -241,6 +241,15 @@ then) — a real, current fragility, not a hypothetical one.
   Gil's approve/deny = peer review. Not just a metaphor — it's the actual justification for why the
   sandbox and the metrics-comparison step both exist as hard requirements, not nice-to-haves.
 
+## Dashboard app — Files tab (in design, 2026-08-27)
+
+- **Files tab**: a read-only viewer tab in the MARVIN dashboard (`~/.agents/dashboard`, alongside
+  the already-shipped Metrics and MR Review tabs) for browsing files MARVIN produces as
+  deliverables. Not a general filesystem browser and not an editor — those were both explicitly
+  ruled out early. Kept as its own tab rather than folding into the planned "MARVIN activity/log"
+  progress view (G-Eskayo/marvin#82) — the two serve different jobs: the Files tab shows *what
+  MARVIN produced*, the activity tab (not yet built) shows *what MARVIN is doing*.
+
 ## Citation-graph knowledge base (in design, not yet built)
 
 - **Seed paper**: the paper a citation-graph traversal starts from — all relevance scoring is
