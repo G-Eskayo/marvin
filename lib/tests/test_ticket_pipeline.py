@@ -114,12 +114,8 @@ def test_main_claims_and_dispatches_oldest_unclaimed(monkeypatch):
     args, kwargs = dispatch_calls[0]
     assert kwargs["target"] == "macbook-pro-1"
     assert kwargs["mode"] == "async"
-    assert "agent/issue-20" in args[0]
-    assert "claude -p" in args[0]
-    assert "--permission-mode dontAsk" in args[0]
-    assert "--allowedTools" in args[0]
-    assert "gh *" in args[0]
-    assert "pytest" in args[0]
+    assert "run_ticket.py 20" in args[0]
+    assert "claude -p" not in args[0]  # no nested prompt-based session anymore (#95)
 
 
 def test_main_releases_claim_if_dispatch_fails(monkeypatch):
@@ -138,9 +134,8 @@ def test_main_releases_claim_if_dispatch_fails(monkeypatch):
     assert release_calls == [(20, "macbook-pro")]
 
 
-def test_build_prompt_references_issue_branch_and_claim_label():
-    prompt = tp._build_prompt(20, "agent/issue-20", "macbook-pro")
-    assert "#20" in prompt
-    assert "agent/issue-20" in prompt
-    assert "claimed:macbook-pro" in prompt
-    assert "Never force-push" in prompt
+def test_build_wrapper_command_runs_run_ticket_script():
+    command = tp._build_wrapper_command(20)
+    assert tp.RUN_TICKET_SCRIPT in command
+    assert f"{tp.RUN_TICKET_SCRIPT} 20" in command
+    assert "dispatch_issue20.log" in command
