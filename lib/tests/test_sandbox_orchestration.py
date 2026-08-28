@@ -245,6 +245,52 @@ def test_default_executor_planning_step_scoped_to_readonly_tools(monkeypatch, tm
     assert "Write" not in allowed
 
 
+def test_default_executor_planning_and_execution_use_dontask_mode(monkeypatch, tmp_path):
+    # ADR 0030: non-interactive `-p` calls have no TTY, so an unlisted tool
+    # hard-denies instead of prompting -- `dontAsk` makes that explicit
+    # rather than relying on --allowedTools scoping alone.
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "a plan"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+    so._default_executor(tmp_path, "TICKET-1", None)
+
+    for cmd in calls:
+        assert "--permission-mode" in cmd
+        assert cmd[cmd.index("--permission-mode") + 1] == "dontAsk"
+
+
+def test_default_executor_execution_step_scoped_to_build_and_test_tools(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "a plan"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+    so._default_executor(tmp_path, "TICKET-1", None)
+
+    exec_cmd = calls[1]
+    assert "--allowedTools" in exec_cmd
+    allowed = exec_cmd[exec_cmd.index("--allowedTools") + 1]
+    assert "Edit" in allowed and "Write" in allowed
+    assert "pytest" in allowed
+    assert "npm test" in allowed
+    # git commit/push and `gh pr create` deliberately absent -- those run as
+    # plain subprocess calls from mr_raiser.py, not from inside this session.
+    assert "git commit" not in allowed
+    assert "gh pr create" not in allowed
+
+
 def test_default_executor_includes_feedback_in_planning_prompt(monkeypatch, tmp_path):
     calls = []
 
