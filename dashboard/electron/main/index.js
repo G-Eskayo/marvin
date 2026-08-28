@@ -4,7 +4,7 @@ import { existsSync } from 'fs'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { listSubsystems, readHistory, buildIndex } from './metrics.js'
-import { listPipelinePrs, approveMr, fetchTicketContext } from './mr_review.js'
+import { listPipelinePrs, approveMr, denyMr, fetchTicketContext } from './mr_review.js'
 import { adoptLoginShellPath } from './path.js'
 
 const execFileAsync = promisify(execFile)
@@ -15,6 +15,8 @@ adoptLoginShellPath()
 // "exact n8n node topology" downstream work exists; defaults to the reference
 // receiver in dashboard/webhook-server/ (see its README for the contract).
 const MR_WEBHOOK_URL = process.env.MARVIN_MR_WEBHOOK_URL || 'http://localhost:7878/approve'
+// Same reference receiver, second endpoint -- ADR 0025's Deny action.
+const MR_DENY_WEBHOOK_URL = process.env.MARVIN_MR_DENY_WEBHOOK_URL || 'http://localhost:7878/deny'
 
 async function listOpenPrs() {
   const { stdout } = await execFileAsync('gh', [
@@ -89,6 +91,14 @@ function registerMetricsHandlers() {
   ipcMain.handle('metrics:history', (_event, subsystem) => readHistory(subsystem))
 }
 
+function postJson(webhookUrl, body) {
+  return fetch(webhookUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  })
+}
+
 function registerMrReviewHandlers() {
   ipcMain.handle('mr:list', () => listPipelinePrs(listOpenPrs))
 
@@ -113,14 +123,30 @@ function registerMrReviewHandlers() {
     if (response !== 1) {
       return { merged: false, cancelled: true }
     }
-    await approveMr(url, MR_WEBHOOK_URL, (webhookUrl, body) =>
-      fetch(webhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      })
-    )
+    await approveMr(url, MR_WEBHOOK_URL, postJson)
     return { merged: true, cancelled: false }
+  })
+
+  // Same native-dialog defense as mr:approve -- both of Deny's terminal
+  // actions have real, visible side effects on GitHub (ADR 0025), and
+  // "drop" specifically closes the PR and ticket with no undo.
+  ipcMain.handle('mr:deny', async (_event, { number, url, ticketNumber, action, reasons, comment }) => {
+    const isDrop = action === 'drop'
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      buttons: ['Cancel', isDrop ? 'Drop PR & Ticket' : 'Send Feedback'],
+      defaultId: 0,
+      cancelId: 0,
+      message: isDrop ? `Drop PR #${number} and close its ticket?` : `Send deny feedback on PR #${number}?`,
+      detail: isDrop
+        ? `This closes ${url} and its ticket via gh. No re-engagement is expected. This can't be undone from here.`
+        : `This comments the structured feedback on ${url} and its ticket, then releases the claim for a future review/debug/improve pass.`
+    })
+    if (response !== 1) {
+      return { done: false, cancelled: true }
+    }
+    await denyMr({ prUrl: url, ticketNumber, action, reasons, comment }, MR_DENY_WEBHOOK_URL, postJson)
+    return { done: true, cancelled: false }
   })
 }
 
