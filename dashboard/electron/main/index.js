@@ -5,8 +5,11 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { listSubsystems, readHistory, buildIndex } from './metrics.js'
 import { listPipelinePrs, approveMr, denyMr, fetchTicketContext } from './mr_review.js'
+import { adoptLoginShellPath } from './path.js'
 
 const execFileAsync = promisify(execFile)
+
+adoptLoginShellPath()
 
 // Overridable via env for pointing at a real n8n webhook once G-Eskayo/marvin#11's
 // "exact n8n node topology" downstream work exists; defaults to the reference
