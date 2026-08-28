@@ -334,6 +334,8 @@ def traverse(
     recent_scores: list[float] = []
 
     def ceiling_hit() -> bool:
+        """ADR 0010: report queue state at the checkpoint (not just a bare
+        pause) so continue/stop is an informed decision, not a guess."""
         if cost_ceiling is None or on_checkpoint is None:
             return False
         if len(results) < cost_ceiling + 1:
