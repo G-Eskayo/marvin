@@ -73,4 +73,7 @@ def _register():
     return MLXInProcessLM
 
 
-_register()
+try:
+    _register()
+except ImportError:
+    pass
