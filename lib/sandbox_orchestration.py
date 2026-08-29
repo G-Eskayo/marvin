@@ -101,11 +101,23 @@ def _create_worktree(repo_path: Path, ticket_ref: str) -> Path:
     different branch mid-edit. Branching from whatever happens to be
     checked out there would silently start a ticket's work from the wrong
     base and reintroduce exactly the collision risk worktree isolation
-    exists to remove (G-Eskayo/marvin#95)."""
+    exists to remove (G-Eskayo/marvin#95).
+
+    Force-deletes any pre-existing local branch of the same name first --
+    a real re-dispatch of ticket #21 hit this: `git worktree remove`
+    (used to clean up a finished attempt) frees the directory but doesn't
+    delete the branch, and `git worktree add -b` refuses to recreate a
+    branch that already exists. Safe to discard: this branch name is
+    reused only across separate attempts at the exact same ticket, a
+    re-dispatch only happens once the ticket is unclaimed again (its
+    previous PR merged/closed, or it never got far enough to push
+    anything), and the branch itself only ever exists inside a worktree
+    this module owns -- nothing else references it by name."""
     WORKTREES_ROOT.mkdir(parents=True, exist_ok=True)
     branch = f"pipeline/{ticket_ref.lower().replace(' ', '-')}"
     worktree_path = WORKTREES_ROOT / branch.replace("/", "-")
     subprocess.run(["git", "fetch", "origin", "main"], cwd=repo_path, check=True, capture_output=True)
+    subprocess.run(["git", "branch", "-D", branch], cwd=repo_path, capture_output=True)
     subprocess.run(
         ["git", "worktree", "add", "-b", branch, str(worktree_path), "origin/main"],
         cwd=repo_path, check=True, capture_output=True,
