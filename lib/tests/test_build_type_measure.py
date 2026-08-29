@@ -51,13 +51,36 @@ def test_command_for_picks_vitest_for_a_dashboard_change(repo_with_worktree):
     assert "vitest" in " ".join(command)
 
 
-def test_command_for_picks_pytest_for_a_backend_change(repo_with_worktree):
+def test_command_for_scopes_pytest_to_the_touched_top_level_directory(repo_with_worktree):
     _commit_change(repo_with_worktree, "lib/some_module.py", "# change\n")
+    command = btm.test_command_for(repo_with_worktree)
+    assert command == [btm.VENV_PYTHON, "-m", "pytest", "-q", "lib"]
+
+
+def test_command_for_scopes_skills_to_two_path_components_not_all_of_skills(repo_with_worktree):
+    # G-Eskayo/marvin#21 found this the hard way: scoping only to "skills"
+    # would still pull in every other skill's tests, not just this one's.
+    _commit_change(repo_with_worktree, "skills/paper-dive/scripts/paper_graph.py", "# change\n")
+    command = btm.test_command_for(repo_with_worktree)
+    assert command == [btm.VENV_PYTHON, "-m", "pytest", "-q", "skills/paper-dive"]
+
+
+def test_command_for_scopes_to_multiple_roots_when_several_areas_touched(repo_with_worktree):
+    _commit_change(repo_with_worktree, "lib/some_module.py", "# change\n")
+    _commit_change(repo_with_worktree, "bench/some_bench_file.py", "# change\n")
+    command = btm.test_command_for(repo_with_worktree)
+    assert command == [btm.VENV_PYTHON, "-m", "pytest", "-q", "bench", "lib"]
+
+
+def test_command_for_falls_back_to_whole_repo_when_nothing_changed(repo_with_worktree):
     command = btm.test_command_for(repo_with_worktree)
     assert command == [btm.VENV_PYTHON, "-m", "pytest", "-q"]
 
 
-def test_command_for_picks_pytest_when_nothing_changed(repo_with_worktree):
+def test_command_for_falls_back_to_whole_repo_when_touched_paths_have_no_real_directory(repo_with_worktree):
+    # e.g. a docs-only change under a path that doesn't exist as a real
+    # code directory in the worktree -- no scoped target to run.
+    _commit_change(repo_with_worktree, "CONTEXT.md", "docs change\n")
     command = btm.test_command_for(repo_with_worktree)
     assert command == [btm.VENV_PYTHON, "-m", "pytest", "-q"]
 

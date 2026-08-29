@@ -104,7 +104,7 @@ git checkout -b ${BRANCH_NAME}
 claude -p "\$(cat ~/dispatch_issue${ISSUE_NUMBER}_prompt.md)" \\
   --model claude-sonnet-5 \\
   --permission-mode dontAsk \\
-  --allowedTools "Read,Edit,Write,Bash(git *),Bash(gh *),Bash(~/.agents/venv/bin/python -m pytest*),Bash(npm test*),Bash(npm install*),Bash(npx vitest run*)" \\
+  --allowedTools "Read,Edit,Write,Bash(git *),Bash(gh *),Bash(~/.agents/venv/bin/python -m pytest*),Bash(pytest*),Bash(python -m pytest*),Bash(python3 -m pytest*),Bash(npm test*),Bash(npm install*),Bash(npx vitest run*)" \\
   > ~/dispatch_issue${ISSUE_NUMBER}.log 2>&1
 
 echo "EXIT_CODE: \$?" >> ~/dispatch_issue${ISSUE_NUMBER}.log
