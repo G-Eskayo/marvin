@@ -94,28 +94,26 @@ def test_command_for_picks_vitest_when_both_dashboard_and_backend_changed(repo_w
 
 # ── measure() (injected capture_test_results via monkeypatch) ──────────────
 
-def test_measure_returns_full_value_when_all_tests_pass(monkeypatch, tmp_path):
-    monkeypatch.setattr(btm, "capture_test_results", lambda wt, cmd: {
-        "suite": "pytest", "passed": 11, "failed": 0, "total": 11,
-    })
-    result = btm.measure(tmp_path)
-    assert result == {"tests_passing": {"value": 1.0, "higher_is_better": True}}
-
-
-def test_measure_returns_partial_value_when_some_tests_fail(monkeypatch, tmp_path):
+def test_measure_returns_raw_passed_and_failed_counts(monkeypatch, tmp_path):
     monkeypatch.setattr(btm, "capture_test_results", lambda wt, cmd: {
         "suite": "pytest", "passed": 8, "failed": 3, "total": 11,
     })
     result = btm.measure(tmp_path)
-    assert result["tests_passing"]["value"] == pytest.approx(8 / 11)
+    assert result == {
+        "tests_passed": {"value": 8, "higher_is_better": True},
+        "tests_failed": {"value": 3, "higher_is_better": False},
+    }
 
 
-def test_measure_returns_zero_when_output_is_unparseable(monkeypatch, tmp_path):
+def test_measure_returns_zero_counts_when_output_is_unparseable(monkeypatch, tmp_path):
     monkeypatch.setattr(btm, "capture_test_results", lambda wt, cmd: {
         "suite": "mystery", "passed": None, "failed": None, "total": None,
     })
     result = btm.measure(tmp_path)
-    assert result == {"tests_passing": {"value": 0.0, "higher_is_better": True}}
+    assert result == {
+        "tests_passed": {"value": 0, "higher_is_better": True},
+        "tests_failed": {"value": 0, "higher_is_better": False},
+    }
 
 
 def test_measure_a_baseline_and_a_current_run_produce_a_real_improvement(monkeypatch, tmp_path):
@@ -138,3 +136,45 @@ def test_measure_a_baseline_and_a_current_run_produce_a_real_improvement(monkeyp
     comparison = mr.compare("test-subsystem", baseline, current)
     assert comparison["passing"] is True
     assert comparison["verdict"] == "improved"
+
+
+def test_measure_detects_new_passing_tests_added_to_an_already_fully_passing_suite(monkeypatch, tmp_path):
+    # The actual bug found live-firing G-Eskayo/marvin#21: a ticket that
+    # adds new passing tests to a suite already at 100% (34/34 -> 37/37)
+    # is invisible to a passing-fraction metric (1.0 -> 1.0, "unchanged")
+    # even though real, correct work landed. Raw counts must catch this.
+    sys.path.insert(0, str(LIB))
+    import metrics_registry as mr
+
+    monkeypatch.setattr(btm, "capture_test_results", lambda wt, cmd: {
+        "suite": "pytest", "passed": 34, "failed": 0, "total": 34,
+    })
+    baseline = btm.measure(tmp_path)
+
+    monkeypatch.setattr(btm, "capture_test_results", lambda wt, cmd: {
+        "suite": "pytest", "passed": 37, "failed": 0, "total": 37,
+    })
+    current = btm.measure(tmp_path)
+
+    comparison = mr.compare("test-subsystem", baseline, current)
+    assert comparison["passing"] is True
+    assert comparison["verdict"] == "improved"
+
+
+def test_measure_a_new_failure_does_not_register_as_improved_even_if_more_pass_too(monkeypatch, tmp_path):
+    sys.path.insert(0, str(LIB))
+    import metrics_registry as mr
+
+    monkeypatch.setattr(btm, "capture_test_results", lambda wt, cmd: {
+        "suite": "pytest", "passed": 34, "failed": 0, "total": 34,
+    })
+    baseline = btm.measure(tmp_path)
+
+    monkeypatch.setattr(btm, "capture_test_results", lambda wt, cmd: {
+        "suite": "pytest", "passed": 36, "failed": 1, "total": 37,
+    })
+    current = btm.measure(tmp_path)
+
+    comparison = mr.compare("test-subsystem", baseline, current)
+    assert comparison["passing"] is False
+    assert comparison["verdict"] == "mixed"

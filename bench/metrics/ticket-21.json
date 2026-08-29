@@ -7,5 +7,14 @@
         "higher_is_better": true
       }
     }
+  },
+  {
+    "timestamp": "2026-08-29T14:03:55.154675+00:00",
+    "metrics": {
+      "tests_passing": {
+        "value": 1.0,
+        "higher_is_better": true
+      }
+    }
   }
 ]
