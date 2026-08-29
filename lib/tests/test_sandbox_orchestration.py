@@ -362,3 +362,43 @@ def test_default_executor_includes_feedback_in_planning_prompt(monkeypatch, tmp_
     so._default_executor(tmp_path, "TICKET-1", feedback)
     plan_prompt = calls[0][calls[0].index("-p") + 1]
     assert "regressed" in plan_prompt
+
+
+def test_default_executor_tells_the_planner_its_headless_and_autonomous(monkeypatch, tmp_path):
+    # G-Eskayo/marvin#21 hit this for real: without this, the planner
+    # paused to ask for human confirmation nobody headless could answer.
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "a plan"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+    so._default_executor(tmp_path, "TICKET-1", None)
+    plan_prompt = calls[0][calls[0].index("-p") + 1]
+    assert "autonomously" in plan_prompt.lower()
+    assert "no human present" in plan_prompt.lower() or "no one" in plan_prompt.lower()
+
+
+def test_default_executor_tells_the_executor_not_to_commit_push_or_open_a_pr(monkeypatch, tmp_path):
+    # G-Eskayo/marvin#21 hit this for real too: the executor got stuck
+    # asking for Bash permission to commit/push/open a PR itself, not
+    # knowing raise_mr does that automatically after it returns.
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "a plan"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+    so._default_executor(tmp_path, "TICKET-1", None)
+    exec_prompt = calls[1][calls[1].index("-p") + 1]
+    assert "do not" in exec_prompt.lower() or "do not commit" in exec_prompt.lower()
+    assert "commit" in exec_prompt.lower()
+    assert "pull request" in exec_prompt.lower() or " pr" in exec_prompt.lower()

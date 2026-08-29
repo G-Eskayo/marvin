@@ -6,9 +6,12 @@ A build-type ticket (a new feature/tab/flag with no prior baseline to
 tune -- see CONTEXT.md's "Build-type ticket" glossary entry) has no real
 metric to improve, unlike a tunable-subsystem ticket. `measure()` here
 feeds metrics_registry.compare()'s existing interface a mechanical
-pass/fail-style signal instead: the fraction of the relevant test suite
-that passes, so "improved" means "more tests pass than before" (0 ->
-partial -> 1.0), not a fabricated tunable metric.
+pass/fail-style signal instead: raw tests_passed/tests_failed counts, so
+"improved" means "more tests pass and nothing newly fails" -- not a
+fabricated tunable metric, and not a passing fraction either (a fraction
+can't tell "added new passing tests to an already-100%-passing suite"
+from "nothing changed," both read as 1.0 -> 1.0; a real dispatch,
+G-Eskayo/marvin#21, hit exactly this).
 
 Reuses evidence_capture.capture_test_results/parse_test_output (G-Eskayo/
 marvin#76) for the actual subprocess-run-and-parse work rather than
@@ -77,12 +80,21 @@ def test_command_for(worktree_path: Path, base_branch: str = "main") -> list[str
 
 def measure(worktree_path: Path) -> dict:
     """metrics_registry.compare()-shaped measure() for build-type
-    tickets. Returns {"tests_passing": {"value", "higher_is_better"}} --
-    value is the passing fraction (0.0 when nothing recognizable ran),
-    so a comparison from failing/absent to passing shows as "improved"
-    through metrics_registry's existing, unmodified compare() logic."""
+    tickets. Returns two separate counts -- tests_passed (higher is
+    better) and tests_failed (lower is better) -- rather than one
+    passing fraction. A real live-fire dispatch (G-Eskayo/marvin#21)
+    found the fraction was blind to a common, legitimate case: a ticket
+    that adds new passing tests to an already-100%-passing suite (34/34
+    -> 37/37) is still 1.0 -> 1.0, registering as "unchanged" even though
+    real, correct work landed. Two counts let metrics_registry.compare()'s
+    existing per-metric direction logic see the added passing tests as a
+    real improvement, while still catching an actual regression (failed
+    count going up) as not passing -- something one fraction can't do."""
     command = test_command_for(worktree_path)
     parsed = capture_test_results(worktree_path, command)
-    total = parsed.get("total")
-    value = (parsed["passed"] / total) if total else 0.0
-    return {"tests_passing": {"value": value, "higher_is_better": True}}
+    passed = parsed.get("passed") or 0
+    failed = parsed.get("failed") or 0
+    return {
+        "tests_passed": {"value": passed, "higher_is_better": True},
+        "tests_failed": {"value": failed, "higher_is_better": False},
+    }

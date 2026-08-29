@@ -68,7 +68,26 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
     execution call inside the worktree. Mocked in tests -- never invoked
     without an explicit live-fire decision, since it spends real API cost
     and autonomously edits files."""
+    # A real live-fire dispatch (G-Eskayo/marvin#21) found this the hard
+    # way, twice: (1) without an explicit "you're headless" statement,
+    # the planning model reasonably-but-wrongly paused to ask for human
+    # confirmation before declaring existing work sufficient -- nobody
+    # headless was there to answer, and the "plan" that got passed to the
+    # executor was just that unanswered question. (2) the executor got
+    # stuck trying to commit/push/open a PR itself and asking for Bash
+    # permission to do so, not knowing that's raise_mr's job, done
+    # automatically after this function returns -- its own job stops at
+    # implementing and locally verifying.
+    autonomy_note = (
+        "You are operating fully autonomously and headlessly -- there is no "
+        "human present to answer questions, grant additional permissions, or "
+        "confirm judgment calls. If existing code already satisfies this "
+        "ticket, say so plainly in your plan and act on that rather than "
+        "pausing to ask for confirmation; if something is genuinely "
+        "ambiguous, make the most reasonable call yourself and note it."
+    )
     plan_prompt = (
+        f"{autonomy_note}\n\n"
         f"Read GitHub issue {ticket_ref} (gh issue view {ticket_ref}) and produce a "
         f"concise, concrete implementation plan covering its 'What to build' section "
         f"and every acceptance criterion. Plan only -- do not edit any files yet."
@@ -85,7 +104,14 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
     )
     plan = plan_result.stdout
 
-    exec_prompt = f"Implement this plan in the current working tree:\n\n{plan}"
+    exec_prompt = (
+        f"{autonomy_note} Your job here stops at implementing the plan and "
+        f"verifying it locally (edit files, run the relevant tests) -- do NOT "
+        f"commit, push, or open a pull request; a separate process handles "
+        f"that automatically after you finish, and asking for permission to "
+        f"do it yourself will just leave you stuck with no one to grant it.\n\n"
+        f"Implement this plan in the current working tree:\n\n{plan}"
+    )
     subprocess.run(
         ["claude", "-p", exec_prompt, "--model", HAIKU_MODEL,
          "--permission-mode", "dontAsk", "--allowedTools", _EXEC_ALLOWED_TOOLS],
