@@ -89,11 +89,19 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
 
 
 def _create_worktree(repo_path: Path, ticket_ref: str) -> Path:
+    """Branches explicitly from `origin/main` (fetched fresh first), not
+    repo_path's current HEAD -- repo_path is the same shared checkout an
+    interactive session might be using at the same moment, possibly on a
+    different branch mid-edit. Branching from whatever happens to be
+    checked out there would silently start a ticket's work from the wrong
+    base and reintroduce exactly the collision risk worktree isolation
+    exists to remove (G-Eskayo/marvin#95)."""
     WORKTREES_ROOT.mkdir(parents=True, exist_ok=True)
     branch = f"pipeline/{ticket_ref.lower().replace(' ', '-')}"
     worktree_path = WORKTREES_ROOT / branch.replace("/", "-")
+    subprocess.run(["git", "fetch", "origin", "main"], cwd=repo_path, check=True, capture_output=True)
     subprocess.run(
-        ["git", "worktree", "add", "-b", branch, str(worktree_path)],
+        ["git", "worktree", "add", "-b", branch, str(worktree_path), "origin/main"],
         cwd=repo_path, check=True, capture_output=True,
     )
     return worktree_path
