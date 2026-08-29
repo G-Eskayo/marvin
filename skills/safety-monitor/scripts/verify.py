@@ -109,16 +109,44 @@ def verify(artifact_text: str, loop_name: str, source_context: str = "") -> floa
         return 0.0
 
 
+_QUARANTINE_HEADING_RE = re.compile(r"^## \d{4}-\d{2}-\d{2} — (.+) \[SAFETY, score [\d.]+, tau [\d.]+\]$")
+
+
+def _last_quarantined_artifact_text(loop_name: str) -> str | None:
+    """The artifact text quoted in the most recently appended quarantine
+    block for this loop, or None if this loop has never had one."""
+    if not QUARANTINE_FILE.exists():
+        return None
+    for section in reversed(QUARANTINE_FILE.read_text().split("\n---\n")):
+        section_lines = section.splitlines()
+        if not section_lines:
+            continue
+        m = _QUARANTINE_HEADING_RE.match(section_lines[0])
+        if not m or m.group(1) != loop_name:
+            continue
+        quoted_lines = []
+        for line in section_lines[1:]:
+            if not line.startswith("> "):
+                break
+            quoted_lines.append(line[2:])
+        return "\n".join(quoted_lines)
+    return None
+
+
 def quarantine(artifact_text: str, score: float, loop_name: str, tau: float,
                reason: str = "") -> None:
     """Append a flagged artifact to ~/.claude/quarantine.md for review."""
-    QUARANTINE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
     # Full text preserved, not truncated — approve/modify/deny needs to see
     # everything, not a 500-char preview. Quote every line so multi-line
     # content renders as a proper blockquote, not only the first line.
     full_text = artifact_text.strip()
+    if full_text == _last_quarantined_artifact_text(loop_name):
+        print(f"[safety-monitor] quarantine() skipped: identical artifact "
+              f"already queued for '{loop_name}'", file=sys.stderr)
+        return
+
+    QUARANTINE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     quoted = "\n".join(f"> {line}" for line in full_text.splitlines())
 
     block = (
