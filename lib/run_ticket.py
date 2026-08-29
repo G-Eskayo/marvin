@@ -30,6 +30,22 @@ def _comment_failure(issue_number: int, reason: str) -> None:
     )
 
 
+def _trigger_redispatch() -> None:
+    """This machine has been free since execute_ticket returned above --
+    win or lose, rather than sit idle until the next hourly
+    ticket_pipeline.py cron tick, check for more unclaimed work right
+    now. Fire-and-forget: ticket_pipeline.py already no-ops safely if
+    nothing's unclaimed or no machine is free, so nothing here needs to
+    check first, and a failed scan shouldn't affect this ticket's own
+    already-decided outcome."""
+    script = Path(__file__).resolve().parent / "ticket_pipeline.py"
+    subprocess.Popen(
+        [sys.executable, str(script)],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
 def run(issue_number: int) -> dict:
     ticket_ref = f"{REPO}#{issue_number}"
     subsystem = f"ticket-{issue_number}"
@@ -48,6 +64,8 @@ def run(issue_number: int) -> dict:
 
     if not outcome["raised"]:
         _comment_failure(issue_number, outcome["reason"])
+
+    _trigger_redispatch()
 
     return outcome
 

@@ -1,5 +1,14 @@
 import { describe, it, expect, vi } from 'vitest'
-import { mergePr, triggerRebuildIfDashboardChanged } from '../webhook-server/merge.js'
+import { mergePr, triggerRebuildIfDashboardChanged, triggerTicketPipeline } from '../webhook-server/merge.js'
+
+// mergePr's rebuild/redispatch defaults are the real fire-and-forget
+// triggers -- every test that reaches past the URL check must override
+// both, or it'll spawn a real subprocess (a real npm build, a real
+// ticket_pipeline.py run) during the test suite.
+function noopRebuild() {
+  return Promise.resolve()
+}
+function noopRedispatch() {}
 
 describe('mergePr', () => {
   it('rejects a non-GitHub URL without calling exec', async () => {
@@ -16,8 +25,7 @@ describe('mergePr', () => {
 
   it('calls gh pr merge with the exact URL for a valid GitHub PR link', async () => {
     const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
-    const rebuild = vi.fn().mockResolvedValue(undefined)
-    await mergePr('https://github.com/G-Eskayo/marvin/pull/71', exec, rebuild)
+    await mergePr('https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, noopRedispatch)
     expect(exec).toHaveBeenCalledWith('gh', ['pr', 'merge', 'https://github.com/G-Eskayo/marvin/pull/71', '--merge'])
   })
 
@@ -29,8 +37,22 @@ describe('mergePr', () => {
   it('checks for a dashboard rebuild after a successful merge', async () => {
     const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
     const rebuild = vi.fn().mockResolvedValue(undefined)
-    await mergePr('https://github.com/G-Eskayo/marvin/pull/71', exec, rebuild)
+    await mergePr('https://github.com/G-Eskayo/marvin/pull/71', exec, rebuild, noopRedispatch)
     expect(rebuild).toHaveBeenCalledWith('https://github.com/G-Eskayo/marvin/pull/71', exec)
+  })
+
+  it('triggers a ticket-pipeline redispatch after a successful merge, regardless of what was touched', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const redispatch = vi.fn()
+    await mergePr('https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, redispatch)
+    expect(redispatch).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not trigger a redispatch when the merge itself fails', async () => {
+    const exec = vi.fn().mockRejectedValue(new Error('merge conflict'))
+    const redispatch = vi.fn()
+    await expect(mergePr('https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, redispatch)).rejects.toThrow()
+    expect(redispatch).not.toHaveBeenCalled()
   })
 })
 
@@ -70,5 +92,20 @@ describe('triggerRebuildIfDashboardChanged', () => {
     const spawnFn = vi.fn()
     await triggerRebuildIfDashboardChanged('https://github.com/G-Eskayo/marvin/pull/1', exec, spawnFn)
     expect(spawnFn).not.toHaveBeenCalled()
+  })
+})
+
+describe('triggerTicketPipeline', () => {
+  it('spawns ticket_pipeline.py detached, unconditionally', () => {
+    const unref = vi.fn()
+    const spawnFn = vi.fn().mockReturnValue({ unref })
+    triggerTicketPipeline(spawnFn)
+    expect(spawnFn).toHaveBeenCalledTimes(1)
+    const [pythonPath, args, opts] = spawnFn.mock.calls[0]
+    expect(pythonPath).toMatch(/venv\/bin\/python$/)
+    expect(args).toHaveLength(1)
+    expect(args[0]).toMatch(/lib\/ticket_pipeline\.py$/)
+    expect(opts).toMatchObject({ detached: true, stdio: 'ignore' })
+    expect(unref).toHaveBeenCalled()
   })
 })

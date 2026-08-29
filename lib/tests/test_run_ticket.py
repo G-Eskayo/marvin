@@ -42,6 +42,7 @@ def test_run_calls_execute_ticket_with_the_right_ticket_ref_and_subsystem(monkey
     monkeypatch.setattr(rt, "ticket_touches_ui", lambda wt: False)
     monkeypatch.setattr(rt, "capture_dev_evidence", lambda wt, touches_ui: {"na": True, "reason": "no UI"})
     monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": True, "pr_url": "http://fake-pr", "reason": None})
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
 
     rt.run(20)
 
@@ -65,6 +66,7 @@ def test_run_captures_test_results_and_dev_evidence_on_a_passing_result(monkeypa
         return {"raised": True, "pr_url": "http://fake-pr", "reason": None}
 
     monkeypatch.setattr(rt, "raise_mr", fake_raise_mr)
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
 
     rt.run(20)
 
@@ -87,6 +89,7 @@ def test_run_skips_evidence_capture_on_a_failing_result(monkeypatch):
 
     monkeypatch.setattr(rt, "raise_mr", fake_raise_mr)
     monkeypatch.setattr(rt, "_comment_failure", lambda *a: None)
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
 
     rt.run(20)
 
@@ -101,6 +104,7 @@ def test_run_comments_the_failure_reason_when_not_raised(monkeypatch):
 
     comments = []
     monkeypatch.setattr(rt, "_comment_failure", lambda issue_number, reason: comments.append((issue_number, reason)))
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
 
     rt.run(20)
 
@@ -117,6 +121,7 @@ def test_run_does_not_comment_on_a_successful_raise(monkeypatch):
 
     comments = []
     monkeypatch.setattr(rt, "_comment_failure", lambda *a: comments.append(a))
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
 
     rt.run(20)
 
@@ -129,3 +134,50 @@ def test_comment_failure_calls_gh_issue_comment(monkeypatch):
     rt._comment_failure(20, "boom")
     assert calls[0][:4] == ["gh", "issue", "comment", "20"]
     assert "boom" in calls[0][-1]
+
+
+def test_run_triggers_redispatch_on_a_successful_raise(monkeypatch):
+    monkeypatch.setattr(rt, "execute_ticket", lambda *a: _passing_result())
+    monkeypatch.setattr(rt, "test_command_for", lambda wt: ["pytest", "-q"])
+    monkeypatch.setattr(rt, "capture_test_results", lambda wt, cmd: {})
+    monkeypatch.setattr(rt, "ticket_touches_ui", lambda wt: False)
+    monkeypatch.setattr(rt, "capture_dev_evidence", lambda wt, touches_ui: {})
+    monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": True, "pr_url": "http://fake-pr", "reason": None})
+
+    calls = []
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: calls.append(True))
+
+    rt.run(20)
+
+    assert calls == [True]
+
+
+def test_run_triggers_redispatch_even_when_not_raised(monkeypatch):
+    # The machine is free either way -- a failed/non-passing ticket
+    # shouldn't leave it idle until the next hourly cron tick either.
+    monkeypatch.setattr(rt, "execute_ticket", lambda *a: _failing_result())
+    monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "nope"})
+    monkeypatch.setattr(rt, "_comment_failure", lambda *a: None)
+
+    calls = []
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: calls.append(True))
+
+    rt.run(20)
+
+    assert calls == [True]
+
+
+def test_trigger_redispatch_spawns_ticket_pipeline_detached(monkeypatch):
+    calls = []
+
+    class FakePopen:
+        def __init__(self, cmd, **kwargs):
+            calls.append((cmd, kwargs))
+
+    monkeypatch.setattr(rt.subprocess, "Popen", FakePopen)
+    rt._trigger_redispatch()
+
+    cmd, kwargs = calls[0]
+    assert cmd[0] == rt.sys.executable
+    assert cmd[1].endswith("ticket_pipeline.py")
+    assert kwargs.get("start_new_session") is True
