@@ -26,23 +26,53 @@ from evidence_capture import capture_test_results  # noqa: E402
 VENV_PYTHON = str(Path.home() / ".agents" / "venv" / "bin" / "python")
 
 
-def _touches_dashboard(worktree_path: Path, base_branch: str = "main") -> bool:
+def _touched_files(worktree_path: Path, base_branch: str = "main") -> list[str]:
     result = subprocess.run(
         ["git", "diff", "--name-only", f"{base_branch}...HEAD"],
         cwd=worktree_path, capture_output=True, text=True,
     )
-    return any(f.startswith("dashboard/") for f in result.stdout.splitlines())
+    return result.stdout.splitlines()
+
+
+def _touches_dashboard(touched: list[str]) -> bool:
+    return any(f.startswith("dashboard/") for f in touched)
+
+
+def _scope_root(touched_file: str) -> str:
+    """One touched file -> the pytest path arg it implies. `skills/` gets
+    two path components (skills/paper-dive, not all of skills/ -- that'd
+    still pull in every other skill's tests) since it's a shared
+    namespace for otherwise-unrelated areas; everything else gets one
+    (lib, bench, brain-map, ...)."""
+    parts = touched_file.split("/")
+    if parts[0] == "skills" and len(parts) > 1:
+        return "/".join(parts[:2])
+    return parts[0]
 
 
 def test_command_for(worktree_path: Path, base_branch: str = "main") -> list[str]:
     """Which test command matches what this ticket's diff actually
-    touches, scoped rather than always running the entire repo's tests.
+    touches, scoped rather than always running the entire repo's tests --
+    a real live-fire dispatch (G-Eskayo/marvin#21) found this the hard
+    way: an unrelated, pre-existing test-collection failure elsewhere in
+    the repo made the whole-repo baseline read 0.0, and "fixing" that
+    unrelated collection error registered as a false-positive
+    "improvement" for a ticket that was never actually implemented.
     A single list (not a (command, cwd) pair) so this composes directly
     with capture_test_results's cwd=worktree_path-always signature --
     the dashboard case cd's internally via a wrapped shell command."""
-    if _touches_dashboard(worktree_path, base_branch):
+    touched = _touched_files(worktree_path, base_branch)
+    if _touches_dashboard(touched):
         return ["bash", "-c", "cd dashboard && npx vitest run"]
-    return [VENV_PYTHON, "-m", "pytest", "-q"]
+
+    roots = sorted({_scope_root(f) for f in touched if f})
+    existing_roots = [r for r in roots if (worktree_path / r).is_dir()]
+    if not existing_roots:
+        # Nothing changed, or nothing maps to a real code directory (e.g.
+        # docs/adr/*.md-only) -- no scoped target to run, fall back to
+        # the whole suite rather than silently running nothing.
+        return [VENV_PYTHON, "-m", "pytest", "-q"]
+    return [VENV_PYTHON, "-m", "pytest", "-q", *existing_roots]
 
 
 def measure(worktree_path: Path) -> dict:
