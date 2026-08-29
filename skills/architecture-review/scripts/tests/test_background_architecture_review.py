@@ -112,3 +112,58 @@ def test_run_review_uses_rendered_paths_in_the_prompt(tmp_path, monkeypatch):
     bar.run_review({"name": "handoffs", "paths": [str(chunk_dir) + "/"]}, "test reason", False)
 
     assert str(chunk_dir / "handoff-a.md") in captured["prompt"]
+
+
+def test_run_review_skips_sort_and_state_update_on_a_nonzero_claude_exit(tmp_path, monkeypatch):
+    # A claude -p call that exits non-zero without timing out (rate limit,
+    # auth error, immediate crash) must be treated the same as the existing
+    # TimeoutExpired branch -- otherwise the chunk is marked reviewed and
+    # skipped for a full rotation even though no review actually happened.
+    monkeypatch.setattr(bar, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(bar, "CURSOR_FILE", tmp_path / "state" / "chunk-cursor.json")
+    monkeypatch.setattr(bar, "LOCK_FILE", tmp_path / "state" / ".last-run")
+    monkeypatch.setattr(bar, "LOG_FILE", tmp_path / "state" / "background-review.log")
+    monkeypatch.setattr(bar, "SUGGESTIONS_FILE", tmp_path / "suggestions.md")
+    monkeypatch.setattr(bar, "_resolve_claude_bin", lambda: "/usr/bin/true")
+
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class Result:
+            returncode = 1
+            stderr = ""
+        return Result()
+
+    monkeypatch.setattr(bar.subprocess, "run", fake_run)
+
+    bar.run_review({"name": "handoffs", "paths": []}, "test reason", False)
+
+    assert len(calls) == 1  # sort_suggestions.py must never be invoked
+    assert not bar.LOCK_FILE.exists()
+    assert not bar.CURSOR_FILE.exists()
+
+
+def test_run_review_still_advances_state_on_a_zero_claude_exit(tmp_path, monkeypatch):
+    monkeypatch.setattr(bar, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(bar, "CURSOR_FILE", tmp_path / "state" / "chunk-cursor.json")
+    monkeypatch.setattr(bar, "LOCK_FILE", tmp_path / "state" / ".last-run")
+    monkeypatch.setattr(bar, "LOG_FILE", tmp_path / "state" / "background-review.log")
+    monkeypatch.setattr(bar, "SUGGESTIONS_FILE", tmp_path / "suggestions.md")
+    monkeypatch.setattr(bar, "_resolve_claude_bin", lambda: "/usr/bin/true")
+
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class Result:
+            returncode = 0
+            stderr = ""
+        return Result()
+
+    monkeypatch.setattr(bar.subprocess, "run", fake_run)
+
+    bar.run_review({"name": "handoffs", "paths": []}, "test reason", False)
+
+    assert len(calls) == 2  # claude call + sort_suggestions.py call
+    assert bar.LOCK_FILE.exists()

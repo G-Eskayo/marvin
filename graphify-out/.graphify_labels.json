@@ -257,7 +257,7 @@
   "255": "mn",
   "256": "ticket-21.md",
   "257": "ticket-22.md",
-  "258": "run",
+  "258": "evidence_capture.py",
   "259": "test_gh_merge_guard.py",
   "260": "background_architecture_review.py",
   "261": "deny.js",
@@ -274,10 +274,12 @@
   "272": "rebuild-manifest.py",
   "273": "ticket_pipeline.py",
   "274": "yi",
-  "275": "hook_errors.py",
+  "275": "log_hook_error",
   "276": "source_monitor.py",
   "277": "ticket-24.md",
   "278": "fixture",
   "279": "dispatch_ticket.sh",
-  "280": "Path"
+  "280": "test_improvement_sweep.py",
+  "281": "run",
+  "282": "Path"
 }
