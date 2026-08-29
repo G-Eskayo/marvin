@@ -109,13 +109,36 @@ def format_issue(entry: dict) -> str:
 
 # ── queue writer ───────────────────────────────────────────────────────────────
 
+_BLOCK_HEADING_RE = re.compile(r"^## \d{4}-\d{2}-\d{2} — (.+)$")
+
+
+def _last_block_issue_lines(project_name: str) -> list[str] | None:
+    """The issue bullet lines from the most recently appended queue block for
+    this project, or None if this project has never had a block written
+    (the file doesn't exist yet, or just never mentions it)."""
+    if not QUEUE_FILE.exists():
+        return None
+    for section in reversed(QUEUE_FILE.read_text().split("\n---\n")):
+        section_lines = section.splitlines()
+        if not section_lines:
+            continue
+        m = _BLOCK_HEADING_RE.match(section_lines[0])
+        if m and m.group(1) == project_name:
+            return [line for line in section_lines if line.startswith("- ")]
+    return None
+
+
 def append_to_queue(project_name: str, issues: list[dict]) -> bool:
-    """Returns True if the block was appended, False if safety-monitor
+    """Returns True if the block was appended (or skipped as a pure repeat of
+    the last one queued for this project), False if safety-monitor
     quarantined it instead (garbled/mismatched entry — see rubrics/improvement_sweep.md)."""
+    issue_lines = [format_issue(issue) for issue in issues]
+    if issue_lines == _last_block_issue_lines(project_name):
+        return True
+
     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     lines = [f"\n---\n## {date_str} — {project_name}\n"]
-    for issue in issues:
-        lines.append(format_issue(issue))
+    lines.extend(issue_lines)
     lines.append(
         f"\n*{len(issues)} item(s). "
         f"Run `qa_scan.py <project> --dry-run` for the full list.*\n"
@@ -136,6 +159,16 @@ def append_to_queue(project_name: str, issues: list[dict]) -> bool:
         existing = QUEUE_FILE.read_text()
         QUEUE_FILE.write_text(existing + block)
     return True
+
+
+def _report_outcome(appended: bool, before: str, after: str, project_name: str, count: int) -> str:
+    if not appended:
+        return (f"\n[improve] {count} improvement(s) for '{project_name}' "
+                f"quarantined by safety-monitor — see ~/.claude/quarantine.md")
+    if after == before:
+        return (f"\n[improve] {count} improvement(s) for '{project_name}' "
+                f"already queued (identical to the last block) — skipped")
+    return f"\n[improve] {count} improvement(s) queued for '{project_name}' → ~/.claude/improvement-queue.md"
 
 
 # ── main ───────────────────────────────────────────────────────────────────────
@@ -187,18 +220,10 @@ def main() -> None:
         return
 
     try:
-        if append_to_queue(project_name, issues):
-            print(
-                f"\n[improve] {len(issues)} improvement(s) queued for '{project_name}' "
-                f"→ ~/.claude/improvement-queue.md",
-                flush=True,
-            )
-        else:
-            print(
-                f"\n[improve] {len(issues)} improvement(s) for '{project_name}' "
-                f"quarantined by safety-monitor — see ~/.claude/quarantine.md",
-                flush=True,
-            )
+        before = QUEUE_FILE.read_text() if QUEUE_FILE.exists() else ""
+        appended = append_to_queue(project_name, issues)
+        after = QUEUE_FILE.read_text() if QUEUE_FILE.exists() else ""
+        print(_report_outcome(appended, before, after, project_name, len(issues)), flush=True)
     except Exception as e:
         log_hook_error("improvement_sweep", f"writing queue/quarantine for {project_name}", e)
         return
