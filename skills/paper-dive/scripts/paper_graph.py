@@ -111,6 +111,7 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
 
 
 def blended_score(seed_embeddings: dict, candidate_embeddings: dict, specter2_weight: float = 0.5) -> float:
+    """Blend SPECTER2 and nomic embeddings to hedge against citation-clique bias. See ADR 0011."""
     specter2_sim = _cosine_similarity(seed_embeddings["specter2"], candidate_embeddings["specter2"])
     nomic_sim = _cosine_similarity(seed_embeddings["nomic"], candidate_embeddings["nomic"])
     return specter2_weight * specter2_sim + (1 - specter2_weight) * nomic_sim
