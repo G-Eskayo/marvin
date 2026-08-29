@@ -110,6 +110,28 @@ def test_worktree_branches_from_origin_main_not_repo_paths_current_checkout(git_
     assert branch == "someone-elses-work-in-progress"
 
 
+def test_redispatch_succeeds_when_the_ticket_branch_already_exists_locally(git_repo, metrics_dir):
+    # A real re-dispatch of ticket #21 hit this: `git worktree remove`
+    # (used to clean up a finished attempt) frees the directory but
+    # leaves the branch behind, and `git worktree add -b` refuses to
+    # recreate a branch that already exists -- the second attempt must
+    # still succeed, starting fresh from origin/main.
+    first = so.execute_ticket(
+        "TICKET-1", "test-subsystem",
+        measure=lambda wt: {"accuracy": _metric(0.9)},
+        executor=_noop_executor, repo_path=git_repo,
+    )
+    subprocess.run(["git", "worktree", "remove", "--force", str(first["worktree_path"])], cwd=git_repo, check=True)
+
+    second = so.execute_ticket(
+        "TICKET-1", "test-subsystem",
+        measure=lambda wt: {"accuracy": _metric(0.9)},
+        executor=_noop_executor, repo_path=git_repo,
+    )
+    assert second["worktree_path"].exists()
+    assert (second["worktree_path"] / "README.md").read_text() == "hello\n"
+
+
 def test_worktree_left_in_place_for_downstream_mr_raiser(git_repo, metrics_dir):
     result = so.execute_ticket(
         "TICKET-1", "test-subsystem",
