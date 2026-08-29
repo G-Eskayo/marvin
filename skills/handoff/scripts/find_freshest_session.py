@@ -23,27 +23,12 @@ or {} if no interactive sessions / nothing found.
 """
 from __future__ import annotations
 import json
-import shutil
 import subprocess
+import sys
 from pathlib import Path
 
-
-def _resolve_claude_bin() -> str:
-    """SSH's non-interactive shell doesn't source .zshrc/.zprofile, so PATH
-    may not include wherever `claude` was actually installed — same gotcha
-    documented in daily_digest.py, hit again live while testing this script
-    over SSH (bare "claude" resolved fine locally, failed remotely)."""
-    found = shutil.which("claude")
-    if found:
-        return found
-    for candidate in (
-        Path.home() / ".local" / "bin" / "claude",
-        Path("/opt/homebrew/bin/claude"),
-        Path("/usr/local/bin/claude"),
-    ):
-        if candidate.exists():
-            return str(candidate)
-    raise FileNotFoundError("claude CLI not found on PATH or in common install locations")
+sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+from claude_bin import resolve_claude_bin as _resolve_claude_bin  # noqa: E402
 
 
 def main() -> None:

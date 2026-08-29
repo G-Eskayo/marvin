@@ -29,7 +29,6 @@ Run standalone: ~/.agents/venv/bin/python background_architecture_review.py
 """
 from __future__ import annotations
 import json
-import shutil
 import subprocess
 import sys
 import time
@@ -38,6 +37,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 from hook_errors import log_hook_error  # noqa: E402
+from claude_bin import resolve_claude_bin as _resolve_claude_bin  # noqa: E402
 
 AGENTS_DIR = Path.home() / ".agents"
 CLAUDE_DIR = Path.home() / ".claude"
@@ -53,20 +53,6 @@ LINE_THRESHOLD = 80
 ROUTING_ENTRY_THRESHOLD = 20
 COOLDOWN_SECONDS = 20 * 60 * 60  # don't double-run same day even if re-triggered
 CLAUDE_CALL_TIMEOUT = 300  # generous for ONE bounded chunk, not the whole system
-
-
-def _resolve_claude_bin() -> str:
-    found = shutil.which("claude")
-    if found:
-        return found
-    for candidate in (
-        Path.home() / ".local" / "bin" / "claude",
-        Path("/opt/homebrew/bin/claude"),
-        Path("/usr/local/bin/claude"),
-    ):
-        if candidate.exists():
-            return str(candidate)
-    raise FileNotFoundError("claude CLI not found on PATH or in common install locations")
 
 
 # ── chunk enumeration ─────────────────────────────────────────────────────────

@@ -9,7 +9,6 @@ Output: ~/.claude/daily-digest/YYYY-MM-DD.md
 """
 from __future__ import annotations
 import re
-import shutil
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -23,31 +22,8 @@ HANDOFFS_DIR = CLAUDE_DIR / "handoffs"
 
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 from notify import notify  # noqa: E402
+from claude_bin import resolve_claude_bin as _resolve_claude_bin  # noqa: E402
 
-
-def _resolve_claude_bin() -> str:
-    """launchd's environment doesn't source .zshrc/.zprofile, so PATH may not
-    include wherever `claude` was actually installed. Found 2026-07-02: every
-    digest since this job started had been silently generating
-    "(claude call failed: ...)" as its entire content, because call_claude()
-    below caught the resulting exception and returned it as if it were real
-    output — the job exited 0 (looked healthy) while producing nothing
-    useful. Falls back to common install locations if a plain PATH lookup
-    fails."""
-    found = shutil.which("claude")
-    if found:
-        return found
-    for candidate in (
-        Path.home() / ".local" / "bin" / "claude",
-        Path("/opt/homebrew/bin/claude"),
-        Path("/usr/local/bin/claude"),
-    ):
-        if candidate.exists():
-            return str(candidate)
-    raise FileNotFoundError(
-        "claude CLI not found on PATH or in common install locations "
-        "(~/.local/bin, /opt/homebrew/bin, /usr/local/bin)"
-    )
 RESULTS_MD   = Path.home() / "marvin-bench" / "RESULTS.md"
 QA_SCRIPTS   = Path.home() / ".agents" / "skills" / "qa-agent" / "scripts"
 SAFETY_MONITOR_SCRIPTS = Path.home() / ".agents" / "skills" / "safety-monitor" / "scripts"

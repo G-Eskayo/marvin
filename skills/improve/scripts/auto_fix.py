@@ -45,19 +45,8 @@ LAUNCH_AGENTS_DIR = Path.home() / "Library" / "LaunchAgents"
 
 SAFE_CATEGORIES = {"NAMING", "VERBOSITY"}
 
-
-def _resolve_claude_bin() -> str:
-    found = shutil.which("claude")
-    if found:
-        return found
-    for candidate in (
-        Path.home() / ".local" / "bin" / "claude",
-        Path("/opt/homebrew/bin/claude"),
-        Path("/usr/local/bin/claude"),
-    ):
-        if candidate.exists():
-            return str(candidate)
-    raise FileNotFoundError("claude CLI not found on PATH or in common install locations")
+sys.path.insert(0, str(AGENTS_DIR / "lib"))
+from claude_bin import resolve_claude_bin as _resolve_claude_bin  # noqa: E402
 
 
 def _core_files() -> set[Path]:

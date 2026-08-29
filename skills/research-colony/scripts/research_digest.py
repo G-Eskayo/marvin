@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Synthesise today's correlated research finds into ~/.claude/research-digest/YYYY-MM-DD.md."""
 import json
-import shutil
 import subprocess
 import sys
 from datetime import date
@@ -14,6 +13,7 @@ SAFETY_MONITOR_SCRIPTS = Path.home() / ".agents" / "skills" / "safety-monitor" /
 
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 from notify import notify  # noqa: E402
+from claude_bin import resolve_claude_bin as _resolve_claude_bin  # noqa: E402
 
 sys.path.insert(0, str(SAFETY_MONITOR_SCRIPTS))
 try:
@@ -21,30 +21,6 @@ try:
     _SAFETY_MONITOR_AVAILABLE = True
 except ImportError:
     _SAFETY_MONITOR_AVAILABLE = False
-
-
-def _resolve_claude_bin() -> str:
-    """launchd's environment doesn't source .zshrc/.zprofile, so PATH may not
-    include wherever `claude` was actually installed (found 2026-07-02: this
-    silently broke both this job and daily_digest.py's identical pattern —
-    daily_digest.py masked it by catching the exception and writing the
-    error string as if it were digest content). Falls back to common install
-    locations if a plain PATH lookup fails, so a misconfiguration surfaces
-    once clearly instead of producing silently-broken output indefinitely."""
-    found = shutil.which("claude")
-    if found:
-        return found
-    for candidate in (
-        Path.home() / ".local" / "bin" / "claude",
-        Path("/opt/homebrew/bin/claude"),
-        Path("/usr/local/bin/claude"),
-    ):
-        if candidate.exists():
-            return str(candidate)
-    raise FileNotFoundError(
-        "claude CLI not found on PATH or in common install locations "
-        "(~/.local/bin, /opt/homebrew/bin, /usr/local/bin)"
-    )
 
 DIGEST_PROMPT = """You are MARVIN's research analyst. Review today's research items and generate a digest.
 
