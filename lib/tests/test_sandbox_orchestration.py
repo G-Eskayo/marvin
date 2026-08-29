@@ -24,6 +24,14 @@ def metrics_dir(tmp_path, monkeypatch):
 
 @pytest.fixture
 def git_repo(tmp_path, monkeypatch):
+    # A bare "origin" the repo actually pushes to and fetches from, not
+    # just a local-only checkout -- _create_worktree branches from
+    # origin/main specifically (G-Eskayo/marvin#95), so the fixture needs
+    # a real remote for that ref to resolve, matching how ~/.agents
+    # actually works rather than a simplified local-only stand-in.
+    origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+
     repo = tmp_path / "repo"
     repo.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
@@ -33,6 +41,8 @@ def git_repo(tmp_path, monkeypatch):
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
     subprocess.run(["git", "branch", "-M", "main"], cwd=repo, check=True)
+    subprocess.run(["git", "remote", "add", "origin", str(origin)], cwd=repo, check=True)
+    subprocess.run(["git", "push", "-q", "origin", "main"], cwd=repo, check=True)
 
     worktrees_root = tmp_path / "worktrees-root"
     monkeypatch.setattr(so, "WORKTREES_ROOT", worktrees_root)
@@ -74,6 +84,30 @@ def test_worktree_created_outside_the_repo_tree(git_repo, metrics_dir):
         executor=_noop_executor, repo_path=git_repo,
     )
     assert git_repo not in result["worktree_path"].parents or result["worktree_path"].parent != git_repo
+
+
+def test_worktree_branches_from_origin_main_not_repo_paths_current_checkout(git_repo, metrics_dir):
+    # G-Eskayo/marvin#95: repo_path is the same shared checkout an
+    # interactive session might be using -- if it's sitting on some other
+    # branch (mid-edit, stale) when a ticket dispatches, the new worktree
+    # must still branch from origin/main, not whatever repo_path happens
+    # to be checked out to right now.
+    subprocess.run(["git", "checkout", "-q", "-b", "someone-elses-work-in-progress"], cwd=git_repo, check=True)
+    (git_repo / "README.md").write_text("an interactive session's uncommitted edit\n")
+
+    result = so.execute_ticket(
+        "TICKET-1", "test-subsystem",
+        measure=lambda wt: {"accuracy": _metric(0.9)},
+        executor=_noop_executor, repo_path=git_repo,
+    )
+
+    assert (result["worktree_path"] / "README.md").read_text() == "hello\n"
+    # repo_path's own working tree (and its in-progress branch) are untouched
+    assert (git_repo / "README.md").read_text() == "an interactive session's uncommitted edit\n"
+    branch = subprocess.run(
+        ["git", "branch", "--show-current"], cwd=git_repo, check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    assert branch == "someone-elses-work-in-progress"
 
 
 def test_worktree_left_in_place_for_downstream_mr_raiser(git_repo, metrics_dir):

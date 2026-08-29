@@ -1,22 +1,49 @@
-// Reads open PRs and identifies which were raised by the MR pipeline
-// (mr_raiser.py, G-Eskayo/marvin#4) rather than a live/manual session, by
-// matching the exact marker string _default_open_pr() always writes into
-// the body. Parses the attached metrics-comparison table back out for
-// display. Approving fires a webhook per the documented contract (see
+// Reads open PRs and identifies which follow the MR pipeline's evidence
+// schema (G-Eskayo/marvin#72, ADR 0024) -- one fixed, structured PR body
+// format that every MR-pipeline PR uses whether it was raised
+// autonomously (mr_raiser.py, G-Eskayo/marvin#4) or by a live/manual
+// session. Detection is schema-based (are the section headers present),
+// not the old exact-marker-string match, so manually-raised PRs that
+// follow the schema are treated the same as pipeline-raised ones. Parses
+// the metrics-comparison, test-results, and dev-environment-evidence
+// sections back out for display, plus the linked ticket reference.
+// Approving fires a webhook per the documented contract (see
 // dashboard/webhook-server/README.md) rather than running `gh pr merge`
 // itself -- G-Eskayo/marvin#11 is explicit that the dashboard is a
-// trigger, not the thing that does the merge.
-const PIPELINE_MARKER = 'Autonomously implemented and verified by the MR pipeline'
-
-export function isPipelinePr(body) {
-  return typeof body === 'string' && body.includes(PIPELINE_MARKER)
+// trigger, not the thing that does the merge. Denying (ADR 0025) follows
+// the same trigger-not-executor shape, via a second webhook endpoint.
+export const EVIDENCE_HEADERS = {
+  metrics: '## Metrics Comparison',
+  testResults: '## Test Results',
+  devEvidence: '## Dev Environment Evidence'
 }
 
-export function parseMetricsEvidence(body) {
-  const subsystemMatch = body.match(/\*\*Subsystem\*\*:\s*(.+)/)
-  const verdictMatch = body.match(/\*\*Verdict\*\*:\s*(.+)/)
+export function hasEvidenceSchema(body) {
+  return (
+    typeof body === 'string' &&
+    body.includes(EVIDENCE_HEADERS.metrics) &&
+    body.includes(EVIDENCE_HEADERS.testResults) &&
+    body.includes(EVIDENCE_HEADERS.devEvidence)
+  )
+}
 
-  const lines = body.split('\n')
+// Returns the section's own body text (everything after its "## " header
+// up to the next "## " header or end of string), or '' if the header
+// isn't present.
+function extractSection(body, header) {
+  const start = body.indexOf(header)
+  if (start === -1) return ''
+  const afterHeader = start + header.length
+  const nextHeaderMatch = body.slice(afterHeader).match(/\n##\s/)
+  const end = nextHeaderMatch ? afterHeader + nextHeaderMatch.index : body.length
+  return body.slice(afterHeader, end).trim()
+}
+
+function parseMetricsSection(section) {
+  const subsystemMatch = section.match(/\*\*Subsystem\*\*:\s*(.+)/)
+  const verdictMatch = section.match(/\*\*Verdict\*\*:\s*(.+)/)
+
+  const lines = section.split('\n')
   const headerIndex = lines.findIndex((line) => /^\|\s*Metric\s*\|/.test(line.trim()))
   const rows = []
   if (headerIndex !== -1) {
@@ -42,20 +69,126 @@ export function parseMetricsEvidence(body) {
   }
 }
 
+function parseTestResultsSection(section) {
+  if (!section) return null
+  const suiteMatch = section.match(/\*\*Suite\*\*:\s*(.+)/)
+  const passedMatch = section.match(/\*\*Passed\*\*:\s*(\d+)/)
+  const failedMatch = section.match(/\*\*Failed\*\*:\s*(\d+)/)
+  const totalMatch = section.match(/\*\*Total\*\*:\s*(\d+)/)
+  if (!suiteMatch && !passedMatch && !failedMatch && !totalMatch) return null
+
+  return {
+    suite: suiteMatch ? suiteMatch[1].trim() : null,
+    passed: passedMatch ? Number(passedMatch[1]) : null,
+    failed: failedMatch ? Number(failedMatch[1]) : null,
+    total: totalMatch ? Number(totalMatch[1]) : null
+  }
+}
+
+function parseDevEvidenceSection(section) {
+  if (!section) return null
+  if (/^N\/A/i.test(section)) {
+    return { na: true, reason: section.replace(/^N\/A\s*[—-]?\s*/i, '').trim() || null }
+  }
+
+  const imageMatch = section.match(/!\[[^\]]*\]\(([^)]+)\)/)
+  const description = section.replace(/!\[[^\]]*\]\([^)]+\)/, '').trim()
+  return {
+    na: false,
+    screenshot: imageMatch ? imageMatch[1].trim() : null,
+    description: description || null
+  }
+}
+
+export function parseTicketRef(body) {
+  const match = body.match(/\b(?:Closes|Fixes|Resolves)\s+(?:[\w.-]+\/[\w.-]+)?#(\d+)/i)
+  return match ? match[1] : null
+}
+
+function parseParentRef(body) {
+  const match = body.match(/##\s*Parent\s*\n+\s*(?:[\w.-]+\/[\w.-]+)?#(\d+)/i)
+  return match ? match[1] : null
+}
+
+// Fetches a ticket's own body (requirements/tasks) and, if it declares a
+// "## Parent", that parent PRD's body too (design/architecture) -- live,
+// via the injected ghIssueView, rather than duplicating either into the
+// PR itself (G-Eskayo/marvin#72's schema deliberately links back to the
+// ticket instead of restating it). Never throws: a missing/inaccessible
+// ticket or parent comes back as `null` in the result rather than
+// propagating the fetch error, so a stale or deleted reference doesn't
+// break the detail view around it.
+export async function fetchTicketContext(ticketRef, ghIssueView) {
+  let ticket = null
+  try {
+    ticket = await ghIssueView(ticketRef)
+  } catch {
+    ticket = null
+  }
+  if (!ticket) {
+    return { ticket: null, parent: null }
+  }
+
+  const parentRef = parseParentRef(ticket.body || '')
+  let parent = null
+  if (parentRef) {
+    try {
+      parent = await ghIssueView(parentRef)
+    } catch {
+      parent = null
+    }
+  }
+
+  return { ticket, parent }
+}
+
+export function parseEvidence(body) {
+  const metrics = parseMetricsSection(extractSection(body, EVIDENCE_HEADERS.metrics))
+  return {
+    ...metrics,
+    testResults: parseTestResultsSection(extractSection(body, EVIDENCE_HEADERS.testResults)),
+    devEvidence: parseDevEvidenceSection(extractSection(body, EVIDENCE_HEADERS.devEvidence)),
+    ticketRef: parseTicketRef(body)
+  }
+}
+
 export async function listPipelinePrs(listOpenPrs) {
   const prs = await listOpenPrs()
   return prs
-    .filter((pr) => isPipelinePr(pr.body))
-    .map((pr) => ({
-      number: pr.number,
-      title: pr.title,
-      url: pr.url,
-      evidence: parseMetricsEvidence(pr.body)
-    }))
+    .filter((pr) => hasEvidenceSchema(pr.body))
+    .map((pr) => {
+      const evidence = parseEvidence(pr.body)
+      return {
+        number: pr.number,
+        title: pr.title,
+        url: pr.url,
+        ticketNumber: evidence.ticketRef ? Number(evidence.ticketRef) : null,
+        evidence
+      }
+    })
 }
 
 export async function approveMr(prUrl, webhookUrl, post) {
   const response = await post(webhookUrl, { pr_url: prUrl })
+  if (!response.ok) {
+    throw new Error(`Webhook call failed: ${response.status}`)
+  }
+  return response
+}
+
+// ADR 0025: Deny opens a structured-feedback modal with two terminal
+// actions -- "send_feedback" (comment + release claim + tag for the
+// future review/debug/improve pipeline) or "drop" (close PR + ticket,
+// release claim, no re-engagement expected). Same webhook-trigger shape
+// as approveMr, one endpoint, action carried in the body.
+export async function denyMr({ prUrl, ticketNumber, action, reasons, comment }, webhookUrl, post) {
+  const response = await post(webhookUrl, {
+    action,
+    pr_url: prUrl,
+    ticket_number: ticketNumber,
+    reasons,
+    comment
+  })
   if (!response.ok) {
     throw new Error(`Webhook call failed: ${response.status}`)
   }

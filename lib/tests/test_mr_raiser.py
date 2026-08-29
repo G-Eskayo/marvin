@@ -127,22 +127,43 @@ def test_no_error_when_worktree_already_committed(repo_with_worktree):
 
 # ── open_pr / comment_on_ticket hooks ───────────────────────────────────────
 
-def test_open_pr_called_with_ticket_branch_and_comparison(repo_with_worktree):
+def test_open_pr_called_with_ticket_branch_comparison_test_results_and_dev_evidence(repo_with_worktree):
     captured = {}
 
-    def open_pr(ticket_ref, branch, comparison):
+    def open_pr(ticket_ref, branch, comparison, test_results, dev_evidence):
         captured["ticket_ref"] = ticket_ref
         captured["branch"] = branch
         captured["comparison"] = comparison
+        captured["test_results"] = test_results
+        captured["dev_evidence"] = dev_evidence
         return "http://fake-pr"
 
     mrr.raise_mr(
         "G-Eskayo/marvin#1", _passing_result(repo_with_worktree),
+        test_results={"suite": "pytest", "passed": 11, "failed": 0, "total": 11},
+        dev_evidence={"na": True, "reason": "no UI"},
         open_pr=open_pr, comment_on_ticket=lambda *a: None, notify=lambda *a: None,
     )
     assert captured["ticket_ref"] == "G-Eskayo/marvin#1"
     assert captured["branch"] == "pipeline/ticket-1"
     assert captured["comparison"]["verdict"] == "improved"
+    assert captured["test_results"] == {"suite": "pytest", "passed": 11, "failed": 0, "total": 11}
+    assert captured["dev_evidence"] == {"na": True, "reason": "no UI"}
+
+
+def test_open_pr_receives_none_test_results_and_dev_evidence_when_not_supplied(repo_with_worktree):
+    captured = {}
+
+    mrr.raise_mr(
+        "G-Eskayo/marvin#1", _passing_result(repo_with_worktree),
+        open_pr=lambda ticket_ref, branch, comparison, test_results, dev_evidence: captured.update(
+            test_results=test_results, dev_evidence=dev_evidence
+        )
+        or "http://fake-pr",
+        comment_on_ticket=lambda *a: None, notify=lambda *a: None,
+    )
+    assert captured["test_results"] is None
+    assert captured["dev_evidence"] is None
 
 
 def test_comment_on_ticket_called_with_ticket_and_pr_url(repo_with_worktree):
@@ -217,6 +238,139 @@ def test_default_open_pr_includes_ticket_and_comparison_in_body(monkeypatch):
     assert "G-Eskayo/marvin#1" in body
     assert "route-classifier" in body
     assert "0.9" in body
+
+
+def test_default_open_pr_body_uses_the_evidence_schema_headers(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "https://github.com/G-Eskayo/marvin/pull/99\n"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(mrr.subprocess, "run", fake_run)
+    comparison = {"subsystem": "route-classifier", "verdict": "improved", "metrics": {}}
+    mrr._default_open_pr("G-Eskayo/marvin#1", "pipeline/ticket-1", comparison)
+
+    body = calls[0][calls[0].index("--body") + 1]
+    assert "## Metrics Comparison" in body
+    assert "## Test Results" in body
+    assert "## Dev Environment Evidence" in body
+    # order matters -- mr_review.js's section-extraction reads each section
+    # up to the *next* "## " header, so getting the order wrong would
+    # silently corrupt every section after the swapped one.
+    assert (
+        body.index("## Metrics Comparison")
+        < body.index("## Test Results")
+        < body.index("## Dev Environment Evidence")
+    )
+
+
+def test_default_open_pr_includes_test_results_section_when_supplied(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "https://github.com/G-Eskayo/marvin/pull/99\n"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(mrr.subprocess, "run", fake_run)
+    comparison = {"subsystem": "route-classifier", "verdict": "improved", "metrics": {}}
+    test_results = {"suite": "pytest", "passed": 11, "failed": 0, "total": 11}
+    mrr._default_open_pr("G-Eskayo/marvin#1", "pipeline/ticket-1", comparison, test_results)
+
+    body = calls[0][calls[0].index("--body") + 1]
+    assert "**Suite**: pytest" in body
+    assert "**Passed**: 11" in body
+    assert "**Failed**: 0" in body
+    assert "**Total**: 11" in body
+
+
+def test_default_open_pr_marks_test_results_not_available_when_missing(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "https://github.com/G-Eskayo/marvin/pull/99\n"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(mrr.subprocess, "run", fake_run)
+    comparison = {"subsystem": "route-classifier", "verdict": "improved", "metrics": {}}
+    mrr._default_open_pr("G-Eskayo/marvin#1", "pipeline/ticket-1", comparison)
+
+    body = calls[0][calls[0].index("--body") + 1]
+    assert "Not available." in body
+
+
+def test_default_open_pr_marks_dev_evidence_na_for_a_non_ui_ticket(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "https://github.com/G-Eskayo/marvin/pull/99\n"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(mrr.subprocess, "run", fake_run)
+    comparison = {"subsystem": "route-classifier", "verdict": "improved", "metrics": {}}
+    mrr._default_open_pr(
+        "G-Eskayo/marvin#1", "pipeline/ticket-1", comparison,
+        dev_evidence={"na": True, "reason": "no UI"},
+    )
+
+    body = calls[0][calls[0].index("--body") + 1]
+    assert "N/A — no UI" in body
+
+
+def test_default_open_pr_includes_screenshot_reference_for_a_ui_ticket(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "https://github.com/G-Eskayo/marvin/pull/99\n"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(mrr.subprocess, "run", fake_run)
+    comparison = {"subsystem": "route-classifier", "verdict": "improved", "metrics": {}}
+    dev_evidence = {
+        "na": False,
+        "screenshot_path": "docs/evidence/pipeline-ticket-1.png",
+        "description": "Live screenshot captured from the running app.",
+    }
+    mrr._default_open_pr("G-Eskayo/marvin#1", "pipeline/ticket-1", comparison, dev_evidence=dev_evidence)
+
+    body = calls[0][calls[0].index("--body") + 1]
+    assert "![Screenshot](docs/evidence/pipeline-ticket-1.png)" in body
+    assert "Live screenshot captured from the running app." in body
+
+
+def test_default_open_pr_marks_dev_evidence_not_available_when_missing(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "https://github.com/G-Eskayo/marvin/pull/99\n"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(mrr.subprocess, "run", fake_run)
+    comparison = {"subsystem": "route-classifier", "verdict": "improved", "metrics": {}}
+    mrr._default_open_pr("G-Eskayo/marvin#1", "pipeline/ticket-1", comparison)
+
+    body = calls[0][calls[0].index("--body") + 1]
+    # both Test Results and Dev Environment Evidence fall back to this when
+    # neither was supplied -- just confirm it appears twice, once per section.
+    assert body.count("Not available.") == 2
 
 
 def test_default_comment_on_ticket_posts_to_correct_issue(monkeypatch):
