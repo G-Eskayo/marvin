@@ -2438,6 +2438,18 @@
       "source_location": "L367"
     },
     {
+      "id": "lib_tests_test_sandbox_orchestration_test_iterates_and_passes_prior_feedback_into_next_executor_call",
+      "label": "test_iterates_and_passes_prior_feedback_into_next_executor_call()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 10,
+      "community_name": "test_sandbox_orchestration.py",
+      "file_type": "code",
+      "norm_label": "test_iterates_and_passes_prior_feedback_into_next_executor_call()",
+      "source_file": "lib/tests/test_sandbox_orchestration.py",
+      "source_location": "L218"
+    },
+    {
       "id": "lib_tests_test_sandbox_orchestration_test_redispatch_succeeds_when_the_ticket_branch_already_exists_locally",
       "label": "test_redispatch_succeeds_when_the_ticket_branch_already_exists_locally()",
       "_callable": true,
@@ -2472,18 +2484,6 @@
       "norm_label": "test_state_setup_optional_defaults_to_noop()",
       "source_file": "lib/tests/test_sandbox_orchestration.py",
       "source_location": "L159"
-    },
-    {
-      "id": "lib_tests_test_sandbox_orchestration_test_stops_with_clear_report_after_max_iterations",
-      "label": "test_stops_with_clear_report_after_max_iterations()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 10,
-      "community_name": "test_sandbox_orchestration.py",
-      "file_type": "code",
-      "norm_label": "test_stops_with_clear_report_after_max_iterations()",
-      "source_file": "lib/tests/test_sandbox_orchestration.py",
-      "source_location": "L241"
     },
     {
       "id": "lib_tests_test_sandbox_orchestration_test_worktree_branches_from_origin_main_not_repo_paths_current_checkout",
@@ -2855,7 +2855,7 @@
       "file_type": "code",
       "norm_label": "append_to_queue()",
       "source_file": "skills/improve/scripts/improvement_sweep.py",
-      "source_location": "L112"
+      "source_location": "L131"
     },
     {
       "id": "skills_improve_scripts_improvement_sweep_extract_project",
@@ -2894,6 +2894,18 @@
       "source_location": "L98"
     },
     {
+      "id": "skills_improve_scripts_improvement_sweep_last_block_issue_lines",
+      "label": "_last_block_issue_lines()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 115,
+      "community_name": "improvement_sweep.py",
+      "file_type": "code",
+      "norm_label": "_last_block_issue_lines()",
+      "source_file": "skills/improve/scripts/improvement_sweep.py",
+      "source_location": "L115"
+    },
+    {
       "id": "skills_improve_scripts_improvement_sweep_main",
       "label": "main()",
       "_callable": true,
@@ -2903,7 +2915,19 @@
       "file_type": "code",
       "norm_label": "main()",
       "source_file": "skills/improve/scripts/improvement_sweep.py",
-      "source_location": "L143"
+      "source_location": "L176"
+    },
+    {
+      "id": "skills_improve_scripts_improvement_sweep_report_outcome",
+      "label": "_report_outcome()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 115,
+      "community_name": "improvement_sweep.py",
+      "file_type": "code",
+      "norm_label": "_report_outcome()",
+      "source_file": "skills/improve/scripts/improvement_sweep.py",
+      "source_location": "L164"
     },
     {
       "id": "skills_improve_scripts_improvement_sweep_top_issues",
@@ -3398,18 +3422,6 @@
       "source_location": "L62"
     },
     {
-      "id": "lib_tests_test_sandbox_orchestration_test_iterates_and_passes_prior_feedback_into_next_executor_call",
-      "label": "test_iterates_and_passes_prior_feedback_into_next_executor_call()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 127,
-      "community_name": "measure",
-      "file_type": "code",
-      "norm_label": "test_iterates_and_passes_prior_feedback_into_next_executor_call()",
-      "source_file": "lib/tests/test_sandbox_orchestration.py",
-      "source_location": "L218"
-    },
-    {
       "id": "lib_tests_test_sandbox_orchestration_test_stops_after_first_passing_comparison",
       "label": "test_stops_after_first_passing_comparison()",
       "_callable": true,
@@ -3420,6 +3432,18 @@
       "norm_label": "test_stops_after_first_passing_comparison()",
       "source_file": "lib/tests/test_sandbox_orchestration.py",
       "source_location": "L201"
+    },
+    {
+      "id": "lib_tests_test_sandbox_orchestration_test_stops_with_clear_report_after_max_iterations",
+      "label": "test_stops_with_clear_report_after_max_iterations()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 127,
+      "community_name": "measure",
+      "file_type": "code",
+      "norm_label": "test_stops_with_clear_report_after_max_iterations()",
+      "source_file": "lib/tests/test_sandbox_orchestration.py",
+      "source_location": "L241"
     },
     {
       "id": "lib_metrics_registry_compare",
@@ -5366,18 +5390,6 @@
       "source_location": "L1"
     },
     {
-      "id": "lib_hook_errors_log_hook_error",
-      "label": "log_hook_error()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 2,
-      "community_name": "session_start_report.py",
-      "file_type": "code",
-      "norm_label": "log_hook_error()",
-      "source_file": "lib/hook_errors.py",
-      "source_location": "L17"
-    },
-    {
       "id": "lib_session_start_report_check_auto_fix_log",
       "label": "check_auto_fix_log()",
       "_callable": true,
@@ -5580,18 +5592,6 @@
       "norm_label": "_parse_iso()",
       "source_file": "lib/session_start_report.py",
       "source_location": "L42"
-    },
-    {
-      "id": "lib_session_start_report_process_and_check_quarantine",
-      "label": "process_and_check_quarantine()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 2,
-      "community_name": "session_start_report.py",
-      "file_type": "code",
-      "norm_label": "process_and_check_quarantine()",
-      "source_file": "lib/session_start_report.py",
-      "source_location": "L130"
     },
     {
       "id": "lib_session_start_report_safe",
@@ -7687,7 +7687,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 258,
-      "community_name": "run",
+      "community_name": "evidence_capture.py",
       "file_type": "code",
       "norm_label": "capture_dev_evidence()",
       "source_file": "lib/evidence_capture.py",
@@ -7699,7 +7699,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 258,
-      "community_name": "run",
+      "community_name": "evidence_capture.py",
       "file_type": "code",
       "norm_label": "capture_test_results()",
       "source_file": "lib/evidence_capture.py",
@@ -7711,7 +7711,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 258,
-      "community_name": "run",
+      "community_name": "evidence_capture.py",
       "file_type": "code",
       "norm_label": "_default_capture_screenshot()",
       "source_file": "lib/evidence_capture.py",
@@ -7723,7 +7723,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 258,
-      "community_name": "run",
+      "community_name": "evidence_capture.py",
       "file_type": "code",
       "norm_label": "_is_ui_path()",
       "source_file": "lib/evidence_capture.py",
@@ -7735,7 +7735,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 258,
-      "community_name": "run",
+      "community_name": "evidence_capture.py",
       "file_type": "code",
       "norm_label": "parse_test_output()",
       "source_file": "lib/evidence_capture.py",
@@ -7747,59 +7747,11 @@
       "_callable": true,
       "_origin": "ast",
       "community": 258,
-      "community_name": "run",
+      "community_name": "evidence_capture.py",
       "file_type": "code",
       "norm_label": "ticket_touches_ui()",
       "source_file": "lib/evidence_capture.py",
       "source_location": "L79"
-    },
-    {
-      "id": "lib_run_ticket_comment_failure",
-      "label": "_comment_failure()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 258,
-      "community_name": "run",
-      "file_type": "code",
-      "norm_label": "_comment_failure()",
-      "source_file": "lib/run_ticket.py",
-      "source_location": "L25"
-    },
-    {
-      "id": "lib_run_ticket_main",
-      "label": "main()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 258,
-      "community_name": "run",
-      "file_type": "code",
-      "norm_label": "main()",
-      "source_file": "lib/run_ticket.py",
-      "source_location": "L73"
-    },
-    {
-      "id": "lib_run_ticket_run",
-      "label": "run()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 258,
-      "community_name": "run",
-      "file_type": "code",
-      "norm_label": "run()",
-      "source_file": "lib/run_ticket.py",
-      "source_location": "L49"
-    },
-    {
-      "id": "lib_run_ticket_trigger_redispatch",
-      "label": "_trigger_redispatch()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 258,
-      "community_name": "run",
-      "file_type": "code",
-      "norm_label": "_trigger_redispatch()",
-      "source_file": "lib/run_ticket.py",
-      "source_location": "L33"
     },
     {
       "id": "lib_tests_test_gh_merge_guard_fakestdin_init",
@@ -10171,7 +10123,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 275,
-      "community_name": "hook_errors.py",
+      "community_name": "log_hook_error",
       "file_type": "code",
       "norm_label": "main()",
       "source_file": "brain-map/scripts/skill_activity.py",
@@ -10183,7 +10135,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 275,
-      "community_name": "hook_errors.py",
+      "community_name": "log_hook_error",
       "file_type": "code",
       "norm_label": "_allow_decision()",
       "source_file": "lib/gh_merge_guard.py",
@@ -10195,7 +10147,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 275,
-      "community_name": "hook_errors.py",
+      "community_name": "log_hook_error",
       "file_type": "code",
       "norm_label": "check()",
       "source_file": "lib/gh_merge_guard.py",
@@ -10207,11 +10159,35 @@
       "_callable": true,
       "_origin": "ast",
       "community": 275,
-      "community_name": "hook_errors.py",
+      "community_name": "log_hook_error",
       "file_type": "code",
       "norm_label": "main()",
       "source_file": "lib/gh_merge_guard.py",
       "source_location": "L52"
+    },
+    {
+      "id": "lib_hook_errors_log_hook_error",
+      "label": "log_hook_error()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 275,
+      "community_name": "log_hook_error",
+      "file_type": "code",
+      "norm_label": "log_hook_error()",
+      "source_file": "lib/hook_errors.py",
+      "source_location": "L17"
+    },
+    {
+      "id": "lib_session_start_report_process_and_check_quarantine",
+      "label": "process_and_check_quarantine()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 275,
+      "community_name": "log_hook_error",
+      "file_type": "code",
+      "norm_label": "process_and_check_quarantine()",
+      "source_file": "lib/session_start_report.py",
+      "source_location": "L130"
     },
     {
       "id": "skills_research_colony_scripts_source_monitor_fetch_arxiv",
@@ -10488,6 +10464,174 @@
       "norm_label": "test_threshold_boundary_is_exclusive()",
       "source_file": "lib/tests/test_cleanup_sweep.py",
       "source_location": "L57"
+    },
+    {
+      "id": "skills_improve_scripts_tests_test_improvement_sweep_issue",
+      "label": "_issue()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 280,
+      "community_name": "test_improvement_sweep.py",
+      "file_type": "code",
+      "norm_label": "_issue()",
+      "source_file": "skills/improve/scripts/tests/test_improvement_sweep.py",
+      "source_location": "L14"
+    },
+    {
+      "id": "skills_improve_scripts_tests_test_improvement_sweep_test_append_to_queue_dedup_is_scoped_per_project_not_global",
+      "label": "test_append_to_queue_dedup_is_scoped_per_project_not_global()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 280,
+      "community_name": "test_improvement_sweep.py",
+      "file_type": "code",
+      "norm_label": "test_append_to_queue_dedup_is_scoped_per_project_not_global()",
+      "source_file": "skills/improve/scripts/tests/test_improvement_sweep.py",
+      "source_location": "L83"
+    },
+    {
+      "id": "skills_improve_scripts_tests_test_improvement_sweep_test_append_to_queue_skips_a_block_identical_to_the_last_one_for_the_same_project",
+      "label": "test_append_to_queue_skips_a_block_identical_to_the_last_one_for_the_same_project()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 280,
+      "community_name": "test_improvement_sweep.py",
+      "file_type": "code",
+      "norm_label": "test_append_to_queue_skips_a_block_identical_to_the_last_one_for_the_same_project()",
+      "source_file": "skills/improve/scripts/tests/test_improvement_sweep.py",
+      "source_location": "L50"
+    },
+    {
+      "id": "skills_improve_scripts_tests_test_improvement_sweep_test_append_to_queue_still_appends_when_the_issues_differ_from_the_last_block",
+      "label": "test_append_to_queue_still_appends_when_the_issues_differ_from_the_last_block()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 280,
+      "community_name": "test_improvement_sweep.py",
+      "file_type": "code",
+      "norm_label": "test_append_to_queue_still_appends_when_the_issues_differ_from_the_last_block()",
+      "source_file": "skills/improve/scripts/tests/test_improvement_sweep.py",
+      "source_location": "L68"
+    },
+    {
+      "id": "skills_improve_scripts_tests_test_improvement_sweep_test_last_block_issue_lines_extracts_the_most_recent_matching_block",
+      "label": "test_last_block_issue_lines_extracts_the_most_recent_matching_block()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 280,
+      "community_name": "test_improvement_sweep.py",
+      "file_type": "code",
+      "norm_label": "test_last_block_issue_lines_extracts_the_most_recent_matching_block()",
+      "source_file": "skills/improve/scripts/tests/test_improvement_sweep.py",
+      "source_location": "L36"
+    },
+    {
+      "id": "skills_improve_scripts_tests_test_improvement_sweep_test_last_block_issue_lines_returns_none_when_project_never_appeared",
+      "label": "test_last_block_issue_lines_returns_none_when_project_never_appeared()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 280,
+      "community_name": "test_improvement_sweep.py",
+      "file_type": "code",
+      "norm_label": "test_last_block_issue_lines_returns_none_when_project_never_appeared()",
+      "source_file": "skills/improve/scripts/tests/test_improvement_sweep.py",
+      "source_location": "L26"
+    },
+    {
+      "id": "skills_improve_scripts_tests_test_improvement_sweep_test_last_block_issue_lines_returns_none_when_queue_file_is_absent",
+      "label": "test_last_block_issue_lines_returns_none_when_queue_file_is_absent()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 280,
+      "community_name": "test_improvement_sweep.py",
+      "file_type": "code",
+      "norm_label": "test_last_block_issue_lines_returns_none_when_queue_file_is_absent()",
+      "source_file": "skills/improve/scripts/tests/test_improvement_sweep.py",
+      "source_location": "L21"
+    },
+    {
+      "id": "skills_improve_scripts_tests_test_improvement_sweep_test_report_outcome_says_quarantined_when_append_returned_false",
+      "label": "test_report_outcome_says_quarantined_when_append_returned_false()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 280,
+      "community_name": "test_improvement_sweep.py",
+      "file_type": "code",
+      "norm_label": "test_report_outcome_says_quarantined_when_append_returned_false()",
+      "source_file": "skills/improve/scripts/tests/test_improvement_sweep.py",
+      "source_location": "L100"
+    },
+    {
+      "id": "skills_improve_scripts_tests_test_improvement_sweep_test_report_outcome_says_queued_when_content_actually_changed",
+      "label": "test_report_outcome_says_queued_when_content_actually_changed()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 280,
+      "community_name": "test_improvement_sweep.py",
+      "file_type": "code",
+      "norm_label": "test_report_outcome_says_queued_when_content_actually_changed()",
+      "source_file": "skills/improve/scripts/tests/test_improvement_sweep.py",
+      "source_location": "L111"
+    },
+    {
+      "id": "skills_improve_scripts_tests_test_improvement_sweep_test_report_outcome_says_skipped_when_content_did_not_change",
+      "label": "test_report_outcome_says_skipped_when_content_did_not_change()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 280,
+      "community_name": "test_improvement_sweep.py",
+      "file_type": "code",
+      "norm_label": "test_report_outcome_says_skipped_when_content_did_not_change()",
+      "source_file": "skills/improve/scripts/tests/test_improvement_sweep.py",
+      "source_location": "L105"
+    },
+    {
+      "id": "lib_run_ticket_comment_failure",
+      "label": "_comment_failure()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 281,
+      "community_name": "run",
+      "file_type": "code",
+      "norm_label": "_comment_failure()",
+      "source_file": "lib/run_ticket.py",
+      "source_location": "L25"
+    },
+    {
+      "id": "lib_run_ticket_main",
+      "label": "main()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 281,
+      "community_name": "run",
+      "file_type": "code",
+      "norm_label": "main()",
+      "source_file": "lib/run_ticket.py",
+      "source_location": "L73"
+    },
+    {
+      "id": "lib_run_ticket_run",
+      "label": "run()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 281,
+      "community_name": "run",
+      "file_type": "code",
+      "norm_label": "run()",
+      "source_file": "lib/run_ticket.py",
+      "source_location": "L49"
+    },
+    {
+      "id": "lib_run_ticket_trigger_redispatch",
+      "label": "_trigger_redispatch()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 281,
+      "community_name": "run",
+      "file_type": "code",
+      "norm_label": "_trigger_redispatch()",
+      "source_file": "lib/run_ticket.py",
+      "source_location": "L33"
     },
     {
       "id": "skills_qa_agent_scripts_qa_capture_build_entry",
@@ -18574,6 +18718,17 @@
       "source_location": "L1"
     },
     {
+      "id": "path",
+      "label": "Path",
+      "_origin": "ast",
+      "community": 115,
+      "community_name": "improvement_sweep.py",
+      "file_type": "code",
+      "norm_label": "path",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
       "id": "skills_improve_scripts_improvement_sweep",
       "label": "improvement_sweep.py",
       "_origin": "ast",
@@ -18585,26 +18740,26 @@
       "source_location": "L1"
     },
     {
-      "id": "skills_improve_scripts_improvement_sweep_py_path",
-      "label": "Path",
-      "_origin": "ast",
-      "community": 115,
-      "community_name": "improvement_sweep.py",
-      "file_type": "code",
-      "norm_label": "path",
-      "source_file": "",
-      "source_location": ""
-    },
-    {
-      "id": "skills_improve_scripts_improvement_sweep_rationale_113",
-      "label": "Returns True if the block was appended, False if safety-monitor quarantined it\u2026",
+      "id": "skills_improve_scripts_improvement_sweep_rationale_116",
+      "label": "The issue bullet lines from the most recently appended queue block for this\u2026",
       "_origin": "ast",
       "community": 115,
       "community_name": "improvement_sweep.py",
       "file_type": "rationale",
-      "norm_label": "returns true if the block was appended, false if safety-monitor quarantined it...",
+      "norm_label": "the issue bullet lines from the most recently appended queue block for this...",
       "source_file": "skills/improve/scripts/improvement_sweep.py",
-      "source_location": "L113"
+      "source_location": "L116"
+    },
+    {
+      "id": "skills_improve_scripts_improvement_sweep_rationale_132",
+      "label": "Returns True if the block was appended (or skipped as a pure repeat of the last\u2026",
+      "_origin": "ast",
+      "community": 115,
+      "community_name": "improvement_sweep.py",
+      "file_type": "rationale",
+      "norm_label": "returns true if the block was appended (or skipped as a pure repeat of the last...",
+      "source_file": "skills/improve/scripts/improvement_sweep.py",
+      "source_location": "L132"
     },
     {
       "id": "skills_diagnose_skill",
@@ -27967,17 +28122,6 @@
       "source_location": "L22"
     },
     {
-      "id": "baseexception",
-      "label": "BaseException",
-      "_origin": "ast",
-      "community": 2,
-      "community_name": "session_start_report.py",
-      "file_type": "code",
-      "norm_label": "baseexception",
-      "source_file": "",
-      "source_location": ""
-    },
-    {
       "id": "lib_session_start_report",
       "label": "session_start_report.py",
       "_origin": "ast",
@@ -30746,7 +30890,7 @@
       "label": "evidence_capture.py",
       "_origin": "ast",
       "community": 258,
-      "community_name": "run",
+      "community_name": "evidence_capture.py",
       "file_type": "code",
       "norm_label": "evidence_capture.py",
       "source_file": "lib/evidence_capture.py",
@@ -30757,29 +30901,18 @@
       "label": "Path",
       "_origin": "ast",
       "community": 258,
-      "community_name": "run",
+      "community_name": "evidence_capture.py",
       "file_type": "code",
       "norm_label": "path",
       "source_file": "",
       "source_location": ""
     },
     {
-      "id": "lib_run_ticket",
-      "label": "run_ticket.py",
-      "_origin": "ast",
-      "community": 258,
-      "community_name": "run",
-      "file_type": "code",
-      "norm_label": "run_ticket.py",
-      "source_file": "lib/run_ticket.py",
-      "source_location": "L1"
-    },
-    {
       "id": "lib_evidence_capture_rationale_116",
       "label": "For a UI-touching ticket, drive the app headlessly and capture a screenshot;\u2026",
       "_origin": "ast",
       "community": 258,
-      "community_name": "run",
+      "community_name": "evidence_capture.py",
       "file_type": "rationale",
       "norm_label": "for a ui-touching ticket, drive the app headlessly and capture a screenshot;...",
       "source_file": "lib/evidence_capture.py",
@@ -30790,7 +30923,7 @@
       "label": "Extract pass/fail/total from a test runner's real stdout+stderr. Recognizes\u2026",
       "_origin": "ast",
       "community": 258,
-      "community_name": "run",
+      "community_name": "evidence_capture.py",
       "file_type": "rationale",
       "norm_label": "extract pass/fail/total from a test runner's real stdout+stderr. recognizes...",
       "source_file": "lib/evidence_capture.py",
@@ -30801,7 +30934,7 @@
       "label": "Extract pass/fail/total from a test runner's real stdout+stderr. Recognizes\u2026",
       "_origin": "ast",
       "community": 258,
-      "community_name": "run",
+      "community_name": "evidence_capture.py",
       "file_type": "rationale",
       "norm_label": "extract pass/fail/total from a test runner's real stdout+stderr. recognizes...",
       "source_file": "lib/evidence_capture.py",
@@ -30812,7 +30945,7 @@
       "label": "Run the ticket's real test command inside worktree_path and parse its output.\u2026",
       "_origin": "ast",
       "community": 258,
-      "community_name": "run",
+      "community_name": "evidence_capture.py",
       "file_type": "rationale",
       "norm_label": "run the ticket's real test command inside worktree_path and parse its output....",
       "source_file": "lib/evidence_capture.py",
@@ -30823,7 +30956,7 @@
       "label": "Run the ticket's real test command inside worktree_path and parse its output.\u2026",
       "_origin": "ast",
       "community": 258,
-      "community_name": "run",
+      "community_name": "evidence_capture.py",
       "file_type": "rationale",
       "norm_label": "run the ticket's real test command inside worktree_path and parse its output....",
       "source_file": "lib/evidence_capture.py",
@@ -30834,7 +30967,7 @@
       "label": "True if this ticket's diff (against base_branch) includes any file under a UI-\u2026",
       "_origin": "ast",
       "community": 258,
-      "community_name": "run",
+      "community_name": "evidence_capture.py",
       "file_type": "rationale",
       "norm_label": "true if this ticket's diff (against base_branch) includes any file under a ui-...",
       "source_file": "lib/evidence_capture.py",
@@ -30845,22 +30978,11 @@
       "label": "Real default: builds the dashboard and drives it headlessly via\u2026",
       "_origin": "ast",
       "community": 258,
-      "community_name": "run",
+      "community_name": "evidence_capture.py",
       "file_type": "rationale",
       "norm_label": "real default: builds the dashboard and drives it headlessly via...",
       "source_file": "lib/evidence_capture.py",
       "source_location": "L90"
-    },
-    {
-      "id": "lib_run_ticket_rationale_34",
-      "label": "This machine has been free since execute_ticket returned above -- win or lose,\u2026",
-      "_origin": "ast",
-      "community": 258,
-      "community_name": "run",
-      "file_type": "rationale",
-      "norm_label": "this machine has been free since execute_ticket returned above -- win or lose,...",
-      "source_file": "lib/run_ticket.py",
-      "source_location": "L34"
     },
     {
       "id": "lib_tests_test_gh_merge_guard",
@@ -31778,11 +31900,22 @@
       "source_location": "L91"
     },
     {
+      "id": "baseexception",
+      "label": "BaseException",
+      "_origin": "ast",
+      "community": 275,
+      "community_name": "log_hook_error",
+      "file_type": "code",
+      "norm_label": "baseexception",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
       "id": "brain_map_scripts_skill_activity",
       "label": "skill_activity.py",
       "_origin": "ast",
       "community": 275,
-      "community_name": "hook_errors.py",
+      "community_name": "log_hook_error",
       "file_type": "code",
       "norm_label": "skill_activity.py",
       "source_file": "brain-map/scripts/skill_activity.py",
@@ -31793,7 +31926,7 @@
       "label": "gh_merge_guard.py",
       "_origin": "ast",
       "community": 275,
-      "community_name": "hook_errors.py",
+      "community_name": "log_hook_error",
       "file_type": "code",
       "norm_label": "gh_merge_guard.py",
       "source_file": "lib/gh_merge_guard.py",
@@ -31804,7 +31937,7 @@
       "label": "hook_errors.py",
       "_origin": "ast",
       "community": 275,
-      "community_name": "hook_errors.py",
+      "community_name": "log_hook_error",
       "file_type": "code",
       "norm_label": "hook_errors.py",
       "source_file": "lib/hook_errors.py",
@@ -31815,7 +31948,7 @@
       "label": "Shared failure logger for PostToolUse hooks. Hooks intentionally swallow\u2026",
       "_origin": "ast",
       "community": 275,
-      "community_name": "hook_errors.py",
+      "community_name": "log_hook_error",
       "file_type": "rationale",
       "norm_label": "shared failure logger for posttooluse hooks. hooks intentionally swallow...",
       "source_file": "lib/hook_errors.py",
@@ -31931,10 +32064,54 @@
       "source_location": "L1"
     },
     {
-      "id": "path",
-      "label": "Path",
+      "id": "skills_improve_scripts_tests_test_improvement_sweep",
+      "label": "test_improvement_sweep.py",
       "_origin": "ast",
       "community": 280,
+      "community_name": "test_improvement_sweep.py",
+      "file_type": "code",
+      "norm_label": "test_improvement_sweep.py",
+      "source_file": "skills/improve/scripts/tests/test_improvement_sweep.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "skills_improve_scripts_tests_test_improvement_sweep_rationale_1",
+      "label": "Tests for improvement_sweep.py's queue-writer dedup. Run via:\u2026",
+      "_origin": "ast",
+      "community": 280,
+      "community_name": "test_improvement_sweep.py",
+      "file_type": "rationale",
+      "norm_label": "tests for improvement_sweep.py's queue-writer dedup. run via:...",
+      "source_file": "skills/improve/scripts/tests/test_improvement_sweep.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "lib_run_ticket",
+      "label": "run_ticket.py",
+      "_origin": "ast",
+      "community": 281,
+      "community_name": "run",
+      "file_type": "code",
+      "norm_label": "run_ticket.py",
+      "source_file": "lib/run_ticket.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "lib_run_ticket_rationale_34",
+      "label": "This machine has been free since execute_ticket returned above -- win or lose,\u2026",
+      "_origin": "ast",
+      "community": 281,
+      "community_name": "run",
+      "file_type": "rationale",
+      "norm_label": "this machine has been free since execute_ticket returned above -- win or lose,...",
+      "source_file": "lib/run_ticket.py",
+      "source_location": "L34"
+    },
+    {
+      "id": "skills_improve_scripts_improvement_sweep_py_path",
+      "label": "Path",
+      "_origin": "ast",
+      "community": 282,
       "community_name": "Path",
       "file_type": "code",
       "norm_label": "path",
@@ -46785,12 +46962,24 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "skills/improve/scripts/improvement_sweep.py",
-      "source_location": "L118",
+      "source_location": "L135",
       "weight": 1.0
     },
     {
       "source": "skills_improve_scripts_improvement_sweep_append_to_queue",
-      "target": "skills_improve_scripts_improvement_sweep_main",
+      "target": "skills_improve_scripts_improvement_sweep_last_block_issue_lines",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "skills/improve/scripts/improvement_sweep.py",
+      "source_location": "L136",
+      "weight": 1.0
+    },
+    {
+      "source": "skills_improve_scripts_improvement_sweep_main",
+      "target": "path",
       "relation": "calls",
       "_origin": "ast",
       "confidence": "EXTRACTED",
@@ -46801,39 +46990,27 @@
       "weight": 1.0
     },
     {
-      "source": "skills_improve_scripts_improvement_sweep_extract_project",
-      "target": "skills_improve_scripts_improvement_sweep_main",
+      "source": "skills_improve_scripts_improvement_sweep_main",
+      "target": "skills_improve_scripts_improvement_sweep_extract_project",
       "relation": "calls",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "skills/improve/scripts/improvement_sweep.py",
-      "source_location": "L172",
-      "weight": 1.0
-    },
-    {
-      "source": "skills_improve_scripts_improvement_sweep_find_project_path",
-      "target": "skills_improve_scripts_improvement_sweep_main",
-      "relation": "calls",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "source_file": "skills/improve/scripts/improvement_sweep.py",
-      "source_location": "L173",
+      "source_location": "L205",
       "weight": 1.0
     },
     {
       "source": "skills_improve_scripts_improvement_sweep_main",
-      "target": "skills_improve_scripts_improvement_sweep_py_path",
+      "target": "skills_improve_scripts_improvement_sweep_find_project_path",
       "relation": "calls",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "skills/improve/scripts/improvement_sweep.py",
-      "source_location": "L157",
+      "source_location": "L206",
       "weight": 1.0
     },
     {
@@ -46845,7 +47022,91 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "skills/improve/scripts/improvement_sweep.py",
-      "source_location": "L185",
+      "source_location": "L218",
+      "weight": 1.0
+    },
+    {
+      "source": "skills_improve_scripts_improvement_sweep_main",
+      "target": "skills_improve_scripts_improvement_sweep_append_to_queue",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "skills/improve/scripts/improvement_sweep.py",
+      "source_location": "L224",
+      "weight": 1.0
+    },
+    {
+      "source": "skills_improve_scripts_improvement_sweep_main",
+      "target": "skills_improve_scripts_improvement_sweep_report_outcome",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "skills/improve/scripts/improvement_sweep.py",
+      "source_location": "L226",
+      "weight": 1.0
+    },
+    {
+      "source": "skills_improve_scripts_tests_test_improvement_sweep_test_append_to_queue_dedup_is_scoped_per_project_not_global",
+      "target": "skills_improve_scripts_tests_test_improvement_sweep_issue",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "skills/improve/scripts/tests/test_improvement_sweep.py",
+      "source_location": "L90",
+      "weight": 1.0
+    },
+    {
+      "source": "skills_improve_scripts_tests_test_improvement_sweep_test_append_to_queue_skips_a_block_identical_to_the_last_one_for_the_same_project",
+      "target": "skills_improve_scripts_tests_test_improvement_sweep_issue",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "skills/improve/scripts/tests/test_improvement_sweep.py",
+      "source_location": "L58",
+      "weight": 1.0
+    },
+    {
+      "source": "skills_improve_scripts_tests_test_improvement_sweep_test_append_to_queue_still_appends_when_the_issues_differ_from_the_last_block",
+      "target": "skills_improve_scripts_tests_test_improvement_sweep_issue",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "skills/improve/scripts/tests/test_improvement_sweep.py",
+      "source_location": "L73",
+      "weight": 1.0
+    },
+    {
+      "source": "skills_improve_scripts_tests_test_improvement_sweep_test_last_block_issue_lines_extracts_the_most_recent_matching_block",
+      "target": "skills_improve_scripts_tests_test_improvement_sweep_issue",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "skills/improve/scripts/tests/test_improvement_sweep.py",
+      "source_location": "L41",
+      "weight": 1.0
+    },
+    {
+      "source": "skills_improve_scripts_tests_test_improvement_sweep_test_last_block_issue_lines_returns_none_when_project_never_appeared",
+      "target": "skills_improve_scripts_tests_test_improvement_sweep_issue",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "skills/improve/scripts/tests/test_improvement_sweep.py",
+      "source_location": "L31",
       "weight": 1.0
     },
     {
@@ -55409,7 +55670,7 @@
     },
     {
       "source": "skills_improve_scripts_improvement_sweep_find_project_path",
-      "target": "skills_improve_scripts_improvement_sweep_py_path",
+      "target": "path",
       "relation": "references",
       "_origin": "ast",
       "confidence": "EXTRACTED",
@@ -70790,30 +71051,52 @@
       "weight": 1.0
     },
     {
-      "source": "skills_improve_scripts_improvement_sweep_append_to_queue",
-      "target": "skills_improve_scripts_improvement_sweep",
+      "source": "skills_improve_scripts_improvement_sweep",
+      "target": "skills_improve_scripts_improvement_sweep_last_block_issue_lines",
       "relation": "contains",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "skills/improve/scripts/improvement_sweep.py",
-      "source_location": "L112",
+      "source_location": "L115",
       "weight": 1.0
     },
     {
-      "source": "skills_improve_scripts_improvement_sweep_extract_project",
-      "target": "skills_improve_scripts_improvement_sweep",
+      "source": "skills_improve_scripts_improvement_sweep",
+      "target": "skills_improve_scripts_improvement_sweep_append_to_queue",
       "relation": "contains",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "skills/improve/scripts/improvement_sweep.py",
-      "source_location": "L56",
+      "source_location": "L131",
       "weight": 1.0
     },
     {
-      "source": "skills_improve_scripts_improvement_sweep_find_project_path",
-      "target": "skills_improve_scripts_improvement_sweep",
+      "source": "skills_improve_scripts_improvement_sweep",
+      "target": "skills_improve_scripts_improvement_sweep_report_outcome",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/improve/scripts/improvement_sweep.py",
+      "source_location": "L164",
+      "weight": 1.0
+    },
+    {
+      "source": "skills_improve_scripts_improvement_sweep",
+      "target": "skills_improve_scripts_improvement_sweep_main",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/improve/scripts/improvement_sweep.py",
+      "source_location": "L176",
+      "weight": 1.0
+    },
+    {
+      "source": "skills_improve_scripts_improvement_sweep",
+      "target": "skills_improve_scripts_improvement_sweep_find_project_path",
       "relation": "contains",
       "_origin": "ast",
       "confidence": "EXTRACTED",
@@ -70823,36 +71106,36 @@
       "weight": 1.0
     },
     {
-      "source": "skills_improve_scripts_improvement_sweep_format_issue",
-      "target": "skills_improve_scripts_improvement_sweep",
+      "source": "skills_improve_scripts_improvement_sweep",
+      "target": "skills_improve_scripts_improvement_sweep_extract_project",
       "relation": "contains",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "skills/improve/scripts/improvement_sweep.py",
-      "source_location": "L98",
+      "source_location": "L56",
       "weight": 1.0
     },
     {
-      "source": "skills_improve_scripts_improvement_sweep_main",
-      "target": "skills_improve_scripts_improvement_sweep",
-      "relation": "contains",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "source_file": "skills/improve/scripts/improvement_sweep.py",
-      "source_location": "L143",
-      "weight": 1.0
-    },
-    {
-      "source": "skills_improve_scripts_improvement_sweep_top_issues",
-      "target": "skills_improve_scripts_improvement_sweep",
+      "source": "skills_improve_scripts_improvement_sweep",
+      "target": "skills_improve_scripts_improvement_sweep_top_issues",
       "relation": "contains",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "skills/improve/scripts/improvement_sweep.py",
       "source_location": "L74",
+      "weight": 1.0
+    },
+    {
+      "source": "skills_improve_scripts_improvement_sweep",
+      "target": "skills_improve_scripts_improvement_sweep_format_issue",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/improve/scripts/improvement_sweep.py",
+      "source_location": "L98",
       "weight": 1.0
     },
     {
@@ -70919,6 +71202,116 @@
       "confidence_score": 1.0,
       "source_file": "skills/improve/scripts/tests/test_cross_machine_merge.py",
       "source_location": "L67",
+      "weight": 1.0
+    },
+    {
+      "source": "skills_improve_scripts_tests_test_improvement_sweep",
+      "target": "skills_improve_scripts_tests_test_improvement_sweep_test_report_outcome_says_quarantined_when_append_returned_false",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/improve/scripts/tests/test_improvement_sweep.py",
+      "source_location": "L100",
+      "weight": 1.0
+    },
+    {
+      "source": "skills_improve_scripts_tests_test_improvement_sweep",
+      "target": "skills_improve_scripts_tests_test_improvement_sweep_test_report_outcome_says_skipped_when_content_did_not_change",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/improve/scripts/tests/test_improvement_sweep.py",
+      "source_location": "L105",
+      "weight": 1.0
+    },
+    {
+      "source": "skills_improve_scripts_tests_test_improvement_sweep",
+      "target": "skills_improve_scripts_tests_test_improvement_sweep_test_report_outcome_says_queued_when_content_actually_changed",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/improve/scripts/tests/test_improvement_sweep.py",
+      "source_location": "L111",
+      "weight": 1.0
+    },
+    {
+      "source": "skills_improve_scripts_tests_test_improvement_sweep",
+      "target": "skills_improve_scripts_tests_test_improvement_sweep_issue",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/improve/scripts/tests/test_improvement_sweep.py",
+      "source_location": "L14",
+      "weight": 1.0
+    },
+    {
+      "source": "skills_improve_scripts_tests_test_improvement_sweep",
+      "target": "skills_improve_scripts_tests_test_improvement_sweep_test_last_block_issue_lines_returns_none_when_queue_file_is_absent",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/improve/scripts/tests/test_improvement_sweep.py",
+      "source_location": "L21",
+      "weight": 1.0
+    },
+    {
+      "source": "skills_improve_scripts_tests_test_improvement_sweep",
+      "target": "skills_improve_scripts_tests_test_improvement_sweep_test_last_block_issue_lines_returns_none_when_project_never_appeared",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/improve/scripts/tests/test_improvement_sweep.py",
+      "source_location": "L26",
+      "weight": 1.0
+    },
+    {
+      "source": "skills_improve_scripts_tests_test_improvement_sweep",
+      "target": "skills_improve_scripts_tests_test_improvement_sweep_test_last_block_issue_lines_extracts_the_most_recent_matching_block",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/improve/scripts/tests/test_improvement_sweep.py",
+      "source_location": "L36",
+      "weight": 1.0
+    },
+    {
+      "source": "skills_improve_scripts_tests_test_improvement_sweep",
+      "target": "skills_improve_scripts_tests_test_improvement_sweep_test_append_to_queue_skips_a_block_identical_to_the_last_one_for_the_same_project",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/improve/scripts/tests/test_improvement_sweep.py",
+      "source_location": "L50",
+      "weight": 1.0
+    },
+    {
+      "source": "skills_improve_scripts_tests_test_improvement_sweep",
+      "target": "skills_improve_scripts_tests_test_improvement_sweep_test_append_to_queue_still_appends_when_the_issues_differ_from_the_last_block",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/improve/scripts/tests/test_improvement_sweep.py",
+      "source_location": "L68",
+      "weight": 1.0
+    },
+    {
+      "source": "skills_improve_scripts_tests_test_improvement_sweep",
+      "target": "skills_improve_scripts_tests_test_improvement_sweep_test_append_to_queue_dedup_is_scoped_per_project_not_global",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/improve/scripts/tests/test_improvement_sweep.py",
+      "source_location": "L83",
       "weight": 1.0
     },
     {
@@ -82923,14 +83316,25 @@
       "weight": 1.0
     },
     {
-      "source": "skills_improve_scripts_improvement_sweep_append_to_queue",
-      "target": "skills_improve_scripts_improvement_sweep_rationale_113",
+      "source": "skills_improve_scripts_improvement_sweep_rationale_116",
+      "target": "skills_improve_scripts_improvement_sweep_last_block_issue_lines",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "skills/improve/scripts/improvement_sweep.py",
-      "source_location": "L113",
+      "source_location": "L116",
+      "weight": 1.0
+    },
+    {
+      "source": "skills_improve_scripts_improvement_sweep_rationale_132",
+      "target": "skills_improve_scripts_improvement_sweep_append_to_queue",
+      "relation": "rationale_for",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/improve/scripts/improvement_sweep.py",
+      "source_location": "L132",
       "weight": 1.0
     },
     {
@@ -82941,6 +83345,17 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "skills/improve/scripts/tests/test_cross_machine_merge.py",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "skills_improve_scripts_tests_test_improvement_sweep_rationale_1",
+      "target": "skills_improve_scripts_tests_test_improvement_sweep",
+      "relation": "rationale_for",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/improve/scripts/tests/test_improvement_sweep.py",
       "source_location": "L1",
       "weight": 1.0
     },
@@ -85331,7 +85746,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "skills/improve/scripts/improvement_sweep.py",
-      "source_location": "L130",
+      "source_location": "L153",
       "weight": 1.0
     },
     {
@@ -85343,7 +85758,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "skills/improve/scripts/improvement_sweep.py",
-      "source_location": "L147",
+      "source_location": "L180",
       "weight": 1.0
     },
     {
@@ -85355,7 +85770,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "skills/improve/scripts/improvement_sweep.py",
-      "source_location": "L180",
+      "source_location": "L213",
       "weight": 1.0
     },
     {
@@ -85612,5 +86027,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "d657efabe620df4eb79fcb6c62721aa08e2d5c21"
+  "built_at_commit": "73afcc8de3b41a610c7423d9d8b8f5ef63f77780"
 }

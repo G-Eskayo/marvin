@@ -211,6 +211,9 @@ def run_review(chunk: dict, trigger_reason: str, is_threshold_trigger: bool) -> 
                 timeout=CLAUDE_CALL_TIMEOUT,
             )
             log.write(f"=== claude exit {proc.returncode} ===\n")
+            if proc.returncode != 0:
+                log.flush()
+                return  # don't advance cursor or sort on a failed run
         except subprocess.TimeoutExpired:
             log.write(f"=== TIMED OUT after {CLAUDE_CALL_TIMEOUT}s — chunk may be too large, consider splitting it further ===\n")
             log.flush()
