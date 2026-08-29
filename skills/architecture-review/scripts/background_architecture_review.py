@@ -148,6 +148,25 @@ def pick_chunk() -> tuple[dict, str, bool]:
     return chunks[cursor], f"scheduled rotation (chunk {cursor + 1}/{len(chunks)})", False
 
 
+def _render_chunk_paths(paths: list[str]) -> str:
+    """The reviewer runs with Read/Write/Edit only -- no Glob/LS -- so a bare
+    directory string is unreadable to it (Read raises EISDIR). Expand any
+    directory path into its real file listing so the reviewer always gets
+    paths it can actually open. Falls back to the bare directory bullet when
+    there's nothing to enumerate (missing or empty), so the prompt never
+    ends up pointing at literally nothing."""
+    lines = []
+    for raw in paths:
+        expanded = Path(raw).expanduser()
+        if expanded.is_dir():
+            files = sorted(str(f) for f in expanded.rglob("*") if f.is_file())
+            if files:
+                lines.extend(f"- {f}" for f in files)
+                continue
+        lines.append(f"- {raw}")
+    return "\n".join(lines)
+
+
 # ── review execution ────────────────────────────────────────────────────────────
 
 REVIEW_PROMPT_TEMPLATE = """You are MARVIN's background architecture reviewer, running unattended with Read, Write, and Edit only — no Bash, no other tools. This is deliberate: the only file you should write to is ~/.claude/suggestions.md, and you physically cannot do anything else, so it's safe to run without anyone watching.
@@ -173,7 +192,7 @@ def run_review(chunk: dict, trigger_reason: str, is_threshold_trigger: bool) -> 
             log.write(f"START_FAILED: {exc}\n")
         return
 
-    chunk_paths = "\n".join(f"- {p}" for p in chunk["paths"])
+    chunk_paths = _render_chunk_paths(chunk["paths"])
     prompt = REVIEW_PROMPT_TEMPLATE.format(chunk_paths=chunk_paths, trigger_reason=trigger_reason)
     before = SUGGESTIONS_FILE.read_text() if SUGGESTIONS_FILE.exists() else ""
 
