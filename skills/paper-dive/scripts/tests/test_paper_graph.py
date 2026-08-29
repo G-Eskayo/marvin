@@ -356,6 +356,116 @@ def test_traverse_stops_early_via_diminishing_returns_without_hitting_ceiling():
     assert len(result) < 7
 
 
+def test_traverse_follows_both_directions_with_independent_caps():
+    # Ticket #21 AC: asymmetric caps apply independently to references and citations.
+    # Seed has 3 above-floor references and 3 above-floor citations, with
+    # references_top_k=2 and citations_top_k=1 — only the top 2 refs and top 1 cite survive.
+    graph = {
+        "seed": {
+            "references": [
+                {"doi": "ref-1", "score": 0.9, "intent": None},
+                {"doi": "ref-2", "score": 0.85, "intent": None},
+                {"doi": "ref-3", "score": 0.75, "intent": None},  # above floor (0.65) but will be dropped by top_k=2
+            ],
+            "citations": [
+                {"doi": "cite-1", "score": 0.88, "intent": None},
+                {"doi": "cite-2", "score": 0.8, "intent": None},   # above floor but will be dropped by top_k=1
+                {"doi": "cite-3", "score": 0.7, "intent": None},   # above floor but will be dropped by top_k=1
+            ],
+        },
+    }
+
+    def fake_fetch(doi):
+        return graph[doi]
+
+    result = traverse(
+        seed_doi="seed",
+        fetch_fn=fake_fetch,
+        max_depth=1,
+        references_top_k=2,
+        citations_top_k=1,
+        relevance_floor=0.65,
+    )
+
+    dois = {node["doi"] for node in result}
+    # seed + 2 references (top-2 of 3 above-floor) + 1 citation (top-1 of 3 above-floor)
+    assert dois == {"seed", "ref-1", "ref-2", "cite-1"}
+
+    # Verify edge types are recorded correctly
+    by_doi = {node["doi"]: node for node in result}
+    assert by_doi["ref-1"]["discovered_via"]["edge_type"] == "reference"
+    assert by_doi["ref-2"]["discovered_via"]["edge_type"] == "reference"
+    assert by_doi["cite-1"]["discovered_via"]["edge_type"] == "citation"
+
+
+def test_traverse_shared_floor_applies_to_both_directions():
+    # Ticket #21 AC: shared relevance_floor rejects below-floor candidates in both directions.
+    graph = {
+        "seed": {
+            "references": [
+                {"doi": "ref-ok", "score": 0.75, "intent": None},
+                {"doi": "ref-below", "score": 0.6, "intent": None},  # below 0.65 floor
+            ],
+            "citations": [
+                {"doi": "cite-ok", "score": 0.8, "intent": None},
+                {"doi": "cite-below", "score": 0.62, "intent": None},  # below 0.65 floor
+            ],
+        },
+    }
+
+    def fake_fetch(doi):
+        return graph[doi]
+
+    result = traverse(
+        seed_doi="seed",
+        fetch_fn=fake_fetch,
+        max_depth=1,
+        references_top_k=10,
+        citations_top_k=10,
+        relevance_floor=0.65,
+    )
+
+    dois = {node["doi"] for node in result}
+    # seed + only the above-floor candidates from both directions
+    assert dois == {"seed", "ref-ok", "cite-ok"}
+    assert "ref-below" not in dois
+    assert "cite-below" not in dois
+
+
+def test_traverse_result_intent_citation_survives_full_traversal_over_cap():
+    # Ticket #21 AC: result-intent citations bypass the top_k cap at the traverse() level,
+    # not just in select_candidates() unit tests.
+    # citations_top_k=1 with 2 ranked-above citations + 1 low-score result-intent citation.
+    # All 3 should make it through the full traverse() call.
+    graph = {
+        "seed": {
+            "references": [],
+            "citations": [
+                {"doi": "cite-high-1", "score": 0.9, "intent": None},
+                {"doi": "cite-high-2", "score": 0.85, "intent": None},
+                {"doi": "cite-result", "score": 0.3, "intent": "result"},  # below floor, but result-intent
+            ],
+        },
+    }
+
+    def fake_fetch(doi):
+        return graph[doi]
+
+    result = traverse(
+        seed_doi="seed",
+        fetch_fn=fake_fetch,
+        max_depth=1,
+        references_top_k=10,
+        citations_top_k=1,  # normally would limit to 1, but result-intent bypasses
+        relevance_floor=0.65,
+    )
+
+    dois = {node["doi"] for node in result}
+    # seed + the top-1 ranked citation + the result-intent citation (bypassed)
+    # NOT cite-high-2 (it's ranked 2nd and not result-intent)
+    assert dois == {"seed", "cite-high-1", "cite-result"}
+
+
 # ── blended_score (SPECTER2 + nomic-embed) ───────────────────────────────────
 
 def test_blended_score_is_one_for_identical_embeddings():
