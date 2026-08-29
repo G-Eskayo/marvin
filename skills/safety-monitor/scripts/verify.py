@@ -7,7 +7,6 @@ not built. See ../REQUIREMENTS.md and ../ARCHITECTURE.md for the design.
 """
 from __future__ import annotations
 import re
-import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -16,26 +15,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from calibrate import get_tau  # noqa: E402
 
+sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+from claude_bin import resolve_claude_bin as _resolve_claude_bin  # noqa: E402
+
 CLAUDE_DIR = Path.home() / ".claude"
 QUARANTINE_FILE = CLAUDE_DIR / "quarantine.md"
 RUBRIC_DIR = Path(__file__).parent / "rubrics"
-
-
-def _resolve_claude_bin() -> str:
-    found = shutil.which("claude")
-    if found:
-        return found
-    for candidate in (
-        Path.home() / ".local" / "bin" / "claude",
-        Path("/opt/homebrew/bin/claude"),
-        Path("/usr/local/bin/claude"),
-    ):
-        if candidate.exists():
-            return str(candidate)
-    raise FileNotFoundError(
-        "claude CLI not found on PATH or in common install locations "
-        "(~/.local/bin, /opt/homebrew/bin, /usr/local/bin)"
-    )
 
 
 def _load_rubric(loop_name: str) -> str:

@@ -18,7 +18,6 @@ Never blocks or errors the originating tool; any failure exits silently.
 """
 from __future__ import annotations
 import json
-import shutil
 import subprocess
 import sys
 import time
@@ -27,6 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 from hook_errors import log_hook_error  # noqa: E402
+from claude_bin import resolve_claude_bin as _resolve_claude_bin  # noqa: E402
 
 HANDOFF_DIR = Path.home() / ".claude" / "handoffs"
 AGENTS_DIR = Path.home() / ".agents"
@@ -50,23 +50,6 @@ except ImportError:
 # call each time. 20 minutes is long enough that back-to-back handoffs in
 # one work session collapse into a single review of the whole span.
 COOLDOWN_SECONDS = 20 * 60
-
-
-def _resolve_claude_bin() -> str:
-    """See daily_digest.py's identical helper — launchd's environment
-    doesn't source .zshrc/.zprofile, so a plain PATH lookup can miss an
-    install that works fine interactively."""
-    found = shutil.which("claude")
-    if found:
-        return found
-    for candidate in (
-        Path.home() / ".local" / "bin" / "claude",
-        Path("/opt/homebrew/bin/claude"),
-        Path("/usr/local/bin/claude"),
-    ):
-        if candidate.exists():
-            return str(candidate)
-    raise FileNotFoundError("claude CLI not found on PATH or in common install locations")
 
 
 def _cooldown_active() -> bool:
