@@ -285,7 +285,7 @@ def test_traverse_continues_past_ceiling_when_checkpoint_says_continue():
 
 
 def test_traverse_checkpoint_receives_accurate_queue_state():
-    # ADR 0010 requires the checkpoint to report queue state (not just pause silently) so
+    # ADR 0010 requires the checkpoint to report queue state (not pause silently) so
     # continue/stop is an informed decision -- this pins down exactly what gets reported.
     graph = {
         "seed": {
