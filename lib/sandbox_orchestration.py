@@ -73,7 +73,7 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
     # the planning model reasonably-but-wrongly paused to ask for human
     # confirmation before declaring existing work sufficient -- nobody
     # headless was there to answer, and the "plan" that got passed to the
-    # executor was just that unanswered question. (2) the executor got
+    # executor was that unanswered question. (2) the executor got
     # stuck trying to commit/push/open a PR itself and asking for Bash
     # permission to do so, not knowing that's raise_mr's job, done
     # automatically after this function returns -- its own job stops at
