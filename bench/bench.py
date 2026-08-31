@@ -215,13 +215,15 @@ def load_task(task_dir: Path) -> dict:
 def run_once(task: dict, profile: str, capture_snapshot: bool = False, model: str | None = None) -> dict:
     config_dir = PROFILES[profile]
     is_fs = task.get("type") == "fs"
+    isolated = bool(task.get("isolated_workdir"))
 
-    # fs tasks get an isolated temp workdir; qa/recall tasks run in a fixed cwd
-    # (default: home) so the project-scoped memory layer engages for the marvin
-    # profile. The clean profile loads no memory regardless of cwd.
-    if is_fs:
+    # fs tasks and isolated_workdir tasks get an isolated temp workdir; qa/recall
+    # tasks without isolated_workdir run in a fixed cwd (default: home) so the
+    # project-scoped memory layer engages for the marvin profile. The clean
+    # profile loads no memory regardless of cwd.
+    if is_fs or isolated:
         workdir = Path(tempfile.mkdtemp(prefix=f"mb-{task['id']}-{profile}-"))
-        if (task["dir"] / "files").exists():
+        if is_fs and (task["dir"] / "files").exists():
             shutil.copytree(task["dir"] / "files", workdir, dirs_exist_ok=True)
         cleanup = True
     else:

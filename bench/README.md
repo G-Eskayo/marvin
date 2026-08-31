@@ -47,7 +47,7 @@ judge's rationale inline. Both substring and judge scores are shown side by side
 
 ```
 tasks/<id>/
-  task.json    # {id, type: "fs"|"qa", expect[], cwd?, timeout?}
+  task.json    # {id, type: "fs"|"qa", expect[], cwd?, timeout?, isolated_workdir?}
   prompt.md
   files/       # (fs tasks) seeded into an isolated temp workdir
 ```
@@ -55,6 +55,9 @@ tasks/<id>/
 - **fs** tasks run in an isolated temp dir with `--permission-mode bypassPermissions`.
 - **qa** tasks run in a fixed `cwd` (default home) so MARVIN's project-scoped
   memory engages; the clean profile loads no memory regardless.
+- **isolated_workdir** (qa tasks only) — use a freshly created, empty temp workdir
+  instead of a fixed `cwd`, for discriminators where the answer must come only from
+  a tool/skill (e.g. ChromaDB), never disk.
 
 ## Known limitations
 
