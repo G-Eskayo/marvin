@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('api', {
     // see the comment on the mr:approve handler for why.
     approve: (pr) => ipcRenderer.invoke('mr:approve', pr),
     deny: (payload) => ipcRenderer.invoke('mr:deny', payload),
-    ticketContext: (ticketRef) => ipcRenderer.invoke('mr:ticketContext', ticketRef)
+    ticketContext: (ticketRef) => ipcRenderer.invoke('mr:ticketContext', ticketRef),
+    reviewStatus: () => ipcRenderer.invoke('mr:reviewStatus'),
+    markSeen: (prNumbers) => ipcRenderer.invoke('mr:markSeen', prNumbers)
   }
 })

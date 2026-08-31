@@ -5,6 +5,7 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { listSubsystems, readHistory, buildIndex } from './metrics.js'
 import { listPipelinePrs, approveMr, denyMr, fetchTicketContext } from './mr_review.js'
+import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
 import { adoptLoginShellPath } from './path.js'
 
 const execFileAsync = promisify(execFile)
@@ -100,7 +101,22 @@ function postJson(webhookUrl, body) {
 }
 
 function registerMrReviewHandlers() {
+  const seenPath = join(app.getPath('userData'), 'mr-seen.json')
+
   ipcMain.handle('mr:list', () => listPipelinePrs(listOpenPrs))
+
+  // Backs the MR Review tab's status dot -- red/blue/green computed from
+  // which pipeline-PR numbers are currently open vs. already marked seen
+  // on this machine (see mr_seen.js).
+  ipcMain.handle('mr:reviewStatus', async () => {
+    const prs = await listPipelinePrs(listOpenPrs)
+    const numbers = prs.map((pr) => pr.number)
+    return { status: computeReviewStatus(numbers, readSeenNumbers(seenPath)), openCount: numbers.length }
+  })
+
+  ipcMain.handle('mr:markSeen', (_event, prNumbers) => {
+    markSeen(seenPath, prNumbers)
+  })
 
   // Live-fetches the linked ticket's (and its parent PRD's) requirements/
   // design/tasks for the detail view, per the "link back, don't duplicate"
