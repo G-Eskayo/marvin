@@ -823,3 +823,140 @@ def test_shape_and_score_selects_cross_camp_rebuttal_that_specter2_alone_would_c
     assert candidates[0]["doi"] == "10.1/rebuttal"
     assert candidates[0]["intent"] == "result"
     assert candidates[0]["score"] == pytest.approx(0.5)  # blended score, not 0.0
+
+
+# ── AC2: skip already-known papers (embedding + fetch) ───────────────────────
+
+def test_shape_and_score_skips_already_known_candidates_without_embedding():
+    # AC2: Known DOIs should skip embedding entirely, not just skip re-recording.
+    seed_embeddings = {"specter2": [1.0, 0.0], "nomic": [1.0, 0.0]}
+    papers = [
+        {"title": "Known", "abstract": "already in collection", "externalIds": {"DOI": "10.1/known"}},
+        {"title": "Unknown", "abstract": "new paper", "externalIds": {"DOI": "10.1/unknown"}},
+    ]
+
+    embed_calls = []
+
+    def spy_embed(text):
+        embed_calls.append(text)
+        return {"specter2": [1.0, 0.0], "nomic": [1.0, 0.0]}
+
+    def fake_is_known(doi):
+        return doi == "10.1/known"
+
+    candidates = _shape_and_score(
+        papers,
+        seed_embeddings,
+        embed_fn=spy_embed,
+        is_citation=False,
+        is_known_fn=fake_is_known,
+    )
+
+    # only unknown paper should be embedded and returned
+    assert len(candidates) == 1
+    assert candidates[0]["doi"] == "10.1/unknown"
+    assert len(embed_calls) == 1
+    assert embed_calls[0] == "new paper"
+
+
+def test_fetch_neighbors_from_s2_filters_out_known_candidates(monkeypatch):
+    # AC2: fetch_neighbors_from_s2 should skip embedding and exclude known DOIs from results.
+    s2_payload = {
+        "references": [
+            {"title": "Known Ref", "abstract": "already known", "externalIds": {"DOI": "10.1/ref-known"}},
+            {"title": "New Ref", "abstract": "new reference", "externalIds": {"DOI": "10.1/ref-new"}},
+        ],
+        "citations": [
+            {"title": "Known Cite", "abstract": "already known", "externalIds": {"DOI": "10.1/cite-known"}, "intents": []},
+            {"title": "New Cite", "abstract": "new citation", "externalIds": {"DOI": "10.1/cite-new"}, "intents": []},
+        ],
+    }
+
+    def fake_get(url, params=None, timeout=None, headers=None):
+        return _FakeResponse(s2_payload)
+
+    monkeypatch.setattr("requests.get", fake_get)
+
+    seed_embeddings = {"specter2": [1.0, 0.0], "nomic": [1.0, 0.0]}
+
+    embed_calls = []
+
+    def spy_embed(text, specter2_fn=None, nomic_fn=None):
+        embed_calls.append(text)
+        return {"specter2": [1.0, 0.0], "nomic": [1.0, 0.0]}
+
+    def fake_is_known(doi):
+        return doi.endswith("-known")
+
+    result = fetch_neighbors_from_s2(
+        doi="10.1/seed",
+        seed_embeddings=seed_embeddings,
+        embed_fn=spy_embed,
+        is_known_fn=fake_is_known,
+    )
+
+    # only new papers should be in results and embedded
+    ref_dois = {c["doi"] for c in result["references"]}
+    cite_dois = {c["doi"] for c in result["citations"]}
+    assert ref_dois == {"10.1/ref-new"}
+    assert cite_dois == {"10.1/cite-new"}
+    assert len(embed_calls) == 2
+    assert "new reference" in embed_calls
+    assert "new citation" in embed_calls
+
+
+def test_run_paper_graph_skips_embedding_already_known_candidates_end_to_end(monkeypatch, tmp_path):
+    # AC2 end-to-end: pre-seed the collection with a candidate DOI, verify it's
+    # never embedded and never explored in the traversal.
+    client = chromadb.PersistentClient(path=str(tmp_path))
+    collection = client.get_or_create_collection("paper-knowledge")
+
+    # Pre-record a candidate DOI so it's "known"
+    record_paper(
+        collection,
+        doi="10.1/known-candidate",
+        abstract="this was found before",
+        discovered_via=None,
+    )
+
+    embed_calls = []
+
+    def spy_embed(text, specter2_fn=None, nomic_fn=None):
+        embed_calls.append(text)
+        return {"specter2": [1.0, 0.0], "nomic": [1.0, 0.0]}
+
+    # Mock S2 API to return our test data
+    s2_payload = {
+        "references": [
+            {"title": "Known", "abstract": "known abstract", "externalIds": {"DOI": "10.1/known-candidate"}},
+            {"title": "New", "abstract": "new abstract", "externalIds": {"DOI": "10.1/new-candidate"}},
+        ],
+        "citations": [],
+    }
+
+    def fake_get(url, params=None, timeout=None, headers=None):
+        return _FakeResponse(s2_payload)
+
+    monkeypatch.setattr("requests.get", fake_get)
+
+    results = run_paper_graph(
+        seed_doi="10.1/seed",
+        seed_abstract="the seed paper's abstract",
+        collection=collection,
+        max_depth=1,
+        references_top_k=10,
+        citations_top_k=5,
+        relevance_floor=0.5,
+        embed_fn=spy_embed,
+    )
+
+    # AC2: known-candidate should be filtered out during traversal entirely (never added to results,
+    # never embedded, never queued for further exploration). Only seed and new-candidate should be present.
+    result_dois = {n["doi"] for n in results}
+    assert result_dois == {"10.1/seed", "10.1/new-candidate"}
+
+    # only seed and new-candidate should be embedded; known-candidate never touched
+    embedded_texts = embed_calls
+    assert "the seed paper's abstract" in embedded_texts
+    assert "new abstract" in embedded_texts
+    assert "known abstract" not in embedded_texts  # never embedded
