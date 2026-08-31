@@ -6,6 +6,7 @@ import { promisify } from 'util'
 import { listSubsystems, readHistory, buildIndex } from './metrics.js'
 import { listPipelinePrs, approveMr, denyMr, fetchTicketContext } from './mr_review.js'
 import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
+import { createRefreshServer } from './refresh_server.js'
 import { adoptLoginShellPath } from './path.js'
 
 const execFileAsync = promisify(execFile)
@@ -18,6 +19,10 @@ adoptLoginShellPath()
 const MR_WEBHOOK_URL = process.env.MARVIN_MR_WEBHOOK_URL || 'http://localhost:7878/approve'
 // Same reference receiver, second endpoint -- ADR 0025's Deny action.
 const MR_DENY_WEBHOOK_URL = process.env.MARVIN_MR_DENY_WEBHOOK_URL || 'http://localhost:7878/deny'
+// Where the webhook-server process forwards its /mr-ready ping (see
+// dashboard/webhook-server/refresh_relay.js) so an already-open window
+// refreshes immediately instead of waiting on its own fallback poll.
+const DASHBOARD_REFRESH_PORT = Number(process.env.MARVIN_DASHBOARD_REFRESH_PORT) || 7879
 
 async function listOpenPrs() {
   const { stdout } = await execFileAsync('gh', [
@@ -170,6 +175,10 @@ app.whenReady().then(() => {
   registerMetricsHandlers()
   registerMrReviewHandlers()
   createWindow()
+
+  createRefreshServer(() => {
+    mainWindow?.webContents.send('mr:refresh')
+  }).listen(DASHBOARD_REFRESH_PORT, '127.0.0.1')
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

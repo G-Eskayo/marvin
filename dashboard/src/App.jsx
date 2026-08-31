@@ -19,12 +19,12 @@ const STATUS_LABEL = {
   green: 'Nothing awaiting review'
 }
 
-// Polled independently of which tab is active so the dot is accurate even
-// if you never open MR Review -- that's the whole point of a glanceable
-// status indicator. Also re-fetched immediately on switching into the tab,
-// since MrReview marks its list seen right after loading and the poll
-// interval alone would leave a stale red dot showing for up to REFRESH_MS.
-const REFRESH_MS = 15000
+// Refreshed on window.api.mr.onRefresh -- pushed the moment mr_raiser.py
+// raises a PR (see webhook-server/refresh_relay.js + electron/main/
+// refresh_server.js) -- so this is a safety net for whatever that push
+// misses (Electron wasn't running yet when the ping arrived, the ping
+// came from the other machine, etc.), not the primary update path.
+const FALLBACK_POLL_MS = 120000
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('metrics')
@@ -42,10 +42,12 @@ export default function App() {
       }
     }
     refresh()
-    const interval = setInterval(refresh, REFRESH_MS)
+    const interval = setInterval(refresh, FALLBACK_POLL_MS)
+    const unsubscribe = window.api.mr.onRefresh(refresh)
     return () => {
       cancelled = true
       clearInterval(interval)
+      unsubscribe()
     }
   }, [])
 
@@ -69,18 +71,14 @@ export default function App() {
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 title={dot ? STATUS_LABEL[dot] : undefined}
-                className={`relative rounded-md px-3 py-1.5 text-sm transition-colors ${
+                className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors ${
                   activeTab === tab.id
                     ? 'bg-neutral-800 text-white'
                     : 'text-neutral-400 hover:text-neutral-200'
                 }`}
               >
+                {dot && <span className={`h-2 w-2 shrink-0 rounded-full ${DOT_COLOR[dot]}`} />}
                 {tab.label}
-                {dot && (
-                  <span
-                    className={`absolute right-1 top-1 h-1.5 w-1.5 rounded-full ${DOT_COLOR[dot]}`}
-                  />
-                )}
               </button>
             )
           })}
