@@ -66,17 +66,27 @@ def run(issue_number: int) -> dict:
     ticket_ref = f"{REPO}#{issue_number}"
     subsystem = f"ticket-{issue_number}"
 
-    result = execute_ticket(ticket_ref, subsystem, measure)
+    try:
+        result = execute_ticket(ticket_ref, subsystem, measure)
 
-    test_results = None
-    dev_evidence = None
-    if result["passing"]:
-        worktree_path = result["worktree_path"]
-        command = test_command_for(worktree_path)
-        test_results = capture_test_results(worktree_path, command)
-        dev_evidence = capture_dev_evidence(worktree_path, ticket_touches_ui(worktree_path))
+        test_results = None
+        dev_evidence = None
+        if result["passing"]:
+            worktree_path = result["worktree_path"]
+            command = test_command_for(worktree_path)
+            test_results = capture_test_results(worktree_path, command)
+            dev_evidence = capture_dev_evidence(worktree_path, ticket_touches_ui(worktree_path))
 
-    outcome = raise_mr(ticket_ref, result, test_results=test_results, dev_evidence=dev_evidence)
+        outcome = raise_mr(ticket_ref, result, test_results=test_results, dev_evidence=dev_evidence)
+    except Exception as exc:
+        # A crash anywhere in execute_ticket/raise_mr (a planner timeout, a
+        # worktree-creation failure, anything) must never skip the cleanup
+        # below -- found live 2026-08-31: two tickets in a row hit the
+        # planner's 300s subprocess timeout, an uncaught exception that
+        # crashed the whole process before it ever reached
+        # raise_mr/_comment_failure/_release_claim/_trigger_redispatch,
+        # leaving both permanently claimed with no way to retry.
+        outcome = {"raised": False, "pr_url": None, "reason": f"Unhandled exception: {exc}"}
 
     if not outcome["raised"]:
         _comment_failure(issue_number, outcome["reason"])

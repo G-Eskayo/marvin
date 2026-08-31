@@ -4,6 +4,7 @@
 from __future__ import annotations
 import sys
 from pathlib import Path
+from subprocess import TimeoutExpired
 
 LIB = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(LIB))
@@ -229,3 +230,57 @@ def test_trigger_redispatch_spawns_ticket_pipeline_detached(monkeypatch):
     assert cmd[0] == rt.sys.executable
     assert cmd[1].endswith("ticket_pipeline.py")
     assert kwargs.get("start_new_session") is True
+
+
+def test_run_recovers_when_execute_ticket_raises_unexpectedly(monkeypatch):
+    # Real incident, 2026-08-31: the planner subprocess call inside
+    # execute_ticket hit its own 300s timeout for two tickets in a row
+    # (subprocess.TimeoutExpired, uncaught) -- run() had no try/except
+    # around execute_ticket at all, so the whole process crashed before
+    # ever reaching raise_mr/_comment_failure/_release_claim/
+    # _trigger_redispatch. Both tickets stayed claimed forever, exactly
+    # the failure mode _release_claim was built to prevent, just reached
+    # through a different, uncaught path.
+    def raise_timeout(*a, **kw):
+        raise TimeoutExpired(cmd=["claude"], timeout=300)
+
+    monkeypatch.setattr(rt, "execute_ticket", raise_timeout)
+
+    comments = []
+    monkeypatch.setattr(rt, "_comment_failure", lambda issue_number, reason: comments.append((issue_number, reason)))
+    released = []
+    monkeypatch.setattr(rt, "_release_claim", lambda issue_number: released.append(issue_number))
+    redispatched = []
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: redispatched.append(True))
+
+    outcome = rt.run(27)
+
+    assert outcome["raised"] is False
+    assert "300" in outcome["reason"] or "timed out" in outcome["reason"].lower()
+    assert comments == [(27, outcome["reason"])]
+    assert released == [27]
+    assert redispatched == [True]
+
+
+def test_run_recovers_when_raise_mr_itself_raises_unexpectedly(monkeypatch):
+    monkeypatch.setattr(rt, "execute_ticket", lambda *a: _passing_result())
+    monkeypatch.setattr(rt, "test_command_for", lambda wt: ["pytest", "-q"])
+    monkeypatch.setattr(rt, "capture_test_results", lambda wt, cmd: {})
+    monkeypatch.setattr(rt, "ticket_touches_ui", lambda wt: False)
+    monkeypatch.setattr(rt, "capture_dev_evidence", lambda wt, touches_ui: {})
+
+    def raise_boom(*a, **kw):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(rt, "raise_mr", raise_boom)
+
+    released = []
+    monkeypatch.setattr(rt, "_release_claim", lambda issue_number: released.append(issue_number))
+    monkeypatch.setattr(rt, "_comment_failure", lambda *a: None)
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+
+    outcome = rt.run(27)
+
+    assert outcome["raised"] is False
+    assert "boom" in outcome["reason"]
+    assert released == [27]
