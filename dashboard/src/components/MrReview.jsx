@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import MrDetail from './MrDetail.jsx'
 
+const MR_LIST_REFRESH_MS = 15000
+
 function EmptyState() {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-neutral-500">
@@ -241,7 +243,16 @@ export default function MrReview() {
       .catch((err) => setError(String(err)))
   }
 
-  useEffect(reload, [])
+  // Previously fetch-once-on-mount only -- a new MR raised while this tab
+  // was already open never appeared until you switched away and back
+  // (which remounts the component). Poll instead, same interval as
+  // App.jsx's status-dot refresh; harmless to keep running while a detail
+  // view is open since `selected` doesn't depend on `prs`.
+  useEffect(() => {
+    reload()
+    const interval = setInterval(reload, MR_LIST_REFRESH_MS)
+    return () => clearInterval(interval)
+  }, [])
 
   // A denied/approved PR stops being an open PR, so its detail view no
   // longer has anything to show -- same reasoning as returning to the list
