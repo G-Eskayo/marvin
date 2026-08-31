@@ -1,0 +1,10 @@
+{
+  "id": "task-015-isolated-kb-recall",
+  "type": "qa",
+  "isolated_workdir": true,
+  "prompt_file": "prompt.md",
+  "timeout": 180,
+  "expect": ["QA-ISOLATE-"],
+  "disallow_tools": ["Read", "Glob", "Grep", "WebSearch", "WebFetch"],
+  "note": "True isolation discriminator for #27. Runs in a freshly created, empty temp dir for every profile (no files/ seeded) — not a real project directory, so there is nothing on disk to find regardless of tool access. Read/Glob/Grep/WebSearch/WebFetch are structurally disallowed so a model can't reach outside the workdir to a known absolute path either (the task-014/Run-15 gap). Bash stays allowed (profile settings.json whitelist only the exact qa_query.py invocation). The expected value is a random canary token seeded once into the qa-knowledge ChromaDB collection via qa_capture.py, tagged bench-fixture/task-015, and never written to any tracked file — so it cannot be produced by training data, file access, or web search. clean/lean: no CLAUDE.md/SKILL.md telling them qa_query.py exists or what to ask it, disk/web tools closed off -> cannot pass. marvin: qa-agent SKILL.md triggers on 'query the knowledge base', runs qa_query.py against the global ~/.claude/chroma path (cwd-independent) -> retrieves the token. A marvin pass is therefore attributable to ChromaDB retrieval specifically, not to project-scoped MEMORY.md ambient loading (a new temp dir has no indexed project, so that channel doesn't even fire) and not to file/web access (closed off structurally). Use --judge is optional here — exact-token substring match is already unambiguous."
+}
