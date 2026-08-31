@@ -75,6 +75,17 @@ def is_known(doi: str, collection) -> bool:
     return len(result["ids"]) > 0
 
 
+def get_discovery(collection, doi: str) -> dict | None:
+    """Returns the first-discovery record ({parent_doi, edge_type, hop_depth}) for doi, or None if doi is unknown or is a seed (no parent)."""
+    result = collection.get(ids=[doi], include=["metadatas"])
+    if not result["ids"]:
+        return None
+    meta = result["metadatas"][0]
+    if "parent_doi" not in meta:
+        return None
+    return {"parent_doi": meta["parent_doi"], "edge_type": meta["edge_type"], "hop_depth": meta["hop_depth"]}
+
+
 def record_paper(collection, doi: str, abstract: str, discovered_via: dict | None) -> None:
     import time
 
@@ -419,6 +430,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Recursive citation-graph traversal from a seed paper (paper-dive).")
     ap.add_argument("--doi", help="DOI of the seed paper (skips session/slug lookup entirely)")
     ap.add_argument("--slug", help="Session slug — reads DOI/title/text from that session's state.json + raw.md")
+    ap.add_argument("--show-discovery", help="Query first-discovery metadata for a DOI and exit")
     ap.add_argument("--depth", type=int, default=2, help="Max hop depth (default: 2)")
     ap.add_argument("--references-top-k", type=int, default=10)
     ap.add_argument("--citations-top-k", type=int, default=5)
@@ -426,6 +438,22 @@ def main() -> None:
     ap.add_argument("--cost-ceiling", type=int, default=100)
     ap.add_argument("--diminishing-returns-window", type=int, default=5)
     args = ap.parse_args()
+
+    import chromadb
+
+    client = chromadb.PersistentClient(path=str(CHROMA_PATH))
+    collection = client.get_or_create_collection(PAPER_KNOWLEDGE_COLLECTION)
+
+    if args.show_discovery:
+        discovery = get_discovery(collection, args.show_discovery)
+        if discovery is None:
+            print(f"No discovery record for {args.show_discovery}")
+        else:
+            print(f"First discovery of {args.show_discovery}:")
+            print(f"  parent_doi: {discovery['parent_doi']}")
+            print(f"  edge_type: {discovery['edge_type']}")
+            print(f"  hop_depth: {discovery['hop_depth']}")
+        raise SystemExit(0)
 
     doi = args.doi
     slug = args.slug
@@ -446,11 +474,6 @@ def main() -> None:
     if not doi and not slug:
         print("ERROR: provide --doi, or --slug (works for both published and unpublished/no-DOI sessions)")
         raise SystemExit(1)
-
-    import chromadb
-
-    client = chromadb.PersistentClient(path=str(CHROMA_PATH))
-    collection = client.get_or_create_collection(PAPER_KNOWLEDGE_COLLECTION)
 
     if doi:
         seed_abstract = seed_abstract or _fetch_seed_abstract(doi)
