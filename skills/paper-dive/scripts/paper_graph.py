@@ -13,6 +13,7 @@ works fine under 4.57.6 despite that declared constraint; the pin is kept at
 from __future__ import annotations
 import heapq
 import re
+import tempfile
 from pathlib import Path
 
 _ARXIV_ID_RE = re.compile(r"^\d{4}\.\d{4,5}(v\d+)?$")
@@ -86,7 +87,7 @@ def get_discovery(collection, doi: str) -> dict | None:
     return {"parent_doi": meta["parent_doi"], "edge_type": meta["edge_type"], "hop_depth": meta["hop_depth"]}
 
 
-def record_paper(collection, doi: str, abstract: str, discovered_via: dict | None) -> None:
+def record_paper(collection, doi: str, abstract: str, discovered_via: dict | None, full_text: bool = False) -> None:
     import time
 
     # created_epoch (not created_at) matches dump_collection.py's --since
@@ -94,12 +95,71 @@ def record_paper(collection, doi: str, abstract: str, discovered_via: dict | Non
     # (ISO-8601 strings aren't supported) -- same field name qa-knowledge
     # uses, so cross_machine_merge.py's incremental sync pattern works here
     # unmodified.
-    metadata = {"doi": doi, "created_epoch": time.time()}
+    metadata = {"doi": doi, "created_epoch": time.time(), "full_text": full_text}
     if discovered_via is not None:
         metadata["parent_doi"] = discovered_via["parent_doi"]
         metadata["edge_type"] = discovered_via["edge_type"]
         metadata["hop_depth"] = discovered_via["hop_depth"]
     collection.add(ids=[doi], documents=[abstract], metadatas=[metadata])
+
+
+def fetch_arxiv_pdf_text(arxiv_id: str) -> str | None:
+    """Fetch full PDF text from arXiv for a given arXiv ID.
+
+    Returns the extracted text on success, or None on 404/network failure.
+    Uses ingest_paper.extract_pdf() for parsing, so behavior is consistent
+    with paper-dive's main ingestion path.
+    """
+    url = f"https://arxiv.org/pdf/{arxiv_id}"
+    try:
+        resp = _get_with_retry(url, params={}, timeout=30, max_retries=3)
+    except Exception:
+        # network error, 404, etc. — gracefully degrade to abstract-only
+        return None
+
+    if resp.status_code == 404:
+        return None
+
+    try:
+        resp.raise_for_status()
+    except Exception:
+        return None
+
+    # Write PDF bytes to temp file, extract via ingest_paper
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            tmp.write(resp.content)
+            tmp_path = tmp.name
+
+        # Import ingest_paper to use its extract_pdf function
+        import sys
+        scripts_dir = Path(__file__).resolve().parent
+        sys.path.insert(0, str(scripts_dir))
+        import ingest_paper
+
+        text = ingest_paper.extract_pdf(Path(tmp_path))
+        return text
+    except Exception:
+        # PDF parse failed (scanned, corrupted, etc.) — gracefully degrade
+        return None
+    finally:
+        # clean up temp file
+        try:
+            Path(tmp_path).unlink()
+        except Exception:
+            pass
+
+
+def fetch_full_text(node: dict) -> str | None:
+    """Fetch full text for a high-relevance node if an arXiv ID is available.
+
+    Currently arXiv-only; returns None if no arXiv ID present or fetch fails.
+    A future legitimate open-access DOI resolver could be added here.
+    """
+    arxiv_id = node.get("arxiv_id")
+    if not arxiv_id:
+        return None
+    return fetch_arxiv_pdf_text(arxiv_id)
 
 
 _NEAR_FLOOR_MARGIN = 0.05
@@ -218,6 +278,7 @@ def _shape_and_score(papers: list[dict], seed_embeddings: dict, embed_fn, is_cit
         # traversal actually cover that population instead of silently
         # dropping it. See _s2_id() for how this gets re-prefixed on lookup.
         doi = external_ids.get("DOI") or external_ids.get("ArXiv")
+        arxiv_id = external_ids.get("ArXiv")  # preserve ArXiv ID separately for full-text fetch
         abstract = p.get("abstract") or p.get("title") or ""
         if not doi or not abstract:
             continue
@@ -226,7 +287,7 @@ def _shape_and_score(papers: list[dict], seed_embeddings: dict, embed_fn, is_cit
         candidate_embeddings = embed_fn(abstract)
         score = blended_score(seed_embeddings, candidate_embeddings)
         intent = "result" if is_citation and "result" in (p.get("intents") or []) else None
-        candidates.append({"doi": doi, "score": score, "intent": intent, "abstract": abstract})
+        candidates.append({"doi": doi, "arxiv_id": arxiv_id, "score": score, "intent": intent, "abstract": abstract})
     return candidates
 
 
@@ -276,6 +337,7 @@ def run_paper_graph(
     references_top_k: int = 10,
     citations_top_k: int = 5,
     relevance_floor: float = 0.65,
+    full_text_threshold: float = 0.85,
     diminishing_returns_window: int | None = 5,
     cost_ceiling: int | None = 100,
     on_checkpoint=None,
@@ -327,7 +389,17 @@ def run_paper_graph(
         if is_known(node["doi"], collection):
             continue
         abstract = node.get("abstract") or (seed_abstract if node["doi"] == seed_id else "")
-        record_paper(collection, doi=node["doi"], abstract=abstract, discovered_via=node["discovered_via"])
+
+        # Attempt full-text fetch for high-relevance nodes with arXiv IDs
+        full_text = False
+        document_text = abstract
+        if node["score"] >= full_text_threshold and node.get("arxiv_id"):
+            fetched_text = fetch_full_text(node)
+            if fetched_text:
+                document_text = fetched_text
+                full_text = True
+
+        record_paper(collection, doi=node["doi"], abstract=document_text, discovered_via=node["discovered_via"], full_text=full_text)
 
     return results
 
@@ -390,6 +462,7 @@ def traverse(
                     "doi": cand["doi"],
                     "score": cand["score"],
                     "abstract": cand.get("abstract", ""),
+                    "arxiv_id": cand.get("arxiv_id"),
                     "discovered_via": {
                         "parent_doi": doi,
                         "edge_type": _EDGE_TYPE_LABEL[edge_type],
@@ -435,6 +508,7 @@ def main() -> None:
     ap.add_argument("--references-top-k", type=int, default=10)
     ap.add_argument("--citations-top-k", type=int, default=5)
     ap.add_argument("--relevance-floor", type=float, default=0.65)
+    ap.add_argument("--full-text-threshold", type=float, default=0.85, help="Score threshold for full-text fetch from arXiv (default: 0.85)")
     ap.add_argument("--cost-ceiling", type=int, default=100)
     ap.add_argument("--diminishing-returns-window", type=int, default=5)
     args = ap.parse_args()
@@ -491,6 +565,7 @@ def main() -> None:
         references_top_k=args.references_top_k,
         citations_top_k=args.citations_top_k,
         relevance_floor=args.relevance_floor,
+        full_text_threshold=args.full_text_threshold,
         diminishing_returns_window=args.diminishing_returns_window,
         cost_ceiling=args.cost_ceiling,
         on_checkpoint=_confirm_checkpoint,
