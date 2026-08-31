@@ -3026,18 +3026,6 @@
       "source_location": "L80"
     },
     {
-      "id": "skills_improve_scripts_daily_digest_call_claude",
-      "label": "call_claude()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 123,
-      "community_name": "daily_digest.py",
-      "file_type": "code",
-      "norm_label": "call_claude()",
-      "source_file": "skills/improve/scripts/daily_digest.py",
-      "source_location": "L230"
-    },
-    {
       "id": "skills_improve_scripts_daily_digest_improvement_queue_summary",
       "label": "improvement_queue_summary()",
       "_callable": true,
@@ -5630,42 +5618,6 @@
       "source_location": "L162"
     },
     {
-      "id": "lib_machine_profile_load_registry",
-      "label": "_load_registry()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 20,
-      "community_name": "task_dispatch.py",
-      "file_type": "code",
-      "norm_label": "_load_registry()",
-      "source_file": "lib/machine_profile.py",
-      "source_location": "L119"
-    },
-    {
-      "id": "lib_machine_profile_registry_id",
-      "label": "registry_id()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 20,
-      "community_name": "task_dispatch.py",
-      "file_type": "code",
-      "norm_label": "registry_id()",
-      "source_file": "lib/machine_profile.py",
-      "source_location": "L128"
-    },
-    {
-      "id": "lib_machine_profile_remote_devices",
-      "label": "remote_devices()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 20,
-      "community_name": "task_dispatch.py",
-      "file_type": "code",
-      "norm_label": "remote_devices()",
-      "source_file": "lib/machine_profile.py",
-      "source_location": "L139"
-    },
-    {
       "id": "lib_task_dispatch_build_wrapper_script",
       "label": "_build_wrapper_script()",
       "_callable": true,
@@ -5676,18 +5628,6 @@
       "norm_label": "_build_wrapper_script()",
       "source_file": "lib/task_dispatch.py",
       "source_location": "L132"
-    },
-    {
-      "id": "lib_task_dispatch_candidates",
-      "label": "_candidates()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 20,
-      "community_name": "task_dispatch.py",
-      "file_type": "code",
-      "norm_label": "_candidates()",
-      "source_file": "lib/task_dispatch.py",
-      "source_location": "L82"
     },
     {
       "id": "lib_task_dispatch_dispatch",
@@ -6506,6 +6446,30 @@
       "source_location": "L22"
     },
     {
+      "id": "dashboard_src_components_mrreview_approvedenyactions",
+      "label": "ApproveDenyActions()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 250,
+      "community_name": "MrReview.jsx",
+      "file_type": "code",
+      "norm_label": "approvedenyactions()",
+      "source_file": "dashboard/src/components/MrReview.jsx",
+      "source_location": "L160"
+    },
+    {
+      "id": "dashboard_src_components_mrreview_approvedenyactions_handleapprove",
+      "label": "handleApprove()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 250,
+      "community_name": "MrReview.jsx",
+      "file_type": "code",
+      "norm_label": "handleapprove()",
+      "source_file": "dashboard/src/components/MrReview.jsx",
+      "source_location": "L165"
+    },
+    {
       "id": "dashboard_src_components_mrreview_denymodal",
       "label": "DenyModal()",
       "_callable": true,
@@ -6575,7 +6539,7 @@
       "file_type": "code",
       "norm_label": "mrreview()",
       "source_file": "dashboard/src/components/MrReview.jsx",
-      "source_location": "L227"
+      "source_location": "L238"
     },
     {
       "id": "dashboard_src_components_mrreview_mrreview_reload",
@@ -6587,7 +6551,7 @@
       "file_type": "code",
       "norm_label": "reload()",
       "source_file": "dashboard/src/components/MrReview.jsx",
-      "source_location": "L232"
+      "source_location": "L243"
     },
     {
       "id": "dashboard_src_components_mrreview_mrreview_reloadandreturntolist",
@@ -6599,7 +6563,7 @@
       "file_type": "code",
       "norm_label": "reloadandreturntolist()",
       "source_file": "dashboard/src/components/MrReview.jsx",
-      "source_location": "L266"
+      "source_location": "L277"
     },
     {
       "id": "dashboard_src_components_mrreview_prcard",
@@ -6611,19 +6575,7 @@
       "file_type": "code",
       "norm_label": "prcard()",
       "source_file": "dashboard/src/components/MrReview.jsx",
-      "source_location": "L157"
-    },
-    {
-      "id": "dashboard_src_components_mrreview_prcard_handleapprove",
-      "label": "handleApprove()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 250,
-      "community_name": "MrReview.jsx",
-      "file_type": "code",
-      "norm_label": "handleapprove()",
-      "source_file": "dashboard/src/components/MrReview.jsx",
-      "source_location": "L162"
+      "source_location": "L214"
     },
     {
       "id": "dashboard_src_components_mrreview_verdictbadge",
@@ -6696,6 +6648,54 @@
       "norm_label": "verify()",
       "source_file": "skills/safety-monitor/scripts/verify.py",
       "source_location": "L36"
+    },
+    {
+      "id": "skills_self_improve_scripts_background_review_cooldown_active",
+      "label": "_cooldown_active()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 252,
+      "community_name": "verify.py",
+      "file_type": "code",
+      "norm_label": "_cooldown_active()",
+      "source_file": "skills/self-improve/scripts/background_review.py",
+      "source_location": "L55"
+    },
+    {
+      "id": "skills_self_improve_scripts_background_review_main",
+      "label": "main()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 252,
+      "community_name": "verify.py",
+      "file_type": "code",
+      "norm_label": "main()",
+      "source_file": "skills/self-improve/scripts/background_review.py",
+      "source_location": "L156"
+    },
+    {
+      "id": "skills_self_improve_scripts_background_review_run_review",
+      "label": "run_review()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 252,
+      "community_name": "verify.py",
+      "file_type": "code",
+      "norm_label": "run_review()",
+      "source_file": "skills/self-improve/scripts/background_review.py",
+      "source_location": "L117"
+    },
+    {
+      "id": "skills_self_improve_scripts_background_review_verify_and_reconcile",
+      "label": "_verify_and_reconcile()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 252,
+      "community_name": "verify.py",
+      "file_type": "code",
+      "norm_label": "_verify_and_reconcile()",
+      "source_file": "skills/self-improve/scripts/background_review.py",
+      "source_location": "L81"
     },
     {
       "id": "brain_map_vendor_motion_12_42_2_ba",
@@ -8882,88 +8882,64 @@
       "source_location": "L1"
     },
     {
-      "id": "skills_research_colony_scripts_correlate_correlate",
-      "label": "correlate()",
+      "id": "lib_tests_test_notify_test_falls_back_to_osascript_without_terminal_notifier",
+      "label": "test_falls_back_to_osascript_without_terminal_notifier()",
       "_callable": true,
       "_origin": "ast",
       "community": 265,
-      "community_name": "research_digest.py",
+      "community_name": "test_notify.py",
       "file_type": "code",
-      "norm_label": "correlate()",
-      "source_file": "skills/research-colony/scripts/correlate.py",
-      "source_location": "L54"
+      "norm_label": "test_falls_back_to_osascript_without_terminal_notifier()",
+      "source_file": "lib/tests/test_notify.py",
+      "source_location": "L38"
     },
     {
-      "id": "skills_research_colony_scripts_correlate_roadmap_match",
-      "label": "roadmap_match()",
+      "id": "lib_tests_test_notify_test_notify_never_raises_on_failure",
+      "label": "test_notify_never_raises_on_failure()",
       "_callable": true,
       "_origin": "ast",
       "community": 265,
-      "community_name": "research_digest.py",
+      "community_name": "test_notify.py",
       "file_type": "code",
-      "norm_label": "roadmap_match()",
-      "source_file": "skills/research-colony/scripts/correlate.py",
-      "source_location": "L48"
+      "norm_label": "test_notify_never_raises_on_failure()",
+      "source_file": "lib/tests/test_notify.py",
+      "source_location": "L51"
     },
     {
-      "id": "skills_research_colony_scripts_research_digest_fmt_item",
-      "label": "_fmt_item()",
+      "id": "lib_tests_test_notify_test_to_open_url_converts_local_path",
+      "label": "test_to_open_url_converts_local_path()",
       "_callable": true,
       "_origin": "ast",
       "community": 265,
-      "community_name": "research_digest.py",
+      "community_name": "test_notify.py",
       "file_type": "code",
-      "norm_label": "_fmt_item()",
-      "source_file": "skills/research-colony/scripts/research_digest.py",
-      "source_location": "L94"
+      "norm_label": "test_to_open_url_converts_local_path()",
+      "source_file": "lib/tests/test_notify.py",
+      "source_location": "L19"
     },
     {
-      "id": "skills_research_colony_scripts_research_digest_generate",
-      "label": "generate()",
+      "id": "lib_tests_test_notify_test_to_open_url_passes_through_urls",
+      "label": "test_to_open_url_passes_through_urls()",
       "_callable": true,
       "_origin": "ast",
       "community": 265,
-      "community_name": "research_digest.py",
+      "community_name": "test_notify.py",
       "file_type": "code",
-      "norm_label": "generate()",
-      "source_file": "skills/research-colony/scripts/research_digest.py",
-      "source_location": "L98"
+      "norm_label": "test_to_open_url_passes_through_urls()",
+      "source_file": "lib/tests/test_notify.py",
+      "source_location": "L14"
     },
     {
-      "id": "skills_research_colony_scripts_research_digest_load_correlated_from_chroma",
-      "label": "load_correlated_from_chroma()",
+      "id": "lib_tests_test_notify_test_uses_terminal_notifier_with_open_flag_when_available",
+      "label": "test_uses_terminal_notifier_with_open_flag_when_available()",
       "_callable": true,
       "_origin": "ast",
       "community": 265,
-      "community_name": "research_digest.py",
+      "community_name": "test_notify.py",
       "file_type": "code",
-      "norm_label": "load_correlated_from_chroma()",
-      "source_file": "skills/research-colony/scripts/research_digest.py",
-      "source_location": "L64"
-    },
-    {
-      "id": "skills_research_colony_scripts_research_digest_load_today_cache",
-      "label": "load_today_cache()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 265,
-      "community_name": "research_digest.py",
-      "file_type": "code",
-      "norm_label": "load_today_cache()",
-      "source_file": "skills/research-colony/scripts/research_digest.py",
-      "source_location": "L53"
-    },
-    {
-      "id": "skills_research_colony_scripts_run_colony_main",
-      "label": "main()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 265,
-      "community_name": "research_digest.py",
-      "file_type": "code",
-      "norm_label": "main()",
-      "source_file": "skills/research-colony/scripts/run_colony.py",
-      "source_location": "L15"
+      "norm_label": "test_uses_terminal_notifier_with_open_flag_when_available()",
+      "source_file": "lib/tests/test_notify.py",
+      "source_location": "L25"
     },
     {
       "id": "lib_tests_test_run_ticket_failing_result",
@@ -9134,16 +9110,64 @@
       "source_location": "L218"
     },
     {
+      "id": "skills_safety_monitor_scripts_calibrate_calibrate",
+      "label": "calibrate()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 268,
+      "community_name": "calibrate.py",
+      "file_type": "code",
+      "norm_label": "calibrate()",
+      "source_file": "skills/safety-monitor/scripts/calibrate.py",
+      "source_location": "L63"
+    },
+    {
+      "id": "skills_safety_monitor_scripts_calibrate_get_tau",
+      "label": "get_tau()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 268,
+      "community_name": "calibrate.py",
+      "file_type": "code",
+      "norm_label": "get_tau()",
+      "source_file": "skills/safety-monitor/scripts/calibrate.py",
+      "source_location": "L89"
+    },
+    {
+      "id": "skills_safety_monitor_scripts_calibrate_read_calibration_rows",
+      "label": "_read_calibration_rows()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 268,
+      "community_name": "calibrate.py",
+      "file_type": "code",
+      "norm_label": "_read_calibration_rows()",
+      "source_file": "skills/safety-monitor/scripts/calibrate.py",
+      "source_location": "L21"
+    },
+    {
       "id": "skills_safety_monitor_scripts_calibrate_record_label",
       "label": "record_label()",
       "_callable": true,
       "_origin": "ast",
       "community": 268,
-      "community_name": "process",
+      "community_name": "calibrate.py",
       "file_type": "code",
       "norm_label": "record_label()",
       "source_file": "skills/safety-monitor/scripts/calibrate.py",
       "source_location": "L38"
+    },
+    {
+      "id": "skills_safety_monitor_scripts_calibrate_write_tau",
+      "label": "_write_tau()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 268,
+      "community_name": "calibrate.py",
+      "file_type": "code",
+      "norm_label": "_write_tau()",
+      "source_file": "skills/safety-monitor/scripts/calibrate.py",
+      "source_location": "L51"
     },
     {
       "id": "skills_safety_monitor_scripts_process_quarantine_reviews_parse_block",
@@ -9151,7 +9175,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 268,
-      "community_name": "process",
+      "community_name": "calibrate.py",
       "file_type": "code",
       "norm_label": "_parse_block()",
       "source_file": "skills/safety-monitor/scripts/process_quarantine_reviews.py",
@@ -9163,7 +9187,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 268,
-      "community_name": "process",
+      "community_name": "calibrate.py",
       "file_type": "code",
       "norm_label": "process()",
       "source_file": "skills/safety-monitor/scripts/process_quarantine_reviews.py",
@@ -9175,7 +9199,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 268,
-      "community_name": "process",
+      "community_name": "calibrate.py",
       "file_type": "code",
       "norm_label": "_split_entries()",
       "source_file": "skills/safety-monitor/scripts/process_quarantine_reviews.py",
@@ -9698,6 +9722,78 @@
       "source_location": "L49"
     },
     {
+      "id": "lib_ticket_pipeline_build_wrapper_command",
+      "label": "_build_wrapper_command()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 273,
+      "community_name": "run_ticket.py",
+      "file_type": "code",
+      "norm_label": "_build_wrapper_command()",
+      "source_file": "lib/ticket_pipeline.py",
+      "source_location": "L90"
+    },
+    {
+      "id": "lib_ticket_pipeline_claim",
+      "label": "_claim()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 273,
+      "community_name": "run_ticket.py",
+      "file_type": "code",
+      "norm_label": "_claim()",
+      "source_file": "lib/ticket_pipeline.py",
+      "source_location": "L72"
+    },
+    {
+      "id": "lib_ticket_pipeline_label_for_device",
+      "label": "_label_for_device()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 273,
+      "community_name": "run_ticket.py",
+      "file_type": "code",
+      "norm_label": "_label_for_device()",
+      "source_file": "lib/ticket_pipeline.py",
+      "source_location": "L50"
+    },
+    {
+      "id": "lib_ticket_pipeline_main",
+      "label": "main()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 273,
+      "community_name": "run_ticket.py",
+      "file_type": "code",
+      "norm_label": "main()",
+      "source_file": "lib/ticket_pipeline.py",
+      "source_location": "L101"
+    },
+    {
+      "id": "lib_ticket_pipeline_release",
+      "label": "_release()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 273,
+      "community_name": "run_ticket.py",
+      "file_type": "code",
+      "norm_label": "_release()",
+      "source_file": "lib/ticket_pipeline.py",
+      "source_location": "L83"
+    },
+    {
+      "id": "lib_ticket_pipeline_unclaimed_ready_tickets",
+      "label": "_unclaimed_ready_tickets()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 273,
+      "community_name": "run_ticket.py",
+      "file_type": "code",
+      "norm_label": "_unclaimed_ready_tickets()",
+      "source_file": "lib/ticket_pipeline.py",
+      "source_location": "L54"
+    },
+    {
       "id": "brain_map_vendor_motion_12_42_2_animatevisualelement",
       "label": "animateVisualElement()",
       "_callable": true,
@@ -10142,6 +10238,42 @@
       "source_location": "L149"
     },
     {
+      "id": "skills_research_colony_scripts_correlate_correlate",
+      "label": "correlate()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 276,
+      "community_name": "source_monitor.py",
+      "file_type": "code",
+      "norm_label": "correlate()",
+      "source_file": "skills/research-colony/scripts/correlate.py",
+      "source_location": "L54"
+    },
+    {
+      "id": "skills_research_colony_scripts_correlate_roadmap_match",
+      "label": "roadmap_match()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 276,
+      "community_name": "source_monitor.py",
+      "file_type": "code",
+      "norm_label": "roadmap_match()",
+      "source_file": "skills/research-colony/scripts/correlate.py",
+      "source_location": "L48"
+    },
+    {
+      "id": "skills_research_colony_scripts_run_colony_main",
+      "label": "main()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 276,
+      "community_name": "source_monitor.py",
+      "file_type": "code",
+      "norm_label": "main()",
+      "source_file": "skills/research-colony/scripts/run_colony.py",
+      "source_location": "L15"
+    },
+    {
       "id": "skills_research_colony_scripts_source_monitor_fetch_arxiv",
       "label": "fetch_arxiv()",
       "_callable": true,
@@ -10212,54 +10344,6 @@
       "norm_label": "store_items()",
       "source_file": "skills/research-colony/scripts/source_monitor.py",
       "source_location": "L116"
-    },
-    {
-      "id": "skills_safety_monitor_scripts_calibrate_calibrate",
-      "label": "calibrate()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 278,
-      "community_name": "calibrate.py",
-      "file_type": "code",
-      "norm_label": "calibrate()",
-      "source_file": "skills/safety-monitor/scripts/calibrate.py",
-      "source_location": "L63"
-    },
-    {
-      "id": "skills_safety_monitor_scripts_calibrate_get_tau",
-      "label": "get_tau()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 278,
-      "community_name": "calibrate.py",
-      "file_type": "code",
-      "norm_label": "get_tau()",
-      "source_file": "skills/safety-monitor/scripts/calibrate.py",
-      "source_location": "L89"
-    },
-    {
-      "id": "skills_safety_monitor_scripts_calibrate_read_calibration_rows",
-      "label": "_read_calibration_rows()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 278,
-      "community_name": "calibrate.py",
-      "file_type": "code",
-      "norm_label": "_read_calibration_rows()",
-      "source_file": "skills/safety-monitor/scripts/calibrate.py",
-      "source_location": "L21"
-    },
-    {
-      "id": "skills_safety_monitor_scripts_calibrate_write_tau",
-      "label": "_write_tau()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 278,
-      "community_name": "calibrate.py",
-      "file_type": "code",
-      "norm_label": "_write_tau()",
-      "source_file": "skills/safety-monitor/scripts/calibrate.py",
-      "source_location": "L51"
     },
     {
       "id": "lib_tests_test_cleanup_sweep_iso",
@@ -11150,78 +11234,6 @@
       "source_location": "L63"
     },
     {
-      "id": "lib_ticket_pipeline_build_wrapper_command",
-      "label": "_build_wrapper_command()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 288,
-      "community_name": "ticket_pipeline.py",
-      "file_type": "code",
-      "norm_label": "_build_wrapper_command()",
-      "source_file": "lib/ticket_pipeline.py",
-      "source_location": "L90"
-    },
-    {
-      "id": "lib_ticket_pipeline_claim",
-      "label": "_claim()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 288,
-      "community_name": "ticket_pipeline.py",
-      "file_type": "code",
-      "norm_label": "_claim()",
-      "source_file": "lib/ticket_pipeline.py",
-      "source_location": "L72"
-    },
-    {
-      "id": "lib_ticket_pipeline_label_for_device",
-      "label": "_label_for_device()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 288,
-      "community_name": "ticket_pipeline.py",
-      "file_type": "code",
-      "norm_label": "_label_for_device()",
-      "source_file": "lib/ticket_pipeline.py",
-      "source_location": "L50"
-    },
-    {
-      "id": "lib_ticket_pipeline_main",
-      "label": "main()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 288,
-      "community_name": "ticket_pipeline.py",
-      "file_type": "code",
-      "norm_label": "main()",
-      "source_file": "lib/ticket_pipeline.py",
-      "source_location": "L101"
-    },
-    {
-      "id": "lib_ticket_pipeline_release",
-      "label": "_release()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 288,
-      "community_name": "ticket_pipeline.py",
-      "file_type": "code",
-      "norm_label": "_release()",
-      "source_file": "lib/ticket_pipeline.py",
-      "source_location": "L83"
-    },
-    {
-      "id": "lib_ticket_pipeline_unclaimed_ready_tickets",
-      "label": "_unclaimed_ready_tickets()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 288,
-      "community_name": "ticket_pipeline.py",
-      "file_type": "code",
-      "norm_label": "_unclaimed_ready_tickets()",
-      "source_file": "lib/ticket_pipeline.py",
-      "source_location": "L54"
-    },
-    {
       "id": "lib_tests_test_claude_bin_test_default_candidates_include_the_three_known_install_locations",
       "label": "test_default_candidates_include_the_three_known_install_locations()",
       "_callable": true,
@@ -11580,54 +11592,6 @@
       "norm_label": "metrics_dir()",
       "source_file": "lib/tests/test_sandbox_orchestration.py",
       "source_location": "L19"
-    },
-    {
-      "id": "skills_self_improve_scripts_background_review_cooldown_active",
-      "label": "_cooldown_active()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 294,
-      "community_name": "background_review.py",
-      "file_type": "code",
-      "norm_label": "_cooldown_active()",
-      "source_file": "skills/self-improve/scripts/background_review.py",
-      "source_location": "L55"
-    },
-    {
-      "id": "skills_self_improve_scripts_background_review_main",
-      "label": "main()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 294,
-      "community_name": "background_review.py",
-      "file_type": "code",
-      "norm_label": "main()",
-      "source_file": "skills/self-improve/scripts/background_review.py",
-      "source_location": "L156"
-    },
-    {
-      "id": "skills_self_improve_scripts_background_review_run_review",
-      "label": "run_review()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 294,
-      "community_name": "background_review.py",
-      "file_type": "code",
-      "norm_label": "run_review()",
-      "source_file": "skills/self-improve/scripts/background_review.py",
-      "source_location": "L117"
-    },
-    {
-      "id": "skills_self_improve_scripts_background_review_verify_and_reconcile",
-      "label": "_verify_and_reconcile()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 294,
-      "community_name": "background_review.py",
-      "file_type": "code",
-      "norm_label": "_verify_and_reconcile()",
-      "source_file": "skills/self-improve/scripts/background_review.py",
-      "source_location": "L81"
     },
     {
       "id": "brain_map_vendor_motion_12_42_2_ar",
@@ -13226,64 +13190,52 @@
       "source_location": "L40"
     },
     {
-      "id": "lib_tests_test_notify_test_falls_back_to_osascript_without_terminal_notifier",
-      "label": "test_falls_back_to_osascript_without_terminal_notifier()",
+      "id": "skills_research_colony_scripts_research_digest_fmt_item",
+      "label": "_fmt_item()",
       "_callable": true,
       "_origin": "ast",
       "community": 4,
       "community_name": "notify",
       "file_type": "code",
-      "norm_label": "test_falls_back_to_osascript_without_terminal_notifier()",
-      "source_file": "lib/tests/test_notify.py",
-      "source_location": "L38"
+      "norm_label": "_fmt_item()",
+      "source_file": "skills/research-colony/scripts/research_digest.py",
+      "source_location": "L94"
     },
     {
-      "id": "lib_tests_test_notify_test_notify_never_raises_on_failure",
-      "label": "test_notify_never_raises_on_failure()",
+      "id": "skills_research_colony_scripts_research_digest_generate",
+      "label": "generate()",
       "_callable": true,
       "_origin": "ast",
       "community": 4,
       "community_name": "notify",
       "file_type": "code",
-      "norm_label": "test_notify_never_raises_on_failure()",
-      "source_file": "lib/tests/test_notify.py",
-      "source_location": "L51"
+      "norm_label": "generate()",
+      "source_file": "skills/research-colony/scripts/research_digest.py",
+      "source_location": "L98"
     },
     {
-      "id": "lib_tests_test_notify_test_to_open_url_converts_local_path",
-      "label": "test_to_open_url_converts_local_path()",
+      "id": "skills_research_colony_scripts_research_digest_load_correlated_from_chroma",
+      "label": "load_correlated_from_chroma()",
       "_callable": true,
       "_origin": "ast",
       "community": 4,
       "community_name": "notify",
       "file_type": "code",
-      "norm_label": "test_to_open_url_converts_local_path()",
-      "source_file": "lib/tests/test_notify.py",
-      "source_location": "L19"
+      "norm_label": "load_correlated_from_chroma()",
+      "source_file": "skills/research-colony/scripts/research_digest.py",
+      "source_location": "L64"
     },
     {
-      "id": "lib_tests_test_notify_test_to_open_url_passes_through_urls",
-      "label": "test_to_open_url_passes_through_urls()",
+      "id": "skills_research_colony_scripts_research_digest_load_today_cache",
+      "label": "load_today_cache()",
       "_callable": true,
       "_origin": "ast",
       "community": 4,
       "community_name": "notify",
       "file_type": "code",
-      "norm_label": "test_to_open_url_passes_through_urls()",
-      "source_file": "lib/tests/test_notify.py",
-      "source_location": "L14"
-    },
-    {
-      "id": "lib_tests_test_notify_test_uses_terminal_notifier_with_open_flag_when_available",
-      "label": "test_uses_terminal_notifier_with_open_flag_when_available()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 4,
-      "community_name": "notify",
-      "file_type": "code",
-      "norm_label": "test_uses_terminal_notifier_with_open_flag_when_available()",
-      "source_file": "lib/tests/test_notify.py",
-      "source_location": "L25"
+      "norm_label": "load_today_cache()",
+      "source_file": "skills/research-colony/scripts/research_digest.py",
+      "source_location": "L53"
     },
     {
       "id": "skills_improve_scripts_cross_machine_merge_build_merged",
@@ -13416,6 +13368,18 @@
       "norm_label": "sync_research_feed()",
       "source_file": "skills/improve/scripts/cross_machine_merge.py",
       "source_location": "L123"
+    },
+    {
+      "id": "skills_improve_scripts_daily_digest_call_claude",
+      "label": "call_claude()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 40,
+      "community_name": "cross_machine_merge.py",
+      "file_type": "code",
+      "norm_label": "call_claude()",
+      "source_file": "skills/improve/scripts/daily_digest.py",
+      "source_location": "L230"
     },
     {
       "id": "skills_paper_dive_scripts_logic_auditor_check_inference_validity",
@@ -16706,40 +16670,52 @@
       "source_location": "L74"
     },
     {
-      "id": "skills_handoff_scripts_generate_handoff_from_transcript_extract_recent_excerpt",
-      "label": "extract_recent_excerpt()",
+      "id": "lib_machine_profile_load_registry",
+      "label": "_load_registry()",
       "_callable": true,
       "_origin": "ast",
       "community": 69,
-      "community_name": "generate_handoff_from_transcript.py",
+      "community_name": "registry_id",
       "file_type": "code",
-      "norm_label": "extract_recent_excerpt()",
-      "source_file": "skills/handoff/scripts/generate_handoff_from_transcript.py",
-      "source_location": "L59"
+      "norm_label": "_load_registry()",
+      "source_file": "lib/machine_profile.py",
+      "source_location": "L119"
     },
     {
-      "id": "skills_handoff_scripts_generate_handoff_from_transcript_extract_text",
-      "label": "_extract_text()",
+      "id": "lib_machine_profile_registry_id",
+      "label": "registry_id()",
       "_callable": true,
       "_origin": "ast",
       "community": 69,
-      "community_name": "generate_handoff_from_transcript.py",
+      "community_name": "registry_id",
       "file_type": "code",
-      "norm_label": "_extract_text()",
-      "source_file": "skills/handoff/scripts/generate_handoff_from_transcript.py",
-      "source_location": "L36"
+      "norm_label": "registry_id()",
+      "source_file": "lib/machine_profile.py",
+      "source_location": "L128"
     },
     {
-      "id": "skills_handoff_scripts_generate_handoff_from_transcript_main",
-      "label": "main()",
+      "id": "lib_machine_profile_remote_devices",
+      "label": "remote_devices()",
       "_callable": true,
       "_origin": "ast",
       "community": 69,
-      "community_name": "generate_handoff_from_transcript.py",
+      "community_name": "registry_id",
       "file_type": "code",
-      "norm_label": "main()",
-      "source_file": "skills/handoff/scripts/generate_handoff_from_transcript.py",
-      "source_location": "L104"
+      "norm_label": "remote_devices()",
+      "source_file": "lib/machine_profile.py",
+      "source_location": "L139"
+    },
+    {
+      "id": "lib_task_dispatch_candidates",
+      "label": "_candidates()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 69,
+      "community_name": "registry_id",
+      "file_type": "code",
+      "norm_label": "_candidates()",
+      "source_file": "lib/task_dispatch.py",
+      "source_location": "L82"
     },
     {
       "id": "bench_bench_aggregate_runs",
@@ -17688,6 +17664,42 @@
       "norm_label": "main()",
       "source_file": "skills/handoff/scripts/find_freshest_session.py",
       "source_location": "L34"
+    },
+    {
+      "id": "skills_handoff_scripts_generate_handoff_from_transcript_extract_recent_excerpt",
+      "label": "extract_recent_excerpt()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 80,
+      "community_name": "claude_bin.py",
+      "file_type": "code",
+      "norm_label": "extract_recent_excerpt()",
+      "source_file": "skills/handoff/scripts/generate_handoff_from_transcript.py",
+      "source_location": "L59"
+    },
+    {
+      "id": "skills_handoff_scripts_generate_handoff_from_transcript_extract_text",
+      "label": "_extract_text()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 80,
+      "community_name": "claude_bin.py",
+      "file_type": "code",
+      "norm_label": "_extract_text()",
+      "source_file": "skills/handoff/scripts/generate_handoff_from_transcript.py",
+      "source_location": "L36"
+    },
+    {
+      "id": "skills_handoff_scripts_generate_handoff_from_transcript_main",
+      "label": "main()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 80,
+      "community_name": "claude_bin.py",
+      "file_type": "code",
+      "norm_label": "main()",
+      "source_file": "skills/handoff/scripts/generate_handoff_from_transcript.py",
+      "source_location": "L104"
     },
     {
       "id": "skills_paper_dive_scripts_logic_auditor_compute_all_reliability_signals",
@@ -28666,28 +28678,6 @@
       "source_location": "L1"
     },
     {
-      "id": "lib_machine_profile_rationale_129",
-      "label": "This machine's stable id in marvin-network.json, resolved by matching hardware\u2026",
-      "_origin": "ast",
-      "community": 20,
-      "community_name": "task_dispatch.py",
-      "file_type": "rationale",
-      "norm_label": "this machine's stable id in marvin-network.json, resolved by matching hardware...",
-      "source_file": "lib/machine_profile.py",
-      "source_location": "L129"
-    },
-    {
-      "id": "lib_machine_profile_rationale_140",
-      "label": "All registered devices that aren't this one, keyed by device id.",
-      "_origin": "ast",
-      "community": 20,
-      "community_name": "task_dispatch.py",
-      "file_type": "rationale",
-      "norm_label": "all registered devices that aren't this one, keyed by device id.",
-      "source_file": "lib/machine_profile.py",
-      "source_location": "L140"
-    },
-    {
       "id": "lib_task_dispatch_rationale_133",
       "label": "A script that marks the dispatch-state file busy, runs the real command, and on\u2026",
       "_origin": "ast",
@@ -28719,17 +28709,6 @@
       "norm_label": "hostnames tailscale currently reports as online (not 'offline').",
       "source_file": "lib/task_dispatch.py",
       "source_location": "L44"
-    },
-    {
-      "id": "lib_task_dispatch_rationale_83",
-      "label": "All known devices (self + registered remotes) keyed by device_id, each tagged\u2026",
-      "_origin": "ast",
-      "community": 20,
-      "community_name": "task_dispatch.py",
-      "file_type": "rationale",
-      "norm_label": "all known devices (self + registered remotes) keyed by device_id, each tagged...",
-      "source_file": "lib/task_dispatch.py",
-      "source_location": "L83"
     },
     {
       "id": "lib_task_dispatch_rationale_94",
@@ -31051,7 +31030,7 @@
       "source_location": "L63"
     },
     {
-      "id": "dashboard_src_components_mrreview_jsx_docref_adr_0025",
+      "id": "docref_adr_0025",
       "label": "ADR-0025",
       "_origin": "ast",
       "community": 250,
@@ -31092,6 +31071,17 @@
       "file_type": "code",
       "norm_label": "verify.py",
       "source_file": "skills/safety-monitor/scripts/verify.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "skills_self_improve_scripts_background_review",
+      "label": "background_review.py",
+      "_origin": "ast",
+      "community": 252,
+      "community_name": "verify.py",
+      "file_type": "code",
+      "norm_label": "background_review.py",
+      "source_file": "skills/self-improve/scripts/background_review.py",
       "source_location": "L1"
     },
     {
@@ -31137,6 +31127,28 @@
       "norm_label": "return a risk score in [0, 1] for `artifact_text` under `loop_name`'s rubric....",
       "source_file": "skills/safety-monitor/scripts/verify.py",
       "source_location": "L37"
+    },
+    {
+      "id": "skills_self_improve_scripts_background_review_rationale_118",
+      "label": "Runs synchronously \u2014 only ever called from the already-detached relaunch below,\u2026",
+      "_origin": "ast",
+      "community": 252,
+      "community_name": "verify.py",
+      "file_type": "rationale",
+      "norm_label": "runs synchronously \u2014 only ever called from the already-detached relaunch below,...",
+      "source_file": "skills/self-improve/scripts/background_review.py",
+      "source_location": "L118"
+    },
+    {
+      "id": "skills_self_improve_scripts_background_review_rationale_82",
+      "label": "Post-hoc check on what the review actually appended to the append-only\u2026",
+      "_origin": "ast",
+      "community": 252,
+      "community_name": "verify.py",
+      "file_type": "rationale",
+      "norm_label": "post-hoc check on what the review actually appended to the append-only...",
+      "source_file": "skills/self-improve/scripts/background_review.py",
+      "source_location": "L82"
     },
     {
       "id": "lib_ticket_claim",
@@ -31739,47 +31751,25 @@
       "source_location": "L1"
     },
     {
-      "id": "skills_research_colony_scripts_correlate",
-      "label": "correlate.py",
+      "id": "lib_tests_test_notify",
+      "label": "test_notify.py",
       "_origin": "ast",
       "community": 265,
-      "community_name": "research_digest.py",
+      "community_name": "test_notify.py",
       "file_type": "code",
-      "norm_label": "correlate.py",
-      "source_file": "skills/research-colony/scripts/correlate.py",
+      "norm_label": "test_notify.py",
+      "source_file": "lib/tests/test_notify.py",
       "source_location": "L1"
     },
     {
-      "id": "skills_research_colony_scripts_research_digest",
-      "label": "research_digest.py",
+      "id": "lib_tests_test_notify_rationale_1",
+      "label": "Tests for notify.py. Run via: ~/.agents/venv/bin/python -m pytest\u2026",
       "_origin": "ast",
       "community": 265,
-      "community_name": "research_digest.py",
-      "file_type": "code",
-      "norm_label": "research_digest.py",
-      "source_file": "skills/research-colony/scripts/research_digest.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "skills_research_colony_scripts_research_digest_py_path",
-      "label": "Path",
-      "_origin": "ast",
-      "community": 265,
-      "community_name": "research_digest.py",
-      "file_type": "code",
-      "norm_label": "path",
-      "source_file": "",
-      "source_location": ""
-    },
-    {
-      "id": "skills_research_colony_scripts_run_colony",
-      "label": "run_colony.py",
-      "_origin": "ast",
-      "community": 265,
-      "community_name": "research_digest.py",
-      "file_type": "code",
-      "norm_label": "run_colony.py",
-      "source_file": "skills/research-colony/scripts/run_colony.py",
+      "community_name": "test_notify.py",
+      "file_type": "rationale",
+      "norm_label": "tests for notify.py. run via: ~/.agents/venv/bin/python -m pytest...",
+      "source_file": "lib/tests/test_notify.py",
       "source_location": "L1"
     },
     {
@@ -31827,11 +31817,22 @@
       "source_location": "L24"
     },
     {
+      "id": "skills_safety_monitor_scripts_calibrate",
+      "label": "calibrate.py",
+      "_origin": "ast",
+      "community": 268,
+      "community_name": "calibrate.py",
+      "file_type": "code",
+      "norm_label": "calibrate.py",
+      "source_file": "skills/safety-monitor/scripts/calibrate.py",
+      "source_location": "L1"
+    },
+    {
       "id": "skills_safety_monitor_scripts_process_quarantine_reviews",
       "label": "process_quarantine_reviews.py",
       "_origin": "ast",
       "community": 268,
-      "community_name": "process",
+      "community_name": "calibrate.py",
       "file_type": "code",
       "norm_label": "process_quarantine_reviews.py",
       "source_file": "skills/safety-monitor/scripts/process_quarantine_reviews.py",
@@ -31842,18 +31843,40 @@
       "label": "label: 0 = approved (was actually fine), 1 = denied (was actually bad).\u2026",
       "_origin": "ast",
       "community": 268,
-      "community_name": "process",
+      "community_name": "calibrate.py",
       "file_type": "rationale",
       "norm_label": "label: 0 = approved (was actually fine), 1 = denied (was actually bad)....",
       "source_file": "skills/safety-monitor/scripts/calibrate.py",
       "source_location": "L39"
     },
     {
+      "id": "skills_safety_monitor_scripts_calibrate_rationale_65",
+      "label": "Smallest tau such that the false-accept rate on labeled-bad rows <=\u2026",
+      "_origin": "ast",
+      "community": 268,
+      "community_name": "calibrate.py",
+      "file_type": "rationale",
+      "norm_label": "smallest tau such that the false-accept rate on labeled-bad rows <=...",
+      "source_file": "skills/safety-monitor/scripts/calibrate.py",
+      "source_location": "L65"
+    },
+    {
+      "id": "skills_safety_monitor_scripts_calibrate_rationale_90",
+      "label": "Fast path for verify.py: use the cached tau if present, else calibrate.",
+      "_origin": "ast",
+      "community": 268,
+      "community_name": "calibrate.py",
+      "file_type": "rationale",
+      "norm_label": "fast path for verify.py: use the cached tau if present, else calibrate.",
+      "source_file": "skills/safety-monitor/scripts/calibrate.py",
+      "source_location": "L90"
+    },
+    {
       "id": "skills_safety_monitor_scripts_process_quarantine_reviews_rationale_40",
       "label": "Splits on the entry-header pattern, not \"---\" (which can appear unquoted inside\u2026",
       "_origin": "ast",
       "community": 268,
-      "community_name": "process",
+      "community_name": "calibrate.py",
       "file_type": "rationale",
       "norm_label": "splits on the entry-header pattern, not \"---\" (which can appear unquoted inside...",
       "source_file": "skills/safety-monitor/scripts/process_quarantine_reviews.py",
@@ -31864,7 +31887,7 @@
       "label": "Returns (processed_count, remaining_count).",
       "_origin": "ast",
       "community": 268,
-      "community_name": "process",
+      "community_name": "calibrate.py",
       "file_type": "rationale",
       "norm_label": "returns (processed_count, remaining_count).",
       "source_file": "skills/safety-monitor/scripts/process_quarantine_reviews.py",
@@ -32302,6 +32325,17 @@
       "source_location": "L1"
     },
     {
+      "id": "lib_ticket_pipeline",
+      "label": "ticket_pipeline.py",
+      "_origin": "ast",
+      "community": 273,
+      "community_name": "run_ticket.py",
+      "file_type": "code",
+      "norm_label": "ticket_pipeline.py",
+      "source_file": "lib/ticket_pipeline.py",
+      "source_location": "L1"
+    },
+    {
       "id": "lib_run_ticket_rationale_36",
       "label": "A ticket that didn't raise a PR -- rate-limited, a worktree-creation failure,\u2026",
       "_origin": "ast",
@@ -32322,6 +32356,17 @@
       "norm_label": "this machine has been free since execute_ticket returned above -- win or lose,...",
       "source_file": "lib/run_ticket.py",
       "source_location": "L50"
+    },
+    {
+      "id": "lib_ticket_pipeline_rationale_91",
+      "label": "run_ticket.py handles worktree creation (from origin/main, not whatever\u2026",
+      "_origin": "ast",
+      "community": 273,
+      "community_name": "run_ticket.py",
+      "file_type": "rationale",
+      "norm_label": "run_ticket.py handles worktree creation (from origin/main, not whatever...",
+      "source_file": "lib/ticket_pipeline.py",
+      "source_location": "L91"
     },
     {
       "id": "lib_cleanup_sweep",
@@ -32366,6 +32411,28 @@
       "norm_label": "cron entry point. runs both sweeps, logs what was removed/released (same...",
       "source_file": "lib/cleanup_sweep.py",
       "source_location": "L177"
+    },
+    {
+      "id": "skills_research_colony_scripts_correlate",
+      "label": "correlate.py",
+      "_origin": "ast",
+      "community": 276,
+      "community_name": "source_monitor.py",
+      "file_type": "code",
+      "norm_label": "correlate.py",
+      "source_file": "skills/research-colony/scripts/correlate.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "skills_research_colony_scripts_run_colony",
+      "label": "run_colony.py",
+      "_origin": "ast",
+      "community": 276,
+      "community_name": "source_monitor.py",
+      "file_type": "code",
+      "norm_label": "run_colony.py",
+      "source_file": "skills/research-colony/scripts/run_colony.py",
+      "source_location": "L1"
     },
     {
       "id": "skills_research_colony_scripts_source_monitor",
@@ -32413,39 +32480,6 @@
       "norm_label": "2026-08-29t16:01:05.086641+00:00 \u2014 ticket-24",
       "source_file": "bench/metrics/ticket-24.md",
       "source_location": "L4"
-    },
-    {
-      "id": "skills_safety_monitor_scripts_calibrate",
-      "label": "calibrate.py",
-      "_origin": "ast",
-      "community": 278,
-      "community_name": "calibrate.py",
-      "file_type": "code",
-      "norm_label": "calibrate.py",
-      "source_file": "skills/safety-monitor/scripts/calibrate.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "skills_safety_monitor_scripts_calibrate_rationale_65",
-      "label": "Smallest tau such that the false-accept rate on labeled-bad rows <=\u2026",
-      "_origin": "ast",
-      "community": 278,
-      "community_name": "calibrate.py",
-      "file_type": "rationale",
-      "norm_label": "smallest tau such that the false-accept rate on labeled-bad rows <=...",
-      "source_file": "skills/safety-monitor/scripts/calibrate.py",
-      "source_location": "L65"
-    },
-    {
-      "id": "skills_safety_monitor_scripts_calibrate_rationale_90",
-      "label": "Fast path for verify.py: use the cached tau if present, else calibrate.",
-      "_origin": "ast",
-      "community": 278,
-      "community_name": "calibrate.py",
-      "file_type": "rationale",
-      "norm_label": "fast path for verify.py: use the cached tau if present, else calibrate.",
-      "source_file": "skills/safety-monitor/scripts/calibrate.py",
-      "source_location": "L90"
     },
     {
       "id": "lib_dispatch_ticket",
@@ -32687,28 +32721,6 @@
       "source_location": "L92"
     },
     {
-      "id": "lib_ticket_pipeline",
-      "label": "ticket_pipeline.py",
-      "_origin": "ast",
-      "community": 288,
-      "community_name": "ticket_pipeline.py",
-      "file_type": "code",
-      "norm_label": "ticket_pipeline.py",
-      "source_file": "lib/ticket_pipeline.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "lib_ticket_pipeline_rationale_91",
-      "label": "run_ticket.py handles worktree creation (from origin/main, not whatever\u2026",
-      "_origin": "ast",
-      "community": 288,
-      "community_name": "ticket_pipeline.py",
-      "file_type": "rationale",
-      "norm_label": "run_ticket.py handles worktree creation (from origin/main, not whatever...",
-      "source_file": "lib/ticket_pipeline.py",
-      "source_location": "L91"
-    },
-    {
       "id": "lib_tests_test_claude_bin",
       "label": "test_claude_bin.py",
       "_origin": "ast",
@@ -32861,39 +32873,6 @@
       "norm_label": "fixture",
       "source_file": "",
       "source_location": ""
-    },
-    {
-      "id": "skills_self_improve_scripts_background_review",
-      "label": "background_review.py",
-      "_origin": "ast",
-      "community": 294,
-      "community_name": "background_review.py",
-      "file_type": "code",
-      "norm_label": "background_review.py",
-      "source_file": "skills/self-improve/scripts/background_review.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "skills_self_improve_scripts_background_review_rationale_118",
-      "label": "Runs synchronously \u2014 only ever called from the already-detached relaunch below,\u2026",
-      "_origin": "ast",
-      "community": 294,
-      "community_name": "background_review.py",
-      "file_type": "rationale",
-      "norm_label": "runs synchronously \u2014 only ever called from the already-detached relaunch below,...",
-      "source_file": "skills/self-improve/scripts/background_review.py",
-      "source_location": "L118"
-    },
-    {
-      "id": "skills_self_improve_scripts_background_review_rationale_82",
-      "label": "Post-hoc check on what the review actually appended to the append-only\u2026",
-      "_origin": "ast",
-      "community": 294,
-      "community_name": "background_review.py",
-      "file_type": "rationale",
-      "norm_label": "post-hoc check on what the review actually appended to the append-only...",
-      "source_file": "skills/self-improve/scripts/background_review.py",
-      "source_location": "L82"
     },
     {
       "id": "bench_metrics_ticket_102",
@@ -34314,15 +34293,26 @@
       "source_location": "L1"
     },
     {
-      "id": "lib_tests_test_notify",
-      "label": "test_notify.py",
+      "id": "skills_research_colony_scripts_research_digest",
+      "label": "research_digest.py",
       "_origin": "ast",
       "community": 4,
       "community_name": "notify",
       "file_type": "code",
-      "norm_label": "test_notify.py",
-      "source_file": "lib/tests/test_notify.py",
+      "norm_label": "research_digest.py",
+      "source_file": "skills/research-colony/scripts/research_digest.py",
       "source_location": "L1"
+    },
+    {
+      "id": "skills_research_colony_scripts_research_digest_py_path",
+      "label": "Path",
+      "_origin": "ast",
+      "community": 4,
+      "community_name": "notify",
+      "file_type": "code",
+      "norm_label": "path",
+      "source_file": "",
+      "source_location": ""
     },
     {
       "id": "lib_notify_rationale_34",
@@ -34356,17 +34346,6 @@
       "norm_label": "fire a macos notification. if open_target (a url or local file path) is given...",
       "source_file": "lib/notify.py",
       "source_location": "L48"
-    },
-    {
-      "id": "lib_tests_test_notify_rationale_1",
-      "label": "Tests for notify.py. Run via: ~/.agents/venv/bin/python -m pytest\u2026",
-      "_origin": "ast",
-      "community": 4,
-      "community_name": "notify",
-      "file_type": "rationale",
-      "norm_label": "tests for notify.py. run via: ~/.agents/venv/bin/python -m pytest...",
-      "source_file": "lib/tests/test_notify.py",
-      "source_location": "L1"
     },
     {
       "id": "skills_improve_scripts_cross_machine_merge",
@@ -35677,26 +35656,37 @@
       "source_location": ""
     },
     {
-      "id": "skills_handoff_scripts_generate_handoff_from_transcript",
-      "label": "generate_handoff_from_transcript.py",
+      "id": "lib_machine_profile_rationale_129",
+      "label": "This machine's stable id in marvin-network.json, resolved by matching hardware\u2026",
       "_origin": "ast",
       "community": 69,
-      "community_name": "generate_handoff_from_transcript.py",
-      "file_type": "code",
-      "norm_label": "generate_handoff_from_transcript.py",
-      "source_file": "skills/handoff/scripts/generate_handoff_from_transcript.py",
-      "source_location": "L1"
+      "community_name": "registry_id",
+      "file_type": "rationale",
+      "norm_label": "this machine's stable id in marvin-network.json, resolved by matching hardware...",
+      "source_file": "lib/machine_profile.py",
+      "source_location": "L129"
     },
     {
-      "id": "skills_handoff_scripts_generate_handoff_from_transcript_py_path",
-      "label": "Path",
+      "id": "lib_machine_profile_rationale_140",
+      "label": "All registered devices that aren't this one, keyed by device id.",
       "_origin": "ast",
       "community": 69,
-      "community_name": "generate_handoff_from_transcript.py",
-      "file_type": "code",
-      "norm_label": "path",
-      "source_file": "",
-      "source_location": ""
+      "community_name": "registry_id",
+      "file_type": "rationale",
+      "norm_label": "all registered devices that aren't this one, keyed by device id.",
+      "source_file": "lib/machine_profile.py",
+      "source_location": "L140"
+    },
+    {
+      "id": "lib_task_dispatch_rationale_83",
+      "label": "All known devices (self + registered remotes) keyed by device_id, each tagged\u2026",
+      "_origin": "ast",
+      "community": 69,
+      "community_name": "registry_id",
+      "file_type": "rationale",
+      "norm_label": "all known devices (self + registered remotes) keyed by device_id, each tagged...",
+      "source_file": "lib/task_dispatch.py",
+      "source_location": "L83"
     },
     {
       "id": "bench_bench",
@@ -36203,6 +36193,28 @@
       "norm_label": "find_freshest_session.py",
       "source_file": "skills/handoff/scripts/find_freshest_session.py",
       "source_location": "L1"
+    },
+    {
+      "id": "skills_handoff_scripts_generate_handoff_from_transcript",
+      "label": "generate_handoff_from_transcript.py",
+      "_origin": "ast",
+      "community": 80,
+      "community_name": "claude_bin.py",
+      "file_type": "code",
+      "norm_label": "generate_handoff_from_transcript.py",
+      "source_file": "skills/handoff/scripts/generate_handoff_from_transcript.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "skills_handoff_scripts_generate_handoff_from_transcript_py_path",
+      "label": "Path",
+      "_origin": "ast",
+      "community": 80,
+      "community_name": "claude_bin.py",
+      "file_type": "code",
+      "norm_label": "path",
+      "source_file": "",
+      "source_location": ""
     },
     {
       "id": "lib_claude_bin_rationale_1",
@@ -43855,7 +43867,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "dashboard/src/components/MrReview.jsx",
-      "source_location": "L268",
+      "source_location": "L279",
       "weight": 1.0
     },
     {
@@ -52975,7 +52987,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "dashboard/src/components/MrReview.jsx",
-      "source_location": "L232",
+      "source_location": "L243",
       "weight": 1.0
     },
     {
@@ -53915,14 +53927,38 @@
       "weight": 1.0
     },
     {
-      "source": "dashboard_src_components_mrreview_evidencetable",
-      "target": "dashboard_src_components_mrdetail",
+      "source": "dashboard_src_components_mrdetail",
+      "target": "dashboard_src_components_mrreview_approvedenyactions",
       "relation": "imports",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "dashboard/src/components/MrDetail.jsx",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_src_components_mrdetail",
+      "target": "dashboard_src_components_mrreview_evidencetable",
+      "relation": "imports",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "import",
+      "source_file": "dashboard/src/components/MrDetail.jsx",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_src_components_mrreview",
+      "target": "dashboard_src_components_mrdetail_mrdetail",
+      "relation": "imports",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "import",
+      "source_file": "dashboard/src/components/MrReview.jsx",
       "source_location": "L2",
       "weight": 1.0
     },
@@ -57286,7 +57322,7 @@
     },
     {
       "source": "dashboard_src_components_mrreview",
-      "target": "dashboard_src_components_mrreview_jsx_docref_adr_0025",
+      "target": "docref_adr_0025",
       "relation": "cites",
       "_origin": "ast",
       "confidence": "EXTRACTED",
@@ -64347,41 +64383,8 @@
       "weight": 1.0
     },
     {
-      "source": "dashboard_src_components_mrdetail_devevidencesection",
-      "target": "dashboard_src_components_mrdetail",
-      "relation": "contains",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "source_file": "dashboard/src/components/MrDetail.jsx",
-      "source_location": "L50",
-      "weight": 1.0
-    },
-    {
-      "source": "dashboard_src_components_mrdetail_issuebody",
-      "target": "dashboard_src_components_mrdetail",
-      "relation": "contains",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "source_file": "dashboard/src/components/MrDetail.jsx",
-      "source_location": "L72",
-      "weight": 1.0
-    },
-    {
-      "source": "dashboard_src_components_mrdetail_mrdetail",
-      "target": "dashboard_src_components_mrdetail",
-      "relation": "contains",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "source_file": "dashboard/src/components/MrDetail.jsx",
-      "source_location": "L88",
-      "weight": 1.0
-    },
-    {
-      "source": "dashboard_src_components_mrdetail_section",
-      "target": "dashboard_src_components_mrdetail",
+      "source": "dashboard_src_components_mrdetail",
+      "target": "dashboard_src_components_mrdetail_section",
       "relation": "contains",
       "_origin": "ast",
       "confidence": "EXTRACTED",
@@ -64391,8 +64394,8 @@
       "weight": 1.0
     },
     {
-      "source": "dashboard_src_components_mrdetail_testresultssection",
-      "target": "dashboard_src_components_mrdetail",
+      "source": "dashboard_src_components_mrdetail",
+      "target": "dashboard_src_components_mrdetail_testresultssection",
       "relation": "contains",
       "_origin": "ast",
       "confidence": "EXTRACTED",
@@ -64402,14 +64405,47 @@
       "weight": 1.0
     },
     {
+      "source": "dashboard_src_components_mrdetail",
+      "target": "dashboard_src_components_mrdetail_devevidencesection",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dashboard/src/components/MrDetail.jsx",
+      "source_location": "L50",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_src_components_mrdetail",
+      "target": "dashboard_src_components_mrdetail_issuebody",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dashboard/src/components/MrDetail.jsx",
+      "source_location": "L72",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_src_components_mrdetail",
+      "target": "dashboard_src_components_mrdetail_mrdetail",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dashboard/src/components/MrDetail.jsx",
+      "source_location": "L88",
+      "weight": 1.0
+    },
+    {
       "source": "dashboard_src_components_mrreview",
-      "target": "dashboard_src_components_mrreview_prcard",
+      "target": "dashboard_src_components_mrreview_approvedenyactions",
       "relation": "contains",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/src/components/MrReview.jsx",
-      "source_location": "L157",
+      "source_location": "L160",
       "weight": 1.0
     },
     {
@@ -64425,13 +64461,24 @@
     },
     {
       "source": "dashboard_src_components_mrreview",
+      "target": "dashboard_src_components_mrreview_prcard",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dashboard/src/components/MrReview.jsx",
+      "source_location": "L214",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_src_components_mrreview",
       "target": "dashboard_src_components_mrreview_mrreview",
       "relation": "contains",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/src/components/MrReview.jsx",
-      "source_location": "L227",
+      "source_location": "L238",
       "weight": 1.0
     },
     {
@@ -64479,6 +64526,17 @@
       "weight": 1.0
     },
     {
+      "source": "dashboard_src_components_mrreview_approvedenyactions",
+      "target": "dashboard_src_components_mrreview_approvedenyactions_handleapprove",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dashboard/src/components/MrReview.jsx",
+      "source_location": "L165",
+      "weight": 1.0
+    },
+    {
       "source": "dashboard_src_components_mrreview_mrreview",
       "target": "dashboard_src_components_mrreview_mrreview_reloadandreturntolist",
       "relation": "contains",
@@ -64486,18 +64544,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/src/components/MrReview.jsx",
-      "source_location": "L266",
-      "weight": 1.0
-    },
-    {
-      "source": "dashboard_src_components_mrreview_prcard",
-      "target": "dashboard_src_components_mrreview_prcard_handleapprove",
-      "relation": "contains",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "source_file": "dashboard/src/components/MrReview.jsx",
-      "source_location": "L162",
+      "source_location": "L277",
       "weight": 1.0
     },
     {
@@ -88238,5 +88285,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "9a32e3f52eed16829ef24a9fb3410a0a196ca14f"
+  "built_at_commit": "2ae3717fd42aa7de655cec144351aa5d48fa3425"
 }
