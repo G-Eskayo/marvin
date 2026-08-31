@@ -101,6 +101,7 @@ def test_run_skips_evidence_capture_on_a_failing_result(monkeypatch):
 def test_run_comments_the_failure_reason_when_not_raised(monkeypatch):
     monkeypatch.setattr(rt, "execute_ticket", lambda *a: _failing_result())
     monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "3 iterations exhausted"})
+    monkeypatch.setattr(rt, "_release_claim", lambda *a: None)
 
     comments = []
     monkeypatch.setattr(rt, "_comment_failure", lambda issue_number, reason: comments.append((issue_number, reason)))
@@ -109,6 +110,53 @@ def test_run_comments_the_failure_reason_when_not_raised(monkeypatch):
     rt.run(20)
 
     assert comments == [(20, "3 iterations exhausted")]
+
+
+def test_run_releases_the_claim_when_not_raised(monkeypatch):
+    # G-Eskayo/marvin's real incident: 28 tickets got claimed then hit
+    # Claude's own session/usage limit inside the nested planner/executor
+    # calls, correctly did no work and returned raised=False -- but nothing
+    # released claimed:<machine>, so every one of them was silently starved
+    # from ever being retried by ticket_pipeline.py again.
+    monkeypatch.setattr(rt, "execute_ticket", lambda *a: _failing_result())
+    monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "nope"})
+    monkeypatch.setattr(rt, "_comment_failure", lambda *a: None)
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+
+    released = []
+    monkeypatch.setattr(rt, "_release_claim", lambda issue_number: released.append(issue_number))
+
+    rt.run(20)
+
+    assert released == [20]
+
+
+def test_run_does_not_release_a_claim_on_a_successful_raise(monkeypatch):
+    monkeypatch.setattr(rt, "execute_ticket", lambda *a: _passing_result())
+    monkeypatch.setattr(rt, "test_command_for", lambda wt: ["pytest", "-q"])
+    monkeypatch.setattr(rt, "capture_test_results", lambda wt, cmd: {})
+    monkeypatch.setattr(rt, "ticket_touches_ui", lambda wt: False)
+    monkeypatch.setattr(rt, "capture_dev_evidence", lambda wt, touches_ui: {})
+    monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": True, "pr_url": "http://fake-pr", "reason": None})
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+
+    released = []
+    monkeypatch.setattr(rt, "_release_claim", lambda issue_number: released.append(issue_number))
+
+    rt.run(20)
+
+    assert released == []
+
+
+def test_release_claim_removes_the_label_for_this_machine(monkeypatch):
+    monkeypatch.setattr(rt.machine_profile, "registry_id", lambda: "mac-mini-2")
+
+    released = []
+    monkeypatch.setattr(rt, "_release", lambda issue_number, label: released.append((issue_number, label)))
+
+    rt._release_claim(20)
+
+    assert released == [(20, "mac-mini")]
 
 
 def test_run_does_not_comment_on_a_successful_raise(monkeypatch):

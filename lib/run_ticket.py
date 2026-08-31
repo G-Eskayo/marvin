@@ -14,10 +14,12 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import machine_profile  # noqa: E402
 from build_type_measure import measure, test_command_for  # noqa: E402
 from evidence_capture import capture_dev_evidence, capture_test_results, ticket_touches_ui  # noqa: E402
 from mr_raiser import raise_mr  # noqa: E402
 from sandbox_orchestration import execute_ticket  # noqa: E402
+from ticket_pipeline import _label_for_device, _release  # noqa: E402
 
 REPO = "G-Eskayo/marvin"
 
@@ -28,6 +30,20 @@ def _comment_failure(issue_number: int, reason: str) -> None:
          f"Automated implementation did not pass verification: {reason}"],
         check=False,
     )
+
+
+def _release_claim(issue_number: int) -> None:
+    """A ticket that didn't raise a PR -- rate-limited, a worktree-creation
+    failure, or genuinely never reached a passing comparison -- leaves this
+    machine free again, but ticket_pipeline.py's claim happens before
+    dispatch, with no way to know in advance whether the dispatch will
+    actually produce anything. Without this, the claimed:<machine> label
+    sticks around forever and the ticket is silently starved from ever
+    being retried. Found live 2026-08-29: a redispatch cascade during a
+    Claude usage-limit window left 28 tickets claimed with zero real work
+    done, none of them ever eligible for retry again."""
+    label = _label_for_device(machine_profile.registry_id())
+    _release(issue_number, label)
 
 
 def _trigger_redispatch() -> None:
@@ -64,6 +80,7 @@ def run(issue_number: int) -> dict:
 
     if not outcome["raised"]:
         _comment_failure(issue_number, outcome["reason"])
+        _release_claim(issue_number)
 
     _trigger_redispatch()
 
