@@ -15,6 +15,7 @@ import pytest
 from paper_graph import (
     select_candidates,
     is_known,
+    get_discovery,
     traverse,
     record_paper,
     diminishing_returns,
@@ -960,3 +961,116 @@ def test_run_paper_graph_skips_embedding_already_known_candidates_end_to_end(mon
     assert "the seed paper's abstract" in embedded_texts
     assert "new abstract" in embedded_texts
     assert "known abstract" not in embedded_texts  # never embedded
+
+
+# ── get_discovery (queryable first-discovery metadata) ────────────────────────
+
+def test_get_discovery_returns_parent_edge_and_hop_for_recorded_paper(tmp_path):
+    # AC2: get_discovery should return the first-discovery record for a non-seed paper.
+    client = chromadb.PersistentClient(path=str(tmp_path))
+    collection = client.get_or_create_collection("paper-knowledge")
+
+    record_paper(
+        collection,
+        doi="10.1/paper",
+        abstract="some abstract",
+        discovered_via={"parent_doi": "10.1/seed", "edge_type": "reference", "hop_depth": 1},
+    )
+
+    discovery = get_discovery(collection, "10.1/paper")
+    assert discovery is not None
+    assert discovery["parent_doi"] == "10.1/seed"
+    assert discovery["edge_type"] == "reference"
+    assert discovery["hop_depth"] == 1
+
+
+def test_get_discovery_returns_none_for_seed_paper(tmp_path):
+    # AC2: a seed paper (discovered_via=None) should return None from get_discovery.
+    client = chromadb.PersistentClient(path=str(tmp_path))
+    collection = client.get_or_create_collection("paper-knowledge")
+
+    record_paper(
+        collection,
+        doi="10.1/seed",
+        abstract="seed abstract",
+        discovered_via=None,
+    )
+
+    discovery = get_discovery(collection, "10.1/seed")
+    assert discovery is None
+
+
+def test_get_discovery_returns_none_for_unknown_doi(tmp_path):
+    # AC2: an unknown DOI should return None.
+    client = chromadb.PersistentClient(path=str(tmp_path))
+    collection = client.get_or_create_collection("paper-knowledge")
+
+    discovery = get_discovery(collection, "10.1/unknown")
+    assert discovery is None
+
+
+def test_run_paper_graph_preserves_first_discovery_only_on_rediscovery(tmp_path):
+    # ADR 0009 regression: "first discovery wins" — if a paper is discovered via one parent/edge
+    # in the first run and then re-encountered via a different parent/edge in a second run, the
+    # original first-discovery metadata should be preserved.
+    client = chromadb.PersistentClient(path=str(tmp_path))
+    collection = client.get_or_create_collection("paper-knowledge")
+
+    # First traversal: find "10.1/child" via "10.1/seed1" as a reference
+    graph1 = {
+        "10.1/seed1": {
+            "references": [{"doi": "10.1/child", "score": 0.9, "intent": None, "abstract": "child abstract"}],
+            "citations": [],
+        },
+    }
+
+    def fake_fetch1(doi):
+        return graph1[doi]
+
+    results1 = run_paper_graph(
+        seed_doi="10.1/seed1",
+        seed_abstract="seed1 abstract",
+        collection=collection,
+        max_depth=1,
+        references_top_k=10,
+        citations_top_k=5,
+        relevance_floor=0.5,
+        fetch_fn=fake_fetch1,
+    )
+
+    # Verify first discovery recorded
+    first_discovery = get_discovery(collection, "10.1/child")
+    assert first_discovery is not None
+    assert first_discovery["parent_doi"] == "10.1/seed1"
+    assert first_discovery["edge_type"] == "reference"
+
+    # Second traversal: if we somehow discover "10.1/child" again via a different parent,
+    # the first-discovery metadata should not be overwritten (it's already known)
+    # (In reality, is_known() filters it out before re-recording, but let's verify the
+    # behavior explicitly by checking that a second run doesn't change the metadata)
+    graph2 = {
+        "10.1/seed2": {
+            "references": [{"doi": "10.1/child", "score": 0.85, "intent": None, "abstract": "child abstract"}],
+            "citations": [],
+        },
+    }
+
+    def fake_fetch2(doi):
+        return graph2[doi]
+
+    results2 = run_paper_graph(
+        seed_doi="10.1/seed2",
+        seed_abstract="seed2 abstract",
+        collection=collection,
+        max_depth=1,
+        references_top_k=10,
+        citations_top_k=5,
+        relevance_floor=0.5,
+        fetch_fn=fake_fetch2,
+    )
+
+    # Verify first-discovery metadata was NOT changed (still points to original parent/edge)
+    still_first_discovery = get_discovery(collection, "10.1/child")
+    assert still_first_discovery is not None
+    assert still_first_discovery["parent_doi"] == "10.1/seed1"  # unchanged
+    assert still_first_discovery["edge_type"] == "reference"  # unchanged
