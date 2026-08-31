@@ -26,6 +26,8 @@ from paper_graph import (
     _get_with_retry,
     _s2_id,
     _check_huggingface_reachable,
+    _cosine_similarity,
+    _shape_and_score,
 )
 
 LIB = Path.home() / ".agents" / "lib"
@@ -781,3 +783,43 @@ def test_check_huggingface_reachable_raises_when_live_check_fails(monkeypatch):
     monkeypatch.setattr(network_reachability, "current_network_id", lambda: "work-net")
     with pytest.raises(RuntimeError, match="huggingface.co is unreachable"):
         _check_huggingface_reachable()
+
+
+def test_blended_score_rescues_cross_camp_rebuttal_specter2_alone_would_drop():
+    # Rebuttal uses different terminology/style from seed (orthogonal in SPECTER2 space),
+    # but same topic in nomic space. Blend rescues it; specter2 alone would drop it.
+    seed = {"specter2": [1.0, 0.0], "nomic": [1.0, 0.0]}
+    rebuttal = {"specter2": [0.0, 1.0], "nomic": [1.0, 0.0]}  # orthogonal SPECTER2, identical nomic
+    specter2_only = _cosine_similarity(seed["specter2"], rebuttal["specter2"])
+    nomic_only = _cosine_similarity(seed["nomic"], rebuttal["nomic"])
+    assert specter2_only == pytest.approx(0.0)
+    assert nomic_only == pytest.approx(1.0)
+    blended = blended_score(seed, rebuttal, specter2_weight=0.5)
+    assert blended == pytest.approx(0.5)
+    assert blended > specter2_only
+
+
+def test_shape_and_score_selects_cross_camp_rebuttal_that_specter2_alone_would_cap_out():
+    # Verify that _shape_and_score uses blended_score (not specter2 alone) and thus
+    # includes a high-nomic-similarity rebuttal that a specter2-only scorer would drop.
+    seed_embeddings = {"specter2": [1.0, 0.0], "nomic": [1.0, 0.0]}
+    papers = [
+        {
+            "title": "Rebuttal",
+            "abstract": "disputes findings",
+            "externalIds": {"DOI": "10.1/rebuttal"},
+            "intents": ["result"],
+        }
+    ]
+
+    def fake_embed(text):
+        # Rebuttal: orthogonal in SPECTER2, identical in nomic
+        return {"specter2": [0.0, 1.0], "nomic": [1.0, 0.0]}
+
+    candidates = _shape_and_score(
+        papers, seed_embeddings, embed_fn=fake_embed, is_citation=True
+    )
+    assert len(candidates) == 1
+    assert candidates[0]["doi"] == "10.1/rebuttal"
+    assert candidates[0]["intent"] == "result"
+    assert candidates[0]["score"] == pytest.approx(0.5)  # blended score, not 0.0
