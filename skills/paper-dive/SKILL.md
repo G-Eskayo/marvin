@@ -136,9 +136,9 @@ Run `scripts/fetch_related.py` with the paper's DOI or title+keywords. Returns:
 - 3–5 papers that contradict or challenge it
 - Ranked by citation count x recency score
 
-Sources queried in order: Semantic Scholar API -> arXiv -> scihub.org
+Sources queried in order: Semantic Scholar API -> arXiv
 
-### `/paper-graph [--depth N]`
+### `/paper-graph [--depth N] [--full-text-threshold T]`
 Recursive citation-graph traversal, building a persistent knowledge base rooted at the current
 paper (or `--slug` session's DOI). Run `scripts/paper_graph.py --slug [session-slug] --depth N`
 (default depth 2). Follows both directions — references (backward, primary-source backbone) and
@@ -150,7 +150,16 @@ run. Already-known papers are skipped entirely during traversal: no S2 fetch, no
 queue expansion — they're treated as dead ends for this run. If the traversal's cost ceiling is
 reached before it naturally runs out of relevant papers to find, it pauses and asks whether to
 keep going rather than silently stopping.
-Design record: `~/.agents/docs/adr/0007`–`0011`.
+
+**Full-text fetch for high-relevance nodes:** For nodes scoring ≥ `--full-text-threshold`
+(default 0.85, stricter than the inclusion floor of 0.65) that have arXiv IDs, paper-graph
+automatically fetches the full PDF from arXiv and extracts text via the same pipeline as
+ingest_paper.py, storing full text instead of abstract only. Nodes with arXiv IDs below the
+threshold remain abstract-only — no fetch is attempted. DOI-only papers (no arXiv ID) store their
+abstract regardless of score. Fetch failures (404, network error) gracefully degrade to
+abstract-only storage.
+
+Design records: `~/.agents/docs/adr/0007`–`0011`, `~/.agents/docs/adr/0031`.
 
 **Known gotcha**: the blended SPECTER2 + nomic-embed score ranks by semantic similarity, not
 domain correctness — it will occasionally surface a paper from a completely unrelated field (e.g.
@@ -202,8 +211,7 @@ synthesis.md    -- output of /synthesize (if run)
 ## Source Hierarchy for Related Papers
 
 1. **Semantic Scholar API** (`api.semanticscholar.org`) -- free, no key required for basic use. Best for citation graph traversal. Use `scripts/fetch_related.py`.
-2. **arXiv** (`arxiv.org`) -- preprints. CS, math, physics, ML. Free API.
-3. **Science Hub** (`scihub.org`) -- Giles' preferred source for journal-quality papers. High-quality open-access journals with society partners.
+2. **arXiv** (`arxiv.org`) -- preprints. CS, math, physics, ML. Free API. Full-text PDFs available via `/paper-graph` for high-relevance nodes.
 
 Always surface which source each paper came from. Note open-access status.
 

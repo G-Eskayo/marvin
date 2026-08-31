@@ -29,6 +29,8 @@ from paper_graph import (
     _check_huggingface_reachable,
     _cosine_similarity,
     _shape_and_score,
+    fetch_arxiv_pdf_text,
+    fetch_full_text,
 )
 
 LIB = Path.home() / ".agents" / "lib"
@@ -824,6 +826,298 @@ def test_shape_and_score_selects_cross_camp_rebuttal_that_specter2_alone_would_c
     assert candidates[0]["doi"] == "10.1/rebuttal"
     assert candidates[0]["intent"] == "result"
     assert candidates[0]["score"] == pytest.approx(0.5)  # blended score, not 0.0
+
+
+# ── Full-text fetch for high-relevance nodes ─────────────────────────────────
+
+def test_shape_and_score_preserves_arxiv_id_separate_from_doi():
+    # AC1: arxiv_id must be distinct from doi for full-text fetch routing
+    seed_embeddings = {"specter2": [1.0, 0.0], "nomic": [1.0, 0.0]}
+    papers = [
+        # DOI + ArXiv both present
+        {
+            "title": "Has Both",
+            "abstract": "doi and arxiv",
+            "externalIds": {"DOI": "10.1/example", "ArXiv": "2503.03704"},
+        },
+        # ArXiv-only (no DOI)
+        {
+            "title": "ArXiv Only",
+            "abstract": "no doi preprint",
+            "externalIds": {"ArXiv": "2605.15338"},
+        },
+    ]
+
+    def fake_embed(text):
+        return {"specter2": [1.0, 0.0], "nomic": [1.0, 0.0]}
+
+    candidates = _shape_and_score(papers, seed_embeddings, embed_fn=fake_embed, is_citation=False)
+
+    assert len(candidates) == 2
+    both_present = candidates[0]
+    assert both_present["doi"] == "10.1/example"  # DOI picked as primary identifier
+    assert both_present["arxiv_id"] == "2503.03704"  # ArXiv preserved separately
+
+    arxiv_only = candidates[1]
+    assert arxiv_only["doi"] == "2605.15338"  # ArXiv used as fallback for doi
+    assert arxiv_only["arxiv_id"] == "2605.15338"  # ArXiv also available for fetch
+
+
+def test_fetch_arxiv_pdf_text_constructs_correct_url_and_extracts(monkeypatch):
+    # AC2: fetch_arxiv_pdf_text builds the right URL and uses ingest_paper.extract_pdf
+    captured_urls = []
+
+    class FakePdfResponse:
+        status_code = 200
+
+        def __init__(self):
+            self.content = b"PDF binary content"
+
+        def raise_for_status(self):
+            pass
+
+    def fake_get_with_retry(url, params, timeout, max_retries=8):
+        captured_urls.append(url)
+        return FakePdfResponse()
+
+    monkeypatch.setattr("paper_graph._get_with_retry", fake_get_with_retry)
+
+    # Mock ingest_paper.extract_pdf to return test text
+    def fake_extract_pdf(path):
+        return "extracted paper text from arXiv"
+
+    # Patch the import inside fetch_arxiv_pdf_text
+    import sys
+    sys.modules["ingest_paper"] = type(sys)("ingest_paper")
+    sys.modules["ingest_paper"].extract_pdf = fake_extract_pdf
+
+    result = fetch_arxiv_pdf_text("2503.03704")
+
+    assert result == "extracted paper text from arXiv"
+    assert "https://arxiv.org/pdf/2503.03704" in captured_urls
+
+
+def test_fetch_arxiv_pdf_text_returns_none_on_404(monkeypatch):
+    # AC3: graceful degradation when PDF not found
+    class FakeResponse:
+        status_code = 404
+
+        def raise_for_status(self):
+            pass
+
+    def fake_get_with_retry(url, params, timeout, max_retries=8):
+        return FakeResponse()
+
+    monkeypatch.setattr("paper_graph._get_with_retry", fake_get_with_retry)
+
+    result = fetch_arxiv_pdf_text("2503.03704")
+
+    assert result is None
+
+
+def test_fetch_arxiv_pdf_text_returns_none_on_network_error(monkeypatch):
+    # AC3: graceful degradation on network failure
+    def fake_get_with_retry(url, params, timeout, max_retries=8):
+        raise Exception("Network error")
+
+    monkeypatch.setattr("paper_graph._get_with_retry", fake_get_with_retry)
+
+    result = fetch_arxiv_pdf_text("2503.03704")
+
+    assert result is None
+
+
+def test_fetch_full_text_returns_none_when_no_arxiv_id():
+    # AC3: no Sci-Hub fallback — DOI-only papers stay abstract-only
+    node = {"doi": "10.1/example", "arxiv_id": None, "score": 0.9}
+
+    result = fetch_full_text(node)
+
+    assert result is None
+
+
+def test_record_paper_stamps_full_text_metadata(tmp_path):
+    # AC1: record_paper must store full_text flag in metadata
+    client = chromadb.PersistentClient(path=str(tmp_path))
+    collection = client.get_or_create_collection("paper-knowledge-test")
+
+    record_paper(
+        collection,
+        doi="10.1/with-full-text",
+        abstract="full text content here",
+        discovered_via=None,
+        full_text=True,
+    )
+
+    meta = collection.get(ids=["10.1/with-full-text"])["metadatas"][0]
+    assert meta["full_text"] is True
+
+    # Also test default (abstract-only)
+    record_paper(
+        collection,
+        doi="10.1/abstract-only",
+        abstract="abstract content",
+        discovered_via=None,
+        full_text=False,
+    )
+
+    meta2 = collection.get(ids=["10.1/abstract-only"])["metadatas"][0]
+    assert meta2["full_text"] is False
+
+
+def test_run_paper_graph_fetches_full_text_for_high_relevance_nodes_with_arxiv_id(
+    tmp_path, monkeypatch
+):
+    # AC1 & AC2: high-relevance node with arXiv ID → full text fetched and stored
+    client = chromadb.PersistentClient(path=str(tmp_path))
+    collection = client.get_or_create_collection("paper-knowledge")
+
+    graph = {
+        "seed": {
+            "references": [
+                {
+                    "doi": "ref-high-arxiv",
+                    "score": 0.88,
+                    "intent": None,
+                    "abstract": "abstract text",
+                    "arxiv_id": "2503.03704",
+                }
+            ],
+            "citations": [],
+        },
+    }
+
+    def fake_fetch(doi):
+        return graph[doi]
+
+    # Mock full-text fetch to return extracted text
+    def fake_fetch_full_text(node):
+        if node.get("arxiv_id") == "2503.03704":
+            return "This is the extracted full text from the PDF."
+        return None
+
+    monkeypatch.setattr("paper_graph.fetch_full_text", fake_fetch_full_text)
+
+    results = run_paper_graph(
+        seed_doi="seed",
+        seed_abstract="seed abstract",
+        collection=collection,
+        max_depth=1,
+        references_top_k=10,
+        citations_top_k=5,
+        relevance_floor=0.5,
+        full_text_threshold=0.85,  # ref-high-arxiv at 0.88 exceeds this
+        fetch_fn=fake_fetch,
+    )
+
+    # Verify the full text was stored
+    stored = collection.get(ids=["ref-high-arxiv"])
+    assert len(stored["ids"]) == 1
+    assert stored["documents"][0] == "This is the extracted full text from the PDF."
+    assert stored["metadatas"][0]["full_text"] is True
+
+
+def test_run_paper_graph_stores_abstract_for_high_relevance_node_without_arxiv_id(
+    tmp_path, monkeypatch
+):
+    # AC1 & AC3: high-relevance DOI-only node → abstract stored, full_text=False, fetch not called
+    client = chromadb.PersistentClient(path=str(tmp_path))
+    collection = client.get_or_create_collection("paper-knowledge")
+
+    graph = {
+        "seed": {
+            "references": [
+                {
+                    "doi": "ref-doi-only",
+                    "score": 0.88,
+                    "intent": None,
+                    "abstract": "abstract of doi-only paper",
+                    "arxiv_id": None,  # no ArXiv ID available
+                }
+            ],
+            "citations": [],
+        },
+    }
+
+    def fake_fetch(doi):
+        return graph[doi]
+
+    fetch_calls = []
+
+    def spy_fetch_full_text(node):
+        fetch_calls.append(node["doi"])
+        return None
+
+    monkeypatch.setattr("paper_graph.fetch_full_text", spy_fetch_full_text)
+
+    results = run_paper_graph(
+        seed_doi="seed",
+        seed_abstract="seed abstract",
+        collection=collection,
+        max_depth=1,
+        references_top_k=10,
+        citations_top_k=5,
+        relevance_floor=0.5,
+        full_text_threshold=0.85,
+        fetch_fn=fake_fetch,
+    )
+
+    # Verify the abstract was stored without attempting a fetch
+    stored = collection.get(ids=["ref-doi-only"])
+    assert stored["documents"][0] == "abstract of doi-only paper"
+    assert stored["metadatas"][0]["full_text"] is False
+    assert "ref-doi-only" not in fetch_calls  # fetch never called
+
+
+def test_run_paper_graph_never_fetches_for_below_threshold_nodes(tmp_path, monkeypatch):
+    # AC3: nodes below full_text_threshold must never trigger a fetch, even with arXiv ID
+    client = chromadb.PersistentClient(path=str(tmp_path))
+    collection = client.get_or_create_collection("paper-knowledge")
+
+    graph = {
+        "seed": {
+            "references": [
+                {
+                    "doi": "ref-below-threshold",
+                    "score": 0.75,  # below 0.85 threshold
+                    "intent": None,
+                    "abstract": "abstract of below-threshold paper",
+                    "arxiv_id": "2503.03704",  # has ArXiv ID but shouldn't be fetched
+                }
+            ],
+            "citations": [],
+        },
+    }
+
+    def fake_fetch(doi):
+        return graph[doi]
+
+    fetch_calls = []
+
+    def spy_fetch_full_text(node):
+        fetch_calls.append(node["doi"])
+        return "full text"
+
+    monkeypatch.setattr("paper_graph.fetch_full_text", spy_fetch_full_text)
+
+    results = run_paper_graph(
+        seed_doi="seed",
+        seed_abstract="seed abstract",
+        collection=collection,
+        max_depth=1,
+        references_top_k=10,
+        citations_top_k=5,
+        relevance_floor=0.5,
+        full_text_threshold=0.85,  # threshold is 0.85, node score is 0.75
+        fetch_fn=fake_fetch,
+    )
+
+    # Verify fetch was NEVER called for below-threshold node
+    assert "ref-below-threshold" not in fetch_calls
+    # Verify abstract stored with full_text=False
+    stored = collection.get(ids=["ref-below-threshold"])
+    assert stored["documents"][0] == "abstract of below-threshold paper"
+    assert stored["metadatas"][0]["full_text"] is False
 
 
 # ── AC2: skip already-known papers (embedding + fetch) ───────────────────────
