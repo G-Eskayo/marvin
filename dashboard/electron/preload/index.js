@@ -17,6 +17,13 @@ contextBridge.exposeInMainWorld('api', {
     deny: (payload) => ipcRenderer.invoke('mr:deny', payload),
     ticketContext: (ticketRef) => ipcRenderer.invoke('mr:ticketContext', ticketRef),
     reviewStatus: () => ipcRenderer.invoke('mr:reviewStatus'),
-    markSeen: (prNumbers) => ipcRenderer.invoke('mr:markSeen', prNumbers)
+    markSeen: (prNumbers) => ipcRenderer.invoke('mr:markSeen', prNumbers),
+    // Fires whenever the webhook-server's /mr-ready ping reaches this
+    // machine's own refresh_server.js. Returns an unsubscribe function.
+    onRefresh: (callback) => {
+      const listener = () => callback()
+      ipcRenderer.on('mr:refresh', listener)
+      return () => ipcRenderer.removeListener('mr:refresh', listener)
+    }
   }
 })

@@ -1,8 +1,21 @@
 import { createServer } from 'http'
 import { mergePr } from './merge.js'
 import { sendFeedback, dropEntirely } from './deny.js'
+import { forwardRefreshPing } from './refresh_relay.js'
 
 const PORT = process.env.PORT || 7878
+// The Electron app's own tiny local server (electron/main/index.js),
+// separate from this process -- see refresh_relay.js for why the hop
+// exists at all.
+const DASHBOARD_REFRESH_URL = process.env.MARVIN_DASHBOARD_REFRESH_URL || 'http://localhost:7879/refresh'
+
+function postJson(url, body) {
+  return fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  })
+}
 
 function readJsonBody(req) {
   return new Promise((resolve, reject) => {
@@ -21,6 +34,17 @@ function readJsonBody(req) {
 }
 
 const server = createServer(async (req, res) => {
+  // mr_raiser.py hits this the moment a PR is raised (any machine) so an
+  // already-open dashboard on THIS machine refreshes immediately instead
+  // of waiting on its own fallback poll. Responds before the forward
+  // resolves -- the caller (an autonomous pipeline run) shouldn't wait on
+  // whether a dashboard happens to be open here.
+  if (req.method === 'POST' && req.url === '/mr-ready') {
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: true }))
+    forwardRefreshPing(DASHBOARD_REFRESH_URL, postJson)
+    return
+  }
+
   if (req.method !== 'POST' || (req.url !== '/approve' && req.url !== '/deny')) {
     res.writeHead(404).end()
     return
