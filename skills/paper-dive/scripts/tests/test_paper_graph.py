@@ -439,7 +439,7 @@ def test_traverse_shared_floor_applies_to_both_directions():
 
 def test_traverse_result_intent_citation_survives_full_traversal_over_cap():
     # Ticket #21 AC: result-intent citations bypass the top_k cap at the traverse() level,
-    # not just in select_candidates() unit tests.
+    # not only in select_candidates() unit tests.
     # citations_top_k=1 with 2 ranked-above citations + 1 low-score result-intent citation.
     # All 3 should make it through the full traverse() call.
     graph = {
