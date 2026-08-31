@@ -213,22 +213,32 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
 
 function PrCard({ pr, onApproved, onDenied, onSelect }) {
   return (
-    <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-4">
+    <div
+      onClick={() => onSelect(pr)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') onSelect(pr)
+      }}
+      className="cursor-pointer rounded-lg border border-neutral-800 bg-neutral-900 p-4 transition-colors hover:border-neutral-700 hover:bg-neutral-800/50"
+    >
       <div className="mb-2 flex items-center justify-between gap-3">
         <div>
-          <button
-            onClick={() => onSelect(pr)}
-            className="text-left font-mono text-sm font-semibold text-white hover:underline"
-          >
+          <p className="font-mono text-sm font-semibold text-white">
             #{pr.number} — {pr.title}
-          </button>
+          </p>
           {pr.evidence.subsystem && (
             <p className="text-xs text-neutral-500">
               {pr.evidence.subsystem} <VerdictBadge verdict={pr.evidence.verdict} />
             </p>
           )}
         </div>
-        <ApproveDenyActions pr={pr} onApproved={onApproved} onDenied={onDenied} />
+        {/* Approve/Deny live inside the same clickable card -- stop the
+            click from also bubbling up to onSelect and opening the detail
+            view underneath whatever action was just taken. */}
+        <div onClick={(e) => e.stopPropagation()}>
+          <ApproveDenyActions pr={pr} onApproved={onApproved} onDenied={onDenied} />
+        </div>
       </div>
       <EvidenceTable metrics={pr.evidence.metrics} />
     </div>
