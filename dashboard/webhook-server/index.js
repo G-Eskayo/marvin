@@ -65,8 +65,13 @@ const server = createServer(async (req, res) => {
 
   if (isApprove) {
     try {
-      await mergePr(payload.pr_url)
-      res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ merged: true }))
+      // mergePr() returning normally covers both a real merge (merged:
+      // true) and G-Eskayo/marvin#91's merge-time gate routing the ticket
+      // to re-engagement instead (merged: false, reengaged: true) -- the
+      // latter is an expected outcome, not a server error, so it gets a
+      // 200 with the real reason attached rather than a bare 500.
+      const result = await mergePr(payload.pr_url)
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(result))
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' }).end(
         JSON.stringify({ merged: false, error: String(err.message || err) })
