@@ -55,7 +55,7 @@ _EXEC_ALLOWED_TOOLS = (
     "Bash(~/.agents/venv/bin/python -m pytest*),"
     # A real live-fire dispatch (G-Eskayo/marvin#21) found the executor
     # naturally reaches for bare `pytest`/`python -m pytest` for its own
-    # self-verification, not just the venv's fully-qualified form -- only
+    # self-verification, not only the venv's fully-qualified form -- only
     # allowlisting one exact invocation left it stuck asking a question
     # nobody headless is present to answer.
     "Bash(pytest*),Bash(python -m pytest*),Bash(python3 -m pytest*),"
