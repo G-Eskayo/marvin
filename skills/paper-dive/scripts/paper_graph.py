@@ -197,7 +197,7 @@ def embed_paper(text: str, specter2_fn=None, nomic_fn=None) -> dict:
 S2_PAPER_BASE = "https://api.semanticscholar.org/graph/v1/paper"
 
 
-def _shape_and_score(papers: list[dict], seed_embeddings: dict, embed_fn, is_citation: bool) -> list[dict]:
+def _shape_and_score(papers: list[dict], seed_embeddings: dict, embed_fn, is_citation: bool, is_known_fn=None) -> list[dict]:
     candidates = []
     for p in papers:
         external_ids = p.get("externalIds") or {}
@@ -210,6 +210,8 @@ def _shape_and_score(papers: list[dict], seed_embeddings: dict, embed_fn, is_cit
         abstract = p.get("abstract") or p.get("title") or ""
         if not doi or not abstract:
             continue
+        if is_known_fn is not None and is_known_fn(doi):
+            continue
         candidate_embeddings = embed_fn(abstract)
         score = blended_score(seed_embeddings, candidate_embeddings)
         intent = "result" if is_citation and "result" in (p.get("intents") or []) else None
@@ -217,7 +219,7 @@ def _shape_and_score(papers: list[dict], seed_embeddings: dict, embed_fn, is_cit
     return candidates
 
 
-def fetch_neighbors_from_s2(doi: str, seed_embeddings: dict, embed_fn=None) -> dict:
+def fetch_neighbors_from_s2(doi: str, seed_embeddings: dict, embed_fn=None, is_known_fn=None) -> dict:
     import time
     import requests
 
@@ -231,12 +233,12 @@ def fetch_neighbors_from_s2(doi: str, seed_embeddings: dict, embed_fn=None) -> d
     time.sleep(0.5)  # rate-limit courtesy, same pattern as fetch_related.py
 
     return {
-        "references": _shape_and_score(data.get("references") or [], seed_embeddings, embed_fn, is_citation=False),
-        "citations": _shape_and_score(data.get("citations") or [], seed_embeddings, embed_fn, is_citation=True),
+        "references": _shape_and_score(data.get("references") or [], seed_embeddings, embed_fn, is_citation=False, is_known_fn=is_known_fn),
+        "citations": _shape_and_score(data.get("citations") or [], seed_embeddings, embed_fn, is_citation=True, is_known_fn=is_known_fn),
     }
 
 
-def fetch_neighbors_by_search(query_text: str, seed_embeddings: dict, embed_fn=None) -> dict:
+def fetch_neighbors_by_search(query_text: str, seed_embeddings: dict, embed_fn=None, is_known_fn=None) -> dict:
     """For an unpublished/non-indexed seed: S2 has no record to fetch 'its' references/citations
     from, so this finds candidate related papers via full-text search instead. Only feeds the
     references bucket — there's no way to discover citations of a paper S2 doesn't know exists."""
@@ -249,7 +251,7 @@ def fetch_neighbors_by_search(query_text: str, seed_embeddings: dict, embed_fn=N
         timeout=15,
     )
     data = resp.json()
-    references = _shape_and_score(data.get("data") or [], seed_embeddings, embed_fn, is_citation=False)
+    references = _shape_and_score(data.get("data") or [], seed_embeddings, embed_fn, is_citation=False, is_known_fn=is_known_fn)
     return {"references": references, "citations": []}
 
 
@@ -279,9 +281,12 @@ def run_paper_graph(
         embed_fn = embed_fn or embed_paper
         seed_embeddings = embed_fn(seed_abstract)
 
+    is_known_fn = None
     if fetch_fn is None:
+        is_known_fn = lambda doi: is_known(doi, collection)
+
         def fetch_fn(doi):
-            return fetch_neighbors_from_s2(doi, seed_embeddings, embed_fn=embed_fn)
+            return fetch_neighbors_from_s2(doi, seed_embeddings, embed_fn=embed_fn, is_known_fn=is_known_fn)
 
     if is_unpublished:
         base_fetch_fn = fetch_fn
@@ -289,7 +294,10 @@ def run_paper_graph(
 
         def fetch_fn(doi):  # noqa: F811 — deliberate shadow: dispatches seed vs. everything else
             if doi == seed_id:
-                return do_search(seed_search_query, seed_embeddings, embed_fn)
+                if search_fetch_fn is None:
+                    return do_search(seed_search_query, seed_embeddings, embed_fn, is_known_fn=is_known_fn)
+                else:
+                    return do_search(seed_search_query, seed_embeddings, embed_fn)
             return base_fetch_fn(doi)
 
     results = traverse(
