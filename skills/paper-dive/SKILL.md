@@ -192,6 +192,16 @@ List recent paper sessions from `~/.claude/paper-sessions/`. Load a session and 
 ### `/synthesize`
 At L5 or after `/compare`, run the synthesis step: given everything learned, what new hypothesis emerges? What experiment would test it? Write to `~/.claude/paper-sessions/[slug]/synthesis.md`.
 
+### `/continuity-check`
+Examines whether later papers actually build on or engage with a seed paper, or whether they contradict it or have gaps in the logical chain. Run `scripts/continuity_checker.py --seeds-json <file> --out-json <file> --out-markdown <file>`, where seeds-json is `{slug: title, ...}`. Returns a report listing each seed's citers, classified as CONSISTENT (engages with the claim), GAP (claims to build on it but doesn't engage), or CONTRADICTS (opposes without acknowledgment). Papers flagged ⚠️ warrant deliberate review.
+
+**Known gotcha**: classification is based on core-claim comparison alone (qwen2.5:14b), unvalidated on real abstracts. False positives may arise from over-aggressive or under-aggressive claim extraction — treat surprising classifications as potential extraction artifacts and verify manually against the actual abstracts before trusting the verdict.
+
+### `/compare-hypothesis`
+Surfaces papers that support or refute a given hypothesis, revealing disagreement patterns in the literature. Run `scripts/competing_ideas.py --hypothesis "<claim>" --out-json <file> --out-markdown <file>`. Returns papers grouped as supporting, refuting, or mixed evidence. The interesting case is when both supports and refutes are non-empty — that's evidence of active field disagreement. Empty results (all support or all refute) are valid; they just indicate consensus in the collection, not a system error.
+
+**Known gotcha**: retrieval relies on semantic search (ChromaDB's default embedder), which surfaces papers by embedding similarity, not domain correctness. The same gotcha as `/paper-graph`'s SPECTER2+nomic-embed scoring — unrelated-field papers can appear if the embedding happens to land close. Treat results from visibly different fields as probable false positives; verify manually before citing.
+
 ---
 
 ## Session State
