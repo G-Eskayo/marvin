@@ -173,7 +173,10 @@ export async function approveMr(prUrl, webhookUrl, post) {
   if (!response.ok) {
     throw new Error(`Webhook call failed: ${response.status}`)
   }
-  return response
+  // A 200 covers both an actual merge and G-Eskayo/marvin#91's merge-time
+  // gate routing to re-engagement instead -- callers need the real body
+  // (merged/reengaged/reason) to tell those apart, not just "it worked."
+  return response.json()
 }
 
 // ADR 0025: Deny opens a structured-feedback modal with two terminal

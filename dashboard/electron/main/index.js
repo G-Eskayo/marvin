@@ -144,8 +144,8 @@ function registerMrReviewHandlers() {
     if (response !== 1) {
       return { merged: false, cancelled: true }
     }
-    await approveMr(url, MR_WEBHOOK_URL, postJson)
-    return { merged: true, cancelled: false }
+    const result = await approveMr(url, MR_WEBHOOK_URL, postJson)
+    return { ...result, cancelled: false }
   })
 
   // Same native-dialog defense as mr:approve -- both of Deny's terminal

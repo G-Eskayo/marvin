@@ -180,9 +180,20 @@ describe('listPipelinePrs', () => {
 
 describe('approveMr', () => {
   it('posts the PR url to the webhook and resolves on success', async () => {
-    const post = vi.fn().mockResolvedValue({ ok: true, status: 200 })
+    const post = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ merged: true, reengaged: false, reason: null }) })
     await approveMr('https://x/71', 'http://localhost:7878/approve', post)
     expect(post).toHaveBeenCalledWith('http://localhost:7878/approve', { pr_url: 'https://x/71' })
+  })
+
+  it('returns the parsed body so callers can tell a merge apart from a re-engagement route', async () => {
+    // G-Eskayo/marvin#91's merge-time gate: a 200 can mean either.
+    const post = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ merged: false, reengaged: true, reason: 'Tests failed after rebasing onto main' })
+    })
+    const result = await approveMr('https://x/71', 'http://localhost:7878/approve', post)
+    expect(result).toEqual({ merged: false, reengaged: true, reason: 'Tests failed after rebasing onto main' })
   })
 
   it('throws when the webhook call fails, so the UI can surface it', async () => {
