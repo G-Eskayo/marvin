@@ -1,0 +1,15 @@
+[
+  {
+    "timestamp": "2026-08-31T17:50:47.239968+00:00",
+    "metrics": {
+      "tests_passed": {
+        "value": 424,
+        "higher_is_better": true
+      },
+      "tests_failed": {
+        "value": 0,
+        "higher_is_better": false
+      }
+    }
+  }
+]

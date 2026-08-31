@@ -230,7 +230,14 @@ export default function MrReview() {
   function reload() {
     window.api.mr
       .list()
-      .then(setPrs)
+      .then((list) => {
+        setPrs(list)
+        // Opening this list is what "seen" means for the tab's status dot
+        // (App.jsx) -- mark every currently-listed PR, not just ones you
+        // click into, since the dot is about "have you looked at the
+        // list," not "have you opened every item on it."
+        window.api.mr.markSeen(list.map((pr) => pr.number)).catch(() => {})
+      })
       .catch((err) => setError(String(err)))
   }
 

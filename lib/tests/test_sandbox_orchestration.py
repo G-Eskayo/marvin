@@ -132,6 +132,30 @@ def test_redispatch_succeeds_when_the_ticket_branch_already_exists_locally(git_r
     assert (second["worktree_path"] / "README.md").read_text() == "hello\n"
 
 
+def test_redispatch_succeeds_when_a_stale_worktree_is_still_registered(git_repo, metrics_dir):
+    # G-Eskayo/marvin#20 hit this live: a worktree from an earlier attempt
+    # was never removed at all (not even via `git worktree remove`), so
+    # `git branch -D` alone can't free the branch -- git refuses to delete
+    # a branch checked out in an existing worktree -- and the subsequent
+    # `git worktree add -b` then fails too, because the branch still
+    # exists. Redispatch must still succeed by clearing the stale worktree
+    # itself, not just the branch.
+    first = so.execute_ticket(
+        "TICKET-1", "test-subsystem",
+        measure=lambda wt: {"accuracy": _metric(0.9)},
+        executor=_noop_executor, repo_path=git_repo,
+    )
+    assert first["worktree_path"].exists()  # left in place, untouched
+
+    second = so.execute_ticket(
+        "TICKET-1", "test-subsystem",
+        measure=lambda wt: {"accuracy": _metric(0.9)},
+        executor=_noop_executor, repo_path=git_repo,
+    )
+    assert second["worktree_path"].exists()
+    assert (second["worktree_path"] / "README.md").read_text() == "hello\n"
+
+
 def test_worktree_left_in_place_for_downstream_mr_raiser(git_repo, metrics_dir):
     result = so.execute_ticket(
         "TICKET-1", "test-subsystem",
