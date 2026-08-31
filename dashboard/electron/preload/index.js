@@ -25,5 +25,8 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.on('mr:refresh', listener)
       return () => ipcRenderer.removeListener('mr:refresh', listener)
     }
+  },
+  dispatch: {
+    status: () => ipcRenderer.invoke('dispatch:status')
   }
 })

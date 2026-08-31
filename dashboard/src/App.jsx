@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import MetricsScorecard from '@components/MetricsScorecard.jsx'
 import MrReview from '@components/MrReview.jsx'
+import DispatchStatusBadge from '@components/DispatchStatusBadge.jsx'
 
 const TABS = [
   { id: 'metrics', label: 'Metrics' },
@@ -83,6 +84,9 @@ export default function App() {
             )
           })}
         </nav>
+        <div className="ml-auto">
+          <DispatchStatusBadge />
+        </div>
       </header>
       <main className="flex-1 overflow-auto">
         {activeTab === 'metrics' ? <MetricsScorecard /> : <MrReview />}
