@@ -158,7 +158,7 @@ function DenyModal({ pr, onClose, onDenied }) {
 // approve/deny behave and look identical in both places, per Gil's
 // request -- one implementation, not a second copy that could drift.
 export function ApproveDenyActions({ pr, onApproved, onDenied }) {
-  const [status, setStatus] = useState('idle') // idle | approving | error
+  const [status, setStatus] = useState('idle') // idle | approving | error | reengaged
   const [errorMessage, setErrorMessage] = useState(null)
   const [showDenyModal, setShowDenyModal] = useState(false)
 
@@ -169,6 +169,15 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
       const result = await window.api.mr.approve({ number: pr.number, url: pr.url })
       if (result.cancelled) {
         setStatus('idle')
+        return
+      }
+      // G-Eskayo/marvin#91's merge-time gate: a rebase or retest failure
+      // blocks the merge and routes to re-engagement instead -- a real
+      // outcome the user needs to see, not the same thing as onApproved's
+      // "it merged" path, and not a tooling failure either.
+      if (result.reengaged) {
+        setStatus('reengaged')
+        setErrorMessage(result.reason)
         return
       }
       onApproved(pr.number)
@@ -197,6 +206,11 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
         </button>
       </div>
       {status === 'error' && <p className="text-sm text-red-400">Failed: {errorMessage}</p>}
+      {status === 'reengaged' && (
+        <p className="max-w-xs text-right text-sm text-amber-400">
+          Not merged — routed to re-engagement: {errorMessage}
+        </p>
+      )}
       {showDenyModal && (
         <DenyModal
           pr={pr}
