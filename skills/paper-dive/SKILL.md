@@ -146,8 +146,10 @@ citations (forward, situational context, including likely rebuttals via a `resul
 bypass) — ordered by relevance to the seed via a blended SPECTER2 + nomic-embed score, not plain
 breadth/depth-first order. Stores every paper found in the shared `paper-knowledge` ChromaDB
 collection (`~/.claude/chroma`), deduplicated across all past investigations, not just within one
-run. If the traversal's cost ceiling is reached before it naturally runs out of relevant papers to
-find, it pauses and asks whether to keep going rather than silently stopping.
+run. Already-known papers are skipped entirely during traversal: no S2 fetch, no embedding, no
+queue expansion — they're treated as dead ends for this run. If the traversal's cost ceiling is
+reached before it naturally runs out of relevant papers to find, it pauses and asks whether to
+keep going rather than silently stopping.
 Design record: `~/.agents/docs/adr/0007`–`0011`.
 
 **Known gotcha**: the blended SPECTER2 + nomic-embed score ranks by semantic similarity, not
