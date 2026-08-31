@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { EvidenceTable } from './MrReview.jsx'
+import { EvidenceTable, ApproveDenyActions } from './MrReview.jsx'
 
 // Full evidence-schema drill-down for one MR (G-Eskayo/marvin#72, ADR
 // 0024) plus its linked ticket/parent-PRD requirements, design, and
@@ -85,7 +85,7 @@ function IssueBody({ label, issue }) {
   )
 }
 
-export default function MrDetail({ pr, onBack }) {
+export default function MrDetail({ pr, onBack, onApproved, onDenied }) {
   const [context, setContext] = useState(null)
   const [error, setError] = useState(null)
 
@@ -116,18 +116,21 @@ export default function MrDetail({ pr, onBack }) {
         ← Back to MR Review
       </button>
 
-      <div>
-        <h2 className="font-mono text-lg font-semibold text-white">
-          #{pr.number} — {pr.title}
-        </h2>
-        {pr.evidence.subsystem && (
-          <p className="text-sm text-neutral-500">
-            {pr.evidence.subsystem} — {pr.evidence.verdict}
-          </p>
-        )}
-        <a href={pr.url} target="_blank" rel="noreferrer" className="text-xs text-blue-400 hover:underline">
-          {pr.url}
-        </a>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="font-mono text-lg font-semibold text-white">
+            #{pr.number} — {pr.title}
+          </h2>
+          {pr.evidence.subsystem && (
+            <p className="text-sm text-neutral-500">
+              {pr.evidence.subsystem} — {pr.evidence.verdict}
+            </p>
+          )}
+          <a href={pr.url} target="_blank" rel="noreferrer" className="text-xs text-blue-400 hover:underline">
+            {pr.url}
+          </a>
+        </div>
+        <ApproveDenyActions pr={pr} onApproved={onApproved} onDenied={onDenied} />
       </div>
 
       <Section title="Metrics Comparison">

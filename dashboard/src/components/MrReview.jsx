@@ -154,7 +154,10 @@ function DenyModal({ pr, onClose, onDenied }) {
   )
 }
 
-function PrCard({ pr, onApproved, onDenied, onSelect }) {
+// Shared by PrCard (the list row) and MrDetail (the deep-dive page) so
+// approve/deny behave and look identical in both places, per Gil's
+// request -- one implementation, not a second copy that could drift.
+export function ApproveDenyActions({ pr, onApproved, onDenied }) {
   const [status, setStatus] = useState('idle') // idle | approving | error
   const [errorMessage, setErrorMessage] = useState(null)
   const [showDenyModal, setShowDenyModal] = useState(false)
@@ -176,6 +179,40 @@ function PrCard({ pr, onApproved, onDenied, onSelect }) {
   }
 
   return (
+    <div className="flex shrink-0 flex-col items-end gap-1">
+      <div className="flex gap-2">
+        <button
+          onClick={() => setShowDenyModal(true)}
+          disabled={status === 'approving'}
+          className="rounded-md border border-neutral-700 px-4 py-1.5 text-sm font-medium text-neutral-300 transition-colors hover:bg-neutral-800 disabled:opacity-50"
+        >
+          Deny
+        </button>
+        <button
+          onClick={handleApprove}
+          disabled={status === 'approving'}
+          className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
+        >
+          {status === 'approving' ? 'Confirming…' : 'Approve & Merge'}
+        </button>
+      </div>
+      {status === 'error' && <p className="text-sm text-red-400">Failed: {errorMessage}</p>}
+      {showDenyModal && (
+        <DenyModal
+          pr={pr}
+          onClose={() => setShowDenyModal(false)}
+          onDenied={(number) => {
+            setShowDenyModal(false)
+            onDenied(number)
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+function PrCard({ pr, onApproved, onDenied, onSelect }) {
+  return (
     <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-4">
       <div className="mb-2 flex items-center justify-between gap-3">
         <div>
@@ -191,35 +228,9 @@ function PrCard({ pr, onApproved, onDenied, onSelect }) {
             </p>
           )}
         </div>
-        <div className="flex shrink-0 gap-2">
-          <button
-            onClick={() => setShowDenyModal(true)}
-            disabled={status === 'approving'}
-            className="rounded-md border border-neutral-700 px-4 py-1.5 text-sm font-medium text-neutral-300 transition-colors hover:bg-neutral-800 disabled:opacity-50"
-          >
-            Deny
-          </button>
-          <button
-            onClick={handleApprove}
-            disabled={status === 'approving'}
-            className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
-          >
-            {status === 'approving' ? 'Confirming…' : 'Approve & Merge'}
-          </button>
-        </div>
+        <ApproveDenyActions pr={pr} onApproved={onApproved} onDenied={onDenied} />
       </div>
       <EvidenceTable metrics={pr.evidence.metrics} />
-      {status === 'error' && <p className="mt-2 text-sm text-red-400">Failed: {errorMessage}</p>}
-      {showDenyModal && (
-        <DenyModal
-          pr={pr}
-          onClose={() => setShowDenyModal(false)}
-          onDenied={(number) => {
-            setShowDenyModal(false)
-            onDenied(number)
-          }}
-        />
-      )}
     </div>
   )
 }
@@ -269,7 +280,14 @@ export default function MrReview() {
   }
 
   if (selected) {
-    return <MrDetail pr={selected} onBack={() => setSelected(null)} />
+    return (
+      <MrDetail
+        pr={selected}
+        onBack={() => setSelected(null)}
+        onApproved={reloadAndReturnToList}
+        onDenied={reloadAndReturnToList}
+      />
+    )
   }
 
   if (error) {
