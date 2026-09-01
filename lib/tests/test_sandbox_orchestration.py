@@ -12,6 +12,7 @@ LIB = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(LIB))
 
 import metrics_registry as mr  # noqa: E402
+import rate_limit_backoff as rlb  # noqa: E402
 import sandbox_orchestration as so  # noqa: E402
 
 
@@ -405,6 +406,100 @@ def test_default_executor_tells_the_planner_its_headless_and_autonomous(monkeypa
     plan_prompt = calls[0][calls[0].index("-p") + 1]
     assert "autonomously" in plan_prompt.lower()
     assert "no human present" in plan_prompt.lower() or "no one" in plan_prompt.lower()
+
+
+# ── rate-limit backoff ───────────────────────────────────────────────────────
+
+def test_default_executor_raises_rate_limited_when_planner_hits_the_limit(monkeypatch, tmp_path):
+    monkeypatch.setattr(rlb, "STATE_PATH", tmp_path / "rate-limit-backoff.json")
+
+    def fake_run(cmd, **kwargs):
+        class R:
+            stdout = "You've hit your session limit · resets 4:50pm (America/Denver)"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+
+    with pytest.raises(rlb.RateLimited):
+        so._default_executor(tmp_path, "TICKET-1", None)
+
+
+def test_default_executor_does_not_call_the_executor_step_when_planner_is_rate_limited(monkeypatch, tmp_path):
+    monkeypatch.setattr(rlb, "STATE_PATH", tmp_path / "rate-limit-backoff.json")
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "You've hit your session limit · resets 4:50pm (America/Denver)"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+
+    with pytest.raises(rlb.RateLimited):
+        so._default_executor(tmp_path, "TICKET-1", None)
+
+    # short-circuits before the second (execution) nested `claude -p` call --
+    # no point spending up to EXEC_TIMEOUT_S on a call doomed to hit the
+    # identical account-wide limit.
+    assert len(calls) == 1
+
+
+def test_default_executor_raises_rate_limited_when_the_execution_step_hits_the_limit(monkeypatch, tmp_path):
+    monkeypatch.setattr(rlb, "STATE_PATH", tmp_path / "rate-limit-backoff.json")
+    responses = iter([
+        "a real plan",
+        "You've hit your session limit · resets 4:50pm (America/Denver)",
+    ])
+
+    def fake_run(cmd, **kwargs):
+        class R:
+            stdout = next(responses)
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+
+    with pytest.raises(rlb.RateLimited):
+        so._default_executor(tmp_path, "TICKET-1", None)
+
+
+def test_default_executor_records_a_shared_backoff_when_rate_limited(monkeypatch, tmp_path):
+    state_path = tmp_path / "rate-limit-backoff.json"
+    monkeypatch.setattr(rlb, "STATE_PATH", state_path)
+
+    def fake_run(cmd, **kwargs):
+        class R:
+            stdout = "You've hit your session limit · resets 4:50pm (America/Denver)"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+
+    with pytest.raises(rlb.RateLimited):
+        so._default_executor(tmp_path, "TICKET-1", None)
+
+    assert state_path.exists()
+    assert rlb.active_backoff() is not None
+
+
+def test_default_executor_normal_output_never_triggers_a_backoff(monkeypatch, tmp_path):
+    state_path = tmp_path / "rate-limit-backoff.json"
+    monkeypatch.setattr(rlb, "STATE_PATH", state_path)
+
+    def fake_run(cmd, **kwargs):
+        class R:
+            stdout = "a plan"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+    plan = so._default_executor(tmp_path, "TICKET-1", None)
+
+    assert plan == "a plan"
+    assert not state_path.exists()
 
 
 def test_default_executor_tells_the_executor_not_to_commit_push_or_open_a_pr(monkeypatch, tmp_path):

@@ -3,13 +3,25 @@
 """
 from __future__ import annotations
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
 LIB = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(LIB))
 
+import pytest  # noqa: E402
+
 import ticket_pipeline as tp  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _no_rate_limit_backoff_by_default(monkeypatch):
+    # Every test below exercises the claim/dispatch path, not the backoff
+    # gate itself -- default to "no backoff active" so they don't depend on
+    # this machine's real ~/.claude/rate-limit-backoff.json state. The
+    # backoff-specific tests override this explicitly.
+    monkeypatch.setattr(tp.rate_limit_backoff, "active_backoff", lambda: None)
 
 
 def _issue(number, created, labels=(), title="a ticket"):
@@ -51,6 +63,44 @@ def test_unclaimed_ready_tickets_returns_empty_on_gh_failure(monkeypatch):
 def test_label_for_device():
     assert tp._label_for_device("mac-mini-1") == "mac-mini"
     assert tp._label_for_device("macbook-pro-1") == "macbook-pro"
+
+
+def test_main_skips_dispatch_entirely_when_rate_limit_backoff_is_active(monkeypatch, capsys):
+    # Real incident, 2026-09-01: without this check, a rate-limited ticket's
+    # released claim was immediately picked back up by the very next
+    # ticket_pipeline.py run (fired via run_ticket.py's own
+    # _trigger_redispatch), re-hitting the identical account-wide limit
+    # every ~30s -- checked before the `gh issue list` scan so a backoff
+    # window doesn't even cost an API call.
+    backoff_until = datetime(2026, 9, 1, 22, 50, tzinfo=timezone.utc)
+    monkeypatch.setattr(tp.rate_limit_backoff, "active_backoff", lambda: backoff_until)
+    scan_calls = []
+    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda: scan_calls.append(True) or [])
+    dispatch_calls = []
+    monkeypatch.setattr(tp, "dispatch", lambda *a, **kw: dispatch_calls.append((a, kw)))
+    monkeypatch.setattr(sys, "argv", ["ticket_pipeline.py"])
+
+    tp.main()
+
+    assert scan_calls == []
+    assert dispatch_calls == []
+    assert "backoff" in capsys.readouterr().err.lower()
+
+
+def test_main_dispatches_normally_when_no_backoff_is_active(monkeypatch):
+    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda: [
+        {"number": 20, "title": "x", "createdAt": "2026-01-01T00:00:00Z", "labels": []}
+    ])
+    monkeypatch.setattr(tp, "select_machine", lambda: ("macbook-pro-1", {"is_self": True}))
+    monkeypatch.setattr(tp, "_claim", lambda n, l: True)
+    dispatch_calls = []
+    monkeypatch.setattr(tp, "dispatch", lambda *a, **kw: dispatch_calls.append((a, kw)) or
+                         SimpleNamespace(ok=True, device_id="macbook-pro-1"))
+    monkeypatch.setattr(sys, "argv", ["ticket_pipeline.py"])
+
+    tp.main()
+
+    assert len(dispatch_calls) == 1
 
 
 def test_main_dry_run_does_not_claim_or_dispatch(monkeypatch, capsys):

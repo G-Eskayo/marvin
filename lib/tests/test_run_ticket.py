@@ -3,6 +3,7 @@
 """
 from __future__ import annotations
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from subprocess import TimeoutExpired
 
@@ -10,6 +11,7 @@ LIB = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(LIB))
 
 import run_ticket as rt  # noqa: E402
+from rate_limit_backoff import RateLimited  # noqa: E402
 
 
 def _passing_result(worktree_path=Path("/tmp/fake-worktree")):
@@ -259,6 +261,36 @@ def test_run_recovers_when_execute_ticket_raises_unexpectedly(monkeypatch):
     assert "300" in outcome["reason"] or "timed out" in outcome["reason"].lower()
     assert comments == [(27, outcome["reason"])]
     assert released == [27]
+    assert redispatched == [True]
+
+
+def test_run_releases_claim_but_does_not_comment_when_rate_limited(monkeypatch):
+    # Real incident, 2026-09-01: ticket #29's session-limit message got
+    # threaded through as fake plan content and the normal not-raised path
+    # (issue comment + release + immediate redispatch) turned into a
+    # redispatch cascade every ~30s. A rate limit isn't a real failure of
+    # the ticket, so it shouldn't post a misleading "did not pass
+    # verification" comment on the issue the way a genuine failure does.
+    backoff_until = datetime(2026, 9, 1, 22, 50, tzinfo=timezone.utc)
+
+    def raise_rate_limited(*a, **kw):
+        raise RateLimited(backoff_until, "You've hit your session limit")
+
+    monkeypatch.setattr(rt, "execute_ticket", raise_rate_limited)
+
+    comments = []
+    monkeypatch.setattr(rt, "_comment_failure", lambda *a: comments.append(a))
+    released = []
+    monkeypatch.setattr(rt, "_release_claim", lambda issue_number: released.append(issue_number))
+    redispatched = []
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: redispatched.append(True))
+
+    outcome = rt.run(29)
+
+    assert outcome["raised"] is False
+    assert "backing off" in outcome["reason"].lower()
+    assert comments == []
+    assert released == [29]
     assert redispatched == [True]
 
 
