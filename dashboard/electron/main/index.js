@@ -9,17 +9,22 @@ import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
 import { readDispatchStatus } from './dispatch_status.js'
 import { createRefreshServer } from './refresh_server.js'
 import { adoptLoginShellPath } from './path.js'
+import { resolveServiceDefaults } from './device_identity.js'
 
 const execFileAsync = promisify(execFile)
 
 adoptLoginShellPath()
 
-// Overridable via env for pointing at a real n8n webhook once G-Eskayo/marvin#11's
-// "exact n8n node topology" downstream work exists; defaults to the reference
-// receiver in dashboard/webhook-server/ (see its README for the contract).
-const MR_WEBHOOK_URL = process.env.MARVIN_MR_WEBHOOK_URL || 'http://localhost:7878/approve'
+// ADR 0032: the webhook-server this app talks to lives on whichever
+// machine is the primary automation host, not always localhost -- see
+// device_identity.js. Overridable via env for pointing at a real n8n
+// webhook once G-Eskayo/marvin#11's "exact n8n node topology" downstream
+// work exists; defaults to the reference receiver in dashboard/webhook-server/
+// (see its README for the contract).
+const { host: defaultWebhookHost } = resolveServiceDefaults()
+const MR_WEBHOOK_URL = process.env.MARVIN_MR_WEBHOOK_URL || `http://${defaultWebhookHost}:7878/approve`
 // Same reference receiver, second endpoint -- ADR 0025's Deny action.
-const MR_DENY_WEBHOOK_URL = process.env.MARVIN_MR_DENY_WEBHOOK_URL || 'http://localhost:7878/deny'
+const MR_DENY_WEBHOOK_URL = process.env.MARVIN_MR_DENY_WEBHOOK_URL || `http://${defaultWebhookHost}:7878/deny`
 // Where the webhook-server process forwards its /mr-ready ping (see
 // dashboard/webhook-server/refresh_relay.js) so an already-open window
 // refreshes immediately instead of waiting on its own fallback poll.
