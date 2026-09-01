@@ -18,6 +18,7 @@ import machine_profile  # noqa: E402
 from build_type_measure import measure, test_command_for  # noqa: E402
 from evidence_capture import capture_dev_evidence, capture_test_results, ticket_touches_ui  # noqa: E402
 from mr_raiser import raise_mr  # noqa: E402
+from rate_limit_backoff import RateLimited  # noqa: E402
 from sandbox_orchestration import execute_ticket  # noqa: E402
 from ticket_pipeline import _label_for_device, _release  # noqa: E402
 
@@ -78,6 +79,21 @@ def run(issue_number: int) -> dict:
             dev_evidence = capture_dev_evidence(worktree_path, ticket_touches_ui(worktree_path))
 
         outcome = raise_mr(ticket_ref, result, test_results=test_results, dev_evidence=dev_evidence)
+    except RateLimited as exc:
+        # The account's session limit, not a real failure of this ticket --
+        # found live 2026-09-01: without this, the limit message got
+        # threaded through as fake plan/implementation content, and the
+        # normal not-raised path below (comment + release + immediate
+        # redispatch) turned into a redispatch cascade that re-hit the
+        # identical limit every ~30s until a human noticed. The claim still
+        # gets released (this ticket is retryable once the backoff clears),
+        # but skips the misleading "did not pass verification" issue
+        # comment -- ticket_pipeline.py's own backoff check (see
+        # active_backoff()) is what actually stops the redispatch loop.
+        _release_claim(issue_number)
+        _trigger_redispatch()
+        return {"raised": False, "pr_url": None,
+                "reason": f"Rate-limited -- backing off until {exc.backoff_until.isoformat()}"}
     except Exception as exc:
         # A crash anywhere in execute_ticket/raise_mr (a planner timeout, a
         # worktree-creation failure, anything) must never skip the cleanup
