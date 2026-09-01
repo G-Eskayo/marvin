@@ -126,7 +126,7 @@
   "124": "to-prd/SKILL.md",
   "125": "7. Architecture Decision Records",
   "126": "tailwind.config.js",
-  "127": "measure",
+  "127": "build_type_measure.py",
   "128": "To Tasklist",
   "129": "Writing Skills",
   "130": "code_sync.py",
@@ -327,5 +327,11 @@
   "325": "capture_screenshot.mjs",
   "326": ".constructor",
   "327": "research_digest.py",
-  "328": "DispatchStatusBadge.jsx"
+  "328": "DispatchStatusBadge.jsx",
+  "329": "test_mr_notification.py",
+  "330": "test_code_sync_push.py",
+  "331": "test_notify.py",
+  "332": "source_monitor.py",
+  "333": "run_colony.py",
+  "334": "git_repo"
 }

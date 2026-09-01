@@ -1598,16 +1598,16 @@
       "source_location": "L1"
     },
     {
-      "id": "lib_tests_test_sandbox_orchestration_git_repo",
-      "label": "git_repo()",
+      "id": "lib_build_type_measure_measure",
+      "label": "measure()",
       "_callable": true,
       "_origin": "ast",
       "community": 10,
       "community_name": "test_sandbox_orchestration.py",
       "file_type": "code",
-      "norm_label": "git_repo()",
-      "source_file": "lib/tests/test_sandbox_orchestration.py",
-      "source_location": "L26"
+      "norm_label": "measure()",
+      "source_file": "lib/build_type_measure.py",
+      "source_location": "L81"
     },
     {
       "id": "lib_tests_test_sandbox_orchestration_metric",
@@ -1622,18 +1622,6 @@
       "source_location": "L52"
     },
     {
-      "id": "lib_tests_test_sandbox_orchestration_metrics_dir",
-      "label": "metrics_dir()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 10,
-      "community_name": "test_sandbox_orchestration.py",
-      "file_type": "code",
-      "norm_label": "metrics_dir()",
-      "source_file": "lib/tests/test_sandbox_orchestration.py",
-      "source_location": "L19"
-    },
-    {
       "id": "lib_tests_test_sandbox_orchestration_noop_executor",
       "label": "_noop_executor()",
       "_callable": true,
@@ -1646,6 +1634,18 @@
       "source_location": "L56"
     },
     {
+      "id": "lib_tests_test_sandbox_orchestration_test_baseline_measured_before_first_executor_call",
+      "label": "test_baseline_measured_before_first_executor_call()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 10,
+      "community_name": "test_sandbox_orchestration.py",
+      "file_type": "code",
+      "norm_label": "test_baseline_measured_before_first_executor_call()",
+      "source_file": "lib/tests/test_sandbox_orchestration.py",
+      "source_location": "L197"
+    },
+    {
       "id": "lib_tests_test_sandbox_orchestration_test_baseline_recorded_to_metrics_registry",
       "label": "test_baseline_recorded_to_metrics_registry()",
       "_callable": true,
@@ -1656,6 +1656,18 @@
       "norm_label": "test_baseline_recorded_to_metrics_registry()",
       "source_file": "lib/tests/test_sandbox_orchestration.py",
       "source_location": "L212"
+    },
+    {
+      "id": "lib_tests_test_sandbox_orchestration_test_creates_isolated_worktree_not_touching_live_repo",
+      "label": "test_creates_isolated_worktree_not_touching_live_repo()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 10,
+      "community_name": "test_sandbox_orchestration.py",
+      "file_type": "code",
+      "norm_label": "test_creates_isolated_worktree_not_touching_live_repo()",
+      "source_file": "lib/tests/test_sandbox_orchestration.py",
+      "source_location": "L62"
     },
     {
       "id": "lib_tests_test_sandbox_orchestration_test_default_executor_execution_step_scoped_to_build_and_test_tools",
@@ -1800,6 +1812,30 @@
       "norm_label": "test_state_setup_optional_defaults_to_noop()",
       "source_file": "lib/tests/test_sandbox_orchestration.py",
       "source_location": "L183"
+    },
+    {
+      "id": "lib_tests_test_sandbox_orchestration_test_stops_after_first_passing_comparison",
+      "label": "test_stops_after_first_passing_comparison()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 10,
+      "community_name": "test_sandbox_orchestration.py",
+      "file_type": "code",
+      "norm_label": "test_stops_after_first_passing_comparison()",
+      "source_file": "lib/tests/test_sandbox_orchestration.py",
+      "source_location": "L225"
+    },
+    {
+      "id": "lib_tests_test_sandbox_orchestration_test_stops_with_clear_report_after_max_iterations",
+      "label": "test_stops_with_clear_report_after_max_iterations()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 10,
+      "community_name": "test_sandbox_orchestration.py",
+      "file_type": "code",
+      "norm_label": "test_stops_with_clear_report_after_max_iterations()",
+      "source_file": "lib/tests/test_sandbox_orchestration.py",
+      "source_location": "L265"
     },
     {
       "id": "lib_tests_test_sandbox_orchestration_test_worktree_branches_from_origin_main_not_repo_paths_current_checkout",
@@ -2642,18 +2678,6 @@
       "source_location": "L80"
     },
     {
-      "id": "skills_improve_scripts_daily_digest_call_claude",
-      "label": "call_claude()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 123,
-      "community_name": "daily_digest.py",
-      "file_type": "code",
-      "norm_label": "call_claude()",
-      "source_file": "skills/improve/scripts/daily_digest.py",
-      "source_location": "L230"
-    },
-    {
       "id": "skills_improve_scripts_daily_digest_improvement_queue_summary",
       "label": "improvement_queue_summary()",
       "_callable": true,
@@ -2726,24 +2750,12 @@
       "source_location": "L45"
     },
     {
-      "id": "lib_build_type_measure_measure",
-      "label": "measure()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 127,
-      "community_name": "measure",
-      "file_type": "code",
-      "norm_label": "measure()",
-      "source_file": "lib/build_type_measure.py",
-      "source_location": "L81"
-    },
-    {
       "id": "lib_build_type_measure_scope_root",
       "label": "_scope_root()",
       "_callable": true,
       "_origin": "ast",
       "community": 127,
-      "community_name": "measure",
+      "community_name": "build_type_measure.py",
       "file_type": "code",
       "norm_label": "_scope_root()",
       "source_file": "lib/build_type_measure.py",
@@ -2755,7 +2767,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 127,
-      "community_name": "measure",
+      "community_name": "build_type_measure.py",
       "file_type": "code",
       "norm_label": "test_command_for()",
       "source_file": "lib/build_type_measure.py",
@@ -2767,7 +2779,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 127,
-      "community_name": "measure",
+      "community_name": "build_type_measure.py",
       "file_type": "code",
       "norm_label": "_touched_files()",
       "source_file": "lib/build_type_measure.py",
@@ -2779,59 +2791,11 @@
       "_callable": true,
       "_origin": "ast",
       "community": 127,
-      "community_name": "measure",
+      "community_name": "build_type_measure.py",
       "file_type": "code",
       "norm_label": "_touches_dashboard()",
       "source_file": "lib/build_type_measure.py",
       "source_location": "L40"
-    },
-    {
-      "id": "lib_tests_test_sandbox_orchestration_test_baseline_measured_before_first_executor_call",
-      "label": "test_baseline_measured_before_first_executor_call()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 127,
-      "community_name": "measure",
-      "file_type": "code",
-      "norm_label": "test_baseline_measured_before_first_executor_call()",
-      "source_file": "lib/tests/test_sandbox_orchestration.py",
-      "source_location": "L197"
-    },
-    {
-      "id": "lib_tests_test_sandbox_orchestration_test_creates_isolated_worktree_not_touching_live_repo",
-      "label": "test_creates_isolated_worktree_not_touching_live_repo()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 127,
-      "community_name": "measure",
-      "file_type": "code",
-      "norm_label": "test_creates_isolated_worktree_not_touching_live_repo()",
-      "source_file": "lib/tests/test_sandbox_orchestration.py",
-      "source_location": "L62"
-    },
-    {
-      "id": "lib_tests_test_sandbox_orchestration_test_stops_after_first_passing_comparison",
-      "label": "test_stops_after_first_passing_comparison()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 127,
-      "community_name": "measure",
-      "file_type": "code",
-      "norm_label": "test_stops_after_first_passing_comparison()",
-      "source_file": "lib/tests/test_sandbox_orchestration.py",
-      "source_location": "L225"
-    },
-    {
-      "id": "lib_tests_test_sandbox_orchestration_test_stops_with_clear_report_after_max_iterations",
-      "label": "test_stops_with_clear_report_after_max_iterations()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 127,
-      "community_name": "measure",
-      "file_type": "code",
-      "norm_label": "test_stops_with_clear_report_after_max_iterations()",
-      "source_file": "lib/tests/test_sandbox_orchestration.py",
-      "source_location": "L265"
     },
     {
       "id": "lib_metrics_registry_compare",
@@ -3326,30 +3290,6 @@
       "source_location": "L114"
     },
     {
-      "id": "lib_mr_notification_default_dashboard_refresh_ping",
-      "label": "_default_dashboard_refresh_ping()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "_default_dashboard_refresh_ping()",
-      "source_file": "lib/mr_notification.py",
-      "source_location": "L57"
-    },
-    {
-      "id": "lib_mr_notification_default_push_notify",
-      "label": "_default_push_notify()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "_default_push_notify()",
-      "source_file": "lib/mr_notification.py",
-      "source_location": "L48"
-    },
-    {
       "id": "lib_notify_applescript_quote",
       "label": "_applescript_quote()",
       "_callable": true,
@@ -3384,342 +3324,6 @@
       "norm_label": "_to_open_url()",
       "source_file": "lib/notify.py",
       "source_location": "L40"
-    },
-    {
-      "id": "lib_tests_test_code_sync_push_git",
-      "label": "_git()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "_git()",
-      "source_file": "lib/tests/test_code_sync_push.py",
-      "source_location": "L19"
-    },
-    {
-      "id": "lib_tests_test_code_sync_push_make_origin_and_clone",
-      "label": "_make_origin_and_clone()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "_make_origin_and_clone()",
-      "source_file": "lib/tests/test_code_sync_push.py",
-      "source_location": "L23"
-    },
-    {
-      "id": "lib_tests_test_code_sync_push_test_push_no_ops_when_truly_nothing_to_do",
-      "label": "test_push_no_ops_when_truly_nothing_to_do()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "test_push_no_ops_when_truly_nothing_to_do()",
-      "source_file": "lib/tests/test_code_sync_push.py",
-      "source_location": "L67"
-    },
-    {
-      "id": "lib_tests_test_code_sync_push_test_push_ships_a_clean_tree_with_unpushed_commits",
-      "label": "test_push_ships_a_clean_tree_with_unpushed_commits()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "test_push_ships_a_clean_tree_with_unpushed_commits()",
-      "source_file": "lib/tests/test_code_sync_push.py",
-      "source_location": "L46"
-    },
-    {
-      "id": "lib_tests_test_mr_notification_test_attempts_a_dashboard_refresh_ping_too",
-      "label": "test_attempts_a_dashboard_refresh_ping_too()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "test_attempts_a_dashboard_refresh_ping_too()",
-      "source_file": "lib/tests/test_mr_notification.py",
-      "source_location": "L85"
-    },
-    {
-      "id": "lib_tests_test_mr_notification_test_attempts_push_notification_too",
-      "label": "test_attempts_push_notification_too()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "test_attempts_push_notification_too()",
-      "source_file": "lib/tests/test_mr_notification.py",
-      "source_location": "L45"
-    },
-    {
-      "id": "lib_tests_test_mr_notification_test_dashboard_refresh_ping_failure_does_not_raise_or_block_the_other_channels",
-      "label": "test_dashboard_refresh_ping_failure_does_not_raise_or_block_the_other_channels()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "test_dashboard_refresh_ping_failure_does_not_raise_or_block_the_other_channels()",
-      "source_file": "lib/tests/test_mr_notification.py",
-      "source_location": "L95"
-    },
-    {
-      "id": "lib_tests_test_mr_notification_test_default_dashboard_refresh_ping_posts_to_the_webhook_servers_mr_ready_endpoint",
-      "label": "test_default_dashboard_refresh_ping_posts_to_the_webhook_servers_mr_ready_endpoint()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "test_default_dashboard_refresh_ping_posts_to_the_webhook_servers_mr_ready_endpoint()",
-      "source_file": "lib/tests/test_mr_notification.py",
-      "source_location": "L116"
-    },
-    {
-      "id": "lib_tests_test_mr_notification_test_default_push_notify_invokes_headless_claude",
-      "label": "test_default_push_notify_invokes_headless_claude()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "test_default_push_notify_invokes_headless_claude()",
-      "source_file": "lib/tests/test_mr_notification.py",
-      "source_location": "L133"
-    },
-    {
-      "id": "lib_tests_test_mr_notification_test_desktop_notification_click_opens_the_pr",
-      "label": "test_desktop_notification_click_opens_the_pr()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "test_desktop_notification_click_opens_the_pr()",
-      "source_file": "lib/tests/test_mr_notification.py",
-      "source_location": "L24"
-    },
-    {
-      "id": "lib_tests_test_mr_notification_test_message_identifies_ticket_and_is_concise",
-      "label": "test_message_identifies_ticket_and_is_concise()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "test_message_identifies_ticket_and_is_concise()",
-      "source_file": "lib/tests/test_mr_notification.py",
-      "source_location": "L34"
-    },
-    {
-      "id": "lib_tests_test_mr_notification_test_push_notification_failure_does_not_raise_or_block_desktop",
-      "label": "test_push_notification_failure_does_not_raise_or_block_desktop()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "test_push_notification_failure_does_not_raise_or_block_desktop()",
-      "source_file": "lib/tests/test_mr_notification.py",
-      "source_location": "L55"
-    },
-    {
-      "id": "lib_tests_test_mr_notification_test_returns_status_dict",
-      "label": "test_returns_status_dict()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "test_returns_status_dict()",
-      "source_file": "lib/tests/test_mr_notification.py",
-      "source_location": "L72"
-    },
-    {
-      "id": "lib_tests_test_mr_notification_test_sends_desktop_notification_when_raised",
-      "label": "test_sends_desktop_notification_when_raised()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "test_sends_desktop_notification_when_raised()",
-      "source_file": "lib/tests/test_mr_notification.py",
-      "source_location": "L14"
-    },
-    {
-      "id": "lib_tests_test_notify_test_falls_back_to_osascript_without_terminal_notifier",
-      "label": "test_falls_back_to_osascript_without_terminal_notifier()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "test_falls_back_to_osascript_without_terminal_notifier()",
-      "source_file": "lib/tests/test_notify.py",
-      "source_location": "L38"
-    },
-    {
-      "id": "lib_tests_test_notify_test_notify_never_raises_on_failure",
-      "label": "test_notify_never_raises_on_failure()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "test_notify_never_raises_on_failure()",
-      "source_file": "lib/tests/test_notify.py",
-      "source_location": "L51"
-    },
-    {
-      "id": "lib_tests_test_notify_test_to_open_url_converts_local_path",
-      "label": "test_to_open_url_converts_local_path()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "test_to_open_url_converts_local_path()",
-      "source_file": "lib/tests/test_notify.py",
-      "source_location": "L19"
-    },
-    {
-      "id": "lib_tests_test_notify_test_to_open_url_passes_through_urls",
-      "label": "test_to_open_url_passes_through_urls()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "test_to_open_url_passes_through_urls()",
-      "source_file": "lib/tests/test_notify.py",
-      "source_location": "L14"
-    },
-    {
-      "id": "lib_tests_test_notify_test_uses_terminal_notifier_with_open_flag_when_available",
-      "label": "test_uses_terminal_notifier_with_open_flag_when_available()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "test_uses_terminal_notifier_with_open_flag_when_available()",
-      "source_file": "lib/tests/test_notify.py",
-      "source_location": "L25"
-    },
-    {
-      "id": "skills_research_colony_scripts_correlate_correlate",
-      "label": "correlate()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "correlate()",
-      "source_file": "skills/research-colony/scripts/correlate.py",
-      "source_location": "L54"
-    },
-    {
-      "id": "skills_research_colony_scripts_correlate_roadmap_match",
-      "label": "roadmap_match()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "roadmap_match()",
-      "source_file": "skills/research-colony/scripts/correlate.py",
-      "source_location": "L48"
-    },
-    {
-      "id": "skills_research_colony_scripts_run_colony_main",
-      "label": "main()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "main()",
-      "source_file": "skills/research-colony/scripts/run_colony.py",
-      "source_location": "L15"
-    },
-    {
-      "id": "skills_research_colony_scripts_source_monitor_fetch_arxiv",
-      "label": "fetch_arxiv()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "fetch_arxiv()",
-      "source_file": "skills/research-colony/scripts/source_monitor.py",
-      "source_location": "L18"
-    },
-    {
-      "id": "skills_research_colony_scripts_source_monitor_fetch_github",
-      "label": "fetch_github()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "fetch_github()",
-      "source_file": "skills/research-colony/scripts/source_monitor.py",
-      "source_location": "L50"
-    },
-    {
-      "id": "skills_research_colony_scripts_source_monitor_fetch_hackernews",
-      "label": "fetch_hackernews()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "fetch_hackernews()",
-      "source_file": "skills/research-colony/scripts/source_monitor.py",
-      "source_location": "L85"
-    },
-    {
-      "id": "skills_research_colony_scripts_source_monitor_main",
-      "label": "main()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "main()",
-      "source_file": "skills/research-colony/scripts/source_monitor.py",
-      "source_location": "L181"
-    },
-    {
-      "id": "skills_research_colony_scripts_source_monitor_save_raw_cache",
-      "label": "save_raw_cache()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "save_raw_cache()",
-      "source_file": "skills/research-colony/scripts/source_monitor.py",
-      "source_location": "L166"
-    },
-    {
-      "id": "skills_research_colony_scripts_source_monitor_store_items",
-      "label": "store_items()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "store_items()",
-      "source_file": "skills/research-colony/scripts/source_monitor.py",
-      "source_location": "L116"
     },
     {
       "id": "brain_map_vendor_motion_12_42_2_cn_constructor",
@@ -7406,18 +7010,6 @@
       "source_location": "L79"
     },
     {
-      "id": "lib_mr_raiser_raise_mr",
-      "label": "raise_mr()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 258,
-      "community_name": "run_ticket.py",
-      "file_type": "code",
-      "norm_label": "raise_mr()",
-      "source_file": "lib/mr_raiser.py",
-      "source_location": "L117"
-    },
-    {
       "id": "lib_run_ticket_comment_failure",
       "label": "_comment_failure()",
       "_callable": true,
@@ -7439,19 +7031,7 @@
       "file_type": "code",
       "norm_label": "main()",
       "source_file": "lib/run_ticket.py",
-      "source_location": "L90"
-    },
-    {
-      "id": "lib_run_ticket_release_claim",
-      "label": "_release_claim()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 258,
-      "community_name": "run_ticket.py",
-      "file_type": "code",
-      "norm_label": "_release_claim()",
-      "source_file": "lib/run_ticket.py",
-      "source_location": "L35"
+      "source_location": "L100"
     },
     {
       "id": "lib_run_ticket_run",
@@ -8891,7 +8471,7 @@
       "file_type": "code",
       "norm_label": "_failing_result()",
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L22"
+      "source_location": "L23"
     },
     {
       "id": "lib_tests_test_run_ticket_passing_result",
@@ -8903,7 +8483,7 @@
       "file_type": "code",
       "norm_label": "_passing_result()",
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L14"
+      "source_location": "L15"
     },
     {
       "id": "lib_tests_test_run_ticket_test_comment_failure_calls_gh_issue_comment",
@@ -8915,7 +8495,7 @@
       "file_type": "code",
       "norm_label": "test_comment_failure_calls_gh_issue_comment()",
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L179"
+      "source_location": "L180"
     },
     {
       "id": "lib_tests_test_run_ticket_test_release_claim_removes_the_label_for_this_machine",
@@ -8927,7 +8507,7 @@
       "file_type": "code",
       "norm_label": "test_release_claim_removes_the_label_for_this_machine()",
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L151"
+      "source_location": "L152"
     },
     {
       "id": "lib_tests_test_run_ticket_test_run_calls_execute_ticket_with_the_right_ticket_ref_and_subsystem",
@@ -8939,7 +8519,7 @@
       "file_type": "code",
       "norm_label": "test_run_calls_execute_ticket_with_the_right_ticket_ref_and_subsystem()",
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L30"
+      "source_location": "L31"
     },
     {
       "id": "lib_tests_test_run_ticket_test_run_captures_test_results_and_dev_evidence_on_a_passing_result",
@@ -8951,7 +8531,7 @@
       "file_type": "code",
       "norm_label": "test_run_captures_test_results_and_dev_evidence_on_a_passing_result()",
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L54"
+      "source_location": "L55"
     },
     {
       "id": "lib_tests_test_run_ticket_test_run_comments_the_failure_reason_when_not_raised",
@@ -8963,7 +8543,7 @@
       "file_type": "code",
       "norm_label": "test_run_comments_the_failure_reason_when_not_raised()",
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L101"
+      "source_location": "L102"
     },
     {
       "id": "lib_tests_test_run_ticket_test_run_does_not_comment_on_a_successful_raise",
@@ -8975,7 +8555,7 @@
       "file_type": "code",
       "norm_label": "test_run_does_not_comment_on_a_successful_raise()",
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L162"
+      "source_location": "L163"
     },
     {
       "id": "lib_tests_test_run_ticket_test_run_does_not_release_a_claim_on_a_successful_raise",
@@ -8987,7 +8567,31 @@
       "file_type": "code",
       "norm_label": "test_run_does_not_release_a_claim_on_a_successful_raise()",
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L134"
+      "source_location": "L135"
+    },
+    {
+      "id": "lib_tests_test_run_ticket_test_run_recovers_when_execute_ticket_raises_unexpectedly",
+      "label": "test_run_recovers_when_execute_ticket_raises_unexpectedly()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 266,
+      "community_name": "test_run_ticket.py",
+      "file_type": "code",
+      "norm_label": "test_run_recovers_when_execute_ticket_raises_unexpectedly()",
+      "source_file": "lib/tests/test_run_ticket.py",
+      "source_location": "L235"
+    },
+    {
+      "id": "lib_tests_test_run_ticket_test_run_recovers_when_raise_mr_itself_raises_unexpectedly",
+      "label": "test_run_recovers_when_raise_mr_itself_raises_unexpectedly()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 266,
+      "community_name": "test_run_ticket.py",
+      "file_type": "code",
+      "norm_label": "test_run_recovers_when_raise_mr_itself_raises_unexpectedly()",
+      "source_file": "lib/tests/test_run_ticket.py",
+      "source_location": "L265"
     },
     {
       "id": "lib_tests_test_run_ticket_test_run_releases_the_claim_when_not_raised",
@@ -8999,7 +8603,7 @@
       "file_type": "code",
       "norm_label": "test_run_releases_the_claim_when_not_raised()",
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L115"
+      "source_location": "L116"
     },
     {
       "id": "lib_tests_test_run_ticket_test_run_skips_evidence_capture_on_a_failing_result",
@@ -9011,7 +8615,7 @@
       "file_type": "code",
       "norm_label": "test_run_skips_evidence_capture_on_a_failing_result()",
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L77"
+      "source_location": "L78"
     },
     {
       "id": "lib_tests_test_run_ticket_test_run_triggers_redispatch_even_when_not_raised",
@@ -9023,7 +8627,7 @@
       "file_type": "code",
       "norm_label": "test_run_triggers_redispatch_even_when_not_raised()",
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L203"
+      "source_location": "L204"
     },
     {
       "id": "lib_tests_test_run_ticket_test_run_triggers_redispatch_on_a_successful_raise",
@@ -9035,7 +8639,7 @@
       "file_type": "code",
       "norm_label": "test_run_triggers_redispatch_on_a_successful_raise()",
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L187"
+      "source_location": "L188"
     },
     {
       "id": "lib_tests_test_run_ticket_test_trigger_redispatch_spawns_ticket_pipeline_detached",
@@ -9047,7 +8651,7 @@
       "file_type": "code",
       "norm_label": "test_trigger_redispatch_spawns_ticket_pipeline_detached()",
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L218"
+      "source_location": "L219"
     },
     {
       "id": "skills_safety_monitor_scripts_calibrate_calibrate",
@@ -9672,6 +9276,18 @@
       "norm_label": ".time()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
+    },
+    {
+      "id": "lib_run_ticket_release_claim",
+      "label": "_release_claim()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 273,
+      "community_name": "ticket_pipeline.py",
+      "file_type": "code",
+      "norm_label": "_release_claim()",
+      "source_file": "lib/run_ticket.py",
+      "source_location": "L35"
     },
     {
       "id": "lib_ticket_pipeline_build_wrapper_command",
@@ -11198,6 +10814,30 @@
       "source_location": "L63"
     },
     {
+      "id": "lib_mr_notification_default_dashboard_refresh_ping",
+      "label": "_default_dashboard_refresh_ping()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 288,
+      "community_name": "mr_raiser.py",
+      "file_type": "code",
+      "norm_label": "_default_dashboard_refresh_ping()",
+      "source_file": "lib/mr_notification.py",
+      "source_location": "L57"
+    },
+    {
+      "id": "lib_mr_notification_default_push_notify",
+      "label": "_default_push_notify()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 288,
+      "community_name": "mr_raiser.py",
+      "file_type": "code",
+      "norm_label": "_default_push_notify()",
+      "source_file": "lib/mr_notification.py",
+      "source_location": "L48"
+    },
+    {
       "id": "lib_mr_notification_notify_mr_ready",
       "label": "notify_mr_ready()",
       "_callable": true,
@@ -11292,6 +10932,18 @@
       "norm_label": "_format_test_results()",
       "source_file": "lib/mr_raiser.py",
       "source_location": "L62"
+    },
+    {
+      "id": "lib_mr_raiser_raise_mr",
+      "label": "raise_mr()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 288,
+      "community_name": "mr_raiser.py",
+      "file_type": "code",
+      "norm_label": "raise_mr()",
+      "source_file": "lib/mr_raiser.py",
+      "source_location": "L117"
     },
     {
       "id": "skills_qa_agent_scripts_qa_capture_build_entry",
@@ -12710,6 +12362,126 @@
       "source_location": "L8"
     },
     {
+      "id": "lib_tests_test_mr_notification_test_attempts_a_dashboard_refresh_ping_too",
+      "label": "test_attempts_a_dashboard_refresh_ping_too()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 329,
+      "community_name": "test_mr_notification.py",
+      "file_type": "code",
+      "norm_label": "test_attempts_a_dashboard_refresh_ping_too()",
+      "source_file": "lib/tests/test_mr_notification.py",
+      "source_location": "L85"
+    },
+    {
+      "id": "lib_tests_test_mr_notification_test_attempts_push_notification_too",
+      "label": "test_attempts_push_notification_too()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 329,
+      "community_name": "test_mr_notification.py",
+      "file_type": "code",
+      "norm_label": "test_attempts_push_notification_too()",
+      "source_file": "lib/tests/test_mr_notification.py",
+      "source_location": "L45"
+    },
+    {
+      "id": "lib_tests_test_mr_notification_test_dashboard_refresh_ping_failure_does_not_raise_or_block_the_other_channels",
+      "label": "test_dashboard_refresh_ping_failure_does_not_raise_or_block_the_other_channels()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 329,
+      "community_name": "test_mr_notification.py",
+      "file_type": "code",
+      "norm_label": "test_dashboard_refresh_ping_failure_does_not_raise_or_block_the_other_channels()",
+      "source_file": "lib/tests/test_mr_notification.py",
+      "source_location": "L95"
+    },
+    {
+      "id": "lib_tests_test_mr_notification_test_default_dashboard_refresh_ping_posts_to_the_webhook_servers_mr_ready_endpoint",
+      "label": "test_default_dashboard_refresh_ping_posts_to_the_webhook_servers_mr_ready_endpoint()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 329,
+      "community_name": "test_mr_notification.py",
+      "file_type": "code",
+      "norm_label": "test_default_dashboard_refresh_ping_posts_to_the_webhook_servers_mr_ready_endpoint()",
+      "source_file": "lib/tests/test_mr_notification.py",
+      "source_location": "L116"
+    },
+    {
+      "id": "lib_tests_test_mr_notification_test_default_push_notify_invokes_headless_claude",
+      "label": "test_default_push_notify_invokes_headless_claude()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 329,
+      "community_name": "test_mr_notification.py",
+      "file_type": "code",
+      "norm_label": "test_default_push_notify_invokes_headless_claude()",
+      "source_file": "lib/tests/test_mr_notification.py",
+      "source_location": "L133"
+    },
+    {
+      "id": "lib_tests_test_mr_notification_test_desktop_notification_click_opens_the_pr",
+      "label": "test_desktop_notification_click_opens_the_pr()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 329,
+      "community_name": "test_mr_notification.py",
+      "file_type": "code",
+      "norm_label": "test_desktop_notification_click_opens_the_pr()",
+      "source_file": "lib/tests/test_mr_notification.py",
+      "source_location": "L24"
+    },
+    {
+      "id": "lib_tests_test_mr_notification_test_message_identifies_ticket_and_is_concise",
+      "label": "test_message_identifies_ticket_and_is_concise()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 329,
+      "community_name": "test_mr_notification.py",
+      "file_type": "code",
+      "norm_label": "test_message_identifies_ticket_and_is_concise()",
+      "source_file": "lib/tests/test_mr_notification.py",
+      "source_location": "L34"
+    },
+    {
+      "id": "lib_tests_test_mr_notification_test_push_notification_failure_does_not_raise_or_block_desktop",
+      "label": "test_push_notification_failure_does_not_raise_or_block_desktop()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 329,
+      "community_name": "test_mr_notification.py",
+      "file_type": "code",
+      "norm_label": "test_push_notification_failure_does_not_raise_or_block_desktop()",
+      "source_file": "lib/tests/test_mr_notification.py",
+      "source_location": "L55"
+    },
+    {
+      "id": "lib_tests_test_mr_notification_test_returns_status_dict",
+      "label": "test_returns_status_dict()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 329,
+      "community_name": "test_mr_notification.py",
+      "file_type": "code",
+      "norm_label": "test_returns_status_dict()",
+      "source_file": "lib/tests/test_mr_notification.py",
+      "source_location": "L72"
+    },
+    {
+      "id": "lib_tests_test_mr_notification_test_sends_desktop_notification_when_raised",
+      "label": "test_sends_desktop_notification_when_raised()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 329,
+      "community_name": "test_mr_notification.py",
+      "file_type": "code",
+      "norm_label": "test_sends_desktop_notification_when_raised()",
+      "source_file": "lib/tests/test_mr_notification.py",
+      "source_location": "L14"
+    },
+    {
       "id": "bench_tasks_task_012_protocol_mismatch_files_decoder_decode",
       "label": "decode()",
       "_callable": true,
@@ -12804,6 +12576,246 @@
       "norm_label": "test_roundtrip_current_version()",
       "source_file": "bench/tasks/task-012-protocol-mismatch/files/test_roundtrip.py",
       "source_location": "L16"
+    },
+    {
+      "id": "lib_tests_test_code_sync_push_git",
+      "label": "_git()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 330,
+      "community_name": "test_code_sync_push.py",
+      "file_type": "code",
+      "norm_label": "_git()",
+      "source_file": "lib/tests/test_code_sync_push.py",
+      "source_location": "L19"
+    },
+    {
+      "id": "lib_tests_test_code_sync_push_make_origin_and_clone",
+      "label": "_make_origin_and_clone()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 330,
+      "community_name": "test_code_sync_push.py",
+      "file_type": "code",
+      "norm_label": "_make_origin_and_clone()",
+      "source_file": "lib/tests/test_code_sync_push.py",
+      "source_location": "L23"
+    },
+    {
+      "id": "lib_tests_test_code_sync_push_test_push_no_ops_when_truly_nothing_to_do",
+      "label": "test_push_no_ops_when_truly_nothing_to_do()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 330,
+      "community_name": "test_code_sync_push.py",
+      "file_type": "code",
+      "norm_label": "test_push_no_ops_when_truly_nothing_to_do()",
+      "source_file": "lib/tests/test_code_sync_push.py",
+      "source_location": "L67"
+    },
+    {
+      "id": "lib_tests_test_code_sync_push_test_push_ships_a_clean_tree_with_unpushed_commits",
+      "label": "test_push_ships_a_clean_tree_with_unpushed_commits()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 330,
+      "community_name": "test_code_sync_push.py",
+      "file_type": "code",
+      "norm_label": "test_push_ships_a_clean_tree_with_unpushed_commits()",
+      "source_file": "lib/tests/test_code_sync_push.py",
+      "source_location": "L46"
+    },
+    {
+      "id": "lib_tests_test_notify_test_falls_back_to_osascript_without_terminal_notifier",
+      "label": "test_falls_back_to_osascript_without_terminal_notifier()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 331,
+      "community_name": "test_notify.py",
+      "file_type": "code",
+      "norm_label": "test_falls_back_to_osascript_without_terminal_notifier()",
+      "source_file": "lib/tests/test_notify.py",
+      "source_location": "L38"
+    },
+    {
+      "id": "lib_tests_test_notify_test_notify_never_raises_on_failure",
+      "label": "test_notify_never_raises_on_failure()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 331,
+      "community_name": "test_notify.py",
+      "file_type": "code",
+      "norm_label": "test_notify_never_raises_on_failure()",
+      "source_file": "lib/tests/test_notify.py",
+      "source_location": "L51"
+    },
+    {
+      "id": "lib_tests_test_notify_test_to_open_url_converts_local_path",
+      "label": "test_to_open_url_converts_local_path()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 331,
+      "community_name": "test_notify.py",
+      "file_type": "code",
+      "norm_label": "test_to_open_url_converts_local_path()",
+      "source_file": "lib/tests/test_notify.py",
+      "source_location": "L19"
+    },
+    {
+      "id": "lib_tests_test_notify_test_to_open_url_passes_through_urls",
+      "label": "test_to_open_url_passes_through_urls()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 331,
+      "community_name": "test_notify.py",
+      "file_type": "code",
+      "norm_label": "test_to_open_url_passes_through_urls()",
+      "source_file": "lib/tests/test_notify.py",
+      "source_location": "L14"
+    },
+    {
+      "id": "lib_tests_test_notify_test_uses_terminal_notifier_with_open_flag_when_available",
+      "label": "test_uses_terminal_notifier_with_open_flag_when_available()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 331,
+      "community_name": "test_notify.py",
+      "file_type": "code",
+      "norm_label": "test_uses_terminal_notifier_with_open_flag_when_available()",
+      "source_file": "lib/tests/test_notify.py",
+      "source_location": "L25"
+    },
+    {
+      "id": "skills_research_colony_scripts_source_monitor_fetch_arxiv",
+      "label": "fetch_arxiv()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 332,
+      "community_name": "source_monitor.py",
+      "file_type": "code",
+      "norm_label": "fetch_arxiv()",
+      "source_file": "skills/research-colony/scripts/source_monitor.py",
+      "source_location": "L18"
+    },
+    {
+      "id": "skills_research_colony_scripts_source_monitor_fetch_github",
+      "label": "fetch_github()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 332,
+      "community_name": "source_monitor.py",
+      "file_type": "code",
+      "norm_label": "fetch_github()",
+      "source_file": "skills/research-colony/scripts/source_monitor.py",
+      "source_location": "L50"
+    },
+    {
+      "id": "skills_research_colony_scripts_source_monitor_fetch_hackernews",
+      "label": "fetch_hackernews()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 332,
+      "community_name": "source_monitor.py",
+      "file_type": "code",
+      "norm_label": "fetch_hackernews()",
+      "source_file": "skills/research-colony/scripts/source_monitor.py",
+      "source_location": "L85"
+    },
+    {
+      "id": "skills_research_colony_scripts_source_monitor_main",
+      "label": "main()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 332,
+      "community_name": "source_monitor.py",
+      "file_type": "code",
+      "norm_label": "main()",
+      "source_file": "skills/research-colony/scripts/source_monitor.py",
+      "source_location": "L181"
+    },
+    {
+      "id": "skills_research_colony_scripts_source_monitor_save_raw_cache",
+      "label": "save_raw_cache()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 332,
+      "community_name": "source_monitor.py",
+      "file_type": "code",
+      "norm_label": "save_raw_cache()",
+      "source_file": "skills/research-colony/scripts/source_monitor.py",
+      "source_location": "L166"
+    },
+    {
+      "id": "skills_research_colony_scripts_source_monitor_store_items",
+      "label": "store_items()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 332,
+      "community_name": "source_monitor.py",
+      "file_type": "code",
+      "norm_label": "store_items()",
+      "source_file": "skills/research-colony/scripts/source_monitor.py",
+      "source_location": "L116"
+    },
+    {
+      "id": "skills_research_colony_scripts_correlate_correlate",
+      "label": "correlate()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 333,
+      "community_name": "run_colony.py",
+      "file_type": "code",
+      "norm_label": "correlate()",
+      "source_file": "skills/research-colony/scripts/correlate.py",
+      "source_location": "L54"
+    },
+    {
+      "id": "skills_research_colony_scripts_correlate_roadmap_match",
+      "label": "roadmap_match()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 333,
+      "community_name": "run_colony.py",
+      "file_type": "code",
+      "norm_label": "roadmap_match()",
+      "source_file": "skills/research-colony/scripts/correlate.py",
+      "source_location": "L48"
+    },
+    {
+      "id": "skills_research_colony_scripts_run_colony_main",
+      "label": "main()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 333,
+      "community_name": "run_colony.py",
+      "file_type": "code",
+      "norm_label": "main()",
+      "source_file": "skills/research-colony/scripts/run_colony.py",
+      "source_location": "L15"
+    },
+    {
+      "id": "lib_tests_test_sandbox_orchestration_git_repo",
+      "label": "git_repo()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 334,
+      "community_name": "git_repo",
+      "file_type": "code",
+      "norm_label": "git_repo()",
+      "source_file": "lib/tests/test_sandbox_orchestration.py",
+      "source_location": "L26"
+    },
+    {
+      "id": "lib_tests_test_sandbox_orchestration_metrics_dir",
+      "label": "metrics_dir()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 334,
+      "community_name": "git_repo",
+      "file_type": "code",
+      "norm_label": "metrics_dir()",
+      "source_file": "lib/tests/test_sandbox_orchestration.py",
+      "source_location": "L19"
     },
     {
       "id": "lib_tests_test_network_reachability_fakecompleted_init",
@@ -13836,6 +13848,18 @@
       "norm_label": "sync_research_feed()",
       "source_file": "skills/improve/scripts/cross_machine_merge.py",
       "source_location": "L123"
+    },
+    {
+      "id": "skills_improve_scripts_daily_digest_call_claude",
+      "label": "call_claude()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 40,
+      "community_name": "cross_machine_merge.py",
+      "file_type": "code",
+      "norm_label": "call_claude()",
+      "source_file": "skills/improve/scripts/daily_digest.py",
+      "source_location": "L230"
     },
     {
       "id": "skills_paper_dive_scripts_logic_auditor_check_inference_validity",
@@ -18992,15 +19016,15 @@
       "source_location": "L1"
     },
     {
-      "id": "lib_tests_test_sandbox_orchestration_py_fixture",
-      "label": "fixture",
+      "id": "lib_build_type_measure_rationale_82",
+      "label": "metrics_registry.compare()-shaped measure() for build-type tickets. Returns two\u2026",
       "_origin": "ast",
       "community": 10,
       "community_name": "test_sandbox_orchestration.py",
-      "file_type": "code",
-      "norm_label": "fixture",
-      "source_file": "",
-      "source_location": ""
+      "file_type": "rationale",
+      "norm_label": "metrics_registry.compare()-shaped measure() for build-type tickets. returns two...",
+      "source_file": "lib/build_type_measure.py",
+      "source_location": "L82"
     },
     {
       "id": "lib_tests_test_sandbox_orchestration_rationale_1",
@@ -21086,7 +21110,7 @@
       "label": "build_type_measure.py",
       "_origin": "ast",
       "community": 127,
-      "community_name": "measure",
+      "community_name": "build_type_measure.py",
       "file_type": "code",
       "norm_label": "build_type_measure.py",
       "source_file": "lib/build_type_measure.py",
@@ -21097,7 +21121,7 @@
       "label": "Path",
       "_origin": "ast",
       "community": 127,
-      "community_name": "measure",
+      "community_name": "build_type_measure.py",
       "file_type": "code",
       "norm_label": "path",
       "source_file": "",
@@ -21108,7 +21132,7 @@
       "label": "One touched file -> the pytest path arg it implies. `skills/` gets two path\u2026",
       "_origin": "ast",
       "community": 127,
-      "community_name": "measure",
+      "community_name": "build_type_measure.py",
       "file_type": "rationale",
       "norm_label": "one touched file -> the pytest path arg it implies. `skills/` gets two path...",
       "source_file": "lib/build_type_measure.py",
@@ -21119,22 +21143,11 @@
       "label": "Which test command matches what this ticket's diff actually touches, scoped\u2026",
       "_origin": "ast",
       "community": 127,
-      "community_name": "measure",
+      "community_name": "build_type_measure.py",
       "file_type": "rationale",
       "norm_label": "which test command matches what this ticket's diff actually touches, scoped...",
       "source_file": "lib/build_type_measure.py",
       "source_location": "L57"
-    },
-    {
-      "id": "lib_build_type_measure_rationale_82",
-      "label": "metrics_registry.compare()-shaped measure() for build-type tickets. Returns two\u2026",
-      "_origin": "ast",
-      "community": 127,
-      "community_name": "measure",
-      "file_type": "rationale",
-      "norm_label": "metrics_registry.compare()-shaped measure() for build-type tickets. returns two...",
-      "source_file": "lib/build_type_measure.py",
-      "source_location": "L82"
     },
     {
       "id": "skills_to_tasklist_skill",
@@ -21659,17 +21672,6 @@
       "source_location": ""
     },
     {
-      "id": "lib_mr_notification",
-      "label": "mr_notification.py",
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "mr_notification.py",
-      "source_file": "lib/mr_notification.py",
-      "source_location": "L1"
-    },
-    {
       "id": "lib_notify",
       "label": "notify.py",
       "_origin": "ast",
@@ -21678,83 +21680,6 @@
       "file_type": "code",
       "norm_label": "notify.py",
       "source_file": "lib/notify.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "lib_tests_test_code_sync_push",
-      "label": "test_code_sync_push.py",
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "test_code_sync_push.py",
-      "source_file": "lib/tests/test_code_sync_push.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "lib_tests_test_code_sync_push_py_path",
-      "label": "Path",
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "path",
-      "source_file": "",
-      "source_location": ""
-    },
-    {
-      "id": "lib_tests_test_mr_notification",
-      "label": "test_mr_notification.py",
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "test_mr_notification.py",
-      "source_file": "lib/tests/test_mr_notification.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "lib_tests_test_notify",
-      "label": "test_notify.py",
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "test_notify.py",
-      "source_file": "lib/tests/test_notify.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "skills_research_colony_scripts_correlate",
-      "label": "correlate.py",
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "correlate.py",
-      "source_file": "skills/research-colony/scripts/correlate.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "skills_research_colony_scripts_run_colony",
-      "label": "run_colony.py",
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "run_colony.py",
-      "source_file": "skills/research-colony/scripts/run_colony.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "skills_research_colony_scripts_source_monitor",
-      "label": "source_monitor.py",
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "source_monitor.py",
-      "source_file": "skills/research-colony/scripts/source_monitor.py",
       "source_location": "L1"
     },
     {
@@ -21833,50 +21758,6 @@
       "norm_label": "fire a macos notification. if open_target (a url or local file path) is given...",
       "source_file": "lib/notify.py",
       "source_location": "L48"
-    },
-    {
-      "id": "lib_tests_test_code_sync_push_rationale_1",
-      "label": "Tests for code_sync.py's push(). Run via: ~/.agents/venv/bin/python -m pytest\u2026",
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "rationale",
-      "norm_label": "tests for code_sync.py's push(). run via: ~/.agents/venv/bin/python -m pytest...",
-      "source_file": "lib/tests/test_code_sync_push.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "lib_tests_test_code_sync_push_rationale_47",
-      "label": "Reproduces the real bug: a manual `git commit` (e.g. resolving a stash conflict\u2026",
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "rationale",
-      "norm_label": "reproduces the real bug: a manual `git commit` (e.g. resolving a stash conflict...",
-      "source_file": "lib/tests/test_code_sync_push.py",
-      "source_location": "L47"
-    },
-    {
-      "id": "lib_tests_test_mr_notification_rationale_1",
-      "label": "Tests for mr_notification.py. Run via: ~/.agents/venv/bin/python -m pytest\u2026",
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "rationale",
-      "norm_label": "tests for mr_notification.py. run via: ~/.agents/venv/bin/python -m pytest...",
-      "source_file": "lib/tests/test_mr_notification.py",
-      "source_location": "L1"
-    },
-    {
-      "id": "lib_tests_test_notify_rationale_1",
-      "label": "Tests for notify.py. Run via: ~/.agents/venv/bin/python -m pytest\u2026",
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "rationale",
-      "norm_label": "tests for notify.py. run via: ~/.agents/venv/bin/python -m pytest...",
-      "source_file": "lib/tests/test_notify.py",
-      "source_location": "L1"
     },
     {
       "id": "dashboard_package_build_mac",
@@ -32317,28 +32198,6 @@
       "source_location": "L90"
     },
     {
-      "id": "lib_mr_raiser_rationale_126",
-      "label": "Given sandbox_orchestration.execute_ticket's result, raise a PR only if\u2026",
-      "_origin": "ast",
-      "community": 258,
-      "community_name": "run_ticket.py",
-      "file_type": "rationale",
-      "norm_label": "given sandbox_orchestration.execute_ticket's result, raise a pr only if...",
-      "source_file": "lib/mr_raiser.py",
-      "source_location": "L126"
-    },
-    {
-      "id": "lib_run_ticket_rationale_36",
-      "label": "A ticket that didn't raise a PR -- rate-limited, a worktree-creation failure,\u2026",
-      "_origin": "ast",
-      "community": 258,
-      "community_name": "run_ticket.py",
-      "file_type": "rationale",
-      "norm_label": "a ticket that didn't raise a pr -- rate-limited, a worktree-creation failure,...",
-      "source_file": "lib/run_ticket.py",
-      "source_location": "L36"
-    },
-    {
       "id": "lib_run_ticket_rationale_50",
       "label": "This machine has been free since execute_ticket returned above -- win or lose,\u2026",
       "_origin": "ast",
@@ -33330,6 +33189,17 @@
       "source_location": "L1"
     },
     {
+      "id": "lib_run_ticket_rationale_36",
+      "label": "A ticket that didn't raise a PR -- rate-limited, a worktree-creation failure,\u2026",
+      "_origin": "ast",
+      "community": 273,
+      "community_name": "ticket_pipeline.py",
+      "file_type": "rationale",
+      "norm_label": "a ticket that didn't raise a pr -- rate-limited, a worktree-creation failure,...",
+      "source_file": "lib/run_ticket.py",
+      "source_location": "L36"
+    },
+    {
       "id": "lib_ticket_pipeline_rationale_91",
       "label": "run_ticket.py handles worktree creation (from origin/main, not whatever\u2026",
       "_origin": "ast",
@@ -33865,6 +33735,17 @@
       "source_location": "L92"
     },
     {
+      "id": "lib_mr_notification",
+      "label": "mr_notification.py",
+      "_origin": "ast",
+      "community": 288,
+      "community_name": "mr_raiser.py",
+      "file_type": "code",
+      "norm_label": "mr_notification.py",
+      "source_file": "lib/mr_notification.py",
+      "source_location": "L1"
+    },
+    {
       "id": "lib_mr_raiser",
       "label": "mr_raiser.py",
       "_origin": "ast",
@@ -33896,6 +33777,17 @@
       "norm_label": "fire all three notification channels for a newly-raised mr. never raises -- a...",
       "source_file": "lib/mr_notification.py",
       "source_location": "L70"
+    },
+    {
+      "id": "lib_mr_raiser_rationale_126",
+      "label": "Given sandbox_orchestration.execute_ticket's result, raise a PR only if\u2026",
+      "_origin": "ast",
+      "community": 288,
+      "community_name": "mr_raiser.py",
+      "file_type": "rationale",
+      "norm_label": "given sandbox_orchestration.execute_ticket's result, raise a pr only if...",
+      "source_file": "lib/mr_raiser.py",
+      "source_location": "L126"
     },
     {
       "id": "docs_adr_0029_ticket_design_docs_live_in_the_pr",
@@ -35247,6 +35139,28 @@
       "source_location": "L1"
     },
     {
+      "id": "lib_tests_test_mr_notification",
+      "label": "test_mr_notification.py",
+      "_origin": "ast",
+      "community": 329,
+      "community_name": "test_mr_notification.py",
+      "file_type": "code",
+      "norm_label": "test_mr_notification.py",
+      "source_file": "lib/tests/test_mr_notification.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "lib_tests_test_mr_notification_rationale_1",
+      "label": "Tests for mr_notification.py. Run via: ~/.agents/venv/bin/python -m pytest\u2026",
+      "_origin": "ast",
+      "community": 329,
+      "community_name": "test_mr_notification.py",
+      "file_type": "rationale",
+      "norm_label": "tests for mr_notification.py. run via: ~/.agents/venv/bin/python -m pytest...",
+      "source_file": "lib/tests/test_mr_notification.py",
+      "source_location": "L1"
+    },
+    {
       "id": "bench_tasks_task_012_protocol_mismatch_files_decoder",
       "label": "decoder.py",
       "_origin": "ast",
@@ -35344,6 +35258,116 @@
       "norm_label": "existing round-trip tests \u2014 all pass against the current v1/v2 implementation.",
       "source_file": "bench/tasks/task-012-protocol-mismatch/files/test_roundtrip.py",
       "source_location": "L1"
+    },
+    {
+      "id": "lib_tests_test_code_sync_push",
+      "label": "test_code_sync_push.py",
+      "_origin": "ast",
+      "community": 330,
+      "community_name": "test_code_sync_push.py",
+      "file_type": "code",
+      "norm_label": "test_code_sync_push.py",
+      "source_file": "lib/tests/test_code_sync_push.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "lib_tests_test_code_sync_push_py_path",
+      "label": "Path",
+      "_origin": "ast",
+      "community": 330,
+      "community_name": "test_code_sync_push.py",
+      "file_type": "code",
+      "norm_label": "path",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
+      "id": "lib_tests_test_code_sync_push_rationale_1",
+      "label": "Tests for code_sync.py's push(). Run via: ~/.agents/venv/bin/python -m pytest\u2026",
+      "_origin": "ast",
+      "community": 330,
+      "community_name": "test_code_sync_push.py",
+      "file_type": "rationale",
+      "norm_label": "tests for code_sync.py's push(). run via: ~/.agents/venv/bin/python -m pytest...",
+      "source_file": "lib/tests/test_code_sync_push.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "lib_tests_test_code_sync_push_rationale_47",
+      "label": "Reproduces the real bug: a manual `git commit` (e.g. resolving a stash conflict\u2026",
+      "_origin": "ast",
+      "community": 330,
+      "community_name": "test_code_sync_push.py",
+      "file_type": "rationale",
+      "norm_label": "reproduces the real bug: a manual `git commit` (e.g. resolving a stash conflict...",
+      "source_file": "lib/tests/test_code_sync_push.py",
+      "source_location": "L47"
+    },
+    {
+      "id": "lib_tests_test_notify",
+      "label": "test_notify.py",
+      "_origin": "ast",
+      "community": 331,
+      "community_name": "test_notify.py",
+      "file_type": "code",
+      "norm_label": "test_notify.py",
+      "source_file": "lib/tests/test_notify.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "lib_tests_test_notify_rationale_1",
+      "label": "Tests for notify.py. Run via: ~/.agents/venv/bin/python -m pytest\u2026",
+      "_origin": "ast",
+      "community": 331,
+      "community_name": "test_notify.py",
+      "file_type": "rationale",
+      "norm_label": "tests for notify.py. run via: ~/.agents/venv/bin/python -m pytest...",
+      "source_file": "lib/tests/test_notify.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "skills_research_colony_scripts_source_monitor",
+      "label": "source_monitor.py",
+      "_origin": "ast",
+      "community": 332,
+      "community_name": "source_monitor.py",
+      "file_type": "code",
+      "norm_label": "source_monitor.py",
+      "source_file": "skills/research-colony/scripts/source_monitor.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "skills_research_colony_scripts_correlate",
+      "label": "correlate.py",
+      "_origin": "ast",
+      "community": 333,
+      "community_name": "run_colony.py",
+      "file_type": "code",
+      "norm_label": "correlate.py",
+      "source_file": "skills/research-colony/scripts/correlate.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "skills_research_colony_scripts_run_colony",
+      "label": "run_colony.py",
+      "_origin": "ast",
+      "community": 333,
+      "community_name": "run_colony.py",
+      "file_type": "code",
+      "norm_label": "run_colony.py",
+      "source_file": "skills/research-colony/scripts/run_colony.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "lib_tests_test_sandbox_orchestration_py_fixture",
+      "label": "fixture",
+      "_origin": "ast",
+      "community": 334,
+      "community_name": "git_repo",
+      "file_type": "code",
+      "norm_label": "fixture",
+      "source_file": "",
+      "source_location": ""
     },
     {
       "id": "lib_tests_test_network_reachability",
@@ -46815,103 +46839,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "lib/run_ticket.py",
-      "source_location": "L94",
-      "weight": 1.0
-    },
-    {
-      "source": "lib_run_ticket_release_claim",
-      "target": "lib_ticket_pipeline_label_for_device",
-      "relation": "calls",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "source_file": "lib/run_ticket.py",
-      "source_location": "L45",
-      "weight": 1.0
-    },
-    {
-      "source": "lib_run_ticket_release_claim",
-      "target": "lib_ticket_pipeline_release",
-      "relation": "calls",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "source_file": "lib/run_ticket.py",
-      "source_location": "L46",
-      "weight": 1.0
-    },
-    {
-      "source": "lib_run_ticket_run",
-      "target": "lib_sandbox_orchestration_execute_ticket",
-      "relation": "calls",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "source_file": "lib/run_ticket.py",
-      "source_location": "L69",
-      "weight": 1.0
-    },
-    {
-      "source": "lib_run_ticket_run",
-      "target": "lib_build_type_measure_test_command_for",
-      "relation": "calls",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "source_file": "lib/run_ticket.py",
-      "source_location": "L75",
-      "weight": 1.0
-    },
-    {
-      "source": "lib_run_ticket_run",
-      "target": "lib_evidence_capture_capture_test_results",
-      "relation": "calls",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "source_file": "lib/run_ticket.py",
-      "source_location": "L76",
-      "weight": 1.0
-    },
-    {
-      "source": "lib_run_ticket_run",
-      "target": "lib_evidence_capture_capture_dev_evidence",
-      "relation": "calls",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "source_file": "lib/run_ticket.py",
-      "source_location": "L77",
-      "weight": 1.0
-    },
-    {
-      "source": "lib_run_ticket_run",
-      "target": "lib_evidence_capture_ticket_touches_ui",
-      "relation": "calls",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "source_file": "lib/run_ticket.py",
-      "source_location": "L77",
-      "weight": 1.0
-    },
-    {
-      "source": "lib_run_ticket_run",
-      "target": "lib_mr_raiser_raise_mr",
-      "relation": "calls",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "source_file": "lib/run_ticket.py",
-      "source_location": "L79",
+      "source_location": "L104",
       "weight": 1.0
     },
     {
@@ -46923,7 +46851,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "lib/run_ticket.py",
-      "source_location": "L82",
+      "source_location": "L92",
       "weight": 1.0
     },
     {
@@ -46935,7 +46863,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "lib/run_ticket.py",
-      "source_location": "L83",
+      "source_location": "L93",
       "weight": 1.0
     },
     {
@@ -46947,7 +46875,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "lib/run_ticket.py",
-      "source_location": "L85",
+      "source_location": "L95",
       "weight": 1.0
     },
     {
@@ -48207,7 +48135,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L55",
+      "source_location": "L56",
       "weight": 1.0
     },
     {
@@ -48219,7 +48147,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L102",
+      "source_location": "L103",
       "weight": 1.0
     },
     {
@@ -48231,7 +48159,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L163",
+      "source_location": "L164",
       "weight": 1.0
     },
     {
@@ -48243,7 +48171,19 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L135",
+      "source_location": "L136",
+      "weight": 1.0
+    },
+    {
+      "source": "lib_tests_test_run_ticket_test_run_recovers_when_raise_mr_itself_raises_unexpectedly",
+      "target": "lib_tests_test_run_ticket_passing_result",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "lib/tests/test_run_ticket.py",
+      "source_location": "L266",
       "weight": 1.0
     },
     {
@@ -48255,7 +48195,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L121",
+      "source_location": "L122",
       "weight": 1.0
     },
     {
@@ -48267,7 +48207,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L78",
+      "source_location": "L79",
       "weight": 1.0
     },
     {
@@ -48279,7 +48219,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L206",
+      "source_location": "L207",
       "weight": 1.0
     },
     {
@@ -48291,7 +48231,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L188",
+      "source_location": "L189",
       "weight": 1.0
     },
     {
@@ -56995,114 +56935,6 @@
       "weight": 1.0
     },
     {
-      "source": "lib_run_ticket",
-      "target": "lib_build_type_measure_measure",
-      "relation": "imports",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "import",
-      "source_file": "lib/run_ticket.py",
-      "source_location": "L18",
-      "weight": 1.0
-    },
-    {
-      "source": "lib_run_ticket",
-      "target": "lib_build_type_measure_test_command_for",
-      "relation": "imports",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "import",
-      "source_file": "lib/run_ticket.py",
-      "source_location": "L18",
-      "weight": 1.0
-    },
-    {
-      "source": "lib_run_ticket",
-      "target": "lib_evidence_capture_capture_dev_evidence",
-      "relation": "imports",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "import",
-      "source_file": "lib/run_ticket.py",
-      "source_location": "L19",
-      "weight": 1.0
-    },
-    {
-      "source": "lib_run_ticket",
-      "target": "lib_evidence_capture_capture_test_results",
-      "relation": "imports",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "import",
-      "source_file": "lib/run_ticket.py",
-      "source_location": "L19",
-      "weight": 1.0
-    },
-    {
-      "source": "lib_run_ticket",
-      "target": "lib_evidence_capture_ticket_touches_ui",
-      "relation": "imports",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "import",
-      "source_file": "lib/run_ticket.py",
-      "source_location": "L19",
-      "weight": 1.0
-    },
-    {
-      "source": "lib_run_ticket",
-      "target": "lib_mr_raiser_raise_mr",
-      "relation": "imports",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "import",
-      "source_file": "lib/run_ticket.py",
-      "source_location": "L20",
-      "weight": 1.0
-    },
-    {
-      "source": "lib_run_ticket",
-      "target": "lib_sandbox_orchestration_execute_ticket",
-      "relation": "imports",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "import",
-      "source_file": "lib/run_ticket.py",
-      "source_location": "L21",
-      "weight": 1.0
-    },
-    {
-      "source": "lib_run_ticket",
-      "target": "lib_ticket_pipeline_label_for_device",
-      "relation": "imports",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "import",
-      "source_file": "lib/run_ticket.py",
-      "source_location": "L22",
-      "weight": 1.0
-    },
-    {
-      "source": "lib_run_ticket",
-      "target": "lib_ticket_pipeline_release",
-      "relation": "imports",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "import",
-      "source_file": "lib/run_ticket.py",
-      "source_location": "L22",
-      "weight": 1.0
-    },
-    {
       "source": "lib_sandbox_orchestration",
       "target": "lib_metrics_registry",
       "relation": "imports",
@@ -57339,7 +57171,7 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L11",
+      "source_location": "L12",
       "weight": 1.0
     },
     {
@@ -71390,6 +71222,17 @@
     },
     {
       "source": "lib_run_ticket",
+      "target": "lib_run_ticket_main",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "lib/run_ticket.py",
+      "source_location": "L100",
+      "weight": 1.0
+    },
+    {
+      "source": "lib_run_ticket",
       "target": "lib_run_ticket_comment_failure",
       "relation": "contains",
       "_origin": "ast",
@@ -71430,17 +71273,6 @@
       "confidence_score": 1.0,
       "source_file": "lib/run_ticket.py",
       "source_location": "L65",
-      "weight": 1.0
-    },
-    {
-      "source": "lib_run_ticket",
-      "target": "lib_run_ticket_main",
-      "relation": "contains",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "source_file": "lib/run_ticket.py",
-      "source_location": "L90",
       "weight": 1.0
     },
     {
@@ -73662,7 +73494,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L101",
+      "source_location": "L102",
       "weight": 1.0
     },
     {
@@ -73673,7 +73505,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L115",
+      "source_location": "L116",
       "weight": 1.0
     },
     {
@@ -73684,7 +73516,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L134",
+      "source_location": "L135",
       "weight": 1.0
     },
     {
@@ -73695,7 +73527,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L14",
+      "source_location": "L15",
       "weight": 1.0
     },
     {
@@ -73706,7 +73538,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L151",
+      "source_location": "L152",
       "weight": 1.0
     },
     {
@@ -73717,7 +73549,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L162",
+      "source_location": "L163",
       "weight": 1.0
     },
     {
@@ -73728,7 +73560,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L179",
+      "source_location": "L180",
       "weight": 1.0
     },
     {
@@ -73739,7 +73571,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L187",
+      "source_location": "L188",
       "weight": 1.0
     },
     {
@@ -73750,7 +73582,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L203",
+      "source_location": "L204",
       "weight": 1.0
     },
     {
@@ -73761,7 +73593,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L218",
+      "source_location": "L219",
       "weight": 1.0
     },
     {
@@ -73772,7 +73604,29 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L22",
+      "source_location": "L23",
+      "weight": 1.0
+    },
+    {
+      "source": "lib_tests_test_run_ticket",
+      "target": "lib_tests_test_run_ticket_test_run_recovers_when_execute_ticket_raises_unexpectedly",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "lib/tests/test_run_ticket.py",
+      "source_location": "L235",
+      "weight": 1.0
+    },
+    {
+      "source": "lib_tests_test_run_ticket",
+      "target": "lib_tests_test_run_ticket_test_run_recovers_when_raise_mr_itself_raises_unexpectedly",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "lib/tests/test_run_ticket.py",
+      "source_location": "L265",
       "weight": 1.0
     },
     {
@@ -73783,7 +73637,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L30",
+      "source_location": "L31",
       "weight": 1.0
     },
     {
@@ -73794,7 +73648,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L54",
+      "source_location": "L55",
       "weight": 1.0
     },
     {
@@ -73805,7 +73659,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "lib/tests/test_run_ticket.py",
-      "source_location": "L77",
+      "source_location": "L78",
       "weight": 1.0
     },
     {
@@ -91621,7 +91475,7 @@
       "confidence_score": 0.85,
       "context": "argument",
       "source_file": "lib/run_ticket.py",
-      "source_location": "L69",
+      "source_location": "L70",
       "weight": 1.0
     },
     {
@@ -92150,6 +92004,102 @@
       "context": "call",
       "source_file": "lib/mr_raiser.py",
       "source_location": "L152",
+      "weight": 1.0
+    },
+    {
+      "source": "lib_run_ticket_release_claim",
+      "target": "lib_ticket_pipeline_label_for_device",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "context": "call",
+      "source_file": "lib/run_ticket.py",
+      "source_location": "L45",
+      "weight": 1.0
+    },
+    {
+      "source": "lib_run_ticket_release_claim",
+      "target": "lib_ticket_pipeline_release",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "context": "call",
+      "source_file": "lib/run_ticket.py",
+      "source_location": "L46",
+      "weight": 1.0
+    },
+    {
+      "source": "lib_run_ticket_run",
+      "target": "lib_sandbox_orchestration_execute_ticket",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "context": "call",
+      "source_file": "lib/run_ticket.py",
+      "source_location": "L70",
+      "weight": 1.0
+    },
+    {
+      "source": "lib_run_ticket_run",
+      "target": "lib_build_type_measure_test_command_for",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "context": "call",
+      "source_file": "lib/run_ticket.py",
+      "source_location": "L76",
+      "weight": 1.0
+    },
+    {
+      "source": "lib_run_ticket_run",
+      "target": "lib_evidence_capture_capture_test_results",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "context": "call",
+      "source_file": "lib/run_ticket.py",
+      "source_location": "L77",
+      "weight": 1.0
+    },
+    {
+      "source": "lib_run_ticket_run",
+      "target": "lib_evidence_capture_capture_dev_evidence",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "context": "call",
+      "source_file": "lib/run_ticket.py",
+      "source_location": "L78",
+      "weight": 1.0
+    },
+    {
+      "source": "lib_run_ticket_run",
+      "target": "lib_evidence_capture_ticket_touches_ui",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "context": "call",
+      "source_file": "lib/run_ticket.py",
+      "source_location": "L78",
+      "weight": 1.0
+    },
+    {
+      "source": "lib_run_ticket_run",
+      "target": "lib_mr_raiser_raise_mr",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "context": "call",
+      "source_file": "lib/run_ticket.py",
+      "source_location": "L80",
       "weight": 1.0
     },
     {
@@ -92682,5 +92632,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "c773a75a62f537f9086a4f6e58bbedbd0d20ba07"
+  "built_at_commit": "2a831b93de25cd9e9604ae710c99e63b02e4fe28"
 }

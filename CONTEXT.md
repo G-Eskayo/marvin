@@ -132,6 +132,11 @@ Domain terms only. No implementation details — see `docs/adr/` for decisions a
   rewiring of the existing cron jobs (research-colony, daily-digest, cross-machine-merge) to use
   it. Migrating live, currently-working production jobs onto a same-day, freshly-built mechanism is
   real risk for no immediate benefit; prove it solid first, migrate one job at a time later.
+- **Primary automation host** ([[0032]], 2026-09-01): `ticket-pipeline`'s own scanning cron moved to
+  mac-mini (always-on) rather than macbook-pro (sleeps/closes between naps) — `select_machine()`
+  itself needed no changes, since it was already machine-agnostic. `dashboard-webhook` runs on both
+  machines until G-Eskayo/marvin#112 (env-aware webhook URLs) ships and makes consolidating it onto
+  mac-mini actually safe.
 
 ### Fan-out + merge (mode 2), first application: research-colony
 
@@ -222,6 +227,9 @@ then) — a real, current fragility, not a hypothetical one.
   Distinct in purpose from `brain-map` (giving MARVIN a sense of life/growth to watch over time as a
   companion visualization) — neither replaces the other, but they're allowed to converge or relate
   as part of the same larger story of MARVIN over time, not walled off from each other by default.
+  The anticipated third tab is now in progress as the "Activity" board (G-Eskayo/marvin#109's PRD)
+  — the GUI itself still runs on both machines as originally decided here; only its webhook/refresh
+  data-source URLs become device-aware ([[0032]]), not the app's own location.
 - **Dashboard tech stack**: Electron + React, matching [[project-finance-os]] (Gil's other native
   app) — chosen specifically for cross-platform portability as more machines join MARVIN's known
   devices, e.g. [[project-third-node-kali-hackintosh]]'s deferred Linux node. Portability applies to
