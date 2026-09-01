@@ -43,6 +43,20 @@ Results print a comparison table and save to `results/<task>-<stamp>.json`.
 `--judge` calls claude as an LLM judge after each run; failing runs print the
 judge's rationale inline. Both substring and judge scores are shown side by side.
 
+## Cross-model aggregation
+
+After running `bench.py` across multiple model tiers (Haiku, Sonnet, Opus), aggregate the results into per-task deltas:
+
+```bash
+python3 cross_model_report.py --results-dir bench/results --models default,claude-haiku-4-5-20251001,claude-opus-5
+```
+
+This computes MARVIN − clean deltas for cost/tokens/correctness per task and tier,
+rolls up by tier to validate the hypothesis that MARVIN's advantage grows on weaker models,
+and outputs a markdown table ready for SCORECARD.md.
+
+See `cross_model_report.py --help` for options.
+
 ## Task format
 
 ```

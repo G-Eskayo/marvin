@@ -24,6 +24,32 @@ Combined: the cheapest viable recall path is now local 14B + RAG → $0.00. The 
 
 ---
 
+## Cross-Model Tiers — Haiku vs Sonnet vs Opus
+
+**Hypothesis:** MARVIN's advantage shrinks on stronger models. Run 8 tested this on Haiku alone; this section aggregates a full suite sweep (14 tasks × 3 tiers) to validate the trend and quantify per-task/tier costs.
+
+**Method:** `cross_model_report.py` aggregates raw `.json` results from `bench.py` runs across models, computes per-task deltas (MARVIN − clean), rolls up by tier, and reports per-task table + trend analysis.
+
+### Per-task deltas (Haiku/Sonnet/Opus)
+
+| Task | Tier | Model | Clean Cost | MARVIN Cost | Cost Δ | Clean Tok | MARVIN Tok | Tok Δ | Clean | MARVIN |
+|------|------|-------|------------|-------------|--------|-----------|-----------|-------|-------|--------|
+| *(To be populated from sweep results)* |
+
+### Tier rollup summary
+
+| Tier | Tasks | Mean Cost Δ | Mean Token Δ | Correctness Δ |
+|------|-------|------------|---------------|---------------|
+| Haiku | — | — | — | — |
+| Sonnet | — | — | — | — |
+| Opus | — | — | — | — |
+
+### Trend verdict
+
+*(awaiting sweep data)*
+
+---
+
 ## GAINS
 
 ### 1. Recall — MARVIN knows things the others don't
