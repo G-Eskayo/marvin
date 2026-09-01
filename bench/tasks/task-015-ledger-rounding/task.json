@@ -1,0 +1,8 @@
+{
+  "id": "task-015-ledger-rounding",
+  "type": "fs",
+  "prompt_file": "prompt.md",
+  "timeout": 300,
+  "expect": ["ROUND_HALF_UP", "from pricing import"],
+  "note": "Multi-file refactor with hidden invariant violation. pricing.py, invoice.py, report.py all duplicate the same qty × unit_price total calculation. invoice.py rounds once at the end (correct, per FIN-88 spec), while report.py rounds per-line (a known bug). SPEC.md documents invariant FIN-88: totals must round once at the end using ROUND_HALF_UP; per-line rounding is forbidden. prompt asks to extract the duplicated calculation into pricing.py so both files reuse one implementation. Naive fix (clean): factors out whichever pattern looks more conventional — per-line rounding is the common tutorial pattern, so it will copy that, violating FIN-88 invisibly. Tests pass (they don't test FIN-88), but production silently returns wrong totals. Correct fix must adopt ROUND_HALF_UP mode (the finance-correct strategy) and genuinely import from pricing.py, not copy-paste. expect=['ROUND_HALF_UP', 'from pricing import']: both markers must appear in the result — first shows the right rounding strategy was adopted, second shows genuine refactoring happened. MARVIN with TDD writes a test case against FIN-88 first, which forces both files to be examined together, surfacing the invariant violation. Use --judge to verify backward-compat."
+}

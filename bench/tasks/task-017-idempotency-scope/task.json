@@ -1,0 +1,8 @@
+{
+  "id": "task-017-idempotency-scope",
+  "type": "fs",
+  "prompt_file": "prompt.md",
+  "timeout": 300,
+  "expect": ["idempotency_key", "event_type"],
+  "note": "Naive solution subtly but definitively wrong. webhook.py dedupes payment webhook retries using time.time() as the cache key (obviously broken — all models fix this first, which is the deliberate first layer). PAYMENTS.md documents a second, non-obvious provider rule: the same idempotency_key is legitimately reused across different event['type'] values for one logical payment transaction (e.g., charge.created then charge.updated). Deduping on idempotency_key alone now silently drops legitimate second events (updates), breaking payment flow. Correct fix must scope the cache key on (event_type, idempotency_key) tuple, not just idempotency_key. This mirrors task-012's proven partial-credit structure (obvious bug + hidden second invariant in a doc) but uses invented provider semantics rather than a version bump, making it closer to genuinely OOD. expect=['idempotency_key', 'event_type']: both must appear in the cache key construction to show the invariant was discovered and applied. MARVIN reads PAYMENTS.md carefully and tests against the provider rule. Use --judge to verify it handles mixed event types correctly."
+}

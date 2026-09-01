@@ -1,0 +1,8 @@
+{
+  "id": "task-016-frame-protocol",
+  "type": "fs",
+  "prompt_file": "prompt.md",
+  "timeout": 300,
+  "expect": ["raw_payload", "0xDC"],
+  "note": "Domain knowledge outside model training. PROTOCOL.md specifies Marvin Frame Protocol v2 with byte-stuffing (looks like HDLC/PPP escape sequences, familiar pattern). But it inverts one detail intentionally: checksum is computed over pre-escape payload bytes (raw_payload), NOT the on-wire escaped bytes — opposite of the common real-world convention. decode_frame() currently checksums the wrong thing (the escaped on-wire bytes). Correct fix must checksum raw_payload variable (already present but unused). expect=['raw_payload'] marks that the fix uses the correct variable; '0xDC' is a specific checksum byte from the worked example in PROTOCOL.md, verifying the implementation follows the spec exactly. Naive fix (clean): pattern-matches to HDLC/PPP (textbook, in training data), checksums on-wire bytes (the common real-world convention), silently produces wrong checksums and fails the protocol's worked examples. MARVIN reads PROTOCOL.md carefully and notices the inversion. Use --judge to verify against the spec examples."
+}
