@@ -241,7 +241,7 @@ def test_run_recovers_when_execute_ticket_raises_unexpectedly(monkeypatch):
     # around execute_ticket at all, so the whole process crashed before
     # ever reaching raise_mr/_comment_failure/_release_claim/
     # _trigger_redispatch. Both tickets stayed claimed forever, exactly
-    # the failure mode _release_claim was built to prevent, just reached
+    # the failure mode _release_claim was built to prevent, reached
     # through a different, uncaught path.
     def raise_timeout(*a, **kw):
         raise TimeoutExpired(cmd=["claude"], timeout=300)
