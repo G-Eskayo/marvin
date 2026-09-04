@@ -1123,7 +1123,7 @@ def test_run_paper_graph_never_fetches_for_below_threshold_nodes(tmp_path, monke
 # ── AC2: skip already-known papers (embedding + fetch) ───────────────────────
 
 def test_shape_and_score_skips_already_known_candidates_without_embedding():
-    # AC2: Known DOIs should skip embedding entirely, not just skip re-recording.
+    # AC2: Known DOIs should skip embedding entirely, not only re-recording.
     seed_embeddings = {"specter2": [1.0, 0.0], "nomic": [1.0, 0.0]}
     papers = [
         {"title": "Known", "abstract": "already in collection", "externalIds": {"DOI": "10.1/known"}},

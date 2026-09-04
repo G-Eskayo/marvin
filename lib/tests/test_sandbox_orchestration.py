@@ -140,7 +140,7 @@ def test_redispatch_succeeds_when_a_stale_worktree_is_still_registered(git_repo,
     # a branch checked out in an existing worktree -- and the subsequent
     # `git worktree add -b` then fails too, because the branch still
     # exists. Redispatch must still succeed by clearing the stale worktree
-    # itself, not just the branch.
+    # itself, not only the branch.
     first = so.execute_ticket(
         "TICKET-1", "test-subsystem",
         measure=lambda wt: {"accuracy": _metric(0.9)},
