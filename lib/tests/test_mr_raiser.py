@@ -369,7 +369,7 @@ def test_default_open_pr_marks_dev_evidence_not_available_when_missing(monkeypat
 
     body = calls[0][calls[0].index("--body") + 1]
     # both Test Results and Dev Environment Evidence fall back to this when
-    # neither was supplied -- confirm it appears twice, once per section.
+    # neither was supplied -- just confirm it appears twice, once per section.
     assert body.count("Not available.") == 2
 
 

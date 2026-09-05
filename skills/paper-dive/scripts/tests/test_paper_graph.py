@@ -285,7 +285,7 @@ def test_traverse_continues_past_ceiling_when_checkpoint_says_continue():
 
 
 def test_traverse_checkpoint_receives_accurate_queue_state():
-    # ADR 0010 requires the checkpoint to report queue state (not pause silently) so
+    # ADR 0010 requires the checkpoint to report queue state (not just pause silently) so
     # continue/stop is an informed decision -- this pins down exactly what gets reported.
     graph = {
         "seed": {
@@ -439,7 +439,7 @@ def test_traverse_shared_floor_applies_to_both_directions():
 
 def test_traverse_result_intent_citation_survives_full_traversal_over_cap():
     # Ticket #21 AC: result-intent citations bypass the top_k cap at the traverse() level,
-    # not only in select_candidates() unit tests.
+    # not just in select_candidates() unit tests.
     # citations_top_k=1 with 2 ranked-above citations + 1 low-score result-intent citation.
     # All 3 should make it through the full traverse() call.
     graph = {
@@ -1123,7 +1123,7 @@ def test_run_paper_graph_never_fetches_for_below_threshold_nodes(tmp_path, monke
 # ── AC2: skip already-known papers (embedding + fetch) ───────────────────────
 
 def test_shape_and_score_skips_already_known_candidates_without_embedding():
-    # AC2: Known DOIs should skip embedding entirely, not only re-recording.
+    # AC2: Known DOIs should skip embedding entirely, not just skip re-recording.
     seed_embeddings = {"specter2": [1.0, 0.0], "nomic": [1.0, 0.0]}
     papers = [
         {"title": "Known", "abstract": "already in collection", "externalIds": {"DOI": "10.1/known"}},

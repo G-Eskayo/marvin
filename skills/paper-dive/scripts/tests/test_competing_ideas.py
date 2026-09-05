@@ -255,7 +255,7 @@ def test_build_competing_ideas_map_handles_consensus():
 
     # All support, no refutes = consensus (empty-conflict is valid)
     assert len(result["supports"]) == 2
-    assert not result["refutes"]
+    assert len(result["refutes"]) == 0
 
 
 # ── render_markdown ────────────────────────────────────────────────────────
