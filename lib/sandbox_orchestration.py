@@ -30,7 +30,6 @@ from pathlib import Path
 from typing import Callable
 
 import metrics_registry as mr
-import rate_limit_backoff as rlb
 
 WORKTREES_ROOT = Path.home() / ".agents-pipeline-worktrees"
 
@@ -56,7 +55,7 @@ _EXEC_ALLOWED_TOOLS = (
     "Bash(~/.agents/venv/bin/python -m pytest*),"
     # A real live-fire dispatch (G-Eskayo/marvin#21) found the executor
     # naturally reaches for bare `pytest`/`python -m pytest` for its own
-    # self-verification, not only the venv's fully-qualified form -- only
+    # self-verification, not just the venv's fully-qualified form -- only
     # allowlisting one exact invocation left it stuck asking a question
     # nobody headless is present to answer.
     "Bash(pytest*),Bash(python -m pytest*),Bash(python3 -m pytest*),"
@@ -74,7 +73,7 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
     # the planning model reasonably-but-wrongly paused to ask for human
     # confirmation before declaring existing work sufficient -- nobody
     # headless was there to answer, and the "plan" that got passed to the
-    # executor was that unanswered question. (2) the executor got
+    # executor was just that unanswered question. (2) the executor got
     # stuck trying to commit/push/open a PR itself and asking for Bash
     # permission to do so, not knowing that's raise_mr's job, done
     # automatically after this function returns -- its own job stops at
@@ -104,7 +103,6 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
         cwd=worktree_path, capture_output=True, text=True, timeout=PLAN_TIMEOUT_S,
     )
     plan = plan_result.stdout
-    _raise_if_rate_limited(plan)
 
     exec_prompt = (
         f"{autonomy_note} Your job here stops at implementing the plan and "
@@ -114,28 +112,12 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
         f"do it yourself will just leave you stuck with no one to grant it.\n\n"
         f"Implement this plan in the current working tree:\n\n{plan}"
     )
-    exec_result = subprocess.run(
+    subprocess.run(
         ["claude", "-p", exec_prompt, "--model", HAIKU_MODEL,
          "--permission-mode", "dontAsk", "--allowedTools", _EXEC_ALLOWED_TOOLS],
-        cwd=worktree_path, capture_output=True, text=True, timeout=EXEC_TIMEOUT_S,
+        cwd=worktree_path, timeout=EXEC_TIMEOUT_S,
     )
-    _raise_if_rate_limited(exec_result.stdout)
     return plan
-
-
-def _raise_if_rate_limited(text: str) -> None:
-    """A headless `claude -p` call that's hit the account's usage limit
-    returns the limit message as its entire stdout instead of real
-    plan/implementation content -- found live 2026-09-01, ticket #29
-    threaded that message through as a fake plan and kept retrying every
-    ~30s, forever, because nothing distinguished "rate limited" from
-    "genuinely produced nothing useful". Raising here short-circuits the
-    remaining nested call too (no point spending up to EXEC_TIMEOUT_S on
-    a call doomed to hit the identical limit) and lets the caller record
-    a shared backoff instead of looping."""
-    backoff_until = rlb.record_backoff(text)
-    if backoff_until is not None:
-        raise rlb.RateLimited(backoff_until, text)
 
 
 def _create_worktree(repo_path: Path, ticket_ref: str) -> Path:

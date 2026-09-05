@@ -38,7 +38,6 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
-import rate_limit_backoff  # noqa: E402
 from task_dispatch import select_machine, dispatch  # noqa: E402
 
 VENV_PYTHON = str(Path.home() / ".agents" / "venv" / "bin" / "python")
@@ -101,20 +100,6 @@ def _build_wrapper_command(issue_number: int) -> str:
 
 def main() -> None:
     dry_run = "--dry-run" in sys.argv
-
-    # The account's usage limit is shared across every ticket this machine
-    # could dispatch, not just whichever one happened to trip it first --
-    # found live 2026-09-01: a rate-limited ticket released its claim and
-    # immediately triggered a redispatch, which just re-hit the identical
-    # limit ~30s later, forever, run_ticket.py -> ticket_pipeline.py ->
-    # run_ticket.py in a tight loop with no backoff anywhere in the chain.
-    # Checked before the `gh issue list` call below so a backoff window
-    # costs nothing but a file read, not a wasted API call.
-    backoff_until = rate_limit_backoff.active_backoff()
-    if backoff_until is not None:
-        print(f"{LOG_PREFIX} rate-limit backoff active until {backoff_until.isoformat()} -- skipping dispatch",
-              file=sys.stderr)
-        return
 
     tickets = _unclaimed_ready_tickets()
     if not tickets:
