@@ -1,0 +1,24 @@
+{
+  "company_holidays": [
+    {
+      "date": "2024-01-01",
+      "name": "New Year's Day"
+    },
+    {
+      "date": "2024-02-22",
+      "name": "town_hall_day"
+    },
+    {
+      "date": "2024-07-04",
+      "name": "Independence Day"
+    },
+    {
+      "date": "2024-11-28",
+      "name": "Thanksgiving"
+    },
+    {
+      "date": "2024-12-25",
+      "name": "Christmas"
+    }
+  ]
+}

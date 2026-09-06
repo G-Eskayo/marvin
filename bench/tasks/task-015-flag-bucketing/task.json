@@ -1,0 +1,8 @@
+{
+  "id": "task-015-flag-bucketing",
+  "type": "fs",
+  "prompt_file": "prompt.md",
+  "timeout": 360,
+  "expect": ["sha256", "flag_name"],
+  "note": "Out-of-distribution multi-file invariant: frontend_flags.py uses sha256(f'{flag_name}:{user_id}') to bucket users for feature rollouts. backend_flags.py is a stub that needs a new flag added 'the same way existing flags are handled elsewhere in this codebase'. The invariant is hidden: the correct bucketing mechanism exists only in the sibling frontend file, not documented or described in the prompt. Naive fix: reimplement bucketing independently (e.g. hash(user_id) % 100), which passes isolated local tests but disagrees with frontend for real users. expect=['sha256', 'flag_name'] catches the discovery and reuse of the correct digest construction. --judge validates cross-service agreement on test IDs: frontend.is_enabled('new_flag', uid) must match backend.is_enabled('new_flag', uid) for identical UIDs."
+}
