@@ -68,7 +68,7 @@ def test_mixed_files_and_directory_in_the_same_chunk(tmp_path):
 
 def test_empty_directory_falls_back_to_the_bare_directory_bullet(tmp_path):
     # No real files to enumerate -- must not render an empty/blank chunk,
-    # which would leave the reviewer with literally nothing to read.
+    # which would leave the reviewer with nothing to read.
     chunk_dir = tmp_path / "empty-dir"
     chunk_dir.mkdir()
 
