@@ -51,9 +51,9 @@ def test_rejects_unrelated_commands():
 
 
 class _FakeStdin:
-    def __init__(self, data: bytes):
+    def __init__(self, content: bytes):
         import io
-        self.buffer = io.BytesIO(data)
+        self.buffer = io.BytesIO(content)
 
 
 def test_main_never_raises_on_garbage_stdin(monkeypatch, capsys):

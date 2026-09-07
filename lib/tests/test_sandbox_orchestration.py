@@ -25,7 +25,7 @@ def metrics_dir(tmp_path, monkeypatch):
 @pytest.fixture
 def git_repo(tmp_path, monkeypatch):
     # A bare "origin" the repo actually pushes to and fetches from, not
-    # just a local-only checkout -- _create_worktree branches from
+    # only a local-only checkout -- _create_worktree branches from
     # origin/main specifically (G-Eskayo/marvin#95), so the fixture needs
     # a real remote for that ref to resolve, matching how ~/.agents
     # actually works rather than a simplified local-only stand-in.
@@ -139,7 +139,7 @@ def test_redispatch_succeeds_when_a_stale_worktree_is_still_registered(git_repo,
     # a branch checked out in an existing worktree -- and the subsequent
     # `git worktree add -b` then fails too, because the branch still
     # exists. Redispatch must still succeed by clearing the stale worktree
-    # itself, not just the branch.
+    # itself, not only the branch.
     first = so.execute_ticket(
         "TICKET-1", "test-subsystem",
         measure=lambda wt: {"accuracy": _metric(0.9)},

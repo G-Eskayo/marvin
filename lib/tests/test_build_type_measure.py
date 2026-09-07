@@ -59,7 +59,7 @@ def test_command_for_scopes_pytest_to_the_touched_top_level_directory(repo_with_
 
 def test_command_for_scopes_skills_to_two_path_components_not_all_of_skills(repo_with_worktree):
     # G-Eskayo/marvin#21 found this the hard way: scoping only to "skills"
-    # would still pull in every other skill's tests, not just this one's.
+    # would still pull in every other skill's tests, not only this one's.
     _commit_change(repo_with_worktree, "skills/paper-dive/scripts/paper_graph.py", "# change\n")
     command = btm.test_command_for(repo_with_worktree)
     assert command == [btm.VENV_PYTHON, "-m", "pytest", "-q", "skills/paper-dive"]
