@@ -59,6 +59,7 @@ Continue from handoff: ~/.claude/handoffs/handoff-[timestamp].md
 
 - Do not duplicate content already in files, commits, or PRDs — reference by path instead
 - Check whether this session wrote anything meant to persist to a temp/scratchpad location (e.g. a scratchpad dir, `/tmp`) — these are session-scoped and vanish in a new session with no error. If so, name its durable destination explicitly in the handoff rather than just noting the loss risk. Confirmed 2026-07-07: a benchmark script + logs left in a session scratchpad would have been silently lost otherwise.
+- Same check applies to substantial content that never touched a file at all — e.g. a forked/background agent's full findings (a ranked review list, a multi-point analysis) relayed only as a chat message. If it's referenced as "see transcript" or "see the final assistant message" instead of a path, that's the scratchpad risk in a different shape: it's one context-compression away from gone. Write it to a durable file (a PR comment, `~/.claude/outbox/`, a scratch note) as part of producing the handoff, don't just flag the risk. Confirmed 2026-09-14: a forked `/code-review` agent's full 10-finding PR review existed only in-transcript at handoff time.
 - Redact API keys, passwords, PII
 - The resume prompt must be self-contained — the next agent should be able to read it cold and know exactly where to start
 - If the user passed an argument describing the next session's focus, tailor the next steps and suggested skills sections to that goal
