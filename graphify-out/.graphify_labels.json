@@ -29,7 +29,7 @@
   "27": "main/index.js",
   "28": "test_cleanup_sweep.py",
   "29": "QA-Agent Capture",
-  "30": "$r",
+  "30": "bo",
   "31": "test_mr_raiser.py",
   "32": "QA-Agent Complexity Visitor",
   "33": "Bench Task 012 Decoder",
@@ -332,7 +332,7 @@
   "330": "test_code_sync_push.py",
   "331": "test_notify.py",
   "332": "source_monitor.py",
-  "333": "run_colony.py",
+  "333": "notify",
   "334": "rebuild-manifest.py",
   "335": "log_hook_error",
   "336": "Proration (Policy FIN-114)",
@@ -347,5 +347,7 @@
   "345": "auto_fix.py",
   "346": "test_background_architecture_review.py",
   "347": "background_review.py",
-  "348": "generate_handoff_from_transcript.py"
+  "348": "generate_handoff_from_transcript.py",
+  "349": "ur",
+  "350": "registry_id"
 }
