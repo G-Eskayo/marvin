@@ -4,6 +4,19 @@
   "graph": {},
   "nodes": [
     {
+      "id": "brain_map_vendor_motion_12_42_2_pa",
+      "label": "pa",
+      "_callable": true,
+      "_callable_class": true,
+      "_origin": "ast",
+      "community": 1,
+      "community_name": "motion.12.42.2.js",
+      "file_type": "code",
+      "norm_label": "pa",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
       "id": "skills_paper_dive_scripts_tests_test_argument_mapper_fakeresp",
       "label": "_FakeResp",
       "_callable": true,
@@ -117,19 +130,6 @@
       "community_name": "co",
       "file_type": "code",
       "norm_label": "oi()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_ur",
-      "label": "ur",
-      "_callable": true,
-      "_callable_class": true,
-      "_origin": "ast",
-      "community": 253,
-      "community_name": "co",
-      "file_type": "code",
-      "norm_label": "ur",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -251,26 +251,13 @@
       "source_location": "L1"
     },
     {
-      "id": "brain_map_vendor_motion_12_42_2_pa",
-      "label": "pa",
-      "_callable": true,
-      "_callable_class": true,
-      "_origin": "ast",
-      "community": 293,
-      "community_name": "e",
-      "file_type": "code",
-      "norm_label": "pa",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
       "id": "brain_map_vendor_motion_12_42_2_bo",
       "label": "bo()",
       "_callable": true,
       "_callable_class": true,
       "_origin": "ast",
       "community": 30,
-      "community_name": "$r",
+      "community_name": "bo",
       "file_type": "code",
       "norm_label": "bo()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
@@ -283,7 +270,7 @@
       "_callable_class": true,
       "_origin": "ast",
       "community": 30,
-      "community_name": "$r",
+      "community_name": "bo",
       "file_type": "code",
       "norm_label": "wr",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
@@ -353,6 +340,19 @@
       "norm_label": "_fakecompleted",
       "source_file": "lib/tests/test_network_reachability.py",
       "source_location": "L35"
+    },
+    {
+      "id": "brain_map_vendor_motion_12_42_2_ur",
+      "label": "ur",
+      "_callable": true,
+      "_callable_class": true,
+      "_origin": "ast",
+      "community": 349,
+      "community_name": "ur",
+      "file_type": "code",
+      "norm_label": "ur",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
     },
     {
       "id": "bench_tasks_task_009_cache_key_files_cache_lrucache",
@@ -650,18 +650,6 @@
       "source_location": "L1"
     },
     {
-      "id": "brain_map_vendor_motion_12_42_2_adopt",
-      "label": "adopt()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 1,
-      "community_name": "motion.12.42.2.js",
-      "file_type": "code",
-      "norm_label": "adopt()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
       "id": "brain_map_vendor_motion_12_42_2_be",
       "label": "be()",
       "_callable": true,
@@ -686,6 +674,18 @@
       "source_location": "L1"
     },
     {
+      "id": "brain_map_vendor_motion_12_42_2_br",
+      "label": "br()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 1,
+      "community_name": "motion.12.42.2.js",
+      "file_type": "code",
+      "norm_label": "br()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
       "id": "brain_map_vendor_motion_12_42_2_bs",
       "label": "Bs()",
       "_callable": true,
@@ -694,30 +694,6 @@
       "community_name": "motion.12.42.2.js",
       "file_type": "code",
       "norm_label": "bs()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_collecttargets",
-      "label": "collectTargets()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 1,
-      "community_name": "motion.12.42.2.js",
-      "file_type": "code",
-      "norm_label": "collecttargets()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_constructor",
-      "label": "constructor()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 1,
-      "community_name": "motion.12.42.2.js",
-      "file_type": "code",
-      "norm_label": "constructor()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -854,14 +830,26 @@
       "source_location": "L1"
     },
     {
-      "id": "brain_map_vendor_motion_12_42_2_getroot",
-      "label": "getRoot()",
+      "id": "brain_map_vendor_motion_12_42_2_go",
+      "label": "Go()",
       "_callable": true,
       "_origin": "ast",
       "community": 1,
       "community_name": "motion.12.42.2.js",
       "file_type": "code",
-      "norm_label": "getroot()",
+      "norm_label": "go()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "brain_map_vendor_motion_12_42_2_gr",
+      "label": "Gr()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 1,
+      "community_name": "motion.12.42.2.js",
+      "file_type": "code",
+      "norm_label": "gr()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -926,18 +914,6 @@
       "source_location": "L1"
     },
     {
-      "id": "brain_map_vendor_motion_12_42_2_il",
-      "label": "il()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 1,
-      "community_name": "motion.12.42.2.js",
-      "file_type": "code",
-      "norm_label": "il()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
       "id": "brain_map_vendor_motion_12_42_2_io",
       "label": "Io()",
       "_callable": true,
@@ -998,6 +974,18 @@
       "source_location": "L1"
     },
     {
+      "id": "brain_map_vendor_motion_12_42_2_jr",
+      "label": "jr()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 1,
+      "community_name": "motion.12.42.2.js",
+      "file_type": "code",
+      "norm_label": "jr()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
       "id": "brain_map_vendor_motion_12_42_2_ka",
       "label": "ka()",
       "_callable": true,
@@ -1030,18 +1018,6 @@
       "community_name": "motion.12.42.2.js",
       "file_type": "code",
       "norm_label": "kt()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_l",
-      "label": "$l()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 1,
-      "community_name": "motion.12.42.2.js",
-      "file_type": "code",
-      "norm_label": "$l()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -1118,18 +1094,6 @@
       "source_location": "L1"
     },
     {
-      "id": "brain_map_vendor_motion_12_42_2_nl",
-      "label": "nl()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 1,
-      "community_name": "motion.12.42.2.js",
-      "file_type": "code",
-      "norm_label": "nl()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
       "id": "brain_map_vendor_motion_12_42_2_no",
       "label": "No()",
       "_callable": true,
@@ -1178,6 +1142,54 @@
       "source_location": "L1"
     },
     {
+      "id": "brain_map_vendor_motion_12_42_2_pa_add",
+      "label": ".add()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 1,
+      "community_name": "motion.12.42.2.js",
+      "file_type": "code",
+      "norm_label": ".add()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "brain_map_vendor_motion_12_42_2_pa_constructor",
+      "label": ".constructor()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 1,
+      "community_name": "motion.12.42.2.js",
+      "file_type": "code",
+      "norm_label": ".constructor()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "brain_map_vendor_motion_12_42_2_pa_remove",
+      "label": ".remove()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 1,
+      "community_name": "motion.12.42.2.js",
+      "file_type": "code",
+      "norm_label": ".remove()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "brain_map_vendor_motion_12_42_2_pr",
+      "label": "pr()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 1,
+      "community_name": "motion.12.42.2.js",
+      "file_type": "code",
+      "norm_label": "pr()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
       "id": "brain_map_vendor_motion_12_42_2_ps",
       "label": "ps()",
       "_callable": true,
@@ -1186,18 +1198,6 @@
       "community_name": "motion.12.42.2.js",
       "file_type": "code",
       "norm_label": "ps()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_qi",
-      "label": "qi()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 1,
-      "community_name": "motion.12.42.2.js",
-      "file_type": "code",
-      "norm_label": "qi()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -1238,26 +1238,14 @@
       "source_location": "L1"
     },
     {
-      "id": "brain_map_vendor_motion_12_42_2_reconcileadditions",
-      "label": "reconcileAdditions()",
+      "id": "brain_map_vendor_motion_12_42_2_r",
+      "label": "$r()",
       "_callable": true,
       "_origin": "ast",
       "community": 1,
       "community_name": "motion.12.42.2.js",
       "file_type": "code",
-      "norm_label": "reconcileadditions()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_rl",
-      "label": "rl()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 1,
-      "community_name": "motion.12.42.2.js",
-      "file_type": "code",
-      "norm_label": "rl()",
+      "norm_label": "$r()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -1270,18 +1258,6 @@
       "community_name": "motion.12.42.2.js",
       "file_type": "code",
       "norm_label": "rs()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_runupdate",
-      "label": "runUpdate()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 1,
-      "community_name": "motion.12.42.2.js",
-      "file_type": "code",
-      "norm_label": "runupdate()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -1310,14 +1286,26 @@
       "source_location": "L1"
     },
     {
-      "id": "brain_map_vendor_motion_12_42_2_sl",
-      "label": "sl()",
+      "id": "brain_map_vendor_motion_12_42_2_sr",
+      "label": "Sr()",
       "_callable": true,
       "_origin": "ast",
       "community": 1,
       "community_name": "motion.12.42.2.js",
       "file_type": "code",
-      "norm_label": "sl()",
+      "norm_label": "sr()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "brain_map_vendor_motion_12_42_2_ta",
+      "label": "ta()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 1,
+      "community_name": "motion.12.42.2.js",
+      "file_type": "code",
+      "norm_label": "ta()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -1346,18 +1334,6 @@
       "source_location": "L1"
     },
     {
-      "id": "brain_map_vendor_motion_12_42_2_transitionfor",
-      "label": "transitionFor()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 1,
-      "community_name": "motion.12.42.2.js",
-      "file_type": "code",
-      "norm_label": "transitionfor()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
       "id": "brain_map_vendor_motion_12_42_2_va",
       "label": "Va()",
       "_callable": true,
@@ -1366,18 +1342,6 @@
       "community_name": "motion.12.42.2.js",
       "file_type": "code",
       "norm_label": "va()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_ve",
-      "label": "ve()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 1,
-      "community_name": "motion.12.42.2.js",
-      "file_type": "code",
-      "norm_label": "ve()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -1466,14 +1430,14 @@
       "source_location": "L1"
     },
     {
-      "id": "brain_map_vendor_motion_12_42_2_xe",
-      "label": "xe()",
+      "id": "brain_map_vendor_motion_12_42_2_xo",
+      "label": "xo()",
       "_callable": true,
       "_origin": "ast",
       "community": 1,
       "community_name": "motion.12.42.2.js",
       "file_type": "code",
-      "norm_label": "xe()",
+      "norm_label": "xo()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -1486,18 +1450,6 @@
       "community_name": "motion.12.42.2.js",
       "file_type": "code",
       "norm_label": "yr()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_zl",
-      "label": "Zl()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 1,
-      "community_name": "motion.12.42.2.js",
-      "file_type": "code",
-      "norm_label": "zl()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -1522,6 +1474,18 @@
       "community_name": "motion.12.42.2.js",
       "file_type": "code",
       "norm_label": "zo()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "brain_map_vendor_motion_12_42_2_zr",
+      "label": "Zr()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 1,
+      "community_name": "motion.12.42.2.js",
+      "file_type": "code",
+      "norm_label": "zr()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -3254,42 +3218,6 @@
       "source_location": "L114"
     },
     {
-      "id": "lib_notify_applescript_quote",
-      "label": "_applescript_quote()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "_applescript_quote()",
-      "source_file": "lib/notify.py",
-      "source_location": "L33"
-    },
-    {
-      "id": "lib_notify_notify",
-      "label": "notify()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "notify()",
-      "source_file": "lib/notify.py",
-      "source_location": "L47"
-    },
-    {
-      "id": "lib_notify_to_open_url",
-      "label": "_to_open_url()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "_to_open_url()",
-      "source_file": "lib/notify.py",
-      "source_location": "L40"
-    },
-    {
       "id": "skills_paper_dive_scripts_paper_graph_diminishing_returns",
       "label": "diminishing_returns()",
       "_callable": true,
@@ -4838,42 +4766,6 @@
       "source_location": "L130"
     },
     {
-      "id": "lib_machine_profile_load_registry",
-      "label": "_load_registry()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 20,
-      "community_name": "task_dispatch.py",
-      "file_type": "code",
-      "norm_label": "_load_registry()",
-      "source_file": "lib/machine_profile.py",
-      "source_location": "L119"
-    },
-    {
-      "id": "lib_machine_profile_registry_id",
-      "label": "registry_id()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 20,
-      "community_name": "task_dispatch.py",
-      "file_type": "code",
-      "norm_label": "registry_id()",
-      "source_file": "lib/machine_profile.py",
-      "source_location": "L128"
-    },
-    {
-      "id": "lib_machine_profile_remote_devices",
-      "label": "remote_devices()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 20,
-      "community_name": "task_dispatch.py",
-      "file_type": "code",
-      "norm_label": "remote_devices()",
-      "source_file": "lib/machine_profile.py",
-      "source_location": "L139"
-    },
-    {
       "id": "lib_task_dispatch_build_wrapper_script",
       "label": "_build_wrapper_script()",
       "_callable": true,
@@ -4884,18 +4776,6 @@
       "norm_label": "_build_wrapper_script()",
       "source_file": "lib/task_dispatch.py",
       "source_location": "L132"
-    },
-    {
-      "id": "lib_task_dispatch_candidates",
-      "label": "_candidates()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 20,
-      "community_name": "task_dispatch.py",
-      "file_type": "code",
-      "norm_label": "_candidates()",
-      "source_file": "lib/task_dispatch.py",
-      "source_location": "L82"
     },
     {
       "id": "lib_task_dispatch_dispatch",
@@ -5942,6 +5822,18 @@
       "source_location": "L1"
     },
     {
+      "id": "brain_map_vendor_motion_12_42_2_at",
+      "label": "At()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 253,
+      "community_name": "co",
+      "file_type": "code",
+      "norm_label": "at()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
       "id": "brain_map_vendor_motion_12_42_2_ba",
       "label": "ba()",
       "_callable": true,
@@ -5950,6 +5842,18 @@
       "community_name": "co",
       "file_type": "code",
       "norm_label": "ba()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "brain_map_vendor_motion_12_42_2_bi",
+      "label": "bi()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 253,
+      "community_name": "co",
+      "file_type": "code",
+      "norm_label": "bi()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -6194,18 +6098,6 @@
       "source_location": "L1"
     },
     {
-      "id": "brain_map_vendor_motion_12_42_2_co_sortnodeposition",
-      "label": ".sortNodePosition()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 253,
-      "community_name": "co",
-      "file_type": "code",
-      "norm_label": ".sortnodeposition()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
       "id": "brain_map_vendor_motion_12_42_2_co_update",
       "label": ".update()",
       "_callable": true,
@@ -6278,14 +6170,14 @@
       "source_location": "L1"
     },
     {
-      "id": "brain_map_vendor_motion_12_42_2_jn",
-      "label": "jn()",
+      "id": "brain_map_vendor_motion_12_42_2_li",
+      "label": "Li()",
       "_callable": true,
       "_origin": "ast",
       "community": 253,
       "community_name": "co",
       "file_type": "code",
-      "norm_label": "jn()",
+      "norm_label": "li()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -6326,6 +6218,18 @@
       "source_location": "L1"
     },
     {
+      "id": "brain_map_vendor_motion_12_42_2_oi_resolvenonekeyframes",
+      "label": ".resolveNoneKeyframes()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 253,
+      "community_name": "co",
+      "file_type": "code",
+      "norm_label": ".resolvenonekeyframes()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
       "id": "brain_map_vendor_motion_12_42_2_ui",
       "label": "ui()",
       "_callable": true,
@@ -6346,102 +6250,6 @@
       "community_name": "co",
       "file_type": "code",
       "norm_label": "update()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_ur_build",
-      "label": ".build()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 253,
-      "community_name": "co",
-      "file_type": "code",
-      "norm_label": ".build()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_ur_constructor",
-      "label": ".constructor()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 253,
-      "community_name": "co",
-      "file_type": "code",
-      "norm_label": ".constructor()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_ur_getbasetargetfromprops",
-      "label": ".getBaseTargetFromProps()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 253,
-      "community_name": "co",
-      "file_type": "code",
-      "norm_label": ".getbasetargetfromprops()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_ur_measureinstanceviewportbox",
-      "label": ".measureInstanceViewportBox()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 253,
-      "community_name": "co",
-      "file_type": "code",
-      "norm_label": ".measureinstanceviewportbox()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_ur_readvaluefrominstance",
-      "label": ".readValueFromInstance()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 253,
-      "community_name": "co",
-      "file_type": "code",
-      "norm_label": ".readvaluefrominstance()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_ur_removevaluefromrenderstate",
-      "label": ".removeValueFromRenderState()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 253,
-      "community_name": "co",
-      "file_type": "code",
-      "norm_label": ".removevaluefromrenderstate()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_ur_renderinstance",
-      "label": ".renderInstance()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 253,
-      "community_name": "co",
-      "file_type": "code",
-      "norm_label": ".renderinstance()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_ur_sortinstancenodeposition",
-      "label": ".sortInstanceNodePosition()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 253,
-      "community_name": "co",
-      "file_type": "code",
-      "norm_label": ".sortinstancenodeposition()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -7682,6 +7490,18 @@
       "source_location": "L1"
     },
     {
+      "id": "brain_map_vendor_motion_12_42_2_ho_constructor",
+      "label": ".constructor()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 264,
+      "community_name": ".get",
+      "file_type": "code",
+      "norm_label": ".constructor()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
       "id": "brain_map_vendor_motion_12_42_2_j",
       "label": "j()",
       "_callable": true,
@@ -7886,6 +7706,30 @@
       "source_location": "L1"
     },
     {
+      "id": "brain_map_vendor_motion_12_42_2_uo",
+      "label": "uo()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 264,
+      "community_name": ".get",
+      "file_type": "code",
+      "norm_label": "uo()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "brain_map_vendor_motion_12_42_2_ve",
+      "label": "ve()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 264,
+      "community_name": ".get",
+      "file_type": "code",
+      "norm_label": "ve()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
       "id": "brain_map_vendor_motion_12_42_2_vl",
       "label": "vl()",
       "_callable": true,
@@ -7918,6 +7762,18 @@
       "community_name": ".get",
       "file_type": "code",
       "norm_label": "wi()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "brain_map_vendor_motion_12_42_2_xe",
+      "label": "xe()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 264,
+      "community_name": ".get",
+      "file_type": "code",
+      "norm_label": "xe()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -9230,30 +9086,6 @@
       "source_location": "L54"
     },
     {
-      "id": "brain_map_vendor_motion_12_42_2_at",
-      "label": "At()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 274,
-      "community_name": "mn",
-      "file_type": "code",
-      "norm_label": "at()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_bi",
-      "label": "bi()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 274,
-      "community_name": "mn",
-      "file_type": "code",
-      "norm_label": "bi()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
       "id": "brain_map_vendor_motion_12_42_2_en_attachtimeline",
       "label": ".attachTimeline()",
       "_callable": true,
@@ -9298,18 +9130,6 @@
       "community_name": "mn",
       "file_type": "code",
       "norm_label": "je()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_li",
-      "label": "Li()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 274,
-      "community_name": "mn",
-      "file_type": "code",
-      "norm_label": "li()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -9502,18 +9322,6 @@
       "community_name": "mn",
       "file_type": "code",
       "norm_label": ".readkeyframes()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_oi_resolvenonekeyframes",
-      "label": ".resolveNoneKeyframes()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 274,
-      "community_name": "mn",
-      "file_type": "code",
-      "norm_label": ".resolvenonekeyframes()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -10526,42 +10334,6 @@
       "source_location": "L63"
     },
     {
-      "id": "lib_mr_notification_default_dashboard_refresh_ping",
-      "label": "_default_dashboard_refresh_ping()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 288,
-      "community_name": "mr_raiser.py",
-      "file_type": "code",
-      "norm_label": "_default_dashboard_refresh_ping()",
-      "source_file": "lib/mr_notification.py",
-      "source_location": "L57"
-    },
-    {
-      "id": "lib_mr_notification_default_push_notify",
-      "label": "_default_push_notify()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 288,
-      "community_name": "mr_raiser.py",
-      "file_type": "code",
-      "norm_label": "_default_push_notify()",
-      "source_file": "lib/mr_notification.py",
-      "source_location": "L48"
-    },
-    {
-      "id": "lib_mr_notification_notify_mr_ready",
-      "label": "notify_mr_ready()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 288,
-      "community_name": "mr_raiser.py",
-      "file_type": "code",
-      "norm_label": "notify_mr_ready()",
-      "source_file": "lib/mr_notification.py",
-      "source_location": "L69"
-    },
-    {
       "id": "lib_mr_raiser_commit_and_push",
       "label": "_commit_and_push()",
       "_callable": true,
@@ -10898,6 +10670,18 @@
       "source_location": "L1"
     },
     {
+      "id": "brain_map_vendor_motion_12_42_2_l",
+      "label": "$l()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 290,
+      "community_name": "s",
+      "file_type": "code",
+      "norm_label": "$l()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
       "id": "brain_map_vendor_motion_12_42_2_le",
       "label": "le()",
       "_callable": true,
@@ -10994,6 +10778,18 @@
       "source_location": "L1"
     },
     {
+      "id": "brain_map_vendor_motion_12_42_2_qi",
+      "label": "qi()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 290,
+      "community_name": "s",
+      "file_type": "code",
+      "norm_label": "qi()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
       "id": "brain_map_vendor_motion_12_42_2_s",
       "label": "s()",
       "_callable": true,
@@ -11050,6 +10846,18 @@
       "community_name": "s",
       "file_type": "code",
       "norm_label": ".play()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "brain_map_vendor_motion_12_42_2_zl",
+      "label": "Zl()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 290,
+      "community_name": "s",
+      "file_type": "code",
+      "norm_label": "zl()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -11122,6 +10930,18 @@
       "community_name": "e",
       "file_type": "code",
       "norm_label": "ar()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "brain_map_vendor_motion_12_42_2_c",
+      "label": "c()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 293,
+      "community_name": "e",
+      "file_type": "code",
+      "norm_label": "c()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -11222,14 +11042,14 @@
       "source_location": "L1"
     },
     {
-      "id": "brain_map_vendor_motion_12_42_2_gr",
-      "label": "Gr()",
+      "id": "brain_map_vendor_motion_12_42_2_fr",
+      "label": "fr()",
       "_callable": true,
       "_origin": "ast",
       "community": 293,
       "community_name": "e",
       "file_type": "code",
-      "norm_label": "gr()",
+      "norm_label": "fr()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -11266,18 +11086,6 @@
       "community_name": "e",
       "file_type": "code",
       "norm_label": "interpolateprojection()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_jr",
-      "label": "jr()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 293,
-      "community_name": "e",
-      "file_type": "code",
-      "norm_label": "jr()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -11342,6 +11150,18 @@
       "source_location": "L1"
     },
     {
+      "id": "brain_map_vendor_motion_12_42_2_or",
+      "label": "Or()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 293,
+      "community_name": "e",
+      "file_type": "code",
+      "norm_label": "or()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
       "id": "brain_map_vendor_motion_12_42_2_p_add",
       "label": ".add()",
       "_callable": true,
@@ -11390,42 +11210,6 @@
       "source_location": "L1"
     },
     {
-      "id": "brain_map_vendor_motion_12_42_2_pa_add",
-      "label": ".add()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 293,
-      "community_name": "e",
-      "file_type": "code",
-      "norm_label": ".add()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_pa_constructor",
-      "label": ".constructor()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 293,
-      "community_name": "e",
-      "file_type": "code",
-      "norm_label": ".constructor()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_pa_remove",
-      "label": ".remove()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 293,
-      "community_name": "e",
-      "file_type": "code",
-      "norm_label": ".remove()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
       "id": "brain_map_vendor_motion_12_42_2_ra",
       "label": "ra()",
       "_callable": true,
@@ -11438,14 +11222,14 @@
       "source_location": "L1"
     },
     {
-      "id": "brain_map_vendor_motion_12_42_2_ta",
-      "label": "ta()",
+      "id": "brain_map_vendor_motion_12_42_2_rn",
+      "label": "rn()",
       "_callable": true,
       "_origin": "ast",
       "community": 293,
       "community_name": "e",
       "file_type": "code",
-      "norm_label": "ta()",
+      "norm_label": "rn()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -11491,7 +11275,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 30,
-      "community_name": "$r",
+      "community_name": "bo",
       "file_type": "code",
       "norm_label": ".constructor()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
@@ -11503,7 +11287,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 30,
-      "community_name": "$r",
+      "community_name": "bo",
       "file_type": "code",
       "norm_label": ".getbasetargetfromprops()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
@@ -11515,7 +11299,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 30,
-      "community_name": "$r",
+      "community_name": "bo",
       "file_type": "code",
       "norm_label": ".removevaluefromrenderstate()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
@@ -11527,33 +11311,9 @@
       "_callable": true,
       "_origin": "ast",
       "community": 30,
-      "community_name": "$r",
+      "community_name": "bo",
       "file_type": "code",
       "norm_label": ".sortinstancenodeposition()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_br",
-      "label": "br()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 30,
-      "community_name": "$r",
-      "file_type": "code",
-      "norm_label": "br()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_c",
-      "label": "c()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 30,
-      "community_name": "$r",
-      "file_type": "code",
-      "norm_label": "c()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -11563,7 +11323,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 30,
-      "community_name": "$r",
+      "community_name": "bo",
       "file_type": "code",
       "norm_label": ".constructor()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
@@ -11575,7 +11335,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 30,
-      "community_name": "$r",
+      "community_name": "bo",
       "file_type": "code",
       "norm_label": ".getbasetarget()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
@@ -11587,7 +11347,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 30,
-      "community_name": "$r",
+      "community_name": "bo",
       "file_type": "code",
       "norm_label": ".triggerbuild()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
@@ -11599,33 +11359,9 @@
       "_callable": true,
       "_origin": "ast",
       "community": 30,
-      "community_name": "$r",
+      "community_name": "bo",
       "file_type": "code",
       "norm_label": "ei()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_fr",
-      "label": "fr()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 30,
-      "community_name": "$r",
-      "file_type": "code",
-      "norm_label": "fr()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_go",
-      "label": "Go()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 30,
-      "community_name": "$r",
-      "file_type": "code",
-      "norm_label": "go()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -11635,57 +11371,9 @@
       "_callable": true,
       "_origin": "ast",
       "community": 30,
-      "community_name": "$r",
+      "community_name": "bo",
       "file_type": "code",
       "norm_label": "hi()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_or",
-      "label": "Or()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 30,
-      "community_name": "$r",
-      "file_type": "code",
-      "norm_label": "or()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_pr",
-      "label": "pr()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 30,
-      "community_name": "$r",
-      "file_type": "code",
-      "norm_label": "pr()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_r",
-      "label": "$r()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 30,
-      "community_name": "$r",
-      "file_type": "code",
-      "norm_label": "$r()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_rn",
-      "label": "rn()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 30,
-      "community_name": "$r",
-      "file_type": "code",
-      "norm_label": "rn()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -11695,21 +11383,9 @@
       "_callable": true,
       "_origin": "ast",
       "community": 30,
-      "community_name": "$r",
+      "community_name": "bo",
       "file_type": "code",
       "norm_label": "so()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_sr",
-      "label": "Sr()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 30,
-      "community_name": "$r",
-      "file_type": "code",
-      "norm_label": "sr()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -11719,7 +11395,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 30,
-      "community_name": "$r",
+      "community_name": "bo",
       "file_type": "code",
       "norm_label": "vo()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
@@ -11731,7 +11407,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 30,
-      "community_name": "$r",
+      "community_name": "bo",
       "file_type": "code",
       "norm_label": "vr()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
@@ -11743,7 +11419,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 30,
-      "community_name": "$r",
+      "community_name": "bo",
       "file_type": "code",
       "norm_label": ".build()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
@@ -11755,7 +11431,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 30,
-      "community_name": "$r",
+      "community_name": "bo",
       "file_type": "code",
       "norm_label": ".constructor()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
@@ -11767,7 +11443,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 30,
-      "community_name": "$r",
+      "community_name": "bo",
       "file_type": "code",
       "norm_label": ".getbasetargetfromprops()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
@@ -11779,7 +11455,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 30,
-      "community_name": "$r",
+      "community_name": "bo",
       "file_type": "code",
       "norm_label": ".readvaluefrominstance()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
@@ -11791,33 +11467,9 @@
       "_callable": true,
       "_origin": "ast",
       "community": 30,
-      "community_name": "$r",
+      "community_name": "bo",
       "file_type": "code",
       "norm_label": ".renderinstance()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_xo",
-      "label": "xo()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 30,
-      "community_name": "$r",
-      "file_type": "code",
-      "norm_label": "xo()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_zr",
-      "label": "Zr()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 30,
-      "community_name": "$r",
-      "file_type": "code",
-      "norm_label": "zr()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -12302,6 +11954,30 @@
       "source_location": "L11"
     },
     {
+      "id": "skills_research_colony_scripts_correlate_correlate",
+      "label": "correlate()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 327,
+      "community_name": "research_digest.py",
+      "file_type": "code",
+      "norm_label": "correlate()",
+      "source_file": "skills/research-colony/scripts/correlate.py",
+      "source_location": "L54"
+    },
+    {
+      "id": "skills_research_colony_scripts_correlate_roadmap_match",
+      "label": "roadmap_match()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 327,
+      "community_name": "research_digest.py",
+      "file_type": "code",
+      "norm_label": "roadmap_match()",
+      "source_file": "skills/research-colony/scripts/correlate.py",
+      "source_location": "L48"
+    },
+    {
       "id": "skills_research_colony_scripts_research_digest_fmt_item",
       "label": "_fmt_item()",
       "_callable": true,
@@ -12348,6 +12024,18 @@
       "norm_label": "load_today_cache()",
       "source_file": "skills/research-colony/scripts/research_digest.py",
       "source_location": "L53"
+    },
+    {
+      "id": "skills_research_colony_scripts_run_colony_main",
+      "label": "main()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 327,
+      "community_name": "research_digest.py",
+      "file_type": "code",
+      "norm_label": "main()",
+      "source_file": "skills/research-colony/scripts/run_colony.py",
+      "source_location": "L15"
     },
     {
       "id": "dashboard_src_components_dispatchstatusbadge_dispatchstatusbadge",
@@ -12782,40 +12470,76 @@
       "source_location": "L116"
     },
     {
-      "id": "skills_research_colony_scripts_correlate_correlate",
-      "label": "correlate()",
+      "id": "lib_mr_notification_default_dashboard_refresh_ping",
+      "label": "_default_dashboard_refresh_ping()",
       "_callable": true,
       "_origin": "ast",
       "community": 333,
-      "community_name": "run_colony.py",
+      "community_name": "notify",
       "file_type": "code",
-      "norm_label": "correlate()",
-      "source_file": "skills/research-colony/scripts/correlate.py",
-      "source_location": "L54"
+      "norm_label": "_default_dashboard_refresh_ping()",
+      "source_file": "lib/mr_notification.py",
+      "source_location": "L57"
     },
     {
-      "id": "skills_research_colony_scripts_correlate_roadmap_match",
-      "label": "roadmap_match()",
+      "id": "lib_mr_notification_default_push_notify",
+      "label": "_default_push_notify()",
       "_callable": true,
       "_origin": "ast",
       "community": 333,
-      "community_name": "run_colony.py",
+      "community_name": "notify",
       "file_type": "code",
-      "norm_label": "roadmap_match()",
-      "source_file": "skills/research-colony/scripts/correlate.py",
+      "norm_label": "_default_push_notify()",
+      "source_file": "lib/mr_notification.py",
       "source_location": "L48"
     },
     {
-      "id": "skills_research_colony_scripts_run_colony_main",
-      "label": "main()",
+      "id": "lib_mr_notification_notify_mr_ready",
+      "label": "notify_mr_ready()",
       "_callable": true,
       "_origin": "ast",
       "community": 333,
-      "community_name": "run_colony.py",
+      "community_name": "notify",
       "file_type": "code",
-      "norm_label": "main()",
-      "source_file": "skills/research-colony/scripts/run_colony.py",
-      "source_location": "L15"
+      "norm_label": "notify_mr_ready()",
+      "source_file": "lib/mr_notification.py",
+      "source_location": "L69"
+    },
+    {
+      "id": "lib_notify_applescript_quote",
+      "label": "_applescript_quote()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 333,
+      "community_name": "notify",
+      "file_type": "code",
+      "norm_label": "_applescript_quote()",
+      "source_file": "lib/notify.py",
+      "source_location": "L33"
+    },
+    {
+      "id": "lib_notify_notify",
+      "label": "notify()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 333,
+      "community_name": "notify",
+      "file_type": "code",
+      "norm_label": "notify()",
+      "source_file": "lib/notify.py",
+      "source_location": "L47"
+    },
+    {
+      "id": "lib_notify_to_open_url",
+      "label": "_to_open_url()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 333,
+      "community_name": "notify",
+      "file_type": "code",
+      "norm_label": "_to_open_url()",
+      "source_file": "lib/notify.py",
+      "source_location": "L40"
     },
     {
       "id": "skills_self_improve_scripts_rebuild_manifest_find_memory_dirs",
@@ -13490,6 +13214,126 @@
       "source_location": "L104"
     },
     {
+      "id": "brain_map_vendor_motion_12_42_2_co_sortnodeposition",
+      "label": ".sortNodePosition()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 349,
+      "community_name": "ur",
+      "file_type": "code",
+      "norm_label": ".sortnodeposition()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "brain_map_vendor_motion_12_42_2_jn",
+      "label": "jn()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 349,
+      "community_name": "ur",
+      "file_type": "code",
+      "norm_label": "jn()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "brain_map_vendor_motion_12_42_2_ur_build",
+      "label": ".build()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 349,
+      "community_name": "ur",
+      "file_type": "code",
+      "norm_label": ".build()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "brain_map_vendor_motion_12_42_2_ur_constructor",
+      "label": ".constructor()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 349,
+      "community_name": "ur",
+      "file_type": "code",
+      "norm_label": ".constructor()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "brain_map_vendor_motion_12_42_2_ur_getbasetargetfromprops",
+      "label": ".getBaseTargetFromProps()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 349,
+      "community_name": "ur",
+      "file_type": "code",
+      "norm_label": ".getbasetargetfromprops()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "brain_map_vendor_motion_12_42_2_ur_measureinstanceviewportbox",
+      "label": ".measureInstanceViewportBox()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 349,
+      "community_name": "ur",
+      "file_type": "code",
+      "norm_label": ".measureinstanceviewportbox()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "brain_map_vendor_motion_12_42_2_ur_readvaluefrominstance",
+      "label": ".readValueFromInstance()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 349,
+      "community_name": "ur",
+      "file_type": "code",
+      "norm_label": ".readvaluefrominstance()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "brain_map_vendor_motion_12_42_2_ur_removevaluefromrenderstate",
+      "label": ".removeValueFromRenderState()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 349,
+      "community_name": "ur",
+      "file_type": "code",
+      "norm_label": ".removevaluefromrenderstate()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "brain_map_vendor_motion_12_42_2_ur_renderinstance",
+      "label": ".renderInstance()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 349,
+      "community_name": "ur",
+      "file_type": "code",
+      "norm_label": ".renderinstance()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "brain_map_vendor_motion_12_42_2_ur_sortinstancenodeposition",
+      "label": ".sortInstanceNodePosition()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 349,
+      "community_name": "ur",
+      "file_type": "code",
+      "norm_label": ".sortinstancenodeposition()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
       "id": "lib_tests_test_ticket_claim_issue",
       "label": "_issue()",
       "_callable": true,
@@ -13680,6 +13524,54 @@
       "norm_label": "test_run_claim_cycle_hands_off_to_execute_when_claimed()",
       "source_file": "lib/tests/test_ticket_claim.py",
       "source_location": "L215"
+    },
+    {
+      "id": "lib_machine_profile_load_registry",
+      "label": "_load_registry()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 350,
+      "community_name": "registry_id",
+      "file_type": "code",
+      "norm_label": "_load_registry()",
+      "source_file": "lib/machine_profile.py",
+      "source_location": "L119"
+    },
+    {
+      "id": "lib_machine_profile_registry_id",
+      "label": "registry_id()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 350,
+      "community_name": "registry_id",
+      "file_type": "code",
+      "norm_label": "registry_id()",
+      "source_file": "lib/machine_profile.py",
+      "source_location": "L128"
+    },
+    {
+      "id": "lib_machine_profile_remote_devices",
+      "label": "remote_devices()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 350,
+      "community_name": "registry_id",
+      "file_type": "code",
+      "norm_label": "remote_devices()",
+      "source_file": "lib/machine_profile.py",
+      "source_location": "L139"
+    },
+    {
+      "id": "lib_task_dispatch_candidates",
+      "label": "_candidates()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 350,
+      "community_name": "registry_id",
+      "file_type": "code",
+      "norm_label": "_candidates()",
+      "source_file": "lib/task_dispatch.py",
+      "source_location": "L82"
     },
     {
       "id": "lib_cron_health_archive_previous_latest",
@@ -15590,18 +15482,6 @@
       "source_location": "L1"
     },
     {
-      "id": "brain_map_vendor_motion_12_42_2_ho_constructor",
-      "label": ".constructor()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 51,
-      "community_name": "ho",
-      "file_type": "code",
-      "norm_label": ".constructor()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
       "id": "brain_map_vendor_motion_12_42_2_ho_crop",
       "label": ".crop()",
       "_callable": true,
@@ -15706,18 +15586,6 @@
       "community_name": "ho",
       "file_type": "code",
       "norm_label": ".updatetarget()",
-      "source_file": "brain-map/vendor/motion.12.42.2.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "brain_map_vendor_motion_12_42_2_uo",
-      "label": "uo()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 51,
-      "community_name": "ho",
-      "file_type": "code",
-      "norm_label": "uo()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -15986,6 +15854,18 @@
       "source_location": "L1"
     },
     {
+      "id": "brain_map_vendor_motion_12_42_2_adopt",
+      "label": "adopt()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 54,
+      "community_name": ".add",
+      "file_type": "code",
+      "norm_label": "adopt()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
       "id": "brain_map_vendor_motion_12_42_2_co_unmount",
       "label": ".unmount()",
       "_callable": true,
@@ -15994,6 +15874,30 @@
       "community_name": ".add",
       "file_type": "code",
       "norm_label": ".unmount()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "brain_map_vendor_motion_12_42_2_collecttargets",
+      "label": "collectTargets()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 54,
+      "community_name": ".add",
+      "file_type": "code",
+      "norm_label": "collecttargets()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "brain_map_vendor_motion_12_42_2_constructor",
+      "label": "constructor()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 54,
+      "community_name": ".add",
+      "file_type": "code",
+      "norm_label": "constructor()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -16106,6 +16010,30 @@
       "source_location": "L1"
     },
     {
+      "id": "brain_map_vendor_motion_12_42_2_getroot",
+      "label": "getRoot()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 54,
+      "community_name": ".add",
+      "file_type": "code",
+      "norm_label": "getroot()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "brain_map_vendor_motion_12_42_2_il",
+      "label": "il()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 54,
+      "community_name": ".add",
+      "file_type": "code",
+      "norm_label": "il()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
       "id": "brain_map_vendor_motion_12_42_2_ll",
       "label": "Ll()",
       "_callable": true,
@@ -16114,6 +16042,18 @@
       "community_name": ".add",
       "file_type": "code",
       "norm_label": "ll()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "brain_map_vendor_motion_12_42_2_nl",
+      "label": "nl()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 54,
+      "community_name": ".add",
+      "file_type": "code",
+      "norm_label": "nl()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -16142,6 +16082,18 @@
       "source_location": "L1"
     },
     {
+      "id": "brain_map_vendor_motion_12_42_2_reconcileadditions",
+      "label": "reconcileAdditions()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 54,
+      "community_name": ".add",
+      "file_type": "code",
+      "norm_label": "reconcileadditions()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
       "id": "brain_map_vendor_motion_12_42_2_reconcileremovals",
       "label": "reconcileRemovals()",
       "_callable": true,
@@ -16154,6 +16106,18 @@
       "source_location": "L1"
     },
     {
+      "id": "brain_map_vendor_motion_12_42_2_rl",
+      "label": "rl()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 54,
+      "community_name": ".add",
+      "file_type": "code",
+      "norm_label": "rl()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
       "id": "brain_map_vendor_motion_12_42_2_rr",
       "label": "Rr()",
       "_callable": true,
@@ -16162,6 +16126,42 @@
       "community_name": ".add",
       "file_type": "code",
       "norm_label": "rr()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "brain_map_vendor_motion_12_42_2_runupdate",
+      "label": "runUpdate()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 54,
+      "community_name": ".add",
+      "file_type": "code",
+      "norm_label": "runupdate()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "brain_map_vendor_motion_12_42_2_sl",
+      "label": "sl()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 54,
+      "community_name": ".add",
+      "file_type": "code",
+      "norm_label": "sl()",
+      "source_file": "brain-map/vendor/motion.12.42.2.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "brain_map_vendor_motion_12_42_2_transitionfor",
+      "label": "transitionFor()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 54,
+      "community_name": ".add",
+      "file_type": "code",
+      "norm_label": "transitionfor()",
       "source_file": "brain-map/vendor/motion.12.42.2.js",
       "source_location": "L1"
     },
@@ -21827,17 +21827,6 @@
       "source_location": ""
     },
     {
-      "id": "lib_notify",
-      "label": "notify.py",
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "code",
-      "norm_label": "notify.py",
-      "source_file": "lib/notify.py",
-      "source_location": "L1"
-    },
-    {
       "id": "lib_code_sync_rationale_129",
       "label": "Is this repo already broken from a run that never finished \u2014 a live merge\u2026",
       "_origin": "ast",
@@ -21880,39 +21869,6 @@
       "norm_label": "fast path for tagging \u2014 just the label, cached aggressively.",
       "source_file": "lib/machine_profile.py",
       "source_location": "L115"
-    },
-    {
-      "id": "lib_notify_rationale_34",
-      "label": "AppleScript double-quoted string escaping \u2014 Python's repr() uses Python syntax,\u2026",
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "rationale",
-      "norm_label": "applescript double-quoted string escaping \u2014 python's repr() uses python syntax,...",
-      "source_file": "lib/notify.py",
-      "source_location": "L34"
-    },
-    {
-      "id": "lib_notify_rationale_41",
-      "label": "terminal-notifier's -open wants a URL; accept a local path too.",
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "rationale",
-      "norm_label": "terminal-notifier's -open wants a url; accept a local path too.",
-      "source_file": "lib/notify.py",
-      "source_location": "L41"
-    },
-    {
-      "id": "lib_notify_rationale_48",
-      "label": "Fire a macOS notification. If open_target (a URL or local file path) is given\u2026",
-      "_origin": "ast",
-      "community": 130,
-      "community_name": "code_sync.py",
-      "file_type": "rationale",
-      "norm_label": "fire a macos notification. if open_target (a url or local file path) is given...",
-      "source_file": "lib/notify.py",
-      "source_location": "L48"
     },
     {
       "id": "dashboard_package_build_mac",
@@ -26524,7 +26480,7 @@
       "node_kind": "heading",
       "norm_label": "on resume",
       "source_file": "skills/handoff/SKILL.md",
-      "source_location": "L67"
+      "source_location": "L68"
     },
     {
       "id": "skills_handoff_skill_rules",
@@ -29605,28 +29561,6 @@
       "source_location": "L1"
     },
     {
-      "id": "lib_machine_profile_rationale_129",
-      "label": "This machine's stable id in marvin-network.json, resolved by matching hardware\u2026",
-      "_origin": "ast",
-      "community": 20,
-      "community_name": "task_dispatch.py",
-      "file_type": "rationale",
-      "norm_label": "this machine's stable id in marvin-network.json, resolved by matching hardware...",
-      "source_file": "lib/machine_profile.py",
-      "source_location": "L129"
-    },
-    {
-      "id": "lib_machine_profile_rationale_140",
-      "label": "All registered devices that aren't this one, keyed by device id.",
-      "_origin": "ast",
-      "community": 20,
-      "community_name": "task_dispatch.py",
-      "file_type": "rationale",
-      "norm_label": "all registered devices that aren't this one, keyed by device id.",
-      "source_file": "lib/machine_profile.py",
-      "source_location": "L140"
-    },
-    {
       "id": "lib_task_dispatch_rationale_133",
       "label": "A script that marks the dispatch-state file busy, runs the real command, and on\u2026",
       "_origin": "ast",
@@ -29658,17 +29592,6 @@
       "norm_label": "hostnames tailscale currently reports as online (not 'offline').",
       "source_file": "lib/task_dispatch.py",
       "source_location": "L44"
-    },
-    {
-      "id": "lib_task_dispatch_rationale_83",
-      "label": "All known devices (self + registered remotes) keyed by device_id, each tagged\u2026",
-      "_origin": "ast",
-      "community": 20,
-      "community_name": "task_dispatch.py",
-      "file_type": "rationale",
-      "norm_label": "all known devices (self + registered remotes) keyed by device_id, each tagged...",
-      "source_file": "lib/task_dispatch.py",
-      "source_location": "L83"
     },
     {
       "id": "lib_task_dispatch_rationale_94",
@@ -30772,6 +30695,18 @@
       "norm_label": "2026-07-07 \u2014 voice-interface design + mlx benchmark side-quest",
       "source_file": "skills/handoff/retrospective.md",
       "source_location": "L3"
+    },
+    {
+      "id": "skills_handoff_retrospective_2026_09_14_dashboard_mac_mini_bring_up_pr_119_review",
+      "label": "2026-09-14 \u2014 Dashboard mac-mini bring-up + PR #119 review",
+      "_origin": "ast",
+      "community": 223,
+      "community_name": "Handoff \u2014 Retrospective",
+      "file_type": "document",
+      "node_kind": "heading",
+      "norm_label": "2026-09-14 \u2014 dashboard mac-mini bring-up + pr #119 review",
+      "source_file": "skills/handoff/retrospective.md",
+      "source_location": "L7"
     },
     {
       "id": "skills_handoff_retrospective_handoff_retrospective",
@@ -33541,17 +33476,6 @@
       "source_location": "L92"
     },
     {
-      "id": "lib_mr_notification",
-      "label": "mr_notification.py",
-      "_origin": "ast",
-      "community": 288,
-      "community_name": "mr_raiser.py",
-      "file_type": "code",
-      "norm_label": "mr_notification.py",
-      "source_file": "lib/mr_notification.py",
-      "source_location": "L1"
-    },
-    {
       "id": "lib_mr_raiser",
       "label": "mr_raiser.py",
       "_origin": "ast",
@@ -33572,17 +33496,6 @@
       "norm_label": "path",
       "source_file": "",
       "source_location": ""
-    },
-    {
-      "id": "lib_mr_notification_rationale_70",
-      "label": "Fire all three notification channels for a newly-raised MR. Never raises -- a\u2026",
-      "_origin": "ast",
-      "community": 288,
-      "community_name": "mr_raiser.py",
-      "file_type": "rationale",
-      "norm_label": "fire all three notification channels for a newly-raised mr. never raises -- a...",
-      "source_file": "lib/mr_notification.py",
-      "source_location": "L70"
     },
     {
       "id": "lib_mr_raiser_rationale_126",
@@ -49024,6 +48937,17 @@
       "source_location": "L22"
     },
     {
+      "id": "skills_research_colony_scripts_correlate",
+      "label": "correlate.py",
+      "_origin": "ast",
+      "community": 327,
+      "community_name": "research_digest.py",
+      "file_type": "code",
+      "norm_label": "correlate.py",
+      "source_file": "skills/research-colony/scripts/correlate.py",
+      "source_location": "L1"
+    },
+    {
       "id": "skills_research_colony_scripts_research_digest",
       "label": "research_digest.py",
       "_origin": "ast",
@@ -49044,6 +48968,17 @@
       "norm_label": "path",
       "source_file": "",
       "source_location": ""
+    },
+    {
+      "id": "skills_research_colony_scripts_run_colony",
+      "label": "run_colony.py",
+      "_origin": "ast",
+      "community": 327,
+      "community_name": "research_digest.py",
+      "file_type": "code",
+      "norm_label": "run_colony.py",
+      "source_file": "skills/research-colony/scripts/run_colony.py",
+      "source_location": "L1"
     },
     {
       "id": "dashboard_src_components_dispatchstatusbadge",
@@ -49266,26 +49201,70 @@
       "source_location": "L1"
     },
     {
-      "id": "skills_research_colony_scripts_correlate",
-      "label": "correlate.py",
+      "id": "lib_mr_notification",
+      "label": "mr_notification.py",
       "_origin": "ast",
       "community": 333,
-      "community_name": "run_colony.py",
+      "community_name": "notify",
       "file_type": "code",
-      "norm_label": "correlate.py",
-      "source_file": "skills/research-colony/scripts/correlate.py",
+      "norm_label": "mr_notification.py",
+      "source_file": "lib/mr_notification.py",
       "source_location": "L1"
     },
     {
-      "id": "skills_research_colony_scripts_run_colony",
-      "label": "run_colony.py",
+      "id": "lib_notify",
+      "label": "notify.py",
       "_origin": "ast",
       "community": 333,
-      "community_name": "run_colony.py",
+      "community_name": "notify",
       "file_type": "code",
-      "norm_label": "run_colony.py",
-      "source_file": "skills/research-colony/scripts/run_colony.py",
+      "norm_label": "notify.py",
+      "source_file": "lib/notify.py",
       "source_location": "L1"
+    },
+    {
+      "id": "lib_mr_notification_rationale_70",
+      "label": "Fire all three notification channels for a newly-raised MR. Never raises -- a\u2026",
+      "_origin": "ast",
+      "community": 333,
+      "community_name": "notify",
+      "file_type": "rationale",
+      "norm_label": "fire all three notification channels for a newly-raised mr. never raises -- a...",
+      "source_file": "lib/mr_notification.py",
+      "source_location": "L70"
+    },
+    {
+      "id": "lib_notify_rationale_34",
+      "label": "AppleScript double-quoted string escaping \u2014 Python's repr() uses Python syntax,\u2026",
+      "_origin": "ast",
+      "community": 333,
+      "community_name": "notify",
+      "file_type": "rationale",
+      "norm_label": "applescript double-quoted string escaping \u2014 python's repr() uses python syntax,...",
+      "source_file": "lib/notify.py",
+      "source_location": "L34"
+    },
+    {
+      "id": "lib_notify_rationale_41",
+      "label": "terminal-notifier's -open wants a URL; accept a local path too.",
+      "_origin": "ast",
+      "community": 333,
+      "community_name": "notify",
+      "file_type": "rationale",
+      "norm_label": "terminal-notifier's -open wants a url; accept a local path too.",
+      "source_file": "lib/notify.py",
+      "source_location": "L41"
+    },
+    {
+      "id": "lib_notify_rationale_48",
+      "label": "Fire a macOS notification. If open_target (a URL or local file path) is given\u2026",
+      "_origin": "ast",
+      "community": 333,
+      "community_name": "notify",
+      "file_type": "rationale",
+      "norm_label": "fire a macos notification. if open_target (a url or local file path) is given...",
+      "source_file": "lib/notify.py",
+      "source_location": "L48"
     },
     {
       "id": "skills_self_improve_scripts_rebuild_manifest",
@@ -49841,6 +49820,39 @@
       "norm_label": "tests for ticket_claim.py. run via: ~/.agents/venv/bin/python -m pytest...",
       "source_file": "lib/tests/test_ticket_claim.py",
       "source_location": "L1"
+    },
+    {
+      "id": "lib_machine_profile_rationale_129",
+      "label": "This machine's stable id in marvin-network.json, resolved by matching hardware\u2026",
+      "_origin": "ast",
+      "community": 350,
+      "community_name": "registry_id",
+      "file_type": "rationale",
+      "norm_label": "this machine's stable id in marvin-network.json, resolved by matching hardware...",
+      "source_file": "lib/machine_profile.py",
+      "source_location": "L129"
+    },
+    {
+      "id": "lib_machine_profile_rationale_140",
+      "label": "All registered devices that aren't this one, keyed by device id.",
+      "_origin": "ast",
+      "community": 350,
+      "community_name": "registry_id",
+      "file_type": "rationale",
+      "norm_label": "all registered devices that aren't this one, keyed by device id.",
+      "source_file": "lib/machine_profile.py",
+      "source_location": "L140"
+    },
+    {
+      "id": "lib_task_dispatch_rationale_83",
+      "label": "All known devices (self + registered remotes) keyed by device_id, each tagged\u2026",
+      "_origin": "ast",
+      "community": 350,
+      "community_name": "registry_id",
+      "file_type": "rationale",
+      "norm_label": "all known devices (self + registered remotes) keyed by device_id, each tagged...",
+      "source_file": "lib/task_dispatch.py",
+      "source_location": "L83"
     },
     {
       "id": "claude_skills_graphify_skill",
@@ -102859,6 +102871,17 @@
       "weight": 1.0
     },
     {
+      "source": "skills_handoff_retrospective_handoff_retrospective",
+      "target": "skills_handoff_retrospective_2026_09_14_dashboard_mac_mini_bring_up_pr_119_review",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/handoff/retrospective.md",
+      "source_location": "L7",
+      "weight": 1.0
+    },
+    {
       "source": "skills_handoff_scripts_check_remote_session",
       "target": "skills_handoff_scripts_check_remote_session_load_state",
       "relation": "contains",
@@ -103042,7 +103065,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "skills/handoff/SKILL.md",
-      "source_location": "L67",
+      "source_location": "L68",
       "weight": 1.0
     },
     {
@@ -120372,5 +120395,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "3ac96c4582a9a1abc03e0ba48b6147f967d07dc3"
+  "built_at_commit": "f0f0f6eecf052324963c3069248b9c8b96255833"
 }
