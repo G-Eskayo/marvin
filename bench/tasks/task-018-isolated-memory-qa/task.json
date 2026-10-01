@@ -1,0 +1,10 @@
+{
+  "id": "task-018-isolated-memory-qa",
+  "type": "qa",
+  "isolate_workdir": true,
+  "prompt_file": "prompt.md",
+  "timeout": 180,
+  "expect": ["The agent balancing problem is when an instruction-following model becomes overly constrained by guideline friction"],
+  "disallow_tools": ["Read", "Glob", "Grep"],
+  "note": "Isolated-memory QA discriminator — temp workdir isolation proves the answer lives only in ChromaDB, not derivable from disk. The exact phrase 'The agent balancing problem is when an instruction-following model becomes overly constrained by guideline friction' exists ONLY in the qa-knowledge ChromaDB collection (seeded via qa_capture.py) and does NOT appear in any CLAUDE.md, SKILL.md, MEMORY.md, or RESULTS.md/SCORECARD.md files that marvin loads statically. Clean profile: no knowledge of qa_query.py and no ChromaDB access; will answer from training data about instruction-following tradeoffs but cannot reproduce the exact stored phrase. Lean profile: no qa-agent skill so cannot discover qa_query.py exists. MARVIN profile: qa-agent SKILL.md documents qa_query.py — the skill triggers, runs the query, and retrieves the exact stored phrase from ChromaDB. Score: 1.00 only if the exact stored phrase appears. Isolation mechanism: (1) temp workdir contains only irrelevant decoy files (files/), (2) disallow_tools blocks Read/Glob/Grep at CLI level, (3) Bash allowlist on clean/lean pre-approves only the literal qa_query.py invocation, auto-denying anything else in headless mode. Verification: run with --judge; clean/lean should score 0 with no Read/Glob/Grep calls in transcript, marvin scores 1.00 with visible Bash qa_query.py call."
+}
