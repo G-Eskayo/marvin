@@ -57,6 +57,26 @@ def _noop_executor(worktree_path, ticket_ref, feedback):
     return "did nothing"
 
 
+def _make_fake_run_with_design_doc(tmp_path, ticket_ref="TICKET-1", plan_text="a plan"):
+    """Returns a fake_run function that also writes a stub design doc at the expected path."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        # Write stub design doc on planning call (first call with "--model")
+        if "--model" in cmd and so.FLAGSHIP_MODEL in cmd:
+            design_doc = so._design_doc_path(tmp_path, ticket_ref)
+            design_doc.parent.mkdir(parents=True, exist_ok=True)
+            design_doc.write_text(plan_text)
+        class R:
+            stdout = plan_text
+            returncode = 0
+        return R()
+
+    fake_run.calls = calls
+    return fake_run
+
+
 # ── worktree isolation ──────────────────────────────────────────────────────
 
 def test_creates_isolated_worktree_not_touching_live_repo(git_repo, metrics_dir):
@@ -296,8 +316,14 @@ def test_default_executor_records_per_call_cost_against_the_ticket(monkeypatch, 
     ])
 
     def fake_run(cmd, **kwargs):
+        resp = next(responses)
+        # Write stub design doc on planning call
+        if "--model" in cmd and so.FLAGSHIP_MODEL in cmd:
+            design_doc = so._design_doc_path(tmp_path, "G-Eskayo/marvin#42")
+            design_doc.parent.mkdir(parents=True, exist_ok=True)
+            design_doc.write_text(resp["result"])
         class R:
-            stdout = _json.dumps(next(responses))
+            stdout = _json.dumps(resp)
             returncode = 0
         return R()
 
@@ -311,87 +337,52 @@ def test_default_executor_records_per_call_cost_against_the_ticket(monkeypatch, 
 
 
 def test_default_executor_invokes_flagship_then_haiku(monkeypatch, tmp_path):
-    calls = []
-
-    def fake_run(cmd, **kwargs):
-        calls.append(cmd)
-        class R:
-            stdout = "a plan"
-            returncode = 0
-        return R()
-
+    fake_run = _make_fake_run_with_design_doc(tmp_path, "TICKET-1", "a plan")
     monkeypatch.setattr(so.subprocess, "run", fake_run)
     plan = so._default_executor(tmp_path, "TICKET-1", None)
 
-    assert len(calls) == 2
-    assert so.FLAGSHIP_MODEL in calls[0]
-    assert so.HAIKU_MODEL in calls[1]
+    assert len(fake_run.calls) == 2
+    assert so.FLAGSHIP_MODEL in fake_run.calls[0]
+    assert so.HAIKU_MODEL in fake_run.calls[1]
     assert plan == "a plan"
 
 
-def test_default_executor_planning_step_scoped_to_readonly_tools(monkeypatch, tmp_path):
-    # Found via two real live-fire smoke tests: (1) without any permission
-    # scoping, the planning step's `gh issue view` (a Bash call) sits blocked
-    # waiting on approval that can never come headlessly; (2) `--permission-
-    # mode plan` unblocks reads but writes the actual plan to a separate file
-    # for interactive ExitPlanMode hand-off, which headless mode can never
-    # complete -- stdout ends up as meta-commentary, not the plan. Precise
-    # --allowedTools scoping avoids both: real read access, clean stdout.
-    calls = []
-
-    def fake_run(cmd, **kwargs):
-        calls.append(cmd)
-        class R:
-            stdout = "a plan"
-            returncode = 0
-        return R()
-
+def test_default_executor_planning_step_allows_file_writes_for_design_doc(monkeypatch, tmp_path):
+    # Planning now writes a design doc to disk; allowlist must include
+    # Write/Edit to enable that, while still excluding git commit/push.
+    fake_run = _make_fake_run_with_design_doc(tmp_path, "TICKET-1", "stub plan")
     monkeypatch.setattr(so.subprocess, "run", fake_run)
     so._default_executor(tmp_path, "TICKET-1", None)
 
-    plan_cmd = calls[0]
+    plan_cmd = fake_run.calls[0]
     assert "--allowedTools" in plan_cmd
     allowed = plan_cmd[plan_cmd.index("--allowedTools") + 1]
     assert "gh issue view" in allowed
-    assert "Edit" not in allowed
-    assert "Write" not in allowed
+    assert "Write" in allowed
+    assert "Edit" in allowed
+    # Broad Bash is still excluded -- only the specific allowlisted invocations work
+    assert "git commit" not in allowed
 
 
 def test_default_executor_planning_and_execution_use_dontask_mode(monkeypatch, tmp_path):
     # ADR 0030: non-interactive `-p` calls have no TTY, so an unlisted tool
     # hard-denies instead of prompting -- `dontAsk` makes that explicit
     # rather than relying on --allowedTools scoping alone.
-    calls = []
-
-    def fake_run(cmd, **kwargs):
-        calls.append(cmd)
-        class R:
-            stdout = "a plan"
-            returncode = 0
-        return R()
-
+    fake_run = _make_fake_run_with_design_doc(tmp_path, "TICKET-1", "a plan")
     monkeypatch.setattr(so.subprocess, "run", fake_run)
     so._default_executor(tmp_path, "TICKET-1", None)
 
-    for cmd in calls:
+    for cmd in fake_run.calls:
         assert "--permission-mode" in cmd
         assert cmd[cmd.index("--permission-mode") + 1] == "dontAsk"
 
 
 def test_default_executor_execution_step_scoped_to_build_and_test_tools(monkeypatch, tmp_path):
-    calls = []
-
-    def fake_run(cmd, **kwargs):
-        calls.append(cmd)
-        class R:
-            stdout = "a plan"
-            returncode = 0
-        return R()
-
+    fake_run = _make_fake_run_with_design_doc(tmp_path, "TICKET-1", "a plan")
     monkeypatch.setattr(so.subprocess, "run", fake_run)
     so._default_executor(tmp_path, "TICKET-1", None)
 
-    exec_cmd = calls[1]
+    exec_cmd = fake_run.calls[1]
     assert "--allowedTools" in exec_cmd
     allowed = exec_cmd[exec_cmd.index("--allowedTools") + 1]
     assert "Edit" in allowed and "Write" in allowed
@@ -404,37 +395,21 @@ def test_default_executor_execution_step_scoped_to_build_and_test_tools(monkeypa
 
 
 def test_default_executor_includes_feedback_in_planning_prompt(monkeypatch, tmp_path):
-    calls = []
-
-    def fake_run(cmd, **kwargs):
-        calls.append(cmd)
-        class R:
-            stdout = "revised plan"
-            returncode = 0
-        return R()
-
+    fake_run = _make_fake_run_with_design_doc(tmp_path, "TICKET-1", "revised plan")
     monkeypatch.setattr(so.subprocess, "run", fake_run)
     feedback = {"verdict": "regressed", "metrics": {}}
     so._default_executor(tmp_path, "TICKET-1", feedback)
-    plan_prompt = calls[0][calls[0].index("-p") + 1]
+    plan_prompt = fake_run.calls[0][fake_run.calls[0].index("-p") + 1]
     assert "regressed" in plan_prompt
 
 
 def test_default_executor_tells_the_planner_its_headless_and_autonomous(monkeypatch, tmp_path):
     # G-Eskayo/marvin#21 hit this for real: without this, the planner
     # paused to ask for human confirmation nobody headless could answer.
-    calls = []
-
-    def fake_run(cmd, **kwargs):
-        calls.append(cmd)
-        class R:
-            stdout = "a plan"
-            returncode = 0
-        return R()
-
+    fake_run = _make_fake_run_with_design_doc(tmp_path, "TICKET-1", "a plan")
     monkeypatch.setattr(so.subprocess, "run", fake_run)
     so._default_executor(tmp_path, "TICKET-1", None)
-    plan_prompt = calls[0][calls[0].index("-p") + 1]
+    plan_prompt = fake_run.calls[0][fake_run.calls[0].index("-p") + 1]
     assert "autonomously" in plan_prompt.lower()
     assert "no human present" in plan_prompt.lower() or "no one" in plan_prompt.lower()
 
@@ -443,18 +418,84 @@ def test_default_executor_tells_the_executor_not_to_commit_push_or_open_a_pr(mon
     # G-Eskayo/marvin#21 hit this for real too: the executor got stuck
     # asking for Bash permission to commit/push/open a PR itself, not
     # knowing raise_mr does that automatically after it returns.
-    calls = []
-
-    def fake_run(cmd, **kwargs):
-        calls.append(cmd)
-        class R:
-            stdout = "a plan"
-            returncode = 0
-        return R()
-
+    fake_run = _make_fake_run_with_design_doc(tmp_path, "TICKET-1", "a plan")
     monkeypatch.setattr(so.subprocess, "run", fake_run)
     so._default_executor(tmp_path, "TICKET-1", None)
-    exec_prompt = calls[1][calls[1].index("-p") + 1]
+    exec_prompt = fake_run.calls[1][fake_run.calls[1].index("-p") + 1]
     assert "do not" in exec_prompt.lower() or "do not commit" in exec_prompt.lower()
     assert "commit" in exec_prompt.lower()
     assert "pull request" in exec_prompt.lower() or " pr" in exec_prompt.lower()
+
+
+def test_default_executor_planning_prompt_instructs_reading_current_file_state(monkeypatch, tmp_path):
+    # AC1: planner must read current state of files before planning, not just
+    # have the tools available but never be told to use them.
+    fake_run = _make_fake_run_with_design_doc(tmp_path, "TICKET-1", "plan")
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+    so._default_executor(tmp_path, "TICKET-1", None)
+    plan_prompt = fake_run.calls[0][fake_run.calls[0].index("-p") + 1]
+    assert "read" in plan_prompt.lower() and "current state" in plan_prompt.lower()
+    assert "Read" in plan_prompt or "Grep" in plan_prompt or "Glob" in plan_prompt
+
+
+def test_default_executor_planning_prompt_specifies_design_doc_path(monkeypatch, tmp_path):
+    # AC2: planning prompt must tell model the exact path to write the design doc to.
+    fake_run = _make_fake_run_with_design_doc(tmp_path, "TICKET-1", "plan")
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+    so._default_executor(tmp_path, "TICKET-1", None)
+    plan_prompt = fake_run.calls[0][fake_run.calls[0].index("-p") + 1]
+    expected_path = str(so._design_doc_path(tmp_path, "TICKET-1"))
+    assert expected_path in plan_prompt
+
+
+def test_default_executor_planning_prompt_lists_acceptance_criteria(monkeypatch, tmp_path):
+    # Planning prompt must explicitly address every acceptance criterion.
+    fake_run = _make_fake_run_with_design_doc(tmp_path, "TICKET-1", "plan")
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+    so._default_executor(tmp_path, "TICKET-1", None)
+    plan_prompt = fake_run.calls[0][fake_run.calls[0].index("-p") + 1]
+    assert "acceptance criterion" in plan_prompt.lower()
+
+
+def test_default_executor_returns_design_doc_file_contents_not_stdout(monkeypatch, tmp_path):
+    # AC2: returned plan must be the file contents, not the raw stdout from
+    # the planning call. This matters because the exec call needs the actual
+    # design doc text, not an empty string or side-effect marker.
+    doc_content = "# Design Doc\nPlan line 1\nPlan line 2\n"
+    fake_run = _make_fake_run_with_design_doc(tmp_path, "TICKET-1", doc_content)
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+    plan = so._default_executor(tmp_path, "TICKET-1", None)
+    assert plan == doc_content
+
+
+def test_default_executor_raises_when_design_doc_not_written(monkeypatch, tmp_path):
+    # If the planning call doesn't write the doc to disk, it's a failure at
+    # the planning boundary, not a logic error -- should raise clearly.
+    def fake_run_no_write(cmd, **kwargs):
+        # Never write the design doc
+        class R:
+            stdout = "some response"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run_no_write)
+    with pytest.raises(RuntimeError) as exc_info:
+        so._default_executor(tmp_path, "TICKET-1", None)
+    assert "design doc" in str(exc_info.value).lower()
+    assert "not write" in str(exc_info.value).lower()
+
+
+def test_default_executor_retry_prompt_references_existing_doc(monkeypatch, tmp_path):
+    # AC4: on retry, prompt must tell model the doc already exists and to
+    # read it first before revising, to address why the comparison came back
+    # as unfavorable -- not just cosmetically rewrite it.
+    fake_run = _make_fake_run_with_design_doc(tmp_path, "TICKET-1", "revised plan")
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+    feedback = {"verdict": "regressed", "metrics": {}}
+    so._default_executor(tmp_path, "TICKET-1", feedback)
+    plan_prompt = fake_run.calls[0][fake_run.calls[0].index("-p") + 1]
+    # Prompt must reference the path and mention reading it
+    assert str(so._design_doc_path(tmp_path, "TICKET-1")) in plan_prompt
+    assert "read" in plan_prompt.lower() and ("prior attempt" in plan_prompt.lower() or "already exists" in plan_prompt.lower())
+    # Must reference the specific verdict to address
+    assert "regressed" in plan_prompt

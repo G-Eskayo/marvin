@@ -51,7 +51,7 @@ EXEC_TIMEOUT_S = 900
 # either list -- those run as plain `subprocess.run()` calls from
 # `mr_raiser.py`, not from inside a nested Claude session, so they were
 # never subject to this wall to begin with.
-_PLAN_ALLOWED_TOOLS = "Read,Grep,Glob,Bash(gh issue view*),Bash(gh issue list*)"
+_PLAN_ALLOWED_TOOLS = "Read,Grep,Glob,Bash(gh issue view*),Bash(gh issue list*),Write,Edit"
 _EXEC_ALLOWED_TOOLS = (
     "Read,Edit,Write,"
     "Bash(git status*),"
@@ -64,6 +64,16 @@ _EXEC_ALLOWED_TOOLS = (
     "Bash(pytest*),Bash(python -m pytest*),Bash(python3 -m pytest*),"
     "Bash(npm test*),Bash(npm install*),Bash(npx vitest run*)"
 )
+
+
+def _design_doc_path(worktree_path: Path, ticket_ref: str) -> Path:
+    """Returns the path where the design doc for a ticket should be written."""
+    ticket_number = _parse_ticket_number(ticket_ref)
+    if ticket_number is not None:
+        filename = f"ticket-{ticket_number}.md"
+    else:
+        filename = f"ticket-{ticket_ref.lower().replace(' ', '-').replace('/', '-').replace('#', '-')}.md"
+    return worktree_path / "docs" / "design" / filename
 
 
 def _run_claude(cmd: list[str], **kwargs) -> tuple[str, float]:
@@ -104,25 +114,46 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
         "pausing to ask for confirmation; if something is genuinely "
         "ambiguous, make the most reasonable call yourself and note it."
     )
+    ticket_number = _parse_ticket_number(ticket_ref)
+    design_doc_path = _design_doc_path(worktree_path, ticket_ref)
+
     plan_prompt = (
         f"{autonomy_note}\n\n"
-        f"Read GitHub issue {ticket_ref} (gh issue view {ticket_ref}) and produce a "
-        f"concise, concrete implementation plan covering its 'What to build' section "
-        f"and every acceptance criterion. Plan only -- do not edit any files yet."
+        f"Read GitHub issue {ticket_ref} (via 'gh issue view {ticket_ref}') to understand "
+        f"its 'What to build' section and acceptance criteria.\n\n"
+        f"Before writing the plan, use Read/Grep/Glob to check the current state of every "
+        f"file this ticket expects to touch — this grounds your plan in reality.\n\n"
+        f"Write a concise, concrete design doc to: {design_doc_path}\n"
+        f"The design doc must cover:\n"
+        f"  - What to build (from the issue)\n"
+        f"  - Every acceptance criterion, addressed explicitly one by one\n"
+        f"  - Implementation approach and any key design decisions\n"
     )
     if feedback is not None:
         plan_prompt += (
-            f" A previous attempt's metrics comparison came back as: {feedback}. "
-            f"Adjust the plan to address this before trying again."
+            f"\nA previous attempt's metrics comparison came back as: {feedback}.\n"
+            f"The design doc already exists at {design_doc_path} from that prior attempt. "
+            f"Read it first, then produce a genuine revision addressing why the comparison "
+            f"came back as {feedback['verdict'] if isinstance(feedback, dict) and 'verdict' in feedback else 'unfavorable'} "
+            f"-- not a cosmetic rewrite.\n"
         )
-    ticket_number = _parse_ticket_number(ticket_ref)
-    plan, plan_cost = _run_claude(
+
+    _, plan_cost = _run_claude(
         ["claude", "-p", plan_prompt, "--model", FLAGSHIP_MODEL,
          "--permission-mode", "dontAsk", "--allowedTools", _PLAN_ALLOWED_TOOLS],
         cwd=worktree_path, timeout=PLAN_TIMEOUT_S,
     )
+
     if ticket_number is not None:
         ts.record_stage(ticket_number, "executing", "started", "planning call", cost_usd=plan_cost)
+
+    if not design_doc_path.exists():
+        raise RuntimeError(
+            f"Planning call did not write design doc to {design_doc_path}. "
+            f"This is a failure at the planning boundary, not a logic error."
+        )
+
+    plan = design_doc_path.read_text()
 
     exec_prompt = (
         f"{autonomy_note} Your job here stops at implementing the plan and "
