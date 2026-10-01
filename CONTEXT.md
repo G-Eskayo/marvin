@@ -376,6 +376,12 @@ then) — a real, current fragility, not a hypothetical one.
   to scheduling (hard vs. soft, per ticket vs. per project/milestone) is still open — to be grilled
   separately, not decided here.
 
+- **Due dates** (decided 2026-10-01): a due date carries a `hard`/`soft` flag, chosen per item,
+  defaulting to **soft** so nothing becomes urgent by accident. *Hard* = fixed date (e.g. the
+  captioning app, 2026-10-25): the orchestrator works backward from it, warns loudly when at risk,
+  and shifts capacity toward it. *Soft* = raises priority as the date nears but never pre-empts
+  other work. Open: which level carries the date (project/milestone vs individual ticket).
+
 ## Citation-graph knowledge base (in design, not yet built)
 
 - **Seed paper**: the paper a citation-graph traversal starts from — all relevance scoring is
