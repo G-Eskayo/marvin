@@ -11,5 +11,18 @@
         "higher_is_better": false
       }
     }
+  },
+  {
+    "timestamp": "2026-09-20T14:11:41.879639+00:00",
+    "metrics": {
+      "tests_passed": {
+        "value": 0,
+        "higher_is_better": true
+      },
+      "tests_failed": {
+        "value": 11,
+        "higher_is_better": false
+      }
+    }
   }
 ]

@@ -1,16 +1,16 @@
-# Graph Report - .agents  (2026-08-31)
+# Graph Report - .agents  (2026-09-27)
 
 ## Corpus Check
-- 405 files · ~517,996 words
+- 409 files · ~567,110 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 3211 nodes · 4756 edges · 335 communities (255 shown, 80 thin omitted)
+- 3231 nodes · 4774 edges · 346 communities (271 shown, 75 thin omitted)
 - Extraction: 97% EXTRACTED · 3% INFERRED · 0% AMBIGUOUS · INFERRED: 136 edges (avg confidence: 0.85)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `2a831b93`
+- Built from commit: `db46eb80`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -23,7 +23,7 @@
 - test_continuity_checker.py
 - test_evidence_capture.py
 - Bench Harness Runner
-- ur
+- $r
 - route.py
 - test_sandbox_orchestration.py
 - Paper-Dive Argument Mapper
@@ -45,7 +45,7 @@
 - main/index.js
 - test_cleanup_sweep.py
 - QA-Agent Capture
-- e
+- me
 - test_mr_raiser.py
 - QA-Agent Complexity Visitor
 - Bench Task 012 Decoder
@@ -69,7 +69,7 @@
 - ho
 - build_audit_report
 - extract_structure
-- .add
+- ga
 - render_pdf.py
 - LRUCache
 - cross_domain_synthesis.py
@@ -135,7 +135,7 @@
 - Writing Skills
 - code_sync.py
 - mac
-- ke
+- background_architecture_review.py
 - Process
 - Design Document — Resume Tailor
 - tdd/SKILL.md
@@ -236,12 +236,12 @@
 - MrReview.jsx
 - @vitejs/plugin-react
 - verify.py
-- $r
+- e
 - ticket_claim.py
-- mn
+- yn
 - ticket-21.md
 - ticket-22.md
-- run_ticket.py
+- evidence_capture.py
 - paper_graph.py
 - execute_ticket
 - deny.js
@@ -251,11 +251,11 @@
 - test_gh_merge_guard.py
 - test_run_ticket.py
 - playwright-core
-- calibrate.py
+- process
 - 0025 — Deny action: two dashboard buttons, structured-feedback modal, not a third "adjust" button
 - MR-approval webhook contract
 - webhook-server/package.json
-- yn
+- rebuild-manifest.py
 - ticket_pipeline.py
 - co
 - cleanup_sweep.py
@@ -271,9 +271,9 @@
 - test_ticket_coordination.py
 - 0028 — Formal semver, driven by existing issue labels, with an auto-generated changelog
 - ticket_coordination.py
-- mr_raiser.py
+- log_hook_error
 - 0029 — Per-ticket design docs and task lists live in the PR, not written direct to CONTEXT.md/ADRs
-- me
+- cr
 - 0030 — Headless dispatch uses `dontAsk` + an explicit allowlist, not `bypassPermissions`
 - blended_score
 - _s2_id
@@ -309,15 +309,25 @@
 - _FakeResponse
 - rebuild_and_install.sh
 - capture_screenshot.mjs
-- .constructor
+- mn
 - research_digest.py
 - DispatchStatusBadge.jsx
-- test_mr_notification.py
+- calibrate.py
 - test_code_sync_push.py
 - test_notify.py
 - source_monitor.py
-- run_colony.py
+- 0032 — mac-mini as primary automation host for ticket-pipeline
 - git_repo
+- oo
+- ke
+- mr_raiser.py
+- .forEach
+- test_mr_notification.py
+- .updateMotionValue
+- run_ticket.py
+- .constructor
+- Writing Style
+- run_colony.py
 
 ## God Nodes (most connected - your core abstractions)
 1. `co()` - 35 edges
@@ -336,17 +346,17 @@
   skills/improve/scripts/improvement_sweep.py → lib/hook_errors.py
 - `main()` --calls--> `notify()`  [INFERRED]
   skills/improve/scripts/daily_digest.py → lib/notify.py
+- `generate()` --calls--> `notify()`  [INFERRED]
+  skills/research-colony/scripts/research_digest.py → lib/notify.py
 - `build_entry()` --calls--> `machine_label()`  [INFERRED]
   skills/qa-agent/scripts/qa_capture.py → lib/machine_profile.py
 - `store_items()` --calls--> `machine_label()`  [INFERRED]
   skills/research-colony/scripts/source_monitor.py → lib/machine_profile.py
-- `generate()` --calls--> `notify()`  [INFERRED]
-  skills/research-colony/scripts/research_digest.py → lib/notify.py
 
 ## Import Cycles
 - None detected.
 
-## Communities (335 total, 80 thin omitted)
+## Communities (346 total, 75 thin omitted)
 
 ### Community 0 - "network_reachability.py"
 Cohesion: 0.18
@@ -354,11 +364,11 @@ Nodes (19): _arp_mac(), check_and_record(), check_domain(), current_network_id()
 
 ### Community 1 - "motion.12.42.2.js"
 Cohesion: 0.04
-Nodes (51): adopt(), be(), bl(), Bs(), collectTargets(), constructor(), de(), Dr() (+43 more)
+Nodes (51): adopt(), ai(), be(), ci(), collectTargets(), constructor(), Dr(), ec() (+43 more)
 
 ### Community 2 - "session_start_report.py"
-Cohesion: 0.05
-Nodes (58): BaseException, main(), _allow_decision(), check(), main(), log_hook_error(), Shared failure logger for PostToolUse hooks. Hooks intentionally swallow…, check_auto_fix_log() (+50 more)
+Cohesion: 0.16
+Nodes (25): check_auto_fix_log(), check_cron_health(), check_daily_digest(), _check_digest(), check_git_conflicts(), check_handoff(), check_hook_errors(), check_identity() (+17 more)
 
 ### Community 4 - "test_competing_ideas.py"
 Cohesion: 0.13
@@ -375,6 +385,10 @@ Nodes (9): _commit_change(), fixture, Tests for evidence_capture.py. Run via: ~/
 ### Community 7 - "Bench Harness Runner"
 Cohesion: 0.07
 Nodes (43): aggregate_runs(), _check_quota(), _fmt_multi(), _fmt_single(), fmt_table(), _is_infra_error(), judge_run(), _load_marvin_context() (+35 more)
+
+### Community 8 - "$r"
+Cohesion: 0.09
+Nodes (11): bo(), br(), Go(), jn(), pr(), $r(), Sr(), ur (+3 more)
 
 ### Community 9 - "route.py"
 Cohesion: 0.17
@@ -456,9 +470,9 @@ Nodes (15): _iso(), _issue(), log_path(), fixture, Tests for cleanup_sweep.py. R
 Cohesion: 0.17
 Nodes (18): build_entry(), infer_pattern_type(), main(), Return True if new, False if already existed (dedup by id)., Return best-guess pattern_type from document content and tags., store_entry(), extract_decisions(), extract_outcome() (+10 more)
 
-### Community 30 - "e"
-Cohesion: 0.08
-Nodes (24): ar(), ca(), cr, e(), er(), ge(), Gr(), ha() (+16 more)
+### Community 30 - "me"
+Cohesion: 0.14
+Nodes (9): de(), fe(), Gt(), Ht(), le(), me(), p, pe() (+1 more)
 
 ### Community 31 - "test_mr_raiser.py"
 Cohesion: 0.11
@@ -497,8 +511,8 @@ Cohesion: 0.29
 Nodes (7): build, appId, directories, files, productName, output, out/**/*
 
 ### Community 40 - "cross_machine_merge.py"
-Cohesion: 0.24
-Nodes (15): build_merged(), load_sync_state(), main(), profile_blurb(), Path, Identical shape to sync_qa_knowledge -- same deterministic-set-union- by-id…, Returns stdout on success, None on any failure (unreachable, non-zero exit,…, run_merge_authority() (+7 more)
+Cohesion: 0.26
+Nodes (14): build_merged(), load_sync_state(), main(), profile_blurb(), Path, Identical shape to sync_qa_knowledge -- same deterministic-set-union- by-id…, Returns stdout on success, None on any failure (unreachable, non-zero exit,…, run_merge_authority() (+6 more)
 
 ### Community 41 - "logic_auditor.py"
 Cohesion: 0.14
@@ -548,9 +562,9 @@ Nodes (12): build_audit_report(), needs_second_look(), Assembles the full per-pa
 Cohesion: 0.17
 Nodes (12): extract_all(), extract_structure(), Extracts the type-appropriate structure as a reviewable intermediate artifact…, papers: {slug: (title, abstract, paper_type)}. Returns {slug: extraction_dict}., test_extract_all_handles_empty_input(), test_extract_all_routes_each_paper_by_its_own_type(), test_extract_structure_benchmark_uses_construct_validity_fields(), test_extract_structure_conceptual_uses_structural_claim_fields() (+4 more)
 
-### Community 54 - ".add"
-Cohesion: 0.09
-Nodes (12): $a(), fe(), finalize(), ga, Ll(), ol(), p, reconcileRemovals() (+4 more)
+### Community 54 - "ga"
+Cohesion: 0.18
+Nodes (6): $a(), ga, Ll(), ol(), reconcileRemovals(), Rr()
 
 ### Community 55 - "render_pdf.py"
 Cohesion: 0.26
@@ -605,8 +619,8 @@ Cohesion: 0.48
 Nodes (6): _check_remote(), _load_state(), main(), Path, _save_state(), _surface_resume_prompt()
 
 ### Community 69 - "fn"
-Cohesion: 0.09
-Nodes (17): ai(), dn(), fi(), fn(), Fs(), gi(), Is(), La() (+9 more)
+Cohesion: 0.12
+Nodes (5): fn(), Fs(), Is(), os(), ti()
 
 ### Community 70 - "main"
 Cohesion: 0.57
@@ -709,8 +723,8 @@ Cohesion: 0.22
 Nodes (8): 2026-07-07 — MLX on-device model benchmark (Qwen2.5-3B vs Llama-3.2-3B), 2026-07-14 — Converting the session-start checklist into a deterministic hook, 2026-07-17 — Brain-map reskin (dark gradient silently not rendering), 2026-07-17 — DesktopLive verification pass (post-Motion deploy), 2026-07-17 — Motion physics deploy to brain-map/DesktopLive (pulses, camera nudges, fitScale), 2026-08-26 — killer-sudoku full day (perf tuning + real bugs), 2026-08-26 — killer-sudoku Kotlin port (UI parity + animation/input bugs), Diagnose — Retrospective
 
 ### Community 123 - "daily_digest.py"
-Cohesion: 0.39
-Nodes (8): bench_summary(), improvement_queue_summary(), main(), qa_kb_summary(), Computed directly from the log, not via an LLM guess at "does this look…, recent_handoffs_summary(), reviewer_health_summary(), roadmap_summary()
+Cohesion: 0.36
+Nodes (9): bench_summary(), call_claude(), improvement_queue_summary(), main(), qa_kb_summary(), Computed directly from the log, not via an LLM guess at "does this look…, recent_handoffs_summary(), reviewer_health_summary() (+1 more)
 
 ### Community 124 - "to-prd/SKILL.md"
 Cohesion: 0.22
@@ -739,6 +753,10 @@ Nodes (21): _files_with_conflict_markers(), _git(), _git_ok(), _log(), main(), _
 ### Community 131 - "mac"
 Cohesion: 0.40
 Nodes (5): mac, category, target, dmg, zip
+
+### Community 132 - "background_architecture_review.py"
+Cohesion: 0.13
+Nodes (14): _claude_md_line_count(), _cooldown_active(), _enumerate_chunks(), _load_state(), main(), pick_chunk(), Returns (chunk, reason, is_threshold_trigger). Size thresholds are edge-…, The reviewer runs with Read/Write/Edit only -- no Glob/LS -- so a bare… (+6 more)
 
 ### Community 133 - "Process"
 Cohesion: 0.10
@@ -1092,9 +1110,9 @@ Nodes (9): MrDetail(), ApproveDenyActions(), DENY_REASONS, DenyModal(), Evidence
 Cohesion: 0.29
 Nodes (9): _last_quarantined_artifact_text(), _load_rubric(), pass_or_quarantine(), quarantine(), The artifact text quoted in the most recently appended quarantine block for…, Append a flagged artifact to ~/.claude/quarantine.md for review., The one-line integration point for existing loops. `source_context`: the real…, Return a risk score in [0, 1] for `artifact_text` under `loop_name`'s rubric.… (+1 more)
 
-### Community 253 - "$r"
-Cohesion: 0.08
-Nodes (18): bo(), br(), c(), ei(), fr(), Go(), hi(), Or() (+10 more)
+### Community 253 - "e"
+Cohesion: 0.11
+Nodes (24): animateVisualElement(), Ao(), ca(), e(), Eo(), er(), fr(), ha() (+16 more)
 
 ### Community 254 - "ticket_claim.py"
 Cohesion: 0.36
@@ -1104,9 +1122,9 @@ Nodes (6): _claim_label(), claim_next_ticket(), _default_add_claim_label(), _def
 Cohesion: 0.50
 Nodes (3): 2026-08-28T23:04:56.742209+00:00 — ticket-22, 2026-08-31T18:05:03.004375+00:00 — ticket-22, 2026-08-31T18:15:38.575940+00:00 — ticket-22
 
-### Community 258 - "run_ticket.py"
-Cohesion: 0.17
-Nodes (17): capture_dev_evidence(), capture_test_results(), _default_capture_screenshot(), _is_ui_path(), parse_test_output(), Path, For a UI-touching ticket, drive the app headlessly and capture a screenshot;…, Extract pass/fail/total from a test runner's real stdout+stderr. Recognizes… (+9 more)
+### Community 258 - "evidence_capture.py"
+Cohesion: 0.22
+Nodes (12): capture_dev_evidence(), capture_test_results(), _default_capture_screenshot(), _is_ui_path(), parse_test_output(), Path, For a UI-touching ticket, drive the app headlessly and capture a screenshot;…, Extract pass/fail/total from a test runner's real stdout+stderr. Recognizes… (+4 more)
 
 ### Community 259 - "paper_graph.py"
 Cohesion: 0.18
@@ -1129,8 +1147,8 @@ Cohesion: 0.19
 Nodes (5): _issue(), Tests for ticket_pipeline.py. Run via: ~/.agents/venv/bin/python -m pytest…, test_main_dry_run_does_not_claim_or_dispatch(), test_unclaimed_ready_tickets_filters_out_claimed(), test_unclaimed_ready_tickets_sorted_oldest_first()
 
 ### Community 264 - ".get"
-Cohesion: 0.08
-Nodes (31): Al(), As(), cl(), dl(), Es(), fl(), gl(), hl() (+23 more)
+Cohesion: 0.15
+Nodes (17): Al(), cl(), dl(), Es(), fl(), gl(), hl(), j() (+9 more)
 
 ### Community 265 - "test_gh_merge_guard.py"
 Cohesion: 0.16
@@ -1140,9 +1158,9 @@ Nodes (5): _FakeStdin, Tests for gh_merge_guard.py. Run via: ~/.agents/venv/bin/
 Cohesion: 0.17
 Nodes (12): _failing_result(), _passing_result(), Tests for run_ticket.py. Run via: ~/.agents/venv/bin/python -m pytest…, test_run_captures_test_results_and_dev_evidence_on_a_passing_result(), test_run_comments_the_failure_reason_when_not_raised(), test_run_does_not_comment_on_a_successful_raise(), test_run_does_not_release_a_claim_on_a_successful_raise(), test_run_recovers_when_raise_mr_itself_raises_unexpectedly() (+4 more)
 
-### Community 268 - "calibrate.py"
-Cohesion: 0.20
-Nodes (13): calibrate(), get_tau(), label: 0 = approved (was actually fine), 1 = denied (was actually bad).…, Smallest tau such that the false-accept rate on labeled-bad rows <=…, Fast path for verify.py: use the cached tau if present, else calibrate., _read_calibration_rows(), record_label(), _write_tau() (+5 more)
+### Community 268 - "process"
+Cohesion: 0.36
+Nodes (7): label: 0 = approved (was actually fine), 1 = denied (was actually bad).…, record_label(), _parse_block(), process(), Splits on the entry-header pattern, not "---" (which can appear unquoted inside…, Returns (processed_count, remaining_count)., _split_entries()
 
 ### Community 269 - "0025 — Deny action: two dashboard buttons, structured-feedback modal, not a third "adjust" button"
 Cohesion: 0.33
@@ -1152,13 +1170,17 @@ Nodes (5): 0025 — Deny action: two dashboard buttons, structured-feedback moda
 Cohesion: 0.33
 Nodes (5): Contract: `POST /approve`, Contract: `POST /deny`, Deliberately out of scope here, MR-approval webhook contract, Running it
 
+### Community 272 - "rebuild-manifest.py"
+Cohesion: 0.35
+Nodes (12): find_memory_dirs(), _hook_should_skip(), main(), normalize_tags(), parse_frontmatter(), Path, When invoked as a PostToolUse hook (JSON payload piped on stdin), only rebuild…, _read_block_list() (+4 more)
+
 ### Community 273 - "ticket_pipeline.py"
-Cohesion: 0.33
-Nodes (9): A ticket that didn't raise a PR -- rate-limited, a worktree-creation failure,…, _release_claim(), _build_wrapper_command(), _claim(), _label_for_device(), main(), run_ticket.py handles worktree creation (from origin/main, not whatever…, _release() (+1 more)
+Cohesion: 0.43
+Nodes (7): _build_wrapper_command(), _claim(), _label_for_device(), main(), run_ticket.py handles worktree creation (from origin/main, not whatever…, _release(), _unclaimed_ready_tickets()
 
 ### Community 274 - "co"
-Cohesion: 0.07
-Nodes (17): animateVisualElement(), Ao(), At(), ba(), bi(), ci(), co(), Eo() (+9 more)
+Cohesion: 0.08
+Nodes (11): ba(), bl(), Bs(), co(), ei(), gs(), hi(), So() (+3 more)
 
 ### Community 275 - "cleanup_sweep.py"
 Cohesion: 0.30
@@ -1196,13 +1218,17 @@ Nodes (5): 0028 — Formal semver, driven by existing issue labels, with an auto
 Cohesion: 0.25
 Nodes (6): Release a claim this machine holds, so another machine (or a later cycle) can…, release(), claim_with_coordination(), Check `issue_number` for a same-instant collision (more than one claimed:*…, Claim via ticket_claim.claim_next_ticket (unchanged), then resolve any…, resolve_collision()
 
-### Community 288 - "mr_raiser.py"
-Cohesion: 0.18
-Nodes (11): notify_mr_ready(), Fire all three notification channels for a newly-raised MR. Never raises -- a…, _commit_and_push(), _current_branch(), _default_open_pr(), _format_comparison(), _format_dev_evidence(), _format_test_results() (+3 more)
+### Community 288 - "log_hook_error"
+Cohesion: 0.31
+Nodes (7): BaseException, main(), _allow_decision(), check(), main(), log_hook_error(), Shared failure logger for PostToolUse hooks. Hooks intentionally swallow…
 
 ### Community 289 - "0029 — Per-ticket design docs and task lists live in the PR, not written direct to CONTEXT.md/ADRs"
 Cohesion: 0.33
 Nodes (5): 0029 — Per-ticket design docs and task lists live in the PR, not written direct to CONTEXT.md/ADRs, Consequences, Context, Decision, Status
+
+### Community 290 - "cr"
+Cohesion: 0.22
+Nodes (4): ar(), cr, Ie(), lr()
 
 ### Community 291 - "0030 — Headless dispatch uses `dontAsk` + an explicit allowlist, not `bypassPermissions`"
 Cohesion: 0.33
@@ -1224,9 +1250,25 @@ Nodes (4): extract_recent_excerpt(), _extract_text(), main(), Path
 Cohesion: 0.12
 Nodes (15): 2026-08-29T17:24:08.904281+00:00 — ticket-26, 2026-08-31T18:29:41.392875+00:00 — ticket-26, 2026-08-31T18:34:46.377320+00:00 — ticket-26, 2026-08-31T18:36:27.797526+00:00 — ticket-26, 2026-08-31T18:38:09.872359+00:00 — ticket-26, 2026-08-31T18:39:49.448291+00:00 — ticket-26, 2026-08-31T18:41:29.878199+00:00 — ticket-26, 2026-08-31T18:43:12.250480+00:00 — ticket-26 (+7 more)
 
+### Community 298 - "ticket-27.md"
+Cohesion: 0.40
+Nodes (4): 2026-08-29T17:25:25.399101+00:00 — ticket-27, 2026-08-31T19:49:18.299813+00:00 — ticket-27, 2026-08-31T21:14:29.038599+00:00 — ticket-27, 2026-08-31T21:19:59.005177+00:00 — ticket-27
+
+### Community 299 - "ticket-28.md"
+Cohesion: 0.22
+Nodes (8): 2026-08-29T17:26:41.962489+00:00 — ticket-28, 2026-08-31T20:04:50.091760+00:00 — ticket-28, 2026-09-01T05:32:13.696877+00:00 — ticket-28, 2026-09-01T09:30:03.523709+00:00 — ticket-28, 2026-09-01T13:33:30.612547+00:00 — ticket-28, 2026-09-01T17:41:20.786658+00:00 — ticket-28, 2026-09-01T18:02:54.354651+00:00 — ticket-28, 2026-09-01T18:15:11.287649+00:00 — ticket-28
+
+### Community 326 - "mn"
+Cohesion: 0.09
+Nodes (8): At(), bi(), Je(), Li(), mn(), Q(), Qe(), tn()
+
 ### Community 327 - "research_digest.py"
 Cohesion: 0.53
 Nodes (5): _fmt_item(), generate(), load_correlated_from_chroma(), load_today_cache(), Path
+
+### Community 329 - "calibrate.py"
+Cohesion: 0.43
+Nodes (6): calibrate(), get_tau(), Smallest tau such that the false-accept rate on labeled-bad rows <=…, Fast path for verify.py: use the cached tau if present, else calibrate., _read_calibration_rows(), _write_tau()
 
 ### Community 330 - "test_code_sync_push.py"
 Cohesion: 0.43
@@ -1236,29 +1278,57 @@ Nodes (7): _git(), _make_origin_and_clone(), Path, Tests for code_sync.py's push
 Cohesion: 0.52
 Nodes (6): fetch_arxiv(), fetch_github(), fetch_hackernews(), main(), save_raw_cache(), store_items()
 
+### Community 333 - "0032 — mac-mini as primary automation host for ticket-pipeline"
+Cohesion: 0.33
+Nodes (5): 0032 — mac-mini as primary automation host for ticket-pipeline, Consequences, Context, Decision, Status
+
 ### Community 334 - "git_repo"
 Cohesion: 0.67
 Nodes (3): git_repo(), metrics_dir(), fixture
 
+### Community 335 - "oo"
+Cohesion: 0.12
+Nodes (17): c(), dn(), gi(), jo(), La(), ni(), oo(), pn() (+9 more)
+
+### Community 337 - "mr_raiser.py"
+Cohesion: 0.18
+Nodes (11): notify_mr_ready(), Fire all three notification channels for a newly-raised MR. Never raises -- a…, _commit_and_push(), _current_branch(), _default_open_pr(), _format_comparison(), _format_dev_evidence(), _format_test_results() (+3 more)
+
+### Community 338 - ".forEach"
+Cohesion: 0.15
+Nodes (9): As(), Gr(), jr(), ms(), pa, ss(), ta(), uo() (+1 more)
+
+### Community 340 - ".updateMotionValue"
+Cohesion: 0.29
+Nodes (4): Ae(), sn(), vn(), xn
+
+### Community 341 - "run_ticket.py"
+Cohesion: 0.39
+Nodes (7): _comment_failure(), main(), A ticket that didn't raise a PR -- rate-limited, a worktree-creation failure,…, This machine has been free since execute_ticket returned above -- win or lose,…, _release_claim(), run(), _trigger_redispatch()
+
+### Community 343 - "Writing Style"
+Cohesion: 0.33
+Nodes (5): AI-writing patterns to actively avoid, How to use this, Voice profile, What this is NOT, Writing Style
+
 ## Knowledge Gaps
-- **783 isolated node(s):** `install.sh script`, `install.sh script`, `1. Gather context`, `2. Explore the codebase (optional)`, `3. Draft vertical slices` (+778 more)
+- **799 isolated node(s):** `Voice profile`, `What this is NOT`, `AI-writing patterns to actively avoid`, `How to use this`, `install.sh script` (+794 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **80 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **75 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `scan()` connect `QA-Agent Code Scanner` to `SortedList`, `auto_fix.py`, `improvement_sweep.py`, `QA-Agent Capture`?**
+- **Why does `log_hook_error()` connect `log_hook_error` to `session_start_report.py`, `background_architecture_review.py`, `rebuild-manifest.py`, `improvement_sweep.py`, `background_review.py`?**
   _High betweenness centrality (0.005) - this node is a cross-community bridge._
-- **Why does `machine_label()` connect `code_sync.py` to `execute_ticket`, `source_monitor.py`, `machine_profile.py`, `task_dispatch.py`, `QA-Agent Capture`, `ticket_claim.py`?**
+- **Why does `en` connect `en` to `motion.12.42.2.js`, `co`, `mn`, `.constructor`?**
+  _High betweenness centrality (0.003) - this node is a cross-community bridge._
+- **Why does `scan()` connect `QA-Agent Code Scanner` to `SortedList`, `auto_fix.py`, `improvement_sweep.py`, `QA-Agent Capture`?**
   _High betweenness centrality (0.003) - this node is a cross-community bridge._
 - **Are the 11 inferred relationships involving `e()` (e.g. with `ca()` and `dl()`) actually correct?**
   _`e()` has 11 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 10 inferred relationships involving `n()` (e.g. with `er()` and `ha()`) actually correct?**
   _`n()` has 10 INFERRED edges - model-reasoned connections that need verification._
-- **What connects `install.sh script`, `install.sh script`, `1. Gather context` to the rest of the system?**
-  _783 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **What connects `Voice profile`, `What this is NOT`, `AI-writing patterns to actively avoid` to the rest of the system?**
+  _799 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `motion.12.42.2.js` be split into smaller, more focused modules?**
-  _Cohesion score 0.037940379403794036 - nodes in this community are weakly interconnected._
-- **Should `session_start_report.py` be split into smaller, more focused modules?**
-  _Cohesion score 0.05257312106627175 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.037654320987654324 - nodes in this community are weakly interconnected._

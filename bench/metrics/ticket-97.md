@@ -2,3 +2,443 @@
 - **tests_passed**: 419
 - **tests_failed**: 0
 
+## 2026-09-27T23:41:52.828979+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-27T23:50:25.567308+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-27T23:56:40.091057+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T00:08:06.664311+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T00:19:17.891683+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T00:24:26.658191+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T00:30:14.727535+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T00:41:10.247544+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T00:41:35.573358+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T00:42:00.713693+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T00:42:26.192774+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T00:42:49.976036+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T00:43:15.262224+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T00:53:20.861912+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:02:03.266122+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:02:27.108792+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:02:51.527448+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:03:15.078280+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:03:41.101151+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:04:07.295205+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:04:35.512520+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:05:02.449608+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:05:28.513284+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:05:54.821219+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:06:20.161550+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:06:52.578456+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:07:22.370935+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:07:49.756034+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:08:15.299684+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:08:41.944894+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:09:06.898285+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:09:31.503065+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:09:58.148464+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:10:23.589366+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:10:50.763471+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:11:17.931247+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:11:45.477818+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:12:11.045148+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:12:37.213666+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:13:01.581147+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:13:26.127038+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:13:51.883196+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:14:17.352845+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:24:39.496909+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:26:22.069457+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:31:34.741037+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:32:09.080522+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:47:37.011244+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T01:49:02.944713+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T02:07:05.336645+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 4
+
+## 2026-09-28T21:04:49.617200+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T21:16:55.316825+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T21:22:08.172278+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T21:32:33.127494+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T21:38:32.078822+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T21:49:52.237428+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T21:50:17.824314+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T21:50:43.850892+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T21:51:11.850084+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T21:51:38.883459+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T21:52:06.594421+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T21:52:33.867064+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T21:53:01.452668+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T21:53:26.464301+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T21:53:51.467483+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T21:54:16.856408+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T21:54:43.743795+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T21:55:12.464453+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T21:55:39.509983+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T21:56:04.915589+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T21:56:31.437821+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T21:56:58.884331+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T21:57:23.450553+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T21:57:49.935744+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T21:58:15.374653+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T21:58:42.133593+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T21:59:08.436968+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T21:59:36.690916+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:00:03.234761+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:00:31.933857+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:01:00.384334+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:01:26.786315+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:01:53.520422+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:02:19.634537+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:02:46.454039+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:03:11.260779+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:03:36.091883+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:04:02.939116+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:04:29.148152+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:04:56.771550+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:05:23.348252+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:05:49.745746+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:06:17.090647+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:06:44.784885+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:07:09.947249+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:07:40.082867+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:08:07.378507+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:08:31.695001+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:08:55.760146+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:09:21.793230+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:09:46.496238+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:10:16.883501+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:10:43.403689+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:11:08.884510+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:11:34.504475+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:12:17.268308+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:12:49.201012+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:14:04.353469+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:18:36.658699+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
+## 2026-09-28T22:20:56.689530+00:00 — ticket-97
+- **tests_passed**: 0
+- **tests_failed**: 11
+
