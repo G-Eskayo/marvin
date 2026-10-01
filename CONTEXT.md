@@ -349,6 +349,19 @@ then) — a real, current fragility, not a hypothetical one.
   steering. The read-only view must be derived from the same selection logic the scanner uses
   (one source of truth), not a second hand-written sort that can drift from real dispatch.
 
+- **Backlog sections** (decided 2026-10-01): four labeled sections, in dispatch order — **Running now**
+  (claimed + in flight), **Queue** (eligible: `ready-for-agent`, no claim, in the order the scanner
+  would pick), **Parked** (failure-capped or awaiting a human, each with its reason and failure
+  count), **Not ready** (open but not yet `ready-for-agent`). Parked work must be visible: today's
+  12 parked tickets were only discoverable by reading raw issue comments, the same silent-failure
+  shape as PR #119 before the MR-Review fix.
+- **Multi-project tickets (known gap, planned next version)**: each project should have its own
+  ticketing, but the pipeline is single-repo today — `ticket_pipeline.py`/`run_ticket.py` hardcode
+  `REPO = "G-Eskayo/marvin"`, so e.g. killer-sudoku's open issues never dispatch. v1 of this tab
+  stays single-project but every ticket record carries its `repo`/project key from the start, so
+  grouping by project is additive, not a rewrite (same reasoning as the steering-ready `position`
+  field above).
+
 ## Citation-graph knowledge base (in design, not yet built)
 
 - **Seed paper**: the paper a citation-graph traversal starts from — all relevance scoring is
