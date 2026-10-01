@@ -9,6 +9,7 @@ local Python function call.
 Run standalone: ~/.agents/venv/bin/python run_ticket.py <issue_number>
 """
 from __future__ import annotations
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -22,13 +23,69 @@ from sandbox_orchestration import execute_ticket  # noqa: E402
 from ticket_pipeline import _label_for_device, _release  # noqa: E402
 
 REPO = "G-Eskayo/marvin"
+FAILURE_MARKER = "Automated implementation did not pass verification"
+MAX_CONSECUTIVE_FAILURES = 3
 
 
 def _comment_failure(issue_number: int, reason: str) -> None:
     subprocess.run(
         ["gh", "issue", "comment", str(issue_number), "--repo", REPO, "--body",
-         f"Automated implementation did not pass verification: {reason}"],
+         f"{FAILURE_MARKER}: {reason}"],
         check=False,
+    )
+
+
+def _consecutive_failure_streak(issue_number: int) -> int:
+    """Count trailing automated-failure comments on this issue, most-recent
+    first, stopping at the first non-matching comment (a human reply, a
+    passing run, anything else). This is the cross-dispatch retry counter --
+    deliberately not a local state file, so both machines agree on it for
+    free via the shared issue thread, and a human commenting on the ticket
+    (to redirect it, add context, anything) naturally resets the streak.
+
+    Found live 2026-09-04..06: with no cap across separate run_ticket.py
+    invocations, a release-claim-then-immediate-redispatch cycle on a
+    genuinely-too-ambiguous ticket (#28) spun ~6,900 back-to-back headless
+    sessions over 3 days with every attempt reaching an identical
+    'unchanged' verdict -- max_iterations=3 only bounds iterations *inside*
+    one execute_ticket call, nothing bounded the outer release/redispatch
+    loop across calls."""
+    proc = subprocess.run(
+        ["gh", "issue", "view", str(issue_number), "--repo", REPO,
+         "--json", "comments"],
+        capture_output=True, text=True, timeout=30, check=False,
+    )
+    if proc.returncode != 0:
+        return 0
+    try:
+        comments = json.loads(proc.stdout)["comments"]
+    except (json.JSONDecodeError, KeyError):
+        return 0
+    streak = 0
+    for c in reversed(comments):
+        if FAILURE_MARKER in c.get("body", ""):
+            streak += 1
+        else:
+            break
+    return streak
+
+
+def _park_stuck_ticket(issue_number: int, streak: int) -> None:
+    label = _label_for_device(machine_profile.registry_id())
+    subprocess.run(
+        ["gh", "issue", "edit", str(issue_number), "--repo", REPO,
+         "--remove-label", "ready-for-agent"],
+        capture_output=True, text=True, timeout=15, check=False,
+    )
+    subprocess.run(
+        ["gh", "issue", "comment", str(issue_number), "--repo", REPO, "--body",
+         f"Parking this ticket after {streak} consecutive failed automated "
+         f"attempts with no progress -- removing `ready-for-agent` so it "
+         f"stops being re-dispatched. Still labeled `claimed:{label}`; "
+         f"needs a human look (re-scope, do it by hand, or re-add "
+         f"`ready-for-agent` once it's less ambiguous) before it's "
+         f"eligible again."],
+        capture_output=True, text=True, timeout=15, check=False,
     )
 
 
@@ -89,8 +146,12 @@ def run(issue_number: int) -> dict:
         outcome = {"raised": False, "pr_url": None, "reason": f"Unhandled exception: {exc}"}
 
     if not outcome["raised"]:
+        prior_streak = _consecutive_failure_streak(issue_number)
         _comment_failure(issue_number, outcome["reason"])
-        _release_claim(issue_number)
+        if prior_streak + 1 >= MAX_CONSECUTIVE_FAILURES:
+            _park_stuck_ticket(issue_number, prior_streak + 1)
+        else:
+            _release_claim(issue_number)
 
     _trigger_redispatch()
 
