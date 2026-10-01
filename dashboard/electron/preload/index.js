@@ -28,5 +28,9 @@ contextBridge.exposeInMainWorld('api', {
   },
   dispatch: {
     status: () => ipcRenderer.invoke('dispatch:status')
+  },
+  health: {
+    status: () => ipcRenderer.invoke('health:status'),
+    refresh: () => ipcRenderer.invoke('health:refresh')
   }
 })

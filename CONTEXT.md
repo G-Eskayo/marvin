@@ -288,6 +288,39 @@ then) — a real, current fragility, not a hypothetical one.
   progress view (G-Eskayo/marvin#82) — the two serve different jobs: the Files tab shows *what
   MARVIN produced*, the activity tab (not yet built) shows *what MARVIN is doing*.
 
+## Health monitoring (in design, 2026-10-01)
+
+- **Check**: a single, named assertion about one piece of MARVIN's own infrastructure (a token
+  file, a ChromaDB collection, a dispatch lock, a cron job) that resolves to a severity plus a
+  human-readable detail message. The atomic unit of the whole system — everything else (coverage,
+  the dashboard tab, the anomaly layer) is built out of a growing list of these.
+- **Severity**: a check's result, one of five states. 🔴 **red** — actively broken right now.
+  🟡 **yellow** — degraded or stale-by-design (e.g. a documented fallback is in use), not broken.
+  🟢 **green** — verified healthy as of the last run. ⚫ **unmonitored** — a real, discovered piece
+  of infrastructure with no check registered for it at all; distinct from grey, since it isn't a
+  staleness problem, it's a coverage gap. Grey is not a fifth discrete severity — see Staleness
+  gradient.
+- **Staleness gradient**: a visual dimension layered on top of a check's last-known severity, not
+  a severity itself — as `now - last_checked` grows past that check's own declared tolerance, its
+  color desaturates toward grey. A check that has never run at all renders as pure grey with no
+  color underneath. Each check declares its own tolerance (a daily cron check tolerates a day; a
+  storm-detection check should grey out within ~30 minutes) — decoupled from how often the
+  scanner itself runs.
+- **Coverage**: the fraction of MARVIN's actually-existing infrastructure (every real launchd job,
+  every registered machine, every synced repo) that has a matching check registered, computed by
+  enumerating those sources directly rather than against a hand-maintained list — the existing
+  `cron_health.py`'s `JOBS` dict is the cautionary example: 5 hand-listed jobs against 14 real
+  ones, silently missing `ticket-pipeline` the entire time it was spiraling. Coverage closes gaps
+  in *named, enumerable* things; it cannot discover a category of failure nobody has instrumented
+  at all (the unmonitored marker only fires for things the system can see exist).
+- **Numeric-anomaly check**: a check that emits a tracked number (not just a severity) — a
+  comment-posting rate, a log-growth rate, a process count — recorded as a time series via
+  `metrics_registry.py`'s existing baseline/current/compare primitive (previously used only for
+  ticket code-quality metrics). Flags a sharp deviation from the metric's own rolling baseline
+  generically, without anyone having pre-written a rule naming the specific failure shape — how a
+  ticket retry storm's comment-velocity spike would be caught without a "storm detector" ever
+  having been written.
+
 ## Citation-graph knowledge base (in design, not yet built)
 
 - **Seed paper**: the paper a citation-graph traversal starts from — all relevance scoring is

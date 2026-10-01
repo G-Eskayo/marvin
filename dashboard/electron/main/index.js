@@ -7,6 +7,7 @@ import { listSubsystems, readHistory, buildIndex } from './metrics.js'
 import { listPipelinePrs, approveMr, denyMr, fetchTicketContext } from './mr_review.js'
 import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
 import { readDispatchStatus } from './dispatch_status.js'
+import { readHealthStatus, runHealthCheckNow } from './health.js'
 import { createRefreshServer } from './refresh_server.js'
 import { adoptLoginShellPath } from './path.js'
 import { resolveServiceDefaults } from './device_identity.js'
@@ -107,6 +108,14 @@ function registerDispatchHandlers() {
   ipcMain.handle('dispatch:status', () => readDispatchStatus())
 }
 
+function registerHealthHandlers() {
+  ipcMain.handle('health:status', () => readHealthStatus())
+  ipcMain.handle('health:refresh', async () => {
+    await runHealthCheckNow(execFileAsync)
+    return readHealthStatus()
+  })
+}
+
 function postJson(webhookUrl, body) {
   return fetch(webhookUrl, {
     method: 'POST',
@@ -185,6 +194,7 @@ app.whenReady().then(() => {
   registerMetricsHandlers()
   registerMrReviewHandlers()
   registerDispatchHandlers()
+  registerHealthHandlers()
   createWindow()
 
   createRefreshServer(() => {
