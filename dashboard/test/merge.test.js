@@ -9,7 +9,8 @@ import {
   triggerRebuildIfDashboardChanged,
   triggerTicketPipeline,
   isBehindMain,
-  rebaseAndRetest
+  rebaseAndRetest,
+  _defaultRunTests
 } from '../webhook-server/merge.js'
 
 const realExec = promisify(execFile)
@@ -334,5 +335,29 @@ describe('rebaseAndRetest', () => {
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
+  })
+})
+
+describe('_defaultRunTests', () => {
+  it('installs dashboard dependencies before running vitest', async () => {
+    // Found live 2026-10-01 (PR #119's actual merge attempt): a
+    // `git worktree add` scratch checkout has no dashboard/node_modules
+    // at all, so `npx vitest run` hard-failed with a dependency-
+    // resolution error wall that had nothing to do with the PR's own
+    // code -- shown to the user as the re-engagement reason, looking
+    // like a real test failure when it was really a missing install step.
+    const calls = []
+    const exec = vi.fn(async (cmd, args, opts) => {
+      calls.push({ cmd, args, cwd: opts?.cwd })
+      return { stdout: '', stderr: '' }
+    })
+
+    await _defaultRunTests('/repo', exec)
+
+    const dashboardCalls = calls.filter((c) => c.cwd === '/repo/dashboard')
+    const installIndex = dashboardCalls.findIndex((c) => c.cmd === 'npm' && c.args[0] === 'install')
+    const vitestIndex = dashboardCalls.findIndex((c) => c.cmd === 'npx' && c.args[0] === 'vitest')
+    expect(installIndex).toBeGreaterThanOrEqual(0)
+    expect(vitestIndex).toBeGreaterThan(installIndex)
   })
 })
