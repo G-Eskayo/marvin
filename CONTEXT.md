@@ -362,6 +362,20 @@ then) — a real, current fragility, not a hypothetical one.
   grouping by project is additive, not a rewrite (same reasoning as the steering-ready `position`
   field above).
 
+- **Ticket source** (decided 2026-10-01): each project declares where its tickets live — GitHub Issues
+  (MARVIN, killer-sudoku, clarity-captions) or a persisted markdown task list (finance-os, local-only
+  by design because it holds real financial data). The Activity tab reads every source through one
+  interface and renders them identically. **finance-os is a first-class source, not excluded.** v1
+  builds only the GitHub reader; the interface exists from day one.
+- **Portfolio orchestration (new design thread, not Activity-tab v1)**: Gil runs several large
+  projects and many small ones concurrently, and wants the orchestrator to allocate machine/token
+  capacity across *all* of them so progress is made everywhere, not one-at-a-time (see memory
+  `feedback-parallel-progress-not-strict-sequencing`). **Due dates become a first-class concept** in
+  the system — until now nothing in a ticket record expresses time. Ticket records carry an optional
+  `due` field from v1 (same additive reasoning as `position` and `repo`); what a due date *means*
+  to scheduling (hard vs. soft, per ticket vs. per project/milestone) is still open — to be grilled
+  separately, not decided here.
+
 ## Citation-graph knowledge base (in design, not yet built)
 
 - **Seed paper**: the paper a citation-graph traversal starts from — all relevance scoring is
