@@ -12,56 +12,14 @@ works fine under 4.57.6 despite that declared constraint; the pin is kept at
 """
 from __future__ import annotations
 import heapq
-import re
+import sys
 import tempfile
 from pathlib import Path
 
-_ARXIV_ID_RE = re.compile(r"^\d{4}\.\d{4,5}(v\d+)?$")
-
-
-def _s2_id(identifier: str) -> str:
-    """Semantic Scholar's paper endpoint accepts several ID namespaces (DOI:,
-    ARXIV:, CorpusId:...) under the same /paper/{id} path. Most of this
-    project's own related-work citations are arXiv preprints (e.g.
-    "2503.03704") with no formal DOI at all — recent AI-safety papers
-    especially — so assuming DOI: unconditionally silently fails or (worse,
-    see _shape_and_score) silently drops exactly the population this paper
-    cites most. Detects the bare arXiv YYMM.NNNNN[vN] shape and prefixes
-    accordingly instead of assuming DOI; passes through an already-prefixed
-    identifier unchanged."""
-    if identifier.startswith(("DOI:", "ARXIV:", "CorpusId:")):
-        return identifier
-    if _ARXIV_ID_RE.match(identifier):
-        return f"ARXIV:{identifier}"
-    return f"DOI:{identifier}"
-
-
-def _get_with_retry(url: str, params: dict, timeout: int, max_retries: int = 8):
-    """Unauthenticated S2 access is a 1000 req/s pool shared across every anonymous caller on the
-    internet, not a per-user quota — a 429 here is transient global contention, not us exceeding
-    anything. An API key's introductory tier (1 RPS) isn't meaningfully better than this pool for
-    our actual volume (~1-2 calls per seed paper), so riding out contention with longer backoff is
-    the right fix, not chasing a key. S2_API_KEY is still honored if set, for whenever a real one
-    with a higher approved tier exists."""
-    import os
-    import random
-    import time
-    import requests
-
-    headers = {}
-    api_key = os.environ.get("S2_API_KEY")
-    if api_key:
-        headers["x-api-key"] = api_key
-
-    for attempt in range(max_retries):
-        resp = requests.get(url, params=params, headers=headers, timeout=timeout)
-        if resp.status_code != 429:
-            resp.raise_for_status()
-            return resp
-        if attempt < max_retries - 1:
-            backoff = min(2 ** attempt, 60)  # 1s, 2s, 4s, ... capped at 60s
-            time.sleep(backoff + random.uniform(0, 1))  # jitter — avoid lockstep retries against a shared pool
-    resp.raise_for_status()  # exhausted retries — surface the final 429 as an error
+sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+from s2_client import get_with_retry as _get_with_retry
+from s2_client import s2_id as _s2_id
+from s2_client import S2_PAPER_BASE
 
 
 def select_candidates(candidates: list[dict], top_k: int, relevance_floor: float) -> list[dict]:
@@ -263,9 +221,6 @@ def embed_paper(text: str, specter2_fn=None, nomic_fn=None) -> dict:
     specter2_fn = specter2_fn or _real_specter2_embed
     nomic_fn = nomic_fn or _real_nomic_embed
     return {"specter2": specter2_fn(text), "nomic": nomic_fn(text)}
-
-
-S2_PAPER_BASE = "https://api.semanticscholar.org/graph/v1/paper"
 
 
 def _shape_and_score(papers: list[dict], seed_embeddings: dict, embed_fn, is_citation: bool, is_known_fn=None) -> list[dict]:
