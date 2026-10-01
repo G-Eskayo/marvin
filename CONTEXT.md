@@ -334,6 +334,21 @@ then) — a real, current fragility, not a hypothetical one.
   one, and when it lands it's meant to be full-fidelity (rendered plot/image output), not a
   text-only reduction.
 
+## Dashboard app — Activity tab: backlog + queue (in design, 2026-10-01)
+
+- **Activity tab scope**: the single place for the whole ticket-pipeline picture — the backlog, the
+  live queue order, what each device is doing now, and per-ticket stage timelines/cost. Supersedes
+  the standalone scope of #115 (per-device columns), #117 (unclaimed backlog), #118 (MR-origin
+  device); all three were reopened 2026-10-01 after being closed in error (only #113/#114/#116 had
+  actually shipped).
+- **Queue order**: the order `ticket_pipeline.py` would actually dispatch tickets — today oldest
+  `createdAt` first among `ready-for-agent` tickets with no `claimed:*` label. **Decided: read-only
+  for v1, but the data shape carries an explicit per-ticket `position`/`priority` field now**, so
+  adding steering (reorder/pin from the dashboard, with the scanner honoring it) later is purely
+  additive. Deliberately not building steering before the queue has been seen and judged worth
+  steering. The read-only view must be derived from the same selection logic the scanner uses
+  (one source of truth), not a second hand-written sort that can drift from real dispatch.
+
 ## Citation-graph knowledge base (in design, not yet built)
 
 - **Seed paper**: the paper a citation-graph traversal starts from — all relevance scoring is
