@@ -47,14 +47,21 @@ judge's rationale inline. Both substring and judge scores are shown side by side
 
 ```
 tasks/<id>/
-  task.json    # {id, type: "fs"|"qa", expect[], cwd?, timeout?}
+  task.json    # {id, type: "fs"|"qa", expect[], cwd?, timeout?, isolate_workdir?, disallow_tools?}
   prompt.md
-  files/       # (fs tasks) seeded into an isolated temp workdir
+  files/       # seeded into isolated temp workdir (for fs or isolate_workdir tasks)
 ```
 
-- **fs** tasks run in an isolated temp dir with `--permission-mode bypassPermissions`.
-- **qa** tasks run in a fixed `cwd` (default home) so MARVIN's project-scoped
+- **type: "fs"** — run in isolated temp dir with `--permission-mode bypassPermissions`.
+- **type: "qa"** (default) — run in fixed `cwd` (default home) so MARVIN's project-scoped
   memory engages; the clean profile loads no memory regardless.
+- **isolate_workdir: true** — (qa tasks only) run in isolated temp dir like fs tasks, but
+  WITHOUT `--permission-mode bypassPermissions`. Allows tool denials (via `disallow_tools`)
+  to enforce that the answer is reachable only via a specific skill/tool (e.g., knowledge
+  base query), not from disk. Copies `files/` as decoys to prove isolation.
+- **disallow_tools: [list]** — deny specific tools at CLI level (e.g., `["Read","Glob","Grep"]`).
+  Used with isolated-memory discriminators where the answer must come from a live query, not
+  static files or training data.
 
 ## Known limitations
 

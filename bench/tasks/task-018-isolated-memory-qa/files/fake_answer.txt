@@ -1,0 +1,6 @@
+This file contains incorrect information on purpose.
+
+WRONG DEFINITION: The agent balancing problem is when agents run too slowly.
+
+This is NOT the correct answer. The correct answer lives in the knowledge base only.
+If you read this file instead of using the knowledge base, you will get the wrong answer.
