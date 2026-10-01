@@ -155,3 +155,25 @@ def test_capture_dev_evidence_calls_capture_screenshot_for_a_ui_ticket(tmp_path)
         "screenshot_path": "docs/evidence/fake.png",
         "description": "Live screenshot captured from the running app.",
     }
+
+
+# ── fd-limit floor for the test subprocess ─────────────────────────────────
+# launchd children (the ticket-pipeline webhook server) and the laptop's own
+# shell default to a 256-file soft limit. A ~535-test pytest run exhausts it
+# ("OSError: Too many open files"), turning ~10 unrelated tests into failures
+# and making every ticket's baseline read 0/11 -- so no ticket could ever
+# register as "improved". The child must get a real floor regardless of the
+# parent's limit.
+
+def test_capture_test_results_child_gets_fd_limit_floor_even_when_parent_is_capped(tmp_path):
+    import resource
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    cap = 256
+    resource.setrlimit(resource.RLIMIT_NOFILE, (cap, hard))
+    try:
+        probe = ("import resource; s,_=resource.getrlimit(resource.RLIMIT_NOFILE); "
+                 "print(f'{s} passed in 0.01s')")
+        result = ec.capture_test_results(tmp_path, ["python3", "-c", probe])
+    finally:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
+    assert result["passed"] >= ec.MIN_NOFILE_SOFT_LIMIT
