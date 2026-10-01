@@ -10,12 +10,14 @@ import random
 import re
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 
 _ARXIV_ID_RE = re.compile(r"^\d{4}\.\d{4,5}(v\d+)?$")
 
 S2_PAPER_BASE = "https://api.semanticscholar.org/graph/v1/paper"
+S2_HOST = "api.semanticscholar.org"
 
 
 def s2_id(identifier: str) -> str:
@@ -69,8 +71,12 @@ def get_with_retry(
     else:
         headers = dict(headers)  # Copy to avoid mutating caller's dict
 
+    # Only ever to Semantic Scholar's own host: this function is shared with the
+    # research skill's arXiv search, and attaching the key to every URL would
+    # send it to export.arxiv.org. Exact hostname match, not a substring, so a
+    # lookalike such as api.semanticscholar.org.evil.example is not trusted.
     api_key = os.environ.get("S2_API_KEY")
-    if api_key:
+    if api_key and urlparse(url).hostname == S2_HOST:
         headers["x-api-key"] = api_key
 
     for attempt in range(max_retries):

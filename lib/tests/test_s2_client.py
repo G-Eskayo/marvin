@@ -123,7 +123,7 @@ def test_get_with_retry_honors_s2_api_key_from_env(monkeypatch):
     monkeypatch.setattr("requests.get", fake_get)
     monkeypatch.setenv("S2_API_KEY", "test-key-12345")
 
-    get_with_retry("http://example.com", params={}, timeout=15)
+    get_with_retry("https://api.semanticscholar.org/graph/v1/paper/x", params={}, timeout=15)
 
     assert len(captured_headers) == 1
     assert captured_headers[0]["x-api-key"] == "test-key-12345"
@@ -140,7 +140,7 @@ def test_get_with_retry_preserves_caller_headers_and_adds_api_key(monkeypatch):
     monkeypatch.setenv("S2_API_KEY", "test-key-12345")
 
     custom_headers = {"User-Agent": "my-app"}
-    get_with_retry("http://example.com", params={}, timeout=15, headers=custom_headers)
+    get_with_retry("https://api.semanticscholar.org/graph/v1/paper/x", params={}, timeout=15, headers=custom_headers)
 
     assert len(captured_headers) == 1
     assert captured_headers[0]["User-Agent"] == "my-app"
@@ -190,3 +190,47 @@ def test_get_with_retry_exponential_backoff_increases(monkeypatch):
     assert all(1 <= s < 2 for s in sleep_calls[0:1])  # 1s + jitter
     assert all(2 <= s < 3 for s in sleep_calls[1:2])  # 2s + jitter
     assert all(4 <= s < 5 for s in sleep_calls[2:3])  # 4s + jitter
+
+
+# ── S2_API_KEY must only ever go to Semantic Scholar ────────────────────────
+# get_with_retry is now shared with the research skill's arXiv search. It used
+# to attach x-api-key whenever S2_API_KEY was set, whatever the URL, so setting
+# a key would have sent it to export.arxiv.org (found reviewing PR #122; latent
+# -- no key was configured).
+
+def _capture_headers(monkeypatch):
+    seen = []
+
+    def fake_get(url, params=None, timeout=None, headers=None):
+        seen.append(dict(headers or {}))
+        return _FakeResponse(200)
+
+    monkeypatch.setattr("requests.get", fake_get)
+    return seen
+
+
+def test_api_key_is_not_sent_to_a_non_semantic_scholar_host(monkeypatch):
+    monkeypatch.setenv("S2_API_KEY", "secret")
+    seen = _capture_headers(monkeypatch)
+
+    get_with_retry("https://export.arxiv.org/api/query", params={}, timeout=15)
+
+    assert "x-api-key" not in seen[0]
+
+
+def test_api_key_is_not_sent_to_a_lookalike_host(monkeypatch):
+    monkeypatch.setenv("S2_API_KEY", "secret")
+    seen = _capture_headers(monkeypatch)
+
+    get_with_retry("https://api.semanticscholar.org.evil.example/graph", params={}, timeout=15)
+
+    assert "x-api-key" not in seen[0]
+
+
+def test_api_key_is_sent_to_semantic_scholar(monkeypatch):
+    monkeypatch.setenv("S2_API_KEY", "secret")
+    seen = _capture_headers(monkeypatch)
+
+    get_with_retry("https://api.semanticscholar.org/graph/v1/paper/search", params={}, timeout=15)
+
+    assert seen[0]["x-api-key"] == "secret"
