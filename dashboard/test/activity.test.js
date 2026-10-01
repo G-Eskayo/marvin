@@ -52,6 +52,25 @@ describe('listTicketActivity', () => {
       expect(entry.eventCount).toBe(3)
     }))
 
+  it('surfaces the title from whichever event carried it, not just the last one', () =>
+    withTempDirs(({ stagesDir, statePath }) => {
+      writeDispatchState(statePath, { busy: false })
+      recordStage(42, 'claimed', 'started', '', { dir: stagesDir, title: 'Versioning: VERSION + CHANGELOG.md bump' })
+      recordStage(42, 'executing', 'started', '', { dir: stagesDir }) // no title on later events
+
+      const [entry] = listTicketActivity(statePath, stagesDir)
+      expect(entry.title).toBe('Versioning: VERSION + CHANGELOG.md bump')
+    }))
+
+  it('reports title: null when no event in the timeline has one (never a bare-number dead end)', () =>
+    withTempDirs(({ stagesDir, statePath }) => {
+      writeDispatchState(statePath, { busy: false })
+      recordStage(42, 'claimed', 'started', '', { dir: stagesDir })
+
+      const [entry] = listTicketActivity(statePath, stagesDir)
+      expect(entry.title).toBe(null)
+    }))
+
   it('flags a ticket as failed if any event in its timeline failed, even if it later recovered', () =>
     withTempDirs(({ stagesDir, statePath }) => {
       writeDispatchState(statePath, { busy: false })

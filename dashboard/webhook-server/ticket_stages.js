@@ -37,7 +37,7 @@ export function readStages(ticketNumber, dir = STAGES_DIR) {
   }
 }
 
-export function recordStage(ticketNumber, stage, status, detail = '', { machine, costUsd = null, dir = STAGES_DIR, resolveId = resolveDeviceId } = {}) {
+export function recordStage(ticketNumber, stage, status, detail = '', { machine, costUsd = null, title = null, dir = STAGES_DIR, resolveId = resolveDeviceId } = {}) {
   if (!VALID_STAGES.has(stage)) {
     throw new Error(`unknown stage: ${stage} (expected one of ${[...VALID_STAGES].sort().join(', ')})`)
   }
@@ -51,7 +51,13 @@ export function recordStage(ticketNumber, stage, status, detail = '', { machine,
     detail,
     timestamp: new Date().toISOString(),
     machine: machine || resolveId() || 'unknown',
-    cost_usd: costUsd
+    cost_usd: costUsd,
+    // Found live 2026-10-01: a bare ticket number is opaque in any UI --
+    // Python's claim-time event is the usual source of truth for this
+    // (ticket_pipeline.py already has the GitHub title there); mergePr()
+    // can also pass it through from the PR's linked-ticket fetch when
+    // available.
+    title
   }
   mkdirSync(dir, { recursive: true })
   const events = readStages(ticketNumber, dir)

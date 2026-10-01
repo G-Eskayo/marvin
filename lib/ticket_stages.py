@@ -39,7 +39,7 @@ def _stage_file(ticket_number: int) -> Path:
 
 def record_stage(
     ticket_number: int, stage: str, status: str, detail: str = "",
-    machine: str | None = None, cost_usd: float | None = None,
+    machine: str | None = None, cost_usd: float | None = None, title: str | None = None,
 ) -> dict:
     if stage not in VALID_STAGES:
         raise ValueError(f"unknown stage: {stage!r} (expected one of {sorted(VALID_STAGES)})")
@@ -59,6 +59,13 @@ def record_stage(
         # so a sum over a ticket's events doesn't quietly undercount by
         # treating "no call made" the same as "call cost nothing."
         "cost_usd": cost_usd,
+        # Found live 2026-10-01: a bare ticket number is opaque in any UI
+        # or conversation -- Gil lost track of which ticket "#97" even was
+        # mid-handoff. Only ever needs to be set once (claimed, the first
+        # event, is where ticket_pipeline.py already has the title from
+        # GitHub) -- readers take it from whichever event in a ticket's
+        # timeline has it, not every event.
+        "title": title,
     }
     path = _stage_file(ticket_number)
     path.parent.mkdir(parents=True, exist_ok=True)

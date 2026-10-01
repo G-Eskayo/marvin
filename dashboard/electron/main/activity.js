@@ -10,11 +10,14 @@ import { readDispatchStatus } from './dispatch_status.js'
 const TERMINAL_STAGE_ORDER = ['claimed', 'planning', 'executing', 'verifying', 'gate', 'merging', 'rebuilding', 'done']
 
 function summarize(events) {
-  if (events.length === 0) return { currentStage: null, currentStatus: null, costUsd: 0, failed: false }
+  if (events.length === 0) return { currentStage: null, currentStatus: null, costUsd: 0, failed: false, title: null }
   const last = events[events.length - 1]
   const costUsd = events.reduce((sum, e) => sum + (e.cost_usd || 0), 0)
   const failed = events.some((e) => e.status === 'failed')
-  return { currentStage: last.stage, currentStatus: last.status, costUsd, failed }
+  // Title is only ever set on the event that had it available (usually
+  // "claimed", the first) -- take the first one found, not the last.
+  const title = events.find((e) => e.title)?.title || null
+  return { currentStage: last.stage, currentStatus: last.status, costUsd, failed, title }
 }
 
 export function listTicketActivity(statePath, stagesDir) {

@@ -52,6 +52,14 @@ describe('recordStage', () => {
       const event = recordStage(42, 'gate', 'started', '', { dir, resolveId: () => null })
       expect(event.machine).toBe('unknown')
     }))
+
+  it('carries a title when given, defaults to null otherwise', () =>
+    withTempDir((dir) => {
+      const withTitle = recordStage(42, 'gate', 'started', '', { dir, title: 'Merge-time gate' })
+      expect(withTitle.title).toBe('Merge-time gate')
+      const withoutTitle = recordStage(43, 'gate', 'started', '', { dir })
+      expect(withoutTitle.title).toBe(null)
+    }))
 })
 
 describe('readStages', () => {
