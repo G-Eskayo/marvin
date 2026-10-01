@@ -11,5 +11,57 @@
         "higher_is_better": false
       }
     }
+  },
+  {
+    "timestamp": "2026-09-18T12:40:37.652347+00:00",
+    "metrics": {
+      "tests_passed": {
+        "value": 0,
+        "higher_is_better": true
+      },
+      "tests_failed": {
+        "value": 11,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-09-18T14:22:08.891027+00:00",
+    "metrics": {
+      "tests_passed": {
+        "value": 0,
+        "higher_is_better": true
+      },
+      "tests_failed": {
+        "value": 11,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-09-18T14:42:57.999117+00:00",
+    "metrics": {
+      "tests_passed": {
+        "value": 0,
+        "higher_is_better": true
+      },
+      "tests_failed": {
+        "value": 11,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-01T16:34:27.877050+00:00",
+    "metrics": {
+      "tests_passed": {
+        "value": 0,
+        "higher_is_better": true
+      },
+      "tests_failed": {
+        "value": 12,
+        "higher_is_better": false
+      }
+    }
   }
 ]
