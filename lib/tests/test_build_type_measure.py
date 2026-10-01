@@ -99,21 +99,20 @@ def test_measure_returns_raw_passed_and_failed_counts(monkeypatch, tmp_path):
         "suite": "pytest", "passed": 8, "failed": 3, "total": 11,
     })
     result = btm.measure(tmp_path)
-    assert result == {
-        "tests_passed": {"value": 8, "higher_is_better": True},
-        "tests_failed": {"value": 3, "higher_is_better": False},
-    }
+    assert result["tests_passed"] == {"value": 8, "higher_is_better": True}
+    assert result["tests_failed"] == {"value": 3, "higher_is_better": False}
 
 
-def test_measure_returns_zero_counts_when_output_is_unparseable(monkeypatch, tmp_path):
+def test_measure_returns_zero_counts_when_the_runner_explicitly_says_no_tests_ran(monkeypatch, tmp_path):
+    # A subsystem with genuinely no tests yet is a legitimate 0 -- distinct
+    # from a crashed run (see the MeasureError tests below).
     monkeypatch.setattr(btm, "capture_test_results", lambda wt, cmd: {
-        "suite": "mystery", "passed": None, "failed": None, "total": None,
+        "suite": "pytest", "passed": None, "failed": None, "total": None,
+        "output_tail": "no tests ran in 0.01s",
     })
     result = btm.measure(tmp_path)
-    assert result == {
-        "tests_passed": {"value": 0, "higher_is_better": True},
-        "tests_failed": {"value": 0, "higher_is_better": False},
-    }
+    assert result["tests_passed"]["value"] == 0
+    assert result["tests_failed"]["value"] == 0
 
 
 def test_measure_a_baseline_and_a_current_run_produce_a_real_improvement(monkeypatch, tmp_path):
@@ -125,6 +124,7 @@ def test_measure_a_baseline_and_a_current_run_produce_a_real_improvement(monkeyp
 
     monkeypatch.setattr(btm, "capture_test_results", lambda wt, cmd: {
         "suite": "pytest", "passed": None, "failed": None, "total": None,
+        "output_tail": "no tests ran in 0.01s",
     })
     baseline = btm.measure(tmp_path)
 
@@ -250,3 +250,58 @@ def test_measure_skips_vitest_and_dependency_install_when_there_is_no_dashboard(
     btm.measure(tmp_path)
 
     assert len(cmds) == 1 and installs == []
+
+
+# ── per-suite visibility + loud failure (found 2026-10-01) ─────────────────
+# #41's recorded baseline was 544 (pytest only) while a clean worktree measures
+# 684 (544 + 140 vitest): a suite had silently contributed 0 and nothing in the
+# data showed it. Each suite's counts are now recorded separately, and a suite
+# that produced no summary because it crashed is an error, not a zero.
+
+def _fake_suites(monkeypatch, pytest_result, vitest_result):
+    def fake(wt, cmd):
+        return vitest_result if any("vitest" in part for part in cmd) else pytest_result
+    monkeypatch.setattr(btm, "capture_test_results", fake)
+    monkeypatch.setattr(btm, "_ensure_dashboard_deps", lambda wt: None)
+
+
+def _dashboard_repo(tmp_path):
+    (tmp_path / "dashboard").mkdir()
+    (tmp_path / "dashboard" / "package.json").write_text("{}")
+    return tmp_path
+
+
+def test_measure_records_each_suites_counts_separately(monkeypatch, tmp_path):
+    _fake_suites(monkeypatch,
+                 {"suite": "p", "passed": 540, "failed": 1, "total": 541},
+                 {"suite": "v", "passed": 140, "failed": 2, "total": 142})
+    result = btm.measure(_dashboard_repo(tmp_path))
+
+    assert result["pytest_passed"]["value"] == 540
+    assert result["pytest_failed"]["value"] == 1
+    assert result["vitest_passed"]["value"] == 140
+    assert result["vitest_failed"]["value"] == 2
+    assert result["tests_passed"]["value"] == 680
+    assert result["pytest_failed"]["higher_is_better"] is False
+
+
+def test_measure_raises_when_a_suite_crashes_without_a_summary(monkeypatch, tmp_path):
+    _fake_suites(monkeypatch,
+                 {"suite": "p", "passed": 540, "failed": 0, "total": 540},
+                 {"suite": "v", "passed": None, "failed": None, "total": None,
+                  "output_tail": "sh: npx: command not found"})
+    with pytest.raises(btm.MeasureError) as exc:
+        btm.measure(_dashboard_repo(tmp_path))
+
+    assert "vitest" in str(exc.value)
+    assert "command not found" in str(exc.value)
+
+
+def test_measure_raises_when_pytest_dies_with_an_environment_error(monkeypatch, tmp_path):
+    monkeypatch.setattr(btm, "capture_test_results", lambda wt, cmd: {
+        "suite": "p", "passed": None, "failed": None, "total": None,
+        "output_tail": "OSError: [Errno 24] Too many open files",
+    })
+    with pytest.raises(btm.MeasureError) as exc:
+        btm.measure(tmp_path)
+    assert "Too many open files" in str(exc.value)

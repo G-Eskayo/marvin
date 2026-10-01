@@ -107,6 +107,20 @@ def _measure_commands(worktree_path: Path) -> list[list[str]]:
     return commands
 
 
+class MeasureError(RuntimeError):
+    """A suite crashed without producing a test summary. Raised instead of
+    reporting 0 so a broken environment can't masquerade as a result."""
+
+
+# A runner's own statement that it found nothing to run -- a legitimate 0
+# (e.g. a brand-new subsystem), unlike a traceback or "command not found".
+_NO_TESTS_MARKERS = ("no tests ran", "no test files found")
+
+
+def _suite_label(command: list[str]) -> str:
+    return "vitest" if any("vitest" in part for part in command) else "pytest"
+
+
 def measure(worktree_path: Path) -> dict:
     """metrics_registry.compare()-shaped measure() for build-type
     tickets. Returns two separate counts -- tests_passed (higher is
@@ -122,16 +136,34 @@ def measure(worktree_path: Path) -> dict:
 
     Counts are summed across the whole pytest suite and, when the repo has a
     dashboard, the whole vitest suite -- the same fixed set on every call (see
-    `_measure_commands`), so a baseline and a later reading are comparable."""
+    `_measure_commands`), so a baseline and a later reading are comparable.
+    Each suite's own counts are also recorded (`pytest_passed`, `vitest_failed`,
+    ...) so a suite that contributes nothing is visible in the data -- found
+    2026-10-01 when #41's baseline read 544 against a clean 684.
+
+    Raises MeasureError if a suite produced no summary and did not say it found
+    nothing to run: a crash is an error, not a zero."""
     commands = _measure_commands(worktree_path)
     if len(commands) > 1:
         _ensure_dashboard_deps(worktree_path)
+    metrics: dict = {}
     passed = failed = 0
     for command in commands:
+        label = _suite_label(command)
         parsed = capture_test_results(worktree_path, command)
-        passed += parsed.get("passed") or 0
-        failed += parsed.get("failed") or 0
-    return {
-        "tests_passed": {"value": passed, "higher_is_better": True},
-        "tests_failed": {"value": failed, "higher_is_better": False},
-    }
+        if parsed.get("passed") is None and parsed.get("failed") is None:
+            tail = parsed.get("output_tail") or ""
+            if not any(marker in tail.lower() for marker in _NO_TESTS_MARKERS):
+                raise MeasureError(
+                    f"{label} produced no test summary (crashed or never ran): "
+                    f"...{tail[-300:].strip()}"
+                )
+        suite_passed = parsed.get("passed") or 0
+        suite_failed = parsed.get("failed") or 0
+        metrics[f"{label}_passed"] = {"value": suite_passed, "higher_is_better": True}
+        metrics[f"{label}_failed"] = {"value": suite_failed, "higher_is_better": False}
+        passed += suite_passed
+        failed += suite_failed
+    metrics["tests_passed"] = {"value": passed, "higher_is_better": True}
+    metrics["tests_failed"] = {"value": failed, "higher_is_better": False}
+    return metrics

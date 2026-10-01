@@ -52,7 +52,9 @@ def test_suite_label_is_whatever_the_caller_passed_in():
 
 def test_capture_test_results_runs_command_and_parses_stdout(tmp_path):
     result = ec.capture_test_results(tmp_path, ["python3", "-c", "print('7 passed in 0.10s')"])
-    assert result == {"suite": "python3 -c print('7 passed in 0.10s')", "passed": 7, "failed": 0, "total": 7}
+    assert {k: result[k] for k in ("suite", "passed", "failed", "total")} == {
+        "suite": "python3 -c print('7 passed in 0.10s')", "passed": 7, "failed": 0, "total": 7}
+    assert "7 passed" in result["output_tail"]
 
 
 def test_capture_test_results_runs_inside_the_given_worktree(tmp_path):
@@ -177,3 +179,38 @@ def test_capture_test_results_child_gets_fd_limit_floor_even_when_parent_is_capp
     finally:
         resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
     assert result["passed"] >= ec.MIN_NOFILE_SOFT_LIMIT
+
+
+def test_capture_test_results_includes_the_output_tail_for_unparseable_runs(tmp_path):
+    # Without the raw tail a crashed run and a genuine "no tests ran" are
+    # indistinguishable (both parse to None) -- found 2026-10-01 when a suite
+    # silently contributed 0 to a ticket's baseline.
+    result = ec.capture_test_results(tmp_path, ["python3", "-c", "print('Traceback: boom')"])
+    assert result["passed"] is None
+    assert "Traceback: boom" in result["output_tail"]
+
+
+# ── parse_test_output must read the FINAL summary line, not the first match ──
+# parse_test_output grabbed the first "N passed" / "N failed" anywhere in the
+# output. A failing test's own assertion diff routinely contains such text
+# (e.g. a test about parsing "7 passed in 0.10s"), which appears before
+# pytest's real summary, so a failing run reported garbage counts (found
+# 2026-10-01: 544-test suite read as 7 passed / 4 failed).
+
+def test_parse_test_output_uses_the_final_summary_line_not_text_earlier_in_the_output():
+    output = (
+        "FAILED lib/tests/test_x.py::test_parse - AssertionError\n"
+        "E   AssertionError: assert {'passed': 7} == ...\n"
+        "E     where result came from 'print(\\'7 passed in 0.10s\\')' and 4 failed earlier\n"
+        "=========== short test summary info ===========\n"
+        "11 failed, 524 passed, 1 skipped, 77 warnings in 19.66s\n"
+    )
+    parsed = ec.parse_test_output("pytest -q", output)
+    assert parsed["passed"] == 524
+    assert parsed["failed"] == 11
+    assert parsed["total"] == 535
+
+
+def test_parse_test_output_still_reads_a_lone_summary_line():
+    parsed = ec.parse_test_output("pytest -q", "3 failed, 8 passed in 2.72s")
+    assert (parsed["passed"], parsed["failed"]) == (8, 3)

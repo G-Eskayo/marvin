@@ -45,8 +45,19 @@ def parse_test_output(suite: str, output: str) -> dict:
         total = int(vitest_line.group(3))
         return {"suite": suite, "passed": passed, "failed": failed, "total": total}
 
-    passed_match = re.search(r"(\d+)\s+passed", output)
-    failed_match = re.search(r"(\d+)\s+failed", output)
+    # pytest's real summary is the LAST line of the form "... N passed ... in
+    # 12.3s". Text earlier in the output (a failing test's assertion diff, a
+    # printed fixture) can contain "N passed"/"N failed" too, so searching the
+    # whole output for the first match misread a failing 544-test run as 7
+    # passed / 4 failed (found 2026-10-01). Restrict to that line when present;
+    # fall back to the whole output only if no such line exists.
+    summary_lines = [
+        line for line in output.splitlines()
+        if re.search(r"\bin \d+(?:\.\d+)?s\b", line) and re.search(r"\d+\s+(?:passed|failed)", line)
+    ]
+    scope = summary_lines[-1] if summary_lines else output
+    passed_match = re.search(r"(\d+)\s+passed", scope)
+    failed_match = re.search(r"(\d+)\s+failed", scope)
     if not passed_match and not failed_match:
         return {"suite": suite, "passed": None, "failed": None, "total": None}
 
@@ -81,7 +92,14 @@ def capture_test_results(worktree_path: Path, test_command: list[str]) -> dict:
         test_command, cwd=worktree_path, capture_output=True, text=True,
         preexec_fn=_raise_nofile_limit,
     )
-    return parse_test_output(" ".join(test_command), result.stdout + result.stderr)
+    output = result.stdout + result.stderr
+    parsed = parse_test_output(" ".join(test_command), output)
+    # The raw tail travels with the result so a caller can tell a crashed run
+    # (traceback, "command not found", "Too many open files") from a genuine
+    # "no tests ran" -- both parse to None, and treating them alike let a
+    # whole suite silently contribute 0 to a ticket's baseline.
+    parsed["output_tail"] = output[-600:]
+    return parsed
 
 
 # UI-associated path prefixes for dev-evidence gating (ADR 0024). A direct
