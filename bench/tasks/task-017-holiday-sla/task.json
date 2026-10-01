@@ -1,0 +1,8 @@
+{
+  "id": "task-017-holiday-sla",
+  "type": "fs",
+  "prompt_file": "prompt.md",
+  "timeout": 360,
+  "expect": ["holidays.json", "2024-02-23"],
+  "note": "Genuinely out-of-distribution: holidays.json lists the company's non-standard business days off (e.g. 'town_hall_day') that no pretraining data could contain. sla.py's add_business_days() only skips weekends. Bug report: SLA due dates land on company holidays. Naive fix: hardcode well-known public holidays (New Year, July 4th), which is plausible, passes generic tests, and is still entirely wrong because it never reads holidays.json. expect=['holidays.json', '<exact_date>'] validates that the fix (a) actually consults the file and (b) produces the correct due date for the test case. --judge checks the due date computation end-to-end for a ticket created 2024-02-20 (Tuesday) with a 2-business-day SLA; the correct answer is 2024-02-23 (Friday) only if company holidays (including the fictional 'town_hall_day' on 2024-02-22) are consulted."
+}

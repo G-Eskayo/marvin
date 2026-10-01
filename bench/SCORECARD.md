@@ -1,6 +1,6 @@
 # MARVIN Bench — Scorecard
 
-> Last updated: 2026-07-02 (Runs 1–16, 14 tasks, 3 profiles, 2 API models + Ollama 7B/14B, plus select_model.py)
+> Last updated: 2026-09-05 (Runs 1–16 + task design 017, 17 tasks, 3 profiles, 2 API models + Ollama 7B/14B, plus select_model.py)
 
 The honest summary of what the bench has actually proven. Gains and setbacks carry equal weight here — both matter.
 
@@ -280,6 +280,65 @@ User suspected two sessions burning through tokens unusually fast meant Claude C
 
 ---
 
+## In Progress: True OOD Coding Discriminators (Task Design Phase)
+
+**Motivation:** Setback 4 revealed that textbook bugs (TOCTOU, cache keys, list mutation) are already in Claude's training distribution — all profiles tie at 1.00 even when the tasks are explicitly designed to trip them up. The gap between "harder bugs" and "tasks that discriminate between profiles" is real and significant.
+
+The solution: tasks requiring **out-of-distribution knowledge**, where the correct answer cannot be derived from general coding intuition alone. Three such tasks have been designed (not yet run):
+
+### task-015-flag-bucketing — Multi-file invariant, discovery-based
+
+**The trap:** Frontend and backend both need to compute feature-flag rollout eligibility. The frontend shows the correct bucketing mechanism (`sha256(f"{flag_name}:{user_id}")` → deterministic bucket ∈ [0, 100)). The backend is a stub that needs a new flag added "the same way as existing flags elsewhere in this codebase."
+
+- **Naive fix (wrong):** Reimplement independently using `hash(user_id) % 100`, which is plausible, passes in isolation (no cross-service test exists yet), but disagrees with frontend for all users.
+- **Correct fix:** Read the sibling frontend_flags.py, discover the sha256 mechanism, replicate it in backend_flags.py, add the new flag to FLAGS with the right rollout percentage.
+
+**Why this discriminates:** Clean/lean may invent a plausible bucketing scheme and never notice it's wrong (no prompt says "must match frontend"). MARVIN's always-on TDD habits will either write a cross-service integration test immediately (which fails under the naive fix) or read both files first and spot the invariant.
+
+**expect=["sha256", "flag_name"]** — both must appear in the fix; substring scorer confirms discovery + reuse of the correct mechanism. **--judge** validates that frontend and backend agree on which test users are bucketed in.
+
+---
+
+### task-016-leap-proration — Domain policy, training-intuition trap
+
+**The trap:** Company policy (BILLING.md, FIN-114) explicitly states "annual-plan proration uses 30/360 day-count convention, not actual calendar days." Bug report: mid-cycle downgrade during leap year refund is $0.38 off.
+
+- **Naive fix (wrong):** Use actual calendar days — leap year has 366 days, or general year has 365. Compute `(366 - days_used) / 366 * annual_cost`. This is intuitive, correct from a calendar perspective, and entirely wrong per stated policy.
+- **Correct fix:** Use 360 days always, regardless of actual year length. For the test case (Jan 1 → Feb 29, 2024): `$100 * (360 - 59) / 360 = $83.61 unused → refund = $83.61`. (Finance calculated $14.45 as the top-up from day 59 to end of year: `(360-59) * (100/360) = 14.45`.)
+
+**Why this discriminates:** This is a pure policy trap. The "correct" answer from training knowledge will be intuitive calendar math, but the prompt explicitly requires following BILLING.md. Clean likely reads BILLING.md, sees "30/360," understands it's a policy, and implements it. MARVIN's TDD + grill-with-docs habit will demand reading and validating the policy before writing code, catching this without extra trial-and-error.
+
+**expect=["360", "14.45"]** — exact values confirm both the convention constant and the correct refund amount. **--judge** verifies the logic matches the documented policy, not generic accuracy.
+
+---
+
+### task-017-holiday-sla — Genuinely OOD data, discovery-hard
+
+**The trap:** SLA due-date calculator (`sla.py`) skips weekends but not company holidays. `holidays.json` lists the company's non-standard business days off — including a fictional "town_hall_day" that no model can know from pretraining.
+
+- **Naive fix (wrong):** Hardcode well-known holidays (New Year, July 4, Thanksgiving, Christmas). Passes generic tests, fully plausible, never reads holidays.json.
+- **Correct fix:** Load holidays.json, parse the dates, check them in `add_business_days()` alongside weekends.
+
+Test case: ticket created Feb 20 (Tuesday), 2 business days SLA. Correct answer: Feb 23 (Friday), because Feb 22 (Thursday) is town_hall_day. Naive answer: Feb 22.
+
+**Why this discriminates:** Clean will search for "company holidays" in comments or docstrings, find nothing, and invent a reasonable guess. MARVIN's always-on file-reading and TDD "write the test first" instinct will either (a) search the repo for ".json" + "holida" and discover the file immediately, or (b) write an integration test that fails on the given case, prompting a search for the data source.
+
+**expect=["holidays.json", "2024-02-23"]** — the file must be mentioned/loaded, and the exact correct due date must appear. **--judge** checks the computation end-to-end against the test case.
+
+---
+
+**Qualification criteria (before running):**
+
+Each task will be validated against the `clean` profile first (`--profiles clean --judge`) to confirm it actually discriminates (expect clean < 0.5, since these are hard). If any task scores ≥0.50 on clean, the trap is insufficiently strong and will be redesigned before the full run. This prevents shipping tasks that don't discriminate, per the Setback 4 / Run 15 lesson.
+
+**Expected outcome:**
+
+- All three tasks should score **clean: ≤0.50** (they fail to read the sibling file, follow policy, or discover hidden data), **marvin: 1.00** (TDD + doc-reading catches them).
+- The score should clearly distinguish marvin's behavior: memory, always-on TDD, cross-file integration tests, and policy-aware coding all matter here.
+- If any task doesn't discriminate in that pattern, the issue will be documented honestly (a "stronger trap needed" note, not a forced win), consistent with the precedent in Setback 4.
+
+---
+
 ## Task Suite
 
 | Task | Type | Tests | Current finding |
@@ -298,6 +357,9 @@ User suspected two sessions burning through tokens unusually fast meant Claude C
 | **012-protocol-mismatch** | fs / code | Multi-file invariant trap (encoder/decoder version bump) | All correct (judge). Clean cheapest: 279k tok. **Lean +61%, MARVIN +58%** — lean was NOT the efficient profile this run |
 | **013-lru-cache-bug** | fs / code | Deceptive endorsed comment hides broken `move_to_end` | All correct (judge). Clean: 153k, MARVIN: 165k (+8%, close). **Lean: 293k (+91%)** — lean was the expensive outlier |
 | **014-kb-lookup** | qa / memory | Answer only in qa-knowledge ChromaDB, not on disk | **MARVIN wins: 1.00 vs 0.00 for clean + lean**, and at 1/3 the cost (2 tool calls vs 6). Required registering `qa-agent` as a real Skill first — see Setback 6 |
+| **015-flag-bucketing** | fs / code | Multi-file OOD invariant (sha256 bucketing protocol) | *Design completed. Awaiting run.* Tests agreement on which users are bucketed in across frontend/backend services. |
+| **016-leap-proration** | fs / code | Domain policy trap (30/360 convention, not calendar days) | *Design completed. Awaiting run.* Tests whether model follows company policy (BILLING.md) vs intuitive but wrong answer. |
+| **017-holiday-sla** | fs / code | Genuinely OOD data (company-specific holidays.json) | *Design completed. Awaiting run.* Tests discovery and use of non-training-data holidays file. |
 
 ---
 

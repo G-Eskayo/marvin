@@ -1,0 +1,8 @@
+{
+  "id": "task-016-leap-proration",
+  "type": "fs",
+  "prompt_file": "prompt.md",
+  "timeout": 360,
+  "expect": ["360", "14.45"],
+  "note": "Domain policy trap: policy document (BILLING.md) explicitly states 'annual-plan proration uses a 30/360 day-count convention, not actual calendar days' (FIN-114). Bug report: mid-cycle downgrade during leap year produces refund $0.38 off from finance's manual calculation. A model trained on general billing logic will 'fix' this using calendar-day math (actual/365 or actual/366), which is the intuitive, plausible, and entirely *wrong* answer per stated policy. expect=['360', '14.45'] captures both the convention constant and the exact correct refund amount for the test case. --judge verifies the fix matches the documented convention in BILLING.md, not generic accuracy."
+}
