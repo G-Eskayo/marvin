@@ -1,0 +1,49 @@
+[
+  {
+    "timestamp": "2026-10-01T15:43:33.690974+00:00",
+    "metrics": {
+      "route:intent-routing-collection": {
+        "value": 92,
+        "higher_is_better": true
+      },
+      "cron:code-sync-push": {
+        "value": 56,
+        "higher_is_better": false
+      },
+      "cron:cross-machine-merge": {
+        "value": 143,
+        "higher_is_better": false
+      },
+      "cron:daily-digest": {
+        "value": 128,
+        "higher_is_better": false
+      },
+      "cron:research-colony": {
+        "value": 113,
+        "higher_is_better": false
+      },
+      "cron:tidy-agent": {
+        "value": 25,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-01T15:44:30.709977+00:00",
+    "metrics": {
+      "route:intent-routing-collection": {
+        "value": 92,
+        "higher_is_better": true
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-01T15:46:46.149932+00:00",
+    "metrics": {
+      "route:intent-routing-collection": {
+        "value": 92,
+        "higher_is_better": true
+      }
+    }
+  }
+]
