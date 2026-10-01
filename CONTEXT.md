@@ -380,7 +380,13 @@ then) — a real, current fragility, not a hypothetical one.
   defaulting to **soft** so nothing becomes urgent by accident. *Hard* = fixed date (e.g. the
   captioning app, 2026-10-25): the orchestrator works backward from it, warns loudly when at risk,
   and shifts capacity toward it. *Soft* = raises priority as the date nears but never pre-empts
-  other work. Open: which level carries the date (project/milestone vs individual ticket).
+  other work. **A date can sit on a project or on a ticket** (the hard/soft flag stays per item, not
+  tied to level -- small projects have no project/ticket split, and a hard date can belong to a
+  one-off item). A ticket's **effective due date** is the earlier of its own date and the date
+  inherited from its project, and it inherits that date's hardness -- the orchestrator needs per-ticket
+  urgency worked backward from a project date, so a date stored only on the project would give it
+  nothing to prioritize tickets with. Hard-on-project / soft-on-ticket is the default *emphasis* in
+  the UI, not a rule. Decided 2026-10-01; milestone-level dates deferred.
 
 ## Citation-graph knowledge base (in design, not yet built)
 
