@@ -38,5 +38,9 @@ contextBridge.exposeInMainWorld('api', {
     refresh: () => ipcRenderer.invoke('docs:refresh'),
     tree: (repo) => ipcRenderer.invoke('docs:tree', repo),
     content: (repo, path) => ipcRenderer.invoke('docs:content', repo, path)
+  },
+  activity: {
+    list: () => ipcRenderer.invoke('activity:list'),
+    timeline: (number) => ipcRenderer.invoke('activity:timeline', number)
   }
 })

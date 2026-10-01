@@ -6,10 +6,23 @@ import sys
 from pathlib import Path
 from subprocess import TimeoutExpired
 
+import pytest
+
 LIB = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(LIB))
 
 import run_ticket as rt  # noqa: E402
+import ticket_stages as ts  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _isolate_ticket_stages(tmp_path, monkeypatch):
+    # run()'s new ts.record_stage("done", ...) call writes to real
+    # ~/.claude/logs/ticket-stages/<n>.json by default -- found live
+    # 2026-10-01: every test here uses real-looking ticket numbers (20,
+    # 27, 28...), and ran unmocked they wrote real files under the
+    # account's actual ticket-stages directory.
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path / "ticket-stages")
 
 
 def _passing_result(worktree_path=Path("/tmp/fake-worktree")):
