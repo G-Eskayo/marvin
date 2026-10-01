@@ -321,6 +321,19 @@ then) — a real, current fragility, not a hypothetical one.
   ticket retry storm's comment-velocity spike would be caught without a "storm detector" ever
   having been written.
 
+## Dashboard app — Docs tab (built 2026-10-01)
+
+- **Docs tab**: a read-only, cross-project viewer onto `CONTEXT.md` + `docs/adr/*.md` + `README.md`,
+  rendered as formatted markdown, for every repo across the whole GitHub account that actually has a
+  `CONTEXT.md` at its root — auto-discovered the same way Health tab coverage is (an enumerated
+  inventory, not a hand-maintained list), not just MARVIN's own docs. Distinct from the Files tab
+  (which shows MARVIN's own generated *deliverables* in `~/.claude/outbox/`) — this shows each
+  project's *design history*, sourced live from GitHub rather than the local filesystem so it reads
+  identically regardless of which machine happens to have which repo cloned locally. v1 is markdown
+  only; Jupyter notebook rendering is deliberately deferred until a real project actually produces
+  one, and when it lands it's meant to be full-fidelity (rendered plot/image output), not a
+  text-only reduction.
+
 ## Citation-graph knowledge base (in design, not yet built)
 
 - **Seed paper**: the paper a citation-graph traversal starts from — all relevance scoring is
