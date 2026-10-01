@@ -52,6 +52,13 @@ EXEC_TIMEOUT_S = 900
 # `mr_raiser.py`, not from inside a nested Claude session, so they were
 # never subject to this wall to begin with.
 _PLAN_ALLOWED_TOOLS = "Read,Grep,Glob,Bash(gh issue view*),Bash(gh issue list*)"
+# Worktrees live in ~/.agents-pipeline-worktrees, a sibling of ~/.agents (not
+# under it), so denying ~/.agents/** blocks writes to the real checkout without
+# touching the executor's own worktree. Edit/Write were previously allowlisted
+# with no path scope and a live probe showed an absolute-path write succeed
+# (#41's executor copied lib/s2_client.py into the real checkout).
+WORKTREES_DIR_NAME = ".agents-pipeline-worktrees"
+_EXEC_DISALLOWED_TOOLS = "Write(~/.agents/**),Edit(~/.agents/**)"
 _EXEC_ALLOWED_TOOLS = (
     "Read,Edit,Write,"
     "Bash(git status*),"
@@ -129,12 +136,18 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
         f"verifying it locally (edit files, run the relevant tests) -- do NOT "
         f"commit, push, or open a pull request; a separate process handles "
         f"that automatically after you finish, and asking for permission to "
-        f"do it yourself will just leave you stuck with no one to grant it.\n\n"
+        f"do it yourself will just leave you stuck with no one to grant it. "
+        f"Write files only inside your current working directory, never to an "
+        f"absolute path elsewhere. If a new module must import a sibling lib "
+        f"module, resolve it relative to __file__ (e.g. Path(__file__).resolve()"
+        f".parents[N] / \"lib\"), never via Path.home() / \".agents\" -- that "
+        f"points at the real checkout, which does not contain your changes.\n\n"
         f"Implement this plan in the current working tree:\n\n{plan}"
     )
     _, exec_cost = _run_claude(
         ["claude", "-p", exec_prompt, "--model", HAIKU_MODEL,
-         "--permission-mode", "dontAsk", "--allowedTools", _EXEC_ALLOWED_TOOLS],
+         "--permission-mode", "dontAsk", "--allowedTools", _EXEC_ALLOWED_TOOLS,
+         "--disallowedTools", _EXEC_DISALLOWED_TOOLS],
         cwd=worktree_path, timeout=EXEC_TIMEOUT_S,
     )
     if ticket_number is not None:
