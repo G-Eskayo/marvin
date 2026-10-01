@@ -178,3 +178,75 @@ def test_measure_a_new_failure_does_not_register_as_improved_even_if_more_pass_t
     comparison = mr.compare("test-subsystem", baseline, current)
     assert comparison["passing"] is False
     assert comparison["verdict"] == "mixed"
+
+
+# ── measure() scope consistency (found 2026-10-01 re-releasing parked tickets) ─
+# measure() used test_command_for()'s diff-scoped command. The baseline has an
+# empty diff -> whole suite (540 passed); after the executor commits a change
+# under skills/research the same measure() ran `pytest -q skills/research` ->
+# 0 tests, "regressed" in 1s. A dashboard ticket compared pytest (baseline) to
+# vitest (current). Baseline and current must run the SAME commands.
+
+def _record_commands(monkeypatch):
+    seen = []
+
+    def fake(wt, cmd):
+        seen.append(list(cmd))
+        return {"suite": "x", "passed": 1, "failed": 0, "total": 1}
+
+    monkeypatch.setattr(btm, "capture_test_results", fake)
+    monkeypatch.setattr(btm, "_ensure_dashboard_deps", lambda wt: None)
+    return seen
+
+
+def test_measure_runs_identical_commands_before_and_after_a_committed_change(monkeypatch, repo_with_worktree):
+    seen = _record_commands(monkeypatch)
+    btm.measure(repo_with_worktree)
+    baseline_cmds = list(seen)
+    seen.clear()
+
+    _commit_change(repo_with_worktree, "skills/research/SKILL.md", "edited\n")
+    btm.measure(repo_with_worktree)
+
+    assert seen == baseline_cmds
+
+
+def test_measure_never_scopes_pytest_to_the_touched_directory(monkeypatch, repo_with_worktree):
+    seen = _record_commands(monkeypatch)
+    _commit_change(repo_with_worktree, "skills/research/SKILL.md", "edited\n")
+    (repo_with_worktree / "skills/research").mkdir(exist_ok=True)
+
+    btm.measure(repo_with_worktree)
+
+    pytest_cmds = [c for c in seen if "pytest" in c]
+    assert len(pytest_cmds) == 1
+    assert pytest_cmds[0][-2:] == ["pytest", "-q"]
+
+
+def test_measure_includes_vitest_and_sums_counts_when_a_dashboard_exists(monkeypatch, tmp_path):
+    (tmp_path / "dashboard").mkdir()
+    (tmp_path / "dashboard" / "package.json").write_text("{}")
+    monkeypatch.setattr(btm, "_ensure_dashboard_deps", lambda wt: None)
+
+    def fake(wt, cmd):
+        if any("vitest" in part for part in cmd):
+            return {"suite": "vitest", "passed": 100, "failed": 2, "total": 102}
+        return {"suite": "pytest", "passed": 540, "failed": 1, "total": 541}
+
+    monkeypatch.setattr(btm, "capture_test_results", fake)
+    result = btm.measure(tmp_path)
+
+    assert result["tests_passed"]["value"] == 640
+    assert result["tests_failed"]["value"] == 3
+
+
+def test_measure_skips_vitest_and_dependency_install_when_there_is_no_dashboard(monkeypatch, tmp_path):
+    installs = []
+    monkeypatch.setattr(btm, "_ensure_dashboard_deps", lambda wt: installs.append(wt))
+    cmds = []
+    monkeypatch.setattr(btm, "capture_test_results",
+                        lambda wt, cmd: cmds.append(cmd) or {"suite": "p", "passed": 3, "failed": 0, "total": 3})
+
+    btm.measure(tmp_path)
+
+    assert len(cmds) == 1 and installs == []
