@@ -28,5 +28,19 @@ contextBridge.exposeInMainWorld('api', {
   },
   dispatch: {
     status: () => ipcRenderer.invoke('dispatch:status')
+  },
+  health: {
+    status: () => ipcRenderer.invoke('health:status'),
+    refresh: () => ipcRenderer.invoke('health:refresh')
+  },
+  docs: {
+    repos: () => ipcRenderer.invoke('docs:repos'),
+    refresh: () => ipcRenderer.invoke('docs:refresh'),
+    tree: (repo) => ipcRenderer.invoke('docs:tree', repo),
+    content: (repo, path) => ipcRenderer.invoke('docs:content', repo, path)
+  },
+  activity: {
+    list: () => ipcRenderer.invoke('activity:list'),
+    timeline: (number) => ipcRenderer.invoke('activity:timeline', number)
   }
 })

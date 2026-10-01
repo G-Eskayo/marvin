@@ -39,6 +39,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 from task_dispatch import select_machine, dispatch  # noqa: E402
+import ticket_stages as ts  # noqa: E402
 
 VENV_PYTHON = str(Path.home() / ".agents" / "venv" / "bin" / "python")
 RUN_TICKET_SCRIPT = str(Path.home() / ".agents" / "lib" / "run_ticket.py")
@@ -77,6 +78,7 @@ def _claim(issue_number: int, label: str) -> bool:
     if proc.returncode != 0:
         print(f"{LOG_PREFIX} failed to claim #{issue_number}: {proc.stderr[:300]}", file=sys.stderr)
         return False
+    ts.record_stage(issue_number, "claimed", "started", f"claimed:{label}")
     return True
 
 

@@ -7,10 +7,7 @@ function EmptyState() {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-neutral-500">
       <p className="text-lg font-medium text-neutral-300">No MRs waiting on you</p>
-      <p className="max-w-md text-sm">
-        This fills in once the pipeline's sandbox orchestration raises a PR with metrics evidence attached.
-        Manually-opened PRs (like this dashboard's own) don't show up here on purpose.
-      </p>
+      <p className="max-w-md text-sm">Every open PR on the repo shows up here — there just aren't any open right now.</p>
     </div>
   )
 }
@@ -241,20 +238,33 @@ function PrCard({ pr, onApproved, onDenied, onSelect }) {
           <p className="font-mono text-sm font-semibold text-white">
             #{pr.number} — {pr.title}
           </p>
-          {pr.evidence.subsystem && (
-            <p className="text-xs text-neutral-500">
-              {pr.evidence.subsystem} <VerdictBadge verdict={pr.evidence.verdict} />
-            </p>
+          {pr.hasSchema ? (
+            pr.evidence.subsystem && (
+              <p className="text-xs text-neutral-500">
+                {pr.evidence.subsystem} <VerdictBadge verdict={pr.evidence.verdict} />
+              </p>
+            )
+          ) : (
+            <p className="text-xs text-amber-400">No structured evidence — needs a manual look</p>
           )}
         </div>
         {/* Approve/Deny live inside the same clickable card -- stop the
             click from also bubbling up to onSelect and opening the detail
-            view underneath whatever action was just taken. */}
+            view underneath whatever action was just taken. Works
+            identically for a non-schema PR -- the webhook only ever
+            needed the PR url, never the parsed evidence. */}
         <div onClick={(e) => e.stopPropagation()}>
           <ApproveDenyActions pr={pr} onApproved={onApproved} onDenied={onDenied} />
         </div>
       </div>
-      <EvidenceTable metrics={pr.evidence.metrics} />
+      {pr.hasSchema ? (
+        <EvidenceTable metrics={pr.evidence.metrics} />
+      ) : (
+        <p className="whitespace-pre-wrap font-mono text-xs text-neutral-500">
+          {pr.rawBody.slice(0, 400)}
+          {pr.rawBody.length > 400 ? '…' : ''}
+        </p>
+      )}
     </div>
   )
 }

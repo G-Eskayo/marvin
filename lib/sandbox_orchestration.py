@@ -25,11 +25,14 @@ model-tier launch commands and the NetworkChuck/Terry headless-claude
 precedent already documented in marvin-roadmap.md.
 """
 from __future__ import annotations
+import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Callable
 
 import metrics_registry as mr
+import ticket_stages as ts
 
 WORKTREES_ROOT = Path.home() / ".agents-pipeline-worktrees"
 
@@ -61,6 +64,21 @@ _EXEC_ALLOWED_TOOLS = (
     "Bash(pytest*),Bash(python -m pytest*),Bash(python3 -m pytest*),"
     "Bash(npm test*),Bash(npm install*),Bash(npx vitest run*)"
 )
+
+
+def _run_claude(cmd: list[str], **kwargs) -> tuple[str, float]:
+    """Runs a `claude -p ... --output-format json` call and returns
+    (result_text, cost_usd). Centralized here (2026-10-01, per Gil's ask
+    for usage visibility alongside Health/Metrics) so every claude -p call
+    this module makes reports its real cost, not just its text output --
+    feeds ticket_stages.py's per-stage cost field, which in turn feeds the
+    same metrics_registry anomaly layer the Health tab already uses."""
+    proc = subprocess.run(cmd + ["--output-format", "json"], capture_output=True, text=True, **kwargs)
+    try:
+        parsed = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return proc.stdout, 0.0
+    return parsed.get("result", proc.stdout), parsed.get("total_cost_usd", 0.0) or 0.0
 
 
 def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | None) -> str:
@@ -97,12 +115,14 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
             f" A previous attempt's metrics comparison came back as: {feedback}. "
             f"Adjust the plan to address this before trying again."
         )
-    plan_result = subprocess.run(
+    ticket_number = _parse_ticket_number(ticket_ref)
+    plan, plan_cost = _run_claude(
         ["claude", "-p", plan_prompt, "--model", FLAGSHIP_MODEL,
          "--permission-mode", "dontAsk", "--allowedTools", _PLAN_ALLOWED_TOOLS],
-        cwd=worktree_path, capture_output=True, text=True, timeout=PLAN_TIMEOUT_S,
+        cwd=worktree_path, timeout=PLAN_TIMEOUT_S,
     )
-    plan = plan_result.stdout
+    if ticket_number is not None:
+        ts.record_stage(ticket_number, "executing", "started", "planning call", cost_usd=plan_cost)
 
     exec_prompt = (
         f"{autonomy_note} Your job here stops at implementing the plan and "
@@ -112,11 +132,13 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
         f"do it yourself will just leave you stuck with no one to grant it.\n\n"
         f"Implement this plan in the current working tree:\n\n{plan}"
     )
-    subprocess.run(
+    _, exec_cost = _run_claude(
         ["claude", "-p", exec_prompt, "--model", HAIKU_MODEL,
          "--permission-mode", "dontAsk", "--allowedTools", _EXEC_ALLOWED_TOOLS],
         cwd=worktree_path, timeout=EXEC_TIMEOUT_S,
     )
+    if ticket_number is not None:
+        ts.record_stage(ticket_number, "executing", "passed", "execution call", cost_usd=exec_cost)
     return plan
 
 
@@ -172,6 +194,7 @@ def execute_ticket(
     "explanation"}."""
     executor = executor or _default_executor
     repo_path = repo_path or (Path.home() / ".agents")
+    ticket_number = _parse_ticket_number(ticket_ref)
 
     worktree_path = _create_worktree(repo_path, ticket_ref)
 
@@ -184,11 +207,30 @@ def execute_ticket(
     feedback = None
     comparison = None
     for iteration in range(1, max_iterations + 1):
-        executor(worktree_path, ticket_ref, feedback)
+        # One event per phase, not per iteration sub-step -- `executor()`
+        # covers plan+exec as a single opaque call (see _default_executor's
+        # own two nested claude -p calls), so "executing" is the finest
+        # grain available without changing that call shape too. Iteration
+        # number lives in `detail` so a 3-retry ticket's timeline is still
+        # legible, not three indistinguishable "executing" rows.
+        if ticket_number is not None:
+            ts.record_stage(ticket_number, "executing", "started", f"iteration {iteration}/{max_iterations}")
+        try:
+            executor(worktree_path, ticket_ref, feedback)
+        except Exception as exc:
+            if ticket_number is not None:
+                ts.record_stage(ticket_number, "executing", "failed", str(exc)[:300])
+            raise
+        if ticket_number is not None:
+            ts.record_stage(ticket_number, "executing", "passed", f"iteration {iteration}/{max_iterations}")
+            ts.record_stage(ticket_number, "verifying", "started", f"iteration {iteration}/{max_iterations}")
+
         current = measure(worktree_path)
         comparison = mr.compare(subsystem, baseline, current)
 
         if comparison["passing"]:
+            if ticket_number is not None:
+                ts.record_stage(ticket_number, "verifying", "passed", comparison.get("verdict", ""))
             return {
                 "passing": True,
                 "worktree_path": worktree_path,
@@ -196,6 +238,8 @@ def execute_ticket(
                 "final_comparison": comparison,
                 "explanation": None,
             }
+        if ticket_number is not None:
+            ts.record_stage(ticket_number, "verifying", "failed", comparison.get("verdict", "unchanged"))
         feedback = comparison
 
     return {
@@ -208,3 +252,8 @@ def execute_ticket(
             f"(max_iterations). Final verdict: {comparison['verdict'] if comparison else 'none'}."
         ),
     }
+
+
+def _parse_ticket_number(ticket_ref: str) -> int | None:
+    match = re.search(r"#(\d+)$", ticket_ref)
+    return int(match.group(1)) if match else None
