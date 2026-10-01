@@ -1,19 +1,6 @@
 [
   {
-    "timestamp": "2026-08-29T17:54:40.642743+00:00",
-    "metrics": {
-      "tests_passed": {
-        "value": 419,
-        "higher_is_better": true
-      },
-      "tests_failed": {
-        "value": 0,
-        "higher_is_better": false
-      }
-    }
-  },
-  {
-    "timestamp": "2026-09-27T16:02:03.455693+00:00",
+    "timestamp": "2026-09-29T12:24:03.415320+00:00",
     "metrics": {
       "tests_passed": {
         "value": 0,
@@ -26,7 +13,7 @@
     }
   },
   {
-    "timestamp": "2026-09-27T16:10:01.971863+00:00",
+    "timestamp": "2026-09-29T12:33:59.365411+00:00",
     "metrics": {
       "tests_passed": {
         "value": 0,
@@ -39,7 +26,7 @@
     }
   },
   {
-    "timestamp": "2026-09-27T16:15:10.196663+00:00",
+    "timestamp": "2026-09-29T12:38:48.981370+00:00",
     "metrics": {
       "tests_passed": {
         "value": 0,
@@ -52,7 +39,7 @@
     }
   },
   {
-    "timestamp": "2026-09-27T16:21:33.415708+00:00",
+    "timestamp": "2026-09-29T12:43:57.646247+00:00",
     "metrics": {
       "tests_passed": {
         "value": 0,
@@ -65,7 +52,7 @@
     }
   },
   {
-    "timestamp": "2026-09-27T16:27:46.168308+00:00",
+    "timestamp": "2026-09-29T12:48:00.942335+00:00",
     "metrics": {
       "tests_passed": {
         "value": 0,
@@ -78,7 +65,7 @@
     }
   },
   {
-    "timestamp": "2026-09-27T16:43:27.125117+00:00",
+    "timestamp": "2026-09-29T12:52:00.150404+00:00",
     "metrics": {
       "tests_passed": {
         "value": 0,
@@ -91,7 +78,7 @@
     }
   },
   {
-    "timestamp": "2026-09-27T16:50:56.338664+00:00",
+    "timestamp": "2026-09-29T12:55:33.141991+00:00",
     "metrics": {
       "tests_passed": {
         "value": 0,
@@ -104,7 +91,7 @@
     }
   },
   {
-    "timestamp": "2026-09-27T16:56:03.851233+00:00",
+    "timestamp": "2026-09-29T12:58:36.230789+00:00",
     "metrics": {
       "tests_passed": {
         "value": 0,
@@ -117,7 +104,7 @@
     }
   },
   {
-    "timestamp": "2026-09-27T17:07:28.492248+00:00",
+    "timestamp": "2026-09-29T13:01:58.946808+00:00",
     "metrics": {
       "tests_passed": {
         "value": 0,
@@ -130,7 +117,7 @@
     }
   },
   {
-    "timestamp": "2026-09-27T17:15:21.174221+00:00",
+    "timestamp": "2026-09-29T13:08:35.345559+00:00",
     "metrics": {
       "tests_passed": {
         "value": 0,
@@ -143,7 +130,7 @@
     }
   },
   {
-    "timestamp": "2026-09-27T17:19:19.931059+00:00",
+    "timestamp": "2026-09-29T13:19:17.248271+00:00",
     "metrics": {
       "tests_passed": {
         "value": 0,
@@ -156,7 +143,7 @@
     }
   },
   {
-    "timestamp": "2026-09-27T17:19:45.195317+00:00",
+    "timestamp": "2026-09-29T13:23:04.370381+00:00",
     "metrics": {
       "tests_passed": {
         "value": 0,
@@ -169,7 +156,7 @@
     }
   },
   {
-    "timestamp": "2026-09-27T17:20:09.113186+00:00",
+    "timestamp": "2026-09-29T13:28:18.015947+00:00",
     "metrics": {
       "tests_passed": {
         "value": 0,
@@ -182,7 +169,7 @@
     }
   },
   {
-    "timestamp": "2026-09-27T17:20:32.819356+00:00",
+    "timestamp": "2026-09-29T13:33:28.238879+00:00",
     "metrics": {
       "tests_passed": {
         "value": 0,
@@ -195,7 +182,7 @@
     }
   },
   {
-    "timestamp": "2026-09-27T17:20:58.500085+00:00",
+    "timestamp": "2026-09-29T13:36:30.892766+00:00",
     "metrics": {
       "tests_passed": {
         "value": 0,
@@ -208,7 +195,7 @@
     }
   },
   {
-    "timestamp": "2026-09-27T17:21:22.440605+00:00",
+    "timestamp": "2026-09-29T13:36:58.769373+00:00",
     "metrics": {
       "tests_passed": {
         "value": 0,
@@ -221,7 +208,7 @@
     }
   },
   {
-    "timestamp": "2026-09-27T17:21:47.553607+00:00",
+    "timestamp": "2026-09-29T13:37:28.035049+00:00",
     "metrics": {
       "tests_passed": {
         "value": 0,
@@ -234,7 +221,7 @@
     }
   },
   {
-    "timestamp": "2026-09-27T17:22:13.884314+00:00",
+    "timestamp": "2026-09-29T13:38:24.833433+00:00",
     "metrics": {
       "tests_passed": {
         "value": 0,
@@ -247,7 +234,7 @@
     }
   },
   {
-    "timestamp": "2026-09-27T17:22:38.449276+00:00",
+    "timestamp": "2026-09-30T16:20:03.173838+00:00",
     "metrics": {
       "tests_passed": {
         "value": 0,
@@ -260,7 +247,7 @@
     }
   },
   {
-    "timestamp": "2026-09-27T17:23:02.904997+00:00",
+    "timestamp": "2026-09-30T16:20:25.704702+00:00",
     "metrics": {
       "tests_passed": {
         "value": 0,
@@ -273,7 +260,7 @@
     }
   },
   {
-    "timestamp": "2026-09-27T17:23:26.444693+00:00",
+    "timestamp": "2026-09-30T16:20:47.458561+00:00",
     "metrics": {
       "tests_passed": {
         "value": 0,
@@ -286,7 +273,7 @@
     }
   },
   {
-    "timestamp": "2026-09-27T17:23:50.054580+00:00",
+    "timestamp": "2026-09-30T16:21:08.324523+00:00",
     "metrics": {
       "tests_passed": {
         "value": 0,
@@ -299,7 +286,7 @@
     }
   },
   {
-    "timestamp": "2026-09-27T17:24:13.597014+00:00",
+    "timestamp": "2026-09-30T16:21:31.253269+00:00",
     "metrics": {
       "tests_passed": {
         "value": 0,
@@ -312,14 +299,196 @@
     }
   },
   {
-    "timestamp": "2026-10-01T16:37:32.763653+00:00",
+    "timestamp": "2026-09-30T16:21:52.725784+00:00",
     "metrics": {
       "tests_passed": {
         "value": 0,
         "higher_is_better": true
       },
       "tests_failed": {
-        "value": 12,
+        "value": 11,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-09-30T16:22:15.378046+00:00",
+    "metrics": {
+      "tests_passed": {
+        "value": 0,
+        "higher_is_better": true
+      },
+      "tests_failed": {
+        "value": 11,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-09-30T16:22:37.163621+00:00",
+    "metrics": {
+      "tests_passed": {
+        "value": 0,
+        "higher_is_better": true
+      },
+      "tests_failed": {
+        "value": 11,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-09-30T16:22:58.350261+00:00",
+    "metrics": {
+      "tests_passed": {
+        "value": 0,
+        "higher_is_better": true
+      },
+      "tests_failed": {
+        "value": 11,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-09-30T16:23:20.798809+00:00",
+    "metrics": {
+      "tests_passed": {
+        "value": 0,
+        "higher_is_better": true
+      },
+      "tests_failed": {
+        "value": 11,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-09-30T16:23:44.897246+00:00",
+    "metrics": {
+      "tests_passed": {
+        "value": 0,
+        "higher_is_better": true
+      },
+      "tests_failed": {
+        "value": 11,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-09-30T16:24:05.828308+00:00",
+    "metrics": {
+      "tests_passed": {
+        "value": 0,
+        "higher_is_better": true
+      },
+      "tests_failed": {
+        "value": 11,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-09-30T16:24:25.926467+00:00",
+    "metrics": {
+      "tests_passed": {
+        "value": 0,
+        "higher_is_better": true
+      },
+      "tests_failed": {
+        "value": 11,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-09-30T16:24:46.371976+00:00",
+    "metrics": {
+      "tests_passed": {
+        "value": 0,
+        "higher_is_better": true
+      },
+      "tests_failed": {
+        "value": 11,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-09-30T16:25:07.194846+00:00",
+    "metrics": {
+      "tests_passed": {
+        "value": 0,
+        "higher_is_better": true
+      },
+      "tests_failed": {
+        "value": 11,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-09-30T16:25:30.635088+00:00",
+    "metrics": {
+      "tests_passed": {
+        "value": 0,
+        "higher_is_better": true
+      },
+      "tests_failed": {
+        "value": 11,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-09-30T16:25:51.753401+00:00",
+    "metrics": {
+      "tests_passed": {
+        "value": 0,
+        "higher_is_better": true
+      },
+      "tests_failed": {
+        "value": 11,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-09-30T16:26:13.213002+00:00",
+    "metrics": {
+      "tests_passed": {
+        "value": 0,
+        "higher_is_better": true
+      },
+      "tests_failed": {
+        "value": 11,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-09-30T16:26:33.137478+00:00",
+    "metrics": {
+      "tests_passed": {
+        "value": 0,
+        "higher_is_better": true
+      },
+      "tests_failed": {
+        "value": 11,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-09-30T16:26:55.824953+00:00",
+    "metrics": {
+      "tests_passed": {
+        "value": 0,
+        "higher_is_better": true
+      },
+      "tests_failed": {
+        "value": 11,
         "higher_is_better": false
       }
     }
