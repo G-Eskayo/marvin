@@ -143,14 +143,39 @@ describe('parseTicketRef', () => {
 })
 
 describe('listPipelinePrs', () => {
-  it('includes both pipeline-raised and manually-raised schema-conforming PRs', async () => {
+  it('includes every open PR regardless of schema conformance', async () => {
+    // Found live 2026-10-01: PR #119 (real, substantive, its own test-plan
+    // checklist) sat invisible for 30 days because it didn't follow the
+    // exact evidence-schema template -- true of any manually-authored PR,
+    // not just malformed ones. A real PR disappearing with no indication
+    // it was excluded is worse than showing it with less structure.
     const listOpenPrs = vi.fn().mockResolvedValue([
       { number: 70, title: 'Old-style manual PR', url: 'https://x/70', body: NON_SCHEMA_BODY },
       { number: 42, title: 'Pipeline PR', url: 'https://x/42', body: PIPELINE_BODY },
       { number: 75, title: 'Manual, schema-conforming PR', url: 'https://x/75', body: MANUAL_SCHEMA_BODY }
     ])
     const result = await listPipelinePrs(listOpenPrs)
-    expect(result.map((pr) => pr.number).sort()).toEqual([42, 75])
+    expect(result.map((pr) => pr.number).sort()).toEqual([42, 70, 75])
+  })
+
+  it('flags non-conforming PRs with hasSchema: false and the full raw body instead of parsed evidence', async () => {
+    const listOpenPrs = vi.fn().mockResolvedValue([
+      { number: 70, title: 'Old-style manual PR', url: 'https://x/70', body: NON_SCHEMA_BODY }
+    ])
+    const result = await listPipelinePrs(listOpenPrs)
+    expect(result[0].hasSchema).toBe(false)
+    expect(result[0].evidence).toBe(null)
+    expect(result[0].ticketNumber).toBe(null)
+    expect(result[0].rawBody).toBe(NON_SCHEMA_BODY) // untruncated -- MrDetail needs the whole thing
+  })
+
+  it('flags conforming PRs with hasSchema: true and no raw body', async () => {
+    const listOpenPrs = vi.fn().mockResolvedValue([
+      { number: 42, title: 'Pipeline PR', url: 'https://x/42', body: PIPELINE_BODY }
+    ])
+    const result = await listPipelinePrs(listOpenPrs)
+    expect(result[0].hasSchema).toBe(true)
+    expect(result[0].rawBody).toBe(null)
   })
 
   it('attaches parsed evidence and a numeric ticketNumber to each included PR', async () => {

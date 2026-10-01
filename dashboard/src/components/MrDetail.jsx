@@ -121,11 +121,12 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied }) {
           <h2 className="font-mono text-lg font-semibold text-white">
             #{pr.number} — {pr.title}
           </h2>
-          {pr.evidence.subsystem && (
+          {pr.hasSchema && pr.evidence.subsystem && (
             <p className="text-sm text-neutral-500">
               {pr.evidence.subsystem} — {pr.evidence.verdict}
             </p>
           )}
+          {!pr.hasSchema && <p className="text-sm text-amber-400">No structured evidence — needs a manual look</p>}
           <a href={pr.url} target="_blank" rel="noreferrer" className="text-xs text-blue-400 hover:underline">
             {pr.url}
           </a>
@@ -133,17 +134,27 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied }) {
         <ApproveDenyActions pr={pr} onApproved={onApproved} onDenied={onDenied} />
       </div>
 
-      <Section title="Metrics Comparison">
-        <EvidenceTable metrics={pr.evidence.metrics} />
-      </Section>
+      {pr.hasSchema ? (
+        <>
+          <Section title="Metrics Comparison">
+            <EvidenceTable metrics={pr.evidence.metrics} />
+          </Section>
 
-      <Section title="Test Results">
-        <TestResultsSection testResults={pr.evidence.testResults} />
-      </Section>
+          <Section title="Test Results">
+            <TestResultsSection testResults={pr.evidence.testResults} />
+          </Section>
 
-      <Section title="Dev Environment Evidence">
-        <DevEvidenceSection devEvidence={pr.evidence.devEvidence} />
-      </Section>
+          <Section title="Dev Environment Evidence">
+            <DevEvidenceSection devEvidence={pr.evidence.devEvidence} />
+          </Section>
+        </>
+      ) : (
+        <Section title="PR Description (no structured evidence template)">
+          <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-md bg-neutral-950 p-3 text-xs text-neutral-300">
+            {pr.rawBody}
+          </pre>
+        </Section>
+      )}
 
       <Section title="Requirements & Tasks (linked ticket)">
         {contextLoading ? (
