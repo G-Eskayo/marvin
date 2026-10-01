@@ -55,7 +55,7 @@ _EXEC_ALLOWED_TOOLS = (
     "Bash(~/.agents/venv/bin/python -m pytest*),"
     # A real live-fire dispatch (G-Eskayo/marvin#21) found the executor
     # naturally reaches for bare `pytest`/`python -m pytest` for its own
-    # self-verification, not just the venv's fully-qualified form -- only
+    # self-verification, not only the venv's fully-qualified form -- only
     # allowlisting one exact invocation left it stuck asking a question
     # nobody headless is present to answer.
     "Bash(pytest*),Bash(python -m pytest*),Bash(python3 -m pytest*),"
@@ -73,7 +73,7 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
     # the planning model reasonably-but-wrongly paused to ask for human
     # confirmation before declaring existing work sufficient -- nobody
     # headless was there to answer, and the "plan" that got passed to the
-    # executor was just that unanswered question. (2) the executor got
+    # executor was that unanswered question. (2) the executor got
     # stuck trying to commit/push/open a PR itself and asking for Bash
     # permission to do so, not knowing that's raise_mr's job, done
     # automatically after this function returns -- its own job stops at

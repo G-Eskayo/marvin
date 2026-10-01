@@ -103,6 +103,7 @@ def test_run_comments_the_failure_reason_when_not_raised(monkeypatch):
     monkeypatch.setattr(rt, "execute_ticket", lambda *a: _failing_result())
     monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "3 iterations exhausted"})
     monkeypatch.setattr(rt, "_release_claim", lambda *a: None)
+    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda *a: 0)
 
     comments = []
     monkeypatch.setattr(rt, "_comment_failure", lambda issue_number, reason: comments.append((issue_number, reason)))
@@ -123,6 +124,7 @@ def test_run_releases_the_claim_when_not_raised(monkeypatch):
     monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "nope"})
     monkeypatch.setattr(rt, "_comment_failure", lambda *a: None)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda *a: 0)
 
     released = []
     monkeypatch.setattr(rt, "_release_claim", lambda issue_number: released.append(issue_number))
@@ -207,6 +209,8 @@ def test_run_triggers_redispatch_even_when_not_raised(monkeypatch):
     monkeypatch.setattr(rt, "execute_ticket", lambda *a: _failing_result())
     monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "nope"})
     monkeypatch.setattr(rt, "_comment_failure", lambda *a: None)
+    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda *a: 0)
+    monkeypatch.setattr(rt, "_release_claim", lambda *a: None)
 
     calls = []
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: calls.append(True))
@@ -239,12 +243,13 @@ def test_run_recovers_when_execute_ticket_raises_unexpectedly(monkeypatch):
     # around execute_ticket at all, so the whole process crashed before
     # ever reaching raise_mr/_comment_failure/_release_claim/
     # _trigger_redispatch. Both tickets stayed claimed forever, exactly
-    # the failure mode _release_claim was built to prevent, just reached
+    # the failure mode _release_claim was built to prevent, reached
     # through a different, uncaught path.
     def raise_timeout(*a, **kw):
         raise TimeoutExpired(cmd=["claude"], timeout=300)
 
     monkeypatch.setattr(rt, "execute_ticket", raise_timeout)
+    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda *a: 0)
 
     comments = []
     monkeypatch.setattr(rt, "_comment_failure", lambda issue_number, reason: comments.append((issue_number, reason)))
@@ -262,6 +267,93 @@ def test_run_recovers_when_execute_ticket_raises_unexpectedly(monkeypatch):
     assert redispatched == [True]
 
 
+def test_run_parks_the_ticket_instead_of_releasing_at_the_failure_cap(monkeypatch):
+    # G-Eskayo/marvin#28, 2026-09-04..06: release-claim-then-immediate-
+    # redispatch with no cross-call cap spun ~6,900 back-to-back headless
+    # sessions in 3 days on a ticket that never once made progress. This is
+    # the guard: the 3rd consecutive identical-failure comment parks it
+    # instead of releasing it back for another immediate re-claim.
+    monkeypatch.setattr(rt, "execute_ticket", lambda *a: _failing_result())
+    monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "unchanged"})
+    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda issue_number: rt.MAX_CONSECUTIVE_FAILURES - 1)
+    monkeypatch.setattr(rt, "_comment_failure", lambda *a: None)
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+
+    released = []
+    monkeypatch.setattr(rt, "_release_claim", lambda issue_number: released.append(issue_number))
+    parked = []
+    monkeypatch.setattr(rt, "_park_stuck_ticket", lambda issue_number, streak: parked.append((issue_number, streak)))
+
+    rt.run(28)
+
+    assert released == []
+    assert parked == [(28, rt.MAX_CONSECUTIVE_FAILURES)]
+
+
+def test_run_still_releases_below_the_failure_cap(monkeypatch):
+    monkeypatch.setattr(rt, "execute_ticket", lambda *a: _failing_result())
+    monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "unchanged"})
+    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda issue_number: 0)
+    monkeypatch.setattr(rt, "_comment_failure", lambda *a: None)
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+
+    released = []
+    monkeypatch.setattr(rt, "_release_claim", lambda issue_number: released.append(issue_number))
+    parked = []
+    monkeypatch.setattr(rt, "_park_stuck_ticket", lambda issue_number, streak: parked.append((issue_number, streak)))
+
+    rt.run(28)
+
+    assert released == [28]
+    assert parked == []
+
+
+def test_consecutive_failure_streak_counts_trailing_failure_comments(monkeypatch):
+    comments = [
+        {"body": "some unrelated human comment"},
+        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
+        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
+    ]
+
+    class FakeResult:
+        returncode = 0
+        stdout = __import__("json").dumps({"comments": comments})
+
+    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: FakeResult())
+
+    assert rt._consecutive_failure_streak(28) == 2
+
+
+def test_consecutive_failure_streak_resets_on_a_human_comment(monkeypatch):
+    comments = [
+        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
+        {"body": "ok, I re-scoped this, try again"},
+        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
+        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
+    ]
+
+    class FakeResult:
+        returncode = 0
+        stdout = __import__("json").dumps({"comments": comments})
+
+    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: FakeResult())
+
+    assert rt._consecutive_failure_streak(28) == 2
+
+
+def test_park_stuck_ticket_removes_ready_for_agent_label(monkeypatch):
+    monkeypatch.setattr(rt.machine_profile, "registry_id", lambda: "mac-mini-1")
+    calls = []
+    monkeypatch.setattr(rt.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
+
+    rt._park_stuck_ticket(28, 3)
+
+    assert calls[0][:3] == ["gh", "issue", "edit"]
+    assert "--remove-label" in calls[0] and "ready-for-agent" in calls[0]
+    assert calls[1][:3] == ["gh", "issue", "comment"]
+    assert "mac-mini" in calls[1][-1]
+
+
 def test_run_recovers_when_raise_mr_itself_raises_unexpectedly(monkeypatch):
     monkeypatch.setattr(rt, "execute_ticket", lambda *a: _passing_result())
     monkeypatch.setattr(rt, "test_command_for", lambda wt: ["pytest", "-q"])
@@ -273,6 +365,7 @@ def test_run_recovers_when_raise_mr_itself_raises_unexpectedly(monkeypatch):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(rt, "raise_mr", raise_boom)
+    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda *a: 0)
 
     released = []
     monkeypatch.setattr(rt, "_release_claim", lambda issue_number: released.append(issue_number))
