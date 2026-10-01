@@ -363,8 +363,14 @@ def test_park_stuck_ticket_removes_ready_for_agent_label(monkeypatch):
 
     assert calls[0][:3] == ["gh", "issue", "edit"]
     assert "--remove-label" in calls[0] and "ready-for-agent" in calls[0]
+    # Also drops the claim: ticket_pipeline only dispatches ready-for-agent
+    # tickets with NO claimed:* label, so a parked ticket that kept its claim
+    # could never be revived by a human re-adding ready-for-agent (found
+    # 2026-10-01 re-releasing parked tickets -- the label alone did nothing).
+    assert "claimed:mac-mini" in calls[0]
     assert calls[1][:3] == ["gh", "issue", "comment"]
-    assert "mac-mini" in calls[1][-1]
+    assert "Still labeled" not in calls[1][-1]
+    assert "re-add `ready-for-agent`" in calls[1][-1]
 
 
 def test_run_recovers_when_raise_mr_itself_raises_unexpectedly(monkeypatch):

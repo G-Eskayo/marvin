@@ -75,17 +75,20 @@ def _park_stuck_ticket(issue_number: int, streak: int) -> None:
     label = _label_for_device(machine_profile.registry_id())
     subprocess.run(
         ["gh", "issue", "edit", str(issue_number), "--repo", REPO,
-         "--remove-label", "ready-for-agent"],
+         "--remove-label", "ready-for-agent",
+         "--remove-label", f"claimed:{label}"],
         capture_output=True, text=True, timeout=15, check=False,
     )
+    # The claim is dropped too, not just ready-for-agent: ticket_pipeline only
+    # dispatches ready-for-agent tickets with no claimed:* label, so a parked
+    # ticket that kept its claim could never be revived by re-adding the label.
     subprocess.run(
         ["gh", "issue", "comment", str(issue_number), "--repo", REPO, "--body",
          f"Parking this ticket after {streak} consecutive failed automated "
-         f"attempts with no progress -- removing `ready-for-agent` so it "
-         f"stops being re-dispatched. Still labeled `claimed:{label}`; "
-         f"needs a human look (re-scope, do it by hand, or re-add "
-         f"`ready-for-agent` once it's less ambiguous) before it's "
-         f"eligible again."],
+         f"attempts with no progress -- removed `ready-for-agent` and the "
+         f"claim so it stops being re-dispatched. Needs a human look "
+         f"(re-scope, do it by hand, or re-add `ready-for-agent` once it's "
+         f"less ambiguous) before it's eligible again."],
         capture_output=True, text=True, timeout=15, check=False,
     )
 
