@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react'
 import MetricsScorecard from '@components/MetricsScorecard.jsx'
 import MrReview from '@components/MrReview.jsx'
 import HealthDashboard from '@components/HealthDashboard.jsx'
+import DocsExplorer from '@components/DocsExplorer.jsx'
 import DispatchStatusBadge from '@components/DispatchStatusBadge.jsx'
 
 const TABS = [
   { id: 'metrics', label: 'Metrics' },
   { id: 'mr-review', label: 'MR Review' },
-  { id: 'health', label: 'Health' }
+  { id: 'health', label: 'Health' },
+  { id: 'docs', label: 'Docs' }
 ]
 
 const DOT_COLOR = {
@@ -118,7 +120,15 @@ export default function App() {
         </div>
       </header>
       <main className="flex-1 overflow-auto">
-        {activeTab === 'metrics' ? <MetricsScorecard /> : activeTab === 'mr-review' ? <MrReview /> : <HealthDashboard />}
+        {activeTab === 'metrics' ? (
+          <MetricsScorecard />
+        ) : activeTab === 'mr-review' ? (
+          <MrReview />
+        ) : activeTab === 'health' ? (
+          <HealthDashboard />
+        ) : (
+          <DocsExplorer />
+        )}
       </main>
     </div>
   )

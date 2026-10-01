@@ -32,5 +32,11 @@ contextBridge.exposeInMainWorld('api', {
   health: {
     status: () => ipcRenderer.invoke('health:status'),
     refresh: () => ipcRenderer.invoke('health:refresh')
+  },
+  docs: {
+    repos: () => ipcRenderer.invoke('docs:repos'),
+    refresh: () => ipcRenderer.invoke('docs:refresh'),
+    tree: (repo) => ipcRenderer.invoke('docs:tree', repo),
+    content: (repo, path) => ipcRenderer.invoke('docs:content', repo, path)
   }
 })
