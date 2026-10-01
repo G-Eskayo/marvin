@@ -137,16 +137,22 @@ def _build_wrapper_script(command: str, task_id: str, task_label: str) -> str:
     Unix/macOS: rm just unlinks the directory entry, the already-open file
     stays readable to the running interpreter until it exits.
 
-    Also exports CLAUDE_CODE_OAUTH_TOKEN from ~/.claude/.oauth-token on
-    whichever machine actually runs this (local or remote — $HOME expands at
-    runtime there, not where this string is built), if that file exists.
-    Dispatched commands run in a non-interactive shell (no .zshrc/.zprofile
-    sourced), so the normal keychain-backed login can't render its
-    interactive confirmation dialog and fails with "Not logged in" — found
-    2026-07-12/13 testing cross-machine claude -p dispatch for real, same
-    root cause as the DarkWake auth bug. The token file is deliberately
-    outside code_sync's ~/.claude scope (its .gitignore never allow-lists
-    it) — this file never leaves the machine it's created on."""
+    Also exports CLAUDE_CODE_OAUTH_TOKEN from ~/.claude/.oauth-token, and
+    GH_TOKEN from ~/.claude/.gh-token, on whichever machine actually runs
+    this (local or remote — $HOME expands at runtime there, not where this
+    string is built), if those files exist. Dispatched commands run in a
+    non-interactive shell (no .zshrc/.zprofile sourced), so the normal
+    keychain-backed login can't render its interactive confirmation dialog
+    and fails with "Not logged in" — found 2026-07-12/13 testing
+    cross-machine claude -p dispatch for real, same root cause as the
+    DarkWake auth bug. Same failure mode hit `gh` itself, one layer later:
+    found 2026-10-01 when a ticket's implementation and tests genuinely
+    passed but `mr_raiser.py`'s plain `gh pr create` subprocess call died on
+    a keychain-access error (errSecInteractionNotAllowed) raising the
+    credential helper needs — the work succeeded and was discarded anyway
+    because nothing could preserve it as a PR. Both token files are
+    deliberately outside code_sync's ~/.claude scope (its .gitignore never
+    allow-lists them) — neither ever leaves the machine it's created on."""
     started_at = datetime.now(timezone.utc).isoformat()
     busy_json = json.dumps({"busy": True, "task": task_label, "task_id": task_id, "started_at": started_at})
     idle_json = json.dumps({"busy": False})
@@ -160,6 +166,9 @@ trap 'rm -f "$0"; cat > {DISPATCH_STATE_PATH} << 'DISPATCH_IDLE_EOF'
 DISPATCH_IDLE_EOF' EXIT
 if [ -f "$HOME/.claude/.oauth-token" ]; then
   export CLAUDE_CODE_OAUTH_TOKEN="$(cat "$HOME/.claude/.oauth-token")"
+fi
+if [ -f "$HOME/.claude/.gh-token" ]; then
+  export GH_TOKEN="$(cat "$HOME/.claude/.gh-token")"
 fi
 {command}
 """

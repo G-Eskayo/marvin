@@ -1,0 +1,41 @@
+[
+  {
+    "timestamp": "2026-10-01T03:35:27.327814+00:00",
+    "metrics": {
+      "tests_passed": {
+        "value": 494,
+        "higher_is_better": true
+      },
+      "tests_failed": {
+        "value": 0,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-01T03:37:14.087974+00:00",
+    "metrics": {
+      "tests_passed": {
+        "value": 494,
+        "higher_is_better": true
+      },
+      "tests_failed": {
+        "value": 0,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-01T03:38:59.183336+00:00",
+    "metrics": {
+      "tests_passed": {
+        "value": 494,
+        "higher_is_better": true
+      },
+      "tests_failed": {
+        "value": 0,
+        "higher_is_better": false
+      }
+    }
+  }
+]
