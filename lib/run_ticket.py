@@ -21,6 +21,7 @@ from evidence_capture import capture_dev_evidence, capture_test_results, ticket_
 from mr_raiser import raise_mr  # noqa: E402
 from sandbox_orchestration import execute_ticket  # noqa: E402
 from ticket_pipeline import _label_for_device, _release  # noqa: E402
+import ticket_stages as ts  # noqa: E402
 
 REPO = "G-Eskayo/marvin"
 FAILURE_MARKER = "Automated implementation did not pass verification"
@@ -150,8 +151,12 @@ def run(issue_number: int) -> dict:
         _comment_failure(issue_number, outcome["reason"])
         if prior_streak + 1 >= MAX_CONSECUTIVE_FAILURES:
             _park_stuck_ticket(issue_number, prior_streak + 1)
+            ts.record_stage(issue_number, "done", "failed", f"parked after {prior_streak + 1} consecutive failures")
         else:
             _release_claim(issue_number)
+            ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300])
+    else:
+        ts.record_stage(issue_number, "done", "passed", f"PR raised: {outcome['pr_url']}")
 
     _trigger_redispatch()
 

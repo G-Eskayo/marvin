@@ -6,6 +6,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import { sendFeedback } from './deny.js'
 import { parseTicketRef } from '../electron/main/mr_review.js'
+import { recordStage } from './ticket_stages.js'
 
 const execFileAsync = promisify(execFile)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -31,9 +32,20 @@ export async function isBehindMain(headRef, exec = execFileAsync, repoPath = REP
   }
 }
 
-async function _defaultRunTests(cwd, exec) {
+export async function _defaultRunTests(cwd, exec) {
   await exec(VENV_PYTHON, ['-m', 'pytest', '-q'], { cwd })
-  await exec('npx', ['vitest', 'run'], { cwd: path.join(cwd, 'dashboard') })
+  // Found live 2026-10-01 (PR #119's merge attempt): a `git worktree add`
+  // scratch checkout has no dashboard/node_modules at all -- `npx vitest
+  // run` hard-fails with a dependency-resolution error wall that has
+  // nothing to do with the PR's own code, and the webhook relayed that
+  // wall verbatim as the re-engagement reason. npm install is slower than
+  // reusing the real checkout's node_modules, but a scratch worktree is a
+  // separate filesystem location so nothing can be shared/symlinked in
+  // safely without risking the exact collision this isolation exists to
+  // avoid.
+  const dashboardDir = path.join(cwd, 'dashboard')
+  await exec('npm', ['install'], { cwd: dashboardDir })
+  await exec('npx', ['vitest', 'run'], { cwd: dashboardDir })
 }
 
 // Rebases headRef onto origin/main inside a throwaway scratch worktree --
@@ -94,31 +106,47 @@ export async function mergePr(
   redispatch = triggerTicketPipeline,
   shouldGateMerge = _defaultShouldGateMerge,
   rebaseAndRetestFn = rebaseAndRetest,
-  reengage = sendFeedback
+  reengage = sendFeedback,
+  recordStageFn = recordStage
 ) {
   if (typeof prUrl !== 'string' || !prUrl.startsWith('https://github.com/')) {
     throw new Error(`Not a GitHub PR URL: ${prUrl}`)
   }
 
   const { gate, headRefName, body } = await shouldGateMerge(prUrl, exec)
+  const ticketNumber = parseTicketRef(body)
+  // Every call below is a no-op (not an error) when ticketNumber is null
+  // -- a manually-authored PR with no linked ticket has nothing to record
+  // a timeline against, same "fails open" spirit as _defaultShouldGateMerge.
+  const stage = (name, status, detail) => {
+    if (ticketNumber !== null) recordStageFn(ticketNumber, name, status, detail)
+  }
+
   if (gate) {
+    stage('gate', 'started', 'rebasing onto main + retesting')
     const result = await rebaseAndRetestFn(headRefName, exec)
     if (!result.ok) {
+      stage('gate', 'failed', result.reason)
       // ADR 0025's existing re-engagement path, not a new failure state:
       // structured comment on both PR and ticket, claim released, tagged
       // needs-reengagement. The PR itself stays open for a human or a
       // future re-engagement pass -- this isn't a "drop" outcome.
       await reengage(
-        { prUrl, ticketNumber: parseTicketRef(body), reasons: ['Regression/quality'], comment: result.reason },
+        { prUrl, ticketNumber, reasons: ['Regression/quality'], comment: result.reason },
         exec
       )
       return { merged: false, reengaged: true, reason: result.reason }
     }
+    stage('gate', 'passed', 'rebased and retested clean')
   }
 
+  stage('merging', 'started', '')
   await exec('gh', ['pr', 'merge', prUrl, '--merge'])
+  stage('merging', 'passed', '')
+  stage('rebuilding', 'started', 'triggered if the PR touched dashboard/')
   await rebuild(prUrl, exec)
   redispatch()
+  stage('done', 'passed', `merged: ${prUrl}`)
   return { merged: true, reengaged: false, reason: null }
 }
 

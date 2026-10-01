@@ -1,11 +1,17 @@
 import { useEffect, useState } from 'react'
 import MetricsScorecard from '@components/MetricsScorecard.jsx'
 import MrReview from '@components/MrReview.jsx'
+import HealthDashboard from '@components/HealthDashboard.jsx'
+import DocsExplorer from '@components/DocsExplorer.jsx'
+import ActivityBoard from '@components/ActivityBoard.jsx'
 import DispatchStatusBadge from '@components/DispatchStatusBadge.jsx'
 
 const TABS = [
   { id: 'metrics', label: 'Metrics' },
-  { id: 'mr-review', label: 'MR Review' }
+  { id: 'mr-review', label: 'MR Review' },
+  { id: 'health', label: 'Health' },
+  { id: 'docs', label: 'Docs' },
+  { id: 'activity', label: 'Activity' }
 ]
 
 const DOT_COLOR = {
@@ -27,9 +33,16 @@ const STATUS_LABEL = {
 // came from the other machine, etc.), not the primary update path.
 const FALLBACK_POLL_MS = 120000
 
+const HEALTH_DOT_COLOR = {
+  red: 'bg-red-500',
+  yellow: 'bg-amber-500',
+  green: 'bg-emerald-500'
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('metrics')
   const [reviewStatus, setReviewStatus] = useState(null)
+  const [healthOverall, setHealthOverall] = useState(null)
 
   useEffect(() => {
     let cancelled = false
@@ -60,25 +73,45 @@ export default function App() {
       .catch(() => {})
   }, [activeTab])
 
+  useEffect(() => {
+    let cancelled = false
+    function refreshHealthDot() {
+      window.api.health
+        .status()
+        .then((result) => {
+          if (!cancelled) setHealthOverall(result.overall)
+        })
+        .catch(() => {})
+    }
+    refreshHealthDot()
+    const interval = setInterval(refreshHealthDot, 60_000)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [])
+
   return (
     <div className="flex h-screen flex-col">
       <header className="flex shrink-0 items-center gap-1 border-b border-neutral-800 px-6 pb-3 pt-12">
         <h1 className="mr-6 text-sm font-semibold tracking-wide text-neutral-400">MARVIN METRICS</h1>
         <nav className="flex gap-1">
           {TABS.map((tab) => {
-            const dot = tab.id === 'mr-review' ? reviewStatus?.status : null
+            const dot = tab.id === 'mr-review' ? reviewStatus?.status : tab.id === 'health' ? healthOverall : null
+            const dotColorMap = tab.id === 'health' ? HEALTH_DOT_COLOR : DOT_COLOR
+            const title = tab.id === 'mr-review' ? STATUS_LABEL[dot] : tab.id === 'health' && dot ? `Overall: ${dot}` : undefined
             return (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                title={dot ? STATUS_LABEL[dot] : undefined}
+                title={title}
                 className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors ${
                   activeTab === tab.id
                     ? 'bg-neutral-800 text-white'
                     : 'text-neutral-400 hover:text-neutral-200'
                 }`}
               >
-                {dot && <span className={`h-2 w-2 shrink-0 rounded-full ${DOT_COLOR[dot]}`} />}
+                {dot && <span className={`h-2 w-2 shrink-0 rounded-full ${dotColorMap[dot]}`} />}
                 {tab.label}
               </button>
             )
@@ -89,7 +122,17 @@ export default function App() {
         </div>
       </header>
       <main className="flex-1 overflow-auto">
-        {activeTab === 'metrics' ? <MetricsScorecard /> : <MrReview />}
+        {activeTab === 'metrics' ? (
+          <MetricsScorecard />
+        ) : activeTab === 'mr-review' ? (
+          <MrReview />
+        ) : activeTab === 'health' ? (
+          <HealthDashboard />
+        ) : activeTab === 'docs' ? (
+          <DocsExplorer />
+        ) : (
+          <ActivityBoard />
+        )}
       </main>
     </div>
   )

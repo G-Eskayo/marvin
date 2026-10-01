@@ -7,6 +7,9 @@ import { listSubsystems, readHistory, buildIndex } from './metrics.js'
 import { listPipelinePrs, approveMr, denyMr, fetchTicketContext } from './mr_review.js'
 import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
 import { readDispatchStatus } from './dispatch_status.js'
+import { readHealthStatus, runHealthCheckNow } from './health.js'
+import { discoverDocFirstRepos, readCachedRepos, listRepoDocTree, fetchFileContent } from './docs.js'
+import { listTicketActivity, getTicketTimeline } from './activity.js'
 import { createRefreshServer } from './refresh_server.js'
 import { adoptLoginShellPath } from './path.js'
 import { resolveServiceDefaults } from './device_identity.js'
@@ -107,6 +110,26 @@ function registerDispatchHandlers() {
   ipcMain.handle('dispatch:status', () => readDispatchStatus())
 }
 
+function registerHealthHandlers() {
+  ipcMain.handle('health:status', () => readHealthStatus())
+  ipcMain.handle('health:refresh', async () => {
+    await runHealthCheckNow(execFileAsync)
+    return readHealthStatus()
+  })
+}
+
+function registerActivityHandlers() {
+  ipcMain.handle('activity:list', () => listTicketActivity())
+  ipcMain.handle('activity:timeline', (_event, number) => getTicketTimeline(number))
+}
+
+function registerDocsHandlers() {
+  ipcMain.handle('docs:repos', () => readCachedRepos())
+  ipcMain.handle('docs:refresh', () => discoverDocFirstRepos(execFileAsync))
+  ipcMain.handle('docs:tree', (_event, repo) => listRepoDocTree(execFileAsync, repo))
+  ipcMain.handle('docs:content', (_event, repo, filePath) => fetchFileContent(execFileAsync, repo, filePath))
+}
+
 function postJson(webhookUrl, body) {
   return fetch(webhookUrl, {
     method: 'POST',
@@ -185,6 +208,9 @@ app.whenReady().then(() => {
   registerMetricsHandlers()
   registerMrReviewHandlers()
   registerDispatchHandlers()
+  registerHealthHandlers()
+  registerDocsHandlers()
+  registerActivityHandlers()
   createWindow()
 
   createRefreshServer(() => {

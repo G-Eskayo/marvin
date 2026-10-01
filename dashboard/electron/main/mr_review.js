@@ -152,20 +152,35 @@ export function parseEvidence(body) {
   }
 }
 
+// Found live 2026-10-01: PR #119 had real, substantive content (its own
+// written test-plan checklist, 107/107 passing) and sat open 30 days
+// because the tab's only filter silently excluded anything that didn't
+// follow the autonomous pipeline's exact evidence-schema template -- true
+// of every manually-authored PR, not just malformed ones. A real PR
+// disappearing with zero indication anywhere that it was excluded, let
+// alone why, is worse than showing it with less structure. Every open PR
+// now shows; `hasSchema` tells the UI whether to render the parsed
+// evidence table or a plain fallback card, but approve/deny only ever
+// needed the PR url (see approveMr/denyMr below), so both paths work for
+// either kind.
 export async function listPipelinePrs(listOpenPrs) {
   const prs = await listOpenPrs()
-  return prs
-    .filter((pr) => hasEvidenceSchema(pr.body))
-    .map((pr) => {
-      const evidence = parseEvidence(pr.body)
-      return {
-        number: pr.number,
-        title: pr.title,
-        url: pr.url,
-        ticketNumber: evidence.ticketRef ? Number(evidence.ticketRef) : null,
-        evidence
-      }
-    })
+  return prs.map((pr) => {
+    const hasSchema = hasEvidenceSchema(pr.body)
+    const evidence = hasSchema ? parseEvidence(pr.body) : null
+    return {
+      number: pr.number,
+      title: pr.title,
+      url: pr.url,
+      hasSchema,
+      ticketNumber: evidence?.ticketRef ? Number(evidence.ticketRef) : null,
+      evidence,
+      // Full body, untruncated -- MrDetail.jsx needs the whole thing since
+      // it's exactly the "drill in and actually read it" view; PrCard.jsx
+      // truncates its own display slice for the compact list card.
+      rawBody: hasSchema ? null : pr.body || ''
+    }
+  })
 }
 
 export async function approveMr(prUrl, webhookUrl, post) {
