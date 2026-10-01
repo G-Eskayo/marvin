@@ -278,6 +278,38 @@ def test_stops_with_clear_report_after_max_iterations(git_repo, metrics_dir):
 
 # ── default executor (mocked subprocess, no real API calls) ─────────────────
 
+def test_default_executor_records_per_call_cost_against_the_ticket(monkeypatch, tmp_path):
+    # Gil's 2026-10-01 ask: usage visibility alongside Health/Metrics.
+    # claude -p's own --output-format json reports total_cost_usd; this
+    # captures it per call rather than only ever having had the raw plan
+    # text to work with.
+    import json as _json
+    import ticket_stages as ts
+
+    stages_dir = tmp_path / "stages"
+    monkeypatch.setattr(ts, "STAGES_DIR", stages_dir)
+    monkeypatch.setattr(ts.machine_profile, "registry_id", lambda: "mac-mini-1")
+
+    responses = iter([
+        {"result": "a real plan", "total_cost_usd": 0.0098},
+        {"result": "", "total_cost_usd": 0.0211},
+    ])
+
+    def fake_run(cmd, **kwargs):
+        class R:
+            stdout = _json.dumps(next(responses))
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+    plan = so._default_executor(tmp_path, "G-Eskayo/marvin#42", None)
+
+    assert plan == "a real plan"
+    events = ts.read_stages(42)
+    costs = [e["cost_usd"] for e in events]
+    assert costs == [0.0098, 0.0211]
+
+
 def test_default_executor_invokes_flagship_then_haiku(monkeypatch, tmp_path):
     calls = []
 

@@ -9,6 +9,7 @@ import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
 import { readDispatchStatus } from './dispatch_status.js'
 import { readHealthStatus, runHealthCheckNow } from './health.js'
 import { discoverDocFirstRepos, readCachedRepos, listRepoDocTree, fetchFileContent } from './docs.js'
+import { listTicketActivity, getTicketTimeline } from './activity.js'
 import { createRefreshServer } from './refresh_server.js'
 import { adoptLoginShellPath } from './path.js'
 import { resolveServiceDefaults } from './device_identity.js'
@@ -117,6 +118,11 @@ function registerHealthHandlers() {
   })
 }
 
+function registerActivityHandlers() {
+  ipcMain.handle('activity:list', () => listTicketActivity())
+  ipcMain.handle('activity:timeline', (_event, number) => getTicketTimeline(number))
+}
+
 function registerDocsHandlers() {
   ipcMain.handle('docs:repos', () => readCachedRepos())
   ipcMain.handle('docs:refresh', () => discoverDocFirstRepos(execFileAsync))
@@ -204,6 +210,7 @@ app.whenReady().then(() => {
   registerDispatchHandlers()
   registerHealthHandlers()
   registerDocsHandlers()
+  registerActivityHandlers()
   createWindow()
 
   createRefreshServer(() => {

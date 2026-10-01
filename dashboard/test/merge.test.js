@@ -1,4 +1,14 @@
 import { describe, it, expect, vi } from 'vitest'
+
+// mergePr()'s new stage-recording calls write real files under
+// ~/.claude/logs/ticket-stages/<n>.json by default -- found live
+// 2026-10-01: these tests' fixture PR bodies reference real-looking
+// ticket numbers (e.g. #5), and ran unmocked they wrote real files.
+// Mocked at the module level (not per-call-site) since mergePr is called
+// with positional args throughout this file and recordStageFn is the
+// last of eight.
+vi.mock('../webhook-server/ticket_stages.js', () => ({ recordStage: vi.fn() }))
+
 import { execFile, execFileSync } from 'child_process'
 import { promisify } from 'util'
 import { mkdtempSync, rmSync, writeFileSync } from 'fs'
@@ -96,6 +106,50 @@ describe('mergePr', () => {
     expect(exec).toHaveBeenCalledWith('gh', ['pr', 'merge', 'https://github.com/G-Eskayo/marvin/pull/71', '--merge'])
     expect(reengage).not.toHaveBeenCalled()
     expect(result).toEqual({ merged: true, reengaged: false, reason: null })
+  })
+
+  it('records a stage timeline for a clean gated merge: gate started/passed, merging, rebuilding, done', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: true, headRefName: 'pipeline/g-eskayo/marvin#5', body: 'Closes G-Eskayo/marvin#5' })
+    const rebaseAndRetestFn = vi.fn().mockResolvedValue({ ok: true })
+    const recordStageFn = vi.fn()
+
+    await mergePr(
+      'https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, noopRedispatch,
+      shouldGateMerge, rebaseAndRetestFn, vi.fn(), recordStageFn
+    )
+
+    const stages = recordStageFn.mock.calls.map(([, stage, status]) => `${stage}:${status}`)
+    expect(stages).toEqual(['gate:started', 'gate:passed', 'merging:started', 'merging:passed', 'rebuilding:started', 'done:passed'])
+    expect(recordStageFn.mock.calls.every(([ticketNumber]) => ticketNumber === '5')).toBe(true)
+  })
+
+  it('records gate:failed and nothing after, when the rebase/retest fails (no false merging/done events)', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: true, headRefName: 'pipeline/g-eskayo/marvin#5', body: 'Closes G-Eskayo/marvin#5' })
+    const rebaseAndRetestFn = vi.fn().mockResolvedValue({ ok: false, reason: 'boom' })
+    const recordStageFn = vi.fn()
+
+    await mergePr(
+      'https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, noopRedispatch,
+      shouldGateMerge, rebaseAndRetestFn, vi.fn().mockResolvedValue(undefined), recordStageFn
+    )
+
+    const stages = recordStageFn.mock.calls.map(([, stage, status]) => `${stage}:${status}`)
+    expect(stages).toEqual(['gate:started', 'gate:failed'])
+  })
+
+  it('records no stage events at all when the PR has no linked ticket', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: false, headRefName: 'some-branch', body: '' })
+    const recordStageFn = vi.fn()
+
+    await mergePr(
+      'https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, noopRedispatch,
+      shouldGateMerge, vi.fn(), vi.fn(), recordStageFn
+    )
+
+    expect(recordStageFn).not.toHaveBeenCalled()
   })
 
   it('routes to re-engagement and does not merge when the rebase or retest fails', async () => {

@@ -6,6 +6,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import { sendFeedback } from './deny.js'
 import { parseTicketRef } from '../electron/main/mr_review.js'
+import { recordStage } from './ticket_stages.js'
 
 const execFileAsync = promisify(execFile)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -105,31 +106,47 @@ export async function mergePr(
   redispatch = triggerTicketPipeline,
   shouldGateMerge = _defaultShouldGateMerge,
   rebaseAndRetestFn = rebaseAndRetest,
-  reengage = sendFeedback
+  reengage = sendFeedback,
+  recordStageFn = recordStage
 ) {
   if (typeof prUrl !== 'string' || !prUrl.startsWith('https://github.com/')) {
     throw new Error(`Not a GitHub PR URL: ${prUrl}`)
   }
 
   const { gate, headRefName, body } = await shouldGateMerge(prUrl, exec)
+  const ticketNumber = parseTicketRef(body)
+  // Every call below is a no-op (not an error) when ticketNumber is null
+  // -- a manually-authored PR with no linked ticket has nothing to record
+  // a timeline against, same "fails open" spirit as _defaultShouldGateMerge.
+  const stage = (name, status, detail) => {
+    if (ticketNumber !== null) recordStageFn(ticketNumber, name, status, detail)
+  }
+
   if (gate) {
+    stage('gate', 'started', 'rebasing onto main + retesting')
     const result = await rebaseAndRetestFn(headRefName, exec)
     if (!result.ok) {
+      stage('gate', 'failed', result.reason)
       // ADR 0025's existing re-engagement path, not a new failure state:
       // structured comment on both PR and ticket, claim released, tagged
       // needs-reengagement. The PR itself stays open for a human or a
       // future re-engagement pass -- this isn't a "drop" outcome.
       await reengage(
-        { prUrl, ticketNumber: parseTicketRef(body), reasons: ['Regression/quality'], comment: result.reason },
+        { prUrl, ticketNumber, reasons: ['Regression/quality'], comment: result.reason },
         exec
       )
       return { merged: false, reengaged: true, reason: result.reason }
     }
+    stage('gate', 'passed', 'rebased and retested clean')
   }
 
+  stage('merging', 'started', '')
   await exec('gh', ['pr', 'merge', prUrl, '--merge'])
+  stage('merging', 'passed', '')
+  stage('rebuilding', 'started', 'triggered if the PR touched dashboard/')
   await rebuild(prUrl, exec)
   redispatch()
+  stage('done', 'passed', `merged: ${prUrl}`)
   return { merged: true, reengaged: false, reason: null }
 }
 
