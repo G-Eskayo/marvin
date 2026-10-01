@@ -458,3 +458,55 @@ def test_default_executor_tells_the_executor_not_to_commit_push_or_open_a_pr(mon
     assert "do not" in exec_prompt.lower() or "do not commit" in exec_prompt.lower()
     assert "commit" in exec_prompt.lower()
     assert "pull request" in exec_prompt.lower() or " pr" in exec_prompt.lower()
+
+
+# ── executor must not be able to write outside its worktree ─────────────────
+# Found 2026-10-01 on #41: Edit/Write were allowlisted with no path scope, so
+# the headless executor wrote a copy of lib/s2_client.py into the real
+# ~/.agents checkout (to satisfy a Path.home()/.agents/lib import) as well as
+# its worktree. Reproduced with a live probe (absolute-path write succeeded),
+# then confirmed a deny rule blocks it while a cwd-relative write still works.
+
+def _capture_executor_calls(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "a plan"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+    so._default_executor(tmp_path, "TICKET-1", None)
+    return calls
+
+
+def test_default_executor_execution_step_denies_writes_to_the_real_checkout(monkeypatch, tmp_path):
+    exec_cmd = _capture_executor_calls(monkeypatch, tmp_path)[1]
+
+    assert "--disallowedTools" in exec_cmd
+    denied = exec_cmd[exec_cmd.index("--disallowedTools") + 1]
+    assert "Write(~/.agents/**)" in denied
+    assert "Edit(~/.agents/**)" in denied
+
+
+def test_default_executor_deny_rule_does_not_match_the_worktree_directory():
+    # Worktrees live in ~/.agents-pipeline-worktrees, a sibling of ~/.agents,
+    # not under it -- the deny glob must not catch them (the glob needs a path
+    # separator after ".agents"), or the executor couldn't write at all.
+    assert so.WORKTREES_DIR_NAME == ".agents-pipeline-worktrees"
+    assert not so.WORKTREES_DIR_NAME.startswith(".agents/")
+
+
+def test_default_executor_planning_step_has_no_write_tools_to_begin_with(monkeypatch, tmp_path):
+    plan_cmd = _capture_executor_calls(monkeypatch, tmp_path)[0]
+    allowed = plan_cmd[plan_cmd.index("--allowedTools") + 1]
+    assert "Write" not in allowed and "Edit" not in allowed
+
+
+def test_default_executor_prompt_tells_it_to_stay_in_its_worktree_and_import_relatively(monkeypatch, tmp_path):
+    exec_prompt = _capture_executor_calls(monkeypatch, tmp_path)[1][2]
+
+    assert "current working directory" in exec_prompt
+    assert "Path.home()" in exec_prompt and "__file__" in exec_prompt
