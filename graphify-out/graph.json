@@ -1563,6 +1563,18 @@
       "source_location": "L1"
     },
     {
+      "id": "lib_build_type_measure_measure",
+      "label": "measure()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 10,
+      "community_name": "test_sandbox_orchestration.py",
+      "file_type": "code",
+      "norm_label": "measure()",
+      "source_file": "lib/build_type_measure.py",
+      "source_location": "L81"
+    },
+    {
       "id": "lib_tests_test_sandbox_orchestration_git_repo",
       "label": "git_repo()",
       "_callable": true,
@@ -1609,6 +1621,18 @@
       "norm_label": "_noop_executor()",
       "source_file": "lib/tests/test_sandbox_orchestration.py",
       "source_location": "L56"
+    },
+    {
+      "id": "lib_tests_test_sandbox_orchestration_test_baseline_measured_before_first_executor_call",
+      "label": "test_baseline_measured_before_first_executor_call()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 10,
+      "community_name": "test_sandbox_orchestration.py",
+      "file_type": "code",
+      "norm_label": "test_baseline_measured_before_first_executor_call()",
+      "source_file": "lib/tests/test_sandbox_orchestration.py",
+      "source_location": "L197"
     },
     {
       "id": "lib_tests_test_sandbox_orchestration_test_baseline_recorded_to_metrics_registry",
@@ -1777,6 +1801,18 @@
       "norm_label": "test_state_setup_optional_defaults_to_noop()",
       "source_file": "lib/tests/test_sandbox_orchestration.py",
       "source_location": "L183"
+    },
+    {
+      "id": "lib_tests_test_sandbox_orchestration_test_stops_after_first_passing_comparison",
+      "label": "test_stops_after_first_passing_comparison()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 10,
+      "community_name": "test_sandbox_orchestration.py",
+      "file_type": "code",
+      "norm_label": "test_stops_after_first_passing_comparison()",
+      "source_file": "lib/tests/test_sandbox_orchestration.py",
+      "source_location": "L225"
     },
     {
       "id": "lib_tests_test_sandbox_orchestration_test_stops_with_clear_report_after_max_iterations",
@@ -2631,18 +2667,6 @@
       "source_location": "L80"
     },
     {
-      "id": "skills_improve_scripts_daily_digest_call_claude",
-      "label": "call_claude()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 123,
-      "community_name": "daily_digest.py",
-      "file_type": "code",
-      "norm_label": "call_claude()",
-      "source_file": "skills/improve/scripts/daily_digest.py",
-      "source_location": "L230"
-    },
-    {
       "id": "skills_improve_scripts_daily_digest_improvement_queue_summary",
       "label": "improvement_queue_summary()",
       "_callable": true,
@@ -2715,24 +2739,12 @@
       "source_location": "L45"
     },
     {
-      "id": "lib_build_type_measure_measure",
-      "label": "measure()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 127,
-      "community_name": "measure",
-      "file_type": "code",
-      "norm_label": "measure()",
-      "source_file": "lib/build_type_measure.py",
-      "source_location": "L81"
-    },
-    {
       "id": "lib_build_type_measure_scope_root",
       "label": "_scope_root()",
       "_callable": true,
       "_origin": "ast",
       "community": 127,
-      "community_name": "measure",
+      "community_name": "build_type_measure.py",
       "file_type": "code",
       "norm_label": "_scope_root()",
       "source_file": "lib/build_type_measure.py",
@@ -2744,7 +2756,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 127,
-      "community_name": "measure",
+      "community_name": "build_type_measure.py",
       "file_type": "code",
       "norm_label": "test_command_for()",
       "source_file": "lib/build_type_measure.py",
@@ -2756,7 +2768,7 @@
       "_callable": true,
       "_origin": "ast",
       "community": 127,
-      "community_name": "measure",
+      "community_name": "build_type_measure.py",
       "file_type": "code",
       "norm_label": "_touched_files()",
       "source_file": "lib/build_type_measure.py",
@@ -2768,35 +2780,11 @@
       "_callable": true,
       "_origin": "ast",
       "community": 127,
-      "community_name": "measure",
+      "community_name": "build_type_measure.py",
       "file_type": "code",
       "norm_label": "_touches_dashboard()",
       "source_file": "lib/build_type_measure.py",
       "source_location": "L40"
-    },
-    {
-      "id": "lib_tests_test_sandbox_orchestration_test_baseline_measured_before_first_executor_call",
-      "label": "test_baseline_measured_before_first_executor_call()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 127,
-      "community_name": "measure",
-      "file_type": "code",
-      "norm_label": "test_baseline_measured_before_first_executor_call()",
-      "source_file": "lib/tests/test_sandbox_orchestration.py",
-      "source_location": "L197"
-    },
-    {
-      "id": "lib_tests_test_sandbox_orchestration_test_stops_after_first_passing_comparison",
-      "label": "test_stops_after_first_passing_comparison()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 127,
-      "community_name": "measure",
-      "file_type": "code",
-      "norm_label": "test_stops_after_first_passing_comparison()",
-      "source_file": "lib/tests/test_sandbox_orchestration.py",
-      "source_location": "L225"
     },
     {
       "id": "lib_tests_test_metrics_registry_metric",
@@ -6159,6 +6147,42 @@
       "source_location": "L1"
     },
     {
+      "id": "lib_sandbox_orchestration_create_worktree",
+      "label": "_create_worktree()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 254,
+      "community_name": "ticket_claim.py",
+      "file_type": "code",
+      "norm_label": "_create_worktree()",
+      "source_file": "lib/sandbox_orchestration.py",
+      "source_location": "L123"
+    },
+    {
+      "id": "lib_sandbox_orchestration_default_executor",
+      "label": "_default_executor()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 254,
+      "community_name": "ticket_claim.py",
+      "file_type": "code",
+      "norm_label": "_default_executor()",
+      "source_file": "lib/sandbox_orchestration.py",
+      "source_location": "L66"
+    },
+    {
+      "id": "lib_sandbox_orchestration_execute_ticket",
+      "label": "execute_ticket()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 254,
+      "community_name": "ticket_claim.py",
+      "file_type": "code",
+      "norm_label": "execute_ticket()",
+      "source_file": "lib/sandbox_orchestration.py",
+      "source_location": "L161"
+    },
+    {
       "id": "lib_ticket_claim_claim_label",
       "label": "_claim_label()",
       "_callable": true,
@@ -6231,18 +6255,6 @@
       "source_location": "L89"
     },
     {
-      "id": "lib_ticket_claim_release",
-      "label": "release()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 254,
-      "community_name": "ticket_claim.py",
-      "file_type": "code",
-      "norm_label": "release()",
-      "source_file": "lib/ticket_claim.py",
-      "source_location": "L123"
-    },
-    {
       "id": "lib_ticket_claim_run_claim_cycle",
       "label": "run_claim_cycle()",
       "_callable": true,
@@ -6253,18 +6265,6 @@
       "norm_label": "run_claim_cycle()",
       "source_file": "lib/ticket_claim.py",
       "source_location": "L135"
-    },
-    {
-      "id": "lib_ticket_coordination_resolve_collision",
-      "label": "resolve_collision()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 254,
-      "community_name": "ticket_claim.py",
-      "file_type": "code",
-      "norm_label": "resolve_collision()",
-      "source_file": "lib/ticket_coordination.py",
-      "source_location": "L63"
     },
     {
       "id": "lib_claude_bin_candidates",
@@ -8199,6 +8199,150 @@
       "source_location": "L223"
     },
     {
+      "id": "dashboard_electron_main_mr_review_approvemr",
+      "label": "approveMr()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 267,
+      "community_name": "mr_review.js",
+      "file_type": "code",
+      "norm_label": "approvemr()",
+      "source_file": "dashboard/electron/main/mr_review.js",
+      "source_location": "L171"
+    },
+    {
+      "id": "dashboard_electron_main_mr_review_denymr",
+      "label": "denyMr()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 267,
+      "community_name": "mr_review.js",
+      "file_type": "code",
+      "norm_label": "denymr()",
+      "source_file": "dashboard/electron/main/mr_review.js",
+      "source_location": "L184"
+    },
+    {
+      "id": "dashboard_electron_main_mr_review_extractsection",
+      "label": "extractSection()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 267,
+      "community_name": "mr_review.js",
+      "file_type": "code",
+      "norm_label": "extractsection()",
+      "source_file": "dashboard/electron/main/mr_review.js",
+      "source_location": "L33"
+    },
+    {
+      "id": "dashboard_electron_main_mr_review_fetchticketcontext",
+      "label": "fetchTicketContext()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 267,
+      "community_name": "mr_review.js",
+      "file_type": "code",
+      "norm_label": "fetchticketcontext()",
+      "source_file": "dashboard/electron/main/mr_review.js",
+      "source_location": "L121"
+    },
+    {
+      "id": "dashboard_electron_main_mr_review_hasevidenceschema",
+      "label": "hasEvidenceSchema()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 267,
+      "community_name": "mr_review.js",
+      "file_type": "code",
+      "norm_label": "hasevidenceschema()",
+      "source_file": "dashboard/electron/main/mr_review.js",
+      "source_location": "L21"
+    },
+    {
+      "id": "dashboard_electron_main_mr_review_listpipelineprs",
+      "label": "listPipelinePrs()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 267,
+      "community_name": "mr_review.js",
+      "file_type": "code",
+      "norm_label": "listpipelineprs()",
+      "source_file": "dashboard/electron/main/mr_review.js",
+      "source_location": "L155"
+    },
+    {
+      "id": "dashboard_electron_main_mr_review_parsedevevidencesection",
+      "label": "parseDevEvidenceSection()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 267,
+      "community_name": "mr_review.js",
+      "file_type": "code",
+      "norm_label": "parsedevevidencesection()",
+      "source_file": "dashboard/electron/main/mr_review.js",
+      "source_location": "L88"
+    },
+    {
+      "id": "dashboard_electron_main_mr_review_parseevidence",
+      "label": "parseEvidence()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 267,
+      "community_name": "mr_review.js",
+      "file_type": "code",
+      "norm_label": "parseevidence()",
+      "source_file": "dashboard/electron/main/mr_review.js",
+      "source_location": "L145"
+    },
+    {
+      "id": "dashboard_electron_main_mr_review_parsemetricssection",
+      "label": "parseMetricsSection()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 267,
+      "community_name": "mr_review.js",
+      "file_type": "code",
+      "norm_label": "parsemetricssection()",
+      "source_file": "dashboard/electron/main/mr_review.js",
+      "source_location": "L42"
+    },
+    {
+      "id": "dashboard_electron_main_mr_review_parseparentref",
+      "label": "parseParentRef()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 267,
+      "community_name": "mr_review.js",
+      "file_type": "code",
+      "norm_label": "parseparentref()",
+      "source_file": "dashboard/electron/main/mr_review.js",
+      "source_location": "L108"
+    },
+    {
+      "id": "dashboard_electron_main_mr_review_parsetestresultssection",
+      "label": "parseTestResultsSection()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 267,
+      "community_name": "mr_review.js",
+      "file_type": "code",
+      "norm_label": "parsetestresultssection()",
+      "source_file": "dashboard/electron/main/mr_review.js",
+      "source_location": "L72"
+    },
+    {
+      "id": "dashboard_electron_main_mr_review_parseticketref",
+      "label": "parseTicketRef()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 267,
+      "community_name": "mr_review.js",
+      "file_type": "code",
+      "norm_label": "parseticketref()",
+      "source_file": "dashboard/electron/main/mr_review.js",
+      "source_location": "L103"
+    },
+    {
       "id": "skills_safety_monitor_scripts_calibrate_calibrate",
       "label": "calibrate()",
       "_callable": true,
@@ -8295,114 +8439,6 @@
       "source_location": "L39"
     },
     {
-      "id": "dashboard_electron_main_device_identity_defaultreadhardwareuuid",
-      "label": "defaultReadHardwareUuid()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "defaultreadhardwareuuid()",
-      "source_file": "dashboard/electron/main/device_identity.js",
-      "source_location": "L12"
-    },
-    {
-      "id": "dashboard_electron_main_device_identity_isprimaryhost",
-      "label": "isPrimaryHost()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "isprimaryhost()",
-      "source_file": "dashboard/electron/main/device_identity.js",
-      "source_location": "L55"
-    },
-    {
-      "id": "dashboard_electron_main_device_identity_loadregistry",
-      "label": "loadRegistry()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "loadregistry()",
-      "source_file": "dashboard/electron/main/device_identity.js",
-      "source_location": "L22"
-    },
-    {
-      "id": "dashboard_electron_main_device_identity_primaryhosttailscalename",
-      "label": "primaryHostTailscaleName()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "primaryhosttailscalename()",
-      "source_file": "dashboard/electron/main/device_identity.js",
-      "source_location": "L47"
-    },
-    {
-      "id": "dashboard_electron_main_device_identity_resolvedeviceid",
-      "label": "resolveDeviceId()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "resolvedeviceid()",
-      "source_file": "dashboard/electron/main/device_identity.js",
-      "source_location": "L34"
-    },
-    {
-      "id": "dashboard_electron_main_device_identity_resolveservicedefaults",
-      "label": "resolveServiceDefaults()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "resolveservicedefaults()",
-      "source_file": "dashboard/electron/main/device_identity.js",
-      "source_location": "L65"
-    },
-    {
-      "id": "dashboard_electron_main_dispatch_status_readdispatchstatus",
-      "label": "readDispatchStatus()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "readdispatchstatus()",
-      "source_file": "dashboard/electron/main/dispatch_status.js",
-      "source_location": "L16"
-    },
-    {
-      "id": "dashboard_electron_main_health_readhealthstatus",
-      "label": "readHealthStatus()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "readhealthstatus()",
-      "source_file": "dashboard/electron/main/health.js",
-      "source_location": "L26"
-    },
-    {
-      "id": "dashboard_electron_main_health_runhealthchecknow",
-      "label": "runHealthCheckNow()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "runhealthchecknow()",
-      "source_file": "dashboard/electron/main/health.js",
-      "source_location": "L12"
-    },
-    {
       "id": "dashboard_electron_main_index_createwindow",
       "label": "createWindow()",
       "_callable": true,
@@ -8412,7 +8448,7 @@
       "file_type": "code",
       "norm_label": "createwindow()",
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L65"
+      "source_location": "L66"
     },
     {
       "id": "dashboard_electron_main_index_ghissueview",
@@ -8424,7 +8460,7 @@
       "file_type": "code",
       "norm_label": "ghissueview()",
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L48"
+      "source_location": "L49"
     },
     {
       "id": "dashboard_electron_main_index_listopenprs",
@@ -8436,7 +8472,7 @@
       "file_type": "code",
       "norm_label": "listopenprs()",
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L34"
+      "source_location": "L35"
     },
     {
       "id": "dashboard_electron_main_index_postjson",
@@ -8448,43 +8484,7 @@
       "file_type": "code",
       "norm_label": "postjson()",
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L119"
-    },
-    {
-      "id": "dashboard_electron_main_index_registerdispatchhandlers",
-      "label": "registerDispatchHandlers()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "registerdispatchhandlers()",
-      "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L107"
-    },
-    {
-      "id": "dashboard_electron_main_index_registerhealthhandlers",
-      "label": "registerHealthHandlers()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "registerhealthhandlers()",
-      "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L111"
-    },
-    {
-      "id": "dashboard_electron_main_index_registermetricshandlers",
-      "label": "registerMetricsHandlers()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "registermetricshandlers()",
-      "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L101"
+      "source_location": "L127"
     },
     {
       "id": "dashboard_electron_main_index_registermrreviewhandlers",
@@ -8496,199 +8496,7 @@
       "file_type": "code",
       "norm_label": "registermrreviewhandlers()",
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L127"
-    },
-    {
-      "id": "dashboard_electron_main_metrics_buildindex",
-      "label": "buildIndex()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "buildindex()",
-      "source_file": "dashboard/electron/main/metrics.js",
-      "source_location": "L40"
-    },
-    {
-      "id": "dashboard_electron_main_metrics_latest",
-      "label": "latest()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "latest()",
-      "source_file": "dashboard/electron/main/metrics.js",
-      "source_location": "L34"
-    },
-    {
-      "id": "dashboard_electron_main_metrics_listsubsystems",
-      "label": "listSubsystems()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "listsubsystems()",
-      "source_file": "dashboard/electron/main/metrics.js",
-      "source_location": "L13"
-    },
-    {
-      "id": "dashboard_electron_main_metrics_readhistory",
-      "label": "readHistory()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "readhistory()",
-      "source_file": "dashboard/electron/main/metrics.js",
-      "source_location": "L21"
-    },
-    {
-      "id": "dashboard_electron_main_mr_review_approvemr",
-      "label": "approveMr()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "approvemr()",
-      "source_file": "dashboard/electron/main/mr_review.js",
-      "source_location": "L171"
-    },
-    {
-      "id": "dashboard_electron_main_mr_review_denymr",
-      "label": "denyMr()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "denymr()",
-      "source_file": "dashboard/electron/main/mr_review.js",
-      "source_location": "L184"
-    },
-    {
-      "id": "dashboard_electron_main_mr_review_extractsection",
-      "label": "extractSection()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "extractsection()",
-      "source_file": "dashboard/electron/main/mr_review.js",
-      "source_location": "L33"
-    },
-    {
-      "id": "dashboard_electron_main_mr_review_fetchticketcontext",
-      "label": "fetchTicketContext()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "fetchticketcontext()",
-      "source_file": "dashboard/electron/main/mr_review.js",
-      "source_location": "L121"
-    },
-    {
-      "id": "dashboard_electron_main_mr_review_hasevidenceschema",
-      "label": "hasEvidenceSchema()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "hasevidenceschema()",
-      "source_file": "dashboard/electron/main/mr_review.js",
-      "source_location": "L21"
-    },
-    {
-      "id": "dashboard_electron_main_mr_review_listpipelineprs",
-      "label": "listPipelinePrs()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "listpipelineprs()",
-      "source_file": "dashboard/electron/main/mr_review.js",
-      "source_location": "L155"
-    },
-    {
-      "id": "dashboard_electron_main_mr_review_parsedevevidencesection",
-      "label": "parseDevEvidenceSection()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "parsedevevidencesection()",
-      "source_file": "dashboard/electron/main/mr_review.js",
-      "source_location": "L88"
-    },
-    {
-      "id": "dashboard_electron_main_mr_review_parseevidence",
-      "label": "parseEvidence()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "parseevidence()",
-      "source_file": "dashboard/electron/main/mr_review.js",
-      "source_location": "L145"
-    },
-    {
-      "id": "dashboard_electron_main_mr_review_parsemetricssection",
-      "label": "parseMetricsSection()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "parsemetricssection()",
-      "source_file": "dashboard/electron/main/mr_review.js",
-      "source_location": "L42"
-    },
-    {
-      "id": "dashboard_electron_main_mr_review_parseparentref",
-      "label": "parseParentRef()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "parseparentref()",
-      "source_file": "dashboard/electron/main/mr_review.js",
-      "source_location": "L108"
-    },
-    {
-      "id": "dashboard_electron_main_mr_review_parsetestresultssection",
-      "label": "parseTestResultsSection()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "parsetestresultssection()",
-      "source_file": "dashboard/electron/main/mr_review.js",
-      "source_location": "L72"
-    },
-    {
-      "id": "dashboard_electron_main_mr_review_parseticketref",
-      "label": "parseTicketRef()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "parseticketref()",
-      "source_file": "dashboard/electron/main/mr_review.js",
-      "source_location": "L103"
+      "source_location": "L135"
     },
     {
       "id": "dashboard_electron_main_mr_seen_computereviewstatus",
@@ -8739,42 +8547,6 @@
       "source_location": "L12"
     },
     {
-      "id": "dashboard_electron_main_refresh_server_createrefreshserver",
-      "label": "createRefreshServer()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "createrefreshserver()",
-      "source_file": "dashboard/electron/main/refresh_server.js",
-      "source_location": "L10"
-    },
-    {
-      "id": "dashboard_test_device_identity_test_withregistry",
-      "label": "withRegistry()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "withregistry()",
-      "source_file": "dashboard/test/device_identity.test.js",
-      "source_location": "L18"
-    },
-    {
-      "id": "dashboard_test_dispatch_status_test_withtempfile",
-      "label": "withTempFile()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "withtempfile()",
-      "source_file": "dashboard/test/dispatch_status.test.js",
-      "source_location": "L7"
-    },
-    {
       "id": "dashboard_test_mr_seen_test_withtempdir",
       "label": "withTempDir()",
       "_callable": true,
@@ -8785,18 +8557,6 @@
       "norm_label": "withtempdir()",
       "source_file": "dashboard/test/mr_seen.test.js",
       "source_location": "L7"
-    },
-    {
-      "id": "dashboard_test_refresh_server_test_listen",
-      "label": "listen()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "listen()",
-      "source_file": "dashboard/test/refresh_server.test.js",
-      "source_location": "L11"
     },
     {
       "id": "brain_map_vendor_motion_12_42_2_ae",
@@ -10647,6 +10407,18 @@
       "source_location": "L58"
     },
     {
+      "id": "lib_ticket_claim_release",
+      "label": "release()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 285,
+      "community_name": "test_ticket_coordination.py",
+      "file_type": "code",
+      "norm_label": "release()",
+      "source_file": "lib/ticket_claim.py",
+      "source_location": "L123"
+    },
+    {
       "id": "lib_ticket_coordination_claim_with_coordination",
       "label": "claim_with_coordination()",
       "_callable": true,
@@ -10669,6 +10441,18 @@
       "norm_label": "_default_list_claim_labels()",
       "source_file": "lib/ticket_coordination.py",
       "source_location": "L54"
+    },
+    {
+      "id": "lib_ticket_coordination_resolve_collision",
+      "label": "resolve_collision()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 285,
+      "community_name": "test_ticket_coordination.py",
+      "file_type": "code",
+      "norm_label": "resolve_collision()",
+      "source_file": "lib/ticket_coordination.py",
+      "source_location": "L63"
     },
     {
       "id": "lib_health_checks_check_cron_job_log",
@@ -13947,6 +13731,18 @@
       "source_location": "L152"
     },
     {
+      "id": "lib_tests_test_health_checks_test_check_dispatch_lock_green_shortly_after_start",
+      "label": "test_check_dispatch_lock_green_shortly_after_start()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 353,
+      "community_name": "test_health_checks.py",
+      "file_type": "code",
+      "norm_label": "test_check_dispatch_lock_green_shortly_after_start()",
+      "source_file": "lib/tests/test_health_checks.py",
+      "source_location": "L82"
+    },
+    {
       "id": "lib_tests_test_health_checks_test_check_dispatch_lock_green_when_idle",
       "label": "test_check_dispatch_lock_green_when_idle()",
       "_callable": true,
@@ -13969,6 +13765,30 @@
       "norm_label": "test_check_dispatch_lock_green_when_no_file()",
       "source_file": "lib/tests/test_health_checks.py",
       "source_location": "L48"
+    },
+    {
+      "id": "lib_tests_test_health_checks_test_check_dispatch_lock_red_after_15_days",
+      "label": "test_check_dispatch_lock_red_after_15_days()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 353,
+      "community_name": "test_health_checks.py",
+      "file_type": "code",
+      "norm_label": "test_check_dispatch_lock_red_after_15_days()",
+      "source_file": "lib/tests/test_health_checks.py",
+      "source_location": "L59"
+    },
+    {
+      "id": "lib_tests_test_health_checks_test_check_dispatch_lock_yellow_in_warning_window",
+      "label": "test_check_dispatch_lock_yellow_in_warning_window()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 353,
+      "community_name": "test_health_checks.py",
+      "file_type": "code",
+      "norm_label": "test_check_dispatch_lock_yellow_in_warning_window()",
+      "source_file": "lib/tests/test_health_checks.py",
+      "source_location": "L72"
     },
     {
       "id": "lib_tests_test_health_checks_test_check_repo_integrity_green_when_clean",
@@ -14331,76 +14151,460 @@
       "source_location": "L37"
     },
     {
-      "id": "lib_sandbox_orchestration_create_worktree",
-      "label": "_create_worktree()",
+      "id": "dashboard_electron_main_docs_discoverdocfirstrepos",
+      "label": "discoverDocFirstRepos()",
       "_callable": true,
       "_origin": "ast",
       "community": 356,
-      "community_name": "sandbox_orchestration.py",
+      "community_name": "docs.js",
       "file_type": "code",
-      "norm_label": "_create_worktree()",
-      "source_file": "lib/sandbox_orchestration.py",
-      "source_location": "L123"
+      "norm_label": "discoverdocfirstrepos()",
+      "source_file": "dashboard/electron/main/docs.js",
+      "source_location": "L33"
     },
     {
-      "id": "lib_sandbox_orchestration_default_executor",
-      "label": "_default_executor()",
+      "id": "dashboard_electron_main_docs_fetchfilecontent",
+      "label": "fetchFileContent()",
       "_callable": true,
       "_origin": "ast",
       "community": 356,
-      "community_name": "sandbox_orchestration.py",
+      "community_name": "docs.js",
       "file_type": "code",
-      "norm_label": "_default_executor()",
-      "source_file": "lib/sandbox_orchestration.py",
-      "source_location": "L66"
+      "norm_label": "fetchfilecontent()",
+      "source_file": "dashboard/electron/main/docs.js",
+      "source_location": "L78"
     },
     {
-      "id": "lib_sandbox_orchestration_execute_ticket",
-      "label": "execute_ticket()",
+      "id": "dashboard_electron_main_docs_fileexists",
+      "label": "fileExists()",
       "_callable": true,
       "_origin": "ast",
       "community": 356,
-      "community_name": "sandbox_orchestration.py",
+      "community_name": "docs.js",
       "file_type": "code",
-      "norm_label": "execute_ticket()",
-      "source_file": "lib/sandbox_orchestration.py",
-      "source_location": "L161"
+      "norm_label": "fileexists()",
+      "source_file": "dashboard/electron/main/docs.js",
+      "source_location": "L21"
     },
     {
-      "id": "lib_tests_test_health_checks_test_check_dispatch_lock_green_shortly_after_start",
-      "label": "test_check_dispatch_lock_green_shortly_after_start()",
+      "id": "dashboard_electron_main_docs_listrepodoctree",
+      "label": "listRepoDocTree()",
       "_callable": true,
       "_origin": "ast",
       "community": 356,
-      "community_name": "sandbox_orchestration.py",
+      "community_name": "docs.js",
       "file_type": "code",
-      "norm_label": "test_check_dispatch_lock_green_shortly_after_start()",
-      "source_file": "lib/tests/test_health_checks.py",
-      "source_location": "L82"
-    },
-    {
-      "id": "lib_tests_test_health_checks_test_check_dispatch_lock_red_after_15_days",
-      "label": "test_check_dispatch_lock_red_after_15_days()",
-      "_callable": true,
-      "_origin": "ast",
-      "community": 356,
-      "community_name": "sandbox_orchestration.py",
-      "file_type": "code",
-      "norm_label": "test_check_dispatch_lock_red_after_15_days()",
-      "source_file": "lib/tests/test_health_checks.py",
+      "norm_label": "listrepodoctree()",
+      "source_file": "dashboard/electron/main/docs.js",
       "source_location": "L59"
     },
     {
-      "id": "lib_tests_test_health_checks_test_check_dispatch_lock_yellow_in_warning_window",
-      "label": "test_check_dispatch_lock_yellow_in_warning_window()",
+      "id": "dashboard_electron_main_docs_readcachedrepos",
+      "label": "readCachedRepos()",
       "_callable": true,
       "_origin": "ast",
       "community": 356,
-      "community_name": "sandbox_orchestration.py",
+      "community_name": "docs.js",
       "file_type": "code",
-      "norm_label": "test_check_dispatch_lock_yellow_in_warning_window()",
-      "source_file": "lib/tests/test_health_checks.py",
-      "source_location": "L72"
+      "norm_label": "readcachedrepos()",
+      "source_file": "dashboard/electron/main/docs.js",
+      "source_location": "L48"
+    },
+    {
+      "id": "dashboard_electron_main_docs_run",
+      "label": "run()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 356,
+      "community_name": "docs.js",
+      "file_type": "code",
+      "norm_label": "run()",
+      "source_file": "dashboard/electron/main/docs.js",
+      "source_location": "L17"
+    },
+    {
+      "id": "dashboard_electron_main_index_registerdocshandlers",
+      "label": "registerDocsHandlers()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 356,
+      "community_name": "docs.js",
+      "file_type": "code",
+      "norm_label": "registerdocshandlers()",
+      "source_file": "dashboard/electron/main/index.js",
+      "source_location": "L120"
+    },
+    {
+      "id": "dashboard_test_docs_test_fakeexec",
+      "label": "fakeExec()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 356,
+      "community_name": "docs.js",
+      "file_type": "code",
+      "norm_label": "fakeexec()",
+      "source_file": "dashboard/test/docs.test.js",
+      "source_location": "L8"
+    },
+    {
+      "id": "dashboard_test_docs_test_withtempcachepath",
+      "label": "withTempCachePath()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 356,
+      "community_name": "docs.js",
+      "file_type": "code",
+      "norm_label": "withtempcachepath()",
+      "source_file": "dashboard/test/docs.test.js",
+      "source_location": "L21"
+    },
+    {
+      "id": "dashboard_electron_main_device_identity_defaultreadhardwareuuid",
+      "label": "defaultReadHardwareUuid()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 359,
+      "community_name": "device_identity.js",
+      "file_type": "code",
+      "norm_label": "defaultreadhardwareuuid()",
+      "source_file": "dashboard/electron/main/device_identity.js",
+      "source_location": "L12"
+    },
+    {
+      "id": "dashboard_electron_main_device_identity_isprimaryhost",
+      "label": "isPrimaryHost()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 359,
+      "community_name": "device_identity.js",
+      "file_type": "code",
+      "norm_label": "isprimaryhost()",
+      "source_file": "dashboard/electron/main/device_identity.js",
+      "source_location": "L55"
+    },
+    {
+      "id": "dashboard_electron_main_device_identity_loadregistry",
+      "label": "loadRegistry()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 359,
+      "community_name": "device_identity.js",
+      "file_type": "code",
+      "norm_label": "loadregistry()",
+      "source_file": "dashboard/electron/main/device_identity.js",
+      "source_location": "L22"
+    },
+    {
+      "id": "dashboard_electron_main_device_identity_primaryhosttailscalename",
+      "label": "primaryHostTailscaleName()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 359,
+      "community_name": "device_identity.js",
+      "file_type": "code",
+      "norm_label": "primaryhosttailscalename()",
+      "source_file": "dashboard/electron/main/device_identity.js",
+      "source_location": "L47"
+    },
+    {
+      "id": "dashboard_electron_main_device_identity_resolvedeviceid",
+      "label": "resolveDeviceId()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 359,
+      "community_name": "device_identity.js",
+      "file_type": "code",
+      "norm_label": "resolvedeviceid()",
+      "source_file": "dashboard/electron/main/device_identity.js",
+      "source_location": "L34"
+    },
+    {
+      "id": "dashboard_electron_main_device_identity_resolveservicedefaults",
+      "label": "resolveServiceDefaults()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 359,
+      "community_name": "device_identity.js",
+      "file_type": "code",
+      "norm_label": "resolveservicedefaults()",
+      "source_file": "dashboard/electron/main/device_identity.js",
+      "source_location": "L65"
+    },
+    {
+      "id": "dashboard_test_device_identity_test_withregistry",
+      "label": "withRegistry()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 359,
+      "community_name": "device_identity.js",
+      "file_type": "code",
+      "norm_label": "withregistry()",
+      "source_file": "dashboard/test/device_identity.test.js",
+      "source_location": "L18"
+    },
+    {
+      "id": "dashboard_src_components_docsexplorer_docsexplorer",
+      "label": "DocsExplorer()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 360,
+      "community_name": "DocsExplorer.jsx",
+      "file_type": "code",
+      "norm_label": "docsexplorer()",
+      "source_file": "dashboard/src/components/DocsExplorer.jsx",
+      "source_location": "L120"
+    },
+    {
+      "id": "dashboard_src_components_docsexplorer_docsexplorer_handlerefresh",
+      "label": "handleRefresh()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 360,
+      "community_name": "DocsExplorer.jsx",
+      "file_type": "code",
+      "norm_label": "handlerefresh()",
+      "source_file": "dashboard/src/components/DocsExplorer.jsx",
+      "source_location": "L134"
+    },
+    {
+      "id": "dashboard_src_components_docsexplorer_docsexplorer_handleselectfile",
+      "label": "handleSelectFile()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 360,
+      "community_name": "DocsExplorer.jsx",
+      "file_type": "code",
+      "norm_label": "handleselectfile()",
+      "source_file": "dashboard/src/components/DocsExplorer.jsx",
+      "source_location": "L154"
+    },
+    {
+      "id": "dashboard_src_components_docsexplorer_docsexplorer_handleselectrepo",
+      "label": "handleSelectRepo()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 360,
+      "community_name": "DocsExplorer.jsx",
+      "file_type": "code",
+      "norm_label": "handleselectrepo()",
+      "source_file": "dashboard/src/components/DocsExplorer.jsx",
+      "source_location": "L146"
+    },
+    {
+      "id": "dashboard_src_components_docsexplorer_doctree",
+      "label": "DocTree()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 360,
+      "community_name": "DocsExplorer.jsx",
+      "file_type": "code",
+      "norm_label": "doctree()",
+      "source_file": "dashboard/src/components/DocsExplorer.jsx",
+      "source_location": "L52"
+    },
+    {
+      "id": "dashboard_src_components_docsexplorer_docviewer",
+      "label": "DocViewer()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 360,
+      "community_name": "DocsExplorer.jsx",
+      "file_type": "code",
+      "norm_label": "docviewer()",
+      "source_file": "dashboard/src/components/DocsExplorer.jsx",
+      "source_location": "L101"
+    },
+    {
+      "id": "dashboard_src_components_docsexplorer_formattimestamp",
+      "label": "formatTimestamp()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 360,
+      "community_name": "DocsExplorer.jsx",
+      "file_type": "code",
+      "norm_label": "formattimestamp()",
+      "source_file": "dashboard/src/components/DocsExplorer.jsx",
+      "source_location": "L5"
+    },
+    {
+      "id": "dashboard_src_components_docsexplorer_repolist",
+      "label": "RepoList()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 360,
+      "community_name": "DocsExplorer.jsx",
+      "file_type": "code",
+      "norm_label": "repolist()",
+      "source_file": "dashboard/src/components/DocsExplorer.jsx",
+      "source_location": "L14"
+    },
+    {
+      "id": "dashboard_src_components_docsexplorer_treeitem",
+      "label": "TreeItem()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 360,
+      "community_name": "DocsExplorer.jsx",
+      "file_type": "code",
+      "norm_label": "treeitem()",
+      "source_file": "dashboard/src/components/DocsExplorer.jsx",
+      "source_location": "L71"
+    },
+    {
+      "id": "dashboard_electron_main_health_readhealthstatus",
+      "label": "readHealthStatus()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 361,
+      "community_name": "health.js",
+      "file_type": "code",
+      "norm_label": "readhealthstatus()",
+      "source_file": "dashboard/electron/main/health.js",
+      "source_location": "L26"
+    },
+    {
+      "id": "dashboard_electron_main_health_runhealthchecknow",
+      "label": "runHealthCheckNow()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 361,
+      "community_name": "health.js",
+      "file_type": "code",
+      "norm_label": "runhealthchecknow()",
+      "source_file": "dashboard/electron/main/health.js",
+      "source_location": "L12"
+    },
+    {
+      "id": "dashboard_electron_main_index_registerhealthhandlers",
+      "label": "registerHealthHandlers()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 361,
+      "community_name": "health.js",
+      "file_type": "code",
+      "norm_label": "registerhealthhandlers()",
+      "source_file": "dashboard/electron/main/index.js",
+      "source_location": "L112"
+    },
+    {
+      "id": "dashboard_electron_main_index_registermetricshandlers",
+      "label": "registerMetricsHandlers()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 362,
+      "community_name": "metrics.js",
+      "file_type": "code",
+      "norm_label": "registermetricshandlers()",
+      "source_file": "dashboard/electron/main/index.js",
+      "source_location": "L102"
+    },
+    {
+      "id": "dashboard_electron_main_metrics_buildindex",
+      "label": "buildIndex()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 362,
+      "community_name": "metrics.js",
+      "file_type": "code",
+      "norm_label": "buildindex()",
+      "source_file": "dashboard/electron/main/metrics.js",
+      "source_location": "L40"
+    },
+    {
+      "id": "dashboard_electron_main_metrics_latest",
+      "label": "latest()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 362,
+      "community_name": "metrics.js",
+      "file_type": "code",
+      "norm_label": "latest()",
+      "source_file": "dashboard/electron/main/metrics.js",
+      "source_location": "L34"
+    },
+    {
+      "id": "dashboard_electron_main_metrics_listsubsystems",
+      "label": "listSubsystems()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 362,
+      "community_name": "metrics.js",
+      "file_type": "code",
+      "norm_label": "listsubsystems()",
+      "source_file": "dashboard/electron/main/metrics.js",
+      "source_location": "L13"
+    },
+    {
+      "id": "dashboard_electron_main_metrics_readhistory",
+      "label": "readHistory()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 362,
+      "community_name": "metrics.js",
+      "file_type": "code",
+      "norm_label": "readhistory()",
+      "source_file": "dashboard/electron/main/metrics.js",
+      "source_location": "L21"
+    },
+    {
+      "id": "dashboard_electron_main_dispatch_status_readdispatchstatus",
+      "label": "readDispatchStatus()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 364,
+      "community_name": "dispatch_status.js",
+      "file_type": "code",
+      "norm_label": "readdispatchstatus()",
+      "source_file": "dashboard/electron/main/dispatch_status.js",
+      "source_location": "L16"
+    },
+    {
+      "id": "dashboard_electron_main_index_registerdispatchhandlers",
+      "label": "registerDispatchHandlers()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 364,
+      "community_name": "dispatch_status.js",
+      "file_type": "code",
+      "norm_label": "registerdispatchhandlers()",
+      "source_file": "dashboard/electron/main/index.js",
+      "source_location": "L108"
+    },
+    {
+      "id": "dashboard_test_dispatch_status_test_withtempfile",
+      "label": "withTempFile()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 364,
+      "community_name": "dispatch_status.js",
+      "file_type": "code",
+      "norm_label": "withtempfile()",
+      "source_file": "dashboard/test/dispatch_status.test.js",
+      "source_location": "L7"
+    },
+    {
+      "id": "dashboard_electron_main_refresh_server_createrefreshserver",
+      "label": "createRefreshServer()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 365,
+      "community_name": "refresh_server.js",
+      "file_type": "code",
+      "norm_label": "createrefreshserver()",
+      "source_file": "dashboard/electron/main/refresh_server.js",
+      "source_location": "L10"
+    },
+    {
+      "id": "dashboard_test_refresh_server_test_listen",
+      "label": "listen()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 365,
+      "community_name": "refresh_server.js",
+      "file_type": "code",
+      "norm_label": "listen()",
+      "source_file": "dashboard/test/refresh_server.test.js",
+      "source_location": "L11"
     },
     {
       "id": "lib_cron_health_archive_previous_latest",
@@ -15061,6 +15265,18 @@
       "norm_label": "sync_research_feed()",
       "source_file": "skills/improve/scripts/cross_machine_merge.py",
       "source_location": "L123"
+    },
+    {
+      "id": "skills_improve_scripts_daily_digest_call_claude",
+      "label": "call_claude()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 40,
+      "community_name": "cross_machine_merge.py",
+      "file_type": "code",
+      "norm_label": "call_claude()",
+      "source_file": "skills/improve/scripts/daily_digest.py",
+      "source_location": "L230"
     },
     {
       "id": "skills_paper_dive_scripts_logic_auditor_check_inference_validity",
@@ -17964,7 +18180,7 @@
       "file_type": "code",
       "norm_label": "app()",
       "source_file": "dashboard/src/App.jsx",
-      "source_location": "L38"
+      "source_location": "L40"
     },
     {
       "id": "dashboard_src_app_app_refresh",
@@ -17976,7 +18192,7 @@
       "file_type": "code",
       "norm_label": "refresh()",
       "source_file": "dashboard/src/App.jsx",
-      "source_location": "L45"
+      "source_location": "L47"
     },
     {
       "id": "dashboard_src_app_app_refreshhealthdot",
@@ -17988,7 +18204,7 @@
       "file_type": "code",
       "norm_label": "refreshhealthdot()",
       "source_file": "dashboard/src/App.jsx",
-      "source_location": "L74"
+      "source_location": "L76"
     },
     {
       "id": "skills_paper_dive_scripts_ingest_paper_extract_pdf",
@@ -20058,6 +20274,17 @@
       "norm_label": "fixture",
       "source_file": "",
       "source_location": ""
+    },
+    {
+      "id": "lib_build_type_measure_rationale_82",
+      "label": "metrics_registry.compare()-shaped measure() for build-type tickets. Returns two\u2026",
+      "_origin": "ast",
+      "community": 10,
+      "community_name": "test_sandbox_orchestration.py",
+      "file_type": "rationale",
+      "norm_label": "metrics_registry.compare()-shaped measure() for build-type tickets. returns two...",
+      "source_file": "lib/build_type_measure.py",
+      "source_location": "L82"
     },
     {
       "id": "lib_tests_test_sandbox_orchestration_rationale_1",
@@ -22143,7 +22370,7 @@
       "label": "build_type_measure.py",
       "_origin": "ast",
       "community": 127,
-      "community_name": "measure",
+      "community_name": "build_type_measure.py",
       "file_type": "code",
       "norm_label": "build_type_measure.py",
       "source_file": "lib/build_type_measure.py",
@@ -22154,7 +22381,7 @@
       "label": "Path",
       "_origin": "ast",
       "community": 127,
-      "community_name": "measure",
+      "community_name": "build_type_measure.py",
       "file_type": "code",
       "norm_label": "path",
       "source_file": "",
@@ -22165,7 +22392,7 @@
       "label": "One touched file -> the pytest path arg it implies. `skills/` gets two path\u2026",
       "_origin": "ast",
       "community": 127,
-      "community_name": "measure",
+      "community_name": "build_type_measure.py",
       "file_type": "rationale",
       "norm_label": "one touched file -> the pytest path arg it implies. `skills/` gets two path...",
       "source_file": "lib/build_type_measure.py",
@@ -22176,22 +22403,11 @@
       "label": "Which test command matches what this ticket's diff actually touches, scoped\u2026",
       "_origin": "ast",
       "community": 127,
-      "community_name": "measure",
+      "community_name": "build_type_measure.py",
       "file_type": "rationale",
       "norm_label": "which test command matches what this ticket's diff actually touches, scoped...",
       "source_file": "lib/build_type_measure.py",
       "source_location": "L57"
-    },
-    {
-      "id": "lib_build_type_measure_rationale_82",
-      "label": "metrics_registry.compare()-shaped measure() for build-type tickets. Returns two\u2026",
-      "_origin": "ast",
-      "community": 127,
-      "community_name": "measure",
-      "file_type": "rationale",
-      "norm_label": "metrics_registry.compare()-shaped measure() for build-type tickets. returns two...",
-      "source_file": "lib/build_type_measure.py",
-      "source_location": "L82"
     },
     {
       "id": "skills_to_tasklist_skill",
@@ -22746,7 +22962,7 @@
       "file_type": "code",
       "norm_label": "mac",
       "source_file": "dashboard/package.json",
-      "source_location": "L37"
+      "source_location": "L39"
     },
     {
       "id": "dashboard_package_mac_category",
@@ -22757,7 +22973,7 @@
       "file_type": "code",
       "norm_label": "category",
       "source_file": "dashboard/package.json",
-      "source_location": "L42"
+      "source_location": "L44"
     },
     {
       "id": "dashboard_package_mac_target",
@@ -22768,7 +22984,7 @@
       "file_type": "code",
       "norm_label": "target",
       "source_file": "dashboard/package.json",
-      "source_location": "L38"
+      "source_location": "L40"
     },
     {
       "id": "ref_dmg",
@@ -22779,7 +22995,7 @@
       "file_type": "concept",
       "norm_label": "dmg",
       "source_file": "dashboard/package.json",
-      "source_location": "L38"
+      "source_location": "L40"
     },
     {
       "id": "ref_zip",
@@ -22790,7 +23006,7 @@
       "file_type": "concept",
       "norm_label": "zip",
       "source_file": "dashboard/package.json",
-      "source_location": "L38"
+      "source_location": "L40"
     },
     {
       "id": "bench_scorecard_1_recall_marvin_knows_things_the_others_don_t",
@@ -27672,7 +27888,7 @@
       "file_type": "code",
       "norm_label": "devdependencies",
       "source_file": "dashboard/package.json",
-      "source_location": "L18"
+      "source_location": "L20"
     },
     {
       "id": "dashboard_package_devdependencies_autoprefixer",
@@ -27683,7 +27899,7 @@
       "file_type": "code",
       "norm_label": "autoprefixer",
       "source_file": "dashboard/package.json",
-      "source_location": "L20"
+      "source_location": "L22"
     },
     {
       "id": "dashboard_package_devdependencies_electron",
@@ -27694,7 +27910,7 @@
       "file_type": "code",
       "norm_label": "electron",
       "source_file": "dashboard/package.json",
-      "source_location": "L21"
+      "source_location": "L23"
     },
     {
       "id": "dashboard_package_devdependencies_electron_builder",
@@ -27705,7 +27921,7 @@
       "file_type": "code",
       "norm_label": "electron-builder",
       "source_file": "dashboard/package.json",
-      "source_location": "L22"
+      "source_location": "L24"
     },
     {
       "id": "dashboard_package_devdependencies_electron_vite",
@@ -27716,7 +27932,18 @@
       "file_type": "code",
       "norm_label": "electron-vite",
       "source_file": "dashboard/package.json",
-      "source_location": "L23"
+      "source_location": "L25"
+    },
+    {
+      "id": "dashboard_package_devdependencies_playwright_core",
+      "label": "playwright-core",
+      "_origin": "ast",
+      "community": 17,
+      "community_name": "devDependencies",
+      "file_type": "code",
+      "norm_label": "playwright-core",
+      "source_file": "dashboard/package.json",
+      "source_location": "L26"
     },
     {
       "id": "dashboard_package_devdependencies_postcss",
@@ -27727,7 +27954,7 @@
       "file_type": "code",
       "norm_label": "postcss",
       "source_file": "dashboard/package.json",
-      "source_location": "L25"
+      "source_location": "L27"
     },
     {
       "id": "dashboard_package_devdependencies_react",
@@ -27738,7 +27965,7 @@
       "file_type": "code",
       "norm_label": "react",
       "source_file": "dashboard/package.json",
-      "source_location": "L26"
+      "source_location": "L28"
     },
     {
       "id": "dashboard_package_devdependencies_react_dom",
@@ -27748,17 +27975,6 @@
       "community_name": "devDependencies",
       "file_type": "code",
       "norm_label": "react-dom",
-      "source_file": "dashboard/package.json",
-      "source_location": "L27"
-    },
-    {
-      "id": "dashboard_package_devdependencies_vitest",
-      "label": "vitest",
-      "_origin": "ast",
-      "community": 17,
-      "community_name": "devDependencies",
-      "file_type": "code",
-      "norm_label": "vitest",
       "source_file": "dashboard/package.json",
       "source_location": "L29"
     },
@@ -27771,7 +27987,7 @@
       "file_type": "concept",
       "norm_label": "autoprefixer",
       "source_file": "dashboard/package.json",
-      "source_location": "L20"
+      "source_location": "L22"
     },
     {
       "id": "electron",
@@ -27782,7 +27998,7 @@
       "file_type": "concept",
       "norm_label": "electron",
       "source_file": "dashboard/package.json",
-      "source_location": "L21"
+      "source_location": "L23"
     },
     {
       "id": "electron_builder",
@@ -27793,7 +28009,7 @@
       "file_type": "concept",
       "norm_label": "electron-builder",
       "source_file": "dashboard/package.json",
-      "source_location": "L22"
+      "source_location": "L24"
     },
     {
       "id": "electron_vite",
@@ -27804,7 +28020,18 @@
       "file_type": "concept",
       "norm_label": "electron-vite",
       "source_file": "dashboard/package.json",
-      "source_location": "L23"
+      "source_location": "L25"
+    },
+    {
+      "id": "playwright_core",
+      "label": "playwright-core",
+      "_origin": "ast",
+      "community": 17,
+      "community_name": "devDependencies",
+      "file_type": "concept",
+      "norm_label": "playwright-core",
+      "source_file": "dashboard/package.json",
+      "source_location": "L26"
     },
     {
       "id": "postcss",
@@ -27815,7 +28042,7 @@
       "file_type": "concept",
       "norm_label": "postcss",
       "source_file": "dashboard/package.json",
-      "source_location": "L25"
+      "source_location": "L27"
     },
     {
       "id": "react",
@@ -27826,7 +28053,7 @@
       "file_type": "concept",
       "norm_label": "react",
       "source_file": "dashboard/package.json",
-      "source_location": "L26"
+      "source_location": "L28"
     },
     {
       "id": "react_dom",
@@ -27836,17 +28063,6 @@
       "community_name": "devDependencies",
       "file_type": "concept",
       "norm_label": "react-dom",
-      "source_file": "dashboard/package.json",
-      "source_location": "L27"
-    },
-    {
-      "id": "vitest",
-      "label": "vitest",
-      "_origin": "ast",
-      "community": 17,
-      "community_name": "devDependencies",
-      "file_type": "concept",
-      "norm_label": "vitest",
       "source_file": "dashboard/package.json",
       "source_location": "L29"
     },
@@ -32236,10 +32452,10 @@
       "file_type": "code",
       "norm_label": "tailwindcss",
       "source_file": "dashboard/package.json",
-      "source_location": "L28"
+      "source_location": "L30"
     },
     {
-      "id": "dashboard_package_json_tailwindcss",
+      "id": "tailwindcss",
       "label": "tailwindcss",
       "_origin": "ast",
       "community": 249,
@@ -32247,7 +32463,7 @@
       "file_type": "concept",
       "norm_label": "tailwindcss",
       "source_file": "dashboard/package.json",
-      "source_location": "L28"
+      "source_location": "L30"
     },
     {
       "id": "dashboard_package",
@@ -32270,28 +32486,6 @@
       "norm_label": "author",
       "source_file": "dashboard/package.json",
       "source_location": "L6"
-    },
-    {
-      "id": "dashboard_package_dependencies",
-      "label": "dependencies",
-      "_origin": "ast",
-      "community": 25,
-      "community_name": "dashboard/package.json",
-      "file_type": "code",
-      "norm_label": "dependencies",
-      "source_file": "dashboard/package.json",
-      "source_location": "L15"
-    },
-    {
-      "id": "dashboard_package_dependencies_recharts",
-      "label": "recharts",
-      "_origin": "ast",
-      "community": 25,
-      "community_name": "dashboard/package.json",
-      "file_type": "code",
-      "norm_label": "recharts",
-      "source_file": "dashboard/package.json",
-      "source_location": "L16"
     },
     {
       "id": "dashboard_package_description",
@@ -32349,17 +32543,6 @@
       "source_location": "L3"
     },
     {
-      "id": "recharts",
-      "label": "recharts",
-      "_origin": "ast",
-      "community": 25,
-      "community_name": "dashboard/package.json",
-      "file_type": "concept",
-      "norm_label": "recharts",
-      "source_file": "dashboard/package.json",
-      "source_location": "L16"
-    },
-    {
       "id": "dashboard_src_components_mrdetail",
       "label": "MrDetail.jsx",
       "_origin": "ast",
@@ -32412,7 +32595,7 @@
       "file_type": "code",
       "norm_label": "@vitejs/plugin-react",
       "source_file": "dashboard/package.json",
-      "source_location": "L19"
+      "source_location": "L21"
     },
     {
       "id": "vitejs_plugin_react",
@@ -32423,7 +32606,7 @@
       "file_type": "concept",
       "norm_label": "@vitejs/plugin-react",
       "source_file": "dashboard/package.json",
-      "source_location": "L19"
+      "source_location": "L21"
     },
     {
       "id": "skills_safety_monitor_scripts_verify",
@@ -32481,6 +32664,17 @@
       "source_location": "L37"
     },
     {
+      "id": "lib_sandbox_orchestration",
+      "label": "sandbox_orchestration.py",
+      "_origin": "ast",
+      "community": 254,
+      "community_name": "ticket_claim.py",
+      "file_type": "code",
+      "norm_label": "sandbox_orchestration.py",
+      "source_file": "lib/sandbox_orchestration.py",
+      "source_location": "L1"
+    },
+    {
       "id": "lib_ticket_claim",
       "label": "ticket_claim.py",
       "_origin": "ast",
@@ -32490,6 +32684,39 @@
       "norm_label": "ticket_claim.py",
       "source_file": "lib/ticket_claim.py",
       "source_location": "L1"
+    },
+    {
+      "id": "lib_sandbox_orchestration_rationale_124",
+      "label": "Branches explicitly from `origin/main` (fetched fresh first), not repo_path's\u2026",
+      "_origin": "ast",
+      "community": 254,
+      "community_name": "ticket_claim.py",
+      "file_type": "rationale",
+      "norm_label": "branches explicitly from `origin/main` (fetched fresh first), not repo_path's...",
+      "source_file": "lib/sandbox_orchestration.py",
+      "source_location": "L124"
+    },
+    {
+      "id": "lib_sandbox_orchestration_rationale_170",
+      "label": "Drive `ticket_ref` through an isolated worktree and a tune-and-compare loop.\u2026",
+      "_origin": "ast",
+      "community": 254,
+      "community_name": "ticket_claim.py",
+      "file_type": "rationale",
+      "norm_label": "drive `ticket_ref` through an isolated worktree and a tune-and-compare loop....",
+      "source_file": "lib/sandbox_orchestration.py",
+      "source_location": "L170"
+    },
+    {
+      "id": "lib_sandbox_orchestration_rationale_67",
+      "label": "Real default: a flagship-tier planning call, then a Haiku-tier execution call\u2026",
+      "_origin": "ast",
+      "community": 254,
+      "community_name": "ticket_claim.py",
+      "file_type": "rationale",
+      "norm_label": "real default: a flagship-tier planning call, then a haiku-tier execution call...",
+      "source_file": "lib/sandbox_orchestration.py",
+      "source_location": "L67"
     },
     {
       "id": "lib_ticket_claim_rationale_104",
@@ -32503,17 +32730,6 @@
       "source_location": "L104"
     },
     {
-      "id": "lib_ticket_claim_rationale_128",
-      "label": "Release a claim this machine holds, so another machine (or a later cycle) can\u2026",
-      "_origin": "ast",
-      "community": 254,
-      "community_name": "ticket_claim.py",
-      "file_type": "rationale",
-      "norm_label": "release a claim this machine holds, so another machine (or a later cycle) can...",
-      "source_file": "lib/ticket_claim.py",
-      "source_location": "L128"
-    },
-    {
       "id": "lib_ticket_claim_rationale_140",
       "label": "Cron entry point: claim a ticket if capacity allows, then hand it to sandbox\u2026",
       "_origin": "ast",
@@ -32523,17 +32739,6 @@
       "norm_label": "cron entry point: claim a ticket if capacity allows, then hand it to sandbox...",
       "source_file": "lib/ticket_claim.py",
       "source_location": "L140"
-    },
-    {
-      "id": "lib_ticket_coordination_rationale_69",
-      "label": "Check `issue_number` for a same-instant collision (more than one claimed:*\u2026",
-      "_origin": "ast",
-      "community": 254,
-      "community_name": "ticket_claim.py",
-      "file_type": "rationale",
-      "norm_label": "check `issue_number` for a same-instant collision (more than one claimed:*...",
-      "source_file": "lib/ticket_coordination.py",
-      "source_location": "L69"
     },
     {
       "id": "lib_claude_bin",
@@ -33225,26 +33430,59 @@
       "source_location": "L1"
     },
     {
-      "id": "dashboard_package_devdependencies_playwright_core",
-      "label": "playwright-core",
+      "id": "dashboard_electron_main_mr_review",
+      "label": "mr_review.js",
       "_origin": "ast",
       "community": 267,
-      "community_name": "playwright-core",
+      "community_name": "mr_review.js",
       "file_type": "code",
-      "norm_label": "playwright-core",
-      "source_file": "dashboard/package.json",
-      "source_location": "L24"
+      "norm_label": "mr_review.js",
+      "source_file": "dashboard/electron/main/mr_review.js",
+      "source_location": "L1"
     },
     {
-      "id": "playwright_core",
-      "label": "playwright-core",
+      "id": "dashboard_electron_main_mr_review_evidence_headers",
+      "label": "EVIDENCE_HEADERS",
       "_origin": "ast",
       "community": 267,
-      "community_name": "playwright-core",
+      "community_name": "mr_review.js",
+      "file_type": "code",
+      "norm_label": "evidence_headers",
+      "source_file": "dashboard/electron/main/mr_review.js",
+      "source_location": "L15"
+    },
+    {
+      "id": "dashboard_test_mr_review_test",
+      "label": "mr_review.test.js",
+      "_origin": "ast",
+      "community": 267,
+      "community_name": "mr_review.js",
+      "file_type": "code",
+      "norm_label": "mr_review.test.js",
+      "source_file": "dashboard/test/mr_review.test.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "dashboard_electron_main_mr_review_js_docref_adr_0024",
+      "label": "ADR-0024",
+      "_origin": "ast",
+      "community": 267,
+      "community_name": "mr_review.js",
       "file_type": "concept",
-      "norm_label": "playwright-core",
-      "source_file": "dashboard/package.json",
-      "source_location": "L24"
+      "norm_label": "adr-0024",
+      "source_file": "dashboard/electron/main/mr_review.js",
+      "source_location": "L2"
+    },
+    {
+      "id": "dashboard_electron_main_mr_review_js_docref_adr_0025",
+      "label": "ADR-0025",
+      "_origin": "ast",
+      "community": 267,
+      "community_name": "mr_review.js",
+      "file_type": "concept",
+      "norm_label": "adr-0025",
+      "source_file": "dashboard/electron/main/mr_review.js",
+      "source_location": "L13"
     },
     {
       "id": "skills_safety_monitor_scripts_calibrate",
@@ -33396,105 +33634,6 @@
       "source_location": "L3"
     },
     {
-      "id": "dashboard_electron_main_device_identity",
-      "label": "device_identity.js",
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "device_identity.js",
-      "source_file": "dashboard/electron/main/device_identity.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "dashboard_electron_main_device_identity_network_path",
-      "label": "NETWORK_PATH",
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "network_path",
-      "source_file": "dashboard/electron/main/device_identity.js",
-      "source_location": "L10"
-    },
-    {
-      "id": "dashboard_electron_main_dispatch_status",
-      "label": "dispatch_status.js",
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "dispatch_status.js",
-      "source_file": "dashboard/electron/main/dispatch_status.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "dashboard_electron_main_dispatch_status_dispatch_state_path",
-      "label": "DISPATCH_STATE_PATH",
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "dispatch_state_path",
-      "source_file": "dashboard/electron/main/dispatch_status.js",
-      "source_location": "L14"
-    },
-    {
-      "id": "dashboard_electron_main_health",
-      "label": "health.js",
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "health.js",
-      "source_file": "dashboard/electron/main/health.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "dashboard_electron_main_health_empty_status",
-      "label": "EMPTY_STATUS",
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "empty_status",
-      "source_file": "dashboard/electron/main/health.js",
-      "source_location": "L24"
-    },
-    {
-      "id": "dashboard_electron_main_health_health_checks_script",
-      "label": "HEALTH_CHECKS_SCRIPT",
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "health_checks_script",
-      "source_file": "dashboard/electron/main/health.js",
-      "source_location": "L10"
-    },
-    {
-      "id": "dashboard_electron_main_health_health_status_path",
-      "label": "HEALTH_STATUS_PATH",
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "health_status_path",
-      "source_file": "dashboard/electron/main/health.js",
-      "source_location": "L22"
-    },
-    {
-      "id": "dashboard_electron_main_health_venv_python",
-      "label": "VENV_PYTHON",
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "venv_python",
-      "source_file": "dashboard/electron/main/health.js",
-      "source_location": "L9"
-    },
-    {
       "id": "dashboard_electron_main_index",
       "label": "main/index.js",
       "_origin": "ast",
@@ -33514,7 +33653,7 @@
       "file_type": "code",
       "norm_label": "execfileasync",
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L15"
+      "source_location": "L16"
     },
     {
       "id": "dashboard_electron_main_index_host_defaultwebhookhost",
@@ -33525,51 +33664,7 @@
       "file_type": "code",
       "norm_label": "{ host: defaultwebhookhost }",
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L25"
-    },
-    {
-      "id": "dashboard_electron_main_metrics",
-      "label": "metrics.js",
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "metrics.js",
-      "source_file": "dashboard/electron/main/metrics.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "dashboard_electron_main_metrics_default_metrics_dir",
-      "label": "DEFAULT_METRICS_DIR",
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "default_metrics_dir",
-      "source_file": "dashboard/electron/main/metrics.js",
-      "source_location": "L11"
-    },
-    {
-      "id": "dashboard_electron_main_mr_review",
-      "label": "mr_review.js",
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "mr_review.js",
-      "source_file": "dashboard/electron/main/mr_review.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "dashboard_electron_main_mr_review_evidence_headers",
-      "label": "EVIDENCE_HEADERS",
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "evidence_headers",
-      "source_file": "dashboard/electron/main/mr_review.js",
-      "source_location": "L15"
+      "source_location": "L26"
     },
     {
       "id": "dashboard_electron_main_mr_seen",
@@ -33591,72 +33686,6 @@
       "file_type": "code",
       "norm_label": "path.js",
       "source_file": "dashboard/electron/main/path.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "dashboard_electron_main_refresh_server",
-      "label": "refresh_server.js",
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "refresh_server.js",
-      "source_file": "dashboard/electron/main/refresh_server.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "dashboard_test_device_identity_test",
-      "label": "device_identity.test.js",
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "device_identity.test.js",
-      "source_file": "dashboard/test/device_identity.test.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "dashboard_test_device_identity_test_registryfixture",
-      "label": "registryFixture",
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "registryfixture",
-      "source_file": "dashboard/test/device_identity.test.js",
-      "source_location": "L13"
-    },
-    {
-      "id": "dashboard_test_dispatch_status_test",
-      "label": "dispatch_status.test.js",
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "dispatch_status.test.js",
-      "source_file": "dashboard/test/dispatch_status.test.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "dashboard_test_metrics_test",
-      "label": "metrics.test.js",
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "metrics.test.js",
-      "source_file": "dashboard/test/metrics.test.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "dashboard_test_mr_review_test",
-      "label": "mr_review.test.js",
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "mr_review.test.js",
-      "source_file": "dashboard/test/mr_review.test.js",
       "source_location": "L1"
     },
     {
@@ -33682,61 +33711,6 @@
       "source_location": "L1"
     },
     {
-      "id": "dashboard_test_refresh_server_test",
-      "label": "refresh_server.test.js",
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "code",
-      "norm_label": "refresh_server.test.js",
-      "source_file": "dashboard/test/refresh_server.test.js",
-      "source_location": "L1"
-    },
-    {
-      "id": "dashboard_electron_main_device_identity_js_docref_adr_0032",
-      "label": "ADR-0032",
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "concept",
-      "norm_label": "adr-0032",
-      "source_file": "dashboard/electron/main/device_identity.js",
-      "source_location": "L44"
-    },
-    {
-      "id": "dashboard_electron_main_health_js_docref_adr_0033",
-      "label": "ADR-0033",
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "concept",
-      "norm_label": "adr-0033",
-      "source_file": "dashboard/electron/main/health.js",
-      "source_location": "L16"
-    },
-    {
-      "id": "dashboard_electron_main_mr_review_js_docref_adr_0024",
-      "label": "ADR-0024",
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "concept",
-      "norm_label": "adr-0024",
-      "source_file": "dashboard/electron/main/mr_review.js",
-      "source_location": "L2"
-    },
-    {
-      "id": "dashboard_electron_main_mr_review_js_docref_adr_0025",
-      "label": "ADR-0025",
-      "_origin": "ast",
-      "community": 27,
-      "community_name": "main/index.js",
-      "file_type": "concept",
-      "norm_label": "adr-0025",
-      "source_file": "dashboard/electron/main/mr_review.js",
-      "source_location": "L13"
-    },
-    {
       "id": "docref_adr_0024",
       "label": "ADR-0024",
       "_origin": "ast",
@@ -33745,7 +33719,7 @@
       "file_type": "concept",
       "norm_label": "adr-0024",
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L147"
+      "source_location": "L155"
     },
     {
       "id": "docref_adr_0025",
@@ -33756,7 +33730,7 @@
       "file_type": "concept",
       "norm_label": "adr-0025",
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L27"
+      "source_location": "L28"
     },
     {
       "id": "docref_adr_0032",
@@ -33767,7 +33741,7 @@
       "file_type": "concept",
       "norm_label": "adr-0032",
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L19"
+      "source_location": "L20"
     },
     {
       "id": "dashboard_webhook_server_readme",
@@ -34347,6 +34321,28 @@
       "norm_label": "tests for ticket_coordination.py. run via: ~/.agents/venv/bin/python -m pytest...",
       "source_file": "lib/tests/test_ticket_coordination.py",
       "source_location": "L1"
+    },
+    {
+      "id": "lib_ticket_claim_rationale_128",
+      "label": "Release a claim this machine holds, so another machine (or a later cycle) can\u2026",
+      "_origin": "ast",
+      "community": 285,
+      "community_name": "test_ticket_coordination.py",
+      "file_type": "rationale",
+      "norm_label": "release a claim this machine holds, so another machine (or a later cycle) can...",
+      "source_file": "lib/ticket_claim.py",
+      "source_location": "L128"
+    },
+    {
+      "id": "lib_ticket_coordination_rationale_69",
+      "label": "Check `issue_number` for a same-instant collision (more than one claimed:*\u2026",
+      "_origin": "ast",
+      "community": 285,
+      "community_name": "test_ticket_coordination.py",
+      "file_type": "rationale",
+      "norm_label": "check `issue_number` for a same-instant collision (more than one claimed:*...",
+      "source_file": "lib/ticket_coordination.py",
+      "source_location": "L69"
     },
     {
       "id": "lib_ticket_coordination_rationale_92",
@@ -62622,6 +62618,17 @@
       "source_location": "L1"
     },
     {
+      "id": "path",
+      "label": "Path",
+      "_origin": "ast",
+      "community": 353,
+      "community_name": "test_health_checks.py",
+      "file_type": "code",
+      "norm_label": "path",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
       "id": "lib_tests_test_health_checks_rationale_1",
       "label": "Tests for health_checks.py (ADR 0033). Run via: ~/.agents/venv/bin/python -m\u2026",
       "_origin": "ast",
@@ -62754,59 +62761,48 @@
       "source_location": "L91"
     },
     {
-      "id": "lib_sandbox_orchestration",
-      "label": "sandbox_orchestration.py",
+      "id": "dashboard_electron_main_docs",
+      "label": "docs.js",
       "_origin": "ast",
       "community": 356,
-      "community_name": "sandbox_orchestration.py",
+      "community_name": "docs.js",
       "file_type": "code",
-      "norm_label": "sandbox_orchestration.py",
-      "source_file": "lib/sandbox_orchestration.py",
+      "norm_label": "docs.js",
+      "source_file": "dashboard/electron/main/docs.js",
       "source_location": "L1"
     },
     {
-      "id": "path",
-      "label": "Path",
+      "id": "dashboard_electron_main_docs_cache_path",
+      "label": "CACHE_PATH",
       "_origin": "ast",
       "community": 356,
-      "community_name": "sandbox_orchestration.py",
+      "community_name": "docs.js",
       "file_type": "code",
-      "norm_label": "path",
-      "source_file": "",
-      "source_location": ""
+      "norm_label": "cache_path",
+      "source_file": "dashboard/electron/main/docs.js",
+      "source_location": "L15"
     },
     {
-      "id": "lib_sandbox_orchestration_rationale_124",
-      "label": "Branches explicitly from `origin/main` (fetched fresh first), not repo_path's\u2026",
+      "id": "dashboard_test_docs_test",
+      "label": "docs.test.js",
       "_origin": "ast",
       "community": 356,
-      "community_name": "sandbox_orchestration.py",
-      "file_type": "rationale",
-      "norm_label": "branches explicitly from `origin/main` (fetched fresh first), not repo_path's...",
-      "source_file": "lib/sandbox_orchestration.py",
-      "source_location": "L124"
+      "community_name": "docs.js",
+      "file_type": "code",
+      "norm_label": "docs.test.js",
+      "source_file": "dashboard/test/docs.test.js",
+      "source_location": "L1"
     },
     {
-      "id": "lib_sandbox_orchestration_rationale_170",
-      "label": "Drive `ticket_ref` through an isolated worktree and a tune-and-compare loop.\u2026",
+      "id": "docref_adr_0033",
+      "label": "ADR-0033",
       "_origin": "ast",
       "community": 356,
-      "community_name": "sandbox_orchestration.py",
-      "file_type": "rationale",
-      "norm_label": "drive `ticket_ref` through an isolated worktree and a tune-and-compare loop....",
-      "source_file": "lib/sandbox_orchestration.py",
-      "source_location": "L170"
-    },
-    {
-      "id": "lib_sandbox_orchestration_rationale_67",
-      "label": "Real default: a flagship-tier planning call, then a Haiku-tier execution call\u2026",
-      "_origin": "ast",
-      "community": 356,
-      "community_name": "sandbox_orchestration.py",
-      "file_type": "rationale",
-      "norm_label": "real default: a flagship-tier planning call, then a haiku-tier execution call...",
-      "source_file": "lib/sandbox_orchestration.py",
-      "source_location": "L67"
+      "community_name": "docs.js",
+      "file_type": "concept",
+      "norm_label": "adr-0033",
+      "source_file": "dashboard/electron/main/docs.js",
+      "source_location": "L31"
     },
     {
       "id": "docs_adr_0033_health_monitoring_absorbs_cron_health_auto_discovered_coverage",
@@ -62927,6 +62923,61 @@
       "norm_label": "2026-10-01t15:46:46.149932+00:00 \u2014 health-monitor",
       "source_file": "bench/metrics/health-monitor.md",
       "source_location": "L12"
+    },
+    {
+      "id": "dashboard_electron_main_device_identity",
+      "label": "device_identity.js",
+      "_origin": "ast",
+      "community": 359,
+      "community_name": "device_identity.js",
+      "file_type": "code",
+      "norm_label": "device_identity.js",
+      "source_file": "dashboard/electron/main/device_identity.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "dashboard_electron_main_device_identity_network_path",
+      "label": "NETWORK_PATH",
+      "_origin": "ast",
+      "community": 359,
+      "community_name": "device_identity.js",
+      "file_type": "code",
+      "norm_label": "network_path",
+      "source_file": "dashboard/electron/main/device_identity.js",
+      "source_location": "L10"
+    },
+    {
+      "id": "dashboard_test_device_identity_test",
+      "label": "device_identity.test.js",
+      "_origin": "ast",
+      "community": 359,
+      "community_name": "device_identity.js",
+      "file_type": "code",
+      "norm_label": "device_identity.test.js",
+      "source_file": "dashboard/test/device_identity.test.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "dashboard_test_device_identity_test_registryfixture",
+      "label": "registryFixture",
+      "_origin": "ast",
+      "community": 359,
+      "community_name": "device_identity.js",
+      "file_type": "code",
+      "norm_label": "registryfixture",
+      "source_file": "dashboard/test/device_identity.test.js",
+      "source_location": "L13"
+    },
+    {
+      "id": "dashboard_electron_main_device_identity_js_docref_adr_0032",
+      "label": "ADR-0032",
+      "_origin": "ast",
+      "community": 359,
+      "community_name": "device_identity.js",
+      "file_type": "concept",
+      "norm_label": "adr-0032",
+      "source_file": "dashboard/electron/main/device_identity.js",
+      "source_location": "L44"
     },
     {
       "id": "claude_skills_graphify_skill",
@@ -63233,6 +63284,281 @@
       "source_location": "L49"
     },
     {
+      "id": "dashboard_src_components_docsexplorer",
+      "label": "DocsExplorer.jsx",
+      "_origin": "ast",
+      "community": 360,
+      "community_name": "DocsExplorer.jsx",
+      "file_type": "code",
+      "norm_label": "docsexplorer.jsx",
+      "source_file": "dashboard/src/components/DocsExplorer.jsx",
+      "source_location": "L1"
+    },
+    {
+      "id": "dashboard_src_components_docsexplorer_markdowncomponents",
+      "label": "markdownComponents",
+      "_origin": "ast",
+      "community": 360,
+      "community_name": "DocsExplorer.jsx",
+      "file_type": "code",
+      "norm_label": "markdowncomponents",
+      "source_file": "dashboard/src/components/DocsExplorer.jsx",
+      "source_location": "L84"
+    },
+    {
+      "id": "dashboard_electron_main_health",
+      "label": "health.js",
+      "_origin": "ast",
+      "community": 361,
+      "community_name": "health.js",
+      "file_type": "code",
+      "norm_label": "health.js",
+      "source_file": "dashboard/electron/main/health.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "dashboard_electron_main_health_empty_status",
+      "label": "EMPTY_STATUS",
+      "_origin": "ast",
+      "community": 361,
+      "community_name": "health.js",
+      "file_type": "code",
+      "norm_label": "empty_status",
+      "source_file": "dashboard/electron/main/health.js",
+      "source_location": "L24"
+    },
+    {
+      "id": "dashboard_electron_main_health_health_checks_script",
+      "label": "HEALTH_CHECKS_SCRIPT",
+      "_origin": "ast",
+      "community": 361,
+      "community_name": "health.js",
+      "file_type": "code",
+      "norm_label": "health_checks_script",
+      "source_file": "dashboard/electron/main/health.js",
+      "source_location": "L10"
+    },
+    {
+      "id": "dashboard_electron_main_health_health_status_path",
+      "label": "HEALTH_STATUS_PATH",
+      "_origin": "ast",
+      "community": 361,
+      "community_name": "health.js",
+      "file_type": "code",
+      "norm_label": "health_status_path",
+      "source_file": "dashboard/electron/main/health.js",
+      "source_location": "L22"
+    },
+    {
+      "id": "dashboard_electron_main_health_venv_python",
+      "label": "VENV_PYTHON",
+      "_origin": "ast",
+      "community": 361,
+      "community_name": "health.js",
+      "file_type": "code",
+      "norm_label": "venv_python",
+      "source_file": "dashboard/electron/main/health.js",
+      "source_location": "L9"
+    },
+    {
+      "id": "dashboard_electron_main_health_js_docref_adr_0033",
+      "label": "ADR-0033",
+      "_origin": "ast",
+      "community": 361,
+      "community_name": "health.js",
+      "file_type": "concept",
+      "norm_label": "adr-0033",
+      "source_file": "dashboard/electron/main/health.js",
+      "source_location": "L16"
+    },
+    {
+      "id": "dashboard_electron_main_metrics",
+      "label": "metrics.js",
+      "_origin": "ast",
+      "community": 362,
+      "community_name": "metrics.js",
+      "file_type": "code",
+      "norm_label": "metrics.js",
+      "source_file": "dashboard/electron/main/metrics.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "dashboard_electron_main_metrics_default_metrics_dir",
+      "label": "DEFAULT_METRICS_DIR",
+      "_origin": "ast",
+      "community": 362,
+      "community_name": "metrics.js",
+      "file_type": "code",
+      "norm_label": "default_metrics_dir",
+      "source_file": "dashboard/electron/main/metrics.js",
+      "source_location": "L11"
+    },
+    {
+      "id": "dashboard_test_metrics_test",
+      "label": "metrics.test.js",
+      "_origin": "ast",
+      "community": 362,
+      "community_name": "metrics.js",
+      "file_type": "code",
+      "norm_label": "metrics.test.js",
+      "source_file": "dashboard/test/metrics.test.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "dashboard_package_dependencies",
+      "label": "dependencies",
+      "_origin": "ast",
+      "community": 363,
+      "community_name": "dependencies",
+      "file_type": "code",
+      "norm_label": "dependencies",
+      "source_file": "dashboard/package.json",
+      "source_location": "L15"
+    },
+    {
+      "id": "dashboard_package_dependencies_react_markdown",
+      "label": "react-markdown",
+      "_origin": "ast",
+      "community": 363,
+      "community_name": "dependencies",
+      "file_type": "code",
+      "norm_label": "react-markdown",
+      "source_file": "dashboard/package.json",
+      "source_location": "L16"
+    },
+    {
+      "id": "dashboard_package_dependencies_recharts",
+      "label": "recharts",
+      "_origin": "ast",
+      "community": 363,
+      "community_name": "dependencies",
+      "file_type": "code",
+      "norm_label": "recharts",
+      "source_file": "dashboard/package.json",
+      "source_location": "L17"
+    },
+    {
+      "id": "dashboard_package_dependencies_remark_gfm",
+      "label": "remark-gfm",
+      "_origin": "ast",
+      "community": 363,
+      "community_name": "dependencies",
+      "file_type": "code",
+      "norm_label": "remark-gfm",
+      "source_file": "dashboard/package.json",
+      "source_location": "L18"
+    },
+    {
+      "id": "react_markdown",
+      "label": "react-markdown",
+      "_origin": "ast",
+      "community": 363,
+      "community_name": "dependencies",
+      "file_type": "concept",
+      "norm_label": "react-markdown",
+      "source_file": "dashboard/package.json",
+      "source_location": "L16"
+    },
+    {
+      "id": "recharts",
+      "label": "recharts",
+      "_origin": "ast",
+      "community": 363,
+      "community_name": "dependencies",
+      "file_type": "concept",
+      "norm_label": "recharts",
+      "source_file": "dashboard/package.json",
+      "source_location": "L17"
+    },
+    {
+      "id": "remark_gfm",
+      "label": "remark-gfm",
+      "_origin": "ast",
+      "community": 363,
+      "community_name": "dependencies",
+      "file_type": "concept",
+      "norm_label": "remark-gfm",
+      "source_file": "dashboard/package.json",
+      "source_location": "L18"
+    },
+    {
+      "id": "dashboard_electron_main_dispatch_status",
+      "label": "dispatch_status.js",
+      "_origin": "ast",
+      "community": 364,
+      "community_name": "dispatch_status.js",
+      "file_type": "code",
+      "norm_label": "dispatch_status.js",
+      "source_file": "dashboard/electron/main/dispatch_status.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "dashboard_electron_main_dispatch_status_dispatch_state_path",
+      "label": "DISPATCH_STATE_PATH",
+      "_origin": "ast",
+      "community": 364,
+      "community_name": "dispatch_status.js",
+      "file_type": "code",
+      "norm_label": "dispatch_state_path",
+      "source_file": "dashboard/electron/main/dispatch_status.js",
+      "source_location": "L14"
+    },
+    {
+      "id": "dashboard_test_dispatch_status_test",
+      "label": "dispatch_status.test.js",
+      "_origin": "ast",
+      "community": 364,
+      "community_name": "dispatch_status.js",
+      "file_type": "code",
+      "norm_label": "dispatch_status.test.js",
+      "source_file": "dashboard/test/dispatch_status.test.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "dashboard_electron_main_refresh_server",
+      "label": "refresh_server.js",
+      "_origin": "ast",
+      "community": 365,
+      "community_name": "refresh_server.js",
+      "file_type": "code",
+      "norm_label": "refresh_server.js",
+      "source_file": "dashboard/electron/main/refresh_server.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "dashboard_test_refresh_server_test",
+      "label": "refresh_server.test.js",
+      "_origin": "ast",
+      "community": 365,
+      "community_name": "refresh_server.js",
+      "file_type": "code",
+      "norm_label": "refresh_server.test.js",
+      "source_file": "dashboard/test/refresh_server.test.js",
+      "source_location": "L1"
+    },
+    {
+      "id": "dashboard_package_devdependencies_vitest",
+      "label": "vitest",
+      "_origin": "ast",
+      "community": 366,
+      "community_name": "vitest",
+      "file_type": "code",
+      "norm_label": "vitest",
+      "source_file": "dashboard/package.json",
+      "source_location": "L31"
+    },
+    {
+      "id": "vitest",
+      "label": "vitest",
+      "_origin": "ast",
+      "community": 366,
+      "community_name": "vitest",
+      "file_type": "concept",
+      "norm_label": "vitest",
+      "source_file": "dashboard/package.json",
+      "source_location": "L31"
+    },
+    {
       "id": "lib_cron_health",
       "label": "cron_health.py",
       "_origin": "ast",
@@ -63373,7 +63699,7 @@
       "file_type": "code",
       "norm_label": "build",
       "source_file": "dashboard/package.json",
-      "source_location": "L31"
+      "source_location": "L33"
     },
     {
       "id": "dashboard_package_build_appid",
@@ -63384,7 +63710,7 @@
       "file_type": "code",
       "norm_label": "appid",
       "source_file": "dashboard/package.json",
-      "source_location": "L32"
+      "source_location": "L34"
     },
     {
       "id": "dashboard_package_build_directories",
@@ -63395,7 +63721,7 @@
       "file_type": "code",
       "norm_label": "directories",
       "source_file": "dashboard/package.json",
-      "source_location": "L34"
+      "source_location": "L36"
     },
     {
       "id": "dashboard_package_build_files",
@@ -63406,7 +63732,7 @@
       "file_type": "code",
       "norm_label": "files",
       "source_file": "dashboard/package.json",
-      "source_location": "L44"
+      "source_location": "L46"
     },
     {
       "id": "dashboard_package_build_productname",
@@ -63417,7 +63743,7 @@
       "file_type": "code",
       "norm_label": "productname",
       "source_file": "dashboard/package.json",
-      "source_location": "L33"
+      "source_location": "L35"
     },
     {
       "id": "dashboard_package_directories_output",
@@ -63428,7 +63754,7 @@
       "file_type": "code",
       "norm_label": "output",
       "source_file": "dashboard/package.json",
-      "source_location": "L35"
+      "source_location": "L37"
     },
     {
       "id": "ref_out",
@@ -63439,7 +63765,7 @@
       "file_type": "concept",
       "norm_label": "out/**/*",
       "source_file": "dashboard/package.json",
-      "source_location": "L44"
+      "source_location": "L46"
     },
     {
       "id": "skills_paper_dive_scripts_competing_ideas",
@@ -64845,7 +65171,7 @@
       "file_type": "code",
       "norm_label": "dot_color",
       "source_file": "dashboard/src/App.jsx",
-      "source_location": "L13"
+      "source_location": "L15"
     },
     {
       "id": "dashboard_src_app_health_dot_color",
@@ -64856,7 +65182,7 @@
       "file_type": "code",
       "norm_label": "health_dot_color",
       "source_file": "dashboard/src/App.jsx",
-      "source_location": "L32"
+      "source_location": "L34"
     },
     {
       "id": "dashboard_src_app_status_label",
@@ -64867,7 +65193,7 @@
       "file_type": "code",
       "norm_label": "status_label",
       "source_file": "dashboard/src/App.jsx",
-      "source_location": "L19"
+      "source_location": "L21"
     },
     {
       "id": "dashboard_src_app_tabs",
@@ -64878,7 +65204,7 @@
       "file_type": "code",
       "norm_label": "tabs",
       "source_file": "dashboard/src/App.jsx",
-      "source_location": "L7"
+      "source_location": "L8"
     },
     {
       "id": "dashboard_src_main",
@@ -73068,6 +73394,78 @@
       "weight": 1.0
     },
     {
+      "source": "dashboard_electron_main_docs_discoverdocfirstrepos",
+      "target": "dashboard_electron_main_docs_run",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "dashboard/electron/main/docs.js",
+      "source_location": "L34",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_electron_main_docs_discoverdocfirstrepos",
+      "target": "dashboard_electron_main_docs_fileexists",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "dashboard/electron/main/docs.js",
+      "source_location": "L40",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_electron_main_docs_fetchfilecontent",
+      "target": "dashboard_electron_main_docs_run",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "dashboard/electron/main/docs.js",
+      "source_location": "L79",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_electron_main_docs_fileexists",
+      "target": "dashboard_electron_main_docs_run",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "dashboard/electron/main/docs.js",
+      "source_location": "L23",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_electron_main_docs_listrepodoctree",
+      "target": "dashboard_electron_main_docs_fileexists",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "dashboard/electron/main/docs.js",
+      "source_location": "L61",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_electron_main_docs_listrepodoctree",
+      "target": "dashboard_electron_main_docs_run",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "dashboard/electron/main/docs.js",
+      "source_location": "L65",
+      "weight": 1.0
+    },
+    {
       "source": "dashboard_electron_main_index_ghissueview",
       "target": "dashboard_electron_main_index_execfileasync",
       "relation": "calls",
@@ -73076,7 +73474,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L49",
+      "source_location": "L50",
       "weight": 1.0
     },
     {
@@ -73088,7 +73486,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L35",
+      "source_location": "L36",
       "weight": 1.0
     },
     {
@@ -73100,7 +73498,55 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L108",
+      "source_location": "L109",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_electron_main_index_registerdocshandlers",
+      "target": "dashboard_electron_main_docs_readcachedrepos",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "dashboard/electron/main/index.js",
+      "source_location": "L121",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_electron_main_index_registerdocshandlers",
+      "target": "dashboard_electron_main_docs_discoverdocfirstrepos",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "dashboard/electron/main/index.js",
+      "source_location": "L122",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_electron_main_index_registerdocshandlers",
+      "target": "dashboard_electron_main_docs_listrepodoctree",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "dashboard/electron/main/index.js",
+      "source_location": "L123",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_electron_main_index_registerdocshandlers",
+      "target": "dashboard_electron_main_docs_fetchfilecontent",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "dashboard/electron/main/index.js",
+      "source_location": "L124",
       "weight": 1.0
     },
     {
@@ -73112,7 +73558,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L112",
+      "source_location": "L113",
       "weight": 1.0
     },
     {
@@ -73124,7 +73570,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L114",
+      "source_location": "L115",
       "weight": 1.0
     },
     {
@@ -73136,7 +73582,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L102",
+      "source_location": "L103",
       "weight": 1.0
     },
     {
@@ -73148,7 +73594,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L103",
+      "source_location": "L104",
       "weight": 1.0
     },
     {
@@ -73160,7 +73606,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L104",
+      "source_location": "L105",
       "weight": 1.0
     },
     {
@@ -73172,7 +73618,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L130",
+      "source_location": "L138",
       "weight": 1.0
     },
     {
@@ -73184,7 +73630,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L138",
+      "source_location": "L146",
       "weight": 1.0
     },
     {
@@ -73196,7 +73642,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L138",
+      "source_location": "L146",
       "weight": 1.0
     },
     {
@@ -73208,7 +73654,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L142",
+      "source_location": "L150",
       "weight": 1.0
     },
     {
@@ -73220,7 +73666,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L148",
+      "source_location": "L156",
       "weight": 1.0
     },
     {
@@ -73232,7 +73678,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L166",
+      "source_location": "L174",
       "weight": 1.0
     },
     {
@@ -73244,7 +73690,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L188",
+      "source_location": "L196",
       "weight": 1.0
     },
     {
@@ -73401,6 +73847,18 @@
       "context": "call",
       "source_file": "dashboard/src/components/DispatchStatusBadge.jsx",
       "source_location": "L50",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_src_components_docsexplorer_repolist",
+      "target": "dashboard_src_components_docsexplorer_formattimestamp",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "dashboard/src/components/DocsExplorer.jsx",
+      "source_location": "L22",
       "weight": 1.0
     },
     {
@@ -82760,7 +83218,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "dashboard/src/App.jsx",
-      "source_location": "L45",
+      "source_location": "L47",
       "weight": 1.0
     },
     {
@@ -82772,7 +83230,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "dashboard/src/App.jsx",
-      "source_location": "L74",
+      "source_location": "L76",
       "weight": 1.0
     },
     {
@@ -83144,7 +83602,7 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "dashboard/package.json",
-      "source_location": "L44",
+      "source_location": "L46",
       "weight": 1.0
     },
     {
@@ -83156,7 +83614,7 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "dashboard/package.json",
-      "source_location": "L38",
+      "source_location": "L40",
       "weight": 1.0
     },
     {
@@ -83168,7 +83626,7 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "dashboard/package.json",
-      "source_location": "L38",
+      "source_location": "L40",
       "weight": 1.0
     },
     {
@@ -83389,7 +83847,7 @@
     },
     {
       "source": "dashboard_electron_main_index",
-      "target": "dashboard_electron_main_refresh_server_createrefreshserver",
+      "target": "dashboard_electron_main_docs_discoverdocfirstrepos",
       "relation": "imports",
       "_origin": "ast",
       "confidence": "EXTRACTED",
@@ -83401,7 +83859,43 @@
     },
     {
       "source": "dashboard_electron_main_index",
-      "target": "dashboard_electron_main_path_adoptloginshellpath",
+      "target": "dashboard_electron_main_docs_fetchfilecontent",
+      "relation": "imports",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "import",
+      "source_file": "dashboard/electron/main/index.js",
+      "source_location": "L11",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_electron_main_index",
+      "target": "dashboard_electron_main_docs_listrepodoctree",
+      "relation": "imports",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "import",
+      "source_file": "dashboard/electron/main/index.js",
+      "source_location": "L11",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_electron_main_index",
+      "target": "dashboard_electron_main_docs_readcachedrepos",
+      "relation": "imports",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "import",
+      "source_file": "dashboard/electron/main/index.js",
+      "source_location": "L11",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_electron_main_index",
+      "target": "dashboard_electron_main_refresh_server_createrefreshserver",
       "relation": "imports",
       "_origin": "ast",
       "confidence": "EXTRACTED",
@@ -83413,7 +83907,7 @@
     },
     {
       "source": "dashboard_electron_main_index",
-      "target": "dashboard_electron_main_device_identity_resolveservicedefaults",
+      "target": "dashboard_electron_main_path_adoptloginshellpath",
       "relation": "imports",
       "_origin": "ast",
       "confidence": "EXTRACTED",
@@ -83421,6 +83915,18 @@
       "context": "import",
       "source_file": "dashboard/electron/main/index.js",
       "source_location": "L13",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_electron_main_index",
+      "target": "dashboard_electron_main_device_identity_resolveservicedefaults",
+      "relation": "imports",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "import",
+      "source_file": "dashboard/electron/main/index.js",
+      "source_location": "L14",
       "weight": 1.0
     },
     {
@@ -83556,6 +84062,18 @@
       "weight": 1.0
     },
     {
+      "source": "dashboard_package_dependencies_react_markdown",
+      "target": "react_markdown",
+      "relation": "imports",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "import",
+      "source_file": "dashboard/package.json",
+      "source_location": "L16",
+      "weight": 1.0
+    },
+    {
       "source": "dashboard_package_dependencies_recharts",
       "target": "recharts",
       "relation": "imports",
@@ -83564,7 +84082,19 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "dashboard/package.json",
-      "source_location": "L16",
+      "source_location": "L17",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_package_dependencies_remark_gfm",
+      "target": "remark_gfm",
+      "relation": "imports",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "import",
+      "source_file": "dashboard/package.json",
+      "source_location": "L18",
       "weight": 1.0
     },
     {
@@ -83576,7 +84106,7 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "dashboard/package.json",
-      "source_location": "L20",
+      "source_location": "L22",
       "weight": 1.0
     },
     {
@@ -83588,7 +84118,7 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "dashboard/package.json",
-      "source_location": "L21",
+      "source_location": "L23",
       "weight": 1.0
     },
     {
@@ -83600,7 +84130,7 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "dashboard/package.json",
-      "source_location": "L22",
+      "source_location": "L24",
       "weight": 1.0
     },
     {
@@ -83612,7 +84142,7 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "dashboard/package.json",
-      "source_location": "L23",
+      "source_location": "L25",
       "weight": 1.0
     },
     {
@@ -83624,7 +84154,7 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "dashboard/package.json",
-      "source_location": "L24",
+      "source_location": "L26",
       "weight": 1.0
     },
     {
@@ -83636,7 +84166,7 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "dashboard/package.json",
-      "source_location": "L25",
+      "source_location": "L27",
       "weight": 1.0
     },
     {
@@ -83648,7 +84178,7 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "dashboard/package.json",
-      "source_location": "L26",
+      "source_location": "L28",
       "weight": 1.0
     },
     {
@@ -83660,19 +84190,19 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "dashboard/package.json",
-      "source_location": "L27",
+      "source_location": "L29",
       "weight": 1.0
     },
     {
       "source": "dashboard_package_devdependencies_tailwindcss",
-      "target": "dashboard_package_json_tailwindcss",
+      "target": "tailwindcss",
       "relation": "imports",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "dashboard/package.json",
-      "source_location": "L28",
+      "source_location": "L30",
       "weight": 1.0
     },
     {
@@ -83684,7 +84214,7 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "dashboard/package.json",
-      "source_location": "L19",
+      "source_location": "L21",
       "weight": 1.0
     },
     {
@@ -83696,7 +84226,7 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "dashboard/package.json",
-      "source_location": "L29",
+      "source_location": "L31",
       "weight": 1.0
     },
     {
@@ -83876,6 +84406,54 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "dashboard/test/dispatch_status.test.js",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_test_docs_test",
+      "target": "dashboard_electron_main_docs_discoverdocfirstrepos",
+      "relation": "imports",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "import",
+      "source_file": "dashboard/test/docs.test.js",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_test_docs_test",
+      "target": "dashboard_electron_main_docs_fetchfilecontent",
+      "relation": "imports",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "import",
+      "source_file": "dashboard/test/docs.test.js",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_test_docs_test",
+      "target": "dashboard_electron_main_docs_listrepodoctree",
+      "relation": "imports",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "import",
+      "source_file": "dashboard/test/docs.test.js",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_test_docs_test",
+      "target": "dashboard_electron_main_docs_readcachedrepos",
+      "relation": "imports",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "import",
+      "source_file": "dashboard/test/docs.test.js",
       "source_location": "L5",
       "weight": 1.0
     },
@@ -85477,7 +86055,7 @@
     },
     {
       "source": "dashboard_electron_main_index",
-      "target": "dashboard_electron_main_refresh_server",
+      "target": "dashboard_electron_main_docs",
       "relation": "imports_from",
       "_origin": "ast",
       "confidence": "EXTRACTED",
@@ -85489,7 +86067,7 @@
     },
     {
       "source": "dashboard_electron_main_index",
-      "target": "dashboard_electron_main_path",
+      "target": "dashboard_electron_main_refresh_server",
       "relation": "imports_from",
       "_origin": "ast",
       "confidence": "EXTRACTED",
@@ -85501,7 +86079,7 @@
     },
     {
       "source": "dashboard_electron_main_index",
-      "target": "dashboard_electron_main_device_identity",
+      "target": "dashboard_electron_main_path",
       "relation": "imports_from",
       "_origin": "ast",
       "confidence": "EXTRACTED",
@@ -85509,6 +86087,18 @@
       "context": "import",
       "source_file": "dashboard/electron/main/index.js",
       "source_location": "L13",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_electron_main_index",
+      "target": "dashboard_electron_main_device_identity",
+      "relation": "imports_from",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "import",
+      "source_file": "dashboard/electron/main/index.js",
+      "source_location": "L14",
       "weight": 1.0
     },
     {
@@ -85652,6 +86242,18 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "dashboard/test/dispatch_status.test.js",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_test_docs_test",
+      "target": "dashboard_electron_main_docs",
+      "relation": "imports_from",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "import",
+      "source_file": "dashboard/test/docs.test.js",
       "source_location": "L5",
       "weight": 1.0
     },
@@ -87602,6 +88204,17 @@
       "weight": 1.0
     },
     {
+      "source": "dashboard_electron_main_docs",
+      "target": "docref_adr_0033",
+      "relation": "cites",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dashboard/electron/main/docs.js",
+      "source_location": "L31",
+      "weight": 1.0
+    },
+    {
       "source": "dashboard_electron_main_health",
       "target": "dashboard_electron_main_health_js_docref_adr_0033",
       "relation": "cites",
@@ -87620,7 +88233,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L147",
+      "source_location": "L155",
       "weight": 1.0
     },
     {
@@ -87631,7 +88244,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L19",
+      "source_location": "L20",
       "weight": 1.0
     },
     {
@@ -87642,7 +88255,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L27",
+      "source_location": "L28",
       "weight": 1.0
     },
     {
@@ -118127,6 +118740,83 @@
       "weight": 1.0
     },
     {
+      "source": "dashboard_electron_main_docs",
+      "target": "dashboard_electron_main_docs_cache_path",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dashboard/electron/main/docs.js",
+      "source_location": "L15",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_electron_main_docs",
+      "target": "dashboard_electron_main_docs_run",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dashboard/electron/main/docs.js",
+      "source_location": "L17",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_electron_main_docs",
+      "target": "dashboard_electron_main_docs_fileexists",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dashboard/electron/main/docs.js",
+      "source_location": "L21",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_electron_main_docs",
+      "target": "dashboard_electron_main_docs_discoverdocfirstrepos",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dashboard/electron/main/docs.js",
+      "source_location": "L33",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_electron_main_docs",
+      "target": "dashboard_electron_main_docs_readcachedrepos",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dashboard/electron/main/docs.js",
+      "source_location": "L48",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_electron_main_docs",
+      "target": "dashboard_electron_main_docs_listrepodoctree",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dashboard/electron/main/docs.js",
+      "source_location": "L59",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_electron_main_docs",
+      "target": "dashboard_electron_main_docs_fetchfilecontent",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dashboard/electron/main/docs.js",
+      "source_location": "L78",
+      "weight": 1.0
+    },
+    {
       "source": "dashboard_electron_main_health",
       "target": "dashboard_electron_main_health_health_checks_script",
       "relation": "contains",
@@ -118200,7 +118890,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L101",
+      "source_location": "L102",
       "weight": 1.0
     },
     {
@@ -118211,7 +118901,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L107",
+      "source_location": "L108",
       "weight": 1.0
     },
     {
@@ -118222,7 +118912,18 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L111",
+      "source_location": "L112",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_electron_main_index",
+      "target": "dashboard_electron_main_index_registerdocshandlers",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dashboard/electron/main/index.js",
+      "source_location": "L120",
       "weight": 1.0
     },
     {
@@ -118233,7 +118934,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L119",
+      "source_location": "L127",
       "weight": 1.0
     },
     {
@@ -118244,7 +118945,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L127",
+      "source_location": "L135",
       "weight": 1.0
     },
     {
@@ -118255,7 +118956,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L15",
+      "source_location": "L16",
       "weight": 1.0
     },
     {
@@ -118266,7 +118967,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L25",
+      "source_location": "L26",
       "weight": 1.0
     },
     {
@@ -118277,7 +118978,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L34",
+      "source_location": "L35",
       "weight": 1.0
     },
     {
@@ -118288,7 +118989,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L48",
+      "source_location": "L49",
       "weight": 1.0
     },
     {
@@ -118299,7 +119000,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L65",
+      "source_location": "L66",
       "weight": 1.0
     },
     {
@@ -118568,17 +119269,6 @@
     },
     {
       "source": "dashboard_package",
-      "target": "dashboard_package_devdependencies",
-      "relation": "contains",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "source_file": "dashboard/package.json",
-      "source_location": "L18",
-      "weight": 1.0
-    },
-    {
-      "source": "dashboard_package",
       "target": "dashboard_package_name",
       "relation": "contains",
       "_origin": "ast",
@@ -118586,6 +119276,17 @@
       "confidence_score": 1.0,
       "source_file": "dashboard/package.json",
       "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_package",
+      "target": "dashboard_package_devdependencies",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dashboard/package.json",
+      "source_location": "L20",
       "weight": 1.0
     },
     {
@@ -118607,7 +119308,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/package.json",
-      "source_location": "L31",
+      "source_location": "L33",
       "weight": 1.0
     },
     {
@@ -118673,7 +119374,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/package.json",
-      "source_location": "L32",
+      "source_location": "L34",
       "weight": 1.0
     },
     {
@@ -118684,7 +119385,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/package.json",
-      "source_location": "L33",
+      "source_location": "L35",
       "weight": 1.0
     },
     {
@@ -118695,7 +119396,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/package.json",
-      "source_location": "L34",
+      "source_location": "L36",
       "weight": 1.0
     },
     {
@@ -118706,7 +119407,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/package.json",
-      "source_location": "L37",
+      "source_location": "L39",
       "weight": 1.0
     },
     {
@@ -118717,7 +119418,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/package.json",
-      "source_location": "L44",
+      "source_location": "L46",
       "weight": 1.0
     },
     {
@@ -118728,7 +119429,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/package.json",
-      "source_location": "L35",
+      "source_location": "L37",
       "weight": 1.0
     },
     {
@@ -118739,7 +119440,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/package.json",
-      "source_location": "L38",
+      "source_location": "L40",
       "weight": 1.0
     },
     {
@@ -118750,7 +119451,18 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/package.json",
-      "source_location": "L42",
+      "source_location": "L44",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_package_dependencies",
+      "target": "dashboard_package_dependencies_react_markdown",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dashboard/package.json",
+      "source_location": "L16",
       "weight": 1.0
     },
     {
@@ -118761,7 +119473,18 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/package.json",
-      "source_location": "L16",
+      "source_location": "L17",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_package_dependencies",
+      "target": "dashboard_package_dependencies_remark_gfm",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dashboard/package.json",
+      "source_location": "L18",
       "weight": 1.0
     },
     {
@@ -118772,7 +119495,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/package.json",
-      "source_location": "L19",
+      "source_location": "L21",
       "weight": 1.0
     },
     {
@@ -118783,7 +119506,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/package.json",
-      "source_location": "L20",
+      "source_location": "L22",
       "weight": 1.0
     },
     {
@@ -118794,7 +119517,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/package.json",
-      "source_location": "L21",
+      "source_location": "L23",
       "weight": 1.0
     },
     {
@@ -118805,7 +119528,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/package.json",
-      "source_location": "L22",
+      "source_location": "L24",
       "weight": 1.0
     },
     {
@@ -118816,7 +119539,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/package.json",
-      "source_location": "L23",
+      "source_location": "L25",
       "weight": 1.0
     },
     {
@@ -118827,7 +119550,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/package.json",
-      "source_location": "L24",
+      "source_location": "L26",
       "weight": 1.0
     },
     {
@@ -118838,7 +119561,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/package.json",
-      "source_location": "L25",
+      "source_location": "L27",
       "weight": 1.0
     },
     {
@@ -118849,7 +119572,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/package.json",
-      "source_location": "L26",
+      "source_location": "L28",
       "weight": 1.0
     },
     {
@@ -118860,7 +119583,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/package.json",
-      "source_location": "L27",
+      "source_location": "L29",
       "weight": 1.0
     },
     {
@@ -118871,7 +119594,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/package.json",
-      "source_location": "L28",
+      "source_location": "L30",
       "weight": 1.0
     },
     {
@@ -118882,7 +119605,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/package.json",
-      "source_location": "L29",
+      "source_location": "L31",
       "weight": 1.0
     },
     {
@@ -118970,7 +119693,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/src/App.jsx",
-      "source_location": "L13",
+      "source_location": "L15",
       "weight": 1.0
     },
     {
@@ -118981,7 +119704,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/src/App.jsx",
-      "source_location": "L19",
+      "source_location": "L21",
       "weight": 1.0
     },
     {
@@ -118992,7 +119715,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/src/App.jsx",
-      "source_location": "L32",
+      "source_location": "L34",
       "weight": 1.0
     },
     {
@@ -119003,7 +119726,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/src/App.jsx",
-      "source_location": "L38",
+      "source_location": "L40",
       "weight": 1.0
     },
     {
@@ -119014,7 +119737,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "dashboard/src/App.jsx",
-      "source_location": "L7",
+      "source_location": "L8",
       "weight": 1.0
     },
     {
@@ -119037,6 +119760,116 @@
       "confidence_score": 1.0,
       "source_file": "dashboard/src/components/DispatchStatusBadge.jsx",
       "source_location": "L8",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_src_components_docsexplorer",
+      "target": "dashboard_src_components_docsexplorer_docviewer",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dashboard/src/components/DocsExplorer.jsx",
+      "source_location": "L101",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_src_components_docsexplorer",
+      "target": "dashboard_src_components_docsexplorer_docsexplorer",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dashboard/src/components/DocsExplorer.jsx",
+      "source_location": "L120",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_src_components_docsexplorer",
+      "target": "dashboard_src_components_docsexplorer_repolist",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dashboard/src/components/DocsExplorer.jsx",
+      "source_location": "L14",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_src_components_docsexplorer",
+      "target": "dashboard_src_components_docsexplorer_formattimestamp",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dashboard/src/components/DocsExplorer.jsx",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_src_components_docsexplorer",
+      "target": "dashboard_src_components_docsexplorer_doctree",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dashboard/src/components/DocsExplorer.jsx",
+      "source_location": "L52",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_src_components_docsexplorer",
+      "target": "dashboard_src_components_docsexplorer_treeitem",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dashboard/src/components/DocsExplorer.jsx",
+      "source_location": "L71",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_src_components_docsexplorer",
+      "target": "dashboard_src_components_docsexplorer_markdowncomponents",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dashboard/src/components/DocsExplorer.jsx",
+      "source_location": "L84",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_src_components_docsexplorer_docsexplorer",
+      "target": "dashboard_src_components_docsexplorer_docsexplorer_handlerefresh",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dashboard/src/components/DocsExplorer.jsx",
+      "source_location": "L134",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_src_components_docsexplorer_docsexplorer",
+      "target": "dashboard_src_components_docsexplorer_docsexplorer_handleselectrepo",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dashboard/src/components/DocsExplorer.jsx",
+      "source_location": "L146",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_src_components_docsexplorer_docsexplorer",
+      "target": "dashboard_src_components_docsexplorer_docsexplorer_handleselectfile",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dashboard/src/components/DocsExplorer.jsx",
+      "source_location": "L154",
       "weight": 1.0
     },
     {
@@ -119433,6 +120266,28 @@
       "confidence_score": 1.0,
       "source_file": "dashboard/test/dispatch_status.test.js",
       "source_location": "L7",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_test_docs_test",
+      "target": "dashboard_test_docs_test_withtempcachepath",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dashboard/test/docs.test.js",
+      "source_location": "L21",
+      "weight": 1.0
+    },
+    {
+      "source": "dashboard_test_docs_test",
+      "target": "dashboard_test_docs_test_fakeexec",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "dashboard/test/docs.test.js",
+      "source_location": "L8",
       "weight": 1.0
     },
     {
@@ -143822,7 +144677,7 @@
       "confidence_score": 0.85,
       "context": "argument",
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L130",
+      "source_location": "L138",
       "weight": 1.0
     },
     {
@@ -143834,7 +144689,7 @@
       "confidence_score": 0.85,
       "context": "argument",
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L148",
+      "source_location": "L156",
       "weight": 1.0
     },
     {
@@ -143846,7 +144701,7 @@
       "confidence_score": 0.85,
       "context": "argument",
       "source_file": "dashboard/electron/main/index.js",
-      "source_location": "L166",
+      "source_location": "L174",
       "weight": 1.0
     },
     {
@@ -146071,5 +146926,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "847b52142f7ac44413a074573f5c6fafdcf9a3f0"
+  "built_at_commit": "faa8831247f1c6a04f0b1284dbd61850d356a85d"
 }
