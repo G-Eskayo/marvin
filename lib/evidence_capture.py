@@ -19,6 +19,7 @@ independently testable without a real subprocess run.
 """
 from __future__ import annotations
 import re
+import resource
 import subprocess
 from pathlib import Path
 from typing import Callable
@@ -54,6 +55,22 @@ def parse_test_output(suite: str, output: str) -> dict:
     return {"suite": suite, "passed": passed, "failed": failed, "total": passed + failed}
 
 
+# macOS gives launchd children (the ticket-pipeline webhook server) and some
+# interactive shells a 256-file soft limit, which a full pytest run exhausts
+# ("OSError: Too many open files"). That turned ~10 unrelated tests into
+# failures and made every ticket's baseline read 0 passed / 11 failed, so no
+# ticket could register as "improved". Raise the *child's* floor here, the one
+# choke point every measure()/evidence run goes through.
+MIN_NOFILE_SOFT_LIMIT = 4096
+
+
+def _raise_nofile_limit() -> None:
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    target = MIN_NOFILE_SOFT_LIMIT if hard == resource.RLIM_INFINITY else min(MIN_NOFILE_SOFT_LIMIT, hard)
+    if soft < target:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
+
+
 def capture_test_results(worktree_path: Path, test_command: list[str]) -> dict:
     """Run the ticket's real test command inside worktree_path and parse
     its output. `test_command` is caller-supplied (e.g.
@@ -62,6 +79,7 @@ def capture_test_results(worktree_path: Path, test_command: list[str]) -> dict:
     which one a given ticket needs."""
     result = subprocess.run(
         test_command, cwd=worktree_path, capture_output=True, text=True,
+        preexec_fn=_raise_nofile_limit,
     )
     return parse_test_output(" ".join(test_command), result.stdout + result.stderr)
 
