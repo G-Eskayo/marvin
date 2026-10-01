@@ -31,9 +31,20 @@ export async function isBehindMain(headRef, exec = execFileAsync, repoPath = REP
   }
 }
 
-async function _defaultRunTests(cwd, exec) {
+export async function _defaultRunTests(cwd, exec) {
   await exec(VENV_PYTHON, ['-m', 'pytest', '-q'], { cwd })
-  await exec('npx', ['vitest', 'run'], { cwd: path.join(cwd, 'dashboard') })
+  // Found live 2026-10-01 (PR #119's merge attempt): a `git worktree add`
+  // scratch checkout has no dashboard/node_modules at all -- `npx vitest
+  // run` hard-fails with a dependency-resolution error wall that has
+  // nothing to do with the PR's own code, and the webhook relayed that
+  // wall verbatim as the re-engagement reason. npm install is slower than
+  // reusing the real checkout's node_modules, but a scratch worktree is a
+  // separate filesystem location so nothing can be shared/symlinked in
+  // safely without risking the exact collision this isolation exists to
+  // avoid.
+  const dashboardDir = path.join(cwd, 'dashboard')
+  await exec('npm', ['install'], { cwd: dashboardDir })
+  await exec('npx', ['vitest', 'run'], { cwd: dashboardDir })
 }
 
 // Rebases headRef onto origin/main inside a throwaway scratch worktree --
