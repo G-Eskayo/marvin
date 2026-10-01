@@ -71,7 +71,7 @@ def test_main_dry_run_does_not_claim_or_dispatch(monkeypatch, capsys):
         returncode=0, stdout=json.dumps(issues), stderr=""))
     monkeypatch.setattr(tp, "select_machine", lambda: ("macbook-pro-1", {"is_self": True}))
     claim_calls = []
-    monkeypatch.setattr(tp, "_claim", lambda n, l: claim_calls.append((n, l)) or True)
+    monkeypatch.setattr(tp, "_claim", lambda n, l, **kw: claim_calls.append((n, l)) or True)
     dispatch_calls = []
     monkeypatch.setattr(tp, "dispatch", lambda *a, **kw: dispatch_calls.append((a, kw)))
 
@@ -99,11 +99,21 @@ def test_main_no_machine_available_does_not_claim(monkeypatch, capsys):
     ])
     monkeypatch.setattr(tp, "select_machine", lambda: None)
     claim_calls = []
-    monkeypatch.setattr(tp, "_claim", lambda n, l: claim_calls.append((n, l)) or True)
+    monkeypatch.setattr(tp, "_claim", lambda n, l, **kw: claim_calls.append((n, l)) or True)
     monkeypatch.setattr(sys, "argv", ["ticket_pipeline.py"])
     tp.main()
     assert claim_calls == []
     assert "no machine currently available" in capsys.readouterr().err
+
+
+def test_claim_records_the_title_on_the_claimed_stage_event(monkeypatch, tmp_path):
+    # Feedback, 2026-10-01: a bare ticket number is opaque -- this is the
+    # one place in the flow that has the real GitHub title, so it's the
+    # one place that must pass it through to ticket_stages.
+    monkeypatch.setattr(tp.subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=0, stdout="", stderr=""))
+    tp._claim(20, "mac-mini", title="Versioning: VERSION + CHANGELOG.md bump on merge")
+    events = ts.read_stages(20)
+    assert events[0]["title"] == "Versioning: VERSION + CHANGELOG.md bump on merge"
 
 
 def test_main_claims_and_dispatches_oldest_unclaimed(monkeypatch):
@@ -112,7 +122,7 @@ def test_main_claims_and_dispatches_oldest_unclaimed(monkeypatch):
     ])
     monkeypatch.setattr(tp, "select_machine", lambda: ("macbook-pro-1", {"is_self": True}))
     claim_calls = []
-    monkeypatch.setattr(tp, "_claim", lambda n, l: claim_calls.append((n, l)) or True)
+    monkeypatch.setattr(tp, "_claim", lambda n, l, **kw: claim_calls.append((n, l, kw.get("title"))) or True)
     dispatch_calls = []
     monkeypatch.setattr(tp, "dispatch", lambda *a, **kw: dispatch_calls.append((a, kw)) or
                          SimpleNamespace(ok=True, device_id="macbook-pro-1"))
@@ -120,7 +130,7 @@ def test_main_claims_and_dispatches_oldest_unclaimed(monkeypatch):
 
     tp.main()
 
-    assert claim_calls == [(20, "macbook-pro")]
+    assert claim_calls == [(20, "macbook-pro", "paper-graph traversal")]
     assert len(dispatch_calls) == 1
     args, kwargs = dispatch_calls[0]
     assert kwargs["target"] == "macbook-pro-1"
@@ -134,7 +144,7 @@ def test_main_releases_claim_if_dispatch_fails(monkeypatch):
         {"number": 20, "title": "x", "createdAt": "2026-01-01T00:00:00Z", "labels": []}
     ])
     monkeypatch.setattr(tp, "select_machine", lambda: ("macbook-pro-1", {"is_self": True}))
-    monkeypatch.setattr(tp, "_claim", lambda n, l: True)
+    monkeypatch.setattr(tp, "_claim", lambda n, l, **kw: True)
     monkeypatch.setattr(tp, "dispatch", lambda *a, **kw: SimpleNamespace(ok=False, error="boom"))
     release_calls = []
     monkeypatch.setattr(tp, "_release", lambda n, l: release_calls.append((n, l)))

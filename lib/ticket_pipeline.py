@@ -70,7 +70,7 @@ def _unclaimed_ready_tickets() -> list[dict]:
     return unclaimed
 
 
-def _claim(issue_number: int, label: str) -> bool:
+def _claim(issue_number: int, label: str, title: str = "") -> bool:
     proc = subprocess.run(
         ["gh", "issue", "edit", str(issue_number), "--repo", REPO, "--add-label", f"claimed:{label}"],
         capture_output=True, text=True, timeout=15,
@@ -78,7 +78,10 @@ def _claim(issue_number: int, label: str) -> bool:
     if proc.returncode != 0:
         print(f"{LOG_PREFIX} failed to claim #{issue_number}: {proc.stderr[:300]}", file=sys.stderr)
         return False
-    ts.record_stage(issue_number, "claimed", "started", f"claimed:{label}")
+    # title threaded through from main()'s own GitHub fetch -- the one
+    # place in this flow that already has it, so the Activity tab never
+    # has to show a bare number (feedback, 2026-10-01).
+    ts.record_stage(issue_number, "claimed", "started", f"claimed:{label}", title=title or None)
     return True
 
 
@@ -123,7 +126,7 @@ def main() -> None:
               f"and dispatch to {device_id} as claimed:{claim_label}", file=sys.stderr)
         return
 
-    if not _claim(issue_number, claim_label):
+    if not _claim(issue_number, claim_label, title=ticket["title"]):
         return
 
     command = _build_wrapper_command(issue_number)

@@ -33,13 +33,15 @@ function StatusDot({ status, failed, isLiveNow }) {
 function TicketRow({ ticket, onSelect }) {
   return (
     <button
-      onClick={() => onSelect(ticket.number)}
+      onClick={() => onSelect({ number: ticket.number, title: ticket.title })}
       className="flex w-full items-center gap-3 rounded-lg border border-neutral-800 bg-neutral-900 p-3 text-left transition-colors hover:border-neutral-700 hover:bg-neutral-800/50"
     >
       <StatusDot status={ticket.currentStatus} failed={ticket.failed} isLiveNow={ticket.isLiveNow} />
       <div className="min-w-0 flex-1">
-        <p className="truncate font-mono text-sm text-white">
-          #{ticket.number} {ticket.isLiveNow && <span className="text-blue-400">· live now</span>}
+        <p className="truncate text-sm text-white">
+          <span className="font-mono text-neutral-500">#{ticket.number}</span>{' '}
+          {ticket.title || <span className="italic text-neutral-600">(title unknown)</span>}{' '}
+          {ticket.isLiveNow && <span className="text-blue-400">· live now</span>}
         </p>
         <p className="text-xs text-neutral-500">
           {STAGE_LABEL[ticket.currentStage] || ticket.currentStage} · {ticket.eventCount} event{ticket.eventCount === 1 ? '' : 's'} · last{' '}
@@ -69,7 +71,7 @@ function TimelineEvent({ event }) {
   )
 }
 
-function TicketDrilldown({ number, onBack }) {
+function TicketDrilldown({ number, title, onBack }) {
   const [events, setEvents] = useState(null)
   const [error, setError] = useState(null)
 
@@ -88,7 +90,9 @@ function TicketDrilldown({ number, onBack }) {
         ← Back to Activity
       </button>
       <div className="mb-4 flex items-baseline justify-between">
-        <h2 className="font-mono text-lg font-semibold text-white">#{number}</h2>
+        <h2 className="text-lg font-semibold text-white">
+          <span className="font-mono text-neutral-500">#{number}</span> {title || <span className="italic text-neutral-600">(title unknown)</span>}
+        </h2>
         {events && <span className="font-mono text-sm text-neutral-400">total: {formatCost(totalCost)}</span>}
       </div>
 
@@ -128,7 +132,7 @@ export default function ActivityBoard() {
   }, [])
 
   if (selected !== null) {
-    return <TicketDrilldown number={selected} onBack={() => setSelected(null)} />
+    return <TicketDrilldown number={selected.number} title={selected.title} onBack={() => setSelected(null)} />
   }
 
   if (error) {
