@@ -54,5 +54,14 @@
         "higher_is_better": true
       }
     }
+  },
+  {
+    "timestamp": "2026-10-01T16:16:50.035701+00:00",
+    "metrics": {
+      "route:intent-routing-collection": {
+        "value": 92,
+        "higher_is_better": true
+      }
+    }
   }
 ]
