@@ -78,6 +78,35 @@ def test_command_for(worktree_path: Path, base_branch: str = "main") -> list[str
     return [VENV_PYTHON, "-m", "pytest", "-q", *existing_roots]
 
 
+def _ensure_dashboard_deps(worktree_path: Path) -> None:
+    """A fresh worktree has no node_modules, so vitest would fail wholesale on
+    missing deps rather than on anything the ticket did -- the same gap that
+    made PR #119's merge gate report a 'massive error' (webhook-server/
+    merge.js). Install once; the second measure() in a ticket's run finds
+    node_modules already present and skips this."""
+    dashboard = worktree_path / "dashboard"
+    if (dashboard / "node_modules").is_dir():
+        return
+    subprocess.run(
+        ["npm", "install", "--no-audit", "--no-fund"],
+        cwd=dashboard, capture_output=True, text=True, timeout=600, check=False,
+    )
+
+
+def _measure_commands(worktree_path: Path) -> list[list[str]]:
+    """The commands measure() runs. Deliberately NOT derived from the ticket's
+    diff: the baseline is taken before the executor edits anything (empty diff)
+    and the current reading after, so any diff-dependent choice made the two
+    readings run different tests. Found 2026-10-01: baseline = whole suite
+    (540 passed), current after a change under skills/research = `pytest -q
+    skills/research` (0 tests, 'regressed' in 1s); a dashboard ticket compared
+    pytest to vitest. Same fixed set both times, whatever the diff."""
+    commands = [[VENV_PYTHON, "-m", "pytest", "-q"]]
+    if (worktree_path / "dashboard" / "package.json").is_file():
+        commands.append(["bash", "-c", "cd dashboard && npx vitest run"])
+    return commands
+
+
 def measure(worktree_path: Path) -> dict:
     """metrics_registry.compare()-shaped measure() for build-type
     tickets. Returns two separate counts -- tests_passed (higher is
@@ -89,11 +118,19 @@ def measure(worktree_path: Path) -> dict:
     real, correct work landed. Two counts let metrics_registry.compare()'s
     existing per-metric direction logic see the added passing tests as a
     real improvement, while still catching an actual regression (failed
-    count going up) as not passing -- something one fraction can't do."""
-    command = test_command_for(worktree_path)
-    parsed = capture_test_results(worktree_path, command)
-    passed = parsed.get("passed") or 0
-    failed = parsed.get("failed") or 0
+    count going up) as not passing -- something one fraction can't do.
+
+    Counts are summed across the whole pytest suite and, when the repo has a
+    dashboard, the whole vitest suite -- the same fixed set on every call (see
+    `_measure_commands`), so a baseline and a later reading are comparable."""
+    commands = _measure_commands(worktree_path)
+    if len(commands) > 1:
+        _ensure_dashboard_deps(worktree_path)
+    passed = failed = 0
+    for command in commands:
+        parsed = capture_test_results(worktree_path, command)
+        passed += parsed.get("passed") or 0
+        failed += parsed.get("failed") or 0
     return {
         "tests_passed": {"value": passed, "higher_is_better": True},
         "tests_failed": {"value": failed, "higher_is_better": False},
