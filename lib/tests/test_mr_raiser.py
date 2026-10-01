@@ -258,6 +258,7 @@ def test_default_open_pr_body_uses_the_evidence_schema_headers(monkeypatch):
     assert "## Metrics Comparison" in body
     assert "## Test Results" in body
     assert "## Dev Environment Evidence" in body
+    assert "## Device" in body
     # order matters -- mr_review.js's section-extraction reads each section
     # up to the *next* "## " header, so getting the order wrong would
     # silently corrupt every section after the swapped one.
@@ -265,6 +266,7 @@ def test_default_open_pr_body_uses_the_evidence_schema_headers(monkeypatch):
         body.index("## Metrics Comparison")
         < body.index("## Test Results")
         < body.index("## Dev Environment Evidence")
+        < body.index("## Device")
     )
 
 
@@ -371,6 +373,45 @@ def test_default_open_pr_marks_dev_evidence_not_available_when_missing(monkeypat
     # both Test Results and Dev Environment Evidence fall back to this when
     # neither was supplied -- confirm it appears twice, once per section.
     assert body.count("Not available.") == 2
+
+
+def test_default_open_pr_includes_device_id_when_supplied(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "https://github.com/G-Eskayo/marvin/pull/99\n"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(mrr.subprocess, "run", fake_run)
+    comparison = {"subsystem": "route-classifier", "verdict": "improved", "metrics": {}}
+    mrr._default_open_pr("G-Eskayo/marvin#1", "pipeline/ticket-1", comparison, device_id="mac-mini-1")
+
+    body = calls[0][calls[0].index("--body") + 1]
+    assert "## Device" in body
+    assert "mac-mini-1" in body
+
+
+def test_default_open_pr_uses_registry_id_as_default_device(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "https://github.com/G-Eskayo/marvin/pull/99\n"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(mrr.subprocess, "run", fake_run)
+    monkeypatch.setattr(mrr.machine_profile, "registry_id", lambda: "macbook-pro-2")
+    comparison = {"subsystem": "route-classifier", "verdict": "improved", "metrics": {}}
+    mrr._default_open_pr("G-Eskayo/marvin#1", "pipeline/ticket-1", comparison)
+
+    body = calls[0][calls[0].index("--body") + 1]
+    assert "## Device" in body
+    assert "macbook-pro-2" in body
 
 
 def test_default_comment_on_ticket_posts_to_correct_issue(monkeypatch):

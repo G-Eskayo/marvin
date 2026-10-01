@@ -47,3 +47,13 @@ section requirements (the classifier-node idea) are explicitly deferred to a lat
 - Known gap this doesn't resolve: today every ticket gets every applicable section whether it's
   actually useful evidence for that ticket or not. The adaptive classifier that would fix this is
   unbuilt — revisit when the n8n topology work actually starts.
+
+## Amendment (2026-09-30)
+
+The schema now includes a fourth section: **Device**, a machine identifier stamp added by `mr_raiser.py`
+via `machine_profile.registry_id()`. This is resolved from `~/.claude/marvin-network.json` by hardware UUID,
+falling back to a label like `mac-mini` or `macbook-pro` if not yet registered. The Device section is
+appended after Dev Environment Evidence, making it an optional-by-parsing field (backward compatible —
+older PRs without it still parse with `device: null`) while newly-raised PRs always include it. This
+satisfies G-Eskayo/marvin#109's acceptance criterion to track which machine executed a given task, closing
+the deferred open question about device provenance in pipeline-raised evidence.

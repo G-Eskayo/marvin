@@ -246,6 +246,11 @@ function PrCard({ pr, onApproved, onDenied, onSelect }) {
               {pr.evidence.subsystem} <VerdictBadge verdict={pr.evidence.verdict} />
             </p>
           )}
+          {pr.evidence.device && (
+            <p className="text-xs text-neutral-600">
+              Device: {pr.evidence.device}
+            </p>
+          )}
         </div>
         {/* Approve/Deny live inside the same clickable card -- stop the
             click from also bubbling up to onSelect and opening the detail

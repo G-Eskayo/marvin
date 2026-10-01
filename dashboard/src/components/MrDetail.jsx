@@ -126,6 +126,11 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied }) {
               {pr.evidence.subsystem} — {pr.evidence.verdict}
             </p>
           )}
+          {pr.evidence.device && (
+            <p className="text-xs text-neutral-600">
+              Device: {pr.evidence.device}
+            </p>
+          )}
           <a href={pr.url} target="_blank" rel="noreferrer" className="text-xs text-blue-400 hover:underline">
             {pr.url}
           </a>

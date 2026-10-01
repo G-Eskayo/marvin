@@ -15,7 +15,8 @@
 export const EVIDENCE_HEADERS = {
   metrics: '## Metrics Comparison',
   testResults: '## Test Results',
-  devEvidence: '## Dev Environment Evidence'
+  devEvidence: '## Dev Environment Evidence',
+  device: '## Device'
 }
 
 export function hasEvidenceSchema(body) {
@@ -100,6 +101,11 @@ function parseDevEvidenceSection(section) {
   }
 }
 
+function parseDeviceSection(section) {
+  if (!section) return null
+  return section.trim()
+}
+
 export function parseTicketRef(body) {
   const match = body.match(/\b(?:Closes|Fixes|Resolves)\s+(?:[\w.-]+\/[\w.-]+)?#(\d+)/i)
   return match ? match[1] : null
@@ -148,6 +154,7 @@ export function parseEvidence(body) {
     ...metrics,
     testResults: parseTestResultsSection(extractSection(body, EVIDENCE_HEADERS.testResults)),
     devEvidence: parseDevEvidenceSection(extractSection(body, EVIDENCE_HEADERS.devEvidence)),
+    device: parseDeviceSection(extractSection(body, EVIDENCE_HEADERS.device)),
     ticketRef: parseTicketRef(body)
   }
 }

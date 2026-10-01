@@ -30,7 +30,11 @@ const PIPELINE_BODY = `Closes G-Eskayo/marvin#42
 
 ## Dev Environment Evidence
 
-N/A — no UI`
+N/A — no UI
+
+## Device
+
+mac-mini`
 
 const MANUAL_SCHEMA_BODY = `Closes #75
 
@@ -115,6 +119,11 @@ describe('parseEvidence', () => {
     expect(parseEvidence(MANUAL_SCHEMA_BODY).ticketRef).toBe('75')
   })
 
+  it('extracts the device stamp when present', () => {
+    const evidence = parseEvidence(PIPELINE_BODY)
+    expect(evidence.device).toBe('mac-mini')
+  })
+
   it('returns nulls for missing evidence sections rather than throwing, independent of ticketRef', () => {
     const evidence = parseEvidence(NON_SCHEMA_BODY)
     expect(evidence).toEqual({
@@ -123,8 +132,15 @@ describe('parseEvidence', () => {
       metrics: [],
       testResults: null,
       devEvidence: null,
+      device: null,
       ticketRef: '70' // ticketRef parses from anywhere in the body, independent of the schema sections
     })
+  })
+
+  it('parses bodies without device section (backward compatible) with device: null', () => {
+    const evidence = parseEvidence(MANUAL_SCHEMA_BODY)
+    expect(evidence.device).toBe(null)
+    expect(evidence.subsystem).toBe('dashboard') // verify other fields still parse
   })
 })
 

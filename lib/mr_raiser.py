@@ -4,9 +4,9 @@
 Runs only after sandbox_orchestration.execute_ticket (G-Eskayo/marvin#3)
 returns a passing result. Commits and pushes the worktree's branch, opens a
 pull request referencing the originating ticket with the metrics
-comparison, test results, and dev-environment evidence attached (the fixed
-PR evidence schema -- G-Eskayo/marvin#72, ADR 0024), and posts a summary
-comment back onto the ticket.
+comparison, test results, dev-environment evidence, and device stamp attached
+(the fixed PR evidence schema -- G-Eskayo/marvin#72, ADR 0024), and posts a
+summary comment back onto the ticket.
 
 Deliberately does not know sandbox_orchestration's branch-naming convention
 -- reads the worktree's actual current branch via git rather than
@@ -25,6 +25,7 @@ from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mr_notification import notify_mr_ready as _default_notify_mr_ready  # noqa: E402
+import machine_profile  # noqa: E402
 
 
 def _current_branch(worktree_path: Path) -> str:
@@ -86,7 +87,9 @@ def _default_open_pr(
     comparison: dict,
     test_results: dict | None = None,
     dev_evidence: dict | None = None,
+    device_id: str | None = None,
 ) -> str:
+    device_id = device_id if device_id is not None else machine_profile.registry_id()
     body = (
         f"Closes {ticket_ref}\n\n"
         f"Autonomously implemented and verified by the MR pipeline.\n\n"
@@ -95,7 +98,9 @@ def _default_open_pr(
         f"## Test Results\n\n"
         f"{_format_test_results(test_results)}\n\n"
         f"## Dev Environment Evidence\n\n"
-        f"{_format_dev_evidence(dev_evidence)}"
+        f"{_format_dev_evidence(dev_evidence)}\n\n"
+        f"## Device\n\n"
+        f"{device_id}"
     )
     result = subprocess.run(
         ["gh", "pr", "create", "--title", f"Implement {ticket_ref}", "--body", body,
