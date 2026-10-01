@@ -8,6 +8,7 @@ import { listPipelinePrs, approveMr, denyMr, fetchTicketContext } from './mr_rev
 import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
 import { readDispatchStatus } from './dispatch_status.js'
 import { readHealthStatus, runHealthCheckNow } from './health.js'
+import { discoverDocFirstRepos, readCachedRepos, listRepoDocTree, fetchFileContent } from './docs.js'
 import { createRefreshServer } from './refresh_server.js'
 import { adoptLoginShellPath } from './path.js'
 import { resolveServiceDefaults } from './device_identity.js'
@@ -116,6 +117,13 @@ function registerHealthHandlers() {
   })
 }
 
+function registerDocsHandlers() {
+  ipcMain.handle('docs:repos', () => readCachedRepos())
+  ipcMain.handle('docs:refresh', () => discoverDocFirstRepos(execFileAsync))
+  ipcMain.handle('docs:tree', (_event, repo) => listRepoDocTree(execFileAsync, repo))
+  ipcMain.handle('docs:content', (_event, repo, filePath) => fetchFileContent(execFileAsync, repo, filePath))
+}
+
 function postJson(webhookUrl, body) {
   return fetch(webhookUrl, {
     method: 'POST',
@@ -195,6 +203,7 @@ app.whenReady().then(() => {
   registerMrReviewHandlers()
   registerDispatchHandlers()
   registerHealthHandlers()
+  registerDocsHandlers()
   createWindow()
 
   createRefreshServer(() => {
