@@ -50,5 +50,18 @@
         "higher_is_better": false
       }
     }
+  },
+  {
+    "timestamp": "2026-10-01T16:34:27.877050+00:00",
+    "metrics": {
+      "tests_passed": {
+        "value": 0,
+        "higher_is_better": true
+      },
+      "tests_failed": {
+        "value": 12,
+        "higher_is_better": false
+      }
+    }
   }
 ]
