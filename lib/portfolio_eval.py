@@ -29,6 +29,8 @@ RESULT_PATH = Path.home() / ".claude" / "portfolio" / "eval-latest.json"
 DEFAULT_RULES = {
     "tolerance_px": 2,
     "footer": {"expected_cards": 2},
+    # one card design everywhere: the photo frame height and how far the card overlays the photo (px)
+    "card": {"image_height": 240, "overlap": 56},
     "github_button": {"text": "View on GitHub", "classes": ["btn", "btn-default"], "owner": "G-Eskayo"},
     "viewports": [1440, 1100, 390],
     "hub_pages": ["/ai-projects/", "/cybersecurity-projects/", "/software-engineering/", "/all-projects/"],
@@ -77,6 +79,19 @@ def check_footer(cards: list[dict], heading: dict | None, rules: dict) -> list[d
         out.append(_finding("footer-card-alignment", f"cards start at different heights: {tops}"))
     if heading and any(_overlaps(c, heading) for c in cards):
         out.append(_finding("footer-heading-overlap", "a footer card overlaps the 'Other Projects' heading"))
+    return out
+
+
+def check_card_geometry(geoms: list[dict], rules: dict) -> list[dict]:
+    """Every project card -- hub grid, All Projects, Other Projects footer -- is the same design: same photo
+    frame, same overlay. (Found 2026-10-02: a stray empty paragraph made hub cards overlay 36px, project pages 56px.)"""
+    tol, want = rules["tolerance_px"], rules["card"]
+    out = []
+    for g in geoms:
+        if abs(g["overlap"] - want["overlap"]) > tol:
+            out.append(_finding("card-overlap", f"card overlays its photo by {g['overlap']}px, expected {want['overlap']}px"))
+        if abs(g["imgH"] - want["image_height"]) > tol:
+            out.append(_finding("card-photo-frame", f"card photo frame is {g['imgH']}px tall, expected {want['image_height']}px"))
     return out
 
 
@@ -159,6 +174,7 @@ _MEASURE_JS = """() => {
   return {
     viewport: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth,
     heading: heading ? rect(heading) : null,
+    cardGeom: cards.map(c => { const im = c.parentElement.querySelector('img'); if (!im) return null; const ir = im.getBoundingClientRect(); return {overlap: Math.round(ir.bottom - c.getBoundingClientRect().top), imgH: Math.round(ir.height)}; }).filter(Boolean),
     footerCards: cards.filter(inFooter).map(rect),
     gridCards: cards.filter(c => !inFooter(c)).map(rect),
     github: [...document.querySelectorAll('a')].filter(a => /github\\.com/.test(a.href) && !a.closest('nav, header, footer, .hub-sidebar'))
@@ -189,6 +205,7 @@ def run(base: str = "http://localhost:8080", rules: dict | None = None, manifest
                 label = f"{url} @{width}"
                 per_page = check_overflow(m["viewport"], m["scrollWidth"])
                 if width >= 1100:   # card geometry rules apply to the desktop layouts
+                    per_page += check_card_geometry(m["cardGeom"], rules)
                     if url in projects.values():
                         per_page += check_footer(m["footerCards"], m["heading"], rules)
                         per_page += check_github_links(m["github"], rules)

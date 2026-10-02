@@ -58,3 +58,12 @@ describe('window can be moved', () => {
     expect(css).toMatch(/\.titlebar button[^}]*-webkit-app-region:\s*no-drag/)
   })
 })
+
+describe('reference previews are inert', () => {
+  it('blocks navigation from inside preview frames while keeping hrefs (so styling is unchanged)', () => {
+    const src = _read(new URL('../src/components/PortfolioHub.jsx', import.meta.url), 'utf8')
+    expect(src).toMatch(/addEventListener\('click'[\s\S]*preventDefault/)
+    expect(src).toMatch(/addEventListener\('submit'/)
+    expect(src).not.toMatch(/sandbox="allow-same-origin allow-scripts"/)   // the frame itself must never run scripts
+  })
+})

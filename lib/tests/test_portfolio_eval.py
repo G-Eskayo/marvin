@@ -197,3 +197,19 @@ def test_print_rules_emits_the_effective_rules_as_json_without_running_a_browser
     import json
     out = json.loads(capsys.readouterr().out)
     assert out["tolerance_px"] == 7 and out["github_button"]["text"] == "View on GitHub"
+
+
+def test_card_geometry_flags_a_card_that_overlays_its_photo_differently():
+    import portfolio_eval as ev
+    rules = ev.DEFAULT_RULES
+    ok = {"overlap": 56, "imgH": 240}
+    assert ev.check_card_geometry([ok, ok], rules) == []
+    bad = ev.check_card_geometry([ok, {"overlap": 36, "imgH": 240}], rules)
+    assert [f["rule"] for f in bad] == ["card-overlap"]
+    tall = ev.check_card_geometry([{"overlap": 56, "imgH": 220}], rules)
+    assert [f["rule"] for f in tall] == ["card-photo-frame"]
+
+
+def test_card_rule_is_in_the_effective_rules():
+    import portfolio_eval as ev
+    assert ev.DEFAULT_RULES["card"] == {"image_height": 240, "overlap": 56}
