@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -248,6 +249,122 @@ def check_repo_integrity(display_name: str, rel_path: str) -> dict:
     return _result(cid, label, "green", "clean, no stashes")
 
 
+# ── sync / parity health (both machines, measured in time) ───────────────
+
+# Drift is normal for a few minutes between sync cycles, so staleness is judged
+# by the AGE of the oldest commit a machine is missing (or hasn't pushed), not
+# by a raw commit count.
+SYNC_YELLOW_AFTER_HOURS = 2
+SYNC_RED_AFTER_HOURS = 24
+
+_REPO_STATE_BODY = r'''
+cd "$HOME/$REPO_REL" 2>/dev/null || { echo "fetch_ok=0"; echo "head="; exit 0; }
+git fetch -q origin >/dev/null 2>&1 && echo "fetch_ok=1" || echo "fetch_ok=0"
+echo "head=$(git rev-parse --short HEAD 2>/dev/null)"
+echo "stashes=$(git stash list 2>/dev/null | wc -l | tr -d ' ')"
+echo "conflicts=$(git status --porcelain 2>/dev/null | grep -cE '^(UU|AA|DD) ')"
+echo "behind=$(git rev-list --count HEAD..origin/main 2>/dev/null)"
+echo "behind_oldest_ts=$(git log --format=%ct HEAD..origin/main 2>/dev/null | tail -1)"
+echo "ahead=$(git rev-list --count origin/main..HEAD 2>/dev/null)"
+echo "ahead_oldest_ts=$(git log --format=%ct origin/main..HEAD 2>/dev/null | tail -1)"
+'''
+
+
+def repo_state_script(rel_path: str) -> str:
+    """The one script that reads a repo's sync state. Run as-is locally or piped
+    to `ssh host bash -s`, so both machines are judged by identical logic."""
+    return f"REPO_REL={shlex.quote(rel_path)}\n" + _REPO_STATE_BODY
+
+
+def parse_repo_state(text: str) -> dict:
+    raw = dict(line.split("=", 1) for line in text.splitlines() if "=" in line)
+
+    def num(key):
+        v = raw.get(key, "").strip()
+        return int(v) if v.isdigit() else None
+
+    return {
+        "head": raw.get("head", "").strip(),
+        "stashes": num("stashes") or 0,
+        "conflicts": num("conflicts") or 0,
+        "fetch_ok": raw.get("fetch_ok", "0").strip() == "1",
+        "behind": num("behind") or 0,
+        "behind_oldest_ts": num("behind_oldest_ts"),
+        "ahead": num("ahead") or 0,
+        "ahead_oldest_ts": num("ahead_oldest_ts"),
+    }
+
+
+_SEV_RANK = {"green": 0, "yellow": 1, "red": 2}
+
+
+def evaluate_repo_sync(state: dict, now: datetime) -> tuple[str, str, int | None]:
+    """(severity, detail, value) for one repo on one machine. Reports the worst
+    condition found; a failed fetch is yellow, never silently green."""
+    findings: list[tuple[str, str]] = []
+
+    def age_finding(count, oldest_ts, noun):
+        if not count or oldest_ts is None:
+            return
+        hours = (now - datetime.fromtimestamp(oldest_ts, tz=timezone.utc)).total_seconds() / 3600
+        sev = "red" if hours >= SYNC_RED_AFTER_HOURS else "yellow" if hours >= SYNC_YELLOW_AFTER_HOURS else "green"
+        if sev != "green":
+            findings.append((sev, f"{count} commit(s) {noun}, oldest {hours:.0f}h ago"))
+
+    if state["conflicts"]:
+        findings.append(("red", "unresolved merge conflict in working tree"))
+    if state["stashes"]:
+        findings.append(("yellow", f"{state['stashes']} stash(es) present -- code-sync refuses to run until resolved; blocks sync"))
+    if not state["fetch_ok"]:
+        findings.append(("yellow", "git fetch failed -- cannot verify convergence"))
+    age_finding(state["behind"], state["behind_oldest_ts"], "behind origin")
+    age_finding(state["ahead"], state["ahead_oldest_ts"], "not yet pushed")
+
+    if not findings:
+        return "green", f"converged with origin ({state['head'] or '?'}), clean", state["stashes"]
+    worst = max(findings, key=lambda f: _SEV_RANK[f[0]])[0]
+    return worst, "; ".join(d for _, d in findings), state["stashes"] or None
+
+
+def _run_repo_state(target: str | None, rel_path: str) -> str:
+    """target None = this machine, else an ssh host."""
+    script = repo_state_script(rel_path)
+    cmd = ["bash", "-s"] if target is None else ["ssh", *SSH_OPTS, target, "bash -s"]
+    proc = subprocess.run(cmd, input=script, capture_output=True, text=True, timeout=60)
+    return proc.stdout
+
+
+def check_repo_sync_everywhere(reachability: dict[str, str], runner=_run_repo_state) -> list[dict]:
+    """Sync health of every synced repo on this machine AND every registered
+    remote device. `reachability` maps machine:<id> -> severity from the
+    reachability check: an asleep device is reported asleep (neutral), any
+    other unreachable device is yellow ('cannot verify'), never skipped."""
+    results = []
+    me = machine_profile.registry_id()
+    devices = [(me, None, "local")] + [
+        (dev, info.get("tailscale_hostname"), reachability.get(f"machine:{dev}", "yellow"))
+        for dev, info in machine_profile.remote_devices().items()
+    ]
+    for display_name, rel in SYNCED_REPOS.items():
+        for dev, host, reach in devices:
+            cid = f"repo:sync:{display_name}@{dev}"
+            label = f"{display_name} sync -- {dev}"
+            if reach == "asleep":
+                results.append(_result(cid, label, "asleep", "cannot check while the machine is asleep"))
+                continue
+            if reach not in ("local", "green"):
+                results.append(_result(cid, label, "yellow", f"machine unreachable ({reach}) -- sync state unverifiable"))
+                continue
+            try:
+                state = parse_repo_state(runner(host, rel))
+            except Exception as exc:  # ssh/git failure: surface it, don't skip silently
+                results.append(_result(cid, label, "yellow", f"could not read sync state: {str(exc)[:120]}"))
+                continue
+            sev, detail, value = evaluate_repo_sync(state, _now())
+            results.append(_result(cid, label, sev, detail, value=value))
+    return results
+
+
 # ── machine reachability ─────────────────────────────────────────────────
 
 # How long a laptop may be offline on Tailscale and still read as "asleep"
@@ -398,7 +515,9 @@ def run_all() -> dict:
     ch._save_state(cron_state)
     for name, rel in SYNCED_REPOS.items():
         results.append(check_repo_integrity(name, rel))
-    results += check_machine_reachability()
+    reach_results = check_machine_reachability()
+    results += reach_results
+    results += check_repo_sync_everywhere({r["id"]: r["severity"] for r in reach_results})
 
     cov = coverage(results)
     anomaly = record_anomaly_metrics(results)
