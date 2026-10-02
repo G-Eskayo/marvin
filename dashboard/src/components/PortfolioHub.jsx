@@ -146,6 +146,13 @@ function AutoFrame({ html, head, title, wide = false, width = null, maxHeight = 
       const wrap = d.getElementById('wrapper')
       const h = wrap ? wrap.getBoundingClientRect().height + 32 : d.body.scrollHeight
       setHeight(Math.min(maxHeight, Math.max(40, Math.ceil(h))))
+      // Everything behaves (hover, focus, pressed) except going anywhere: a link in a reference preview must not
+      // navigate the frame or submit anything. Listener lives in the parent, so no script runs inside the frame.
+      if (!d.__inert) {
+        d.__inert = true
+        d.addEventListener('click', (ev) => { if (ev.target.closest && ev.target.closest('a, button, input[type="submit"]')) ev.preventDefault() }, true)
+        d.addEventListener('submit', (ev) => ev.preventDefault(), true)
+      }
     } catch { /* keep the default height */ }
   }
   return (
@@ -234,20 +241,21 @@ function ChromePart({ part, head }) {
   )
 }
 
-// The crawled buttons, judged against the canonical three: this belongs with the button templates.
+// A one-line audit under the button templates: how much of the site already uses them. (Same section, not a second one.)
 function ButtonAudit() {
   const [inv, setInv] = useState(null)
   useEffect(() => { window.api.portfolio.inventory().then(setInv).catch(() => setInv(false)) }, [])
   if (!inv) return null
   const off = inv.buttons.filter((v) => !buttonVerdict(v).ok)
+  const ok = inv.buttons.filter((v) => buttonVerdict(v).ok)
+  const instances = ok.reduce((n, v) => n + v.count, 0)
   return (
-    <div className="rounded-lg border border-neutral-800 p-4">
-      <h3 className="mb-1 text-base font-medium text-white">Buttons on the site today</h3>
-      <p className="mb-3 text-xs text-neutral-400">
-        {inv.buttons.length} look{inv.buttons.length === 1 ? '' : 's'} crawled; {off.length === 0 ? 'every one is a canonical button.' : `${off.length} off-canon — these are the ones to bring back to the three above.`}
-      </p>
-      <ButtonVariants variants={inv.buttons} />
-    </div>
+    <p className="text-xs text-neutral-500">
+      On the site today: {instances} use{instances === 1 ? '' : 's'} of the canonical buttons.{' '}
+      {off.length === 0
+        ? 'No other button looks.'
+        : `Still to bring back to these: ${off.map((v) => `“${v.texts[0] || v.classes || 'unnamed'}” ×${v.count}`).join(', ')}.`}
+    </p>
   )
 }
 
@@ -299,33 +307,6 @@ function Shot({ rel, className = '' }) {
     return () => { live = false }
   }, [rel])
   return src ? <img src={src} alt="" className={className} /> : <div className={`flex items-center justify-center bg-neutral-900 text-[10px] text-neutral-600 ${className}`}>{rel ? 'loading…' : 'no screenshot'}</div>
-}
-
-function ButtonVariants({ variants }) {
-  const [open, setOpen] = useState(null)
-  return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-      {variants.map((v) => (
-        <div key={v.id} className="rounded-lg border border-neutral-800 p-3">
-          <div className="mb-2 flex items-center gap-2">
-            <span className={`rounded px-1.5 py-0.5 text-[10px] ${v.kind === 'github-link' ? 'bg-purple-950 text-purple-300' : 'bg-blue-950 text-blue-300'}`}>{v.kind === 'github-link' ? 'GitHub link' : 'Button'}</span>
-            <span className={`rounded px-1.5 py-0.5 text-[10px] ${buttonVerdict(v).ok ? 'bg-emerald-950 text-emerald-300' : 'bg-amber-950 text-amber-300'}`}>{buttonVerdict(v).label}</span>
-            <span className="text-xs text-neutral-300">×{v.count} on {v.pages.length} page{v.pages.length === 1 ? '' : 's'}</span>
-          </div>
-          <div className="rounded bg-white p-3"><Shot rel={v.screenshot} className="max-h-16 max-w-full" /></div>
-          <p className="mt-2 truncate text-xs text-neutral-400">{v.texts.join(' · ') || '(no text)'}</p>
-          <p className="truncate font-mono text-[10px] text-neutral-600">{v.classes || '(no class)'} · {v.styles.fontSize} {v.styles.textTransform}</p>
-          <button onClick={() => setOpen(open === v.id ? null : v.id)} className="mt-2 text-xs text-blue-400 hover:text-blue-300">{open === v.id ? 'hide details' : 'details'}</button>
-          {open === v.id && (
-            <div className="mt-2 flex flex-col gap-2">
-              <pre className="max-h-32 overflow-auto rounded border border-neutral-800 bg-neutral-950 p-2 text-[10px] text-neutral-300">{v.example.html}</pre>
-              <p className="text-[10px] text-neutral-500">Used on: {v.pages.slice(0, 12).join(', ')}{v.pages.length > 12 ? ` …+${v.pages.length - 12}` : ''}</p>
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
-  )
 }
 
 function PageTemplates({ pages }) {
