@@ -1,37 +1,87 @@
 {
-  "anomaly-detection": {
-    "hash": "982291c411c433cc8880f7fbff3e3000",
+  "algorithms": {
+    "hash": "d4526ba594526badaa8be6ff3e3c1800",
     "salt": 0,
     "style": "cubes"
   },
+  "anomaly-detection": {
+    "hash": "8846898011c411888a80f3fbff3e3000",
+    "salt": 0,
+    "style": "cubes"
+  },
+  "bug-bounty": {
+    "hash": "25576d369962a264aaefffff91010100",
+    "salt": 0,
+    "style": "contours"
+  },
+  "clarity-captions": {
+    "hash": "64a036490524d96a000eb5fefbff8100",
+    "salt": 0,
+    "style": "lines"
+  },
+  "helicopter-crutches": {
+    "hash": "010ffce0031ff8c0aa6eb9b300bcbd18",
+    "salt": 0,
+    "style": "halftone"
+  },
   "killer-sudoku": {
-    "hash": "0000000000000000202ca2264bfbcdf9",
+    "hash": "0142850410000000202e36450b6fcdf9",
     "salt": 0,
     "style": "moire"
   },
   "mancala": {
-    "hash": "96d2db494d6424b6aaefff0f00309d18",
+    "hash": "96d2db494d6424b6aaefff0701309d18",
     "salt": 0,
     "style": "halftone"
   },
+  "marketplace-ml-agent": {
+    "hash": "00924140a0814005aa01dbffff3c0800",
+    "salt": 0,
+    "style": "cubes"
+  },
   "marvin": {
-    "hash": "8000000000000000aa80ce7c7164d3c7",
+    "hash": "0000000000000000aa81ee7b3068c3c7",
     "salt": 0,
     "style": "moire"
   },
   "mitre": {
-    "hash": "4b4a5ad296b4a5a5aaebff3e0c109918",
+    "hash": "4b4a5ad296b4a5a5aaebef3e0e109918",
     "salt": 0,
     "style": "halftone"
   },
   "paper-dive": {
-    "hash": "0f000a000040007caa680008bdcbbdfb",
+    "hash": "0700240000000058aa693e688638b9cb",
     "salt": 0,
     "style": "moire"
   },
+  "pipeline": {
+    "hash": "8a435d462a5d49ad808fffffffc00000",
+    "salt": 0,
+    "style": "contours"
+  },
+  "random-number": {
+    "hash": "9c8c8c8e8ecec6cfaa4bbdcdeff84000",
+    "salt": 0,
+    "style": "contours"
+  },
   "regression-and-classification": {
-    "hash": "aab94585aaea55310023c3cdb1fe7f44",
+    "hash": "aa9b4585aaaa55110021c38db3ff7f44",
     "salt": 0,
     "style": "lines"
+  },
+  "resume-selector": {
+    "hash": "40a0894d40809041aa80c0bfffbf3800",
+    "salt": 0,
+    "style": "cubes"
+  },
+  "resume-tailor": {
+    "hash": "134c92496cb5c996a0a7ffdfdf810100",
+    "salt": 0,
+    "style": "contours"
+  },
+  "skineedipping": {
+    "hash": "0220fa7a0540fcfdaa6eb9dbfb2c2400",
+    "salt": 0,
+    "style": "cubes"
   }
 }
