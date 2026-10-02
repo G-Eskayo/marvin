@@ -1,0 +1,37 @@
+{
+  "anomaly-detection": {
+    "hash": "982291c411c433cc8880f7fbff3e3000",
+    "salt": 0,
+    "style": "cubes"
+  },
+  "killer-sudoku": {
+    "hash": "0000000000000000202ca2264bfbcdf9",
+    "salt": 0,
+    "style": "moire"
+  },
+  "mancala": {
+    "hash": "96d2db494d6424b6aaefff0f00309d18",
+    "salt": 0,
+    "style": "halftone"
+  },
+  "marvin": {
+    "hash": "8000000000000000aa80ce7c7164d3c7",
+    "salt": 0,
+    "style": "moire"
+  },
+  "mitre": {
+    "hash": "4b4a5ad296b4a5a5aaebff3e0c109918",
+    "salt": 0,
+    "style": "halftone"
+  },
+  "paper-dive": {
+    "hash": "0f000a000040007caa680008bdcbbdfb",
+    "salt": 0,
+    "style": "moire"
+  },
+  "regression-and-classification": {
+    "hash": "aab94585aaea55310023c3cdb1fe7f44",
+    "salt": 0,
+    "style": "lines"
+  }
+}
