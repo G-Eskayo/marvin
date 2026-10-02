@@ -54,8 +54,8 @@ def root(tmp_path):
     return tmp_path
 
 
-def render(root, tid, data=None, options=None):
-    return pt.render(tid, data or {}, options, root=root)
+def render(root, tid, field_values=None, options=None):
+    return pt.render(tid, field_values or {}, options, root=root)
 
 
 # ── filling ─────────────────────────────────────────────────────────────────
@@ -255,7 +255,7 @@ def test_a_page_with_genuinely_empty_content_is_listed_and_flagged_empty_not_fak
 
 def test_a_page_with_content_is_not_flagged_empty(tmp_path):
     inv = tmp_path / "inv"; (inv / "raw").mkdir(parents=True)
-    (inv / "raw" / "a.html").write_text("[fusion_text]x[/fusion_text]")
+    (inv / "raw" / "a.html").write_text("[fusion_text]<p>A real page with a real paragraph of content.</p>[/fusion_text]")
     (inv / "inventory.json").write_text(json.dumps({"pages": [{"slug": "a", "url": "/a/", "title": "A", "type": "page", "raw": "raw/a.html"}]}))
     assert pt.export_reference(inv, tmp_path / "templates")[0]["empty"] is False
 
@@ -276,3 +276,36 @@ def test_a_template_without_a_leading_comment_is_unchanged(tmp_path):
     (tmp_path / "templates.json").write_text(json.dumps({"version": 1, "templates": [
         {"id": "t", "kind": "component", "file": "t.html", "fields": [{"name": "X", "type": "text"}]}]}))
     assert pt.render("t", {"X": "a"}, None, tmp_path)["html"] == "<div>a</div>"
+
+
+# ── legacy pages: the useful reference is what visitors get, not a 17-character shortcode ──
+# 12 of the 33 pages (the WP-Coder generations) store [wp_wow_coder id="..."] and nothing else; their real
+# markup lives in the database. A reference template that is only a shortcode tells nobody anything.
+
+def test_a_page_that_is_only_shortcodes_is_detected():
+    assert pt.is_shortcode_only('[wp_wow_coder id="5"]')
+    assert pt.is_shortcode_only('\n[fusion_builder_container][wp_wow_coder id="5"][/fusion_builder_container]\n')
+    assert pt.is_shortcode_only("")
+    assert not pt.is_shortcode_only("[fusion_text]<div class=\"section-container\">Real content here</div>[/fusion_text]")
+
+
+def test_a_shortcode_only_page_uses_its_rendered_content_as_the_reference_and_says_so(tmp_path):
+    inv = tmp_path / "inv"; (inv / "raw").mkdir(parents=True); (inv / "rendered").mkdir()
+    (inv / "raw" / "mancala.html").write_text('[wp_wow_coder id="5"]')
+    (inv / "rendered" / "mancala.html").write_text('<div class="card-container"><h1>Mancala</h1></div>')
+    (inv / "raw" / "modern.html").write_text('[fusion_text]<div class="section-container"><div class="container">real</div></div>[/fusion_text]')
+    (inv / "rendered" / "modern.html").write_text("<div>rendered modern</div>")
+    (inv / "inventory.json").write_text(json.dumps({"pages": [
+        {"slug": "mancala", "url": "/m/", "title": "M", "type": "project", "raw": "raw/mancala.html", "rendered": "rendered/mancala.html"},
+        {"slug": "modern", "url": "/n/", "title": "N", "type": "project", "raw": "raw/modern.html", "rendered": "rendered/modern.html"}]}))
+    index = {e["slug"]: e for e in pt.export_reference(inv, tmp_path / "templates")}
+    assert index["mancala"]["source"] == "rendered" and (tmp_path / "templates/reference/mancala.html").read_text() == '<div class="card-container"><h1>Mancala</h1></div>'
+    assert index["modern"]["source"] == "raw" and "section-container" in (tmp_path / "templates/reference/modern.html").read_text()
+
+
+def test_a_shortcode_only_page_with_no_rendered_capture_is_flagged_not_faked(tmp_path):
+    inv = tmp_path / "inv"; (inv / "raw").mkdir(parents=True)
+    (inv / "raw" / "x.html").write_text('[wp_wow_coder id="5"]')
+    (inv / "inventory.json").write_text(json.dumps({"pages": [{"slug": "x", "url": "/x/", "title": "X", "type": "page", "raw": "raw/x.html"}]}))
+    [e] = pt.export_reference(inv, tmp_path / "templates")
+    assert e["empty"] is True and e["source"] == "raw"
