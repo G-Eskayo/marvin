@@ -112,6 +112,11 @@ def check_github_links(links: list[dict], rules: dict) -> list[dict]:
         # Links into OTHER accounts are references (e.g. "AIMA Python Reference"), not the
         # project's own repo, so the canonical-button rule does not apply to them.
         if owner and link.get("href") and f"github.com/{owner}/" not in str(link["href"]).lower():
+            # Not the project's own repo. Normally a reference and exempt -- but if it WEARS the
+            # canonical button (text + style), a bulk rewrite has relabelled someone else's repo
+            # as "View on GitHub" and sent visitors to the wrong project.
+            if (_norm(link.get("text", "")) == want_text and want_cls <= set(str(link.get("cls", "")).split())):
+                out.append(_finding("github-button-target", f"'View on GitHub' button points at another account's repo: {link['href']}"))
             continue
         if _norm(link.get("text", "")) != want_text:
             out.append(_finding("github-button-text", f"link says {link.get('text')!r}, expected {rules['github_button']['text']!r}"))

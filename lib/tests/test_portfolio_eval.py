@@ -163,3 +163,24 @@ def test_owner_matching_is_case_insensitive_and_exact_not_a_substring():
 def test_the_owner_is_a_rule_that_can_be_changed():
     r = pe.load_rules(Path("/nonexistent")); r["github_button"]["owner"] = "someone-else"
     assert pe.check_github_links([{"text": "x", "cls": "", "href": "https://github.com/G-Eskayo/r"}], r) == []
+
+
+# ── a canonical-looking button must point at the OWNER's repo ───────────────
+# A bulk "standardise every GitHub link" pass that rewrites the FIRST github.com link on a page
+# will also relabel a REFERENCE to someone else's repo (e.g. AIMA) as "View on GitHub",
+# sending visitors to the wrong project. The reference-link exemption above would hide that, so
+# a canonical-styled button aimed at another account is its own finding.
+
+def test_a_view_on_github_button_pointing_at_another_account_is_flagged():
+    wrong = {"text": "View on GitHub", "cls": "btn btn-default", "href": "https://github.com/aimacode/aima-python"}
+    assert rules_of(pe.check_github_links([wrong], RULES)) == ["github-button-target"]
+
+
+def test_the_same_button_pointing_at_the_owners_repo_is_clean():
+    ok = {"text": "View on GitHub", "cls": "btn btn-default", "href": "https://github.com/G-Eskayo/AI-algorithms"}
+    assert pe.check_github_links([ok], RULES) == []
+
+
+def test_a_plain_reference_link_to_another_account_is_still_just_a_reference():
+    ref = {"text": "AIMA Python Reference", "cls": "", "href": "https://github.com/aimacode/aima-python"}
+    assert pe.check_github_links([ref], RULES) == []
