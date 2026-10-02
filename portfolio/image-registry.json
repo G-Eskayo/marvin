@@ -1,87 +1,87 @@
 {
   "algorithms": {
-    "hash": "d4526ba594526badaa8be6ff3e3c1800",
+    "hash": "30c48aa090d0d080aaeff3ffeb200000",
     "salt": 0,
-    "style": "cubes"
+    "style": "tree"
   },
   "anomaly-detection": {
-    "hash": "8846898011c411888a80f3fbff3e3000",
+    "hash": "002650207070928aaaefffbbfb000000",
     "salt": 0,
-    "style": "cubes"
+    "style": "outliers"
   },
   "bug-bounty": {
-    "hash": "25576d369962a264aaefffff91010100",
+    "hash": "1032323231323230aaeffcff99180800",
     "salt": 0,
-    "style": "contours"
+    "style": "crosshair"
   },
   "clarity-captions": {
-    "hash": "64a036490524d96a000eb5fefbff8100",
+    "hash": "81929aaa9292b6b6aaefffff9b000000",
     "salt": 0,
-    "style": "lines"
+    "style": "waveform"
   },
   "helicopter-crutches": {
-    "hash": "010ffce0031ff8c0aa6eb9b300bcbd18",
+    "hash": "4d29ca5230246870aaefffff44440400",
     "salt": 0,
-    "style": "halftone"
+    "style": "rotor"
   },
   "killer-sudoku": {
-    "hash": "0142850410000000202e36450b6fcdf9",
+    "hash": "c0c0c0c0c0c0c0c0aaefffbdbc180000",
     "salt": 0,
-    "style": "moire"
+    "style": "sudoku"
   },
   "mancala": {
-    "hash": "96d2db494d6424b6aaefff0701309d18",
+    "hash": "9280989aa0d4cc92aae7ffffe7000000",
     "salt": 0,
-    "style": "halftone"
+    "style": "mancala"
   },
   "marketplace-ml-agent": {
-    "hash": "00924140a0814005aa01dbffff3c0800",
+    "hash": "20c0900412cdcd2382effffffb000000",
     "salt": 0,
-    "style": "cubes"
+    "style": "network"
   },
   "marvin": {
-    "hash": "0000000000000000aa81ee7b3068c3c7",
+    "hash": "a22b8282404a9884aaefffffe9000000",
     "salt": 0,
-    "style": "moire"
+    "style": "network"
   },
   "mitre": {
-    "hash": "4b4a5ad296b4a5a5aaebef3e0e109918",
+    "hash": "aaaa94e03a2ca925aaeffffe3c180000",
     "salt": 0,
-    "style": "halftone"
+    "style": "matrix"
   },
   "paper-dive": {
-    "hash": "0700240000000058aa693e688638b9cb",
+    "hash": "4acaa2d38192c848a8efffff97020000",
     "salt": 0,
-    "style": "moire"
+    "style": "citations"
   },
   "pipeline": {
-    "hash": "8a435d462a5d49ad808fffffffc00000",
+    "hash": "800090a2a2800000aaaddbffbd180800",
     "salt": 0,
-    "style": "contours"
+    "style": "pipeline"
   },
   "random-number": {
-    "hash": "9c8c8c8e8ecec6cfaa4bbdcdeff84000",
+    "hash": "c00ae5e4aeb2a282aaefffff7c000000",
     "salt": 0,
-    "style": "contours"
+    "style": "histogram"
   },
   "regression-and-classification": {
-    "hash": "aa9b4585aaaa55110021c38db3ff7f44",
+    "hash": "09461cf1c4c80510aaefffffb4200000",
     "salt": 0,
-    "style": "lines"
+    "style": "regression"
   },
   "resume-selector": {
-    "hash": "40a0894d40809041aa80c0bfffbf3800",
+    "hash": "23040c0d0c0c8c00aaefffbf18181800",
     "salt": 0,
-    "style": "cubes"
+    "style": "documents"
   },
   "resume-tailor": {
-    "hash": "134c92496cb5c996a0a7ffdfdf810100",
-    "salt": 0,
-    "style": "contours"
+    "hash": "5051111090914948aac3ffff3c181800",
+    "salt": 1,
+    "style": "documents-tailored"
   },
   "skineedipping": {
-    "hash": "0220fa7a0540fcfdaa6eb9dbfb2c2400",
+    "hash": "d2d2d2aa9ad2a28aaaeff9dbfe080800",
     "salt": 0,
-    "style": "cubes"
+    "style": "storefront"
   }
 }

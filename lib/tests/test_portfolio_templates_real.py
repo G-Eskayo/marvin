@@ -119,3 +119,12 @@ def test_the_project_pages_action_row_only_offers_buttons_that_belong_on_a_proje
 def test_github_comes_before_download_in_the_action_row_order():
     project = next(p for p in by_kind("page") if p["pageType"] == "project")
     assert project["slots"]["actions"]["options"].index("button-github") < project["slots"]["actions"]["options"].index("button-download")
+
+
+def test_every_template_has_a_specimen_that_renders_cleanly():
+    """The Templates tab shows each template as what it is, using the sample content in the manifest."""
+    import portfolio_templates as pt
+    for t in pt.list_templates():
+        r = pt.specimen(t["id"])
+        assert r["ok"], (t["id"], r["missing"], r["errors"])
+        assert r["html"].strip(), t["id"]

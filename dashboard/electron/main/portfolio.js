@@ -277,11 +277,9 @@ export function createPortfolio({
     return readText(await templateFile(id))
   }
 
-  async function saveTemplateSource(id, content) {
-    if (typeof content !== 'string' || !content.trim()) throw new Error('Template markup must be a non-empty string')
-    const file = await templateFile(id)
-    await fsp.writeFile(file, content)
-    return { id }
+  const specimen = (id) => {
+    if (typeof id !== 'string' || !TEMPLATE_ID.test(id)) throw new Error(`Invalid template id: ${JSON.stringify(id)}`)
+    return runTemplates(['specimen', id])
   }
 
   const planProject = (data) => runTemplates(['plan', '--data', JSON.stringify(data || {})])
@@ -293,5 +291,5 @@ export function createPortfolio({
     return readText(path.join(referenceDir, `${slug}.html`), null)
   }
 
-  return { inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, templateSource, saveTemplateSource, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage }
+  return { inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, templateSource, specimen, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage }
 }

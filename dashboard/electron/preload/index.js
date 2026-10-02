@@ -59,7 +59,7 @@ contextBridge.exposeInMainWorld('api', {
     pageMarkup: (slug) => ipcRenderer.invoke('portfolio:page-markup', slug),
     templates: () => ipcRenderer.invoke('portfolio:templates'),
     templateSource: (id) => ipcRenderer.invoke('portfolio:template:source', id),
-    saveTemplateSource: (id, content) => ipcRenderer.invoke('portfolio:template:source:save', id, content),
+    specimen: (id) => ipcRenderer.invoke('portfolio:template:specimen', id),
     renderTemplate: (id, data, options) => ipcRenderer.invoke('portfolio:template:render', id, data, options),
     planProject: (data) => ipcRenderer.invoke('portfolio:project:plan', data),
     reference: () => ipcRenderer.invoke('portfolio:reference'),

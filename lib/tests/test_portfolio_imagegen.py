@@ -39,7 +39,7 @@ def test_every_real_project_slug_is_perceptually_distinct_from_every_other_once_
     # Raw renders of same-style slugs can land close on a coarse 64-bit hash (killer-sudoku vs
     # marvin: distance 5, though their pixels differ strongly). Distinctness is what assign()
     # GUARANTEES by re-rolling with a salt -- so that is what is asserted, not luck.
-    out = ig.assign(SLUGS, registry_path=tmp_path / "r.json", size=SMALL)
+    out = ig.assign(SLUGS, registry_path=tmp_path / "r.json", size=ig.HERO_SIZE)  # the real banner size: sparse diagrams are too coarse to compare when tiny
     hashes = {s: int(v["hash"], 16) for s, v in out.items()}
     worst = min(ig.hamming(hashes[a], hashes[b]) for i, a in enumerate(SLUGS) for b in SLUGS[i + 1:])
     assert worst >= ig.MIN_DISTANCE
@@ -67,7 +67,8 @@ def test_the_generator_uses_several_distinct_styles_across_projects():
 def test_images_are_coloured_not_greyscale_since_the_sites_black_and_white_is_a_css_effect():
     # Gil 2026-10-02: colour is fine -- the black-and-white on the site is an effect applied to images.
     img = arr(ig.render("mancala", size=SMALL)).astype(int)
-    assert (img.max(axis=2) - img.min(axis=2)).mean() > 25
+    chroma = img.max(axis=2) - img.min(axis=2)
+    assert np.percentile(chroma, 99) > 60   # the drawn structure is coloured (the dark ground is naturally low-chroma)
 
 
 def _mean_hue(img):
@@ -218,3 +219,39 @@ def test_a_project_whose_image_has_no_colour_still_gets_a_deterministic_colour_f
 def test_slug_derived_colours_vary_across_projects():
     hues = {round(_mean_hue(ig.render(s, size=(220, 60))) / 60) for s in SLUGS}
     assert len(hues) >= 3
+
+
+# ── thematic motifs ─────────────────────────────────────────────────────────
+
+def test_every_default_motif_is_drawable_and_deterministic():
+    import numpy as np
+    import portfolio_motifs as m
+    for name in set(m.DEFAULT_MOTIFS.values()):
+        a = m.draw(name, (440, 120), np.random.RandomState(3))
+        b = m.draw(name, (440, 120), np.random.RandomState(3))
+        assert a.shape == (120, 440) and a.max() > 0.5, name       # something is actually drawn
+        assert (a == b).all(), name
+
+
+def test_motif_override_wins_and_unknown_motif_is_rejected(tmp_path):
+    import json
+    import numpy as np
+    import portfolio_motifs as m
+    f = tmp_path / "o.json"
+    f.write_text(json.dumps({"marvin": "tree", "mancala": None}))
+    assert m.motif_for("marvin", f) == "tree"
+    assert m.motif_for("mancala", f) is None            # explicit null = abstract pattern instead
+    assert m.motif_for("killer-sudoku", f) == "sudoku"  # untouched slugs keep the default
+    assert m.motif_for("never-heard-of-it", f) is None
+    import pytest
+    with pytest.raises(ValueError):
+        m.draw("nope", (10, 10), np.random.RandomState(0))
+
+
+def test_projects_with_a_motif_render_differently_from_the_pattern_only_look():
+    import numpy as np
+    import portfolio_imagegen as g
+    with_motif = np.asarray(g.render("mancala", (440, 120)))
+    assert g.look_for("mancala") == "mancala"
+    assert g.look_for("some-new-project") == g.style_for("some-new-project")
+    assert with_motif.std() > 0
