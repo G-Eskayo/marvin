@@ -367,3 +367,42 @@ describe('previewHead inline styles', () => {
     expect(await q.previewHead()).toContain("href='a.css'")
   })
 })
+
+describe('image variants (keep what was generated, choose what is used)', () => {
+  beforeEach(() => {
+    write('deploy/other-projects/manifest.json', JSON.stringify([{ title: 'Mancala', url: '/ai-projects/mancala/', thumbnail: '/wp-content/uploads/m.jpg' }]))
+    exec.mockResolvedValue({ stdout: JSON.stringify({ ok: true }), stderr: '' })
+  })
+
+  it('lists variants through the generator CLI, only for known projects', async () => {
+    await p.imageVariants('mancala')
+    expect(exec.mock.calls[0][1].slice(-2)).toEqual(['mancala', '--list'])
+    await expect(p.imageVariants('nope')).rejects.toThrow(/unknown project/i)
+  })
+
+  it('generates another variant, optionally of a chosen theme, with colour inspiration', async () => {
+    await p.newImageVariant('mancala', 'tree')
+    const args = exec.mock.calls[0][1]
+    expect(args).toEqual(expect.arrayContaining(['mancala', '--new', '--motif', 'tree']))
+    expect(args).toContain('--inspire')
+    await expect(p.newImageVariant('mancala', '../x')).rejects.toThrow(/invalid motif/i)
+  })
+
+  it('chooses a variant by theme and number, validating both', async () => {
+    await p.chooseImageVariant('mancala', 'mancala', 2)
+    expect(exec.mock.calls[0][1]).toEqual(expect.arrayContaining(['--choose', '--motif', 'mancala', '--salt', '2']))
+    await expect(p.chooseImageVariant('mancala', 'mancala', -1)).rejects.toThrow(/invalid variant number/i)
+    await expect(p.chooseImageVariant('mancala', 'mancala', 1.5)).rejects.toThrow(/invalid variant number/i)
+    await expect(p.chooseImageVariant('mancala', '; rm -rf', 1)).rejects.toThrow(/invalid motif/i)
+  })
+
+  it('previews a stored variant as a data URL, null when absent, and refuses bad names', async () => {
+    expect(await p.variantPreview('mancala', 'mancala', 0)).toBeNull()
+    const d = path.join(home, '.claude/portfolio/images/mancala')
+    mkdirSync(d, { recursive: true })
+    writeFileSync(path.join(d, 'mancala-0.png'), Buffer.from([137, 80]))
+    expect(await p.variantPreview('mancala', 'mancala', 0)).toBe('data:image/png;base64,' + Buffer.from([137, 80]).toString('base64'))
+    await expect(p.variantPreview('mancala', '../../x', 0)).rejects.toThrow(/invalid variant/i)
+    await expect(p.variantPreview('../etc', 'mancala', 0)).rejects.toThrow(/unknown project/i)
+  })
+})

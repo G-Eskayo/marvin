@@ -174,18 +174,62 @@ export function createPortfolio({
     )
   }
 
-  async function generateImage(slug) {
+  // The project's existing thumbnail (inside the dev site only) is passed as COLOUR inspiration -- never used as the image.
+  async function knownProject(slug) {
     const manifest = await readJson(manifestFile, [])
-    const known = Array.isArray(manifest) && manifest.some((m) => slugOf(m.url) === slug)
-    if (typeof slug !== 'string' || !NAME_RE.test(slug) || !known) {
-      throw new Error(`Unknown project: ${JSON.stringify(slug)}`)
-    }
-    const entry = manifest.find((m) => slugOf(m.url) === slug)
+    const entry = Array.isArray(manifest) && typeof slug === 'string' && NAME_RE.test(slug) ? manifest.find((m) => slugOf(m.url) === slug) : null
+    if (!entry) throw new Error(`Unknown project: ${JSON.stringify(slug)}`)
+    return entry
+  }
+
+  function inspireArgs(entry) {
     const existing = path.resolve(htmlDir, '.' + String(entry.thumbnail || ''))
     const inside = existing.startsWith(path.resolve(htmlDir) + path.sep)   // a crafted thumbnail path must not escape htmlDir
-    const args = [imageScript, slug, ...(inside ? ['--inspire', existing] : [])]
-    await exec(python, args, { maxBuffer: 1024 * 1024, timeout: 5 * 60 * 1000 })
+    return inside ? ['--inspire', existing] : []
+  }
+
+  async function generateImage(slug) {
+    const entry = await knownProject(slug)
+    await exec(python, [imageScript, slug, ...inspireArgs(entry)], { maxBuffer: 1024 * 1024, timeout: 5 * 60 * 1000 })
     return { slug, path: path.join(imagesDir, `${slug}.png`) }
+  }
+
+  // ── variants: every image tried is kept; the person chooses which one is in use ──
+  const MOTIF_RE = /^[a-z][a-z-]{0,30}$/
+
+  async function runImages(args) {
+    const { stdout } = await exec(python, [imageScript, ...args], { maxBuffer: 1024 * 1024, timeout: 5 * 60 * 1000 })
+    return JSON.parse(stdout)
+  }
+
+  const imageMotifs = () => runImages(['--motifs'])
+
+  async function imageVariants(slug) {
+    await knownProject(slug)
+    return runImages([slug, '--list'])
+  }
+
+  async function newImageVariant(slug, motif) {
+    const entry = await knownProject(slug)
+    if (motif != null && !MOTIF_RE.test(motif)) throw new Error(`Invalid motif: ${JSON.stringify(motif)}`)
+    return runImages([slug, '--new', ...(motif ? ['--motif', motif] : []), ...inspireArgs(entry)])
+  }
+
+  async function chooseImageVariant(slug, motif, salt) {
+    const entry = await knownProject(slug)
+    if (typeof motif !== 'string' || !MOTIF_RE.test(motif)) throw new Error(`Invalid motif: ${JSON.stringify(motif)}`)
+    if (!Number.isInteger(salt) || salt < 0 || salt > 9999) throw new Error(`Invalid variant number: ${JSON.stringify(salt)}`)
+    return runImages([slug, '--choose', '--motif', motif, '--salt', String(salt), ...inspireArgs(entry)])
+  }
+
+  async function variantPreview(slug, motif, salt) {
+    await knownProject(slug)
+    if (typeof motif !== 'string' || !MOTIF_RE.test(motif) || !Number.isInteger(salt) || salt < 0) throw new Error('Invalid variant')
+    try {
+      return 'data:image/png;base64,' + (await fsp.readFile(path.join(imagesDir, slug, `${motif}-${salt}.png`))).toString('base64')
+    } catch {
+      return null
+    }
   }
 
   // A generated image as a data URL, for the gallery. Same slug validation as generateImage.
@@ -314,5 +358,5 @@ export function createPortfolio({
     return readText(path.join(referenceDir, `${slug}.html`), null)
   }
 
-  return { chrome, inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, templateSource, specimen, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage }
+  return { chrome, inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, templateSource, specimen, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage, imageMotifs, imageVariants, newImageVariant, chooseImageVariant, variantPreview }
 }
