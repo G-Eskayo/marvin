@@ -3,6 +3,7 @@ import { mergePr } from './merge.js'
 import { sendFeedback, dropEntirely } from './deny.js'
 import { forwardRefreshPing } from './refresh_relay.js'
 import { loadGhToken } from './gh_auth.js'
+import { failureResponse } from './failure.js'
 
 // Authenticate gh/git children from the pipeline's shared credential file (see gh_auth.js).
 const ghTokenSource = loadGhToken()
@@ -77,9 +78,11 @@ const server = createServer(async (req, res) => {
       const result = await mergePr(payload.pr_url)
       res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(result))
     } catch (err) {
-      res.writeHead(500, { 'Content-Type': 'application/json' }).end(
-        JSON.stringify({ merged: false, error: String(err.message || err) })
-      )
+      // Structured: code, stage, retryable, action, remediation -- so the dashboard can say
+      // what broke and the pipeline can act on it (see failure.js).
+      const { status, body } = failureResponse(err)
+      console.error(`approve failed: ${body.error}`)
+      res.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(body))
     }
     return
   }

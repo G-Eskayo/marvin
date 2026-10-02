@@ -116,3 +116,18 @@ def test_a_corrupt_log_line_never_crashes_the_breaker():
     for t in (32, 35, 37):
         _fail(t, VITEST)
     assert len(fb.tripped(now=NOW)) == 1
+
+
+def test_a_failure_line_written_by_the_node_webhook_is_read_and_grouped():
+    # dashboard/webhook-server/failure_log.js writes approve/merge failures into this
+    # same log. Cross-language contract: an ISO time with a trailing 'Z' (JS
+    # toISOString), kind "failure", an int ticket, and a "merge:<CODE>" signature.
+    import json
+    lines = [json.dumps({"t": (NOW - timedelta(minutes=m)).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                         "kind": "failure", "ticket": t, "sig": "merge:GH_AUTH_INVALID",
+                         "reason": "GH_AUTH_INVALID: Bad credentials"})
+             for m, t in ((9, 123), (6, 124), (3, 125))]
+    fb.LOG_PATH.write_text("\n".join(lines) + "\n")
+    [trip] = fb.tripped(now=NOW)
+    assert trip["signature"] == "merge:GH_AUTH_INVALID"
+    assert sorted(trip["tickets"]) == [123, 124, 125]

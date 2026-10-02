@@ -183,10 +183,31 @@ export async function listPipelinePrs(listOpenPrs) {
   })
 }
 
+// Turns the webhook's structured failure body into a message that says what broke, where,
+// and what happens next -- "Webhook call failed: 500" hid the real reason (2026-10-02).
+function describeApproveFailure(status, body) {
+  if (!body || !body.code) return `Webhook call failed: ${status}`
+  const next =
+    body.action === 'escalate'
+      ? ' -- needs you'
+      : body.action === 'retry'
+        ? ` -- already retried ${body.attempts ?? '?'} times; try again shortly`
+        : ' -- sent back to its ticket'
+  return `${body.code} at ${body.stage}: ${body.message}${next}. ${body.remediation ?? ''}`.trim()
+}
+
 export async function approveMr(prUrl, webhookUrl, post) {
   const response = await post(webhookUrl, { pr_url: prUrl })
   if (!response.ok) {
-    throw new Error(`Webhook call failed: ${response.status}`)
+    let body = null
+    try {
+      body = await response.json()
+    } catch {
+      // not JSON (or no body): fall back to the bare status below
+    }
+    const error = new Error(describeApproveFailure(response.status, body))
+    if (body && body.code) error.payload = body
+    throw error
   }
   // A 200 covers both an actual merge and G-Eskayo/marvin#91's merge-time
   // gate routing to re-engagement instead -- callers need the real body

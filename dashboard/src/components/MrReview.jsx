@@ -1,3 +1,4 @@
+import { cleanIpcError } from '../lib/ipcError.js'
 import { useEffect, useState } from 'react'
 import MrDetail from './MrDetail.jsx'
 
@@ -180,7 +181,7 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
       onApproved(pr.number)
     } catch (err) {
       setStatus('error')
-      setErrorMessage(String(err))
+      setErrorMessage(cleanIpcError(err))
     }
   }
 
