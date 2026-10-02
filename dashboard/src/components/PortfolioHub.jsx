@@ -2,8 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
-  groupFindingsByRule, parseRulesText, previewDocument, nextComponentName, formatRunTime,
-  initialData, buildOptions, fieldInputType, groupTemplates, slugify, projectDefaults, CATEGORIES, countByType
+  groupFindingsByRule, parseRulesText, previewDocument, formatRunTime,
+  initialData, buildOptions, buttonVerdict, fieldInputType, groupTemplates, slugify, projectDefaults, CATEGORIES, countByType
 } from '../lib/portfolio.js'
 
 // The Portfolio hub (CONTEXT.md "Dashboard app -- Portfolio tab"): the single place that defines how
@@ -15,7 +15,6 @@ const DEV_SITE = 'http://localhost:8080'
 const SUBTABS = [
   ['templates', 'Templates'],
   ['inventory', 'Site inventory'],
-  ['components', 'Edit templates'],
   ['guide', 'Guide & rules'],
   ['evaluation', 'Evaluation'],
   ['images', 'Images']
@@ -137,6 +136,83 @@ function Problems({ result }) {
 
 // ── Templates: plug-and-play forms ──────────────────────────────────────────
 
+// What this template is FOR: the rules a builder follows (prescriptive), not what happens to exist.
+function Guidance({ template }) {
+  const rows = [
+    template.pageType && ['Page type', template.pageType],
+    template.role && ['Role', template.role],
+    template.usedOn && ['Used on', template.usedOn.join(', ') + ' pages only'],
+    template.placement && ['Placement', template.placement]
+  ].filter(Boolean)
+  if (!rows.length && !(template.zones || []).length) return null
+  return (
+    <div className="rounded-lg border border-neutral-800 p-3">
+      <h4 className="mb-2 text-xs font-medium uppercase tracking-wide text-neutral-400">How to use it</h4>
+      {rows.map(([k, v]) => (
+        <p key={k} className="text-xs text-neutral-300"><span className="text-neutral-500">{k}: </span>{v}</p>
+      ))}
+      {(template.zones || []).length > 0 && (
+        <ol className="mt-2 flex flex-col gap-1">
+          {template.zones.map((z, i) => (
+            <li key={z.name} className="rounded border border-dashed border-neutral-700 px-2 py-1 text-xs text-neutral-300">
+              <span className="text-neutral-500">{i + 1}. </span>{z.name}<span className="text-neutral-500"> — {z.note}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  )
+}
+
+// The plain markup behind the template: read it, copy it, or edit it so every future page inherits the change.
+function MarkupEditor({ id }) {
+  const [text, setText] = useState(null)
+  const [saved, setSaved] = useState('')
+  const [status, setStatus] = useState(null)
+  useEffect(() => {
+    let live = true
+    setText(null); setStatus(null)
+    window.api.portfolio.templateSource(id).then((t) => { if (live) { setText(t); setSaved(t) } }).catch((e) => live && setStatus({ error: errText(e) }))
+    return () => { live = false }
+  }, [id])
+  async function save() {
+    try {
+      await window.api.portfolio.saveTemplateSource(id, text)
+      setSaved(text)
+      setStatus({ message: 'Saved to the template file' })
+    } catch (e) {
+      setStatus({ error: errText(e) })
+    }
+  }
+  if (text === null) return <Status state={status} />
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-3">
+        <h3 className="text-xs font-medium uppercase tracking-wide text-neutral-500">Template markup (the plain reference)</h3>
+        <CopyButton text={text} label="Copy markup" />
+        <button onClick={save} disabled={text === saved} className={primary}>Save</button>
+        <Status state={status} />
+      </div>
+      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={12} spellCheck={false} className={field} />
+      <p className="text-[11px] text-neutral-500">{'{{NAME}}'} marks a field filled by the form above. Editing here changes what every new page of this kind is built from.</p>
+    </div>
+  )
+}
+
+function PagesOfType({ pageType }) {
+  const [pages, setPages] = useState(null)
+  useEffect(() => {
+    window.api.portfolio.inventory().then((inv) => setPages((inv?.pages || []).filter((p) => p.type === pageType))).catch(() => setPages([]))
+  }, [pageType])
+  if (!pages || !pages.length) return null
+  return (
+    <div>
+      <h3 className="mb-1 text-xs font-medium uppercase tracking-wide text-neutral-500">Existing pages of this type ({pages.length}) — see Site inventory</h3>
+      <p className="text-xs text-neutral-400">{pages.map((p) => p.title).join(' · ')}</p>
+    </div>
+  )
+}
+
 function TemplateRunner({ template, templates, head }) {
   const [data, setData] = useState(() => initialData(template))
   const [choices, setChoices] = useState({})
@@ -161,6 +237,7 @@ function TemplateRunner({ template, templates, head }) {
           <h2 className="text-lg font-medium text-white">{template.name}</h2>
           <p className="text-xs text-neutral-500">{template.description}</p>
         </div>
+        <Guidance template={template} />
         <FieldInputs fields={template.fields} data={data} onChange={setData} />
         {Object.entries(template.slots || {}).map(([slot, spec]) => (
           <SlotPicker key={slot} slot={slot} spec={spec} templates={templates} value={choices[slot]} onChange={(v) => setChoices({ ...choices, [slot]: v })} />
@@ -173,7 +250,11 @@ function TemplateRunner({ template, templates, head }) {
         </div>
         <Problems result={result} />
         <iframe title="template preview" sandbox="" srcDoc={previewDocument(result?.html || '', head)} className="h-64 w-full rounded-md border border-neutral-800 bg-white" />
-        <textarea readOnly value={result?.html ?? ''} rows={10} spellCheck={false} className={field} />
+        <textarea readOnly value={result?.html ?? ''} rows={6} spellCheck={false} className={field} />
+      </div>
+      <div className="flex min-w-0 flex-col gap-4 xl:col-span-2">
+        <MarkupEditor id={template.id} />
+        {template.pageType && <PagesOfType pageType={template.pageType} />}
       </div>
     </div>
   )
@@ -263,7 +344,7 @@ function Templates() {
         </button>
         {groupTemplates(templates).map((g) => (
           <div key={g.kind} className="mb-2">
-            <h4 className="px-1 pb-1 text-[10px] font-medium uppercase tracking-wide text-neutral-500">{g.kind === 'page' ? 'Pages' : g.kind === 'component' ? 'Components' : 'Buttons'}</h4>
+            <h4 className="px-1 pb-1 text-[10px] font-medium uppercase tracking-wide text-neutral-500">{g.kind === 'page' ? 'Page types' : g.kind === 'component' ? 'Components' : 'Buttons (the only three)'}</h4>
             {g.items.map((t) => (
               <button key={t.id} onClick={() => setSelected(t.id)} className={`block w-full rounded-md border px-3 py-2 text-left text-sm ${selected === t.id ? 'border-blue-500 bg-blue-950 text-white' : 'border-transparent text-neutral-300 hover:border-neutral-700'}`}>
                 {t.name}
@@ -299,6 +380,7 @@ function ButtonVariants({ variants }) {
         <div key={v.id} className="rounded-lg border border-neutral-800 p-3">
           <div className="mb-2 flex items-center gap-2">
             <span className={`rounded px-1.5 py-0.5 text-[10px] ${v.kind === 'github-link' ? 'bg-purple-950 text-purple-300' : 'bg-blue-950 text-blue-300'}`}>{v.kind === 'github-link' ? 'GitHub link' : 'Button'}</span>
+            <span className={`rounded px-1.5 py-0.5 text-[10px] ${buttonVerdict(v).ok ? 'bg-emerald-950 text-emerald-300' : 'bg-amber-950 text-amber-300'}`}>{buttonVerdict(v).label}</span>
             <span className="text-xs text-neutral-300">×{v.count} on {v.pages.length} page{v.pages.length === 1 ? '' : 's'}</span>
           </div>
           <div className="rounded bg-white p-3"><Shot rel={v.screenshot} className="max-h-16 max-w-full" /></div>
@@ -384,7 +466,7 @@ function Inventory() {
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-center gap-3">
-        <h2 className="text-lg font-medium text-white">What is actually on the website</h2>
+        <h2 className="text-lg font-medium text-white">What is on the website today (descriptive — the rules live in Templates)</h2>
         <button onClick={refresh} disabled={busy} className={primary}>{busy ? 'Crawling the dev site (about a minute)…' : 'Refresh from dev site'}</button>
         <span className="text-xs text-neutral-500">crawled: {formatRunTime(inv?.generated_at)}</span>
         {error && <span className="text-xs text-red-400">{error}</span>}
@@ -397,132 +479,12 @@ function Inventory() {
             {s.pages} pages ({Object.entries(s.pages_by_type).map(([t, n]) => `${n} ${t}`).join(', ')}) · {s.button_variants} button look{s.button_variants === 1 ? '' : 's'} + {s.github_link_variants} GitHub-link looks across {s.button_instances} instances
           </p>
           <div className="flex gap-2">
-            {[['buttons', `Buttons & links (${inv.buttons.length})`], ['pages', `Page templates (${inv.pages.length})`]].map(([id, label]) => (
+            {[['buttons', `Buttons & links (${inv.buttons.length})`], ['pages', `Pages (${inv.pages.length})`]].map(([id, label]) => (
               <button key={id} onClick={() => setView(id)} className={`rounded-md border px-3 py-1.5 text-xs ${view === id ? 'border-blue-500 bg-blue-950 text-white' : 'border-neutral-800 text-neutral-400 hover:border-neutral-600'}`}>{label}</button>
             ))}
           </div>
           {view === 'buttons' ? <ButtonVariants variants={inv.buttons} /> : <PageTemplates pages={inv.pages} />}
         </>
-      )}
-    </div>
-  )
-}
-
-// ── Edit templates (the raw component files) ────────────────────────────────
-
-function Components() {
-  const [list, setList] = useState(null)
-  const [selected, setSelected] = useState(null)
-  const [html, setHtml] = useState('')
-  const [notes, setNotes] = useState('')
-  const [head, setHead] = useState('')
-  const [newName, setNewName] = useState('')
-  const [status, setStatus] = useState(null)
-
-  const load = useCallback(async (keep) => {
-    const items = await window.api.portfolio.components()
-    setList(items)
-    const pick = items.find((c) => c.name === keep) || items[0]
-    if (pick) {
-      setSelected(pick.name)
-      setHtml(pick.html)
-      setNotes(pick.notes)
-    }
-  }, [])
-
-  const [loadError, setLoadError] = useState(null)
-
-  useEffect(() => {
-    load().catch((e) => setLoadError(errText(e)))
-    window.api.portfolio.previewHead().then(setHead).catch(() => {})
-  }, [load])
-
-  function choose(c) {
-    setSelected(c.name)
-    setHtml(c.html)
-    setNotes(c.notes)
-    setStatus(null)
-  }
-
-  async function save() {
-    try {
-      await window.api.portfolio.saveComponent(selected, html, notes)
-      setStatus({ message: `Saved ${selected}` })
-      await load(selected)
-    } catch (e) {
-      setStatus({ error: errText(e) })
-    }
-  }
-
-  async function create() {
-    const name = nextComponentName(newName)
-    if (!name) return setStatus({ error: 'Type a name first' })
-    try {
-      await window.api.portfolio.createComponent(name, '<!-- new component -->\n', '')
-      setNewName('')
-      await load(name)
-      setStatus({ message: `Created ${name}` })
-    } catch (e) {
-      setStatus({ error: errText(e) })
-    }
-  }
-
-  // A failed load must say so -- "Loading…" forever would hide the reason.
-  if (loadError) return <p className="text-sm text-red-400">Could not load components: {loadError}</p>
-  if (!list) return <p className="text-sm text-neutral-500">Loading components…</p>
-
-  return (
-    <div className="grid grid-cols-[220px_1fr] gap-6">
-      <aside className="flex flex-col gap-2">
-        {list.length === 0 && <p className="text-xs text-neutral-500">No components yet. Create the first one below.</p>}
-        {list.map((c) => (
-          <button
-            key={c.name}
-            onClick={() => choose(c)}
-            className={`rounded-md border px-3 py-2 text-left text-sm ${
-              selected === c.name ? 'border-blue-500 bg-blue-950 text-white' : 'border-neutral-800 text-neutral-300 hover:border-neutral-600'
-            }`}
-          >
-            {c.name}
-          </button>
-        ))}
-        <div className="mt-3 flex gap-2">
-          <input
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            placeholder="new-component"
-            className="min-w-0 flex-1 rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-xs text-neutral-200 outline-none focus:border-blue-500"
-          />
-          <button onClick={create} className={button}>
-            Add
-          </button>
-        </div>
-      </aside>
-
-      {selected ? (
-        <section className="flex min-w-0 flex-col gap-4">
-          <div className="flex items-center gap-3">
-            <h2 className="text-lg font-medium text-white">{selected}</h2>
-            <button onClick={save} className={primary}>
-              Save
-            </button>
-            <Status state={status} />
-          </div>
-          <div>
-            <h3 className="mb-1 text-xs font-medium uppercase tracking-wide text-neutral-500">Live preview (the dev site's own styles)</h3>
-            <iframe title="component preview" sandbox="" srcDoc={previewDocument(html, head)} className="h-40 w-full rounded-md border border-neutral-800 bg-white" />
-          </div>
-          <div>
-            <h3 className="mb-1 text-xs font-medium uppercase tracking-wide text-neutral-500">HTML</h3>
-            <textarea value={html} onChange={(e) => setHtml(e.target.value)} rows={9} spellCheck={false} className={field} />
-          </div>
-          <div>
-            <h3 className="mb-1 text-xs font-medium uppercase tracking-wide text-neutral-500">Notes — when to use it, what to fill in</h3>
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={4} className={field} />
-          </div>
-        </section>
-      ) : (
-        <p className="text-sm text-neutral-500">Select or create a component.</p>
       )}
     </div>
   )
@@ -798,7 +760,7 @@ export default function PortfolioHub() {
         <span className="ml-auto pb-2 text-[11px] text-neutral-600">dev site only · nothing here touches production</span>
       </nav>
       <div className="flex-1 overflow-auto p-6">
-        {tab === 'templates' ? <Templates /> : tab === 'inventory' ? <Inventory /> : tab === 'components' ? <Components /> : tab === 'guide' ? <GuideAndRules /> : tab === 'evaluation' ? <Evaluation /> : <Images />}
+        {tab === 'templates' ? <Templates /> : tab === 'inventory' ? <Inventory /> : tab === 'guide' ? <GuideAndRules /> : tab === 'evaluation' ? <Evaluation /> : <Images />}
       </div>
     </div>
   )

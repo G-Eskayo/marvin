@@ -261,6 +261,29 @@ export function createPortfolio({
     return runTemplates(['render', id, '--data', JSON.stringify(data || {}), '--options', JSON.stringify(options || {})])
   }
 
+  // The plain markup behind a template, for reading and editing in the Templates tab. The manifest names
+  // the file; the resolved path must stay inside templates/ so a crafted manifest entry cannot escape.
+  async function templateFile(id) {
+    if (typeof id !== 'string' || !TEMPLATE_ID.test(id)) throw new Error(`Invalid template id: ${JSON.stringify(id)}`)
+    const manifest = await readJson(path.join(templates, 'templates.json'), null)
+    const entry = (manifest?.templates || []).find((t) => t.id === id)
+    if (!entry?.file) throw new Error(`Unknown template: ${id}`)
+    const file = path.resolve(templates, entry.file)
+    if (!file.startsWith(templates + path.sep)) throw new Error(`Template file escapes templates/: ${entry.file}`)
+    return file
+  }
+
+  async function templateSource(id) {
+    return readText(await templateFile(id))
+  }
+
+  async function saveTemplateSource(id, content) {
+    if (typeof content !== 'string' || !content.trim()) throw new Error('Template markup must be a non-empty string')
+    const file = await templateFile(id)
+    await fsp.writeFile(file, content)
+    return { id }
+  }
+
   const planProject = (data) => runTemplates(['plan', '--data', JSON.stringify(data || {})])
 
   const listReference = async () => (await readJson(path.join(referenceDir, 'index.json'), [])) || []
@@ -270,5 +293,5 @@ export function createPortfolio({
     return readText(path.join(referenceDir, `${slug}.html`), null)
   }
 
-  return { inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage }
+  return { inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, templateSource, saveTemplateSource, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage }
 }
