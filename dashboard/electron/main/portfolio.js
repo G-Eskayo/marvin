@@ -222,6 +222,20 @@ export function createPortfolio({
     return runImages([slug, '--choose', '--motif', motif, '--salt', String(salt), ...inspireArgs(entry)])
   }
 
+  async function deleteImageVariant(slug, motif, salt) {
+    await knownProject(slug)
+    if (typeof motif !== 'string' || !MOTIF_RE.test(motif)) throw new Error(`Invalid motif: ${JSON.stringify(motif)}`)
+    if (!Number.isInteger(salt) || salt < 0 || salt > 9999) throw new Error(`Invalid variant number: ${JSON.stringify(salt)}`)
+    try {
+      return await runImages([slug, '--delete', '--motif', motif, '--salt', String(salt)])
+    } catch (err) {
+      // the generator reports a refusal (e.g. "that image is the one in use") as JSON on stdout with exit code 3
+      let reason = null
+      try { reason = JSON.parse(err.stdout || '{}').error } catch { /* not JSON */ }
+      throw new Error(reason || err.message)
+    }
+  }
+
   async function variantPreview(slug, motif, salt) {
     await knownProject(slug)
     if (typeof motif !== 'string' || !MOTIF_RE.test(motif) || !Number.isInteger(salt) || salt < 0) throw new Error('Invalid variant')
@@ -358,5 +372,5 @@ export function createPortfolio({
     return readText(path.join(referenceDir, `${slug}.html`), null)
   }
 
-  return { chrome, inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, templateSource, specimen, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage, imageMotifs, imageVariants, newImageVariant, chooseImageVariant, variantPreview }
+  return { chrome, inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, templateSource, specimen, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage, imageMotifs, imageVariants, newImageVariant, chooseImageVariant, deleteImageVariant, variantPreview }
 }

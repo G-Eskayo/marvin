@@ -149,6 +149,7 @@ function registerDocsHandlers() {
   ipcMain.handle('portfolio:image:variants', (_e, slug) => portfolio.imageVariants(slug))
   ipcMain.handle('portfolio:image:variant:new', (_e, slug, motif) => portfolio.newImageVariant(slug, motif))
   ipcMain.handle('portfolio:image:variant:choose', (_e, slug, motif, salt) => portfolio.chooseImageVariant(slug, motif, salt))
+  ipcMain.handle('portfolio:image:variant:delete', (_e, slug, motif, salt) => portfolio.deleteImageVariant(slug, motif, salt))
   ipcMain.handle('portfolio:image:variant:preview', (_e, slug, motif, salt) => portfolio.variantPreview(slug, motif, salt))
   ipcMain.handle('portfolio:image:preview', (_e, slug) => portfolio.imagePreview(slug))
   ipcMain.handle('portfolio:inventory', () => portfolio.inventory())

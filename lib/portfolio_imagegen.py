@@ -290,10 +290,39 @@ def make_variant(slug: str, motif=DEFAULT, salt: int = 0, inspiration: dict | No
 def next_variant_salt(slug: str, motif, images_dir: Path = IMAGES_DIR) -> int:
     """The lowest salt for this motif that has not been generated yet."""
     motif = portfolio_motifs.motif_for(slug) if motif is DEFAULT else motif
+    rejected = _rejected(slug, images_dir)
     n = 0
-    while variant_file(slug, motif, n, images_dir).exists():
+    while variant_file(slug, motif, n, images_dir).exists() or (_label(motif), n) in rejected:
         n += 1
     return n
+
+
+def _rejected_file(slug: str, images_dir: Path) -> Path:
+    return Path(images_dir) / slug / "rejected.json"
+
+
+def _rejected(slug: str, images_dir: Path) -> set:
+    try:
+        return {(m, int(n)) for m, n in json.loads(_rejected_file(slug, images_dir).read_text())}
+    except (OSError, ValueError, TypeError):
+        return set()
+
+
+def delete_variant(slug: str, motif, salt: int, registry_path: Path = REGISTRY_PATH, images_dir: Path = IMAGES_DIR) -> dict:
+    """Delete a variant the person does not want. The one IN USE cannot be deleted (choose another first). Its
+    (motif, salt) is remembered as rejected, because variants are reproducible: without that, 'generate another' would
+    simply hand the same unwanted image back."""
+    motif = portfolio_motifs.motif_for(slug) if motif is DEFAULT else motif
+    listing = list_variants(slug, registry_path, images_dir)
+    if any(v["motif"] == _label(motif) and v["salt"] == int(salt) and v["chosen"] for v in listing["variants"]):
+        raise ValueError("that image is the one in use; choose another first, then delete this one")
+    f = variant_file(slug, motif, salt, images_dir)
+    if not f.exists():
+        raise ValueError("no such image")
+    f.unlink()
+    rejected = _rejected(slug, images_dir) | {(_label(motif), int(salt))}
+    _rejected_file(slug, images_dir).write_text(json.dumps(sorted(rejected)))
+    return {"slug": slug, "motif": _label(motif), "salt": int(salt), "deleted": True}
 
 
 def list_variants(slug: str, registry_path: Path = REGISTRY_PATH, images_dir: Path = IMAGES_DIR) -> dict:
@@ -344,6 +373,7 @@ def main() -> None:
     ap.add_argument("--list", action="store_true", help="JSON: every generated variant of the slug and which is in use")
     ap.add_argument("--motifs", action="store_true", help="JSON: the motif names that can be chosen")
     ap.add_argument("--new", action="store_true", help="generate another variant (next unused salt for --motif)")
+    ap.add_argument("--delete", action="store_true", help="delete the variant given by --motif and --salt (never the one in use)")
     ap.add_argument("--choose", action="store_true", help="use the variant given by --motif and --salt")
     ap.add_argument("--motif", default=None)
     ap.add_argument("--salt", type=int, default=0)
@@ -359,6 +389,12 @@ def main() -> None:
     elif args.new:
         motif = _motif_arg(args.motif)
         print(json.dumps(make_variant(args.slug, motif, next_variant_salt(args.slug, motif), insp)))
+    elif args.delete:
+        try:
+            print(json.dumps(delete_variant(args.slug, _motif_arg(args.motif), args.salt)))
+        except ValueError as e:
+            print(json.dumps({"error": str(e)}))
+            sys.exit(3)
     elif args.choose:
         print(json.dumps(choose_variant(args.slug, _motif_arg(args.motif), args.salt, insp)))
     else:
