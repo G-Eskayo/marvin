@@ -388,6 +388,36 @@ then) — a real, current fragility, not a hypothetical one.
   nothing to prioritize tickets with. Hard-on-project / soft-on-ticket is the default *emphasis* in
   the UI, not a rule. Decided 2026-10-01; milestone-level dates deferred.
 
+## Dashboard app — Portfolio tab (in design, 2026-10-02)
+
+The portfolio site (`G-Eskayo/portfolio-website-updater`, WordPress + Avada) has visible inconsistency
+across project pages (measured 2026-10-02: footer cards differ in height and overlap their heading,
+6 GitHub-link wordings / 4 looks, 17 projects share 12 thumbnails). Root cause: pages are hand-built,
+so nothing enforces parity. The Portfolio tab is the hub that enforces it by construction.
+
+- **Portfolio hub**: one dashboard tab that is the single source of truth for how a Project Page is
+  built — the guide, the component library, the evaluation results, and the images. Gil edits and
+  refines it; MARVIN reads from it when building or updating pages, so a component is defined once.
+- **Component**: a reusable, named HTML/CSS snippet with one canonical definition (e.g. the GitHub
+  button, the project card). Stored as files in the portfolio repo's `templates/components/`, editable
+  in the tab with a live preview. Defaults today: GitHub button = the existing `btn btn-default` look
+  (5 pages already use it, and it matches DISCOVER), text "View on GitHub"; refined in the tab, not here.
+- **Design rules**: machine-readable (`templates/design-rules.json`) and human-readable guide. The
+  evaluation reads the same rules the tab edits, so changing a rule changes what is checked.
+- **Evaluation**: deterministic layout/consistency checks run with headless Playwright against the dev
+  site (no model, no tokens): footer cards equal height/aligned/not overlapping the heading, grid
+  cards equal height per row, one canonical GitHub button, unique images, no horizontal overflow at
+  three viewports. The pair of "Other Projects" cards is randomised per view, so checks measure each
+  card against rules instead of comparing to a fixed layout. Results shown in the tab.
+- **Generated hero image** (decided 2026-10-02): deterministic generative art keyed to the project's
+  slug — same slug, same image; unique per project; black-and-white aesthetic matching the site; zero
+  API cost. A project's existing images are **never** used as the key photo; they are *inspiration
+  only* (palette/mood feed the generator's parameters). Uniqueness is enforced by a perceptual-hash
+  check, not assumed.
+- **Write policy**: the tab and anything MARVIN builds write to the **dev** site only. Promotion to
+  production is Gil's manual act (the portfolio repo's standing rule: a push touching `deploy/`
+  auto-deploys to production).
+
 ## Citation-graph knowledge base (in design, not yet built)
 
 - **Seed paper**: the paper a citation-graph traversal starts from — all relevance scoring is
