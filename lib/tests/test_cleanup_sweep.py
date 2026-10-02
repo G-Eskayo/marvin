@@ -195,3 +195,31 @@ def test_run_daily_sweep_returns_summary_dict(log_path, tmp_path):
     )
     assert result["stale_claims_released"] == 1
     assert result["orphaned_worktrees_removed"] == 0
+
+
+def test_default_remove_worktree_preserves_unique_work_before_discarding(tmp_path, monkeypatch):
+    # cleanup_sweep force-removed stale worktrees and deleted their branch blind --
+    # the same data-loss pattern as sandbox_orchestration._create_worktree.
+    import subprocess
+    import cleanup_sweep as cs
+    import sandbox_orchestration as so
+
+    origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "clone", "-q", str(origin), str(repo)], check=True, capture_output=True)
+    (repo / "f").write_text("1")
+    for args in (["add", "."], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "i"],
+                 ["push", "-q", "origin", "HEAD:main"]):
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+    monkeypatch.setattr(so, "WORKTREES_ROOT", tmp_path / "wts")
+    wt = so._create_worktree(repo, "G-Eskayo/marvin#55")
+    (wt / "half.py").write_text("work\n")
+    monkeypatch.setattr(cs, "REPO_PATH", repo, raising=False)
+
+    cs._default_remove_worktree(wt, "pipeline/g-eskayo/marvin#55")
+
+    refs = subprocess.run(["git", "for-each-ref", "--format=%(refname)", "refs/rescue/"], cwd=repo,
+                          capture_output=True, text=True).stdout.split()
+    assert len(refs) == 1
+    assert not wt.exists()

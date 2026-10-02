@@ -157,7 +157,7 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
     return plan
 
 
-def _preserve_prior_attempt(repo_path: Path, worktree_path: Path, branch: str) -> str | None:
+def _preserve_prior_attempt(repo_path: Path, worktree_path: "Path | list[Path]", branch: str) -> str | None:
     """Before a re-dispatch discards a ticket's old worktree and branch, keep
     anything unique they hold: commit uncommitted changes onto the branch, then,
     if the branch has commits beyond origin/main, pin them under
@@ -170,9 +170,11 @@ def _preserve_prior_attempt(repo_path: Path, worktree_path: Path, branch: str) -
             cwd=cwd, capture_output=True, text=True,
         )
 
-    if worktree_path.exists() and git("status", "--porcelain", cwd=worktree_path).stdout.strip():
-        git("add", "-A", cwd=worktree_path)
-        git("commit", "-qm", "WIP preserved before redispatch", cwd=worktree_path)
+    paths = worktree_path if isinstance(worktree_path, (list, tuple)) else [worktree_path]
+    for path in paths:
+        if path.exists() and git("status", "--porcelain", cwd=path).stdout.strip():
+            git("add", "-A", cwd=path)
+            git("commit", "-qm", "WIP preserved before redispatch", cwd=path)
 
     ahead = git("rev-list", "--count", f"origin/main..{branch}")
     if ahead.returncode != 0 or not ahead.stdout.strip().isdigit() or int(ahead.stdout.strip()) == 0:
@@ -216,10 +218,16 @@ def _create_worktree(repo_path: Path, ticket_ref: str) -> Path:
     locally and pushed to origin), and only then is the old state discarded."""
     WORKTREES_ROOT.mkdir(parents=True, exist_ok=True)
     branch = f"pipeline/{ticket_ref.lower().replace(' ', '-')}"
-    worktree_path = WORKTREES_ROOT / branch.replace("/", "-")
+    # No '#' in the DIRECTORY name (the branch keeps it, cleanup_sweep reads the
+    # branch): vite/vitest read '#' in a path as a URL fragment and crash, which
+    # silently zeroed every pipeline ticket's vitest count. Worktrees created
+    # before the rename sit at the old '#' path, so that one is cleaned up too.
+    worktree_path = WORKTREES_ROOT / branch.replace("/", "-").replace("#", "-")
+    legacy_path = WORKTREES_ROOT / branch.replace("/", "-")
     subprocess.run(["git", "fetch", "origin", "main"], cwd=repo_path, check=True, capture_output=True)
-    _preserve_prior_attempt(repo_path, worktree_path, branch)
-    subprocess.run(["git", "worktree", "remove", "--force", str(worktree_path)], cwd=repo_path, capture_output=True)
+    _preserve_prior_attempt(repo_path, [worktree_path, legacy_path], branch)
+    for stale in (worktree_path, legacy_path):
+        subprocess.run(["git", "worktree", "remove", "--force", str(stale)], cwd=repo_path, capture_output=True)
     subprocess.run(["git", "branch", "-D", branch], cwd=repo_path, capture_output=True)
     subprocess.run(
         ["git", "worktree", "add", "-b", branch, str(worktree_path), "origin/main"],
