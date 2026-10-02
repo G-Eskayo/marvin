@@ -45,9 +45,11 @@ def test_pulls_then_pushes_both_synced_repos_in_a_fixed_order():
         ("pull", "/Users/test/.agents"), ("push", "/Users/test/.agents"),
         ("pull", "/Users/test/.claude"), ("push", "/Users/test/.claude"),
     ]
-    assert len(steps) == 4
-    for step, (action, repo) in zip(steps, expected):
+    assert len(steps) == 5
+    for step, (action, repo) in zip(steps[:4], expected):
         assert f"code_sync.py {action} {repo}" in step
+    # ...then rebuild the installed dashboard app if the pulled code left it behind.
+    assert "lib/dashboard_rebuild.py" in steps[4]
 
 
 def test_steps_are_independent_so_one_failure_cannot_skip_the_others():

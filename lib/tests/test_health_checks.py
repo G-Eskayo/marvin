@@ -475,3 +475,77 @@ def test_pipeline_breaker_check_is_red_and_names_the_signature_and_tickets_when_
     assert r["severity"] == "red"
     assert "measure:vitest-no-summary" in r["detail"]
     assert "32" in r["detail"] and "paused" in r["detail"].lower()
+
+
+# ── per-machine state that silently rots: dashboard build + GitHub credential ──
+# 2026-10-02: Approve "didn't merge" on the laptop for TWO reasons nothing watched:
+# its installed dashboard app was a month behind the code (it only rebuilds where a
+# merge happened), and its GitHub credential had expired. The existing token check
+# only verified the file EXISTS, not that the token works.
+
+def _mstate(**kw):
+    base = {"app_built_ts": int((NOW - timedelta(hours=1)).timestamp()),
+            "dashboard_commit_ts": int((NOW - timedelta(hours=3)).timestamp()),
+            "gh_token": "ok"}
+    base.update(kw)
+    return base
+
+
+def test_parse_machine_state_reads_key_value_output():
+    st = hc.parse_machine_state("app_built_ts=1759000000\ndashboard_commit_ts=1759100000\ngh_token=invalid\n")
+    assert st == {"app_built_ts": 1759000000, "dashboard_commit_ts": 1759100000, "gh_token": "invalid"}
+
+
+def test_parse_machine_state_missing_app_is_none():
+    st = hc.parse_machine_state("app_built_ts=\ndashboard_commit_ts=5\ngh_token=ok\n")
+    assert st["app_built_ts"] is None
+
+
+def test_build_is_green_when_the_app_is_at_least_as_new_as_the_latest_dashboard_commit():
+    res = dict((k, (s, d)) for k, s, d in hc.evaluate_machine_state(_mstate(), NOW))
+    assert res["dashboard:build"][0] == "green"
+
+
+def test_build_is_yellow_when_a_few_hours_behind_and_red_when_a_day_or_more_behind():
+    two = hc.evaluate_machine_state(_mstate(app_built_ts=int((NOW - timedelta(hours=9)).timestamp()),
+                                            dashboard_commit_ts=int((NOW - timedelta(hours=3)).timestamp())), NOW)
+    assert dict((k, s) for k, s, _ in two)["dashboard:build"] == "yellow"
+    old = hc.evaluate_machine_state(_mstate(app_built_ts=int((NOW - timedelta(days=32)).timestamp()),
+                                            dashboard_commit_ts=int((NOW - timedelta(hours=1)).timestamp())), NOW)
+    sev, detail = [(s, d) for k, s, d in old if k == "dashboard:build"][0]
+    assert sev == "red" and "31" in detail or "32" in detail
+
+
+def test_missing_app_is_yellow_not_silently_green():
+    res = dict((k, s) for k, s, _ in hc.evaluate_machine_state(_mstate(app_built_ts=None), NOW))
+    assert res["dashboard:build"] == "yellow"
+
+
+def test_invalid_github_token_is_red_and_says_what_breaks():
+    sev, detail = [(s, d) for k, s, d in hc.evaluate_machine_state(_mstate(gh_token="invalid"), NOW) if k == "auth:gh"][0]
+    assert sev == "red"
+    assert "merge" in detail.lower()
+
+
+def test_missing_github_token_file_is_yellow_and_valid_is_green():
+    assert dict((k, s) for k, s, _ in hc.evaluate_machine_state(_mstate(gh_token="missing"), NOW))["auth:gh"] == "yellow"
+    assert dict((k, s) for k, s, _ in hc.evaluate_machine_state(_mstate(gh_token="ok"), NOW))["auth:gh"] == "green"
+
+
+def test_check_machine_state_everywhere_covers_every_device_and_marks_asleep(monkeypatch):
+    monkeypatch.setattr(hc.machine_profile, "registry_id", lambda: "mac-mini-1")
+    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {
+        "macbook-pro-1": {"kind": "laptop", "tailscale_hostname": "lap"}})
+    monkeypatch.setattr(hc, "_now", lambda: NOW)
+    good = f"app_built_ts={int((NOW - timedelta(hours=1)).timestamp())}\ndashboard_commit_ts={int((NOW - timedelta(hours=2)).timestamp())}\ngh_token=ok\n"
+    bad = f"app_built_ts={int((NOW - timedelta(days=30)).timestamp())}\ndashboard_commit_ts={int((NOW - timedelta(hours=2)).timestamp())}\ngh_token=invalid\n"
+
+    results = hc.check_machine_state_everywhere({"machine:macbook-pro-1": "green"},
+                                                runner=lambda target, script: good if target is None else bad)
+    by_id = {r["id"]: r["severity"] for r in results}
+    assert by_id["dashboard:build@mac-mini-1"] == "green"
+    assert by_id["dashboard:build@macbook-pro-1"] == "red"
+    assert by_id["auth:gh@macbook-pro-1"] == "red"
+
+    asleep = hc.check_machine_state_everywhere({"machine:macbook-pro-1": "asleep"}, runner=lambda t, s: good)
+    assert {r["severity"] for r in asleep if r["id"].endswith("@macbook-pro-1")} == {"asleep"}
