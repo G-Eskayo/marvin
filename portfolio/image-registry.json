@@ -75,9 +75,11 @@
     "style": "documents"
   },
   "resume-tailor": {
-    "hash": "5051111090914948aac3ffff3c181800",
-    "salt": 1,
-    "style": "documents-tailored"
+    "chosen": true,
+    "hash": "0000928080800040aaaddbffbd180800",
+    "look": "pipeline",
+    "salt": 0,
+    "style": "pipeline"
   },
   "skineedipping": {
     "hash": "d2d2d2aa9ad2a28aaaeff9dbfe080800",
