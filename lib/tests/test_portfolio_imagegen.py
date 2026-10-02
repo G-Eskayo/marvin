@@ -64,10 +64,23 @@ def test_the_generator_uses_several_distinct_styles_across_projects():
     assert len({ig.style_for(s) for s in SLUGS}) >= 3
 
 
-def test_images_stay_in_the_sites_black_and_white_aesthetic():
+def test_images_are_coloured_not_greyscale_since_the_sites_black_and_white_is_a_css_effect():
+    # Gil 2026-10-02: colour is fine -- the black-and-white on the site is an effect applied to images.
     img = arr(ig.render("mancala", size=SMALL)).astype(int)
-    chroma = (img.max(axis=2) - img.min(axis=2)).mean()
-    assert chroma < 30            # at most a faint tint, never colourful
+    assert (img.max(axis=2) - img.min(axis=2)).mean() > 25
+
+
+def _mean_hue(img):
+    import colorsys
+    a = np.asarray(img, dtype=np.float32).reshape(-1, 3)[::11] / 255.0
+    hsv = np.array([colorsys.rgb_to_hsv(*px) for px in a])
+    w = hsv[:, 1] * hsv[:, 2]
+    return float(np.degrees(np.arctan2((np.sin(hsv[:, 0] * 2 * np.pi) * w).sum(), (np.cos(hsv[:, 0] * 2 * np.pi) * w).sum())) % 360)
+
+
+def _angle_gap(a, b):
+    d = abs(a - b) % 360
+    return min(d, 360 - d)
 
 
 # ── inspiration, never the key photo ────────────────────────────────────────
@@ -172,3 +185,36 @@ def test_the_fingerprint_is_128_bits_and_deterministic():
 def test_registry_stores_the_128_bit_fingerprint_as_32_hex_chars(tmp_path):
     out = ig.assign(["mancala"], registry_path=tmp_path / "r.json", size=SMALL)
     assert len(out["mancala"]["hash"]) == 32
+
+
+# ── colour palette inspired by the project's own image ──────────────────────
+
+def _tinted(tmp_path, rgb, name):
+    p = tmp_path / name
+    Image.fromarray(np.full((120, 440, 3), rgb, dtype=np.uint8)).save(p)
+    return p
+
+
+def test_inspiration_reports_the_dominant_hues_of_a_coloured_image(tmp_path):
+    red = ig.inspiration_from([_tinted(tmp_path, (200, 20, 20), "r.png")])
+    assert red["saturation"] > 0.5 and _angle_gap(red["hues"][0], 0) < 15
+    assert len(red["hues"]) == 2
+
+
+def test_a_red_inspiration_gives_red_art_and_a_teal_one_gives_teal_art(tmp_path):
+    red = ig.render("mancala", size=SMALL, inspiration=ig.inspiration_from([_tinted(tmp_path, (210, 30, 30), "r.png")]))
+    teal = ig.render("mancala", size=SMALL, inspiration=ig.inspiration_from([_tinted(tmp_path, (20, 190, 180), "t.png")]))
+    assert _angle_gap(_mean_hue(red), 0) < 40
+    assert _angle_gap(_mean_hue(teal), 175) < 40
+
+
+def test_a_project_whose_image_has_no_colour_still_gets_a_deterministic_colour_from_its_slug(tmp_path):
+    grey = ig.inspiration_from([_tinted(tmp_path, (120, 120, 120), "g.png")])
+    a1, a2 = ig.render("mancala", size=SMALL, inspiration=grey), ig.render("mancala", size=SMALL, inspiration=grey)
+    assert np.array_equal(arr(a1), arr(a2))
+    assert (arr(a1).astype(int).max(axis=2) - arr(a1).astype(int).min(axis=2)).mean() > 25   # coloured, not grey
+
+
+def test_slug_derived_colours_vary_across_projects():
+    hues = {round(_mean_hue(ig.render(s, size=(220, 60))) / 60) for s in SLUGS}
+    assert len(hues) >= 3

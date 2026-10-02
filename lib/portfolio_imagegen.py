@@ -2,7 +2,7 @@
 """Deterministic generative hero images for portfolio projects.
 
 Decided 2026-10-02 (Gil): unique art keyed to each project's slug -- same slug, same image --
-in the site's black-and-white aesthetic, at zero API cost. A project's existing images are
+in a palette inspired by the project's own image (the site's black-and-white look is a CSS effect, so colour is fine), at zero API cost. A project's existing images are
 NEVER the key photo; they only INSPIRE the generator: their measured brightness, contrast and
 tint steer its parameters (`inspiration_from`). No pixels are ever composited. Motivation:
 6 of 17 projects shared one stock thumbnail (work001-01.jpg).
@@ -27,7 +27,7 @@ from PIL import Image
 HERO_SIZE = (2200, 600)       # the site's wide panorama hero (existing hero photos are ~3.66:1)
 MIN_DISTANCE = 24             # minimum Hamming distance (of 128 bits: layout + spectrum) between any two projects
 STYLES = ("contours", "moire", "cubes", "halftone", "lines")
-NEUTRAL_INSPIRATION = {"luminance": 0.45, "contrast": 0.5, "hue": None, "saturation": 0.0}
+NEUTRAL_INSPIRATION = {"luminance": 0.45, "contrast": 0.5, "hue": None, "hues": [], "saturation": 0.0}
 REGISTRY_PATH = Path(__file__).resolve().parents[1] / "portfolio" / "image-registry.json"
 
 
@@ -83,12 +83,39 @@ def inspiration_from(paths) -> dict:
         weights = hsv[:, 1] + 1e-6
         hue = float(np.degrees(np.arctan2((np.sin(hsv[:, 0] * 2 * np.pi) * weights).sum(),
                                           (np.cos(hsv[:, 0] * 2 * np.pi) * weights).sum())) % 360)
-        stats.append((float(luma.mean()), float(min(1.0, luma.std() / 0.5)), hue if sat > 0.05 else None, sat))
+        stats.append((float(luma.mean()), float(min(1.0, luma.std() / 0.5)), hue if sat > 0.05 else None, sat, _dominant_hues(hsv)))
     if not stats:
         return dict(NEUTRAL_INSPIRATION)
     hues = [s[2] for s in stats if s[2] is not None]
+    palette = max(stats, key=lambda s: s[3])[4]          # the most colourful source image decides the palette
     return {"luminance": float(np.mean([s[0] for s in stats])), "contrast": float(np.mean([s[1] for s in stats])),
-            "hue": float(np.mean(hues)) if hues else None, "saturation": float(np.mean([s[3] for s in stats]))}
+            "hue": float(np.mean(hues)) if hues else None, "hues": palette, "saturation": float(np.mean([s[3] for s in stats]))}
+
+
+def _dominant_hues(hsv: np.ndarray) -> list[float]:
+    """The two strongest hues (degrees) in an image, weighted by how saturated and bright each pixel is.
+    The second is at least 50 degrees from the first, or the first shifted 40 degrees if there is none."""
+    weights = hsv[:, 1] * hsv[:, 2]
+    if weights.sum() < 1e-6 or hsv[:, 1].mean() < 0.06:
+        return []
+    bins = np.zeros(12)
+    for h, w in zip(hsv[:, 0], weights):
+        bins[int(h * 12) % 12] += w
+    def refine(center_deg: float) -> float:
+        """Weighted circular mean of the pixels within 30 degrees of a bin centre -- the true hue, not the bin's midpoint."""
+        ang = hsv[:, 0] * 360.0
+        gap = np.minimum(np.abs(ang - center_deg), 360 - np.abs(ang - center_deg))
+        w = weights * (gap <= 30)
+        if w.sum() < 1e-9:
+            return center_deg
+        rad = np.radians(ang)
+        return float(np.degrees(np.arctan2((np.sin(rad) * w).sum(), (np.cos(rad) * w).sum())) % 360)
+
+    first = int(bins.argmax())
+    first_deg = refine((first + 0.5) * 30.0)
+    far = [(bins[i], i) for i in range(12) if min(abs(i - first), 12 - abs(i - first)) >= 2 and bins[i] > 0.15 * bins[first]]
+    second_deg = refine((max(far)[1] + 0.5) * 30.0) if far else (first_deg + 40.0) % 360
+    return [float(first_deg), float(second_deg)]
 
 
 # ── generation ──────────────────────────────────────────────────────────────
@@ -152,11 +179,24 @@ def render(slug: str, size=HERO_SIZE, inspiration: dict | None = None, salt: int
     v = np.clip((v - 0.5) * (0.6 + 0.8 * insp["contrast"]) + 0.5, 0, 1)
     v = v ** (0.5 + 2.0 * (1.0 - insp["luminance"]))                    # darker/brighter inspiration -> darker/brighter art
     v = np.clip(v + rng.normal(0, 0.018, v.shape).astype(np.float32), 0, 1)   # film grain
-    gray = (v * 255.0)[..., None].repeat(3, axis=2)
-    if insp.get("hue") is not None and insp["saturation"] > 0.05:      # at most a faint tint of the inspiration's hue
-        r, g, b = colorsys.hsv_to_rgb(insp["hue"] / 360.0, 1.0, 1.0)
-        gray += (np.array([r, g, b], dtype=np.float32) - 0.5) * (14.0 * min(1.0, insp["saturation"]))
-    return Image.fromarray(np.clip(gray, 0, 255).astype(np.uint8), "RGB")
+    dark, mid, light = _palette(slug, insp)
+    t = v[..., None]
+    rgb = np.where(t < 0.5, dark + (mid - dark) * (t * 2), mid + (light - mid) * ((t - 0.5) * 2))   # gradient map
+    return Image.fromarray(np.clip(rgb * 255.0, 0, 255).astype(np.uint8), "RGB")
+
+
+def _palette(slug: str, insp: dict):
+    """(dark, mid, light) RGB in 0..1. Dark tones take the inspiring image's dominant hue, light tones its
+    second hue. An image with no colour of its own (grey/black-and-white) gets a hue derived from the slug,
+    so the result is still deterministic and projects do not all look alike."""
+    hues = insp.get("hues") or []
+    sat = max(0.55, min(0.95, insp.get("saturation", 0.0) * 1.2))
+    if not hues or insp.get("saturation", 0.0) < 0.12:
+        base = (_digest(slug, 7) % 360)
+        hues, sat = [float(base), float((base + 45) % 360)], 0.6
+    h1, h2 = hues[0] / 360.0, hues[1] / 360.0
+    rgb = lambda h, s, val: np.array(colorsys.hsv_to_rgb(h, s, val), dtype=np.float32)
+    return rgb(h1, min(1.0, sat * 0.9), 0.07), rgb(h1, sat, 0.5), rgb(h2, sat * 0.55, 0.97)
 
 
 def thumbnail(img: Image.Image, width: int = 600) -> Image.Image:
