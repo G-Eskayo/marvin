@@ -213,3 +213,14 @@ def test_card_geometry_flags_a_card_that_overlays_its_photo_differently():
 def test_card_rule_is_in_the_effective_rules():
     import portfolio_eval as ev
     assert ev.DEFAULT_RULES["card"] == {"image_height": 240, "overlap": 56}
+
+
+def test_card_consistency_flags_a_card_with_different_structure_or_typography():
+    import portfolio_eval as ev
+    good = {"sig": "div.col a img div.card", "look": "mono | black | 22px | block | 14px"}
+    stray = {"sig": "div.col a img p div.card", "look": good["look"]}
+    plain = {"sig": good["sig"], "look": "arial | grey | 20px | inline-block | 14px"}
+    pages = {"/a/ @1440": [good, good], "/b/ @1440": [good, stray], "/c/ @1440": [plain, good, good]}
+    found = ev.check_card_consistency(pages)
+    assert sorted((f["page"], f["rule"]) for f in found) == [("/b/ @1440", "card-markup"), ("/c/ @1440", "card-typography")]
+    assert ev.check_card_consistency({"/a/": [good, good]}) == []
