@@ -41,6 +41,8 @@ skill-name/
 ---
 name: skill-name
 description: Brief description of capability. Use when [specific triggers].
+tags: [type:skill, intent:..., domain:...]
+model-scope: all
 ---
 
 # Skill Name
@@ -57,6 +59,12 @@ description: Brief description of capability. Use when [specific triggers].
 
 [Link to separate files: See [REFERENCE.md](REFERENCE.md)]
 ```
+
+**Frontmatter fields**:
+- `name`: short kebab-case identifier
+- `description`: agent-facing trigger text (max 1024 chars)
+- `tags`: [required] at least one tag; use `type:skill`, plus domain/intent tags
+- `model-scope`: [optional] model tier restrictions (omit or `all` for unrestricted; `sonnet+` for sonnet and above; `haiku,sonnet` for comma-separated list)
 
 ## Description Requirements
 
@@ -112,8 +120,10 @@ After drafting, verify:
 
 - [ ] Description includes triggers ("Use when...")
 - [ ] SKILL.md under 100 lines
+- [ ] Frontmatter includes at least `name`, `description`, `tags` (required), and `model-scope` if needed
 - [ ] No time-sensitive info
 - [ ] Consistent terminology
 - [ ] Concrete examples included
 - [ ] References one level deep
 - [ ] If the skill claims to "run automatically" / "no user prompt needed": is there a real enforcement mechanism (hook, cron, log) behind that claim, not just the description asserting it? Confirmed 2026-07-03 — `self-improve`'s own autonomy claim went unexercised for weeks until a PostToolUse hook was actually wired in; the prose alone never fired it.
+- [ ] If skill requires a specific model tier: set `model-scope` with evidence (e.g., bench run showing degradation)
