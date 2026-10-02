@@ -303,3 +303,28 @@ describe('templates', () => {
     await expect(p.referenceMarkup('../../x')).rejects.toThrow(/invalid page/i)
   })
 })
+
+describe('template source (plain markup behind each template)', () => {
+  const manifest = (file) => JSON.stringify({ templates: [{ id: 'content-page', file }] })
+
+  it('reads and saves the file the manifest names', async () => {
+    write('templates/templates.json', manifest('content-page.html'))
+    write('templates/content-page.html', '<p>old</p>')
+    expect(await p.templateSource('content-page')).toBe('<p>old</p>')
+    await p.saveTemplateSource('content-page', '<p>new</p>')
+    expect(readFileSync(path.join(project, 'templates', 'content-page.html'), 'utf8')).toBe('<p>new</p>')
+  })
+
+  it('rejects unknown ids, bad ids and empty markup', async () => {
+    write('templates/templates.json', manifest('content-page.html'))
+    await expect(p.templateSource('nope')).rejects.toThrow(/Unknown template/)
+    await expect(p.templateSource('../x')).rejects.toThrow(/Invalid template id/)
+    await expect(p.saveTemplateSource('content-page', '   ')).rejects.toThrow(/non-empty/)
+  })
+
+  it('never writes outside templates/ even if the manifest points there', async () => {
+    write('templates/templates.json', manifest('../deploy/evil.html'))
+    await expect(p.saveTemplateSource('content-page', '<p>x</p>')).rejects.toThrow(/escapes templates/)
+    expect(existsSync(path.join(project, 'deploy', 'evil.html'))).toBe(false)
+  })
+})

@@ -126,3 +126,15 @@ describe('previewDocument hides WordPress shortcodes', () => {
     expect(previewDocument('<p>a [b] c</p>', '')).toContain('a [b] c')
   })
 })
+
+import { buttonVerdict } from '../src/lib/portfolio.js'
+describe('buttonVerdict', () => {
+  it('accepts the three canonical buttons', () => {
+    for (const t of ['Discover', 'View on GitHub', 'Download report'])
+      expect(buttonVerdict({ texts: [t], classes: 'btn btn-default' }).ok).toBe(true)
+  })
+  it('flags other wording or non-button styling', () => {
+    expect(buttonVerdict({ texts: ['GitHub'], classes: 'btn btn-default' })).toEqual({ ok: false, label: 'off-canon text' })
+    expect(buttonVerdict({ texts: ['View on GitHub'], classes: 'link' })).toEqual({ ok: false, label: 'off-canon style' })
+  })
+})

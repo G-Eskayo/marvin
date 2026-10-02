@@ -85,3 +85,12 @@ export function countByType(pages) {
   for (const p of pages || []) out[p.type] = (out[p.type] || 0) + 1
   return out
 }
+
+// A crawled button look versus the canonical set (Templates tab): Discover, View on GitHub, Download.
+const CANON_TEXT = /^(discover|view on github|download\b.*)$/i
+export function buttonVerdict(variant) {
+  const texts = variant?.texts || []
+  const isBtn = /\bbtn\b/.test(variant?.classes || '')
+  const ok = isBtn && texts.length > 0 && texts.every((t) => CANON_TEXT.test(String(t).trim()))
+  return ok ? { ok: true, label: 'canonical' } : { ok: false, label: isBtn ? 'off-canon text' : 'off-canon style' }
+}
