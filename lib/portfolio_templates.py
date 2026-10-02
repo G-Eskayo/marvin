@@ -15,6 +15,7 @@ CLI:  portfolio_templates.py list | render ID [--data JSON] [--options JSON]
 from __future__ import annotations
 import html as _html
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -42,7 +43,9 @@ def _entry(manifest: dict, tid: str) -> dict | None:
 
 def _read_template(root: Path, entry: dict) -> str:
     root = Path(root).resolve()
-    path = (root / entry["file"]).resolve()
+    # Lexical check (not resolve()): a template may be a symlink to its single source elsewhere in the repo
+    # (the project card lives in deploy/ because the live site fetches it), but it must not name a path outside.
+    path = Path(os.path.abspath(root / entry["file"]))
     if root not in path.parents:                       # a manifest entry must not read outside the templates root
         raise ValueError(f"template file escapes the templates root: {entry['file']}")
     return path.read_text()
@@ -113,6 +116,9 @@ def render(template_id: str, field_values: dict | None = None, options: dict | N
     source = re.sub(r"\A\s*<!--.*?-->\s*", "", source, count=1, flags=re.DOTALL)
     out = _SLOT.sub(lambda m: slot_html.get(m.group(1), ""), source)
     out = _PLACEHOLDER.sub(lambda m: values.get(m.group(1), ""), out)
+    if entry.get("compact"):
+        # WordPress turns whitespace between tags into stray empty paragraphs; a compact template is emitted without any
+        out = re.sub(r">\s+<", "><", out).strip()
     return _result(out, ok=not missing and not errors, missing=missing, errors=errors, warnings=warnings, used=used)
 
 

@@ -128,3 +128,81 @@ def test_every_template_has_a_specimen_that_renders_cleanly():
         r = pt.specimen(t["id"])
         assert r["ok"], (t["id"], r["missing"], r["errors"])
         assert r["html"].strip(), t["id"]
+
+
+# ── ONE project card, everywhere ────────────────────────────────────────────
+# Found 2026-10-02: the card markup was hand-copied into four places and the copies had drifted (stray WordPress
+# paragraphs, a different button, inline styles), so the "same" card looked different on hub, All Projects and the
+# footer. These pin it to one file.
+
+PORTFOLIO = Path.home() / "Documents" / "Projects" / "portfolio-website-updater"
+
+
+def _bin_card():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_card", PORTFOLIO / "bin" / "_card.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_card_markup_exists_in_exactly_one_file():
+    offenders = []
+    for f in list((PORTFOLIO / "bin").glob("*.py")) + list((PORTFOLIO / "deploy").rglob("*.js")) + list((PORTFOLIO / "deploy").rglob("*.php")):
+        if "card-container-lg" in f.read_text():
+            offenders.append(f.name)
+    assert offenders == [], f"card markup copied into: {offenders} (use deploy/other-projects/project-card.html)"
+    template = PORTFOLIO / "templates" / "components" / "project-card.html"
+    assert template.is_symlink() and template.resolve() == (PORTFOLIO / "deploy" / "other-projects" / "project-card.html").resolve()
+
+
+def test_generators_render_the_same_card_as_the_template_renderer():
+    import portfolio_templates as pt
+    card = _bin_card()
+    args = dict(url="/ai-projects/x/", title="A & B", thumbnail="/t.jpg", description="Does <things>.")
+    via_generator = card.render_card(args["url"], args["title"], args["thumbnail"], args["description"])
+    via_renderer = pt.render("project-card", {"URL": args["url"], "TITLE": args["title"], "THUMBNAIL": args["thumbnail"],
+                                              "DESCRIPTION": args["description"]})["html"]
+    assert via_generator == via_renderer
+    also = card.render_card(args["url"], args["title"], args["thumbnail"], args["description"], ["Cybersecurity"])
+    assert 'class="card-also">Also: Cybersecurity</p>' in also
+    assert ">\n" not in via_generator and "> <" not in via_generator       # compact: nothing for WordPress to wrap in <p>
+
+
+def test_footer_script_fills_the_same_card_as_the_generators():
+    import json
+    import shutil
+    import subprocess
+    import pytest
+    if not shutil.which("node"):
+        pytest.skip("node not available")
+    card = _bin_card()
+    manifest = json.loads((PORTFOLIO / "deploy/other-projects/manifest.json").read_text())
+    js = (PORTFOLIO / "deploy/other-projects/other-projects.js").read_text()
+    template = (PORTFOLIO / "deploy/other-projects/project-card.html").read_text()
+    harness = """
+      const vm = require('vm');
+      const mount = {innerHTML: ''};
+      let ready;
+      const ctx = {
+        window: {location: {pathname: '/ai-projects/mancala/'}},
+        document: {addEventListener: (_e, f) => { ready = f; }, getElementById: () => mount},
+        fetch: (u) => Promise.resolve(u.endsWith('.json') ? {json: () => Promise.resolve(%s)} : {text: () => Promise.resolve(%s)}),
+        console,
+      };
+      vm.createContext(ctx);
+      vm.runInContext(%s, ctx);
+      ready();
+      setTimeout(() => console.log(JSON.stringify(mount.innerHTML)), 50);
+    """ % (json.dumps(manifest), json.dumps(template), json.dumps(js))
+    out = json.loads(subprocess.run(["node", "-e", harness], capture_output=True, text=True, timeout=30, check=True).stdout)
+    cards = [c for c in out.split('<div class="col-md-6">')[1:]]
+    assert len(cards) == 2
+    for chunk in cards:
+        chunk = '<div class="col-md-6">' + chunk
+        # the footer wraps cards in a row; cut each at the card's own closing tags
+        chunk = chunk[: chunk.index("Discover</a></div></div>") + len("Discover</a></div></div>")]
+        url = chunk.split('href="', 1)[1].split('"', 1)[0]
+        p = next(p for p in manifest if p["url"] == url)
+        others = [c for c in [p["category"]] + p.get("secondary_categories", []) if c != "AI & Machine Learning"]
+        assert chunk == card.render_card(p["url"], p["title"], p["thumbnail"], p["description"], others)

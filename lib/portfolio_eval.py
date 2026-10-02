@@ -95,6 +95,24 @@ def check_card_geometry(geoms: list[dict], rules: dict) -> list[dict]:
     return out
 
 
+def check_card_consistency(per_page: dict[str, list[dict]]) -> list[dict]:
+    """One card design: across EVERY page, every card has the same RENDERED element structure (elements the CSS
+    hides, such as WordPress's empty auto-paragraphs, do not count; extra visible wrappers do) and the same computed typography/button. The most common form is taken as the standard;
+    each deviation is reported against it."""
+    from collections import Counter
+    out: list[dict] = []
+    for key, rule in (("sig", "card-markup"), ("look", "card-typography")):
+        values = [g[key] for geoms in per_page.values() for g in geoms]
+        if not values:
+            continue
+        standard = Counter(values).most_common(1)[0][0]
+        for page, geoms in per_page.items():
+            bad = sum(1 for g in geoms if g[key] != standard)
+            if bad:
+                out.append({"page": page, **_finding(rule, f"{bad} card(s) differ from the site's standard card ({key}): {next(g[key] for g in geoms if g[key] != standard)[:160]}")})
+    return out
+
+
 def check_grid(cards: list[dict], rules: dict) -> list[dict]:
     """Cards in the same row (same top within tolerance) must share one height."""
     tol = rules["tolerance_px"]
@@ -174,7 +192,16 @@ _MEASURE_JS = """() => {
   return {
     viewport: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth,
     heading: heading ? rect(heading) : null,
-    cardGeom: cards.map(c => { const im = c.parentElement.querySelector('img'); if (!im) return null; const ir = im.getBoundingClientRect(); return {overlap: Math.round(ir.bottom - c.getBoundingClientRect().top), imgH: Math.round(ir.height)}; }).filter(Boolean),
+    cardGeom: cards.map(c => {
+      const col = c.parentElement, im = col.querySelector('img'); if (!im) return null;
+      const ir = im.getBoundingClientRect(), cs = getComputedStyle(c), btn = c.querySelector('.btn'), desc = c.querySelector('.equal p');
+      const noise = /(^| )(lazyloaded|lazyload|lazyloading|ls-is-cached|fusion-responsive-typography-calculated)(?= |$)/g;
+      return {
+        overlap: Math.round(ir.bottom - c.getBoundingClientRect().top), imgH: Math.round(ir.height),
+        sig: [...col.querySelectorAll('*')].filter(e => getComputedStyle(e).display !== 'none' && !e.classList.contains('card-also')).map(e => e.tagName.toLowerCase() + '.' + String(e.className || '').replace(noise, '').trim().replace(/ +/g, '.')).join(' '),
+        look: [cs.fontFamily, cs.color, cs.lineHeight, btn ? getComputedStyle(btn).display : '', desc ? getComputedStyle(desc).fontSize : ''].join(' | '),
+      };
+    }).filter(Boolean),
     footerCards: cards.filter(inFooter).map(rect),
     gridCards: cards.filter(c => !inFooter(c)).map(rect),
     github: [...document.querySelectorAll('a')].filter(a => /github\\.com/.test(a.href) && !a.closest('nav, header, footer, .hub-sidebar'))
@@ -192,6 +219,7 @@ def run(base: str = "http://localhost:8080", rules: dict | None = None, manifest
     findings: list[dict] = []
     pages = list(projects.values()) + list(rules["hub_pages"])
 
+    card_geoms: dict[str, list[dict]] = {}
     for f in check_unique_images({p["title"]: p["thumbnail"] for p in manifest}):
         findings.append({"page": "(manifest)", **f})
 
@@ -206,6 +234,7 @@ def run(base: str = "http://localhost:8080", rules: dict | None = None, manifest
                 per_page = check_overflow(m["viewport"], m["scrollWidth"])
                 if width >= 1100:   # card geometry rules apply to the desktop layouts
                     per_page += check_card_geometry(m["cardGeom"], rules)
+                    card_geoms[label] = m["cardGeom"]
                     if url in projects.values():
                         per_page += check_footer(m["footerCards"], m["heading"], rules)
                         per_page += check_github_links(m["github"], rules)
@@ -215,6 +244,7 @@ def run(base: str = "http://localhost:8080", rules: dict | None = None, manifest
             page.close()
         browser.close()
 
+    findings += check_card_consistency(card_geoms)
     labels = [f"{u} @{w}" for w in rules["viewports"] for u in pages] + ["(manifest)"]
     return {"base": base, "rules": rules, "findings": findings, "summary": summarize(findings, labels)}
 
