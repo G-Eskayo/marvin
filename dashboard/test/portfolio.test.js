@@ -424,3 +424,12 @@ describe('deleting an image variant', () => {
     await expect(p.deleteImageVariant('mancala', 'tree', 0)).rejects.toThrow(/one in use/)
   })
 })
+
+describe('applying images to the dev site', () => {
+  it('runs the apply script and returns its last JSON line', async () => {
+    exec.mockResolvedValue({ stdout: 'noise\n' + JSON.stringify({ images: 17, manifest_changed: 3, pages: [] }) + '\n', stderr: '' })
+    const r = await p.applyImages()
+    expect(r).toEqual({ images: 17, manifest_changed: 3, pages: [] })
+    expect(exec.mock.calls[0][1][0]).toMatch(/portfolio_apply\.py$/)
+  })
+})

@@ -724,6 +724,8 @@ function Images() {
   const [items, setItems] = useState(null)
   const [error, setError] = useState(null)
   const [motifs, setMotifs] = useState([])
+  const [applying, setApplying] = useState(false)
+  const [applied, setApplied] = useState(null)
   const load = useCallback(() => window.api.portfolio.images().then(setItems).catch((e) => setError(errText(e))), [])
   useEffect(() => {
     load()
@@ -734,6 +736,20 @@ function Images() {
   if (!items) return <p className="text-sm text-neutral-500">Loading images…</p>
   const shared = items.filter((i) => i.sharedWith.length > 0).length
 
+  async function applyAll() {
+    setApplying(true)
+    setApplied(null)
+    try {
+      const r = await window.api.portfolio.applyImages()
+      setApplied({ message: `Applied ${r.images} images to the dev site; ${r.manifest_changed} manifest thumbnail${r.manifest_changed === 1 ? '' : 's'} changed (review deploy/other-projects/manifest.json in the repo — nothing was pushed).` })
+      await load()
+    } catch (e) {
+      setApplied({ error: errText(e) })
+    } finally {
+      setApplying(false)
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center gap-3">
@@ -741,7 +757,9 @@ function Images() {
         <span className="text-xs text-neutral-500">
           {items.length} projects · {shared} sharing a thumbnail · generated art is unique per project and keyed to its slug
         </span>
+        <button onClick={applyAll} disabled={applying} className={`${primary} ml-auto`}>{applying ? 'Applying to the dev site (about a minute)…' : 'Apply chosen images to the dev site'}</button>
       </div>
+      <Status state={applied} />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {items.map((it) => (
           <ImageCard key={it.slug} item={it} motifs={motifs} onGenerate={load} />
