@@ -9,6 +9,7 @@ import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
 import { readDispatchStatus } from './dispatch_status.js'
 import { readHealthStatus, runHealthCheckNow } from './health.js'
 import { discoverDocFirstRepos, readCachedRepos, listRepoDocTree, fetchFileContent } from './docs.js'
+import { createPortfolio } from './portfolio.js'
 import { listTicketActivity, getTicketTimeline } from './activity.js'
 import { createRefreshServer } from './refresh_server.js'
 import { adoptLoginShellPath } from './path.js'
@@ -128,6 +129,23 @@ function registerDocsHandlers() {
   ipcMain.handle('docs:refresh', () => discoverDocFirstRepos(execFileAsync))
   ipcMain.handle('docs:tree', (_event, repo) => listRepoDocTree(execFileAsync, repo))
   ipcMain.handle('docs:content', (_event, repo, filePath) => fetchFileContent(execFileAsync, repo, filePath))
+
+  // Portfolio tab (CONTEXT.md "Dashboard app -- Portfolio tab"): component library, design rules, guide,
+  // evaluation, images. Dev-only: every write is confined to the portfolio repo's templates/.
+  const portfolio = createPortfolio({ exec: execFileAsync })
+  ipcMain.handle('portfolio:components', () => portfolio.listComponents())
+  ipcMain.handle('portfolio:component:save', (_e, name, html, notes) => portfolio.saveComponent(name, html, notes))
+  ipcMain.handle('portfolio:component:create', (_e, name, html, notes) => portfolio.createComponent(name, html, notes))
+  ipcMain.handle('portfolio:preview-head', () => portfolio.previewHead())
+  ipcMain.handle('portfolio:rules', () => portfolio.getRules())
+  ipcMain.handle('portfolio:rules:save', (_e, overrides) => portfolio.saveRules(overrides))
+  ipcMain.handle('portfolio:guide', () => portfolio.getGuide())
+  ipcMain.handle('portfolio:guide:save', (_e, text) => portfolio.saveGuide(text))
+  ipcMain.handle('portfolio:eval:latest', () => portfolio.latestEval())
+  ipcMain.handle('portfolio:eval:run', () => portfolio.runEval())
+  ipcMain.handle('portfolio:images', () => portfolio.listImages())
+  ipcMain.handle('portfolio:image:generate', (_e, slug) => portfolio.generateImage(slug))
+  ipcMain.handle('portfolio:image:preview', (_e, slug) => portfolio.imagePreview(slug))
 }
 
 function postJson(webhookUrl, body) {

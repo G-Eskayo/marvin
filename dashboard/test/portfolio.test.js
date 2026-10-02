@@ -1,0 +1,226 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'fs'
+import { tmpdir } from 'os'
+import path from 'path'
+import { createPortfolio, slugOf } from '../electron/main/portfolio.js'
+
+// The Portfolio tab's backend: the single hub for how a portfolio Project Page is built --
+// component library, design rules, guide, evaluation, images. Dev-only by construction: it can
+// only write inside <project>/templates/ and never touches deploy/ (a push touching deploy/
+// auto-deploys to PRODUCTION).
+
+let dir, project, home, p, exec
+const write = (rel, text) => { const f = path.join(project, rel); mkdirSync(path.dirname(f), { recursive: true }); writeFileSync(f, text) }
+
+beforeEach(() => {
+  dir = mkdtempSync(path.join(tmpdir(), 'portfolio-'))
+  project = path.join(dir, 'project'); home = path.join(dir, 'home')
+  mkdirSync(project, { recursive: true }); mkdirSync(home, { recursive: true })
+  exec = vi.fn().mockResolvedValue({ stdout: '{}', stderr: '' })
+  p = createPortfolio({ projectDir: project, homeDir: home, agentsDir: path.join(dir, 'agents'), exec })
+})
+afterEach(() => rmSync(dir, { recursive: true, force: true }))
+
+describe('components', () => {
+  it('lists nothing when the library does not exist yet', async () => {
+    expect(await p.listComponents()).toEqual([])
+  })
+
+  it('lists components sorted by name with their html and optional notes', async () => {
+    write('templates/components/project-card.html', '<div class="card"></div>')
+    write('templates/components/github-button.html', '<a class="btn btn-default">View on GitHub</a>')
+    write('templates/components/github-button.md', 'Use for the project\'s OWN repo only.')
+    const list = await p.listComponents()
+    expect(list.map((c) => c.name)).toEqual(['github-button', 'project-card'])
+    expect(list[0]).toMatchObject({ html: '<a class="btn btn-default">View on GitHub</a>', notes: "Use for the project's OWN repo only." })
+    expect(list[1].notes).toBe('')
+  })
+
+  it('saves a component, creating the library directory on first use', async () => {
+    await p.saveComponent('github-button', '<a>x</a>', 'notes here')
+    expect(readFileSync(path.join(project, 'templates/components/github-button.html'), 'utf8')).toBe('<a>x</a>')
+    expect(readFileSync(path.join(project, 'templates/components/github-button.md'), 'utf8')).toBe('notes here')
+  })
+
+  it.each(['../evil', 'a/b', 'Has Space', '', '.hidden', 'x'.repeat(80), 'UPPER'])('rejects the unsafe component name %j', async (name) => {
+    await expect(p.saveComponent(name, '<a/>')).rejects.toThrow(/invalid component name/i)
+  })
+
+  it('never writes outside templates/ even for a crafted name', async () => {
+    await p.saveComponent('ok-name', '<a/>')
+    expect(existsSync(path.join(project, 'deploy'))).toBe(false)
+  })
+
+  it('refuses to create a component that already exists, but saving updates it', async () => {
+    await p.createComponent('card', '<div/>')
+    await expect(p.createComponent('card', '<p/>')).rejects.toThrow(/already exists/i)
+    await p.saveComponent('card', '<p/>')
+    expect((await p.listComponents())[0].html).toBe('<p/>')
+  })
+
+  it('rejects non-string html', async () => {
+    await expect(p.saveComponent('card', 42)).rejects.toThrow(/html must be a string/i)
+  })
+})
+
+describe('design rules', () => {
+  it('returns the effective rules (from the evaluator) alongside the saved overrides', async () => {
+    exec.mockResolvedValue({ stdout: JSON.stringify({ tolerance_px: 2, github_button: { text: 'View on GitHub' } }), stderr: '' })
+    write('templates/design-rules.json', JSON.stringify({ tolerance_px: 5 }))
+    const r = await p.getRules()
+    expect(r.overrides).toEqual({ tolerance_px: 5 })
+    expect(r.effective.github_button.text).toBe('View on GitHub')
+    expect(exec.mock.calls[0][1]).toContain('--print-rules')
+  })
+
+  it('treats a missing or corrupt rules file as no overrides', async () => {
+    exec.mockResolvedValue({ stdout: '{}', stderr: '' })
+    expect((await p.getRules()).overrides).toEqual({})
+    write('templates/design-rules.json', '{broken')
+    expect((await p.getRules()).overrides).toEqual({})
+  })
+
+  it('saves valid override objects as pretty JSON and rejects anything else', async () => {
+    await p.saveRules({ footer: { expected_cards: 2 } })
+    expect(JSON.parse(readFileSync(path.join(project, 'templates/design-rules.json'), 'utf8'))).toEqual({ footer: { expected_cards: 2 } })
+    await expect(p.saveRules([1, 2])).rejects.toThrow(/object/i)
+    await expect(p.saveRules('x')).rejects.toThrow(/object/i)
+    await expect(p.saveRules(null)).rejects.toThrow(/object/i)
+  })
+})
+
+describe('guide', () => {
+  it('is empty until written, then round-trips', async () => {
+    expect(await p.getGuide()).toBe('')
+    await p.saveGuide('# Guide\n\nCards are equal height.')
+    expect(await p.getGuide()).toBe('# Guide\n\nCards are equal height.')
+  })
+})
+
+describe('evaluation', () => {
+  const result = { generated_at: 't', findings: [{ page: '/a/', rule: 'x', detail: 'd' }], summary: { by_rule: { x: 1 } } }
+
+  it('latestEval is null when nothing has run, or the file is corrupt', async () => {
+    expect(await p.latestEval()).toBeNull()
+    mkdirSync(path.join(home, '.claude/portfolio'), { recursive: true })
+    writeFileSync(path.join(home, '.claude/portfolio/eval-latest.json'), '{nope')
+    expect(await p.latestEval()).toBeNull()
+  })
+
+  it('reads the latest evaluation result', async () => {
+    mkdirSync(path.join(home, '.claude/portfolio'), { recursive: true })
+    writeFileSync(path.join(home, '.claude/portfolio/eval-latest.json'), JSON.stringify(result))
+    expect((await p.latestEval()).summary.by_rule).toEqual({ x: 1 })
+  })
+
+  it('runEval treats exit code 1 (findings found) as a normal outcome, not a failure', async () => {
+    mkdirSync(path.join(home, '.claude/portfolio'), { recursive: true })
+    exec.mockImplementation(async () => {
+      writeFileSync(path.join(home, '.claude/portfolio/eval-latest.json'), JSON.stringify(result))
+      throw Object.assign(new Error('exit 1'), { code: 1 })
+    })
+    const r = await p.runEval()
+    expect(r.findings).toHaveLength(1)
+  })
+
+  it('runEval surfaces a real failure (any other exit code)', async () => {
+    exec.mockRejectedValue(Object.assign(new Error('playwright missing'), { code: 2, stderr: 'boom' }))
+    await expect(p.runEval()).rejects.toThrow(/evaluation failed/i)
+  })
+})
+
+describe('images', () => {
+  const manifest = [
+    { title: 'Algorithms', url: '/ai-projects/algorithms/', thumbnail: '/u/work001-01.jpg' },
+    { title: 'Mancala', url: '/ai-projects/mancala/', thumbnail: '/u/work001-01.jpg' },
+    { title: 'MITRE', url: '/ai-projects/mitre/', thumbnail: '/u/mitre.jpg' }
+  ]
+  beforeEach(() => write('deploy/other-projects/manifest.json', JSON.stringify(manifest)))
+
+  it('derives a slug from a project url', () => {
+    expect(slugOf('/ai-projects/mancala/')).toBe('mancala')
+    expect(slugOf('/software-engineering/killer-sudoku')).toBe('killer-sudoku')
+  })
+
+  it('lists projects and flags a shared thumbnail, naming who shares it', async () => {
+    const list = await p.listImages()
+    const alg = list.find((i) => i.slug === 'algorithms')
+    expect(alg.sharedWith).toEqual(['Mancala'])
+    expect(list.find((i) => i.slug === 'mitre').sharedWith).toEqual([])
+  })
+
+  it('reports whether a generated image exists for each project', async () => {
+    mkdirSync(path.join(home, '.claude/portfolio/images'), { recursive: true })
+    writeFileSync(path.join(home, '.claude/portfolio/images/mitre.png'), 'png')
+    const list = await p.listImages()
+    expect(list.find((i) => i.slug === 'mitre').generated).toMatchObject({ exists: true })
+    expect(list.find((i) => i.slug === 'mancala').generated.exists).toBe(false)
+  })
+
+  it('generates an image only for a slug that is in the manifest', async () => {
+    await p.generateImage('mitre')
+    expect(exec.mock.calls[0][1]).toEqual(expect.arrayContaining(['mitre']))
+    await expect(p.generateImage('../../etc/passwd')).rejects.toThrow(/unknown project/i)
+    await expect(p.generateImage('not-in-manifest')).rejects.toThrow(/unknown project/i)
+  })
+
+  it('returns an empty list when the manifest is missing, not a crash', async () => {
+    rmSync(path.join(project, 'deploy'), { recursive: true, force: true })
+    expect(await p.listImages()).toEqual([])
+  })
+})
+
+describe('previews', () => {
+  it('imagePreview returns a data URL for a generated image and null when none exists', async () => {
+    write('deploy/other-projects/manifest.json', JSON.stringify([{ title: 'MITRE', url: '/ai-projects/mitre/', thumbnail: '/u/m.jpg' }]))
+    expect(await p.imagePreview('mitre')).toBeNull()
+    mkdirSync(path.join(home, '.claude/portfolio/images'), { recursive: true })
+    writeFileSync(path.join(home, '.claude/portfolio/images/mitre.png'), Buffer.from([137, 80, 78, 71]))
+    expect(await p.imagePreview('mitre')).toBe('data:image/png;base64,' + Buffer.from([137, 80, 78, 71]).toString('base64'))
+  })
+
+  it('imagePreview refuses anything that is not a known project slug', async () => {
+    write('deploy/other-projects/manifest.json', '[]')
+    await expect(p.imagePreview('../../etc/passwd')).rejects.toThrow(/unknown project/i)
+  })
+
+  it('previewHead fetches the dev site and returns its stylesheet links plus a base href, so a component previews with the real site styling', async () => {
+    const html = `<html><head><link rel='stylesheet' id='a' href='http://localhost:8080/wp-content/a.css?ver=1' media='all' />
+      <link rel="stylesheet" href="/wp-content/b.css"><link rel="icon" href="/x.ico"><style>.x{}</style></head></html>`
+    const fetchFn = vi.fn().mockResolvedValue({ ok: true, text: async () => html })
+    const q = createPortfolio({ projectDir: project, homeDir: home, agentsDir: path.join(dir, 'agents'), exec, fetchFn })
+    const head = await q.previewHead('http://localhost:8080')
+    expect(head).toContain('<base href="http://localhost:8080/">')
+    expect(head).toContain("href='http://localhost:8080/wp-content/a.css?ver=1'")   // WordPress emits single quotes; tags are kept verbatim
+    expect(head).toContain('href="/wp-content/b.css"')
+    expect(head).not.toContain('x.ico')           // only stylesheets
+    expect(head).not.toContain('<style>')         // no inline script/style carried over
+  })
+
+  it('previewHead degrades to an empty head with a reason when the dev site is down', async () => {
+    const fetchFn = vi.fn().mockRejectedValue(new Error('ECONNREFUSED'))
+    const q = createPortfolio({ projectDir: project, homeDir: home, agentsDir: path.join(dir, 'agents'), exec, fetchFn })
+    const head = await q.previewHead('http://localhost:8080')
+    expect(head).toContain('dev site not reachable')
+  })
+})
+
+describe('generateImage passes the project\'s existing image as inspiration', () => {
+  it('hands the generator the existing thumbnail (resolved inside the dev html dir) via --inspire', async () => {
+    write('deploy/other-projects/manifest.json', JSON.stringify([{ title: 'MITRE', url: '/ai-projects/mitre/', thumbnail: '/wp-content/uploads/2025/10/mitre.jpg' }]))
+    const htmlDir = path.join(dir, 'html')
+    const q = createPortfolio({ projectDir: project, homeDir: home, agentsDir: path.join(dir, 'agents'), exec, htmlDir })
+    await q.generateImage('mitre')
+    const args = exec.mock.calls[0][1]
+    expect(args).toContain('--inspire')
+    expect(args[args.indexOf('--inspire') + 1]).toBe(path.join(htmlDir, 'wp-content/uploads/2025/10/mitre.jpg'))
+  })
+
+  it('never lets a crafted thumbnail path escape the html dir', async () => {
+    write('deploy/other-projects/manifest.json', JSON.stringify([{ title: 'X', url: '/a/evil/', thumbnail: '/../../../etc/passwd' }]))
+    const htmlDir = path.join(dir, 'html')
+    const q = createPortfolio({ projectDir: project, homeDir: home, agentsDir: path.join(dir, 'agents'), exec, htmlDir })
+    await q.generateImage('evil')
+    expect(exec.mock.calls[0][1]).not.toContain('--inspire')
+  })
+})

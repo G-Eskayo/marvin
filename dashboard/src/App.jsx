@@ -4,6 +4,7 @@ import MrReview from '@components/MrReview.jsx'
 import HealthDashboard from '@components/HealthDashboard.jsx'
 import DocsExplorer from '@components/DocsExplorer.jsx'
 import ActivityBoard from '@components/ActivityBoard.jsx'
+import PortfolioHub from '@components/PortfolioHub.jsx'
 import DispatchStatusBadge from '@components/DispatchStatusBadge.jsx'
 
 const TABS = [
@@ -11,7 +12,8 @@ const TABS = [
   { id: 'mr-review', label: 'MR Review' },
   { id: 'health', label: 'Health' },
   { id: 'docs', label: 'Docs' },
-  { id: 'activity', label: 'Activity' }
+  { id: 'activity', label: 'Activity' },
+  { id: 'portfolio', label: 'Portfolio' }
 ]
 
 const DOT_COLOR = {
@@ -130,6 +132,8 @@ export default function App() {
           <HealthDashboard />
         ) : activeTab === 'docs' ? (
           <DocsExplorer />
+        ) : activeTab === 'portfolio' ? (
+          <PortfolioHub />
         ) : (
           <ActivityBoard />
         )}

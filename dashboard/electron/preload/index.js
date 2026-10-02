@@ -39,6 +39,21 @@ contextBridge.exposeInMainWorld('api', {
     tree: (repo) => ipcRenderer.invoke('docs:tree', repo),
     content: (repo, path) => ipcRenderer.invoke('docs:content', repo, path)
   },
+  portfolio: {
+    components: () => ipcRenderer.invoke('portfolio:components'),
+    saveComponent: (name, html, notes) => ipcRenderer.invoke('portfolio:component:save', name, html, notes),
+    createComponent: (name, html, notes) => ipcRenderer.invoke('portfolio:component:create', name, html, notes),
+    previewHead: () => ipcRenderer.invoke('portfolio:preview-head'),
+    rules: () => ipcRenderer.invoke('portfolio:rules'),
+    saveRules: (overrides) => ipcRenderer.invoke('portfolio:rules:save', overrides),
+    guide: () => ipcRenderer.invoke('portfolio:guide'),
+    saveGuide: (text) => ipcRenderer.invoke('portfolio:guide:save', text),
+    latestEval: () => ipcRenderer.invoke('portfolio:eval:latest'),
+    runEval: () => ipcRenderer.invoke('portfolio:eval:run'),
+    images: () => ipcRenderer.invoke('portfolio:images'),
+    generateImage: (slug) => ipcRenderer.invoke('portfolio:image:generate', slug),
+    imagePreview: (slug) => ipcRenderer.invoke('portfolio:image:preview', slug)
+  },
   activity: {
     list: () => ipcRenderer.invoke('activity:list'),
     timeline: (number) => ipcRenderer.invoke('activity:timeline', number)

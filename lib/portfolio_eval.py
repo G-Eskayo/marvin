@@ -207,7 +207,11 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="http://localhost:8080")
     ap.add_argument("--out", default=str(RESULT_PATH))
+    ap.add_argument("--print-rules", action="store_true", help="print the effective rules as JSON and exit")
     args = ap.parse_args()
+    if args.print_rules:
+        print(json.dumps(load_rules(RULES_PATH)))
+        return
     result = run(args.base)
     from datetime import datetime, timezone
     result["generated_at"] = datetime.now(timezone.utc).isoformat()
