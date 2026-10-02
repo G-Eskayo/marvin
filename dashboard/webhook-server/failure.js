@@ -28,6 +28,9 @@ const RULES = [
   { code: 'TOOL_MISSING', action: 'escalate', retryable: false,
     test: /enoent|command not found|no such file or directory.*(gh|git|npm|npx)/i,
     remediation: "A required tool (gh/git/npm) is missing from the webhook's PATH. Install it or fix the launchd plist PATH." },
+  { code: 'PR_NOT_FOUND', action: 'escalate', retryable: false,
+    test: /could not resolve to a pullrequest|pull request not found|no pull requests? found/i,
+    remediation: 'GitHub has no such pull request. It may have been closed or deleted, or the URL is wrong.' },
   { code: 'INVALID_REQUEST', action: 'escalate', retryable: false,
     test: /not a github pr url/i,
     remediation: 'The request did not contain a valid GitHub PR URL.' }
@@ -39,6 +42,14 @@ function textOf(error) {
   return [error?.message, error?.stderr, error?.stdout].filter(Boolean).map(String).join('\n')
 }
 
+// execFile's .message is "Command failed: <cmd>" -- the real reason is in stderr. Prefer the
+// first non-empty stderr line; otherwise fall back to the message's first line.
+function firstMeaningfulLine(error) {
+  const fromStderr = String(error?.stderr ?? '').split('\n').map((l) => l.trim()).find(Boolean)
+  const line = fromStderr || String(error?.message ?? error).split('\n')[0]
+  return line.slice(0, 300)
+}
+
 export function classifyFailure({ stage, error }) {
   const text = textOf(error)
   const rule = RULES.find((r) => r.test.test(text))
@@ -48,7 +59,7 @@ export function classifyFailure({ stage, error }) {
     action: rule ? rule.action : 'escalate',
     retryable: rule ? rule.retryable : false,
     remediation: rule ? rule.remediation : 'Unclassified failure. See the evidence; this needs triage.',
-    message: String(error?.message ?? error).split('\n')[0].slice(0, 300),
+    message: firstMeaningfulLine(error),
     evidence: text.slice(0, EVIDENCE_MAX)
   }
 }
