@@ -22,18 +22,18 @@ def _strip_html(s: str) -> str:
     return s.strip()
 
 
-def _collect_html_strings(obj, out, min_len=200):
+def _collect_html_strings(node, out, min_len=200):
     """Recursively walk a JSON blob, collecting string values that look like
     rich-text job description HTML (contain tags and are reasonably long)."""
-    if isinstance(obj, dict):
-        for v in obj.values():
+    if isinstance(node, dict):
+        for v in node.values():
             _collect_html_strings(v, out, min_len)
-    elif isinstance(obj, list):
-        for v in obj:
+    elif isinstance(node, list):
+        for v in node:
             _collect_html_strings(v, out, min_len)
-    elif isinstance(obj, str):
-        if len(obj) >= min_len and ("<p" in obj or "<li" in obj or "<div" in obj):
-            out.append(obj)
+    elif isinstance(node, str):
+        if len(node) >= min_len and ("<p" in node or "<li" in node or "<div" in node):
+            out.append(node)
 
 
 def _try_next_data(html: str) -> str | None:

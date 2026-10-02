@@ -398,6 +398,6 @@ def test_main_graceful_degradation_when_one_source_fails(monkeypatch, capsys):
     assert "semantic_scholar" in output
     assert "arxiv" in output
     assert len(output["semantic_scholar"]) == 1
-    assert len(output["arxiv"]) == 0
+    assert not output["arxiv"]
     # Error should be on stderr
     assert "arXiv search failed" in captured.err
