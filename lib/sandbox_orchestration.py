@@ -28,6 +28,8 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -155,6 +157,34 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
     return plan
 
 
+def _preserve_prior_attempt(repo_path: Path, worktree_path: Path, branch: str) -> str | None:
+    """Before a re-dispatch discards a ticket's old worktree and branch, keep
+    anything unique they hold: commit uncommitted changes onto the branch, then,
+    if the branch has commits beyond origin/main, pin them under
+    refs/rescue/<branch>/<utc-timestamp> (local ref, best-effort push to origin
+    so it also survives the machine). Returns the rescue ref, or None when there
+    was nothing worth keeping -- an untouched worktree leaves no noise."""
+    def git(*args, cwd=repo_path):
+        return subprocess.run(
+            ["git", "-c", "user.name=marvin-pipeline", "-c", "user.email=pipeline@marvin.local", *args],
+            cwd=cwd, capture_output=True, text=True,
+        )
+
+    if worktree_path.exists() and git("status", "--porcelain", cwd=worktree_path).stdout.strip():
+        git("add", "-A", cwd=worktree_path)
+        git("commit", "-qm", "WIP preserved before redispatch", cwd=worktree_path)
+
+    ahead = git("rev-list", "--count", f"origin/main..{branch}")
+    if ahead.returncode != 0 or not ahead.stdout.strip().isdigit() or int(ahead.stdout.strip()) == 0:
+        return None  # no such branch, or nothing beyond origin/main
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    ref = f"refs/rescue/{branch}/{stamp}"
+    git("update-ref", ref, branch)
+    git("push", "origin", f"{ref}:{ref}")  # best-effort: the local ref is the guarantee
+    print(f"[sandbox] preserved prior attempt of {branch} as {ref}", file=sys.stderr)
+    return ref
+
+
 def _create_worktree(repo_path: Path, ticket_ref: str) -> Path:
     """Branches explicitly from `origin/main` (fetched fresh first), not
     repo_path's current HEAD -- repo_path is the same shared checkout an
@@ -175,15 +205,20 @@ def _create_worktree(repo_path: Path, ticket_ref: str) -> Path:
       branch -D` alone can't free it (git refuses to delete a branch
       checked out in an existing worktree), so `git worktree add -b`
       then fails on the still-existing branch too.
-    Safe to discard either way: this branch/worktree is reused only
-    across separate attempts at the exact same ticket, a re-dispatch only
-    happens once the ticket is unclaimed again (its previous PR
-    merged/closed, or it never got far enough to push anything), and
-    neither is ever referenced by anything outside this module."""
+    NOT safe to discard blindly, despite what this docstring used to claim
+    ("a re-dispatch only happens once it never got far enough to push
+    anything"): a failed attempt routinely leaves real work behind --
+    uncommitted files, committed-but-unpushed commits. Found 2026-10-01 with
+    five worktrees across both machines holding unmerged work (a whole new
+    skill directory, a partial Files tab, committed bench tests), and #41's own
+    first attempt was lost this way. So anything unique the prior attempt
+    produced is first preserved under refs/rescue/<branch>/<timestamp> (kept
+    locally and pushed to origin), and only then is the old state discarded."""
     WORKTREES_ROOT.mkdir(parents=True, exist_ok=True)
     branch = f"pipeline/{ticket_ref.lower().replace(' ', '-')}"
     worktree_path = WORKTREES_ROOT / branch.replace("/", "-")
     subprocess.run(["git", "fetch", "origin", "main"], cwd=repo_path, check=True, capture_output=True)
+    _preserve_prior_attempt(repo_path, worktree_path, branch)
     subprocess.run(["git", "worktree", "remove", "--force", str(worktree_path)], cwd=repo_path, capture_output=True)
     subprocess.run(["git", "branch", "-D", branch], cwd=repo_path, capture_output=True)
     subprocess.run(
