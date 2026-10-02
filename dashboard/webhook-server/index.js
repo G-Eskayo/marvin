@@ -2,6 +2,10 @@ import { createServer } from 'http'
 import { mergePr } from './merge.js'
 import { sendFeedback, dropEntirely } from './deny.js'
 import { forwardRefreshPing } from './refresh_relay.js'
+import { loadGhToken } from './gh_auth.js'
+
+// Authenticate gh/git children from the pipeline's shared credential file (see gh_auth.js).
+const ghTokenSource = loadGhToken()
 
 const PORT = process.env.PORT || 7878
 // The Electron app's own tiny local server (electron/main/index.js),
@@ -105,4 +109,5 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`MR-approval webhook listening on http://localhost:${PORT}/approve`)
+  console.log(`GitHub credential source: ${ghTokenSource}`)
 })

@@ -12,6 +12,11 @@ SRC="dist/mac-arm64/${APP_NAME}"
 DEST="/Applications/${APP_NAME}"
 LOG_PREFIX="[rebuild-and-install]"
 
+# Install first: a rebuild must not assume node_modules is current. The laptop's
+# build failed on a missing dependency (react-markdown) added on another machine.
+echo "${LOG_PREFIX} installing dependencies..."
+npm install --no-audit --no-fund
+
 echo "${LOG_PREFIX} building..."
 npm run build:mac
 
