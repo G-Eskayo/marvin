@@ -65,3 +65,78 @@
 ## 2026-10-01T20:02:54.157670+00:00 — health-monitor
 - **route:intent-routing-collection**: 92
 
+## 2026-10-01T20:17:55.790695+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+
+## 2026-10-01T20:32:57.439396+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **dispatch:lock-age**: 1.7229691833333334
+
+## 2026-10-01T20:47:59.226604+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **dispatch:lock-age**: 5.174425833333333
+
+## 2026-10-01T21:03:00.772197+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+
+## 2026-10-01T21:18:02.361871+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+
+## 2026-10-01T21:43:35.767768+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+
+## 2026-10-01T21:58:42.814887+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+
+## 2026-10-01T22:13:49.639114+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+
+## 2026-10-01T22:40:49.463792+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+
+## 2026-10-01T22:44:42.105690+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+
+## 2026-10-01T22:59:44.378172+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+
+## 2026-10-01T23:14:46.413908+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+
+## 2026-10-01T23:29:48.412633+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+
+## 2026-10-01T23:44:50.475312+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+
+## 2026-10-01T23:59:52.379851+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+
+## 2026-10-02T00:14:54.499506+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+
+## 2026-10-02T00:29:56.426136+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+
+## 2026-10-02T00:44:58.713545+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+
+## 2026-10-02T00:48:51.059530+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **repo:sync:~/.agents@mac-mini-1**: 0
+- **repo:sync:~/.agents@macbook-pro-1**: 7
+- **repo:sync:~/.claude@mac-mini-1**: 0
+
+## 2026-10-02T00:49:31.802971+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **repo:sync:~/.agents@mac-mini-1**: 0
+- **repo:sync:~/.agents@macbook-pro-1**: 7
+- **repo:sync:~/.claude@mac-mini-1**: 0
+
+## 2026-10-02T00:55:13.457727+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **dispatch:lock-age**: 0.08064668333333333
+- **repo:sync:~/.agents@mac-mini-1**: 0
+- **repo:sync:~/.agents@macbook-pro-1**: 7
+- **repo:sync:~/.claude@mac-mini-1**: 0
+
