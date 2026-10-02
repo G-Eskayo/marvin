@@ -80,7 +80,7 @@ def _park_stuck_ticket(issue_number: int, streak: int) -> None:
          "--remove-label", f"claimed:{label}"],
         capture_output=True, text=True, timeout=15, check=False,
     )
-    # The claim is dropped too, not just ready-for-agent: ticket_pipeline only
+    # The claim is dropped too, not only ready-for-agent: ticket_pipeline only
     # dispatches ready-for-agent tickets with no claimed:* label, so a parked
     # ticket that kept its claim could never be revived by re-adding the label.
     subprocess.run(
