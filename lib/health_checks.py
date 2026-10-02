@@ -25,6 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cron_health as ch  # noqa: E402
 import machine_profile  # noqa: E402
+from task_dispatch import TAILSCALE_BIN  # noqa: E402  (absolute path -- launchd's PATH omits the shell's additions)
 import metrics_registry as mr  # noqa: E402
 
 HOME = Path.home()
@@ -249,6 +250,67 @@ def check_repo_integrity(display_name: str, rel_path: str) -> dict:
 
 # ── machine reachability ─────────────────────────────────────────────────
 
+# How long a laptop may be offline on Tailscale and still read as "asleep"
+# (lid closed / carried away) rather than a problem worth looking at.
+ASLEEP_MAX_HOURS = 72
+
+
+def _tailscale_peer(host: str) -> dict | None:
+    """Tailscale's own view of one peer: {"online": bool, "last_seen": datetime|None},
+    or None if Tailscale can't be asked or doesn't know the host. An *online*
+    peer reports a zero LastSeen, which is treated as 'no timestamp'."""
+    try:
+        proc = subprocess.run([TAILSCALE_BIN, "status", "--json"],
+                              capture_output=True, text=True, timeout=10)
+        if proc.returncode != 0:
+            return None
+        peers = json.loads(proc.stdout).get("Peer") or {}
+    except Exception:
+        return None
+    want = host.lower()
+    for peer in peers.values():
+        names = {str(peer.get("HostName", "")).lower(),
+                 str(peer.get("DNSName", "")).lower().split(".")[0]}
+        if want in names:
+            raw = peer.get("LastSeen") or ""
+            last_seen = None
+            if raw and not raw.startswith("0001-"):
+                try:
+                    last_seen = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                except ValueError:
+                    last_seen = None
+            return {"online": bool(peer.get("Online")), "last_seen": last_seen}
+    return None
+
+
+def classify_unreachable(kind: str, peer: dict | None, now: datetime) -> tuple[str, str]:
+    """Severity for a device we could not reach over ssh. 'red' is reserved for
+    "needs your immediate attention", so a normal lid-close must not be red.
+    A laptop that Tailscale reports OFFLINE recently is `asleep` (neutral);
+    online-but-unreachable is a real fault; an always-on desktop being down is
+    red; and when Tailscale can't say, a laptop is `yellow` (unknown), never
+    silently asleep. Remotely, sleep and a crash look the same -- this is a
+    heuristic keyed on device kind + how long it has been gone."""
+    if kind != "laptop":
+        return "red", "unreachable (always-on device)"
+    if peer is None:
+        return "yellow", "unreachable and cannot tell if it is asleep (Tailscale state unavailable)"
+    if peer["online"]:
+        return "red", "on the network but not answering ssh"
+    last = peer["last_seen"]
+    if last is None:
+        return "asleep", "offline (lid closed or away); last-seen time unknown"
+    hours = (now - last).total_seconds() / 3600
+    if hours <= ASLEEP_MAX_HOURS:
+        return "asleep", f"offline (lid closed or away) for {hours:.0f}h"
+    return "yellow", f"offline for {hours / 24:.0f} days -- longer than a normal lid-close"
+
+
+def overall_severity(severities: list[str]) -> str:
+    """`asleep` is neutral: it never raises the overall status above green."""
+    return "red" if "red" in severities else "yellow" if "yellow" in severities else "green"
+
+
 def check_machine_reachability() -> list[dict]:
     results = []
     for device_id, info in machine_profile.remote_devices().items():
@@ -263,10 +325,12 @@ def check_machine_reachability() -> list[dict]:
                                   capture_output=True, text=True, timeout=8)
             if proc.returncode == 0:
                 results.append(_result(cid, label, "green", f"reachable ({host})"))
-            else:
-                results.append(_result(cid, label, "red", f"unreachable ({host}): {proc.stderr.strip()[:200]}"))
+                continue
+            why = proc.stderr.strip()[:200]
         except subprocess.TimeoutExpired:
-            results.append(_result(cid, label, "red", f"unreachable ({host}): timed out"))
+            why = "timed out"
+        severity, detail = classify_unreachable(info.get("kind", "desktop"), _tailscale_peer(host), _now())
+        results.append(_result(cid, label, severity, f"{detail} ({host}: {why})"))
     return results
 
 
@@ -340,7 +404,7 @@ def run_all() -> dict:
     anomaly = record_anomaly_metrics(results)
 
     severities = [r["severity"] for r in results]
-    overall = "red" if "red" in severities else "yellow" if "yellow" in severities else "green"
+    overall = overall_severity(severities)
 
     return {
         "generated_at": _now().isoformat(),

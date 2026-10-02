@@ -14,7 +14,23 @@ const SEVERITY_COLOR = {
   red: { bg: 'bg-red-950', border: 'border-red-900', dot: 'bg-red-500', text: 'text-red-300' },
   yellow: { bg: 'bg-amber-950', border: 'border-amber-900', dot: 'bg-amber-500', text: 'text-amber-300' },
   green: { bg: 'bg-emerald-950', border: 'border-emerald-900', dot: 'bg-emerald-500', text: 'text-emerald-300' },
+  // "asleep" = a laptop that is simply closed/away (Tailscale offline, recent) -- neutral,
+  // blue + moon, deliberately NOT red: red means "needs your immediate attention".
+  asleep: { bg: 'bg-sky-950', border: 'border-sky-900', dot: 'bg-sky-400', text: 'text-sky-300' },
   unmonitored: { bg: 'bg-neutral-900', border: 'border-neutral-700', dot: 'bg-neutral-600', text: 'text-neutral-400' }
+}
+
+function MoonIcon({ className = '' }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-label="asleep"
+      role="img"
+      className={`h-3.5 w-3.5 shrink-0 fill-sky-300 ${className}`}
+    >
+      <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
+    </svg>
+  )
 }
 
 function stalenessOpacity(checkedAt) {
@@ -37,7 +53,11 @@ function CheckCard({ check, onClick }) {
       className={`flex flex-col gap-2 rounded-lg border ${colors.border} ${colors.bg} p-4 text-left transition-opacity hover:opacity-100`}
     >
       <div className="flex items-center gap-2">
-        <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${colors.dot}`} />
+        {check.severity === 'asleep' ? (
+          <MoonIcon />
+        ) : (
+          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${colors.dot}`} />
+        )}
         <h3 className="truncate text-sm font-medium text-white">{check.label}</h3>
       </div>
       <p className={`line-clamp-2 text-xs ${colors.text}`}>{check.detail}</p>
