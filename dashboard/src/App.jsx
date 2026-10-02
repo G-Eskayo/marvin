@@ -95,7 +95,7 @@ export default function App() {
 
   return (
     <div className="flex h-screen flex-col">
-      <header className="flex shrink-0 items-center gap-1 border-b border-neutral-800 px-6 pb-3 pt-12">
+      <header className="titlebar flex shrink-0 items-center gap-1 border-b border-neutral-800 px-6 pb-3 pt-12">
         <h1 className="mr-6 text-sm font-semibold tracking-wide text-neutral-400">MARVIN METRICS</h1>
         <nav className="flex gap-1">
           {TABS.map((tab) => {

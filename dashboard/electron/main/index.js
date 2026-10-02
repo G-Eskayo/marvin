@@ -149,6 +149,7 @@ function registerDocsHandlers() {
   ipcMain.handle('portfolio:inventory', () => portfolio.inventory())
   ipcMain.handle('portfolio:inventory:image', (_e, rel) => portfolio.inventoryImage(rel))
   ipcMain.handle('portfolio:inventory:refresh', () => portfolio.refreshInventory())
+  ipcMain.handle('portfolio:chrome', () => portfolio.chrome())
   ipcMain.handle('portfolio:page-markup', (_e, slug) => portfolio.pageMarkup(slug))
   ipcMain.handle('portfolio:templates', () => portfolio.listTemplates())
   ipcMain.handle('portfolio:template:source', (_e, id) => portfolio.templateSource(id))

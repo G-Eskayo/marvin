@@ -47,3 +47,14 @@ describe('renderer Content Security Policy', () => {
     expect(directive('connect-src')).toBeNull()
   })
 })
+
+import { readFileSync as _read } from 'fs'
+describe('window can be moved', () => {
+  it('the header is a drag region and its controls opt out', () => {
+    const css = _read(new URL('../src/index.css', import.meta.url), 'utf8')
+    const app = _read(new URL('../src/App.jsx', import.meta.url), 'utf8')
+    expect(app).toMatch(/<header className="titlebar /)
+    expect(css).toMatch(/\.titlebar\s*\{\s*-webkit-app-region:\s*drag/)
+    expect(css).toMatch(/\.titlebar button[^}]*-webkit-app-region:\s*no-drag/)
+  })
+})

@@ -233,6 +233,15 @@ export function createPortfolio({
     }
   }
 
+  // The parts of the page that wrap every page (header, title bar, sidebar, footer cards, footer), captured by the crawler.
+  async function chrome() {
+    const items = await readJson(path.join(inventoryDir, 'chrome', 'index.json'), [])
+    return Promise.all((Array.isArray(items) ? items : []).map(async (c) => ({
+      id: c.id, name: c.name, source: c.source, screenshot: c.screenshot,
+      markup: await readText(path.join(inventoryDir, 'chrome', `${path.basename(String(c.id))}.html`))
+    })))
+  }
+
   async function pageMarkup(slug) {
     if (typeof slug !== 'string' || !/^[a-z0-9][a-z0-9-]*$/.test(slug)) throw new Error(`Invalid page: ${JSON.stringify(slug)}`)
     const text = await readText(path.join(inventoryDir, 'raw', `${slug}.html`), null)
@@ -291,5 +300,5 @@ export function createPortfolio({
     return readText(path.join(referenceDir, `${slug}.html`), null)
   }
 
-  return { inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, templateSource, specimen, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage }
+  return { chrome, inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, templateSource, specimen, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage }
 }
