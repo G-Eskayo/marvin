@@ -7,6 +7,7 @@ import { listSubsystems, readHistory, buildIndex } from './metrics.js'
 import { listPipelinePrs, approveMr, denyMr, fetchTicketContext } from './mr_review.js'
 import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
 import { readDispatchStatus } from './dispatch_status.js'
+import { listTree, readOutboxFile } from './outbox.js'
 import { createRefreshServer } from './refresh_server.js'
 import { adoptLoginShellPath } from './path.js'
 import { resolveServiceDefaults } from './device_identity.js'
@@ -107,6 +108,13 @@ function registerDispatchHandlers() {
   ipcMain.handle('dispatch:status', () => readDispatchStatus())
 }
 
+function registerOutboxHandlers() {
+  // Deliberately read-only: no write, delete, or rename handler exists.
+  // Outbox files are managed externally; this is a viewer only.
+  ipcMain.handle('outbox:tree', () => listTree())
+  ipcMain.handle('outbox:read', (_event, relPath) => readOutboxFile(relPath))
+}
+
 function postJson(webhookUrl, body) {
   return fetch(webhookUrl, {
     method: 'POST',
@@ -185,6 +193,7 @@ app.whenReady().then(() => {
   registerMetricsHandlers()
   registerMrReviewHandlers()
   registerDispatchHandlers()
+  registerOutboxHandlers()
   createWindow()
 
   createRefreshServer(() => {

@@ -2,10 +2,12 @@ import { useEffect, useState } from 'react'
 import MetricsScorecard from '@components/MetricsScorecard.jsx'
 import MrReview from '@components/MrReview.jsx'
 import DispatchStatusBadge from '@components/DispatchStatusBadge.jsx'
+import OutboxBrowser from '@components/OutboxBrowser.jsx'
 
 const TABS = [
   { id: 'metrics', label: 'Metrics' },
-  { id: 'mr-review', label: 'MR Review' }
+  { id: 'mr-review', label: 'MR Review' },
+  { id: 'files', label: 'Files' }
 ]
 
 const DOT_COLOR = {

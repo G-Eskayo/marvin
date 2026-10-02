@@ -28,5 +28,9 @@ contextBridge.exposeInMainWorld('api', {
   },
   dispatch: {
     status: () => ipcRenderer.invoke('dispatch:status')
+  },
+  outbox: {
+    tree: () => ipcRenderer.invoke('outbox:tree'),
+    read: (relPath) => ipcRenderer.invoke('outbox:read', relPath)
   }
 })
