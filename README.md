@@ -3,7 +3,7 @@
 > *"I could calculate your chances of survival, but you won't like it."*
 > — Marvin, The Hitchhiker's Guide to the Galaxy
 
-**MARVIN** is an open-source memory, routing, and skills layer for [Claude Code](https://claude.ai/code). Where Claude starts every session cold, MARVIN gives it persistent memory, 27 structured skills, autonomous background agents, a self-measuring bench, and automatic profile + model routing — so it finds the right knowledge, applies the right skill, runs on the cheapest viable model, and gets measurably better over time.
+**MARVIN** is an open-source memory, routing, and skills layer for [Claude Code](https://claude.ai/code). Where Claude starts every session cold, MARVIN gives it persistent memory, 28 structured skills, autonomous background agents, a self-measuring bench, and automatic profile + model routing — so it finds the right knowledge, applies the right skill, runs on the cheapest viable model, and gets measurably better over time.
 
 Named after the Hitchhiker's Guide's brilliant, underutilised android. This project is about making sure that brain gets used.
 
@@ -38,13 +38,14 @@ mindmap
         reference pointers
       Lexicon
       Handoff and resume
-    Skills 27 total
+    Skills 28 total
       Quality
         diagnose
         grill-with-docs preferred default
         grill-me fallback no project
         tdd
         qa-agent
+        variable-tracker dev tool
         improve-codebase-architecture
         audit intent vs reality
       Research
@@ -161,7 +162,7 @@ Compared Qwen2.5-3B vs Llama-3.2-3B on `leaderboard_mmlu_pro` (N=200) for MARVIN
 
 ## Skills — Complete List
 
-All 27 skills, their triggers, and what they do:
+All 28 skills, their triggers, and what they do:
 
 | Skill | Trigger | What it does |
 |-------|---------|-------------|
@@ -169,6 +170,7 @@ All 27 skills, their triggers, and what they do:
 | `audit` | A verification question can't be confidently answered, or docs/ADRs say one thing and the system does another | Compares documented intent against actual state to find gaps nobody's reported yet — distinct from `diagnose`, which needs a known symptom to start from |
 | `tdd` | "TDD", "red-green-refactor", test-first | Writes failing tests first, then drives implementation to pass |
 | `qa-agent` | "qa", "scan project", "best practices for X" | AST + text quality scan; appends lessons to ChromaDB `qa-knowledge` |
+| `variable-tracker` | "track variables", "what's X set to", "lost track of state" | Tracks variable declarations and uses within active files — precise AST for Python, approximate regex for text files. Inline output for mid-session state debugging. |
 | `grill-with-docs` | **Preferred default** for any grilling request when a project exists | Devil's advocate that also cross-references actual docs/ADRs and updates them live — a strict superset of grill-me |
 | `grill-me` | Fallback only — no project/repo to attach docs to | Devil's advocate — challenges assumptions and finds hidden failure modes |
 | `improve-codebase-architecture` | "Improve architecture", "reduce coupling" | Structural refactor with an eye on testability and cohesion |
@@ -374,7 +376,7 @@ New skill = a `SKILL.md` with frontmatter, dropped in `~/.agents/skills/`. New c
 
 ```
 ~/.agents/
-├── skills/                        ← 27 skill SKILL.md files + scripts
+├── skills/                        ← 28 skill SKILL.md files + scripts
 │   ├── self-improve/scripts/      ← manifest rebuild, embeddings, retrieval
 │   ├── improve/scripts/           ← improvement sweep, daily digest, cron
 │   ├── research-colony/scripts/   ← source monitor, correlate, digest, cron
