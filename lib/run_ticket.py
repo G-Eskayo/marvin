@@ -21,6 +21,7 @@ from evidence_capture import capture_dev_evidence, capture_test_results, ticket_
 from mr_raiser import raise_mr  # noqa: E402
 from sandbox_orchestration import execute_ticket  # noqa: E402
 from ticket_pipeline import _label_for_device, _release  # noqa: E402
+import failure_breaker  # noqa: E402
 import ticket_stages as ts  # noqa: E402
 
 REPO = "G-Eskayo/marvin"
@@ -152,6 +153,9 @@ def run(issue_number: int) -> dict:
     if not outcome["raised"]:
         prior_streak = _consecutive_failure_streak(issue_number)
         _comment_failure(issue_number, outcome["reason"])
+        # Feed the cross-ticket breaker (failure_breaker.py): the SAME failure across
+        # different tickets means the system is broken, not the tickets.
+        failure_breaker.record_failure(issue_number, outcome["reason"])
         if prior_streak + 1 >= MAX_CONSECUTIVE_FAILURES:
             _park_stuck_ticket(issue_number, prior_streak + 1)
             ts.record_stage(issue_number, "done", "failed", f"parked after {prior_streak + 1} consecutive failures")
@@ -160,6 +164,7 @@ def run(issue_number: int) -> dict:
             ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300])
     else:
         ts.record_stage(issue_number, "done", "passed", f"PR raised: {outcome['pr_url']}")
+        failure_breaker.record_success(issue_number)  # proves the environment works: clears the breaker
 
     _trigger_redispatch()
 

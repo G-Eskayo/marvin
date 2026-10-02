@@ -39,6 +39,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 from task_dispatch import select_machine, dispatch  # noqa: E402
+import failure_breaker  # noqa: E402
 import ticket_stages as ts  # noqa: E402
 
 VENV_PYTHON = str(Path.home() / ".agents" / "venv" / "bin" / "python")
@@ -105,6 +106,17 @@ def _build_wrapper_command(issue_number: int) -> str:
 
 def main() -> None:
     dry_run = "--dry-run" in sys.argv
+
+    # Cross-ticket circuit breaker: the same failure across different tickets means
+    # the environment is broken, not the tickets -- stop feeding it more tickets
+    # (each would just burn its own strikes) until a success or a manual clear.
+    trips = failure_breaker.tripped()
+    if trips:
+        for t in trips:
+            print(f"{LOG_PREFIX} dispatch PAUSED by circuit breaker: {t['signature']} failed across "
+                  f"tickets {t['tickets']} (since {t['first_seen']}); e.g. {t['example'][:140]}. "
+                  f"Fix the cause, then `failure_breaker.py clear`.", file=sys.stderr)
+        return
 
     tickets = _unclaimed_ready_tickets()
     if not tickets:
