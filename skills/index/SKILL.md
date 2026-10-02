@@ -16,10 +16,12 @@ Pull exactly the boxes the task needs. Nothing else.
 **MUST run via the venv interpreter** — bare `python3` lacks the deps and silently degrades to tag matching:
 
 ```bash
-~/.agents/venv/bin/python ~/.agents/skills/self-improve/scripts/retrieve.py "<task description>" --intent <intent>
+~/.agents/venv/bin/python ~/.agents/skills/self-improve/scripts/retrieve.py "<task description>" --intent <intent> --model <your-tier>
 ```
 
-`--intent` tunes precision/recall: `debug`/`fix`/`diagnose` (precise), `create`/`ideate`/`brainstorm` (recall), `plan`/`research`/`tdd` (mid). Omit if unsure. Add `--json` for structured output.
+`--intent` tunes precision/recall: `debug`/`fix`/`diagnose` (precise), `create`/`ideate`/`brainstorm` (recall), `plan`/`research`/`tdd` (mid). Omit if unsure.
+
+`--model` (optional) filters results by which Claude model can run them. Pass your current tier (`haiku`, `sonnet`, or `opus`) — you'll find it in your system context. Add `--json` for structured output.
 
 Then load the returned paths. Check each loaded skill's `calls:` and load those too if the task needs them.
 
@@ -30,19 +32,21 @@ If the engine prints `INFO: ... tag fallback` or returns nothing, match by hand:
 1. **Read the request** — extract 2–4 keywords describing the task
 2. **Read `~/.claude/manifest.json`** — scan the `index[]` array
 3. **Collect entries** whose `tags` intersect the task keywords
-4. **Load those files** — read each matched `path`
-5. **Check `calls`** — if a loaded skill declares `calls: [x, y]`, load those too if the task needs them
-6. **Proceed** with only what's relevant
+4. **Skip any entries** whose `model-scope` excludes your current tier (check your system context for which model you're running)
+5. **Load those files** — read each matched `path`
+6. **Check `calls`** — if a loaded skill declares `calls: [x, y]`, load those too if the task needs them
+7. **Proceed** with only what's relevant
 
-`~/.claude/manifest.json` is the unified index for all skills AND knowledge files. Each entry has `name`, `path`, `tags[]`, and optionally `calls[]`. Tags use `namespace:value` — `domain:`, `intent:`, `type:`.
+`~/.claude/manifest.json` is the unified index for all skills AND knowledge files. Each entry has `name`, `path`, `tags[]`, optionally `model-scope`, and optionally `calls[]`. Tags use `namespace:value` — `domain:`, `intent:`, `type:`.
 
-## Tag Namespaces
+## Tag Namespaces & Fields
 
-| Namespace | Meaning | Examples |
-|-----------|---------|---------|
-| `domain:` | Subject area | `domain:mcp`, `domain:debugging`, `domain:testing` |
-| `intent:` | What you're doing | `intent:build`, `intent:debug`, `intent:plan` |
-| `type:` | Kind of file | `type:skill`, `type:knowledge`, `type:memory-user` |
+| Field | Meaning | Examples |
+|-------|---------|----------|
+| `domain:` (tag) | Subject area | `domain:mcp`, `domain:debugging`, `domain:testing` |
+| `intent:` (tag) | What you're doing | `intent:build`, `intent:debug`, `intent:plan` |
+| `type:` (tag) | Kind of file | `type:skill`, `type:knowledge`, `type:memory-user` |
+| `model-scope` (field) | Model tier restrictions | `sonnet+` (sonnet or better), `haiku,sonnet` (comma list), omitted/`all` (unrestricted) |
 
 ## Examples
 

@@ -8,12 +8,16 @@ CLI usage:
   python3 retrieve.py "how do I build an MCP server"
   python3 retrieve.py "debug auth middleware" --intent debug
   python3 retrieve.py "brainstorm new features" --intent create --json
+  python3 retrieve.py "find skills" --model haiku
 """
 
 import argparse
 import json
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+import model_scope  # noqa: E402
 
 HOME = Path.home()
 MANIFEST_PATH = HOME / ".claude" / "manifest.json"
@@ -78,13 +82,14 @@ def _query_collection(client, cname, query_vector, threshold):
             "tags": meta.get("tags", "").split(),
             "score": round(1.0 - dist, 4),
             "source": "semantic",
+            "model_scope": meta.get("model-scope", ""),
         }
         for meta, dist in zip(res["metadatas"][0], res["distances"][0])
         if 1.0 - dist >= threshold
     ]
 
 
-def semantic_search(query_vector, threshold):
+def semantic_search(query_vector, threshold, model=None):
     try:
         import chromadb
         client = chromadb.PersistentClient(path=str(CHROMA_PATH))
@@ -94,7 +99,8 @@ def semantic_search(query_vector, threshold):
             for hit in _query_collection(client, cname, query_vector, threshold)
         ]
         results.sort(key=lambda x: x["score"], reverse=True)
-        return results[:TOP_K]
+        results = results[:TOP_K]
+        return _filter_by_model_scope(results, model)
     except Exception as e:
         print(f"  WARN: semantic search error: {e}", file=sys.stderr)
         return []
@@ -147,7 +153,20 @@ def _entry_tag_words(entry) -> set[str]:
     }
 
 
-def tag_fallback(query):
+def _filter_by_model_scope(results, model):
+    """Filter results by model-scope field. If model is None, no filtering."""
+    if not model:
+        return results
+
+    filtered = []
+    for r in results:
+        scope = r.get("model_scope", "")
+        if model_scope.is_allowed(scope, model):
+            filtered.append(r)
+    return filtered
+
+
+def tag_fallback(query, model=None):
     if not MANIFEST_PATH.exists():
         return []
     manifest = json.loads(MANIFEST_PATH.read_text())
@@ -157,34 +176,36 @@ def tag_fallback(query):
         (len(query_words & _entry_tag_words(e)), e)
         for e in manifest.get("index", [])
     ]
-    return [
+    results = [
         {
             "path": e["path"],
             "name": e.get("name", ""),
             "tags": e.get("tags", []),
             "score": round(overlap / n_query, 4),
             "source": "tags",
+            "model_scope": e.get("model-scope", ""),
         }
         for overlap, e in sorted(scored, key=lambda x: -x[0])[:TOP_K]
         if overlap > 0
     ]
+    return _filter_by_model_scope(results, model)
 
 
-def retrieve(query, intent=None):
+def retrieve(query, intent=None, model=None):
     threshold = get_threshold(intent)
 
     query_vector = embed_query(query)
     if query_vector is None:
         print("  INFO: Ollama unavailable — using tag fallback", file=sys.stderr)
-        return tag_fallback(query)
+        return tag_fallback(query, model)
 
-    semantic = semantic_search(query_vector, threshold)
+    semantic = semantic_search(query_vector, threshold, model)
 
     if not semantic:
-        return tag_fallback(query)
+        return tag_fallback(query, model)
 
     enhanced = bm25_rerank(query, semantic)
-    return rrf_merge(semantic, enhanced)
+    return _filter_by_model_scope(rrf_merge(semantic, enhanced), model)
 
 
 def main():
@@ -196,10 +217,15 @@ def main():
         "--intent",
         help="Intent hint: debug, fix, diagnose, create, ideate, brainstorm, plan, research, tdd",
     )
+    parser.add_argument(
+        "--model",
+        choices=["haiku", "sonnet", "opus"],
+        help="Filter results by model tier (haiku, sonnet, or opus)",
+    )
     parser.add_argument("--json", action="store_true", help="Output as JSON")
     args = parser.parse_args()
 
-    results = retrieve(args.query, args.intent)
+    results = retrieve(args.query, args.intent, args.model)
 
     if args.json:
         print(json.dumps(results, indent=2))

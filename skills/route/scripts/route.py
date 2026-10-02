@@ -7,6 +7,7 @@ Usage:
     route.py --recall --launch                     # explicit recall mode + launch
     route.py --table                               # show full routing table
     route.py --aliases                             # print shell alias definitions
+    route.py --check-skill grill-with-docs --model haiku  # check if skill is allowed
 
 Routing is keyword-scored. With ≥2 keyword hits the winning intent is used;
 ties or zero-hit tasks fall back to the 'architecture' default (full config,
@@ -15,12 +16,14 @@ default model — the conservative, never-wrong choice).
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 import intent_classify  # noqa: E402
+import model_scope  # noqa: E402
 
 # ── routing table ─────────────────────────────────────────────────────────────
 
@@ -94,6 +97,37 @@ INTENTS: dict[str, dict] = {
 
 DEFAULT_INTENT = "architecture"
 MIN_HITS = 2  # require at least 2 keyword matches to override the default
+
+
+# ── model-scope helpers ──────────────────────────────────────────────────────
+
+def skill_allowed(skill_name: str, model: str, manifest: dict | None = None) -> bool:
+    """Check if a skill is allowed to run on the given model tier.
+
+    Args:
+        skill_name: Name of the skill (e.g., 'grill-with-docs')
+        model: Model tier ('haiku', 'sonnet', 'opus')
+        manifest: Parsed manifest dict; if None, loads from ~/.claude/manifest.json
+
+    Returns:
+        True if the skill is allowed, False if explicitly restricted.
+        Unknown skills return True (fail open).
+    """
+    if manifest is None:
+        manifest_path = Path.home() / ".claude" / "manifest.json"
+        if not manifest_path.exists():
+            return True
+        try:
+            manifest = json.loads(manifest_path.read_text())
+        except Exception:
+            return True
+
+    for entry in manifest.get("index", []):
+        if entry.get("name") == skill_name:
+            scope = entry.get("model-scope", "")
+            return model_scope.is_allowed(scope, model)
+
+    return True
 
 
 # ── classifier ────────────────────────────────────────────────────────────────
@@ -255,6 +289,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
              "(ADR 0023 default since 2026-08-13, bench/RESULTS.md Run 21: 70% "
              "held-out accuracy vs. keyword's 25%)",
     )
+    ap.add_argument(
+        "--check-skill",
+        metavar="SKILL_NAME",
+        help="check if a skill is allowed on the given model tier (requires --model)",
+    )
+    ap.add_argument(
+        "--model",
+        choices=["haiku", "sonnet", "opus"],
+        help="model tier for skill checking (use with --check-skill)",
+    )
     # explicit intent overrides
     for intent in INTENTS:
         ap.add_argument(f"--{intent}", action="store_true", help=f"force {intent} routing")
@@ -276,6 +320,14 @@ def main() -> None:
     if args.aliases:
         print_aliases()
         return
+
+    if args.check_skill:
+        if not args.model:
+            print("error: --check-skill requires --model", file=sys.stderr)
+            sys.exit(1)
+        allowed = skill_allowed(args.check_skill, args.model)
+        print(f"{'allowed' if allowed else 'not allowed'}")
+        sys.exit(0 if allowed else 1)
 
     # explicit intent flag overrides classifier
     forced = next((i for i in INTENTS if getattr(args, i, False)), None)
