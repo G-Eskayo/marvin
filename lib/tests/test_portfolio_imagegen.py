@@ -111,7 +111,7 @@ def test_same_slug_and_same_inspiration_is_still_deterministic(tmp_path):
 def test_the_output_is_never_a_copy_of_the_source_photo(tmp_path):
     src = _photo(tmp_path, 120, "src.png", noise=60)
     out = ig.render("mancala", size=SMALL, inspiration=ig.inspiration_from([src]))
-    assert ig.hamming(ig.dhash(Image.open(src)), ig.dhash(out)) >= ig.MIN_DISTANCE
+    assert ig.hamming(ig.fingerprint(Image.open(src)), ig.fingerprint(out)) >= ig.MIN_DISTANCE
     assert not np.array_equal(arr(Image.open(src).resize(SMALL)), arr(out))
 
 
@@ -135,7 +135,7 @@ def test_adding_a_new_project_never_changes_an_existing_projects_image(tmp_path)
 
 def test_a_collision_with_an_already_assigned_image_is_resolved_with_a_salt(tmp_path, monkeypatch):
     reg = tmp_path / "registry.json"
-    monkeypatch.setattr(ig, "MIN_DISTANCE", 65)       # impossible distance: everything "collides"
+    monkeypatch.setattr(ig, "MIN_DISTANCE", 200)      # impossible distance: everything "collides"
     out = ig.assign(["mancala", "mitre"], registry_path=reg, size=SMALL, max_salt=3)
     assert out["mancala"]["salt"] == 0
     assert out["mitre"]["salt"] == 3 and out["mitre"].get("warning")   # gave up at the cap, but said so
@@ -144,3 +144,31 @@ def test_a_collision_with_an_already_assigned_image_is_resolved_with_a_salt(tmp_
 def test_a_corrupt_registry_is_treated_as_empty_not_a_crash(tmp_path):
     reg = tmp_path / "registry.json"; reg.write_text("{broken")
     assert "mancala" in ig.assign(["mancala"], registry_path=reg, size=SMALL)
+
+
+# ── the fingerprint must see fine textures ──────────────────────────────────
+# Found 2026-10-02 generating real images: killer-sudoku's very fine moire weave averaged to flat
+# grey at the 9x8 dHash resolution -> hash 0000000000000000, so the uniqueness check was BLIND to it
+# (and the closest same-style pair was only 5 bits apart). The fingerprint now adds a spectral
+# half (which frequencies/orientations the image contains), which is phase-independent.
+
+def test_a_fine_moire_weave_does_not_fingerprint_as_flat():
+    fp = ig.fingerprint(ig.render("killer-sudoku", size=(1100, 300)))
+    assert fp != 0 and (fp & ((1 << 64) - 1)) != 0          # the spectral half is populated
+
+
+def test_two_fine_weaves_with_different_parameters_are_told_apart():
+    a = ig.fingerprint(ig.render("killer-sudoku", size=(1100, 300)))
+    b = ig.fingerprint(ig.render("marvin", size=(1100, 300)))
+    assert ig.hamming(a, b) >= ig.MIN_DISTANCE
+
+
+def test_the_fingerprint_is_128_bits_and_deterministic():
+    img = ig.render("mancala", size=SMALL)
+    assert ig.fingerprint(img) == ig.fingerprint(ig.render("mancala", size=SMALL))
+    assert 0 <= ig.fingerprint(img) < (1 << 128)
+
+
+def test_registry_stores_the_128_bit_fingerprint_as_32_hex_chars(tmp_path):
+    out = ig.assign(["mancala"], registry_path=tmp_path / "r.json", size=SMALL)
+    assert len(out["mancala"]["hash"]) == 32

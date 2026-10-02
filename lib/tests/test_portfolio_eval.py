@@ -184,3 +184,16 @@ def test_the_same_button_pointing_at_the_owners_repo_is_clean():
 def test_a_plain_reference_link_to_another_account_is_still_just_a_reference():
     ref = {"text": "AIMA Python Reference", "cls": "", "href": "https://github.com/aimacode/aima-python"}
     assert pe.check_github_links([ref], RULES) == []
+
+
+def test_print_rules_emits_the_effective_rules_as_json_without_running_a_browser(monkeypatch, capsys, tmp_path):
+    # The dashboard's Portfolio tab shows the effective rules (defaults + saved overrides) by asking
+    # the evaluator itself, so the two can never disagree about what the defaults are.
+    f = tmp_path / "design-rules.json"; f.write_text('{"tolerance_px": 7}')
+    monkeypatch.setattr(pe, "RULES_PATH", f)
+    monkeypatch.setattr(sys, "argv", ["portfolio_eval.py", "--print-rules"])
+    monkeypatch.setattr(pe, "run", lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not launch a browser")))
+    pe.main()
+    import json
+    out = json.loads(capsys.readouterr().out)
+    assert out["tolerance_px"] == 7 and out["github_button"]["text"] == "View on GitHub"

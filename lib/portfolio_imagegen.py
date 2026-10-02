@@ -7,7 +7,7 @@ NEVER the key photo; they only INSPIRE the generator: their measured brightness,
 tint steer its parameters (`inspiration_from`). No pixels are ever composited. Motivation:
 6 of 17 projects shared one stock thumbnail (work001-01.jpg).
 
-Uniqueness is enforced, not assumed: every image gets a 64-bit perceptual hash (dHash) and a
+Uniqueness is enforced, not assumed: every image gets a 128-bit fingerprint (layout dHash + spectral texture hash) and a
 new image that lands too close to an already-assigned one is re-rolled with a deterministic salt.
 The registry (slug -> salt/hash) keeps assignments stable, so adding a project can never change
 an existing project's image.
@@ -25,7 +25,7 @@ import numpy as np
 from PIL import Image
 
 HERO_SIZE = (2200, 600)       # the site's wide panorama hero (existing hero photos are ~3.66:1)
-MIN_DISTANCE = 12             # minimum dHash Hamming distance (of 64 bits) between any two projects
+MIN_DISTANCE = 24             # minimum Hamming distance (of 128 bits: layout + spectrum) between any two projects
 STYLES = ("contours", "moire", "cubes", "halftone", "lines")
 NEUTRAL_INSPIRATION = {"luminance": 0.45, "contrast": 0.5, "hue": None, "saturation": 0.0}
 REGISTRY_PATH = Path(__file__).resolve().parents[1] / "portfolio" / "image-registry.json"
@@ -37,6 +37,29 @@ def dhash(img: Image.Image) -> int:
     g = np.asarray(img.convert("L").resize((9, 8), Image.LANCZOS), dtype=np.int16)
     bits = (g[:, 1:] > g[:, :-1]).flatten()
     return int("".join("1" if b else "0" for b in bits), 2)
+
+
+def spectral_hash(img: Image.Image, rad: int = 8, ang: int = 8) -> int:
+    """64 bits describing which spatial frequencies and orientations the image contains
+    (radial x angular bands of the 2-D power spectrum, thresholded at their median). Unlike dHash it
+    sees fine textures (a very fine weave averages to flat grey at dHash's 9x8 resolution) and it is
+    phase-independent, which is what "looks alike" means for a texture."""
+    g = np.asarray(img.convert("L").resize((512, 144), Image.LANCZOS), dtype=np.float32)
+    g = (g - g.mean()) * np.outer(np.hanning(g.shape[0]), np.hanning(g.shape[1]))
+    spectrum = np.abs(np.fft.fftshift(np.fft.fft2(g)))
+    h, w = spectrum.shape
+    yy, xx = np.mgrid[-h // 2:h // 2, -w // 2:w // 2]
+    r = np.clip(np.sqrt((xx / (w / 2)) ** 2 + (yy / (h / 2)) ** 2), 0, 0.999)
+    a = (np.arctan2(yy, xx) % np.pi) / np.pi                              # orientation modulo 180 degrees
+    band = (np.minimum((np.log1p(r * 40) / np.log1p(40) * rad).astype(int), rad - 1) * ang
+            + np.minimum((a * ang).astype(int), ang - 1))
+    vec = np.array([np.log1p(spectrum[band == k].mean()) if (band == k).any() else 0.0 for k in range(rad * ang)])
+    return int("".join("1" if b else "0" for b in vec > np.median(vec)), 2)
+
+
+def fingerprint(img: Image.Image) -> int:
+    """128 bits: layout (dHash) in the high half, texture/frequency (spectral) in the low half."""
+    return (dhash(img) << 64) | spectral_hash(img)
 
 
 def hamming(a: int, b: int) -> int:
@@ -161,12 +184,12 @@ def assign(slugs, registry_path: Path = REGISTRY_PATH, size=HERO_SIZE, max_salt:
         taken = [int(v["hash"], 16) for v in registry.values()]
         insp = (inspirations or {}).get(slug)
         for salt in range(max_salt + 1):
-            h = dhash(render(slug, size, insp, salt))
+            h = fingerprint(render(slug, size, insp, salt))
             if all(hamming(h, t) >= MIN_DISTANCE for t in taken):
-                registry[slug] = {"salt": salt, "hash": f"{h:016x}", "style": style_for(slug)}
+                registry[slug] = {"salt": salt, "hash": f"{h:032x}", "style": style_for(slug)}
                 break
         else:
-            registry[slug] = {"salt": max_salt, "hash": f"{h:016x}", "style": style_for(slug),
+            registry[slug] = {"salt": max_salt, "hash": f"{h:032x}", "style": style_for(slug),
                               "warning": f"could not reach distance {MIN_DISTANCE} within {max_salt} re-rolls"}
     Path(registry_path).parent.mkdir(parents=True, exist_ok=True)
     Path(registry_path).write_text(json.dumps(registry, indent=2, sort_keys=True))
