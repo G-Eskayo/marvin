@@ -327,3 +327,131 @@ def test_tailscale_peer_parses_online_state_and_last_seen(monkeypatch):
     assert peer["online"] is False
     assert peer["last_seen"] == datetime(2026, 10, 2, 9, 0, tzinfo=timezone.utc)
     assert hc._tailscale_peer("nope") is None
+
+
+# ── sync / parity health: measured on BOTH machines, in time not commits ────
+# repo integrity only inspected the local machine, so the laptop's 7 leftover
+# stashes (which make code_sync REFUSE to run) never showed on the dashboard
+# while ~/.agents quietly drifted. One state reader runs locally or over ssh and
+# one pure evaluator judges it.
+
+def _state(**kw):
+    base = {"head": "abc1234", "stashes": 0, "conflicts": 0, "fetch_ok": True,
+            "behind": 0, "behind_oldest_ts": None, "ahead": 0, "ahead_oldest_ts": None}
+    base.update(kw)
+    return base
+
+
+def _ago(hours):
+    return int((NOW - timedelta(hours=hours)).timestamp())
+
+
+def test_parse_repo_state_reads_key_value_output():
+    text = "head=abc1234\nstashes=7\nconflicts=0\nfetch_ok=1\nbehind=2\nbehind_oldest_ts=1759000000\nahead=0\nahead_oldest_ts=\n"
+    st = hc.parse_repo_state(text)
+    assert st["head"] == "abc1234" and st["stashes"] == 7 and st["fetch_ok"] is True
+    assert st["behind"] == 2 and st["behind_oldest_ts"] == 1759000000
+    assert st["ahead_oldest_ts"] is None
+
+
+def test_evaluate_repo_sync_green_when_converged_and_clean():
+    sev, detail, _ = hc.evaluate_repo_sync(_state(), NOW)
+    assert sev == "green"
+
+
+def test_evaluate_repo_sync_stashes_block_sync_and_are_flagged():
+    sev, detail, value = hc.evaluate_repo_sync(_state(stashes=7), NOW)
+    assert sev == "yellow"
+    assert "7" in detail and "block" in detail.lower()
+    assert value == 7
+
+
+def test_evaluate_repo_sync_conflict_is_red():
+    sev, _, _ = hc.evaluate_repo_sync(_state(conflicts=1), NOW)
+    assert sev == "red"
+
+
+def test_evaluate_repo_sync_behind_is_judged_by_age_of_oldest_missing_commit():
+    assert hc.evaluate_repo_sync(_state(behind=1, behind_oldest_ts=_ago(0.5)), NOW)[0] == "green"
+    assert hc.evaluate_repo_sync(_state(behind=3, behind_oldest_ts=_ago(5)), NOW)[0] == "yellow"
+    sev, detail, _ = hc.evaluate_repo_sync(_state(behind=9, behind_oldest_ts=_ago(30)), NOW)
+    assert sev == "red" and "30" in detail
+
+
+def test_evaluate_repo_sync_unpushed_commits_age_the_same_way():
+    assert hc.evaluate_repo_sync(_state(ahead=2, ahead_oldest_ts=_ago(5)), NOW)[0] == "yellow"
+    assert hc.evaluate_repo_sync(_state(ahead=2, ahead_oldest_ts=_ago(30)), NOW)[0] == "red"
+
+
+def test_evaluate_repo_sync_fetch_failure_is_yellow_not_silently_green():
+    sev, detail, _ = hc.evaluate_repo_sync(_state(fetch_ok=False), NOW)
+    assert sev == "yellow" and "fetch" in detail.lower()
+
+
+def test_evaluate_repo_sync_reports_the_worst_condition():
+    sev, _, _ = hc.evaluate_repo_sync(_state(stashes=2, behind=9, behind_oldest_ts=_ago(40)), NOW)
+    assert sev == "red"
+
+
+def test_repo_state_script_against_real_git_repos(tmp_path):
+    import subprocess as sp, shlex
+
+    def g(cwd, *a):
+        sp.run(["git", "-C", str(cwd), "-c", "user.name=t", "-c", "user.email=t@t", *a],
+               check=True, capture_output=True)
+
+    bare = tmp_path / "origin.git"
+    sp.run(["git", "init", "-q", "--bare", "-b", "main", str(bare)], check=True)
+    a, b = tmp_path / "a", tmp_path / "home" / "repo"
+    sp.run(["git", "clone", "-q", str(bare), str(a)], check=True, capture_output=True)
+    (a / "f").write_text("1"); g(a, "add", "."); g(a, "commit", "-qm", "one"); g(a, "push", "-q", "origin", "HEAD:main")
+    (tmp_path / "home").mkdir()
+    sp.run(["git", "clone", "-q", str(bare), str(b)], check=True, capture_output=True)
+    (a / "f").write_text("2"); g(a, "add", "."); g(a, "commit", "-qm", "two"); g(a, "push", "-q", "origin", "HEAD:main")
+    (b / "g").write_text("x"); g(b, "add", "."); g(b, "commit", "-qm", "local-only")
+    (b / "h").write_text("y"); g(b, "stash", "push", "-u", "-q", "-m", "left over")
+
+    out = sp.run(["bash", "-s"], input=hc.repo_state_script("repo"), capture_output=True, text=True,
+                 env={"HOME": str(tmp_path / "home"), "PATH": "/usr/bin:/bin:/opt/homebrew/bin"})
+    st = hc.parse_repo_state(out.stdout)
+    assert st["fetch_ok"] is True
+    assert st["behind"] == 1 and st["behind_oldest_ts"] is not None
+    assert st["ahead"] == 1 and st["ahead_oldest_ts"] is not None
+    assert st["stashes"] == 1
+
+
+def test_check_repo_sync_everywhere_covers_local_and_reachable_remote(monkeypatch):
+    monkeypatch.setattr(hc, "SYNCED_REPOS", {"~/.agents": ".agents"})
+    monkeypatch.setattr(hc.machine_profile, "registry_id", lambda: "mac-mini-1")
+    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {
+        "macbook-pro-1": {"kind": "laptop", "tailscale_hostname": "lap"}})
+    monkeypatch.setattr(hc, "_now", lambda: NOW)
+    calls = []
+
+    def runner(target, rel):
+        calls.append((target, rel))
+        return "head=abc\nstashes=7\nconflicts=0\nfetch_ok=1\nbehind=0\nbehind_oldest_ts=\nahead=0\nahead_oldest_ts=\n" \
+            if target == "lap" else "head=abc\nstashes=0\nconflicts=0\nfetch_ok=1\nbehind=0\nbehind_oldest_ts=\nahead=0\nahead_oldest_ts=\n"
+
+    reach = {"machine:macbook-pro-1": "green"}
+    results = hc.check_repo_sync_everywhere(reach, runner=runner)
+
+    by_id = {r["id"]: r for r in results}
+    assert by_id["repo:sync:~/.agents@mac-mini-1"]["severity"] == "green"
+    assert by_id["repo:sync:~/.agents@macbook-pro-1"]["severity"] == "yellow"
+    assert ("lap", ".agents") in calls
+
+
+def test_check_repo_sync_everywhere_marks_an_asleep_laptop_asleep_not_failed(monkeypatch):
+    monkeypatch.setattr(hc, "SYNCED_REPOS", {"~/.agents": ".agents"})
+    monkeypatch.setattr(hc.machine_profile, "registry_id", lambda: "mac-mini-1")
+    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {
+        "macbook-pro-1": {"kind": "laptop", "tailscale_hostname": "lap"}})
+    monkeypatch.setattr(hc, "_now", lambda: NOW)
+    local = "head=abc\nstashes=0\nconflicts=0\nfetch_ok=1\nbehind=0\nbehind_oldest_ts=\nahead=0\nahead_oldest_ts=\n"
+    runner = lambda target, rel: local
+
+    results = hc.check_repo_sync_everywhere({"machine:macbook-pro-1": "asleep"}, runner=runner)
+
+    remote = [r for r in results if r["id"].endswith("@macbook-pro-1")][0]
+    assert remote["severity"] == "asleep"
