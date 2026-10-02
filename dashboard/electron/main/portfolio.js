@@ -271,31 +271,33 @@ export function createPortfolio({
   // stylesheet links (and nothing else) behind a <base>. Fetched in the main process because the
   // renderer cannot read the dev site cross-origin.
   async function previewHead(base = 'http://localhost:8080') {
-    try {
-      const res = await fetchFn(base, { signal: AbortSignal.timeout(5000) })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const html = await res.text()
-      const links = [...html.matchAll(/<link\b[^>]*>/gi)]
-        .map((m) => m[0])
-        .filter((tag) => /rel=['"]stylesheet['"]/i.test(tag))
-      // Some of the site's styling is inline <style> on the page itself (the category sidebar's pink active item, for
-      // one), so previews also take the inline styles of a real project page: elements look as they do on the site.
-      // The <body> class matters too: Avada scopes much of its layout (header, title bar...) to it.
-      let inline = []
-      let bodyClass = ''
+    const root = base.replace(/\/?$/, '')
+    const get = async (url) => {
       try {
-        const page = await fetchFn(base.replace(/\/?$/, '') + '/ai-projects/mancala/', { signal: AbortSignal.timeout(5000) })
-        if (page.ok) {
-          const text = await page.text()
-          inline = [...text.matchAll(/<style\b[^>]*>[\s\S]*?<\/style>/gi)].map((m) => m[0])
-          bodyClass = (text.match(/<body\b[^>]*\bclass=["']([^"']*)["']/i) || [])[1] || ''
-        }
-      } catch { /* stylesheets alone are still a good preview */ }
-      const meta = bodyClass ? `\n<meta name="preview-body-class" content="${bodyClass.replace(/"/g, '&quot;')}">` : ''
-      return `<base href="${base.replace(/\/?$/, '/')}">\n${links.join('\n')}\n${inline.join('\n')}${meta}`
-    } catch (err) {
-      return `<!-- dev site not reachable (${String(err.message || err)}): previewing without the site's stylesheets -->`
+        const res = await fetchFn(url, { signal: AbortSignal.timeout(5000) })
+        return res.ok ? await res.text() : null
+      } catch {
+        return null
+      }
     }
+    // Avada writes a different generated stylesheet per page (the one with the card titles and photo treatment is only
+    // linked from pages that use cards), so a preview takes the UNION of the stylesheets of a few representative pages.
+    const [home, cards, project] = await Promise.all([get(root), get(`${root}/all-projects/`), get(`${root}/ai-projects/mancala/`)])
+    if (home === null && cards === null && project === null) {
+      return "<!-- dev site not reachable: previewing without the site's stylesheets -->"
+    }
+    const links = []
+    for (const html of [cards, project, home]) {
+      for (const m of (html || '').matchAll(/<link\b[^>]*>/gi)) {
+        if (/rel=['"]stylesheet['"]/i.test(m[0]) && !links.includes(m[0])) links.push(m[0])
+      }
+    }
+    // Some styling is inline <style> on the page itself (the category sidebar's pink active item, for one), and the <body>
+    // class scopes much of Avada's layout, so both come from a real project page.
+    const inline = [...(project || '').matchAll(/<style\b[^>]*>[\s\S]*?<\/style>/gi)].map((m) => m[0])
+    const bodyClass = ((project || '').match(/<body\b[^>]*\bclass=["']([^"']*)["']/i) || [])[1] || ''
+    const meta = bodyClass ? `\n<meta name="preview-body-class" content="${bodyClass.replace(/"/g, '&quot;')}">` : ''
+    return `<base href="${root}/">\n${links.join('\n')}\n${inline.join('\n')}${meta}`
   }
 
   // ── site inventory: what is ACTUALLY on the website (crawled by lib/portfolio_inventory.py) ──

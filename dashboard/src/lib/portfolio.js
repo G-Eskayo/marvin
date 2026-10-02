@@ -28,13 +28,25 @@ export function parseRulesText(text) {
 
 // A component previews inside a sandboxed iframe using the REAL dev site's stylesheets (the
 // head comes from the main process), so a button looks exactly as it will on a page.
-export function previewDocument(html, head, { wide = false, width = null } = {}) {
+// The theme scopes much of its typography and image treatment (the Roboto Slab titles, the grayscale photos) to where an
+// element sits on a real page, so a preview wraps the element in the same ancestors the live site has:
+//   'chrome' -- header / title bar / footer: they sit OUTSIDE <main>, so only the page wrapper
+//   'page'   -- anything authored inside a page: the wrapper, <main>, the content column
+//   'grid'   -- a project card: the page context plus the card grid (.other > .container > .row > .col-md-12.sm-2-items > .row)
+export function previewDocument(html, head, { wide = false, width = null, context = 'page' } = {}) {
   // Page templates are WordPress/Avada shortcodes that the server expands; in a preview only the real markup
   // inside them should show, not the tokens.
   html = String(html || '').replace(/\[\/?fusion_[a-z_]+[^\]]*\]/g, '')
+  if (context === 'grid') {
+    html = `<div class="other"><div class="container"><div class="row"><div class="col-md-12 sm-2-items"><div class="row">${html}</div></div></div></div></div>`
+  }
+  if (context !== 'chrome') {
+    html = `<main id="main" class="clearfix"><div class="fusion-row"><section id="content"><div class="post-content">${html}</div></section></div></main>`
+  }
   // The site's own <body> class (carried in the head by the main process) so theme rules scoped to it apply.
   const bodyClass = ((head || '').match(/<meta name="preview-body-class" content="([^"]*)">/) || [])[1] || ''
-  return `<!doctype html><html><head><meta charset="utf-8">${head || ''}<style>html,body,#wrapper{height:auto!important;min-height:0!important}</style></head><body class="${bodyClass}" style="margin:0;padding:16px;background:#fff"><div id="wrapper" class="fusion-wrapper" style="max-width:${width ? `${Number(width)}px` : wide ? 'none' : '340px'}">${html}</div></body></html>`
+  const max = width ? `${Number(width)}px` : wide ? 'none' : '340px'
+  return `<!doctype html><html><head><meta charset="utf-8">${head || ''}<style>html,body,#wrapper,#boxed-wrapper,#main{height:auto!important;min-height:0!important}</style></head><body class="${bodyClass}" style="margin:0;padding:16px;background:#fff"><div id="boxed-wrapper"><div id="wrapper" class="fusion-wrapper" style="max-width:${max}">${html}</div></div></body></html>`
 }
 
 export function nextComponentName(typed) {

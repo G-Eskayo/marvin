@@ -1,4 +1,5 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, session } from 'electron'
+import { installDevSiteCors } from './dev_site_cors.js'
 import { join } from 'path'
 import { existsSync } from 'fs'
 import { execFile } from 'child_process'
@@ -242,6 +243,7 @@ function registerMrReviewHandlers() {
 }
 
 app.whenReady().then(() => {
+  installDevSiteCors(session.defaultSession)   // previews need the dev site's web fonts (see dev_site_cors.js)
   registerMetricsHandlers()
   registerMrReviewHandlers()
   registerDispatchHandlers()
