@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Label kept as ...-push (it now also pulls) so Health-tab coverage and the
+         log paths below keep working. Installed from this template on BOTH machines
+         via lib/launchd/install_code_sync.sh, never hand-edited per machine.
+
+         Every 30 minutes and at load: pull then push each synced repo, ~/.agents
+         (skill code) then ~/.claude (curated config/memory, self-hosted remote).
+         ADR 0021 had pushes once a day and pulls only at Claude session start, so a
+         machine without a session never pulled and drift ran up to a day.
+         Steps are separated by a semicolon, not a double ampersand, so one repo's failure cannot skip the
+         rest. A sleeping laptop's timer pauses, so after wake the next run lands
+         within 30 minutes. -->
+    <key>Label</key>
+    <string>com.marvin.code-sync-push</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>__HOME__/.agents/venv/bin/python __HOME__/.agents/lib/code_sync.py pull __HOME__/.agents; __HOME__/.agents/venv/bin/python __HOME__/.agents/lib/code_sync.py push __HOME__/.agents; __HOME__/.agents/venv/bin/python __HOME__/.agents/lib/code_sync.py pull __HOME__/.claude; __HOME__/.agents/venv/bin/python __HOME__/.agents/lib/code_sync.py push __HOME__/.claude</string>
+    </array>
+
+    <key>StartInterval</key>
+    <integer>1800</integer>
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/.claude/logs/code-sync-push.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/.claude/logs/code-sync-push-error.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>__HOME__</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:__HOME__/.agents/venv/bin</string>
+    </dict>
+
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>
