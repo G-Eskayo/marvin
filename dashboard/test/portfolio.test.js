@@ -194,7 +194,7 @@ describe('previews', () => {
     expect(head).toContain("href='http://localhost:8080/wp-content/a.css?ver=1'")   // WordPress emits single quotes; tags are kept verbatim
     expect(head).toContain('href="/wp-content/b.css"')
     expect(head).not.toContain('x.ico')           // only stylesheets
-    expect(head).not.toContain('<style>')         // no inline script/style carried over
+    expect(head).not.toContain('<script')         // styles only -- never page scripts (inline <style> from a project page is covered separately)
   })
 
   it('previewHead degrades to an empty head with a reason when the dev site is down', async () => {
@@ -344,5 +344,26 @@ describe('site chrome (header, title bar, sidebar, footers captured by the crawl
     writeFileSync(path.join(d, 'site-header.html'), '<header/>')
     const [c] = await p.chrome()
     expect(c).toMatchObject({ id: 'site-header', name: 'Site header', markup: '<header/>', screenshot: 'chrome/site-header.png' })
+  })
+})
+
+describe('previewHead inline styles', () => {
+  it('includes the inline <style> blocks of a real project page, not just linked stylesheets', async () => {
+    const fetchFn = vi.fn(async (url) => ({
+      ok: true,
+      text: async () => (String(url).includes('/ai-projects/') ? '<style>.hub-sidebar .active{background:#ec4899}</style>' : "<link rel='stylesheet' href='a.css'>")
+    }))
+    const q = createPortfolio({ projectDir: project, homeDir: home, agentsDir: path.join(dir, 'agents'), exec, fetchFn })
+    const head = await q.previewHead('http://localhost:8080')
+    expect(head).toContain("href='a.css'")
+    expect(head).toContain('.hub-sidebar .active{background:#ec4899}')
+  })
+  it('still previews with stylesheets alone when the project page cannot be fetched', async () => {
+    const fetchFn = vi.fn(async (url) => {
+      if (String(url).includes('/ai-projects/')) throw new Error('boom')
+      return { ok: true, text: async () => "<link rel='stylesheet' href='a.css'>" }
+    })
+    const q = createPortfolio({ projectDir: project, homeDir: home, agentsDir: path.join(dir, 'agents'), exec, fetchFn })
+    expect(await q.previewHead()).toContain("href='a.css'")
   })
 })

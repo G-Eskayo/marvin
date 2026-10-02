@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
   groupFindingsByRule, parseRulesText, previewDocument, formatRunTime,
-  buttonVerdict, groupTemplates, countByType
+  buttonVerdict, groupTemplates, countByType, inventoryIsStale
 } from '../lib/portfolio.js'
 
 // The Portfolio hub (CONTEXT.md "Dashboard app -- Portfolio tab"): the single place that defines how
@@ -134,6 +134,25 @@ function Problems({ result }) {
   )
 }
 
+// A live element in an iframe that grows to fit it: real markup, real site CSS, real hover states -- not a picture.
+// allow-same-origin WITHOUT allow-scripts: the parent may measure the content, but nothing in it can run.
+function AutoFrame({ html, head, title, wide = false, width = null, maxHeight = 640 }) {
+  const [height, setHeight] = useState(120)
+  const measure = (e) => {
+    try {
+      // Measure the content wrapper, not the document: the theme gives html/body a viewport-based height, which
+      // would only ever grow the frame.
+      const d = e.target.contentDocument
+      const wrap = d.getElementById('wrapper')
+      const h = wrap ? wrap.getBoundingClientRect().height + 32 : d.body.scrollHeight
+      setHeight(Math.min(maxHeight, Math.max(40, Math.ceil(h))))
+    } catch { /* keep the default height */ }
+  }
+  return (
+    <iframe title={title} sandbox="allow-same-origin" srcDoc={previewDocument(html, head, { wide, width })} onLoad={measure} style={{ height }} className="w-full rounded-md border border-neutral-800 bg-white" />
+  )
+}
+
 // ── Templates: the prescriptive reference, shown as what each one IS ───────
 
 function Rule({ label, children }) {
@@ -156,7 +175,6 @@ function Specimen({ template, head }) {
     setShowMarkup((v) => !v)
   }
   const isPage = template.kind === 'page'
-  const height = isPage ? 'h-[28rem]' : template.kind === 'button' ? 'h-20' : 'h-64'
   return (
     <article className="rounded-lg border border-neutral-800 p-4">
       <div className="mb-3 flex flex-wrap items-baseline gap-3">
@@ -181,7 +199,7 @@ function Specimen({ template, head }) {
         </div>
         <div className="min-w-0">
           {res && !res.ok && <p className="text-xs text-red-400">Specimen did not render: {[...(res.errors || []), ...(res.missing || [])].join('; ')}</p>}
-          {res?.html && <iframe title={`${template.name} specimen`} sandbox="" srcDoc={previewDocument(res.html, head, { wide: isPage })} className={`${height} w-full rounded-md border border-neutral-800 bg-white`} />}
+          {res?.html && <AutoFrame title={`${template.name} specimen`} html={res.html} head={head} wide={isPage} width={isPage ? null : template.kind === 'button' ? 340 : 400} maxHeight={isPage ? 700 : 520} />}
           {!res && <p className="text-xs text-neutral-600">Rendering…</p>}
         </div>
       </div>
@@ -195,7 +213,7 @@ function Specimen({ template, head }) {
 }
 
 // A part of the page that wraps every page (not authored per page): shown as it is on the site, with where it comes from.
-function ChromePart({ part }) {
+function ChromePart({ part, head }) {
   const [open, setOpen] = useState(false)
   return (
     <article className="rounded-lg border border-neutral-800 p-4">
@@ -204,7 +222,9 @@ function ChromePart({ part }) {
         <span className="font-mono text-[11px] text-neutral-600">{part.id}</span>
       </div>
       <p className="mb-3 text-xs text-neutral-400">{part.source}</p>
-      <div className="overflow-hidden rounded-md border border-neutral-800 bg-white"><Shot rel={part.screenshot} className="w-full" /></div>
+      <div style={part.width ? { maxWidth: part.width + 24 } : undefined}>
+        <AutoFrame title={part.name} html={part.markup} head={head} wide width={part.width} maxHeight={['hub-sidebar', 'other-projects'].includes(part.id) ? 900 : 520} />
+      </div>
       <div className="mt-3 flex items-center gap-3">
         <button onClick={() => setOpen((v) => !v)} className="text-xs text-blue-400 hover:text-blue-300">{open ? 'hide markup' : 'show markup'}</button>
         {open && <CopyButton text={part.markup} label="Copy markup" />}
@@ -256,7 +276,7 @@ function Templates() {
         <h2 className="text-sm font-medium uppercase tracking-wide text-neutral-400">Around every page — generated, not authored per page</h2>
         {chrome.length === 0 ? (
           <p className="text-xs text-neutral-500">Not captured yet: start the dev site and use Refresh in Site inventory.</p>
-        ) : chrome.map((c) => <ChromePart key={c.id} part={c} />)}
+        ) : chrome.map((c) => <ChromePart key={c.id} part={c} head={head} />)}
       </section>
       {groupTemplates(templates).map((g) => (
         <section key={g.kind} className="flex flex-col gap-4">
@@ -363,7 +383,16 @@ function Inventory() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
-  useEffect(() => { window.api.portfolio.inventory().then(setInv).catch((e) => setError(errText(e))) }, [])
+  // Always live: show what was last crawled at once, and re-crawl in the background when it is stale.
+  useEffect(() => {
+    let live = true
+    window.api.portfolio.inventory().then((i) => {
+      if (!live) return
+      setInv(i)
+      if (inventoryIsStale(i?.generated_at)) refresh()
+    }).catch((e) => live && setError(errText(e)))
+    return () => { live = false }
+  }, [])
 
   async function refresh() {
     setBusy(true); setError(null)
@@ -375,7 +404,7 @@ function Inventory() {
     <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-center gap-3">
         <h2 className="text-lg font-medium text-white">What is on the website today (descriptive — the rules live in Templates)</h2>
-        <button onClick={refresh} disabled={busy} className={primary}>{busy ? 'Crawling the dev site (about a minute)…' : 'Refresh from dev site'}</button>
+        <button onClick={refresh} disabled={busy} className={primary}>{busy ? 'Updating from the dev site (about a minute)…' : 'Refresh now'}</button>
         <span className="text-xs text-neutral-500">crawled: {formatRunTime(inv?.generated_at)}</span>
         {error && <span className="text-xs text-red-400">{error}</span>}
       </div>

@@ -28,11 +28,13 @@ export function parseRulesText(text) {
 
 // A component previews inside a sandboxed iframe using the REAL dev site's stylesheets (the
 // head comes from the main process), so a button looks exactly as it will on a page.
-export function previewDocument(html, head, { wide = false } = {}) {
+export function previewDocument(html, head, { wide = false, width = null } = {}) {
   // Page templates are WordPress/Avada shortcodes that the server expands; in a preview only the real markup
   // inside them should show, not the tokens.
   html = String(html || '').replace(/\[\/?fusion_[a-z_]+[^\]]*\]/g, '')
-  return `<!doctype html><html><head><meta charset="utf-8">${head || ''}</head><body style="margin:0;padding:16px;background:#fff"><div style="max-width:${wide ? 'none' : '340px'}">${html}</div></body></html>`
+  // The site's own <body> class (carried in the head by the main process) so theme rules scoped to it apply.
+  const bodyClass = ((head || '').match(/<meta name="preview-body-class" content="([^"]*)">/) || [])[1] || ''
+  return `<!doctype html><html><head><meta charset="utf-8">${head || ''}<style>html,body,#wrapper{height:auto!important;min-height:0!important}</style></head><body class="${bodyClass}" style="margin:0;padding:16px;background:#fff"><div id="wrapper" class="fusion-wrapper" style="max-width:${width ? `${Number(width)}px` : wide ? 'none' : '340px'}">${html}</div></body></html>`
 }
 
 export function nextComponentName(typed) {
@@ -93,4 +95,11 @@ export function buttonVerdict(variant) {
   const isBtn = /\bbtn\b/.test(variant?.classes || '')
   const ok = isBtn && texts.length > 0 && texts.every((t) => CANON_TEXT.test(String(t).trim()))
   return ok ? { ok: true, label: 'canonical' } : { ok: false, label: isBtn ? 'off-canon text' : 'off-canon style' }
+}
+
+// How stale the crawled inventory may get before the tab quietly re-crawls it on open.
+export const INVENTORY_MAX_AGE_MS = 10 * 60 * 1000
+export function inventoryIsStale(generatedAt, now = Date.now(), maxAge = INVENTORY_MAX_AGE_MS) {
+  const t = Date.parse(generatedAt || '')
+  return Number.isNaN(t) || now - t > maxAge
 }
