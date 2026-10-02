@@ -232,3 +232,98 @@ def test_record_anomaly_metrics_compares_against_prior_baseline(monkeypatch):
 def test_higher_is_better_only_for_the_one_registered_metric():
     assert "route:intent-routing-collection" in hc.HIGHER_IS_BETTER
     assert "dispatch:lock-age" not in hc.HIGHER_IS_BETTER
+
+
+# ── machine reachability: a closed laptop is asleep, not broken ─────────────
+# The Health tab marked the MacBook red whenever it was unreachable, i.e. every
+# time the lid was closed. Red is supposed to mean "needs your immediate
+# attention", so a normal lid-close taught the dashboard to cry wolf.
+# Classification: kind=laptop + Tailscale reports it OFFLINE recently => "asleep"
+# (neutral); online-but-unreachable or an always-on desktop down => red.
+
+NOW = datetime(2026, 10, 2, 12, 0, tzinfo=timezone.utc)
+
+
+def _peer(online, hours_ago=None):
+    return {"online": online,
+            "last_seen": None if hours_ago is None else NOW - timedelta(hours=hours_ago)}
+
+
+def test_laptop_offline_recently_is_asleep_not_red():
+    sev, detail = hc.classify_unreachable("laptop", _peer(False, hours_ago=3), NOW)
+    assert sev == "asleep"
+    assert "3" in detail
+
+
+def test_laptop_offline_with_unknown_last_seen_is_still_asleep():
+    sev, _ = hc.classify_unreachable("laptop", _peer(False, hours_ago=None), NOW)
+    assert sev == "asleep"
+
+
+def test_laptop_offline_for_days_escalates_to_yellow_not_silently_asleep_forever():
+    sev, detail = hc.classify_unreachable("laptop", _peer(False, hours_ago=24 * 5), NOW)
+    assert sev == "yellow"
+    assert "5" in detail
+
+
+def test_laptop_online_on_tailscale_but_ssh_failing_is_red():
+    # Awake and on the network yet unreachable is a genuine fault, not a lid.
+    sev, _ = hc.classify_unreachable("laptop", _peer(True), NOW)
+    assert sev == "red"
+
+
+def test_always_on_desktop_offline_is_red():
+    sev, _ = hc.classify_unreachable("desktop", _peer(False, hours_ago=3), NOW)
+    assert sev == "red"
+
+
+def test_laptop_with_no_tailscale_state_is_yellow_not_red_and_not_asleep():
+    sev, detail = hc.classify_unreachable("laptop", None, NOW)
+    assert sev == "yellow"
+    assert "cannot tell" in detail.lower() or "can't tell" in detail.lower()
+
+
+def test_desktop_with_no_tailscale_state_stays_red():
+    sev, _ = hc.classify_unreachable("desktop", None, NOW)
+    assert sev == "red"
+
+
+def test_check_machine_reachability_reports_asleep_for_a_closed_laptop(monkeypatch):
+    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {
+        "macbook-pro-1": {"kind": "laptop", "tailscale_hostname": "lap"}})
+
+    class Fail:
+        returncode = 255
+        stderr = "ssh: connect to host lap port 22: Operation timed out"
+
+    monkeypatch.setattr(hc.subprocess, "run", lambda *a, **k: Fail())
+    monkeypatch.setattr(hc, "_tailscale_peer", lambda host: _peer(False, hours_ago=2))
+    monkeypatch.setattr(hc, "_now", lambda: NOW)
+
+    [r] = hc.check_machine_reachability()
+    assert r["severity"] == "asleep"
+    assert r["id"] == "machine:macbook-pro-1"
+
+
+def test_asleep_does_not_make_the_overall_status_red_or_yellow():
+    assert hc.overall_severity(["green", "asleep", "green"]) == "green"
+    assert hc.overall_severity(["green", "asleep", "red"]) == "red"
+    assert hc.overall_severity(["yellow", "asleep"]) == "yellow"
+
+
+def test_tailscale_peer_parses_online_state_and_last_seen(monkeypatch):
+    payload = json.dumps({"Peer": {
+        "k1": {"HostName": "Lap", "DNSName": "lap.tail1.ts.net.", "Online": False,
+               "LastSeen": "2026-10-02T09:00:00Z"},
+        "k2": {"HostName": "other", "DNSName": "other.tail1.ts.net.", "Online": True,
+               "LastSeen": "0001-01-01T00:00:00Z"}}})
+
+    class R:
+        returncode = 0
+        stdout = payload
+
+    monkeypatch.setattr(hc.subprocess, "run", lambda *a, **k: R())
+    peer = hc._tailscale_peer("lap")
+    assert peer["online"] is False
+    assert peer["last_seen"] == datetime(2026, 10, 2, 9, 0, tzinfo=timezone.utc)
+    assert hc._tailscale_peer("nope") is None

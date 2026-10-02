@@ -2,6 +2,7 @@ const SEVERITY_LABEL = {
   red: 'Broken',
   yellow: 'Degraded',
   green: 'Healthy',
+  asleep: 'Asleep (lid closed or away)',
   unmonitored: 'Unmonitored'
 }
 
