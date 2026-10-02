@@ -433,3 +433,20 @@ describe('applying images to the dev site', () => {
     expect(exec.mock.calls[0][1][0]).toMatch(/portfolio_apply\.py$/)
   })
 })
+
+describe('previewHead takes the union of stylesheets across representative pages', () => {
+  it('includes a stylesheet that only the card pages link (Avada generates one per page)', async () => {
+    const pages = {
+      'http://localhost:8080': "<link rel='stylesheet' href='/home.css'>",
+      'http://localhost:8080/all-projects/': "<link rel='stylesheet' href='/cards.css'><link rel='stylesheet' href='/home.css'>",
+      'http://localhost:8080/ai-projects/mancala/': '<body class="x y"><style>.a{}</style>'
+    }
+    const fetchFn = vi.fn(async (url) => (pages[url] ? { ok: true, text: async () => pages[url] } : { ok: false }))
+    const q = createPortfolio({ projectDir: project, homeDir: home, agentsDir: path.join(dir, 'agents'), exec, fetchFn })
+    const head = await q.previewHead('http://localhost:8080')
+    expect(head).toContain('/cards.css')
+    expect(head).toContain('/home.css')
+    expect(head.match(/home\.css/g)).toHaveLength(1)                       // not duplicated
+    expect(head).toContain('preview-body-class" content="x y"')
+  })
+})

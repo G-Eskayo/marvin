@@ -136,7 +136,7 @@ function Problems({ result }) {
 
 // A live element in an iframe that grows to fit it: real markup, real site CSS, real hover states -- not a picture.
 // allow-same-origin WITHOUT allow-scripts: the parent may measure the content, but nothing in it can run.
-function AutoFrame({ html, head, title, wide = false, width = null, maxHeight = 640 }) {
+function AutoFrame({ html, head, title, wide = false, width = null, maxHeight = 640, context = 'page' }) {
   const [height, setHeight] = useState(120)
   const measure = (e) => {
     try {
@@ -156,7 +156,7 @@ function AutoFrame({ html, head, title, wide = false, width = null, maxHeight = 
     } catch { /* keep the default height */ }
   }
   return (
-    <iframe title={title} sandbox="allow-same-origin" srcDoc={previewDocument(html, head, { wide, width })} onLoad={measure} style={{ height }} className="w-full rounded-md border border-neutral-800 bg-white" />
+    <iframe title={title} sandbox="allow-same-origin" srcDoc={previewDocument(html, head, { wide, width, context })} onLoad={measure} style={{ height }} className="w-full rounded-md border border-neutral-800 bg-white" />
   )
 }
 
@@ -189,7 +189,9 @@ function Specimen({ template, head }) {
         <span className="font-mono text-[11px] text-neutral-600">{template.id}</span>
       </div>
       <p className="mb-3 text-xs text-neutral-400">{template.description}</p>
-      <div className={isPage ? 'flex flex-col gap-4' : 'grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]'}>
+      {/* Stacked, so the preview frame is as wide as the page: the theme's desktop styles are media queries on the
+          frame's width, and a narrow side-by-side frame would preview the phone layout instead. */}
+      <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-1">
           <Rule label="Page type">{template.pageType || '—'}</Rule>
           {template.role && <Rule label="Role">{template.role}</Rule>}
@@ -206,7 +208,7 @@ function Specimen({ template, head }) {
         </div>
         <div className="min-w-0">
           {res && !res.ok && <p className="text-xs text-red-400">Specimen did not render: {[...(res.errors || []), ...(res.missing || [])].join('; ')}</p>}
-          {res?.html && <AutoFrame title={`${template.name} specimen`} html={res.html} head={head} wide={isPage} width={isPage ? null : template.kind === 'button' ? 340 : 400} maxHeight={isPage ? 700 : 520} />}
+          {res?.html && <AutoFrame title={`${template.name} specimen`} html={res.html} head={head} wide={isPage} width={isPage ? null : template.kind === 'button' ? 340 : template.id === 'project-card' ? 760 : 400} context={template.id === 'project-card' ? 'grid' : 'page'} maxHeight={isPage ? 700 : 520} />}
           {!res && <p className="text-xs text-neutral-600">Rendering…</p>}
         </div>
       </div>
@@ -230,7 +232,7 @@ function ChromePart({ part, head }) {
       </div>
       <p className="mb-3 text-xs text-neutral-400">{part.source}</p>
       <div style={part.width ? { maxWidth: part.width + 24 } : undefined}>
-        <AutoFrame title={part.name} html={part.markup} head={head} wide width={part.width} maxHeight={['hub-sidebar', 'other-projects'].includes(part.id) ? 900 : 520} />
+        <AutoFrame title={part.name} html={part.markup} head={head} wide width={part.width} context="chrome" maxHeight={['hub-sidebar', 'other-projects'].includes(part.id) ? 900 : 520} />
       </div>
       <div className="mt-3 flex items-center gap-3">
         <button onClick={() => setOpen((v) => !v)} className="text-xs text-blue-400 hover:text-blue-300">{open ? 'hide markup' : 'show markup'}</button>
