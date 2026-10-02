@@ -224,3 +224,82 @@ describe('generateImage passes the project\'s existing image as inspiration', ()
     expect(exec.mock.calls[0][1]).not.toContain('--inspire')
   })
 })
+
+// ── site inventory + templates (Gil 2026-10-02: components must be representative of what is ON the
+// website; templates for every existing page; plug-and-play so MARVIN supplies data, not markup) ──
+
+describe('inventory', () => {
+  const inv = { generated_at: 't', pages: [{ slug: 'ai-projects--mancala', url: '/ai-projects/mancala/', title: 'Mancala', type: 'project', screenshot: 'pages/ai-projects--mancala.png', raw: 'raw/ai-projects--mancala.html' }],
+    buttons: [{ id: 'abc', kind: 'button', count: 3, screenshot: 'buttons/abc.png' }], summary: { pages: 1 } }
+  beforeEach(() => {
+    const d = path.join(home, '.claude/portfolio/inventory')
+    mkdirSync(path.join(d, 'pages'), { recursive: true }); mkdirSync(path.join(d, 'buttons'), { recursive: true }); mkdirSync(path.join(d, 'raw'), { recursive: true })
+    writeFileSync(path.join(d, 'inventory.json'), JSON.stringify(inv))
+    writeFileSync(path.join(d, 'pages/ai-projects--mancala.png'), Buffer.from([1, 2, 3]))
+    writeFileSync(path.join(d, 'buttons/abc.png'), Buffer.from([4, 5]))
+    writeFileSync(path.join(d, 'raw/ai-projects--mancala.html'), '[fusion_text]Mancala[/fusion_text]')
+  })
+
+  it('reads the inventory, or null when it has never been collected / is corrupt', async () => {
+    expect((await p.inventory()).summary.pages).toBe(1)
+    writeFileSync(path.join(home, '.claude/portfolio/inventory/inventory.json'), '{bad')
+    expect(await p.inventory()).toBeNull()
+  })
+
+  it('serves an inventory screenshot as a data URL, confined to the inventory directory', async () => {
+    expect(await p.inventoryImage('buttons/abc.png')).toBe('data:image/png;base64,' + Buffer.from([4, 5]).toString('base64'))
+    await expect(p.inventoryImage('../../../etc/passwd')).rejects.toThrow(/invalid inventory path/i)
+    await expect(p.inventoryImage('/etc/passwd')).rejects.toThrow(/invalid inventory path/i)
+    expect(await p.inventoryImage('buttons/missing.png')).toBeNull()
+  })
+
+  it('returns a page\'s raw markup, by slug only (never a path)', async () => {
+    expect(await p.pageMarkup('ai-projects--mancala')).toBe('[fusion_text]Mancala[/fusion_text]')
+    await expect(p.pageMarkup('../x')).rejects.toThrow(/invalid page/i)
+    expect(await p.pageMarkup('nope')).toBeNull()
+  })
+
+  it('refreshInventory runs the crawler, then re-exports the reference templates, and returns the new inventory', async () => {
+    const r = await p.refreshInventory()
+    const scripts = exec.mock.calls.map((c) => c[1][0])
+    expect(scripts[0]).toMatch(/portfolio_inventory\.py$/)
+    expect(r.summary.pages).toBe(1)
+  })
+})
+
+describe('templates', () => {
+  it('lists templates via the renderer (single source of truth for fields and slots)', async () => {
+    exec.mockResolvedValue({ stdout: JSON.stringify([{ id: 'project-page', kind: 'page' }]), stderr: '' })
+    expect((await p.listTemplates())[0].id).toBe('project-page')
+    expect(exec.mock.calls[0][1]).toEqual(expect.arrayContaining(['list']))
+  })
+
+  it('renders through the Python renderer, passing data and options as JSON', async () => {
+    exec.mockResolvedValue({ stdout: JSON.stringify({ ok: true, html: '<a/>' }), stderr: '' })
+    const r = await p.renderTemplate('button-github', { REPO_URL: 'https://github.com/G-Eskayo/x' }, {})
+    expect(r.ok).toBe(true)
+    const args = exec.mock.calls[0][1]
+    expect(args).toEqual(expect.arrayContaining(['render', 'button-github']))
+    expect(JSON.parse(args[args.indexOf('--data') + 1])).toEqual({ REPO_URL: 'https://github.com/G-Eskayo/x' })
+  })
+
+  it('refuses a template id that is not a plain id', async () => {
+    await expect(p.renderTemplate('../../x', {}, {})).rejects.toThrow(/invalid template id/i)
+  })
+
+  it('plans a whole new project from one data set (page + card + manifest entry)', async () => {
+    exec.mockResolvedValue({ stdout: JSON.stringify({ ok: true, page_html: '<p/>', card_html: '<c/>', manifest_entry: { url: '/ai-projects/x/' } }), stderr: '' })
+    const plan = await p.planProject({ title: 'X', slug: 'x' })
+    expect(plan.manifest_entry.url).toBe('/ai-projects/x/')
+    expect(exec.mock.calls[0][1]).toEqual(expect.arrayContaining(['plan']))
+  })
+
+  it('lists the reference templates (one per existing page) from templates/reference/index.json', async () => {
+    write('templates/reference/index.json', JSON.stringify([{ slug: 'about-me', url: '/about-me/', title: 'About me', type: 'page', file: 'reference/about-me.html', empty: false }]))
+    write('templates/reference/about-me.html', '[fusion_text]About[/fusion_text]')
+    const list = await p.listReference()
+    expect(list[0].slug).toBe('about-me')
+    expect(await p.referenceMarkup('about-me')).toBe('[fusion_text]About[/fusion_text]')
+    await expect(p.referenceMarkup('../../x')).rejects.toThrow(/invalid page/i)
+  })
+})

@@ -52,7 +52,16 @@ contextBridge.exposeInMainWorld('api', {
     runEval: () => ipcRenderer.invoke('portfolio:eval:run'),
     images: () => ipcRenderer.invoke('portfolio:images'),
     generateImage: (slug) => ipcRenderer.invoke('portfolio:image:generate', slug),
-    imagePreview: (slug) => ipcRenderer.invoke('portfolio:image:preview', slug)
+    imagePreview: (slug) => ipcRenderer.invoke('portfolio:image:preview', slug),
+    inventory: () => ipcRenderer.invoke('portfolio:inventory'),
+    inventoryImage: (rel) => ipcRenderer.invoke('portfolio:inventory:image', rel),
+    refreshInventory: () => ipcRenderer.invoke('portfolio:inventory:refresh'),
+    pageMarkup: (slug) => ipcRenderer.invoke('portfolio:page-markup', slug),
+    templates: () => ipcRenderer.invoke('portfolio:templates'),
+    renderTemplate: (id, data, options) => ipcRenderer.invoke('portfolio:template:render', id, data, options),
+    planProject: (data) => ipcRenderer.invoke('portfolio:project:plan', data),
+    reference: () => ipcRenderer.invoke('portfolio:reference'),
+    referenceMarkup: (slug) => ipcRenderer.invoke('portfolio:reference:markup', slug)
   },
   activity: {
     list: () => ipcRenderer.invoke('activity:list'),

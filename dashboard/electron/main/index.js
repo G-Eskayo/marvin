@@ -146,6 +146,15 @@ function registerDocsHandlers() {
   ipcMain.handle('portfolio:images', () => portfolio.listImages())
   ipcMain.handle('portfolio:image:generate', (_e, slug) => portfolio.generateImage(slug))
   ipcMain.handle('portfolio:image:preview', (_e, slug) => portfolio.imagePreview(slug))
+  ipcMain.handle('portfolio:inventory', () => portfolio.inventory())
+  ipcMain.handle('portfolio:inventory:image', (_e, rel) => portfolio.inventoryImage(rel))
+  ipcMain.handle('portfolio:inventory:refresh', () => portfolio.refreshInventory())
+  ipcMain.handle('portfolio:page-markup', (_e, slug) => portfolio.pageMarkup(slug))
+  ipcMain.handle('portfolio:templates', () => portfolio.listTemplates())
+  ipcMain.handle('portfolio:template:render', (_e, id, data, options) => portfolio.renderTemplate(id, data, options))
+  ipcMain.handle('portfolio:project:plan', (_e, data) => portfolio.planProject(data))
+  ipcMain.handle('portfolio:reference', () => portfolio.listReference())
+  ipcMain.handle('portfolio:reference:markup', (_e, slug) => portfolio.referenceMarkup(slug))
 }
 
 function postJson(webhookUrl, body) {
