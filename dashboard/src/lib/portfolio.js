@@ -28,11 +28,11 @@ export function parseRulesText(text) {
 
 // A component previews inside a sandboxed iframe using the REAL dev site's stylesheets (the
 // head comes from the main process), so a button looks exactly as it will on a page.
-export function previewDocument(html, head) {
+export function previewDocument(html, head, { wide = false } = {}) {
   // Page templates are WordPress/Avada shortcodes that the server expands; in a preview only the real markup
   // inside them should show, not the tokens.
   html = String(html || '').replace(/\[\/?fusion_[a-z_]+[^\]]*\]/g, '')
-  return `<!doctype html><html><head><meta charset="utf-8">${head || ''}</head><body style="margin:0;padding:16px;background:#fff"><div style="max-width:340px">${html}</div></body></html>`
+  return `<!doctype html><html><head><meta charset="utf-8">${head || ''}</head><body style="margin:0;padding:16px;background:#fff"><div style="max-width:${wide ? 'none' : '340px'}">${html}</div></body></html>`
 }
 
 export function nextComponentName(typed) {

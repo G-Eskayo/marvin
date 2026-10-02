@@ -304,27 +304,31 @@ describe('templates', () => {
   })
 })
 
-describe('template source (plain markup behind each template)', () => {
+describe('template source (plain markup behind each template, read-only)', () => {
   const manifest = (file) => JSON.stringify({ templates: [{ id: 'content-page', file }] })
 
-  it('reads and saves the file the manifest names', async () => {
+  it('reads the file the manifest names', async () => {
     write('templates/templates.json', manifest('content-page.html'))
     write('templates/content-page.html', '<p>old</p>')
     expect(await p.templateSource('content-page')).toBe('<p>old</p>')
-    await p.saveTemplateSource('content-page', '<p>new</p>')
-    expect(readFileSync(path.join(project, 'templates', 'content-page.html'), 'utf8')).toBe('<p>new</p>')
   })
 
-  it('rejects unknown ids, bad ids and empty markup', async () => {
+  it('rejects unknown and malformed ids', async () => {
     write('templates/templates.json', manifest('content-page.html'))
     await expect(p.templateSource('nope')).rejects.toThrow(/Unknown template/)
     await expect(p.templateSource('../x')).rejects.toThrow(/Invalid template id/)
-    await expect(p.saveTemplateSource('content-page', '   ')).rejects.toThrow(/non-empty/)
   })
 
-  it('never writes outside templates/ even if the manifest points there', async () => {
-    write('templates/templates.json', manifest('../deploy/evil.html'))
-    await expect(p.saveTemplateSource('content-page', '<p>x</p>')).rejects.toThrow(/escapes templates/)
-    expect(existsSync(path.join(project, 'deploy', 'evil.html'))).toBe(false)
+  it('refuses a manifest file path that escapes templates/', async () => {
+    write('templates/templates.json', manifest('../deploy/secret.html'))
+    write('deploy/secret.html', 'x')
+    await expect(p.templateSource('content-page')).rejects.toThrow(/escapes templates/)
+  })
+
+  it('asks the renderer for a specimen and rejects bad ids', async () => {
+    exec.mockResolvedValue({ stdout: JSON.stringify({ ok: true, html: '<p/>' }), stderr: '' })
+    expect((await p.specimen('hub-page')).ok).toBe(true)
+    expect(exec.mock.calls[0][1].slice(-2)).toEqual(['specimen', 'hub-page'])
+    expect(() => p.specimen('../x')).toThrow(/Invalid template id/)
   })
 })

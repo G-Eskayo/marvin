@@ -152,7 +152,7 @@ function registerDocsHandlers() {
   ipcMain.handle('portfolio:page-markup', (_e, slug) => portfolio.pageMarkup(slug))
   ipcMain.handle('portfolio:templates', () => portfolio.listTemplates())
   ipcMain.handle('portfolio:template:source', (_e, id) => portfolio.templateSource(id))
-  ipcMain.handle('portfolio:template:source:save', (_e, id, content) => portfolio.saveTemplateSource(id, content))
+  ipcMain.handle('portfolio:template:specimen', (_e, id) => portfolio.specimen(id))
   ipcMain.handle('portfolio:template:render', (_e, id, data, options) => portfolio.renderTemplate(id, data, options))
   ipcMain.handle('portfolio:project:plan', (_e, data) => portfolio.planProject(data))
   ipcMain.handle('portfolio:reference', () => portfolio.listReference())

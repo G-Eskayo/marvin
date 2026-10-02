@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
   groupFindingsByRule, parseRulesText, previewDocument, formatRunTime,
-  initialData, buildOptions, buttonVerdict, fieldInputType, groupTemplates, slugify, projectDefaults, CATEGORIES, countByType
+  buttonVerdict, groupTemplates, countByType
 } from '../lib/portfolio.js'
 
 // The Portfolio hub (CONTEXT.md "Dashboard app -- Portfolio tab"): the single place that defines how
@@ -134,228 +134,91 @@ function Problems({ result }) {
   )
 }
 
-// ── Templates: plug-and-play forms ──────────────────────────────────────────
+// ── Templates: the prescriptive reference, shown as what each one IS ───────
 
-// What this template is FOR: the rules a builder follows (prescriptive), not what happens to exist.
-function Guidance({ template }) {
-  const rows = [
-    template.pageType && ['Page type', template.pageType],
-    template.role && ['Role', template.role],
-    template.usedOn && ['Used on', template.usedOn.join(', ') + ' pages only'],
-    template.placement && ['Placement', template.placement]
-  ].filter(Boolean)
-  if (!rows.length && !(template.zones || []).length) return null
-  return (
-    <div className="rounded-lg border border-neutral-800 p-3">
-      <h4 className="mb-2 text-xs font-medium uppercase tracking-wide text-neutral-400">How to use it</h4>
-      {rows.map(([k, v]) => (
-        <p key={k} className="text-xs text-neutral-300"><span className="text-neutral-500">{k}: </span>{v}</p>
-      ))}
-      {(template.zones || []).length > 0 && (
-        <ol className="mt-2 flex flex-col gap-1">
-          {template.zones.map((z, i) => (
-            <li key={z.name} className="rounded border border-dashed border-neutral-700 px-2 py-1 text-xs text-neutral-300">
-              <span className="text-neutral-500">{i + 1}. </span>{z.name}<span className="text-neutral-500"> — {z.note}</span>
-            </li>
-          ))}
-        </ol>
-      )}
-    </div>
-  )
+function Rule({ label, children }) {
+  return <p className="text-xs text-neutral-300"><span className="text-neutral-500">{label}: </span>{children}</p>
 }
 
-// The plain markup behind the template: read it, copy it, or edit it so every future page inherits the change.
-function MarkupEditor({ id }) {
-  const [text, setText] = useState(null)
-  const [saved, setSaved] = useState('')
-  const [status, setStatus] = useState(null)
+function Specimen({ template, head }) {
+  const [res, setRes] = useState(null)
+  const [markup, setMarkup] = useState(null)
+  const [showMarkup, setShowMarkup] = useState(false)
   useEffect(() => {
     let live = true
-    setText(null); setStatus(null)
-    window.api.portfolio.templateSource(id).then((t) => { if (live) { setText(t); setSaved(t) } }).catch((e) => live && setStatus({ error: errText(e) }))
+    window.api.portfolio.specimen(template.id).then((r) => live && setRes(r)).catch((e) => live && setRes({ ok: false, errors: [errText(e)] }))
     return () => { live = false }
-  }, [id])
-  async function save() {
-    try {
-      await window.api.portfolio.saveTemplateSource(id, text)
-      setSaved(text)
-      setStatus({ message: 'Saved to the template file' })
-    } catch (e) {
-      setStatus({ error: errText(e) })
-    }
-  }
-  if (text === null) return <Status state={status} />
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-3">
-        <h3 className="text-xs font-medium uppercase tracking-wide text-neutral-500">Template markup (the plain reference)</h3>
-        <CopyButton text={text} label="Copy markup" />
-        <button onClick={save} disabled={text === saved} className={primary}>Save</button>
-        <Status state={status} />
-      </div>
-      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={12} spellCheck={false} className={field} />
-      <p className="text-[11px] text-neutral-500">{'{{NAME}}'} marks a field filled by the form above. Editing here changes what every new page of this kind is built from.</p>
-    </div>
-  )
-}
-
-function PagesOfType({ pageType }) {
-  const [pages, setPages] = useState(null)
-  useEffect(() => {
-    window.api.portfolio.inventory().then((inv) => setPages((inv?.pages || []).filter((p) => p.type === pageType))).catch(() => setPages([]))
-  }, [pageType])
-  if (!pages || !pages.length) return null
-  return (
-    <div>
-      <h3 className="mb-1 text-xs font-medium uppercase tracking-wide text-neutral-500">Existing pages of this type ({pages.length}) — see Site inventory</h3>
-      <p className="text-xs text-neutral-400">{pages.map((p) => p.title).join(' · ')}</p>
-    </div>
-  )
-}
-
-function TemplateRunner({ template, templates, head }) {
-  const [data, setData] = useState(() => initialData(template))
-  const [choices, setChoices] = useState({})
-  const [result, setResult] = useState(null)
-
-  useEffect(() => {
-    setData(initialData(template))
-    setChoices({})
   }, [template.id])
-
-  useEffect(() => {
-    const t = setTimeout(() => {
-      window.api.portfolio.renderTemplate(template.id, data, buildOptions(choices)).then(setResult).catch((e) => setResult({ ok: false, errors: [errText(e)] }))
-    }, 250)
-    return () => clearTimeout(t)
-  }, [template.id, data, choices])
-
+  async function toggleMarkup() {
+    if (markup === null) {
+      try { setMarkup(await window.api.portfolio.templateSource(template.id)) } catch (e) { setMarkup(`Could not read: ${errText(e)}`) }
+    }
+    setShowMarkup((v) => !v)
+  }
+  const isPage = template.kind === 'page'
+  const height = isPage ? 'h-[28rem]' : template.kind === 'button' ? 'h-20' : 'h-64'
   return (
-    <div className="grid gap-6 xl:grid-cols-2">
-      <div className="flex flex-col gap-4">
-        <div>
-          <h2 className="text-lg font-medium text-white">{template.name}</h2>
-          <p className="text-xs text-neutral-500">{template.description}</p>
+    <article className="rounded-lg border border-neutral-800 p-4">
+      <div className="mb-3 flex flex-wrap items-baseline gap-3">
+        <h3 className="text-base font-medium text-white">{template.name}</h3>
+        <span className="font-mono text-[11px] text-neutral-600">{template.id}</span>
+      </div>
+      <p className="mb-3 text-xs text-neutral-400">{template.description}</p>
+      <div className={isPage ? 'flex flex-col gap-4' : 'grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]'}>
+        <div className="flex flex-col gap-1">
+          <Rule label="Page type">{template.pageType || '—'}</Rule>
+          {template.role && <Rule label="Role">{template.role}</Rule>}
+          {template.usedOn && <Rule label="Used on">{template.usedOn.join(', ')} pages only</Rule>}
+          {template.placement && <Rule label="Placement">{template.placement}</Rule>}
+          {(template.zones || []).length > 0 && (
+            <ol className="mt-1 flex flex-col gap-1">
+              {template.zones.map((z, i) => (
+                <li key={z.name} className="rounded border border-dashed border-neutral-700 px-2 py-1 text-xs text-neutral-300"><span className="text-neutral-500">{i + 1}. </span>{z.name}<span className="text-neutral-500"> — {z.note}</span></li>
+              ))}
+            </ol>
+          )}
+          {(template.fields || []).length > 0 && <Rule label="Fill in">{template.fields.map((f) => f.label || f.name).join(' · ')}</Rule>}
         </div>
-        <Guidance template={template} />
-        <FieldInputs fields={template.fields} data={data} onChange={setData} />
-        {Object.entries(template.slots || {}).map(([slot, spec]) => (
-          <SlotPicker key={slot} slot={slot} spec={spec} templates={templates} value={choices[slot]} onChange={(v) => setChoices({ ...choices, [slot]: v })} />
-        ))}
-      </div>
-      <div className="flex min-w-0 flex-col gap-3">
-        <div className="flex items-center gap-3">
-          <h3 className="text-xs font-medium uppercase tracking-wide text-neutral-500">Result</h3>
-          <CopyButton text={result?.html} label="Copy HTML" />
+        <div className="min-w-0">
+          {res && !res.ok && <p className="text-xs text-red-400">Specimen did not render: {[...(res.errors || []), ...(res.missing || [])].join('; ')}</p>}
+          {res?.html && <iframe title={`${template.name} specimen`} sandbox="" srcDoc={previewDocument(res.html, head, { wide: isPage })} className={`${height} w-full rounded-md border border-neutral-800 bg-white`} />}
+          {!res && <p className="text-xs text-neutral-600">Rendering…</p>}
         </div>
-        <Problems result={result} />
-        <iframe title="template preview" sandbox="" srcDoc={previewDocument(result?.html || '', head)} className="h-64 w-full rounded-md border border-neutral-800 bg-white" />
-        <textarea readOnly value={result?.html ?? ''} rows={6} spellCheck={false} className={field} />
       </div>
-      <div className="flex min-w-0 flex-col gap-4 xl:col-span-2">
-        <MarkupEditor id={template.id} />
-        {template.pageType && <PagesOfType pageType={template.pageType} />}
+      <div className="mt-3 flex items-center gap-3">
+        <button onClick={toggleMarkup} className="text-xs text-blue-400 hover:text-blue-300">{showMarkup ? 'hide markup' : 'show markup'}</button>
+        {showMarkup && <CopyButton text={markup} label="Copy markup" />}
       </div>
-    </div>
-  )
-}
-
-function NewProject({ templates, head }) {
-  const [d, setD] = useState(projectDefaults)
-  const [slugTouched, setSlugTouched] = useState(false)
-  const [plan, setPlan] = useState(null)
-  const set = (k, v) => setD((cur) => ({ ...cur, [k]: v, ...(k === 'title' && !slugTouched ? { slug: slugify(v) } : {}) }))
-
-  useEffect(() => {
-    const t = setTimeout(() => {
-      window.api.portfolio.planProject(d).then(setPlan).catch((e) => setPlan({ ok: false, errors: [errText(e)] }))
-    }, 300)
-    return () => clearTimeout(t)
-  }, [d])
-
-  const input = 'rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-xs text-neutral-200 outline-none focus:border-blue-500'
-  const row = (label, node) => (
-    <label className="flex flex-col gap-1"><span className="text-xs text-neutral-400">{label}</span>{node}</label>
-  )
-  const actionsSpec = templates.find((t) => t.id === 'project-page')?.slots?.actions
-
-  return (
-    <div className="grid gap-6 xl:grid-cols-2">
-      <div className="flex flex-col gap-3">
-        <div>
-          <h2 className="text-lg font-medium text-white">New project</h2>
-          <p className="text-xs text-neutral-500">One form produces the project page, its card and its manifest entry — nothing is hand-written, so it matches every other page.</p>
-        </div>
-        {row('Title', <input value={d.title} onChange={(e) => set('title', e.target.value)} className={input} />)}
-        {row('Slug (the URL ending)', <input value={d.slug} onChange={(e) => { setSlugTouched(true); set('slug', e.target.value) }} className={input} />)}
-        {row('Category', <select value={d.category} onChange={(e) => set('category', e.target.value)} className={input}>{CATEGORIES.map((c) => <option key={c}>{c}</option>)}</select>)}
-        {row('Subtitle (the pink line)', <input value={d.subtitle} onChange={(e) => set('subtitle', e.target.value)} className={input} />)}
-        {row('Card description (one line)', <input value={d.description} onChange={(e) => set('description', e.target.value)} className={input} />)}
-        {row('Body (HTML paragraphs)', <textarea value={d.body_html} onChange={(e) => set('body_html', e.target.value)} rows={5} className={field} />)}
-        {row('Hero image URL', <input value={d.hero_image_url} onChange={(e) => set('hero_image_url', e.target.value)} className={input} />)}
-        {row('Thumbnail URL', <input value={d.thumbnail} onChange={(e) => set('thumbnail', e.target.value)} className={input} />)}
-        {row('Stack (comma-separated)', <input value={d.stack_csv} onChange={(e) => set('stack_csv', e.target.value)} className={input} />)}
-        {actionsSpec && <SlotPicker slot="actions" spec={actionsSpec} templates={templates} value={d.actions} onChange={(v) => set('actions', v)} />}
-      </div>
-      <div className="flex min-w-0 flex-col gap-4">
-        <Problems result={plan ? { errors: plan.ok ? [] : plan.errors, warnings: plan.warnings } : null} />
-        {plan?.ok && (
-          <>
-            <div>
-              <div className="mb-1 flex items-center gap-3"><h3 className="text-xs font-medium uppercase tracking-wide text-neutral-500">Card (as it appears on hub pages)</h3><CopyButton text={plan.card_html} /></div>
-              <iframe title="card preview" sandbox="" srcDoc={previewDocument(plan.card_html, head)} className="h-56 w-full rounded-md border border-neutral-800 bg-white" />
-            </div>
-            <div>
-              <div className="mb-1 flex items-center gap-3"><h3 className="text-xs font-medium uppercase tracking-wide text-neutral-500">Project page content</h3><CopyButton text={plan.page_html} /></div>
-              <textarea readOnly value={plan.page_html} rows={7} className={field} />
-            </div>
-            <div>
-              <div className="mb-1 flex items-center gap-3"><h3 className="text-xs font-medium uppercase tracking-wide text-neutral-500">Manifest entry</h3><CopyButton text={JSON.stringify(plan.manifest_entry, null, 2)} /></div>
-              <textarea readOnly value={JSON.stringify(plan.manifest_entry, null, 2)} rows={8} className={field} />
-              <p className="mt-1 text-[11px] text-neutral-500">Add this to deploy/other-projects/manifest.json as a reviewed repo change — it lives in deploy/, which this tab never writes.</p>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
+      {showMarkup && <pre className="mt-2 max-h-80 overflow-auto rounded border border-neutral-800 bg-neutral-950 p-3 text-[11px] text-neutral-300">{markup}</pre>}
+    </article>
   )
 }
 
 function Templates() {
   const [templates, setTemplates] = useState(null)
-  const [selected, setSelected] = useState(null)
   const [head, setHead] = useState('')
   const [error, setError] = useState(null)
 
   useEffect(() => {
-    window.api.portfolio.templates().then((t) => { setTemplates(t); setSelected((cur) => cur ?? 'project-page') }).catch((e) => setError(errText(e)))
+    window.api.portfolio.templates().then(setTemplates).catch((e) => setError(errText(e)))
     window.api.portfolio.previewHead().then(setHead).catch(() => {})
   }, [])
 
   if (error) return <p className="text-sm text-red-400">Could not load templates: {error}</p>
   if (!templates) return <p className="text-sm text-neutral-500">Loading templates…</p>
-  const current = templates.find((t) => t.id === selected)
 
+  const titles = { page: 'Page types', component: 'Components', button: 'Buttons — the only three' }
   return (
-    <div className="grid grid-cols-[230px_1fr] gap-6">
-      <aside className="flex flex-col gap-1">
-        <button onClick={() => setSelected('__new')} className={`mb-2 rounded-md px-3 py-2 text-left text-sm font-medium ${selected === '__new' ? 'bg-blue-600 text-white' : 'border border-blue-700 text-blue-300 hover:bg-blue-950'}`}>
-          + New project
-        </button>
-        {groupTemplates(templates).map((g) => (
-          <div key={g.kind} className="mb-2">
-            <h4 className="px-1 pb-1 text-[10px] font-medium uppercase tracking-wide text-neutral-500">{g.kind === 'page' ? 'Page types' : g.kind === 'component' ? 'Components' : 'Buttons (the only three)'}</h4>
-            {g.items.map((t) => (
-              <button key={t.id} onClick={() => setSelected(t.id)} className={`block w-full rounded-md border px-3 py-2 text-left text-sm ${selected === t.id ? 'border-blue-500 bg-blue-950 text-white' : 'border-transparent text-neutral-300 hover:border-neutral-700'}`}>
-                {t.name}
-              </button>
-            ))}
-          </div>
-        ))}
-      </aside>
-      <section className="min-w-0">
-        {selected === '__new' ? <NewProject templates={templates} head={head} /> : current ? <TemplateRunner key={current.id} template={current} templates={templates} head={head} /> : null}
-      </section>
+    <div className="flex flex-col gap-8">
+      <p className="max-w-3xl text-xs text-neutral-500">
+        The reference for how every page is built. Each template is shown as it renders on the site, with the rules for using it. To build or change a page, start from the matching template here so structure stays uniform.
+      </p>
+      {groupTemplates(templates).map((g) => (
+        <section key={g.kind} className="flex flex-col gap-4">
+          <h2 className="text-sm font-medium uppercase tracking-wide text-neutral-400">{titles[g.kind] || g.kind}</h2>
+          {g.items.map((t) => <Specimen key={t.id} template={t} head={head} />)}
+        </section>
+      ))}
     </div>
   )
 }

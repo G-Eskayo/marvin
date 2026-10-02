@@ -116,6 +116,35 @@ def render(template_id: str, field_values: dict | None = None, options: dict | N
     return _result(out, ok=not missing and not errors, missing=missing, errors=errors, warnings=warnings, used=used)
 
 
+def _resolve_sample(value, root: Path, depth: int):
+    """A specimen value is literal text, or "@template-id" meaning that template's own specimen (so a hub
+    page's card list is made of real cards), or a list of those, joined."""
+    if isinstance(value, list):
+        return "\n".join(_resolve_sample(v, root, depth) for v in value)
+    if isinstance(value, str) and value.startswith("@") and depth < 4:
+        sub = specimen(value[1:], root, depth + 1)
+        return sub["html"] or ""
+    return value
+
+
+def specimen(template_id: str, root: Path = ROOT, depth: int = 0) -> dict:
+    """The template rendered with the sample content its manifest entry declares, so the Templates tab can
+    show every template as what it IS rather than an empty form."""
+    try:
+        entry = _entry(_load_manifest(root), template_id)
+    except (OSError, ValueError) as exc:
+        return _result(errors=[f"cannot read templates.json: {exc}"])
+    if entry is None:
+        return _result(errors=[f"unknown template: {template_id}"])
+    sample = entry.get("specimen") or {}
+    data = {k: _resolve_sample(v, root, depth) for k, v in (sample.get("data") or {}).items()}
+    options = {
+        slot: [{"template": c["template"], "data": {k: _resolve_sample(v, root, depth) for k, v in (c.get("data") or {}).items()}} for c in choices]
+        for slot, choices in (sample.get("options") or {}).items()
+    }
+    return render(template_id, data, options, root)
+
+
 def list_templates(root: Path = ROOT) -> list[dict]:
     return _load_manifest(root).get("templates", [])
 
@@ -196,12 +225,15 @@ def main() -> None:
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("list")
     r = sub.add_parser("render"); r.add_argument("id"); r.add_argument("--data", default="{}"); r.add_argument("--options", default="{}")
+    sp = sub.add_parser("specimen"); sp.add_argument("id")
     n = sub.add_parser("plan"); n.add_argument("--data", required=True)
     args = ap.parse_args()
     if args.cmd == "list":
         print(json.dumps(list_templates(), indent=2))
     elif args.cmd == "render":
         print(json.dumps(render(args.id, json.loads(args.data), json.loads(args.options))))
+    elif args.cmd == "specimen":
+        print(json.dumps(specimen(args.id)))
     else:
         print(json.dumps(plan_new_project(json.loads(args.data))))
 

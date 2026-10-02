@@ -24,6 +24,9 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import portfolio_motifs  # noqa: E402
+
 HERO_SIZE = (2200, 600)       # the site's wide panorama hero (existing hero photos are ~3.66:1)
 MIN_DISTANCE = 24             # minimum Hamming distance (of 128 bits: layout + spectrum) between any two projects
 STYLES = ("contours", "moire", "cubes", "halftone", "lines")
@@ -129,6 +132,10 @@ def style_for(slug: str) -> str:
     return STYLES[int(hashlib.sha256(slug.encode()).hexdigest()[:2], 16) % len(STYLES)]
 
 
+def look_for(slug: str) -> str:
+    return portfolio_motifs.motif_for(slug) or style_for(slug)
+
+
 def _field(X, Y, rng, octaves=4):
     """Smooth pseudo-noise: a sum of randomly oriented sine waves."""
     f = np.zeros_like(X)
@@ -176,6 +183,10 @@ def render(slug: str, size=HERO_SIZE, inspiration: dict | None = None, salt: int
     w, h = size
     X, Y = np.meshgrid(np.linspace(0, w / h, w, dtype=np.float32), np.linspace(0, 1, h, dtype=np.float32))
     v = _pattern(style_for(slug), X, Y, rng).astype(np.float32)
+    motif = portfolio_motifs.motif_for(slug)
+    if motif:
+        # the subject: a diagram of what the project is, over a quiet version of the abstract texture
+        v = np.maximum(v * 0.2, portfolio_motifs.draw(motif, size, rng))
     v = np.clip((v - 0.5) * (0.6 + 0.8 * insp["contrast"]) + 0.5, 0, 1)
     v = v ** (0.5 + 2.0 * (1.0 - insp["luminance"]))                    # darker/brighter inspiration -> darker/brighter art
     v = np.clip(v + rng.normal(0, 0.018, v.shape).astype(np.float32), 0, 1)   # film grain
@@ -226,10 +237,10 @@ def assign(slugs, registry_path: Path = REGISTRY_PATH, size=HERO_SIZE, max_salt:
         for salt in range(max_salt + 1):
             h = fingerprint(render(slug, size, insp, salt))
             if all(hamming(h, t) >= MIN_DISTANCE for t in taken):
-                registry[slug] = {"salt": salt, "hash": f"{h:032x}", "style": style_for(slug)}
+                registry[slug] = {"salt": salt, "hash": f"{h:032x}", "style": look_for(slug)}
                 break
         else:
-            registry[slug] = {"salt": max_salt, "hash": f"{h:032x}", "style": style_for(slug),
+            registry[slug] = {"salt": max_salt, "hash": f"{h:032x}", "style": look_for(slug),
                               "warning": f"could not reach distance {MIN_DISTANCE} within {max_salt} re-rolls"}
     Path(registry_path).parent.mkdir(parents=True, exist_ok=True)
     Path(registry_path).write_text(json.dumps(registry, indent=2, sort_keys=True))
