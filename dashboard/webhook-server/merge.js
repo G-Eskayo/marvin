@@ -3,6 +3,8 @@ import { promisify } from 'util'
 import { mkdtemp, rm } from 'fs/promises'
 import { tmpdir } from 'os'
 import path from 'path'
+import { classifyFailure, summarizeGateFailure, withRetry, MergeFailure } from './failure.js'
+import { recordFailure } from './failure_log.js'
 import { fileURLToPath } from 'url'
 import { sendFeedback } from './deny.js'
 import { parseTicketRef } from '../electron/main/mr_review.js'
@@ -96,6 +98,11 @@ async function _defaultShouldGateMerge(prUrl, exec) {
   }
 }
 
+function prNumberOf(prUrl) {
+  const m = String(prUrl).match(/\/pull\/(\d+)/)
+  return m ? Number(m[1]) : 0
+}
+
 // Separated from the HTTP plumbing in index.js so this -- the part that
 // actually matters -- is unit-testable without spinning up a real server
 // or hitting real GitHub.
@@ -107,10 +114,12 @@ export async function mergePr(
   shouldGateMerge = _defaultShouldGateMerge,
   rebaseAndRetestFn = rebaseAndRetest,
   reengage = sendFeedback,
-  recordStageFn = recordStage
+  recordStageFn = recordStage,
+  deps = {}
 ) {
+  const { sleep, recordFailureFn = recordFailure } = deps
   if (typeof prUrl !== 'string' || !prUrl.startsWith('https://github.com/')) {
-    throw new Error(`Not a GitHub PR URL: ${prUrl}`)
+    throw new MergeFailure(classifyFailure({ stage: 'request', error: new Error(`Not a GitHub PR URL: ${prUrl}`) }))
   }
 
   const { gate, headRefName, body } = await shouldGateMerge(prUrl, exec)
@@ -126,22 +135,51 @@ export async function mergePr(
     stage('gate', 'started', 'rebasing onto main + retesting')
     const result = await rebaseAndRetestFn(headRefName, exec)
     if (!result.ok) {
-      stage('gate', 'failed', result.reason)
+      // Structured, concise feedback (code header, failing test names, capped tail)
+      // instead of a raw output wall: this comment is what the ticket's executor reads
+      // to decide how to fix its work, so it has to be parseable and to the point.
+      const summary = summarizeGateFailure(result.reason)
+      stage('gate', 'failed', `${summary.code}: ${summary.failingTests.length ? summary.failingTests.length + ' failing test(s)' : 'see comment'}`)
+      recordFailureFn({ ticket: ticketNumber ?? prNumberOf(prUrl), code: summary.code, message: summary.failingTests[0] || 'merge gate failed' })
       // ADR 0025's existing re-engagement path, not a new failure state:
       // structured comment on both PR and ticket, claim released, tagged
       // needs-reengagement. The PR itself stays open for a human or a
       // future re-engagement pass -- this isn't a "drop" outcome.
       await reengage(
-        { prUrl, ticketNumber, reasons: ['Regression/quality'], comment: result.reason },
+        { prUrl, ticketNumber, reasons: ['Regression/quality'], comment: summary.comment },
         exec
       )
-      return { merged: false, reengaged: true, reason: result.reason }
+      return { merged: false, reengaged: true, code: summary.code, stage: 'gate', action: 'reengage',
+               failingTests: summary.failingTests, reason: summary.comment }
     }
     stage('gate', 'passed', 'rebased and retested clean')
   }
 
   stage('merging', 'started', '')
-  await exec('gh', ['pr', 'merge', prUrl, '--merge'])
+  try {
+    // Transient failures (network, rate limit) are retried with backoff right here, so
+    // a blip never reaches the human or the pipeline as a failure.
+    await withRetry(() => exec('gh', ['pr', 'merge', prUrl, '--merge']), {
+      classify: (e) => classifyFailure({ stage: 'merging', error: e }),
+      ...(sleep ? { sleep } : {})
+    })
+  } catch (error) {
+    const failure = classifyFailure({ stage: 'merging', error })
+    failure.attempts = error.attempts ?? 1
+    stage('merging', 'failed', `${failure.code}: ${failure.message}`)
+    recordFailureFn({ ticket: ticketNumber ?? prNumberOf(prUrl), code: failure.code, message: failure.message })
+    if (failure.action === 'reengage' && ticketNumber !== null) {
+      // The PR's own work needs changing (e.g. conflicts main moved past): hand it back to
+      // the ticket with the detail, the same path the gate uses, instead of dead-ending.
+      await reengage(
+        { prUrl, ticketNumber, reasons: ['Regression/quality'],
+          comment: `**Merge: ${failure.code}**\n\n${failure.remediation}\n\nEvidence:\n\`\`\`\n${failure.evidence}\n\`\`\`` },
+        exec
+      )
+      return { merged: false, reengaged: true, code: failure.code, stage: 'merging', action: 'reengage', reason: failure.message }
+    }
+    throw new MergeFailure(failure)
+  }
   stage('merging', 'passed', '')
   stage('rebuilding', 'started', 'triggered if the PR touched dashboard/')
   await rebuild(prUrl, exec)

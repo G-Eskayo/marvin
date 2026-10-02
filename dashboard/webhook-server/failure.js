@@ -1,0 +1,123 @@
+// Structured failures for the approve/merge path.
+//
+// Before: an approve failure reached the dashboard as "Webhook call failed: 500" and
+// reached the pipeline as a raw stderr wall, so neither a human nor an automated
+// consumer could act on it (found 2026-10-02 while chasing "MRs aren't merging").
+// Now every failure carries a stable CODE, the STAGE it happened at, whether it is
+// RETRYABLE, and a next ACTION the pipeline can take without parsing prose:
+//   retry    -- transient; the server already retried with backoff
+//   reengage -- the ticket's work needs changing; sent back to the ticket with detail
+//   escalate -- needs a human (credentials, tooling, branch protection, unknown)
+
+const RULES = [
+  { code: 'GH_AUTH_INVALID', action: 'escalate', retryable: false,
+    test: /bad credentials|http 401|authentication failed|could not read username|requires authentication|token.*(invalid|expired)|invalid.*token/i,
+    remediation: 'GitHub rejected the credential. Fix ~/.claude/.gh-token on the machine running the webhook (the Health tab shows auth:gh per machine).' },
+  { code: 'NOT_MERGEABLE', action: 'reengage', retryable: false,
+    test: /not mergeable|merge conflict|conflicts? must be resolved|cannot be merged/i,
+    remediation: 'The PR conflicts with main. It was sent back to its ticket for rework.' },
+  { code: 'BRANCH_PROTECTION', action: 'escalate', retryable: false,
+    test: /protected branch|required status check|required review|branch protection|gh006|gh013/i,
+    remediation: 'Branch protection blocked the merge. Satisfy the required checks/reviews, or adjust the rule.' },
+  { code: 'RATE_LIMITED', action: 'retry', retryable: true,
+    test: /rate limit|secondary rate|abuse detection/i,
+    remediation: 'GitHub rate limit. Retried automatically with backoff; try again shortly if it persists.' },
+  { code: 'TRANSIENT_NETWORK', action: 'retry', retryable: true,
+    test: /econnreset|etimedout|enotfound|econnrefused|eai_again|socket hang up|network|timed out|http 50[234]|bad gateway|service unavailable|gateway time-?out/i,
+    remediation: 'Transient network or GitHub error. Retried automatically; check connectivity if it persists.' },
+  { code: 'TOOL_MISSING', action: 'escalate', retryable: false,
+    test: /enoent|command not found|no such file or directory.*(gh|git|npm|npx)/i,
+    remediation: "A required tool (gh/git/npm) is missing from the webhook's PATH. Install it or fix the launchd plist PATH." },
+  { code: 'INVALID_REQUEST', action: 'escalate', retryable: false,
+    test: /not a github pr url/i,
+    remediation: 'The request did not contain a valid GitHub PR URL.' }
+]
+
+const EVIDENCE_MAX = 600
+
+function textOf(error) {
+  return [error?.message, error?.stderr, error?.stdout].filter(Boolean).map(String).join('\n')
+}
+
+export function classifyFailure({ stage, error }) {
+  const text = textOf(error)
+  const rule = RULES.find((r) => r.test.test(text))
+  return {
+    code: rule ? rule.code : 'UNKNOWN',
+    stage,
+    action: rule ? rule.action : 'escalate',
+    retryable: rule ? rule.retryable : false,
+    remediation: rule ? rule.remediation : 'Unclassified failure. See the evidence; this needs triage.',
+    message: String(error?.message ?? error).split('\n')[0].slice(0, 300),
+    evidence: text.slice(0, EVIDENCE_MAX)
+  }
+}
+
+// An Error that carries the structured payload so the HTTP layer can return it as JSON
+// while callers/tests that only look at .message still see the code and original text.
+export class MergeFailure extends Error {
+  constructor(payload) {
+    super(`${payload.code} at ${payload.stage}: ${payload.message}`)
+    this.name = 'MergeFailure'
+    this.payload = payload
+  }
+}
+
+const TEST_NAME_PATTERNS = [
+  /^FAILED\s+(\S+)/,            // pytest short summary
+  /^ERROR\s+(\S+)/,             // pytest collection/setup error
+  /^\s*FAIL\s+(.+?)\s*$/,       // vitest
+]
+
+export function summarizeGateFailure(reason) {
+  const text = String(reason ?? '')
+  const isRebase = /^rebase onto main failed/i.test(text)
+  const code = isRebase ? 'REBASE_CONFLICT' : 'GATE_TESTS_FAILED'
+  const body = text.replace(/^[^\n]*:\s*\n+/, '') // drop the "…failed:" header line
+  const lines = body.split('\n')
+
+  const failingTests = []
+  for (const line of lines) {
+    for (const re of TEST_NAME_PATTERNS) {
+      const m = line.match(re)
+      if (m) {
+        failingTests.push(m[1].replace(/\s+-\s+.*$/, ''))
+        break
+      }
+    }
+  }
+  const unique = [...new Set(failingTests)].slice(0, 15)
+  const tail = lines.slice(-25).join('\n')
+
+  const header = `**Merge gate: ${code}** (${isRebase ? 'rebasing onto main' : 'after rebasing onto main'})`
+  const parts = [header]
+  if (unique.length) {
+    parts.push(`Failing tests (${unique.length}):\n${unique.map((t) => `- ${t}`).join('\n')}`)
+  }
+  parts.push(`Last output:\n\`\`\`\n${tail}\n\`\`\``)
+  return { code, failingTests: unique, comment: parts.join('\n\n') }
+}
+
+export async function withRetry(fn, { classify, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), retries = 3, baseMs = 2000 } = {}) {
+  let attempts = 0
+  for (;;) {
+    attempts += 1
+    try {
+      return { value: await fn(), attempts }
+    } catch (error) {
+      error.attempts = attempts
+      if (attempts > retries || !classify(error).retryable) throw error
+      await sleep(baseMs * 2 ** (attempts - 1))
+    }
+  }
+}
+
+// HTTP response for a failed approve. Always 500 with a JSON body that keeps the legacy
+// { merged:false, error } keys (older clients read those) and adds the structured fields.
+export function failureResponse(error) {
+  const payload = error instanceof MergeFailure ? error.payload : classifyFailure({ stage: 'merging', error })
+  return {
+    status: 500,
+    body: { merged: false, error: `${payload.code} at ${payload.stage}: ${payload.message}`, ...payload }
+  }
+}

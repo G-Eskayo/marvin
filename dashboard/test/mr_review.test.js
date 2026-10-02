@@ -227,6 +227,36 @@ describe('approveMr', () => {
       'Webhook call failed: 500'
     )
   })
+
+  // 2026-10-02: "Webhook call failed: 500" hid the real reason, which cost a long hunt.
+  it('surfaces the server\'s structured reason: code, stage, message and what happens next', async () => {
+    const post = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({ merged: false, code: 'GH_AUTH_INVALID', stage: 'merging', message: 'HTTP 401: Bad credentials',
+                           action: 'escalate', remediation: 'Fix ~/.claude/.gh-token on the webhook machine.' })
+    })
+    const err = await approveMr('https://x/71', 'http://localhost:7878/approve', post).catch((e) => e)
+    expect(err.message).toContain('GH_AUTH_INVALID at merging')
+    expect(err.message).toContain('Bad credentials')
+    expect(err.message).toContain('needs you')
+    expect(err.message).toContain('.gh-token')
+    expect(err.payload.code).toBe('GH_AUTH_INVALID')
+  })
+
+  it('says it already retried for a retry-class failure', async () => {
+    const post = vi.fn().mockResolvedValue({
+      ok: false, status: 500,
+      json: async () => ({ merged: false, code: 'TRANSIENT_NETWORK', stage: 'merging', message: 'ETIMEDOUT', action: 'retry', attempts: 4, remediation: 'Check connectivity.' })
+    })
+    const err = await approveMr('https://x/71', 'http://localhost:7878/approve', post).catch((e) => e)
+    expect(err.message).toContain('retried 4')
+  })
+
+  it('falls back to the bare status when the body is not JSON or has no code', async () => {
+    const post = vi.fn().mockResolvedValue({ ok: false, status: 502, json: async () => { throw new Error('not json') } })
+    await expect(approveMr('https://x/71', 'http://localhost:7878/approve', post)).rejects.toThrow('Webhook call failed: 502')
+  })
 })
 
 describe('denyMr', () => {

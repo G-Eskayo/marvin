@@ -8,6 +8,9 @@ import { describe, it, expect, vi } from 'vitest'
 // with positional args throughout this file and recordStageFn is the
 // last of eight.
 vi.mock('../webhook-server/ticket_stages.js', () => ({ recordStage: vi.fn() }))
+// Likewise the approve-failure log (shared with lib/failure_breaker.py): never write the
+// real ~/.claude/logs/pipeline-failures.jsonl from a test.
+vi.mock('../webhook-server/failure_log.js', () => ({ recordFailure: vi.fn() }))
 
 import { execFile, execFileSync } from 'child_process'
 import { promisify } from 'util'
@@ -164,19 +167,22 @@ describe('mergePr', () => {
       'https://github.com/G-Eskayo/marvin/pull/71', exec, rebuild, redispatch, shouldGateMerge, rebaseAndRetestFn, reengage
     )
 
+    // Contract changed 2026-10-02: the feedback sent back to the ticket is now a structured,
+    // parseable comment (code header, failing test names, capped tail), not the raw wall.
     expect(reengage).toHaveBeenCalledWith(
-      {
+      expect.objectContaining({
         prUrl: 'https://github.com/G-Eskayo/marvin/pull/71',
         ticketNumber: '5',
         reasons: ['Regression/quality'],
-        comment: 'Tests failed after rebasing onto main:\n\nboom'
-      },
+        comment: expect.stringContaining('**Merge gate: GATE_TESTS_FAILED**')
+      }),
       exec
     )
     expect(exec).not.toHaveBeenCalledWith('gh', ['pr', 'merge', 'https://github.com/G-Eskayo/marvin/pull/71', '--merge'])
     expect(rebuild).not.toHaveBeenCalled()
     expect(redispatch).not.toHaveBeenCalled()
-    expect(result).toEqual({ merged: false, reengaged: true, reason: 'Tests failed after rebasing onto main:\n\nboom' })
+    expect(result).toMatchObject({ merged: false, reengaged: true, code: 'GATE_TESTS_FAILED', stage: 'gate', action: 'reengage' })
+    expect(result.reason).toContain('boom')
   })
 })
 
@@ -413,5 +419,86 @@ describe('_defaultRunTests', () => {
     const vitestIndex = dashboardCalls.findIndex((c) => c.cmd === 'npx' && c.args[0] === 'vitest')
     expect(installIndex).toBeGreaterThanOrEqual(0)
     expect(vitestIndex).toBeGreaterThan(installIndex)
+  })
+})
+
+
+// ── structured, pipeline-actionable failures (2026-10-02) ───────────────────
+
+import { MergeFailure } from '../webhook-server/failure.js'
+import { recordFailure } from '../webhook-server/failure_log.js'
+import { recordStage } from '../webhook-server/ticket_stages.js'
+
+const PR = 'https://github.com/G-Eskayo/marvin/pull/71'
+const ticketGate = () => vi.fn().mockResolvedValue({ gate: false, headRefName: 'b', body: 'Closes G-Eskayo/marvin#5' })
+const ghMergeFails = (err) => vi.fn(async (cmd, args) => { if (args[0] === 'pr' && args[1] === 'merge') throw err; return { stdout: '', stderr: '' } })
+const noSleep = { sleep: vi.fn().mockResolvedValue(undefined) }
+
+describe('mergePr structured failures', () => {
+  it('throws a MergeFailure carrying code/stage/action for a non-retryable gh failure', async () => {
+    const exec = ghMergeFails(Object.assign(new Error('Command failed'), { stderr: 'HTTP 401: Bad credentials' }))
+    const p = mergePr(PR, exec, noopRebuild, noopRedispatch, ticketGate(), undefined, undefined, undefined, noSleep)
+    await expect(p).rejects.toBeInstanceOf(MergeFailure)
+    await p.catch((e) => {
+      expect(e.payload).toMatchObject({ code: 'GH_AUTH_INVALID', stage: 'merging', action: 'escalate', retryable: false })
+      expect(e.payload.remediation).toContain('.gh-token')
+    })
+  })
+
+  it('records the failure on the ticket timeline and in the shared failure log', async () => {
+    const exec = ghMergeFails(Object.assign(new Error('x'), { stderr: 'HTTP 401: Bad credentials' }))
+    await mergePr(PR, exec, noopRebuild, noopRedispatch, ticketGate(), undefined, undefined, undefined, noSleep).catch(() => {})
+    expect(recordStage).toHaveBeenCalledWith('5', 'merging', 'failed', expect.stringContaining('GH_AUTH_INVALID'))
+    expect(recordFailure).toHaveBeenCalledWith(expect.objectContaining({ ticket: '5', code: 'GH_AUTH_INVALID' }))
+  })
+
+  it('retries a transient failure with backoff and then merges', async () => {
+    let calls = 0
+    const exec = vi.fn(async (cmd, args) => {
+      if (args[0] === 'pr' && args[1] === 'merge') {
+        calls += 1
+        if (calls < 3) throw Object.assign(new Error('x'), { stderr: 'connect ETIMEDOUT' })
+      }
+      return { stdout: '', stderr: '' }
+    })
+    const sleep = vi.fn().mockResolvedValue(undefined)
+    const result = await mergePr(PR, exec, noopRebuild, noopRedispatch, ticketGate(), undefined, undefined, undefined, { sleep })
+    expect(result).toMatchObject({ merged: true })
+    expect(calls).toBe(3)
+    expect(sleep).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports TRANSIENT_NETWORK with the attempt count once the retry budget is spent', async () => {
+    const exec = ghMergeFails(Object.assign(new Error('x'), { stderr: 'connect ETIMEDOUT' }))
+    const p = mergePr(PR, exec, noopRebuild, noopRedispatch, ticketGate(), undefined, undefined, undefined, noSleep)
+    await p.catch((e) => {
+      expect(e.payload).toMatchObject({ code: 'TRANSIENT_NETWORK', action: 'retry', attempts: 4 })
+    })
+    await expect(p).rejects.toBeInstanceOf(MergeFailure)
+  })
+
+  it('sends a not-mergeable PR back to its ticket (reengage) instead of just erroring, when a ticket is linked', async () => {
+    const exec = ghMergeFails(Object.assign(new Error('x'), { stderr: 'Pull request is not mergeable: merge conflict' }))
+    const reengage = vi.fn().mockResolvedValue(undefined)
+    const result = await mergePr(PR, exec, noopRebuild, noopRedispatch, ticketGate(), undefined, reengage, undefined, noSleep)
+    expect(reengage).toHaveBeenCalledWith(
+      expect.objectContaining({ prUrl: PR, ticketNumber: '5', comment: expect.stringContaining('NOT_MERGEABLE') }),
+      exec
+    )
+    expect(result).toMatchObject({ merged: false, reengaged: true, code: 'NOT_MERGEABLE', action: 'reengage' })
+  })
+
+  it('does not redispatch or rebuild when the merge failed', async () => {
+    const exec = ghMergeFails(Object.assign(new Error('x'), { stderr: 'HTTP 401: Bad credentials' }))
+    const rebuild = vi.fn(); const redispatch = vi.fn()
+    await mergePr(PR, exec, rebuild, redispatch, ticketGate(), undefined, undefined, undefined, noSleep).catch(() => {})
+    expect(rebuild).not.toHaveBeenCalled()
+    expect(redispatch).not.toHaveBeenCalled()
+  })
+
+  it('still rejects an invalid URL with the original message, now as a coded failure', async () => {
+    const p = mergePr('not-a-url', vi.fn())
+    await expect(p).rejects.toThrow('Not a GitHub PR URL')
+    await p.catch((e) => expect(e.payload.code).toBe('INVALID_REQUEST'))
   })
 })
