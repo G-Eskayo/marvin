@@ -30,6 +30,7 @@ from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ticket_claim  # noqa: E402
+import sandbox_orchestration  # noqa: E402
 from sandbox_orchestration import WORKTREES_ROOT  # noqa: E402
 
 OUTPUT_PATH = Path.home() / ".claude" / "logs" / "mr-pipeline-sweep.md"
@@ -66,9 +67,15 @@ def _default_list_worktrees() -> list[tuple[Path, str]]:
     return out
 
 
+REPO_PATH = Path.home() / ".agents"
+
+
 def _default_remove_worktree(path: Path, branch: str) -> None:
-    subprocess.run(["git", "worktree", "remove", str(path), "--force"], capture_output=True)
-    subprocess.run(["git", "branch", "-D", branch], capture_output=True)
+    # Preserve anything unique first (same data-loss pattern as _create_worktree:
+    # a stale worktree is not necessarily an empty one).
+    sandbox_orchestration._preserve_prior_attempt(REPO_PATH, path, branch)
+    subprocess.run(["git", "worktree", "remove", str(path), "--force"], cwd=REPO_PATH, capture_output=True)
+    subprocess.run(["git", "branch", "-D", branch], cwd=REPO_PATH, capture_output=True)
 
 
 def _extract_issue_number(branch: str) -> int | None:

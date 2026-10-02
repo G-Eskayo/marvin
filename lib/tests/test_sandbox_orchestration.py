@@ -574,3 +574,39 @@ def test_rescue_ref_is_pushed_to_origin_so_it_survives_the_machine(git_repo):
     remote = subprocess.run(["git", "ls-remote", "origin", "refs/rescue/*"], cwd=git_repo,
                             capture_output=True, text=True).stdout
     assert "refs/rescue/" in remote
+
+
+# ── worktree directory names must not contain '#' ───────────────────────────
+# Worktrees were named pipeline-g-eskayo-marvin#NN. Vite/vitest treat '#' in a
+# filesystem path as a URL fragment (it surfaced as ".../pipeline-g-eskayo-marvin%2332/
+# dashboard/node_modules/..."), so vitest crashed in every pipeline worktree and
+# silently contributed 0 to every ticket's measure -- found 2026-10-01 when
+# measure() started failing loudly (and it explained #41's 544-vs-684 baseline).
+
+def test_worktree_directory_name_has_no_hash_character(git_repo):
+    wt = so._create_worktree(git_repo, "G-Eskayo/marvin#32")
+    assert "#" not in str(wt)
+    assert wt.name == "pipeline-g-eskayo-marvin-32"
+
+
+def test_branch_name_keeps_the_issue_number_so_cleanup_sweep_still_finds_it(git_repo):
+    wt = so._create_worktree(git_repo, "G-Eskayo/marvin#32")
+    branch = subprocess.run(["git", "branch", "--show-current"], cwd=wt,
+                            capture_output=True, text=True).stdout.strip()
+    assert branch == "pipeline/g-eskayo/marvin#32"
+
+
+def test_a_legacy_hash_named_worktree_is_preserved_then_replaced(git_repo):
+    # Worktrees created before the rename sit at the old '#' path on the same branch.
+    legacy = so.WORKTREES_ROOT / "pipeline-g-eskayo-marvin#33"
+    so.WORKTREES_ROOT.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "worktree", "add", "-b", "pipeline/g-eskayo/marvin#33", str(legacy), "origin/main"],
+                   cwd=git_repo, check=True, capture_output=True)
+    (legacy / "unfinished.py").write_text("keep me\n")
+
+    new = so._create_worktree(git_repo, "G-Eskayo/marvin#33")
+
+    assert "#" not in str(new) and new.exists()
+    assert not legacy.exists()
+    [ref] = _rescue_refs(git_repo)
+    assert _show(git_repo, ref, "unfinished.py") == "keep me\n"
