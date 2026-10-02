@@ -64,3 +64,65 @@ describe('formatRunTime', () => {
     expect(formatRunTime(null)).toBe('never')
   })
 })
+
+import { initialData, buildOptions, fieldInputType, groupTemplates, slugify, projectDefaults, countByType } from '../src/lib/portfolio.js'
+
+describe('template form helpers', () => {
+  const page = { fields: [{ name: 'TITLE', type: 'text', required: true }, { name: 'LABEL', type: 'text', default: 'View on GitHub' }, { name: 'BODY_HTML', type: 'html' }] }
+
+  it('initialData seeds each field with its default (or empty)', () => {
+    expect(initialData(page)).toEqual({ TITLE: '', LABEL: 'View on GitHub', BODY_HTML: '' })
+    expect(initialData({})).toEqual({})
+  })
+
+  it('fieldInputType picks a textarea for html and long text, url and text otherwise', () => {
+    expect(fieldInputType({ type: 'html' })).toBe('textarea')
+    expect(fieldInputType({ type: 'url' })).toBe('url')
+    expect(fieldInputType({ type: 'text' })).toBe('text')
+    expect(fieldInputType({})).toBe('text')
+  })
+
+  it('buildOptions turns slot choices into the renderer\'s options shape, dropping empty slots', () => {
+    const choices = { actions: [{ template: 'button-github', data: { REPO_URL: 'https://github.com/G-Eskayo/x' } }], extras: [] }
+    expect(buildOptions(choices)).toEqual({ actions: [{ template: 'button-github', data: { REPO_URL: 'https://github.com/G-Eskayo/x' } }] })
+    expect(buildOptions({})).toEqual({})
+  })
+
+  it('groupTemplates orders pages, then components, then buttons, and omits empty groups', () => {
+    const g = groupTemplates([{ id: 'b', kind: 'button' }, { id: 'p', kind: 'page' }, { id: 'c', kind: 'component' }, { id: 'p2', kind: 'page' }])
+    expect(g.map((x) => [x.kind, x.items.map((i) => i.id)])).toEqual([['page', ['p', 'p2']], ['component', ['c']], ['button', ['b']]])
+    expect(groupTemplates([])).toEqual([])
+  })
+})
+
+describe('new project wizard helpers', () => {
+  it('slugify makes a safe url slug from a title', () => {
+    expect(slugify('Resume Tailor!')).toBe('resume-tailor')
+    expect(slugify('  MITRE ATT&CK Techniques ')).toBe('mitre-att-ck-techniques')
+    expect(slugify('')).toBe('')
+  })
+
+  it('projectDefaults starts every field blank with the first category and no actions', () => {
+    const d = projectDefaults()
+    expect(d).toMatchObject({ title: '', slug: '', category: 'AI & Machine Learning', actions: [] })
+    expect(Object.keys(d)).toEqual(expect.arrayContaining(['subtitle', 'description', 'body_html', 'hero_image_url', 'thumbnail', 'stack_csv']))
+  })
+})
+
+describe('countByType', () => {
+  it('counts pages per type for the inventory header', () => {
+    expect(countByType([{ type: 'project' }, { type: 'project' }, { type: 'hub' }])).toEqual({ project: 2, hub: 1 })
+    expect(countByType(undefined)).toEqual({})
+  })
+})
+
+describe('previewDocument hides WordPress shortcodes', () => {
+  it('removes fusion shortcode tokens so only the real markup shows in a preview', () => {
+    const doc = previewDocument('[fusion_builder_container type="flex"][fusion_text]<p>Hello</p>[/fusion_text][/fusion_builder_container]', '')
+    expect(doc).toContain('<p>Hello</p>')
+    expect(doc).not.toMatch(/\[\/?fusion_/)
+  })
+  it('leaves ordinary square brackets alone', () => {
+    expect(previewDocument('<p>a [b] c</p>', '')).toContain('a [b] c')
+  })
+})

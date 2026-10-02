@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { groupFindingsByRule, parseRulesText, previewDocument, nextComponentName, formatRunTime } from '../lib/portfolio.js'
+import {
+  groupFindingsByRule, parseRulesText, previewDocument, nextComponentName, formatRunTime,
+  initialData, buildOptions, fieldInputType, groupTemplates, slugify, projectDefaults, CATEGORIES, countByType
+} from '../lib/portfolio.js'
 
 // The Portfolio hub (CONTEXT.md "Dashboard app -- Portfolio tab"): the single place that defines how
 // a portfolio Project Page is built -- guide + design rules, the component library, the evaluation
@@ -10,7 +13,9 @@ import { groupFindingsByRule, parseRulesText, previewDocument, nextComponentName
 
 const DEV_SITE = 'http://localhost:8080'
 const SUBTABS = [
-  ['components', 'Components'],
+  ['templates', 'Templates'],
+  ['inventory', 'Site inventory'],
+  ['components', 'Edit templates'],
   ['guide', 'Guide & rules'],
   ['evaluation', 'Evaluation'],
   ['images', 'Images']
@@ -33,7 +38,377 @@ function errText(err) {
   return String(err?.message || err).replace(/^Error invoking remote method '[^']+':\s*(Error:\s*)?/, '')
 }
 
-// ── Components ──────────────────────────────────────────────────────────────
+
+// ── Shared form pieces ──────────────────────────────────────────────────────
+
+function CopyButton({ text, label = 'Copy' }) {
+  const [done, setDone] = useState(false)
+  return (
+    <button
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text || '')
+          setDone(true)
+          setTimeout(() => setDone(false), 1500)
+        } catch {
+          /* clipboard unavailable */
+        }
+      }}
+      className={button}
+    >
+      {done ? 'Copied' : label}
+    </button>
+  )
+}
+
+function FieldInputs({ fields, data, onChange }) {
+  return (
+    <div className="flex flex-col gap-3">
+      {fields.map((f) => (
+        <label key={f.name} className="flex flex-col gap-1">
+          <span className="text-xs text-neutral-400">
+            {f.label || f.name}
+            {f.required && <span className="text-red-400"> *</span>}
+          </span>
+          {fieldInputType(f) === 'textarea' ? (
+            <textarea value={data[f.name] ?? ''} onChange={(e) => onChange({ ...data, [f.name]: e.target.value })} rows={5} spellCheck={false} className={field} />
+          ) : (
+            <input type="text" value={data[f.name] ?? ''} onChange={(e) => onChange({ ...data, [f.name]: e.target.value })} className="rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-xs text-neutral-200 outline-none focus:border-blue-500" />
+          )}
+        </label>
+      ))}
+    </div>
+  )
+}
+
+// One slot (e.g. "Action buttons"): the alternatives a template accepts, each with its own fields.
+function SlotPicker({ slot, spec, templates, value, onChange }) {
+  const [adding, setAdding] = useState('')
+  const byId = Object.fromEntries(templates.map((t) => [t.id, t]))
+  const list = value || []
+  return (
+    <div className="rounded-lg border border-neutral-800 p-3">
+      <div className="mb-2 flex items-center gap-2">
+        <h4 className="text-xs font-medium uppercase tracking-wide text-neutral-400">{spec.label || slot}</h4>
+        <span className="text-[10px] text-neutral-600">optional — leave empty for none</span>
+      </div>
+      {list.map((choice, i) => (
+        <div key={i} className="mb-3 rounded-md border border-neutral-800 bg-neutral-950 p-3">
+          <div className="mb-2 flex items-center">
+            <span className="text-xs font-medium text-white">{byId[choice.template]?.name || choice.template}</span>
+            <button onClick={() => onChange(list.filter((_, j) => j !== i))} className="ml-auto text-xs text-neutral-500 hover:text-red-400">remove</button>
+          </div>
+          <FieldInputs fields={byId[choice.template]?.fields || []} data={choice.data} onChange={(d) => onChange(list.map((c, j) => (j === i ? { ...c, data: d } : c)))} />
+        </div>
+      ))}
+      <div className="flex items-center gap-2">
+        <select value={adding} onChange={(e) => setAdding(e.target.value)} className="rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-xs text-neutral-200">
+          <option value="">Add an alternative…</option>
+          {spec.options.map((id) => (
+            <option key={id} value={id}>{byId[id]?.name || id}</option>
+          ))}
+        </select>
+        <button
+          disabled={!adding}
+          onClick={() => {
+            onChange([...list, { template: adding, data: initialData(byId[adding]) }])
+            setAdding('')
+          }}
+          className={button}
+        >
+          Add
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function Problems({ result }) {
+  if (!result) return null
+  const items = [...(result.missing || []).map((m) => `Missing: ${m}`), ...(result.errors || [])]
+  if (!items.length && !(result.warnings || []).length) return <span className="text-xs text-emerald-400">Ready — valid and complete</span>
+  return (
+    <ul className="text-xs">
+      {items.map((m, i) => <li key={i} className="text-red-400">{m}</li>)}
+      {(result.warnings || []).map((m, i) => <li key={`w${i}`} className="text-amber-400">{m}</li>)}
+    </ul>
+  )
+}
+
+// ── Templates: plug-and-play forms ──────────────────────────────────────────
+
+function TemplateRunner({ template, templates, head }) {
+  const [data, setData] = useState(() => initialData(template))
+  const [choices, setChoices] = useState({})
+  const [result, setResult] = useState(null)
+
+  useEffect(() => {
+    setData(initialData(template))
+    setChoices({})
+  }, [template.id])
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      window.api.portfolio.renderTemplate(template.id, data, buildOptions(choices)).then(setResult).catch((e) => setResult({ ok: false, errors: [errText(e)] }))
+    }, 250)
+    return () => clearTimeout(t)
+  }, [template.id, data, choices])
+
+  return (
+    <div className="grid gap-6 xl:grid-cols-2">
+      <div className="flex flex-col gap-4">
+        <div>
+          <h2 className="text-lg font-medium text-white">{template.name}</h2>
+          <p className="text-xs text-neutral-500">{template.description}</p>
+        </div>
+        <FieldInputs fields={template.fields} data={data} onChange={setData} />
+        {Object.entries(template.slots || {}).map(([slot, spec]) => (
+          <SlotPicker key={slot} slot={slot} spec={spec} templates={templates} value={choices[slot]} onChange={(v) => setChoices({ ...choices, [slot]: v })} />
+        ))}
+      </div>
+      <div className="flex min-w-0 flex-col gap-3">
+        <div className="flex items-center gap-3">
+          <h3 className="text-xs font-medium uppercase tracking-wide text-neutral-500">Result</h3>
+          <CopyButton text={result?.html} label="Copy HTML" />
+        </div>
+        <Problems result={result} />
+        <iframe title="template preview" sandbox="" srcDoc={previewDocument(result?.html || '', head)} className="h-64 w-full rounded-md border border-neutral-800 bg-white" />
+        <textarea readOnly value={result?.html ?? ''} rows={10} spellCheck={false} className={field} />
+      </div>
+    </div>
+  )
+}
+
+function NewProject({ templates, head }) {
+  const [d, setD] = useState(projectDefaults)
+  const [slugTouched, setSlugTouched] = useState(false)
+  const [plan, setPlan] = useState(null)
+  const set = (k, v) => setD((cur) => ({ ...cur, [k]: v, ...(k === 'title' && !slugTouched ? { slug: slugify(v) } : {}) }))
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      window.api.portfolio.planProject(d).then(setPlan).catch((e) => setPlan({ ok: false, errors: [errText(e)] }))
+    }, 300)
+    return () => clearTimeout(t)
+  }, [d])
+
+  const input = 'rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-xs text-neutral-200 outline-none focus:border-blue-500'
+  const row = (label, node) => (
+    <label className="flex flex-col gap-1"><span className="text-xs text-neutral-400">{label}</span>{node}</label>
+  )
+  const actionsSpec = templates.find((t) => t.id === 'project-page')?.slots?.actions
+
+  return (
+    <div className="grid gap-6 xl:grid-cols-2">
+      <div className="flex flex-col gap-3">
+        <div>
+          <h2 className="text-lg font-medium text-white">New project</h2>
+          <p className="text-xs text-neutral-500">One form produces the project page, its card and its manifest entry — nothing is hand-written, so it matches every other page.</p>
+        </div>
+        {row('Title', <input value={d.title} onChange={(e) => set('title', e.target.value)} className={input} />)}
+        {row('Slug (the URL ending)', <input value={d.slug} onChange={(e) => { setSlugTouched(true); set('slug', e.target.value) }} className={input} />)}
+        {row('Category', <select value={d.category} onChange={(e) => set('category', e.target.value)} className={input}>{CATEGORIES.map((c) => <option key={c}>{c}</option>)}</select>)}
+        {row('Subtitle (the pink line)', <input value={d.subtitle} onChange={(e) => set('subtitle', e.target.value)} className={input} />)}
+        {row('Card description (one line)', <input value={d.description} onChange={(e) => set('description', e.target.value)} className={input} />)}
+        {row('Body (HTML paragraphs)', <textarea value={d.body_html} onChange={(e) => set('body_html', e.target.value)} rows={5} className={field} />)}
+        {row('Hero image URL', <input value={d.hero_image_url} onChange={(e) => set('hero_image_url', e.target.value)} className={input} />)}
+        {row('Thumbnail URL', <input value={d.thumbnail} onChange={(e) => set('thumbnail', e.target.value)} className={input} />)}
+        {row('Stack (comma-separated)', <input value={d.stack_csv} onChange={(e) => set('stack_csv', e.target.value)} className={input} />)}
+        {actionsSpec && <SlotPicker slot="actions" spec={actionsSpec} templates={templates} value={d.actions} onChange={(v) => set('actions', v)} />}
+      </div>
+      <div className="flex min-w-0 flex-col gap-4">
+        <Problems result={plan ? { errors: plan.ok ? [] : plan.errors, warnings: plan.warnings } : null} />
+        {plan?.ok && (
+          <>
+            <div>
+              <div className="mb-1 flex items-center gap-3"><h3 className="text-xs font-medium uppercase tracking-wide text-neutral-500">Card (as it appears on hub pages)</h3><CopyButton text={plan.card_html} /></div>
+              <iframe title="card preview" sandbox="" srcDoc={previewDocument(plan.card_html, head)} className="h-56 w-full rounded-md border border-neutral-800 bg-white" />
+            </div>
+            <div>
+              <div className="mb-1 flex items-center gap-3"><h3 className="text-xs font-medium uppercase tracking-wide text-neutral-500">Project page content</h3><CopyButton text={plan.page_html} /></div>
+              <textarea readOnly value={plan.page_html} rows={7} className={field} />
+            </div>
+            <div>
+              <div className="mb-1 flex items-center gap-3"><h3 className="text-xs font-medium uppercase tracking-wide text-neutral-500">Manifest entry</h3><CopyButton text={JSON.stringify(plan.manifest_entry, null, 2)} /></div>
+              <textarea readOnly value={JSON.stringify(plan.manifest_entry, null, 2)} rows={8} className={field} />
+              <p className="mt-1 text-[11px] text-neutral-500">Add this to deploy/other-projects/manifest.json as a reviewed repo change — it lives in deploy/, which this tab never writes.</p>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function Templates() {
+  const [templates, setTemplates] = useState(null)
+  const [selected, setSelected] = useState(null)
+  const [head, setHead] = useState('')
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    window.api.portfolio.templates().then((t) => { setTemplates(t); setSelected((cur) => cur ?? 'project-page') }).catch((e) => setError(errText(e)))
+    window.api.portfolio.previewHead().then(setHead).catch(() => {})
+  }, [])
+
+  if (error) return <p className="text-sm text-red-400">Could not load templates: {error}</p>
+  if (!templates) return <p className="text-sm text-neutral-500">Loading templates…</p>
+  const current = templates.find((t) => t.id === selected)
+
+  return (
+    <div className="grid grid-cols-[230px_1fr] gap-6">
+      <aside className="flex flex-col gap-1">
+        <button onClick={() => setSelected('__new')} className={`mb-2 rounded-md px-3 py-2 text-left text-sm font-medium ${selected === '__new' ? 'bg-blue-600 text-white' : 'border border-blue-700 text-blue-300 hover:bg-blue-950'}`}>
+          + New project
+        </button>
+        {groupTemplates(templates).map((g) => (
+          <div key={g.kind} className="mb-2">
+            <h4 className="px-1 pb-1 text-[10px] font-medium uppercase tracking-wide text-neutral-500">{g.kind === 'page' ? 'Pages' : g.kind === 'component' ? 'Components' : 'Buttons'}</h4>
+            {g.items.map((t) => (
+              <button key={t.id} onClick={() => setSelected(t.id)} className={`block w-full rounded-md border px-3 py-2 text-left text-sm ${selected === t.id ? 'border-blue-500 bg-blue-950 text-white' : 'border-transparent text-neutral-300 hover:border-neutral-700'}`}>
+                {t.name}
+              </button>
+            ))}
+          </div>
+        ))}
+      </aside>
+      <section className="min-w-0">
+        {selected === '__new' ? <NewProject templates={templates} head={head} /> : current ? <TemplateRunner key={current.id} template={current} templates={templates} head={head} /> : null}
+      </section>
+    </div>
+  )
+}
+
+// ── Site inventory: what is ACTUALLY on the website ─────────────────────────
+
+function Shot({ rel, className = '' }) {
+  const [src, setSrc] = useState(null)
+  useEffect(() => {
+    let live = true
+    if (rel) window.api.portfolio.inventoryImage(rel).then((d) => live && setSrc(d)).catch(() => {})
+    return () => { live = false }
+  }, [rel])
+  return src ? <img src={src} alt="" className={className} /> : <div className={`flex items-center justify-center bg-neutral-900 text-[10px] text-neutral-600 ${className}`}>{rel ? 'loading…' : 'no screenshot'}</div>
+}
+
+function ButtonVariants({ variants }) {
+  const [open, setOpen] = useState(null)
+  return (
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      {variants.map((v) => (
+        <div key={v.id} className="rounded-lg border border-neutral-800 p-3">
+          <div className="mb-2 flex items-center gap-2">
+            <span className={`rounded px-1.5 py-0.5 text-[10px] ${v.kind === 'github-link' ? 'bg-purple-950 text-purple-300' : 'bg-blue-950 text-blue-300'}`}>{v.kind === 'github-link' ? 'GitHub link' : 'Button'}</span>
+            <span className="text-xs text-neutral-300">×{v.count} on {v.pages.length} page{v.pages.length === 1 ? '' : 's'}</span>
+          </div>
+          <div className="rounded bg-white p-3"><Shot rel={v.screenshot} className="max-h-16 max-w-full" /></div>
+          <p className="mt-2 truncate text-xs text-neutral-400">{v.texts.join(' · ') || '(no text)'}</p>
+          <p className="truncate font-mono text-[10px] text-neutral-600">{v.classes || '(no class)'} · {v.styles.fontSize} {v.styles.textTransform}</p>
+          <button onClick={() => setOpen(open === v.id ? null : v.id)} className="mt-2 text-xs text-blue-400 hover:text-blue-300">{open === v.id ? 'hide details' : 'details'}</button>
+          {open === v.id && (
+            <div className="mt-2 flex flex-col gap-2">
+              <pre className="max-h-32 overflow-auto rounded border border-neutral-800 bg-neutral-950 p-2 text-[10px] text-neutral-300">{v.example.html}</pre>
+              <p className="text-[10px] text-neutral-500">Used on: {v.pages.slice(0, 12).join(', ')}{v.pages.length > 12 ? ` …+${v.pages.length - 12}` : ''}</p>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function PageTemplates({ pages }) {
+  const [type, setType] = useState('all')
+  const [open, setOpen] = useState(null)
+  const [markup, setMarkup] = useState(null)
+  const counts = countByType(pages)
+  const shown = pages.filter((p) => type === 'all' || p.type === type)
+
+  async function choose(p) {
+    setOpen(p)
+    setMarkup(null)
+    try { setMarkup(await window.api.portfolio.pageMarkup(p.slug)) } catch { setMarkup('') }
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap gap-2">
+        {['all', ...Object.keys(counts)].map((t) => (
+          <button key={t} onClick={() => setType(t)} className={`rounded-md border px-3 py-1 text-xs ${type === t ? 'border-blue-500 bg-blue-950 text-white' : 'border-neutral-800 text-neutral-400 hover:border-neutral-600'}`}>
+            {t}{t !== 'all' ? ` (${counts[t]})` : ` (${pages.length})`}
+          </button>
+        ))}
+      </div>
+      <div className="grid gap-4 sm:grid-cols-3 xl:grid-cols-5">
+        {shown.map((p) => (
+          <button key={p.slug} onClick={() => choose(p)} className={`overflow-hidden rounded-lg border text-left ${open?.slug === p.slug ? 'border-blue-500' : 'border-neutral-800 hover:border-neutral-600'}`}>
+            <div className="h-40 overflow-hidden bg-neutral-900"><Shot rel={p.screenshot} className="w-full" /></div>
+            <div className="p-2">
+              <p className="truncate text-xs font-medium text-white">{p.title}</p>
+              <p className="truncate font-mono text-[10px] text-neutral-500">{p.url}</p>
+              <span className="mt-1 inline-block rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-400">{p.type}</span>
+            </div>
+          </button>
+        ))}
+      </div>
+      {open && (
+        <div className="rounded-lg border border-neutral-800 p-4">
+          <div className="mb-2 flex items-center gap-3">
+            <h3 className="text-sm font-medium text-white">{open.title} <span className="font-mono text-xs text-neutral-500">{open.url}</span></h3>
+            <CopyButton text={markup || ''} label="Copy markup" />
+            <span className="text-[11px] text-neutral-500">saved as a reference template: templates/reference/{open.slug}.html</span>
+          </div>
+          {markup === null ? <p className="text-xs text-neutral-500">Loading…</p> : markup.trim() ? (
+            <pre className="max-h-96 overflow-auto rounded border border-neutral-800 bg-neutral-950 p-3 text-[11px] text-neutral-300">{markup}</pre>
+          ) : <p className="text-xs text-neutral-500">This page has no content of its own (it is only a navigation parent).</p>}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function Inventory() {
+  const [inv, setInv] = useState(undefined)
+  const [view, setView] = useState('buttons')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  useEffect(() => { window.api.portfolio.inventory().then(setInv).catch((e) => setError(errText(e))) }, [])
+
+  async function refresh() {
+    setBusy(true); setError(null)
+    try { setInv(await window.api.portfolio.refreshInventory()) } catch (e) { setError(errText(e)) } finally { setBusy(false) }
+  }
+
+  const s = inv?.summary
+  return (
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-wrap items-center gap-3">
+        <h2 className="text-lg font-medium text-white">What is actually on the website</h2>
+        <button onClick={refresh} disabled={busy} className={primary}>{busy ? 'Crawling the dev site (about a minute)…' : 'Refresh from dev site'}</button>
+        <span className="text-xs text-neutral-500">crawled: {formatRunTime(inv?.generated_at)}</span>
+        {error && <span className="text-xs text-red-400">{error}</span>}
+      </div>
+      {inv === undefined && <p className="text-sm text-neutral-500">Loading…</p>}
+      {inv === null && <p className="text-sm text-neutral-400">Nothing crawled yet. Start the dev site, then refresh.</p>}
+      {s && (
+        <>
+          <p className="text-xs text-neutral-500">
+            {s.pages} pages ({Object.entries(s.pages_by_type).map(([t, n]) => `${n} ${t}`).join(', ')}) · {s.button_variants} button look{s.button_variants === 1 ? '' : 's'} + {s.github_link_variants} GitHub-link looks across {s.button_instances} instances
+          </p>
+          <div className="flex gap-2">
+            {[['buttons', `Buttons & links (${inv.buttons.length})`], ['pages', `Page templates (${inv.pages.length})`]].map(([id, label]) => (
+              <button key={id} onClick={() => setView(id)} className={`rounded-md border px-3 py-1.5 text-xs ${view === id ? 'border-blue-500 bg-blue-950 text-white' : 'border-neutral-800 text-neutral-400 hover:border-neutral-600'}`}>{label}</button>
+            ))}
+          </div>
+          {view === 'buttons' ? <ButtonVariants variants={inv.buttons} /> : <PageTemplates pages={inv.pages} />}
+        </>
+      )}
+    </div>
+  )
+}
+
+// ── Edit templates (the raw component files) ────────────────────────────────
 
 function Components() {
   const [list, setList] = useState(null)
@@ -407,7 +782,7 @@ function Images() {
 // ── Hub ─────────────────────────────────────────────────────────────────────
 
 export default function PortfolioHub() {
-  const [tab, setTab] = useState('components')
+  const [tab, setTab] = useState('templates')
   return (
     <div className="flex h-full flex-col">
       <nav className="flex items-center gap-1 border-b border-neutral-800 px-6 pt-3">
@@ -423,7 +798,7 @@ export default function PortfolioHub() {
         <span className="ml-auto pb-2 text-[11px] text-neutral-600">dev site only · nothing here touches production</span>
       </nav>
       <div className="flex-1 overflow-auto p-6">
-        {tab === 'components' ? <Components /> : tab === 'guide' ? <GuideAndRules /> : tab === 'evaluation' ? <Evaluation /> : <Images />}
+        {tab === 'templates' ? <Templates /> : tab === 'inventory' ? <Inventory /> : tab === 'components' ? <Components /> : tab === 'guide' ? <GuideAndRules /> : tab === 'evaluation' ? <Evaluation /> : <Images />}
       </div>
     </div>
   )

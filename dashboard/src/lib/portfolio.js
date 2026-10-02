@@ -29,6 +29,9 @@ export function parseRulesText(text) {
 // A component previews inside a sandboxed iframe using the REAL dev site's stylesheets (the
 // head comes from the main process), so a button looks exactly as it will on a page.
 export function previewDocument(html, head) {
+  // Page templates are WordPress/Avada shortcodes that the server expands; in a preview only the real markup
+  // inside them should show, not the tokens.
+  html = String(html || '').replace(/\[\/?fusion_[a-z_]+[^\]]*\]/g, '')
   return `<!doctype html><html><head><meta charset="utf-8">${head || ''}</head><body style="margin:0;padding:16px;background:#fff"><div style="max-width:340px">${html}</div></body></html>`
 }
 
@@ -44,4 +47,41 @@ export function formatRunTime(iso) {
   if (!iso) return 'never'
   const d = new Date(iso)
   return Number.isNaN(d.getTime()) ? 'unknown' : d.toLocaleString()
+}
+
+// ── template forms (Templates tab) ──────────────────────────────────────────
+
+export const initialData = (template) => Object.fromEntries((template?.fields || []).map((f) => [f.name, f.default ?? '']))
+
+export const fieldInputType = (field) => (field?.type === 'html' ? 'textarea' : field?.type === 'url' ? 'url' : 'text')
+
+export function buildOptions(choices) {
+  const out = {}
+  for (const [slot, list] of Object.entries(choices || {})) if (list && list.length) out[slot] = list
+  return out
+}
+
+const KIND_ORDER = ['page', 'component', 'button']
+export function groupTemplates(list) {
+  return KIND_ORDER.map((kind) => ({ kind, items: (list || []).filter((t) => t.kind === kind) })).filter((g) => g.items.length)
+}
+
+export const slugify = (title) =>
+  String(title || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60)
+
+export const CATEGORIES = ['AI & Machine Learning', 'Cybersecurity', 'Software Engineering']
+
+export const projectDefaults = () => ({
+  title: '', slug: '', category: CATEGORIES[0], subtitle: '', description: '', body_html: '',
+  hero_image_url: '', thumbnail: '', stack_csv: '', actions: []
+})
+
+export function countByType(pages) {
+  const out = {}
+  for (const p of pages || []) out[p.type] = (out[p.type] || 0) + 1
+  return out
 }

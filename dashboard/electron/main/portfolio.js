@@ -63,6 +63,10 @@ export function createPortfolio({
   const python = path.join(agentsDir, 'venv', 'bin', 'python')
   const evalScript = path.join(agentsDir, 'lib', 'portfolio_eval.py')
   const imageScript = path.join(agentsDir, 'lib', 'portfolio_imagegen.py')
+  const inventoryScript = path.join(agentsDir, 'lib', 'portfolio_inventory.py')
+  const templatesScript = path.join(agentsDir, 'lib', 'portfolio_templates.py')
+  const inventoryDir = path.join(dataDir, 'inventory')
+  const referenceDir = path.join(templates, 'reference')
 
   async function listComponents() {
     let entries
@@ -213,5 +217,58 @@ export function createPortfolio({
     }
   }
 
-  return { imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage }
+  // ── site inventory: what is ACTUALLY on the website (crawled by lib/portfolio_inventory.py) ──
+  const inventory = () => readJson(path.join(inventoryDir, 'inventory.json'), null)
+
+  // A screenshot from the inventory as a data URL. Relative path only, confined to the inventory dir.
+  async function inventoryImage(rel) {
+    const abs = path.resolve(inventoryDir, String(rel))
+    if (typeof rel !== 'string' || path.isAbsolute(rel) || !abs.startsWith(path.resolve(inventoryDir) + path.sep)) {
+      throw new Error(`Invalid inventory path: ${JSON.stringify(rel)}`)
+    }
+    try {
+      return 'data:image/png;base64,' + (await fsp.readFile(abs)).toString('base64')
+    } catch {
+      return null
+    }
+  }
+
+  async function pageMarkup(slug) {
+    if (typeof slug !== 'string' || !/^[a-z0-9][a-z0-9-]*$/.test(slug)) throw new Error(`Invalid page: ${JSON.stringify(slug)}`)
+    const text = await readText(path.join(inventoryDir, 'raw', `${slug}.html`), null)
+    return text
+  }
+
+  async function refreshInventory() {
+    await exec(python, [inventoryScript], { maxBuffer: 10 * 1024 * 1024, timeout: 10 * 60 * 1000 })
+    // keep the reference templates (one per existing page) in step with what was just crawled
+    await exec(python, ['-c', `import sys; sys.path.insert(0, ${JSON.stringify(path.join(agentsDir, 'lib'))}); import portfolio_templates as t; from pathlib import Path; t.export_reference(Path(${JSON.stringify(inventoryDir)}), Path(${JSON.stringify(templates)}))`], { maxBuffer: 1024 * 1024 })
+    return inventory()
+  }
+
+  // ── templates: rendering is the Python renderer's job (one implementation, fully tested) ──
+  const TEMPLATE_ID = /^[a-z0-9][a-z0-9-]*$/
+
+  async function runTemplates(args) {
+    const { stdout } = await exec(python, [templatesScript, ...args], { maxBuffer: 5 * 1024 * 1024 })
+    return JSON.parse(stdout)
+  }
+
+  const listTemplates = () => runTemplates(['list'])
+
+  async function renderTemplate(id, data, options) {
+    if (typeof id !== 'string' || !TEMPLATE_ID.test(id)) throw new Error(`Invalid template id: ${JSON.stringify(id)}`)
+    return runTemplates(['render', id, '--data', JSON.stringify(data || {}), '--options', JSON.stringify(options || {})])
+  }
+
+  const planProject = (data) => runTemplates(['plan', '--data', JSON.stringify(data || {})])
+
+  const listReference = async () => (await readJson(path.join(referenceDir, 'index.json'), [])) || []
+
+  async function referenceMarkup(slug) {
+    if (typeof slug !== 'string' || !/^[a-z0-9][a-z0-9-]*$/.test(slug)) throw new Error(`Invalid page: ${JSON.stringify(slug)}`)
+    return readText(path.join(referenceDir, `${slug}.html`), null)
+  }
+
+  return { inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage }
 }
