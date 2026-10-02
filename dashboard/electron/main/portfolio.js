@@ -63,6 +63,7 @@ export function createPortfolio({
   const python = path.join(agentsDir, 'venv', 'bin', 'python')
   const evalScript = path.join(agentsDir, 'lib', 'portfolio_eval.py')
   const imageScript = path.join(agentsDir, 'lib', 'portfolio_imagegen.py')
+  const applyScript = path.join(agentsDir, 'lib', 'portfolio_apply.py')
   const inventoryScript = path.join(agentsDir, 'lib', 'portfolio_inventory.py')
   const templatesScript = path.join(agentsDir, 'lib', 'portfolio_templates.py')
   const inventoryDir = path.join(dataDir, 'inventory')
@@ -222,6 +223,14 @@ export function createPortfolio({
     return runImages([slug, '--choose', '--motif', motif, '--salt', String(salt), ...inspireArgs(entry)])
   }
 
+  // Put the images that are in use onto the DEV site (thumbnails, manifest, hub + All Projects pages). Slow (it
+  // regenerates pages through the dev site), and it edits deploy/other-projects/manifest.json in the repo: a change
+  // for the person to review and commit -- this never pushes anything.
+  async function applyImages() {
+    const { stdout } = await exec(python, [applyScript], { maxBuffer: 5 * 1024 * 1024, timeout: 10 * 60 * 1000 })
+    return JSON.parse(stdout.trim().split('\n').pop())
+  }
+
   async function deleteImageVariant(slug, motif, salt) {
     await knownProject(slug)
     if (typeof motif !== 'string' || !MOTIF_RE.test(motif)) throw new Error(`Invalid motif: ${JSON.stringify(motif)}`)
@@ -372,5 +381,5 @@ export function createPortfolio({
     return readText(path.join(referenceDir, `${slug}.html`), null)
   }
 
-  return { chrome, inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, templateSource, specimen, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage, imageMotifs, imageVariants, newImageVariant, chooseImageVariant, deleteImageVariant, variantPreview }
+  return { chrome, inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, templateSource, specimen, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage, imageMotifs, imageVariants, newImageVariant, chooseImageVariant, applyImages, deleteImageVariant, variantPreview }
 }
