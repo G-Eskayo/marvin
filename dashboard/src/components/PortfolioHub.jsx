@@ -568,9 +568,24 @@ function Evaluation() {
 
 // ── Images ──────────────────────────────────────────────────────────────────
 
+// Full-size view of an image: Esc (or a click outside the picture) closes it.
+function Lightbox({ src, caption, onClose }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+  return (
+    <div role="dialog" aria-label="Full-size image" onClick={onClose} className="fixed inset-0 z-50 flex cursor-zoom-out flex-col items-center justify-center gap-3 bg-black/85 p-6">
+      <img src={src} alt={caption || ''} onClick={(e) => e.stopPropagation()} className="max-h-[85vh] max-w-full cursor-default rounded shadow-2xl" />
+      <p className="text-xs text-neutral-300">{caption ? `${caption} · ` : ''}press Esc to close</p>
+    </div>
+  )
+}
+
 // One generated variant: its picture and a button to put it in use. Every image ever generated stays here, so a
 // liked one is never lost to a re-roll.
-function VariantTile({ slug, v, onChoose, busy }) {
+function VariantTile({ slug, v, onChoose, onDelete, onZoom, busy }) {
   const [src, setSrc] = useState(null)
   useEffect(() => {
     let live = true
@@ -579,12 +594,15 @@ function VariantTile({ slug, v, onChoose, busy }) {
   }, [slug, v.motif, v.salt])
   return (
     <div className={`flex flex-col gap-1 rounded border p-1 ${v.chosen ? 'border-emerald-600' : 'border-neutral-800'}`}>
-      {src ? <img src={src} alt="" className="h-16 w-full rounded object-cover" /> : <div className="h-16 rounded bg-neutral-900" />}
+      {src ? <img src={src} alt="" onClick={() => onZoom(src, `${v.motif} #${v.salt}`)} className="h-16 w-full cursor-zoom-in rounded object-cover" /> : <div className="h-16 rounded bg-neutral-900" />}
       <div className="flex items-center gap-1">
         <span className="truncate text-[10px] text-neutral-400">{v.motif} #{v.salt}</span>
         {v.chosen
           ? <span className="ml-auto rounded bg-emerald-950 px-1.5 py-0.5 text-[10px] text-emerald-300">in use</span>
-          : <button disabled={busy} onClick={() => onChoose(v)} className="ml-auto text-[10px] text-blue-400 hover:text-blue-300 disabled:opacity-50">use this</button>}
+          : <>
+              <button disabled={busy} onClick={() => onChoose(v)} className="ml-auto text-[10px] text-blue-400 hover:text-blue-300 disabled:opacity-50">use this</button>
+              <button disabled={busy} onClick={() => onDelete(v)} title="Delete this image" className="text-[10px] text-neutral-500 hover:text-red-400 disabled:opacity-50">delete</button>
+            </>}
       </div>
     </div>
   )
@@ -598,6 +616,7 @@ function ImageCard({ item, motifs, onGenerate }) {
   const [open, setOpen] = useState(false)
   const [variants, setVariants] = useState(null)
   const [theme, setTheme] = useState('default')
+  const [zoom, setZoom] = useState(null)
 
   const loadVariants = useCallback(() => window.api.portfolio.imageVariants(item.slug).then(setVariants).catch((e) => setErr(errText(e))), [item.slug])
 
@@ -644,8 +663,16 @@ function ImageCard({ item, motifs, onGenerate }) {
     await loadVariants()
   })
 
+  const remove = (v) => run(async () => {
+    await window.api.portfolio.deleteImageVariant(item.slug, v.motif, v.salt)
+    await loadVariants()
+  })
+
+  const closeZoom = useCallback(() => setZoom(null), [])
+
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-neutral-800 p-3">
+      {zoom && <Lightbox src={zoom.src} caption={zoom.caption} onClose={closeZoom} />}
       <div className="flex items-center gap-2">
         <h3 className="truncate text-sm font-medium text-white">{item.title}</h3>
         {item.sharedWith.length > 0 && (
@@ -657,11 +684,11 @@ function ImageCard({ item, motifs, onGenerate }) {
       <div className="grid grid-cols-2 gap-2">
         <div>
           <p className="mb-1 text-[10px] uppercase tracking-wide text-neutral-500">On the site now</p>
-          <img src={`${DEV_SITE}${item.thumbnail}`} alt="" className="h-20 w-full rounded border border-neutral-800 object-cover" />
+          <img src={`${DEV_SITE}${item.thumbnail}`} alt="" onClick={() => setZoom({ src: `${DEV_SITE}${item.thumbnail}`, caption: `${item.title} · on the site now` })} className="h-20 w-full cursor-zoom-in rounded border border-neutral-800 object-cover" />
         </div>
         <div>
           <p className="mb-1 text-[10px] uppercase tracking-wide text-neutral-500">Chosen{item.generated.style ? ` · ${item.generated.style}` : ''}</p>
-          {preview ? <img src={preview} alt="" className="h-20 w-full rounded border border-neutral-800 object-cover" /> : <div className="flex h-20 items-center justify-center rounded border border-dashed border-neutral-800 text-[10px] text-neutral-600">not generated</div>}
+          {preview ? <img src={preview} alt="" onClick={() => setZoom({ src: preview, caption: `${item.title} · chosen` })} className="h-20 w-full cursor-zoom-in rounded border border-neutral-800 object-cover" /> : <div className="flex h-20 items-center justify-center rounded border border-dashed border-neutral-800 text-[10px] text-neutral-600">not generated</div>}
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-2">
@@ -683,7 +710,7 @@ function ImageCard({ item, motifs, onGenerate }) {
             <p className="text-xs text-neutral-500">Nothing generated yet.</p>
           ) : (
             <div className="grid grid-cols-3 gap-2">
-              {variants.variants.map((v) => <VariantTile key={`${v.motif}-${v.salt}`} slug={item.slug} v={v} onChoose={choose} busy={busy} />)}
+              {variants.variants.map((v) => <VariantTile key={`${v.motif}-${v.salt}`} slug={item.slug} v={v} onChoose={choose} onDelete={remove} onZoom={(src, caption) => setZoom({ src, caption: `${item.title} · ${caption}` })} busy={busy} />)}
             </div>
           )}
           <p className="text-[10px] text-neutral-600">Every image you generate is kept. Pick any as the one in use; the choice stays until you pick another.</p>

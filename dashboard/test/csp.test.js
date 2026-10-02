@@ -67,3 +67,19 @@ describe('reference previews are inert', () => {
     expect(src).not.toMatch(/sandbox="allow-same-origin allow-scripts"/)   // the frame itself must never run scripts
   })
 })
+
+describe('image lightbox and delete', () => {
+  const src = () => _read(new URL('../src/components/PortfolioHub.jsx', import.meta.url), 'utf8')
+  it('closes on Escape and on a click outside the picture', () => {
+    expect(src()).toMatch(/e\.key === 'Escape'/)
+    expect(src()).toMatch(/onClick=\{onClose\}/)
+    expect(src()).toMatch(/stopPropagation/)
+  })
+  it('every image in the Images tab can be opened full size, and variants can be deleted but not the one in use', () => {
+    expect(src()).toMatch(/setZoom\(\{ src: preview/)
+    expect(src()).toMatch(/onZoom\(src,/)
+    expect(src()).toMatch(/deleteImageVariant/)
+    // the delete control sits in the not-chosen branch of the tile
+    expect(src()).toMatch(/v\.chosen\s*\?[\s\S]*?in use[\s\S]*?:\s*<>[\s\S]*?delete/)
+  })
+})

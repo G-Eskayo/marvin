@@ -316,3 +316,29 @@ def test_motif_argument_parsing():
     with pytest.raises(ValueError):
         ig._motif_arg("nonsense")
     assert "pattern" in ig.motif_choices() and "network" in ig.motif_choices()
+
+
+def test_deleting_a_variant_removes_it_and_is_never_regenerated_by_generate_another(tmp_path):
+    p = _paths(tmp_path)
+    for n in (0, 1):
+        ig.make_variant("mancala", "mancala", n, None, p["images_dir"], SMALL)
+    out = ig.delete_variant("mancala", "mancala", 1, **p)
+    assert out["deleted"] is True
+    assert not ig.variant_file("mancala", "mancala", 1, p["images_dir"]).exists()
+    # without the rejected memory this would return 1 again -- the very image that was just thrown away
+    assert ig.next_variant_salt("mancala", "mancala", p["images_dir"]) == 2
+
+
+def test_the_image_in_use_cannot_be_deleted(tmp_path):
+    import pytest
+    p = _paths(tmp_path)
+    ig.choose_variant("mancala", "mancala", 0, None, size=SMALL, **p)
+    with pytest.raises(ValueError, match="in use"):
+        ig.delete_variant("mancala", "mancala", 0, **p)
+    assert ig.variant_file("mancala", "mancala", 0, p["images_dir"]).exists()
+
+
+def test_deleting_something_that_does_not_exist_is_an_error(tmp_path):
+    import pytest
+    with pytest.raises(ValueError, match="no such image"):
+        ig.delete_variant("mancala", "mancala", 7, **_paths(tmp_path))

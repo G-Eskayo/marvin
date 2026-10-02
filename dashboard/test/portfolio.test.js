@@ -406,3 +406,21 @@ describe('image variants (keep what was generated, choose what is used)', () => 
     await expect(p.variantPreview('../etc', 'mancala', 0)).rejects.toThrow(/unknown project/i)
   })
 })
+
+describe('deleting an image variant', () => {
+  beforeEach(() => {
+    write('deploy/other-projects/manifest.json', JSON.stringify([{ title: 'Mancala', url: '/ai-projects/mancala/', thumbnail: '/u/m.jpg' }]))
+  })
+  it('asks the generator to delete, validating the project, theme and number', async () => {
+    exec.mockResolvedValue({ stdout: JSON.stringify({ deleted: true }), stderr: '' })
+    await p.deleteImageVariant('mancala', 'tree', 3)
+    expect(exec.mock.calls[0][1]).toEqual(expect.arrayContaining(['mancala', '--delete', '--motif', 'tree', '--salt', '3']))
+    await expect(p.deleteImageVariant('nope', 'tree', 3)).rejects.toThrow(/unknown project/i)
+    await expect(p.deleteImageVariant('mancala', '../x', 3)).rejects.toThrow(/invalid motif/i)
+    await expect(p.deleteImageVariant('mancala', 'tree', -2)).rejects.toThrow(/invalid variant number/i)
+  })
+  it('surfaces the generator\'s own reason when it refuses (the image in use)', async () => {
+    exec.mockRejectedValue(Object.assign(new Error('Command failed'), { stdout: JSON.stringify({ error: 'that image is the one in use; choose another first' }) }))
+    await expect(p.deleteImageVariant('mancala', 'tree', 0)).rejects.toThrow(/one in use/)
+  })
+})
