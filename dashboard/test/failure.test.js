@@ -41,6 +41,21 @@ describe('classifyFailure', () => {
     expect(f.code).toBe('GH_AUTH_INVALID')
   })
 
+  it('uses the first meaningful stderr line as the message, not execFile\'s "Command failed:" boilerplate', () => {
+    const e = err('Command failed: gh pr merge https://github.com/o/r/pull/9 --merge\nGraphQL: Could not resolve to a PullRequest', {
+      stderr: 'GraphQL: Could not resolve to a PullRequest with the number of 9. (repository.pullRequest)\n'
+    })
+    const f = classifyFailure({ stage: 'merging', error: e })
+    expect(f.message).toBe('GraphQL: Could not resolve to a PullRequest with the number of 9. (repository.pullRequest)')
+  })
+
+  it('gives a PR that cannot be found its own code', () => {
+    const f = classifyFailure({ stage: 'merging', error: err('x', { stderr: 'GraphQL: Could not resolve to a PullRequest with the number of 9.' }) })
+    expect(f.code).toBe('PR_NOT_FOUND')
+    expect(f.action).toBe('escalate')
+    expect(f.remediation).toMatch(/closed|deleted|URL/i)
+  })
+
   it('keeps a short excerpt of the original text as evidence, capped', () => {
     const f = classifyFailure({ stage: 'merging', error: err('x'.repeat(5000)) })
     expect(f.evidence.length).toBeLessThanOrEqual(600)
