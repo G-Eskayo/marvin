@@ -510,3 +510,67 @@ def test_default_executor_prompt_tells_it_to_stay_in_its_worktree_and_import_rel
 
     assert "current working directory" in exec_prompt
     assert "Path.home()" in exec_prompt and "__file__" in exec_prompt
+
+
+# ── a re-dispatch must never destroy a previous attempt's unique work ───────
+# _create_worktree force-removed any existing worktree AND branch, its docstring
+# calling that "safe to discard" because a re-dispatch only happens once the
+# ticket "never got far enough to push anything". False: found 2026-10-01 with
+# five worktrees holding real unmerged work (uncommitted skills/, a partial Files
+# tab, committed bench tests...) and #41's own first attempt lost the same way.
+# Anything the old attempt produced must survive under refs/rescue/*.
+
+def _rescue_refs(repo):
+    out = subprocess.run(["git", "for-each-ref", "--format=%(refname)", "refs/rescue/"],
+                         cwd=repo, capture_output=True, text=True, check=True).stdout
+    return [r for r in out.splitlines() if r]
+
+
+def _show(repo, ref, path):
+    return subprocess.run(["git", "show", f"{ref}:{path}"], cwd=repo, capture_output=True, text=True).stdout
+
+
+def test_redispatch_preserves_uncommitted_work_under_a_rescue_ref(git_repo):
+    wt = so._create_worktree(git_repo, "G-Eskayo/marvin#7")
+    (wt / "new_feature.py").write_text("print('half done')\n")       # untracked
+    (wt / "README.md").write_text("edited by the executor\n")          # tracked, modified
+
+    wt2 = so._create_worktree(git_repo, "G-Eskayo/marvin#7")            # re-dispatch
+
+    refs = _rescue_refs(git_repo)
+    assert len(refs) == 1 and "pipeline/g-eskayo/marvin#7" in refs[0]
+    assert _show(git_repo, refs[0], "new_feature.py") == "print('half done')\n"
+    assert _show(git_repo, refs[0], "README.md") == "edited by the executor\n"
+    # ...and the fresh attempt still starts clean from origin/main
+    assert not (wt2 / "new_feature.py").exists()
+    assert (wt2 / "README.md").read_text() == "hello\n"
+
+
+def test_redispatch_preserves_committed_but_unpushed_work(git_repo):
+    wt = so._create_worktree(git_repo, "G-Eskayo/marvin#8")
+    (wt / "impl.py").write_text("x = 1\n")
+    subprocess.run(["git", "add", "."], cwd=wt, check=True)
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "Implement #8"],
+                   cwd=wt, check=True)
+
+    so._create_worktree(git_repo, "G-Eskayo/marvin#8")
+
+    [ref] = _rescue_refs(git_repo)
+    assert _show(git_repo, ref, "impl.py") == "x = 1\n"
+
+
+def test_redispatch_of_an_untouched_worktree_leaves_no_rescue_noise(git_repo):
+    so._create_worktree(git_repo, "G-Eskayo/marvin#9")
+    so._create_worktree(git_repo, "G-Eskayo/marvin#9")
+    assert _rescue_refs(git_repo) == []
+
+
+def test_rescue_ref_is_pushed_to_origin_so_it_survives_the_machine(git_repo):
+    wt = so._create_worktree(git_repo, "G-Eskayo/marvin#10")
+    (wt / "work.py").write_text("y = 2\n")
+
+    so._create_worktree(git_repo, "G-Eskayo/marvin#10")
+
+    remote = subprocess.run(["git", "ls-remote", "origin", "refs/rescue/*"], cwd=git_repo,
+                            capture_output=True, text=True).stdout
+    assert "refs/rescue/" in remote
