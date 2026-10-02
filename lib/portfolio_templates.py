@@ -53,8 +53,8 @@ def _result(html=None, ok=False, missing=None, errors=None, warnings=None, used=
             "warnings": warnings or [], "used_options": used or []}
 
 
-def render(template_id: str, data: dict | None = None, options: dict | None = None, root: Path = ROOT) -> dict:
-    data, options = dict(data or {}), dict(options or {})
+def render(template_id: str, field_values: dict | None = None, options: dict | None = None, root: Path = ROOT) -> dict:
+    field_values, options = dict(field_values or {}), dict(options or {})
     try:
         manifest = _load_manifest(root)
     except (OSError, ValueError) as exc:
@@ -71,7 +71,7 @@ def render(template_id: str, data: dict | None = None, options: dict | None = No
     missing, errors, warnings = [], [], []
     values: dict[str, str] = {}
     for name, spec in fields.items():
-        raw = data.get(name)
+        raw = field_values.get(name)
         value = "" if raw is None else str(raw)
         if not value.strip():
             if spec.get("required"):
@@ -83,7 +83,7 @@ def render(template_id: str, data: dict | None = None, options: dict | None = No
             if spec.get("pattern") and not re.search(spec["pattern"], value):
                 errors.append(f"{name}: does not match the required pattern")
         values[name] = value if spec.get("type") == "html" else _html.escape(value, quote=True)
-    warnings += [f"unknown field ignored: {k}" for k in data if k not in fields]
+    warnings += [f"unknown field ignored: {k}" for k in field_values if k not in fields]
 
     used: list[str] = []
     slots = entry.get("slots", {})
@@ -130,6 +130,15 @@ def extract_page_content(raw: str) -> str:
     return raw
 
 
+_SHORTCODE = re.compile(r"\[/?[a-zA-Z_][^\]]*\]")
+
+
+def is_shortcode_only(text: str) -> bool:
+    """True when a page's raw markup is nothing but shortcodes (the WP-Coder generations store
+    [wp_wow_coder id="5"] and nothing else; the real markup lives in the database)."""
+    return len(_SHORTCODE.sub("", text or "").strip()) < 20
+
+
 def export_reference(inventory_dir: Path, templates_root: Path = ROOT) -> list[dict]:
     """Write one reference template per crawled page (templates/reference/<slug>.html) plus an index.
     Pages whose raw markup could not be read are skipped, never faked."""
@@ -141,40 +150,44 @@ def export_reference(inventory_dir: Path, templates_root: Path = ROOT) -> list[d
         if not p.get("raw") or p["slug"] in seen:
             continue
         seen.add(p["slug"])
-        content = extract_page_content((inventory_dir / p["raw"]).read_text())
+        raw = extract_page_content((inventory_dir / p["raw"]).read_text())
+        source, content = "raw", raw
+        # A shortcode-only page (legacy WP-Coder) tells nobody anything as a reference: use what visitors actually get.
+        if is_shortcode_only(raw) and p.get("rendered") and (inventory_dir / p["rendered"]).exists():
+            source, content = "rendered", (inventory_dir / p["rendered"]).read_text()
         (out / f"{p['slug']}.html").write_text(content)
         # a page that is only a navigation parent (e.g. /education/) has genuinely empty content: listed, flagged, not faked
         index.append({"slug": p["slug"], "url": p["url"], "title": p["title"], "type": p["type"],
-                      "file": f"reference/{p['slug']}.html", "empty": not content.strip()})
+                      "file": f"reference/{p['slug']}.html", "source": source, "empty": not content.strip() or (source == "raw" and is_shortcode_only(content))})
     (out / "index.json").write_text(json.dumps(index, indent=2) + "\n")
     return index
 
 
 # ── plug-and-play: a whole new project from one data set ────────────────────
 
-def plan_new_project(data: dict, root: Path = ROOT) -> dict:
+def plan_new_project(project: dict, root: Path = ROOT) -> dict:
     """Page content, card markup and the manifest entry for a new project -- deterministic, no writes.
     Applying the manifest entry (it lives in deploy/) stays a reviewed repo change."""
     need = ["title", "slug", "category", "subtitle", "description", "body_html", "hero_image_url", "thumbnail"]
-    errors = [f"missing {k}" for k in need if not str(data.get(k, "")).strip()]
-    if data.get("category") and data["category"] not in CATEGORY_PREFIX:
+    errors = [f"missing {k}" for k in need if not str(project.get(k, "")).strip()]
+    if project.get("category") and project["category"] not in CATEGORY_PREFIX:
         errors.append(f"category must be one of {sorted(CATEGORY_PREFIX)}")
-    if data.get("slug") and not re.fullmatch(r"[a-z0-9][a-z0-9-]*", data["slug"]):
+    if project.get("slug") and not re.fullmatch(r"[a-z0-9][a-z0-9-]*", project["slug"]):
         errors.append("slug must be lowercase letters, digits and hyphens")
     if errors:
         return {"ok": False, "errors": errors, "page_html": None, "card_html": None, "manifest_entry": None}
-    url = f"/{CATEGORY_PREFIX[data['category']]}/{data['slug']}/"
-    page = render("project-page", {"TITLE": data["title"], "SUBTITLE": data["subtitle"], "HERO_IMAGE_URL": data["hero_image_url"],
-                                   "BODY_HTML": data["body_html"], "STACK_CSV": data.get("stack_csv", "")},
-                  {"actions": data.get("actions", [])}, root)
-    card = render("project-card", {"URL": url, "TITLE": data["title"], "THUMBNAIL": data["thumbnail"], "DESCRIPTION": data["description"]}, None, root)
+    url = f"/{CATEGORY_PREFIX[project['category']]}/{project['slug']}/"
+    page = render("project-page", {"TITLE": project["title"], "SUBTITLE": project["subtitle"], "HERO_IMAGE_URL": project["hero_image_url"],
+                                   "BODY_HTML": project["body_html"], "STACK_CSV": project.get("stack_csv", "")},
+                  {"actions": project.get("actions", [])}, root)
+    card = render("project-card", {"URL": url, "TITLE": project["title"], "THUMBNAIL": project["thumbnail"], "DESCRIPTION": project["description"]}, None, root)
     errors = page["errors"] + card["errors"] + [f"missing {m}" for m in page["missing"] + card["missing"]]
     if errors:
         return {"ok": False, "errors": errors, "page_html": None, "card_html": None, "manifest_entry": None}
     return {"ok": True, "errors": [], "warnings": page["warnings"] + card["warnings"], "page_html": page["html"], "card_html": card["html"],
-            "url": url, "manifest_entry": {"title": data["title"], "url": url, "category": data["category"],
-                                           "secondary_categories": list(data.get("secondary_categories", [])),
-                                           "thumbnail": data["thumbnail"], "description": data["description"]}}
+            "url": url, "manifest_entry": {"title": project["title"], "url": url, "category": project["category"],
+                                           "secondary_categories": list(project.get("secondary_categories", [])),
+                                           "thumbnail": project["thumbnail"], "description": project["description"]}}
 
 
 def main() -> None:

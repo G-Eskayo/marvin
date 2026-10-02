@@ -22,7 +22,7 @@ pytestmark = pytest.mark.skipif(not (ROOT / "templates.json").exists(), reason="
 SAMPLE = {"URL": "/ai-projects/mancala/", "TITLE": "Mancala", "THUMBNAIL": "/u/t.png", "DESCRIPTION": "A game.", "SUBTITLE": "Sub",
           "HERO_IMAGE_URL": "/u/h.png", "BODY_HTML": "<p>Body.</p>", "STACK_CSV": "Python", "CATEGORY": "AI & Machine Learning",
           "CARDS_HTML": "<div>cards</div>", "HEADING": "Other Projects", "LABEL": "Go", "REPO_URL": "https://github.com/G-Eskayo/mancala",
-          "FILE_URL": "/wp-content/uploads/paper.pdf"}
+          "FILE_URL": "/wp-content/uploads/paper.pdf", "SECTIONS_HTML": "<div>sections</div>"}
 
 
 def entries():
@@ -77,3 +77,45 @@ def test_every_existing_page_has_a_reference_template():
     for e in index:
         has_content = bool((ROOT / e["file"]).read_text().strip())
         assert has_content != e["empty"], f"{e['url']}: empty flag does not match the file"
+
+
+# ── the decisions (Gil 2026-10-02): few buttons, one place each; a template for every page TYPE ──
+# The site had 4 different GitHub buttons and three structural generations of "project page". These pin the
+# decisions so the sprawl cannot quietly come back: adding a button or a page type is a deliberate act.
+
+MAX_BUTTONS = 3        # Discover, View on GitHub, Download. Raise this deliberately, never by accident.
+PAGE_TYPES = {"project", "hub", "all-projects", "content"}
+
+
+def by_kind(kind):
+    return [e for e in entries() if e["kind"] == kind]
+
+
+def test_there_are_only_the_few_buttons_we_decided_on_and_each_has_one_job_and_one_place():
+    buttons = by_kind("button")
+    assert {b["id"] for b in buttons} == {"button-github", "button-download", "button-discover"}
+    assert len(buttons) <= MAX_BUTTONS
+    for b in buttons:
+        assert b.get("role") and b.get("placement") and b.get("usedOn"), f"{b['id']} needs a role, a placement rule and the page types it is for"
+        assert set(b["usedOn"]) <= {"project", "card"}
+
+
+def test_every_page_type_has_exactly_one_plain_template_with_a_wireframe():
+    pages = by_kind("page")
+    assert {p["pageType"] for p in pages} == PAGE_TYPES
+    assert len({p["pageType"] for p in pages}) == len(pages)          # one template per type, not several competing ones
+    for p in pages:
+        assert len(p.get("zones", [])) >= 2 and all(z.get("name") and z.get("note") for z in p["zones"]), p["id"]
+
+
+def test_the_project_pages_action_row_only_offers_buttons_that_belong_on_a_project_page():
+    project = next(p for p in by_kind("page") if p["pageType"] == "project")
+    offered = project["slots"]["actions"]["options"]
+    allowed = {b["id"] for b in by_kind("button") if "project" in b["usedOn"]}
+    assert set(offered) == allowed
+    assert 'class="action-row"' in project["slots"]["actions"]["wrap"]      # a fixed, findable place for them
+
+
+def test_github_comes_before_download_in_the_action_row_order():
+    project = next(p for p in by_kind("page") if p["pageType"] == "project")
+    assert project["slots"]["actions"]["options"].index("button-github") < project["slots"]["actions"]["options"].index("button-download")

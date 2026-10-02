@@ -115,6 +115,15 @@ _BUTTONS_JS = """(fields) => {
 }"""
 
 
+_RENDERED_JS = """() => {
+  const el = document.querySelector('#content .post-content') || document.querySelector('.post-content') || document.querySelector('#content') || document.querySelector('main') || document.body;
+  const clone = el.cloneNode(true);
+  clone.querySelectorAll('script, style, noscript').forEach(n => n.remove());
+  clone.querySelectorAll('[data-inv]').forEach(n => n.removeAttribute('data-inv'));
+  return clone.innerHTML.trim();
+}"""
+
+
 def _wpcli(args: list[str]) -> str | None:
     try:
         r = subprocess.run(["docker", "exec", WPCLI_CONTAINER, "wp", *args, "--path=/var/www/html"],
@@ -156,11 +165,17 @@ def collect(base: str = "http://localhost:8080", out_dir: Path = OUT_DIR, manife
             img = Image.open(shot); w, h = img.size
             img.resize((480, min(2400, max(1, round(h * 480 / w)))), Image.LANCZOS).save(shot)
             raw = _wpcli(["post", "get", str(wp["ID"]), "--field=post_content"]) if wp else None
+            # What visitors actually get: the main content area's markup (the useful reference for legacy WP-Coder pages,
+            # whose raw content is only a shortcode).
+            rendered = page.evaluate(_RENDERED_JS)
+            (out_dir / "rendered").mkdir(exist_ok=True)
+            (out_dir / "rendered" / f"{slug}.html").write_text(rendered or "")
             if raw is not None:
                 (out_dir / "raw" / f"{slug}.html").write_text(raw)
             pages.append({"slug": slug, "url": url, "title": title, "id": wp["ID"] if wp else None,
                           "type": classify_page(url, manifest_urls, HUB_PAGES) if url != "/" else "home",
                           "screenshot": f"pages/{slug}.png", "raw": f"raw/{slug}.html" if raw is not None else None,
+                          "rendered": f"rendered/{slug}.html",
                           "raw_chars": len(raw) if raw else 0})
             for rec in page.evaluate(_BUTTONS_JS, STYLE_FIELDS):
                 rec["page"] = url
