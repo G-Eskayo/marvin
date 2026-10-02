@@ -18,6 +18,7 @@ from __future__ import annotations
 import colorsys
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -31,6 +32,8 @@ HERO_SIZE = (2200, 600)       # the site's wide panorama hero (existing hero pho
 MIN_DISTANCE = 24             # minimum Hamming distance (of 128 bits: layout + spectrum) between any two projects
 STYLES = ("contours", "moire", "cubes", "halftone", "lines")
 NEUTRAL_INSPIRATION = {"luminance": 0.45, "contrast": 0.5, "hue": None, "hues": [], "saturation": 0.0}
+DEFAULT = object()    # "use this project's default motif" (None means: no motif, the abstract pattern)
+IMAGES_DIR = Path.home() / ".claude" / "portfolio" / "images"
 REGISTRY_PATH = Path(__file__).resolve().parents[1] / "portfolio" / "image-registry.json"
 
 
@@ -177,13 +180,14 @@ def _pattern(style, X, Y, rng):
     return _smooth(np.sin(2 * np.pi * f * (Y + warp)), 0.45)
 
 
-def render(slug: str, size=HERO_SIZE, inspiration: dict | None = None, salt: int = 0) -> Image.Image:
+def render(slug: str, size=HERO_SIZE, inspiration: dict | None = None, salt: int = 0, motif: str | None = DEFAULT) -> Image.Image:
     insp = {**NEUTRAL_INSPIRATION, **(inspiration or {})}
     rng = np.random.RandomState(_digest(slug, salt))
     w, h = size
     X, Y = np.meshgrid(np.linspace(0, w / h, w, dtype=np.float32), np.linspace(0, 1, h, dtype=np.float32))
     v = _pattern(style_for(slug), X, Y, rng).astype(np.float32)
-    motif = portfolio_motifs.motif_for(slug)
+    if motif is DEFAULT:
+        motif = portfolio_motifs.motif_for(slug)
     if motif:
         # the subject: a diagram of what the project is, over a quiet version of the abstract texture
         v = np.maximum(v * 0.2, portfolio_motifs.draw(motif, size, rng))
@@ -247,20 +251,133 @@ def assign(slugs, registry_path: Path = REGISTRY_PATH, size=HERO_SIZE, max_salt:
     return {s: registry[s] for s in slugs}
 
 
+# ── variants: keep what was generated, choose what is used ──────────────────
+# A variant is fully described by (motif, salt) for a slug, so it is reproducible and cheap to keep: the PNGs in
+# images/<slug>/ are a cache of what was tried, and the registry says which one is IN USE.
+
+def _label(motif: str | None) -> str:
+    return motif or "pattern"
+
+
+def variant_file(slug: str, motif: str | None, salt: int, images_dir: Path = IMAGES_DIR) -> Path:
+    return Path(images_dir) / slug / f"{_label(motif)}-{int(salt)}.png"
+
+
+def motif_choices() -> list[str]:
+    return list(portfolio_motifs.MOTIF_NAMES) + ["pattern"]
+
+
+def _motif_arg(value: str | None):
+    """CLI/API value -> render() motif: None/'default' = the project's default, 'pattern' = no motif."""
+    if value in (None, "", "default"):
+        return DEFAULT
+    if value == "pattern":
+        return None
+    if value not in portfolio_motifs.MOTIF_NAMES:
+        raise ValueError(f"unknown motif: {value!r}")
+    return value
+
+
+def make_variant(slug: str, motif=DEFAULT, salt: int = 0, inspiration: dict | None = None, images_dir: Path = IMAGES_DIR, size=HERO_SIZE) -> dict:
+    motif = portfolio_motifs.motif_for(slug) if motif is DEFAULT else motif
+    img = render(slug, size, inspiration, salt, motif)
+    f = variant_file(slug, motif, salt, images_dir)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    img.save(f)
+    return {"slug": slug, "motif": _label(motif), "salt": int(salt), "file": str(f), "hash": f"{fingerprint(img):032x}"}
+
+
+def next_variant_salt(slug: str, motif, images_dir: Path = IMAGES_DIR) -> int:
+    """The lowest salt for this motif that has not been generated yet."""
+    motif = portfolio_motifs.motif_for(slug) if motif is DEFAULT else motif
+    n = 0
+    while variant_file(slug, motif, n, images_dir).exists():
+        n += 1
+    return n
+
+
+def list_variants(slug: str, registry_path: Path = REGISTRY_PATH, images_dir: Path = IMAGES_DIR) -> dict:
+    chosen = dict(_load(registry_path).get(slug, {}))
+    look = chosen.get("look") or chosen.get("style")
+    chosen["look"] = look if look in portfolio_motifs.MOTIF_NAMES else ("pattern" if look else None)
+    out = []
+    d = Path(images_dir) / slug
+    for f in sorted(d.glob("*.png")) if d.is_dir() else []:
+        m = re.match(r"^(.+)-(\d+)\.png$", f.name)
+        if m:
+            out.append({"motif": m.group(1), "salt": int(m.group(2)), "file": f.name,
+                        "chosen": chosen.get("look") == m.group(1) and chosen.get("salt") == int(m.group(2))})
+    return {"slug": slug, "variants": out, "chosen": {"motif": chosen.get("look"), "salt": chosen.get("salt")} if chosen else None,
+            "default_motif": _label(portfolio_motifs.motif_for(slug))}
+
+
+def choose_variant(slug: str, motif, salt: int, inspiration: dict | None = None, registry_path: Path = REGISTRY_PATH,
+                   images_dir: Path = IMAGES_DIR, size=HERO_SIZE) -> dict:
+    """Make (motif, salt) the image IN USE for the slug: records it in the registry and writes images/<slug>.png.
+    The choice is the person's, so it overrides the uniqueness re-roll; a near-twin is reported, not refused."""
+    motif = portfolio_motifs.motif_for(slug) if motif is DEFAULT else motif
+    f = variant_file(slug, motif, salt, images_dir)
+    if not f.exists():
+        make_variant(slug, motif, salt, inspiration, images_dir, size)
+    img = Image.open(f).convert("RGB")
+    registry = _load(registry_path)
+    h = fingerprint(img)
+    others = {k: int(v["hash"], 16) for k, v in registry.items() if k != slug}
+    nearest = min(((hamming(h, t), k) for k, t in others.items()), default=(None, None))
+    registry[slug] = {"salt": int(salt), "hash": f"{h:032x}", "style": _label(motif), "look": _label(motif), "chosen": True}
+    Path(registry_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(registry_path).write_text(json.dumps(registry, indent=2, sort_keys=True))
+    Path(images_dir).mkdir(parents=True, exist_ok=True)
+    img.save(Path(images_dir) / f"{slug}.png")
+    out = {"slug": slug, "motif": _label(motif), "salt": int(salt)}
+    if nearest[0] is not None and nearest[0] < MIN_DISTANCE:
+        out["warning"] = f"looks very similar to {nearest[1]} (distance {nearest[0]}, wanted {MIN_DISTANCE}+)"
+    return out
+
+
 def main() -> None:
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("slug")
+    ap.add_argument("slug", nargs="?")
     ap.add_argument("--out", default=None)
     ap.add_argument("--inspire", nargs="*", default=[])
+    ap.add_argument("--list", action="store_true", help="JSON: every generated variant of the slug and which is in use")
+    ap.add_argument("--motifs", action="store_true", help="JSON: the motif names that can be chosen")
+    ap.add_argument("--new", action="store_true", help="generate another variant (next unused salt for --motif)")
+    ap.add_argument("--choose", action="store_true", help="use the variant given by --motif and --salt")
+    ap.add_argument("--motif", default=None)
+    ap.add_argument("--salt", type=int, default=0)
     args = ap.parse_args()
+    if args.motifs:
+        print(json.dumps(motif_choices()))
+        return
+    if not args.slug:
+        ap.error("slug is required")
     insp = inspiration_from(args.inspire)
-    salt = assign([args.slug], inspirations={args.slug: insp})[args.slug]["salt"]
-    img = render(args.slug, HERO_SIZE, insp, salt)
-    out = Path(args.out or Path.home() / ".claude" / "portfolio" / "images" / f"{args.slug}.png")
-    out.parent.mkdir(parents=True, exist_ok=True)
-    img.save(out)
-    print(f"{args.slug}: style={style_for(args.slug)} salt={salt} inspiration={insp} -> {out}")
+    if args.list:
+        print(json.dumps(list_variants(args.slug)))
+    elif args.new:
+        motif = _motif_arg(args.motif)
+        print(json.dumps(make_variant(args.slug, motif, next_variant_salt(args.slug, motif), insp)))
+    elif args.choose:
+        print(json.dumps(choose_variant(args.slug, _motif_arg(args.motif), args.salt, insp)))
+    else:
+        registry = _load(REGISTRY_PATH)
+        if args.slug in registry and registry[args.slug].get("chosen"):
+            e = registry[args.slug]   # a choice was made: reproduce exactly that
+            motif = None if e["look"] == "pattern" else e["look"]
+            salt = e["salt"]
+        else:
+            salt = assign([args.slug], inspirations={args.slug: insp})[args.slug]["salt"]
+            motif = DEFAULT
+        img = render(args.slug, HERO_SIZE, insp, salt, motif)
+        kept = variant_file(args.slug, portfolio_motifs.motif_for(args.slug) if motif is DEFAULT else motif, salt)
+        kept.parent.mkdir(parents=True, exist_ok=True)
+        img.save(kept)                      # the image in use is always among the variants too
+        out = Path(args.out or IMAGES_DIR / f"{args.slug}.png")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        img.save(out)
+        print(f"{args.slug}: look={look_for(args.slug)} salt={salt} inspiration={insp} -> {out}")
 
 
 if __name__ == "__main__":

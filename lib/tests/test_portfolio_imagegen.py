@@ -255,3 +255,64 @@ def test_projects_with_a_motif_render_differently_from_the_pattern_only_look():
     assert g.look_for("mancala") == "mancala"
     assert g.look_for("some-new-project") == g.style_for("some-new-project")
     assert with_motif.std() > 0
+
+
+# ── variants: keep what was generated, choose what is used ──────────────────
+
+def _paths(tmp_path):
+    return {"registry_path": tmp_path / "reg.json", "images_dir": tmp_path / "images"}
+
+
+def test_a_variant_is_cached_by_motif_and_salt_and_listed(tmp_path):
+    p = _paths(tmp_path)
+    v = ig.make_variant("mancala", "mancala", 0, None, p["images_dir"], SMALL)
+    assert Path(v["file"]).exists() and Path(v["file"]).name == "mancala-0.png"
+    listing = ig.list_variants("mancala", **p)
+    assert [(x["motif"], x["salt"], x["chosen"]) for x in listing["variants"]] == [("mancala", 0, False)]
+    assert listing["default_motif"] == "mancala"
+
+
+def test_next_salt_skips_variants_already_generated(tmp_path):
+    p = _paths(tmp_path)
+    assert ig.next_variant_salt("mancala", "mancala", p["images_dir"]) == 0
+    ig.make_variant("mancala", "mancala", 0, None, p["images_dir"], SMALL)
+    ig.make_variant("mancala", "mancala", 1, None, p["images_dir"], SMALL)
+    assert ig.next_variant_salt("mancala", "mancala", p["images_dir"]) == 2
+    assert ig.next_variant_salt("mancala", "tree", p["images_dir"]) == 0      # another motif has its own count
+
+
+def test_choosing_a_variant_makes_it_the_image_in_use_and_survives_listing(tmp_path):
+    p = _paths(tmp_path)
+    ig.make_variant("mancala", "mancala", 3, None, p["images_dir"], SMALL)
+    out = ig.choose_variant("mancala", "mancala", 3, None, size=SMALL, **p)
+    assert out == {"slug": "mancala", "motif": "mancala", "salt": 3}
+    assert (p["images_dir"] / "mancala.png").exists()
+    reg = json.loads(p["registry_path"].read_text())["mancala"]
+    assert reg["chosen"] is True and reg["salt"] == 3 and reg["look"] == "mancala"
+    listing = ig.list_variants("mancala", **p)
+    assert [x["chosen"] for x in listing["variants"]] == [True]
+
+
+def test_choosing_a_different_theme_than_the_default_is_allowed(tmp_path):
+    p = _paths(tmp_path)
+    ig.choose_variant("mancala", "tree", 0, None, size=SMALL, **p)     # make_variant happens on demand
+    assert json.loads(p["registry_path"].read_text())["mancala"]["look"] == "tree"
+    ig.choose_variant("mancala", None, 0, None, size=SMALL, **p)       # None = the abstract pattern, no motif
+    assert json.loads(p["registry_path"].read_text())["mancala"]["look"] == "pattern"
+
+
+def test_a_choice_is_never_blocked_by_similarity_only_warned(tmp_path):
+    p = _paths(tmp_path)
+    ig.choose_variant("marvin", "network", 0, None, size=SMALL, **p)
+    out = ig.choose_variant("marketplace-ml-agent", "network", 0, None, size=SMALL, **p)
+    assert out["motif"] == "network"             # chosen regardless; a warning may accompany it
+    assert json.loads(p["registry_path"].read_text())["marketplace-ml-agent"]["chosen"] is True
+
+
+def test_motif_argument_parsing():
+    assert ig._motif_arg(None) is ig.DEFAULT and ig._motif_arg("default") is ig.DEFAULT
+    assert ig._motif_arg("pattern") is None and ig._motif_arg("tree") == "tree"
+    import pytest
+    with pytest.raises(ValueError):
+        ig._motif_arg("nonsense")
+    assert "pattern" in ig.motif_choices() and "network" in ig.motif_choices()

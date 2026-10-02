@@ -568,10 +568,38 @@ function Evaluation() {
 
 // ── Images ──────────────────────────────────────────────────────────────────
 
-function ImageCard({ item, onGenerate }) {
+// One generated variant: its picture and a button to put it in use. Every image ever generated stays here, so a
+// liked one is never lost to a re-roll.
+function VariantTile({ slug, v, onChoose, busy }) {
+  const [src, setSrc] = useState(null)
+  useEffect(() => {
+    let live = true
+    window.api.portfolio.variantPreview(slug, v.motif, v.salt).then((d) => live && setSrc(d)).catch(() => {})
+    return () => { live = false }
+  }, [slug, v.motif, v.salt])
+  return (
+    <div className={`flex flex-col gap-1 rounded border p-1 ${v.chosen ? 'border-emerald-600' : 'border-neutral-800'}`}>
+      {src ? <img src={src} alt="" className="h-16 w-full rounded object-cover" /> : <div className="h-16 rounded bg-neutral-900" />}
+      <div className="flex items-center gap-1">
+        <span className="truncate text-[10px] text-neutral-400">{v.motif} #{v.salt}</span>
+        {v.chosen
+          ? <span className="ml-auto rounded bg-emerald-950 px-1.5 py-0.5 text-[10px] text-emerald-300">in use</span>
+          : <button disabled={busy} onClick={() => onChoose(v)} className="ml-auto text-[10px] text-blue-400 hover:text-blue-300 disabled:opacity-50">use this</button>}
+      </div>
+    </div>
+  )
+}
+
+function ImageCard({ item, motifs, onGenerate }) {
   const [preview, setPreview] = useState(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
+  const [note, setNote] = useState(null)
+  const [open, setOpen] = useState(false)
+  const [variants, setVariants] = useState(null)
+  const [theme, setTheme] = useState('default')
+
+  const loadVariants = useCallback(() => window.api.portfolio.imageVariants(item.slug).then(setVariants).catch((e) => setErr(errText(e))), [item.slug])
 
   useEffect(() => {
     let live = true
@@ -581,19 +609,40 @@ function ImageCard({ item, onGenerate }) {
     }
   }, [item.slug, item.generated.exists])
 
-  async function generate() {
+  useEffect(() => { if (open) loadVariants() }, [open, loadVariants])
+
+  async function run(fn) {
     setBusy(true)
     setErr(null)
+    setNote(null)
     try {
-      await window.api.portfolio.generateImage(item.slug)
-      await onGenerate()
-      setPreview(await window.api.portfolio.imagePreview(item.slug))
+      await fn()
     } catch (e) {
       setErr(errText(e))
     } finally {
       setBusy(false)
     }
   }
+
+  const generate = () => run(async () => {
+    await window.api.portfolio.generateImage(item.slug)
+    await onGenerate()
+    setPreview(await window.api.portfolio.imagePreview(item.slug))
+    if (open) await loadVariants()
+  })
+
+  const another = () => run(async () => {
+    await window.api.portfolio.newImageVariant(item.slug, theme === 'default' ? null : theme)
+    await loadVariants()
+  })
+
+  const choose = (v) => run(async () => {
+    const r = await window.api.portfolio.chooseImageVariant(item.slug, v.motif, v.salt)
+    if (r.warning) setNote(r.warning)
+    await onGenerate()
+    setPreview(await window.api.portfolio.imagePreview(item.slug))
+    await loadVariants()
+  })
 
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-neutral-800 p-3">
@@ -607,20 +656,39 @@ function ImageCard({ item, onGenerate }) {
       </div>
       <div className="grid grid-cols-2 gap-2">
         <div>
-          <p className="mb-1 text-[10px] uppercase tracking-wide text-neutral-500">Current</p>
+          <p className="mb-1 text-[10px] uppercase tracking-wide text-neutral-500">On the site now</p>
           <img src={`${DEV_SITE}${item.thumbnail}`} alt="" className="h-20 w-full rounded border border-neutral-800 object-cover" />
         </div>
         <div>
-          <p className="mb-1 text-[10px] uppercase tracking-wide text-neutral-500">Generated{item.generated.style ? ` · ${item.generated.style}` : ''}</p>
+          <p className="mb-1 text-[10px] uppercase tracking-wide text-neutral-500">Chosen{item.generated.style ? ` · ${item.generated.style}` : ''}</p>
           {preview ? <img src={preview} alt="" className="h-20 w-full rounded border border-neutral-800 object-cover" /> : <div className="flex h-20 items-center justify-center rounded border border-dashed border-neutral-800 text-[10px] text-neutral-600">not generated</div>}
         </div>
       </div>
-      <div className="flex items-center gap-2">
-        <button onClick={generate} disabled={busy} className={button}>
-          {busy ? 'Generating…' : item.generated.exists ? 'Regenerate' : 'Generate'}
-        </button>
+      <div className="flex flex-wrap items-center gap-2">
+        {!item.generated.exists && <button onClick={generate} disabled={busy} className={button}>{busy ? 'Generating…' : 'Generate'}</button>}
+        <button onClick={() => setOpen((v) => !v)} className={button}>{open ? 'Hide choices' : 'Choose image…'}</button>
         {err && <span className="text-xs text-red-400">{err}</span>}
+        {note && <span className="text-xs text-amber-400">{note}</span>}
       </div>
+      {open && (
+        <div className="flex flex-col gap-2 rounded-md border border-neutral-800 bg-neutral-950 p-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <select value={theme} onChange={(e) => setTheme(e.target.value)} className="rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs text-neutral-200">
+              <option value="default">Theme: suggested{variants?.default_motif ? ` (${variants.default_motif})` : ''}</option>
+              {(motifs || []).map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+            <button onClick={another} disabled={busy} className={button}>{busy ? 'Generating…' : 'Generate another'}</button>
+          </div>
+          {variants === null ? <p className="text-xs text-neutral-500">Loading…</p> : variants.variants.length === 0 ? (
+            <p className="text-xs text-neutral-500">Nothing generated yet.</p>
+          ) : (
+            <div className="grid grid-cols-3 gap-2">
+              {variants.variants.map((v) => <VariantTile key={`${v.motif}-${v.salt}`} slug={item.slug} v={v} onChoose={choose} busy={busy} />)}
+            </div>
+          )}
+          <p className="text-[10px] text-neutral-600">Every image you generate is kept. Pick any as the one in use; the choice stays until you pick another.</p>
+        </div>
+      )}
     </div>
   )
 }
@@ -628,9 +696,11 @@ function ImageCard({ item, onGenerate }) {
 function Images() {
   const [items, setItems] = useState(null)
   const [error, setError] = useState(null)
+  const [motifs, setMotifs] = useState([])
   const load = useCallback(() => window.api.portfolio.images().then(setItems).catch((e) => setError(errText(e))), [])
   useEffect(() => {
     load()
+    window.api.portfolio.imageMotifs().then(setMotifs).catch(() => {})
   }, [load])
 
   if (error) return <p className="text-sm text-red-400">{error}</p>
@@ -647,7 +717,7 @@ function Images() {
       </div>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {items.map((it) => (
-          <ImageCard key={it.slug} item={it} onGenerate={load} />
+          <ImageCard key={it.slug} item={it} motifs={motifs} onGenerate={load} />
         ))}
       </div>
     </div>
