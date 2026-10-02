@@ -249,6 +249,22 @@ def check_repo_integrity(display_name: str, rel_path: str) -> dict:
     return _result(cid, label, "green", "clean, no stashes")
 
 
+# ── pipeline circuit breaker ─────────────────────────────────────────────
+
+def check_pipeline_breaker() -> dict:
+    """Red while the cross-ticket breaker (failure_breaker.py) has paused dispatch:
+    the same failure hit several different tickets, i.e. the environment is
+    broken, not the tickets. This is the first automated consumer of pipeline
+    failures -- until it existed, only displays read them."""
+    import failure_breaker
+    cid, label = "pipeline:breaker", "Ticket pipeline circuit breaker"
+    trips = failure_breaker.tripped()
+    if not trips:
+        return _result(cid, label, "green", "not tripped")
+    detail = "; ".join(f"{t['signature']} across tickets {t['tickets']}" for t in trips)
+    return _result(cid, label, "red", f"dispatch paused -- {detail}", value=len(trips))
+
+
 # ── sync / parity health (both machines, measured in time) ───────────────
 
 # Drift is normal for a few minutes between sync cycles, so staleness is judged
@@ -506,6 +522,7 @@ def run_all() -> dict:
     results.append(check_intent_routing_collection())
     results.append(check_dispatch_lock())
     results += check_ticket_failure_streaks()
+    results.append(check_pipeline_breaker())
     cron_state = ch._load_state()
     cron_now = datetime.now().astimezone()
     for job in discover_launchd_jobs():

@@ -160,3 +160,23 @@ def test_build_wrapper_command_runs_run_ticket_script():
     assert tp.RUN_TICKET_SCRIPT in command
     assert f"{tp.RUN_TICKET_SCRIPT} 20" in command
     assert "dispatch_issue20.log" in command
+
+
+# ── dispatch pauses while the cross-ticket circuit breaker is tripped ───────
+
+def test_main_does_not_dispatch_while_the_breaker_is_tripped(monkeypatch, capsys):
+    import failure_breaker as fb
+    monkeypatch.setattr(fb, "tripped", lambda now=None: [
+        {"signature": "measure:vitest-no-summary", "tickets": [32, 35, 37],
+         "first_seen": "x", "last_seen": "y", "example": "e"}])
+    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda: [{"number": 99, "title": "t", "createdAt": "z", "labels": []}])
+    monkeypatch.setattr(tp, "select_machine", lambda: ("mac-mini-1", {}))
+    called = []
+    monkeypatch.setattr(tp, "_claim", lambda *a, **k: called.append("claim") or True)
+    monkeypatch.setattr(tp, "dispatch", lambda *a, **k: called.append("dispatch"))
+    monkeypatch.setattr(sys, "argv", ["ticket_pipeline.py"])
+
+    tp.main()
+
+    assert called == []
+    assert "paused" in capsys.readouterr().err.lower()

@@ -396,3 +396,36 @@ def test_run_recovers_when_raise_mr_itself_raises_unexpectedly(monkeypatch):
     assert outcome["raised"] is False
     assert "boom" in outcome["reason"]
     assert released == [27]
+
+
+# ── failures/successes feed the cross-ticket circuit breaker ────────────────
+
+def test_a_failed_run_records_a_failure_for_the_circuit_breaker(monkeypatch):
+    import failure_breaker as fb
+    seen = []
+    monkeypatch.setattr(fb, "record_failure", lambda ticket, reason, now=None: seen.append((ticket, reason)))
+    monkeypatch.setattr(rt, "execute_ticket", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda n: 0)
+    for name in ("_comment_failure", "_release_claim", "_park_stuck_ticket", "_trigger_redispatch"):
+        monkeypatch.setattr(rt, name, lambda *a, **k: None)
+
+    rt.run(42)
+
+    assert seen and seen[0][0] == 42 and "boom" in seen[0][1]
+
+
+def test_a_successful_run_records_a_success_which_clears_the_breaker(monkeypatch):
+    import failure_breaker as fb
+    seen = []
+    monkeypatch.setattr(fb, "record_success", lambda ticket, now=None: seen.append(ticket))
+    monkeypatch.setattr(rt, "execute_ticket", lambda *a, **k: _passing_result())
+    monkeypatch.setattr(rt, "test_command_for", lambda wt: ["pytest", "-q"])
+    monkeypatch.setattr(rt, "capture_test_results", lambda wt, cmd: {})
+    monkeypatch.setattr(rt, "ticket_touches_ui", lambda wt: False)
+    monkeypatch.setattr(rt, "capture_dev_evidence", lambda wt, touches_ui: {})
+    monkeypatch.setattr(rt, "raise_mr", lambda *a, **k: {"raised": True, "pr_url": "https://x/pr/1", "reason": None})
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda *a, **k: None)
+
+    rt.run(43)
+
+    assert seen == [43]

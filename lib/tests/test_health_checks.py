@@ -455,3 +455,23 @@ def test_check_repo_sync_everywhere_marks_an_asleep_laptop_asleep_not_failed(mon
 
     remote = [r for r in results if r["id"].endswith("@macbook-pro-1")][0]
     assert remote["severity"] == "asleep"
+
+
+# ── pipeline circuit breaker is visible on the dashboard ────────────────────
+
+def test_pipeline_breaker_check_is_green_when_not_tripped(monkeypatch):
+    import failure_breaker as fb
+    monkeypatch.setattr(fb, "tripped", lambda now=None: [])
+    r = hc.check_pipeline_breaker()
+    assert r["id"] == "pipeline:breaker" and r["severity"] == "green"
+
+
+def test_pipeline_breaker_check_is_red_and_names_the_signature_and_tickets_when_tripped(monkeypatch):
+    import failure_breaker as fb
+    monkeypatch.setattr(fb, "tripped", lambda now=None: [
+        {"signature": "measure:vitest-no-summary", "tickets": [32, 35, 37],
+         "first_seen": "2026-10-02T01:00:00+00:00", "last_seen": "2026-10-02T01:02:00+00:00", "example": "e"}])
+    r = hc.check_pipeline_breaker()
+    assert r["severity"] == "red"
+    assert "measure:vitest-no-summary" in r["detail"]
+    assert "32" in r["detail"] and "paused" in r["detail"].lower()
