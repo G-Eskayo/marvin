@@ -138,3 +138,31 @@ describe('buttonVerdict', () => {
     expect(buttonVerdict({ texts: ['View on GitHub'], classes: 'link' })).toEqual({ ok: false, label: 'off-canon style' })
   })
 })
+
+import { inventoryIsStale } from '../src/lib/portfolio.js'
+describe('inventoryIsStale', () => {
+  const now = Date.parse('2026-10-02T12:00:00Z')
+  it('is stale when never crawled or unparseable', () => {
+    expect(inventoryIsStale(null, now)).toBe(true)
+    expect(inventoryIsStale('garbage', now)).toBe(true)
+  })
+  it('is fresh within the window and stale beyond it', () => {
+    expect(inventoryIsStale('2026-10-02T11:55:00Z', now)).toBe(false)
+    expect(inventoryIsStale('2026-10-02T11:40:00Z', now)).toBe(true)
+  })
+})
+
+describe('previewDocument width', () => {
+  it('honours an explicit pixel width over the default', () => {
+    expect(previewDocument('<p/>', '', { width: 260 })).toContain('max-width:260px')
+    expect(previewDocument('<p/>', '', { wide: true })).toContain('max-width:none')
+  })
+})
+
+describe('previewDocument body class', () => {
+  it('applies the site body class carried in the head, and wraps content like the theme does', () => {
+    const doc = previewDocument('<p/>', '<meta name="preview-body-class" content="fusion-top-header single">')
+    expect(doc).toContain('<body class="fusion-top-header single"')
+    expect(doc).toContain('id="wrapper"')
+  })
+})

@@ -211,7 +211,21 @@ export function createPortfolio({
       const links = [...html.matchAll(/<link\b[^>]*>/gi)]
         .map((m) => m[0])
         .filter((tag) => /rel=['"]stylesheet['"]/i.test(tag))
-      return `<base href="${base.replace(/\/?$/, '/')}">\n${links.join('\n')}`
+      // Some of the site's styling is inline <style> on the page itself (the category sidebar's pink active item, for
+      // one), so previews also take the inline styles of a real project page: elements look as they do on the site.
+      // The <body> class matters too: Avada scopes much of its layout (header, title bar...) to it.
+      let inline = []
+      let bodyClass = ''
+      try {
+        const page = await fetchFn(base.replace(/\/?$/, '') + '/ai-projects/mancala/', { signal: AbortSignal.timeout(5000) })
+        if (page.ok) {
+          const text = await page.text()
+          inline = [...text.matchAll(/<style\b[^>]*>[\s\S]*?<\/style>/gi)].map((m) => m[0])
+          bodyClass = (text.match(/<body\b[^>]*\bclass=["']([^"']*)["']/i) || [])[1] || ''
+        }
+      } catch { /* stylesheets alone are still a good preview */ }
+      const meta = bodyClass ? `\n<meta name="preview-body-class" content="${bodyClass.replace(/"/g, '&quot;')}">` : ''
+      return `<base href="${base.replace(/\/?$/, '/')}">\n${links.join('\n')}\n${inline.join('\n')}${meta}`
     } catch (err) {
       return `<!-- dev site not reachable (${String(err.message || err)}): previewing without the site's stylesheets -->`
     }
@@ -237,7 +251,7 @@ export function createPortfolio({
   async function chrome() {
     const items = await readJson(path.join(inventoryDir, 'chrome', 'index.json'), [])
     return Promise.all((Array.isArray(items) ? items : []).map(async (c) => ({
-      id: c.id, name: c.name, source: c.source, screenshot: c.screenshot,
+      id: c.id, name: c.name, source: c.source, width: c.width ?? null, screenshot: c.screenshot,
       markup: await readText(path.join(inventoryDir, 'chrome', `${path.basename(String(c.id))}.html`))
     })))
   }
