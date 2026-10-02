@@ -16,6 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 from hook_errors import log_hook_error  # noqa: E402
+import model_scope  # noqa: E402
 
 HOME = Path.home()
 MANIFEST_PATH = HOME / ".claude" / "manifest.json"
@@ -193,6 +194,12 @@ def scan_skills() -> list[dict]:
         }
         if raw_calls:
             entry["calls"] = raw_calls
+
+        # Only include model-scope in manifest if it's not the default ("all")
+        raw_scope = fm.get("model-scope", "all").strip()
+        if raw_scope and raw_scope.lower() != "all":
+            entry["model-scope"] = raw_scope
+
         entries.append(entry)
 
     return entries

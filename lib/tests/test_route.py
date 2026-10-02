@@ -79,3 +79,44 @@ def test_use_embed_is_false_when_keyword_flag_is_set():
     ap = route._build_arg_parser()
     args = ap.parse_args(["fix the bug", "--keyword"])
     assert route._use_embed(args) is False
+
+
+# ── skill_allowed: model-scope checking ────────────────────────────────────────
+
+def test_skill_allowed_with_no_manifest_returns_true():
+    """Unknown skill (no manifest) returns True (fail open)."""
+    result = route.skill_allowed("unknown-skill", "haiku", manifest={})
+    assert result is True
+
+
+def test_skill_allowed_checks_model_scope_field():
+    """skill_allowed checks model-scope field for a skill."""
+    manifest = {
+        "index": [
+            {"name": "skill1", "model-scope": "sonnet+"},
+            {"name": "skill2", "model-scope": "haiku,sonnet"},
+            {"name": "skill3", "model-scope": ""},
+        ]
+    }
+
+    # skill1 (sonnet+) allowed on sonnet and opus, not haiku
+    assert route.skill_allowed("skill1", "haiku", manifest) is False
+    assert route.skill_allowed("skill1", "sonnet", manifest) is True
+    assert route.skill_allowed("skill1", "opus", manifest) is True
+
+    # skill2 (haiku,sonnet) allowed on haiku and sonnet, not opus
+    assert route.skill_allowed("skill2", "haiku", manifest) is True
+    assert route.skill_allowed("skill2", "sonnet", manifest) is True
+    assert route.skill_allowed("skill2", "opus", manifest) is False
+
+    # skill3 (no scope) allowed on all
+    assert route.skill_allowed("skill3", "haiku", manifest) is True
+    assert route.skill_allowed("skill3", "sonnet", manifest) is True
+    assert route.skill_allowed("skill3", "opus", manifest) is True
+
+
+def test_check_skill_cli_flag_is_registered():
+    ap = route._build_arg_parser()
+    args = ap.parse_args(["--check-skill", "grill-with-docs", "--model", "haiku"])
+    assert args.check_skill == "grill-with-docs"
+    assert args.model == "haiku"
