@@ -332,3 +332,17 @@ describe('template source (plain markup behind each template, read-only)', () =>
     expect(() => p.specimen('../x')).toThrow(/Invalid template id/)
   })
 })
+
+describe('site chrome (header, title bar, sidebar, footers captured by the crawler)', () => {
+  it('is empty before the first crawl', async () => {
+    expect(await p.chrome()).toEqual([])
+  })
+  it('lists captured parts with their markup', async () => {
+    const d = path.join(home, '.claude', 'portfolio', 'inventory', 'chrome')
+    mkdirSync(d, { recursive: true })
+    writeFileSync(path.join(d, 'index.json'), JSON.stringify([{ id: 'site-header', name: 'Site header', source: 'Avada', screenshot: 'chrome/site-header.png' }]))
+    writeFileSync(path.join(d, 'site-header.html'), '<header/>')
+    const [c] = await p.chrome()
+    expect(c).toMatchObject({ id: 'site-header', name: 'Site header', markup: '<header/>', screenshot: 'chrome/site-header.png' })
+  })
+})

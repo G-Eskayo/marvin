@@ -56,6 +56,7 @@ contextBridge.exposeInMainWorld('api', {
     inventory: () => ipcRenderer.invoke('portfolio:inventory'),
     inventoryImage: (rel) => ipcRenderer.invoke('portfolio:inventory:image', rel),
     refreshInventory: () => ipcRenderer.invoke('portfolio:inventory:refresh'),
+    chrome: () => ipcRenderer.invoke('portfolio:chrome'),
     pageMarkup: (slug) => ipcRenderer.invoke('portfolio:page-markup', slug),
     templates: () => ipcRenderer.invoke('portfolio:templates'),
     templateSource: (id) => ipcRenderer.invoke('portfolio:template:source', id),

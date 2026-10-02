@@ -100,3 +100,11 @@ def test_summary_counts_variants_and_flags_how_many_distinct_looks_each_kind_has
     s = inv.summarize(pages=[{"type": "project"}, {"type": "project"}, {"type": "hub"}], buttons=variants)
     assert s["pages"] == 3 and s["pages_by_type"] == {"project": 2, "hub": 1}
     assert s["button_variants"] == 2 and s["github_link_variants"] == 1
+
+
+def test_chrome_catalogue_covers_every_part_that_wraps_a_page():
+    import portfolio_inventory as inv
+    ids = [c["id"] for c in inv.CHROME]
+    assert ids == ["site-header", "page-title-bar", "hub-sidebar", "other-projects", "site-footer"]
+    for c in inv.CHROME:
+        assert c["selector"] and c["source"], c["id"]      # each says where it comes from, so nobody rebuilds it per page
