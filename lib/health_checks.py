@@ -381,6 +381,93 @@ def check_repo_sync_everywhere(reachability: dict[str, str], runner=_run_repo_st
     return results
 
 
+# ── per-machine state that silently rots: dashboard build + GitHub credential ──
+
+# One script, run locally or piped over ssh, so every machine is judged by the same
+# logic. Absolute paths throughout (launchd/ssh PATHs omit /opt/homebrew/bin).
+_MACHINE_STATE_SCRIPT = r'''
+APP="/Applications/MARVIN Metrics.app/Contents/Resources/app.asar"
+if [ -f "$APP" ]; then echo "app_built_ts=$(stat -f %m "$APP")"; else echo "app_built_ts="; fi
+git -C "$HOME/.agents" fetch -q origin >/dev/null 2>&1
+echo "dashboard_commit_ts=$(git -C "$HOME/.agents" log -1 --format=%ct origin/main -- dashboard/src dashboard/electron dashboard/index.html dashboard/package.json dashboard/package-lock.json dashboard/electron.vite.config.js dashboard/tailwind.config.js dashboard/postcss.config.js 2>/dev/null)"
+TOK="$HOME/.claude/.gh-token"
+if [ -s "$TOK" ]; then
+  if GH_TOKEN="$(tr -d '[:space:]' < "$TOK")" /opt/homebrew/bin/gh api user --jq .login >/dev/null 2>&1; then echo "gh_token=ok"; else echo "gh_token=invalid"; fi
+else echo "gh_token=missing"; fi
+'''
+
+
+def parse_machine_state(text: str) -> dict:
+    raw = dict(line.split("=", 1) for line in text.splitlines() if "=" in line)
+
+    def num(key):
+        v = raw.get(key, "").strip()
+        return int(v) if v.isdigit() else None
+
+    return {"app_built_ts": num("app_built_ts"), "dashboard_commit_ts": num("dashboard_commit_ts"),
+            "gh_token": raw.get("gh_token", "").strip()}
+
+
+def evaluate_machine_state(state: dict, now: datetime) -> list[tuple[str, str, str]]:
+    """[(check_key, severity, detail)] for one machine. The dashboard app is a native
+    build that only rebuilds where a merge happened, so it silently drifts behind the
+    code (found 2026-10-02: a month behind, routing Approve to the wrong webhook);
+    and a GitHub credential can expire without anything noticing."""
+    out = []
+    built, newest = state["app_built_ts"], state["dashboard_commit_ts"]
+    if built is None:
+        out.append(("dashboard:build", "yellow", "dashboard app is not installed"))
+    elif newest is None or built >= newest:
+        out.append(("dashboard:build", "green", "installed app is at least as new as the latest dashboard change"))
+    else:
+        behind_h = (newest - built) / 3600
+        age = (now - datetime.fromtimestamp(built, tz=timezone.utc)).total_seconds() / 86400
+        sev = "red" if behind_h >= SYNC_RED_AFTER_HOURS else "yellow" if behind_h >= SYNC_YELLOW_AFTER_HOURS else "green"
+        detail = f"installed app built {age:.0f}d ago, {behind_h:.0f}h older than the latest dashboard change -- run dashboard/scripts/rebuild_and_install.sh"
+        out.append(("dashboard:build", sev, detail if sev != "green" else "installed app is current"))
+    tok = state["gh_token"]
+    if tok == "ok":
+        out.append(("auth:gh", "green", "shared GitHub token (~/.claude/.gh-token) authenticates"))
+    elif tok == "invalid":
+        out.append(("auth:gh", "red", "shared GitHub token is INVALID -- dashboard merges and ticket-pipeline gh/git calls on this machine will fail"))
+    else:
+        out.append(("auth:gh", "yellow", "no ~/.claude/.gh-token on this machine"))
+    return out
+
+
+def _run_machine_state(target: str | None, script: str = _MACHINE_STATE_SCRIPT) -> str:
+    cmd = ["bash", "-s"] if target is None else ["ssh", *SSH_OPTS, target, "bash -s"]
+    return subprocess.run(cmd, input=script, capture_output=True, text=True, timeout=60).stdout
+
+
+def check_machine_state_everywhere(reachability: dict[str, str], runner=_run_machine_state) -> list[dict]:
+    results = []
+    me = machine_profile.registry_id()
+    devices = [(me, None, "local")] + [
+        (dev, info.get("tailscale_hostname"), reachability.get(f"machine:{dev}", "yellow"))
+        for dev, info in machine_profile.remote_devices().items()
+    ]
+    labels = {"dashboard:build": "Dashboard app build", "auth:gh": "GitHub credential"}
+    for dev, host, reach in devices:
+        if reach == "asleep":
+            for key, label in labels.items():
+                results.append(_result(f"{key}@{dev}", f"{label} -- {dev}", "asleep", "cannot check while the machine is asleep"))
+            continue
+        if reach not in ("local", "green"):
+            for key, label in labels.items():
+                results.append(_result(f"{key}@{dev}", f"{label} -- {dev}", "yellow", f"machine unreachable ({reach}) -- unverifiable"))
+            continue
+        try:
+            state = parse_machine_state(runner(host, _MACHINE_STATE_SCRIPT))
+        except Exception as exc:
+            for key, label in labels.items():
+                results.append(_result(f"{key}@{dev}", f"{label} -- {dev}", "yellow", f"could not read machine state: {str(exc)[:100]}"))
+            continue
+        for key, sev, detail in evaluate_machine_state(state, _now()):
+            results.append(_result(f"{key}@{dev}", f"{labels[key]} -- {dev}", sev, detail))
+    return results
+
+
 # ── machine reachability ─────────────────────────────────────────────────
 
 # How long a laptop may be offline on Tailscale and still read as "asleep"
@@ -535,6 +622,7 @@ def run_all() -> dict:
     reach_results = check_machine_reachability()
     results += reach_results
     results += check_repo_sync_everywhere({r["id"]: r["severity"] for r in reach_results})
+    results += check_machine_state_everywhere({r["id"]: r["severity"] for r in reach_results})
 
     cov = coverage(results)
     anomaly = record_anomaly_metrics(results)
