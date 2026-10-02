@@ -194,7 +194,45 @@ function Specimen({ template, head }) {
   )
 }
 
+// A part of the page that wraps every page (not authored per page): shown as it is on the site, with where it comes from.
+function ChromePart({ part }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <article className="rounded-lg border border-neutral-800 p-4">
+      <div className="mb-2 flex items-baseline gap-3">
+        <h3 className="text-base font-medium text-white">{part.name}</h3>
+        <span className="font-mono text-[11px] text-neutral-600">{part.id}</span>
+      </div>
+      <p className="mb-3 text-xs text-neutral-400">{part.source}</p>
+      <div className="overflow-hidden rounded-md border border-neutral-800 bg-white"><Shot rel={part.screenshot} className="w-full" /></div>
+      <div className="mt-3 flex items-center gap-3">
+        <button onClick={() => setOpen((v) => !v)} className="text-xs text-blue-400 hover:text-blue-300">{open ? 'hide markup' : 'show markup'}</button>
+        {open && <CopyButton text={part.markup} label="Copy markup" />}
+      </div>
+      {open && <pre className="mt-2 max-h-80 overflow-auto rounded border border-neutral-800 bg-neutral-950 p-3 text-[11px] text-neutral-300">{part.markup}</pre>}
+    </article>
+  )
+}
+
+// The crawled buttons, judged against the canonical three: this belongs with the button templates.
+function ButtonAudit() {
+  const [inv, setInv] = useState(null)
+  useEffect(() => { window.api.portfolio.inventory().then(setInv).catch(() => setInv(false)) }, [])
+  if (!inv) return null
+  const off = inv.buttons.filter((v) => !buttonVerdict(v).ok)
+  return (
+    <div className="rounded-lg border border-neutral-800 p-4">
+      <h3 className="mb-1 text-base font-medium text-white">Buttons on the site today</h3>
+      <p className="mb-3 text-xs text-neutral-400">
+        {inv.buttons.length} look{inv.buttons.length === 1 ? '' : 's'} crawled; {off.length === 0 ? 'every one is a canonical button.' : `${off.length} off-canon — these are the ones to bring back to the three above.`}
+      </p>
+      <ButtonVariants variants={inv.buttons} />
+    </div>
+  )
+}
+
 function Templates() {
+  const [chrome, setChrome] = useState([])
   const [templates, setTemplates] = useState(null)
   const [head, setHead] = useState('')
   const [error, setError] = useState(null)
@@ -202,6 +240,7 @@ function Templates() {
   useEffect(() => {
     window.api.portfolio.templates().then(setTemplates).catch((e) => setError(errText(e)))
     window.api.portfolio.previewHead().then(setHead).catch(() => {})
+    window.api.portfolio.chrome().then(setChrome).catch(() => {})
   }, [])
 
   if (error) return <p className="text-sm text-red-400">Could not load templates: {error}</p>
@@ -213,10 +252,17 @@ function Templates() {
       <p className="max-w-3xl text-xs text-neutral-500">
         The reference for how every page is built. Each template is shown as it renders on the site, with the rules for using it. To build or change a page, start from the matching template here so structure stays uniform.
       </p>
+      <section className="flex flex-col gap-4">
+        <h2 className="text-sm font-medium uppercase tracking-wide text-neutral-400">Around every page — generated, not authored per page</h2>
+        {chrome.length === 0 ? (
+          <p className="text-xs text-neutral-500">Not captured yet: start the dev site and use Refresh in Site inventory.</p>
+        ) : chrome.map((c) => <ChromePart key={c.id} part={c} />)}
+      </section>
       {groupTemplates(templates).map((g) => (
         <section key={g.kind} className="flex flex-col gap-4">
           <h2 className="text-sm font-medium uppercase tracking-wide text-neutral-400">{titles[g.kind] || g.kind}</h2>
           {g.items.map((t) => <Specimen key={t.id} template={t} head={head} />)}
+          {g.kind === 'button' && <ButtonAudit />}
         </section>
       ))}
     </div>
@@ -314,7 +360,6 @@ function PageTemplates({ pages }) {
 
 function Inventory() {
   const [inv, setInv] = useState(undefined)
-  const [view, setView] = useState('buttons')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
@@ -339,14 +384,9 @@ function Inventory() {
       {s && (
         <>
           <p className="text-xs text-neutral-500">
-            {s.pages} pages ({Object.entries(s.pages_by_type).map(([t, n]) => `${n} ${t}`).join(', ')}) · {s.button_variants} button look{s.button_variants === 1 ? '' : 's'} + {s.github_link_variants} GitHub-link looks across {s.button_instances} instances
+            {s.pages} pages ({Object.entries(s.pages_by_type).map(([t, n]) => `${n} ${t}`).join(', ')})
           </p>
-          <div className="flex gap-2">
-            {[['buttons', `Buttons & links (${inv.buttons.length})`], ['pages', `Pages (${inv.pages.length})`]].map(([id, label]) => (
-              <button key={id} onClick={() => setView(id)} className={`rounded-md border px-3 py-1.5 text-xs ${view === id ? 'border-blue-500 bg-blue-950 text-white' : 'border-neutral-800 text-neutral-400 hover:border-neutral-600'}`}>{label}</button>
-            ))}
-          </div>
-          {view === 'buttons' ? <ButtonVariants variants={inv.buttons} /> : <PageTemplates pages={inv.pages} />}
+          <PageTemplates pages={inv.pages} />
         </>
       )}
     </div>
