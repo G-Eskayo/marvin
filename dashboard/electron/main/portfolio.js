@@ -64,6 +64,7 @@ export function createPortfolio({
   const evalScript = path.join(agentsDir, 'lib', 'portfolio_eval.py')
   const imageScript = path.join(agentsDir, 'lib', 'portfolio_imagegen.py')
   const addProjectScript = path.join(agentsDir, 'lib', 'portfolio_add_project.py')
+  const parityScript = path.join(agentsDir, 'lib', 'portfolio_parity.py')
   const applyScript = path.join(agentsDir, 'lib', 'portfolio_apply.py')
   const inventoryScript = path.join(agentsDir, 'lib', 'portfolio_inventory.py')
   const templatesScript = path.join(agentsDir, 'lib', 'portfolio_templates.py')
@@ -251,6 +252,34 @@ export function createPortfolio({
     }
   }
 
+  // The element library (templates/elements/<id>.json): elements captured from the live dev site, generalized, with their
+  // look, where each look comes from, and every page that carries them.
+  async function listElements() {
+    let names = []
+    try {
+      names = (await fsp.readdir(path.join(templates, 'elements'))).filter((f) => f.endsWith('.json')).sort()
+    } catch {
+      return []
+    }
+    const out = []
+    for (const f of names) {
+      const e = await readJson(path.join(templates, 'elements', f), null)
+      if (e && e.id) out.push(e)
+    }
+    return out
+  }
+
+  // Does the dashboard's own preview of the element still match the live site? (Renders it exactly as the tab does.)
+  async function verifyElement(id) {
+    if (typeof id !== 'string' || !TEMPLATE_ID.test(id)) throw new Error(`Invalid element id: ${JSON.stringify(id)}`)
+    try {
+      const { stdout } = await exec(python, [parityScript, id], { maxBuffer: 2 * 1024 * 1024, timeout: 3 * 60 * 1000 })
+      return JSON.parse(stdout.trim().split('\n').pop())
+    } catch (err) {
+      try { return JSON.parse(String(err.stdout || '').trim().split('\n').pop()) } catch { throw new Error(err.message) }
+    }
+  }
+
   async function deleteImageVariant(slug, motif, salt) {
     await knownProject(slug)
     if (typeof motif !== 'string' || !MOTIF_RE.test(motif)) throw new Error(`Invalid motif: ${JSON.stringify(motif)}`)
@@ -403,5 +432,5 @@ export function createPortfolio({
     return readText(path.join(referenceDir, `${slug}.html`), null)
   }
 
-  return { chrome, inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, templateSource, specimen, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage, imageMotifs, imageVariants, newImageVariant, chooseImageVariant, applyImages, addProject, deleteImageVariant, variantPreview }
+  return { chrome, inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, templateSource, specimen, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage, imageMotifs, imageVariants, newImageVariant, chooseImageVariant, applyImages, addProject, listElements, verifyElement, deleteImageVariant, variantPreview }
 }

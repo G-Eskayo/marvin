@@ -487,15 +487,23 @@ replaced by this automated path**: that gap is what this section closes.
   the project is); existing images are colour inspiration only, never the key photo; uniqueness checked by a
   perceptual hash.
 
-### Task list (doc-first: not started until approved)
+### Task list
 
-1. Capture the element library from the dev site (card first), generalize, show in Templates with usage.
-2. Parity check: each element's dashboard preview vs its live look, automatic.
-3. Evaluator compares instances to the captured element (replaces the fixed numbers).
-4. Site rules in one machine-readable file the pipeline and evaluator both read.
-5. Add-project pipeline: create-page and manifest-append steps, then the whole run, CLI + dashboard action.
-6. De-duplicate page layouts (generator strings vs `templates/*.html` vs 9 legacy pages).
-7. Remaining elements through capture: buttons, sidebar, header, title bar, footers.
+1. **Done for the project card (2026-10-03):** captured from the live dev site (`lib/portfolio_elements.py` →
+   `templates/elements/project-card.json`): 72 placements on 22 pages, 1 look, 1 geometry, 0 deviations; shown in
+   Templates with its look, provenance (which CSS rule sets what), usage and a "verify" button. The capture found and
+   fixed two real deviations (legacy per-page CSS overriding the card's padding and min-height; hand-built cards on
+   `/distributed-llm-inference/`, now filled by the footer script via `data-category` on the mount).
+2. **Done for the card:** parity check (`lib/portfolio_parity.py`): renders the element exactly as the dashboard
+   previews it and compares look, geometry and font loading with the captured element. Fails on the old broken preview.
+3. **Done for the card:** the evaluator compares every placement (also pages outside the manifest) with the captured
+   element: markup, look per part, geometry (`element-markup/look/geometry`), instead of fixed numbers.
+4. Site rules in one machine-readable file the pipeline and evaluator both read. (Not started.)
+5. **Done:** add-project pipeline (`lib/portfolio_add_project.py`, dashboard "Add project" tab): spec in → unique image,
+   page created under its hub, manifest entry appended, hub/All Projects/sidebars regenerated, evaluation run. Proven end
+   to end on the dev site with a throwaway project (then removed).
+6. De-duplicate page layouts (generator strings vs `templates/*.html` vs 9 legacy pages). (Not started.)
+7. Remaining elements through capture: buttons, sidebar, header, title bar, footers, page layouts. (Not started.)
 
 ## Citation-graph knowledge base (in design, not yet built)
 

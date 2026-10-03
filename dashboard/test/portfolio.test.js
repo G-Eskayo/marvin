@@ -477,3 +477,21 @@ describe('addProject (the add-project pipeline)', () => {
     expect(exec).not.toHaveBeenCalled()
   })
 })
+
+describe('element library', () => {
+  it('lists captured elements, skipping files that are not valid elements', async () => {
+    expect(await p.listElements()).toEqual([])
+    write('templates/elements/project-card.json', JSON.stringify({ id: 'project-card', name: 'Project card', markup: '<div/>' }))
+    write('templates/elements/broken.json', '{not json')
+    write('templates/elements/noid.json', JSON.stringify({ name: 'x' }))
+    expect((await p.listElements()).map((e) => e.id)).toEqual(['project-card'])
+  })
+  it('verifies an element through the parity check and surfaces its verdict, also when it exits non-zero', async () => {
+    exec.mockResolvedValue({ stdout: JSON.stringify({ ok: true, differences: [] }) + '\n', stderr: '' })
+    expect(await p.verifyElement('project-card')).toEqual({ ok: true, differences: [] })
+    expect(exec.mock.calls[0][1]).toEqual([expect.stringMatching(/portfolio_parity\.py$/), 'project-card'])
+    exec.mockRejectedValue(Object.assign(new Error('Command failed'), { stdout: JSON.stringify({ ok: false, differences: ['title.fontFamily: site a, preview b'] }) }))
+    expect((await p.verifyElement('project-card')).ok).toBe(false)
+    await expect(p.verifyElement('../x')).rejects.toThrow(/Invalid element id/)
+  })
+})

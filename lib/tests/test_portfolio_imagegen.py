@@ -325,7 +325,7 @@ def test_deleting_a_variant_removes_it_and_is_never_regenerated_by_generate_anot
     out = ig.delete_variant("mancala", "mancala", 1, **p)
     assert out["deleted"] is True
     assert not ig.variant_file("mancala", "mancala", 1, p["images_dir"]).exists()
-    # without the rejected memory this would return 1 again -- the very image that was just thrown away
+    # without the rejected memory this would return 1 again -- the very image that was thrown away
     assert ig.next_variant_salt("mancala", "mancala", p["images_dir"]) == 2
 
 
