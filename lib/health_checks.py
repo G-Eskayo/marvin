@@ -265,6 +265,35 @@ def check_pipeline_breaker() -> dict:
     return _result(cid, label, "red", f"dispatch paused -- {detail}", value=len(trips))
 
 
+TRIGGER_MISS_LOG = Path.home() / ".claude" / "logs" / "trigger-misses.jsonl"
+TRIGGER_MISS_WINDOW_HOURS = 24
+
+
+def check_trigger_coverage(log_path: Path | None = None, now: datetime | None = None) -> dict:
+    """Yellow when the dashboard's slow backstop poll found changes no trigger announced
+    (logged by the app's reconciler): a place state changes that has no trigger yet."""
+    cid, label = "triggers:missed", "Dashboard triggers cover every change"
+    log_path = log_path or TRIGGER_MISS_LOG
+    now = now or _now()
+    cutoff = now - timedelta(hours=TRIGGER_MISS_WINDOW_HOURS)
+    misses = []
+    try:
+        lines = log_path.read_text().splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        try:
+            m = json.loads(line)
+            if datetime.fromisoformat(m["at"]) >= cutoff:
+                misses.append(m)
+        except (ValueError, KeyError, TypeError):
+            continue
+    if not misses:
+        return _result(cid, label, "green", f"no unannounced changes in {TRIGGER_MISS_WINDOW_HOURS}h")
+    where = ", ".join(sorted({f"{m['topic']}:{m['key']}" for m in misses}))
+    return _result(cid, label, "yellow", f"{len(misses)} change(s) found by polling that no trigger announced ({where})", value=len(misses))
+
+
 # ── sync / parity health (both machines, measured in time) ───────────────
 
 # Drift is normal for a few minutes between sync cycles, so staleness is judged
@@ -610,6 +639,7 @@ def run_all() -> dict:
     results.append(check_dispatch_lock())
     results += check_ticket_failure_streaks()
     results.append(check_pipeline_breaker())
+    results.append(check_trigger_coverage())
     cron_state = ch._load_state()
     cron_now = datetime.now().astimezone()
     for job in discover_launchd_jobs():

@@ -59,6 +59,13 @@
     "salt": 0,
     "style": "pipeline"
   },
+  "pipeline-smoke-test": {
+    "chosen": true,
+    "hash": "4400a28a80800000aaaddbbfbd181800",
+    "look": "pipeline",
+    "salt": 8,
+    "style": "pipeline"
+  },
   "random-number": {
     "hash": "c00ae5e4aeb2a282aaefffff7c000000",
     "salt": 0,

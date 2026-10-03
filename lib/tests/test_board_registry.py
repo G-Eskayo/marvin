@@ -55,3 +55,27 @@ def test_corrupt_registry_is_preserved_not_clobbered(tmp_path):
     else:
         raise AssertionError("should refuse to overwrite a corrupt registry")
     assert path.read_text() == "{not json"
+
+
+def test_discover_registers_repos_that_use_the_pipeline_labels(tmp_path):
+    labels = {"o/with": ["ready-for-agent", "bug"], "o/without": ["bug"], "o/old": ["ready-for-agent"]}
+
+    def gh(args):
+        if args[:2] == ["repo", "list"]:
+            return json.dumps([{"nameWithOwner": "o/with", "isArchived": False},
+                               {"nameWithOwner": "o/without", "isArchived": False},
+                               {"nameWithOwner": "o/old", "isArchived": True}])
+        repo = args[args.index("--repo") + 1]
+        return json.dumps([{"name": n} for n in labels[repo]])
+
+    path = tmp_path / "r.json"
+    assert br.discover("o", gh=gh, path=path) == ["o/with"]
+    assert br.discover("o", gh=gh, path=path) == []  # already registered: nothing new
+    assert [b["repo"] for b in br.list_boards(path)] == ["o/with"]
+
+
+def test_discover_survives_a_failing_repo_and_a_failing_gh(tmp_path):
+    def gh(args):
+        raise RuntimeError("offline")
+
+    assert br.discover("o", gh=gh, path=tmp_path / "r.json") == []

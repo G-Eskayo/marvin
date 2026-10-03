@@ -27,6 +27,19 @@ describe('createRefreshServer', () => {
     expect(onRefresh).toHaveBeenCalledTimes(1)
   })
 
+  it('passes a JSON body (topics, source) through to onRefresh, tolerating junk', async () => {
+    const onRefresh = vi.fn()
+    server = createRefreshServer(onRefresh)
+    const port = await listen(server)
+    const url = `http://127.0.0.1:${port}/refresh`
+
+    await fetch(url, { method: 'POST', body: JSON.stringify({ topics: ['activity'], source: 'github:o/r' }) })
+    await fetch(url, { method: 'POST', body: '{not json' })
+
+    expect(onRefresh).toHaveBeenNthCalledWith(1, { topics: ['activity'], source: 'github:o/r' })
+    expect(onRefresh).toHaveBeenNthCalledWith(2, {})
+  })
+
   it('responds 404 and does not call onRefresh for any other route', async () => {
     const onRefresh = vi.fn()
     server = createRefreshServer(onRefresh)

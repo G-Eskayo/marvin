@@ -340,6 +340,20 @@ def list_variants(slug: str, registry_path: Path = REGISTRY_PATH, images_dir: Pa
             "default_motif": _label(portfolio_motifs.motif_for(slug))}
 
 
+def pick_unique_variant(slug: str, motif=DEFAULT, inspiration: dict | None = None, registry_path: Path = REGISTRY_PATH,
+                        images_dir: Path = IMAGES_DIR, size=HERO_SIZE, max_salt: int = 8) -> dict:
+    """For a NEW project: the first variant (re-rolling the salt) that is distinct enough from every image already in
+    use, chosen as the project's image. This is what keeps generated art unique without a person comparing them."""
+    taken = [int(v["hash"], 16) for k, v in _load(registry_path).items() if k != slug]
+    last = None
+    for salt in range(max_salt + 1):
+        last = make_variant(slug, motif, salt, inspiration, images_dir, size)
+        if all(hamming(int(last["hash"], 16), t) >= MIN_DISTANCE for t in taken):
+            break
+    out = choose_variant(slug, motif, last["salt"], inspiration, registry_path, images_dir, size)
+    return out
+
+
 def choose_variant(slug: str, motif, salt: int, inspiration: dict | None = None, registry_path: Path = REGISTRY_PATH,
                    images_dir: Path = IMAGES_DIR, size=HERO_SIZE) -> dict:
     """Make (motif, salt) the image IN USE for the slug: records it in the registry and writes images/<slug>.png.
