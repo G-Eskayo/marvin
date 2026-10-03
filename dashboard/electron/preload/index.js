@@ -56,6 +56,7 @@ contextBridge.exposeInMainWorld('api', {
     imageVariants: (slug) => ipcRenderer.invoke('portfolio:image:variants', slug),
     newImageVariant: (slug, motif) => ipcRenderer.invoke('portfolio:image:variant:new', slug, motif),
     chooseImageVariant: (slug, motif, salt) => ipcRenderer.invoke('portfolio:image:variant:choose', slug, motif, salt),
+    addProject: (spec, opts) => ipcRenderer.invoke('portfolio:project:add', spec, opts),
     applyImages: () => ipcRenderer.invoke('portfolio:images:apply'),
     deleteImageVariant: (slug, motif, salt) => ipcRenderer.invoke('portfolio:image:variant:delete', slug, motif, salt),
     variantPreview: (slug, motif, salt) => ipcRenderer.invoke('portfolio:image:variant:preview', slug, motif, salt),

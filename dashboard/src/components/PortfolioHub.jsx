@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
   groupFindingsByRule, parseRulesText, previewDocument, formatRunTime,
-  buttonVerdict, groupTemplates, countByType, inventoryIsStale
+  buttonVerdict, groupTemplates, countByType, inventoryIsStale, slugify, CATEGORIES
 } from '../lib/portfolio.js'
 
 // The Portfolio hub (CONTEXT.md "Dashboard app -- Portfolio tab"): the single place that defines how
@@ -15,6 +15,7 @@ const DEV_SITE = 'http://localhost:8080'
 const SUBTABS = [
   ['templates', 'Templates'],
   ['inventory', 'Site inventory'],
+  ['add', 'Add project'],
   ['guide', 'Guide & rules'],
   ['evaluation', 'Evaluation'],
   ['images', 'Images']
@@ -405,6 +406,98 @@ function Inventory() {
   )
 }
 
+// ── Add project: a project spec in, a finished DEV-site change out ──────────
+
+const SPEC_START = {
+  title: '', slug: '', category: CATEGORIES[0], subtitle: '', description: '', body_html: '', stack_csv: '',
+  github_url: '', download_url: '', download_label: '', theme: ''
+}
+
+function AddProject() {
+  const [spec, setSpec] = useState(SPEC_START)
+  const [slugTouched, setSlugTouched] = useState(false)
+  const [motifs, setMotifs] = useState([])
+  const [busy, setBusy] = useState(null)
+  const [result, setResult] = useState(null)
+  const [error, setError] = useState(null)
+  const set = (k, v) => setSpec((cur) => ({ ...cur, [k]: v, ...(k === 'title' && !slugTouched ? { slug: slugify(v) } : {}) }))
+
+  useEffect(() => { window.api.portfolio.imageMotifs().then(setMotifs).catch(() => {}) }, [])
+
+  async function run(plan) {
+    setBusy(plan ? 'plan' : 'create')
+    setError(null)
+    setResult(null)
+    try {
+      const clean = Object.fromEntries(Object.entries(spec).filter(([, v]) => String(v).trim() !== ''))
+      setResult(await window.api.portfolio.addProject(clean, { plan }))
+    } catch (e) {
+      setError(errText(e))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const input = 'rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-xs text-neutral-200 outline-none focus:border-blue-500'
+  const row = (label, node, hint) => (
+    <label className="flex flex-col gap-1"><span className="text-xs text-neutral-400">{label}</span>{node}{hint && <span className="text-[10px] text-neutral-600">{hint}</span>}</label>
+  )
+
+  return (
+    <div className="grid gap-6 xl:grid-cols-2">
+      <div className="flex flex-col gap-3">
+        <div>
+          <h2 className="text-lg font-medium text-white">Add a project to the dev site</h2>
+          <p className="text-xs text-neutral-500">
+            Fill in what only a person writes. The pipeline does the rest by the site rules: generates a unique image, creates the page under its category,
+            adds the card and manifest entry, rebuilds the hub, All Projects and sidebars, and checks the result. Dev site only; nothing is pushed.
+          </p>
+        </div>
+        {row('Title', <input value={spec.title} onChange={(e) => set('title', e.target.value)} className={input} />)}
+        {row('Slug (the URL ending)', <input value={spec.slug} onChange={(e) => { setSlugTouched(true); set('slug', e.target.value) }} className={input} />)}
+        {row('Category', <select value={spec.category} onChange={(e) => set('category', e.target.value)} className={input}>{CATEGORIES.map((c) => <option key={c}>{c}</option>)}</select>)}
+        {row('Subtitle (the pink line)', <input value={spec.subtitle} onChange={(e) => set('subtitle', e.target.value)} className={input} />)}
+        {row('Card description (one or two sentences)', <input value={spec.description} onChange={(e) => set('description', e.target.value)} className={input} />)}
+        {row('Body (HTML paragraphs)', <textarea value={spec.body_html} onChange={(e) => set('body_html', e.target.value)} rows={6} spellCheck={false} className={field} />)}
+        {row('Stack (comma-separated)', <input value={spec.stack_csv} onChange={(e) => set('stack_csv', e.target.value)} className={input} />)}
+        {row('GitHub repository URL', <input value={spec.github_url} onChange={(e) => set('github_url', e.target.value)} placeholder="https://github.com/G-Eskayo/…" className={input} />, 'Leave empty if the project has no public repository: no button is added.')}
+        {row('Download file URL', <input value={spec.download_url} onChange={(e) => set('download_url', e.target.value)} className={input} />, 'Optional. Shown after the GitHub button.')}
+        {row('Image theme', <select value={spec.theme} onChange={(e) => set('theme', e.target.value)} className={input}><option value="">Plain pattern (choose another later in Images)</option>{motifs.filter((m) => m !== 'pattern').map((m) => <option key={m} value={m}>{m}</option>)}</select>)}
+        <div className="flex items-center gap-2">
+          <button onClick={() => run(true)} disabled={!!busy} className={button}>{busy === 'plan' ? 'Checking…' : 'Check (writes nothing)'}</button>
+          <button onClick={() => run(false)} disabled={!!busy} className={primary}>{busy === 'create' ? 'Creating on the dev site (about two minutes)…' : 'Create on the dev site'}</button>
+        </div>
+      </div>
+      <div className="flex min-w-0 flex-col gap-3">
+        {error && <p className="text-xs text-red-400">{error}</p>}
+        {result && !result.ok && (
+          <ul className="text-xs">{(result.errors || ['Something went wrong']).map((m, i) => <li key={i} className="text-red-400">{m}</li>)}</ul>
+        )}
+        {result?.ok && result.dry_run && (
+          <div className="rounded-lg border border-neutral-800 p-3 text-xs text-neutral-300">
+            <p className="mb-1 text-emerald-400">Valid. Nothing was written.</p>
+            <p>Page: <span className="font-mono">{result.url}</span></p>
+            <p>Steps: {result.steps.join(' → ')}</p>
+            <pre className="mt-2 overflow-auto rounded border border-neutral-800 bg-neutral-950 p-2 text-[11px]">{JSON.stringify(result.manifest_entry, null, 2)}</pre>
+          </div>
+        )}
+        {result?.ok && !result.dry_run && (
+          <div className="rounded-lg border border-emerald-900 p-3 text-xs text-neutral-300">
+            <p className="mb-1 text-emerald-400">Created on the dev site.</p>
+            <p>Page: <a href={`http://localhost:8080${result.url}`} target="_blank" rel="noreferrer" className="font-mono text-blue-400">{result.url}</a></p>
+            {result.image?.warning && <p className="text-amber-400">Image: {result.image.warning} — choose another in the Images tab.</p>}
+            <p>{(result.pages_regenerated || []).length} page rebuild step(s) ran.</p>
+            {(result.findings_for_new_page || []).length > 0 ? (
+              <ul className="mt-1">{result.findings_for_new_page.map((f, i) => <li key={i} className="text-amber-400">{f.rule}: {f.detail}</li>)}</ul>
+            ) : <p className="text-emerald-400">The evaluation found nothing wrong with the new page.</p>}
+            <p className="mt-2 text-neutral-500">Review: {result.review}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Guide & rules ───────────────────────────────────────────────────────────
 
 function GuideAndRules() {
@@ -790,7 +883,7 @@ export default function PortfolioHub() {
         <span className="ml-auto pb-2 text-[11px] text-neutral-600">dev site only · nothing here touches production</span>
       </nav>
       <div className="flex-1 overflow-auto p-6">
-        {tab === 'templates' ? <Templates /> : tab === 'inventory' ? <Inventory /> : tab === 'guide' ? <GuideAndRules /> : tab === 'evaluation' ? <Evaluation /> : <Images />}
+        {tab === 'templates' ? <Templates /> : tab === 'inventory' ? <Inventory /> : tab === 'add' ? <AddProject /> : tab === 'guide' ? <GuideAndRules /> : tab === 'evaluation' ? <Evaluation /> : <Images />}
       </div>
     </div>
   )

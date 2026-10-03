@@ -450,3 +450,30 @@ describe('previewHead takes the union of stylesheets across representative pages
     expect(head).toContain('preview-body-class" content="x y"')
   })
 })
+
+describe('addProject (the add-project pipeline)', () => {
+  const spec = { title: 'T', slug: 'weather', category: 'Software Engineering' }
+  it('runs the pipeline script with the spec in a temp file, --plan for a dry run, and cleans the file up', async () => {
+    let seen
+    exec.mockImplementation(async (_py, args) => {
+      seen = { args, spec: JSON.parse(readFileSync(args[args.indexOf('--spec') + 1], 'utf8')) }
+      return { stdout: JSON.stringify({ ok: true, dry_run: true }) + '\n', stderr: '' }
+    })
+    const r = await p.addProject(spec, { plan: true })
+    expect(r).toEqual({ ok: true, dry_run: true })
+    expect(seen.args).toContain('--plan')
+    expect(seen.args[0]).toMatch(/portfolio_add_project\.py$/)
+    expect(seen.spec).toEqual(spec)
+    expect(existsSync(seen.args[seen.args.indexOf('--spec') + 1])).toBe(false)
+  })
+  it('returns the pipeline\'s own explanation when it refuses a spec (exit code 2)', async () => {
+    exec.mockRejectedValue(Object.assign(new Error('Command failed'), { stdout: JSON.stringify({ ok: false, stage: 'plan', errors: ['missing subtitle'] }) }))
+    expect(await p.addProject(spec)).toEqual({ ok: false, stage: 'plan', errors: ['missing subtitle'] })
+  })
+  it('rejects a missing spec or a bad slug before running anything', async () => {
+    exec.mockClear()
+    await expect(p.addProject(null)).rejects.toThrow(/spec is required/)
+    await expect(p.addProject({ slug: '../x' })).rejects.toThrow(/slug/)
+    expect(exec).not.toHaveBeenCalled()
+  })
+})
