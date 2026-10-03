@@ -113,6 +113,38 @@ def check_card_consistency(per_page: dict[str, list[dict]]) -> list[dict]:
     return out
 
 
+def load_element(element_id: str, project: Path = PROJECT) -> dict | None:
+    """The captured element (templates/elements/<id>.json), or None when it has not been captured yet."""
+    try:
+        return json.loads((Path(project) / "templates" / "elements" / f"{element_id}.json").read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def check_element_instances(instances: list[dict], element: dict) -> list[dict]:
+    """Every placement of an element must BE the element: the same generalized markup, the same computed look part by
+    part, the same geometry. The reference is the captured element (the approved dev-site look), not numbers someone
+    typed into a rules file."""
+    import portfolio_elements as pe
+    out: list[dict] = []
+    for inst in instances:
+        try:
+            if inst.get("html") and element.get("markup") and pe.generalize_card(inst["html"]) != element["markup"]:
+                out.append(_finding("element-markup", f"a {element['name']} on this page is hand-built, not the element"))
+        except ValueError:
+            out.append(_finding("element-markup", f"a {element['name']} on this page is not recognisable as the element"))
+        want = element.get("look") or {}
+        for part, props in want.items():
+            have = (inst.get("look") or {}).get(part)
+            if props and have != props:
+                diff = sorted(k for k in props if (have or {}).get(k) != props[k])
+                out.append(_finding("element-look", f"{element['name']} {part} differs from the element: {', '.join(diff) or 'missing'}"))
+        geo, want_geo = inst.get("geometry"), element.get("geometry")
+        if want_geo and geo and geo != want_geo:
+            out.append(_finding("element-geometry", f"{element['name']} geometry {geo} differs from the element's {want_geo}"))
+    return out
+
+
 def check_grid(cards: list[dict], rules: dict) -> list[dict]:
     """Cards in the same row (same top within tolerance) must share one height."""
     tol = rules["tolerance_px"]
@@ -217,7 +249,13 @@ def run(base: str = "http://localhost:8080", rules: dict | None = None, manifest
     manifest = json.loads(Path(manifest_path).read_text())
     projects = {p["title"]: p["url"] for p in manifest}
     findings: list[dict] = []
+    element = load_element("project-card")
     pages = list(projects.values()) + list(rules["hub_pages"])
+    off_manifest: list[str] = []
+    if element:   # pages that carry the element but are not in the manifest (e.g. top-level project pages) are checked too
+        off_manifest = [u for u in element["usage"]["pages"] if u not in pages]
+        pages += off_manifest
+    project_like = set(projects.values()) | set(off_manifest)
 
     card_geoms: dict[str, list[dict]] = {}
     for f in check_unique_images({p["title"]: p["thumbnail"] for p in manifest}):
@@ -233,9 +271,13 @@ def run(base: str = "http://localhost:8080", rules: dict | None = None, manifest
                 label = f"{url} @{width}"
                 per_page = check_overflow(m["viewport"], m["scrollWidth"])
                 if width >= 1100:   # card geometry rules apply to the desktop layouts
-                    per_page += check_card_geometry(m["cardGeom"], rules)
+                    if element:
+                        import portfolio_elements as pe
+                        per_page += check_element_instances(pe.page_instances(page, pe.ELEMENTS["project-card"]), element)
+                    else:
+                        per_page += check_card_geometry(m["cardGeom"], rules)
                     card_geoms[label] = m["cardGeom"]
-                    if url in projects.values():
+                    if url in project_like:
                         per_page += check_footer(m["footerCards"], m["heading"], rules)
                         per_page += check_github_links(m["github"], rules)
                     else:

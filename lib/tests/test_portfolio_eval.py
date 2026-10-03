@@ -224,3 +224,45 @@ def test_card_consistency_flags_a_card_with_different_structure_or_typography():
     found = ev.check_card_consistency(pages)
     assert sorted((f["page"], f["rule"]) for f in found) == [("/b/ @1440", "card-markup"), ("/c/ @1440", "card-typography")]
     assert ev.check_card_consistency({"/a/": [good, good]}) == []
+
+
+# ── placements must BE the captured element ─────────────────────────────────
+
+ELEMENT = {"name": "Project card", "markup": '<div class="col-md-6"><a href="{{URL}}" class="black-image-project-hover"><img src="{{THUMBNAIL}}" alt="" class="img-responsive"></a><div class="card-container card-container-lg"><a href="{{URL}}" title="{{TITLE}}"><h3 class="card-title">{{TITLE}}</h3></a><div class="equal"><p>{{DESCRIPTION}}</p>{{ALSO_HTML}}</div><a href="{{URL}}" class="btn btn-default">Discover</a></div></div>',
+           "look": {"title": {"color": "pink", "fontFamily": "slab"}, "button": {"display": "block"}}, "geometry": {"photoHeight": 240, "boxHeight": 290, "overlap": 56}}
+LIVE = ELEMENT["markup"].replace("{{URL}}", "/p/").replace("{{THUMBNAIL}}", "/i.jpg").replace("{{TITLE}}", "T").replace("{{DESCRIPTION}}", "d").replace("{{ALSO_HTML}}", "")
+
+
+def _inst(**over):
+    base = {"look": {"title": {"color": "pink", "fontFamily": "slab"}, "button": {"display": "block"}}, "geometry": dict(ELEMENT["geometry"]), "html": LIVE}
+    base.update(over)
+    return base
+
+
+def test_a_placement_identical_to_the_element_has_no_findings():
+    import portfolio_eval as ev
+    assert ev.check_element_instances([_inst(), _inst()], ELEMENT) == []
+
+
+def test_a_placement_with_a_different_look_names_the_part_and_properties():
+    import portfolio_eval as ev
+    bad = _inst(look={"title": {"color": "black", "fontFamily": "slab"}, "button": {"display": "block"}})
+    f = ev.check_element_instances([bad], ELEMENT)
+    assert [x["rule"] for x in f] == ["element-look"] and "title" in f[0]["detail"] and "color" in f[0]["detail"]
+
+
+def test_a_placement_with_different_geometry_or_hand_built_markup_is_flagged():
+    import portfolio_eval as ev
+    geo = ev.check_element_instances([_inst(geometry={"photoHeight": 240, "boxHeight": 290, "overlap": 34})], ELEMENT)
+    assert [x["rule"] for x in geo] == ["element-geometry"]
+    hand = ev.check_element_instances([_inst(html=LIVE.replace('<a href="/p/" class="black-image-project-hover">', '<a href="/p/" class="black-image-project-hover"><br>'))], ELEMENT)
+    assert [x["rule"] for x in hand] == ["element-markup"]
+    junk = ev.check_element_instances([_inst(html="<div>nope</div>")], ELEMENT)
+    assert [x["rule"] for x in junk] == ["element-markup"]
+
+
+def test_live_theme_noise_does_not_make_a_placement_look_hand_built():
+    import portfolio_eval as ev
+    noisy = LIVE.replace('class="img-responsive"', 'class="lazyloaded img-responsive" decoding="async" data-orig-src="/i.jpg"').replace(
+        '<h3 class="card-title">', '<h3 class="card-title fusion-responsive-typography-calculated" data-fontsize="26" data-lineheight="35.1px" style="--fontSize: 26; line-height: 1.35;">')
+    assert ev.check_element_instances([_inst(html=noisy)], ELEMENT) == []

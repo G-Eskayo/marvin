@@ -195,6 +195,8 @@ function registerDocsHandlers() {
   ipcMain.handle('portfolio:image:variant:new', (_e, slug, motif) => portfolio.newImageVariant(slug, motif))
   ipcMain.handle('portfolio:image:variant:choose', (_e, slug, motif, salt) => portfolio.chooseImageVariant(slug, motif, salt))
   ipcMain.handle('portfolio:project:add', (_e, spec, opts) => portfolio.addProject(spec, opts))
+  ipcMain.handle('portfolio:elements', () => portfolio.listElements())
+  ipcMain.handle('portfolio:element:verify', (_e, id) => portfolio.verifyElement(id))
   ipcMain.handle('portfolio:images:apply', () => portfolio.applyImages())
   ipcMain.handle('portfolio:image:variant:delete', (_e, slug, motif, salt) => portfolio.deleteImageVariant(slug, motif, salt))
   ipcMain.handle('portfolio:image:variant:preview', (_e, slug, motif, salt) => portfolio.variantPreview(slug, motif, salt))

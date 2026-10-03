@@ -167,7 +167,67 @@ function Rule({ label, children }) {
   return <p className="text-xs text-neutral-300"><span className="text-neutral-500">{label}: </span>{children}</p>
 }
 
-function Specimen({ template, head }) {
+// What the library knows about an element captured from the live dev site: its look, where each look comes from,
+// where it is used, and whether the dashboard's own preview still matches the site.
+function ElementDetails({ element }) {
+  const [check, setCheck] = useState(null)
+  const [busy, setBusy] = useState(false)
+  async function verify() {
+    setBusy(true)
+    setCheck(null)
+    try {
+      setCheck(await window.api.portfolio.verifyElement(element.id))
+    } catch (e) {
+      setCheck({ ok: false, differences: [errText(e)] })
+    } finally {
+      setBusy(false)
+    }
+  }
+  const pages = Object.entries(element.usage?.pages || {})
+  const sources = Object.entries(element.provenance || {})
+  return (
+    <div className="mt-3 flex flex-col gap-3 rounded-md border border-neutral-800 bg-neutral-950 p-3 text-xs text-neutral-300">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="rounded bg-emerald-950 px-1.5 py-0.5 text-[10px] text-emerald-300">captured from the live dev site</span>
+        <span>{element.usage?.placements} placements on {pages.length} pages · {element.distinct_looks} distinct look{element.distinct_looks === 1 ? '' : 's'}</span>
+        <span className={element.deviations?.length ? 'text-amber-400' : 'text-emerald-400'}>
+          {element.deviations?.length ? `${element.deviations.length} placement(s) are not the element` : 'every placement is the element'}
+        </span>
+        <button onClick={verify} disabled={busy} className={`${button} ml-auto`}>{busy ? 'Checking…' : 'Verify this preview against the live site'}</button>
+      </div>
+      {check && (
+        <p className={check.ok ? 'text-emerald-400' : 'text-red-400'}>
+          {check.ok ? 'The preview above matches the live site (look and geometry).' : `Differences from the live site: ${check.differences.join('; ')}`}
+        </p>
+      )}
+      {(element.deviations || []).map((d) => (
+        <p key={d.page} className="text-amber-400">{d.page}: {d.why.join('; ')}</p>
+      ))}
+      {element.geometry && (
+        <p><span className="text-neutral-500">Geometry: </span>photo frame {element.geometry.photoHeight}px · text box {element.geometry.boxHeight}px · box overlays the photo by {element.geometry.overlap}px</p>
+      )}
+      <details>
+        <summary className="cursor-pointer text-neutral-400">Where its look comes from ({sources.length} parts)</summary>
+        <div className="mt-2 flex flex-col gap-2">
+          {sources.map(([part, props]) => (
+            <div key={part}>
+              <p className="text-neutral-500">{part}</p>
+              {Object.entries(props).map(([prop, v]) => (
+                <p key={prop} className="font-mono text-[11px]">{prop}: {v.value} <span className="text-neutral-600">← {v.selector} in {v.source}</span></p>
+              ))}
+            </div>
+          ))}
+        </div>
+      </details>
+      <details>
+        <summary className="cursor-pointer text-neutral-400">Pages that use it ({pages.length})</summary>
+        <p className="mt-2 font-mono text-[11px] text-neutral-400">{pages.map(([u, n]) => `${u} ×${n}`).join(' · ')}</p>
+      </details>
+    </div>
+  )
+}
+
+function Specimen({ template, head, element }) {
   const [res, setRes] = useState(null)
   const [markup, setMarkup] = useState(null)
   const [showMarkup, setShowMarkup] = useState(false)
@@ -218,6 +278,7 @@ function Specimen({ template, head }) {
         {showMarkup && <CopyButton text={markup} label="Copy markup" />}
       </div>
       {showMarkup && <pre className="mt-2 max-h-80 overflow-auto rounded border border-neutral-800 bg-neutral-950 p-3 text-[11px] text-neutral-300">{markup}</pre>}
+      {element && <ElementDetails element={element} />}
     </article>
   )
 }
@@ -264,6 +325,7 @@ function ButtonAudit() {
 
 function Templates() {
   const [chrome, setChrome] = useState([])
+  const [elements, setElements] = useState({})
   const [templates, setTemplates] = useState(null)
   const [head, setHead] = useState('')
   const [error, setError] = useState(null)
@@ -272,6 +334,7 @@ function Templates() {
     window.api.portfolio.templates().then(setTemplates).catch((e) => setError(errText(e)))
     window.api.portfolio.previewHead().then(setHead).catch(() => {})
     window.api.portfolio.chrome().then(setChrome).catch(() => {})
+    window.api.portfolio.elements().then((list) => setElements(Object.fromEntries(list.map((e) => [e.id, e])))).catch(() => {})
   }, [])
 
   if (error) return <p className="text-sm text-red-400">Could not load templates: {error}</p>
@@ -292,7 +355,7 @@ function Templates() {
       {groupTemplates(templates).map((g) => (
         <section key={g.kind} className="flex flex-col gap-4">
           <h2 className="text-sm font-medium uppercase tracking-wide text-neutral-400">{titles[g.kind] || g.kind}</h2>
-          {g.items.map((t) => <Specimen key={t.id} template={t} head={head} />)}
+          {g.items.map((t) => <Specimen key={t.id} template={t} head={head} element={elements[t.id]} />)}
           {g.kind === 'button' && <ButtonAudit />}
         </section>
       ))}
