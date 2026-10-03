@@ -415,36 +415,87 @@ its ticketing system creates shows up there with drill-down status. Boards live 
   MARVIN-repo tickets have stage events today; stage storage is keyed by number, so other repos get
   GitHub-derived status only until stage keys carry the repo — additive, noted not built).
 - **Titles always travel with numbers** (never a bare `#n`).
+- **Nothing here is invoked by hand (decided 2026-10-03, Gil: "the idea is automation").**
+  Boards *appear* via `board_registry.discover()` (hourly, inside the `ticket-pipeline` run: any
+  non-archived repo of the owner that has the `ready-for-agent` label gets a board) plus the claim and
+  `to-issues` hooks. Board *contents* poll GitHub every 60s while the tab is open. The *app itself* is
+  rebuilt and relaunched by the 30-min code-sync cycle (`dashboard_rebuild.py`): a change settles for
+  15 min, and a running app is rebuilt once it is >=1h behind (was 2h / 24h, which made a new feature
+  take up to a day to show). Trade-off accepted: the relaunch drops unsaved in-tab edits (Portfolio).
 
-## Dashboard app — Portfolio tab (in design, 2026-10-02)
+## Dashboard app — Portfolio tab (2026-10-02/03)
 
-The portfolio site (`G-Eskayo/portfolio-website-updater`, WordPress + Avada) has visible inconsistency
-across project pages (measured 2026-10-02: footer cards differ in height and overlap their heading,
-6 GitHub-link wordings / 4 looks, 17 projects share 12 thumbnails). Root cause: pages are hand-built,
-so nothing enforces parity. The Portfolio tab is the hub that enforces it by construction.
+The portfolio site (`G-Eskayo/portfolio-website-updater`, WordPress + Avada) had visible inconsistency
+across project pages (measured 2026-10-02: footer cards differing in height and overlapping their heading,
+6 GitHub-link wordings / 4 looks, 17 projects sharing 12 thumbnails). Root cause: pages were hand-built,
+so nothing enforced parity. The goal is not a nicer tab; it is **plug-and-play site building**: when a new
+project is finished, MARVIN can create its page and update the site from a set of rules, with an LLM
+involved only where judgment is needed (writing the words, picking a theme) and everything else deterministic.
 
-- **Portfolio hub**: one dashboard tab that is the single source of truth for how a Project Page is
-  built — the guide, the component library, the evaluation results, and the images. Gil edits and
-  refines it; MARVIN reads from it when building or updating pages, so a component is defined once.
-- **Component**: a reusable, named HTML/CSS snippet with one canonical definition (e.g. the GitHub
-  button, the project card). Stored as files in the portfolio repo's `templates/components/`, editable
-  in the tab with a live preview. Defaults today: GitHub button = the existing `btn btn-default` look
-  (5 pages already use it, and it matches DISCOVER), text "View on GitHub"; refined in the tab, not here.
-- **Design rules**: machine-readable (`templates/design-rules.json`) and human-readable guide. The
-  evaluation reads the same rules the tab edits, so changing a rule changes what is checked.
-- **Evaluation**: deterministic layout/consistency checks run with headless Playwright against the dev
-  site (no model, no tokens): footer cards equal height/aligned/not overlapping the heading, grid
-  cards equal height per row, one canonical GitHub button, unique images, no horizontal overflow at
-  three viewports. The pair of "Other Projects" cards is randomised per view, so checks measure each
-  card against rules instead of comparing to a fixed layout. Results shown in the tab.
-- **Generated hero image** (decided 2026-10-02): deterministic generative art keyed to the project's
-  slug — same slug, same image; unique per project; black-and-white aesthetic matching the site; zero
-  API cost. A project's existing images are **never** used as the key photo; they are *inspiration
-  only* (palette/mood feed the generator's parameters). Uniqueness is enforced by a perceptual-hash
-  check, not assumed.
-- **Write policy**: the tab and anything MARVIN builds write to the **dev** site only. Promotion to
-  production is Gil's manual act (the portfolio repo's standing rule: a push touching `deploy/`
-  auto-deploys to production).
+**Environments.** The **dev site** (localhost:8080) is the pre-production copy of what customers will see:
+the place to build and break things. **Production** is what customers see; promotion is Gil's manual act
+(a push touching `deploy/` auto-deploys it, so nothing here pushes the portfolio repo). Everything MARVIN builds
+writes to dev only.
+
+### Language
+
+- **Element**: one individual kind of thing that appears on the website, defined once: the project card, each
+  of the three canonical buttons, the category sidebar, the site header, the page title bar, the Other
+  Projects section, the footer, the section heading, each page layout (project, hub, All Projects, content).
+  Instances of an element on pages are placements of it, never copies.
+- **Element library**: the set of all elements, each with its generalized markup (content replaced by
+  placeholders), where its look comes from (which CSS), the rules for using it, and the pages that use it.
+  Shown in the dashboard's **Templates** tab exactly as it renders on the dev site, so it is the place to copy
+  from. **Built once, by capture**: Gil approved the dev site's look, so each element is captured from the live dev
+  site (markup + computed look) and generalized, instead of being re-derived from our own files. After that
+  the library is edited deliberately, not re-captured.
+- **Site rules**: the machine-readable statement of what a new project or page requires (URL shape, manifest
+  fields, which elements in which order, which button where, image requirements). Rules, not prose, so a
+  program can apply and check them. Today partly in `templates/design-rules.json` and the generators.
+- **Project spec**: the small structured input for a new project (title, category, slug, subtitle, card
+  description, body, stack, optional GitHub repo / download file, optional theme). The only thing an LLM
+  needs to write.
+- **Add-project pipeline**: the automation that turns a project spec into a finished dev-site change by
+  applying the site rules and the element library, then checks it with the evaluation.
+
+### Add-project pipeline (target)
+
+1. Validate the spec against the site rules (`plan_new_project`, exists).
+2. Render the project page from the project-page layout and its elements (renderer, exists).
+3. **Create the page on the dev site** under its category (missing: the generators only update pages that
+   already exist).
+4. **Append the manifest entry** (missing: this was a copy-by-hand step in the old wizard).
+5. Generate the image, let the person choose, apply it (variants, choose, delete, apply, exist).
+6. Regenerate the category hub, All Projects and the sidebars from the manifest (exists); the Other Projects
+   footer needs nothing, it reads the manifest.
+7. Run the evaluation on the new page and the pages it touched (exists).
+8. Report: what changed on dev, the manifest diff to review, and what the evaluation found.
+
+Entry points: a dashboard action and a command-line script MARVIN calls (same code). The old interactive "New
+project" form was removed from the dashboard on request (templates are a reference, not forms) and **was not
+replaced by this automated path**: that gap is what this section closes.
+
+### Components of the tab (as built)
+
+- **Templates** = the element library (read-only reference, live previews, markup to copy, pages using it).
+  Today these previews are re-renders of our template files inside a simulated page; the target is the
+  captured element itself.
+- **Site inventory** = descriptive: what is on the dev site today, crawled live (re-crawled when stale).
+- **Guide & rules**, **Evaluation** (deterministic Playwright checks, no tokens), **Images** (generated art
+  keyed to slug and theme; every variant kept; choose, delete, apply to dev).
+- **Generated hero image**: deterministic art keyed to the project's slug and a chosen theme (a diagram of what
+  the project is); existing images are colour inspiration only, never the key photo; uniqueness checked by a
+  perceptual hash.
+
+### Task list (doc-first: not started until approved)
+
+1. Capture the element library from the dev site (card first), generalize, show in Templates with usage.
+2. Parity check: each element's dashboard preview vs its live look, automatic.
+3. Evaluator compares instances to the captured element (replaces the fixed numbers).
+4. Site rules in one machine-readable file the pipeline and evaluator both read.
+5. Add-project pipeline: create-page and manifest-append steps, then the whole run, CLI + dashboard action.
+6. De-duplicate page layouts (generator strings vs `templates/*.html` vs 9 legacy pages).
+7. Remaining elements through capture: buttons, sidebar, header, title bar, footers.
 
 ## Citation-graph knowledge base (in design, not yet built)
 
