@@ -1,0 +1,57 @@
+"""Tests for board_registry.py. Run via:
+    ~/.agents/venv/bin/python -m pytest lib/tests/test_board_registry.py -v
+"""
+from __future__ import annotations
+import json
+import sys
+from pathlib import Path
+
+LIB = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(LIB))
+
+import board_registry as br  # noqa: E402
+
+
+def test_ensure_board_creates_an_entry_once(tmp_path):
+    path = tmp_path / "registry.json"
+    first = br.ensure_board("G-Eskayo/clarity-captions", path=path)
+    second = br.ensure_board("G-Eskayo/clarity-captions", path=path)
+    assert first["created"] is True
+    assert second["created"] is False
+    boards = json.loads(path.read_text())["boards"]
+    assert [b["repo"] for b in boards] == ["G-Eskayo/clarity-captions"]
+
+
+def test_default_name_is_the_repo_name(tmp_path):
+    entry = br.ensure_board("G-Eskayo/killer-sudoku", path=tmp_path / "r.json")["board"]
+    assert entry["name"] == "killer-sudoku"
+    assert "addedAt" in entry
+
+
+def test_existing_board_keeps_its_fields_but_accepts_new_due(tmp_path):
+    path = tmp_path / "r.json"
+    br.ensure_board("o/r", name="Pretty", path=path)
+    entry = br.ensure_board("o/r", due="2026-10-25", due_hard=True, path=path)["board"]
+    assert entry["name"] == "Pretty"
+    assert entry["due"] == "2026-10-25" and entry["dueHard"] is True
+
+
+def test_rejects_malformed_repo(tmp_path):
+    for bad in ("", "noslash", "a/b/c", "a b/c"):
+        try:
+            br.ensure_board(bad, path=tmp_path / "r.json")
+        except ValueError:
+            continue
+        raise AssertionError(f"accepted {bad!r}")
+
+
+def test_corrupt_registry_is_preserved_not_clobbered(tmp_path):
+    path = tmp_path / "r.json"
+    path.write_text("{not json")
+    try:
+        br.ensure_board("o/r", path=path)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("should refuse to overwrite a corrupt registry")
+    assert path.read_text() == "{not json"

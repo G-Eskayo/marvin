@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""Project board registry (CONTEXT.md "Project boards").
+
+A board is a registry entry; its tickets are read live from the project's
+tracker by the dashboard, so nothing here stores tickets. Idempotent:
+`ensure_board` is safe to call every time MARVIN touches a project.
+
+    board_registry.py ensure <owner/repo> [--name N] [--due YYYY-MM-DD] [--hard]
+    board_registry.py list
+"""
+from __future__ import annotations
+import argparse
+import json
+import re
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+REGISTRY_PATH = Path.home() / ".claude" / "boards" / "registry.json"
+_REPO_RE = re.compile(r"^[\w.-]+/[\w.-]+$")
+
+
+def _load(path: Path) -> dict:
+    if not path.exists():
+        return {"boards": []}
+    try:
+        data = json.loads(path.read_text())
+    except json.JSONDecodeError as e:
+        # Never overwrite what we can't parse -- it's synced, shared state.
+        raise ValueError(f"{path} is corrupt ({e}); fix or remove it by hand") from e
+    if not isinstance(data, dict) or not isinstance(data.get("boards"), list):
+        raise ValueError(f"{path} has an unexpected shape")
+    return data
+
+
+def ensure_board(repo: str, name: str | None = None, due: str | None = None,
+                 due_hard: bool | None = None, path: Path | None = None) -> dict:
+    if not _REPO_RE.match(repo or ""):
+        raise ValueError(f"expected owner/repo, got {repo!r}")
+    path = path or REGISTRY_PATH
+    data = _load(path)
+    entry = next((b for b in data["boards"] if b["repo"] == repo), None)
+    created = entry is None
+    if created:
+        entry = {"repo": repo, "name": name or repo.split("/")[1],
+                 "addedAt": datetime.now(timezone.utc).isoformat()}
+        data["boards"].append(entry)
+    changed = created
+    if due and entry.get("due") != due:
+        entry["due"] = due
+        changed = True
+    if due_hard is not None and due and entry.get("dueHard") != due_hard:
+        entry["dueHard"] = due_hard
+        changed = True
+    if changed:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=2) + "\n")
+        tmp.replace(path)
+    return {"created": created, "board": entry}
+
+
+def list_boards(path: Path | None = None) -> list[dict]:
+    return _load(path or REGISTRY_PATH)["boards"]
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description=__doc__)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    e = sub.add_parser("ensure")
+    e.add_argument("repo")
+    e.add_argument("--name")
+    e.add_argument("--due")
+    e.add_argument("--hard", action="store_true")
+    sub.add_parser("list")
+    a = p.parse_args()
+    try:
+        if a.cmd == "ensure":
+            r = ensure_board(a.repo, a.name, a.due, True if a.hard else None)
+            print(("created" if r["created"] else "exists"), r["board"]["repo"])
+        else:
+            for b in list_boards():
+                print(b["repo"], "-", b["name"], b.get("due", ""))
+    except ValueError as err:
+        print(f"board_registry: {err}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
