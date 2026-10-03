@@ -89,3 +89,7 @@ Or "None - can start immediately" if no blockers.
 </issue-template>
 
 Do NOT close or modify any parent issue.
+
+### 6. Make sure the project has a dashboard board
+
+After publishing, run `~/.agents/venv/bin/python ~/.agents/lib/board_registry.py ensure <owner/repo>` (add `--due YYYY-MM-DD --hard` if the project has a fixed deadline). It is idempotent; the Activity tab's per-project board then shows these tickets by column (backlog, ready, blocked, in progress, in review/testing, done) with PR links. Never store tickets in the registry -- the board reads them live from the tracker.

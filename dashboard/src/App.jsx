@@ -135,7 +135,7 @@ export default function App() {
         ) : activeTab === 'portfolio' ? (
           <PortfolioHub />
         ) : (
-          <ActivityBoard />
+          <ActivityBoard onOpenMr={() => setActiveTab('mr-review')} />
         )}
       </main>
     </div>

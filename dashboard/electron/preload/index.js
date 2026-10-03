@@ -76,5 +76,10 @@ contextBridge.exposeInMainWorld('api', {
   activity: {
     list: () => ipcRenderer.invoke('activity:list'),
     timeline: (number) => ipcRenderer.invoke('activity:timeline', number)
+  },
+  boards: {
+    list: () => ipcRenderer.invoke('boards:list'),
+    load: (repo) => ipcRenderer.invoke('boards:load', repo),
+    ticket: (repo, number) => ipcRenderer.invoke('boards:ticket', repo, number)
   }
 })

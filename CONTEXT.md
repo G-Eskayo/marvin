@@ -388,6 +388,34 @@ then) — a real, current fragility, not a hypothetical one.
   nothing to prioritize tickets with. Hard-on-project / soft-on-ticket is the default *emphasis* in
   the UI, not a rule. Decided 2026-10-01; milestone-level dates deferred.
 
+## Dashboard app — Project boards (Jira-style, decided 2026-10-03)
+
+Gil's ask: when MARVIN starts working on any project it creates a board for it, and every ticket
+its ticketing system creates shows up there with drill-down status. Boards live in the Activity tab
+(the per-project board is the main view; the old flat pipeline list stays as a "Pipeline log" view).
+
+- **Board = registry entry + derived view, never stored tickets.** `~/.claude/boards/registry.json`
+  (synced via the `~/.claude` repo) lists `{repo, name, addedAt, due?, dueHard?}`. Tickets are always
+  read live from the project's tracker (GitHub Issues + PRs today; source interface for the finance-os
+  task list later), so a board can't drift from the real tickets. `lib/board_registry.py:ensure_board()`
+  is idempotent; `ticket_pipeline` calls it on claim and `to-issues` calls it after filing, so "MARVIN
+  starts working on a project" creates the board by construction. Seeded: marvin, clarity-captions,
+  killer-sudoku.
+- **Columns (derived by one pure function, `dashboard/electron/main/board.js`, first match wins):**
+  1. **Done** — issue closed.
+  2. **In review / testing** — an open PR closes the ticket (PR body `Closes #n`), or the last
+     pipeline stage is verifying/gate/merging. Card shows the PR link and whether the PR carries
+     Dev Environment Evidence; clicking the PR opens it in the MR Review tab.
+  3. **Blocked** — label `blocked`; or `Blocked by #n` in the body with #n still open; or the
+     pipeline's last stage failed and nothing is running. Card always states the reason.
+  4. **In progress** — `claimed:*` label or a live dispatch.
+  5. **Ready** — `ready-for-agent` / `ready-for-human`, unclaimed (badge shows which).
+  6. **Backlog** — everything else open (`needs-triage`, `needs-info`, unlabelled).
+- **Drill-down**: reason for the column, labels, body, linked PRs, and the per-stage timeline (only
+  MARVIN-repo tickets have stage events today; stage storage is keyed by number, so other repos get
+  GitHub-derived status only until stage keys carry the repo — additive, noted not built).
+- **Titles always travel with numbers** (never a bare `#n`).
+
 ## Dashboard app — Portfolio tab (in design, 2026-10-02)
 
 The portfolio site (`G-Eskayo/portfolio-website-updater`, WordPress + Avada) has visible inconsistency

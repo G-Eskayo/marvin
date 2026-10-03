@@ -41,6 +41,7 @@ sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 from task_dispatch import select_machine, dispatch  # noqa: E402
 import failure_breaker  # noqa: E402
 import ticket_stages as ts  # noqa: E402
+import board_registry  # noqa: E402
 
 VENV_PYTHON = str(Path.home() / ".agents" / "venv" / "bin" / "python")
 RUN_TICKET_SCRIPT = str(Path.home() / ".agents" / "lib" / "run_ticket.py")
@@ -71,6 +72,15 @@ def _unclaimed_ready_tickets() -> list[dict]:
     return unclaimed
 
 
+def _ensure_board() -> None:
+    # MARVIN starting work on a project creates its dashboard board. Best
+    # effort: a registry problem must never block or undo a claim.
+    try:
+        board_registry.ensure_board(REPO)
+    except Exception as e:  # noqa: BLE001
+        print(f"{LOG_PREFIX} board registry: {e}", file=sys.stderr)
+
+
 def _claim(issue_number: int, label: str, title: str = "") -> bool:
     proc = subprocess.run(
         ["gh", "issue", "edit", str(issue_number), "--repo", REPO, "--add-label", f"claimed:{label}"],
@@ -83,6 +93,7 @@ def _claim(issue_number: int, label: str, title: str = "") -> bool:
     # place in this flow that already has it, so the Activity tab never
     # has to show a bare number (feedback, 2026-10-01).
     ts.record_stage(issue_number, "claimed", "started", f"claimed:{label}", title=title or None)
+    _ensure_board()
     return True
 
 

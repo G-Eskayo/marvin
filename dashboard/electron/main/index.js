@@ -12,6 +12,7 @@ import { readHealthStatus, runHealthCheckNow } from './health.js'
 import { discoverDocFirstRepos, readCachedRepos, listRepoDocTree, fetchFileContent } from './docs.js'
 import { createPortfolio } from './portfolio.js'
 import { listTicketActivity, getTicketTimeline } from './activity.js'
+import { readRegistry, loadBoard } from './boards.js'
 import { createRefreshServer } from './refresh_server.js'
 import { adoptLoginShellPath } from './path.js'
 import { resolveServiceDefaults } from './device_identity.js'
@@ -123,6 +124,23 @@ function registerHealthHandlers() {
 function registerActivityHandlers() {
   ipcMain.handle('activity:list', () => listTicketActivity())
   ipcMain.handle('activity:timeline', (_event, number) => getTicketTimeline(number))
+
+  // Project boards: only repos in the registry are fetchable, so the renderer
+  // can't make the main process shell out to gh for an arbitrary repo.
+  const ghJson = async (args) => (await execFileAsync('gh', args)).stdout
+  const assertRegistered = (repo) => {
+    if (!readRegistry().some((b) => b.repo === repo)) throw new Error(`No board registered for ${repo}`)
+  }
+  ipcMain.handle('boards:list', () => readRegistry())
+  ipcMain.handle('boards:load', (_event, repo) => {
+    assertRegistered(repo)
+    return loadBoard(repo, { gh: ghJson })
+  })
+  ipcMain.handle('boards:ticket', async (_event, repo, number) => {
+    assertRegistered(repo)
+    const out = await ghJson(['issue', 'view', String(Number(number)), '--repo', repo, '--json', 'number,title,body,labels,url,state,comments'])
+    return JSON.parse(out)
+  })
 }
 
 function registerDocsHandlers() {

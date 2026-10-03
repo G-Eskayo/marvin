@@ -1,0 +1,123 @@
+import { describe, it, expect } from 'vitest'
+import { deriveColumn, buildBoard, COLUMNS } from '../electron/main/board.js'
+
+const issue = (over = {}) => ({
+  number: 1,
+  title: 'Some ticket',
+  state: 'OPEN',
+  labels: [],
+  body: '',
+  url: 'https://github.com/o/r/issues/1',
+  createdAt: '2026-10-01T00:00:00Z',
+  ...over
+})
+const labels = (...names) => names.map((name) => ({ name }))
+const pr = (over = {}) => ({
+  number: 50,
+  title: 'A PR',
+  url: 'https://github.com/o/r/pull/50',
+  state: 'OPEN',
+  isDraft: false,
+  body: 'Closes #1',
+  ...over
+})
+const ctx = (over = {}) => ({ prs: [], events: [], isLive: false, openNumbers: new Set([1]), ...over })
+
+describe('deriveColumn', () => {
+  it('puts closed issues in done', () => {
+    expect(deriveColumn(issue({ state: 'CLOSED' }), ctx()).column).toBe('done')
+  })
+
+  it('puts a ticket with an open closing PR in review, linking the PR', () => {
+    const r = deriveColumn(issue(), ctx({ prs: [pr()] }))
+    expect(r.column).toBe('review')
+    expect(r.prs.map((p) => p.number)).toEqual([50])
+  })
+
+  it('ignores PRs that are merged/closed or close other tickets', () => {
+    expect(deriveColumn(issue(), ctx({ prs: [pr({ state: 'MERGED' })] })).column).toBe('backlog')
+    expect(deriveColumn(issue(), ctx({ prs: [pr({ body: 'Closes #2' })] })).column).toBe('backlog')
+  })
+
+  it('treats a verifying/gate/merging last stage as review even without a PR', () => {
+    const events = [{ stage: 'verifying', status: 'started' }]
+    expect(deriveColumn(issue(), ctx({ events })).column).toBe('review')
+  })
+
+  it('blocks on the blocked label with a reason', () => {
+    const r = deriveColumn(issue({ labels: labels('blocked') }), ctx())
+    expect(r.column).toBe('blocked')
+    expect(r.reason).toMatch(/blocked/i)
+  })
+
+  it('blocks on an open "Blocked by #n" dependency, naming it', () => {
+    const r = deriveColumn(issue({ body: 'Blocked by #7' }), ctx({ openNumbers: new Set([1, 7]) }))
+    expect(r.column).toBe('blocked')
+    expect(r.reason).toContain('#7')
+  })
+
+  it('reads the to-issues "## Blocked by" section, ignoring "None"', () => {
+    const open = ctx({ openNumbers: new Set([1, 12]) })
+    const sec = (t) => issue({ body: `## What to build\nx\n\n## Blocked by\n\n${t}\n\n## Notes\nsee #12` })
+    expect(deriveColumn(sec('- #12 the schema'), open).reason).toContain('#12')
+    expect(deriveColumn(sec('None - can start immediately'), open).column).toBe('backlog')
+  })
+
+  it('does not block when the dependency is already closed', () => {
+    const r = deriveColumn(issue({ body: 'Blocked by #7', labels: labels('ready-for-agent') }), ctx())
+    expect(r.column).toBe('ready')
+  })
+
+  it('blocks when the pipeline failed and nothing is running', () => {
+    const events = [
+      { stage: 'executing', status: 'started' },
+      { stage: 'executing', status: 'failed', detail: 'tests red' }
+    ]
+    const r = deriveColumn(issue({ labels: labels('claimed:mac-mini') }), ctx({ events }))
+    expect(r.column).toBe('blocked')
+    expect(r.reason).toContain('executing')
+  })
+
+  it('keeps a failed-but-live ticket in progress (a retry is running)', () => {
+    const events = [{ stage: 'executing', status: 'failed' }]
+    const r = deriveColumn(issue({ labels: labels('claimed:mac-mini') }), ctx({ events, isLive: true }))
+    expect(r.column).toBe('progress')
+  })
+
+  it('puts claimed tickets in progress, naming the machine', () => {
+    const r = deriveColumn(issue({ labels: labels('claimed:mac-mini') }), ctx())
+    expect(r.column).toBe('progress')
+    expect(r.reason).toContain('mac-mini')
+  })
+
+  it('puts unclaimed ready tickets in ready, flagging human-only ones', () => {
+    expect(deriveColumn(issue({ labels: labels('ready-for-agent') }), ctx())).toMatchObject({ column: 'ready', owner: 'agent' })
+    expect(deriveColumn(issue({ labels: labels('ready-for-human') }), ctx())).toMatchObject({ column: 'ready', owner: 'human' })
+  })
+
+  it('puts everything else open in backlog, explaining needs-info', () => {
+    expect(deriveColumn(issue(), ctx()).column).toBe('backlog')
+    expect(deriveColumn(issue({ labels: labels('needs-info') }), ctx()).reason).toMatch(/info/i)
+  })
+
+  it('notes dev-environment evidence on the PR', () => {
+    const body = 'Closes #1\n## Metrics Comparison\nx\n## Test Results\ny\n## Dev Environment Evidence\nz'
+    const r = deriveColumn(issue(), ctx({ prs: [pr({ body })] }))
+    expect(r.prs[0].hasDevEvidence).toBe(true)
+  })
+})
+
+describe('buildBoard', () => {
+  it('groups cards into every column (empty ones included) with titles attached', () => {
+    const issues = [
+      issue({ number: 1, title: 'One', labels: labels('ready-for-agent') }),
+      issue({ number: 2, title: 'Two', state: 'CLOSED' }),
+      issue({ number: 3, title: 'Three', body: 'Blocked by #1' })
+    ]
+    const board = buildBoard({ repo: 'o/r', issues, prs: [], eventsByNumber: {}, liveNumbers: new Set() })
+    expect(board.columns.map((c) => c.id)).toEqual(COLUMNS.map((c) => c.id))
+    const byId = Object.fromEntries(board.columns.map((c) => [c.id, c.cards.map((x) => x.number)]))
+    expect(byId).toMatchObject({ ready: [1], done: [2], blocked: [3], backlog: [], progress: [], review: [] })
+    expect(board.columns.flatMap((c) => c.cards).every((c) => c.title)).toBe(true)
+  })
+})

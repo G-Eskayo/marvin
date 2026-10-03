@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import ProjectBoard from './ProjectBoard.jsx'
 
 const STAGE_LABEL = {
   claimed: 'Claimed',
@@ -110,7 +111,7 @@ function TicketDrilldown({ number, title, onBack }) {
   )
 }
 
-export default function ActivityBoard() {
+function PipelineLog() {
   const [tickets, setTickets] = useState(null)
   const [error, setError] = useState(null)
   const [selected, setSelected] = useState(null)
@@ -165,6 +166,28 @@ export default function ActivityBoard() {
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+// Activity tab: per-project Jira-style boards first; the flat pipeline log
+// (per-ticket stages + cost) stays as its own view.
+export default function ActivityBoard({ onOpenMr }) {
+  const [view, setView] = useState('boards')
+  return (
+    <div>
+      <div className="flex gap-1 px-6 pt-4">
+        {[['boards', 'Boards'], ['log', 'Pipeline log']].map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setView(id)}
+            className={`rounded px-3 py-1 text-sm ${view === id ? 'bg-neutral-800 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {view === 'boards' ? <ProjectBoard onOpenMr={onOpenMr} /> : <PipelineLog />}
     </div>
   )
 }
