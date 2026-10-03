@@ -549,3 +549,26 @@ def test_check_machine_state_everywhere_covers_every_device_and_marks_asleep(mon
 
     asleep = hc.check_machine_state_everywhere({"machine:macbook-pro-1": "asleep"}, runner=lambda t, s: good)
     assert {r["severity"] for r in asleep if r["id"].endswith("@macbook-pro-1")} == {"asleep"}
+
+
+# ── dashboard trigger coverage guard ────────────────────────────────────────
+
+def _miss(at, topic="activity", key="o/r"):
+    return json.dumps({"topic": topic, "key": key, "at": at.isoformat(), "note": "poll found a change no trigger announced"})
+
+
+def test_trigger_check_is_green_with_no_log_or_no_recent_misses(tmp_path):
+    now = datetime(2026, 10, 3, 12, tzinfo=timezone.utc)
+    assert hc.check_trigger_coverage(tmp_path / "nope.jsonl", now=now)["severity"] == "green"
+    log = tmp_path / "m.jsonl"
+    log.write_text(_miss(now - timedelta(days=3)) + "\n")
+    assert hc.check_trigger_coverage(log, now=now)["severity"] == "green"
+
+
+def test_trigger_check_is_yellow_and_names_what_was_missed(tmp_path):
+    now = datetime(2026, 10, 3, 12, tzinfo=timezone.utc)
+    log = tmp_path / "m.jsonl"
+    log.write_text("\n".join([_miss(now - timedelta(hours=1)), _miss(now - timedelta(hours=2), key="o/other"), "garbage"]) + "\n")
+    r = hc.check_trigger_coverage(log, now=now)
+    assert r["id"] == "triggers:missed" and r["severity"] == "yellow"
+    assert r["value"] == 2 and "o/r" in r["detail"] and "o/other" in r["detail"]

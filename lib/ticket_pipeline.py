@@ -72,6 +72,10 @@ def _unclaimed_ready_tickets() -> list[dict]:
     return unclaimed
 
 
+def _discover_boards() -> list[str]:
+    return board_registry.discover(REPO.split("/")[0])
+
+
 def _ensure_board() -> None:
     # MARVIN starting work on a project creates its dashboard board. Best
     # effort: a registry problem must never block or undo a claim.
@@ -117,6 +121,12 @@ def _build_wrapper_command(issue_number: int) -> str:
 
 def main() -> None:
     dry_run = "--dry-run" in sys.argv
+
+    # Hourly run doubles as board discovery, before any early return below, so a
+    # project set up anywhere gets its dashboard board without being asked for.
+    if not dry_run:
+        for repo in _discover_boards():
+            print(f"{LOG_PREFIX} registered dashboard board for {repo}", file=sys.stderr)
 
     # Cross-ticket circuit breaker: the same failure across different tickets means
     # the environment is broken, not the tickets -- stop feeding it more tickets

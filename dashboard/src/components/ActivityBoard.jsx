@@ -128,8 +128,12 @@ function PipelineLog() {
 
   useEffect(() => {
     load()
-    const interval = setInterval(load, 30_000)
-    return () => clearInterval(interval)
+    const interval = setInterval(load, 120_000) // backstop; triggers below do the real work
+    const off = window.api.triggers.on((t) => t.topic === 'activity' && load())
+    return () => {
+      clearInterval(interval)
+      off()
+    }
   }, [])
 
   if (selected !== null) {

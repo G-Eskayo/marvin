@@ -1,7 +1,8 @@
 import { app, BrowserWindow, ipcMain, dialog, session } from 'electron'
 import { installDevSiteCors } from './dev_site_cors.js'
-import { join } from 'path'
-import { existsSync } from 'fs'
+import { join, dirname } from 'path'
+import { existsSync, mkdirSync, appendFileSync } from 'fs'
+import { homedir } from 'os'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { listSubsystems, readHistory, buildIndex } from './metrics.js'
@@ -12,7 +13,11 @@ import { readHealthStatus, runHealthCheckNow } from './health.js'
 import { discoverDocFirstRepos, readCachedRepos, listRepoDocTree, fetchFileContent } from './docs.js'
 import { createPortfolio } from './portfolio.js'
 import { listTicketActivity, getTicketTimeline } from './activity.js'
-import { readRegistry, loadBoard } from './boards.js'
+import { readRegistry, loadBoard, REGISTRY_PATH } from './boards.js'
+import { createTriggerHub, createReconciler } from './triggers.js'
+import { STAGES_DIR } from '../../webhook-server/ticket_stages.js'
+import { DISPATCH_STATE_PATH } from './dispatch_status.js'
+import { createHash } from 'crypto'
 import { createRefreshServer } from './refresh_server.js'
 import { adoptLoginShellPath } from './path.js'
 import { resolveServiceDefaults } from './device_identity.js'
@@ -62,6 +67,25 @@ async function ghIssueView(issueNumber) {
   ])
   return JSON.parse(stdout)
 }
+
+// Event-driven refresh for the Activity tab (CONTEXT.md "Triggers over polling").
+const triggerHub = createTriggerHub()
+const TRIGGER_MISS_LOG = join(homedir(), '.claude', 'logs', 'trigger-misses.jsonl')
+const reconciler = createReconciler({
+  lastEmitAt: triggerHub.lastEmitAt,
+  record: (miss) => {
+    try {
+      mkdirSync(dirname(TRIGGER_MISS_LOG), { recursive: true })
+      appendFileSync(TRIGGER_MISS_LOG, JSON.stringify(miss) + '\n')
+    } catch {
+      // the guard must never break the board
+    }
+  }
+})
+const boardDigest = (board) =>
+  createHash('sha1')
+    .update(JSON.stringify(board.columns.map((c) => c.cards.map((k) => [k.number, k.reason, k.prs.map((p) => p.number)]))))
+    .digest('hex')
 
 process.env['ELECTRON_DISABLE_SECURITY_WARNINGS'] = 'true'
 
@@ -132,9 +156,11 @@ function registerActivityHandlers() {
     if (!readRegistry().some((b) => b.repo === repo)) throw new Error(`No board registered for ${repo}`)
   }
   ipcMain.handle('boards:list', () => readRegistry())
-  ipcMain.handle('boards:load', (_event, repo) => {
+  ipcMain.handle('boards:load', async (_event, repo, source = 'poll') => {
     assertRegistered(repo)
-    return loadBoard(repo, { gh: ghJson })
+    const board = await loadBoard(repo, { gh: ghJson })
+    reconciler.observe('activity', repo, boardDigest(board), source)
+    return board
   })
   ipcMain.handle('boards:ticket', async (_event, repo, number) => {
     assertRegistered(repo)
@@ -270,8 +296,22 @@ app.whenReady().then(() => {
   registerActivityHandlers()
   createWindow()
 
-  createRefreshServer(() => {
-    mainWindow?.webContents.send('mr:refresh')
+  // Local state: watch where it's stored, so every writer (Python, Node, any chat) is covered.
+  mkdirSync(STAGES_DIR, { recursive: true })
+  triggerHub.watchFiles('activity', [
+    { dir: STAGES_DIR, match: (n) => n.endsWith('.json') },
+    { dir: dirname(DISPATCH_STATE_PATH), match: (n) => n === 'dispatch-state.json' },
+    { dir: dirname(REGISTRY_PATH), match: (n) => n === 'registry.json' }
+  ])
+  triggerHub.onTrigger((t) => mainWindow?.webContents.send('trigger', t))
+
+  // External pings (webhook-server): bare = the legacy "MR list changed"; with topics = what changed.
+  createRefreshServer((payload = {}) => {
+    const topics = Array.isArray(payload.topics) ? payload.topics : ['mr']
+    for (const topic of topics) {
+      if (topic === 'mr') mainWindow?.webContents.send('mr:refresh')
+      else triggerHub.emit(topic, payload.source || 'ping')
+    }
   }).listen(DASHBOARD_REFRESH_PORT, '127.0.0.1')
 
   app.on('activate', () => {

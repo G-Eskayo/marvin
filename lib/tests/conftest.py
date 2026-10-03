@@ -24,3 +24,5 @@ def _isolate_board_registry(tmp_path_factory, monkeypatch):
     # _claim() registers a dashboard board; tests must never write the real, synced registry.
     import board_registry
     monkeypatch.setattr(board_registry, "REGISTRY_PATH", tmp_path_factory.mktemp("boards") / "registry.json")
+    import ticket_pipeline
+    monkeypatch.setattr(ticket_pipeline, "_discover_boards", lambda: [])  # no real gh calls from tests

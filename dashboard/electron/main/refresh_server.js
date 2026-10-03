@@ -13,7 +13,20 @@ export function createRefreshServer(onRefresh) {
       res.writeHead(404).end()
       return
     }
-    onRefresh()
-    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: true }))
+    let raw = ''
+    req.on('data', (chunk) => (raw += chunk))
+    req.on('end', () => {
+      // Optional body {topics, source} says what changed; empty/invalid = the
+      // legacy "MR list changed" ping.
+      let payload = {}
+      try {
+        const parsed = JSON.parse(raw)
+        if (parsed && typeof parsed === 'object') payload = parsed
+      } catch {
+        // no body, or not JSON
+      }
+      onRefresh(payload)
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: true }))
+    })
   })
 }

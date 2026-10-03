@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { cleanIpcError } from '../lib/ipcError.js'
 
+// Backstop only: triggers (window.api.triggers) drive refreshes; a poll that
+// finds a change no trigger announced is logged as a gap.
 const REFRESH_MS = 60_000
 
 const COLUMN_STYLE = {
@@ -148,17 +150,20 @@ export default function ProjectBoard({ onOpenMr }) {
   useEffect(() => {
     if (!repo) return
     let live = true
-    const load = () =>
+    // source tells the coverage guard whether a trigger or the backstop poll asked.
+    const load = (source) =>
       window.api.boards
-        .load(repo)
+        .load(repo, source)
         .then((b) => live && (setBoard(b), setError(null)))
         .catch((e) => live && setError(cleanIpcError(e)))
     setBoard(null)
-    load()
-    const id = setInterval(load, REFRESH_MS)
+    load('initial')
+    const id = setInterval(() => load('poll'), REFRESH_MS)
+    const off = window.api.triggers.on((t) => t.topic === 'activity' && load('trigger'))
     return () => {
       live = false
       clearInterval(id)
+      off()
     }
   }, [repo])
 

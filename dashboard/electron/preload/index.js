@@ -77,9 +77,17 @@ contextBridge.exposeInMainWorld('api', {
     list: () => ipcRenderer.invoke('activity:list'),
     timeline: (number) => ipcRenderer.invoke('activity:timeline', number)
   },
+  triggers: {
+    // Fires when something the Activity tab shows has changed (file watch or GitHub ping).
+    on: (callback) => {
+      const listener = (_event, trigger) => callback(trigger)
+      ipcRenderer.on('trigger', listener)
+      return () => ipcRenderer.removeListener('trigger', listener)
+    }
+  },
   boards: {
     list: () => ipcRenderer.invoke('boards:list'),
-    load: (repo) => ipcRenderer.invoke('boards:load', repo),
+    load: (repo, source) => ipcRenderer.invoke('boards:load', repo, source),
     ticket: (repo, number) => ipcRenderer.invoke('boards:ticket', repo, number)
   }
 })

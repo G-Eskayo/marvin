@@ -33,15 +33,19 @@ def test_skips_when_the_app_is_already_current():
 
 
 def test_waits_for_a_fresh_change_to_settle_before_rebuilding():
-    assert d(app_built_ts=NOW - 10 * H, dashboard_commit_ts=NOW - 30 * 60)[0] == "skip"
+    assert d(app_built_ts=NOW - 10 * H, dashboard_commit_ts=NOW - 5 * 60)[0] == "skip"
+
+
+def test_a_change_that_has_settled_for_a_quarter_hour_rebuilds():
+    assert d(app_built_ts=NOW - 10 * H, dashboard_commit_ts=NOW - 20 * 60)[0] == "rebuild"
 
 
 def test_does_not_interrupt_a_running_app_for_a_small_gap():
-    assert d(app_running=True)[0] == "skip"
+    assert d(app_running=True, app_built_ts=NOW - 30 * 60, dashboard_commit_ts=NOW - 20 * 60)[0] == "skip"
 
 
-def test_but_a_running_app_that_is_a_day_or_more_behind_gets_rebuilt_anyway():
-    assert d(app_running=True, app_built_ts=NOW - 40 * H, dashboard_commit_ts=NOW - 3 * H)[0] == "rebuild"
+def test_but_a_running_app_an_hour_or_more_behind_gets_rebuilt_anyway():
+    assert d(app_running=True, app_built_ts=NOW - 3 * H, dashboard_commit_ts=NOW - 30 * 60)[0] == "rebuild"
 
 
 def test_backs_off_after_a_recent_attempt_so_a_broken_build_cannot_loop():

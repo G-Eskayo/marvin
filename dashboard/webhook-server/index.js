@@ -4,6 +4,8 @@ import { sendFeedback, dropEntirely } from './deny.js'
 import { forwardRefreshPing } from './refresh_relay.js'
 import { loadGhToken } from './gh_auth.js'
 import { failureResponse } from './failure.js'
+import { startChangeWatch, createGithubProbe } from './gh_watch.js'
+import { readRegistry } from '../electron/main/boards.js'
 
 // Authenticate gh/git children from the pipeline's shared credential file (see gh_auth.js).
 const ghTokenSource = loadGhToken()
@@ -113,4 +115,12 @@ const server = createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log(`MR-approval webhook listening on http://localhost:${PORT}/approve`)
   console.log(`GitHub credential source: ${ghTokenSource}`)
+
+  // Trigger source for GitHub-side changes to any board repo: tell an open dashboard on this
+  // machine what changed the moment it does (best-effort, like /mr-ready).
+  startChangeWatch({
+    getRepos: () => readRegistry().map((b) => b.repo),
+    probe: createGithubProbe(),
+    ping: (repo) => forwardRefreshPing(DASHBOARD_REFRESH_URL, (url) => postJson(url, { topics: ['activity', 'mr'], source: `github:${repo}` }))
+  })
 })

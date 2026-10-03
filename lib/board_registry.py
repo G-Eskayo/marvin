@@ -7,11 +7,13 @@ tracker by the dashboard, so nothing here stores tickets. Idempotent:
 
     board_registry.py ensure <owner/repo> [--name N] [--due YYYY-MM-DD] [--hard]
     board_registry.py list
+    board_registry.py discover [owner]   # register every repo using the pipeline labels
 """
 from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -64,6 +66,37 @@ def list_boards(path: Path | None = None) -> list[dict]:
     return _load(path or REGISTRY_PATH)["boards"]
 
 
+PIPELINE_LABEL = "ready-for-agent"
+
+
+def _gh(args: list[str]) -> str:
+    return subprocess.run(["gh", *args], capture_output=True, text=True, check=True, timeout=30).stdout
+
+
+def discover(owner: str, gh=_gh, path: Path | None = None) -> list[str]:
+    """Register a board for every non-archived repo of `owner` that uses the ticket
+    pipeline's labels, so a board exists without anyone remembering to ask for it.
+    Returns the newly registered repos. Never raises: discovery is best-effort."""
+    try:
+        repos = json.loads(gh(["repo", "list", owner, "--limit", "100", "--json", "nameWithOwner,isArchived"]))
+    except Exception:  # noqa: BLE001 -- offline / auth: try again next cycle
+        return []
+    known = {b["repo"] for b in list_boards(path)}
+    added = []
+    for r in repos:
+        repo = r["nameWithOwner"]
+        if r.get("isArchived") or repo in known:
+            continue
+        try:
+            names = {l["name"] for l in json.loads(gh(["label", "list", "--repo", repo, "--limit", "200", "--json", "name"]))}
+        except Exception:  # noqa: BLE001
+            continue
+        if PIPELINE_LABEL in names:
+            ensure_board(repo, path=path)
+            added.append(repo)
+    return added
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -73,11 +106,16 @@ def main() -> int:
     e.add_argument("--due")
     e.add_argument("--hard", action="store_true")
     sub.add_parser("list")
+    d = sub.add_parser("discover")
+    d.add_argument("owner", nargs="?", default="G-Eskayo")
     a = p.parse_args()
     try:
         if a.cmd == "ensure":
             r = ensure_board(a.repo, a.name, a.due, True if a.hard else None)
             print(("created" if r["created"] else "exists"), r["board"]["repo"])
+        elif a.cmd == "discover":
+            for repo in discover(a.owner):
+                print("created", repo)
         else:
             for b in list_boards():
                 print(b["repo"], "-", b["name"], b.get("due", ""))

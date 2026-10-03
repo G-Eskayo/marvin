@@ -30,8 +30,8 @@ APP_SOURCE_PATHS = ("dashboard/src", "dashboard/electron", "dashboard/index.html
                     "dashboard/package-lock.json", "dashboard/electron.vite.config.js",
                     "dashboard/tailwind.config.js", "dashboard/postcss.config.js")
 
-SETTLE_SECONDS = 2 * 3600        # let a fresh change finish landing before building
-FORCE_AFTER_SECONDS = 24 * 3600  # rebuild even a running app once this far behind
+SETTLE_SECONDS = 15 * 60         # let a fresh change finish landing before building
+FORCE_AFTER_SECONDS = 3600       # rebuild even a running app once this far behind
 BACKOFF_SECONDS = 6 * 3600       # minimum gap between attempts
 
 
