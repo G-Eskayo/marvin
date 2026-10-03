@@ -83,3 +83,12 @@ describe('image lightbox and delete', () => {
     expect(src()).toMatch(/v\.chosen\s*\?[\s\S]*?in use[\s\S]*?:\s*<>[\s\S]*?delete/)
   })
 })
+
+describe('add project subtab', () => {
+  it('is wired to the pipeline with a dry-run check and a create action', () => {
+    const src = _read(new URL('../src/components/PortfolioHub.jsx', import.meta.url), 'utf8')
+    expect(src).toMatch(/\['add', 'Add project'\]/)
+    expect(src).toMatch(/addProject\(clean, \{ plan \}\)/)
+    expect(src).toMatch(/Check \(writes nothing\)/)
+  })
+})

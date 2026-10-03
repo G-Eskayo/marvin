@@ -63,6 +63,7 @@ export function createPortfolio({
   const python = path.join(agentsDir, 'venv', 'bin', 'python')
   const evalScript = path.join(agentsDir, 'lib', 'portfolio_eval.py')
   const imageScript = path.join(agentsDir, 'lib', 'portfolio_imagegen.py')
+  const addProjectScript = path.join(agentsDir, 'lib', 'portfolio_add_project.py')
   const applyScript = path.join(agentsDir, 'lib', 'portfolio_apply.py')
   const inventoryScript = path.join(agentsDir, 'lib', 'portfolio_inventory.py')
   const templatesScript = path.join(agentsDir, 'lib', 'portfolio_templates.py')
@@ -231,6 +232,25 @@ export function createPortfolio({
     return JSON.parse(stdout.trim().split('\n').pop())
   }
 
+  // The add-project pipeline (lib/portfolio_add_project.py): a project spec in, a finished DEV-site change out. `plan`
+  // validates and writes nothing. The script exits 2 for a spec problem and reports it as JSON on stdout.
+  async function addProject(spec, { plan = false } = {}) {
+    if (!spec || typeof spec !== 'object' || Array.isArray(spec)) throw new Error('A project spec is required')
+    if (!/^[a-z0-9][a-z0-9-]{0,60}$/.test(String(spec.slug || ''))) throw new Error('The slug must be lowercase letters, digits and hyphens')
+    if (JSON.stringify(spec).length > 200000) throw new Error('The project spec is too large')
+    await fsp.mkdir(dataDir, { recursive: true })
+    const file = path.join(dataDir, `add-project-${process.pid}-${Date.now()}.json`)
+    await fsp.writeFile(file, JSON.stringify(spec))
+    try {
+      const { stdout } = await exec(python, [addProjectScript, '--spec', file, ...(plan ? ['--plan'] : [])], { maxBuffer: 5 * 1024 * 1024, timeout: 15 * 60 * 1000 })
+      return JSON.parse(stdout.trim().split('\n').pop())
+    } catch (err) {
+      try { return JSON.parse(String(err.stdout || '').trim().split('\n').pop()) } catch { throw new Error(err.message) }
+    } finally {
+      await fsp.rm(file, { force: true })
+    }
+  }
+
   async function deleteImageVariant(slug, motif, salt) {
     await knownProject(slug)
     if (typeof motif !== 'string' || !MOTIF_RE.test(motif)) throw new Error(`Invalid motif: ${JSON.stringify(motif)}`)
@@ -383,5 +403,5 @@ export function createPortfolio({
     return readText(path.join(referenceDir, `${slug}.html`), null)
   }
 
-  return { chrome, inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, templateSource, specimen, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage, imageMotifs, imageVariants, newImageVariant, chooseImageVariant, applyImages, deleteImageVariant, variantPreview }
+  return { chrome, inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, templateSource, specimen, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage, imageMotifs, imageVariants, newImageVariant, chooseImageVariant, applyImages, addProject, deleteImageVariant, variantPreview }
 }
