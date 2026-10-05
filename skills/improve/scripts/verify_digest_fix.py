@@ -57,6 +57,11 @@ def tail_log(path: Path, lines: int = 15) -> str:
     return "(empty)" if not text else "\n".join(text.splitlines()[-lines:])
 
 
+sys.path.insert(0, str(__import__("pathlib").Path.home() / ".agents" / "lib"))
+import job_events  # noqa: E402  (run log shown in the dashboard's Health tab)
+
+
+@job_events.reported("verify-digest-fix", "Verify digest fix")
 def main() -> None:
     results = []
 

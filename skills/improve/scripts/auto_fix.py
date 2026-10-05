@@ -188,6 +188,11 @@ def log_run(candidates: list[dict], fixed_ok: list[Path], reverted: list[Path], 
         f.write("\n".join(lines) + "\n")
 
 
+sys.path.insert(0, str(__import__("pathlib").Path.home() / ".agents" / "lib"))
+import job_events  # noqa: E402  (run log shown in the dashboard's Health tab)
+
+
+@job_events.reported("auto-fix", "Auto-fix (naming/verbosity)")
 def main() -> None:
     candidates = get_candidates()
     if not candidates:

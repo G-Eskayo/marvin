@@ -34,6 +34,11 @@ VENV_PYTHON = Path.home() / ".agents" / "venv" / "bin" / "python"
 LOG_PREFIX = "[check-and-trigger-merge]"
 
 
+sys.path.insert(0, str(__import__("pathlib").Path.home() / ".agents" / "lib"))
+import job_events  # noqa: E402  (run log shown in the dashboard's Health tab)
+
+
+@job_events.reported("check-and-trigger-merge")
 def main() -> None:
     own_profile = load_or_build(max_age_hours=0)
     remotes = remote_devices()
