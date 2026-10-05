@@ -13,6 +13,11 @@ import { readHealthStatus, runHealthCheckNow } from './health.js'
 import { readCachedRepos } from './docs.js'
 import { createPortfolio } from './portfolio.js'
 import { listTicketActivity, getTicketTimeline } from './activity.js'
+import { getDeviceStatuses } from './devices.js'
+import { createMergeOps } from './merge_ops.js'
+import { assertInOrder } from './pr_order.js'
+
+const mergeOps = createMergeOps()
 import { readRegistry, loadBoard, fetchBoardData, fetchCompletedData, withProjectStatus, defaultStagesFor, defaultLiveNumbers, getEvidence, REGISTRY_PATH } from './boards.js'
 import { createRelationsService } from './relations_service.js'
 import { summarizeBoard, buildCompleted } from './board.js'
@@ -57,7 +62,7 @@ const MR_DENY_WEBHOOK_URL = process.env.MARVIN_MR_DENY_WEBHOOK_URL || `http://${
 const DASHBOARD_REFRESH_PORT = Number(process.env.MARVIN_DASHBOARD_REFRESH_PORT) || 7879
 
 async function ghListOpenPrs(repo) {
-  const { stdout } = await execFileAsync('gh', ['pr', 'list', '--repo', repo, '--state', 'open', '--json', 'number,title,url,body'])
+  const { stdout } = await execFileAsync('gh', ['pr', 'list', '--repo', repo, '--state', 'open', '--json', 'number,title,url,body,files'])
   return JSON.parse(stdout)
 }
 
@@ -152,6 +157,7 @@ function registerMetricsHandlers() {
 
 function registerDispatchHandlers() {
   ipcMain.handle('dispatch:status', () => readDispatchStatus())
+  ipcMain.handle('devices:status', () => getDeviceStatuses())
   // The header indicator: dispatched task + every background agent that is mid-run, on this machine.
   ipcMain.handle('working:now', () => buildWorkingNow({ dispatch: readDispatchStatus(), jobs: listJobs() }))
 }
@@ -442,20 +448,31 @@ function registerMrReviewHandlers() {
   // fast double-click the way a custom in-page confirm affordance could.
   ipcMain.handle('mr:approve', async (_event, { number, url }) => {
     assertMergeable(url)
-    const { response } = await dialog.showMessageBox(mainWindow, {
-      type: 'warning',
-      buttons: ['Cancel', 'Merge PR'],
-      defaultId: 0,
-      cancelId: 0,
-      message: `Merge PR #${number}?`,
-      detail: `This fires the approval webhook and merges ${url} via gh pr merge. This can't be undone from here.`
-    })
-    if (response !== 1) {
-      return { merged: false, cancelled: true }
+    assertInOrder(await listOpenPrs(), url)  // checked here, not just greyed out in the UI, so a stale screen can't skip it
+    if (!mergeOps.start(url)) return { merged: false, cancelled: true, alreadyMerging: true }
+    try {
+      const { response } = await dialog.showMessageBox(mainWindow, {
+        type: 'warning',
+        buttons: ['Cancel', 'Merge PR'],
+        defaultId: 0,
+        cancelId: 0,
+        message: `Merge PR #${number}?`,
+        detail: `This fires the approval webhook and merges ${url} via gh pr merge. This can't be undone from here.`
+      })
+      if (response !== 1) {
+        mergeOps.cancel(url)
+        return { merged: false, cancelled: true }
+      }
+      const result = await approveMr(url, MR_WEBHOOK_URL, postJson)
+      mergeOps.finish(url, result)
+      return { ...result, cancelled: false }
+    } catch (err) {
+      mergeOps.fail(url, err.message)
+      throw err
     }
-    const result = await approveMr(url, MR_WEBHOOK_URL, postJson)
-    return { ...result, cancelled: false }
   })
+
+  ipcMain.handle('mr:mergeState', (_event, url) => mergeOps.get(url))
 
   // Same native-dialog defense as mr:approve -- both of Deny's terminal
   // actions have real, visible side effects on GitHub (ADR 0025), and
