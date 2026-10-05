@@ -95,6 +95,12 @@ contextBridge.exposeInMainWorld('api', {
       return () => ipcRenderer.removeListener('trigger', listener)
     }
   },
+  relations: {
+    ticket: (repo, number) => ipcRenderer.invoke('relations:ticket', repo, number),
+    doc: (project, path) => ipcRenderer.invoke('relations:doc', project, path),
+    pr: (repo, number) => ipcRenderer.invoke('relations:pr', repo, number),
+    context: (project) => ipcRenderer.invoke('relations:context', project)
+  },
   boards: {
     list: () => ipcRenderer.invoke('boards:list'),
     load: (repo, source) => ipcRenderer.invoke('boards:load', repo, source),

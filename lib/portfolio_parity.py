@@ -59,7 +59,7 @@ def compare(element: dict, instance: dict) -> list[str]:
             if have.get(prop) != value:
                 diffs.append(f"{part}.{prop}: site {value!r}, preview {have.get(prop)!r}")
     want_geo, geo = element.get("geometry"), instance.get("geometry")
-    if want_geo and not pe.geometry_close(geo, want_geo):
+    if want_geo and not pe.geometry_matches(want_geo, geo):
         diffs.append(f"geometry: site {want_geo}, preview {geo}")
     return diffs
 
@@ -116,7 +116,7 @@ def verify(element_id: str = "project-card", base: str = pe.BASE, project: Path 
     for i, inst in enumerate(instances):          # EVERY sample must match the element, and so each other
         diffs += [(f"sample {i + 1}: " if len(instances) > 1 else "") + d for d in compare(element, inst)]
     geos = [i["geometry"] for i in instances if i.get("geometry")]
-    if geos and not all(pe.geometry_close(geos[0], g) for g in geos):
+    if geos and not all(pe.geometry_matches({k: v for k, v in geos[0].items() if k != 'photoWidth'}, g) for g in geos):
         diffs.append(f"samples differ in size from each other: {geos}")
     diffs += font_diffs
     return {"ok": not diffs, "element": element_id, "differences": diffs}

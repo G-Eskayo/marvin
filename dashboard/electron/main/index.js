@@ -13,12 +13,13 @@ import { readHealthStatus, runHealthCheckNow } from './health.js'
 import { readCachedRepos } from './docs.js'
 import { createPortfolio } from './portfolio.js'
 import { listTicketActivity, getTicketTimeline } from './activity.js'
-import { readRegistry, loadBoard, REGISTRY_PATH } from './boards.js'
+import { readRegistry, loadBoard, fetchBoardData, withProjectStatus, REGISTRY_PATH } from './boards.js'
+import { createRelationsService } from './relations_service.js'
 import { summarizeBoard } from './board.js'
 import { createTriggerHub, createReconciler } from './triggers.js'
 import { listOpenPrsAcrossRepos, normalizeSeen, canMergeFromDashboard, repoFromPrUrl, MARVIN_REPO } from './mr_repos.js'
-import { createIndexer, buildDocsIndex } from './docs_search.js'
-import { createDocsService } from './docs_service.js'
+import { createIndexer, buildDocsIndex, loadIndex } from './docs_search.js'
+import { createDocsService, MASTER_ID } from './docs_service.js'
 import { searchFiles, isRevealable } from './files_search.js'
 import { readCatalog, readMasterDoc, CATALOG_DIR, MASTER_DOC_PATH } from './catalog.js'
 import { STAGES_DIR } from '../../webhook-server/ticket_stages.js'
@@ -66,6 +67,17 @@ async function listOpenPrs() {
 async function ghIssueView(issueNumber, repo = MARVIN_REPO) {
   const { stdout } = await execFileAsync('gh', ['issue', 'view', String(issueNumber), '--repo', repo, '--json', 'number,title,body'])
   return JSON.parse(stdout)
+}
+
+// Raw tickets + PRs per repo, shared by the board view and the relation index, kept for 30s so the two
+// (and several tabs) don't each hit GitHub; a trigger or reload clears it.
+const boardDataCache = new Map()
+async function getBoardData(repo, gh) {
+  const hit = boardDataCache.get(repo)
+  if (hit && Date.now() - hit.at < 30_000) return hit.data
+  const data = await fetchBoardData(repo, gh)
+  boardDataCache.set(repo, { at: Date.now(), data })
+  return data
 }
 
 // Event-driven refresh for the Activity tab (CONTEXT.md "Triggers over polling").
@@ -165,16 +177,16 @@ function registerActivityHandlers() {
   const assertRegistered = (repo) => {
     if (!readRegistry().some((b) => b.repo === repo)) throw new Error(`No board registered for ${repo}`)
   }
-  ipcMain.handle('boards:list', () => readRegistry())
+  ipcMain.handle('boards:list', () => withProjectStatus(readRegistry(), readCatalog({ deviceId: deviceId() })))
   ipcMain.handle('boards:load', async (_event, repo, source = 'poll') => {
     assertRegistered(repo)
-    const board = await loadBoard(repo, { gh: ghJson })
+    const board = await loadBoard(repo, { gh: ghJson, data: await getBoardData(repo, ghJson) })
     reconciler.observe('activity', repo, boardDigest(board), source)
     return board
   })
   ipcMain.handle('boards:summary', async (_event, repo) => {
     assertRegistered(repo)
-    return summarizeBoard(await loadBoard(repo, { gh: ghJson }))
+    return summarizeBoard(await loadBoard(repo, { gh: ghJson, data: await getBoardData(repo, ghJson) }))
   })
   ipcMain.handle('boards:ticket', async (_event, repo, number) => {
     assertRegistered(repo)
@@ -198,6 +210,33 @@ function registerDocsHandlers() {
     readMaster: () => readMasterDoc(),
     fallbackRepos: () => readCachedRepos().repos
   })
+
+  // Relationships between tickets, PRs and docs, derived from their text (relations.js). Docs come from
+  // local clones when there are any, else the GitHub index; the cache is dropped on the same triggers
+  // that refresh the boards and docs.
+  const ghForRelations = async (args) => (await execFileAsync('gh', args, { maxBuffer: 50 * 1024 * 1024 })).stdout
+  const relations = createRelationsService({
+    getRepos: () => readRegistry().map((b) => b.repo),
+    getBoardData: (repo) => getBoardData(repo, ghForRelations),
+    getDocs: async () => {
+      const local = await docsService.localDocs()
+      const remote = (loadIndex().docs || []).filter((d) => !local.repos.has(d.repo))
+      return [...local.docs, ...remote]
+        .filter((d) => d.path !== 'PROJECT.md' && d.repo !== MASTER_ID)
+        .map((d) => ({ project: d.repo, path: d.path, label: d.label, content: d.content }))
+    },
+    getProjects: () => (readCatalog({ deviceId: deviceId() })?.projects || []).filter((p) => p.repo).map((p) => ({ id: p.id, repo: p.repo }))
+  })
+  triggerHub.onTrigger((t) => {
+    if (t.topic === 'activity' || t.topic === 'docs') {
+      boardDataCache.clear()
+      relations.invalidate()
+    }
+  })
+  ipcMain.handle('relations:ticket', (_e, repo, number) => relations.forTicket(String(repo), Number(number)))
+  ipcMain.handle('relations:doc', (_e, project, filePath) => relations.forDoc(String(project), String(filePath)))
+  ipcMain.handle('relations:pr', (_e, repo, number) => relations.forPr(String(repo), Number(number)))
+  ipcMain.handle('relations:context', (_e, project) => relations.context(String(project)))
 
   let refreshing = null
   function refreshCatalog() {

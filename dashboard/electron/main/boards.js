@@ -3,6 +3,7 @@ import { homedir } from 'os'
 import path from 'path'
 import { buildBoard } from './board.js'
 import { readOverrides } from './catalog.js'
+import { projectIdOf } from '../../src/lib/projects.js'
 import { listTrackedTickets, readStages } from '../../webhook-server/ticket_stages.js'
 import { readDispatchStatus } from './dispatch_status.js'
 
@@ -28,6 +29,13 @@ export function readRegistry(file = REGISTRY_PATH, overrides = readOverrides()) 
   }
 }
 
+// A board's project status (active / recent / dormant / archived) comes from the catalog, so boards of
+// projects nobody is working on can sit out of the way without being deleted. Unknown = recent: never hide.
+export function withProjectStatus(boards, catalog) {
+  const status = Object.fromEntries((catalog?.projects || []).map((p) => [p.id, p.status]))
+  return boards.map((b) => ({ ...b, status: status[projectIdOf(b.repo)] || 'recent' }))
+}
+
 // Stage events are keyed by ticket number only, so they belong to the MARVIN
 // repo alone until stage keys carry a repo (CONTEXT.md "Project boards").
 function defaultStagesFor(repo) {
@@ -42,20 +50,26 @@ function defaultLiveNumbers(repo) {
   return new Set(m.map((x) => Number(x[1])))
 }
 
-export async function loadBoard(repo, { gh, stagesFor = defaultStagesFor, liveNumbers } = {}) {
+// The raw tickets and open PRs of one repo. Open tickets are fetched on their own so a long history of
+// closed ones can never crowd them out (one newest-200 query silently drops the oldest open ticket);
+// closed ones are the 100 most recent. PRs carry their changed files so docs they touch can be linked.
+export async function fetchBoardData(repo, gh) {
+  const fields = 'number,title,state,labels,body,url,createdAt,updatedAt,closedAt'
+  const [openJson, closedJson, prsJson] = await Promise.all([
+    gh(['issue', 'list', '--repo', repo, '--state', 'open', '--limit', '1000', '--json', fields]),
+    gh(['issue', 'list', '--repo', repo, '--state', 'closed', '--limit', '100', '--json', fields]),
+    gh(['pr', 'list', '--repo', repo, '--state', 'open', '--limit', '100', '--json', 'number,title,url,state,isDraft,body,files'])
+  ])
+  return { issues: [...JSON.parse(openJson), ...JSON.parse(closedJson)], prs: JSON.parse(prsJson) }
+}
+
+export async function loadBoard(repo, { gh, stagesFor = defaultStagesFor, liveNumbers, data } = {}) {
   try {
-    // Open tickets are fetched on their own so a long history of closed ones can never crowd them out
-    // (a single newest-200 query would silently drop the oldest open ticket); closed ones are recent only.
-    const fields = 'number,title,state,labels,body,url,createdAt,updatedAt,closedAt'
-    const [openJson, closedJson, prsJson] = await Promise.all([
-      gh(['issue', 'list', '--repo', repo, '--state', 'open', '--limit', '1000', '--json', fields]),
-      gh(['issue', 'list', '--repo', repo, '--state', 'closed', '--limit', '100', '--json', fields]),
-      gh(['pr', 'list', '--repo', repo, '--state', 'open', '--limit', '100', '--json', 'number,title,url,state,isDraft,body'])
-    ])
+    const { issues, prs } = data || (await fetchBoardData(repo, gh))
     return buildBoard({
       repo,
-      issues: [...JSON.parse(openJson), ...JSON.parse(closedJson)],
-      prs: JSON.parse(prsJson),
+      issues,
+      prs,
       eventsByNumber: stagesFor(repo),
       liveNumbers: liveNumbers || defaultLiveNumbers(repo)
     })

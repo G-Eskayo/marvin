@@ -73,16 +73,24 @@ def _gh(args: list[str]) -> str:
     return subprocess.run(["gh", *args], capture_output=True, text=True, check=True, timeout=30).stdout
 
 
-def discover(owner: str, gh=_gh, path: Path | None = None) -> list[str]:
+def discover(owner: str, gh=_gh, path: Path | None = None, extra_repos=()) -> list[str]:
     """Register a board for every non-archived repo of `owner` that tracks work in issues (has the ticket
     pipeline's labels, or any issue at all), so a board exists without anyone remembering to ask for it.
-    Returns the newly registered repos. Never raises: discovery is best-effort."""
+    `extra_repos` (e.g. every active or recent project in the catalog) get a board too, so a project has
+    somewhere for its first ticket to show up. Returns the newly registered repos. Never raises:
+    discovery is best-effort."""
+    known = {b["repo"] for b in list_boards(path)}
+    added = []
+    for repo in extra_repos:
+        if repo in known or not _REPO_RE.match(repo or ""):
+            continue
+        ensure_board(repo, path=path)
+        known.add(repo)
+        added.append(repo)
     try:
         repos = json.loads(gh(["repo", "list", owner, "--limit", "100", "--json", "nameWithOwner,isArchived"]))
     except Exception:  # noqa: BLE001 -- offline / auth: try again next cycle
-        return []
-    known = {b["repo"] for b in list_boards(path)}
-    added = []
+        return added
     for r in repos:
         repo = r["nameWithOwner"]
         if r.get("isArchived") or repo in known:

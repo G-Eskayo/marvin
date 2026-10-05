@@ -59,3 +59,19 @@ describe('loadBoard', () => {
     await expect(loadBoard('o/r', { gh })).rejects.toThrow(/o\/r/)
   })
 })
+
+import { withProjectStatus } from '../electron/main/boards.js'
+
+describe('withProjectStatus', () => {
+  const cat = { projects: [{ id: 'marvin', status: 'active' }, { id: 'old-thing', status: 'dormant' }, { id: 'gone', status: 'archived' }] }
+
+  it('adds each board\'s project status from the catalog, matching by project id', () => {
+    const out = withProjectStatus([{ repo: 'G-Eskayo/marvin' }, { repo: 'G-Eskayo/Old_Thing' }, { repo: 'G-Eskayo/gone' }], cat)
+    expect(out.map((b) => b.status)).toEqual(['active', 'dormant', 'archived'])
+  })
+
+  it('treats a board with no catalog entry (or no catalog yet) as recent, never hides it', () => {
+    expect(withProjectStatus([{ repo: 'G-Eskayo/unknown' }], cat)[0].status).toBe('recent')
+    expect(withProjectStatus([{ repo: 'G-Eskayo/marvin' }], null)[0].status).toBe('recent')
+  })
+})

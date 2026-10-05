@@ -134,15 +134,15 @@ export default function App() {
         {activeTab === 'metrics' ? (
           <MetricsScorecard />
         ) : activeTab === 'mr-review' ? (
-          <MrReview nav={nav} onOpenDocs={(projectId) => navigate('docs', { projectId })} onOpenBoard={(repo) => navigate('activity', { repo })} />
+          <MrReview nav={nav} onOpenDocs={(projectId, path) => navigate('docs', { projectId, path })} onOpenBoard={(repo) => navigate('activity', { repo })} onOpenTicket={(repo, number) => navigate('activity', { repo, ticketNumber: number })} />
         ) : activeTab === 'health' ? (
           <HealthDashboard />
         ) : activeTab === 'docs' ? (
-          <DocsExplorer nav={nav} onOpenBoard={(repo) => navigate('activity', { repo })} />
+          <DocsExplorer nav={nav} onOpenBoard={(repo) => navigate('activity', { repo })} onOpenTicket={(repo, number) => navigate('activity', { repo, ticketNumber: number })} onOpenPr={(repo, number) => navigate('mr-review', { prKey: `${repo}#${number}` })} />
         ) : activeTab === 'portfolio' ? (
           <PortfolioHub />
         ) : (
-          <ActivityBoard nav={nav} onOpenMr={(prKey) => navigate('mr-review', { prKey })} onOpenDocs={(projectId) => navigate('docs', { projectId })} />
+          <ActivityBoard nav={nav} onOpenMr={(prKey) => navigate('mr-review', { prKey })} onOpenDocs={(projectId, path) => navigate('docs', { projectId, path })} onOpenTicket={(repo, number) => navigate('activity', { repo, ticketNumber: number })} />
         )}
       </main>
     </div>

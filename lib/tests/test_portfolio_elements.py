@@ -48,7 +48,7 @@ def test_the_captured_card_is_one_look_in_one_geometry_everywhere_it_appears():
     element = json.loads((PROJECT / "templates" / "elements" / "project-card.json").read_text())
     assert element["distinct_looks"] == 1 and element["distinct_geometries"] == 1
     assert element["deviations"] == []
-    assert element["usage"]["placements"] >= 20 and element["geometry"] == {"photoHeight": 240, "boxWidth": 280, "boxHeight": 290, "overlap": 56}   # one text-box size, everywhere
+    assert element["usage"]["placements"] >= 20 and element["geometry"] == {"photoHeight": 240, "boxWidth": 300, "boxHeight": 244, "overlap": 56}   # one text-box size, everywhere
 
 
 def test_every_defined_element_has_what_capture_needs():
@@ -83,3 +83,19 @@ def test_geometry_agrees_within_a_pixel_but_not_more():
     assert not pe.geometry_close(a, {"boxWidth": 320, "boxHeight": 290})          # a missing dimension is a difference
     assert pe.geometry_close(None, None) and not pe.geometry_close(a, None)
     assert len(pe._cluster([a, {**a, "boxWidth": 319}, {**a, "overlap": 34}])) == 2
+
+
+def test_the_box_is_at_most_its_width_and_never_reaches_its_photos_borders():
+    want = {"photoHeight": 240, "boxWidth": 300, "boxHeight": 244, "overlap": 56}
+    wide = {**want, "photoWidth": 497}
+    narrow = {**want, "boxWidth": 264, "photoWidth": 292}          # the hub beside its sidebar at 1100px: 292 - 2 x 14
+    too_wide = {**want, "boxWidth": 292, "photoWidth": 292}        # reaches the photo's borders
+    assert pe.geometry_matches(want, wide) and pe.geometry_matches(want, narrow)
+    assert not pe.geometry_matches(want, too_wide)
+    assert not pe.geometry_matches(want, {**wide, "boxHeight": 290})
+
+
+def test_the_master_geometry_takes_the_widest_box_not_the_most_common_one():
+    g = lambda w, pw: {"photoHeight": 240, "photoWidth": pw, "boxWidth": w, "boxHeight": 244, "overlap": 56}
+    assert pe.master_geometry([g(264, 292), g(264, 292), g(300, 351), g(300, 497)]) == {"boxHeight": 244, "boxWidth": 300, "overlap": 56, "photoHeight": 240}
+    assert pe.master_geometry([]) is None

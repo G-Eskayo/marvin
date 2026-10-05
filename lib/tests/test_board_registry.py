@@ -95,3 +95,27 @@ def test_discover_also_registers_repos_that_have_tickets_but_no_pipeline_label(t
         return json.dumps(issues[repo])  # `issue list`
 
     assert br.discover("o", gh=gh, path=tmp_path / "r.json") == ["o/tracked"]
+
+
+def test_discover_also_registers_the_extra_repos_it_is_given_even_without_tickets(tmp_path):
+    def gh(args):
+        if args[:2] == ["repo", "list"]:
+            return json.dumps([{"nameWithOwner": "o/quiet", "isArchived": False}, {"nameWithOwner": "o/other", "isArchived": False}])
+        if args[0] == "label":
+            return json.dumps([{"name": "bug"}])
+        return "[]"  # no tickets anywhere
+
+    path = tmp_path / "r.json"
+    assert br.discover("o", gh=gh, path=path, extra_repos=["o/quiet"]) == ["o/quiet"]
+    assert [b["repo"] for b in br.list_boards(path)] == ["o/quiet"]
+
+
+def test_extra_repos_are_not_registered_twice_or_when_malformed(tmp_path):
+    def gh(args):
+        if args[:2] == ["repo", "list"]:
+            return json.dumps([])
+        return "[]"
+
+    path = tmp_path / "r.json"
+    br.discover("o", gh=gh, path=path, extra_repos=["o/a", "not a repo", "o/a"])
+    assert [b["repo"] for b in br.list_boards(path)] == ["o/a"]

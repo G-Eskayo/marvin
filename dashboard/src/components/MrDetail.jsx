@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { EvidenceTable, ApproveDenyActions } from './MrReview.jsx'
 import { projectIdOf } from '../lib/projects.js'
+import Related, { useRelated } from './Related.jsx'
 
 // Full evidence-schema drill-down for one MR (G-Eskayo/marvin#72, ADR
 // 0024) plus its linked ticket/parent-PRD requirements, design, and
@@ -86,7 +87,8 @@ function IssueBody({ label, issue }) {
   )
 }
 
-export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs, onOpenBoard }) {
+export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs, onOpenBoard, onOpenTicket }) {
+  const rel = useRelated(() => window.api.relations.pr(pr.repo, pr.number), [pr.repo, pr.number])
   const [context, setContext] = useState(null)
   const [error, setError] = useState(null)
 
@@ -189,6 +191,12 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
           <IssueBody label="Parent" issue={context.parent} />
         )}
       </Section>
+
+      <Related
+        rel={rel}
+        onDoc={(project, path) => onOpenDocs?.(project, path)}
+        onTicket={(repo, number) => onOpenTicket?.(repo, number)}
+      />
     </div>
   )
 }

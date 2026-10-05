@@ -170,6 +170,32 @@ def geometry_close(a: dict | None, b: dict | None, tol: int = 1) -> bool:
     return a.keys() == b.keys() and all(abs(a[k] - b[k]) <= tol for k in a)
 
 
+EDGE_GAP = 14      # the text box keeps this much clear of each side of its photo (--card-edge-gap in other-projects.css)
+
+
+def geometry_matches(want: dict | None, got: dict | None, tol: int = 1) -> bool:
+    """A measured placement matches the element's geometry. The box is at most `want.boxWidth` wide and never reaches its
+    photo's borders, so its expected width on THIS placement is min(boxWidth, photoWidth - 2 x EDGE_GAP); every other
+    dimension must agree to the pixel."""
+    if not want or not got:
+        return want == got
+    expect = dict(want)
+    if "photoWidth" in got and "boxWidth" in expect:
+        expect["boxWidth"] = min(expect["boxWidth"], got["photoWidth"] - 2 * EDGE_GAP)
+    have = {k: v for k, v in got.items() if k != "photoWidth"}
+    return expect.keys() == have.keys() and all(abs(expect[k] - have[k]) <= tol for k in expect)
+
+
+def master_geometry(geoms: list[dict]) -> dict | None:
+    """The element's geometry from its placements: the most common, with the box width taken as the widest seen (narrow
+    columns shrink the box, they do not define it)."""
+    if not geoms:
+        return None
+    base = json.loads(_most_common([{k: v for k, v in g.items() if k not in ("photoWidth", "boxWidth")} for g in geoms]))
+    base["boxWidth"] = max(g["boxWidth"] for g in geoms)
+    return dict(sorted(base.items()))
+
+
 def normalize_markup(markup: str) -> str:
     """Whitespace-insensitive form of generalized markup, so a captured element and its template compare equal."""
     out = re.sub(r"\s+", " ", markup)
@@ -213,7 +239,7 @@ def find_deviations(instances: list[tuple[str, dict]], markup: str | None, look:
             why.add("not recognisable as the element")
         if look and inst["look"] != look:
             why.add("different computed look")
-        if geometry and inst["geometry"] and not geometry_close(inst["geometry"], geometry):
+        if geometry and inst["geometry"] and not geometry_matches(geometry, inst["geometry"]):
             why.add(f"different geometry {inst['geometry']}")
         if why:
             found.setdefault(url, set()).update(why)
@@ -226,7 +252,7 @@ _GEOM_JS = """([sel, photoSel, boxSel]) => [...document.querySelectorAll(sel)].m
   const ph = el.querySelector(photoSel), bx = el.querySelector(boxSel);
   if (!ph || !bx) return null;
   const pr = ph.getBoundingClientRect(), br = bx.getBoundingClientRect();
-  return {photoHeight: Math.round(pr.height), boxWidth: Math.round(br.width), boxHeight: Math.round(br.height), overlap: Math.round(pr.bottom - br.top)};
+  return {photoHeight: Math.round(pr.height), photoWidth: Math.round(pr.width), boxWidth: Math.round(br.width), boxHeight: Math.round(br.height), overlap: Math.round(pr.bottom - br.top)};
 })"""
 
 _LOOK_JS = """([sel, parts, partProps, rules]) => [...document.querySelectorAll(sel)].map(el => {
@@ -317,6 +343,7 @@ def _cluster(geoms: list[dict]) -> list[dict]:
     """Geometries that agree to the pixel are one: the representatives of each cluster."""
     reps: list[dict] = []
     for g in geoms:
+        g = {k: v for k, v in g.items() if k != "photoWidth"}
         if not any(geometry_close(g, r) for r in reps):
             reps.append(g)
     return reps
@@ -372,13 +399,13 @@ def _finish(element_id: str, a: dict, provenance: dict, project: Path) -> dict:
     conforming = [i for (_, i), m in zip(instances, live_markups) if m == master]
     looks = distinct_looks([i["look"] for _, i in instances])
     look = json.loads(_most_common([i["look"] for i in conforming] or [i["look"] for _, i in instances])) if instances else None
-    geometry = json.loads(_most_common(a["geoms"])) if a["geoms"] else None
+    geometry = master_geometry(a["geoms"])
     deviations = find_deviations(instances, master, look, geometry, normalize)
     result = {
         "id": element_id, "name": definition["name"], "description": definition["description"],
         "fields": definition["fields"], "markup": master, "look": look,
         "distinct_looks": len(looks), "geometry": geometry,
-        "distinct_geometries": len(_cluster(a["geoms"])), "deviations": deviations, "provenance": provenance,
+        "distinct_geometries": 1 + len(_cluster([g for g in a["geoms"] if not geometry_matches(geometry, g)])) if geometry else 0, "deviations": deviations, "provenance": provenance,
         "usage": {"pages": a["usage"], "placements": sum(a["usage"].values())},
         "captured_from": a["first"], "captured_at": datetime.now(timezone.utc).isoformat(),
     }
