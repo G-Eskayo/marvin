@@ -18,7 +18,14 @@ echo "${LOG_PREFIX} installing dependencies..."
 npm install --no-audit --no-fund
 
 echo "${LOG_PREFIX} building..."
-npm run build:mac
+if ! npm run build:mac; then
+  # Signing needs the login keychain, which is locked in an SSH session or just after a reboot (errSecInternalComponent).
+  # A stale app is worse than an ad-hoc-signed one, so build again without the identity and sign ad hoc.
+  echo "${LOG_PREFIX} signed build failed; retrying with an ad-hoc signature" >&2
+  rm -rf "dist/mac-arm64"
+  npx electron-builder --mac --dir -c.mac.identity=-
+  codesign --force --deep -s - "$SRC"
+fi
 
 if [ ! -d "$SRC" ]; then
   echo "${LOG_PREFIX} build did not produce $SRC" >&2
