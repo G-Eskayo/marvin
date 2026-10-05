@@ -33,12 +33,13 @@ import { listJobs } from './jobs.js'
 import { readTicketAgents } from './ticket_agents.js'
 import { readToolUsage, isStale as toolUsageStale } from './tool_usage.js'
 import { createRefreshServer } from './refresh_server.js'
-import { adoptLoginShellPath } from './path.js'
+import { adoptLoginShellPath, adoptSharedGhToken } from './path.js'
 import { resolveServiceDefaults, resolveDeviceId } from './device_identity.js'
 
 const execFileAsync = promisify(execFile)
 
 adoptLoginShellPath()
+adoptSharedGhToken()
 
 // ADR 0032: the webhook-server this app talks to lives on whichever
 // machine is the primary automation host, not always localhost -- see
