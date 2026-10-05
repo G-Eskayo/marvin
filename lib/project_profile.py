@@ -6,7 +6,7 @@ toolchain needs, how a ticket is verified (tiers: command, parser, required/opti
 model may run. marvin itself keeps its built-in path and has no profile.
 
     project_profile.py list                 profiles and whether dispatch is on
-    project_profile.py selftest <repo>      dry run in a throwaway worktree: no model call, no GitHub writes
+    project_profile.py selftest <repo> [ref]  dry run in a throwaway worktree: no model call, no GitHub writes
     project_profile.py gate-info <repo>     what the dashboard's merge gate needs (JSON)
     project_profile.py verify <repo> <dir>  run the required checks in a worktree; exit 0 clean, 1 failed, 3 tool missing
 """
@@ -23,6 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 PROFILES_DIR = Path.home() / ".agents" / "config" / "projects"
+PIPELINE_CLONES = Path.home() / ".agents-pipeline-clones"  # dedicated clones: not a working copy, not in iCloud
 _NO_TESTS_MARKERS = ("no tests ran", "no test files found")
 
 
@@ -65,6 +66,22 @@ def parse_swift_test(output: str) -> dict | None:
     return {"total": total, "failed": failed, "skipped": skipped, "passed": max(0, total - failed - skipped)}
 
 
+_VITEST_RE = re.compile(r"Tests\s+(?:(\d+) failed\s*\|\s*)?(?:(\d+) skipped\s*\|\s*)?(?:(\d+) passed)?(?:\s*\|\s*(\d+) skipped)?\s*\((\d+)\)")
+
+
+def parse_vitest(output: str) -> dict | None:
+    """vitest's summary line: 'Tests  2 failed | 17 passed | 1 skipped (20)'."""
+    m = None
+    for m in _VITEST_RE.finditer(output):
+        pass
+    if m is None:
+        return None
+    failed, skipped_a, passed, skipped_b, total = m.groups()
+    failed, passed, total = int(failed or 0), int(passed or 0), int(total)
+    skipped = int(skipped_a or skipped_b or 0)
+    return {"total": total, "failed": failed, "skipped": skipped, "passed": passed}
+
+
 def parse_xcodebuild(output: str) -> dict | None:
     if "** BUILD SUCCEEDED **" in output:
         return {"build_ok": 1}
@@ -80,6 +97,8 @@ def parse_exit_code(output: str, returncode: int | None = None) -> dict | None:
 def parse_output(parser: str, output: str, returncode: int) -> dict | None:
     if parser == "swift-test":
         return parse_swift_test(output)
+    if parser == "vitest":
+        return parse_vitest(output)
     if parser == "xcodebuild":
         return parse_xcodebuild(output)
     if parser == "exit-code":
@@ -105,6 +124,15 @@ def _validate(profile: dict, source: str) -> dict:
         t.setdefault("timeout_s", 1200)
     profile.setdefault("base_branch", "main")
     profile.setdefault("dispatch", "off")  # a profile does nothing until a person turns it on
+    profile.setdefault("clone_mode", "catalog")  # "catalog" = the live working copy; "pipeline" = a dedicated clone
+    profile.setdefault("setup", [])
+    for st in profile["setup"]:
+        if "command" not in st or "id" not in st:
+            raise ValueError(f"{source}: setup step needs an id and a command")
+        st.setdefault("label", st["id"])
+        st.setdefault("cwd", ".")
+        st.setdefault("requires", [])
+        st.setdefault("timeout_s", 1800)
     profile.setdefault("merge_from_dashboard", False)  # approving/denying its PRs in MR Review is opt-in too
     profile.setdefault("machines", [])
     profile.setdefault("clone_hints", [])
@@ -146,9 +174,36 @@ def dispatchable_repos(directory: Path | None = None) -> list[str]:
     return [p["repo"] for p in all_profiles(directory) if p["dispatch"] == "on"]
 
 
-def resolve_clone(profile: dict, catalog: dict | None = None) -> Path | None:
-    """The project's real clone on THIS machine: the catalog's newest local path first (the live working
-    copy), then the profile's own hints."""
+def _token_env() -> dict:
+    """GH_TOKEN from the pipeline's shared token file, so a clone/fetch authenticates as the pipeline does."""
+    try:
+        import project_catalog
+        return project_catalog.run_env()
+    except Exception:  # noqa: BLE001
+        return dict(os.environ)
+
+
+def pipeline_clone_path(profile: dict) -> Path:
+    return PIPELINE_CLONES / profile["repo"].split("/")[-1]
+
+
+def resolve_clone(profile: dict, catalog: dict | None = None, ensure: bool = False) -> Path | None:
+    """The clone the pipeline works from on THIS machine.
+    clone_mode "catalog" (default): the project's live working copy (catalog's newest local path, then the
+    profile's hints). clone_mode "pipeline": a dedicated clone under ~/.agents-pipeline-clones, never a
+    person's working copy and never inside iCloud (a clone of an iCloud-synced folder took minutes and can
+    stall; the same repo cloned from GitHub takes under a second). With ensure=True a missing pipeline clone
+    is created; without it, None."""
+    if profile.get("clone_mode") == "pipeline":
+        path = pipeline_clone_path(profile)
+        if (path / ".git").exists():
+            return path
+        if not ensure:
+            return None
+        path.parent.mkdir(parents=True, exist_ok=True)
+        proc = subprocess.run(["gh", "repo", "clone", profile["repo"], str(path), "--", "-q"], capture_output=True, text=True,
+                              timeout=600, env=_token_env())
+        return path if proc.returncode == 0 and (path / ".git").exists() else None
     candidates = []
     for p in (catalog or {}).get("projects", []):
         if p.get("repo") == profile["repo"]:
@@ -159,6 +214,18 @@ def resolve_clone(profile: dict, catalog: dict | None = None) -> Path | None:
         if (path / ".git").exists():
             return path
     return None
+
+
+def ignore_in_clone(clone: Path, patterns: list[str]) -> None:
+    """Add names to the clone's own exclude file (shared by all its worktrees). A dependency folder that is a
+    symlink escapes a "node_modules/" ignore rule (git sees a file, not a directory), so the bare name is
+    excluded here and `git add -A` can never commit it."""
+    exclude = clone / ".git" / "info" / "exclude"
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    have = exclude.read_text().splitlines() if exclude.exists() else []
+    add = [p for p in patterns if p not in have]
+    if add:
+        exclude.write_text("\n".join(have + add) + "\n")
 
 
 # ── environment ─────────────────────────────────────────────────────────────
@@ -230,6 +297,7 @@ class Measurer:
         metrics: dict = {}
         passed = failed = 0
         self.report = {"tiers": [], "notes": []}
+        self._setup(Path(worktree))
         for t in self.profile["verify"]:
             row = {"id": t["id"], "label": t["label"], "ran": False}
             self.report["tiers"].append(row)
@@ -262,6 +330,19 @@ class Measurer:
         metrics["tests_failed"] = {"value": failed, "higher_is_better": False}
         return metrics
 
+    def _setup(self, worktree: Path) -> None:
+        """Dependency steps a fresh worktree needs before its checks can run (e.g. installing packages).
+        A step whose `creates` path already exists is skipped, so the second measurement is free."""
+        for st in self.profile.get("setup", []):
+            if st.get("creates") and (worktree / st["creates"]).exists():
+                continue
+            missing = [c for c in st["requires"] if not self.have(c, self.env)]
+            if missing:
+                raise EnvMissing(st["id"], missing)
+            rc, out = self.runner(st["command"], worktree / st["cwd"], self.env, st["timeout_s"])
+            if rc != 0:
+                raise MeasureError(f"setup step '{st['label']}' failed: ...{out[-400:].strip()}")
+
     def evidence(self) -> tuple[dict | None, dict]:
         """(test_results, dev_evidence) in the shapes mr_raiser formats into the PR body."""
         tests = [t for t in self.report["tiers"] if t.get("ran") and "total" in t]
@@ -281,7 +362,7 @@ class Measurer:
 def gate_info(profile: dict, catalog: dict | None = None, have=None) -> dict:
     """Everything the dashboard's merge gate needs to know to rebase and retest one of this project's PRs."""
     profile = _validate(copy.deepcopy(profile), "profile")
-    clone = resolve_clone(profile, catalog if catalog is not None else _catalog())
+    clone = resolve_clone(profile, catalog if catalog is not None else _catalog(), ensure=True)
     env = build_env(profile)
     check = have or (lambda cap, e: globals()["have"](cap, e))
     missing: list[str] = []
@@ -335,7 +416,7 @@ def _cleanup_worktree(clone: Path, worktree: Path, branch: str) -> None:
     subprocess.run(["git", "branch", "-D", branch], cwd=clone, capture_output=True)
 
 
-def selftest(profile: dict, runner=_default_runner, have=None, catalog: dict | None = None) -> dict:
+def selftest(profile: dict, runner=_default_runner, have=None, catalog: dict | None = None, ref: str | None = None) -> dict:
     """Everything a real ticket does EXCEPT the model call and any GitHub write: find the clone, make a real
     worktree from the base branch, run the required checks for real (the baseline), and build the PR body the
     pipeline would raise. Always removes the worktree and branch it made."""
@@ -344,7 +425,7 @@ def selftest(profile: dict, runner=_default_runner, have=None, catalog: dict | N
     import metrics_registry as mr
 
     profile = _validate(copy.deepcopy(profile), "profile")
-    clone = resolve_clone(profile, catalog if catalog is not None else _catalog())
+    clone = resolve_clone(profile, catalog if catalog is not None else _catalog(), ensure=True)
     if clone is None:
         return {"ok": False, "error": f"no local clone of {profile['repo']} on this machine"}
     ticket_ref = f"{profile['repo']}#999999"
@@ -359,7 +440,7 @@ def selftest(profile: dict, runner=_default_runner, have=None, catalog: dict | N
         return {"ok": False, "clone": str(clone), "error": f"this machine lacks {', '.join(lacking)}, which the required checks need"}
     worktree = None
     try:
-        worktree = so._create_worktree(clone, ticket_ref, profile["base_branch"])
+        worktree = so._create_worktree(clone, ticket_ref, ref or profile["base_branch"])
         baseline = measurer(worktree)
         comparison = mr.compare("selftest", baseline, baseline)
         test_results, dev = measurer.evidence()
@@ -393,9 +474,9 @@ def executor_tools(profile: dict, clone: Path | None = None) -> tuple[str, str]:
     marvin #41's executor writing into the real checkout)."""
     ex = profile.get("executor") or {}
     allowed = ["Read", "Edit", "Write", "Bash(git status*)", *ex.get("allowed_tools", [])]
-    denied = []
+    denied = list(ex.get("denied_tools", []))
     if clone is not None:
-        denied = [f"Write({clone}/**)", f"Edit({clone}/**)"]
+        denied += [f"Write({clone}/**)", f"Edit({clone}/**)"]
     return ",".join(allowed), ",".join(denied)
 
 
@@ -415,7 +496,7 @@ def main() -> int:
             print(f"no profile for {sys.argv[2]}", file=sys.stderr)
             return 1
         print(f"profile ok. missing on this machine: {missing_here(profile) or 'nothing'}")
-        r = selftest(profile)
+        r = selftest(profile, ref=sys.argv[3] if len(sys.argv) > 3 else None)
         if not r["ok"]:
             print("SELFTEST FAILED:", r["error"])
             return 1

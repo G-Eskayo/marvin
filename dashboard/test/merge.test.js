@@ -23,8 +23,10 @@ import {
   triggerTicketPipeline,
   isBehindMain,
   rebaseAndRetest,
+  defaultGateContext,
   _defaultRunTests
 } from '../webhook-server/merge.js'
+import { MergeFailure, refusal } from '../webhook-server/failure.js'
 
 const realExec = promisify(execFile)
 
@@ -500,5 +502,128 @@ describe('mergePr structured failures', () => {
     const p = mergePr('not-a-url', vi.fn())
     await expect(p).rejects.toThrow('Not a GitHub PR URL')
     await p.catch((e) => expect(e.payload.code).toBe('INVALID_REQUEST'))
+  })
+})
+
+// ── another project's PR (execution profile) ────────────────────────────────
+
+const CC_PR = 'https://github.com/G-Eskayo/clarity-captions/pull/21'
+const CTX = { repo: 'G-Eskayo/clarity-captions', clone: '/Users/me/Developer/clarity-captions', base: 'main', runTests: vi.fn() }
+
+describe('mergePr for a project with a profile', () => {
+  it('refuses a project that has no profile or has not opted in, without merging or sending anything back', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const reengage = vi.fn()
+    const gateContext = vi.fn().mockRejectedValue(new MergeFailure(refusal('NO_MERGE_PROFILE', 'request', 'no profile', 'Add one.')))
+    await expect(mergePr(CC_PR, exec, noopRebuild, noopRedispatch, vi.fn(), vi.fn(), reengage, vi.fn(), { gateContext })).rejects.toMatchObject({ payload: { code: 'NO_MERGE_PROFILE' } })
+    expect(exec).not.toHaveBeenCalledWith('gh', ['pr', 'merge', CC_PR, '--merge'])
+    expect(reengage).not.toHaveBeenCalled()
+  })
+
+  it('merges directly when the PR is not behind, and does not rebuild the dashboard', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const rebuild = vi.fn()
+    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: false, headRefName: 'pipeline/x', body: 'Closes G-Eskayo/clarity-captions#7' })
+    const result = await mergePr(CC_PR, exec, rebuild, noopRedispatch, shouldGateMerge, vi.fn(), vi.fn(), vi.fn(), { gateContext: async () => CTX })
+    expect(shouldGateMerge).toHaveBeenCalledWith(CC_PR, exec, CTX)
+    expect(exec).toHaveBeenCalledWith('gh', ['pr', 'merge', CC_PR, '--merge'])
+    expect(rebuild).not.toHaveBeenCalled()
+    expect(result.merged).toBe(true)
+  })
+
+  it('rebases and retests in the project\'s clone on its base branch with its own checks when behind', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: true, headRefName: 'pipeline/g-eskayo/clarity-captions#7', body: 'Closes G-Eskayo/clarity-captions#7' })
+    const rebaseAndRetestFn = vi.fn().mockResolvedValue({ ok: true })
+    await mergePr(CC_PR, exec, noopRebuild, noopRedispatch, shouldGateMerge, rebaseAndRetestFn, vi.fn(), vi.fn(), { gateContext: async () => CTX })
+    expect(rebaseAndRetestFn).toHaveBeenCalledWith('pipeline/g-eskayo/clarity-captions#7', exec, CTX.clone, CTX.runTests, 'main')
+  })
+
+  it('records the ticket timeline under the project, not under marvin\'s same-numbered ticket', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: true, headRefName: 'b', body: 'Closes G-Eskayo/clarity-captions#7' })
+    const recordStageFn = vi.fn()
+    await mergePr(CC_PR, exec, noopRebuild, noopRedispatch, shouldGateMerge, vi.fn().mockResolvedValue({ ok: true }), vi.fn(), recordStageFn, { gateContext: async () => CTX })
+    const stages = recordStageFn.mock.calls.map(([, stage, status]) => `${stage}:${status}`)
+    expect(stages).toEqual(['gate:started', 'gate:passed', 'merging:started', 'merging:passed', 'done:passed'])  // no dashboard rebuild stage
+    expect(recordStageFn.mock.calls.every((c) => c[4]?.repo === 'G-Eskayo/clarity-captions')).toBe(true)
+  })
+
+  it('sends a failed retest back to the ticket in that project\'s repo with the failing test named', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: true, headRefName: 'b', body: 'Closes G-Eskayo/clarity-captions#7' })
+    const failing = { ok: false, reason: "Tests failed after rebasing onto main:\n\nTest Case '-[CoreTests.AlignTests testBad]' failed (0.1 seconds)." }
+    const reengage = vi.fn()
+    const result = await mergePr(CC_PR, exec, noopRebuild, noopRedispatch, shouldGateMerge, vi.fn().mockResolvedValue(failing), reengage, vi.fn(), { gateContext: async () => CTX })
+    expect(result).toMatchObject({ merged: false, reengaged: true, code: 'GATE_TESTS_FAILED' })
+    expect(reengage.mock.calls[0][0]).toMatchObject({ prUrl: CC_PR, ticketNumber: '7' })
+    expect(reengage.mock.calls[0][0].comment).toContain('CoreTests.AlignTests/testBad')
+  })
+})
+
+describe('defaultGateContext', () => {
+  const run = (info) => vi.fn().mockResolvedValue({ stdout: JSON.stringify(info), stderr: '' })
+
+  it('refuses a project with no profile, or one that has not opted in', async () => {
+    await expect(defaultGateContext('o/x', run({ profile: false }))).rejects.toMatchObject({ payload: { code: 'NO_MERGE_PROFILE' } })
+    await expect(defaultGateContext('o/x', run({ repo: 'o/x', clone: '/c', base_branch: 'main', merge_from_dashboard: false, missing_here: [] }))).rejects.toMatchObject({ payload: { code: 'NO_MERGE_PROFILE' } })
+  })
+
+  it('refuses when this machine lacks a tool the required checks need, as an environment problem', async () => {
+    const err = await defaultGateContext('o/x', run({ repo: 'o/x', clone: '/c', base_branch: 'main', merge_from_dashboard: true, missing_here: ['xcode'] })).catch((e) => e)
+    expect(err.payload).toMatchObject({ code: 'ENV_MISSING', action: 'escalate' })
+    expect(err.payload.message).toContain('xcode')
+  })
+
+  it('refuses when there is no clone of the project on this machine', async () => {
+    await expect(defaultGateContext('o/x', run({ repo: 'o/x', clone: null, base_branch: 'main', merge_from_dashboard: true, missing_here: [] }))).rejects.toMatchObject({ payload: { code: 'NO_MERGE_PROFILE' } })
+  })
+
+  it('hands back the clone, base branch and a runner that verifies with the profile', async () => {
+    const exec = run({ repo: 'o/x', clone: '/c', base_branch: 'trunk', merge_from_dashboard: true, missing_here: [] })
+    const ctx = await defaultGateContext('o/x', exec)
+    expect(ctx).toMatchObject({ repo: 'o/x', clone: '/c', base: 'trunk' })
+    await ctx.runTests('/scratch', exec)
+    const last = exec.mock.calls.at(-1)
+    expect(last[1].slice(-3)).toEqual(['verify', 'o/x', '/scratch'])
+  })
+})
+
+describe('base branches other than main', () => {
+  it('isBehindMain compares against the given base', async () => {
+    const calls = []
+    const exec = vi.fn(async (cmd, args) => {
+      calls.push(args.join(' '))
+      return { stdout: '', stderr: '' }
+    })
+    await isBehindMain('feature', exec, '/repo', 'trunk')
+    expect(calls[0]).toBe('fetch origin trunk feature')
+    expect(calls[1]).toContain('origin/trunk')
+  })
+
+  it('rebaseAndRetest rebases onto the given base and pushes, in a real repo', async () => {
+    const { root, repoDir } = makeGitFixture()
+    try {
+      sh('git', ['branch', '-m', 'main', 'trunk'], repoDir)
+      sh('git', ['push', '-u', 'origin', 'trunk'], repoDir)
+      sh('git', ['checkout', '-q', '-b', 'feature'], repoDir)
+      writeFileSync(path.join(repoDir, 'f.txt'), 'x\n')
+      sh('git', ['add', '.'], repoDir)
+      sh('git', ['commit', '-q', '-m', 'feature'], repoDir)
+      sh('git', ['push', '-u', 'origin', 'feature'], repoDir)
+      sh('git', ['checkout', '-q', 'trunk'], repoDir)
+      writeFileSync(path.join(repoDir, 't.txt'), 'y\n')
+      sh('git', ['add', '.'], repoDir)
+      sh('git', ['commit', '-q', '-m', 'trunk moved'], repoDir)
+      sh('git', ['push', 'origin', 'trunk'], repoDir)
+      const runTests = vi.fn().mockResolvedValue(undefined)
+      const result = await rebaseAndRetest('feature', realExec, repoDir, runTests, 'trunk')
+      expect(result).toEqual({ ok: true })
+      expect(runTests).toHaveBeenCalledTimes(1)
+      sh('git', ['fetch', 'origin', 'feature'], repoDir)
+      expect(sh('git', ['merge-base', '--is-ancestor', 'origin/trunk', 'origin/feature'], repoDir)).toBe('')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })

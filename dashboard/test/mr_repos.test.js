@@ -63,3 +63,25 @@ describe('repoFromPrUrl', () => {
     expect(repoFromPrUrl(undefined)).toBeNull()
   })
 })
+
+describe('canMergeFromDashboard with opted-in projects', () => {
+  it('allows marvin always, and another project only when its profile opted in', () => {
+    const opted = new Set(['G-Eskayo/clarity-captions'])
+    expect(canMergeFromDashboard(MARVIN_REPO, opted)).toBe(true)
+    expect(canMergeFromDashboard('G-Eskayo/clarity-captions', opted)).toBe(true)
+    expect(canMergeFromDashboard('G-Eskayo/killer-sudoku', opted)).toBe(false)
+    expect(canMergeFromDashboard('G-Eskayo/clarity-captions')).toBe(false)
+  })
+
+  it('listPipelinePrs marks each PR with the permission it was given', async () => {
+    const opted = new Set(['G-Eskayo/clarity-captions'])
+    const out = await listPipelinePrs(
+      async () => [
+        { number: 1, title: 'a', url: 'u', body: '', repo: 'G-Eskayo/clarity-captions' },
+        { number: 2, title: 'b', url: 'u', body: '', repo: 'G-Eskayo/killer-sudoku' }
+      ],
+      { canMerge: (repo) => canMergeFromDashboard(repo, opted) }
+    )
+    expect(out.map((p) => p.canMerge)).toEqual([true, false])
+  })
+})

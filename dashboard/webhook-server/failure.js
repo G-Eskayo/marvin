@@ -79,6 +79,8 @@ const TEST_NAME_PATTERNS = [
   /^ERROR\s+(\S+)/,             // pytest collection/setup error
   /^\s*FAIL\s+(.+?)\s*$/,       // vitest
 ]
+// XCTest: "Test Case '-[Suite testName]' failed" -> Suite/testName
+const XCTEST_FAILED = /Test Case '-\[(\S+) (\S+)\]' failed/
 
 export function summarizeGateFailure(reason) {
   const text = String(reason ?? '')
@@ -89,6 +91,11 @@ export function summarizeGateFailure(reason) {
 
   const failingTests = []
   for (const line of lines) {
+    const xc = line.match(XCTEST_FAILED)
+    if (xc) {
+      failingTests.push(`${xc[1]}/${xc[2]}`)
+      continue
+    }
     for (const re of TEST_NAME_PATTERNS) {
       const m = line.match(re)
       if (m) {
@@ -107,6 +114,12 @@ export function summarizeGateFailure(reason) {
   }
   parts.push(`Last output:\n\`\`\`\n${tail}\n\`\`\``)
   return { code, failingTests: unique, comment: parts.join('\n\n') }
+}
+
+// A refusal the gate decides itself (not a gh/git error to be pattern-matched): same shape as a
+// classified failure so the HTTP layer and the dashboard treat it identically.
+export function refusal(code, stage, message, remediation, action = 'escalate') {
+  return { code, stage, action, retryable: false, remediation, message, evidence: '' }
 }
 
 export async function withRetry(fn, { classify, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), retries = 3, baseMs = 2000 } = {}) {

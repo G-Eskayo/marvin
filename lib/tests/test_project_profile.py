@@ -304,3 +304,143 @@ def test_verify_feedback_leads_with_the_failing_lines_even_when_a_long_run_burie
     assert r["kind"] == "failed"
     assert r["output_tail"].startswith("Test Case '-[S.T testBroken]' failed")  # not lost off the end
     assert len(r["output_tail"]) <= 4000
+
+
+# ── a dedicated pipeline clone (not anyone's working copy, not in iCloud) ───
+
+def test_pipeline_mode_uses_a_clone_of_its_own_and_ignores_the_catalogs_working_copy(tmp_path, monkeypatch):
+    monkeypatch.setattr(pp, "PIPELINE_CLONES", tmp_path / "clones")
+    human = tmp_path / "Documents" / "proj"
+    (human / ".git").mkdir(parents=True)
+    profile = {"repo": "G-Eskayo/proj", "clone_mode": "pipeline"}
+    cat = {"projects": [{"repo": "G-Eskayo/proj", "localPaths": [str(human)]}]}
+    assert pp.resolve_clone(profile, cat) is None  # not created yet, and NOT the human's copy
+    (tmp_path / "clones" / "proj" / ".git").mkdir(parents=True)
+    assert pp.resolve_clone(profile, cat) == tmp_path / "clones" / "proj"
+
+
+def test_ensure_creates_the_pipeline_clone_once_with_the_shared_token(tmp_path, monkeypatch):
+    monkeypatch.setattr(pp, "PIPELINE_CLONES", tmp_path / "clones")
+    calls = []
+
+    def fake_clone(cmd, **kw):
+        calls.append((cmd, kw.get("env", {}).get("GH_TOKEN")))
+        (tmp_path / "clones" / "proj" / ".git").mkdir(parents=True)
+
+        class R:
+            returncode = 0
+            stdout = stderr = ""
+        return R()
+
+    monkeypatch.setattr(pp.subprocess, "run", fake_clone)
+    monkeypatch.setattr(pp, "_token_env", lambda: {"GH_TOKEN": "tok"})
+    profile = {"repo": "G-Eskayo/proj", "clone_mode": "pipeline"}
+    path = pp.resolve_clone(profile, {"projects": []}, ensure=True)
+    assert path == tmp_path / "clones" / "proj"
+    assert calls[0][0][:3] == ["gh", "repo", "clone"] and calls[0][0][3] == "G-Eskayo/proj" and calls[0][1] == "tok"
+    pp.resolve_clone(profile, {"projects": []}, ensure=True)
+    assert len(calls) == 1  # already there: not cloned again
+
+
+def test_a_failed_clone_is_reported_as_no_clone_not_a_crash(tmp_path, monkeypatch):
+    monkeypatch.setattr(pp, "PIPELINE_CLONES", tmp_path / "clones")
+
+    def boom(cmd, **kw):
+        class R:
+            returncode = 1
+            stdout = ""
+            stderr = "authentication failed"
+        return R()
+
+    monkeypatch.setattr(pp.subprocess, "run", boom)
+    assert pp.resolve_clone({"repo": "G-Eskayo/proj", "clone_mode": "pipeline"}, {"projects": []}, ensure=True) is None
+
+
+def test_the_pipeline_clone_never_hides_files_the_project_ignores_by_directory(tmp_path):
+    # a dependency folder reached through a symlink escapes a "node_modules/" ignore rule, so make sure
+    # the clone's own exclude file ignores the bare name too
+    clone = tmp_path / "c"
+    (clone / ".git" / "info").mkdir(parents=True)
+    pp.ignore_in_clone(clone, ["node_modules"])
+    pp.ignore_in_clone(clone, ["node_modules"])
+    text = (clone / ".git" / "info" / "exclude").read_text()
+    assert text.count("node_modules") == 1
+
+
+# ── setup steps (dependencies in a fresh worktree) ──────────────────────────
+
+SETUP = {"id": "deps", "label": "Install dependencies", "command": ["npm", "ci"], "creates": "node_modules", "requires": ["node"]}
+
+
+def test_setup_runs_when_its_result_is_missing_and_is_skipped_when_present(tmp_path):
+    prof = {**PROFILE, "setup": [SETUP]}
+    (tmp_path / "Pkg").mkdir()
+    have = lambda c, e: c != "xcodegen"  # the optional app-build tier stays out of this
+    m = pp.Measurer(prof, runner=runner_returning([(0, "installed"), (0, XCTEST_OK)]), have=have)
+    m(tmp_path)
+    assert m.runner.calls[0]["cmd"] == ["npm", "ci"]
+    (tmp_path / "node_modules").mkdir()
+    m2 = pp.Measurer(prof, runner=runner_returning([(0, XCTEST_OK)]), have=have)
+    m2(tmp_path)
+    assert [c["cmd"] for c in m2.runner.calls] == [["swift", "test"]]  # node_modules already there: no reinstall
+
+
+def test_a_failing_setup_is_an_error_naming_the_step_not_a_zero_test_result(tmp_path):
+    prof = {**PROFILE, "setup": [SETUP]}
+    m = pp.Measurer(prof, runner=runner_returning([(1, "npm ERR! network")]), have=lambda c, e: True)
+    try:
+        m(tmp_path)
+    except pp.MeasureError as e:
+        assert "Install dependencies" in str(e) and "npm ERR" in str(e)
+    else:
+        raise AssertionError("a broken install must not read as zero tests")
+
+
+def test_setup_needing_a_tool_the_machine_lacks_is_an_environment_problem(tmp_path):
+    prof = {**PROFILE, "setup": [SETUP]}
+    m = pp.Measurer(prof, runner=runner_returning([]), have=lambda c, e: c != "node")
+    try:
+        m(tmp_path)
+    except pp.EnvMissing as e:
+        assert "node" in str(e)
+    else:
+        raise AssertionError("must be reported as the machine lacking node")
+
+
+VITEST_OK = """ RUN  v2.1.9 /x
+
+ ✓ test/bills.test.js (20 tests) 208ms
+
+ Test Files  1 passed (1)
+      Tests  20 passed (20)
+"""
+VITEST_MIXED = " Test Files  1 failed | 2 passed (3)\n      Tests  2 failed | 17 passed | 1 skipped (20)\n"
+
+
+def test_vitest_summary_is_read_from_its_real_output():
+    assert pp.parse_vitest(VITEST_OK) == {"total": 20, "failed": 0, "skipped": 0, "passed": 20}
+    r = pp.parse_vitest(VITEST_MIXED)
+    assert (r["total"], r["failed"], r["passed"], r["skipped"]) == (20, 2, 17, 1)
+    assert pp.parse_vitest("Error: Electron failed to install correctly") is None
+    assert pp.parse_output("vitest", VITEST_OK, 0)["passed"] == 20
+
+
+def test_a_profile_can_forbid_the_model_from_reading_or_writing_sensitive_paths(tmp_path):
+    profile = {"executor": {"allowed_tools": [], "denied_tools": ["Read(~/Library/Application Support/FinanceOS/**)", "Bash(cat ~/Library/Application Support/FinanceOS*)"]}}
+    allowed, denied = pp.executor_tools(profile, clone=Path("/c"))
+    assert "Read(~/Library/Application Support/FinanceOS/**)" in denied
+    assert "Write(/c/**)" in denied  # the real-clone wall is still there
+    assert "FinanceOS" not in allowed
+
+
+def test_selftest_can_be_pointed_at_a_branch_other_than_the_base(tmp_path, monkeypatch):
+    import sandbox_orchestration as so
+    seen = {}
+    wt = tmp_path / "wt"
+    (wt / "Pkg").mkdir(parents=True)
+    monkeypatch.setattr(so, "_create_worktree", lambda clone, ref, base="main": seen.setdefault("base", base) and wt)
+    monkeypatch.setattr(pp, "_cleanup_worktree", lambda *a: None)
+    (tmp_path / ".git").mkdir()
+    profile = {**PROFILE, "clone_hints": [str(tmp_path)]}
+    pp.selftest(profile, runner=runner_returning([(0, XCTEST_OK)]), have=lambda c, e: c == "swift", catalog={"projects": []}, ref="feature/x")
+    assert seen["base"] == "feature/x"

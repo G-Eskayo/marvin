@@ -165,3 +165,19 @@ describe('failureResponse', () => {
     expect(body.merged).toBe(false)
   })
 })
+
+import { summarizeGateFailure as summarize, refusal } from '../webhook-server/failure.js'
+
+describe('Swift gate failures and refusals', () => {
+  it('names a failing XCTest so the ticket\'s executor knows which test to fix', () => {
+    const reason = `Tests failed after rebasing onto main:\n\nTest Case '-[CaptionCoreTests.SpeakerAlignerTests testBad]' failed (0.1 seconds).\nTest Case '-[CaptionCoreTests.ThemeTests testWorse]' failed (0.0 seconds).\nExecuted 12 tests, with 2 failures`
+    const s = summarize(reason)
+    expect(s.code).toBe('GATE_TESTS_FAILED')
+    expect(s.failingTests).toEqual(['CaptionCoreTests.SpeakerAlignerTests/testBad', 'CaptionCoreTests.ThemeTests/testWorse'])
+  })
+
+  it('builds a coded refusal that says what to do next', () => {
+    const r = refusal('NO_MERGE_PROFILE', 'request', 'x has no profile', 'Add merge_from_dashboard to its profile.')
+    expect(r).toMatchObject({ code: 'NO_MERGE_PROFILE', stage: 'request', action: 'escalate', retryable: false, remediation: expect.stringContaining('merge_from_dashboard') })
+  })
+})

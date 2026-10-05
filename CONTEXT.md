@@ -616,6 +616,29 @@ untouched (it is the "legacy profile"); only repos with a profile file use the p
 - **Turning it on**: set `"dispatch": "on"` in `config/projects/clarity-captions.json`. From the next hourly
   scan the best ready clarity-captions ticket competes with marvin's by priority then age, is claimed, and runs
   on a machine in `machines` (mac-mini-1) as `run_ticket.py G-Eskayo/clarity-captions#N`. Nothing else changes.
+- **Profiles for killer-sudoku and finance-os (2026-10-05)**, both `dispatch: off`, both
+  `merge_from_dashboard: true`, both `clone_mode: "pipeline"`. New profile capabilities they needed:
+  `clone_mode: "pipeline"` = a dedicated clone under `~/.agents-pipeline-clones/<name>` made with `gh repo clone`
+  (cloning killer-sudoku from GitHub took 0.7s; the same repo from the iCloud-synced `~/Documents` copy hung for
+  minutes, and a person's working copy should not be the pipeline's base anyway); `setup` steps (run once per
+  fresh worktree, skipped when their `creates` path exists; a failed step is an error, a missing tool is
+  EnvMissing); a `vitest` parser; `executor.denied_tools` (finance-os forbids reading
+  `~/Library/Application Support/FinanceOS` and `~/Documents/Money-and-Admin`). killer-sudoku: `swift test` at the
+  repo root (102 tests, Swift Testing, 13s). finance-os: SETUP.md's two-step install (`npm install
+  --ignore-scripts`, then Electron's binary, then `@electron/rebuild -f -w better-sqlite3`, because Node 25/26
+  cannot build better-sqlite3), plus a fallback that unzips the cached Electron by hand because Electron's own
+  installer silently fails to unpack under Node 26; then `npm test` (20 vitest tests, ~10s). finance-os `main`
+  has no `test` script yet (it arrives with PRs #7-#10), so verification works on the PR branches
+  (`selftest G-Eskayo/finance-os feature/bills-ipc`). killer-sudoku's 8 open tickets were all implemented on
+  main by commits that said "(issue #N)" but never closed the tickets; closed 2026-10-05 with the commit named
+  in each comment. finance-os's tickets are NOT stale (4 real open PRs, stacked).
+- **Turning dispatch on**: Health -> Autonomous agents -> "Projects MARVIN can work on by itself": per project a
+  Turn on / Turn off button (a native confirmation when turning on) and a "Test setup" button that runs the whole
+  path short of the model and GitHub. It edits only the `"dispatch"` value in `config/projects/<name>.json`.
+- **Header working indicator**: was invisible when idle and only knew about dispatch-system tasks. Now always
+  shown: what is running on this machine (the dispatched task plus every agent whose run log says it is mid-run,
+  with its current step and elapsed time, "+N more"), or "Idle - last: <agent> (<summary>) <ago>". Click goes to
+  the agents list. Updates on the 'agents' trigger, with a 10s poll as backstop.
 - **Cross-project identity**: stage records and the failure breaker were keyed by bare ticket number, so
   clarity-captions #7 and marvin #7 would have collided. Non-marvin tickets are keyed `<repo>-<n>`; marvin's
   keep their plain number (nothing existing moves). `gh pr create`/`gh issue comment` now pass `--repo`

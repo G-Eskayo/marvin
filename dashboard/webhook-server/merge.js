@@ -3,11 +3,12 @@ import { promisify } from 'util'
 import { mkdtemp, rm } from 'fs/promises'
 import { tmpdir } from 'os'
 import path from 'path'
-import { classifyFailure, summarizeGateFailure, withRetry, MergeFailure } from './failure.js'
+import { classifyFailure, summarizeGateFailure, withRetry, MergeFailure, refusal } from './failure.js'
 import { recordFailure } from './failure_log.js'
 import { fileURLToPath } from 'url'
 import { sendFeedback } from './deny.js'
 import { parseTicketRef } from '../electron/main/mr_review.js'
+import { repoFromPrUrl, MARVIN_REPO } from '../electron/main/mr_repos.js'
 import { recordStage } from './ticket_stages.js'
 
 const execFileAsync = promisify(execFile)
@@ -16,6 +17,7 @@ const REPO_PATH = path.resolve(__dirname, '..', '..')
 const REBUILD_SCRIPT = path.resolve(__dirname, '..', 'scripts', 'rebuild_and_install.sh')
 const TICKET_PIPELINE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'ticket_pipeline.py')
 const VENV_PYTHON = path.resolve(__dirname, '..', '..', 'venv', 'bin', 'python')
+const PROFILE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'project_profile.py')
 
 // ADR 0026: dispatch stays concurrent (no throttling), so two tickets can
 // finish out of order -- whichever merges second may already be behind
@@ -24,10 +26,10 @@ const VENV_PYTHON = path.resolve(__dirname, '..', '..', 'venv', 'bin', 'python')
 // diverged, or the ref/fetch itself failing) is treated as "needs the
 // gate" -- safe to be conservative here since rebaseAndRetest() below is
 // a no-op-if-already-clean rebase in the failure-adjacent cases.
-export async function isBehindMain(headRef, exec = execFileAsync, repoPath = REPO_PATH) {
-  await exec('git', ['fetch', 'origin', 'main', headRef], { cwd: repoPath })
+export async function isBehindMain(headRef, exec = execFileAsync, repoPath = REPO_PATH, base = 'main') {
+  await exec('git', ['fetch', 'origin', base, headRef], { cwd: repoPath })
   try {
-    await exec('git', ['merge-base', '--is-ancestor', 'origin/main', `origin/${headRef}`], { cwd: repoPath })
+    await exec('git', ['merge-base', '--is-ancestor', `origin/${base}`, `origin/${headRef}`], { cwd: repoPath })
     return false
   } catch {
     return true
@@ -57,14 +59,14 @@ export async function _defaultRunTests(cwd, exec) {
 // test suite. Only pushes the rebased branch back if both steps succeed;
 // a conflict or a test failure leaves the branch on origin untouched, and
 // the scratch worktree is always removed regardless of outcome.
-export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = REPO_PATH, runTests = _defaultRunTests) {
+export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = REPO_PATH, runTests = _defaultRunTests, base = 'main') {
   const scratchDir = await mkdtemp(path.join(tmpdir(), 'mr-merge-gate-'))
   try {
-    await exec('git', ['fetch', 'origin', 'main', headRef], { cwd: repoPath })
+    await exec('git', ['fetch', 'origin', base, headRef], { cwd: repoPath })
     await exec('git', ['worktree', 'add', '--detach', scratchDir, `origin/${headRef}`], { cwd: repoPath })
 
     try {
-      await exec('git', ['rebase', 'origin/main'], { cwd: scratchDir })
+      await exec('git', ['rebase', `origin/${base}`], { cwd: scratchDir })
     } catch (err) {
       return { ok: false, reason: `Rebase onto main failed:\n\n${String(err.stderr || err.message || err)}` }
     }
@@ -87,14 +89,46 @@ export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = 
 // applies. Fails open (gate: false) on any error -- a hiccup in this
 // metadata fetch is a reason to fall back to today's direct-merge
 // behavior, not a reason to block an otherwise-fine merge.
-async function _defaultShouldGateMerge(prUrl, exec) {
+async function _defaultShouldGateMerge(prUrl, exec, ctx = null) {
   try {
     const { stdout } = await exec('gh', ['pr', 'view', prUrl, '--json', 'headRefName,body'])
     const { headRefName, body } = JSON.parse(stdout)
-    const behind = await isBehindMain(headRefName, exec)
+    const behind = ctx ? await isBehindMain(headRefName, exec, ctx.clone, ctx.base) : await isBehindMain(headRefName, exec)
     return { gate: behind, headRefName, body: body || '' }
   } catch {
     return { gate: false, headRefName: null, body: '' }
+  }
+}
+
+// What the gate needs for a project other than marvin, from that project's execution profile
+// (lib/project_profile.py). Refuses -- as coded failures, not exceptions the HTTP layer would call
+// a server error -- a project that never opted in, one with no clone on this machine, and a machine
+// lacking a tool the project's required checks need (that last one is about the machine, so the
+// ticket is NOT sent back for rework).
+export async function defaultGateContext(repo, exec = execFileAsync) {
+  const { stdout } = await exec(VENV_PYTHON, [PROFILE_SCRIPT, 'gate-info', repo])
+  const info = JSON.parse(stdout)
+  const name = repo.split('/').pop()
+  if (info.profile === false || !info.merge_from_dashboard) {
+    throw new MergeFailure(refusal('NO_MERGE_PROFILE', 'request', `${name} is not set up for merging from the dashboard`,
+      `Review and merge it on GitHub, or set "merge_from_dashboard": true in config/projects/${name}.json.`))
+  }
+  if (!info.clone) {
+    throw new MergeFailure(refusal('NO_MERGE_PROFILE', 'request', `there is no clone of ${name} on the machine running the webhook`,
+      `Clone ${repo} on that machine (or add its path to clone_hints in the profile).`))
+  }
+  if (info.missing_here.length) {
+    throw new MergeFailure(refusal('ENV_MISSING', 'request', `this machine lacks ${info.missing_here.join(', ')}, which ${name}'s required checks need`,
+      'Run the webhook on a machine that has the toolchain, or install it here. The PR was not sent back for rework.'))
+  }
+  return {
+    repo,
+    clone: info.clone,
+    base: info.base_branch,
+    // The same measuring code the pipeline uses, so "passes the gate" means what "passes verification" means.
+    runTests: async (cwd, run) => {
+      await run(VENV_PYTHON, [PROFILE_SCRIPT, 'verify', repo, cwd])
+    }
   }
 }
 
@@ -117,23 +151,33 @@ export async function mergePr(
   recordStageFn = recordStage,
   deps = {}
 ) {
-  const { sleep, recordFailureFn = recordFailure } = deps
+  const { sleep, recordFailureFn = recordFailure, gateContext = defaultGateContext } = deps
   if (typeof prUrl !== 'string' || !prUrl.startsWith('https://github.com/')) {
     throw new MergeFailure(classifyFailure({ stage: 'request', error: new Error(`Not a GitHub PR URL: ${prUrl}`) }))
   }
 
-  const { gate, headRefName, body } = await shouldGateMerge(prUrl, exec)
+  // marvin's own PRs use the built-in gate. Any other project needs its profile to say it may be
+  // merged from here -- enforced here, not just on the screen.
+  const repo = repoFromPrUrl(prUrl)
+  const ctx = repo && repo !== MARVIN_REPO ? await gateContext(repo, exec) : null
+
+  const { gate, headRefName, body } = ctx ? await shouldGateMerge(prUrl, exec, ctx) : await shouldGateMerge(prUrl, exec)
   const ticketNumber = parseTicketRef(body)
   // Every call below is a no-op (not an error) when ticketNumber is null
   // -- a manually-authored PR with no linked ticket has nothing to record
   // a timeline against, same "fails open" spirit as _defaultShouldGateMerge.
+  // Another project's tickets are recorded under that project (#7 there is not #7 in marvin).
   const stage = (name, status, detail) => {
-    if (ticketNumber !== null) recordStageFn(ticketNumber, name, status, detail)
+    if (ticketNumber === null) return
+    if (ctx) recordStageFn(ticketNumber, name, status, detail, { repo })
+    else recordStageFn(ticketNumber, name, status, detail)
   }
 
   if (gate) {
-    stage('gate', 'started', 'rebasing onto main + retesting')
-    const result = await rebaseAndRetestFn(headRefName, exec)
+    stage('gate', 'started', `rebasing onto ${ctx ? ctx.base : 'main'} + retesting`)
+    const result = ctx
+      ? await rebaseAndRetestFn(headRefName, exec, ctx.clone, ctx.runTests, ctx.base)
+      : await rebaseAndRetestFn(headRefName, exec)
     if (!result.ok) {
       // Structured, concise feedback (code header, failing test names, capped tail)
       // instead of a raw output wall: this comment is what the ticket's executor reads
@@ -181,8 +225,11 @@ export async function mergePr(
     throw new MergeFailure(failure)
   }
   stage('merging', 'passed', '')
-  stage('rebuilding', 'started', 'triggered if the PR touched dashboard/')
-  await rebuild(prUrl, exec)
+  if (!ctx) {
+    // marvin-only: the dashboard app is rebuilt when a merged PR touched dashboard/.
+    stage('rebuilding', 'started', 'triggered if the PR touched dashboard/')
+    await rebuild(prUrl, exec)
+  }
   redispatch()
   stage('done', 'passed', `merged: ${prUrl}`)
   return { merged: true, reengaged: false, reason: null }

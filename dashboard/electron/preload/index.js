@@ -29,6 +29,14 @@ contextBridge.exposeInMainWorld('api', {
   dispatch: {
     status: () => ipcRenderer.invoke('dispatch:status')
   },
+  profiles: {
+    list: () => ipcRenderer.invoke('profiles:list'),
+    setDispatch: (repo, value) => ipcRenderer.invoke('profiles:setDispatch', repo, value),
+    selftest: (repo) => ipcRenderer.invoke('profiles:selftest', repo)
+  },
+  working: {
+    now: () => ipcRenderer.invoke('working:now')
+  },
   health: {
     status: () => ipcRenderer.invoke('health:status'),
     agents: () => ipcRenderer.invoke('health:agents'),

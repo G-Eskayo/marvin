@@ -1,8 +1,12 @@
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 
+import { repoFromPrUrl } from '../electron/main/mr_repos.js'
+
 const execFileAsync = promisify(execFile)
 const REPO = 'G-Eskayo/marvin'
+// The PR's own URL says which project it belongs to; marvin only if it can't be read.
+const repoOf = (prUrl) => repoFromPrUrl(prUrl) || REPO
 const REENGAGEMENT_LABEL = 'needs-reengagement'
 
 function assertGithubPrUrl(prUrl) {
@@ -29,12 +33,12 @@ export function formatFeedback(reasons = [], comment = '') {
 // a claimed:<machine_id> GitHub label, and this webhook doesn't know which
 // machine claimed a given ticket, so it removes whatever claimed:* labels
 // are actually present rather than guessing a machine id.
-async function releaseClaim(ticketNumber, exec) {
+async function releaseClaim(ticketNumber, exec, repo = REPO) {
   if (!ticketNumber) return
-  const { stdout } = await exec('gh', ['issue', 'view', String(ticketNumber), '--repo', REPO, '--json', 'labels'])
+  const { stdout } = await exec('gh', ['issue', 'view', String(ticketNumber), '--repo', repo, '--json', 'labels'])
   const claimLabels = JSON.parse(stdout).labels.map((label) => label.name).filter((name) => name.startsWith('claimed:'))
   for (const label of claimLabels) {
-    await exec('gh', ['issue', 'edit', String(ticketNumber), '--repo', REPO, '--remove-label', label])
+    await exec('gh', ['issue', 'edit', String(ticketNumber), '--repo', repo, '--remove-label', label])
   }
 }
 
@@ -42,33 +46,35 @@ async function releaseClaim(ticketNumber, exec) {
 // lib/ticket_claim.py's _default_add_claim_label -- this label doesn't
 // exist on the repo yet since the pipeline that will consume it
 // (review/debug/improve) isn't built yet (ADR 0025).
-async function tagForReengagement(ticketNumber, exec) {
+async function tagForReengagement(ticketNumber, exec, repo = REPO) {
   if (!ticketNumber) return
   try {
-    await exec('gh', ['issue', 'edit', String(ticketNumber), '--repo', REPO, '--add-label', REENGAGEMENT_LABEL])
+    await exec('gh', ['issue', 'edit', String(ticketNumber), '--repo', repo, '--add-label', REENGAGEMENT_LABEL])
   } catch (err) {
     if (!String(err.message || err).toLowerCase().includes('not found')) throw err
-    await exec('gh', ['label', 'create', REENGAGEMENT_LABEL, '--repo', REPO])
-    await exec('gh', ['issue', 'edit', String(ticketNumber), '--repo', REPO, '--add-label', REENGAGEMENT_LABEL])
+    await exec('gh', ['label', 'create', REENGAGEMENT_LABEL, '--repo', repo])
+    await exec('gh', ['issue', 'edit', String(ticketNumber), '--repo', repo, '--add-label', REENGAGEMENT_LABEL])
   }
 }
 
 export async function sendFeedback({ prUrl, ticketNumber, reasons, comment }, exec = execFileAsync) {
   assertGithubPrUrl(prUrl)
+  const repo = repoOf(prUrl)
   const feedback = formatFeedback(reasons, comment)
   await exec('gh', ['pr', 'comment', prUrl, '--body', feedback])
   if (ticketNumber) {
-    await exec('gh', ['issue', 'comment', String(ticketNumber), '--repo', REPO, '--body', feedback])
+    await exec('gh', ['issue', 'comment', String(ticketNumber), '--repo', repo, '--body', feedback])
   }
-  await releaseClaim(ticketNumber, exec)
-  await tagForReengagement(ticketNumber, exec)
+  await releaseClaim(ticketNumber, exec, repo)
+  await tagForReengagement(ticketNumber, exec, repo)
 }
 
 export async function dropEntirely({ prUrl, ticketNumber }, exec = execFileAsync) {
   assertGithubPrUrl(prUrl)
+  const repo = repoOf(prUrl)
   await exec('gh', ['pr', 'close', prUrl])
   if (ticketNumber) {
-    await exec('gh', ['issue', 'close', String(ticketNumber), '--repo', REPO])
+    await exec('gh', ['issue', 'close', String(ticketNumber), '--repo', repo])
   }
-  await releaseClaim(ticketNumber, exec)
+  await releaseClaim(ticketNumber, exec, repo)
 }

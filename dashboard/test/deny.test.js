@@ -100,3 +100,26 @@ describe('dropEntirely', () => {
     expect(exec).toHaveBeenCalledWith('gh', ['pr', 'close', PR_URL])
   })
 })
+
+describe('feedback and drop for another project', () => {
+  const CC_PR = 'https://github.com/G-Eskayo/clarity-captions/pull/21'
+
+  it('comments on, releases and labels the ticket in the PR\'s own repo, not marvin\'s', async () => {
+    const exec = vi.fn().mockImplementation((cmd, args) => {
+      if (args[0] === 'issue' && args[1] === 'view') return Promise.resolve({ stdout: JSON.stringify({ labels: [{ name: 'claimed:mac-mini' }] }) })
+      return Promise.resolve({ stdout: '', stderr: '' })
+    })
+    await sendFeedback({ prUrl: CC_PR, ticketNumber: 7, reasons: ['Insufficient tests'], comment: '' }, exec)
+    const issueCalls = exec.mock.calls.filter(([, args]) => args[0] === 'issue')
+    expect(issueCalls.length).toBeGreaterThan(0)
+    for (const [, args] of issueCalls) expect(args[args.indexOf('--repo') + 1]).toBe('G-Eskayo/clarity-captions')
+    expect(exec).toHaveBeenCalledWith('gh', ['issue', 'edit', '7', '--repo', 'G-Eskayo/clarity-captions', '--add-label', 'needs-reengagement'])
+  })
+
+  it('closes the ticket in the PR\'s own repo when dropping', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: JSON.stringify({ labels: [] }), stderr: '' })
+    await dropEntirely({ prUrl: CC_PR, ticketNumber: 7 }, exec)
+    expect(exec).toHaveBeenCalledWith('gh', ['pr', 'close', CC_PR])
+    expect(exec).toHaveBeenCalledWith('gh', ['issue', 'close', '7', '--repo', 'G-Eskayo/clarity-captions'])
+  })
+})

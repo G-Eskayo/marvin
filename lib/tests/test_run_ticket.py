@@ -458,7 +458,7 @@ class FakeMeasurer:
 def _profile_run_setup(monkeypatch, profile=PROFILE, clone=Path("/Users/me/Developer/clarity-captions")):
     import project_profile as pp
     monkeypatch.setattr(rt.pp, "load_profile", lambda repo, directory=None: profile if repo == CC else None)
-    monkeypatch.setattr(rt.pp, "resolve_clone", lambda p, catalog=None: clone)
+    monkeypatch.setattr(rt.pp, "resolve_clone", lambda p, catalog=None, ensure=False: clone)
     monkeypatch.setattr(rt.pp, "Measurer", FakeMeasurer)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
     monkeypatch.setattr(rt, "_load_catalog", lambda: {"projects": []})

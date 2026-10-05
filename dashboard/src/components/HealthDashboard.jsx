@@ -105,12 +105,16 @@ function OverallBadge({ overall, generatedAt, refreshing, onRefresh }) {
   )
 }
 
-export default function HealthDashboard() {
+export default function HealthDashboard({ nav }) {
   const [status, setStatus] = useState(null)
   const [error, setError] = useState(null)
   const [selected, setSelected] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
   const [view, setView] = useState('checks')
+  // A click on the header's working indicator lands on the agents list.
+  useEffect(() => {
+    if (nav?.tab === 'health' && nav.view) setView(nav.view)
+  }, [nav?.at])
   const [agents, setAgents] = useState(null)
 
   // Agents refresh by trigger (the run-log folder is watched); the poll is only a backstop.
