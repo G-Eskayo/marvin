@@ -497,3 +497,20 @@ def test_open_pr_still_raises_on_other_gh_failures(monkeypatch):
     monkeypatch.setattr(mrr.subprocess, "run", fake_run)
     with pytest.raises(subprocess.CalledProcessError):
         mrr._default_open_pr("o/r#23", "pipeline/x", {"subsystem": "s", "verdict": "v", "metrics": {}})
+
+
+def test_generated_files_are_left_out_of_the_pipeline_commit(repo_with_worktree, monkeypatch):
+    import project_profile as pp
+    wt = repo_with_worktree
+    (wt / "graphify-out").mkdir()
+    (wt / "graphify-out" / "graph.json").write_text("noise\n")
+    monkeypatch.setattr(pp, "load_profile", lambda repo: {"generated": [{"path": "graphify-out"}]})
+    mrr._commit_and_push(wt, "G-Eskayo/finance-os#3")
+    files = subprocess.run(["git", "show", "--name-only", "--format=", "HEAD"], cwd=wt, capture_output=True, text=True).stdout.split()
+    assert "new_file.txt" in files and "graphify-out/graph.json" not in files
+
+
+def test_a_project_without_generated_rules_commits_everything_as_before(repo_with_worktree):
+    wt = repo_with_worktree
+    mrr._commit_and_push(wt, "G-Eskayo/marvin#1")
+    assert "new_file.txt" in subprocess.run(["git", "show", "--name-only", "--format=", "HEAD"], cwd=wt, capture_output=True, text=True).stdout

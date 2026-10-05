@@ -30,3 +30,11 @@ export function repoFromPrUrl(url) {
   const m = typeof url === 'string' ? url.match(/^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/\d+/) : null
   return m ? m[1] : null
 }
+
+// What `gh pr list` is asked for. GraphQL cost grows with every nested field, and `files` is the expensive
+// one, so the status dot (polled every minute; it only counts PRs) gets the light form -- the full form
+// (bodies for the evidence schema, files and branch names for merge order) is for the list itself.
+export function prListArgs(repo, { light = false } = {}) {
+  const fields = light ? 'number,title,url' : 'number,title,url,body,files,baseRefName,headRefName'
+  return ['pr', 'list', '--repo', repo, '--state', 'open', '--limit', '200', '--json', fields]
+}

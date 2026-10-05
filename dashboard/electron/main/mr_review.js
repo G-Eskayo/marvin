@@ -1,5 +1,5 @@
 import { MARVIN_REPO, prKey, canMergeFromDashboard } from './mr_repos.js'
-import { waitingOn } from './pr_order.js'
+import { waitingOn, baseProblem } from './pr_order.js'
 
 // Reads open PRs and identifies which follow the MR pipeline's evidence
 // schema (G-Eskayo/marvin#72, ADR 0024) -- one fixed, structured PR body
@@ -178,6 +178,7 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       repo: pr.repo || MARVIN_REPO,
       key: prKey(pr.repo || MARVIN_REPO, pr.number),
       canMerge: canMerge(pr.repo || MARVIN_REPO),
+      baseProblem: baseProblem(prs.map((p) => ({ ...p, repo: p.repo || MARVIN_REPO })), { ...pr, repo: pr.repo || MARVIN_REPO }),
       waitingOn: waitingOn(prs.map((p) => ({ ...p, repo: p.repo || MARVIN_REPO })), { ...pr, repo: pr.repo || MARVIN_REPO }),
       hasSchema,
       ticketNumber: evidence?.ticketRef ? Number(evidence.ticketRef) : null,

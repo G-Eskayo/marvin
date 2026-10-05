@@ -22,7 +22,7 @@ import { readRegistry, loadBoard, fetchBoardData, fetchCompletedData, withProjec
 import { createRelationsService } from './relations_service.js'
 import { summarizeBoard, buildCompleted } from './board.js'
 import { createTriggerHub, createReconciler } from './triggers.js'
-import { listOpenPrsAcrossRepos, normalizeSeen, canMergeFromDashboard, repoFromPrUrl, MARVIN_REPO } from './mr_repos.js'
+import { listOpenPrsAcrossRepos, prListArgs, normalizeSeen, canMergeFromDashboard, repoFromPrUrl, MARVIN_REPO } from './mr_repos.js'
 import { createIndexer, buildDocsIndex, loadIndex } from './docs_search.js'
 import { createDocsService, MASTER_ID } from './docs_service.js'
 import { readMergeableRepos, listProfiles, setDispatch } from './profiles.js'
@@ -61,15 +61,15 @@ const MR_DENY_WEBHOOK_URL = process.env.MARVIN_MR_DENY_WEBHOOK_URL || `http://${
 // refreshes immediately instead of waiting on its own fallback poll.
 const DASHBOARD_REFRESH_PORT = Number(process.env.MARVIN_DASHBOARD_REFRESH_PORT) || 7879
 
-async function ghListOpenPrs(repo) {
-  const { stdout } = await execFileAsync('gh', ['pr', 'list', '--repo', repo, '--state', 'open', '--json', 'number,title,url,body,files'])
+const ghListOpenPrs = (light) => async (repo) => {
+  const { stdout } = await execFileAsync('gh', prListArgs(repo, { light }))
   return JSON.parse(stdout)
 }
 
 // Every registered project's open PRs (MR Review spans projects; only marvin's can be merged from
 // here -- see mr_repos.js). A failing repo is logged and skipped, never fatal to the list.
-async function listOpenPrs() {
-  const { prs, errors } = await listOpenPrsAcrossRepos(readRegistry().map((b) => b.repo), ghListOpenPrs)
+async function listOpenPrs({ light = false } = {}) {
+  const { prs, errors } = await listOpenPrsAcrossRepos(readRegistry().map((b) => b.repo), ghListOpenPrs(light))
   for (const e of errors) console.error(`[mr] could not list PRs for ${e.repo}: ${e.message}`)
   return prs
 }
@@ -416,7 +416,7 @@ function registerMrReviewHandlers() {
   // which pipeline-PR numbers are currently open vs. already marked seen
   // on this machine (see mr_seen.js).
   ipcMain.handle('mr:reviewStatus', async () => {
-    const prs = await listPipelinePrs(listOpenPrs)
+    const prs = await listPipelinePrs(() => listOpenPrs({ light: true }))
     const keys = prs.map((pr) => pr.key)
     return { status: computeReviewStatus(keys, normalizeSeen(readSeenNumbers(seenPath))), openCount: keys.length }
   })

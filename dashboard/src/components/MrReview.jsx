@@ -161,6 +161,7 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
   const [errorMessage, setErrorMessage] = useState(null)
   const [showDenyModal, setShowDenyModal] = useState(false)
   const waiting = pr.waitingOn || []
+  const wrongBase = pr.baseProblem || null
 
   // The merge runs in the main process, so this button can be unmounted (you navigate away) and
   // remounted mid-merge. Ask the main process what this PR is doing, and keep asking while it merges.
@@ -235,13 +236,19 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
         </button>
         <button
           onClick={handleApprove}
-          disabled={status === 'approving' || waiting.length > 0}
+          disabled={status === 'approving' || waiting.length > 0 || !!wrongBase}
           title={waiting.length ? `Merge ${waiting.map((w) => '#' + w.number).join(', ')} first` : undefined}
           className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
         >
           {status === 'approving' ? 'Confirming…' : 'Approve & Merge'}
         </button>
       </div>
+      {wrongBase && (
+        <p className="max-w-xs text-right text-xs text-red-400">
+          Targets <span className="font-mono">{wrongBase.base}</span>, not {wrongBase.expected}: merging it here would not put the work on {wrongBase.expected}.{' '}
+          {wrongBase.parent ? `It is stacked on #${wrongBase.parent.number} — merge that first, then change this PR's base to ${wrongBase.expected}.` : `Change its base to ${wrongBase.expected} on GitHub first.`}
+        </p>
+      )}
       {waiting.length > 0 && (
         <p className="max-w-xs text-right text-xs text-amber-400">
           Merge {waiting.map((w) => `#${w.number}`).join(', ')} first — it changes the same files ({waiting[0].shared.slice(0, 2).join(', ')}), so this one would conflict.

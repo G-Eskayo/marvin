@@ -35,9 +35,26 @@ def _current_branch(worktree_path: Path) -> str:
     return result.stdout.strip()
 
 
+def _leave_out_generated(worktree_path: Path, ticket_ref: str) -> None:
+    """Files the project declares as generated (profile "generated", see generated_paths.py) change in nearly
+    every PR and make unrelated PRs conflict, so they stay out of the pipeline's commit. Best effort: a
+    project with no profile or no rules commits everything, exactly as before."""
+    try:
+        import generated_paths
+        import project_profile as pp
+        repo = _repo_of(ticket_ref)
+        profile = pp.load_profile(repo) if repo else None
+        dropped = generated_paths.unstage_generated(worktree_path, (profile or {}).get("generated", []))
+        if dropped:
+            print(f"[mr_raiser] left {len(dropped)} generated file(s) out of the commit", file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[mr_raiser] generated-file filter skipped: {exc}", file=sys.stderr)
+
+
 def _commit_and_push(worktree_path: Path, ticket_ref: str) -> str:
     branch = _current_branch(worktree_path)
     subprocess.run(["git", "add", "-A"], cwd=worktree_path, check=True)
+    _leave_out_generated(worktree_path, ticket_ref)
     status = subprocess.run(
         ["git", "status", "--porcelain"], cwd=worktree_path, check=True, capture_output=True, text=True,
     ).stdout

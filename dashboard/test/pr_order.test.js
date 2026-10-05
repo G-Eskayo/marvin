@@ -44,3 +44,30 @@ describe('the MR list carries the order', () => {
     expect(list[1].waitingOn.map((w) => w.number)).toEqual([29])
   })
 })
+
+import { baseProblem } from '../electron/main/pr_order.js'
+describe('baseProblem: a PR must target the base branch', () => {
+  const p = (number, base, head) => ({ number, repo: 'o/r', title: 'T' + number, url: 'u' + number, baseRefName: base, headRefName: head })
+  it('is null when it targets the base branch (or the base is unknown)', () => {
+    expect(baseProblem([p(1, 'main', 'a')], p(1, 'main', 'a'))).toBeNull()
+    expect(baseProblem([], { number: 2, repo: 'o/r' })).toBeNull()
+  })
+  it('names the parent PR when the base is another open PR\'s branch (a stack)', () => {
+    const prs = [p(7, 'main', 'feature/a'), p(8, 'feature/a', 'feature/b')]
+    expect(baseProblem(prs, prs[1])).toMatchObject({ base: 'feature/a', parent: { number: 7 } })
+  })
+  it('has no parent when the base branch has no open PR (the parent already merged, or never existed)', () => {
+    const r = baseProblem([p(8, 'feature/a', 'feature/b')], p(8, 'feature/a', 'feature/b'))
+    expect(r.base).toBe('feature/a')
+    expect(r.parent).toBeNull()
+  })
+  it('assertInOrder refuses it with the reason', () => {
+    const prs = [p(7, 'main', 'feature/a'), p(8, 'feature/a', 'feature/b')]
+    expect(() => assertInOrder(prs, 'u8')).toThrow(/targets "feature\/a", not main/)
+    expect(() => assertInOrder(prs, 'u8')).toThrow(/#7/)
+  })
+  it('the MR list carries it', async () => {
+    const raw = [{ ...p(8, 'feature/a', 'feature/b'), body: '', files: [] }]
+    expect((await listPipelinePrs(async () => raw))[0].baseProblem).toMatchObject({ base: 'feature/a' })
+  })
+})
