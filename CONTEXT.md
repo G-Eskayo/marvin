@@ -516,11 +516,17 @@ replaced by this automated path**: that gap is what this section closes.
    previews it and compares look, geometry and font loading with the captured element. Fails on the old broken preview.
 3. **Done for the card:** the evaluator compares every placement (also pages outside the manifest) with the captured
    element: markup, look per part, geometry (`element-markup/look/geometry`), instead of fixed numbers.
-4. Site rules in one machine-readable file the pipeline and evaluator both read. (Not started.)
+4. **Done (2026-10-05):** site rules in one module, `lib/portfolio_rules.py` (categories and hub slugs, required spec
+   fields, slug shape, action-button order, image sizes and uniqueness distance, plus the evaluation's thresholds), with
+   Gil's overrides in `templates/design-rules.json`. The pipeline, template renderer, apply step, image generator and
+   evaluation all read it; tests fail if a consumer grows its own copy. The Guide & rules tab shows the effective rules.
 5. **Done:** add-project pipeline (`lib/portfolio_add_project.py`, dashboard "Add project" tab): spec in → unique image,
    page created under its hub, manifest entry appended, hub/All Projects/sidebars regenerated, evaluation run. Proven end
    to end on the dev site with a throwaway project (then removed).
-6. De-duplicate page layouts (generator strings vs `templates/*.html` vs 9 legacy pages). (Not started.)
+6. **Done for generated pages (2026-10-05):** the hub, All Projects and category-section layouts exist only in
+   `templates/*.html`; the generators fill them through `bin/_card.py`, the renderer through `portfolio_templates.py`, and a
+   test asserts both produce identical pages. The 9 legacy WP Coder project pages are still hand-built (their cards, GitHub
+   links, header and footer already conform; their layout does not).
 7. **Done for buttons, header, title bar, sidebar, Other Projects section, footer (2026-10-05):** captured from the live
    dev site into the library (generalized in the page by placeholder rules; per-page state such as the current menu item
    removed; each part records only the properties the element sets; fonts compared by the family drawn). All seven

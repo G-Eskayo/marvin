@@ -21,37 +21,19 @@ import json
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import portfolio_rules  # noqa: E402
+
 PROJECT = Path.home() / "Documents" / "Projects" / "portfolio-website-updater"
 RULES_PATH = PROJECT / "templates" / "design-rules.json"
 MANIFEST_PATH = PROJECT / "deploy" / "other-projects" / "manifest.json"
 RESULT_PATH = Path.home() / ".claude" / "portfolio" / "eval-latest.json"
 
-DEFAULT_RULES = {
-    "tolerance_px": 2,
-    "footer": {"expected_cards": 2},
-    # one card design everywhere: the photo frame height and how far the card overlays the photo (px)
-    "card": {"image_height": 240, "overlap": 56},
-    "github_button": {"text": "View on GitHub", "classes": ["btn", "btn-default"], "owner": "G-Eskayo"},
-    "viewports": [1440, 1100, 390],
-    "hub_pages": ["/ai-projects/", "/cybersecurity-projects/", "/software-engineering/", "/all-projects/"],
-}
+DEFAULT_RULES = portfolio_rules.DEFAULT_RULES        # the rules live in portfolio_rules.py: one copy for everything
 
 
 def load_rules(path: Path = RULES_PATH) -> dict:
-    """DEFAULT_RULES with the file's values merged over them (one level deep)."""
-    rules = copy.deepcopy(DEFAULT_RULES)
-    try:
-        override = json.loads(Path(path).read_text())
-    except (OSError, ValueError):
-        return rules
-    if not isinstance(override, dict):
-        return rules
-    for key, value in override.items():
-        if isinstance(value, dict) and isinstance(rules.get(key), dict):
-            rules[key].update(value)
-        else:
-            rules[key] = value
-    return rules
+    return portfolio_rules.load_rules(path)
 
 
 def _finding(rule: str, detail: str, severity: str = "error") -> dict:

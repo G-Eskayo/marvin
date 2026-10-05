@@ -24,6 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import portfolio_apply as pa  # noqa: E402
+import portfolio_rules  # noqa: E402
 import portfolio_templates as pt  # noqa: E402
 
 HERO_URL = "/{sub}/{slug}-hero.jpg"
@@ -43,8 +44,8 @@ def normalise(spec: dict) -> dict:
         actions.append({"template": "button-github", "data": {"REPO_URL": s["github_url"]}})
     if s.get("download_url"):
         actions.append({"template": "button-download", "data": {"FILE_URL": s["download_url"], **({"LABEL": s["download_label"]} if s.get("download_label") else {})}})
-    # rule: GitHub first, then Download, nothing else
-    order = {"button-github": 0, "button-download": 1}
+    # rule (portfolio_rules project_page.action_order): GitHub first, then Download, nothing else
+    order = {t: i for i, t in enumerate(portfolio_rules.load_rules()["project_page"]["action_order"])}
     s["actions"] = sorted((a for a in actions if a.get("template") in order), key=lambda a: order[a["template"]])
     s.setdefault("secondary_categories", [])
     s.setdefault("stack_csv", "")
@@ -83,7 +84,7 @@ def _run(cmd, input=None):
 def create_page(s: dict, content: str, runner=_run) -> int:
     """Create the project page on the dev site under its category hub. Returns the new page's ID."""
     wp = ["docker", "exec", "-i", pa.WPCLI, "wp", "--path=/var/www/html"]
-    hub_slug = pt.CATEGORY_PREFIX[s["category"]]
+    hub_slug = portfolio_rules.load_rules()["categories"][s["category"]]
     listing = runner([*wp, "post", "list", "--post_type=page", "--post_status=publish", "--fields=ID,post_name,post_parent", "--format=json"])
     if listing.returncode != 0:
         raise AddProjectError("could not reach the dev site's WordPress (is the dev site running?)")

@@ -27,9 +27,10 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import portfolio_motifs  # noqa: E402
+import portfolio_rules  # noqa: E402
 
-HERO_SIZE = (2200, 600)       # the site's wide panorama hero (existing hero photos are ~3.66:1)
-MIN_DISTANCE = 24             # minimum Hamming distance (of 128 bits: layout + spectrum) between any two projects
+HERO_SIZE = tuple(portfolio_rules.load_rules()["images"]["hero_size"])   # the site's wide panorama hero (~3.66:1)
+MIN_DISTANCE = portfolio_rules.load_rules()["images"]["min_distance"]   # minimum Hamming distance (of 128 bits) between any two projects
 STYLES = ("contours", "moire", "cubes", "halftone", "lines")
 NEUTRAL_INSPIRATION = {"luminance": 0.45, "contrast": 0.5, "hue": None, "hues": [], "saturation": 0.0}
 DEFAULT = object()    # "use this project's default motif" (None means: no motif, the abstract pattern)
