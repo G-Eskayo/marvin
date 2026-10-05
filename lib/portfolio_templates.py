@@ -13,6 +13,7 @@ string work -- no model, no network, no writes.
 CLI:  portfolio_templates.py list | render ID [--data JSON] [--options JSON]
 """
 from __future__ import annotations
+import base64
 import html as _html
 import json
 import os
@@ -56,7 +57,7 @@ def _result(html=None, ok=False, missing=None, errors=None, warnings=None, used=
             "warnings": warnings or [], "used_options": used or []}
 
 
-def render(template_id: str, field_values: dict | None = None, options: dict | None = None, root: Path = ROOT) -> dict:
+def render(template_id: str, field_values: dict | None = None, options: dict | None = None, root: Path = ROOT, raw: bool = True) -> dict:
     field_values, options = dict(field_values or {}), dict(options or {})
     try:
         manifest = _load_manifest(root)
@@ -74,8 +75,8 @@ def render(template_id: str, field_values: dict | None = None, options: dict | N
     missing, errors, warnings = [], [], []
     values: dict[str, str] = {}
     for name, spec in fields.items():
-        raw = field_values.get(name)
-        value = "" if raw is None else str(raw)
+        given = field_values.get(name)       # (not `raw`: that is the render() parameter)
+        value = "" if given is None else str(given)
         if not value.strip():
             if spec.get("required"):
                 missing.append(name)
@@ -116,6 +117,11 @@ def render(template_id: str, field_values: dict | None = None, options: dict | N
     source = re.sub(r"\A\s*<!--.*?-->\s*", "", source, count=1, flags=re.DOTALL)
     out = _SLOT.sub(lambda m: slot_html.get(m.group(1), ""), source)
     out = _PLACEHOLDER.sub(lambda m: values.get(m.group(1), ""), out)
+    if entry.get("raw") and raw:
+        # Avada runs [fusion_text] through wpautop, which sprinkles empty <p> elements into card markup; [fusion_code] emits
+        # its (base64) content untouched. bin/_card.py in the portfolio repo does exactly this step for the page generators.
+        out = re.sub(r"\[fusion_text\](.*?)\[/fusion_text\]",
+                     lambda m: "[fusion_code]" + base64.b64encode(m.group(1).strip().encode()).decode() + "[/fusion_code]", out, flags=re.DOTALL)
     if entry.get("compact"):
         # WordPress turns whitespace between tags into stray empty paragraphs; a compact template is emitted without any
         out = re.sub(r">\s+<", "><", out).strip()
@@ -148,7 +154,7 @@ def specimen(template_id: str, root: Path = ROOT, depth: int = 0) -> dict:
         slot: [{"template": c["template"], "data": {k: _resolve_sample(v, root, depth) for k, v in (c.get("data") or {}).items()}} for c in choices]
         for slot, choices in (sample.get("options") or {}).items()
     }
-    return render(template_id, data, options, root)
+    return render(template_id, data, options, root, raw=False)     # the dashboard previews the readable form
 
 
 def list_templates(root: Path = ROOT) -> list[dict]:

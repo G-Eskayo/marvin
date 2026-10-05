@@ -206,3 +206,33 @@ def test_footer_script_fills_the_same_card_as_the_generators():
         p = next(p for p in manifest if p["url"] == url)
         others = [c for c in [p["category"]] + p.get("secondary_categories", []) if c != "AI & Machine Learning"]
         assert chunk == card.render_card(p["url"], p["title"], p["thumbnail"], p["description"], others)
+
+
+# ── page layouts live in templates/ only ────────────────────────────────────
+
+def test_the_page_generators_contain_no_page_markup_of_their_own():
+    for f in ("generate-hub-page.py", "generate-all-projects-page.py"):
+        text = (PORTFOLIO / "bin" / f).read_text()
+        for marker in ("section-container", "sm-2-items", 'class="other"', "fusion_builder_container"):
+            assert marker not in text, f"{f} duplicates page markup ({marker}); it belongs in templates/"
+
+
+def test_generators_and_the_renderer_produce_identical_pages_from_the_same_templates():
+    import portfolio_templates as pt
+    card = _bin_card()
+    cards = card.render_card("/ai-projects/a/", "A & B", "/i.jpg", "desc") + card.render_card("/ai-projects/b/", "B", "/j.jpg", "d2", ["Cybersecurity"])
+    hub_gen = card.render_template("hub-page.html", {"CATEGORY": "AI & Machine Learning", "CARDS_HTML": cards}, html_fields={"CARDS_HTML"}, raw=True)
+    hub_ren = pt.render("hub-page", {"CATEGORY": "AI & Machine Learning", "CARDS_HTML": cards})["html"]
+    assert hub_gen == hub_ren and "[fusion_code]" in hub_gen and "[fusion_text]" not in hub_gen
+    section_gen = card.render_template("components/category-section.html", {"CATEGORY": "Cybersecurity", "CARDS_HTML": cards}, html_fields={"CARDS_HTML"})
+    section_ren = pt.render("category-section", {"CATEGORY": "Cybersecurity", "CARDS_HTML": cards})["html"]
+    assert section_gen == section_ren
+    all_gen = card.render_template("all-projects-page.html", {"TITLE": "All Projects", "SECTIONS_HTML": section_gen}, html_fields={"SECTIONS_HTML"}, raw=True)
+    all_ren = pt.render("all-projects-page", {"TITLE": "All Projects", "SECTIONS_HTML": section_ren})["html"]
+    assert all_gen == all_ren
+
+
+def test_the_dashboard_still_previews_the_readable_form_of_a_raw_page():
+    import portfolio_templates as pt
+    html = pt.specimen("hub-page")["html"]
+    assert "[fusion_text]" in html and "[fusion_code]" not in html
