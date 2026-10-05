@@ -713,3 +713,27 @@ def test_a_ticket_ref_that_is_not_owner_repo_hash_number_is_passed_through_uncha
     so._default_executor(tmp_path, "TICKET-1", None)
     prompt = calls[0][0][calls[0][0].index("-p") + 1]
     assert "gh issue view TICKET-1" in prompt
+
+
+def test_fetching_the_base_branch_retries_a_transient_failure(monkeypatch, tmp_path):
+    import sandbox_orchestration as so
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        rc = 255 if len(calls) == 1 else 0
+        return type("R", (), {"returncode": rc, "stdout": "", "stderr": "fatal: unable to access remote"})()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+    monkeypatch.setattr(so.time, "sleep", lambda s: None)
+    so._fetch_base(tmp_path, "main")
+    assert len(calls) == 2
+
+
+def test_a_persistent_fetch_failure_says_what_git_said(monkeypatch, tmp_path):
+    import sandbox_orchestration as so
+    monkeypatch.setattr(so.subprocess, "run", lambda cmd, **kw: type("R", (), {"returncode": 255, "stdout": "", "stderr": "fatal: index.lock exists"})())
+    monkeypatch.setattr(so.time, "sleep", lambda s: None)
+    import pytest
+    with pytest.raises(RuntimeError, match="index.lock exists"):
+        so._fetch_base(tmp_path, "main")

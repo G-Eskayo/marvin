@@ -443,3 +443,43 @@ def test_unclaimed_ready_still_dispatches_when_evidence_unreadable(monkeypatch):
         returncode=0, stdout=json.dumps(issues), stderr=""))
     monkeypatch.setattr(tp, "_evidence_facts", lambda repo: None)
     assert [i["number"] for i in tp._unclaimed_ready_tickets()] == [1]
+
+
+def _stub_issues(monkeypatch, issues):
+    import json
+    monkeypatch.setattr(tp.subprocess, "run", lambda *a, **kw: SimpleNamespace(
+        returncode=0, stdout=json.dumps(issues), stderr=""))
+
+
+PR_FACTS = {"prs": [{"number": 30, "body": "Closes #7", "headRefName": "pipeline/x-7"}],
+            "branches": [], "rescue": [], "commits": []}
+
+
+def test_a_sent_back_ticket_is_redispatched_even_though_its_old_pr_is_open(monkeypatch):
+    _stub_issues(monkeypatch, [_issue(7, "2026-01-01T00:00:00Z", labels=["ready-for-agent", "needs-reengagement"])])
+    monkeypatch.setattr(tp, "_evidence_facts", lambda repo: PR_FACTS)
+    monkeypatch.setattr(tp, "_attempts", lambda repo, n: 1)
+    assert [i["number"] for i in tp._unclaimed_ready_tickets()] == [7]
+
+
+def test_a_sent_back_ticket_goes_to_a_person_after_three_attempts(monkeypatch):
+    _stub_issues(monkeypatch, [_issue(7, "2026-01-01T00:00:00Z", labels=["ready-for-agent", "needs-reengagement"])])
+    monkeypatch.setattr(tp, "_evidence_facts", lambda repo: PR_FACTS)
+    monkeypatch.setattr(tp, "_attempts", lambda repo, n: 3)
+    assert tp._unclaimed_ready_tickets() == []
+
+
+def test_a_sent_back_ticket_with_commits_already_on_main_is_still_held(monkeypatch):
+    _stub_issues(monkeypatch, [_issue(7, "2026-01-01T00:00:00Z", labels=["ready-for-agent", "needs-reengagement"])])
+    monkeypatch.setattr(tp, "_evidence_facts", lambda repo: {**PR_FACTS, "commits": [("abc", "Add it (issue #7)")]})
+    monkeypatch.setattr(tp, "_attempts", lambda repo, n: 1)
+    assert tp._unclaimed_ready_tickets() == []
+
+
+def test_attempts_count_finished_attempts_not_claims(tmp_path, monkeypatch):
+    """A claim that died before doing anything (a failed git fetch) must not use up a ticket's re-engagement budget."""
+    ts.record_stage(7, "claimed", "started", "claimed:mac-mini", machine="m", repo="o/r")
+    ts.record_stage(7, "done", "passed", "PR raised: https://github.com/o/r/pull/1", repo="o/r")
+    ts.record_stage(7, "claimed", "started", "claimed:mac-mini", machine="m", repo="o/r")
+    ts.record_stage(7, "done", "failed", "Unhandled exception: git fetch", repo="o/r")
+    assert tp._attempts("o/r", 7) == 1
