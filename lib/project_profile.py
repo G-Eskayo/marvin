@@ -125,6 +125,10 @@ def _validate(profile: dict, source: str) -> dict:
     profile.setdefault("base_branch", "main")
     profile.setdefault("dispatch", "off")  # a profile does nothing until a person turns it on
     profile.setdefault("clone_mode", "catalog")  # "catalog" = the live working copy; "pipeline" = a dedicated clone
+    profile.setdefault("generated", [])  # files a tool rebuilds; see generated_paths.py
+    for g in profile["generated"]:
+        if not isinstance(g, dict) or not g.get("path") or not isinstance(g.get("regenerate", []), list):
+            raise ValueError(f"{source}: each generated entry needs a path, and regenerate (if any) must be a command list")
     profile.setdefault("setup", [])
     for st in profile["setup"]:
         if "command" not in st or "id" not in st:
@@ -370,7 +374,8 @@ def gate_info(profile: dict, catalog: dict | None = None, have=None) -> dict:
         if t["required"] and t.get("enabled") is not False:
             missing += [c for c in t["requires"] if not check(c, env) and c not in missing]
     return {"repo": profile["repo"], "clone": str(clone) if clone else None, "base_branch": profile["base_branch"],
-            "merge_from_dashboard": profile["merge_from_dashboard"], "missing_here": missing}
+            "merge_from_dashboard": profile["merge_from_dashboard"], "missing_here": missing,
+            "generated": profile["generated"]}
 
 
 def _failure_digest(tiers: list[dict], limit: int = 4000) -> str:

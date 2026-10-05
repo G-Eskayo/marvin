@@ -267,7 +267,7 @@ def test_gate_info_gives_the_gate_the_clone_the_base_branch_and_what_this_machin
     (tmp_path / ".git").mkdir()
     profile = {**PROFILE, "base_branch": "trunk", "merge_from_dashboard": True, "clone_hints": [str(tmp_path)]}
     info = pp.gate_info(profile, catalog={"projects": []}, have=lambda cap, env: cap != "swift")
-    assert info == {"repo": "G-Eskayo/proj", "clone": str(tmp_path), "base_branch": "trunk", "merge_from_dashboard": True, "missing_here": ["swift"]}
+    assert info == {"repo": "G-Eskayo/proj", "clone": str(tmp_path), "base_branch": "trunk", "merge_from_dashboard": True, "missing_here": ["swift"], "generated": []}
 
 
 def test_verify_passes_when_every_required_check_is_clean(tmp_path):
@@ -444,3 +444,23 @@ def test_selftest_can_be_pointed_at_a_branch_other_than_the_base(tmp_path, monke
     profile = {**PROFILE, "clone_hints": [str(tmp_path)]}
     pp.selftest(profile, runner=runner_returning([(0, XCTEST_OK)]), have=lambda c, e: c == "swift", catalog={"projects": []}, ref="feature/x")
     assert seen["base"] == "feature/x"
+
+
+# ── generated-file rules (see generated_paths.py) ───────────────────────────
+
+def _minimal(**extra):
+    return {"repo": "o/r", "verify": [{"id": "t", "label": "t", "command": ["true"], "parser": "exit-code", "required": True}], **extra}
+
+
+def test_generated_defaults_to_none():
+    assert pp._validate(_minimal(), "p")["generated"] == []
+
+
+def test_generated_rules_are_validated():
+    import pytest
+    ok = pp._validate(_minimal(generated=[{"path": "graphify-out"}, {"path": "package-lock.json", "unless": "package.json", "regenerate": ["npm", "i"]}]), "p")
+    assert len(ok["generated"]) == 2
+    with pytest.raises(ValueError, match="generated"):
+        pp._validate(_minimal(generated=[{"unless": "x"}]), "p")
+    with pytest.raises(ValueError, match="generated"):
+        pp._validate(_minimal(generated=[{"path": "a", "regenerate": "npm i"}]), "p")  # a command is a list, not a shell string

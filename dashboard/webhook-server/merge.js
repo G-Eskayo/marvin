@@ -18,6 +18,7 @@ const REBUILD_SCRIPT = path.resolve(__dirname, '..', 'scripts', 'rebuild_and_ins
 const TICKET_PIPELINE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'ticket_pipeline.py')
 const VENV_PYTHON = path.resolve(__dirname, '..', '..', 'venv', 'bin', 'python')
 const PROFILE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'project_profile.py')
+const GENERATED_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'generated_paths.py')
 
 // ADR 0026: dispatch stays concurrent (no throttling), so two tickets can
 // finish out of order -- whichever merges second may already be behind
@@ -59,7 +60,7 @@ export async function _defaultRunTests(cwd, exec) {
 // test suite. Only pushes the rebased branch back if both steps succeed;
 // a conflict or a test failure leaves the branch on origin untouched, and
 // the scratch worktree is always removed regardless of outcome.
-export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = REPO_PATH, runTests = _defaultRunTests, base = 'main') {
+export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = REPO_PATH, runTests = _defaultRunTests, base = 'main', resolveConflicts = null) {
   const scratchDir = await mkdtemp(path.join(tmpdir(), 'mr-merge-gate-'))
   try {
     await exec('git', ['fetch', 'origin', base, headRef], { cwd: repoPath })
@@ -68,7 +69,13 @@ export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = 
     try {
       await exec('git', ['rebase', `origin/${base}`], { cwd: scratchDir })
     } catch (err) {
-      return { ok: false, reason: `Rebase onto main failed:\n\n${String(err.stderr || err.message || err)}` }
+      // A project can declare generated files (profile "generated"); a rebase that conflicts ONLY in those
+      // is finished by the resolver (main's copy, regenerated). Real code conflicts still end here.
+      const resolved = resolveConflicts ? await resolveConflicts(scratchDir).catch((e) => ({ ok: false, reason: String(e.message || e) })) : null
+      if (!resolved?.ok) {
+        const why = resolved?.reason ? `\n\nGenerated-file resolution: ${resolved.reason}` : ''
+        return { ok: false, reason: `Rebase onto main failed:\n\n${String(err.stderr || err.message || err)}${why}` }
+      }
     }
 
     try {
@@ -128,7 +135,20 @@ export async function defaultGateContext(repo, exec = execFileAsync) {
     // The same measuring code the pipeline uses, so "passes the gate" means what "passes verification" means.
     runTests: async (cwd, run) => {
       await run(VENV_PYTHON, [PROFILE_SCRIPT, 'verify', repo, cwd])
-    }
+    },
+    // Only when the project declares generated files; otherwise a conflicted rebase just fails, as before.
+    resolveConflicts: info.generated?.length
+      ? async (cwd) => {
+          try {
+            const { stdout } = await exec(VENV_PYTHON, [GENERATED_SCRIPT, 'resolve-rebase', repo, cwd])
+            return JSON.parse(stdout)
+          } catch (e) {
+            let parsed = null
+            try { parsed = JSON.parse(e.stdout) } catch { /* not JSON */ }
+            return parsed || { ok: false, reason: String(e.message || e) }
+          }
+        }
+      : null
   }
 }
 
@@ -140,6 +160,25 @@ function prNumberOf(prUrl) {
 // Separated from the HTTP plumbing in index.js so this -- the part that
 // actually matters -- is unit-testable without spinning up a real server
 // or hitting real GitHub.
+// `gh pr merge` merges into whatever branch the PR TARGETS. A PR aimed at a side branch (a stacked PR whose
+// parent was never merged to main) therefore reports "merged" while its work never reaches the base branch
+// (finance-os #8 did exactly that on 2026-10-05). Refuse it, say where it points, and leave the PR alone.
+// A metadata hiccup does not block: the merge itself would then fail loudly on its own.
+export async function assertTargetsBase(prUrl, exec, expectedBase) {
+  let base
+  try {
+    const { stdout } = await exec('gh', ['pr', 'view', prUrl, '--json', 'baseRefName'])
+    base = JSON.parse(stdout).baseRefName
+  } catch {
+    return
+  }
+  if (base && base !== expectedBase) {
+    throw new MergeFailure(refusal('WRONG_BASE', 'request',
+      `this PR targets "${base}", not ${expectedBase}: merging it would not put the work on ${expectedBase}`,
+      `Merge or retarget its parent first, or change its base to ${expectedBase} on GitHub. The PR was not sent back for rework.`))
+  }
+}
+
 export async function mergePr(
   prUrl,
   exec = execFileAsync,
@@ -161,6 +200,8 @@ export async function mergePr(
   const repo = repoFromPrUrl(prUrl)
   const ctx = repo && repo !== MARVIN_REPO ? await gateContext(repo, exec) : null
 
+  await assertTargetsBase(prUrl, exec, ctx ? ctx.base : 'main')
+
   const { gate, headRefName, body } = ctx ? await shouldGateMerge(prUrl, exec, ctx) : await shouldGateMerge(prUrl, exec)
   const ticketNumber = parseTicketRef(body)
   // Every call below is a no-op (not an error) when ticketNumber is null
@@ -176,7 +217,7 @@ export async function mergePr(
   if (gate) {
     stage('gate', 'started', `rebasing onto ${ctx ? ctx.base : 'main'} + retesting`)
     const result = ctx
-      ? await rebaseAndRetestFn(headRefName, exec, ctx.clone, ctx.runTests, ctx.base)
+      ? await rebaseAndRetestFn(headRefName, exec, ctx.clone, ctx.runTests, ctx.base, ctx.resolveConflicts)
       : await rebaseAndRetestFn(headRefName, exec)
     if (!result.ok) {
       // Structured, concise feedback (code header, failing test names, capped tail)

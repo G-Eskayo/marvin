@@ -871,3 +871,11 @@ row, Other Projects footer) plus a stack of **sections** after the title card.
 ## clarity-captions app-build check is now required (2026-10-05)
 
 The profile's `spike-app` tier (xcodegen + `xcodebuild` for the iOS Simulator SDK, signing off) is enabled and **required**, so both the pipeline's verification and the dashboard merge gate fail a PR that breaks the app build, not just CaptionCore's `swift test`. Selftest on main: build ok, 85 tests, about 3.5 min. Needs `xcodegen` (Homebrew, installed on the mini) and the 234 MB Sortformer model, which the `diarizer-model` setup step links into each worktree from `~/.agents-pipeline-cache/clarity-captions/` (fetched once, self-healing if missing). Build output goes to a shared `DerivedData` in that cache dir. Only `mac-mini-1` has these; a machine without them releases the claim without a strike.
+
+## Base-branch rule (2026-10-05, from finance-os #8)
+
+`gh pr merge` merges into whatever the PR *targets*. finance-os #8 targeted `feature/bills-table`, so it showed MERGED while `ipc/bills.js` never reached main; #9 and #10 target the same side branch and now conflict with it. Rules, enforced in the webhook (`assertTargetsBase` in `merge.js`, refusal `WRONG_BASE`, not sent back for rework) and mirrored in the dashboard (`baseProblem` in `pr_order.js`: the button is disabled, and it names the parent PR when the side branch is another open PR's head). Open: finance-os needs a human decision on how to land `feature/bills-table`; its tracked `graphify-out/` files and `package-lock.json` change in every PR, which is what makes unrelated PRs conflict.
+
+## Generated files stop causing conflicts (2026-10-05)
+
+A profile can declare `"generated": [{"path", "unless"?, "regenerate"?}]` (`lib/generated_paths.py`). One implementation, two uses: (1) the pipeline leaves those paths out of its commit (`mr_raiser._leave_out_generated`), except that a lockfile is kept when `package.json` changed in the same change (`unless`); (2) the merge gate, when a rebase conflicts ONLY in generated files, takes main's copy, runs `regenerate` if given, and continues (`rebaseAndRetest`'s resolver). A conflict in real code still fails the gate, and the files stay tracked. finance-os declares `graphify-out` and `package-lock.json`. Not covered: a post-merge job to refresh them on main (they go stale between refreshes).

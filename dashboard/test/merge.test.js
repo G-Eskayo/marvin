@@ -24,7 +24,8 @@ import {
   isBehindMain,
   rebaseAndRetest,
   defaultGateContext,
-  _defaultRunTests
+  _defaultRunTests,
+  assertTargetsBase
 } from '../webhook-server/merge.js'
 import { MergeFailure, refusal } from '../webhook-server/failure.js'
 
@@ -310,6 +311,63 @@ describe('isBehindMain', () => {
   })
 })
 
+describe('rebaseAndRetest with generated-file conflict resolution', () => {
+  // README.md stands in for a generated file: it conflicts between the branch and main.
+  function conflictFixture() {
+    const f = makeGitFixture()
+    const { repoDir } = f
+    sh('git', ['checkout', '-q', '-b', 'feature'], repoDir)
+    writeFileSync(path.join(repoDir, 'README.md'), 'hello\nfeature line\n')
+    sh('git', ['add', '.'], repoDir)
+    sh('git', ['commit', '-q', '-m', 'edit on feature'], repoDir)
+    sh('git', ['push', '-u', 'origin', 'feature'], repoDir)
+    sh('git', ['checkout', '-q', 'main'], repoDir)
+    writeFileSync(path.join(repoDir, 'README.md'), 'hello\nmain line\n')
+    sh('git', ['add', '.'], repoDir)
+    sh('git', ['commit', '-q', '-m', 'edit on main'], repoDir)
+    sh('git', ['push', 'origin', 'main'], repoDir)
+    return f
+  }
+
+  it('lets the resolver finish a conflicted rebase, then retests and pushes', async () => {
+    const { root, repoDir } = conflictFixture()
+    try {
+      const before = currentRemoteSha(repoDir, 'feature')
+      const resolve = vi.fn(async (dir) => {
+        sh('git', ['checkout', '--ours', '--', 'README.md'], dir)
+        sh('git', ['add', 'README.md'], dir)
+        await realExec('git', ['rebase', '--continue'], { cwd: dir, env: { ...process.env, GIT_EDITOR: 'true' } })
+        return { ok: true }
+      })
+      const runTests = vi.fn().mockResolvedValue(undefined)
+      const result = await rebaseAndRetest('feature', realExec, repoDir, runTests, 'main', resolve)
+      expect(result).toEqual({ ok: true })
+      expect(resolve).toHaveBeenCalledTimes(1)
+      expect(runTests).toHaveBeenCalledTimes(1)
+      expect(currentRemoteSha(repoDir, 'feature')).not.toBe(before)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('fails with the resolver\'s reason, pushes nothing and cleans up when it cannot resolve', async () => {
+    const { root, repoDir } = conflictFixture()
+    try {
+      const before = currentRemoteSha(repoDir, 'feature')
+      const resolve = vi.fn().mockResolvedValue({ ok: false, reason: 'conflicts in files that are not generated: src.js' })
+      const runTests = vi.fn()
+      const result = await rebaseAndRetest('feature', realExec, repoDir, runTests, 'main', resolve)
+      expect(result.ok).toBe(false)
+      expect(result.reason).toContain('not generated: src.js')
+      expect(runTests).not.toHaveBeenCalled()
+      expect(currentRemoteSha(repoDir, 'feature')).toBe(before)
+      expect(sh('git', ['worktree', 'list'], repoDir)).not.toContain('mr-merge-gate-')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('rebaseAndRetest', () => {
   it('rebases, retests, and pushes the rebased branch when everything passes', async () => {
     const { root, repoDir } = makeGitFixture()
@@ -536,7 +594,7 @@ describe('mergePr for a project with a profile', () => {
     const shouldGateMerge = vi.fn().mockResolvedValue({ gate: true, headRefName: 'pipeline/g-eskayo/clarity-captions#7', body: 'Closes G-Eskayo/clarity-captions#7' })
     const rebaseAndRetestFn = vi.fn().mockResolvedValue({ ok: true })
     await mergePr(CC_PR, exec, noopRebuild, noopRedispatch, shouldGateMerge, rebaseAndRetestFn, vi.fn(), vi.fn(), { gateContext: async () => CTX })
-    expect(rebaseAndRetestFn).toHaveBeenCalledWith('pipeline/g-eskayo/clarity-captions#7', exec, CTX.clone, CTX.runTests, 'main')
+    expect(rebaseAndRetestFn).toHaveBeenCalledWith('pipeline/g-eskayo/clarity-captions#7', exec, CTX.clone, CTX.runTests, 'main', CTX.resolveConflicts)
   })
 
   it('records the ticket timeline under the project, not under marvin\'s same-numbered ticket', async () => {
@@ -625,5 +683,35 @@ describe('base branches other than main', () => {
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
+  })
+})
+
+describe('a PR must target the project base branch', () => {
+  const PR = 'https://github.com/G-Eskayo/finance-os/pull/8'
+  const viewing = (base) => vi.fn().mockResolvedValue({ stdout: JSON.stringify({ baseRefName: base }) })
+
+  it('refuses a PR aimed at a side branch: GitHub would "merge" it there and it would never reach main', async () => {
+    await expect(assertTargetsBase(PR, viewing('feature/bills-table'), 'main')).rejects.toMatchObject({
+      payload: { code: 'WRONG_BASE', action: 'escalate' }
+    })
+    await expect(assertTargetsBase(PR, viewing('feature/bills-table'), 'main')).rejects.toMatchObject({
+      payload: { message: expect.stringContaining('feature/bills-table') }
+    })
+  })
+
+  it('passes a PR aimed at the base branch, and uses the profile base, not a hardcoded main', async () => {
+    await expect(assertTargetsBase(PR, viewing('main'), 'main')).resolves.toBeUndefined()
+    await expect(assertTargetsBase(PR, viewing('develop'), 'develop')).resolves.toBeUndefined()
+  })
+
+  it('does not block on a metadata hiccup (the merge itself would fail loudly anyway)', async () => {
+    await expect(assertTargetsBase(PR, vi.fn().mockRejectedValue(new Error('boom')), 'main')).resolves.toBeUndefined()
+    await expect(assertTargetsBase(PR, vi.fn().mockResolvedValue({ stdout: 'not json' }), 'main')).resolves.toBeUndefined()
+  })
+
+  it('mergePr refuses before merging anything', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: JSON.stringify({ baseRefName: 'feature/x' }) })
+    await expect(mergePr('https://github.com/G-Eskayo/marvin/pull/9', exec, noopRebuild, noopRedispatch)).rejects.toMatchObject({ payload: { code: 'WRONG_BASE' } })
+    expect(exec.mock.calls.some((c) => c[1]?.includes('merge'))).toBe(false)
   })
 })
