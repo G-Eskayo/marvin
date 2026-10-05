@@ -311,6 +311,32 @@ def fetch(repo: str) -> tuple[str, set[str], dict, set[str] | None]:
     return text, tree, meta, scripts
 
 
+def fetch_local(path: str) -> tuple[str, set[str], dict, set[str] | None]:
+    """The same inputs from a local clone: for checking a README BEFORE it is committed or pushed."""
+    from pathlib import Path
+    root = Path(path).expanduser()
+
+    def git(*args: str) -> str:
+        return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, timeout=60).stdout
+    readme = next((f for f in ("README.md", "README.rst", "README") if (root / f).exists()), None)
+    if readme is None:
+        raise RuntimeError(f"no README in {root}")
+    text = (root / readme).read_text()
+    tree = {l for l in git("ls-files").splitlines() if l}
+    tree |= {str(p.relative_to(root)) for p in root.rglob("*") if p.is_file() and ".git" not in p.parts and "node_modules" not in p.parts and "venv" not in p.parts}
+    last = git("log", "-1", "--format=%cI").strip() or None
+    readme_at = git("log", "-1", "--format=%cI", "--", readme).strip() or None
+    since = len([l for l in git("log", f"--since={readme_at}", "--format=%H").splitlines() if l]) - 1 if readme_at else 0
+    meta = {"description": "(local)", "repo_commit_at": last, "readme_commit_at": readme_at, "commits_since_readme": max(since, 0)}
+    scripts = None
+    if (root / "package.json").exists():
+        try:
+            scripts = set((json.loads((root / "package.json").read_text()).get("scripts") or {}))
+        except ValueError:
+            scripts = None
+    return text, tree, meta, scripts
+
+
 def render_markdown(repo: str, result: dict) -> str:
     out = [f"## {repo}", "",
            f"{result['summary']['pass']} pass · {result['summary']['warn']} warn · {result['summary']['fail']} fail  ·  "
@@ -329,14 +355,15 @@ def render_markdown(repo: str, result: dict) -> str:
 def main() -> None:
     import argparse
     ap = argparse.ArgumentParser(description="Audit a repository's README.")
-    ap.add_argument("repos", nargs="+", help="owner/name, one or more")
+    ap.add_argument("repos", nargs="+", help="owner/name, one or more (or a local path with --local)")
+    ap.add_argument("--local", action="store_true", help="treat each argument as a local clone and audit its working-tree README")
     ap.add_argument("--json", action="store_true", help="JSON instead of markdown")
     ap.add_argument("--no-network-links", action="store_true", help="do not check external links")
     args = ap.parse_args()
     results = {}
     for repo in args.repos:
         try:
-            text, tree, meta, scripts = fetch(repo)
+            text, tree, meta, scripts = fetch_local(repo) if args.local else fetch(repo)
             results[repo] = audit(text, tree, meta, scripts, None if args.no_network_links else http_status)
         except Exception as exc:
             results[repo] = {"error": str(exc)}

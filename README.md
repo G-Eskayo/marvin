@@ -1,494 +1,169 @@
 # MARVIN
 
-> *"I could calculate your chances of survival, but you won't like it."*
-> — Marvin, The Hitchhiker's Guide to the Galaxy
+> *"I could calculate your chances of survival, but you won't like it."*: Marvin, The Hitchhiker's Guide to the Galaxy
 
-**MARVIN** is an open-source memory, routing, and skills layer for [Claude Code](https://claude.ai/code). Where Claude starts every session cold, MARVIN gives it persistent memory, 27 structured skills, autonomous background agents, a self-measuring bench, and automatic profile + model routing — so it finds the right knowledge, applies the right skill, runs on the cheapest viable model, and gets measurably better over time.
+**MARVIN gives [Claude Code](https://claude.ai/code) a memory, a set of skills, and a way to keep working while you are away.** Claude starts every session cold; MARVIN loads only the context a task needs, applies the right skill, runs on the cheapest model that passes the bench, and ships small changes through a gated pipeline that you review from a dashboard.
 
-Named after the Hitchhiker's Guide's brilliant, underutilised android. This project is about making sure that brain gets used.
-
-> **North star:** minimise token cost, maximise capability and quality. Every component earns its place through measurement, not intuition.
+**Status:** in daily use by its author on two Macs (a primary automation host and a laptop). macOS is the supported platform; Linux and WSL2 run the memory and skills layer but are untested end to end. The dashboard and the background agents are macOS-only (launchd, Electron).
 
 <p align="center">
-  <img src="assets/screenshots/brain-map-demo.gif" alt="MARVIN's live 3D architecture map, rotating, with skill nodes pulsing gold as activity fires" width="480">
+  <img src="assets/screenshots/brain-map-demo.gif" alt="MARVIN's live 3D architecture map rotating, with skill nodes pulsing gold as activity fires" width="480">
 </p>
 
-This isn't a diagram someone drew once and forgot to update — it's MARVIN's actual structure, generated straight from the same `manifest.json` that drives retrieval, one node per skill/hook/memory type.
+*Above: MARVIN's real structure, generated from `manifest.json` (one node per skill, hook and memory type; gold pulses are real calls). It is a recorded loop; the live version is `brain-map/index.html`.*
 
-**How to read it:** each dot's color groups it into a category (memory, quality, research, agents, and so on); quiet grey branches are structure — category → skill, like a dendrite off a cell body. The gold pulses are the *real* wiring: a skill actually firing right now, or a `calls:` edge between two parts of the system that isn't just implied by folder layout. It rotates and lights up entirely on its own — there's nothing to click here, this is a recorded loop.
+## Contents
 
-The real thing runs and regenerates live on any machine with MARVIN installed — open `~/.agents/brain-map/index.html` yourself once you've followed [Build Your Own MARVIN](#build-your-own-marvin) below, and drag it, zoom it, click a node.
+[What it does](#what-it-does) · [See it work](#see-it-work) · [How it works](#how-it-works) · [Quickstart](#quickstart) · [Docs map](#docs-map) · [Platforms](#platforms) · [Contributing](#contributing)
 
----
+## What it does
 
-## What MARVIN Can Do
+| | |
+|---|---|
+| **Memory** | Four kinds of memory (user, feedback, project, reference) plus three ChromaDB collections, retrieved by meaning and keyword so a session starts with what it needs and nothing more. |
+| **32 skills** | Debugging, TDD, research, architecture review, handoffs, README writing and more, each a `SKILL.md` Claude loads on demand. [Full list](docs/skills.md). |
+| **A gated ticket pipeline** | Issues labelled `ready-for-agent` are worked in an isolated worktree, measured against the repo's own tests, and raised as pull requests with evidence. Nothing merges until you approve it. |
+| **A dashboard** | An Electron app with tabs for metrics, MR review, health, docs, activity boards and a portfolio site manager. |
+| **Background agents** | launchd jobs for a daily digest, a research colony, health checks, code sync between machines, and an auto-fixer limited to safe changes. |
+| **A bench** | `marvin-bench` A/B tests configurations (clean, lean, full) on token cost and correctness, so every "this is better" claim has a number behind it. [Scorecard](bench/SCORECARD.md). |
+
+## See it work
+
+**Routing: the cheapest model that passes.** Real output, 2026-10-05:
+
+```text
+$ route "what were the bench results last session?"
+intent:    recall  (embed match, score 0.8075)
+profile:   marvin
+model:     claude-haiku-4-5-20251001
+savings:   ~60% vs MARVIN + Sonnet
+why:       Memory retrieval — MARVIN's ChromaDB holds the answer. Haiku handles recall at ~60% Sonnet cost (bench Run 8).
+alias:     claude-recall
+```
+
+**Health: one command tells you what is wrong.** Real output (abridged):
+
+```text
+$ ~/.agents/venv/bin/python lib/health_checks.py
+overall: yellow  coverage: 5/18
+  [ green] Auth token: gh-token: present, 40 chars, no whitespace
+  [ green] route.py embedding classifier (ChromaDB): 92 reference examples indexed
+  [ green] Local dispatch lock: idle
+```
+
+**The pipeline: how a change gets made while you are away.**
 
 ```mermaid
-mindmap
-  root((MARVIN))
-    Memory
-      ChromaDB vector store
-        qa-knowledge
-        research-feed
-        marvin-memory RAG index
-      Auto-memory
-        user profiles
-        feedback rules
-        project context
-        reference pointers
-      Lexicon
-      Handoff and resume
-    Skills 27 total
-      Quality
-        diagnose
-        grill-with-docs preferred default
-        grill-me fallback no project
-        tdd
-        qa-agent
-        improve-codebase-architecture
-        audit intent vs reality
-      Research
-        research
-        paper-dive
-        zoom-out
-      Creation
-        creative
-        prototype
-        improve
-      Continuity
-        handoff
-        index
-        self-improve
-        architecture-review
-        write-a-skill
-        caveman
-        lexicon
-        route
-      Project
-        setup-matt-pocock-skills
-        triage
-        to-issues
-        to-prd
-        resume-tailor
-        research-colony
-    Live Architecture Map
-      3D dendrite tree of the real graph
-        generated from manifest.json live
-        gold synapses are real calls and hooks
-      DesktopLive Swift wallpaper
-        window pinned to desktop level
-        no dock icon no menu bar item
-        survives restart via launchd
-      Activity pulses
-        skill fires camera eases to it
-        node create or remove animates in place
-    Autonomous Agents
-      Daily digest 08h30
-        feature combinations
-        trim candidates
-        wild ideas and quick wins
-      Research colony 09h00
-        arXiv CS.AI CS.LG CS.MA
-        GitHub trending
-        Hacker News front page
-        semantic correlation
-        daily research digest
-      File organiser daily
-        Desktop and Downloads
-        7-day grace period
-      Safety monitor
-        scores autonomous output for risk
-        quarantines flagged artifacts
-        never blocks the loop itself
-    Bench
-      14 tasks
-      3 profiles
-        clean baseline
-        lean low-overhead
-        marvin full stack
-      flags repeat N judge model
-      cross-model Haiku vs Sonnet
-      Ollama runner zero API cost
-        full context injection
-        RAG targeted retrieval
-      SCORECARD gains and losses
-    Routing
-      route script keyword classifier
-      shell aliases
-        claude-recall marvin haiku
-        claude-code lean sonnet
-        claude-research marvin haiku
-        claude-arch marvin sonnet
-      session-start auto-suggest
-    Hooks
-      On skill or memory file save
-        rebuild-manifest path scoped
-        emit-resume-prompt
-        qa-session-capture
-        improvement-sweep
-      On any skill invocation
-        skill-activity feeds live map
+flowchart LR
+  I["Issue labelled<br/>ready-for-agent"] --> C["Claimed by the<br/>ticket pipeline"]
+  C --> W["Isolated worktree:<br/>planner plans, executor edits"]
+  W --> M["Measure: pytest + vitest<br/>no regression, a real improvement"]
+  M -->|worse, or crash| P["Parked with a reason;<br/>circuit breaker counts it"]
+  M -->|better or equal| R["Pull request with<br/>evidence attached"]
+  R --> D["You review in the<br/>dashboard"]
+  D -->|Approve| G["Merge gate: rebase,<br/>tests, install, merge"]
+  G --> Main[("main")]
 ```
 
----
+Every failure is recorded with a cause, and the same failure on three different tickets pauses dispatch instead of repeating ([circuit breaker](lib/failure_breaker.py)).
 
-## Real-World Impact
+## How it works
 
-Not "MARVIN exists" — concrete before/after evidence from real sessions. Every claim here links to something you can go verify yourself: a commit, an ADR, a live external contribution.
+**A session's context** is chosen, not dumped: a tag manifest narrows the skills, vector search finds the memories, a keyword pass re-ranks, and only the result is loaded.
 
-### Built a citation-graph knowledge base for [`paper-dive`](https://github.com/G-Eskayo/paper-dive), end to end
-
-Since extracted into [its own repo](https://github.com/G-Eskayo/paper-dive) — a complete, independently useful capability that doesn't need MARVIN's other infrastructure, verified standalone before extraction (all 23 tests pass with zero MARVIN dependency).
-
-Went from a one-line roadmap idea ("follow a paper's bibliography recursively") to a working, tested, deployed `/paper-graph` command — via 12 architecture-decision records ([`docs/adr/0007`–`0012`](docs/adr/)), strict TDD (23 tests, zero mocking of the actual scoring logic), and real verification against an unpublished paper, not just a synthetic test fixture.
-
-Along the way, MARVIN caught and fixed three real bugs that would have shipped silently otherwise:
-- A version conflict between `mlx-lm` and `transformers` that broke model loading — root-caused and patched, verified empirically rather than guessed at.
-- A misdiagnosed "adapter not activated" warning in a widely-used ML library (`adapters`) that looked like a real functional bug — a direct embedding comparison proved the warning was a false positive, saving a costly fallback to a lower-quality model that wasn't actually needed.
-- A Semantic Scholar rate-limit gap discovered only by running the real thing against real data, not caught by any unit test — fixed with exponential backoff per the API's own published policy.
-
-### Found and reported a real bug in an external, widely-used open-source library
-
-That misdiagnosed adapter warning turned out to be a genuine, confirmed, previously-unresolved bug in `adapter-hub/adapters` (open since June 2025). MARVIN reproduced it precisely, isolated the root cause via a controlled before/after comparison, and reported it upstream: [adapter-hub/adapters#815](https://github.com/adapter-hub/adapters/issues/815#issuecomment-4909089359) — a real contribution to a project MARVIN doesn't own, verifiable by anyone, not a claim made about MARVIN's own repo.
-
-### Ran a real, evidence-based model comparison instead of picking by vibes
-
-Compared Qwen2.5-3B vs Llama-3.2-3B on `leaderboard_mmlu_pro` (N=200) for MARVIN's own voice-interface offline-mode decision — not by vibes, and not by trusting either vendor's self-reported numbers. `mlx_lm.server`'s OpenAI-compatible API doesn't support the `echo` parameter loglikelihood-based tasks need, so this required building a custom in-process `lm-eval` adapter (`bench/lib/mlx_lm_eval_adapter.py`, `bench/run_mlx_model_comparison.py`) that computes log-probabilities directly from MLX model logits — cross-checked against an independent step-by-step computation before trusting it.
-
-**Qwen2.5-3B: 32.5% accuracy** — matching, almost exactly, HuggingFace's own independently-measured Open LLM Leaderboard number for the same model, a strong signal the custom adapter is measuring correctly. **Llama-3.2-3B: 23.5% accuracy** — a clear, decisive 9-point gap on the same real 200-question test, resolving MARVIN's voice-interface offline-mode model choice with actual evidence instead of a guess.
-
----
-
-## Skills — Complete List
-
-All 27 skills, their triggers, and what they do:
-
-| Skill | Trigger | What it does |
-|-------|---------|-------------|
-| `diagnose` | Bug reported, broken/throwing/failing, perf regression | Root-cause analysis — traces symptom → cause → fix |
-| `audit` | A verification question can't be confidently answered, or docs/ADRs say one thing and the system does another | Compares documented intent against actual state to find gaps nobody's reported yet — distinct from `diagnose`, which needs a known symptom to start from |
-| `tdd` | "TDD", "red-green-refactor", test-first | Writes failing tests first, then drives implementation to pass |
-| `qa-agent` | "qa", "scan project", "best practices for X" | AST + text quality scan; appends lessons to ChromaDB `qa-knowledge` |
-| `grill-with-docs` | **Preferred default** for any grilling request when a project exists | Devil's advocate that also cross-references actual docs/ADRs and updates them live — a strict superset of grill-me |
-| `grill-me` | Fallback only — no project/repo to attach docs to | Devil's advocate — challenges assumptions and finds hidden failure modes |
-| `improve-codebase-architecture` | "Improve architecture", "reduce coupling" | Structural refactor with an eye on testability and cohesion |
-| `research` | "Research X", investigate claim, evaluate technology | Tiered source lookup: arXiv → Semantic Scholar → official docs → web |
-| [`paper-dive`](https://github.com/G-Eskayo/paper-dive) | `/paper-dive`, PDF path or paper URL | Walks through a research paper — findings, method, relevance to MARVIN. **Now its own repo** — see link. |
-| `zoom-out` | Unfamiliar with code area, "give me the map" | Produces a high-level architectural map of the code area |
-| `creative` | "Be creative", ideation, "surprise me" | Generative ideation with cross-domain pattern retrieval |
-| `prototype` | "Prototype", "mock up UI", "try a few designs" | Rapid sketch mode — speed over polish, multiple variants |
-| `improve` | "Show improvement queue", "run daily digest" | Surfaces the improvement queue and/or triggers the daily digest |
-| `handoff` | Auto before context switch or topic shift | Writes a resume prompt to `~/.claude/handoffs/`; surfaces it as a code block |
-| `index` | Task start (auto) | Matches task keywords to `manifest.json` tags to load only relevant skills |
-| `self-improve` | Explicit `/self-improve` request | Identifies a pattern worth preserving and writes it to memory |
-| `architecture-review` | Auto every 3–5 sessions or when CLAUDE.md > 80 lines | Audits CLAUDE.md for bloat; appends suggestions to `~/.claude/suggestions.md` (renamed from `self-optimize` — was too easily confused with `self-improve`) |
-| `write-a-skill` | "Create a new skill", "write a skill" | Scaffolds a new `SKILL.md` with correct frontmatter and routing entry |
-| `caveman` | "Caveman mode", "less tokens", `/caveman` | Switches to minimal-prose responses for token-tight situations |
-| `lexicon` | New concept crystallises, "add to lexicon" | Adds a term + definition to `~/.claude/lexicon.md` |
-| `research-colony` | "Show research digest", "what's new in AI", "any new papers" | Runs or displays the research colony pipeline |
-| `setup-matt-pocock-skills` | First use in a new repo | Activates triage, to-issues, to-prd for the current project |
-| `triage` | (activated by setup-matt-pocock-skills) | Triages issues and priorities for a project |
-| `to-issues` | (activated by setup-matt-pocock-skills) | Converts tasks/TODOs into GitHub issues |
-| `to-prd` | (activated by setup-matt-pocock-skills) | Drafts a product requirements document from a feature description |
-| [`resume-tailor`](https://github.com/G-Eskayo/resume-tailor) | "Tailor my resume", "apply for X" | Tailors master resume to a job description; local-only, never commits. **Now its own repo** — see link. |
-| `route` | "which profile should I use", "should I use haiku", "route this task" | Keyword-classifies the task → outputs optimal profile + model + shell alias; `--launch` execs claude directly |
-
----
-
-## Capability Areas
-
-### Memory
-Four persistent memory types across sessions: **user** (role, preferences, expertise), **feedback** (corrections and confirmed approaches), **project** (goals, deadlines, constraints), **reference** (pointers to external systems). Stored as Markdown files, indexed in ChromaDB for semantic retrieval.
-
-Three ChromaDB collections: `qa-knowledge` (lessons learned from all past sessions), `research-feed` (external research, populated daily by the research colony), and `marvin-memory` (auto-memory files indexed for RAG retrieval in the Ollama runner).
-
-### Autonomous Agents
-Three launchd cron jobs run without intervention:
-
-| Agent | Time | Output |
-|-------|------|--------|
-| **Daily digest** | 08:30 | `~/.claude/daily-digest/YYYY-MM-DD.md` — feature combinations, trim candidates, wild idea, quick win |
-| **Research colony** | 09:00 | `~/.claude/research-digest/YYYY-MM-DD.md` — directly relevant, lateral finds, tools/repos, skip list |
-| **File organiser** | Daily | Sorts Desktop + Downloads into `~/Documents` buckets; 7-day grace period keeps new items visible |
-
-Every autonomous loop's output is scored by `safety-monitor` before it ships — a calibrated verifier that checks generated artifacts for risk (fabricated references, unsupported claims) and quarantines anything flagged for human review instead of blocking the loop outright. It's infrastructure, not a slash-command skill — it doesn't trigger on a request, it watches the loops that already run unattended.
-
-### Live Architecture Map
-
-The rotating capture at the top of this README is this section — MARVIN's actual structure, rendered — not a diagram someone drew once and forgot to update. `brain-map/generate.py` builds a 3D dendrite tree live from `manifest.json` (structure) merged with a small hand-maintained file (prose, non-skill nodes, hook/cron wiring), regenerated automatically by the `rebuild-manifest` hook whenever a skill actually changes. Branches are structure; gold threads are the *real* wiring — `calls:` declarations, hook chains, and at least one dependency that existed in code but was never declared in frontmatter until this caught it.
-
-`DesktopLive` (a ~150-line Swift binary, no Xcode project needed) renders the same file as actual desktop wallpaper — a window pinned to the desktop level via public `NSWindow`/`CGWindowLevelForKey` API, no Dock icon, no menu-bar item, mouse events pass through to your real desktop. A `skill-activity` hook pulses the corresponding node and eases the camera toward it every time a skill actually fires; nodes grow in and shrink out when the graph itself changes, instead of the whole thing flashing on reload.
-
-```bash
-bash ~/.agents/brain-map/install.sh   # compiles DesktopLive, installs as a login-persistent launchd agent
-~/.agents/venv/bin/python ~/.agents/brain-map/demo.py   # local, zero-token showcase — no real skill calls, nothing real touched
+```mermaid
+flowchart TB
+  Q["Your request"] --> T["manifest.json<br/>tag index"]
+  T --> V["ChromaDB<br/>768-dim vectors"]
+  V --> B["BM25 re-rank<br/>(RRF merge)"]
+  B --> X["Only the context<br/>this task needs"]
+  X --> CC["Claude Code"]
 ```
 
-### marvin-bench — objective A/B testing
-14 tasks across three profiles (clean / lean / marvin) with four metrics: token cost, tool efficiency, task correctness (substring + LLM judge), and recall quality. Includes an ascending-cost model-selection sweep (select_model.py) and harder discriminator tasks (012–014) where profiles actually diverge. Supports cross-model runs and a zero-cost local Ollama runner.
+**The system around it** runs on two Macs that keep each other in step:
 
-```bash
-python3 bench/bench.py bench/tasks/*                                       # full suite
-python3 bench/bench.py bench/tasks/* --repeat 5                            # mean ± σ
-python3 bench/bench.py bench/tasks/* --judge                               # LLM grading
-python3 bench/bench.py bench/tasks/* --profiles lean                       # one profile
-python3 bench/bench.py bench/tasks/* --model claude-haiku-4-5-20251001     # swap model
-
-# local Ollama runner (zero API cost, QA tasks only)
-python3 bench/bench.py bench/tasks/task-002-recall \
-  --runner ollama --ollama-model qwen2.5:14b \
-  --profiles clean,marvin --context rag --judge
+```mermaid
+flowchart LR
+  subgraph Mini["Mac mini: primary automation host"]
+    TP["ticket pipeline"] --- AG["background agents"]
+    WH["merge webhook"]
+  end
+  subgraph Lap["MacBook: where you work"]
+    DB["Dashboard app"]
+    CC2["Claude Code sessions"]
+  end
+  GH[("GitHub: issues, PRs, code")]
+  TP <--> GH
+  DB <--> GH
+  Mini <-->|"code sync every 30 min"| Lap
+  HC["Health checks watch both,<br/>including 'is the other one asleep?'"] -.-> Mini
+  HC -.-> Lap
 ```
 
-**Proven cost hierarchy from 12 bench runs:**
+Design decisions are written down as [ADRs](docs/adr/) as they are made; the live design of each subsystem is in [`CONTEXT.md`](CONTEXT.md).
 
-| Option | Cost | Quality |
-|--------|------|---------|
-| Local `qwen2.5:14b` + RAG | **$0.00** | Semantic parity — judge passes, human can't tell the difference |
-| `claude-haiku` + marvin | ~$0.02 | Exact-phrase parity — substring matches |
-| `claude-sonnet` + marvin | ~$0.05 | Full reasoning + exact recall |
+## Quickstart
 
-See [`bench/SCORECARD.md`](bench/SCORECARD.md) for honest results — gains *and* setbacks at equal weight.
-
-### Automatic Profile + Model Routing
-
-The `route` script classifies a task description and maps it to the proven-optimal profile + model combination from bench data.
-
-```bash
-route "what were the bench results last session?"
-# intent:   recall
-# profile:  marvin
-# model:    claude-haiku-4-5-20251001
-# savings:  ~60% vs MARVIN + Sonnet
-# launch:   CLAUDE_CONFIG_DIR=~/.claude claude --model claude-haiku-4-5-20251001
-# alias:    claude-recall
-```
-
-| Alias | Profile | Model | Use for | Evidence |
-|-------|---------|-------|---------|----------|
-| `claude-recall` | marvin | haiku | Memory/session history | bench Run 8: 1.00 vs 0.00 at ~60% cost |
-| `claude-research` | marvin | haiku | arXiv, papers, synthesis | haiku sufficient for text synthesis |
-| `claude-code` | lean | sonnet | Self-contained coding tasks | bench Runs 2–6: 9-10% cheaper, same quality |
-| `claude-arch` | marvin | sonnet | Design, architecture, planning | full reasoning required |
-
-For zero-cost recall, skip the API aliases entirely and run local:
-
-```bash
-# zero-cost recall via local Ollama (semantic parity, bench Run 12)
-ollama pull qwen2.5:14b
-python3 bench/bench.py tasks/task-002-recall \
-  --runner ollama --ollama-model qwen2.5:14b \
-  --profiles marvin --context rag
-```
-
-```bash
-# Install API-model aliases into ~/.zshrc
-bash ~/.agents/skills/route/install.sh && source ~/.zshrc
-```
-
-Session-start auto-routing: CLAUDE.md step 7 analyses the first message and surfaces the suggestion once if ≥2 routing keywords match.
-
-### Hooks
-Four fire on every Write/Edit, each filtering to its own relevant path (not literally every save — `rebuild-manifest` used to fire unconditionally on any file anywhere until that was found and scoped):
-
-| Hook | Fires on | What it does |
-|------|----------|-------------|
-| `rebuild-manifest` | A `SKILL.md` or memory file changes | Keeps `manifest.json` current; also regenerates the live architecture map |
-| `emit-resume-prompt` | A handoff doc is written | Writes session resume prompt to `~/.claude/handoffs/` |
-| `qa-session-capture` | A handoff doc is written | Appends lessons to `qa-knowledge` ChromaDB |
-| `improvement-sweep` | A handoff doc is written | Scans changed project; appends top 5 issues to `improvement-queue.md` |
-
-A fifth fires on skill invocation, not file changes:
-
-| Hook | Fires on | What it does |
-|------|----------|-------------|
-| `skill-activity` | Any skill actually runs | Feeds the live architecture map's activity pulses |
-
----
-
-## Architecture
-
-```
-Your request
-     │
-     ▼
- manifest.json       ← flat tag index (domain:, intent:, type:)
-     │
-     ▼
- ChromaDB            ← 768-dim vectors via nomic-embed-text
-     │  cosine similarity
-     ▼
- BM25 re-rank        ← keyword overlap on top candidates
-     │  RRF merge
-     ▼
- Loaded context      ← only what this task needs, nothing more
-     │
-     ▼
-  Claude Code
-```
-
-Skills live in `~/.agents/skills/`. Each is a `SKILL.md` with YAML frontmatter tags. Memory files live in `~/.claude/projects/*/memory/`. Both feed the same manifest and vector store.
-
----
-
-## Build Your Own MARVIN
-
-This whole repo is one person's answer to a specific problem: Claude Code starts every session cold, and re-explaining yourself every time is a tax nobody should have to pay forever. MARVIN is what happens when you stop treating that as normal — memory that persists, skills that get selected instead of guessed at, a live map of the thing so it's never a black box, and a bench that keeps every claim about "better" honest with a number.
-
-None of it is proprietary and none of it is specific to this machine. It's a `git clone` and a shell script. The sections below walk through what you end up with and in what order, so you can build the same thing — or fork it and make it yours.
-
-**1. Get the base layer running.**
+macOS, with [Claude Code](https://claude.ai/code) installed and signed in (the memory and skills layer also runs on Linux and WSL2).
 
 ```bash
 git clone https://github.com/G-Eskayo/marvin.git
 cd marvin
-chmod +x setup.sh
 ./setup.sh
 ```
 
-Open Claude Code and start a new session. MARVIN loads silently — no separate app, no separate process, just skills and memory a session can now reach.
+`setup.sh` creates the Python environment (3.9 to 3.12), installs Ollama and pulls the `nomic-embed-text` embedding model (about 274 MB), builds the ChromaDB collections and installs the hooks. Open Claude Code and start a new session; MARVIN loads on its own.
 
-**2. Turn on the parts that work while you're not there.**
+Optional pieces, each independent (macOS):
 
 ```bash
 bash ~/.agents/skills/improve/install.sh          # daily digest at 08:30
 bash ~/.agents/skills/research-colony/install.sh  # research colony at 09:00
 bash ~/.agents/skills/route/install.sh            # claude-recall / claude-code / claude-arch aliases
-bash ~/.agents/brain-map/install.sh               # live architecture map as desktop wallpaper (needs Swift, macOS only)
-source ~/.zshrc
+bash ~/.agents/brain-map/install.sh               # live architecture map as desktop wallpaper (needs Swift)
+cd ~/.agents/dashboard && npm install && npm run dev   # the dashboard, in development mode
 ```
 
-Each of these is optional and independent — take the digest and skip the wallpaper, or the other way around. Nothing here needs the others to work.
+To check an install worked, open `~/.agents/brain-map/index.html`: every skill you installed should be a node.
 
-**3. See it, don't just trust it.**
+**Add a skill:** a folder under `~/.agents/skills/` with a `SKILL.md` (frontmatter `name`, `description`, `tags`). The save hook picks it up; add a row to the routing table in `~/.claude/CLAUDE.md` to wire a slash command. The `write-a-skill` skill scaffolds one.
 
-Open `~/.agents/brain-map/index.html` in a browser (or let `install.sh` put it on your desktop as wallpaper) and it's the fastest way to check a fresh install actually did what it claims — every skill you just installed shows up as a node, every real hook chain as a gold thread. If a skill you added isn't there, `~/.agents/brain-map/generate.py` will tell you why.
+## Docs map
 
-**4. Add what you actually need, verify it against your own record instead of vibes.**
-
-New skill = a `SKILL.md` with frontmatter, dropped in `~/.agents/skills/`. New claim about "this is better now" = a bench task, run against `clean`/`lean`/`marvin` profiles, so the number exists before the claim does. That loop — build, measure, keep only what earns its place — is the actual mechanism, not the skill count.
-
----
-
-## What Gets Installed
-
-```
-~/.agents/
-├── skills/                        ← 27 skill SKILL.md files + scripts
-│   ├── self-improve/scripts/      ← manifest rebuild, embeddings, retrieval
-│   ├── improve/scripts/           ← improvement sweep, daily digest, cron
-│   ├── research-colony/scripts/   ← source monitor, correlate, digest, cron
-│   ├── qa-agent/scripts/          ← QA scanner, session capture, KB query
-│   └── route/scripts/             ← keyword classifier + launcher
-│       └── route.py               ← route "task" [--launch] [--table]
-├── bench/                         ← marvin-bench A/B harness
-│   ├── bench.py                   ← --runner {claude,ollama} --context {full,rag}
-│   ├── lib/
-│   │   ├── score.py               ← stream parser + correctness scorer
-│   │   └── memory_rag.py          ← ChromaDB RAG retrieval for Ollama runner
-│   ├── tasks/                     ← 14 tasks (task-001 … task-014)
-│   ├── select_model.py            ← ascending-cost sweep, locks in cheapest model that passes N>=3
-│   ├── SCORECARD.md
-│   └── profiles/                  ← clean / lean / marvin config dirs
-├── brain-map/                     ← live 3D architecture map + desktop-wallpaper renderer
-│   ├── generate.py                ← manifest.json + enrichment.json → index.html + tree-data.json
-│   ├── DesktopLive/main.swift     ← desktop-level WKWebView, no dock icon, no menu bar
-│   ├── demo.py                    ← zero-token local showcase, nothing real touched
-│   └── install.sh                 ← compiles DesktopLive, installs as a login-persistent agent
-└── venv/                          ← Python virtualenv (chromadb, rank_bm25, ollama)
-
-~/.claude/
-├── CLAUDE.md                      ← Global instructions + routing table (step 7: auto-route)
-├── lexicon.md                     ← Shared vocabulary
-├── manifest.json                  ← Generated tag index (do not edit)
-├── chroma/                        ← ChromaDB (qa-knowledge + research-feed + marvin-memory)
-├── handoffs/                      ← Session resume prompts
-├── daily-digest/                  ← YYYY-MM-DD.md brainstorm digests
-├── research-digest/               ← YYYY-MM-DD.md research colony digests
-├── research-feed/                 ← Raw fetch cache (JSON per day)
-├── improvement-queue.md           ← Live issue backlog
-└── settings.local.json            ← 4 PostToolUse hooks
-```
-
----
-
-## Prerequisites
-
-- **[Claude Code](https://claude.ai/code)** — CLI or desktop app
-- **Anthropic API key** — set as `ANTHROPIC_API_KEY`
-- **Python 3.9–3.12** — Python 3.14+ not supported (libexpat ABI mismatch on macOS)
-- **~600 MB disk** — 274 MB nomic-embed-text + ChromaDB + deps
-- **Ollama** — installed by `setup.sh`; required for embeddings, offline after first pull
-
----
-
-## Platform Compatibility
-
-| Platform | Status | Notes |
-|---|---|---|
-| macOS ARM (M1–M4) | ✅ Recommended | Ollama uses Metal; embeddings ~8s/100 files |
-| macOS Intel | ✅ Full support | — |
-| Ubuntu / Debian x86_64 | ✅ Full support | Use Python 3.11 from apt |
-| Fedora / RHEL x86_64 | ✅ Full support | Use Python 3.11 from dnf |
-| Linux ARM (Raspberry Pi 5+) | ⚠️ Partial | Works; ~5s/file. 4 GB RAM min |
-| Windows WSL2 | ✅ Full support | Run `setup.sh` inside WSL2 |
-| Windows native | ❌ Not supported | Hooks require bash + POSIX paths |
-
----
-
-## Adding Your Own Skills
-
-```markdown
----
-name: my-skill
-description: One-line description
-tags: [domain:my-domain, intent:my-intent, type:skill]
----
-
-# My Skill
-
-Instructions for Claude here...
-```
-
-Drop it in `~/.agents/skills/my-skill/SKILL.md`. The PostToolUse hook picks it up on the next save. To wire it to a slash command, add a row to the routing table in `~/.claude/CLAUDE.md`.
-
----
-
-## AI Disclosure
-
-Built collaboratively with Claude (claude-sonnet-4-6 via Claude Code).
-
-| Component | AI involvement |
+| You want | Read |
 |---|---|
-| All skill SKILL.md files | Authored by AI, reviewed by human |
-| All Python scripts | Designed and written by AI |
-| `setup.sh` | AI, from human-specified platform requirements |
-| Architecture decisions | Grilled and validated by human |
-| `CLAUDE.md` / `lexicon.md` | Collaboratively authored |
-| README | AI |
+| The current design of each subsystem (pipeline, health, dashboard, portfolio, sync...) | [`CONTEXT.md`](CONTEXT.md) |
+| Why a decision was made | [`docs/adr/`](docs/adr/) |
+| What each skill does | [`docs/skills.md`](docs/skills.md) (generated from the skills) |
+| Evidence the system works (bench runs, real bugs found) | [`docs/impact.md`](docs/impact.md), [`bench/SCORECARD.md`](bench/SCORECARD.md) |
+| How READMEs here are judged | [`docs/readme-criteria.md`](docs/readme-criteria.md), latest [audit](docs/readme-audit-2026-10-05.md) |
+| The start-of-session checklist | [`docs/session-start-checklist.md`](docs/session-start-checklist.md) |
+| Security rules (what must never be committed) | [`SECURITY.md`](SECURITY.md) |
 
-**What the human contributed:** the core concept (selective context loading), all architectural decisions, platform requirements and testing, the name.
+## Platforms
 
-**Note:** tested on macOS ARM. Linux and WSL2 cross-platform behaviour has not been tested end-to-end. Open an issue if something breaks.
+| Platform | Memory and skills | Dashboard and background agents |
+|---|---|---|
+| macOS Apple Silicon | Used daily (the author's setup) | Used daily |
+| macOS Intel | Expected to work, untested | Expected to work, untested |
+| Linux, WSL2 | Written to work, untested end to end | Not supported (launchd, Electron app) |
+| Windows native | Not supported (hooks need bash and POSIX paths) | Not supported |
 
----
+Tested on macOS ARM only. If something breaks elsewhere, please open an issue.
 
 ## Contributing
 
-PRs welcome:
-- New skills (`SKILL.md` + PR)
-- Linux / WSL2 testing and bug reports
-- Hard bench tasks (tasks where `clean` scores ≤ 0.50)
-- Windows native support (PowerShell setup script)
+Pull requests are welcome: new skills (a `SKILL.md` plus a PR), Linux and WSL2 testing, hard bench tasks (ones where the `clean` profile scores 0.50 or less), and a PowerShell setup for Windows. Run the tests first:
 
----
+```bash
+~/.agents/venv/bin/python -m pytest lib/tests -q     # Python (about 900 tests)
+cd dashboard && npx vitest run                       # dashboard (about 490 tests)
+```
+
+## AI disclosure
+
+Built collaboratively with Claude through Claude Code. The skills, scripts, `setup.sh` and this README were written by Claude and reviewed by the author; the concept (selective context loading), the architecture decisions, the platform requirements and the name are the author's. See [`ACKNOWLEDGEMENTS.md`](ACKNOWLEDGEMENTS.md) for the work this builds on.
 
 ## License
 
-MIT. See `LICENSE`.
-
----
-
-*MARVIN: "I could calculate your chances of survival, but you won't like it."*
-*You: "Just load the relevant context."*
-*MARVIN: "Done."*
+MIT. See [`LICENSE`](LICENSE).

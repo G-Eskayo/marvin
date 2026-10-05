@@ -130,3 +130,15 @@ def test_goal_scores_are_pass_fractions_and_info_is_left_out():
 
 def test_anchor_of_matches_githubs_rule():
     assert ra.anchor_of("Quick Start: Install & Run!") == "quick-start-install--run"
+
+
+def test_a_local_clone_can_be_audited_before_anything_is_pushed(tmp_path):
+    import subprocess
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "a.md").write_text("x")
+    (tmp_path / "README.md").write_text("# Local\n\nLocal is a tool that does a thing so you can do it faster.\n\n[docs](docs/a.md) [gone](docs/b.md)\n")
+    subprocess.run(["git", "-C", str(tmp_path), "init", "-q"], check=True)
+    text, tree, meta, scripts = ra.fetch_local(str(tmp_path))
+    assert "docs/a.md" in tree and scripts is None
+    f = by(ra.audit(text, tree, meta), "relative-links")
+    assert f["status"] == "fail" and f["evidence"] == ["docs/b.md"]
