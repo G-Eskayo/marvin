@@ -444,6 +444,11 @@ TOK="$HOME/.claude/.gh-token"
 if [ -s "$TOK" ]; then
   if GH_TOKEN="$(tr -d '[:space:]' < "$TOK")" /opt/homebrew/bin/gh api user --jq .login >/dev/null 2>&1; then echo "gh_token=ok"; else echo "gh_token=invalid"; fi
 else echo "gh_token=missing"; fi
+# What the dashboard Docs tab does: read a file from GitHub with the shared credential.
+if [ -s "$TOK" ] && GH_TOKEN="$(tr -d '[:space:]' < "$TOK")" /opt/homebrew/bin/gh api repos/G-Eskayo/marvin/contents/README.md --jq .name >/dev/null 2>&1; then echo "docs_access=ok"; else echo "docs_access=failed"; fi
+if /usr/bin/pgrep -x DesktopLive >/dev/null 2>&1; then echo "desktoplive=running"; else echo "desktoplive=stopped"; fi
+TREE="$HOME/.agents/brain-map/tree-data.json"
+if [ -f "$TREE" ]; then echo "brain_data_ts=$(stat -f %m "$TREE")"; else echo "brain_data_ts="; fi
 '''
 
 
@@ -455,7 +460,8 @@ def parse_machine_state(text: str) -> dict:
         return int(v) if v.isdigit() else None
 
     return {"app_built_ts": num("app_built_ts"), "dashboard_commit_ts": num("dashboard_commit_ts"),
-            "gh_token": raw.get("gh_token", "").strip()}
+            "gh_token": raw.get("gh_token", "").strip(), "docs_access": raw.get("docs_access", "").strip(),
+            "desktoplive": raw.get("desktoplive", "").strip(), "brain_data_ts": num("brain_data_ts")}
 
 
 def evaluate_machine_state(state: dict, now: datetime) -> list[tuple[str, str, str]]:
@@ -482,6 +488,21 @@ def evaluate_machine_state(state: dict, now: datetime) -> list[tuple[str, str, s
         out.append(("auth:gh", "red", "shared GitHub token is INVALID -- dashboard merges and ticket-pipeline gh/git calls on this machine will fail"))
     else:
         out.append(("auth:gh", "yellow", "no ~/.claude/.gh-token on this machine"))
+    docs = state.get("docs_access")
+    if docs == "ok":
+        out.append(("docs:access", "green", "the Docs tab's GitHub read works (shared credential)"))
+    elif docs:
+        out.append(("docs:access", "red", "cannot read repo files from GitHub -- the dashboard Docs tab will be empty on this machine"))
+    live = state.get("desktoplive")
+    if live == "running":
+        out.append(("desktoplive:running", "green", "the desktop brain-map background is running"))
+    elif live:
+        out.append(("desktoplive:running", "yellow", "the desktop brain-map background (DesktopLive) is not running"))
+    ts = state.get("brain_data_ts")
+    if ts is not None:
+        days = (now - datetime.fromtimestamp(ts, tz=timezone.utc)).total_seconds() / 86400
+        out.append(("brainmap:data", "yellow" if days >= 7 else "green",
+                    f"brain-map data last regenerated {days:.0f}d ago" + (" -- it is rebuilt by use on this machine, so an idle machine shows an old picture" if days >= 7 else "")))
     return out
 
 
@@ -497,7 +518,8 @@ def check_machine_state_everywhere(reachability: dict[str, str], runner=_run_mac
         (dev, info.get("tailscale_hostname"), reachability.get(f"machine:{dev}", "yellow"))
         for dev, info in machine_profile.remote_devices().items()
     ]
-    labels = {"dashboard:build": "Dashboard app build", "auth:gh": "GitHub credential"}
+    labels = {"dashboard:build": "Dashboard app build", "auth:gh": "GitHub credential", "docs:access": "Docs tab GitHub access",
+              "desktoplive:running": "Desktop brain-map background", "brainmap:data": "Brain-map data freshness"}
     for dev, host, reach in devices:
         if reach == "asleep":
             for key, label in labels.items():
