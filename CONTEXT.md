@@ -409,12 +409,19 @@ its ticketing system creates shows up there with drill-down status. Boards live 
      Dev Environment Evidence; clicking the PR opens it in the MR Review tab.
   3. **Blocked** — label `blocked`; or `Blocked by #n` in the body with #n still open; or the
      pipeline's last stage failed and nothing is running. Card always states the reason.
-  4. **In progress** — `claimed:*` label or a live dispatch.
+  4. **In progress** — `claimed:*` label or a live dispatch, **and** some sign of life: a live dispatch, a
+     pipeline stage, or a touch on the ticket within 24h. A claim with none of those is a stale claim and
+     sits in Blocked ("Claimed by X but no activity for N days"): a claim label is a statement, not
+     evidence (found 2026-10-05: 14 stale claims were showing as "in progress" and also stopping the
+     pipeline from dispatching, since it only picks unclaimed tickets).
   5. **Ready** — `ready-for-agent` / `ready-for-human`, unclaimed (badge shows which).
   6. **Backlog** — everything else open (`needs-triage`, `needs-info`, unlabelled).
 - **Drill-down**: reason for the column, labels, body, linked PRs, and the per-stage timeline (only
   MARVIN-repo tickets have stage events today; stage storage is keyed by number, so other repos get
   GitHub-derived status only until stage keys carry the repo — additive, noted not built).
+- **Open tickets are never crowded out**: open issues are fetched on their own (limit 1000) and only the
+  100 most recent closed ones, because a single newest-200 query silently drops the oldest open ticket
+  once a repo passes 200 issues. A repo gets a board if it has *any* issue, not only the pipeline label.
 - **Titles always travel with numbers** (never a bare `#n`).
 - **Nothing here is invoked by hand (decided 2026-10-03, Gil: "the idea is automation").**
   Boards *appear* via `board_registry.discover()` (hourly, inside the `ticket-pipeline` run: any
@@ -481,6 +488,26 @@ nothing connected them. "Where things are" was only the tidy agent's file-filing
 - **Docs tab**: lists every catalog project, not just doc-first repos. Each gets a "Project card" page;
   projects with a `CONTEXT.md`/`README.md` show those too (local first, GitHub fallback). The master doc
   appears as its own entry. Cards and the master are searchable.
+
+### Cross-links by project, and Background work (decided 2026-10-05)
+
+- **The project id is the shared key.** Docs (catalog), Activity boards (board registry) and MR Review
+  each had their own project list; they now link by the catalog project id (`projectIdOf(repo)` in JS
+  matches `slug()` in `project_catalog.py`). Links: project card shows its board counts + "Open board",
+  board header "Docs →", MR detail "Docs →" / "Board →", a PR chip on a board card opens that PR in MR
+  Review. Navigation is one `nav` object in `App.jsx` that the target tab reads once per navigation.
+- **MR Review spans projects, the merge gate does not.** It lists every registered repo's open PRs (keys
+  are `repo#number`; old bare numbers in the seen-file are read as marvin's). Approve/Deny are refused in
+  the main process for any non-marvin PR (derived from the PR url, not a renderer flag) because the gate
+  rebases in marvin's checkout and runs marvin's pytest/vitest. Other projects show "Review on GitHub"
+  until each has its own merge profile (open work: a per-project merge profile; clarity-captions is Swift).
+  Found on first run: 4 finance-os PRs (#7-#10) had been invisible because only marvin was listed.
+- **Background work** (Activity tab): `lib/job_events.py` is the run log for non-ticket jobs (the sibling of
+  `ticket_stages`): `with job_run(name) as run: run.step(...)`, rewritten after every step, last 20 runs
+  per job in `~/.claude/logs/jobs/<job>.json` (per machine, not synced). Recording is best-effort and can
+  never break the job. A run "in progress" for >30 min is reported as crashed. Instrumented so far:
+  ticket-pipeline (hourly scan), project-catalog, tidy-agent, dashboard-rebuild. The app watches the folder
+  so a step appears as it happens. Not instrumented yet: the docs index rebuild, code-sync, health checks.
 
 ## Dashboard app — Portfolio tab (2026-10-02/03)
 

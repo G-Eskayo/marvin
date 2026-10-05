@@ -35,6 +35,7 @@ describe('loadBoard', () => {
     const calls = []
     const gh = async (args) => {
       calls.push(args)
+      if (args[0] === 'issue' && args.includes('closed')) return JSON.stringify([])
       if (args[0] === 'issue') {
         return JSON.stringify([
           { number: 1, title: 'T', state: 'OPEN', labels: [{ name: 'ready-for-agent' }], body: '', url: 'u', createdAt: '2026-10-01T00:00:00Z' }
@@ -43,7 +44,10 @@ describe('loadBoard', () => {
       return JSON.stringify([])
     }
     const board = await loadBoard('o/r', { gh, stagesFor: () => ({}), liveNumbers: new Set() })
-    expect(calls.map((c) => c[0])).toEqual(['issue', 'pr'])
+    expect(calls.map((c) => c[0])).toEqual(['issue', 'issue', 'pr'])
+    // every open ticket is fetched on its own (never crowded out by closed ones), closed ones are recent only
+    expect(calls[0]).toContain('open')
+    expect(calls[1]).toContain('closed')
     expect(calls.every((c) => c.includes('o/r'))).toBe(true)
     expect(board.columns.find((c) => c.id === 'ready').cards[0].title).toBe('T')
   })

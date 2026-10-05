@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import ProjectBoard from './ProjectBoard.jsx'
+import BackgroundWork from './BackgroundWork.jsx'
 
 const STAGE_LABEL = {
   claimed: 'Claimed',
@@ -178,20 +179,43 @@ function PipelineLog() {
 // (per-ticket stages + cost) stays as its own view.
 export default function ActivityBoard({ onOpenMr, onOpenDocs, nav }) {
   const [view, setView] = useState('boards')
+  const [jobs, setJobs] = useState(null)
+
+  // Background jobs: refreshed by trigger (the run-log folder is watched), with a slow poll as backstop.
+  useEffect(() => {
+    const load = () => window.api.activity.jobs().then(setJobs).catch(() => {})
+    load()
+    const id = setInterval(load, 120_000)
+    const off = window.api.triggers.on((t) => t.topic === 'activity' && load())
+    return () => {
+      clearInterval(id)
+      off()
+    }
+  }, [])
+
+  // A deep link to a board (from Docs or an MR) shows the boards view.
+  useEffect(() => {
+    if (nav?.tab === 'activity' && nav.repo) setView('boards')
+  }, [nav?.at])
+
+  const running = jobs?.filter((j) => j.status === 'running').length || 0
+  const problems = jobs?.filter((j) => j.status === 'failed' || j.status === 'crashed').length || 0
   return (
     <div>
-      <div className="flex gap-1 px-6 pt-4">
-        {[['boards', 'Boards'], ['log', 'Pipeline log']].map(([id, label]) => (
+      <div className="flex items-center gap-1 px-6 pt-4">
+        {[['boards', 'Boards'], ['work', 'Background work'], ['log', 'Pipeline log']].map(([id, label]) => (
           <button
             key={id}
             onClick={() => setView(id)}
             className={`rounded px-3 py-1 text-sm ${view === id ? 'bg-neutral-800 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
           >
             {label}
+            {id === 'work' && running > 0 && <span className="ml-1.5 inline-block h-2 w-2 animate-pulse rounded-full bg-blue-500" title={`${running} running`} />}
+            {id === 'work' && problems > 0 && <span className="ml-1.5 inline-block h-2 w-2 rounded-full bg-red-500" title={`${problems} need attention`} />}
           </button>
         ))}
       </div>
-      {view === 'boards' ? <ProjectBoard onOpenMr={onOpenMr} onOpenDocs={onOpenDocs} nav={nav} /> : <PipelineLog />}
+      {view === 'boards' ? <ProjectBoard onOpenMr={onOpenMr} onOpenDocs={onOpenDocs} nav={nav} /> : view === 'work' ? <BackgroundWork jobs={jobs} /> : <PipelineLog />}
     </div>
   )
 }

@@ -81,7 +81,8 @@ contextBridge.exposeInMainWorld('api', {
   },
   activity: {
     list: () => ipcRenderer.invoke('activity:list'),
-    timeline: (number) => ipcRenderer.invoke('activity:timeline', number)
+    timeline: (number) => ipcRenderer.invoke('activity:timeline', number),
+    jobs: () => ipcRenderer.invoke('activity:jobs')
   },
   triggers: {
     // Fires when something the Activity tab shows has changed (file watch or GitHub ping).
