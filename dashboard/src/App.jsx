@@ -43,6 +43,13 @@ const HEALTH_DOT_COLOR = {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('metrics')
+  // Cross-tab links by project: { tab, ...target, at } -- the target tab reads what it needs
+  // (prKey for MR Review, projectId for Docs, repo for Activity) and acts once per `at`.
+  const [nav, setNav] = useState(null)
+  const navigate = (tab, target = {}) => {
+    setNav({ ...target, tab, at: Date.now() })
+    setActiveTab(tab)
+  }
   const [reviewStatus, setReviewStatus] = useState(null)
   const [healthOverall, setHealthOverall] = useState(null)
 
@@ -127,15 +134,15 @@ export default function App() {
         {activeTab === 'metrics' ? (
           <MetricsScorecard />
         ) : activeTab === 'mr-review' ? (
-          <MrReview />
+          <MrReview nav={nav} onOpenDocs={(projectId) => navigate('docs', { projectId })} onOpenBoard={(repo) => navigate('activity', { repo })} />
         ) : activeTab === 'health' ? (
           <HealthDashboard />
         ) : activeTab === 'docs' ? (
-          <DocsExplorer />
+          <DocsExplorer nav={nav} onOpenBoard={(repo) => navigate('activity', { repo })} />
         ) : activeTab === 'portfolio' ? (
           <PortfolioHub />
         ) : (
-          <ActivityBoard onOpenMr={() => setActiveTab('mr-review')} />
+          <ActivityBoard nav={nav} onOpenMr={(prKey) => navigate('mr-review', { prKey })} onOpenDocs={(projectId) => navigate('docs', { projectId })} />
         )}
       </main>
     </div>

@@ -1,5 +1,5 @@
 import { cleanIpcError } from '../lib/ipcError.js'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import MrDetail from './MrDetail.jsx'
 
 const MR_LIST_REFRESH_MS = 120000
@@ -185,6 +185,18 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
     }
   }
 
+  if (pr.canMerge === false) {
+    // The merge gate runs marvin's own tests, so other projects' PRs are reviewed on GitHub.
+    return (
+      <div className="flex shrink-0 flex-col items-end gap-1 text-right">
+        <a href={pr.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="rounded-md border border-neutral-700 px-4 py-1.5 text-sm text-neutral-300 hover:bg-neutral-800">
+          Review on GitHub ↗
+        </a>
+        <p className="max-w-[16rem] text-xs text-neutral-600">Merging {pr.repo.split('/')[1]} from here isn't set up yet: the merge gate only runs marvin's tests.</p>
+      </div>
+    )
+  }
+
   return (
     <div className="flex shrink-0 flex-col items-end gap-1">
       <div className="flex gap-2">
@@ -237,7 +249,8 @@ function PrCard({ pr, onApproved, onDenied, onSelect }) {
       <div className="mb-2 flex items-center justify-between gap-3">
         <div>
           <p className="font-mono text-sm font-semibold text-white">
-            #{pr.number} — {pr.title}
+            #{pr.number} — {pr.title}{' '}
+            {pr.repo !== 'G-Eskayo/marvin' && <span className="rounded bg-sky-950 px-1.5 py-0.5 font-sans text-[10px] font-normal text-sky-300">{pr.repo.split('/')[1]}</span>}
           </p>
           {pr.hasSchema ? (
             pr.evidence.subsystem && (
@@ -270,7 +283,7 @@ function PrCard({ pr, onApproved, onDenied, onSelect }) {
   )
 }
 
-export default function MrReview() {
+export default function MrReview({ nav, onOpenDocs, onOpenBoard }) {
   const [prs, setPrs] = useState(null)
   const [error, setError] = useState(null)
   const [selected, setSelected] = useState(null)
@@ -284,7 +297,7 @@ export default function MrReview() {
         // (App.jsx) -- mark every currently-listed PR, not just ones you
         // click into, since the dot is about "have you looked at the
         // list," not "have you opened every item on it."
-        window.api.mr.markSeen(list.map((pr) => pr.number)).catch(() => {})
+        window.api.mr.markSeen(list.map((pr) => pr.key)).catch(() => {})
       })
       .catch((err) => setError(String(err)))
   }
@@ -306,6 +319,15 @@ export default function MrReview() {
     }
   }, [])
 
+  // Deep link from an Activity board card: open that PR's detail once the list has it.
+  const handledNav = useRef(null)
+  useEffect(() => {
+    if (!nav?.prKey || !prs || handledNav.current === nav.at) return
+    const target = prs.find((p) => p.key === nav.prKey)
+    if (target) setSelected(target)
+    handledNav.current = nav.at
+  }, [nav?.at, prs])
+
   // A denied/approved PR stops being an open PR, so its detail view no
   // longer has anything to show -- same reasoning as returning to the list
   // rather than a broken drill-down.
@@ -318,6 +340,8 @@ export default function MrReview() {
     return (
       <MrDetail
         pr={selected}
+        onOpenDocs={onOpenDocs}
+        onOpenBoard={onOpenBoard}
         onBack={() => setSelected(null)}
         onApproved={reloadAndReturnToList}
         onDenied={reloadAndReturnToList}

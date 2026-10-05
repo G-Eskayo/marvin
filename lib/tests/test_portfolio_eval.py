@@ -288,3 +288,13 @@ def test_a_button_styled_github_link_with_the_wrong_words_is_flagged_even_beside
     good = {"text": "View on GitHub", "cls": "btn btn-default", "href": "https://github.com/G-Eskayo/proj"}
     odd = {"text": "Source code", "cls": "btn btn-default", "href": "https://github.com/G-Eskayo/proj/tree/main"}
     assert [x["rule"] for x in ev.check_github_links([good, odd], ev.DEFAULT_RULES)] == ["github-button-text"]
+
+
+def test_layout_records_in_the_element_library_are_not_treated_as_elements(tmp_path):
+    import json
+    import portfolio_eval as ev
+    d = tmp_path / "templates" / "elements"
+    d.mkdir(parents=True)
+    (d / "layout-project-page.json").write_text(json.dumps({"id": "layout-project-page", "kind": "layout", "pages": {}}))
+    (d / "site-header.json").write_text(json.dumps({"id": "site-header", "name": "Site header", "usage": {"pages": {}}}))
+    assert list(ev.load_elements(tmp_path)) == ["site-header"]

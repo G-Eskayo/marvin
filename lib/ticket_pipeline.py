@@ -134,57 +134,92 @@ def _build_wrapper_command(issue_number: int) -> str:
 
 def main() -> None:
     dry_run = "--dry-run" in sys.argv
+    if dry_run:  # a preview records nothing
+        _scan(lambda *a, **k: None, dry_run=True)
+        return
+    import job_events
+    with job_events.job_run("ticket-pipeline", "Ticket pipeline (hourly scan)") as run:
+        _scan(run, dry_run=False)
+
+
+def _scan(run, dry_run: bool) -> None:
+    """One scan. `run` is the job's run log (job_events): each phase is reported so the
+    dashboard's Activity tab can show where this hourly job is and what it decided."""
+    step = run.step if hasattr(run, "step") else run
+    summary = run.summary if hasattr(run, "summary") else (lambda *a: None)
+    fail = run.fail if hasattr(run, "fail") else (lambda *a: None)
 
     # Hourly run doubles as board discovery, before any early return below, so a
     # project set up anywhere gets its dashboard board without being asked for.
     if not dry_run:
-        for repo in _discover_boards():
+        step("Board discovery")
+        added = _discover_boards()
+        for repo in added:
             print(f"{LOG_PREFIX} registered dashboard board for {repo}", file=sys.stderr)
+        step("Board discovery", f"{len(added)} new" if added else "no new projects")
+        step("Project catalog", "refresh if older than 50 min")
         _refresh_catalog()
 
     # Cross-ticket circuit breaker: the same failure across different tickets means
     # the environment is broken, not the tickets -- stop feeding it more tickets
     # (each would just burn its own strikes) until a success or a manual clear.
+    step("Circuit breaker")
     trips = failure_breaker.tripped()
     if trips:
         for t in trips:
             print(f"{LOG_PREFIX} dispatch PAUSED by circuit breaker: {t['signature']} failed across "
                   f"tickets {t['tickets']} (since {t['first_seen']}); e.g. {t['example'][:140]}. "
                   f"Fix the cause, then `failure_breaker.py clear`.", file=sys.stderr)
+        step("Circuit breaker", "TRIPPED: " + "; ".join(t["signature"] for t in trips))
+        summary("dispatch paused by the circuit breaker")
         return
+    step("Circuit breaker", "clear")
 
+    step("Scanning tickets", "G-Eskayo/marvin, ready-for-agent and unclaimed")
     tickets = _unclaimed_ready_tickets()
     if not tickets:
         print(f"{LOG_PREFIX} no unclaimed ready-for-agent tickets", file=sys.stderr)
+        step("Scanning tickets", "none ready")
+        summary("no ready tickets")
         return
 
     ticket = tickets[0]
     issue_number = ticket["number"]
+    step("Scanning tickets", f"{len(tickets)} ready; next is #{issue_number} {ticket['title']}")
 
+    step("Choosing a machine")
     selected = select_machine()
     if selected is None:
         print(f"{LOG_PREFIX} #{issue_number} ready but no machine currently available", file=sys.stderr)
+        step("Choosing a machine", "none available")
+        summary(f"#{issue_number} {ticket['title']} is ready but no machine is available")
         return
     device_id, _info = selected
     claim_label = _label_for_device(device_id)
+    step("Choosing a machine", device_id)
 
     if dry_run:
         print(f"{LOG_PREFIX} [dry-run] would claim #{issue_number} ({ticket['title']}) "
               f"and dispatch to {device_id} as claimed:{claim_label}", file=sys.stderr)
         return
 
+    step("Claiming ticket", f"#{issue_number} {ticket['title']}")
     if not _claim(issue_number, claim_label, title=ticket["title"]):
+        fail(f"could not claim #{issue_number}")
         return
 
     command = _build_wrapper_command(issue_number)
 
+    step("Dispatching", f"to {device_id}")
     result = dispatch(command, target=device_id, mode="async",
                        task_label=f"ticket #{issue_number}: {ticket['title'][:40]}")
     if result.ok:
         print(f"{LOG_PREFIX} dispatched #{issue_number} to {device_id}", file=sys.stderr)
+        summary(f"dispatched #{issue_number} {ticket['title']} to {device_id}")
     else:
         print(f"{LOG_PREFIX} dispatch failed for #{issue_number}: {result.error} -- releasing claim", file=sys.stderr)
         _release(issue_number, claim_label)
+        fail(f"dispatch of #{issue_number} to {device_id} failed: {result.error}")
 
 
 if __name__ == "__main__":

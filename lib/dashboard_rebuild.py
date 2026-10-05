@@ -69,17 +69,23 @@ def _facts(now: int) -> dict:
 
 
 def main() -> None:
-    now = int(time.time())
-    action, reason = decide(**_facts(now))
-    print(f"[dashboard-rebuild] {action}: {reason}", file=sys.stderr)
-    if action != "rebuild":
-        return
-    ATTEMPT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    ATTEMPT_FILE.write_text(str(now))  # recorded BEFORE building so a failure still backs off
-    env_path = f"/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:{HOME}/.local/bin"
-    with LOG_FILE.open("a") as log:
-        subprocess.Popen(["/bin/bash", str(SCRIPT)], stdout=log, stderr=log, env={"HOME": str(HOME), "PATH": env_path},
-                         start_new_session=True)
+    import job_events
+    with job_events.job_run("dashboard-rebuild", "Dashboard app rebuild check") as run:
+        now = int(time.time())
+        run.step("Checking", "is the installed app behind the code?")
+        action, reason = decide(**_facts(now))
+        print(f"[dashboard-rebuild] {action}: {reason}", file=sys.stderr)
+        run.step("Decision", f"{action}: {reason}")
+        run.summary(f"{action}: {reason}")
+        if action != "rebuild":
+            return
+        ATTEMPT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        ATTEMPT_FILE.write_text(str(now))  # recorded BEFORE building so a failure still backs off
+        env_path = f"/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:{HOME}/.local/bin"
+        run.step("Rebuilding", "build + install running in the background (log: ~/.claude/logs/dashboard-rebuild.log)")
+        with LOG_FILE.open("a") as log:
+            subprocess.Popen(["/bin/bash", str(SCRIPT)], stdout=log, stderr=log, env={"HOME": str(HOME), "PATH": env_path},
+                             start_new_session=True)
 
 
 if __name__ == "__main__":

@@ -1,3 +1,5 @@
+import { MARVIN_REPO, prKey, canMergeFromDashboard } from './mr_repos.js'
+
 // Reads open PRs and identifies which follow the MR pipeline's evidence
 // schema (G-Eskayo/marvin#72, ADR 0024) -- one fixed, structured PR body
 // format that every MR-pipeline PR uses whether it was raised
@@ -172,6 +174,9 @@ export async function listPipelinePrs(listOpenPrs) {
       number: pr.number,
       title: pr.title,
       url: pr.url,
+      repo: pr.repo || MARVIN_REPO,
+      key: prKey(pr.repo || MARVIN_REPO, pr.number),
+      canMerge: canMergeFromDashboard(pr.repo || MARVIN_REPO),
       hasSchema,
       ticketNumber: evidence?.ticketRef ? Number(evidence.ticketRef) : null,
       evidence,

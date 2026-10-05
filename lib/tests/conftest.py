@@ -27,3 +27,10 @@ def _isolate_board_registry(tmp_path_factory, monkeypatch):
     import ticket_pipeline
     monkeypatch.setattr(ticket_pipeline, "_discover_boards", lambda: [])  # no real gh calls from tests
     monkeypatch.setattr(ticket_pipeline, "_refresh_catalog", lambda: None)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_job_events(tmp_path_factory, monkeypatch):
+    # Instrumented jobs write a run log; tests must never write the real ~/.claude/logs/jobs.
+    import job_events
+    monkeypatch.setattr(job_events, "JOBS_DIR", tmp_path_factory.mktemp("jobs"))

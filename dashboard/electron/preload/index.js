@@ -15,7 +15,7 @@ contextBridge.exposeInMainWorld('api', {
     // see the comment on the mr:approve handler for why.
     approve: (pr) => ipcRenderer.invoke('mr:approve', pr),
     deny: (payload) => ipcRenderer.invoke('mr:deny', payload),
-    ticketContext: (ticketRef) => ipcRenderer.invoke('mr:ticketContext', ticketRef),
+    ticketContext: (ticketRef, repo) => ipcRenderer.invoke('mr:ticketContext', ticketRef, repo),
     reviewStatus: () => ipcRenderer.invoke('mr:reviewStatus'),
     markSeen: (prNumbers) => ipcRenderer.invoke('mr:markSeen', prNumbers),
     // Fires whenever the webhook-server's /mr-ready ping reaches this
@@ -94,6 +94,7 @@ contextBridge.exposeInMainWorld('api', {
   boards: {
     list: () => ipcRenderer.invoke('boards:list'),
     load: (repo, source) => ipcRenderer.invoke('boards:load', repo, source),
-    ticket: (repo, number) => ipcRenderer.invoke('boards:ticket', repo, number)
+    ticket: (repo, number) => ipcRenderer.invoke('boards:ticket', repo, number),
+    summary: (repo) => ipcRenderer.invoke('boards:summary', repo)
   }
 })

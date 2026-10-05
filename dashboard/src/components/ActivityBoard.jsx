@@ -176,7 +176,7 @@ function PipelineLog() {
 
 // Activity tab: per-project Jira-style boards first; the flat pipeline log
 // (per-ticket stages + cost) stays as its own view.
-export default function ActivityBoard({ onOpenMr }) {
+export default function ActivityBoard({ onOpenMr, onOpenDocs, nav }) {
   const [view, setView] = useState('boards')
   return (
     <div>
@@ -191,7 +191,7 @@ export default function ActivityBoard({ onOpenMr }) {
           </button>
         ))}
       </div>
-      {view === 'boards' ? <ProjectBoard onOpenMr={onOpenMr} /> : <PipelineLog />}
+      {view === 'boards' ? <ProjectBoard onOpenMr={onOpenMr} onOpenDocs={onOpenDocs} nav={nav} /> : <PipelineLog />}
     </div>
   )
 }

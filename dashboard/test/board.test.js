@@ -121,3 +121,33 @@ describe('buildBoard', () => {
     expect(board.columns.flatMap((c) => c.cards).every((c) => c.title)).toBe(true)
   })
 })
+
+import { summarizeBoard } from '../electron/main/board.js'
+import { projectIdOf } from '../src/lib/projects.js'
+
+describe('summarizeBoard / projectIdOf', () => {
+  it('counts cards per column and lists what needs attention', () => {
+    const board = buildBoard({
+      repo: 'o/r',
+      issues: [
+        issue({ number: 1, labels: labels('ready-for-agent') }),
+        issue({ number: 2, labels: labels('ready-for-agent'), createdAt: '2026-10-02T00:00:00Z' }),
+        issue({ number: 3, body: 'Blocked by #1' }),
+        issue({ number: 4, state: 'CLOSED' })
+      ],
+      prs: [],
+      eventsByNumber: {},
+      liveNumbers: new Set()
+    })
+    const s = summarizeBoard(board)
+    expect(s.counts).toMatchObject({ ready: 2, blocked: 1, done: 1, progress: 0, review: 0, backlog: 0 })
+    expect(s.open).toBe(3)
+    expect(s.total).toBe(4)
+  })
+
+  it('derives the same project id as the Python catalog', () => {
+    expect(projectIdOf('G-Eskayo/Portfolio_Website')).toBe('portfolio-website')
+    expect(projectIdOf('G-Eskayo/marvin')).toBe('marvin')
+    expect(projectIdOf('G-Eskayo/ML_supervised_learning-Regression-Classification-project')).toBe('ml-supervised-learning-regression-classification-project')
+  })
+})

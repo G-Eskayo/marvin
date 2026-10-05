@@ -14,7 +14,9 @@ import { readCachedRepos } from './docs.js'
 import { createPortfolio } from './portfolio.js'
 import { listTicketActivity, getTicketTimeline } from './activity.js'
 import { readRegistry, loadBoard, REGISTRY_PATH } from './boards.js'
+import { summarizeBoard } from './board.js'
 import { createTriggerHub, createReconciler } from './triggers.js'
+import { listOpenPrsAcrossRepos, normalizeSeen, canMergeFromDashboard, repoFromPrUrl, MARVIN_REPO } from './mr_repos.js'
 import { createIndexer, buildDocsIndex } from './docs_search.js'
 import { createDocsService } from './docs_service.js'
 import { searchFiles, isRevealable } from './files_search.js'
@@ -45,30 +47,21 @@ const MR_DENY_WEBHOOK_URL = process.env.MARVIN_MR_DENY_WEBHOOK_URL || `http://${
 // refreshes immediately instead of waiting on its own fallback poll.
 const DASHBOARD_REFRESH_PORT = Number(process.env.MARVIN_DASHBOARD_REFRESH_PORT) || 7879
 
-async function listOpenPrs() {
-  const { stdout } = await execFileAsync('gh', [
-    'pr',
-    'list',
-    '--repo',
-    'G-Eskayo/marvin',
-    '--state',
-    'open',
-    '--json',
-    'number,title,url,body'
-  ])
+async function ghListOpenPrs(repo) {
+  const { stdout } = await execFileAsync('gh', ['pr', 'list', '--repo', repo, '--state', 'open', '--json', 'number,title,url,body'])
   return JSON.parse(stdout)
 }
 
-async function ghIssueView(issueNumber) {
-  const { stdout } = await execFileAsync('gh', [
-    'issue',
-    'view',
-    String(issueNumber),
-    '--repo',
-    'G-Eskayo/marvin',
-    '--json',
-    'number,title,body'
-  ])
+// Every registered project's open PRs (MR Review spans projects; only marvin's can be merged from
+// here -- see mr_repos.js). A failing repo is logged and skipped, never fatal to the list.
+async function listOpenPrs() {
+  const { prs, errors } = await listOpenPrsAcrossRepos(readRegistry().map((b) => b.repo), ghListOpenPrs)
+  for (const e of errors) console.error(`[mr] could not list PRs for ${e.repo}: ${e.message}`)
+  return prs
+}
+
+async function ghIssueView(issueNumber, repo = MARVIN_REPO) {
+  const { stdout } = await execFileAsync('gh', ['issue', 'view', String(issueNumber), '--repo', repo, '--json', 'number,title,body'])
   return JSON.parse(stdout)
 }
 
@@ -165,6 +158,10 @@ function registerActivityHandlers() {
     const board = await loadBoard(repo, { gh: ghJson })
     reconciler.observe('activity', repo, boardDigest(board), source)
     return board
+  })
+  ipcMain.handle('boards:summary', async (_event, repo) => {
+    assertRegistered(repo)
+    return summarizeBoard(await loadBoard(repo, { gh: ghJson }))
   })
   ipcMain.handle('boards:ticket', async (_event, repo, number) => {
     assertRegistered(repo)
@@ -308,24 +305,37 @@ function registerMrReviewHandlers() {
   // on this machine (see mr_seen.js).
   ipcMain.handle('mr:reviewStatus', async () => {
     const prs = await listPipelinePrs(listOpenPrs)
-    const numbers = prs.map((pr) => pr.number)
-    return { status: computeReviewStatus(numbers, readSeenNumbers(seenPath)), openCount: numbers.length }
+    const keys = prs.map((pr) => pr.key)
+    return { status: computeReviewStatus(keys, normalizeSeen(readSeenNumbers(seenPath))), openCount: keys.length }
   })
 
-  ipcMain.handle('mr:markSeen', (_event, prNumbers) => {
-    markSeen(seenPath, prNumbers)
+  ipcMain.handle('mr:markSeen', (_event, prKeys) => {
+    markSeen(seenPath, prKeys.filter((k) => typeof k === 'string'))
   })
 
   // Live-fetches the linked ticket's (and its parent PRD's) requirements/
   // design/tasks for the detail view, per the "link back, don't duplicate"
   // decision in G-Eskayo/marvin#72's evidence schema (ADR 0024).
-  ipcMain.handle('mr:ticketContext', (_event, ticketRef) => fetchTicketContext(ticketRef, ghIssueView))
+  ipcMain.handle('mr:ticketContext', (_event, ticketRef, repo = MARVIN_REPO) => {
+    if (repo !== MARVIN_REPO && !readRegistry().some((b) => b.repo === repo)) throw new Error(`No board registered for ${repo}`)
+    return fetchTicketContext(ticketRef, (n) => ghIssueView(n, repo))
+  })
+
+  // The merge gate only knows marvin (its tests, its rebuild), so refuse anything else here,
+  // from the PR url itself, whatever the renderer claims.
+  const assertMergeable = (url) => {
+    const repo = repoFromPrUrl(url)
+    if (!repo || !canMergeFromDashboard(repo)) {
+      throw new Error(`Merging ${repo || 'this PR'} from the dashboard isn't set up: the merge gate only runs marvin's tests. Review it on GitHub.`)
+    }
+  }
 
   // The actual "unambiguous, no risk of accidental merge from a stray click"
   // requirement (G-Eskayo/marvin#11's acceptance criteria) lives here, not in
   // the renderer -- a native OS-level confirm dialog can't be spoofed by a
   // fast double-click the way a custom in-page confirm affordance could.
   ipcMain.handle('mr:approve', async (_event, { number, url }) => {
+    assertMergeable(url)
     const { response } = await dialog.showMessageBox(mainWindow, {
       type: 'warning',
       buttons: ['Cancel', 'Merge PR'],
@@ -345,6 +355,7 @@ function registerMrReviewHandlers() {
   // actions have real, visible side effects on GitHub (ADR 0025), and
   // "drop" specifically closes the PR and ticket with no undo.
   ipcMain.handle('mr:deny', async (_event, { number, url, ticketNumber, action, reasons, comment }) => {
+    assertMergeable(url)
     const isDrop = action === 'drop'
     const { response } = await dialog.showMessageBox(mainWindow, {
       type: 'warning',
