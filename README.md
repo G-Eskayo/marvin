@@ -10,7 +10,7 @@
   <img src="assets/screenshots/brain-map-demo.gif" alt="MARVIN's live 3D architecture map rotating, with skill nodes pulsing gold as activity fires" width="480">
 </p>
 
-*Above: MARVIN's real structure, generated from `manifest.json` (one node per skill, hook and memory type; gold pulses are real calls). It is a recorded loop; the live version is `brain-map/index.html`.*
+*Above: MARVIN's real structure, generated from `manifest.json` (one node per skill, hook and memory type; gold pulses are real calls). It is a recorded loop; generate the live version with `python3 brain-map/generate.py`, which writes the `index.html` beside it.*
 
 ## Contents
 
@@ -124,7 +124,7 @@ bash ~/.agents/brain-map/install.sh               # live architecture map as des
 cd ~/.agents/dashboard && npm install && npm run dev   # the dashboard, in development mode
 ```
 
-To check an install worked, open `~/.agents/brain-map/index.html`: every skill you installed should be a node.
+To check an install worked, run `python3 ~/.agents/brain-map/generate.py` and open the `index.html` it writes: every skill you installed should be a node.
 
 **Add a skill:** a folder under `~/.agents/skills/` with a `SKILL.md` (frontmatter `name`, `description`, `tags`). The save hook picks it up; add a row to the routing table in `~/.claude/CLAUDE.md` to wire a slash command. The `write-a-skill` skill scaffolds one.
 
