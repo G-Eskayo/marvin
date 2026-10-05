@@ -459,7 +459,7 @@ if [ -f "$TREE" ]; then echo "brain_data_ts=$(stat -f %m "$TREE")"; else echo "b
 JOB_PLACEMENT = {
     "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "both", "research-colony": "both",
     "desktoplive": "both", "dashboard-webhook": "both",  # webhook on both until #112 (ADR 0032)
-    "ticket-pipeline": "mini",  # laptop's copy is meant to be unloaded (ADR 0032); redundant but claim-safe
+    "ticket-pipeline": "both",  # mini scans; the laptop's copy is a standby that scans only if the mini goes quiet (scanner_role.py)
     "architecture-review": "mini", "auto-fix": "mini", "cron-health": "mini", "health-check": "mini",
     "process-quarantine-reviews": "mini", "verify-digest-fix": "mini",
     "dashboard-launch": "laptop", "desktoplive-restart": "laptop",
