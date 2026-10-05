@@ -265,6 +265,27 @@ def check_pipeline_breaker() -> dict:
     return _result(cid, label, "red", f"dispatch paused -- {detail}", value=len(trips))
 
 
+CATALOG_YELLOW_AFTER_HOURS = 3
+CATALOG_RED_AFTER_HOURS = 24
+
+
+def check_catalog_fresh(path: Path | None = None, now: datetime | None = None) -> dict:
+    """The project catalog (and so the master 'Where things are' doc) must keep refreshing on its own;
+    it is rebuilt hourly by the ticket pipeline and daily by the tidy agent."""
+    import project_catalog
+    cid, label = "catalog:fresh", "Project catalog is current"
+    path = path or project_catalog.catalog_path()
+    now = now or _now()
+    cat = project_catalog.read_catalog(path)
+    gen = project_catalog._parse((cat or {}).get("generated_at"))
+    if gen is None:
+        return _result(cid, label, "yellow", "no catalog built on this machine yet")
+    age_h = (now - gen).total_seconds() / 3600
+    n = len(cat.get("projects", []))
+    sev = "green" if age_h <= CATALOG_YELLOW_AFTER_HOURS else "yellow" if age_h <= CATALOG_RED_AFTER_HOURS else "red"
+    return _result(cid, label, sev, f"{n} projects, built {age_h:.1f}h ago", value=round(age_h, 1))
+
+
 TRIGGER_MISS_LOG = Path.home() / ".claude" / "logs" / "trigger-misses.jsonl"
 TRIGGER_MISS_WINDOW_HOURS = 24
 
@@ -640,6 +661,7 @@ def run_all() -> dict:
     results += check_ticket_failure_streaks()
     results.append(check_pipeline_breaker())
     results.append(check_trigger_coverage())
+    results.append(check_catalog_fresh())
     cron_state = ch._load_state()
     cron_now = datetime.now().astimezone()
     for job in discover_launchd_jobs():

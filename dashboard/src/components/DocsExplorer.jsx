@@ -12,41 +12,46 @@ function formatTimestamp(iso) {
   }
 }
 
+const MASTER_ID = '__master__'
+
 function RepoList({ repos, generatedAt, refreshing, onRefresh, selected, onSelect }) {
   return (
-    <div className="flex w-56 shrink-0 flex-col border-r border-neutral-800">
+    <div className="flex w-60 shrink-0 flex-col border-r border-neutral-800">
       <div className="flex items-center justify-between border-b border-neutral-800 p-3">
-        <span className="text-xs uppercase tracking-wide text-neutral-500">Projects</span>
+        <span className="text-xs uppercase tracking-wide text-neutral-500">Projects ({Math.max(0, repos.length - 1)})</span>
         <button
           onClick={onRefresh}
           disabled={refreshing}
-          title={`Last discovered: ${formatTimestamp(generatedAt)}`}
+          title={`Rediscover projects now. Last built: ${formatTimestamp(generatedAt)}`}
           className="text-xs text-neutral-400 hover:text-neutral-200 disabled:opacity-50"
         >
           {refreshing ? '…' : '↻'}
         </button>
       </div>
       {repos.length === 0 ? (
-        <p className="p-3 text-xs text-neutral-500">
-          No doc-first repos discovered yet. Click ↻ to scan (looks for a CONTEXT.md at the root of each repo).
-        </p>
+        <p className="p-3 text-xs text-neutral-500">Building the project catalog… click ↻ if this stays empty.</p>
       ) : (
         <ul className="overflow-auto">
           {repos.map((repo) => (
-            <li key={repo.name}>
+            <li key={repo.id}>
               <button
-                onClick={() => onSelect(repo.name)}
-                className={`block w-full truncate px-3 py-2 text-left text-sm transition-colors ${
-                  selected === repo.name ? 'bg-neutral-800 text-white' : 'text-neutral-300 hover:bg-neutral-900'
-                }`}
+                onClick={() => onSelect(repo.id)}
+                title={repo.kind === 'portfolio-only' ? 'On the portfolio site only (no repo or folder of its own)' : repo.kind === 'local' ? 'Local folder, not on GitHub' : undefined}
+                className={`flex w-full items-center truncate px-3 py-2 text-left text-sm transition-colors ${
+                  selected === repo.id ? 'bg-neutral-800 text-white' : 'hover:bg-neutral-900'
+                } ${repo.id === MASTER_ID ? 'border-b border-neutral-800 font-medium text-amber-200' : repo.status === 'dormant' || repo.status === 'archived' ? 'text-neutral-500' : 'text-neutral-300'}`}
               >
-                {repo.name}
+                <span className="truncate">{repo.name}</span>
                 {repo.local && <span title={`Local clone: ${repo.local}`} className="ml-1 text-[10px] text-emerald-500">●</span>}
+                {repo.kind === 'portfolio-only' && <span className="ml-1 text-[10px] text-neutral-600">site</span>}
               </button>
             </li>
           ))}
         </ul>
       )}
+      <p className="mt-auto border-t border-neutral-900 p-2 text-[10px] leading-snug text-neutral-600">
+        <span className="text-emerald-500">●</span> local clone on this machine (reads your files, shows uncommitted edits) · dim = dormant · site = portfolio page only
+      </p>
     </div>
   )
 }
@@ -175,7 +180,88 @@ function Highlight({ text, terms }) {
   )
 }
 
-function SearchResults({ state, query, onOpen }) {
+function formatSize(n) {
+  if (n == null) return ''
+  for (const u of ['B', 'K', 'M', 'G']) {
+    if (n < 1024) return `${Math.round(n)}${u}`
+    n /= 1024
+  }
+  return `${Math.round(n)}T`
+}
+
+function FileRow({ f, onOpenProject }) {
+  return (
+    <button
+      onClick={() => window.api.docs.reveal(f.path).catch(() => {})}
+      title="Show in Finder"
+      className="w-full rounded border border-neutral-800 px-3 py-2 text-left transition-colors hover:border-neutral-600"
+    >
+      <p className="flex items-center gap-2 text-sm text-neutral-200">
+        <span className="truncate">{f.name}</span>
+        <span className="shrink-0 rounded bg-neutral-800 px-1 text-[10px] text-neutral-400">{f.bucket}</span>
+        {f.project && (
+          <span
+            role="link"
+            onClick={(e) => {
+              e.stopPropagation()
+              onOpenProject(f.project.id)
+            }}
+            className="shrink-0 rounded bg-emerald-950 px-1 text-[10px] text-emerald-300 hover:bg-emerald-900"
+            title="Open this project's card"
+          >
+            {f.project.name}
+          </span>
+        )}
+      </p>
+      <p className="mt-0.5 truncate text-[11px] text-neutral-600">
+        {f.mtime ? new Date(f.mtime * 1000).toLocaleDateString() : ''} · {f.isDir ? 'folder' : formatSize(f.size)} · {f.path}
+      </p>
+    </button>
+  )
+}
+
+function FileGroup({ title, files, onOpenProject }) {
+  const [all, setAll] = useState(false)
+  if (!files.length) return null
+  const shown = all ? files : files.slice(0, 6)
+  return (
+    <div className="mt-3">
+      <p className="mb-1 text-xs text-neutral-500">
+        {title} ({files.length})
+      </p>
+      <div className="flex flex-col gap-1">
+        {shown.map((f) => (
+          <FileRow key={f.path} f={f} onOpenProject={onOpenProject} />
+        ))}
+      </div>
+      {files.length > 6 && (
+        <button onClick={() => setAll(!all)} className="mt-1 text-xs text-neutral-500 hover:text-neutral-300">
+          {all ? 'Show fewer' : `Show all ${files.length}`}
+        </button>
+      )}
+    </div>
+  )
+}
+
+function FilesSection({ files, onOpenProject }) {
+  return (
+    <div className="mt-8 border-t border-neutral-800 pt-4">
+      <h3 className="text-sm font-medium text-neutral-300">Files on this Mac</h3>
+      <p className="text-[11px] text-neutral-600">Documents, Desktop, Downloads and Developer — by name or by text inside the file (same search as the findit command). Click to show in Finder.</p>
+      {files === null && <p className="mt-2 text-xs text-neutral-500">Searching files…</p>}
+      {files?.error && <p className="mt-2 text-xs text-red-400">File search failed: {files.error}</p>}
+      {files && !files.error && files.name.length + files.content.length === 0 && <p className="mt-2 text-xs text-neutral-500">No files matched.</p>}
+      {files && (
+        <>
+          <FileGroup title="Name matches" files={files.name} onOpenProject={onOpenProject} />
+          <FileGroup title="Found by text inside the file" files={files.content} onOpenProject={onOpenProject} />
+        </>
+      )}
+    </div>
+  )
+}
+
+function SearchResults({ state, query, onOpen, nameOf, files, onOpenProject }) {
   if (!state) return <div className="p-6 text-neutral-500">Searching…</div>
   const { results, indexing, docCount, indexedAt } = state
   return (
@@ -193,7 +279,7 @@ function SearchResults({ state, query, onOpen }) {
               className="w-full rounded-lg border border-neutral-800 bg-neutral-900 p-3 text-left transition-colors hover:border-neutral-600"
             >
               <p className="flex items-center text-xs text-neutral-500">
-                {r.repo} / {r.path}
+                {nameOf(r.repo)} / {r.path}
                 <StateBadge state={r.state} />
               </p>
               <p className="mt-0.5 text-sm font-medium text-white">
@@ -206,6 +292,7 @@ function SearchResults({ state, query, onOpen }) {
           </li>
         ))}
       </ul>
+      <FilesSection files={files} onOpenProject={onOpenProject} />
     </div>
   )
 }
@@ -225,6 +312,7 @@ export default function DocsExplorer() {
   const [pendingHeading, setPendingHeading] = useState(null)
   const [source, setSource] = useState(null)
   const [docsTick, setDocsTick] = useState(0)
+  const [filesState, setFilesState] = useState(null)
   const scrollRef = useRef(null)
 
   useEffect(() => {
@@ -252,6 +340,24 @@ export default function DocsExplorer() {
     }
   }, [query, docsTick])
 
+  // Spotlight is slower and costlier than the doc index: wait for typing to settle, and only
+  // re-run when the query changes (not on every doc-change trigger).
+  useEffect(() => {
+    setFilesState(null)
+    if (!query.trim()) return
+    let live = true
+    const id = setTimeout(() => {
+      window.api.docs
+        .files(query)
+        .then((r) => live && setFilesState(r))
+        .catch((err) => live && setFilesState({ name: [], content: [], error: String(err) }))
+    }, 500)
+    return () => {
+      live = false
+      clearTimeout(id)
+    }
+  }, [query])
+
   // Local docs or git refs changed (file watch in the main process): refresh what is on screen
   // in place, without resetting scroll or selection.
   useEffect(() => window.api.triggers.on((t) => t.topic === 'docs' && setDocsTick((n) => n + 1)), [])
@@ -266,6 +372,8 @@ export default function DocsExplorer() {
         .catch(() => {})
     }
   }, [docsTick])
+
+  const nameOf = (id) => cache.repos.find((r) => r.id === id)?.name || id
 
   function jumpToHeading(index) {
     const el = scrollRef.current?.querySelectorAll(HEADING_SELECTOR)[index]
@@ -308,6 +416,7 @@ export default function DocsExplorer() {
     setContent(null)
     setShowResults(false)
     loadTree(repoName)
+    openFile(repoName, repoName === MASTER_ID ? 'WHERE-THINGS-ARE.md' : 'PROJECT.md')
   }
 
   function openFile(repoName, filePath, headingIndex = null) {
@@ -360,12 +469,12 @@ export default function DocsExplorer() {
         {selectedRepo && <DocTree tree={tree} selectedPath={selectedPath} onSelect={(p) => openFile(selectedRepo, p)} />}
         <div className="flex-1 overflow-auto">
           {showResults ? (
-            <SearchResults state={searchState} query={query} onOpen={handleOpenResult} />
+            <SearchResults state={searchState} query={query} onOpen={handleOpenResult} nameOf={nameOf} files={filesState} onOpenProject={handleSelectRepo} />
           ) : (
             <>
               {source && selectedRepo && (
                 <p className="border-b border-neutral-900 px-6 py-1 text-[11px] text-neutral-600">
-                  {source.source === 'local' ? `Reading local clone · ${source.dir.replace(/^\/Users\/[^/]+/, '~')}` : 'Reading GitHub · no clone of this repo on this machine'}
+                  {source.source === 'local' ? `Reading local clone · ${source.dir.replace(/^\/Users\/[^/]+/, '~')}` : source.source === 'github' ? 'Reading GitHub · no clone of this project on this machine' : source.source === 'master' ? 'Generated daily by the tidy agent from the project catalog' : 'Generated from the project catalog (no docs of its own yet)'}
                 </p>
               )}
               <DocViewer content={content} loading={loading} error={error} scrollRef={scrollRef} onJump={jumpToHeading} />

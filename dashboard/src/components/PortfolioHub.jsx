@@ -227,6 +227,32 @@ function ElementDetails({ element }) {
   )
 }
 
+// A page layout captured from the live site: which pages follow it and, for the rest, what is different.
+function LayoutDetails({ layout }) {
+  const entries = Object.entries(layout.pages || {})
+  const off = entries.filter(([, v]) => !v.conforms)
+  return (
+    <div className="mt-3 flex flex-col gap-2 rounded-md border border-neutral-800 bg-neutral-950 p-3 text-xs text-neutral-300">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="rounded bg-emerald-950 px-1.5 py-0.5 text-[10px] text-emerald-300">captured from the live dev site</span>
+        <span className={off.length ? 'text-amber-400' : 'text-emerald-400'}>{layout.conforming} of {layout.total} pages follow this layout</span>
+      </div>
+      {off.length > 0 && (
+        <details>
+          <summary className="cursor-pointer text-neutral-400">Pages that do not ({off.length})</summary>
+          <div className="mt-2 flex flex-col gap-1">
+            {off.map(([url, v]) => <p key={url} className="font-mono text-[11px]">{url} <span className="text-neutral-500">— {v.why}</span></p>)}
+          </div>
+        </details>
+      )}
+      <details>
+        <summary className="cursor-pointer text-neutral-400">The layout as zones</summary>
+        <pre className="mt-2 overflow-auto rounded border border-neutral-800 p-2 text-[11px] text-neutral-400">{layout.master_skeleton}</pre>
+      </details>
+    </div>
+  )
+}
+
 function Specimen({ template, head, element }) {
   const [res, setRes] = useState(null)
   const [markup, setMarkup] = useState(null)
@@ -278,7 +304,7 @@ function Specimen({ template, head, element }) {
         {showMarkup && <CopyButton text={markup} label="Copy markup" />}
       </div>
       {showMarkup && <pre className="mt-2 max-h-80 overflow-auto rounded border border-neutral-800 bg-neutral-950 p-3 text-[11px] text-neutral-300">{markup}</pre>}
-      {element && <ElementDetails element={element} />}
+      {element && (element.kind === 'layout' ? <LayoutDetails layout={element} /> : <ElementDetails element={element} />)}
     </article>
   )
 }
@@ -356,7 +382,7 @@ function Templates() {
       {groupTemplates(templates).map((g) => (
         <section key={g.kind} className="flex flex-col gap-4">
           <h2 className="text-sm font-medium uppercase tracking-wide text-neutral-400">{titles[g.kind] || g.kind}</h2>
-          {g.items.map((t) => <Specimen key={t.id} template={t} head={head} element={elements[t.id]} />)}
+          {g.items.map((t) => <Specimen key={t.id} template={t} head={head} element={elements[t.id] || elements[`layout-${t.id}`]} />)}
           {g.kind === 'button' && <ButtonAudit />}
         </section>
       ))}
@@ -376,7 +402,12 @@ function Shot({ rel, className = '' }) {
   return src ? <img src={src} alt="" className={className} /> : <div className={`flex items-center justify-center bg-neutral-900 text-[10px] text-neutral-600 ${className}`}>{rel ? 'loading…' : 'no screenshot'}</div>
 }
 
+const LAYOUT_OF_TYPE = { project: 'layout-project-page', hub: 'layout-hub-page', 'all-projects': 'layout-all-projects-page' }
+
 function PageTemplates({ pages }) {
+  const [layouts, setLayouts] = useState({})
+  useEffect(() => { window.api.portfolio.elements().then((list) => setLayouts(Object.fromEntries(list.filter((e) => e.kind === 'layout').map((e) => [e.id, e])))).catch(() => {}) }, [])
+  const verdictOf = (p) => layouts[LAYOUT_OF_TYPE[p.type]]?.pages?.[p.url]
   const [type, setType] = useState('all')
   const [open, setOpen] = useState(null)
   const [markup, setMarkup] = useState(null)
@@ -406,6 +437,11 @@ function PageTemplates({ pages }) {
               <p className="truncate text-xs font-medium text-white">{p.title}</p>
               <p className="truncate font-mono text-[10px] text-neutral-500">{p.url}</p>
               <span className="mt-1 inline-block rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-400">{p.type}</span>
+              {verdictOf(p) && (
+                <span title={verdictOf(p).why || 'follows the layout'} className={`ml-1 inline-block rounded px-1.5 py-0.5 text-[10px] ${verdictOf(p).conforms ? 'bg-emerald-950 text-emerald-300' : 'bg-amber-950 text-amber-300'}`}>
+                  {verdictOf(p).conforms ? 'follows layout' : 'legacy layout'}
+                </span>
+              )}
             </div>
           </button>
         ))}
