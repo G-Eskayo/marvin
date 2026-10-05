@@ -7,6 +7,8 @@ model may run. marvin itself keeps its built-in path and has no profile.
 
     project_profile.py list                 profiles and whether dispatch is on
     project_profile.py selftest <repo>      dry run in a throwaway worktree: no model call, no GitHub writes
+    project_profile.py gate-info <repo>     what the dashboard's merge gate needs (JSON)
+    project_profile.py verify <repo> <dir>  run the required checks in a worktree; exit 0 clean, 1 failed, 3 tool missing
 """
 from __future__ import annotations
 import copy
@@ -103,6 +105,7 @@ def _validate(profile: dict, source: str) -> dict:
         t.setdefault("timeout_s", 1200)
     profile.setdefault("base_branch", "main")
     profile.setdefault("dispatch", "off")  # a profile does nothing until a person turns it on
+    profile.setdefault("merge_from_dashboard", False)  # approving/denying its PRs in MR Review is opt-in too
     profile.setdefault("machines", [])
     profile.setdefault("clone_hints", [])
     profile.setdefault("env", {})
@@ -205,6 +208,12 @@ def _default_runner(cmd, cwd, env, timeout):
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
 
+def _failure_lines(output: str, limit: int = 60) -> list[str]:
+    """The lines that say what failed, kept from the FULL output (a long mostly-green run would otherwise
+    push them out of any tail we keep)."""
+    return [l.strip() for l in output.splitlines() if re.search(r"\bfailed\b|error:|FAIL", l)][:limit]
+
+
 class Measurer:
     """Callable with the shape `execute_ticket` expects of `measure`: worktree -> metrics. Also keeps what
     it saw (`report`) so the PR can say exactly what was and was not verified."""
@@ -215,6 +224,7 @@ class Measurer:
         self.env = env if env is not None else build_env(self.profile)
         self.have = have or (lambda cap, e: globals()["have"](cap, e))
         self.report: dict = {"tiers": [], "notes": []}
+        self.last_output = ""
 
     def __call__(self, worktree: Path) -> dict:
         metrics: dict = {}
@@ -238,8 +248,9 @@ class Measurer:
                 if any(m in out.lower() for m in _NO_TESTS_MARKERS):
                     parsed = {"total": 0, "failed": 0, "skipped": 0, "passed": 0}
                 else:
+                    self.last_output = out
                     raise MeasureError(f"{t['label']} produced no result (crashed or never ran): ...{out[-300:].strip()}")
-            row.update(ran=True, **parsed)
+            row.update(ran=True, output_tail=out[-3000:], failure_lines=_failure_lines(out), **parsed)
             if "build_ok" in parsed:
                 metrics[f"{t['id']}_build_ok"] = {"value": parsed["build_ok"], "higher_is_better": True}
             else:
@@ -263,6 +274,58 @@ class Measurer:
 
     def pr_note(self) -> str:
         return "\n".join(self.report["notes"])
+
+
+# ── what the merge gate asks of a profile ───────────────────────────────────
+
+def gate_info(profile: dict, catalog: dict | None = None, have=None) -> dict:
+    """Everything the dashboard's merge gate needs to know to rebase and retest one of this project's PRs."""
+    profile = _validate(copy.deepcopy(profile), "profile")
+    clone = resolve_clone(profile, catalog if catalog is not None else _catalog())
+    env = build_env(profile)
+    check = have or (lambda cap, e: globals()["have"](cap, e))
+    missing: list[str] = []
+    for t in profile["verify"]:
+        if t["required"] and t.get("enabled") is not False:
+            missing += [c for c in t["requires"] if not check(c, env) and c not in missing]
+    return {"repo": profile["repo"], "clone": str(clone) if clone else None, "base_branch": profile["base_branch"],
+            "merge_from_dashboard": profile["merge_from_dashboard"], "missing_here": missing}
+
+
+def _failure_digest(tiers: list[dict], limit: int = 4000) -> str:
+    """The failing lines first, then the tail of the output."""
+    chunks = []
+    for t in tiers:
+        lines = t.get("failure_lines", [])
+        chunks.append("\n".join(lines[:40]) + ("\n...\n" if lines else "") + t.get("output_tail", "")[-1500:])
+    return "\n".join(chunks)[:limit]
+
+
+def verify_dir(profile: dict, directory: Path, runner=_default_runner, have=None) -> dict:
+    """Run the profile's checks in `directory` (the gate's scratch worktree) and say whether it is clean.
+    kind: passed | failed | env_missing (this machine lacks a tool: not the PR's fault) | error (a check
+    crashed without a result)."""
+    m = Measurer(profile, runner=runner, have=have)
+    try:
+        metrics = m(Path(directory))
+    except EnvMissing as e:
+        return {"ok": False, "kind": "env_missing", "summary": str(e), "tiers": [], "output_tail": ""}
+    except MeasureError as e:
+        return {"ok": False, "kind": "error", "summary": str(e).split(": ...")[0], "tiers": m.report["tiers"], "output_tail": m.last_output[-3000:] or str(e)}
+    bad = []
+    for t in m.report["tiers"]:
+        if not t.get("ran"):
+            continue
+        if t.get("build_ok") == 0:
+            bad.append(t)
+        elif t.get("failed"):
+            bad.append(t)
+    ran = [t for t in m.report["tiers"] if t.get("ran")]
+    if bad:
+        summary = "; ".join(f"{t['label']}: " + ("build failed" if "build_ok" in t else f"{t['failed']} failed of {t['total']}") for t in bad)
+        return {"ok": False, "kind": "failed", "summary": summary, "tiers": ran, "output_tail": _failure_digest(bad)}
+    summary = "; ".join(f"{t['label']}: " + ("build ok" if "build_ok" in t else f"{t['passed']} passed") for t in ran)
+    return {"ok": True, "kind": "passed", "summary": summary, "tiers": ran, "output_tail": ""}
 
 
 # ── selftest ────────────────────────────────────────────────────────────────
@@ -361,6 +424,21 @@ def main() -> int:
             print("note      ", n)
         print("\n--- the PR body the pipeline would raise ---\n" + r["pr_body"])
         return 0
+    if cmd == "gate-info" and len(sys.argv) > 2:
+        profile = load_profile(sys.argv[2])
+        print(json.dumps(gate_info(profile) if profile else {"profile": False}))
+        return 0
+    if cmd == "verify" and len(sys.argv) > 3:
+        profile = load_profile(sys.argv[2])
+        if profile is None:
+            print(f"no profile for {sys.argv[2]}", file=sys.stderr)
+            return 2
+        r = verify_dir(profile, Path(sys.argv[3]))
+        if r["ok"]:
+            print(json.dumps(r))
+            return 0
+        print(f"{r['summary']}\n\n{r['output_tail']}", file=sys.stderr)
+        return 3 if r["kind"] == "env_missing" else 1
     print(__doc__)
     return 1
 
