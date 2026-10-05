@@ -545,6 +545,40 @@ nothing connected them. "Where things are" was only the tidy agent's file-filing
   whether the *right* skill fired for a request (that needs intent classification against the routing table;
   candidate next step using `route.py`'s classifier). Bash "errors" are non-zero exits and are often expected.
 
+### Ticket agents and the completed record (decided 2026-10-05)
+
+- **Completed work is reference, not clutter (Gil: "how will we know where we are going if we don't remember
+  where we have been")**: every project's board has a **Completed** view next to the board: all closed
+  tickets (up to 1000, not just two weeks), newest first, grouped by month, searchable and filterable by tag,
+  with how long each took and the merged PR that closed it (from its `Closes #n`). Clicking one opens the
+  same drill-down (docs it referenced, tickets it relates to). The Done column's Archive is only a
+  convenience; this is the record.
+- **Four ticket agents** (`lib/ticket_agents.py`, rules in pure `lib/ticket_policy.py`), run inside the
+  hourly ticket-pipeline scan across every board repo. They change only **labels and comments**, write every
+  change to `~/.claude/logs/ticket-agent-actions.jsonl` with the ticket's labels before (so it is
+  reversible), cap at 30 changes per pass, and never touch a `pinned` ticket:
+  1. **prioritize** - `priority:p0..p3` from what the ticket unblocks (leverage), project due dates (hard
+     outranks soft), bug/breaking, age (capped). Leaves a priority a person set; updates one it set itself.
+  2. **triage** - untriaged tickets to `ready-for-agent` / `ready-for-human` / `needs-info` plus bug or
+     enhancement, deterministically (sections + acceptance criteria present; no model, no tokens). Skips
+     PRDs and claimed tickets. Comments carry the triage AI disclaimer.
+  3. **stale_claims** - releases `claimed:*` untouched for 2 days when no PR/branch/rescue ref is in flight
+     for it; `held` protects.
+  4. **refeed** - a denied or gate-failed ticket (`needs-reengagement`, which nothing used to read) goes back
+     to `ready-for-agent` with a note; after 2 re-queues it goes to `ready-for-human`. The planner prompt now
+     also reads the ticket comments (`gh issue view --comments`), which is where the denial feedback lives.
+- **Modes** (`config/ticket_agents.json`): `auto` = propose until `act_after` (2026-10-12), then act. In
+  propose mode an agent lists what it would change and changes nothing; the review screen is Health ->
+  Autonomous agents -> Ticket agents. **stale_claims and refeed are pinned to propose** until a person edits
+  the config: releasing a claim can re-queue a ticket that was deliberately held (e.g. #115/#117 are
+  effectively done by the Activity-tab work and want closing, not releasing), and refeed would open a second
+  PR beside the denied one.
+- **Dispatcher** (`ticket_pipeline._unclaimed_ready_tickets`): now skips tickets with an open blocker and
+  `pinned` ones, and orders by priority then age (unscored counts as middle). It still only EXECUTES marvin's
+  tickets: the executor works in marvin's checkout with marvin's test suites. Ready work in other projects is
+  counted and shown in the run log ("Other projects ... no execution profile yet") instead of hidden. A
+  per-project execution profile (clone path, test command, dev-env) is the open piece for clarity-captions.
+
 ## Dashboard app — Portfolio tab (2026-10-02/03)
 
 The portfolio site (`G-Eskayo/portfolio-website-updater`, WordPress + Avada) had visible inconsistency
@@ -648,6 +682,13 @@ replaced by this automated path**: that gap is what this section closes.
    project-page template: reads hero, title, subtitle, body and the repo link, saves the original (page + WP Coder blocks)
    to `~/.claude/outbox/migrations/<slug>/`, rebuilds, re-wraps the sidebar; `--plan` writes nothing, `--rollback` restores.
    A missing Stack line is reported, never invented. Pilot: Anomaly Detection (rollback and re-migration both exercised).
+10. **Legacy migration, batch done (2026-10-05):** 13 of 17 project pages are now built from the layout (the stacks were taken
+   from each page's own text). Guards added: a rebuild that would lose any of the author's words is refused (it stopped two
+   pages), the first backup is never overwritten, hard-wrapped text is tidied (WordPress had turned it into mid-sentence
+   line breaks), and a leftover "Project Website:" label goes with its link. **Two pages left on purpose:** Helicopter
+   Crutches (a long design-process write-up with image/text rows outside the card) and SkineeDipping (a multi-section
+   technical write-up). They are a different page type: they need either their sections folded into the card or a second
+   "long-form project page" layout in the library: a design decision, not something to automate.
 
 ### Element pipeline and the card text box (2026-10-05)
 

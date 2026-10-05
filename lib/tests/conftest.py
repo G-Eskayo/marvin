@@ -27,6 +27,7 @@ def _isolate_board_registry(tmp_path_factory, monkeypatch):
     import ticket_pipeline
     monkeypatch.setattr(ticket_pipeline, "_discover_boards", lambda: [])  # no real gh calls from tests
     monkeypatch.setattr(ticket_pipeline, "_refresh_catalog", lambda: None)
+    monkeypatch.setattr(ticket_pipeline, "_run_ticket_agents", lambda step, summary: None)  # no real gh calls
 
 
 @pytest.fixture(autouse=True)

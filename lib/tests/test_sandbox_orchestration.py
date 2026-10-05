@@ -610,3 +610,22 @@ def test_a_legacy_hash_named_worktree_is_preserved_then_replaced(git_repo):
     assert not legacy.exists()
     [ref] = _rescue_refs(git_repo)
     assert _show(git_repo, ref, "unfinished.py") == "keep me\n"
+
+
+def test_default_executor_tells_the_planner_to_read_the_ticket_comments(monkeypatch, tmp_path):
+    # Denial feedback and earlier failure notes live in the ticket's comments, which a plain
+    # `gh issue view` does not show. Without this a re-queued ticket repeats the same mistake.
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "plan"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+    so._default_executor(tmp_path, "G-Eskayo/marvin#9", None)
+    plan_prompt = calls[0][calls[0].index("-p") + 1]
+    assert "--comments" in plan_prompt
+    assert "feedback" in plan_prompt.lower()

@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
@@ -42,6 +43,8 @@ from task_dispatch import select_machine, dispatch  # noqa: E402
 import failure_breaker  # noqa: E402
 import ticket_stages as ts  # noqa: E402
 import board_registry  # noqa: E402
+import ticket_policy  # noqa: E402
+import ticket_agents  # noqa: E402
 import project_catalog  # noqa: E402
 
 VENV_PYTHON = str(Path.home() / ".agents" / "venv" / "bin" / "python")
@@ -55,27 +58,42 @@ def _label_for_device(device_id: str) -> str:
     return "mac-mini" if device_id.startswith("mac-mini") else "macbook-pro"
 
 
+UNSCORED_RANK = 2  # a ticket the prioritizer hasn't scored yet counts as middle priority
+
+
 def _unclaimed_ready_tickets() -> list[dict]:
+    """What this machine may dispatch next, in order: ready-for-agent, unclaimed, not pinned, and with
+    no open blocker, highest priority first and oldest first among equals. One call fetches every open
+    ticket because whether a blocker is still open depends on the others."""
     proc = subprocess.run(
-        ["gh", "issue", "list", "--repo", REPO, "--label", "ready-for-agent",
-         "--state", "open", "--json", "number,title,labels,createdAt"],
+        ["gh", "issue", "list", "--repo", REPO, "--state", "open", "--limit", "1000",
+         "--json", "number,title,labels,createdAt,body"],
         capture_output=True, text=True, timeout=30,
     )
     if proc.returncode != 0:
         print(f"{LOG_PREFIX} gh issue list failed: {proc.stderr[:300]}", file=sys.stderr)
         return []
     issues = json.loads(proc.stdout)
-    unclaimed = [
-        i for i in issues
-        if not any(l["name"].startswith("claimed:") for l in i["labels"])
-    ]
-    unclaimed.sort(key=lambda i: i["createdAt"])
-    return unclaimed
+    open_numbers = {i["number"] for i in issues}
+
+    def eligible(i):
+        names = set(ticket_policy.label_names(i))
+        return ("ready-for-agent" in names and "pinned" not in names
+                and not any(n.startswith("claimed:") for n in names)
+                and not ticket_policy.open_blockers(i, open_numbers))
+
+    def rank(i):
+        r = ticket_policy.priority_rank(i)
+        return UNSCORED_RANK if r is None else r
+
+    ready = [i for i in issues if eligible(i)]
+    ready.sort(key=lambda i: (rank(i), i["createdAt"]))
+    return ready
 
 
 def _refresh_catalog() -> None:
-    # The hourly pipeline run also keeps the project catalog (and the master "Where things
-    # are" doc built from it) current. Best effort: never let it block dispatch.
+    # The hourly pipeline run also keeps the project catalog (and the master "Where things are"
+    # doc built from it) current. Best effort: never let it block dispatch.
     try:
         path = project_catalog.catalog_path()
         if project_catalog.is_stale(path, 50 * 60):
@@ -83,6 +101,25 @@ def _refresh_catalog() -> None:
             print(f"{LOG_PREFIX} project catalog: " + (f"{res['count']} projects" if res["ok"] else f"refresh failed, kept last good ({res['error']})"), file=sys.stderr)
     except Exception as e:  # noqa: BLE001
         print(f"{LOG_PREFIX} project catalog: {e}", file=sys.stderr)
+
+
+def _run_ticket_agents(step, summary) -> None:
+    """Prioritize / triage / stale-claim / refeed across every board repo (lib/ticket_agents.py), then
+    note which projects have ready work this machine cannot execute yet. Best effort, and the agents
+    only propose until their date (config/ticket_agents.json), so this never blocks dispatch."""
+    try:
+        cfg = ticket_agents.load_config()
+        snap = ticket_agents.collect(ticket_agents.board_repos())
+        res = ticket_agents.run(snap, ticket_agents._gh, cfg, datetime.now(timezone.utc),
+                                in_flight=lambda repo: ticket_agents.in_flight_numbers(repo, snap),
+                                due_for=ticket_agents.due_for_repo, report=lambda agent, detail: step(f"Ticket agents · {agent}", detail))
+        step("Ticket agents", f"{res['applied']} applied, {res['proposed']} proposed, {res['failed']} failed")
+        elsewhere = ticket_agents.ready_elsewhere(snap)
+        if elsewhere:
+            step("Other projects", "ready for an agent but no execution profile yet: " + ", ".join(f"{r.split('/')[1]} {n}" for r, n in elsewhere.items()))
+    except Exception as e:  # noqa: BLE001
+        print(f"{LOG_PREFIX} ticket agents: {e}", file=sys.stderr)
+        step("Ticket agents", f"skipped: {e}")
 
 
 def _active_project_repos() -> list[str]:
@@ -168,6 +205,7 @@ def _scan(run, dry_run: bool) -> None:
         step("Board discovery", f"{len(added)} new" if added else "no new projects")
         step("Project catalog", "refresh if older than 50 min")
         _refresh_catalog()
+        _run_ticket_agents(step, summary)
 
     # Cross-ticket circuit breaker: the same failure across different tickets means
     # the environment is broken, not the tickets -- stop feeding it more tickets

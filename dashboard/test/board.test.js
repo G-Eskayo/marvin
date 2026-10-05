@@ -242,3 +242,42 @@ describe('archive', () => {
     expect(s.archived).toBe(1)
   })
 })
+
+import { buildCompleted } from '../electron/main/board.js'
+
+describe('buildCompleted', () => {
+  const closedIssue = (n, createdDaysAgo, closedDaysAgo, extra = {}) => ({
+    number: n,
+    title: `T${n}`,
+    state: 'CLOSED',
+    labels: [{ name: 'enhancement' }],
+    url: `u${n}`,
+    createdAt: new Date(Date.parse('2026-10-05T12:00:00Z') - createdDaysAgo * 86400_000).toISOString(),
+    closedAt: new Date(Date.parse('2026-10-05T12:00:00Z') - closedDaysAgo * 86400_000).toISOString(),
+    ...extra
+  })
+
+  it('lists closed tickets newest first with how long each took, grouped by month', () => {
+    const out = buildCompleted({ issues: [closedIssue(1, 40, 35), closedIssue(2, 5, 1), closedIssue(3, 20, 18)], prs: [] })
+    expect(out.items.map((i) => i.number)).toEqual([2, 3, 1])
+    expect(out.items[0].tookDays).toBe(4)
+    // closed 1, 18 and 35 days before 2026-10-05: Oct, Sep, Aug
+    expect(out.months.map((m) => [m.month, m.items.length])).toEqual([['2026-10', 1], ['2026-09', 1], ['2026-08', 1]])
+  })
+
+  it('ignores open tickets', () => {
+    const open = { ...closedIssue(9, 3, 1), state: 'OPEN', closedAt: null }
+    expect(buildCompleted({ issues: [open], prs: [] }).items).toEqual([])
+  })
+
+  it('names the merged PR that closed each ticket, from its "Closes #n"', () => {
+    const prs = [{ number: 50, title: 'The fix', url: 'p50', body: 'Closes #2', mergedAt: '2026-10-04T00:00:00Z' }]
+    const out = buildCompleted({ issues: [closedIssue(2, 5, 1)], prs })
+    expect(out.items[0].pr).toMatchObject({ number: 50, title: 'The fix' })
+  })
+
+  it('keeps the tags so completed work can be filtered the same way as the board', () => {
+    const out = buildCompleted({ issues: [closedIssue(1, 5, 1, { labels: [{ name: 'bug' }, { name: 'claimed:mac-mini' }] })], prs: [] })
+    expect(out.items[0].tags.map((t) => [t.name, t.kind])).toEqual([['bug', 'type'], ['claimed:mac-mini', 'claim']])
+  })
+})

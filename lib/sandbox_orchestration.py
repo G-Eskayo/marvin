@@ -117,7 +117,9 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
         f"{autonomy_note}\n\n"
         f"Read GitHub issue {ticket_ref} (gh issue view {ticket_ref}) and produce a "
         f"concise, concrete implementation plan covering its 'What to build' section "
-        f"and every acceptance criterion. Plan only -- do not edit any files yet."
+        f"and every acceptance criterion. Also read its comments (gh issue view {ticket_ref} --comments): "
+        f"any denial feedback or earlier failure notes there are requirements for this attempt. "
+        f"Plan only -- do not edit any files yet."
     )
     if feedback is not None:
         plan_prompt += (

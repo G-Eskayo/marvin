@@ -86,6 +86,12 @@ Avoid specific file paths or code snippets — they go stale fast. Exception: if
 
 Or "None - can start immediately" if no blockers.
 
+## Docs
+
+- The docs this slice depends on or will change: write ADRs as "ADR 0033", and name `CONTEXT.md` or `README.md` when they apply. The dashboard turns these into live links in both directions (ticket <-> doc), so a reader of the ticket can open the doc and a reader of the doc can see every ticket that points at it.
+
+Or "None" if it touches no documented decision.
+
 </issue-template>
 
 Do NOT close or modify any parent issue.

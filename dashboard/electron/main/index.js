@@ -13,9 +13,9 @@ import { readHealthStatus, runHealthCheckNow } from './health.js'
 import { readCachedRepos } from './docs.js'
 import { createPortfolio } from './portfolio.js'
 import { listTicketActivity, getTicketTimeline } from './activity.js'
-import { readRegistry, loadBoard, fetchBoardData, withProjectStatus, REGISTRY_PATH } from './boards.js'
+import { readRegistry, loadBoard, fetchBoardData, fetchCompletedData, withProjectStatus, REGISTRY_PATH } from './boards.js'
 import { createRelationsService } from './relations_service.js'
-import { summarizeBoard } from './board.js'
+import { summarizeBoard, buildCompleted } from './board.js'
 import { createTriggerHub, createReconciler } from './triggers.js'
 import { listOpenPrsAcrossRepos, normalizeSeen, canMergeFromDashboard, repoFromPrUrl, MARVIN_REPO } from './mr_repos.js'
 import { createIndexer, buildDocsIndex, loadIndex } from './docs_search.js'
@@ -27,6 +27,7 @@ import { DISPATCH_STATE_PATH } from './dispatch_status.js'
 import { createHash } from 'crypto'
 import { JOBS_DIR } from './jobs.js'
 import { listAgents } from './agents.js'
+import { readTicketAgents } from './ticket_agents.js'
 import { readToolUsage, isStale as toolUsageStale } from './tool_usage.js'
 import { createRefreshServer } from './refresh_server.js'
 import { adoptLoginShellPath } from './path.js'
@@ -152,6 +153,7 @@ function registerDispatchHandlers() {
 function registerHealthHandlers() {
   ipcMain.handle('health:status', () => readHealthStatus())
   ipcMain.handle('health:agents', () => listAgents())
+  ipcMain.handle('health:ticketAgents', () => readTicketAgents())
   // Tool & skill usage from the session transcripts: rescanned when older than 10 minutes (about 1.5s).
   ipcMain.handle('health:tools', async () => {
     let usage = readToolUsage()
@@ -187,6 +189,16 @@ function registerActivityHandlers() {
   ipcMain.handle('boards:summary', async (_event, repo) => {
     assertRegistered(repo)
     return summarizeBoard(await loadBoard(repo, { gh: ghJson, data: await getBoardData(repo, ghJson) }))
+  })
+  // Completed work (all closed tickets + the PRs that closed them), cached 5 min: it only grows slowly.
+  const completedCache = new Map()
+  ipcMain.handle('boards:completed', async (_event, repo) => {
+    assertRegistered(repo)
+    const hit = completedCache.get(repo)
+    if (hit && Date.now() - hit.at < 300_000) return hit.value
+    const value = buildCompleted(await fetchCompletedData(repo, ghJson))
+    completedCache.set(repo, { at: Date.now(), value })
+    return value
   })
   ipcMain.handle('boards:ticket', async (_event, repo, number) => {
     assertRegistered(repo)
