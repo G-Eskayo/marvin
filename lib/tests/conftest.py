@@ -27,6 +27,7 @@ def _isolate_board_registry(tmp_path_factory, monkeypatch):
     import ticket_pipeline
     monkeypatch.setattr(ticket_pipeline, "_discover_boards", lambda: [])  # no real gh calls from tests
     monkeypatch.setattr(ticket_pipeline, "_refresh_catalog", lambda: None)
+    monkeypatch.setattr(ticket_pipeline, "_local_busy", lambda: False)  # the real machine may be mid-ticket
     monkeypatch.setattr(ticket_pipeline, "_run_ticket_agents", lambda step, summary: None)  # no real gh calls
 
 
@@ -42,3 +43,11 @@ def _isolate_project_profiles(tmp_path_factory, monkeypatch):
     # A real config/projects/*.json with dispatch "on" must never change what a test dispatches.
     import project_profile
     monkeypatch.setattr(project_profile, "PROFILES_DIR", tmp_path_factory.mktemp("profiles"))
+
+
+@pytest.fixture(autouse=True)
+def _isolate_ticket_stages_everywhere(tmp_path_factory, monkeypatch):
+    # Tests use realistic ticket references (#9, #17...); recorded for real they pollute the account's actual
+    # ticket-stages folder and show up as fake history on the dashboard (found 2026-10-05).
+    import ticket_stages
+    monkeypatch.setattr(ticket_stages, "STAGES_DIR", tmp_path_factory.mktemp("stages"))

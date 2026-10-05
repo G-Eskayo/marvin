@@ -247,3 +247,29 @@ def test_ready_work_only_counts_as_waiting_when_the_executor_cannot_run_that_pro
     snap = {cc: {"issues": [issue(1, labels=["ready-for-agent"])], "prs": []}}
     assert ta.ready_elsewhere(snap) == {cc: 1}
     assert ta.ready_elsewhere(snap, executable={"G-Eskayo/marvin", cc}) == {}
+
+
+def test_adding_a_label_the_repo_has_never_had_creates_it_first():
+    calls = []
+
+    def gh(args):
+        calls.append(args)
+        if args[:2] == ["issue", "edit"] and not any(c[:2] == ["label", "create"] for c in calls):
+            raise RuntimeError("'priority:p1' not found")
+        return ""
+
+    ta.apply_action({"op": "add_label", "repo": "G-Eskayo/clarity-captions", "number": 3, "arg": "priority:p1"}, gh)
+    assert any(c[:3] == ["label", "create", "priority:p1"] for c in calls)
+    assert [c[:2] for c in calls].count(["issue", "edit"]) == 2
+
+
+def test_other_label_failures_are_not_swallowed():
+    def gh(args):
+        raise RuntimeError("HTTP 403 forbidden")
+
+    try:
+        ta.apply_action({"op": "add_label", "repo": "o/r", "number": 3, "arg": "bug"}, gh)
+    except RuntimeError as e:
+        assert "403" in str(e)
+    else:
+        raise AssertionError("must not hide a real failure")

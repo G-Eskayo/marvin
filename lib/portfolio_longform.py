@@ -156,6 +156,46 @@ def convert(url: str, *, plan: bool = False, outbox: Path = OUTBOX, runner=pm._r
     return {"ok": True, **summary, "backup": str(backup / BACKUP), "pages_regenerated": len(log)}
 
 
+def author(url: str, content: dict, *, plan: bool = False, outbox: Path = OUTBOX, runner=pm._run, regenerate=pa.regenerate_pages,
+           project: Path = pa.PROJECT) -> dict:
+    """Rebuild an existing project page as a long-form page from NEW, authored content (a lead and sections), keeping its
+    title, subtitle, hero, Stack line and buttons. For projects whose long form is written, not restructured out of the old
+    page. The old page is saved first (before-longform.json), as for a conversion; --rollback restores it."""
+    page = pm.find_page(url, runner)
+    raw = pm._wp(runner, "post", "get", str(page["ID"]), "--field=post_content").stdout
+    try:
+        current = parse_short_page(raw)
+    except ConversionError as exc:
+        return {"ok": False, "stage": "skipped", "url": url, "reason": str(exc)}
+    sections = content.get("sections") or []
+    if not content.get("lead_html", "").strip() or not sections:
+        return {"ok": False, "stage": "invalid", "url": url, "reason": "a lead and at least one section are required"}
+    rendered_sections = [pt.render("longform-section", {"HEADING": s["heading"], "BODY_HTML": s["body_html"]}, None, raw=False) for s in sections]
+    bad = [e for r in rendered_sections for e in r["errors"] + [f"missing {m}" for m in r["missing"]]]
+    if bad:
+        return {"ok": False, "stage": "render", "url": url, "errors": bad}
+    spec = {"template": "longform-page", "fields": {
+        "TITLE": content.get("title") or current["title"], "SUBTITLE": content.get("subtitle") or current["subtitle"],
+        "HERO_IMAGE_URL": content.get("hero") or current["hero"], "LEAD_HTML": content["lead_html"], "STACK_CSV": content.get("stack") or current["stack"],
+        "SECTIONS_HTML": "\n".join(r["html"] for r in rendered_sections)},
+        "options": {"actions": content.get("actions") if content.get("actions") is not None else current["actions"]}}
+    rendered = pm.render_page(spec)
+    if not rendered["ok"]:
+        return {"ok": False, "stage": "render", "url": url, "errors": rendered["errors"] + [f"missing {m}" for m in rendered["missing"]]}
+    summary = {"url": url, "sections": [s["heading"] for s in sections], "figures": rendered["html"].count("<img") if False else pm.render_page(spec, raw=False)["html"].count("<img")}
+    if plan:
+        return {"ok": True, "plan": True, **summary}
+    slug = url.strip("/").split("/")[-1]
+    backup = Path(outbox) / slug
+    backup.mkdir(parents=True, exist_ok=True)
+    (backup / BACKUP).write_text(json.dumps({"page_id": page["ID"], "url": url, "content": raw}, indent=2))
+    r = pm._wp(runner, "post", "update", str(page["ID"]), "-", input=rendered["html"])
+    if r.returncode != 0:
+        raise pm.MigrationError(f"updating the page failed: {(r.stderr or r.stdout)[-200:]}")
+    log = regenerate(project, runner) if regenerate else []
+    return {"ok": True, **summary, "backup": str(backup / BACKUP), "pages_regenerated": len(log)}
+
+
 def rollback(slug: str, outbox: Path = OUTBOX, runner=pm._run) -> dict:
     saved = json.loads((Path(outbox) / slug / BACKUP).read_text())
     r = pm._wp(runner, "post", "update", str(saved["page_id"]), "-", input=saved["content"])
@@ -170,8 +210,14 @@ def main() -> None:
     ap.add_argument("url")
     ap.add_argument("--plan", action="store_true")
     ap.add_argument("--rollback", action="store_true")
+    ap.add_argument("--author", metavar="CONTENT.json", help="rebuild the page from authored content: {lead_html, sections:[{heading, body_html}], stack?, subtitle?}")
     args = ap.parse_args()
-    out = rollback(args.url.strip("/").split("/")[-1]) if args.rollback else convert(args.url, plan=args.plan)
+    if args.rollback:
+        out = rollback(args.url.strip("/").split("/")[-1])
+    elif args.author:
+        out = author(args.url, json.loads(Path(args.author).read_text()), plan=args.plan)
+    else:
+        out = convert(args.url, plan=args.plan)
     print(json.dumps(out))
     sys.exit(0 if out.get("ok") else 2)
 

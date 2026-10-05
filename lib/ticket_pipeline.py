@@ -155,10 +155,15 @@ def _ensure_board(repo: str = REPO) -> None:
 
 
 def _claim(issue_number: int, label: str, title: str = "", repo: str = REPO) -> bool:
-    proc = subprocess.run(
-        ["gh", "issue", "edit", str(issue_number), "--repo", repo, "--add-label", f"claimed:{label}"],
-        capture_output=True, text=True, timeout=15,
-    )
+    cmd = ["gh", "issue", "edit", str(issue_number), "--repo", repo, "--add-label", f"claimed:{label}"]
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    if proc.returncode != 0 and "not found" in (proc.stderr or "").lower():
+        # First claim in a project that has never had this machine's claim label: create it, then retry
+        # (marvin's repo already has them, which is why this only shows up for other projects).
+        subprocess.run(["gh", "label", "create", f"claimed:{label}", "--repo", repo, "--color", "5319E7",
+                        "--description", "Being worked on by this machine's ticket pipeline"],
+                       capture_output=True, text=True, timeout=15)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
     if proc.returncode != 0:
         print(f"{LOG_PREFIX} failed to claim #{issue_number}: {proc.stderr[:300]}", file=sys.stderr)
         return False
@@ -201,6 +206,14 @@ def _order_key(ticket: dict) -> tuple:
     return (UNSCORED_RANK if rank is None else rank, ticket["createdAt"])
 
 
+def _local_busy() -> bool:
+    try:
+        from task_dispatch import _read_local_dispatch_state
+        return bool(_read_local_dispatch_state().get("busy"))
+    except Exception:  # noqa: BLE001 -- if we cannot tell, assume busy: a missed scan is cheap, a double run is not
+        return True
+
+
 def _select_for_profile(profile: dict):
     """A machine the profile allows, that is free, and (if it is this one) has the tools its required
     checks need. Other machines are trusted to be what the profile says they are; a ticket that proves
@@ -209,8 +222,11 @@ def _select_for_profile(profile: dict):
         selected = select_machine(device)
         if selected is None:
             continue
-        if selected[1].get("is_self") and pp.missing_here(profile):
-            continue
+        if selected[1].get("is_self"):
+            # An explicit target skips the busy check for THIS machine (select_machine only checks other
+            # machines then), so check it here: never start a second ticket on top of a running one.
+            if _local_busy() or pp.missing_here(profile):
+                continue
         return selected
     return None
 
