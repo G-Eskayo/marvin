@@ -682,7 +682,7 @@ replaced by this automated path**: that gap is what this section closes.
    project-page template: reads hero, title, subtitle, body and the repo link, saves the original (page + WP Coder blocks)
    to `~/.claude/outbox/migrations/<slug>/`, rebuilds, re-wraps the sidebar; `--plan` writes nothing, `--rollback` restores.
    A missing Stack line is reported, never invented. Pilot: Anomaly Detection (rollback and re-migration both exercised).
-10. **Legacy migration, batch done (2026-10-05):** 13 of 17 project pages are now built from the layout (the stacks were taken
+10. **Legacy migration, batch done (2026-10-05):** 15 of 17 project pages are now built from the layout (5 modern + 10 migrated) (the stacks were taken
    from each page's own text). Guards added: a rebuild that would lose any of the author's words is refused (it stopped two
    pages), the first backup is never overwritten, hard-wrapped text is tidied (WordPress had turned it into mid-sentence
    line breaks), and a leftover "Project Website:" label goes with its link. **Two pages left on purpose:** Helicopter
