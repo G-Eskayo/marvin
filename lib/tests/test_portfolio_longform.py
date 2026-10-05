@@ -101,3 +101,34 @@ def test_converting_saves_the_short_page_first_and_rollback_restores_it(tmp_path
 def test_a_page_without_structure_is_skipped_not_failed(tmp_path):
     out = lf.convert("/ai-projects/p/", outbox=tmp_path, runner=_runner(short("<p>Just prose.</p>")), regenerate=None)
     assert out["ok"] is False and out["stage"] == "skipped" and "heading" in out["reason"]
+
+
+# ── authored long-form content on an existing page ──────────────────────────
+
+CONTENT = {"lead_html": "<p>New lead.</p>", "stack": "Swift", "sections": [{"heading": "Why", "body_html": "<p>because</p>"}, {"heading": "How", "body_html": "<p>so</p>"}]}
+
+
+def test_authoring_keeps_the_frame_and_replaces_the_body(tmp_path):
+    r = _runner(short())
+    out = lf.author("/ai-projects/p/", CONTENT, outbox=tmp_path, runner=r, regenerate=lambda p, rr: ["ok"])
+    assert out["ok"] and out["sections"] == ["Why", "How"]
+    update = next(inp for c, inp in r.calls if "post update" in c)
+    assert "[fusion_code]" in update
+    saved = json.loads((tmp_path / "p" / "before-longform.json").read_text())
+    assert saved["content"] == short()                                   # the old page is saved first
+
+
+def test_authoring_can_override_the_subtitle_hero_stack_and_buttons_and_otherwise_keeps_them():
+    import base64, re
+    r = _runner(short())
+    lf.author("/ai-projects/p/", {**CONTENT, "subtitle": "New sub", "hero": "/new.jpg", "actions": []}, plan=False, outbox=Path("/tmp/lf-test-outbox"), runner=r, regenerate=None)
+    update = next(inp for c, inp in r.calls if "post update" in c)
+    html = base64.b64decode(re.search(r"\[fusion_code\]([A-Za-z0-9+/=]+)\[/fusion_code\]", update).group(1)).decode()
+    assert "New sub" in html and "/new.jpg" in html and "Swift." in html and "action-row" not in html
+
+
+def test_authoring_requires_a_lead_and_sections_and_leaves_the_page_alone_otherwise(tmp_path):
+    r = _runner(short())
+    out = lf.author("/ai-projects/p/", {"lead_html": "", "sections": []}, outbox=tmp_path, runner=r, regenerate=None)
+    assert out["ok"] is False and out["stage"] == "invalid"
+    assert not any("post update" in c for c, _ in r.calls)

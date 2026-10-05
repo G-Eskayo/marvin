@@ -339,3 +339,53 @@ def test_the_wrapper_command_for_another_project_names_it_and_logs_separately():
     assert f"{tp.RUN_TICKET_SCRIPT} {CC}#7" in command
     assert "dispatch_clarity-captions_issue7.log" in command
     assert tp._build_wrapper_command(7).count("clarity") == 0  # marvin's command is unchanged
+
+
+# ── a project that has never had a claim label ──────────────────────────────
+
+def test_claiming_creates_the_label_the_first_time_a_project_needs_it(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        label_missing = cmd[:3] == ["gh", "issue", "edit"] and not any(c[:3] == ["gh", "label", "create"] for c in calls)
+        return SimpleNamespace(returncode=1 if label_missing else 0, stdout="", stderr="'claimed:mac-mini' not found" if label_missing else "")
+
+    monkeypatch.setattr(tp.subprocess, "run", fake_run)
+    monkeypatch.setattr(tp.ts, "record_stage", lambda *a, **k: None)
+    monkeypatch.setattr(tp, "_ensure_board", lambda *a, **k: None)
+    assert tp._claim(21, "mac-mini", title="t", repo="G-Eskayo/clarity-captions") is True
+    created = [c for c in calls if c[:3] == ["gh", "label", "create"]]
+    assert created and created[0][3] == "claimed:mac-mini" and created[0][created[0].index("--repo") + 1] == "G-Eskayo/clarity-captions"
+    assert [c[:3] for c in calls].count(["gh", "issue", "edit"]) == 2  # tried, created the label, tried again
+
+
+def test_a_claim_that_fails_for_another_reason_is_not_retried_or_papered_over(monkeypatch):
+    calls = []
+    monkeypatch.setattr(tp.subprocess, "run", lambda cmd, **kw: calls.append(cmd) or SimpleNamespace(returncode=1, stdout="", stderr="HTTP 403 forbidden"))
+    assert tp._claim(21, "mac-mini", repo="G-Eskayo/clarity-captions") is False
+    assert not any(c[:3] == ["gh", "label", "create"] for c in calls)
+
+
+# ── never start a second ticket on a machine that is already running one ────
+
+def test_a_machine_that_is_already_running_a_ticket_is_not_chosen_again_for_another_project(monkeypatch):
+    # task_dispatch.select_machine(<explicit device>) skips the busy check for the local machine, so asking for the
+    # profile's machine by name let a second ticket start on top of the first (found live 2026-10-05).
+    monkeypatch.setattr(tp, "select_machine", lambda target=None: (target, {"is_self": True}))
+    monkeypatch.setattr(tp.pp, "missing_here", lambda p: [])
+    monkeypatch.setattr(tp, "_local_busy", lambda: True)
+    assert tp._select_for_profile({"machines": ["mac-mini-1"]}) is None
+
+
+def test_the_same_machine_is_chosen_once_it_is_free(monkeypatch):
+    monkeypatch.setattr(tp, "select_machine", lambda target=None: (target, {"is_self": True}))
+    monkeypatch.setattr(tp.pp, "missing_here", lambda p: [])
+    monkeypatch.setattr(tp, "_local_busy", lambda: False)
+    assert tp._select_for_profile({"machines": ["mac-mini-1"]})[0] == "mac-mini-1"
+
+
+def test_a_remote_machine_is_not_blocked_by_this_machines_busy_flag(monkeypatch):
+    monkeypatch.setattr(tp, "select_machine", lambda target=None: (target, {"is_self": False}))
+    monkeypatch.setattr(tp, "_local_busy", lambda: True)
+    assert tp._select_for_profile({"machines": ["macbook-pro-1"]})[0] == "macbook-pro-1"  # select_machine already checked it

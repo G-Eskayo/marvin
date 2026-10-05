@@ -195,7 +195,14 @@ def refeed_counts(path: Path, repo: str) -> dict[int, int]:
 def apply_action(a: dict, gh) -> None:
     base = ["--repo", a["repo"]]
     if a["op"] == "add_label":
-        gh(["issue", "edit", str(a["number"]), *base, "--add-label", a["arg"]])
+        try:
+            gh(["issue", "edit", str(a["number"]), *base, "--add-label", a["arg"]])
+        except Exception as e:  # noqa: BLE001
+            if "not found" not in str(e).lower():
+                raise
+            # a project that has never had this label (priority:p1, ready-for-human...): create it, retry once
+            gh(["label", "create", a["arg"], *base])
+            gh(["issue", "edit", str(a["number"]), *base, "--add-label", a["arg"]])
     elif a["op"] == "remove_label":
         gh(["issue", "edit", str(a["number"]), *base, "--remove-label", a["arg"]])
     elif a["op"] == "comment":
