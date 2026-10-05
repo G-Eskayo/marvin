@@ -27,9 +27,9 @@ BASE = "http://localhost:8080"
 
 # inventory page type -> (layout id, template id)
 LAYOUTS = {
-    "project": ("layout-project-page", "project-page"),
-    "hub": ("layout-hub-page", "hub-page"),
-    "all-projects": ("layout-all-projects-page", "all-projects-page"),
+    "project": [("layout-project-page", "project-page"), ("layout-longform-page", "longform-page")],
+    "hub": [("layout-hub-page", "hub-page")],
+    "all-projects": [("layout-all-projects-page", "all-projects-page")],
 }
 # the part of the live page that holds the authored content (outside the theme's own header / footer)
 ROOT_JS = """() => {
@@ -58,6 +58,8 @@ def _token(tag: Tag) -> str | None:
         return "{other-projects}"
     if _has_class(tag, "col-md-6") and tag.select_one(".card-container-lg"):
         return "{card}"
+    if tag.name == "section" and _has_class(tag, "longform-section"):
+        return "{section}"                       # a long-form section: the repeating zone; its insides are the author's
     if tag.name == "a" and _has_class(tag, "btn"):
         return "{button}"
     if tag.name == "nav" and _has_class(tag, "hub-sidebar"):
@@ -154,7 +156,7 @@ def skeleton(html: str) -> str:
         else:
             break
     # the authored body is one zone however many blocks it holds
-    return re.sub(r"\{body\}\*", "{body}", "\n".join(_walk(node)))
+    return re.sub(r"\{(body|section)\}\*", r"{\1}", "\n".join(_walk(node)))
 
 
 OPTIONAL = ("{actions}",)      # zones a page may omit: a project with no repo or file gets no button row, never an invented one
@@ -191,40 +193,46 @@ def master_skeleton(template_id: str, project: Path = PROJECT) -> str:
 
 
 def capture(base: str = BASE, project: Path = PROJECT, inventory: Path = INVENTORY) -> dict:
+    """A page follows the first of its type's layouts whose skeleton it matches (a project page: the short layout or the
+    long-form one). A page that follows none is listed under the type's first layout with the reason."""
     from playwright.sync_api import sync_playwright
     pages = json.loads(Path(inventory).read_text())["pages"]
-    results: dict[str, dict] = {}
+    skeletons: dict[str, tuple[str, str]] = {}                     # url -> (page type, skeleton)
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
         page = browser.new_page(viewport={"width": 1440, "height": 900})
         for entry in pages:
             if entry["type"] not in LAYOUTS:
                 continue
-            layout_id, template_id = LAYOUTS[entry["type"]]
             page.goto(base + entry["url"], wait_until="networkidle")
             page.wait_for_timeout(300)
-            html = page.evaluate(ROOT_JS)
-            results.setdefault(layout_id, {"template": template_id, "pages": {}})["pages"][entry["url"]] = skeleton(html or "")
+            skeletons[entry["url"]] = (entry["type"], skeleton(page.evaluate(ROOT_JS) or ""))
         browser.close()
+    masters = {lid: (tid, master_skeleton(tid, project)) for cands in LAYOUTS.values() for lid, tid in cands}
+    records: dict[str, dict] = {lid: {} for lid in masters}
+    for url, (ptype, sk) in skeletons.items():
+        cands = LAYOUTS[ptype]
+        followed = next((lid for lid, _ in cands if not diff_summary(masters[lid][1], sk)), None)
+        if followed:
+            records[followed][url] = {"conforms": True}
+        else:
+            first = cands[0][0]
+            records[first][url] = {"conforms": False, "why": diff_summary(masters[first][1], sk)}
     out_dir = Path(project) / "templates" / "elements"
     out_dir.mkdir(parents=True, exist_ok=True)
     written = {}
-    for layout_id, data in results.items():
-        master = master_skeleton(data["template"], project)
-        verdicts = {}
-        for url, sk in data["pages"].items():
-            why = diff_summary(master, sk)
-            verdicts[url] = {"conforms": not why, **({"why": why} if why else {})}
+    for lid, verdicts in records.items():
+        tid, master = masters[lid]
         record = {
-            "id": layout_id, "kind": "layout", "template": data["template"],
-            "name": data["template"].replace("-", " ").capitalize() + " layout",
+            "id": lid, "kind": "layout", "template": tid,
+            "name": tid.replace("-", " ").capitalize() + " layout",
             "description": "The frame of this page type: its zones in order, made of the library's elements. The authored body is free; the zones around it are not.",
             "markup": None, "master_skeleton": master,
             "pages": verdicts, "conforming": sum(1 for v in verdicts.values() if v["conforms"]), "total": len(verdicts),
             "captured_at": datetime.now(timezone.utc).isoformat(),
         }
-        (out_dir / f"{layout_id}.json").write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n")
-        written[layout_id] = record
+        (out_dir / f"{lid}.json").write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n")
+        written[lid] = record
     return written
 
 

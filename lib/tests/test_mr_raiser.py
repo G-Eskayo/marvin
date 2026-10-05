@@ -1,5 +1,5 @@
-"""Tests for mr_raiser.py. Run via:
-    ~/.agents/venv/bin/python -m pytest lib/tests/test_mr_raiser.py -v
+"""Tests for mr_mrr.py. Run via:
+    ~/.agents/venv/bin/python -m pytest lib/tests/test_mr_mrr.py -v
 """
 from __future__ import annotations
 import subprocess
@@ -391,3 +391,41 @@ def test_default_comment_on_ticket_posts_to_correct_issue(monkeypatch):
     assert "1" in cmd
     body = cmd[cmd.index("--body") + 1]
     assert "99" in body or "pull/99" in body
+
+
+# ── other projects ──────────────────────────────────────────────────────────
+
+def _spy_run(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "https://github.com/G-Eskayo/clarity-captions/pull/21\n"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(mrr.subprocess, "run", fake_run)
+    return calls
+
+
+def test_the_pr_is_opened_in_the_tickets_own_repo_not_wherever_the_process_happens_to_be(monkeypatch):
+    calls = _spy_run(monkeypatch)
+    comparison = {"subsystem": "ticket-7", "verdict": "improved", "metrics": {}}
+    mrr._default_open_pr("G-Eskayo/clarity-captions#7", "pipeline/g-eskayo/clarity-captions#7", comparison)
+    cmd = calls[0]
+    assert cmd[cmd.index("--repo") + 1] == "G-Eskayo/clarity-captions"
+    assert "Closes G-Eskayo/clarity-captions#7" in cmd[cmd.index("--body") + 1]
+
+
+def test_the_ticket_comment_is_posted_on_the_tickets_own_repo(monkeypatch):
+    calls = _spy_run(monkeypatch)
+    mrr._default_comment_on_ticket("G-Eskayo/clarity-captions#7", "https://github.com/x/pull/1")
+    cmd = calls[0]
+    assert cmd[:4] == ["gh", "issue", "comment", "7"]
+    assert cmd[cmd.index("--repo") + 1] == "G-Eskayo/clarity-captions"
+
+
+def test_the_pr_says_what_was_not_verified():
+    text = mrr._format_test_results({"suite": "Core", "passed": 60, "failed": 0, "total": 61, "notes": "App build: not verified (needs xcodegen)"})
+    assert "**Suite**: Core" in text and "not verified" in text

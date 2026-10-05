@@ -221,7 +221,19 @@ def plan_new_project(project: dict, root: Path = ROOT, rules_path: Path | None =
     Applying the manifest entry (it lives in deploy/) stays a reviewed repo change."""
     rules = portfolio_rules.load_rules(rules_path) if rules_path else portfolio_rules.load_rules()
     prefixes = rules["categories"]
-    errors = [f"missing {k}" for k in rules["project_spec"]["required"] if not str(project.get(k, "")).strip()]
+    longform = project.get("layout") == "long-form"
+    if project.get("layout") not in (None, "", "project", "long-form"):
+        return {"ok": False, "errors": ["layout must be 'project' or 'long-form'"], "page_html": None, "card_html": None, "manifest_entry": None}
+    # a long-form page has a short lead and sections instead of one body
+    required = [k for k in rules["project_spec"]["required"] if not (longform and k == "body_html")] + (["lead_html"] if longform else [])
+    errors = [f"missing {k}" for k in required if not str(project.get(k, "")).strip()]
+    sections = project.get("sections") or []
+    if longform:
+        if not sections:
+            errors.append("a long-form project needs at least one section")
+        for i, sec in enumerate(sections):
+            if not str((sec or {}).get("heading", "")).strip() or not str((sec or {}).get("body_html", "")).strip():
+                errors.append(f"section {i + 1} needs a heading and a body_html")
     if project.get("category") and project["category"] not in prefixes:
         errors.append(f"category must be one of {sorted(prefixes)}")
     if project.get("slug") and not re.fullmatch(rules["project_spec"]["slug_pattern"], project["slug"]):
@@ -229,9 +241,19 @@ def plan_new_project(project: dict, root: Path = ROOT, rules_path: Path | None =
     if errors:
         return {"ok": False, "errors": errors, "page_html": None, "card_html": None, "manifest_entry": None}
     url = f"/{prefixes[project['category']]}/{project['slug']}/"
-    page = render("project-page", {"TITLE": project["title"], "SUBTITLE": project["subtitle"], "HERO_IMAGE_URL": project["hero_image_url"],
-                                   "BODY_HTML": project["body_html"], "STACK_CSV": project.get("stack_csv", "")},
-                  {"actions": project.get("actions", [])}, root)
+    if longform:
+        rendered = [render("longform-section", {"HEADING": sec["heading"], "BODY_HTML": sec["body_html"]}, None, root, raw=False) for sec in sections]
+        page = render("longform-page", {"TITLE": project["title"], "SUBTITLE": project["subtitle"], "HERO_IMAGE_URL": project["hero_image_url"],
+                                        "LEAD_HTML": project["lead_html"], "STACK_CSV": project.get("stack_csv", ""),
+                                        "SECTIONS_HTML": "\n".join(r["html"] or "" for r in rendered)},
+                      {"actions": project.get("actions", [])}, root)
+        for r in rendered:
+            page["errors"] += r["errors"]
+            page["missing"] += r["missing"]
+    else:
+        page = render("project-page", {"TITLE": project["title"], "SUBTITLE": project["subtitle"], "HERO_IMAGE_URL": project["hero_image_url"],
+                                       "BODY_HTML": project["body_html"], "STACK_CSV": project.get("stack_csv", "")},
+                      {"actions": project.get("actions", [])}, root)
     card = render("project-card", {"URL": url, "TITLE": project["title"], "THUMBNAIL": project["thumbnail"], "DESCRIPTION": project["description"]}, None, root)
     errors = page["errors"] + card["errors"] + [f"missing {m}" for m in page["missing"] + card["missing"]]
     if errors:

@@ -62,12 +62,15 @@ def _format_comparison(comparison: dict) -> str:
 def _format_test_results(test_results: dict | None) -> str:
     if not test_results or test_results.get("total") is None:
         return "Not available."
-    return (
+    text = (
         f"**Suite**: {test_results['suite']}\n"
         f"**Passed**: {test_results['passed']}\n"
         f"**Failed**: {test_results['failed']}\n"
         f"**Total**: {test_results['total']}"
     )
+    if test_results.get("notes"):  # what the project's profile could NOT verify, so the PR never over-claims
+        text += f"\n\n{test_results['notes']}"
+    return text
 
 
 def _format_dev_evidence(dev_evidence: dict | None) -> str:
@@ -80,12 +83,19 @@ def _format_dev_evidence(dev_evidence: dict | None) -> str:
     return f"![Screenshot]({screenshot})\n\n{description}".strip()
 
 
+def _repo_of(ticket_ref: str) -> str | None:
+    """'G-Eskayo/clarity-captions#7' -> 'G-Eskayo/clarity-captions'. gh must be told which repo: the
+    process's own directory is not a reliable stand-in once more than one project is in play."""
+    return ticket_ref.rsplit("#", 1)[0] if "/" in ticket_ref and "#" in ticket_ref else None
+
+
 def _default_open_pr(
     ticket_ref: str,
     branch: str,
     comparison: dict,
     test_results: dict | None = None,
     dev_evidence: dict | None = None,
+    base_branch: str = "main",
 ) -> str:
     body = (
         f"Closes {ticket_ref}\n\n"
@@ -97,9 +107,10 @@ def _default_open_pr(
         f"## Dev Environment Evidence\n\n"
         f"{_format_dev_evidence(dev_evidence)}"
     )
+    repo = _repo_of(ticket_ref)
     result = subprocess.run(
-        ["gh", "pr", "create", "--title", f"Implement {ticket_ref}", "--body", body,
-         "--base", "main", "--head", branch],
+        ["gh", "pr", "create", *(["--repo", repo] if repo else []), "--title", f"Implement {ticket_ref}", "--body", body,
+         "--base", base_branch, "--head", branch],
         check=True, capture_output=True, text=True,
     )
     return result.stdout.strip()
@@ -107,8 +118,9 @@ def _default_open_pr(
 
 def _default_comment_on_ticket(ticket_ref: str, pr_url: str) -> None:
     issue_number = ticket_ref.rsplit("#", 1)[-1]
+    repo = _repo_of(ticket_ref)
     subprocess.run(
-        ["gh", "issue", "comment", issue_number, "--body",
+        ["gh", "issue", "comment", issue_number, *(["--repo", repo] if repo else []), "--body",
          f"Verification passed. Pull request raised: {pr_url}"],
         check=True, capture_output=True,
     )

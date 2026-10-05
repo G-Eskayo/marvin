@@ -60,3 +60,22 @@ def test_the_captured_layouts_record_which_pages_follow_them():
         assert rec["conforming"] == sum(1 for v in rec["pages"].values() if v["conforms"])
         for v in rec["pages"].values():
             assert v["conforms"] or v["why"]               # every page that does not follow the layout says why
+
+
+LONGFORM = ('<div class="section-container"><div class="container"><div class="row"><div class="col-xs-12">'
+            '<img src="/h.jpg" class="img-responsive" alt=""><div class="card-container"><div class="text-center"><h1 class="h2">T</h1></div>'
+            '<div><div class="text-center"><h3 class="pink">S</h3></div><div><p>lead</p><p><strong>Stack:</strong> Python.</p></div></div>'
+            '</div></div></div></div></div>{SECTIONS}<div id="other-projects-mount"></div>')
+SEC = '<section class="longform-section"><div class="container"><div class="text-center"><h2 class="h2">H</h2></div><div class="longform-body"><p>x</p></div></div></section>'
+
+
+def test_a_long_form_page_has_a_section_zone_that_repeats_whatever_the_count():
+    one, three = pl.skeleton(LONGFORM.replace("{SECTIONS}", SEC)), pl.skeleton(LONGFORM.replace("{SECTIONS}", SEC * 3))
+    assert one == three and "{section}" in one and "{section}*" not in one
+
+
+def test_the_short_and_long_layouts_are_told_apart_by_that_zone():
+    short = pl.skeleton(page())
+    long = pl.skeleton(LONGFORM.replace("{SECTIONS}", SEC))
+    assert short != long and "{section}" not in short
+    assert "extra {section}" in pl.diff_summary(short, long)

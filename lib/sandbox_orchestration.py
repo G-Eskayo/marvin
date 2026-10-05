@@ -90,7 +90,8 @@ def _run_claude(cmd: list[str], **kwargs) -> tuple[str, float]:
     return parsed.get("result", proc.stdout), parsed.get("total_cost_usd", 0.0) or 0.0
 
 
-def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | None) -> str:
+def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | None, profile: dict | None = None,
+                      clone: Path | None = None, env: dict | None = None) -> str:
     """Real default: a flagship-tier planning call, then a Haiku-tier
     execution call inside the worktree. Mocked in tests -- never invoked
     without an explicit live-fire decision, since it spends real API cost
@@ -113,11 +114,21 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
         "pausing to ask for confirmation; if something is genuinely "
         "ambiguous, make the most reasonable call yourself and note it."
     )
+    # A project profile (project_profile.py) replaces marvin's assumptions: its own notes, its own leash.
+    project_notes = ""
+    if profile is not None:
+        import project_profile as pp
+        notes = pp.executor_notes(profile)
+        project_notes = f"\n\nProject notes:\n{notes}" if notes else ""
+    run_kwargs = {"env": env} if env is not None else {}
+    # `gh issue view owner/repo#17` is rejected by gh; the working form names the repo with --repo.
+    m = re.fullmatch(r"([\w.-]+/[\w.-]+)#(\d+)", ticket_ref)
+    view = f"gh issue view {m.group(2)} --repo {m.group(1)}" if m else f"gh issue view {ticket_ref}"
     plan_prompt = (
-        f"{autonomy_note}\n\n"
-        f"Read GitHub issue {ticket_ref} (gh issue view {ticket_ref}) and produce a "
+        f"{autonomy_note}{project_notes}\n\n"
+        f"Read GitHub issue {ticket_ref} ({view}) and produce a "
         f"concise, concrete implementation plan covering its 'What to build' section "
-        f"and every acceptance criterion. Also read its comments (gh issue view {ticket_ref} --comments): "
+        f"and every acceptance criterion. Also read its comments ({view} --comments): "
         f"any denial feedback or earlier failure notes there are requirements for this attempt. "
         f"Plan only -- do not edit any files yet."
     )
@@ -130,36 +141,40 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
     plan, plan_cost = _run_claude(
         ["claude", "-p", plan_prompt, "--model", FLAGSHIP_MODEL,
          "--permission-mode", "dontAsk", "--allowedTools", _PLAN_ALLOWED_TOOLS],
-        cwd=worktree_path, timeout=PLAN_TIMEOUT_S,
+        cwd=worktree_path, timeout=PLAN_TIMEOUT_S, **run_kwargs,
     )
-    if ticket_number is not None:
-        ts.record_stage(ticket_number, "executing", "started", "planning call", cost_usd=plan_cost)
+    _stage(ticket_ref, "executing", "started", "planning call", cost_usd=plan_cost)
 
+    if profile is None:
+        import_advice = (
+            f"If a new module must import a sibling lib "
+            f"module, resolve it relative to __file__ (e.g. Path(__file__).resolve()"
+            f".parents[N] / \"lib\"), never via Path.home() / \".agents\" -- that "
+            f"points at the real checkout, which does not contain your changes."
+        )
+        allowed_tools, disallowed_tools = _EXEC_ALLOWED_TOOLS, _EXEC_DISALLOWED_TOOLS
+    else:
+        import_advice = "Keep every change inside this working tree; the project's real checkout must not be touched."
+        allowed_tools, disallowed_tools = pp.executor_tools(profile, clone)
     exec_prompt = (
-        f"{autonomy_note} Your job here stops at implementing the plan and "
+        f"{autonomy_note}{project_notes} Your job here stops at implementing the plan and "
         f"verifying it locally (edit files, run the relevant tests) -- do NOT "
         f"commit, push, or open a pull request; a separate process handles "
         f"that automatically after you finish, and asking for permission to "
         f"do it yourself will just leave you stuck with no one to grant it. "
         f"Write files only inside your current working directory, never to an "
-        f"absolute path elsewhere. If a new module must import a sibling lib "
-        f"module, resolve it relative to __file__ (e.g. Path(__file__).resolve()"
-        f".parents[N] / \"lib\"), never via Path.home() / \".agents\" -- that "
-        f"points at the real checkout, which does not contain your changes.\n\n"
+        f"absolute path elsewhere. {import_advice}\n\n"
         f"Implement this plan in the current working tree:\n\n{plan}"
     )
-    _, exec_cost = _run_claude(
-        ["claude", "-p", exec_prompt, "--model", HAIKU_MODEL,
-         "--permission-mode", "dontAsk", "--allowedTools", _EXEC_ALLOWED_TOOLS,
-         "--disallowedTools", _EXEC_DISALLOWED_TOOLS],
-        cwd=worktree_path, timeout=EXEC_TIMEOUT_S,
-    )
-    if ticket_number is not None:
-        ts.record_stage(ticket_number, "executing", "passed", "execution call", cost_usd=exec_cost)
+    exec_cmd = ["claude", "-p", exec_prompt, "--model", HAIKU_MODEL, "--permission-mode", "dontAsk", "--allowedTools", allowed_tools]
+    if disallowed_tools:
+        exec_cmd += ["--disallowedTools", disallowed_tools]
+    _, exec_cost = _run_claude(exec_cmd, cwd=worktree_path, timeout=EXEC_TIMEOUT_S, **run_kwargs)
+    _stage(ticket_ref, "executing", "passed", "execution call", cost_usd=exec_cost)
     return plan
 
 
-def _preserve_prior_attempt(repo_path: Path, worktree_path: "Path | list[Path]", branch: str) -> str | None:
+def _preserve_prior_attempt(repo_path: Path, worktree_path: "Path | list[Path]", branch: str, base_branch: str = "main") -> str | None:
     """Before a re-dispatch discards a ticket's old worktree and branch, keep
     anything unique they hold: commit uncommitted changes onto the branch, then,
     if the branch has commits beyond origin/main, pin them under
@@ -178,7 +193,7 @@ def _preserve_prior_attempt(repo_path: Path, worktree_path: "Path | list[Path]",
             git("add", "-A", cwd=path)
             git("commit", "-qm", "WIP preserved before redispatch", cwd=path)
 
-    ahead = git("rev-list", "--count", f"origin/main..{branch}")
+    ahead = git("rev-list", "--count", f"origin/{base_branch}..{branch}")
     if ahead.returncode != 0 or not ahead.stdout.strip().isdigit() or int(ahead.stdout.strip()) == 0:
         return None  # no such branch, or nothing beyond origin/main
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
@@ -189,7 +204,7 @@ def _preserve_prior_attempt(repo_path: Path, worktree_path: "Path | list[Path]",
     return ref
 
 
-def _create_worktree(repo_path: Path, ticket_ref: str) -> Path:
+def _create_worktree(repo_path: Path, ticket_ref: str, base_branch: str = "main") -> Path:
     """Branches explicitly from `origin/main` (fetched fresh first), not
     repo_path's current HEAD -- repo_path is the same shared checkout an
     interactive session might be using at the same moment, possibly on a
@@ -226,13 +241,13 @@ def _create_worktree(repo_path: Path, ticket_ref: str) -> Path:
     # before the rename sit at the old '#' path, so that one is cleaned up too.
     worktree_path = WORKTREES_ROOT / branch.replace("/", "-").replace("#", "-")
     legacy_path = WORKTREES_ROOT / branch.replace("/", "-")
-    subprocess.run(["git", "fetch", "origin", "main"], cwd=repo_path, check=True, capture_output=True)
-    _preserve_prior_attempt(repo_path, [worktree_path, legacy_path], branch)
+    subprocess.run(["git", "fetch", "origin", base_branch], cwd=repo_path, check=True, capture_output=True)
+    _preserve_prior_attempt(repo_path, [worktree_path, legacy_path], branch, base_branch)
     for stale in (worktree_path, legacy_path):
         subprocess.run(["git", "worktree", "remove", "--force", str(stale)], cwd=repo_path, capture_output=True)
     subprocess.run(["git", "branch", "-D", branch], cwd=repo_path, capture_output=True)
     subprocess.run(
-        ["git", "worktree", "add", "-b", branch, str(worktree_path), "origin/main"],
+        ["git", "worktree", "add", "-b", branch, str(worktree_path), f"origin/{base_branch}"],
         cwd=repo_path, check=True, capture_output=True,
     )
     return worktree_path
@@ -246,6 +261,7 @@ def execute_ticket(
     state_setup: Callable[[Path], None] | None = None,
     repo_path: Path | None = None,
     max_iterations: int = 3,
+    base_branch: str = "main",
 ) -> dict:
     """Drive `ticket_ref` through an isolated worktree and a tune-and-compare
     loop. Returns {"passing", "worktree_path", "iterations", "final_comparison",
@@ -254,7 +270,7 @@ def execute_ticket(
     repo_path = repo_path or (Path.home() / ".agents")
     ticket_number = _parse_ticket_number(ticket_ref)
 
-    worktree_path = _create_worktree(repo_path, ticket_ref)
+    worktree_path = _create_worktree(repo_path, ticket_ref, base_branch)
 
     if state_setup is not None:
         state_setup(worktree_path)
@@ -271,24 +287,20 @@ def execute_ticket(
         # grain available without changing that call shape too. Iteration
         # number lives in `detail` so a 3-retry ticket's timeline is still
         # legible, not three indistinguishable "executing" rows.
-        if ticket_number is not None:
-            ts.record_stage(ticket_number, "executing", "started", f"iteration {iteration}/{max_iterations}")
+        _stage(ticket_ref, "executing", "started", f"iteration {iteration}/{max_iterations}")
         try:
             executor(worktree_path, ticket_ref, feedback)
         except Exception as exc:
-            if ticket_number is not None:
-                ts.record_stage(ticket_number, "executing", "failed", str(exc)[:300])
+            _stage(ticket_ref, "executing", "failed", str(exc)[:300])
             raise
-        if ticket_number is not None:
-            ts.record_stage(ticket_number, "executing", "passed", f"iteration {iteration}/{max_iterations}")
-            ts.record_stage(ticket_number, "verifying", "started", f"iteration {iteration}/{max_iterations}")
+        _stage(ticket_ref, "executing", "passed", f"iteration {iteration}/{max_iterations}")
+        _stage(ticket_ref, "verifying", "started", f"iteration {iteration}/{max_iterations}")
 
         current = measure(worktree_path)
         comparison = mr.compare(subsystem, baseline, current)
 
         if comparison["passing"]:
-            if ticket_number is not None:
-                ts.record_stage(ticket_number, "verifying", "passed", comparison.get("verdict", ""))
+            _stage(ticket_ref, "verifying", "passed", comparison.get("verdict", ""))
             return {
                 "passing": True,
                 "worktree_path": worktree_path,
@@ -296,8 +308,7 @@ def execute_ticket(
                 "final_comparison": comparison,
                 "explanation": None,
             }
-        if ticket_number is not None:
-            ts.record_stage(ticket_number, "verifying", "failed", comparison.get("verdict", "unchanged"))
+        _stage(ticket_ref, "verifying", "failed", comparison.get("verdict", "unchanged"))
         feedback = comparison
 
     return {
@@ -310,6 +321,20 @@ def execute_ticket(
             f"(max_iterations). Final verdict: {comparison['verdict'] if comparison else 'none'}."
         ),
     }
+
+
+def _ticket_repo(ticket_ref: str) -> str | None:
+    """'G-Eskayo/clarity-captions#7' -> the repo, but None for marvin's (their records keep the plain number)."""
+    repo = ticket_ref.rsplit("#", 1)[0] if "/" in ticket_ref and "#" in ticket_ref else None
+    return None if repo in (None, "G-Eskayo/marvin") else repo
+
+
+def _stage(ticket_ref: str, stage: str, status: str, detail: str = "", **kw) -> None:
+    number = _parse_ticket_number(ticket_ref)
+    if number is None:
+        return
+    repo = _ticket_repo(ticket_ref)
+    ts.record_stage(number, stage, status, detail, **kw, **({"repo": repo} if repo else {}))
 
 
 def _parse_ticket_number(ticket_ref: str) -> int | None:

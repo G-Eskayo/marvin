@@ -75,3 +75,22 @@ describe('withProjectStatus', () => {
     expect(withProjectStatus([{ repo: 'G-Eskayo/marvin' }], null)[0].status).toBe('recent')
   })
 })
+
+import { liveTicketNumbers } from '../electron/main/boards.js'
+
+describe('liveTicketNumbers', () => {
+  it('reads which project\'s ticket is running from the dispatch label, so marvin #7 is not mistaken for clarity #7', () => {
+    const task = 'ticket G-Eskayo/clarity-captions#7: Auto-scroll'
+    expect([...liveTicketNumbers('G-Eskayo/clarity-captions', task)]).toEqual([7])
+    expect([...liveTicketNumbers('G-Eskayo/marvin', task)]).toEqual([])
+  })
+
+  it('still reads the older unqualified label as marvin\'s', () => {
+    expect([...liveTicketNumbers('G-Eskayo/marvin', 'ticket #42: something')]).toEqual([42])
+    expect([...liveTicketNumbers('G-Eskayo/clarity-captions', 'ticket #42: something')]).toEqual([])
+  })
+
+  it('is empty when nothing is running', () => {
+    expect([...liveTicketNumbers('G-Eskayo/marvin', null)]).toEqual([])
+  })
+})

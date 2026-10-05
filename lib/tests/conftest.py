@@ -35,3 +35,10 @@ def _isolate_job_events(tmp_path_factory, monkeypatch):
     # Instrumented jobs write a run log; tests must never write the real ~/.claude/logs/jobs.
     import job_events
     monkeypatch.setattr(job_events, "JOBS_DIR", tmp_path_factory.mktemp("jobs"))
+
+
+@pytest.fixture(autouse=True)
+def _isolate_project_profiles(tmp_path_factory, monkeypatch):
+    # A real config/projects/*.json with dispatch "on" must never change what a test dispatches.
+    import project_profile
+    monkeypatch.setattr(project_profile, "PROFILES_DIR", tmp_path_factory.mktemp("profiles"))

@@ -14,21 +14,30 @@ export const STAGES_DIR = path.join(homedir(), '.claude', 'logs', 'ticket-stages
 const VALID_STAGES = new Set(['claimed', 'planning', 'executing', 'verifying', 'gate', 'merging', 'rebuilding', 'done'])
 const VALID_STATUSES = new Set(['started', 'passed', 'failed'])
 
-function stageFile(ticketNumber, dir = STAGES_DIR) {
+const MARVIN_REPO = 'G-Eskayo/marvin'
+
+// marvin's tickets keep their plain number; another project's ticket is `<repo>-<n>`, because #7 in
+// clarity-captions is not #7 in marvin (mirrors lib/ticket_stages.py).
+function stageFile(ticketNumber, dir = STAGES_DIR, repo = null) {
+  if (repo && repo !== MARVIN_REPO) return path.join(dir, `${repo.split('/').pop().toLowerCase()}-${ticketNumber}.json`)
   return path.join(dir, `${ticketNumber}.json`)
 }
 
-export function listTrackedTickets(dir = STAGES_DIR) {
+export function listTrackedTickets(dir = STAGES_DIR, repo = null) {
   if (!existsSync(dir)) return []
+  const prefix = repo && repo !== MARVIN_REPO ? `${repo.split('/').pop().toLowerCase()}-` : null
   return readdirSync(dir)
     .filter((name) => name.endsWith('.json'))
-    .map((name) => parseInt(name.replace('.json', ''), 10))
-    .filter((n) => Number.isInteger(n))
+    .map((name) => name.replace('.json', ''))
+    .filter((stem) => (prefix ? stem.startsWith(prefix) : true))
+    .map((stem) => (prefix ? stem.slice(prefix.length) : stem))
+    .filter((stem) => /^\d+$/.test(stem))
+    .map((stem) => parseInt(stem, 10))
     .sort((a, b) => a - b)
 }
 
-export function readStages(ticketNumber, dir = STAGES_DIR) {
-  const file = stageFile(ticketNumber, dir)
+export function readStages(ticketNumber, dir = STAGES_DIR, repo = null) {
+  const file = stageFile(ticketNumber, dir, repo)
   if (!existsSync(file)) return []
   try {
     return JSON.parse(readFileSync(file, 'utf-8'))
@@ -37,7 +46,7 @@ export function readStages(ticketNumber, dir = STAGES_DIR) {
   }
 }
 
-export function recordStage(ticketNumber, stage, status, detail = '', { machine, costUsd = null, title = null, dir = STAGES_DIR, resolveId = resolveDeviceId } = {}) {
+export function recordStage(ticketNumber, stage, status, detail = '', { machine, costUsd = null, title = null, dir = STAGES_DIR, resolveId = resolveDeviceId, repo = null } = {}) {
   if (!VALID_STAGES.has(stage)) {
     throw new Error(`unknown stage: ${stage} (expected one of ${[...VALID_STAGES].sort().join(', ')})`)
   }
@@ -60,8 +69,8 @@ export function recordStage(ticketNumber, stage, status, detail = '', { machine,
     title
   }
   mkdirSync(dir, { recursive: true })
-  const events = readStages(ticketNumber, dir)
+  const events = readStages(ticketNumber, dir, repo)
   events.push(event)
-  writeFileSync(stageFile(ticketNumber, dir), JSON.stringify(events, null, 2))
+  writeFileSync(stageFile(ticketNumber, dir, repo), JSON.stringify(events, null, 2))
   return event
 }

@@ -33,13 +33,21 @@ VALID_STAGES = {"claimed", "planning", "executing", "verifying", "gate", "mergin
 VALID_STATUSES = {"started", "passed", "failed"}
 
 
-def _stage_file(ticket_number: int) -> Path:
+MARVIN_REPO = "G-Eskayo/marvin"
+
+
+def _stage_file(ticket_number: int, repo: str | None = None) -> Path:
+    """marvin's tickets keep their plain number (nothing existing moves). Another project's ticket is
+    keyed `<repo>-<n>`, because #7 in clarity-captions is not #7 in marvin."""
+    if repo and repo != MARVIN_REPO:
+        return STAGES_DIR / f"{repo.split('/')[-1].lower()}-{ticket_number}.json"
     return STAGES_DIR / f"{ticket_number}.json"
 
 
 def record_stage(
     ticket_number: int, stage: str, status: str, detail: str = "",
     machine: str | None = None, cost_usd: float | None = None, title: str | None = None,
+    repo: str | None = None,
 ) -> dict:
     if stage not in VALID_STAGES:
         raise ValueError(f"unknown stage: {stage!r} (expected one of {sorted(VALID_STAGES)})")
@@ -67,16 +75,16 @@ def record_stage(
         # timeline has it, not every event.
         "title": title,
     }
-    path = _stage_file(ticket_number)
+    path = _stage_file(ticket_number, repo)
     path.parent.mkdir(parents=True, exist_ok=True)
-    events = read_stages(ticket_number)
+    events = read_stages(ticket_number, repo)
     events.append(event)
     path.write_text(json.dumps(events, indent=2))
     return event
 
 
-def read_stages(ticket_number: int) -> list[dict]:
-    path = _stage_file(ticket_number)
+def read_stages(ticket_number: int, repo: str | None = None) -> list[dict]:
+    path = _stage_file(ticket_number, repo)
     if not path.exists():
         return []
     try:
@@ -85,13 +93,19 @@ def read_stages(ticket_number: int) -> list[dict]:
         return []
 
 
-def list_tracked_tickets() -> list[int]:
+def list_tracked_tickets(repo: str | None = None) -> list[int]:
     if not STAGES_DIR.exists():
         return []
+    prefix = f"{repo.split('/')[-1].lower()}-" if repo and repo != MARVIN_REPO else None
     numbers = []
     for p in STAGES_DIR.glob("*.json"):
+        stem = p.stem
+        if prefix:
+            if not stem.startswith(prefix):
+                continue
+            stem = stem[len(prefix):]
         try:
-            numbers.append(int(p.stem))
+            numbers.append(int(stem))
         except ValueError:
             continue
     return sorted(numbers)

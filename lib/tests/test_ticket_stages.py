@@ -101,3 +101,30 @@ def test_list_tracked_tickets_empty_when_dir_does_not_exist_yet(tmp_path):
         assert ts2.list_tracked_tickets() == []
     finally:
         ts2.STAGES_DIR = original
+
+
+# ── tickets of other projects must not collide with marvin's ────────────────
+
+def test_a_ticket_of_another_project_gets_its_own_timeline_even_when_the_number_matches(tmp_path, monkeypatch):
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path)
+    ts.record_stage(7, "claimed", "started", "marvin's", machine="m")
+    ts.record_stage(7, "claimed", "started", "clarity's", machine="m", repo="G-Eskayo/clarity-captions")
+    assert [e["detail"] for e in ts.read_stages(7)] == ["marvin's"]
+    assert [e["detail"] for e in ts.read_stages(7, repo="G-Eskayo/clarity-captions")] == ["clarity's"]
+    assert (tmp_path / "7.json").exists() and (tmp_path / "clarity-captions-7.json").exists()
+
+
+def test_marvin_tickets_keep_their_plain_number_with_or_without_the_repo_given(tmp_path, monkeypatch):
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path)
+    ts.record_stage(9, "claimed", "started", machine="m", repo="G-Eskayo/marvin")
+    assert (tmp_path / "9.json").exists()
+    assert len(ts.read_stages(9)) == 1
+
+
+def test_listing_tracked_tickets_is_per_project(tmp_path, monkeypatch):
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path)
+    ts.record_stage(3, "claimed", "started", machine="m")
+    ts.record_stage(5, "claimed", "started", machine="m", repo="G-Eskayo/clarity-captions")
+    ts.record_stage(8, "claimed", "started", machine="m", repo="G-Eskayo/clarity-captions")
+    assert ts.list_tracked_tickets() == [3]
+    assert ts.list_tracked_tickets(repo="G-Eskayo/clarity-captions") == [5, 8]

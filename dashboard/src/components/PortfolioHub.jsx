@@ -442,12 +442,17 @@ function Shot({ rel, className = '' }) {
   return src ? <img src={src} alt="" className={className} /> : <div className={`flex items-center justify-center bg-neutral-900 text-[10px] text-neutral-600 ${className}`}>{rel ? 'loading…' : 'no screenshot'}</div>
 }
 
-const LAYOUT_OF_TYPE = { project: 'layout-project-page', hub: 'layout-hub-page', 'all-projects': 'layout-all-projects-page' }
+const LAYOUTS_OF_TYPE = { project: ['layout-project-page', 'layout-longform-page'], hub: ['layout-hub-page'], 'all-projects': ['layout-all-projects-page'] }
 
 function PageTemplates({ pages }) {
   const [layouts, setLayouts] = useState({})
   useEffect(() => { window.api.portfolio.elements().then((list) => setLayouts(Object.fromEntries(list.filter((e) => e.kind === 'layout').map((e) => [e.id, e])))).catch(() => {}) }, [])
-  const verdictOf = (p) => layouts[LAYOUT_OF_TYPE[p.type]]?.pages?.[p.url]
+  // a project page follows the short layout OR the long-form one; show whichever it follows (or why it follows neither)
+  const verdictOf = (p) => {
+    const found = (LAYOUTS_OF_TYPE[p.type] || []).map((id) => ({ id, v: layouts[id]?.pages?.[p.url] })).filter((x) => x.v)
+    const following = found.find((x) => x.v.conforms)
+    return following ? { ...following.v, layout: following.id } : found[0]?.v
+  }
   const [type, setType] = useState('all')
   const [open, setOpen] = useState(null)
   const [markup, setMarkup] = useState(null)
@@ -479,7 +484,7 @@ function PageTemplates({ pages }) {
               <span className="mt-1 inline-block rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-400">{p.type}</span>
               {verdictOf(p) && (
                 <span title={verdictOf(p).why || 'follows the layout'} className={`ml-1 inline-block rounded px-1.5 py-0.5 text-[10px] ${verdictOf(p).conforms ? 'bg-emerald-950 text-emerald-300' : 'bg-amber-950 text-amber-300'}`}>
-                  {verdictOf(p).conforms ? 'follows layout' : 'legacy layout'}
+                  {verdictOf(p).conforms ? (verdictOf(p).layout === 'layout-longform-page' ? 'long-form layout' : 'follows layout') : 'legacy layout'}
                 </span>
               )}
             </div>
@@ -550,7 +555,19 @@ function Inventory() {
 
 const SPEC_START = {
   title: '', slug: '', category: CATEGORIES[0], subtitle: '', description: '', body_html: '', stack_csv: '',
-  github_url: '', download_url: '', download_label: '', theme: ''
+  github_url: '', download_url: '', download_label: '', theme: '',
+  layout: 'project', lead_html: '', sections_text: ''
+}
+
+// "## Heading" starts a section; everything under it until the next heading is that section's body (HTML).
+export function parseSections(text) {
+  const out = []
+  for (const line of String(text || '').split('\n')) {
+    const m = line.match(/^##\s+(.+?)\s*$/)
+    if (m) out.push({ heading: m[1], body_html: '' })
+    else if (out.length) out[out.length - 1].body_html += (out[out.length - 1].body_html ? '\n' : '') + line
+  }
+  return out.map((s) => ({ ...s, body_html: s.body_html.trim() })).filter((s) => s.heading)
 }
 
 function AddProject() {
@@ -569,7 +586,12 @@ function AddProject() {
     setError(null)
     setResult(null)
     try {
-      const clean = Object.fromEntries(Object.entries(spec).filter(([, v]) => String(v).trim() !== ''))
+      const { sections_text: sectionsText, layout, ...rest } = spec
+      const clean = Object.fromEntries(Object.entries(rest).filter(([, v]) => String(v).trim() !== ''))
+      if (layout === 'long-form') {
+        clean.layout = 'long-form'
+        clean.sections = parseSections(sectionsText)
+      }
       setResult(await window.api.portfolio.addProject(clean, { plan }))
     } catch (e) {
       setError(errText(e))
@@ -598,7 +620,15 @@ function AddProject() {
         {row('Category', <select value={spec.category} onChange={(e) => set('category', e.target.value)} className={input}>{CATEGORIES.map((c) => <option key={c}>{c}</option>)}</select>)}
         {row('Subtitle (the pink line)', <input value={spec.subtitle} onChange={(e) => set('subtitle', e.target.value)} className={input} />)}
         {row('Card description (one or two sentences)', <input value={spec.description} onChange={(e) => set('description', e.target.value)} className={input} />)}
-        {row('Body (HTML paragraphs)', <textarea value={spec.body_html} onChange={(e) => set('body_html', e.target.value)} rows={6} spellCheck={false} className={field} />)}
+        {row('Layout', <select value={spec.layout} onChange={(e) => set('layout', e.target.value)} className={input}><option value="project">Project page (a card with the whole story)</option><option value="long-form">Long-form (a short lead, then sections with diagrams and figures)</option></select>)}
+        {spec.layout === 'long-form' ? (
+          <>
+            {row('Lead (a short summary, HTML)', <textarea value={spec.lead_html} onChange={(e) => set('lead_html', e.target.value)} rows={3} spellCheck={false} className={field} />)}
+            {row('Sections', <textarea value={spec.sections_text} onChange={(e) => set('sections_text', e.target.value)} rows={10} spellCheck={false} placeholder={'## Problem\n<p>What it was and why it mattered.</p>\n## Design\n<p>…</p>'} className={field} />, 'A line starting with ## begins a section. Under it: paragraphs, and the figure / figure-row / callout parts from the Templates tab.')}
+          </>
+        ) : (
+          row('Body (HTML paragraphs)', <textarea value={spec.body_html} onChange={(e) => set('body_html', e.target.value)} rows={6} spellCheck={false} className={field} />)
+        )}
         {row('Stack (comma-separated)', <input value={spec.stack_csv} onChange={(e) => set('stack_csv', e.target.value)} className={input} />)}
         {row('GitHub repository URL', <input value={spec.github_url} onChange={(e) => set('github_url', e.target.value)} placeholder="https://github.com/G-Eskayo/…" className={input} />, 'Leave empty if the project has no public repository: no button is added.')}
         {row('Download file URL', <input value={spec.download_url} onChange={(e) => set('download_url', e.target.value)} className={input} />, 'Optional. Shown after the GitHub button.')}
