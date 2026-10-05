@@ -88,7 +88,8 @@ function DenyModal({ pr, onClose, onDenied }) {
         comment
       })
       if (result.cancelled) {
-        setStatus('idle')
+        // Another window/tab is already merging this PR: show that, don't reset the button.
+        setStatus(result.alreadyMerging ? 'approving' : 'idle')
         return
       }
       onDenied(pr.number)
@@ -159,6 +160,31 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
   const [status, setStatus] = useState('idle') // idle | approving | error | reengaged
   const [errorMessage, setErrorMessage] = useState(null)
   const [showDenyModal, setShowDenyModal] = useState(false)
+  const waiting = pr.waitingOn || []
+
+  // The merge runs in the main process, so this button can be unmounted (you navigate away) and
+  // remounted mid-merge. Ask the main process what this PR is doing, and keep asking while it merges.
+  useEffect(() => {
+    let cancelled = false
+    let timer
+    const check = async () => {
+      try {
+        const m = await window.api.mr.mergeState(pr.url)
+        if (cancelled) return
+        if (m.state === 'merging') {
+          setStatus('approving')
+          timer = setTimeout(check, 2000)
+        } else if (m.state === 'reengaged' || m.state === 'error') {
+          setStatus(m.state)
+          setErrorMessage(m.reason)
+        } else {
+          setStatus((s) => (s === 'approving' ? 'idle' : s))
+        }
+      } catch { /* keep whatever this component already knows */ }
+    }
+    check()
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [pr.url])
 
   async function handleApprove() {
     setStatus('approving')
@@ -209,12 +235,18 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
         </button>
         <button
           onClick={handleApprove}
-          disabled={status === 'approving'}
+          disabled={status === 'approving' || waiting.length > 0}
+          title={waiting.length ? `Merge ${waiting.map((w) => '#' + w.number).join(', ')} first` : undefined}
           className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
         >
           {status === 'approving' ? 'Confirming…' : 'Approve & Merge'}
         </button>
       </div>
+      {waiting.length > 0 && (
+        <p className="max-w-xs text-right text-xs text-amber-400">
+          Merge {waiting.map((w) => `#${w.number}`).join(', ')} first — it changes the same files ({waiting[0].shared.slice(0, 2).join(', ')}), so this one would conflict.
+        </p>
+      )}
       {status === 'error' && <p className="text-sm text-red-400">Failed: {errorMessage}</p>}
       {status === 'reengaged' && (
         <p className="max-w-xs text-right text-sm text-amber-400">

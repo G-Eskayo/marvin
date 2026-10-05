@@ -429,3 +429,21 @@ def test_the_ticket_comment_is_posted_on_the_tickets_own_repo(monkeypatch):
 def test_the_pr_says_what_was_not_verified():
     text = mrr._format_test_results({"suite": "Core", "passed": 60, "failed": 0, "total": 61, "notes": "App build: not verified (needs xcodegen)"})
     assert "**Suite**: Core" in text and "not verified" in text
+
+
+# ── rework of a sent-back ticket ────
+
+def test_commenting_the_new_pr_on_the_ticket_clears_needs_reengagement(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = ""
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(mrr.subprocess, "run", fake_run)
+    mrr._default_comment_on_ticket("o/r#23", "https://github.com/o/r/pull/30")
+    edit = [c for c in calls if "edit" in c][0]
+    assert "--remove-label" in edit and "needs-reengagement" in edit

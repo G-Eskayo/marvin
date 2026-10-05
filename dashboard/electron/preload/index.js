@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('api', {
     // Confirmation happens in the main process via a native dialog, not here --
     // see the comment on the mr:approve handler for why.
     approve: (pr) => ipcRenderer.invoke('mr:approve', pr),
+    mergeState: (url) => ipcRenderer.invoke('mr:mergeState', url),
     deny: (payload) => ipcRenderer.invoke('mr:deny', payload),
     ticketContext: (ticketRef, repo) => ipcRenderer.invoke('mr:ticketContext', ticketRef, repo),
     parity: () => ipcRenderer.invoke('mr:parity'),
@@ -29,6 +30,9 @@ contextBridge.exposeInMainWorld('api', {
   },
   dispatch: {
     status: () => ipcRenderer.invoke('dispatch:status')
+  },
+  devices: {
+    status: () => ipcRenderer.invoke('devices:status')
   },
   profiles: {
     list: () => ipcRenderer.invoke('profiles:list'),
