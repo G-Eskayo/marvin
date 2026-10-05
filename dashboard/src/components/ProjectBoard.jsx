@@ -83,6 +83,14 @@ function Card({ card, repo, onSelect, onOpenMr, activeTags, onTag }) {
         {card.tags.filter((t) => !(t.kind === 'state' && (t.name === 'ready-for-agent' || t.name === 'ready-for-human'))).map((t) => (
           <Tag key={t.name} tag={t} active={activeTags.has(t.name)} onClick={onTag} />
         ))}
+        {card.evidence && (
+          <span
+            className={`rounded px-1.5 py-0.5 text-[10px] ${card.evidence.verdict === 'in-flight' ? 'bg-amber-950 text-amber-300' : 'bg-emerald-950 text-emerald-300'}`}
+            title={card.evidence.items.map((e) => `${e.ref}: ${e.detail}`).join('\n')}
+          >
+            {card.evidence.verdict === 'in-flight' ? '⚠ work in flight' : '✓ commit mentions this'}
+          </span>
+        )}
         {card.blockedBy.map((n) => (
           <span key={n} className="rounded bg-red-950 px-1.5 py-0.5 font-mono text-[10px] text-red-300" title={`Blocked by #${n}`}>
             ⛔ #{n}

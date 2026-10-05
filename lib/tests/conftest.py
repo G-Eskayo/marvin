@@ -51,3 +51,10 @@ def _isolate_ticket_stages_everywhere(tmp_path_factory, monkeypatch):
     # ticket-stages folder and show up as fake history on the dashboard (found 2026-10-05).
     import ticket_stages
     monkeypatch.setattr(ticket_stages, "STAGES_DIR", tmp_path_factory.mktemp("stages"))
+
+
+@pytest.fixture(autouse=True)
+def _isolate_ticket_evidence(monkeypatch):
+    # The pre-dispatch "does work already exist" guard shells out to gh/git; tests opt in explicitly.
+    import ticket_pipeline
+    monkeypatch.setattr(ticket_pipeline, "_evidence_facts", lambda repo: None)

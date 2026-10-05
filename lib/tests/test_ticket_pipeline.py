@@ -421,3 +421,25 @@ def test_the_process_check_looks_for_run_ticket_and_treats_an_error_as_busy(monk
     assert real._ticket_process_alive() is False
     monkeypatch.setattr(real.subprocess, "run", lambda cmd, **kw: (_ for _ in ()).throw(OSError("no pgrep")))
     assert real._ticket_process_alive() is True  # cannot tell -> assume busy
+
+
+def test_unclaimed_ready_skips_tickets_that_already_have_work(monkeypatch):
+    import json
+    issues = [_issue(1, "2026-01-01T00:00:00Z", labels=["ready-for-agent"]),
+              _issue(2, "2026-01-02T00:00:00Z", labels=["ready-for-agent"]),
+              _issue(3, "2026-01-03T00:00:00Z", labels=["ready-for-agent"])]
+    monkeypatch.setattr(tp.subprocess, "run", lambda *a, **kw: SimpleNamespace(
+        returncode=0, stdout=json.dumps(issues), stderr=""))
+    monkeypatch.setattr(tp, "_evidence_facts", lambda repo: {
+        "prs": [{"number": 9, "body": "Closes #1", "headRefName": "x"}], "branches": [], "rescue": [],
+        "commits": [("abc", "Add thing (issue #2)")]})
+    assert [i["number"] for i in tp._unclaimed_ready_tickets()] == [3]
+
+
+def test_unclaimed_ready_still_dispatches_when_evidence_unreadable(monkeypatch):
+    import json
+    issues = [_issue(1, "2026-01-01T00:00:00Z", labels=["ready-for-agent"])]
+    monkeypatch.setattr(tp.subprocess, "run", lambda *a, **kw: SimpleNamespace(
+        returncode=0, stdout=json.dumps(issues), stderr=""))
+    monkeypatch.setattr(tp, "_evidence_facts", lambda repo: None)
+    assert [i["number"] for i in tp._unclaimed_ready_tickets()] == [1]

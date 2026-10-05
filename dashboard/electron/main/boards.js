@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'fs'
+import { execFile } from 'child_process'
 import { homedir } from 'os'
 import path from 'path'
 import { buildBoard } from './board.js'
@@ -80,7 +81,30 @@ export async function fetchCompletedData(repo, gh) {
   return { issues: JSON.parse(issuesJson), prs: JSON.parse(prsJson) }
 }
 
-export async function loadBoard(repo, { gh, stagesFor = defaultStagesFor, liveNumbers, data } = {}) {
+// Does work already exist for each open ticket? Asked of lib/ticket_evidence.py (git + PRs), cached for
+// a few minutes because it fetches. Any failure means "no evidence", never a broken board.
+const EVIDENCE_TTL_MS = 5 * 60 * 1000
+const evidenceCache = new Map()
+const PY = path.join(homedir(), '.agents', 'venv', 'bin', 'python')
+const EVIDENCE_CLI = path.join(homedir(), '.agents', 'lib', 'ticket_evidence.py')
+
+export function getEvidence(repo, { run = defaultEvidenceRun, now = Date.now() } = {}) {
+  const hit = evidenceCache.get(repo)
+  if (hit && now - hit.at < EVIDENCE_TTL_MS) return hit.promise
+  const promise = run(repo).then((out) => JSON.parse(out)).catch(() => ({}))
+  evidenceCache.set(repo, { at: now, promise })
+  return promise
+}
+
+function defaultEvidenceRun(repo) {
+  return new Promise((resolve, reject) =>
+    execFile(PY, [EVIDENCE_CLI, 'report', repo], { timeout: 90000 }, (err, stdout) => (err ? reject(err) : resolve(stdout)))
+  )
+}
+
+export function clearEvidenceCache() { evidenceCache.clear() }
+
+export async function loadBoard(repo, { gh, stagesFor = defaultStagesFor, liveNumbers, data, evidence = {} } = {}) {
   try {
     const { issues, prs } = data || (await fetchBoardData(repo, gh))
     return buildBoard({
@@ -88,7 +112,8 @@ export async function loadBoard(repo, { gh, stagesFor = defaultStagesFor, liveNu
       issues,
       prs,
       eventsByNumber: stagesFor(repo),
-      liveNumbers: liveNumbers || defaultLiveNumbers(repo)
+      liveNumbers: liveNumbers || defaultLiveNumbers(repo),
+      evidenceByNumber: evidence
     })
   } catch (err) {
     throw new Error(`Could not load board for ${repo}: ${err.message}`)

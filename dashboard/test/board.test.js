@@ -299,3 +299,40 @@ describe('a denied PR (sent back for rework)', () => {
     expect(deriveColumn(issue({ labels: labels('needs-reengagement') }), ctx()).reason).not.toMatch(/sent back from review/i)
   })
 })
+
+describe('existing-work evidence on cards', () => {
+  const NOW2 = Date.parse('2026-10-05T12:00:00Z')
+  const iss = (n) => ({ number: n, title: 't' + n, state: 'OPEN', labels: [{ name: 'ready-for-agent' }], createdAt: '2026-10-01T00:00:00Z', url: 'u' })
+  const build = (evidenceByNumber) => buildBoard({ repo: 'o/r', issues: [iss(1), iss(2)], prs: [], now: NOW2, evidenceByNumber })
+  const cards = (b) => b.columns.flatMap((c) => c.cards)
+
+  it('attaches the verdict and evidence to the matching card only', () => {
+    const ev = { 1: { verdict: 'looks-done', evidence: [{ kind: 'commit', ref: 'abc1234', detail: 'Add thing (#1)' }] } }
+    const [a, b] = cards(build(ev)).sort((x, y) => x.number - y.number)
+    expect(a.evidence).toEqual({ verdict: 'looks-done', items: ev[1].evidence })
+    expect(b.evidence).toBeNull()
+  })
+
+  it('works with no evidence supplied (older callers)', () => {
+    expect(cards(buildBoard({ repo: 'o/r', issues: [iss(1)], prs: [], now: NOW2 }))[0].evidence).toBeNull()
+  })
+
+  it('a ready ticket with existing work says so in its reason, so the column is not a lie', () => {
+    const ev = { 1: { verdict: 'in-flight', evidence: [{ kind: 'rescue-ref', ref: 'refs/rescue/x', detail: 'a prior run' }] } }
+    const c = cards(build(ev)).find((x) => x.number === 1)
+    expect(c.reason).toMatch(/work already exists/i)
+  })
+})
+
+import { getEvidence, clearEvidenceCache } from '../electron/main/boards.js'
+describe('getEvidence', () => {
+  it('caches per repo, and a failing check means no evidence rather than a broken board', async () => {
+    clearEvidenceCache()
+    let calls = 0
+    const ok = async () => { calls++; return '{"3":{"verdict":"in-flight","evidence":[]}}' }
+    expect(await getEvidence('o/a', { run: ok, now: 1000 })).toEqual({ 3: { verdict: 'in-flight', evidence: [] } })
+    await getEvidence('o/a', { run: ok, now: 2000 })
+    expect(calls).toBe(1)
+    expect(await getEvidence('o/b', { run: async () => { throw new Error('boom') }, now: 1000 })).toEqual({})
+  })
+})

@@ -106,7 +106,7 @@ export function deriveColumn(issue, { prs = [], events = [], isLive = false, ope
   return { ...base, column: 'backlog', reason: 'Not yet triaged' }
 }
 
-export function buildBoard({ repo, issues, prs, eventsByNumber = {}, liveNumbers = new Set(), now = Date.now() }) {
+export function buildBoard({ repo, issues, prs, eventsByNumber = {}, liveNumbers = new Set(), evidenceByNumber = {}, now = Date.now() }) {
   const openNumbers = new Set(issues.filter((i) => i.state === 'OPEN').map((i) => i.number))
   const columns = COLUMNS.map((c) => ({ ...c, cards: [] }))
   const byId = Object.fromEntries(columns.map((c) => [c.id, c]))
@@ -118,6 +118,11 @@ export function buildBoard({ repo, issues, prs, eventsByNumber = {}, liveNumbers
     const d = deriveColumn(issue, { prs, events, isLive: liveNumbers.has(issue.number), openNumbers, now })
     const names = labelNames(issue)
     const created = Date.parse(issue.createdAt)
+    // Git is what happened, labels are what was said: surface work that already exists (lib/ticket_evidence.py).
+    const ev = evidenceByNumber[issue.number]
+    const evidence = ev ? { verdict: ev.verdict, items: ev.evidence } : null
+    const idle = d.column === 'ready' || d.column === 'backlog'
+    const reason = ev && idle ? `Work already exists (${ev.verdict === 'in-flight' ? 'in flight' : 'commit mentions it'}: ${ev.evidence[0].ref}) - ${d.reason}` : d.reason
     const card = {
       number: issue.number,
       title: issue.title,
@@ -129,7 +134,8 @@ export function buildBoard({ repo, issues, prs, eventsByNumber = {}, liveNumbers
       createdAt: issue.createdAt,
       closedAt: issue.closedAt || null,
       ageDays: Number.isFinite(created) ? Math.floor((now - created) / DAY_MS) : null,
-      reason: d.reason,
+      reason,
+      evidence,
       owner: d.owner,
       prs: d.prs,
       hasTimeline: events.length > 0
