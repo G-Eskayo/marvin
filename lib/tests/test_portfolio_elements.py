@@ -49,3 +49,28 @@ def test_the_captured_card_is_one_look_in_one_geometry_everywhere_it_appears():
     assert element["distinct_looks"] == 1 and element["distinct_geometries"] == 1
     assert element["deviations"] == []
     assert element["usage"]["placements"] >= 20 and element["geometry"] == {"photoHeight": 240, "boxHeight": 290, "overlap": 56}
+
+
+def test_every_defined_element_has_what_capture_needs():
+    for eid, d in pe.ELEMENTS.items():
+        assert d["selector"] and d["parts"] and d["sample_pages"] and d["name"], eid
+        assert d.get("rules") is not None or eid == "project-card", eid        # all but the card are generalized in the page
+
+
+def test_state_that_changes_per_page_is_not_part_of_an_elements_markup():
+    # the menu item for the page you are on, page-id classes, mobile current-item: per-page state, never part of the element
+    js = pe._LOOK_JS
+    for state in ("current[-_]", "page_item", "page-item-", "fusion-mobile-current-nav-item"):
+        assert state in js, state
+
+
+def test_a_font_stack_is_compared_by_the_family_actually_drawn():
+    assert pe.normalize_look({"fontFamily": '"Roboto Mono", Helvetica, Arial, sans-serif', "color": "x"}) == \
+        pe.normalize_look({"fontFamily": '"Roboto Mono", Arial, Helvetica, sans-serif', "color": "x"})
+    assert pe.normalize_look(None) is None
+
+
+def test_a_templates_normalized_markup_is_the_master_for_its_element():
+    m = pe.template_markup("button-github", PROJECT)
+    assert m == '<a href="{{REPO_URL}}" target="_blank" rel="noopener" class="btn btn-default">{{LABEL}}</a>'
+    assert pe.template_markup("no-such-template", PROJECT) is None

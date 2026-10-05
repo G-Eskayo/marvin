@@ -266,3 +266,25 @@ def test_live_theme_noise_does_not_make_a_placement_look_hand_built():
     noisy = LIVE.replace('class="img-responsive"', 'class="lazyloaded img-responsive" decoding="async" data-orig-src="/i.jpg"').replace(
         '<h3 class="card-title">', '<h3 class="card-title fusion-responsive-typography-calculated" data-fontsize="26" data-lineheight="35.1px" style="--fontSize: 26; line-height: 1.35;">')
     assert ev.check_element_instances([_inst(html=noisy)], ELEMENT) == []
+
+
+def test_extra_plain_links_into_the_projects_own_repo_are_references_once_the_canonical_button_exists():
+    import portfolio_eval as ev
+    rules = ev.DEFAULT_RULES
+    btn = {"text": "View on GitHub", "cls": "btn btn-default", "href": "https://github.com/G-Eskayo/proj"}
+    ref = {"text": "GitHub", "cls": "", "href": "https://github.com/G-Eskayo/proj/tree/main/notebooks"}
+    assert ev.check_github_links([btn, ref, ref], rules) == []
+
+
+def test_an_own_repo_link_with_no_canonical_button_is_flagged_on_the_first_such_link():
+    import portfolio_eval as ev
+    plain = {"text": "GitHub", "cls": "", "href": "https://github.com/G-Eskayo/proj"}
+    f = ev.check_github_links([plain], ev.DEFAULT_RULES)
+    assert sorted(x["rule"] for x in f) == ["github-button-style", "github-button-text"]
+
+
+def test_a_button_styled_github_link_with_the_wrong_words_is_flagged_even_beside_a_canonical_one():
+    import portfolio_eval as ev
+    good = {"text": "View on GitHub", "cls": "btn btn-default", "href": "https://github.com/G-Eskayo/proj"}
+    odd = {"text": "Source code", "cls": "btn btn-default", "href": "https://github.com/G-Eskayo/proj/tree/main"}
+    assert [x["rule"] for x in ev.check_github_links([good, odd], ev.DEFAULT_RULES)] == ["github-button-text"]

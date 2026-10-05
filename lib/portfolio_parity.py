@@ -20,6 +20,33 @@ import portfolio_templates as pt  # noqa: E402
 DASHBOARD = Path(__file__).resolve().parents[1] / "dashboard"
 # how the Templates tab frames each element (see Specimen in PortfolioHub.jsx)
 FRAMING = {"project-card": {"context": "grid", "width": 760, "wide": False}}
+CHROME_WIDTHS = {"site-header": None, "page-title-bar": None, "site-footer": None, "hub-sidebar": 260, "other-projects": 760}
+CHROME_DIR = Path.home() / ".claude" / "portfolio" / "inventory" / "chrome"
+
+
+def framing_for(element_id: str) -> dict:
+    if element_id in FRAMING:
+        return FRAMING[element_id]
+    if element_id == "other-projects":    # lives INSIDE the page content (a mount in the page body), so it takes the page context
+        return {"context": "page", "wide": True, "width": CHROME_WIDTHS[element_id]}
+    if element_id in CHROME_WIDTHS:       # parts that sit around the page, outside <main>
+        return {"context": "chrome", "wide": True, "width": CHROME_WIDTHS[element_id]}
+    return {"context": "page", "width": 340, "wide": False}
+
+
+def preview_html(element_id: str, project: Path) -> str:
+    """What the dashboard puts in the frame: the template's specimen when the element has a template, otherwise the part as
+    captured from the live site (the same thing the Templates tab shows for the parts around every page)."""
+    try:
+        specimen = pt.specimen(element_id, project / "templates")
+    except Exception:
+        specimen = {"ok": False}
+    if specimen.get("ok"):
+        return specimen["html"]
+    captured = CHROME_DIR / f"{element_id}.html"
+    if captured.exists():
+        return captured.read_text()
+    raise RuntimeError(f"nothing to preview for {element_id!r}")
 FRAME_WIDTH = 1100          # the preview iframe is page-wide in the dashboard, so the theme's desktop styles apply
 
 
@@ -66,10 +93,7 @@ def preview_document(html: str, framing: dict) -> str:
 def verify(element_id: str = "project-card", base: str = pe.BASE, project: Path = pe.PROJECT) -> dict:
     from playwright.sync_api import sync_playwright
     element = json.loads((Path(project) / "templates" / "elements" / f"{element_id}.json").read_text())
-    specimen = pt.specimen(element_id, project / "templates")
-    if not specimen["ok"]:
-        raise RuntimeError(f"the specimen did not render: {specimen['errors']}")
-    doc = preview_document(specimen["html"], FRAMING[element_id])
+    doc = preview_document(preview_html(element_id, project), framing_for(element_id))
 
     def cors(route):                     # the dashboard adds this header to dev-site responses (electron/main/dev_site_cors.js)
         response = route.fetch()

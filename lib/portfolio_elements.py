@@ -89,7 +89,9 @@ ELEMENTS = {
     "page-title-bar": {
         "name": "Page title bar", "description": "The dark bar with the page's own title; comes from the page title.",
         "selector": ".avada-page-titlebar-wrapper", "parts": {"bar": ".fusion-page-title-bar", "title": ".entry-title"},
-        "part_props": {"bar": ["display", "backgroundColor", "paddingTop", "paddingBottom"], "title": _TEXT},
+        "part_props": {"bar": ["display", "backgroundColor", "paddingTop", "paddingBottom"],
+                       # size and line height are written by Avada's responsive-typography script per page, not by us
+                       "title": ["fontFamily", "fontWeight", "letterSpacing", "textTransform", "textAlign", "color"]},
         "rules": [{"select": ".entry-title", "text": "{{TITLE}}"}],
         "sample_pages": ["/ai-projects/marvin/"], "fields": [{"name": "TITLE", "label": "Page title", "type": "text"}],
     },

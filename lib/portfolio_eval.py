@@ -121,6 +121,18 @@ def load_element(element_id: str, project: Path = PROJECT) -> dict | None:
         return None
 
 
+def load_elements(project: Path = PROJECT) -> dict[str, dict]:
+    """Every captured element in the library, by id."""
+    out = {}
+    for f in sorted((Path(project) / "templates" / "elements").glob("*.json")):
+        try:
+            e = json.loads(f.read_text())
+            out[e["id"]] = e
+        except (OSError, ValueError, KeyError):
+            continue
+    return out
+
+
 def check_element_instances(instances: list[dict], element: dict) -> list[dict]:
     """Every placement of an element must BE the element: the same generalized markup, the same computed look part by
     part, the same geometry. The reference is the captured element (the approved dev-site look), not numbers someone
@@ -129,7 +141,8 @@ def check_element_instances(instances: list[dict], element: dict) -> list[dict]:
     out: list[dict] = []
     for inst in instances:
         try:
-            if inst.get("html") and element.get("markup") and pe.generalize_card(inst["html"]) != element["markup"]:
+            got = inst.get("markup") if inst.get("markup") is not None else (pe.generalize_card(inst["html"]) if inst.get("html") else None)
+            if got is not None and element.get("markup") and got != element["markup"]:
                 out.append(_finding("element-markup", f"a {element['name']} on this page is hand-built, not the element"))
         except ValueError:
             out.append(_finding("element-markup", f"a {element['name']} on this page is not recognisable as the element"))
@@ -167,26 +180,35 @@ def _norm(text: str) -> str:
 
 
 def check_github_links(links: list[dict], rules: dict) -> list[dict]:
-    """Every GitHub link must be the one canonical button. A page with no repo link is
-    fine -- a project without a public repo must not be given a fabricated one."""
+    """The project's own repository is shown by ONE canonical button. A page with no repo link is fine -- a project
+    without a public repo must not be given a fabricated one. Links into other accounts are references and exempt unless
+    they wear the canonical button (that would send visitors to the wrong project). Further plain links into the
+    project's own repo (a folder, a notebook, "GitHub" in a reference list) are references too: the rule is that the
+    page HAS the canonical button, and that nothing else is styled as a button without being one."""
     want_text = _norm(rules["github_button"]["text"])
     want_cls = set(rules["github_button"]["classes"])
     owner = str(rules["github_button"].get("owner", "")).lower()
-    out = []
+    out: list[dict] = []
+    own: list[dict] = []
     for link in links:
-        # Links into OTHER accounts are references (e.g. "AIMA Python Reference"), not the
-        # project's own repo, so the canonical-button rule does not apply to them.
         if owner and link.get("href") and f"github.com/{owner}/" not in str(link["href"]).lower():
-            # Not the project's own repo. Normally a reference and exempt -- but if it WEARS the
-            # canonical button (text + style), a bulk rewrite has relabelled someone else's repo
-            # as "View on GitHub" and sent visitors to the wrong project.
             if (_norm(link.get("text", "")) == want_text and want_cls <= set(str(link.get("cls", "")).split())):
                 out.append(_finding("github-button-target", f"'View on GitHub' button points at another account's repo: {link['href']}"))
             continue
-        if _norm(link.get("text", "")) != want_text:
-            out.append(_finding("github-button-text", f"link says {link.get('text')!r}, expected {rules['github_button']['text']!r}"))
-        if not want_cls <= set(str(link.get("cls", "")).split()):
-            out.append(_finding("github-button-style", f"link {link.get('text')!r} is not styled as the canonical button (classes: {link.get('cls') or 'none'})"))
+        own.append(link)
+
+    def canonical(link):
+        return _norm(link.get("text", "")) == want_text and want_cls <= set(str(link.get("cls", "")).split())
+
+    if own and not any(canonical(l) for l in own):
+        first = own[0]      # the page has an own-repo link but no canonical button: the first one should become it
+        if _norm(first.get("text", "")) != want_text:
+            out.append(_finding("github-button-text", f"link says {first.get('text')!r}, expected {rules['github_button']['text']!r}"))
+        if not want_cls <= set(str(first.get("cls", "")).split()):
+            out.append(_finding("github-button-style", f"link {first.get('text')!r} is not styled as the canonical button (classes: {first.get('cls') or 'none'})"))
+    for link in own:        # a button-styled own-repo link must be the canonical one, whatever it says
+        if "btn" in str(link.get("cls", "")).split() and not canonical(link):
+            out.append(_finding("github-button-text", f"button-styled link says {link.get('text')!r}, expected {rules['github_button']['text']!r}"))
     return out
 
 
@@ -249,13 +271,17 @@ def run(base: str = "http://localhost:8080", rules: dict | None = None, manifest
     manifest = json.loads(Path(manifest_path).read_text())
     projects = {p["title"]: p["url"] for p in manifest}
     findings: list[dict] = []
-    element = load_element("project-card")
+    library = load_elements()
+    element = library.get("project-card")
     pages = list(projects.values()) + list(rules["hub_pages"])
     off_manifest: list[str] = []
-    if element:   # pages that carry the element but are not in the manifest (e.g. top-level project pages) are checked too
+    if element:   # pages that carry the card but are not in the manifest (e.g. top-level project pages) get the card rules too
         off_manifest = [u for u in element["usage"]["pages"] if u not in pages]
         pages += off_manifest
     project_like = set(projects.values()) | set(off_manifest)
+    # every other element is checked wherever the library saw it (the header and footer: on every page)
+    element_pages = {u for e in library.values() for u in e["usage"]["pages"]}
+    pages += sorted(element_pages - set(pages))
 
     card_geoms: dict[str, list[dict]] = {}
     for f in check_unique_images({p["title"]: p["thumbnail"] for p in manifest}):
@@ -271,10 +297,11 @@ def run(base: str = "http://localhost:8080", rules: dict | None = None, manifest
                 label = f"{url} @{width}"
                 per_page = check_overflow(m["viewport"], m["scrollWidth"])
                 if width >= 1100:   # card geometry rules apply to the desktop layouts
-                    if element:
-                        import portfolio_elements as pe
-                        per_page += check_element_instances(pe.page_instances(page, pe.ELEMENTS["project-card"]), element)
-                    else:
+                    import portfolio_elements as pe
+                    for eid, el in library.items():
+                        if url in el["usage"]["pages"] and eid in pe.ELEMENTS:
+                            per_page += check_element_instances(pe.page_instances(page, pe.ELEMENTS[eid]), el)
+                    if not element:
                         per_page += check_card_geometry(m["cardGeom"], rules)
                     card_geoms[label] = m["cardGeom"]
                     if url in project_like:

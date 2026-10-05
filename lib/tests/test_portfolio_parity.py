@@ -37,8 +37,20 @@ def _live():
         return False
 
 
-@pytest.mark.skipif(not shutil.which("node") or not _live() or not (PROJECT / "templates/elements/project-card.json").exists(),
-                    reason="needs node, the running dev site and a captured element")
-def test_the_dashboard_preview_of_the_project_card_matches_the_live_site():
-    result = pp.verify("project-card")
+def test_framing_puts_each_kind_of_element_in_the_context_it_has_on_the_site():
+    assert pp.framing_for("project-card")["context"] == "grid"
+    assert pp.framing_for("site-header")["context"] == "chrome" and pp.framing_for("hub-sidebar")["width"] == 260
+    assert pp.framing_for("other-projects")["context"] == "page"       # it sits inside the page content, not around it
+    assert pp.framing_for("button-github")["context"] == "page"
+
+
+ELEMENT_IDS = ["project-card", "button-github", "site-header", "page-title-bar", "hub-sidebar", "other-projects", "site-footer"]
+
+
+@pytest.mark.parametrize("element_id", ELEMENT_IDS)
+@pytest.mark.skipif(not shutil.which("node") or not _live(), reason="needs node and the running dev site")
+def test_the_dashboard_preview_of_every_captured_element_matches_the_live_site(element_id):
+    if not (PROJECT / "templates" / "elements" / f"{element_id}.json").exists():
+        pytest.skip("element not captured")
+    result = pp.verify(element_id)
     assert result["ok"], result["differences"]
