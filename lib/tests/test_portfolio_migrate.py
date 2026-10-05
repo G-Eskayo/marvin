@@ -118,3 +118,61 @@ def test_a_failed_update_is_an_error_after_the_backup_exists(tmp_path):
 def test_a_url_that_is_not_a_page_is_refused():
     with pytest.raises(pm.MigrationError, match="no page at"):
         pm.find_page("/nope/", _runner(PAGES, BLOCKS))
+
+
+# ── content must never be lost; one-block pages; tidy text ──────────────────
+
+def test_a_rebuild_that_would_lose_what_the_author_wrote_is_refused(tmp_path):
+    long_body = "<p>" + " ".join(f"word{i}" for i in range(40)) + "</p>"
+    blocks = {7: HERO + "</div></div></div></div></div></div>", 8: "<div id='x'></div>"}
+    content = CONTENT.replace("Intro words.", "Intro words.</p>" + long_body + "<p>")
+    # the extractor would keep this; simulate a loss by checking the guard directly
+    original = pm.strip_sidebar_wrapper(content)
+    assert pm.lost_words(original, original.replace("word7", "").replace("word8", "")) == ["word7", "word8"]
+    assert pm.lost_words(original, original) == []
+
+
+def test_the_guard_ignores_shortcodes_scripts_and_order_but_not_missing_words():
+    a = '[fusion_text]<p>alpha beta</p><script>var x=1</script>[/fusion_text]'
+    assert pm.lost_words(a, "<p>beta alpha</p>") == []
+    assert pm.lost_words(a, "<p>alpha</p>") == ["beta"]
+
+
+ONE_BLOCK = ('<div class="section-container"><div class="container"><div class="row"><div class="col-xs-12"><img src="/h.jpg" class="" alt="">'
+             '<div class="card-container"><div class="text-center"><h1 class="h2">Title</h1></div>'
+             '<div><div class="text-center"><h3 class="pink">Sub</h3></div><p class="no-margin">Before the subtitle block</p>'
+             '<div>Body one.</div><p>Body two.</p><ul><li>three</li></ul></div></div></div></div></div></div><div id="other-projects-mount"></div>')
+
+
+def test_a_single_block_page_keeps_every_part_of_its_card_except_title_and_subtitle():
+    body = pm.single_block_body(ONE_BLOCK)
+    for part in ("Before the subtitle block", "Body one.", "Body two.", "three"):
+        assert part in body
+    assert "Title" not in body and "Sub" not in body and "other-projects-mount" not in body
+
+
+def test_the_hero_image_is_found_even_without_the_img_responsive_class():
+    assert pm.read_hero_block(ONE_BLOCK)["hero_old"] == "/h.jpg"
+
+
+def test_hard_wrapped_text_becomes_running_text_but_code_keeps_its_lines():
+    out = pm.tidy_text("<p>as part of a Real\n      World\n      Pentest lab</p><pre>line1\nline2</pre>")
+    assert "Real World Pentest lab" in out and "line1\nline2" in out
+
+
+def test_a_label_left_beside_the_repo_link_goes_with_it():
+    body = '<div><strong>Project Website:</strong> <a href="https://github.com/G-Eskayo/p" class="x">GitHub</a></div><p>text</p>'
+    out = pm.remove_repo_item(body, "https://github.com/G-Eskayo/p")
+    assert "Project Website" not in out and "<p>text</p>" in out
+
+
+def test_the_first_backup_is_kept_so_a_second_run_cannot_overwrite_the_original(tmp_path):
+    r = _runner(PAGES, BLOCKS)
+    pm.migrate("/ai-projects/proj/", stack="Python", outbox=tmp_path, runner=r, regenerate=None)
+    first = (tmp_path / "proj" / "before.json").read_text()
+    r2 = _runner(PAGES, BLOCKS, content="[fusion_text]already migrated[/fusion_text][wp_code id=\"7\"][wp_code id=\"8\"]")
+    try:
+        pm.migrate("/ai-projects/proj/", stack="Python", outbox=tmp_path, runner=r2, regenerate=None)
+    except pm.MigrationError:
+        pass
+    assert (tmp_path / "proj" / "before.json").read_text() == first

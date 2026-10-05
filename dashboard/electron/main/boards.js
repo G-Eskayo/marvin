@@ -63,6 +63,16 @@ export async function fetchBoardData(repo, gh) {
   return { issues: [...JSON.parse(openJson), ...JSON.parse(closedJson)], prs: JSON.parse(prsJson) }
 }
 
+// Everything closed in this repo (up to 1000 tickets) and the merged PRs that closed them -- the
+// completed-work record. No bodies or comments: this is a list, the drill-down fetches the detail.
+export async function fetchCompletedData(repo, gh) {
+  const [issuesJson, prsJson] = await Promise.all([
+    gh(['issue', 'list', '--repo', repo, '--state', 'closed', '--limit', '1000', '--json', 'number,title,state,labels,url,createdAt,closedAt']),
+    gh(['pr', 'list', '--repo', repo, '--state', 'merged', '--limit', '300', '--json', 'number,title,url,body,mergedAt'])
+  ])
+  return { issues: JSON.parse(issuesJson), prs: JSON.parse(prsJson) }
+}
+
 export async function loadBoard(repo, { gh, stagesFor = defaultStagesFor, liveNumbers, data } = {}) {
   try {
     const { issues, prs } = data || (await fetchBoardData(repo, gh))

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import TicketAgentsPanel from './TicketAgentsPanel.jsx'
 
 const DOT = {
   running: 'bg-blue-500 animate-pulse',
@@ -102,6 +103,7 @@ export default function AgentsPanel({ agents }) {
   const reporting = agents.filter((a) => a.reporting).length
   return (
     <div className="max-w-3xl">
+      <TicketAgentsPanel />
       <p className="mb-3 text-xs text-neutral-500">
         Every autonomous agent on this machine: what launchd says (schedule, running now, last exit) and what the agent reports about itself
         (current step, recent runs). {reporting} of {agents.length} report steps; the rest start reporting at their next run.

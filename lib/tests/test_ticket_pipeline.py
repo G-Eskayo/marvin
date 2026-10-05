@@ -43,9 +43,9 @@ def test_unclaimed_ready_tickets_filters_out_claimed(monkeypatch):
 def test_unclaimed_ready_tickets_sorted_oldest_first(monkeypatch):
     import json
     issues = [
-        _issue(5, "2026-03-01T00:00:00Z"),
-        _issue(3, "2026-01-01T00:00:00Z"),
-        _issue(4, "2026-02-01T00:00:00Z"),
+        _issue(5, "2026-03-01T00:00:00Z", labels=["ready-for-agent"]),
+        _issue(3, "2026-01-01T00:00:00Z", labels=["ready-for-agent"]),
+        _issue(4, "2026-02-01T00:00:00Z", labels=["ready-for-agent"]),
     ]
     monkeypatch.setattr(tp.subprocess, "run", lambda *a, **kw: SimpleNamespace(
         returncode=0, stdout=json.dumps(issues), stderr=""))
@@ -206,3 +206,42 @@ def test_a_tripped_breaker_is_visible_in_the_run_log(monkeypatch):
     tp.main()
     run = json.loads((job_events.JOBS_DIR / "ticket-pipeline.json").read_text())["runs"][-1]
     assert "circuit breaker" in run["summary"] and "TRIPPED" in run["steps"][-1]["detail"]
+
+
+# ── what the dispatcher will and will not pick ──────────────────────────────
+
+def _fake_gh(monkeypatch, issues):
+    import json
+    monkeypatch.setattr(tp.subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=0, stdout=json.dumps(issues), stderr=""))
+
+
+def test_a_ticket_with_an_open_blocker_is_not_dispatched(monkeypatch):
+    issues = [
+        _issue(1, "2026-01-01T00:00:00Z", labels=["ready-for-agent"]),
+        {**_issue(2, "2026-01-02T00:00:00Z", labels=["ready-for-agent"]), "body": "## Blocked by\n\n- #1"},
+        {**_issue(3, "2026-01-03T00:00:00Z", labels=["ready-for-agent"]), "body": "## Blocked by\n\n- #99"},  # #99 is closed/absent
+    ]
+    _fake_gh(monkeypatch, issues)
+    assert [i["number"] for i in tp._unclaimed_ready_tickets()] == [1, 3]
+
+
+def test_higher_priority_goes_first_then_oldest(monkeypatch):
+    issues = [
+        _issue(1, "2026-01-01T00:00:00Z", labels=["ready-for-agent"]),
+        _issue(2, "2026-01-02T00:00:00Z", labels=["ready-for-agent", "priority:p0"]),
+        _issue(3, "2026-01-03T00:00:00Z", labels=["ready-for-agent", "priority:p0"]),
+        _issue(4, "2026-01-04T00:00:00Z", labels=["ready-for-agent", "priority:p3"]),
+    ]
+    _fake_gh(monkeypatch, issues)
+    # p0s first (oldest first among equals); an unscored ticket counts as middle priority, so it comes before p3
+    assert [i["number"] for i in tp._unclaimed_ready_tickets()] == [2, 3, 1, 4]
+
+
+def test_only_ready_unclaimed_unpinned_tickets_are_candidates(monkeypatch):
+    issues = [
+        _issue(1, "2026-01-01T00:00:00Z", labels=["bug"]),                                  # not ready
+        _issue(2, "2026-01-02T00:00:00Z", labels=["ready-for-agent", "pinned"]),             # a person has it
+        _issue(3, "2026-01-03T00:00:00Z", labels=["ready-for-agent"]),
+    ]
+    _fake_gh(monkeypatch, issues)
+    assert [i["number"] for i in tp._unclaimed_ready_tickets()] == [3]

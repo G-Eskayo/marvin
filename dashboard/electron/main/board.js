@@ -148,3 +148,40 @@ export function summarizeBoard(board) {
   const total = Object.values(counts).reduce((a, b) => a + b, 0) + archived
   return { counts, archived, total, open: total - archived - (counts.done || 0) }
 }
+
+// The record of what got done: every closed ticket (not just the last two weeks), newest first, grouped
+// by month, with how long it took, its tags and the merged PR that closed it. Completed work stays
+// useful as reference -- "how will we know where we are going if we don't remember where we have been".
+export function buildCompleted({ issues, prs = [] }) {
+  const prFor = new Map()
+  for (const p of prs) {
+    const n = parseTicketRef(p.body || '')
+    if (n && !prFor.has(Number(n))) prFor.set(Number(n), { number: p.number, title: p.title, url: p.url, mergedAt: p.mergedAt || null })
+  }
+  const items = issues
+    .filter((i) => i.state === 'CLOSED')
+    .map((i) => {
+      const created = Date.parse(i.createdAt)
+      const closed = Date.parse(i.closedAt)
+      return {
+        number: i.number,
+        title: i.title,
+        url: i.url,
+        tags: labelNames(i).map((name) => ({ name, kind: labelKind(name) })),
+        labels: labelNames(i),
+        createdAt: i.createdAt,
+        closedAt: i.closedAt || null,
+        tookDays: Number.isFinite(created) && Number.isFinite(closed) ? Math.max(0, Math.round((closed - created) / DAY_MS)) : null,
+        pr: prFor.get(i.number) || null
+      }
+    })
+    .sort((a, b) => (b.closedAt || '').localeCompare(a.closedAt || ''))
+  const months = []
+  for (const item of items) {
+    const month = (item.closedAt || 'unknown').slice(0, 7)
+    const last = months[months.length - 1]
+    if (last && last.month === month) last.items.push(item)
+    else months.push({ month, items: [item] })
+  }
+  return { items, months, total: items.length }
+}

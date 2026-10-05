@@ -66,3 +66,19 @@ describe('AgentsPanel', () => {
     expect(html).toContain('1 of 3 report steps')
   })
 })
+
+import CompletedView from '../src/components/CompletedView.jsx'
+
+describe('CompletedView', () => {
+  it('shows a loading state before data arrives (the fetch runs in an effect, not on the server)', () => {
+    expect(renderToStaticMarkup(<CompletedView repo="G-Eskayo/marvin" onSelect={() => {}} />)).toContain('Loading the finished work')
+  })
+})
+
+import TicketAgentsPanel from '../src/components/TicketAgentsPanel.jsx'
+
+describe('TicketAgentsPanel', () => {
+  it('renders nothing until its data loads (the fetch runs in an effect)', () => {
+    expect(renderToStaticMarkup(<TicketAgentsPanel />)).toBe('')
+  })
+})

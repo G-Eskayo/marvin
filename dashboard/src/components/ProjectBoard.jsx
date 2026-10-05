@@ -3,6 +3,7 @@ import { cleanIpcError } from '../lib/ipcError.js'
 import { projectIdOf } from '../lib/projects.js'
 import Markdown from './Markdown.jsx'
 import Related, { useRelated } from './Related.jsx'
+import CompletedView from './CompletedView.jsx'
 
 // Backstop only: triggers (window.api.triggers) drive refreshes; a poll that
 // finds a change no trigger announced is logged as a gap.
@@ -96,7 +97,7 @@ function Card({ card, repo, onSelect, onOpenMr, activeTags, onTag }) {
   )
 }
 
-function Column({ column, repo, onSelect, onOpenMr, activeTags, onTag }) {
+function Column({ column, repo, onSelect, onOpenMr, activeTags, onTag, onAllCompleted }) {
   const [showArchive, setShowArchive] = useState(false)
   const visible = column.cards.filter((c) => [...activeTags].every((t) => c.labels.includes(t)))
   const archive = column.archive || []
@@ -111,6 +112,11 @@ function Column({ column, repo, onSelect, onOpenMr, activeTags, onTag }) {
           <Card key={card.number} card={card} repo={repo} onSelect={onSelect} onOpenMr={onOpenMr} activeTags={activeTags} onTag={onTag} />
         ))}
         {visible.length === 0 && <p className="py-2 text-xs italic text-neutral-700">Nothing here</p>}
+        {column.id === 'done' && (
+          <button onClick={onAllCompleted} className="mt-1 text-left text-xs text-neutral-500 hover:text-neutral-300">
+            All completed work →
+          </button>
+        )}
         {column.id === 'done' && archive.length > 0 && (
           <div className="mt-2">
             <button onClick={() => setShowArchive(!showArchive)} className="text-xs text-neutral-500 hover:text-neutral-300">
@@ -279,6 +285,7 @@ export default function ProjectBoard({ onOpenMr, onOpenDocs, onOpenTicket, nav }
   const [error, setError] = useState(null)
   const [selected, setSelected] = useState(null)
   const [activeTags, setActiveTags] = useState(new Set())
+  const [view, setView] = useState('board') // 'board' | 'completed'
   const toggleTag = (name) =>
     setActiveTags((cur) => {
       const next = new Set(cur)
@@ -302,6 +309,7 @@ export default function ProjectBoard({ onOpenMr, onOpenDocs, onOpenTicket, nav }
     if (nav?.tab === 'activity' && nav.repo) {
       setRepo(nav.repo)
       setSelected(null)
+      setView('board')
       setPendingTicket(nav.ticketNumber || null)
     }
   }, [nav?.at])
@@ -405,18 +413,46 @@ export default function ProjectBoard({ onOpenMr, onOpenDocs, onOpenTicket, nav }
           </span>
         )}
       </div>
+      <div className="mb-3 flex gap-1">
+        {[['board', 'Board'], ['completed', 'Completed']].map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setView(id)}
+            className={`rounded px-3 py-1 text-xs ${view === id ? 'bg-neutral-800 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {view === 'completed' && repo && <CompletedView
+          repo={repo}
+          onSelect={(item) =>
+            // a completed item is a finished card: give the drill-down the same shape a board card has
+            setSelected({
+              number: item.number,
+              title: item.title,
+              labels: item.labels,
+              tags: item.tags,
+              blockedBy: [],
+              reason: `Completed ${item.closedAt?.slice(0, 10) || ''}${item.tookDays != null ? `, took ${item.tookDays} days` : ''}`,
+              prs: item.pr ? [{ number: item.pr.number, title: item.pr.title, url: item.pr.url, isDraft: false, hasDevEvidence: false }] : [],
+              hasTimeline: repo === 'G-Eskayo/marvin',
+              closedAt: item.closedAt
+            })
+          }
+        />}
       {error && <p className="mb-3 text-red-400">{error}</p>}
-      {!board && !error && <p className="text-neutral-500">Loading {repo}…</p>}
-      {boardIsEmpty && (
+      {view === 'board' && !board && !error && <p className="text-neutral-500">Loading {repo}…</p>}
+      {view === 'board' && boardIsEmpty && (
         <p className="mb-3 rounded border border-neutral-800 bg-neutral-900 p-3 text-sm text-neutral-400">
           No tickets yet for this project. File them with <code className="text-neutral-200">/to-issues</code> and they appear here by themselves.
         </p>
       )}
-      {board && <TagBar board={board} activeTags={activeTags} onTag={toggleTag} onClear={() => setActiveTags(new Set())} />}
-      {board && (
+      {view === 'board' && board && <TagBar board={board} activeTags={activeTags} onTag={toggleTag} onClear={() => setActiveTags(new Set())} />}
+      {view === 'board' && board && (
         <div className="flex gap-4 overflow-x-auto pb-4">
           {board.columns.map((c) => (
-            <Column key={c.id} column={c} repo={repo} onSelect={setSelected} onOpenMr={onOpenMr} activeTags={activeTags} onTag={toggleTag} />
+            <Column key={c.id} column={c} repo={repo} onSelect={setSelected} onOpenMr={onOpenMr} activeTags={activeTags} onTag={toggleTag} onAllCompleted={() => setView('completed')} />
           ))}
         </div>
       )}

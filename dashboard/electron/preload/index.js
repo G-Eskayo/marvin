@@ -32,6 +32,7 @@ contextBridge.exposeInMainWorld('api', {
   health: {
     status: () => ipcRenderer.invoke('health:status'),
     agents: () => ipcRenderer.invoke('health:agents'),
+    ticketAgents: () => ipcRenderer.invoke('health:ticketAgents'),
     tools: () => ipcRenderer.invoke('health:tools'),
     refresh: () => ipcRenderer.invoke('health:refresh')
   },
@@ -105,6 +106,7 @@ contextBridge.exposeInMainWorld('api', {
     list: () => ipcRenderer.invoke('boards:list'),
     load: (repo, source) => ipcRenderer.invoke('boards:load', repo, source),
     ticket: (repo, number) => ipcRenderer.invoke('boards:ticket', repo, number),
-    summary: (repo) => ipcRenderer.invoke('boards:summary', repo)
+    summary: (repo) => ipcRenderer.invoke('boards:summary', repo),
+    completed: (repo) => ipcRenderer.invoke('boards:completed', repo)
   }
 })

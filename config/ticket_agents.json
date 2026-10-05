@@ -1,0 +1,9 @@
+{
+  "_readme": "Ticket agents (lib/ticket_agents.py). mode: auto = propose until act_after, then act | propose | act | off. agents: per-agent override. stale_claims and refeed stay on 'propose' until you change them here: releasing claims can re-queue tickets that were deliberately held, and refeed opens a second PR beside the denied one. A ticket labelled pinned is never touched; held also protects its claim.",
+  "mode": "auto",
+  "act_after": "2026-10-12",
+  "agents": {
+    "stale_claims": "propose",
+    "refeed": "propose"
+  }
+}
