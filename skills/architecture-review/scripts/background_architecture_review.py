@@ -227,6 +227,11 @@ def run_review(chunk: dict, trigger_reason: str, is_threshold_trigger: bool) -> 
         _save_state(index=(current_index + 1) % len(chunks))
 
 
+sys.path.insert(0, str(__import__("pathlib").Path.home() / ".agents" / "lib"))
+import job_events  # noqa: E402  (run log shown in the dashboard's Health tab)
+
+
+@job_events.reported("architecture-review", "Architecture review")
 def main() -> None:
     if _cooldown_active():
         print("[architecture-review] skipped: ran within the last 20h", file=sys.stderr)

@@ -183,3 +183,62 @@ describe('stale claims', () => {
     expect(STALE_CLAIM_MS).toBe(24 * 3600_000)
   })
 })
+
+import { ARCHIVE_AFTER_DAYS, labelKind } from '../electron/main/board.js'
+
+describe('tags on cards', () => {
+  const NOW = Date.parse('2026-10-05T12:00:00Z')
+  const board = (issues) => buildBoard({ repo: 'o/r', issues, prs: [], eventsByNumber: {}, liveNumbers: new Set(), now: NOW })
+  const card = (b, n) => b.columns.flatMap((c) => [...c.cards, ...(c.archive || [])]).find((k) => k.number === n)
+
+  it('classifies labels into type, state, claim, priority and other', () => {
+    expect(labelKind('bug')).toBe('type')
+    expect(labelKind('research-spike')).toBe('type')
+    expect(labelKind('ready-for-agent')).toBe('state')
+    expect(labelKind('needs-reengagement')).toBe('state')
+    expect(labelKind('claimed:mac-mini')).toBe('claim')
+    expect(labelKind('priority:p1')).toBe('priority')
+    expect(labelKind('area:dashboard')).toBe('other')
+  })
+
+  it('gives each card its tags (with kinds), who holds the claim, and what blocks it', () => {
+    const b = board([
+      issue({ number: 7, labels: labels('bug', 'ready-for-agent', 'priority:p1', 'area:docs') }),
+      issue({ number: 8, labels: labels('claimed:mac-mini'), updatedAt: new Date(NOW - 3600_000).toISOString() }),
+      issue({ number: 9, body: '## Blocked by\n\n- #7' })
+    ])
+    expect(card(b, 7).tags.map((t) => [t.name, t.kind])).toEqual([['bug', 'type'], ['ready-for-agent', 'state'], ['priority:p1', 'priority'], ['area:docs', 'other']])
+    expect(card(b, 8).claimedBy).toBe('mac-mini')
+    expect(card(b, 9).blockedBy).toEqual([7])
+  })
+
+  it('carries age in days from creation', () => {
+    const b = board([issue({ number: 7, createdAt: new Date(NOW - 5 * 86400_000).toISOString() })])
+    expect(card(b, 7).ageDays).toBe(5)
+  })
+})
+
+describe('archive', () => {
+  const NOW = Date.parse('2026-10-05T12:00:00Z')
+  const closed = (n, daysAgo) => issue({ number: n, state: 'CLOSED', closedAt: new Date(NOW - daysAgo * 86400_000).toISOString() })
+  const done = (issues) => buildBoard({ repo: 'o/r', issues, prs: [], eventsByNumber: {}, liveNumbers: new Set(), now: NOW }).columns.find((c) => c.id === 'done')
+
+  it('keeps recently closed tickets in Done, newest first, and moves older ones to the archive', () => {
+    const d = done([closed(1, 20), closed(2, 3), closed(3, 1), closed(4, 400)])
+    expect(d.cards.map((c) => c.number)).toEqual([3, 2])
+    expect(d.archive.map((c) => c.number)).toEqual([1, 4])
+  })
+
+  it('has a 14 day window, and a closed ticket with no date stays visible rather than vanishing', () => {
+    expect(ARCHIVE_AFTER_DAYS).toBe(14)
+    const d = done([issue({ number: 5, state: 'CLOSED' })])
+    expect(d.cards.map((c) => c.number)).toEqual([5])
+  })
+
+  it('summarizeBoard reports the archive separately and does not count it as open or recent', () => {
+    const b = buildBoard({ repo: 'o/r', issues: [closed(1, 20), closed(2, 1)], prs: [], now: NOW })
+    const s = summarizeBoard(b)
+    expect(s.counts.done).toBe(1)
+    expect(s.archived).toBe(1)
+  })
+})

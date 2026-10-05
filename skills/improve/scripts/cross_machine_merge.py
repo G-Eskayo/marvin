@@ -393,6 +393,11 @@ def run_merge_authority(remote_id: str, host: str, own_profile: dict) -> None:
 
 # ── main ─────────────────────────────────────────────────────────────────────
 
+sys.path.insert(0, str(__import__("pathlib").Path.home() / ".agents" / "lib"))
+import job_events  # noqa: E402  (run log shown in the dashboard's Health tab)
+
+
+@job_events.reported("cross-machine-merge", "Cross-machine data merge")
 def main() -> None:
     own_profile = load_or_build(max_age_hours=0)  # always refresh — this is the one daily point we snapshot it
     my_id = registry_id()

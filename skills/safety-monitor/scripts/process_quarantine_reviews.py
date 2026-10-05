@@ -103,6 +103,16 @@ def process() -> tuple[int, int]:
     return processed, len(remaining_blocks)
 
 
-if __name__ == "__main__":
+sys.path.insert(0, str(__import__("pathlib").Path.home() / ".agents" / "lib"))
+import job_events  # noqa: E402  (run log shown in the dashboard's Health tab)
+
+
+@job_events.reported("process-quarantine-reviews", "Process quarantine reviews")
+def _cli() -> None:
     processed, remaining = process()
+    job_events.step("Reviews processed", f"{processed} processed, {remaining} still pending")
     print(f"[process-quarantine-reviews] {processed} review(s) processed, {remaining} still pending", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    _cli()

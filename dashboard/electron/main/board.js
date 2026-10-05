@@ -12,6 +12,21 @@ export const COLUMNS = [
   { id: 'done', label: 'Done' }
 ]
 
+export const ARCHIVE_AFTER_DAYS = 14
+const DAY_MS = 86400_000
+
+const TYPE_LABELS = new Set(['bug', 'enhancement', 'documentation', 'research-spike', 'breaking-change', 'question', 'duplicate', 'invalid', 'good first issue', 'help wanted'])
+const STATE_LABELS = new Set(['ready-for-agent', 'ready-for-human', 'needs-triage', 'needs-info', 'needs-reengagement', 'wontfix'])
+
+// What kind of tag a label is, so the board can colour and group them.
+export function labelKind(name) {
+  if (name.startsWith('claimed:')) return 'claim'
+  if (/^(priority:|p[0-3]$)/.test(name)) return 'priority'
+  if (STATE_LABELS.has(name)) return 'state'
+  if (TYPE_LABELS.has(name)) return 'type'
+  return 'other'
+}
+
 const REVIEW_STAGES = new Set(['verifying', 'gate', 'merging'])
 // A claim label is a statement, not evidence. With no live dispatch, no recent pipeline stage and no
 // touch on the ticket for a day, it is a stale claim (found 2026-10-05: 14 of them showed as "in progress").
@@ -33,13 +48,13 @@ function closingPrs(issue, prs) {
 
 // Dependencies come from either inline "Blocked by #n" or the to-issues
 // template's "## Blocked by" section (bullets of #n refs, or "None ...").
-function openDependency(issue, openNumbers) {
+function openDependencies(issue, openNumbers) {
   const body = issue.body || ''
   const refs = []
   for (const m of body.matchAll(/\bBlocked by\s+(?:[\w.-]+\/[\w.-]+)?#(\d+)/gi)) refs.push(Number(m[1]))
   const sec = body.match(/##\s*Blocked by\s*\n([\s\S]*?)(?=\n##\s|$)/i)
   if (sec) for (const m of sec[1].matchAll(/#(\d+)/g)) refs.push(Number(m[1]))
-  return refs.find((n) => openNumbers.has(n)) ?? null
+  return [...new Set(refs)].filter((n) => openNumbers.has(n))
 }
 
 // First match wins; order is the board's meaning. See CONTEXT.md for the rules.
@@ -59,8 +74,8 @@ export function deriveColumn(issue, { prs = [], events = [], isLive = false, ope
   }
 
   if (labels.includes('blocked')) return { ...base, column: 'blocked', reason: 'Labelled blocked' }
-  const dep = openDependency(issue, openNumbers)
-  if (dep !== null) return { ...base, column: 'blocked', reason: `Blocked by #${dep}, still open` }
+  const deps = openDependencies(issue, openNumbers)
+  if (deps.length) return { ...base, column: 'blocked', reason: `Blocked by ${deps.map((d) => `#${d}`).join(', ')}, still open` }
   if (last && last.status === 'failed' && !isLive) {
     const why = last.detail ? `: ${last.detail}` : ''
     return { ...base, column: 'blocked', reason: `Pipeline failed at ${last.stage}${why}` }
@@ -90,30 +105,46 @@ export function buildBoard({ repo, issues, prs, eventsByNumber = {}, liveNumbers
   const openNumbers = new Set(issues.filter((i) => i.state === 'OPEN').map((i) => i.number))
   const columns = COLUMNS.map((c) => ({ ...c, cards: [] }))
   const byId = Object.fromEntries(columns.map((c) => [c.id, c]))
+  byId.done.archive = []
+  const archiveBefore = now - ARCHIVE_AFTER_DAYS * DAY_MS
 
   for (const issue of issues) {
     const events = eventsByNumber[issue.number] || []
     const d = deriveColumn(issue, { prs, events, isLive: liveNumbers.has(issue.number), openNumbers, now })
-    byId[d.column].cards.push({
+    const names = labelNames(issue)
+    const created = Date.parse(issue.createdAt)
+    const card = {
       number: issue.number,
       title: issue.title,
       url: issue.url,
-      labels: labelNames(issue),
+      labels: names,
+      tags: names.map((name) => ({ name, kind: labelKind(name) })),
+      claimedBy: names.find((l) => l.startsWith('claimed:'))?.slice('claimed:'.length) || null,
+      blockedBy: openDependencies(issue, openNumbers),
       createdAt: issue.createdAt,
+      closedAt: issue.closedAt || null,
+      ageDays: Number.isFinite(created) ? Math.floor((now - created) / DAY_MS) : null,
       reason: d.reason,
       owner: d.owner,
       prs: d.prs,
       hasTimeline: events.length > 0
-    })
+    }
+    // Closed long ago -> archive (never deleted, just out of the way). A closed ticket with no date stays visible.
+    const closedMs = Date.parse(issue.closedAt)
+    if (d.column === 'done' && Number.isFinite(closedMs) && closedMs < archiveBefore) byId.done.archive.push(card)
+    else byId[d.column].cards.push(card)
   }
-  // Oldest first within a column = the order the pipeline would pick them.
-  for (const c of columns) c.cards.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  // Open work: oldest first = the order the pipeline would pick them. Done / archive: newest first.
+  const newestFirst = (a, b) => (b.closedAt || '').localeCompare(a.closedAt || '')
+  for (const c of columns) c.cards.sort(c.id === 'done' ? newestFirst : (a, b) => a.createdAt.localeCompare(b.createdAt))
+  byId.done.archive.sort(newestFirst)
   return { repo, columns }
 }
 
 // Compact numbers for the project card in Docs: how many cards per column, how many still open.
 export function summarizeBoard(board) {
   const counts = Object.fromEntries(board.columns.map((c) => [c.id, c.cards.length]))
-  const total = Object.values(counts).reduce((a, b) => a + b, 0)
-  return { counts, total, open: total - (counts.done || 0) }
+  const archived = board.columns.reduce((n, c) => n + (c.archive?.length || 0), 0)
+  const total = Object.values(counts).reduce((a, b) => a + b, 0) + archived
+  return { counts, archived, total, open: total - archived - (counts.done || 0) }
 }
