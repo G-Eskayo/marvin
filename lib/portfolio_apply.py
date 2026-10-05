@@ -60,10 +60,13 @@ def best_cut(img: Image.Image, aspect: float) -> Image.Image:
     return img.crop((x, 0, x + cw, h))
 
 
-def publish_images(manifest: list[dict], images_dir: Path, html_dir: Path) -> dict[str, str]:
-    """Write each in-use image into the dev uploads. Returns {slug: thumbnail URL} for the ones that exist."""
-    out_dir = Path(html_dir) / UPLOAD_SUBDIR
-    out_dir.mkdir(parents=True, exist_ok=True)
+def publish_images(manifest: list[dict], images_dir: Path, html_dir: Path, deploy_dir: Path | None = None) -> dict[str, str]:
+    """Write each in-use image into the dev uploads, and (when `deploy_dir` is given) into the repo's deploy/ folder too.
+    The production deploy only ships deploy/ (to wp-content/), so an image that exists only under the dev site's uploads
+    would be a broken thumbnail on the live site. Returns {slug: thumbnail URL} for the ones that exist."""
+    out_dirs = [Path(html_dir) / UPLOAD_SUBDIR] + ([Path(deploy_dir) / "uploads" / "generated"] if deploy_dir else [])
+    for d in out_dirs:
+        d.mkdir(parents=True, exist_ok=True)
     urls: dict[str, str] = {}
     for entry in manifest:
         slug = slug_of(entry["url"])
@@ -72,8 +75,9 @@ def publish_images(manifest: list[dict], images_dir: Path, html_dir: Path) -> di
             continue
         img = Image.open(src).convert("RGB")
         thumb = best_cut(img, THUMB_SIZE[0] / THUMB_SIZE[1]).resize(THUMB_SIZE, Image.LANCZOS)
-        thumb.save(out_dir / f"{slug}-600w.jpg", quality=90)
-        img.save(out_dir / f"{slug}-hero.jpg", quality=90)
+        for out_dir in out_dirs:
+            thumb.save(out_dir / f"{slug}-600w.jpg", quality=88, optimize=True)
+            img.save(out_dir / f"{slug}-hero.jpg", quality=82, optimize=True)
         urls[slug] = f"/{UPLOAD_SUBDIR}/{slug}-600w.jpg"
     return urls
 
@@ -129,7 +133,7 @@ def regenerate_pages(project: Path = PROJECT, runner=_run) -> list[str]:
 def apply(project: Path = PROJECT, html_dir: Path = DEV_HTML, images_dir: Path = IMAGES_DIR, runner=_run, regenerate: bool = True) -> dict:
     manifest_file = Path(project) / "deploy" / "other-projects" / "manifest.json"
     text = manifest_file.read_text()
-    urls = publish_images(json.loads(text), images_dir, html_dir)
+    urls = publish_images(json.loads(text), images_dir, html_dir, Path(project) / "deploy")
     new_text, changed = update_manifest_text(text, urls)
     if changed:
         manifest_file.write_text(new_text)

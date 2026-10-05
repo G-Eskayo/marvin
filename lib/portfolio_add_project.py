@@ -120,7 +120,7 @@ def add_project(spec: dict, *, dry_run: bool = False, project: Path = pa.PROJECT
     kw = {k: v for k, v in (("images_dir", images_dir), ("registry_path", registry_path)) if v}
     motif = imagegen._motif_arg(s.get("theme"))
     image = imagegen.pick_unique_variant(s["slug"], motif, None, **kw)
-    pa.publish_images([{"url": p["url"]}], images_dir or imagegen.IMAGES_DIR, html_dir)
+    pa.publish_images([{"url": p["url"]}], images_dir or imagegen.IMAGES_DIR, html_dir, Path(project) / "deploy")
 
     page_id = create_page(s, p["page_html"], runner)
     new_text = append_manifest_entry(manifest_text, p["manifest_entry"])
