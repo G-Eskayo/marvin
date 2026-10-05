@@ -698,7 +698,11 @@ def write_status(status: dict | None = None) -> dict:
     return status
 
 
-if __name__ == "__main__":
+import job_events  # noqa: E402  (run log shown in the dashboard's Health tab)
+
+
+@job_events.reported("health-check", "Health check sweep")
+def _cli() -> None:
     out = write_status()
     if "--json" in sys.argv:
         print(json.dumps(out, indent=2))
@@ -708,3 +712,8 @@ if __name__ == "__main__":
             print(f"  [{r['severity']:>6}] {r['label']}: {r['detail']}")
         if out["coverage"]["unmonitored_jobs"]:
             print(f"  unmonitored jobs: {', '.join(out['coverage']['unmonitored_jobs'])}")
+    job_events.step("Sweep finished", f"overall {out['overall']}, coverage {out['coverage']['covered']}/{out['coverage']['total']}")
+
+
+if __name__ == "__main__":
+    _cli()

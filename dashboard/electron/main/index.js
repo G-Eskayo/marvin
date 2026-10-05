@@ -24,7 +24,9 @@ import { readCatalog, readMasterDoc, CATALOG_DIR, MASTER_DOC_PATH } from './cata
 import { STAGES_DIR } from '../../webhook-server/ticket_stages.js'
 import { DISPATCH_STATE_PATH } from './dispatch_status.js'
 import { createHash } from 'crypto'
-import { listJobs, JOBS_DIR } from './jobs.js'
+import { JOBS_DIR } from './jobs.js'
+import { listAgents } from './agents.js'
+import { readToolUsage, isStale as toolUsageStale } from './tool_usage.js'
 import { createRefreshServer } from './refresh_server.js'
 import { adoptLoginShellPath } from './path.js'
 import { resolveServiceDefaults, resolveDeviceId } from './device_identity.js'
@@ -137,6 +139,16 @@ function registerDispatchHandlers() {
 
 function registerHealthHandlers() {
   ipcMain.handle('health:status', () => readHealthStatus())
+  ipcMain.handle('health:agents', () => listAgents())
+  // Tool & skill usage from the session transcripts: rescanned when older than 10 minutes (about 1.5s).
+  ipcMain.handle('health:tools', async () => {
+    let usage = readToolUsage()
+    if (toolUsageStale(usage)) {
+      await execFileAsync(AGENTS_PYTHON, [join(homedir(), '.agents', 'lib', 'tool_usage.py'), 'refresh'], { timeout: 120_000 }).catch(() => {})
+      usage = readToolUsage() || usage
+    }
+    return usage
+  })
   ipcMain.handle('health:refresh', async () => {
     await runHealthCheckNow(execFileAsync)
     return readHealthStatus()
@@ -146,7 +158,6 @@ function registerHealthHandlers() {
 function registerActivityHandlers() {
   ipcMain.handle('activity:list', () => listTicketActivity())
   ipcMain.handle('activity:timeline', (_event, number) => getTicketTimeline(number))
-  ipcMain.handle('activity:jobs', () => listJobs())
 
   // Project boards: only repos in the registry are fetchable, so the renderer
   // can't make the main process shell out to gh for an arbitrary repo.
@@ -269,6 +280,8 @@ function registerDocsHandlers() {
   ipcMain.handle('portfolio:image:variant:new', (_e, slug, motif) => portfolio.newImageVariant(slug, motif))
   ipcMain.handle('portfolio:image:variant:choose', (_e, slug, motif, salt) => portfolio.chooseImageVariant(slug, motif, salt))
   ipcMain.handle('portfolio:project:add', (_e, spec, opts) => portfolio.addProject(spec, opts))
+  ipcMain.handle('portfolio:pipeline:status', () => portfolio.pipelineStatus())
+  ipcMain.handle('portfolio:pipeline:run', () => portfolio.runPipeline())
   ipcMain.handle('portfolio:elements', () => portfolio.listElements())
   ipcMain.handle('portfolio:element:verify', (_e, id) => portfolio.verifyElement(id))
   ipcMain.handle('portfolio:images:apply', () => portfolio.applyImages())
@@ -392,10 +405,11 @@ app.whenReady().then(() => {
   mkdirSync(JOBS_DIR, { recursive: true })
   triggerHub.watchFiles('activity', [
     { dir: STAGES_DIR, match: (n) => n.endsWith('.json') },
-    { dir: JOBS_DIR, match: (n) => n.endsWith('.json') && !n.startsWith('.') },
     { dir: dirname(DISPATCH_STATE_PATH), match: (n) => n === 'dispatch-state.json' },
     { dir: dirname(REGISTRY_PATH), match: (n) => n === 'registry.json' }
   ])
+  // Agents report through run logs; a step landing in that folder refreshes the Health tab's agent list.
+  triggerHub.watchFiles('agents', [{ dir: JOBS_DIR, match: (n) => n.endsWith('.json') && !n.startsWith('.') }])
   triggerHub.onTrigger((t) => mainWindow?.webContents.send('trigger', t))
 
   // External pings (webhook-server): bare = the legacy "MR list changed"; with topics = what changed.

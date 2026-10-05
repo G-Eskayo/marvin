@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import HealthDrilldown from './HealthDrilldown.jsx'
+import AgentsPanel from './AgentsPanel.jsx'
+import ToolUsage from './ToolUsage.jsx'
 
 // How long a check is trusted at full color before it starts visually
 // greying out (ADR 0033's Staleness gradient term). All v1 checks run in
@@ -108,6 +110,20 @@ export default function HealthDashboard() {
   const [error, setError] = useState(null)
   const [selected, setSelected] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [view, setView] = useState('checks')
+  const [agents, setAgents] = useState(null)
+
+  // Agents refresh by trigger (the run-log folder is watched); the poll is only a backstop.
+  useEffect(() => {
+    const loadAgents = () => window.api.health.agents().then(setAgents).catch(() => {})
+    loadAgents()
+    const id = setInterval(loadAgents, 60_000)
+    const off = window.api.triggers.on((t) => t.topic === 'agents' && loadAgents())
+    return () => {
+      clearInterval(id)
+      off()
+    }
+  }, [])
 
   function load() {
     window.api.health
@@ -147,8 +163,29 @@ export default function HealthDashboard() {
   }
 
   const cov = status.coverage
+  const agentProblems = agents?.filter((a) => ['failed', 'crashed', 'stopped'].includes(a.status)).length || 0
+  const agentsRunning = agents?.filter((a) => a.status === 'running').length || 0
   return (
     <div className="p-6">
+      <div className="mb-4 flex gap-1">
+        {[['checks', 'Checks'], ['agents', 'Autonomous agents'], ['tools', 'Tool & skill usage']].map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setView(id)}
+            className={`rounded px-3 py-1 text-sm ${view === id ? 'bg-neutral-800 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
+          >
+            {label}
+            {id === 'agents' && agentsRunning > 0 && <span className="ml-1.5 inline-block h-2 w-2 animate-pulse rounded-full bg-blue-500" title={`${agentsRunning} running`} />}
+            {id === 'agents' && agentProblems > 0 && <span className="ml-1.5 inline-block h-2 w-2 rounded-full bg-red-500" title={`${agentProblems} need attention`} />}
+          </button>
+        ))}
+      </div>
+      {view === 'agents' ? (
+        <AgentsPanel agents={agents} />
+      ) : view === 'tools' ? (
+        <ToolUsage />
+      ) : (
+      <>
       <OverallBadge overall={status.overall} generatedAt={status.generated_at} refreshing={refreshing} onRefresh={handleRefresh} />
 
       {cov && (
@@ -176,6 +213,8 @@ export default function HealthDashboard() {
             <UnmonitoredCard key={name} jobName={name} onClick={() => {}} />
           ))}
         </div>
+      )}
+      </>
       )}
     </div>
   )

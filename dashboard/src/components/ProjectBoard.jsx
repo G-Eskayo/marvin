@@ -72,6 +72,58 @@ function Column({ column, repo, onSelect, onOpenMr }) {
   )
 }
 
+const STAGE_LABEL = {
+  claimed: 'Claimed',
+  planning: 'Planning',
+  executing: 'Executing',
+  verifying: 'Verifying',
+  gate: 'Merge gate',
+  merging: 'Merging',
+  rebuilding: 'Rebuilding',
+  done: 'Done'
+}
+
+const money = (usd) => (usd ? `$${usd.toFixed(usd < 0.01 ? 4 : 2)}` : '$0.00')
+const when = (iso) => {
+  try {
+    return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+  } catch {
+    return iso
+  }
+}
+
+// The ticket's pipeline history, stage by stage (what the old standalone "Pipeline log" listed for all
+// tickets at once): where it got to, where it failed, on which machine, and what it cost.
+function PipelineHistory({ events }) {
+  const total = events.reduce((sum, e) => sum + (e.cost_usd || 0), 0)
+  const last = events[events.length - 1]
+  return (
+    <div className="mt-4">
+      <div className="mb-1 flex items-baseline justify-between">
+        <h3 className="text-xs uppercase tracking-wide text-neutral-500">Pipeline history</h3>
+        <span className="font-mono text-xs text-neutral-400">
+          now: {STAGE_LABEL[last.stage] || last.stage} ({last.status}) · total {money(total)}
+        </span>
+      </div>
+      {events.map((e, i) => {
+        const color = e.status === 'failed' ? 'text-red-400' : e.status === 'passed' ? 'text-emerald-400' : 'text-neutral-400'
+        return (
+          <div key={i} className="border-l-2 border-neutral-800 py-1.5 pl-4">
+            <p className={`text-sm font-medium ${color}`}>
+              {STAGE_LABEL[e.stage] || e.stage} — {e.status}
+            </p>
+            {e.detail && <p className="mt-0.5 whitespace-pre-wrap font-mono text-xs text-neutral-500">{e.detail}</p>}
+            <p className="mt-0.5 text-xs text-neutral-600">
+              {when(e.timestamp)} · {e.machine}
+              {e.cost_usd != null ? ` · ${money(e.cost_usd)}` : ''}
+            </p>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function TicketDrilldown({ repo, card, onBack, onOpenMr }) {
   const [detail, setDetail] = useState(null)
   const [events, setEvents] = useState([])
@@ -106,17 +158,7 @@ function TicketDrilldown({ repo, card, onBack, onOpenMr }) {
       </div>
       {error && <p className="mt-4 text-red-400">Failed to load ticket: {error}</p>}
       {detail && <pre className="mt-4 whitespace-pre-wrap rounded border border-neutral-800 bg-neutral-900 p-3 font-mono text-xs text-neutral-300">{detail.body || '(no description)'}</pre>}
-      {events.length > 0 && (
-        <div className="mt-4">
-          <h3 className="mb-1 text-xs uppercase tracking-wide text-neutral-500">Pipeline timeline</h3>
-          {events.map((e, i) => (
-            <p key={i} className={`border-l-2 border-neutral-800 py-1 pl-3 text-xs ${e.status === 'failed' ? 'text-red-400' : 'text-neutral-400'}`}>
-              {e.stage} — {e.status} · {e.machine} · {new Date(e.timestamp).toLocaleString()}
-              {e.detail ? ` · ${e.detail}` : ''}
-            </p>
-          ))}
-        </div>
-      )}
+      {events.length > 0 && <PipelineHistory events={events} />}
       {detail?.comments?.length > 0 && (
         <div className="mt-4">
           <h3 className="mb-1 text-xs uppercase tracking-wide text-neutral-500">Comments ({detail.comments.length})</h3>

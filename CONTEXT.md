@@ -502,12 +502,30 @@ nothing connected them. "Where things are" was only the tidy agent's file-filing
   rebases in marvin's checkout and runs marvin's pytest/vitest. Other projects show "Review on GitHub"
   until each has its own merge profile (open work: a per-project merge profile; clarity-captions is Swift).
   Found on first run: 4 finance-os PRs (#7-#10) had been invisible because only marvin was listed.
-- **Background work** (Activity tab): `lib/job_events.py` is the run log for non-ticket jobs (the sibling of
-  `ticket_stages`): `with job_run(name) as run: run.step(...)`, rewritten after every step, last 20 runs
-  per job in `~/.claude/logs/jobs/<job>.json` (per machine, not synced). Recording is best-effort and can
-  never break the job. A run "in progress" for >30 min is reported as crashed. Instrumented so far:
-  ticket-pipeline (hourly scan), project-catalog, tidy-agent, dashboard-rebuild. The app watches the folder
-  so a step appears as it happens. Not instrumented yet: the docs index rebuild, code-sync, health checks.
+- **Where things live (decided 2026-10-05, Gil's call)**: the **Activity** tab is the project boards and
+  nothing else. A ticket's pipeline history (stage by stage, machine, cost) is the drill-down you click into
+  on its card; the old standalone "Pipeline log" list is retired. Everything about the *machinery* lives in
+  the **Health** tab, in three views: Checks, **Autonomous agents**, **Tool & skill usage**.
+- **Autonomous agents** (Health): every launchd agent on the machine (schedule, running now/pid, last exit)
+  joined with what it reports about itself. `lib/job_events.py` is the run log for non-ticket jobs (the sibling
+  of `ticket_stages`): `@job_events.reported(name)` on a script's entry point records start, steps
+  (`job_events.step(...)` from anywhere) and outcome, rewritten after every step, last 20 runs per job in
+  `~/.claude/logs/jobs/<job>.json` (per machine, not synced). The job is named from launchd's
+  `XPC_SERVICE_NAME`, so a shared script run under two schedules (daily-digest / research-colony) gets two
+  logs. Best-effort: recording can never break the job; a clean `sys.exit(0)` is a pass; a run "in progress"
+  for >30 min is shown as crashed. All 12 scheduled agents are decorated; the 3 always-on services
+  (dashboard-webhook, desktoplive, ngrok) show running/stopped from launchd. Agents that haven't run since
+  being instrumented show "not reporting steps yet" rather than looking healthy by omission. Run logs with no
+  launchd agent of their own (project-catalog, dashboard-rebuild, tool-usage) appear as sub-jobs.
+- **Tool & skill usage** (Health): `lib/tool_usage.py` reads the Claude Code session transcripts
+  (`~/.claude/projects/**/*.jsonl`, the same source as the usage-accounting work) and reports, per tool, skill,
+  MCP server and subagent type: calls, outcome (ok / error / declined / interrupted / **invalid call** = wrong
+  parameters, schema not loaded, unknown skill), last used, a 30-day sparkline, and the interactive /
+  headless / subagent split. A MARVIN skill counts as used when loaded via the Skill tool **or** by reading its
+  `SKILL.md` (CLAUDE.md's routing table invokes most that way; counting only the Skill tool wrongly said 23 of
+  27 never fired, the truth was 10). Rescanned on demand when older than 10 min (~1.5s). **Not measured:**
+  whether the *right* skill fired for a request (that needs intent classification against the routing table;
+  candidate next step using `route.py`'s classifier). Bash "errors" are non-zero exits and are often expected.
 
 ## Dashboard app — Portfolio tab (2026-10-02/03)
 
@@ -612,6 +630,18 @@ replaced by this automated path**: that gap is what this section closes.
    project-page template: reads hero, title, subtitle, body and the repo link, saves the original (page + WP Coder blocks)
    to `~/.claude/outbox/migrations/<slug>/`, rebuilds, re-wraps the sidebar; `--plan` writes nothing, `--rollback` restores.
    A missing Stack line is reported, never invented. Pilot: Anomaly Detection (rollback and re-migration both exercised).
+
+### Element pipeline and the card text box (2026-10-05)
+
+- **One text-box size**: every project card's text box is 280 x 290 px wherever it appears (hub, All Projects, Other
+  Projects footer), with the title in a fixed two-line band, the description centred in the space below and Discover pinned
+  to the bottom, all on one centre line. 280 is the narrowest desktop column (the hub beside its sidebar at 1100px).
+- **Pipeline** (`lib/portfolio_sync_dev.py`, shown and runnable in the Templates tab): repo `deploy/` files -> the dev
+  site's own copy (only files that differ) -> regenerate hub/All Projects/sidebars -> capture every element and layout ->
+  dashboard-preview parity for every element -> evaluation. Result in `~/.claude/portfolio/pipeline-status.json`.
+  Cause it closes: nothing copied `deploy/` to the dev site, and the stylesheet carried a constant `?ver=1.0`, so an edited
+  card looked right in one place and stale in another. The version is now the file's mtime, and the dashboard never caches
+  dev-site responses.
 
 ## Citation-graph knowledge base (in design, not yet built)
 

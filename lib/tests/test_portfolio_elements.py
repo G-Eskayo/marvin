@@ -48,7 +48,7 @@ def test_the_captured_card_is_one_look_in_one_geometry_everywhere_it_appears():
     element = json.loads((PROJECT / "templates" / "elements" / "project-card.json").read_text())
     assert element["distinct_looks"] == 1 and element["distinct_geometries"] == 1
     assert element["deviations"] == []
-    assert element["usage"]["placements"] >= 20 and element["geometry"] == {"photoHeight": 240, "boxHeight": 290, "overlap": 56}
+    assert element["usage"]["placements"] >= 20 and element["geometry"] == {"photoHeight": 240, "boxWidth": 280, "boxHeight": 290, "overlap": 56}   # one text-box size, everywhere
 
 
 def test_every_defined_element_has_what_capture_needs():
@@ -74,3 +74,12 @@ def test_a_templates_normalized_markup_is_the_master_for_its_element():
     m = pe.template_markup("button-github", PROJECT)
     assert m == '<a href="{{REPO_URL}}" target="_blank" rel="noopener" class="btn btn-default">{{LABEL}}</a>'
     assert pe.template_markup("no-such-template", PROJECT) is None
+
+
+def test_geometry_agrees_within_a_pixel_but_not_more():
+    a = {"boxWidth": 320, "boxHeight": 290, "overlap": 56}
+    assert pe.geometry_close(a, {"boxWidth": 319, "boxHeight": 290, "overlap": 56})
+    assert not pe.geometry_close(a, {"boxWidth": 317, "boxHeight": 290, "overlap": 56})
+    assert not pe.geometry_close(a, {"boxWidth": 320, "boxHeight": 290})          # a missing dimension is a difference
+    assert pe.geometry_close(None, None) and not pe.geometry_close(a, None)
+    assert len(pe._cluster([a, {**a, "boxWidth": 319}, {**a, "overlap": 34}])) == 2

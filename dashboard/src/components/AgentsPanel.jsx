@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react'
 
 const DOT = {
   running: 'bg-blue-500 animate-pulse',
+  stopped: 'bg-red-500',
   idle: 'bg-emerald-500',
   failed: 'bg-red-500',
   crashed: 'bg-red-500',
   never: 'bg-neutral-600'
 }
-const STATUS_TEXT = { running: 'Running', idle: 'Idle', failed: 'Last run failed', crashed: 'Stopped unexpectedly', never: 'Has not run yet' }
+const STATUS_TEXT = { running: 'Running', idle: 'Idle', failed: 'Last run failed', crashed: 'Stopped unexpectedly', stopped: 'Not running', never: 'Has not run yet' }
+const KIND_TEXT = { scheduled: 'scheduled', service: 'always-on service', job: 'sub-job' }
 
 function ago(iso, now) {
   const s = Math.max(0, Math.round((now - Date.parse(iso)) / 1000))
@@ -44,62 +46,69 @@ function RunHistory({ runs, now }) {
   )
 }
 
-function JobCard({ job, now }) {
+function AgentCard({ agent, now }) {
   const [open, setOpen] = useState(false)
-  const bad = job.status === 'failed' || job.status === 'crashed'
+  const job = agent.job
+  const bad = agent.status === 'failed' || agent.status === 'crashed' || agent.status === 'stopped'
   return (
     <div className={`rounded-lg border bg-neutral-900 p-4 ${bad ? 'border-red-900' : 'border-neutral-800'}`}>
-      <button onClick={() => setOpen(!open)} className="flex w-full items-start gap-3 text-left">
-        <span className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${DOT[job.status]}`} />
+      <button onClick={() => job && setOpen(!open)} className={`flex w-full items-start gap-3 text-left ${job ? '' : 'cursor-default'}`}>
+        <span className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${DOT[agent.status] || DOT.never}`} />
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium text-white">
-            {job.label} <span className={`ml-2 text-xs font-normal ${bad ? 'text-red-400' : 'text-neutral-500'}`}>{STATUS_TEXT[job.status]}</span>
+            {agent.label}
+            <span className={`ml-2 text-xs font-normal ${bad ? 'text-red-400' : 'text-neutral-500'}`}>{STATUS_TEXT[agent.status]}</span>
+            <span className="ml-2 text-[11px] font-normal text-neutral-600">
+              {KIND_TEXT[agent.kind]} · {agent.schedule}
+              {agent.pid ? ` · pid ${agent.pid}` : ''}
+            </span>
           </p>
-          {job.current && (
+          {job?.current && (
             <p className="mt-0.5 text-sm text-blue-300">
               {job.current.step}
               {job.current.detail ? <span className="text-neutral-400"> — {job.current.detail}</span> : null}
               <span className="ml-2 text-xs text-neutral-500">{dur(Math.max(0, Math.round((now - Date.parse(job.current.startedAt)) / 1000)))} so far</span>
             </p>
           )}
-          {job.last && (
+          {job?.last && (
             <p className={`mt-0.5 text-xs ${job.last.status === 'failed' ? 'text-red-400' : 'text-neutral-500'}`}>
               Last run {ago(job.last.finishedAt, now)}, took {dur(job.last.durationS)}
               {job.last.summary ? ` — ${job.last.summary}` : ''}
               {job.last.error ? ` — ${job.last.error}` : ''}
             </p>
           )}
+          {!agent.reporting && (
+            <p className="mt-0.5 text-xs text-neutral-600">
+              Not reporting steps yet: all we know is launchd's last exit code ({agent.lastExit ?? 'unknown'}). It starts reporting on its next run.
+            </p>
+          )}
         </div>
-        <span className="text-xs text-neutral-600">{open ? 'hide' : 'history'}</span>
+        {job && <span className="text-xs text-neutral-600">{open ? 'hide' : 'history'}</span>}
       </button>
-      {open && <RunHistory runs={job.runs} now={now} />}
+      {open && job && <RunHistory runs={job.runs} now={now} />}
     </div>
   )
 }
 
-export default function BackgroundWork({ jobs }) {
+export default function AgentsPanel({ agents }) {
   const [now, setNow] = useState(Date.now())
-  const anyRunning = jobs?.some((j) => j.status === 'running')
+  const anyRunning = agents?.some((a) => a.status === 'running')
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), anyRunning ? 1000 : 30_000)
     return () => clearInterval(id)
   }, [anyRunning])
 
-  if (jobs === null) return <div className="p-6 text-neutral-500">Loading…</div>
-  if (jobs.length === 0) {
-    return (
-      <div className="flex h-64 flex-col items-center justify-center gap-2 text-center text-neutral-500">
-        <p className="text-lg font-medium text-neutral-300">No background work recorded yet</p>
-        <p className="max-w-md text-sm">Jobs show up here the first time they run: the hourly ticket scan, the project catalog, the daily tidy-up, the dashboard rebuild check.</p>
-      </div>
-    )
-  }
+  if (agents === null) return <div className="p-6 text-neutral-500">Loading…</div>
+  const reporting = agents.filter((a) => a.reporting).length
   return (
-    <div className="max-w-3xl p-6">
-      <p className="mb-3 text-xs text-neutral-500">What MARVIN's background jobs are doing on this machine, live. Click a job for its recent runs and the steps of each.</p>
+    <div className="max-w-3xl">
+      <p className="mb-3 text-xs text-neutral-500">
+        Every autonomous agent on this machine: what launchd says (schedule, running now, last exit) and what the agent reports about itself
+        (current step, recent runs). {reporting} of {agents.length} report steps; the rest start reporting at their next run.
+      </p>
       <div className="flex flex-col gap-2">
-        {jobs.map((j) => (
-          <JobCard key={j.job} job={j} now={now} />
+        {agents.map((a) => (
+          <AgentCard key={a.id} agent={a} now={now} />
         ))}
       </div>
     </div>

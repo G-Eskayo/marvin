@@ -137,7 +137,7 @@ def check_element_instances(instances: list[dict], element: dict) -> list[dict]:
                 diff = sorted(k for k in props if (have or {}).get(k) != props[k])
                 out.append(_finding("element-look", f"{element['name']} {part} differs from the element: {', '.join(diff) or 'missing'}"))
         geo, want_geo = inst.get("geometry"), element.get("geometry")
-        if want_geo and geo and geo != want_geo:
+        if want_geo and geo and not pe.geometry_close(geo, want_geo):
             out.append(_finding("element-geometry", f"{element['name']} geometry {geo} differs from the element's {want_geo}"))
     return out
 

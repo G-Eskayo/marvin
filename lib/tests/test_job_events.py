@@ -101,3 +101,73 @@ def test_reporting_the_same_step_again_updates_it_instead_of_adding_a_duplicate(
         run.step("Local folders")
     steps = read(tmp_path)["runs"][-1]["steps"]
     assert [(s["step"], s["detail"]) for s in steps] == [("GitHub repos", "18 found"), ("Local folders", "")]
+
+
+# ── generic reporting for launchd jobs ──────────────────────────────────────
+
+def test_job_id_comes_from_the_launchd_label_when_there_is_one(monkeypatch):
+    monkeypatch.setenv("XPC_SERVICE_NAME", "com.marvin.research-colony")
+    assert je.job_id("fallback") == "research-colony"
+    monkeypatch.setenv("XPC_SERVICE_NAME", "com.giles.tidy-agent")
+    assert je.job_id("fallback") == "tidy-agent"
+    monkeypatch.setenv("XPC_SERVICE_NAME", "0")  # what a terminal session sets
+    assert je.job_id("fallback") == "fallback"
+    monkeypatch.delenv("XPC_SERVICE_NAME")
+    assert je.job_id("fallback") == "fallback"
+
+
+def test_reported_wraps_a_main_function_and_names_the_run_after_the_launchd_label(tmp_path, monkeypatch):
+    monkeypatch.setattr(je, "JOBS_DIR", tmp_path)
+    monkeypatch.setenv("XPC_SERVICE_NAME", "com.marvin.daily-digest")
+
+    @je.reported("check-and-trigger-merge", "Merge trigger")
+    def main():
+        je.step("Doing the thing", "detail")
+        return 7
+
+    assert main() == 7
+    doc = json.loads((tmp_path / "daily-digest.json").read_text())
+    assert doc["runs"][-1]["status"] == "passed"
+    assert doc["runs"][-1]["steps"][0]["step"] == "Doing the thing"
+
+
+def test_reported_records_failures_and_reraises(tmp_path, monkeypatch):
+    monkeypatch.setattr(je, "JOBS_DIR", tmp_path)
+    monkeypatch.delenv("XPC_SERVICE_NAME", raising=False)
+
+    @je.reported("boom-job")
+    def main():
+        raise ValueError("bad input")
+
+    try:
+        main()
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("must re-raise")
+    assert json.loads((tmp_path / "boom-job.json").read_text())["runs"][-1]["status"] == "failed"
+
+
+def test_a_clean_sys_exit_is_a_pass_and_a_nonzero_exit_is_a_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(je, "JOBS_DIR", tmp_path)
+    monkeypatch.delenv("XPC_SERVICE_NAME", raising=False)
+
+    @je.reported("exits-ok")
+    def ok():
+        sys.exit(0)
+
+    @je.reported("exits-bad")
+    def bad():
+        sys.exit(3)
+
+    for fn in (ok, bad):
+        try:
+            fn()
+        except SystemExit:
+            pass
+    assert json.loads((tmp_path / "exits-ok.json").read_text())["runs"][-1]["status"] == "passed"
+    assert json.loads((tmp_path / "exits-bad.json").read_text())["runs"][-1]["status"] == "failed"
+
+
+def test_step_outside_any_run_is_a_harmless_no_op():
+    je.step("nothing is running")  # must not raise

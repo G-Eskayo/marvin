@@ -204,7 +204,7 @@ function ElementDetails({ element }) {
         <p key={d.page} className="text-amber-400">{d.page}: {d.why.join('; ')}</p>
       ))}
       {element.geometry && (
-        <p><span className="text-neutral-500">Geometry: </span>photo frame {element.geometry.photoHeight}px · text box {element.geometry.boxHeight}px · box overlays the photo by {element.geometry.overlap}px</p>
+        <p><span className="text-neutral-500">Geometry: </span>photo frame {element.geometry.photoHeight}px tall · text box {element.geometry.boxWidth} × {element.geometry.boxHeight}px (the same everywhere) · box overlays the photo by {element.geometry.overlap}px</p>
       )}
       <details>
         <summary className="cursor-pointer text-neutral-400">Where its look comes from ({sources.length} parts)</summary>
@@ -350,6 +350,45 @@ function ButtonAudit() {
   )
 }
 
+// The element pipeline: source files -> dev site -> pages -> capture -> parity -> evaluation, with the last result.
+function PipelineBar() {
+  const [status, setStatus] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+  useEffect(() => { window.api.portfolio.pipelineStatus().then(setStatus).catch(() => {}) }, [])
+  async function run() {
+    setBusy(true)
+    setError(null)
+    try {
+      setStatus(await window.api.portfolio.runPipeline())
+    } catch (e) {
+      setError(errText(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-neutral-800 p-3 text-xs text-neutral-300">
+      <div className="flex flex-wrap items-center gap-3">
+        <h3 className="text-sm font-medium text-white">Pipeline</h3>
+        <span className="text-neutral-500">repo files → dev site → pages → capture → preview parity → evaluation</span>
+        {status && <span className={status.ok ? 'text-emerald-400' : 'text-amber-400'}>{status.ok ? 'last run: everything matches' : 'last run: needs attention'} · {formatRunTime(status.ran_at)}</span>}
+        <button onClick={run} disabled={busy} className={`${primary} ml-auto`}>{busy ? 'Running (a few minutes)…' : 'Sync repo → dev and verify'}</button>
+      </div>
+      {error && <p className="text-red-400">{error}</p>}
+      {status && (
+        <ul className="grid gap-1 sm:grid-cols-2">
+          {status.steps.map((st) => (
+            <li key={st.name} className={st.ok ? 'text-neutral-400' : 'text-amber-400'}>
+              <span className="font-mono">{st.ok ? '✓' : '✗'} {st.name}</span> — {st.detail}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 function Templates() {
   const [chrome, setChrome] = useState([])
   const [elements, setElements] = useState({})
@@ -370,6 +409,7 @@ function Templates() {
   const titles = { page: 'Page types', component: 'Components', button: 'Buttons — the only three' }
   return (
     <div className="flex flex-col gap-8">
+      <PipelineBar />
       <p className="max-w-3xl text-xs text-neutral-500">
         The reference for how every page is built. Each template is shown as it renders on the site, with the rules for using it. To build or change a page, start from the matching template here so structure stays uniform.
       </p>

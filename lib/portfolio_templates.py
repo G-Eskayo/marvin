@@ -156,7 +156,15 @@ def specimen(template_id: str, root: Path = ROOT, depth: int = 0) -> dict:
         slot: [{"template": c["template"], "data": {k: _resolve_sample(v, root, depth) for k, v in (c.get("data") or {}).items()}} for c in choices]
         for slot, choices in (sample.get("options") or {}).items()
     }
-    return render(template_id, data, options, root, raw=False)     # the dashboard previews the readable form
+    first = render(template_id, data, options, root, raw=False)     # the dashboard previews the readable form
+    # Some elements are best shown by several samples (a card with a long title and description beside one with short
+    # text), so the preview proves the size does not depend on the words.
+    extra = [render(template_id, {k: _resolve_sample(v, root, depth) for k, v in d.items()}, options, root, raw=False) for d in sample.get("variants", [])]
+    if not extra:
+        return first
+    parts = [first, *extra]
+    return {**first, "ok": all(r["ok"] for r in parts), "html": "".join(r["html"] or "" for r in parts),
+            "errors": [e for r in parts for e in r["errors"]], "missing": [m for r in parts for m in r["missing"]]}
 
 
 def list_templates(root: Path = ROOT) -> list[dict]:

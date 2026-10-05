@@ -279,6 +279,11 @@ def _archive_previous_latest() -> str:
     return f"{new_entry}{rest}"
 
 
+sys.path.insert(0, str(__import__("pathlib").Path.home() / ".agents" / "lib"))
+import job_events  # noqa: E402  (run log shown in the dashboard's Health tab)
+
+
+@job_events.reported("cron-health", "Cron health report")
 def main() -> None:
     now = datetime.now().astimezone()
     state = _load_state()

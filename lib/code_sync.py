@@ -316,11 +316,17 @@ def pull(repo: Path) -> None:
     # up naturally, same as any other pending local change.
 
 
+sys.path.insert(0, str(__import__("pathlib").Path.home() / ".agents" / "lib"))
+import job_events  # noqa: E402  (run log shown in the dashboard's Health tab)
+
+
+@job_events.reported("code-sync-push", "Code sync (git pull/push)")
 def main() -> None:
     if len(sys.argv) not in (2, 3) or sys.argv[1] not in ("push", "pull"):
         print("usage: code_sync.py {push|pull} [repo-path]", file=sys.stderr)
         sys.exit(1)
     repo = Path(sys.argv[2]).expanduser() if len(sys.argv) == 3 else DEFAULT_REPO
+    job_events.step(f"{sys.argv[1]} {repo}")
     (push if sys.argv[1] == "push" else pull)(repo)
 
 

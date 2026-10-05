@@ -495,3 +495,20 @@ describe('element library', () => {
     await expect(p.verifyElement('../x')).rejects.toThrow(/Invalid element id/)
   })
 })
+
+describe('element pipeline', () => {
+  it('reads the last pipeline result, null before the first run', async () => {
+    expect(await p.pipelineStatus()).toBeNull()
+    const d = path.join(home, '.claude', 'portfolio')
+    mkdirSync(d, { recursive: true })
+    writeFileSync(path.join(d, 'pipeline-status.json'), JSON.stringify({ ok: true, steps: [] }))
+    expect(await p.pipelineStatus()).toEqual({ ok: true, steps: [] })
+  })
+  it('runs the pipeline script and returns its verdict, also when it exits non-zero', async () => {
+    exec.mockResolvedValue({ stdout: JSON.stringify({ ok: true, steps: [] }) + '\n', stderr: '' })
+    expect((await p.runPipeline()).ok).toBe(true)
+    expect(exec.mock.calls[0][1][0]).toMatch(/portfolio_sync_dev\.py$/)
+    exec.mockRejectedValue(Object.assign(new Error('Command failed'), { stdout: JSON.stringify({ ok: false, steps: [{ name: 'parity', ok: false }] }) }))
+    expect((await p.runPipeline()).ok).toBe(false)
+  })
+})
