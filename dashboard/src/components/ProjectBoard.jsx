@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { cleanIpcError } from '../lib/ipcError.js'
+import { projectIdOf } from '../lib/projects.js'
 
 // Backstop only: triggers (window.api.triggers) drive refreshes; a poll that
 // finds a change no trigger announced is logged as a gap.
@@ -14,7 +15,7 @@ const COLUMN_STYLE = {
   done: 'border-emerald-700'
 }
 
-function PrChip({ pr, onOpenMr }) {
+function PrChip({ pr, repo, onOpenMr }) {
   return (
     <span
       role="button"
@@ -22,9 +23,9 @@ function PrChip({ pr, onOpenMr }) {
       title="Open in MR Review"
       onClick={(e) => {
         e.stopPropagation()
-        onOpenMr()
+        onOpenMr(`${repo}#${pr.number}`)
       }}
-      onKeyDown={(e) => e.key === 'Enter' && onOpenMr()}
+      onKeyDown={(e) => e.key === 'Enter' && onOpenMr(`${repo}#${pr.number}`)}
       className="inline-flex items-center gap-1 rounded bg-amber-950 px-1.5 py-0.5 text-xs text-amber-300 hover:bg-amber-900"
     >
       PR #{pr.number}
@@ -34,7 +35,7 @@ function PrChip({ pr, onOpenMr }) {
   )
 }
 
-function Card({ card, onSelect, onOpenMr }) {
+function Card({ card, repo, onSelect, onOpenMr }) {
   return (
     <button
       onClick={() => onSelect(card)}
@@ -47,14 +48,14 @@ function Card({ card, onSelect, onOpenMr }) {
       <div className="mt-2 flex flex-wrap gap-1">
         {card.owner === 'human' && <span className="rounded bg-sky-950 px-1.5 py-0.5 text-xs text-sky-300">human</span>}
         {card.prs.map((pr) => (
-          <PrChip key={pr.number} pr={pr} onOpenMr={onOpenMr} />
+          <PrChip key={pr.number} pr={pr} repo={repo} onOpenMr={onOpenMr} />
         ))}
       </div>
     </button>
   )
 }
 
-function Column({ column, onSelect, onOpenMr }) {
+function Column({ column, repo, onSelect, onOpenMr }) {
   return (
     <div className="flex w-72 shrink-0 flex-col">
       <div className={`mb-2 flex items-center justify-between border-b-2 pb-1 ${COLUMN_STYLE[column.id]}`}>
@@ -63,7 +64,7 @@ function Column({ column, onSelect, onOpenMr }) {
       </div>
       <div className="flex flex-col gap-2">
         {column.cards.map((card) => (
-          <Card key={card.number} card={card} onSelect={onSelect} onOpenMr={onOpenMr} />
+          <Card key={card.number} card={card} repo={repo} onSelect={onSelect} onOpenMr={onOpenMr} />
         ))}
         {column.cards.length === 0 && <p className="py-2 text-xs italic text-neutral-700">Nothing here</p>}
       </div>
@@ -100,7 +101,7 @@ function TicketDrilldown({ repo, card, onBack, onOpenMr }) {
           </span>
         ))}
         {card.prs.map((pr) => (
-          <PrChip key={pr.number} pr={pr} onOpenMr={onOpenMr} />
+          <PrChip key={pr.number} pr={pr} repo={repo} onOpenMr={onOpenMr} />
         ))}
       </div>
       {error && <p className="mt-4 text-red-400">Failed to load ticket: {error}</p>}
@@ -130,7 +131,7 @@ function TicketDrilldown({ repo, card, onBack, onOpenMr }) {
   )
 }
 
-export default function ProjectBoard({ onOpenMr }) {
+export default function ProjectBoard({ onOpenMr, onOpenDocs, nav }) {
   const [boards, setBoards] = useState(null)
   const [repo, setRepo] = useState(null)
   const [board, setBoard] = useState(null)
@@ -146,6 +147,14 @@ export default function ProjectBoard({ onOpenMr }) {
       })
       .catch((e) => setError(cleanIpcError(e)))
   }, [])
+
+  // Deep link from Docs / MR Review: show that project's board (once per navigation).
+  useEffect(() => {
+    if (nav?.tab === 'activity' && nav.repo) {
+      setRepo(nav.repo)
+      setSelected(null)
+    }
+  }, [nav?.at])
 
   useEffect(() => {
     if (!repo) return
@@ -194,6 +203,11 @@ export default function ProjectBoard({ onOpenMr }) {
             {b.name}
           </button>
         ))}
+        {repo && (
+          <button onClick={() => onOpenDocs?.(projectIdOf(repo))} className="ml-2 text-xs text-neutral-500 hover:text-neutral-200" title="Open this project's docs">
+            Docs →
+          </button>
+        )}
         {current?.due && (
           <span className={`ml-auto text-xs ${current.dueHard ? 'text-amber-400' : 'text-neutral-500'}`}>
             {current.dueHard ? 'Hard' : 'Soft'} due {current.due}
@@ -205,7 +219,7 @@ export default function ProjectBoard({ onOpenMr }) {
       {board && (
         <div className="flex gap-4 overflow-x-auto pb-4">
           {board.columns.map((c) => (
-            <Column key={c.id} column={c} onSelect={setSelected} onOpenMr={onOpenMr} />
+            <Column key={c.id} column={c} repo={repo} onSelect={setSelected} onOpenMr={onOpenMr} />
           ))}
         </div>
       )}

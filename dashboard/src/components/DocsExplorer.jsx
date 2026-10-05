@@ -297,7 +297,7 @@ function SearchResults({ state, query, onOpen, nameOf, files, onOpenProject }) {
   )
 }
 
-export default function DocsExplorer() {
+export default function DocsExplorer({ nav, onOpenBoard }) {
   const [cache, setCache] = useState({ generated_at: null, repos: [] })
   const [refreshing, setRefreshing] = useState(false)
   const [selectedRepo, setSelectedRepo] = useState(null)
@@ -314,6 +314,8 @@ export default function DocsExplorer() {
   const [docsTick, setDocsTick] = useState(0)
   const [filesState, setFilesState] = useState(null)
   const scrollRef = useRef(null)
+  const [boardSummary, setBoardSummary] = useState(null)
+  const handledNav = useRef(null)
 
   useEffect(() => {
     window.api.docs.repos().then(setCache).catch(() => {})
@@ -372,6 +374,30 @@ export default function DocsExplorer() {
         .catch(() => {})
     }
   }, [docsTick])
+
+  // Deep link from an Activity board or an MR: open that project's card (once per navigation).
+  useEffect(() => {
+    if (nav?.tab === 'docs' && nav.projectId && handledNav.current !== nav.at) {
+      handledNav.current = nav.at
+      setQuery('')
+      handleSelectRepo(nav.projectId)
+    }
+  }, [nav?.at])
+
+  // The project card shows where its tickets stand (counts per column) with a link to the board.
+  const selectedProject = cache.repos.find((r) => r.id === selectedRepo)
+  useEffect(() => {
+    setBoardSummary(null)
+    if (!selectedProject?.board || !selectedProject.repo || selectedPath !== 'PROJECT.md') return
+    let live = true
+    window.api.boards
+      .summary(selectedProject.repo)
+      .then((r) => live && setBoardSummary(r))
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [selectedRepo, selectedPath, docsTick, selectedProject?.board])
 
   const nameOf = (id) => cache.repos.find((r) => r.id === id)?.name || id
 
@@ -476,6 +502,19 @@ export default function DocsExplorer() {
                 <p className="border-b border-neutral-900 px-6 py-1 text-[11px] text-neutral-600">
                   {source.source === 'local' ? `Reading local clone · ${source.dir.replace(/^\/Users\/[^/]+/, '~')}` : source.source === 'github' ? 'Reading GitHub · no clone of this project on this machine' : source.source === 'master' ? 'Generated daily by the tidy agent from the project catalog' : 'Generated from the project catalog (no docs of its own yet)'}
                 </p>
+              )}
+              {boardSummary && (
+                <div className="flex items-center gap-3 border-b border-neutral-900 px-6 py-2 text-xs text-neutral-400">
+                  <span className="text-neutral-500">Board</span>
+                  {[['ready', 'ready'], ['progress', 'in progress'], ['review', 'in review'], ['blocked', 'blocked'], ['done', 'done']].map(([id, label]) => (
+                    <span key={id} className={id === 'blocked' && boardSummary.counts.blocked ? 'text-red-400' : ''}>
+                      {boardSummary.counts[id] ?? 0} {label}
+                    </span>
+                  ))}
+                  <button onClick={() => onOpenBoard?.(selectedProject.repo)} className="ml-auto text-neutral-300 hover:text-white">
+                    Open board →
+                  </button>
+                </div>
               )}
               <DocViewer content={content} loading={loading} error={error} scrollRef={scrollRef} onJump={jumpToHeading} />
             </>

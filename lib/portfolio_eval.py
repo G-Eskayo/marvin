@@ -109,6 +109,8 @@ def load_elements(project: Path = PROJECT) -> dict[str, dict]:
     for f in sorted((Path(project) / "templates" / "elements").glob("*.json")):
         try:
             e = json.loads(f.read_text())
+            if e.get("kind") == "layout":      # page layouts are a migration queue (portfolio_layouts), not per-element checks
+                continue
             out[e["id"]] = e
         except (OSError, ValueError, KeyError):
             continue

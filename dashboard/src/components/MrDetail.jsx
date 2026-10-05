@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { EvidenceTable, ApproveDenyActions } from './MrReview.jsx'
+import { projectIdOf } from '../lib/projects.js'
 
 // Full evidence-schema drill-down for one MR (G-Eskayo/marvin#72, ADR
 // 0024) plus its linked ticket/parent-PRD requirements, design, and
@@ -85,7 +86,7 @@ function IssueBody({ label, issue }) {
   )
 }
 
-export default function MrDetail({ pr, onBack, onApproved, onDenied }) {
+export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs, onOpenBoard }) {
   const [context, setContext] = useState(null)
   const [error, setError] = useState(null)
 
@@ -96,7 +97,7 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied }) {
       return
     }
     window.api.mr
-      .ticketContext(pr.ticketNumber)
+      .ticketContext(pr.ticketNumber, pr.repo)
       .then((result) => {
         if (!cancelled) setContext(result)
       })
@@ -130,6 +131,19 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied }) {
           <a href={pr.url} target="_blank" rel="noreferrer" className="text-xs text-blue-400 hover:underline">
             {pr.url}
           </a>
+          <p className="mt-1 text-xs text-neutral-500">
+            Project: <span className="text-neutral-300">{pr.repo.split('/')[1]}</span>
+            {onOpenDocs && (
+              <button onClick={() => onOpenDocs(projectIdOf(pr.repo))} className="ml-2 text-neutral-400 hover:text-white">
+                Docs →
+              </button>
+            )}
+            {onOpenBoard && (
+              <button onClick={() => onOpenBoard(pr.repo)} className="ml-2 text-neutral-400 hover:text-white">
+                Board →
+              </button>
+            )}
+          </p>
         </div>
         <ApproveDenyActions pr={pr} onApproved={onApproved} onDenied={onDenied} />
       </div>

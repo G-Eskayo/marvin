@@ -576,6 +576,15 @@ replaced by this automated path**: that gap is what this section closes.
    (Anomaly Detection's `href=" https..."` with a stray space, SkineeDipping's WP Coder block). The GitHub rule is now:
    the page has the canonical button; further plain links into the repo are references. Page layouts (project, hub, All
    Projects, content) are still to capture. The download button has no live placement yet (library entry from its template).
+8. **Page layouts captured (2026-10-05):** `lib/portfolio_layouts.py` reduces each page's frame to a structure-only skeleton
+   (zones in order; embedded elements as tokens; the authored body as one zone; the action row optional) and compares it
+   with the template's. Result: hub 3/3 and All Projects 1/1 follow their layouts; project pages 6/17 (the five modern ones
+   plus the pilot below); the other 11 are the migration queue, each with its reason, shown as a "legacy layout" badge in
+   Site inventory and in the layout's Templates entry.
+9. **Legacy migration, pilot done (2026-10-05):** `lib/portfolio_migrate.py` rebuilds a WP Coder "sandwich" page from the
+   project-page template: reads hero, title, subtitle, body and the repo link, saves the original (page + WP Coder blocks)
+   to `~/.claude/outbox/migrations/<slug>/`, rebuilds, re-wraps the sidebar; `--plan` writes nothing, `--rollback` restores.
+   A missing Stack line is reported, never invented. Pilot: Anomaly Detection (rollback and re-migration both exercised).
 
 ## Citation-graph knowledge base (in design, not yet built)
 

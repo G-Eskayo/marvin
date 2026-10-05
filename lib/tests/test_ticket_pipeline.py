@@ -180,3 +180,29 @@ def test_main_does_not_dispatch_while_the_breaker_is_tripped(monkeypatch, capsys
 
     assert called == []
     assert "paused" in capsys.readouterr().err.lower()
+
+
+# ── run log (Activity tab "Background work") ────────────────────────────────
+
+def test_a_scan_with_nothing_ready_leaves_a_run_log_saying_so(monkeypatch):
+    import json
+    import job_events
+    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda: [])
+    monkeypatch.setattr(tp.failure_breaker, "tripped", lambda now=None: [])
+    monkeypatch.setattr(sys, "argv", ["ticket_pipeline.py"])
+    tp.main()
+    run = json.loads((job_events.JOBS_DIR / "ticket-pipeline.json").read_text())["runs"][-1]
+    assert run["status"] == "passed" and run["summary"] == "no ready tickets"
+    steps = [s["step"] for s in run["steps"]]
+    assert steps == ["Board discovery", "Project catalog", "Circuit breaker", "Scanning tickets"]
+
+
+def test_a_tripped_breaker_is_visible_in_the_run_log(monkeypatch):
+    import json
+    import job_events
+    trip = {"signature": "measure:x", "tickets": [1, 2, 3], "first_seen": "t", "example": "e"}
+    monkeypatch.setattr(tp.failure_breaker, "tripped", lambda now=None: [trip])
+    monkeypatch.setattr(sys, "argv", ["ticket_pipeline.py"])
+    tp.main()
+    run = json.loads((job_events.JOBS_DIR / "ticket-pipeline.json").read_text())["runs"][-1]
+    assert "circuit breaker" in run["summary"] and "TRIPPED" in run["steps"][-1]["detail"]

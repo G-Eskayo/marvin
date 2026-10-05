@@ -100,3 +100,10 @@ export function buildBoard({ repo, issues, prs, eventsByNumber = {}, liveNumbers
   for (const c of columns) c.cards.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
   return { repo, columns }
 }
+
+// Compact numbers for the project card in Docs: how many cards per column, how many still open.
+export function summarizeBoard(board) {
+  const counts = Object.fromEntries(board.columns.map((c) => [c.id, c.cards.length]))
+  const total = Object.values(counts).reduce((a, b) => a + b, 0)
+  return { counts, total, open: total - (counts.done || 0) }
+}

@@ -34,7 +34,7 @@ export function createDocsService({ getCatalog, exec, readMaster, fallbackRepos 
       generated_at: cat.generated_at,
       repos: [
         master,
-        ...cat.projects.map((p) => ({ id: p.id, name: p.name, kind: p.kind, status: p.status, local: dirOf(p), tags: p.tags }))
+        ...cat.projects.map((p) => ({ id: p.id, name: p.name, kind: p.kind, status: p.status, local: dirOf(p), tags: p.tags, repo: p.repo, board: p.board }))
       ]
     }
   }

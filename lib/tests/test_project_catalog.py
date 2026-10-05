@@ -213,3 +213,26 @@ def test_run_environment_has_homebrew_on_path_and_the_shared_gh_token(monkeypatc
     assert env["GH_TOKEN"] == "tok123"
     monkeypatch.setenv("GH_TOKEN", "explicit")
     assert pc.run_env(token_file=token)["GH_TOKEN"] == "explicit"
+
+
+def test_refresh_reports_each_phase_with_counts(tmp_path):
+    steps = []
+    out = pc.refresh(path=tmp_path / "p.json", github=lambda: [gh_repo("a"), gh_repo("b")], local=lambda: [], manifest=lambda: [entry("/x/m/")],
+                     memory=lambda: [], overrides=lambda: {}, boards=lambda: set(), now=NOW, report=lambda step, detail="": steps.append((step, detail)))
+    assert out["ok"] is True
+    names = [s for i, (s, _) in enumerate(steps) if i == 0 or steps[i - 1][0] != s]  # collapse start/done pairs
+    assert names[:5] == ["GitHub repos", "Local folders", "Portfolio manifest", "Memory notes", "Boards"]
+    assert names[-1] == "Writing catalog"
+    assert ("GitHub repos", "2 found") in steps
+    assert out["count"] == 3  # 2 repos + 1 portfolio-only
+
+
+def test_refresh_names_the_phase_that_failed(tmp_path):
+    steps = []
+
+    def boom():
+        raise RuntimeError("rate limited")
+
+    out = pc.refresh(path=tmp_path / "p.json", github=boom, local=lambda: [], manifest=lambda: [], memory=lambda: [],
+                     overrides=lambda: {}, boards=lambda: set(), now=NOW, report=lambda s, d="": steps.append(s))
+    assert out["ok"] is False and "GitHub repos" in out["error"] and "rate limited" in out["error"]

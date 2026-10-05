@@ -323,12 +323,32 @@ def catalog_path() -> Path:
     return CATALOG_DIR / f"projects.{machine_profile.registry_id() or 'unknown'}.json"
 
 
-def refresh(path: Path, github, local, manifest, memory, overrides, boards, now=None, docs_probe=None) -> dict:
-    """Rebuild and write the catalog. Any discovery failure keeps the last good file."""
+def refresh(path: Path, github, local, manifest, memory, overrides, boards, now=None, docs_probe=None, report=None) -> dict:
+    """Rebuild and write the catalog. Any discovery failure keeps the last good file.
+    `report(step, detail)` is told each phase as it starts, so the dashboard can show progress."""
+    report = report or (lambda step, detail="": None)
+    phase = "starting"
     try:
-        cat = build_catalog(github(), local(), manifest(), memory(), overrides(), boards(), now=now, docs_probe=docs_probe)
+        def run(name, fn, count=lambda r: f"{len(r)} found"):
+            nonlocal phase
+            phase = name
+            report(name)
+            result = fn()
+            report(name, count(result))
+            return result
+
+        gh = run("GitHub repos", github)
+        loc = run("Local folders", local)
+        man = run("Portfolio manifest", manifest)
+        mem = run("Memory notes", memory)
+        brd = run("Boards", boards)
+        ovr = overrides()
+        phase = "Building catalog"
+        report(phase, "matching repos, folders, portfolio pages and memory")
+        cat = build_catalog(gh, loc, man, mem, ovr, brd, now=now, docs_probe=docs_probe)
     except Exception as e:  # noqa: BLE001
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": f"{phase}: {e}"}
+    report("Writing catalog", f"{len(cat['projects'])} projects")
     write_catalog(cat, path)
     return {"ok": True, "count": len(cat["projects"])}
 
@@ -441,8 +461,14 @@ def discover_boards() -> set[str]:
 
 
 def real_refresh(path: Path | None = None, now=None) -> dict:
-    return refresh(path or catalog_path(), discover_github, discover_local, discover_manifest, discover_memory,
-                   load_overrides, discover_boards, now=now, docs_probe=github_docs_probe)
+    import job_events
+    with job_events.job_run("project-catalog", "Project catalog") as run:
+        res = refresh(path or catalog_path(), discover_github, discover_local, discover_manifest, discover_memory,
+                      load_overrides, discover_boards, now=now, docs_probe=github_docs_probe, report=run.step)
+        run.summary(f"{res['count']} projects" if res["ok"] else f"failed, kept last good: {res['error']}")
+        if not res["ok"]:
+            run.fail(res["error"])
+        return res
 
 
 def main() -> int:
