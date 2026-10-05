@@ -493,7 +493,8 @@ def _mstate(**kw):
 
 def test_parse_machine_state_reads_key_value_output():
     st = hc.parse_machine_state("app_built_ts=1759000000\ndashboard_commit_ts=1759100000\ngh_token=invalid\n")
-    assert st == {"app_built_ts": 1759000000, "dashboard_commit_ts": 1759100000, "gh_token": "invalid"}
+    assert st["app_built_ts"] == 1759000000 and st["dashboard_commit_ts"] == 1759100000 and st["gh_token"] == "invalid"
+    assert st["docs_access"] == "" and st["brain_data_ts"] is None
 
 
 def test_parse_machine_state_missing_app_is_none():
@@ -592,3 +593,11 @@ def test_catalog_check_is_green_when_fresh_amber_when_stale_red_when_missing_or_
     assert hc.check_catalog_fresh(tmp_path / "none.json", now=now)["severity"] == "yellow"
     r = hc.check_catalog_fresh(f, now=now)
     assert r["id"] == "catalog:fresh" and "30" in r["detail"]
+
+
+def test_machine_state_parity_checks_docs_background_and_data():
+    st = hc.parse_machine_state("docs_access=failed\ndesktoplive=stopped\nbrain_data_ts=%d\n" % int((NOW - timedelta(days=9)).timestamp()))
+    res = {k: s for k, s, _ in hc.evaluate_machine_state(_mstate(**{k: st[k] for k in ("docs_access", "desktoplive", "brain_data_ts")}), NOW)}
+    assert res["docs:access"] == "red" and res["desktoplive:running"] == "yellow" and res["brainmap:data"] == "yellow"
+    ok = {k: s for k, s, _ in hc.evaluate_machine_state(_mstate(docs_access="ok", desktoplive="running", brain_data_ts=int(NOW.timestamp())), NOW)}
+    assert ok["docs:access"] == ok["desktoplive:running"] == ok["brainmap:data"] == "green"
