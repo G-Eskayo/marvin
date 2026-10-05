@@ -22,7 +22,9 @@ pytestmark = pytest.mark.skipif(not (ROOT / "templates.json").exists(), reason="
 SAMPLE = {"URL": "/ai-projects/mancala/", "TITLE": "Mancala", "THUMBNAIL": "/u/t.png", "DESCRIPTION": "A game.", "SUBTITLE": "Sub",
           "HERO_IMAGE_URL": "/u/h.png", "BODY_HTML": "<p>Body.</p>", "STACK_CSV": "Python", "CATEGORY": "AI & Machine Learning",
           "CARDS_HTML": "<div>cards</div>", "HEADING": "Other Projects", "LABEL": "Go", "REPO_URL": "https://github.com/G-Eskayo/mancala",
-          "FILE_URL": "/wp-content/uploads/paper.pdf", "SECTIONS_HTML": "<div>sections</div>"}
+          "FILE_URL": "/wp-content/uploads/paper.pdf", "SECTIONS_HTML": "<div>sections</div>",
+          "LEAD_HTML": "<p>Lead.</p>", "IMAGE_URL": "/wp-content/longform/sample-diagram.svg", "ALT": "A diagram", "CAPTION": "Figure 1.",
+          "TEXT_HTML": "<p>Text.</p>"}
 
 
 def entries():
@@ -101,9 +103,12 @@ def test_there_are_only_the_few_buttons_we_decided_on_and_each_has_one_job_and_o
 
 
 def test_every_page_type_has_exactly_one_plain_template_with_a_wireframe():
+    from collections import Counter
     pages = by_kind("page")
     assert {p["pageType"] for p in pages} == PAGE_TYPES
-    assert len({p["pageType"] for p in pages}) == len(pages)          # one template per type, not several competing ones
+    # one template per type, not several competing ones -- except the project page, which has a short and a long-form layout
+    assert Counter(p["pageType"] for p in pages) == Counter({t: (2 if t == "project" else 1) for t in PAGE_TYPES})
+    assert {p["id"] for p in pages if p["pageType"] == "project"} == {"project-page", "longform-page"}
     for p in pages:
         assert len(p.get("zones", [])) >= 2 and all(z.get("name") and z.get("note") for z in p["zones"]), p["id"]
 
@@ -236,3 +241,46 @@ def test_the_dashboard_still_previews_the_readable_form_of_a_raw_page():
     import portfolio_templates as pt
     html = pt.specimen("hub-page")["html"]
     assert "[fusion_text]" in html and "[fusion_code]" not in html
+
+
+# ── the long-form project page ──────────────────────────────────────────────
+
+def test_the_long_form_page_and_its_parts_render_from_their_specimens():
+    import portfolio_templates as pt
+    for tid in ("longform-page", "longform-section", "longform-figure", "longform-figure-row", "longform-callout"):
+        r = pt.specimen(tid)
+        assert r["ok"], (tid, r["missing"], r["errors"])
+    html = pt.specimen("longform-page")["html"]
+    assert html.count('class="longform-section"') == 2 and "longform-figure-row" in html and "longform-callout" in html
+    assert "Stack:" in html and "action-row" in html and 'id="other-projects-mount"' in html
+
+
+def test_a_figure_has_alt_text_and_a_caption_field_so_diagrams_are_always_described():
+    import json
+    m = json.loads((PORTFOLIO / "templates" / "templates.json").read_text())["templates"]
+    for tid in ("longform-figure", "longform-figure-row"):
+        names = {f["name"] for t in m if t["id"] == tid for f in t["fields"]}
+        assert {"IMAGE_URL", "ALT", "CAPTION"} <= names
+
+
+def test_a_long_form_project_can_be_planned_and_a_short_one_still_is():
+    import portfolio_templates as pt
+    base = {"title": "T", "slug": "t", "category": "Software Engineering", "subtitle": "s", "description": "d", "stack_csv": "Python",
+            "hero_image_url": "/h.jpg", "thumbnail": "/t.jpg"}
+    out = pt.plan_new_project({**base, "layout": "long-form", "lead_html": "<p>lead</p>",
+                               "sections": [{"heading": "Design", "body_html": "<p>x</p>"}, {"heading": "Results", "body_html": "<p>y</p>"}]})
+    assert out["ok"], out["errors"]
+    assert "[fusion_code]" in out["page_html"]                          # emitted raw, like the generated pages
+    short = pt.plan_new_project({**base, "body_html": "<p>b</p>"})
+    assert short["ok"] and "longform" not in short["page_html"]
+
+
+def test_a_long_form_project_without_sections_or_a_lead_is_refused_with_reasons():
+    import portfolio_templates as pt
+    base = {"title": "T", "slug": "t", "category": "Software Engineering", "subtitle": "s", "description": "d", "stack_csv": "Python",
+            "hero_image_url": "/h.jpg", "thumbnail": "/t.jpg", "layout": "long-form"}
+    out = pt.plan_new_project(base)
+    assert not out["ok"] and "missing lead_html" in out["errors"] and any("at least one section" in e for e in out["errors"])
+    bad = pt.plan_new_project({**base, "lead_html": "<p>x</p>", "sections": [{"heading": "", "body_html": "<p>x</p>"}]})
+    assert any("section 1" in e for e in bad["errors"])
+    assert pt.plan_new_project({**base, "layout": "magazine"})["errors"] == ["layout must be 'project' or 'long-form'"]

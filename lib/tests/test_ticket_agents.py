@@ -227,3 +227,23 @@ def test_ready_work_in_projects_the_executor_cannot_run_is_counted_not_hidden():
                                                   issue(3, labels=["ready-for-agent"], body="## Blocked by\n\n- #1")], "prs": []},
     }
     assert ta.ready_elsewhere(snap) == {"G-Eskayo/clarity-captions": 1}
+
+
+def test_stale_claim_and_requeue_agents_cover_every_project_the_executor_can_run():
+    cc = "G-Eskayo/clarity-captions"
+    snap = {cc: {"issues": [issue(5, labels=["claimed:mac-mini"], updated=5), issue(6, labels=["needs-reengagement"])], "prs": []}}
+    base = dict(snapshot=snap, gh=FakeGh(), cfg={"mode": "propose", "agents": {}}, now=NOW, in_flight=lambda r: set(), due_for=lambda r: None)
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        paths = dict(audit_path=Path(d) / "a.jsonl", proposals_path=Path(d) / "p.json")
+        without = ta.run(**base, **paths)
+        with_exec = ta.run(**base, **paths, executable={"G-Eskayo/marvin", cc})
+    assert without["by_agent"]["stale_claims"]["planned"] == 0  # the executor does not know this project yet
+    assert with_exec["by_agent"]["stale_claims"]["planned"] > 0 and with_exec["by_agent"]["refeed"]["planned"] > 0
+
+
+def test_ready_work_only_counts_as_waiting_when_the_executor_cannot_run_that_project():
+    cc = "G-Eskayo/clarity-captions"
+    snap = {cc: {"issues": [issue(1, labels=["ready-for-agent"])], "prs": []}}
+    assert ta.ready_elsewhere(snap) == {cc: 1}
+    assert ta.ready_elsewhere(snap, executable={"G-Eskayo/marvin", cc}) == {}

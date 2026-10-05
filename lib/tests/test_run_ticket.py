@@ -429,3 +429,123 @@ def test_a_successful_run_records_a_success_which_clears_the_breaker(monkeypatch
     rt.run(43)
 
     assert seen == [43]
+
+
+# ── tickets of another project (execution profile) ──────────────────────────
+
+CC = "G-Eskayo/clarity-captions"
+PROFILE = {"repo": CC, "base_branch": "main", "dispatch": "on", "machines": ["mac-mini-1"], "env": {}, "executor": {},
+           "evidence": {"dev": {"na": "no simulator capture"}},
+           "verify": [{"id": "core", "label": "Core tests", "command": ["swift", "test"], "required": True, "requires": ["swift"], "parser": "swift-test"}]}
+
+
+class FakeMeasurer:
+    def __init__(self, profile):
+        self.profile = profile
+        self.env = {"DEVELOPER_DIR": "/xcode"}
+        self.report = {"tiers": [], "notes": []}
+
+    def __call__(self, worktree):
+        return {}
+
+    def evidence(self):
+        return {"suite": "Core tests", "passed": 60, "failed": 0, "total": 61}, {"na": True, "reason": "no simulator capture"}
+
+    def pr_note(self):
+        return "App build: not verified (needs xcodegen)"
+
+
+def _profile_run_setup(monkeypatch, profile=PROFILE, clone=Path("/Users/me/Developer/clarity-captions")):
+    import project_profile as pp
+    monkeypatch.setattr(rt.pp, "load_profile", lambda repo, directory=None: profile if repo == CC else None)
+    monkeypatch.setattr(rt.pp, "resolve_clone", lambda p, catalog=None: clone)
+    monkeypatch.setattr(rt.pp, "Measurer", FakeMeasurer)
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+    monkeypatch.setattr(rt, "_load_catalog", lambda: {"projects": []})
+
+
+def test_a_profile_ticket_runs_in_the_projects_clone_on_its_base_branch_with_its_own_measure(monkeypatch):
+    _profile_run_setup(monkeypatch)
+    seen = {}
+
+    def fake_execute(ticket_ref, subsystem, measure, **kw):
+        seen.update(ticket_ref=ticket_ref, subsystem=subsystem, measure=measure, **kw)
+        return _passing_result()
+
+    monkeypatch.setattr(rt, "execute_ticket", fake_execute)
+    monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": True, "pr_url": "http://pr", "reason": None})
+    rt.run(7, repo=CC)
+    assert seen["ticket_ref"] == f"{CC}#7"
+    assert seen["subsystem"] == "clarity-captions-ticket-7"  # not "ticket-7": that name belongs to marvin's #7
+    assert isinstance(seen["measure"], FakeMeasurer)
+    assert seen["repo_path"] == Path("/Users/me/Developer/clarity-captions") and seen["base_branch"] == "main"
+    assert callable(seen["executor"])
+
+
+def test_a_profile_ticket_pr_carries_the_profiles_test_results_notes_and_dev_evidence(monkeypatch):
+    _profile_run_setup(monkeypatch)
+    monkeypatch.setattr(rt, "execute_ticket", lambda *a, **k: _passing_result())
+    got = {}
+    monkeypatch.setattr(rt, "raise_mr", lambda ref, result, test_results=None, dev_evidence=None, **kw: got.update(t=test_results, d=dev_evidence) or {"raised": True, "pr_url": "u", "reason": None})
+    rt.run(7, repo=CC)
+    assert got["t"]["suite"] == "Core tests" and "not verified" in got["t"]["notes"]
+    assert got["d"] == {"na": True, "reason": "no simulator capture"}
+
+
+def test_a_failed_profile_ticket_is_handled_in_its_own_repo_and_feeds_its_own_breaker(monkeypatch):
+    _profile_run_setup(monkeypatch)
+    monkeypatch.setattr(rt, "execute_ticket", lambda *a, **k: _failing_result())
+    monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "tests regressed"})
+    calls = {}
+    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda n, repo=rt.REPO: calls.setdefault("streak", (n, repo)) and 0)
+    monkeypatch.setattr(rt, "_comment_failure", lambda n, reason, repo=rt.REPO: calls.update(comment=(n, repo)))
+    monkeypatch.setattr(rt, "_release_claim", lambda n, repo=rt.REPO: calls.update(release=(n, repo)))
+    import failure_breaker as fb
+    monkeypatch.setattr(fb, "record_failure", lambda ticket, reason, now=None, project=fb.MARVIN: calls.update(breaker=(ticket, project)))
+    rt.run(7, repo=CC)
+    assert calls["comment"] == (7, CC) and calls["release"] == (7, CC) and calls["breaker"] == (7, CC)
+
+
+def test_a_machine_without_the_toolchain_releases_the_claim_without_blaming_the_ticket(monkeypatch):
+    _profile_run_setup(monkeypatch)
+    import project_profile as pp
+
+    def boom(*a, **k):
+        raise pp.EnvMissing("core", ["xcode"])
+
+    monkeypatch.setattr(rt, "execute_ticket", boom)
+    calls = {"comment": 0, "breaker": 0, "park": 0}
+    monkeypatch.setattr(rt, "_release_claim", lambda n, repo=rt.REPO: calls.update(release=(n, repo)))
+    monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: calls.update(comment=calls["comment"] + 1))
+    monkeypatch.setattr(rt, "_park_stuck_ticket", lambda *a, **k: calls.update(park=calls["park"] + 1))
+    import failure_breaker as fb
+    monkeypatch.setattr(fb, "record_failure", lambda *a, **k: calls.update(breaker=calls["breaker"] + 1))
+    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda *a, **k: 2)  # even at the cap, this is not a strike
+    out = rt.run(7, repo=CC)
+    assert calls["release"] == (7, CC)
+    assert (calls["comment"], calls["breaker"], calls["park"]) == (0, 0, 0)
+    assert out["raised"] is False and "xcode" in out["reason"]
+
+
+def test_a_repo_without_a_profile_is_refused_not_run_with_marvins_assumptions(monkeypatch):
+    _profile_run_setup(monkeypatch)
+    monkeypatch.setattr(rt, "execute_ticket", lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not run")))
+    monkeypatch.setattr(rt, "_release_claim", lambda *a, **k: None)
+    monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: None)
+    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda *a, **k: 0)
+    out = rt.run(3, repo="G-Eskayo/other")
+    assert out["raised"] is False and "profile" in out["reason"]
+
+
+def test_the_command_line_takes_a_plain_number_or_owner_repo_hash_number():
+    assert rt.parse_ticket_arg("123") == (rt.REPO, 123)
+    assert rt.parse_ticket_arg("G-Eskayo/clarity-captions#7") == ("G-Eskayo/clarity-captions", 7)
+    with pytest.raises(ValueError):
+        rt.parse_ticket_arg("not a ticket")
+
+
+def test_gh_calls_for_another_project_name_that_project(monkeypatch):
+    calls = []
+    monkeypatch.setattr(rt.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
+    rt._comment_failure(7, "why", repo=CC)
+    assert calls[0][calls[0].index("--repo") + 1] == CC

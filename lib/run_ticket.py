@@ -10,16 +10,19 @@ Run standalone: ~/.agents/venv/bin/python run_ticket.py <issue_number>
 """
 from __future__ import annotations
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import functools  # noqa: E402
 import machine_profile  # noqa: E402
+import project_profile as pp  # noqa: E402
 from build_type_measure import measure, test_command_for  # noqa: E402
 from evidence_capture import capture_dev_evidence, capture_test_results, ticket_touches_ui  # noqa: E402
 from mr_raiser import raise_mr  # noqa: E402
-from sandbox_orchestration import execute_ticket  # noqa: E402
+from sandbox_orchestration import execute_ticket, _default_executor  # noqa: E402
 from ticket_pipeline import _label_for_device, _release  # noqa: E402
 import failure_breaker  # noqa: E402
 import ticket_stages as ts  # noqa: E402
@@ -29,15 +32,15 @@ FAILURE_MARKER = "Automated implementation did not pass verification"
 MAX_CONSECUTIVE_FAILURES = 3
 
 
-def _comment_failure(issue_number: int, reason: str) -> None:
+def _comment_failure(issue_number: int, reason: str, repo: str = REPO) -> None:
     subprocess.run(
-        ["gh", "issue", "comment", str(issue_number), "--repo", REPO, "--body",
+        ["gh", "issue", "comment", str(issue_number), "--repo", repo, "--body",
          f"{FAILURE_MARKER}: {reason}"],
         check=False,
     )
 
 
-def _consecutive_failure_streak(issue_number: int) -> int:
+def _consecutive_failure_streak(issue_number: int, repo: str = REPO) -> int:
     """Count trailing automated-failure comments on this issue, most-recent
     first, stopping at the first non-matching comment (a human reply, a
     passing run, anything else). This is the cross-dispatch retry counter --
@@ -53,7 +56,7 @@ def _consecutive_failure_streak(issue_number: int) -> int:
     one execute_ticket call, nothing bounded the outer release/redispatch
     loop across calls."""
     proc = subprocess.run(
-        ["gh", "issue", "view", str(issue_number), "--repo", REPO,
+        ["gh", "issue", "view", str(issue_number), "--repo", repo,
          "--json", "comments"],
         capture_output=True, text=True, timeout=30, check=False,
     )
@@ -72,10 +75,10 @@ def _consecutive_failure_streak(issue_number: int) -> int:
     return streak
 
 
-def _park_stuck_ticket(issue_number: int, streak: int) -> None:
+def _park_stuck_ticket(issue_number: int, streak: int, repo: str = REPO) -> None:
     label = _label_for_device(machine_profile.registry_id())
     subprocess.run(
-        ["gh", "issue", "edit", str(issue_number), "--repo", REPO,
+        ["gh", "issue", "edit", str(issue_number), "--repo", repo,
          "--remove-label", "ready-for-agent",
          "--remove-label", f"claimed:{label}"],
         capture_output=True, text=True, timeout=15, check=False,
@@ -84,7 +87,7 @@ def _park_stuck_ticket(issue_number: int, streak: int) -> None:
     # dispatches ready-for-agent tickets with no claimed:* label, so a parked
     # ticket that kept its claim could never be revived by re-adding the label.
     subprocess.run(
-        ["gh", "issue", "comment", str(issue_number), "--repo", REPO, "--body",
+        ["gh", "issue", "comment", str(issue_number), "--repo", repo, "--body",
          f"Parking this ticket after {streak} consecutive failed automated "
          f"attempts with no progress -- removed `ready-for-agent` and the "
          f"claim so it stops being re-dispatched. Needs a human look "
@@ -94,7 +97,7 @@ def _park_stuck_ticket(issue_number: int, streak: int) -> None:
     )
 
 
-def _release_claim(issue_number: int) -> None:
+def _release_claim(issue_number: int, repo: str = REPO) -> None:
     """A ticket that didn't raise a PR -- rate-limited, a worktree-creation
     failure, or genuinely never reached a passing comparison -- leaves this
     machine free again, but ticket_pipeline.py's claim happens before
@@ -105,7 +108,7 @@ def _release_claim(issue_number: int) -> None:
     Claude usage-limit window left 28 tickets claimed with zero real work
     done, none of them ever eligible for retry again."""
     label = _label_for_device(machine_profile.registry_id())
-    _release(issue_number, label)
+    _release(issue_number, label) if repo == REPO else _release(issue_number, label, repo)
 
 
 def _trigger_redispatch() -> None:
@@ -124,22 +127,69 @@ def _trigger_redispatch() -> None:
     )
 
 
-def run(issue_number: int) -> dict:
-    ticket_ref = f"{REPO}#{issue_number}"
-    subsystem = f"ticket-{issue_number}"
+def _load_catalog() -> dict:
+    try:
+        import project_catalog
+        return project_catalog.read_catalog(project_catalog.catalog_path()) or {"projects": []}
+    except Exception:  # noqa: BLE001 -- the profile's clone_hints still work without a catalog
+        return {"projects": []}
+
+
+def parse_ticket_arg(arg: str) -> tuple[str, int]:
+    """'123' (marvin's, as before) or 'owner/repo#123'."""
+    m = re.fullmatch(r"([\w.-]+/[\w.-]+)#(\d+)", arg.strip())
+    if m:
+        return m.group(1), int(m.group(2))
+    if arg.strip().isdigit():
+        return REPO, int(arg)
+    raise ValueError(f"expected a ticket number or owner/repo#number, got {arg!r}")
+
+
+def run(issue_number: int, repo: str = REPO) -> dict:
+    ticket_ref = f"{repo}#{issue_number}"
+    other = repo != REPO
+    # marvin's path is called exactly as it always was; another project's calls carry its repo so its
+    # stage records, claim label, comments and breaker entries stay its own.
+    kw = {"repo": repo} if other else {}
+    profile = pp.load_profile(repo) if other else None
+    subsystem = f"ticket-{issue_number}" if not other else f"{repo.split('/')[-1].lower()}-ticket-{issue_number}"
+    measurer = None
 
     try:
-        result = execute_ticket(ticket_ref, subsystem, measure)
+        if other and profile is None:
+            outcome = {"raised": False, "pr_url": None, "reason": f"{repo} has no execution profile (config/projects/), so the pipeline cannot run its tickets"}
+        else:
+            if profile is None:
+                result = execute_ticket(ticket_ref, subsystem, measure)
+            else:
+                clone = pp.resolve_clone(profile, _load_catalog())
+                if clone is None:
+                    raise RuntimeError(f"no local clone of {repo} found on this machine (catalog and clone_hints)")
+                measurer = pp.Measurer(profile)
+                result = execute_ticket(
+                    ticket_ref, subsystem, measurer,
+                    executor=functools.partial(_default_executor, profile=profile, clone=clone, env=measurer.env),
+                    repo_path=clone, base_branch=profile["base_branch"],
+                )
 
-        test_results = None
-        dev_evidence = None
-        if result["passing"]:
-            worktree_path = result["worktree_path"]
-            command = test_command_for(worktree_path)
-            test_results = capture_test_results(worktree_path, command)
-            dev_evidence = capture_dev_evidence(worktree_path, ticket_touches_ui(worktree_path))
+            test_results = None
+            dev_evidence = None
+            if result["passing"]:
+                worktree_path = result["worktree_path"]
+                if measurer is None:
+                    command = test_command_for(worktree_path)
+                    test_results = capture_test_results(worktree_path, command)
+                    dev_evidence = capture_dev_evidence(worktree_path, ticket_touches_ui(worktree_path))
+                else:
+                    test_results, dev_evidence = measurer.evidence()
+                    if test_results is not None:
+                        test_results["notes"] = measurer.pr_note()
 
-        outcome = raise_mr(ticket_ref, result, test_results=test_results, dev_evidence=dev_evidence)
+            outcome = raise_mr(ticket_ref, result, test_results=test_results, dev_evidence=dev_evidence)
+    except pp.EnvMissing as exc:
+        # This machine lacks a tool the project's required check needs. That is about the machine, not the
+        # ticket: no comment, no strike, no breaker entry; the claim goes back so a capable machine can take it.
+        outcome = {"raised": False, "pr_url": None, "reason": str(exc), "env_missing": True}
     except Exception as exc:
         # A crash anywhere in execute_ticket/raise_mr (a planner timeout, a
         # worktree-creation failure, anything) must never skip the cleanup
@@ -151,20 +201,25 @@ def run(issue_number: int) -> dict:
         outcome = {"raised": False, "pr_url": None, "reason": f"Unhandled exception: {exc}"}
 
     if not outcome["raised"]:
-        prior_streak = _consecutive_failure_streak(issue_number)
-        _comment_failure(issue_number, outcome["reason"])
+        if outcome.get("env_missing"):
+            _release_claim(issue_number, **kw)
+            ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
+            _trigger_redispatch()
+            return outcome
+        prior_streak = _consecutive_failure_streak(issue_number, **kw)
+        _comment_failure(issue_number, outcome["reason"], **kw)
         # Feed the cross-ticket breaker (failure_breaker.py): the SAME failure across
         # different tickets means the system is broken, not the tickets.
-        failure_breaker.record_failure(issue_number, outcome["reason"])
+        failure_breaker.record_failure(issue_number, outcome["reason"], **({"project": repo} if other else {}))
         if prior_streak + 1 >= MAX_CONSECUTIVE_FAILURES:
-            _park_stuck_ticket(issue_number, prior_streak + 1)
-            ts.record_stage(issue_number, "done", "failed", f"parked after {prior_streak + 1} consecutive failures")
+            _park_stuck_ticket(issue_number, prior_streak + 1, **kw)
+            ts.record_stage(issue_number, "done", "failed", f"parked after {prior_streak + 1} consecutive failures", **kw)
         else:
-            _release_claim(issue_number)
-            ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300])
+            _release_claim(issue_number, **kw)
+            ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
     else:
-        ts.record_stage(issue_number, "done", "passed", f"PR raised: {outcome['pr_url']}")
-        failure_breaker.record_success(issue_number)  # proves the environment works: clears the breaker
+        ts.record_stage(issue_number, "done", "passed", f"PR raised: {outcome['pr_url']}", **kw)
+        failure_breaker.record_success(issue_number, **({"project": repo} if other else {}))  # proves this project's environment works
 
     _trigger_redispatch()
 
@@ -173,9 +228,14 @@ def run(issue_number: int) -> dict:
 
 def main() -> None:
     if len(sys.argv) != 2:
-        print("usage: run_ticket.py <issue_number>", file=sys.stderr)
+        print("usage: run_ticket.py <issue_number | owner/repo#issue_number>", file=sys.stderr)
         sys.exit(1)
-    outcome = run(int(sys.argv[1]))
+    try:
+        repo, number = parse_ticket_arg(sys.argv[1])
+    except ValueError as e:
+        print(e, file=sys.stderr)
+        sys.exit(1)
+    outcome = run(number, repo) if repo != REPO else run(number)
     print(outcome)
     sys.exit(0 if outcome["raised"] else 1)
 

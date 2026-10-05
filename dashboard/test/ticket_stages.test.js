@@ -99,3 +99,25 @@ describe('listTrackedTickets', () => {
       expect(listTrackedTickets(path.join(dir, 'does-not-exist'))).toEqual([])
     }))
 })
+
+import { readStages as rs, recordStage as rec, listTrackedTickets as lt } from '../webhook-server/ticket_stages.js'
+import { mkdtempSync as mk, rmSync as rm, existsSync as ex } from 'fs'
+import { tmpdir as td } from 'os'
+import pth from 'path'
+
+describe('stage records of other projects', () => {
+  it('keep their own timeline when the ticket number matches marvin\'s, and marvin keeps its plain file', () => {
+    const dir = mk(pth.join(td(), 'stages-'))
+    try {
+      rec(7, 'claimed', 'started', "marvin's", { machine: 'm', dir })
+      rec(7, 'claimed', 'started', "clarity's", { machine: 'm', dir, repo: 'G-Eskayo/clarity-captions' })
+      expect(rs(7, dir).map((e) => e.detail)).toEqual(["marvin's"])
+      expect(rs(7, dir, 'G-Eskayo/clarity-captions').map((e) => e.detail)).toEqual(["clarity's"])
+      expect(ex(pth.join(dir, '7.json')) && ex(pth.join(dir, 'clarity-captions-7.json'))).toBe(true)
+      expect(lt(dir)).toEqual([7])
+      expect(lt(dir, 'G-Eskayo/clarity-captions')).toEqual([7])
+    } finally {
+      rm(dir, { recursive: true, force: true })
+    }
+  })
+})

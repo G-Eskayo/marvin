@@ -65,13 +65,16 @@ def _append(record: dict) -> None:
         fh.write(json.dumps(record) + "\n")
 
 
-def record_failure(ticket: int, reason: str, now: datetime | None = None) -> None:
-    _append({"t": (now or _now()).isoformat(), "kind": "failure", "ticket": ticket,
+MARVIN = "G-Eskayo/marvin"
+
+
+def record_failure(ticket: int, reason: str, now: datetime | None = None, project: str = MARVIN) -> None:
+    _append({"t": (now or _now()).isoformat(), "kind": "failure", "ticket": ticket, "project": project,
              "sig": signature(reason), "reason": (reason or "")[:300]})
 
 
-def record_success(ticket: int, now: datetime | None = None) -> None:
-    _append({"t": (now or _now()).isoformat(), "kind": "success", "ticket": ticket})
+def record_success(ticket: int, now: datetime | None = None, project: str = MARVIN) -> None:
+    _append({"t": (now or _now()).isoformat(), "kind": "success", "ticket": ticket, "project": project})
 
 
 def clear(now: datetime | None = None) -> None:
@@ -92,26 +95,35 @@ def _read() -> list[dict]:
     return out
 
 
-def tripped(now: datetime | None = None) -> list[dict]:
-    """Signatures currently tripped: [{signature, tickets, first_seen, last_seen, example}]."""
+def tripped(now: datetime | None = None, project: str | None = None) -> list[dict]:
+    """Signatures currently tripped, per project: [{project, signature, tickets, first_seen, last_seen,
+    example}]. One project's broken environment (say, a missing Xcode) must not pause the others, and a
+    success in one project only proves THAT project's environment works. Log lines from before projects
+    existed belong to marvin."""
     now = now or _now()
     horizon = now - timedelta(hours=WINDOW_HOURS)
     records = [r for r in _read() if r["_t"] >= horizon]
-    resets = [r["_t"] for r in records if r["kind"] in ("success", "clear")]
-    last_reset = max(resets) if resets else None
-    failures = [r for r in records if r["kind"] == "failure" and (last_reset is None or r["_t"] > last_reset)]
-
-    by_sig: dict[str, list[dict]] = {}
-    for f in failures:
-        by_sig.setdefault(f["sig"], []).append(f)
+    for r in records:
+        r.setdefault("project", MARVIN)
     result = []
-    for sig, group in by_sig.items():
-        tickets = sorted({f["ticket"] for f in group})
-        if len(tickets) >= MIN_DISTINCT_TICKETS:
-            result.append({"signature": sig, "tickets": tickets,
-                           "first_seen": min(f["_t"] for f in group).isoformat(),
-                           "last_seen": max(f["_t"] for f in group).isoformat(),
-                           "example": group[-1].get("reason", "")})
+    for proj in sorted({r["project"] for r in records}):
+        if project is not None and proj != project:
+            continue
+        mine = [r for r in records if r["project"] == proj]
+        # a success only proves its own project works; a manual `clear` is a person saying "all clear"
+        resets = [r["_t"] for r in mine if r["kind"] == "success"] + [r["_t"] for r in records if r["kind"] == "clear"]
+        last_reset = max(resets) if resets else None
+        failures = [r for r in mine if r["kind"] == "failure" and (last_reset is None or r["_t"] > last_reset)]
+        by_sig: dict[str, list[dict]] = {}
+        for f in failures:
+            by_sig.setdefault(f["sig"], []).append(f)
+        for sig, group in by_sig.items():
+            tickets = sorted({f["ticket"] for f in group})
+            if len(tickets) >= MIN_DISTINCT_TICKETS:
+                result.append({"project": proj, "signature": sig, "tickets": tickets,
+                               "first_seen": min(f["_t"] for f in group).isoformat(),
+                               "last_seen": max(f["_t"] for f in group).isoformat(),
+                               "example": group[-1].get("reason", "")})
     return result
 
 

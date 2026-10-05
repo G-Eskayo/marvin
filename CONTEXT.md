@@ -604,6 +604,18 @@ untouched (it is the "legacy profile"); only repos with a profile file use the p
   rule (ADR 0010, ticket #17: "the at-the-bottom decision is pure logic with unit tests") puts decisions in
   `CaptionCore`, which is what makes `swift test` a meaningful gate. Evidence: dev-environment screenshot is
   `N/A` (no simulator capture yet).
+- **Verified 2026-10-05 on mac-mini against the real clone**: `project_profile.py selftest
+  G-Eskayo/clarity-captions` makes a real worktree from `origin/main`, runs the real baseline (`swift test`,
+  60 passed + 1 skipped, 0 failed, ~31s) and prints the PR body the pipeline would raise (Metrics Comparison,
+  Test Results with a "not verified: Spike app build" note, Dev Evidence N/A), then removes the worktree and
+  branch. No model call, no GitHub write. The pipeline's own token has push access to the repo.
+- **Found while building it**: `gh issue view owner/repo#17` is rejected ("invalid issue format"); the planner
+  prompt now gives the working `gh issue view 17 --repo owner/repo` (marvin's planner had been recovering from
+  that error on its own). The failure breaker is now scoped per project (one project's broken toolchain pauses
+  only that project's dispatch; a success or a manual clear resets accordingly).
+- **Turning it on**: set `"dispatch": "on"` in `config/projects/clarity-captions.json`. From the next hourly
+  scan the best ready clarity-captions ticket competes with marvin's by priority then age, is claimed, and runs
+  on a machine in `machines` (mac-mini-1) as `run_ticket.py G-Eskayo/clarity-captions#N`. Nothing else changes.
 - **Cross-project identity**: stage records and the failure breaker were keyed by bare ticket number, so
   clarity-captions #7 and marvin #7 would have collided. Non-marvin tickets are keyed `<repo>-<n>`; marvin's
   keep their plain number (nothing existing moves). `gh pr create`/`gh issue comment` now pass `--repo`
@@ -723,7 +735,7 @@ replaced by this automated path**: that gap is what this section closes.
    technical write-up). They are a different page type: they need either their sections folded into the card or a second
    "long-form project page" layout in the library: a design decision, not something to automate.
 
-### Long-form project page (decided 2026-10-05)
+### Long-form project page (decided and built 2026-10-05)
 
 Gil wants more of his projects to be long form: room for diagrams, detail and showing as well as telling. A second project
 layout, alongside the short **project page**, built from the same elements (hero, title card, subtitle, Stack line, action
@@ -740,6 +752,12 @@ row, Other Projects footer) plus a stack of **sections** after the title card.
 - **Pipeline**: the add-project spec can carry `layout: "long-form"` and `sections`; legacy long pages migrate with
   `portfolio_migrate.py --layout long-form`, which keeps every block of the original (the content-loss guard applies) and
   only standardizes the frame around it. Capture and conformance treat a project page as following EITHER project layout.
+- **Built**: `templates/longform-page.html` + parts (section, figure, figure row, callout) in the Templates tab with live
+  specimens (a sample diagram included); `deploy/longform/longform.css` + `enqueue-longform.php`; layout capture with a
+  `{section}` zone; `portfolio_migrate.py --layout long-form` (keeps every block of a one-block legacy page; the content-loss
+  guard applies); the add-project pipeline and the dashboard's Add project tab accept `layout: long-form`, a lead and sections
+  (`## Heading` starts a section). Helicopter Crutches and SkineeDipping are migrated: all 17 project pages now follow a
+  layout (15 short, 2 long-form).
 
 ### Element pipeline and the card text box (2026-10-05)
 

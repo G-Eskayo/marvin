@@ -70,8 +70,11 @@ def single_block_body(html: str) -> str:
     card = soup.select_one(".card-container")
     if card is None:
         raise MigrationError("could not find the card inside the single WP Coder block")
-    for holder in list(card.select(".text-center")):
-        if holder.find(["h1", "h2"]) and holder.find_parent(class_="card-container") is card or holder.select_one("h3.pink"):
+    title = card.select_one(".text-center h1, .text-center h2")
+    sub = card.select_one("h3.pink")
+    for el in (title, sub):
+        holder = el.find_parent(class_="text-center") if el is not None else None
+        if holder is not None and holder.get_text(strip=True) == el.get_text(strip=True):
             holder.decompose()
     node = card
     for _ in range(4):                              # unwrap wrapper divs that hold nothing but the next level
@@ -84,6 +87,72 @@ def single_block_body(html: str) -> str:
     inner = "".join(str(c) for c in node.contents)
     inner = re.sub(r"<!--.*?-->", "", inner, flags=re.S)                # the author's "body goes here" markers
     return inner.strip()
+
+
+def _meaningful(node) -> bool:
+    if isinstance(node, Comment):
+        return False
+    if isinstance(node, NavigableString):
+        return bool(str(node).strip())
+    return isinstance(node, Tag) and not (node.name in ("script", "style")) and not node.get("id") == "other-projects-mount" \
+        and (bool(node.get_text(strip=True)) or node.find(["img", "video", "iframe", "svg", "figure"]) is not None)
+
+
+def _heading_text(node) -> str | None:
+    """A section heading in the old markup: a centred block holding just an h2."""
+    if isinstance(node, Tag) and node.name == "div" and "text-center" in (node.get("class") or []):
+        h = node.find("h2")
+        if h is not None and node.get_text(strip=True) == h.get_text(strip=True):
+            return h.get_text(" ", strip=True)
+    return None
+
+
+def parse_longform_block(html: str) -> dict:
+    """A long legacy page held in ONE WP Coder block: the hero and title card, then sections that may sit inside the card
+    AND outside it (image/text rows, captions). Returns the hero, the lead (everything before the first heading) and the
+    sections in document order, each heading with the blocks under it. No block is dropped."""
+    hero = read_hero_block(html)
+    soup = BeautifulSoup(html, "html.parser")
+    card = soup.select_one(".card-container")
+    if card is None:
+        raise MigrationError("could not find the card inside the WP Coder block")
+    col = card.find_parent(class_="col-xs-12")
+    row = col.find_parent(class_="row") if col else None
+    container = row.find_parent(class_="container") if row else None
+    section = container.find_parent(class_="section-container") if container else None
+    after = []
+    if row is not None and container is not None:
+        after += list(row.next_siblings)
+    if container is not None and section is not None:
+        after += list(container.next_siblings)
+    title = card.select_one(".text-center h1, .text-center h2")      # the FIRST centred h1/h2 is the title; later h2s are sections
+    sub = card.select_one("h3.pink")
+    for el in (title, sub):                                          # the title and subtitle belong to the layout's frame
+        holder = el.find_parent(class_="text-center") if el is not None else None
+        if holder is not None and holder.get_text(strip=True) == el.get_text(strip=True):
+            holder.decompose()
+    node = card
+    for _ in range(4):
+        kids = [c for c in node.children if isinstance(c, Tag)]
+        stray = [c for c in node.children if isinstance(c, NavigableString) and str(c).strip() and not isinstance(c, Comment)]
+        if len(kids) == 1 and kids[0].name == "div" and not stray and not kids[0].get("class"):
+            node = kids[0]
+        else:
+            break
+    nodes = [c for c in list(node.contents) + after if _meaningful(c)]
+    lead, sections = [], []
+    for n in nodes:
+        heading = _heading_text(n)
+        if heading is not None:
+            sections.append([heading, []])
+        elif sections:
+            sections[-1][1].append(str(n))
+        else:
+            lead.append(str(n))
+    if not sections:
+        raise MigrationError("no section headings found: a long-form page needs at least one")
+    clean = lambda h: re.sub(r"<!--.*?-->", "", h, flags=re.S).strip()
+    return {"hero": hero, "lead_html": clean("".join(lead)), "sections": [(h, clean("".join(parts))) for h, parts in sections]}
 
 
 def own_repo_link(body: str) -> str | None:
@@ -166,9 +235,25 @@ def lost_words(original_html: str, new_html: str) -> list[str]:
 MAX_LOST = 8        # the removed repo link's own words ("View on GitHub", the label) and nothing more
 
 
-def render_page(spec: dict, root: Path | None = None) -> dict:
+def render_page(spec: dict, root: Path | None = None, raw: bool = True) -> dict:
     kw = {"root": root} if root else {}
-    return pt.render("project-page", spec["fields"], spec["options"], **kw)
+    return pt.render(spec.get("template", "project-page"), spec["fields"], spec["options"], raw=raw, **kw)
+
+
+def build_longform_fields(parsed: dict, stack: str | None, hero_url: str | None) -> dict:
+    """Fields for longform-page.html from a parsed long legacy page: every block kept, the repo link becoming the button."""
+    all_html = parsed["lead_html"] + "".join(b for _, b in parsed["sections"])
+    repo = own_repo_link(all_html)
+    fix = (lambda h: tidy_text(remove_repo_item(h, repo))) if repo else tidy_text
+    sections = [pt.render("longform-section", {"HEADING": h, "BODY_HTML": fix(b)}, None, raw=False)["html"] for h, b in parsed["sections"]]
+    hero = parsed["hero"]
+    return {
+        "template": "longform-page",
+        "fields": {"TITLE": hero["title"], "SUBTITLE": hero["subtitle"], "HERO_IMAGE_URL": hero_url or hero["hero_old"],
+                   "LEAD_HTML": fix(parsed["lead_html"]), "STACK_CSV": stack or suggest_stack(all_html) or "",
+                   "SECTIONS_HTML": "\n".join(sections)},
+        "options": {"actions": [{"template": "button-github", "data": {"REPO_URL": repo}}] if repo else []},
+    }
 
 
 # ── dev site I/O ────────────────────────────────────────────────────────────
@@ -204,10 +289,21 @@ def read_wp_code(block_id: str, runner=_run) -> str:
     return r.stdout
 
 
-def extract(url: str, stack: str | None = None, runner=_run) -> dict:
+def extract(url: str, stack: str | None = None, runner=_run, layout: str = "project") -> dict:
     page = find_page(url, runner)
     raw = _wp(runner, "post", "get", str(page["ID"]), "--field=post_content").stdout
     content = strip_sidebar_wrapper(raw)
+    if layout == "long-form":
+        ids = WP_CODE.findall(content)
+        if len(ids) != 1:
+            raise MigrationError("long-form migration expects the page to be ONE WP Coder block")
+        block = read_wp_code(ids[0], runner)
+        slug = url.strip("/").split("/")[-1]
+        generated = pa.DEV_HTML / pa.UPLOAD_SUBDIR / f"{slug}-hero.jpg"
+        hero_url = f"/{pa.UPLOAD_SUBDIR}/{slug}-hero.jpg" if generated.exists() else None
+        spec = build_longform_fields(parse_longform_block(block), stack, hero_url)
+        return {"page": page, "slug": slug, "url": url, "raw": raw, "blocks": {ids[0]: block}, "wp_code_ids": ids,
+                "hero_old": parse_longform_block(block)["hero"]["hero_old"], "spec": spec}
     try:
         ids, body = split_sandwich(content)
         hero = read_hero_block(read_wp_code(ids[0], runner))
@@ -227,8 +323,8 @@ def extract(url: str, stack: str | None = None, runner=_run) -> dict:
 
 
 def migrate(url: str, *, stack: str | None = None, plan: bool = False, outbox: Path = OUTBOX, runner=_run,
-            regenerate=pa.regenerate_pages, project: Path = pa.PROJECT) -> dict:
-    e = extract(url, stack, runner)
+            regenerate=pa.regenerate_pages, project: Path = pa.PROJECT, layout: str = "project") -> dict:
+    e = extract(url, stack, runner, layout)
     needs = []
     if not e["spec"]["fields"]["STACK_CSV"].strip():
         needs.append("STACK_CSV: the page never had a Stack line; give one with --stack")
@@ -240,7 +336,8 @@ def migrate(url: str, *, stack: str | None = None, plan: bool = False, outbox: P
     original = strip_sidebar_wrapper(e["raw"])
     for bid, html in e["blocks"].items():
         original = original.replace(f'[wp_code id="{bid}"]', html)
-    lost = lost_words(original, rendered["html"])
+    readable = render_page(e["spec"], raw=False)["html"]          # the guard reads the page as a visitor does (not the base64 form)
+    lost = lost_words(original, readable)
     if len(lost) > MAX_LOST:           # never rebuild a page that would lose what the author wrote
         return {"ok": False, "stage": "content-loss", "url": url, "lost_words": len(lost), "sample": sorted(set(lost))[:25]}
     summary = {"url": url, "page_id": e["page"]["ID"], "title": e["spec"]["fields"]["TITLE"], "subtitle": e["spec"]["fields"]["SUBTITLE"],
@@ -272,6 +369,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("url", help="the page's URL path, e.g. /ai-projects/anomaly-detection/")
     ap.add_argument("--stack", help="the Stack line, when the page never had one")
+    ap.add_argument("--layout", choices=["project", "long-form"], default="project", help="the layout to build the page on")
     ap.add_argument("--plan", action="store_true", help="show what would change; write nothing")
     ap.add_argument("--rollback", action="store_true", help="restore the page saved before migration")
     args = ap.parse_args()
@@ -279,7 +377,7 @@ def main() -> None:
         out = rollback(args.url.strip("/").split("/")[-1])
     else:
         try:
-            out = migrate(args.url, stack=args.stack, plan=args.plan)
+            out = migrate(args.url, stack=args.stack, plan=args.plan, layout=args.layout)
         except MigrationError as exc:                        # a page this tool cannot handle is a normal outcome, not a crash
             out = {"ok": False, "stage": "unsupported", "url": args.url, "reason": str(exc)}
     print(json.dumps(out))

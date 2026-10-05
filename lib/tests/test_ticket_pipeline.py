@@ -245,3 +245,97 @@ def test_only_ready_unclaimed_unpinned_tickets_are_candidates(monkeypatch):
     ]
     _fake_gh(monkeypatch, issues)
     assert [i["number"] for i in tp._unclaimed_ready_tickets()] == [3]
+
+
+# ── dispatching other projects' tickets (execution profiles) ────────────────
+
+CC = "G-Eskayo/clarity-captions"
+CC_PROFILE = {"repo": CC, "base_branch": "main", "dispatch": "on", "machines": ["mac-mini-1"], "env": {}, "executor": {}, "evidence": {},
+              "verify": [{"id": "core", "label": "Core", "command": ["swift", "test"], "required": True, "requires": ["swift"], "parser": "swift-test"}]}
+
+
+def _ticket(n, created="2026-02-01T00:00:00Z", labels=(), title="t"):
+    return {"number": n, "title": title, "createdAt": created, "labels": [{"name": l} for l in labels]}
+
+
+def _setup_projects(monkeypatch, marvin=(), cc=(), profile=CC_PROFILE, missing_here=()):
+    """marvin's tickets come from the zero-argument call exactly as before; another project's from repo=..."""
+    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda repo=tp.REPO: list(marvin) if repo == tp.REPO else (list(cc) if repo == CC else []))
+    monkeypatch.setattr(tp.pp, "dispatchable_repos", lambda directory=None: [CC] if profile and profile["dispatch"] == "on" else [])
+    monkeypatch.setattr(tp.pp, "load_profile", lambda repo, directory=None: profile if repo == CC else None)
+    monkeypatch.setattr(tp.pp, "missing_here", lambda p: list(missing_here))
+    monkeypatch.setattr(tp.failure_breaker, "tripped", lambda now=None, project=None: [])
+    monkeypatch.setattr(sys, "argv", ["ticket_pipeline.py"])
+
+
+def _capture(monkeypatch, select=lambda target=None: ("mac-mini-1", {"is_self": True})):
+    got = {"claims": [], "dispatches": [], "releases": []}
+    monkeypatch.setattr(tp, "select_machine", select)
+    monkeypatch.setattr(tp, "_claim", lambda n, l, **kw: got["claims"].append((n, l, kw.get("repo"))) or True)
+    monkeypatch.setattr(tp, "dispatch", lambda *a, **kw: got["dispatches"].append((a, kw)) or SimpleNamespace(ok=True, device_id="mac-mini-1"))
+    monkeypatch.setattr(tp, "_release", lambda n, l, repo=None: got["releases"].append((n, l, repo)))
+    return got
+
+
+def test_a_ready_clarity_ticket_is_claimed_and_dispatched_with_its_repo_in_the_command(monkeypatch):
+    _setup_projects(monkeypatch, cc=[_ticket(17, title="Auto-scroll")])
+    got = _capture(monkeypatch)
+    tp.main()
+    assert got["claims"] == [(17, "mac-mini", CC)]
+    args, kw = got["dispatches"][0]
+    assert f"run_ticket.py {CC}#17" in args[0]
+    assert kw["target"] == "mac-mini-1"
+    assert kw["task_label"].startswith(f"ticket {CC}#17")  # qualified, so the dashboard never mistakes it for marvin's #17
+
+
+def test_the_most_urgent_ticket_across_projects_goes_first(monkeypatch):
+    _setup_projects(monkeypatch, marvin=[_ticket(5, "2026-01-01T00:00:00Z", labels=["priority:p3"])], cc=[_ticket(9, "2026-03-01T00:00:00Z", labels=["priority:p0"])])
+    got = _capture(monkeypatch)
+    tp.main()
+    assert got["claims"][0][0] == 9 and got["claims"][0][2] == CC
+
+
+def test_a_profile_with_dispatch_off_is_never_dispatched(monkeypatch):
+    _setup_projects(monkeypatch, cc=[_ticket(17)], profile={**CC_PROFILE, "dispatch": "off"})
+    got = _capture(monkeypatch)
+    tp.main()
+    assert got["claims"] == [] and got["dispatches"] == []
+
+
+def test_one_projects_tripped_breaker_pauses_only_that_project(monkeypatch):
+    _setup_projects(monkeypatch, marvin=[_ticket(5)], cc=[_ticket(9)])
+    monkeypatch.setattr(tp.failure_breaker, "tripped", lambda now=None, project=None: [
+        {"project": tp.REPO, "signature": "measure:vitest-no-summary", "tickets": [1, 2, 3], "first_seen": "x", "last_seen": "y", "example": "e"}])
+    got = _capture(monkeypatch)
+    tp.main()
+    assert [c[0] for c in got["claims"]] == [9]  # marvin paused, clarity-captions carries on
+
+
+def test_a_machine_that_cannot_run_the_projects_required_checks_is_not_used(monkeypatch):
+    _setup_projects(monkeypatch, cc=[_ticket(17)], missing_here=["xcode"])
+    got = _capture(monkeypatch)
+    tp.main()
+    assert got["claims"] == [] and got["dispatches"] == []
+
+
+def test_only_machines_the_profile_allows_are_considered(monkeypatch):
+    _setup_projects(monkeypatch, cc=[_ticket(17)])
+    asked = []
+    got = _capture(monkeypatch, select=lambda target=None: asked.append(target) or None)
+    tp.main()
+    assert asked == ["mac-mini-1"] and got["claims"] == []
+
+
+def test_a_failed_dispatch_releases_the_claim_in_the_right_repo(monkeypatch):
+    _setup_projects(monkeypatch, cc=[_ticket(17)])
+    got = _capture(monkeypatch)
+    monkeypatch.setattr(tp, "dispatch", lambda *a, **kw: SimpleNamespace(ok=False, error="boom"))
+    tp.main()
+    assert got["releases"] == [(17, "mac-mini", CC)]
+
+
+def test_the_wrapper_command_for_another_project_names_it_and_logs_separately():
+    command = tp._build_wrapper_command(7, CC)
+    assert f"{tp.RUN_TICKET_SCRIPT} {CC}#7" in command
+    assert "dispatch_clarity-captions_issue7.log" in command
+    assert tp._build_wrapper_command(7).count("clarity") == 0  # marvin's command is unchanged

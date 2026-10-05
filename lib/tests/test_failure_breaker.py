@@ -131,3 +131,52 @@ def test_a_failure_line_written_by_the_node_webhook_is_read_and_grouped():
     [trip] = fb.tripped(now=NOW)
     assert trip["signature"] == "merge:GH_AUTH_INVALID"
     assert sorted(trip["tickets"]) == [123, 124, 125]
+
+
+# ── one project's broken environment must not pause the others ──────────────
+
+def test_the_same_failure_in_three_tickets_of_one_other_project_trips_only_that_project(monkeypatch, tmp_path):
+    monkeypatch.setattr(fb, "LOG_PATH", tmp_path / "f.jsonl")
+    for n in (7, 11, 17):
+        fb.record_failure(n, "swift test: no such module 'XCTest'", project="G-Eskayo/clarity-captions")
+    trips = fb.tripped()
+    assert [t["project"] for t in trips] == ["G-Eskayo/clarity-captions"]
+    assert fb.tripped(project="G-Eskayo/marvin") == []
+    assert len(fb.tripped(project="G-Eskayo/clarity-captions")) == 1
+
+
+def test_ticket_7_in_two_projects_counts_as_two_tickets_not_one(monkeypatch, tmp_path):
+    monkeypatch.setattr(fb, "LOG_PATH", tmp_path / "f.jsonl")
+    fb.record_failure(7, "boom the same way", project="G-Eskayo/marvin")
+    fb.record_failure(7, "boom the same way", project="G-Eskayo/clarity-captions")
+    fb.record_failure(8, "boom the same way", project="G-Eskayo/marvin")
+    fb.record_failure(9, "boom the same way", project="G-Eskayo/marvin")
+    assert [t["project"] for t in fb.tripped()] == ["G-Eskayo/marvin"]  # marvin has 3 distinct, clarity only 1
+
+
+def test_a_success_in_one_project_does_not_clear_another_projects_trip(monkeypatch, tmp_path):
+    monkeypatch.setattr(fb, "LOG_PATH", tmp_path / "f.jsonl")
+    for n in (1, 2, 3):
+        fb.record_failure(n, "xcode exploded", project="G-Eskayo/clarity-captions")
+    fb.record_success(99, project="G-Eskayo/marvin")
+    assert len(fb.tripped(project="G-Eskayo/clarity-captions")) == 1
+    fb.record_success(4, project="G-Eskayo/clarity-captions")
+    assert fb.tripped(project="G-Eskayo/clarity-captions") == []
+
+
+def test_old_log_lines_without_a_project_are_marvins(monkeypatch, tmp_path):
+    p = tmp_path / "f.jsonl"
+    monkeypatch.setattr(fb, "LOG_PATH", p)
+    import json as _j
+    now = fb._now().isoformat()
+    p.write_text("\n".join(_j.dumps({"t": now, "kind": "failure", "ticket": n, "sig": "s", "reason": "r"}) for n in (1, 2, 3)) + "\n")
+    assert [t["project"] for t in fb.tripped()] == ["G-Eskayo/marvin"]
+
+
+def test_a_manual_clear_resets_every_projects_trip(monkeypatch, tmp_path):
+    monkeypatch.setattr(fb, "LOG_PATH", tmp_path / "f.jsonl")
+    for n in (1, 2, 3):
+        fb.record_failure(n, "xcode exploded", project="G-Eskayo/clarity-captions")
+    assert fb.tripped()
+    fb.clear()
+    assert fb.tripped() == []

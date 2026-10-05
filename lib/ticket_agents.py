@@ -213,9 +213,10 @@ def _write(path: Path, rows: list[dict], mode="a") -> None:
 
 
 def run(snapshot, gh, cfg, now, audit_path=AUDIT_PATH, proposals_path=PROPOSALS_PATH, in_flight=lambda repo: set(),
-        due_for=lambda repo: None, report=None) -> dict:
+        due_for=lambda repo: None, report=None, executable=None) -> dict:
     """One pass over every repo in `snapshot` ({repo: {"issues": [...], "prs": [...]}})."""
     report = report or (lambda *a, **k: None)
+    executable = set(executable) if executable else {"G-Eskayo/marvin"}  # projects the executor can run
     modes = {a: effective_mode(cfg, a, now) for a in AGENTS}
     planned: list[dict] = []
     for repo, data in snapshot.items():
@@ -224,7 +225,7 @@ def run(snapshot, gh, cfg, now, audit_path=AUDIT_PATH, proposals_path=PROPOSALS_
             planned += plan_prioritize(repo, issues, due_for(repo), owned_priorities(audit_path, repo), now)
         if modes["triage"] != "off":
             planned += plan_triage(repo, issues)
-        if repo == "G-Eskayo/marvin":  # claims and re-queues belong to the executor, which only knows marvin
+        if repo in executable:  # claims and re-queues belong to the executor, so only projects it can run
             if modes["stale_claims"] != "off":
                 planned += plan_stale_claims(repo, issues, in_flight(repo), now)
             if modes["refeed"] != "off":
@@ -312,12 +313,13 @@ def due_for_repo(repo, overrides_path: Path = OVERRIDES_PATH):
     return {"date": o["due"], "hard": bool(o.get("dueHard"))} if o.get("due") else None
 
 
-def ready_elsewhere(snapshot) -> dict[str, int]:
-    """Projects other than marvin with tickets ready for an agent: the executor only knows marvin's
-    checkout and test suites, so these wait for a per-project execution profile. Shown, not hidden."""
+def ready_elsewhere(snapshot, executable=None) -> dict[str, int]:
+    """Projects the executor cannot run (yet) that have tickets ready for an agent: they wait for an
+    execution profile with dispatch switched on. Shown, not hidden."""
+    executable = set(executable) if executable else {"G-Eskayo/marvin"}
     out = {}
     for repo, data in snapshot.items():
-        if repo == "G-Eskayo/marvin":
+        if repo in executable:
             continue
         open_numbers = {t["number"] for t in data["issues"]}
         n = sum(1 for t in data["issues"] if "ready-for-agent" in pol.label_names(t) and not pol.claim_of(t)

@@ -629,3 +629,87 @@ def test_default_executor_tells_the_planner_to_read_the_ticket_comments(monkeypa
     plan_prompt = calls[0][calls[0].index("-p") + 1]
     assert "--comments" in plan_prompt
     assert "feedback" in plan_prompt.lower()
+
+
+# ── per-project profiles ────────────────────────────────────────────────────
+
+def _capture_claude(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        class R:
+            stdout = "plan"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+    return calls
+
+
+PROFILE = {"repo": "G-Eskayo/proj", "env": {}, "executor": {"allowed_tools": ["Bash(swift test*)"], "notes": "Logic lives in the SwiftPM package."}}
+
+
+def test_profile_executor_uses_the_profiles_tools_not_marvins_and_walls_off_the_real_clone(monkeypatch, tmp_path):
+    calls = _capture_claude(monkeypatch)
+    so._default_executor(tmp_path, "G-Eskayo/proj#9", None, profile=PROFILE, clone=Path("/Users/me/Developer/proj"))
+    exec_cmd = calls[1][0]
+    allowed = exec_cmd[exec_cmd.index("--allowedTools") + 1]
+    denied = exec_cmd[exec_cmd.index("--disallowedTools") + 1]
+    assert "Bash(swift test*)" in allowed and "pytest" not in allowed and "npm" not in allowed
+    assert "Edit(/Users/me/Developer/proj/**)" in denied
+    assert "~/.agents/**" not in denied  # marvin's rule, not this project's
+
+
+def test_profile_executor_gives_both_calls_the_project_notes_and_drops_marvins_import_advice(monkeypatch, tmp_path):
+    calls = _capture_claude(monkeypatch)
+    so._default_executor(tmp_path, "G-Eskayo/proj#9", None, profile=PROFILE, clone=Path("/x"))
+    plan_prompt = calls[0][0][calls[0][0].index("-p") + 1]
+    exec_prompt = calls[1][0][calls[1][0].index("-p") + 1]
+    assert "Logic lives in the SwiftPM package." in plan_prompt
+    assert "Logic lives in the SwiftPM package." in exec_prompt
+    assert "Path.home()" not in exec_prompt and "__file__" not in exec_prompt
+
+
+def test_profile_executor_runs_the_model_in_the_projects_environment(monkeypatch, tmp_path):
+    calls = _capture_claude(monkeypatch)
+    so._default_executor(tmp_path, "G-Eskayo/proj#9", None, profile=PROFILE, clone=Path("/x"), env={"DEVELOPER_DIR": "/Applications/Xcode.app/Contents/Developer"})
+    for cmd, kw in calls:
+        assert kw["env"]["DEVELOPER_DIR"] == "/Applications/Xcode.app/Contents/Developer"
+
+
+def test_worktree_branches_from_the_projects_base_branch_not_always_main(monkeypatch, tmp_path):
+    cmds = []
+
+    def fake_run(cmd, **kwargs):
+        cmds.append(cmd)
+        class R:
+            stdout = "0"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+    monkeypatch.setattr(so, "WORKTREES_ROOT", tmp_path / "wt")
+    so._create_worktree(Path("/repo"), "G-Eskayo/proj#9", base_branch="trunk")
+    flat = [" ".join(c) for c in cmds]
+    assert any(c.startswith("git fetch origin trunk") for c in flat)
+    assert any("worktree add" in c and c.endswith("origin/trunk") for c in flat)
+    assert not any("origin/main" in c for c in flat)
+
+
+def test_the_planner_is_given_an_issue_view_command_that_actually_works(monkeypatch, tmp_path):
+    # `gh issue view owner/repo#17` is rejected by gh ("invalid issue format"); the working form is
+    # `gh issue view 17 --repo owner/repo`. Do not make the model discover that from an error.
+    calls = _capture_claude(monkeypatch)
+    so._default_executor(tmp_path, "G-Eskayo/clarity-captions#17", None)
+    prompt = calls[0][0][calls[0][0].index("-p") + 1]
+    assert "gh issue view 17 --repo G-Eskayo/clarity-captions" in prompt
+    assert "gh issue view 17 --repo G-Eskayo/clarity-captions --comments" in prompt
+    assert "gh issue view G-Eskayo/clarity-captions#17" not in prompt
+
+
+def test_a_ticket_ref_that_is_not_owner_repo_hash_number_is_passed_through_unchanged(monkeypatch, tmp_path):
+    calls = _capture_claude(monkeypatch)
+    so._default_executor(tmp_path, "TICKET-1", None)
+    prompt = calls[0][0][calls[0][0].index("-p") + 1]
+    assert "gh issue view TICKET-1" in prompt

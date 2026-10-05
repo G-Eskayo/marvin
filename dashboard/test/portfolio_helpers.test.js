@@ -175,3 +175,15 @@ describe('previewDocument section context', () => {
     expect(previewDocument('<h2>C</h2>', '', { context: 'chrome' })).not.toContain('class="other"')
   })
 })
+
+import { parseSections } from '../src/components/PortfolioHub.jsx'
+describe('parseSections (the Add project tab\'s section format)', () => {
+  it('turns ## headings into sections with their bodies', () => {
+    const out = parseSections('## Problem\n<p>One.</p>\n\n## Design\n<p>Two.</p>\n<p>More.</p>')
+    expect(out).toEqual([{ heading: 'Problem', body_html: '<p>One.</p>' }, { heading: 'Design', body_html: '<p>Two.</p>\n<p>More.</p>' }])
+  })
+  it('ignores text before the first heading and empty input', () => {
+    expect(parseSections('stray\n## A\nb')).toEqual([{ heading: 'A', body_html: 'b' }])
+    expect(parseSections('')).toEqual([])
+  })
+})

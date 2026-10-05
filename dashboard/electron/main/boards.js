@@ -36,18 +36,25 @@ export function withProjectStatus(boards, catalog) {
   return boards.map((b) => ({ ...b, status: status[projectIdOf(b.repo)] || 'recent' }))
 }
 
-// Stage events are keyed by ticket number only, so they belong to the MARVIN
-// repo alone until stage keys carry a repo (CONTEXT.md "Project boards").
+// Stage events: marvin's tickets by plain number, other projects' as `<repo>-<n>` (ticket_stages.js).
 function defaultStagesFor(repo) {
-  if (repo !== MARVIN_REPO) return {}
-  return Object.fromEntries(listTrackedTickets().map((n) => [n, readStages(n)]))
+  return Object.fromEntries(listTrackedTickets(undefined, repo).map((n) => [n, readStages(n, undefined, repo)]))
+}
+
+// The dispatch label says which project's ticket is running ("ticket owner/repo#7: title"; the older
+// "ticket #7: title" was always marvin's), so marvin #7 is never mistaken for clarity-captions #7.
+export function liveTicketNumbers(repo, task) {
+  if (!task) return new Set()
+  const nums = new Set()
+  for (const m of task.matchAll(/(?:([\w.-]+\/[\w.-]+))?#(\d+)/g)) {
+    if ((m[1] || MARVIN_REPO) === repo) nums.add(Number(m[2]))
+  }
+  return nums
 }
 
 function defaultLiveNumbers(repo) {
-  if (repo !== MARVIN_REPO) return new Set()
   const live = readDispatchStatus()
-  const m = live.busy && live.task ? [...live.task.matchAll(/#(\d+)/g)] : []
-  return new Set(m.map((x) => Number(x[1])))
+  return live.busy ? liveTicketNumbers(repo, live.task) : new Set()
 }
 
 // The raw tickets and open PRs of one repo. Open tickets are fetched on their own so a long history of
