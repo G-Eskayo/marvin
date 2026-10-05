@@ -38,3 +38,24 @@ export function prListArgs(repo, { light = false } = {}) {
   const fields = light ? 'number,title,url' : 'number,title,url,body,files,baseRefName,headRefName'
   return ['pr', 'list', '--repo', repo, '--state', 'open', '--limit', '200', '--json', fields]
 }
+
+// One short-lived cache in front of the GitHub listing, shared by the status dot (every minute), the MR list
+// and the board. A fresh FULL listing is a superset of a light one, so it answers both. A merge passes
+// fresh:true so it never acts on stale data. (`fetchers` = { full, light }, each returning the PR array.)
+export function createListCache(fetchers, ttlMs) {
+  const slot = { full: null, light: null }
+  return {
+    invalidate() { slot.full = null; slot.light = null },
+    async get({ light = false, now = Date.now(), fresh = false } = {}) {
+      const valid = (e) => e && now - e.at < ttlMs
+      if (!fresh) {
+        if (valid(slot.full)) return slot.full.value
+        if (light && valid(slot.light)) return slot.light.value
+      }
+      const kind = light ? 'light' : 'full'
+      const value = await fetchers[kind]()
+      slot[kind] = { at: now, value }
+      return value
+    }
+  }
+}

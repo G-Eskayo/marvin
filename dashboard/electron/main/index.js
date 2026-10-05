@@ -22,7 +22,7 @@ import { readRegistry, loadBoard, fetchBoardData, fetchCompletedData, withProjec
 import { createRelationsService } from './relations_service.js'
 import { summarizeBoard, buildCompleted } from './board.js'
 import { createTriggerHub, createReconciler } from './triggers.js'
-import { listOpenPrsAcrossRepos, prListArgs, normalizeSeen, canMergeFromDashboard, repoFromPrUrl, MARVIN_REPO } from './mr_repos.js'
+import { listOpenPrsAcrossRepos, prListArgs, createListCache, normalizeSeen, canMergeFromDashboard, repoFromPrUrl, MARVIN_REPO } from './mr_repos.js'
 import { createIndexer, buildDocsIndex, loadIndex } from './docs_search.js'
 import { createDocsService, MASTER_ID } from './docs_service.js'
 import { readMergeableRepos, listProfiles, setDispatch } from './profiles.js'
@@ -68,11 +68,14 @@ const ghListOpenPrs = (light) => async (repo) => {
 
 // Every registered project's open PRs (MR Review spans projects; only marvin's can be merged from
 // here -- see mr_repos.js). A failing repo is logged and skipped, never fatal to the list.
-async function listOpenPrs({ light = false } = {}) {
+async function fetchOpenPrs(light) {
   const { prs, errors } = await listOpenPrsAcrossRepos(readRegistry().map((b) => b.repo), ghListOpenPrs(light))
   for (const e of errors) console.error(`[mr] could not list PRs for ${e.repo}: ${e.message}`)
   return prs
 }
+// The status dot, the MR list and the merge-order check share one 45s cache; a merge asks for fresh data.
+const openPrsCache = createListCache({ full: () => fetchOpenPrs(false), light: () => fetchOpenPrs(true) }, 45_000)
+const listOpenPrs = (opts = {}) => openPrsCache.get(opts)
 
 async function ghIssueView(issueNumber, repo = MARVIN_REPO) {
   const { stdout } = await execFileAsync('gh', ['issue', 'view', String(issueNumber), '--repo', repo, '--json', 'number,title,body'])
@@ -448,7 +451,7 @@ function registerMrReviewHandlers() {
   // fast double-click the way a custom in-page confirm affordance could.
   ipcMain.handle('mr:approve', async (_event, { number, url }) => {
     assertMergeable(url)
-    assertInOrder(await listOpenPrs(), url)  // checked here, not just greyed out in the UI, so a stale screen can't skip it
+    assertInOrder(await listOpenPrs({ fresh: true }), url)  // checked here, not just greyed out in the UI, so a stale screen can't skip it
     if (!mergeOps.start(url)) return { merged: false, cancelled: true, alreadyMerging: true }
     try {
       const { response } = await dialog.showMessageBox(mainWindow, {
@@ -465,6 +468,7 @@ function registerMrReviewHandlers() {
       }
       const result = await approveMr(url, MR_WEBHOOK_URL, postJson)
       mergeOps.finish(url, result)
+      openPrsCache.invalidate()  // the list must not keep showing a PR that just merged
       return { ...result, cancelled: false }
     } catch (err) {
       mergeOps.fail(url, err.message)
@@ -494,6 +498,7 @@ function registerMrReviewHandlers() {
       return { done: false, cancelled: true }
     }
     await denyMr({ prUrl: url, ticketNumber, action, reasons, comment }, MR_DENY_WEBHOOK_URL, postJson)
+    openPrsCache.invalidate()
     return { done: true, cancelled: false }
   })
 }
