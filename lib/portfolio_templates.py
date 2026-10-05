@@ -21,6 +21,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import portfolio_rules  # noqa: E402
+
 PROJECT = Path.home() / "Documents" / "Projects" / "portfolio-website-updater"
 ROOT = PROJECT / "templates"
 
@@ -28,8 +31,7 @@ _PLACEHOLDER = re.compile(r"\{\{([A-Z0-9_]+)\}\}")
 _SLOT = re.compile(r"\{\{@([a-z0-9_-]+)\}\}")
 _URL_OK = re.compile(r"^(https?://\S+|/\S*|mailto:\S+)$", re.IGNORECASE)
 
-CATEGORY_PREFIX = {"AI & Machine Learning": "ai-projects", "Cybersecurity": "cybersecurity-projects",
-                   "Software Engineering": "software-engineering"}
+CATEGORY_PREFIX = portfolio_rules.load_rules()["categories"]     # the live value comes from portfolio_rules.load_rules()
 
 WRAP_START, WRAP_END = "<!-- hub-sidebar:content-start -->", "<!-- hub-sidebar:content-end -->"
 
@@ -206,18 +208,19 @@ def export_reference(inventory_dir: Path, templates_root: Path = ROOT) -> list[d
 
 # ── plug-and-play: a whole new project from one data set ────────────────────
 
-def plan_new_project(project: dict, root: Path = ROOT) -> dict:
+def plan_new_project(project: dict, root: Path = ROOT, rules_path: Path | None = None) -> dict:
     """Page content, card markup and the manifest entry for a new project -- deterministic, no writes.
     Applying the manifest entry (it lives in deploy/) stays a reviewed repo change."""
-    need = ["title", "slug", "category", "subtitle", "description", "body_html", "hero_image_url", "thumbnail"]
-    errors = [f"missing {k}" for k in need if not str(project.get(k, "")).strip()]
-    if project.get("category") and project["category"] not in CATEGORY_PREFIX:
-        errors.append(f"category must be one of {sorted(CATEGORY_PREFIX)}")
-    if project.get("slug") and not re.fullmatch(r"[a-z0-9][a-z0-9-]*", project["slug"]):
+    rules = portfolio_rules.load_rules(rules_path) if rules_path else portfolio_rules.load_rules()
+    prefixes = rules["categories"]
+    errors = [f"missing {k}" for k in rules["project_spec"]["required"] if not str(project.get(k, "")).strip()]
+    if project.get("category") and project["category"] not in prefixes:
+        errors.append(f"category must be one of {sorted(prefixes)}")
+    if project.get("slug") and not re.fullmatch(rules["project_spec"]["slug_pattern"], project["slug"]):
         errors.append("slug must be lowercase letters, digits and hyphens")
     if errors:
         return {"ok": False, "errors": errors, "page_html": None, "card_html": None, "manifest_entry": None}
-    url = f"/{CATEGORY_PREFIX[project['category']]}/{project['slug']}/"
+    url = f"/{prefixes[project['category']]}/{project['slug']}/"
     page = render("project-page", {"TITLE": project["title"], "SUBTITLE": project["subtitle"], "HERO_IMAGE_URL": project["hero_image_url"],
                                    "BODY_HTML": project["body_html"], "STACK_CSV": project.get("stack_csv", "")},
                   {"actions": project.get("actions", [])}, root)

@@ -23,6 +23,9 @@ from pathlib import Path
 
 from PIL import Image
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import portfolio_rules  # noqa: E402
+
 HOME = Path.home()
 PROJECT = HOME / "Documents" / "Projects" / "portfolio-website-updater"
 DEV_HTML = HOME / "portfolio-dev" / "wordpress" / "html"
@@ -30,9 +33,9 @@ IMAGES_DIR = HOME / ".claude" / "portfolio" / "images"
 UPLOAD_SUBDIR = "wp-content/uploads/generated"
 WPCLI = "portfolio-website-updater-wpcli-1"
 BASE = "http://localhost:8080"
-THUMB_SIZE = (800, 500)      # card-shaped (the photo frame is roughly 3:2), so the cropped site frame loses very little
+THUMB_SIZE = tuple(portfolio_rules.load_rules()["images"]["thumb_size"])   # card-shaped (the photo frame is roughly 3:2)
 
-HUBS = [("AI & Machine Learning", "ai-projects"), ("Cybersecurity", "cybersecurity-projects"), ("Software Engineering", "software-engineering")]
+HUBS = list(portfolio_rules.load_rules()["categories"].items())        # (category, hub page slug)
 
 
 def slug_of(url: str) -> str:
