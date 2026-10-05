@@ -33,12 +33,16 @@ export function parseRulesText(text) {
 //   'chrome' -- header / title bar / footer: they sit OUTSIDE <main>, so only the page wrapper
 //   'page'   -- anything authored inside a page: the wrapper, <main>, the content column
 //   'grid'   -- a project card: the page context plus the card grid (.other > .container > .row > .col-md-12.sm-2-items > .row)
+//   'section'-- a category section (heading + card grid): the page context plus the .other > .container > .row it sits in
 export function previewDocument(html, head, { wide = false, width = null, context = 'page' } = {}) {
   // Page templates are WordPress/Avada shortcodes that the server expands; in a preview only the real markup
   // inside them should show, not the tokens.
   html = String(html || '').replace(/\[\/?fusion_[a-z_]+[^\]]*\]/g, '')
   if (context === 'grid') {
     html = `<div class="other"><div class="container"><div class="row"><div class="col-md-12 sm-2-items"><div class="row">${html}</div></div></div></div></div>`
+  }
+  if (context === 'section') {
+    html = `<div class="other"><div class="container"><div class="row">${html}</div></div></div>`
   }
   if (context !== 'chrome') {
     html = `<main id="main" class="clearfix"><div class="fusion-row"><section id="content"><div class="post-content">${html}</div></section></div></main>`

@@ -283,7 +283,7 @@ function PrCard({ pr, onApproved, onDenied, onSelect }) {
   )
 }
 
-export default function MrReview({ nav, onOpenDocs, onOpenBoard }) {
+export default function MrReview({ nav, onOpenDocs, onOpenBoard, onOpenTicket }) {
   const [prs, setPrs] = useState(null)
   const [error, setError] = useState(null)
   const [selected, setSelected] = useState(null)
@@ -342,6 +342,7 @@ export default function MrReview({ nav, onOpenDocs, onOpenBoard }) {
         pr={selected}
         onOpenDocs={onOpenDocs}
         onOpenBoard={onOpenBoard}
+        onOpenTicket={onOpenTicket}
         onBack={() => setSelected(null)}
         onApproved={reloadAndReturnToList}
         onDenied={reloadAndReturnToList}

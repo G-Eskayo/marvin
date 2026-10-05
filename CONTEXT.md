@@ -496,6 +496,24 @@ nothing connected them. "Where things are" was only the tidy agent's file-filing
   matches `slug()` in `project_catalog.py`). Links: project card shows its board counts + "Open board",
   board header "Docs →", MR detail "Docs →" / "Board →", a PR chip on a board card opens that PR in MR
   Review. Navigation is one `nav` object in `App.jsx` that the target tab reads once per navigation.
+- **Relationships are derived from text, not stored (decided 2026-10-05, Gil: "connect them relationally,
+  not another button")**: `electron/main/relations.js` reads every ticket and PR body, every doc, and each
+  PR's changed files, and derives edges: ticket->ticket (blocked by / mentions), ticket->doc ("ADR 0033"
+  resolves to that project's `docs/adr/0033-*.md`, also `CONTEXT.md`/`README.md` and explicit paths),
+  PR->ticket (closes / mentions), PR->doc (changes / mentions), doc->ticket (`#12`, `owner/repo#12`),
+  doc->doc. Edit a doc or a ticket and its relations change with it; nothing to sync. Code fences and
+  inline code are ignored. Surfaces: `#12` and `ADR 0033` inside a doc or ticket body are clickable
+  (linkify, `dash://` links that stay in the app); a **Related** panel on every doc, ticket and MR lists
+  what it points at and what points at it, with each ticket's board column and each PR's state; clicking
+  goes to it (doc -> Docs, ticket -> its drill-down, PR -> MR Review). The `to-issues` template has a
+  `## Docs` section so links are deliberate. The index is cached 60s and dropped on the activity/docs
+  triggers. Not built: section-level links (a ticket naming a heading inside CONTEXT.md), links from
+  memory notes.
+- **More boards, archive, tags (2026-10-05)**: every active or recent catalog project gets a board even
+  before its first ticket (`board_registry.discover(extra_repos=...)`, hourly in the ticket-pipeline run);
+  boards of dormant/archived projects sit under a "Dormant boards" menu, kept not deleted. Done shows the
+  last 14 days; older closed tickets collapse into an Archive under it. Cards show every label as a tag
+  (typed: type / state / claim / priority / other), blockers, age and PRs, and a tag bar filters the board.
 - **MR Review spans projects, the merge gate does not.** It lists every registered repo's open PRs (keys
   are `repo#number`; old bare numbers in the seen-file are read as marvin's). Approve/Deny are refused in
   the main process for any non-marvin PR (derived from the PR url, not a renderer flag) because the gate
@@ -633,7 +651,7 @@ replaced by this automated path**: that gap is what this section closes.
 
 ### Element pipeline and the card text box (2026-10-05)
 
-- **One text-box size**: every project card's text box is 280 x 290 px wherever it appears (hub, All Projects, Other
+- **One text-box size**: every project card's text box is 300 x 244 px (never within 14px of its photo's borders; narrower only where the photo is) wherever it appears (hub, All Projects, Other
   Projects footer), with the title in a fixed two-line band, the description centred in the space below and Discover pinned
   to the bottom, all on one centre line. 280 is the narrowest desktop column (the hub beside its sidebar at 1100px).
 - **Pipeline** (`lib/portfolio_sync_dev.py`, shown and runnable in the Templates tab): repo `deploy/` files -> the dev

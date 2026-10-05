@@ -85,8 +85,17 @@ def _refresh_catalog() -> None:
         print(f"{LOG_PREFIX} project catalog: {e}", file=sys.stderr)
 
 
+def _active_project_repos() -> list[str]:
+    """Repos of the catalog's active and recent projects: each deserves a board even before its first ticket."""
+    try:
+        cat = project_catalog.read_catalog(project_catalog.catalog_path()) or {}
+        return [p["repo"] for p in cat.get("projects", []) if p.get("repo") and p.get("status") in ("active", "recent")]
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def _discover_boards() -> list[str]:
-    return board_registry.discover(REPO.split("/")[0])
+    return board_registry.discover(REPO.split("/")[0], extra_repos=_active_project_repos())
 
 
 def _ensure_board() -> None:

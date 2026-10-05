@@ -166,3 +166,12 @@ describe('previewDocument body class', () => {
     expect(doc).toContain('id="wrapper"')
   })
 })
+
+describe('previewDocument section context', () => {
+  it('wraps a category section in the grid containers it sits in on the real page', () => {
+    const doc = previewDocument('<h2>C</h2>', '', { wide: true, context: 'section' })
+    expect(doc).toContain('<div class="other"><div class="container"><div class="row"><h2>C</h2>')
+    expect(doc).toContain('id="main"')                 // and still inside the page context
+    expect(previewDocument('<h2>C</h2>', '', { context: 'chrome' })).not.toContain('class="other"')
+  })
+})

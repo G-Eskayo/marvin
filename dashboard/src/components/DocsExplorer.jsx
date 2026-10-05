@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import Markdown from './Markdown.jsx'
+import Related, { useRelated } from './Related.jsx'
 import { extractOutline } from '../lib/docs_text.js'
 
 function formatTimestamp(iso) {
@@ -104,23 +104,6 @@ function TreeItem({ item, selected, onSelect }) {
   )
 }
 
-const markdownComponents = {
-  h1: (props) => <h1 className="mb-3 mt-6 text-xl font-semibold text-white first:mt-0" {...props} />,
-  h2: (props) => <h2 className="mb-2 mt-5 text-lg font-semibold text-white" {...props} />,
-  h3: (props) => <h3 className="mb-2 mt-4 text-base font-semibold text-neutral-100" {...props} />,
-  p: (props) => <p className="mb-3 leading-relaxed text-neutral-300" {...props} />,
-  a: (props) => <a className="text-blue-400 hover:underline" target="_blank" rel="noreferrer" {...props} />,
-  code: ({ inline, ...props }) =>
-    inline ? (
-      <code className="rounded bg-neutral-800 px-1 py-0.5 font-mono text-sm text-neutral-200" {...props} />
-    ) : (
-      <code className="block overflow-auto rounded-lg bg-neutral-900 p-3 font-mono text-sm text-neutral-200" {...props} />
-    ),
-  ul: (props) => <ul className="mb-3 list-disc pl-6 text-neutral-300" {...props} />,
-  ol: (props) => <ol className="mb-3 list-decimal pl-6 text-neutral-300" {...props} />,
-  blockquote: (props) => <blockquote className="mb-3 border-l-2 border-neutral-700 pl-3 text-neutral-400" {...props} />
-}
-
 const HEADING_SELECTOR = 'h1,h2,h3,h4,h5,h6'
 
 function Outline({ content, onJump }) {
@@ -144,7 +127,7 @@ function Outline({ content, onJump }) {
   )
 }
 
-function DocViewer({ content, loading, error, scrollRef, onJump }) {
+function DocViewer({ content, loading, error, scrollRef, onJump, ctx, onLink, rel, onTicket, onDoc, onPr }) {
   if (error) return <div className="p-6 text-red-400">Failed to load: {error}</div>
   if (loading) return <div className="p-6 text-neutral-500">Loading…</div>
   if (content === null) {
@@ -157,9 +140,8 @@ function DocViewer({ content, loading, error, scrollRef, onJump }) {
   return (
     <div className="flex">
       <div ref={scrollRef} className="min-w-0 max-w-3xl flex-1 p-6">
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-          {content}
-        </ReactMarkdown>
+        <Markdown content={content} ctx={ctx} onLink={onLink} />
+        <Related rel={rel} onTicket={onTicket} onDoc={onDoc} onPr={onPr} />
       </div>
       <Outline content={content} onJump={onJump} />
     </div>
@@ -297,7 +279,7 @@ function SearchResults({ state, query, onOpen, nameOf, files, onOpenProject }) {
   )
 }
 
-export default function DocsExplorer({ nav, onOpenBoard }) {
+export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr }) {
   const [cache, setCache] = useState({ generated_at: null, repos: [] })
   const [refreshing, setRefreshing] = useState(false)
   const [selectedRepo, setSelectedRepo] = useState(null)
@@ -375,12 +357,37 @@ export default function DocsExplorer({ nav, onOpenBoard }) {
     }
   }, [docsTick])
 
+  // Relationships: how #12 / ADR 0033 in this project's text resolve, and what points at this doc.
+  const [docCtx, setDocCtx] = useState(null)
+  useEffect(() => {
+    setDocCtx(null)
+    if (selectedRepo && selectedRepo !== MASTER_ID) window.api.relations.context(selectedRepo).then(setDocCtx).catch(() => {})
+  }, [selectedRepo, docsTick])
+  const isRealDoc = selectedRepo && selectedRepo !== MASTER_ID && selectedPath && selectedPath !== 'PROJECT.md'
+  const rel = useRelated(
+    () => (isRealDoc ? window.api.relations.doc(selectedRepo, selectedPath) : Promise.resolve({ docs: [], tickets: [], prs: [] })),
+    [selectedRepo, selectedPath, docsTick]
+  )
+
+  // Open any doc, in any project (from a link in text or from the Related list).
+  function openDoc(project, path) {
+    setQuery('')
+    setShowResults(false)
+    if (project !== selectedRepo) {
+      setSelectedRepo(project)
+      loadTree(project)
+    }
+    openFile(project, path)
+  }
+  const onLink = (link) => (link.type === 'ticket' ? onOpenTicket?.(link.repo, link.number) : openDoc(link.project, link.path))
+
   // Deep link from an Activity board or an MR: open that project's card (once per navigation).
   useEffect(() => {
     if (nav?.tab === 'docs' && nav.projectId && handledNav.current !== nav.at) {
       handledNav.current = nav.at
       setQuery('')
       handleSelectRepo(nav.projectId)
+      if (nav.path) openFile(nav.projectId, nav.path)
     }
   }, [nav?.at])
 
@@ -516,7 +523,7 @@ export default function DocsExplorer({ nav, onOpenBoard }) {
                   </button>
                 </div>
               )}
-              <DocViewer content={content} loading={loading} error={error} scrollRef={scrollRef} onJump={jumpToHeading} />
+              <DocViewer content={content} loading={loading} error={error} scrollRef={scrollRef} onJump={jumpToHeading} ctx={docCtx} onLink={onLink} rel={rel} onTicket={onOpenTicket} onDoc={openDoc} onPr={onOpenPr} />
             </>
           )}
         </div>

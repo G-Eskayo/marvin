@@ -295,7 +295,7 @@ function Specimen({ template, head, element }) {
         </div>
         <div className="min-w-0">
           {res && !res.ok && <p className="text-xs text-red-400">Specimen did not render: {[...(res.errors || []), ...(res.missing || [])].join('; ')}</p>}
-          {res?.html && <AutoFrame title={`${template.name} specimen`} html={res.html} head={head} wide={isPage} width={isPage ? null : template.kind === 'button' ? 340 : template.id === 'project-card' ? 760 : 400} context={template.id === 'project-card' ? 'grid' : 'page'} maxHeight={isPage ? 700 : 520} />}
+          {res?.html && <AutoFrame title={`${template.name} specimen`} html={res.html} head={head} wide={isPage || template.id === 'category-section'} width={isPage || template.id === 'category-section' ? null : template.kind === 'button' ? 340 : template.id === 'project-card' ? 760 : 400} context={template.id === 'project-card' ? 'grid' : template.id === 'category-section' ? 'section' : 'page'} maxHeight={isPage || template.id === 'category-section' ? 700 : 520} />}
           {!res && <p className="text-xs text-neutral-600">Rendering…</p>}
         </div>
       </div>
