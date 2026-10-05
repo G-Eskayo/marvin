@@ -94,6 +94,15 @@ def _unclaimed_ready_tickets(repo: str = REPO) -> list[dict]:
         kept = []
         for i in ready:
             ev = ticket_evidence.evidence_for(i["number"], facts)
+            sent_back = "needs-reengagement" in ticket_policy.label_names(i)
+            if sent_back:
+                # Its open PR / branch / rescue ref ARE the first attempt, which is what a rework replaces
+                # (mr_raiser force-with-lease, the old work kept under refs/rescue). Commits already on the
+                # base branch still mean the work landed, and a ticket that keeps bouncing goes to a person.
+                ev = [e for e in ev if e["kind"] == "commit"]
+                if not ev and _attempts(repo, i["number"]) >= MAX_REENGAGE_ATTEMPTS:
+                    print(f"{LOG_PREFIX} skip {repo}#{i['number']}: sent back after {MAX_REENGAGE_ATTEMPTS} reworked PRs, needs a person", file=sys.stderr)
+                    continue
             if ticket_evidence.verdict(ev) == "clear":
                 kept.append(i)
             else:
@@ -102,6 +111,17 @@ def _unclaimed_ready_tickets(repo: str = REPO) -> list[dict]:
         ready = kept
     ready.sort(key=lambda i: (rank(i), i["createdAt"]))
     return ready
+
+
+MAX_REENGAGE_ATTEMPTS = 3
+
+
+def _attempts(repo: str, number: int) -> int:
+    """How many attempts at this ticket got as far as raising a PR. A claim that died earlier (a failed
+    fetch, a missing tool) is not an attempt: those are the failure breaker's business, not this budget's."""
+    stages = ts.read_stages(number, None if repo == REPO else repo)
+    return sum(1 for e in stages if e.get("stage") == "done" and e.get("status") == "passed"
+               and str(e.get("detail", "")).startswith("PR raised"))
 
 
 def _evidence_facts(repo: str):

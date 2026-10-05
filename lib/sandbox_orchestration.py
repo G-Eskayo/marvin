@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import time
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -241,7 +242,7 @@ def _create_worktree(repo_path: Path, ticket_ref: str, base_branch: str = "main"
     # before the rename sit at the old '#' path, so that one is cleaned up too.
     worktree_path = WORKTREES_ROOT / branch.replace("/", "-").replace("#", "-")
     legacy_path = WORKTREES_ROOT / branch.replace("/", "-")
-    subprocess.run(["git", "fetch", "origin", base_branch], cwd=repo_path, check=True, capture_output=True)
+    _fetch_base(repo_path, base_branch)
     _preserve_prior_attempt(repo_path, [worktree_path, legacy_path], branch, base_branch)
     for stale in (worktree_path, legacy_path):
         subprocess.run(["git", "worktree", "remove", "--force", str(stale)], cwd=repo_path, capture_output=True)
@@ -251,6 +252,18 @@ def _create_worktree(repo_path: Path, ticket_ref: str, base_branch: str = "main"
         cwd=repo_path, check=True, capture_output=True,
     )
     return worktree_path
+
+
+def _fetch_base(repo_path: Path, base_branch: str, attempts: int = 2) -> None:
+    """Fetch the base branch, retrying once: a transient failure (a lock held by another git process, a
+    network blip) used to kill a whole run with no explanation, because check=True hid git's own message."""
+    for n in range(1, attempts + 1):
+        proc = subprocess.run(["git", "fetch", "origin", base_branch], cwd=repo_path, capture_output=True, text=True)
+        if proc.returncode == 0:
+            return
+        if n < attempts:
+            time.sleep(3)
+    raise RuntimeError(f"git fetch origin {base_branch} failed after {attempts} tries (exit {proc.returncode}): {(proc.stderr or '').strip()[-300:]}")
 
 
 def execute_ticket(

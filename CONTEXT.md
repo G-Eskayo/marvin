@@ -861,3 +861,13 @@ row, Other Projects footer) plus a stack of **sections** after the title card.
 ## Device columns on Activity (2026-10-05)
 
 `lib/device_status.py` gives one row per device in `marvin-network.json`: idle / busy (task) / unreachable. It reuses task_dispatch's readers, but a failed SSH read is *unreachable*, not idle (task_dispatch's own reader treats failure as idle, which is right for picking a machine and wrong for a status view). The dashboard shows them above the boards (`DeviceColumns.jsx`, cached 8s); this machine's column embeds `DispatchStatusBadge`. Closes #115 and #117.
+
+## Merge order and the sent-back loop (2026-10-05)
+
+- **Order:** a PR waits on every OLDER open PR in its repo that shares a changed file (`dashboard/electron/main/pr_order.js`). Derived from the PRs' file lists each time; the MR list shows it, Approve & Merge is disabled with the reason, and `mr:approve` re-checks it in the main process so a stale screen cannot skip it. Deny stays available.
+- **Merge state survives navigation:** `merge_ops.js` holds each PR's merging / re-engaged / error state in the main process.
+- **Sent-back loop (closed, Gil chose the in-place option):** a `needs-reengagement` ticket is re-dispatched even though its first attempt's PR/branch/rescue ref exist (the existing-work guard exempts those, but not commits already on the base branch). The executor rebuilds `pipeline/<ref>` from the current main, `mr_raiser` pushes with `--force-with-lease` (pipeline branches only; the old work is kept under `refs/rescue/`), and an already-open PR is updated and commented instead of duplicated. Opening the PR clears `needs-reengagement`. After 3 claims a ticket is left for a person (`MAX_REENGAGE_ATTEMPTS`).
+
+## clarity-captions app-build check is now required (2026-10-05)
+
+The profile's `spike-app` tier (xcodegen + `xcodebuild` for the iOS Simulator SDK, signing off) is enabled and **required**, so both the pipeline's verification and the dashboard merge gate fail a PR that breaks the app build, not just CaptionCore's `swift test`. Selftest on main: build ok, 85 tests, about 3.5 min. Needs `xcodegen` (Homebrew, installed on the mini) and the 234 MB Sortformer model, which the `diarizer-model` setup step links into each worktree from `~/.agents-pipeline-cache/clarity-captions/` (fetched once, self-healing if missing). Build output goes to a shared `DerivedData` in that cache dir. Only `mac-mini-1` has these; a machine without them releases the claim without a strike.

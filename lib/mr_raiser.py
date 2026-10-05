@@ -46,7 +46,12 @@ def _commit_and_push(worktree_path: Path, ticket_ref: str) -> str:
             ["git", "commit", "-m", f"Implement {ticket_ref}"],
             cwd=worktree_path, check=True, capture_output=True,
         )
-    subprocess.run(["git", "push", "-u", "origin", branch], cwd=worktree_path, check=True, capture_output=True)
+    # A ticket sent back and re-dispatched is rebuilt from the current main under the SAME branch name, while
+    # origin still holds the first attempt behind its open PR. That attempt is already preserved under
+    # refs/rescue/ (sandbox_orchestration._preserve_prior_attempt), so replacing it is safe, and the lease
+    # means we only replace the tip we last fetched, never someone else's newer push. Pipeline branches only.
+    force = ["--force-with-lease"] if branch.startswith("pipeline/") else []
+    subprocess.run(["git", "push", "-u", *force, "origin", branch], cwd=worktree_path, check=True, capture_output=True)
     return branch
 
 
@@ -108,12 +113,26 @@ def _default_open_pr(
         f"{_format_dev_evidence(dev_evidence)}"
     )
     repo = _repo_of(ticket_ref)
-    result = subprocess.run(
-        ["gh", "pr", "create", *(["--repo", repo] if repo else []), "--title", f"Implement {ticket_ref}", "--body", body,
-         "--base", base_branch, "--head", branch],
-        check=True, capture_output=True, text=True,
-    )
-    return result.stdout.strip()
+    repo_args = ["--repo", repo] if repo else []
+    try:
+        result = subprocess.run(
+            ["gh", "pr", "create", *repo_args, "--title", f"Implement {ticket_ref}", "--body", body,
+             "--base", base_branch, "--head", branch],
+            check=True, capture_output=True, text=True,
+        )
+        return result.stdout.strip()
+    except subprocess.CalledProcessError as e:
+        if "already exists" not in (e.stderr or ""):
+            raise
+    # A re-engaged ticket's earlier PR is still open on this branch and the push above already updated it:
+    # refresh its description with the new results instead of opening a duplicate.
+    url = subprocess.run(["gh", "pr", "view", branch, *repo_args, "--json", "url", "-q", ".url"],
+                         check=True, capture_output=True, text=True).stdout.strip()
+    subprocess.run(["gh", "pr", "edit", url, "--body", body], check=True, capture_output=True, text=True)
+    subprocess.run(["gh", "pr", "comment", url, "--body",
+                    "Reworked after being sent back: rebuilt on the current base branch and re-verified. The results above are the new ones."],
+                   check=True, capture_output=True, text=True)
+    return url
 
 
 def _default_comment_on_ticket(ticket_ref: str, pr_url: str) -> None:

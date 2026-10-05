@@ -447,3 +447,53 @@ def test_commenting_the_new_pr_on_the_ticket_clears_needs_reengagement(monkeypat
     mrr._default_comment_on_ticket("o/r#23", "https://github.com/o/r/pull/30")
     edit = [c for c in calls if "edit" in c][0]
     assert "--remove-label" in edit and "needs-reengagement" in edit
+
+
+def test_pushing_over_a_stale_pipeline_branch_succeeds(repo_with_worktree):
+    """A re-dispatched ticket rebuilds pipeline/<ref> from the new main while origin still holds the first
+    attempt (behind its open PR). That attempt is preserved under refs/rescue/, so a lease-protected
+    replace is safe; a plain push is rejected."""
+    wt = repo_with_worktree
+    _run(["git", "config", "user.email", "t@t.com"], cwd=wt)
+    _run(["git", "config", "user.name", "T"], cwd=wt)
+    (wt / "first_attempt.txt").write_text("v1\n")
+    _run(["git", "add", "-A"], cwd=wt)
+    _run(["git", "commit", "-q", "-m", "first attempt"], cwd=wt)
+    _run(["git", "push", "-u", "origin", "pipeline/ticket-1"], cwd=wt)
+    _run(["git", "fetch", "origin"], cwd=wt)  # the lease is measured against what this clone last saw
+    _run(["git", "reset", "-q", "--hard", "origin/main"], cwd=wt)  # the rebuild from main
+    (wt / "second_attempt.txt").write_text("v2\n")
+    assert mrr._commit_and_push(wt, "G-Eskayo/marvin#1") == "pipeline/ticket-1"
+    remote = subprocess.run(["git", "rev-parse", "origin/pipeline/ticket-1"], cwd=wt, capture_output=True, text=True).stdout
+    assert remote == subprocess.run(["git", "rev-parse", "HEAD"], cwd=wt, capture_output=True, text=True).stdout
+
+
+def test_a_non_pipeline_branch_is_never_replaced(monkeypatch):
+    calls = []
+    monkeypatch.setattr(mrr.subprocess, "run", lambda cmd, **kw: calls.append(cmd) or type("R", (), {"stdout": "", "returncode": 0})())
+    monkeypatch.setattr(mrr, "_current_branch", lambda wt: "main")
+    mrr._commit_and_push(Path("/x"), "o/r#1")
+    assert not any("--force-with-lease" in c for c in calls)
+
+
+def test_open_pr_updates_the_existing_pr_when_one_is_already_open_for_the_branch(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if "create" in cmd:
+            raise subprocess.CalledProcessError(1, cmd, stderr='a pull request for branch "pipeline/x" into branch "main" already exists:\nhttps://github.com/o/r/pull/30')
+        return type("R", (), {"stdout": "https://github.com/o/r/pull/30\n", "returncode": 0})()
+
+    monkeypatch.setattr(mrr.subprocess, "run", fake_run)
+    url = mrr._default_open_pr("o/r#23", "pipeline/x", {"subsystem": "s", "verdict": "improved", "metrics": {}})
+    assert url == "https://github.com/o/r/pull/30"
+    assert any("pr" in c and "edit" in c for c in calls) and any("pr" in c and "comment" in c for c in calls)
+
+
+def test_open_pr_still_raises_on_other_gh_failures(monkeypatch):
+    def fake_run(cmd, **kwargs):
+        raise subprocess.CalledProcessError(1, cmd, stderr="HTTP 401 bad credentials")
+    monkeypatch.setattr(mrr.subprocess, "run", fake_run)
+    with pytest.raises(subprocess.CalledProcessError):
+        mrr._default_open_pr("o/r#23", "pipeline/x", {"subsystem": "s", "verdict": "v", "metrics": {}})
