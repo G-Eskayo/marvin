@@ -281,3 +281,21 @@ describe('buildCompleted', () => {
     expect(out.items[0].tags.map((t) => [t.name, t.kind])).toEqual([['bug', 'type'], ['claimed:mac-mini', 'claim']])
   })
 })
+
+describe('a denied PR (sent back for rework)', () => {
+  it('moves the ticket out of "In review": the PR is still open but the ball is back with the agent', () => {
+    const r = deriveColumn(issue({ labels: labels('needs-reengagement') }), ctx({ prs: [pr()] }))
+    expect(r.column).toBe('blocked')
+    expect(r.reason).toMatch(/sent back/i)
+    expect(r.reason).toContain('PR #50')
+    expect(r.prs.map((p) => p.number)).toEqual([50]) // the PR stays attached, so the board can still link to it
+  })
+
+  it('does not change a PR that is simply awaiting review', () => {
+    expect(deriveColumn(issue({ labels: labels('ready-for-agent') }), ctx({ prs: [pr()] })).column).toBe('review')
+  })
+
+  it('a needs-reengagement ticket with no open PR is not "sent back from review" (nothing to review)', () => {
+    expect(deriveColumn(issue({ labels: labels('needs-reengagement') }), ctx()).reason).not.toMatch(/sent back from review/i)
+  })
+})

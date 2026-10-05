@@ -37,7 +37,7 @@ export function withProjectStatus(boards, catalog) {
 }
 
 // Stage events: marvin's tickets by plain number, other projects' as `<repo>-<n>` (ticket_stages.js).
-function defaultStagesFor(repo) {
+export function defaultStagesFor(repo) {
   return Object.fromEntries(listTrackedTickets(undefined, repo).map((n) => [n, readStages(n, undefined, repo)]))
 }
 
@@ -52,7 +52,7 @@ export function liveTicketNumbers(repo, task) {
   return nums
 }
 
-function defaultLiveNumbers(repo) {
+export function defaultLiveNumbers(repo) {
   const live = readDispatchStatus()
   return live.busy ? liveTicketNumbers(repo, live.task) : new Set()
 }

@@ -13,7 +13,7 @@ import { readHealthStatus, runHealthCheckNow } from './health.js'
 import { readCachedRepos } from './docs.js'
 import { createPortfolio } from './portfolio.js'
 import { listTicketActivity, getTicketTimeline } from './activity.js'
-import { readRegistry, loadBoard, fetchBoardData, fetchCompletedData, withProjectStatus, REGISTRY_PATH } from './boards.js'
+import { readRegistry, loadBoard, fetchBoardData, fetchCompletedData, withProjectStatus, defaultStagesFor, defaultLiveNumbers, REGISTRY_PATH } from './boards.js'
 import { createRelationsService } from './relations_service.js'
 import { summarizeBoard, buildCompleted } from './board.js'
 import { createTriggerHub, createReconciler } from './triggers.js'
@@ -271,7 +271,9 @@ function registerDocsHandlers() {
         .filter((d) => d.path !== 'PROJECT.md' && d.repo !== MASTER_ID)
         .map((d) => ({ project: d.repo, path: d.path, label: d.label, content: d.content }))
     },
-    getProjects: () => (readCatalog({ deviceId: deviceId() })?.projects || []).filter((p) => p.repo).map((p) => ({ id: p.id, repo: p.repo }))
+    getProjects: () => (readCatalog({ deviceId: deviceId() })?.projects || []).filter((p) => p.repo).map((p) => ({ id: p.id, repo: p.repo })),
+    getStages: defaultStagesFor,
+    getLive: defaultLiveNumbers
   })
   triggerHub.onTrigger((t) => {
     if (t.topic === 'activity' || t.topic === 'docs') {
@@ -282,6 +284,9 @@ function registerDocsHandlers() {
   ipcMain.handle('relations:ticket', (_e, repo, number) => relations.forTicket(String(repo), Number(number)))
   ipcMain.handle('relations:doc', (_e, project, filePath) => relations.forDoc(String(project), String(filePath)))
   ipcMain.handle('relations:pr', (_e, repo, number) => relations.forPr(String(repo), Number(number)))
+  // MR Review <-> boards, one-to-one: each open PR with its ticket and column; what is waiting on you per project.
+  ipcMain.handle('mr:parity', () => relations.parity())
+  ipcMain.handle('activity:overview', () => relations.overview())
   ipcMain.handle('relations:context', (_e, project) => relations.context(String(project)))
 
   let refreshing = null

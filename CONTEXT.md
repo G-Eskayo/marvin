@@ -639,6 +639,24 @@ untouched (it is the "legacy profile"); only repos with a profile file use the p
   shown: what is running on this machine (the dispatched task plus every agent whose run log says it is mid-run,
   with its current step and elapsed time, "+N more"), or "Idle - last: <agent> (<summary>) <ago>". Click goes to
   the agents list. Updates on the 'agents' trigger, with a 10s poll as backstop.
+- **First live run (2026-10-05)**: with clarity-captions dispatch on, ticket #21 (third-party notices) went
+  claim -> plan -> implement -> verify -> **PR #28** in about 5 minutes: `NOTICE.md`, an About & Credits screen,
+  a tested `ThirdPartyNotice` type, an ADR amendment; `swift test` 60 -> 63 passing, 0 failing; the PR says the
+  app build was not verified. Two bugs found by running it for real, both mine: (1) the first claim in a project
+  that never had a `claimed:<machine>` label failed ("not found"); claims and the ticket agents' labels now
+  create a missing label on first use. (2) Two tickets ran at once on one machine: asking for a specific
+  machine skips the busy check for the local machine, and the single shared dispatch-state flag is cleared by
+  whichever overlapping run finishes first. "Busy" now also means a live `run_ticket` process exists
+  (`ticket_pipeline._local_busy`). Also: my own tests were writing realistic ticket numbers into the real
+  ticket-stages folder; stage logs are now isolated for the whole suite.
+- **MR Review <-> boards, one to one (2026-10-05)**: `relations_service.parity()` pairs every open PR with the
+  ticket it closes and that ticket's board column, and checks each ticket filed under "In review" has an open
+  PR. MR Review shows it: each card says "closes #N <title>" with the board status (In review / sent back / no
+  card / filed elsewhere) and clicking opens the ticket on its board; a summary line says "Matches the boards" or
+  lists exactly what disagrees. The board's In-review column says "N waiting in MR Review" and links there; a
+  "Waiting on you" strip across all projects (in review, ready-for-human) sits above the project tabs. A denied PR
+  stays open but its ticket is now filed under Blocked as "Sent back from review", and MR Review shows the same
+  PR as "sent back", so both views say the same thing about it.
 - **Cross-project identity**: stage records and the failure breaker were keyed by bare ticket number, so
   clarity-captions #7 and marvin #7 would have collided. Non-marvin tickets are keyed `<repo>-<n>`; marvin's
   keep their plain number (nothing existing moves). `gh pr create`/`gh issue comment` now pass `--repo`

@@ -389,3 +389,35 @@ def test_a_remote_machine_is_not_blocked_by_this_machines_busy_flag(monkeypatch)
     monkeypatch.setattr(tp, "select_machine", lambda target=None: (target, {"is_self": False}))
     monkeypatch.setattr(tp, "_local_busy", lambda: True)
     assert tp._select_for_profile({"machines": ["macbook-pro-1"]})[0] == "macbook-pro-1"  # select_machine already checked it
+
+
+# ── "busy" must mean a ticket is actually running, not just that a flag file says so ─
+
+def test_local_busy_is_true_when_a_ticket_process_is_alive_even_if_the_flag_was_cleared(monkeypatch):
+    # The dispatch-state flag is one shared boolean: the first of two overlapping runs to finish resets it while the
+    # other is still going, so the next scan saw "idle" and started a third (found live 2026-10-05).
+    import importlib
+    real = importlib.reload(tp)  # undo the suite-wide stub of _local_busy for this test
+    monkeypatch.setattr(real, "_flag_busy", lambda: False)
+    monkeypatch.setattr(real, "_ticket_process_alive", lambda: True)
+    assert real._local_busy() is True
+
+
+def test_local_busy_is_false_when_neither_the_flag_nor_a_process_says_so(monkeypatch):
+    import importlib
+    real = importlib.reload(tp)
+    monkeypatch.setattr(real, "_flag_busy", lambda: False)
+    monkeypatch.setattr(real, "_ticket_process_alive", lambda: False)
+    assert real._local_busy() is False
+
+
+def test_the_process_check_looks_for_run_ticket_and_treats_an_error_as_busy(monkeypatch):
+    import importlib
+    real = importlib.reload(tp)
+    seen = []
+    monkeypatch.setattr(real.subprocess, "run", lambda cmd, **kw: seen.append(cmd) or SimpleNamespace(returncode=0, stdout="123\n"))
+    assert real._ticket_process_alive() is True and "run_ticket.py" in " ".join(seen[0])
+    monkeypatch.setattr(real.subprocess, "run", lambda cmd, **kw: SimpleNamespace(returncode=1, stdout=""))
+    assert real._ticket_process_alive() is False
+    monkeypatch.setattr(real.subprocess, "run", lambda cmd, **kw: (_ for _ in ()).throw(OSError("no pgrep")))
+    assert real._ticket_process_alive() is True  # cannot tell -> assume busy

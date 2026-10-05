@@ -107,6 +107,11 @@ function Column({ column, repo, onSelect, onOpenMr, activeTags, onTag, onAllComp
         <h3 className="text-xs font-medium uppercase tracking-wide text-neutral-300">{column.label}</h3>
         <span className="text-xs text-neutral-500">{activeTags.size ? `${visible.length} / ${column.cards.length}` : column.cards.length}</span>
       </div>
+      {column.id === 'review' && column.cards.length > 0 && (
+        <button onClick={() => onOpenMr?.()} className="-mt-1 mb-2 text-left text-[11px] text-amber-300 hover:text-amber-200" title="These are the same PRs MR Review lists">
+          {column.cards.length} waiting in MR Review →
+        </button>
+      )}
       <div className="flex flex-col gap-2">
         {visible.map((card) => (
           <Card key={card.number} card={card} repo={repo} onSelect={onSelect} onOpenMr={onOpenMr} activeTags={activeTags} onTag={onTag} />
@@ -255,6 +260,38 @@ function TicketDrilldown({ repo, card, onBack, onOpenMr, onOpenDocs, onOpenTicke
   )
 }
 
+// Across ALL projects: where reviews and decisions are waiting on you, so the right board is one click away
+// (the PRs in MR Review belong to whichever project they came from, not necessarily the board you have open).
+function WaitingOnYou({ boards, onPick, onOpenMr, refreshKey }) {
+  const [overview, setOverview] = useState(null)
+  useEffect(() => {
+    const load = () => window.api.activity.overview().then(setOverview).catch(() => {})
+    load()
+    const off = window.api.triggers.on((t) => (t.topic === 'activity' || t.topic === 'mr') && load())
+    return off
+  }, [refreshKey])
+  if (!overview) return null
+  const rows = (boards || [])
+    .map((b) => ({ b, o: overview[b.repo] }))
+    .filter(({ o }) => o && (o.review || o.needsYou))
+  if (rows.length === 0) return null
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+      <span className="text-neutral-500">Waiting on you</span>
+      {rows.map(({ b, o }) => (
+        <button key={b.repo} onClick={() => onPick(b.repo)} className="rounded border border-neutral-800 px-2 py-1 text-neutral-300 hover:border-neutral-600">
+          {b.name}
+          {o.review > 0 && <span className="ml-2 text-amber-300">{o.review} in review</span>}
+          {o.needsYou > 0 && <span className="ml-2 text-sky-300">{o.needsYou} need you</span>}
+        </button>
+      ))}
+      <button onClick={() => onOpenMr?.()} className="text-neutral-500 hover:text-neutral-200">
+        MR Review →
+      </button>
+    </div>
+  )
+}
+
 // Every tag on the board with how many cards carry it; click to filter (all selected tags must match).
 function TagBar({ board, activeTags, onTag, onClear }) {
   const counts = new Map()
@@ -377,6 +414,7 @@ export default function ProjectBoard({ onOpenMr, onOpenDocs, onOpenTicket, nav }
 
   return (
     <div className="p-6">
+      <WaitingOnYou boards={boards} onPick={(r) => { setRepo(r); setView('board'); setSelected(null) }} onOpenMr={onOpenMr} refreshKey={repo} />
       <div className="mb-4 flex flex-wrap items-center gap-2">
         {working.map((b) => (
           <button

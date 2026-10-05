@@ -206,12 +206,26 @@ def _order_key(ticket: dict) -> tuple:
     return (UNSCORED_RANK if rank is None else rank, ticket["createdAt"])
 
 
-def _local_busy() -> bool:
+def _flag_busy() -> bool:
     try:
         from task_dispatch import _read_local_dispatch_state
         return bool(_read_local_dispatch_state().get("busy"))
-    except Exception:  # noqa: BLE001 -- if we cannot tell, assume busy: a missed scan is cheap, a double run is not
+    except Exception:  # noqa: BLE001
         return True
+
+
+def _ticket_process_alive() -> bool:
+    """Is a ticket actually being worked on right now? The dispatch-state flag is one shared boolean that the
+    first of two overlapping runs to finish clears while the other is still going, so it alone can say
+    "idle" mid-ticket. A live run_ticket process cannot lie."""
+    try:
+        return subprocess.run(["pgrep", "-f", "lib/run_ticket.py"], capture_output=True, text=True, timeout=10).returncode == 0
+    except Exception:  # noqa: BLE001 -- cannot tell: assume busy (a missed scan is cheap, a double run is not)
+        return True
+
+
+def _local_busy() -> bool:
+    return _flag_busy() or _ticket_process_alive()
 
 
 def _select_for_profile(profile: dict):
@@ -300,6 +314,8 @@ def _scan(run, dry_run: bool) -> None:
     profile = pp.load_profile(repo) if other else None
     step("Choosing a machine")
     selected = select_machine() if not other else _select_for_profile(profile)
+    if selected is not None and not other and selected[1].get("is_self") and _local_busy():
+        selected = None  # select_machine only read the flag; a live run_ticket means this machine is not free
     if selected is None:
         print(f"{LOG_PREFIX} {where}#{issue_number} ready but no {'suitable ' if other else ''}machine currently available", file=sys.stderr)
         step("Choosing a machine", "none available" if not other else f"none free that can run {repo.split('/')[-1]} ({', '.join(profile.get('machines', [])) or 'no machines listed'})")
