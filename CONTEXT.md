@@ -579,6 +579,39 @@ nothing connected them. "Where things are" was only the tidy agent's file-filing
   counted and shown in the run log ("Other projects ... no execution profile yet") instead of hidden. A
   per-project execution profile (clone path, test command, dev-env) is the open piece for clarity-captions.
 
+### Per-project execution profiles (decided 2026-10-05)
+
+The ticket executor (`sandbox_orchestration` + `run_ticket`) was written for marvin: marvin's checkout,
+pytest + vitest, a dashboard screenshot as evidence. A **profile** (`config/projects/<repo>.json`, versioned
+in this repo) tells it how to do the same job for another project, so a ready clarity-captions ticket can
+flow ticket -> worktree -> implement -> verify -> PR like a marvin one. marvin keeps its built-in path
+untouched (it is the "legacy profile"); only repos with a profile file use the profile path.
+
+- **Profile fields**: `repo`, `base_branch`, `clone_hints` (the real clone is found through the project
+  catalog's newest local path first), `machines` (eligible device ids), `dispatch` (`"off"` | `"on"`; **starts
+  off**: a profile does nothing until a person turns it on), `env` (e.g. `DEVELOPER_DIR` = the first existing
+  Xcode, so `swift test` works without `sudo xcode-select`), `executor` (extra allowed tools and context notes
+  for the headless model), `verify` (tiers), `evidence`.
+- **Verify tiers**: each has `command`, `cwd`, `requires` (capabilities such as `swift`, `xcode`, `xcodegen`),
+  a `parser` (`swift-test`, `xcodebuild`, `exit-code`), and `required`. A required tier whose tools are missing
+  on the executing machine is an **environment problem, not a ticket failure**: the claim is released, no
+  strike is counted and the failure breaker is not fed. An optional tier that cannot run is skipped and said so
+  in the PR ("not verified: ...") - verification is never silently weaker than it looks.
+- **clarity-captions** (measured on mac-mini 2026-10-05): required tier = `swift test` in
+  `Packages/CaptionCore` (XCTest, needs full Xcode via `DEVELOPER_DIR`; 61 tests, ~31s warm / ~83s cold).
+  Optional tier = Spike app build, which needs `xcodegen`, the 241MB speaker model
+  (`scripts/fetch-diarizer-models.sh`) and a signing team, so it is off until those exist. The project's own
+  rule (ADR 0010, ticket #17: "the at-the-bottom decision is pure logic with unit tests") puts decisions in
+  `CaptionCore`, which is what makes `swift test` a meaningful gate. Evidence: dev-environment screenshot is
+  `N/A` (no simulator capture yet).
+- **Cross-project identity**: stage records and the failure breaker were keyed by bare ticket number, so
+  clarity-captions #7 and marvin #7 would have collided. Non-marvin tickets are keyed `<repo>-<n>`; marvin's
+  keep their plain number (nothing existing moves). `gh pr create`/`gh issue comment` now pass `--repo`
+  explicitly instead of relying on the process's directory.
+- **Not in this change**: approving/merging a clarity-captions PR from the dashboard. The merge gate
+  (`webhook-server/merge.js`) is still marvin-only; those PRs show "Review on GitHub" until it reads a
+  profile too.
+
 ## Dashboard app — Portfolio tab (2026-10-02/03)
 
 The portfolio site (`G-Eskayo/portfolio-website-updater`, WordPress + Avada) had visible inconsistency
@@ -689,6 +722,24 @@ replaced by this automated path**: that gap is what this section closes.
    Crutches (a long design-process write-up with image/text rows outside the card) and SkineeDipping (a multi-section
    technical write-up). They are a different page type: they need either their sections folded into the card or a second
    "long-form project page" layout in the library: a design decision, not something to automate.
+
+### Long-form project page (decided 2026-10-05)
+
+Gil wants more of his projects to be long form: room for diagrams, detail and showing as well as telling. A second project
+layout, alongside the short **project page**, built from the same elements (hero, title card, subtitle, Stack line, action
+row, Other Projects footer) plus a stack of **sections** after the title card.
+
+- **Layout zones**: hero -> title card (title, pink subtitle, a short LEAD summary, Stack line, action row) -> N sections ->
+  Other Projects. A page's layout is chosen by what it needs: short pages stay on the project page.
+- **Section**: a centred heading and a body of free-form content, optionally built from the section parts below. Sections are
+  the repeating zone; any number.
+- **Section parts** (each a library template, so each is copied, not hand-made): **figure** (a full-width image or diagram
+  with a caption), **figure row** (image and text side by side, either way round), **callout** (a highlighted note), plus the
+  existing paragraph, list and code styles. Diagrams are images (PNG/SVG) or inline SVG.
+- **Style** lives in its own stylesheet (`deploy/longform/longform.css`, versioned by mtime like the card's), never inline.
+- **Pipeline**: the add-project spec can carry `layout: "long-form"` and `sections`; legacy long pages migrate with
+  `portfolio_migrate.py --layout long-form`, which keeps every block of the original (the content-loss guard applies) and
+  only standardizes the frame around it. Capture and conformance treat a project page as following EITHER project layout.
 
 ### Element pipeline and the card text box (2026-10-05)
 
