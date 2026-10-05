@@ -447,9 +447,41 @@ else echo "gh_token=missing"; fi
 # What the dashboard Docs tab does: read a file from GitHub with the shared credential.
 if [ -s "$TOK" ] && GH_TOKEN="$(tr -d '[:space:]' < "$TOK")" /opt/homebrew/bin/gh api repos/G-Eskayo/marvin/contents/README.md --jq .name >/dev/null 2>&1; then echo "docs_access=ok"; else echo "docs_access=failed"; fi
 if /usr/bin/pgrep -x DesktopLive >/dev/null 2>&1; then echo "desktoplive=running"; else echo "desktoplive=stopped"; fi
+echo "jobs=$(/bin/launchctl list 2>/dev/null | /usr/bin/awk '{print $3}' | /usr/bin/grep '^com\.marvin\.' | /usr/bin/sed 's/^com\.marvin\.//' | /usr/bin/sort | /usr/bin/tr '\n' ',')"
 TREE="$HOME/.agents/brain-map/tree-data.json"
 if [ -f "$TREE" ]; then echo "brain_data_ts=$(stat -f %m "$TREE")"; else echo "brain_data_ts="; fi
 '''
+
+
+# Which machine is meant to run each com.marvin.* launchd job. "both" = both machines, "mini" = the primary automation
+# host only (ADR 0032, 0033), "laptop" = only where Gil sits. Edit here when a job is deliberately moved; a job that
+# is not listed is reported as unplaced so a new job cannot silently run on only one machine.
+JOB_PLACEMENT = {
+    "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "both", "research-colony": "both",
+    "desktoplive": "both", "dashboard-webhook": "both",  # webhook on both until #112 (ADR 0032)
+    "ticket-pipeline": "mini",  # laptop's copy is meant to be unloaded (ADR 0032); redundant but claim-safe
+    "architecture-review": "mini", "auto-fix": "mini", "cron-health": "mini", "health-check": "mini",
+    "process-quarantine-reviews": "mini", "verify-digest-fix": "mini",
+    "dashboard-launch": "laptop", "desktoplive-restart": "laptop",
+}
+
+
+def evaluate_job_placement(jobs: list[str], role: str) -> tuple[str, str]:
+    """role: "mini" or "laptop". (severity, detail) comparing the loaded jobs with JOB_PLACEMENT."""
+    loaded = set(jobs)
+    missing = sorted(j for j, where in JOB_PLACEMENT.items() if where in ("both", role) and j not in loaded)
+    extra = sorted(j for j in loaded if JOB_PLACEMENT.get(j) not in (None, "both", role))
+    unplaced = sorted(j for j in loaded if j not in JOB_PLACEMENT)
+    parts = []
+    if missing:
+        parts.append("missing: " + ", ".join(missing))
+    if extra:
+        parts.append("running here but meant for the other machine: " + ", ".join(extra))
+    if unplaced:
+        parts.append("not in the placement table: " + ", ".join(unplaced))
+    if not parts:
+        return "green", f"all {len([j for j, w in JOB_PLACEMENT.items() if w in ('both', role)])} jobs meant for this machine are loaded, none stray"
+    return "yellow", "; ".join(parts)
 
 
 def parse_machine_state(text: str) -> dict:
@@ -461,7 +493,8 @@ def parse_machine_state(text: str) -> dict:
 
     return {"app_built_ts": num("app_built_ts"), "dashboard_commit_ts": num("dashboard_commit_ts"),
             "gh_token": raw.get("gh_token", "").strip(), "docs_access": raw.get("docs_access", "").strip(),
-            "desktoplive": raw.get("desktoplive", "").strip(), "brain_data_ts": num("brain_data_ts")}
+            "desktoplive": raw.get("desktoplive", "").strip(), "brain_data_ts": num("brain_data_ts"),
+            "jobs": [j for j in raw.get("jobs", "").strip().split(",") if j]}
 
 
 def evaluate_machine_state(state: dict, now: datetime) -> list[tuple[str, str, str]]:
@@ -503,6 +536,10 @@ def evaluate_machine_state(state: dict, now: datetime) -> list[tuple[str, str, s
         days = (now - datetime.fromtimestamp(ts, tz=timezone.utc)).total_seconds() / 86400
         out.append(("brainmap:data", "yellow" if days >= 7 else "green",
                     f"brain-map data last regenerated {days:.0f}d ago" + (" -- it is rebuilt by use on this machine, so an idle machine shows an old picture" if days >= 7 else "")))
+    if state.get("jobs"):
+        role = "laptop" if "macbook" in state.get("_device", "") else "mini"
+        sev, detail = evaluate_job_placement(state["jobs"], role)
+        out.append(("jobs:placement", sev, detail))
     return out
 
 
@@ -519,7 +556,7 @@ def check_machine_state_everywhere(reachability: dict[str, str], runner=_run_mac
         for dev, info in machine_profile.remote_devices().items()
     ]
     labels = {"dashboard:build": "Dashboard app build", "auth:gh": "GitHub credential", "docs:access": "Docs tab GitHub access",
-              "desktoplive:running": "Desktop brain-map background", "brainmap:data": "Brain-map data freshness"}
+              "desktoplive:running": "Desktop brain-map background", "brainmap:data": "Brain-map data freshness", "jobs:placement": "Scheduled jobs vs. placement"}
     for dev, host, reach in devices:
         if reach == "asleep":
             for key, label in labels.items():
@@ -535,6 +572,7 @@ def check_machine_state_everywhere(reachability: dict[str, str], runner=_run_mac
             for key, label in labels.items():
                 results.append(_result(f"{key}@{dev}", f"{label} -- {dev}", "yellow", f"could not read machine state: {str(exc)[:100]}"))
             continue
+        state["_device"] = dev
         for key, sev, detail in evaluate_machine_state(state, _now()):
             results.append(_result(f"{key}@{dev}", f"{labels[key]} -- {dev}", sev, detail))
     return results
