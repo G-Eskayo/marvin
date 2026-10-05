@@ -42,6 +42,7 @@ from task_dispatch import select_machine, dispatch  # noqa: E402
 import failure_breaker  # noqa: E402
 import ticket_stages as ts  # noqa: E402
 import board_registry  # noqa: E402
+import project_catalog  # noqa: E402
 
 VENV_PYTHON = str(Path.home() / ".agents" / "venv" / "bin" / "python")
 RUN_TICKET_SCRIPT = str(Path.home() / ".agents" / "lib" / "run_ticket.py")
@@ -70,6 +71,18 @@ def _unclaimed_ready_tickets() -> list[dict]:
     ]
     unclaimed.sort(key=lambda i: i["createdAt"])
     return unclaimed
+
+
+def _refresh_catalog() -> None:
+    # The hourly pipeline run also keeps the project catalog (and the master "Where things
+    # are" doc built from it) current. Best effort: never let it block dispatch.
+    try:
+        path = project_catalog.catalog_path()
+        if project_catalog.is_stale(path, 50 * 60):
+            res = project_catalog.real_refresh(path)
+            print(f"{LOG_PREFIX} project catalog: " + (f"{res['count']} projects" if res["ok"] else f"refresh failed, kept last good ({res['error']})"), file=sys.stderr)
+    except Exception as e:  # noqa: BLE001
+        print(f"{LOG_PREFIX} project catalog: {e}", file=sys.stderr)
 
 
 def _discover_boards() -> list[str]:
@@ -127,6 +140,7 @@ def main() -> None:
     if not dry_run:
         for repo in _discover_boards():
             print(f"{LOG_PREFIX} registered dashboard board for {repo}", file=sys.stderr)
+        _refresh_catalog()
 
     # Cross-ticket circuit breaker: the same failure across different tickets means
     # the environment is broken, not the tickets -- stop feeding it more tickets

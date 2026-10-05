@@ -27,7 +27,7 @@ export async function buildDocsIndex(execFileAsync, repos, indexPath = INDEX_PAT
     const fetched = await Promise.all(
       files.map(async (f) => {
         try {
-          return { repo: repo.name, path: f.path, label: f.label, content: await fetchFileContent(execFileAsync, repo.name, f.path) }
+          return { repo: repo.id || repo.name, path: f.path, label: f.label, content: await fetchFileContent(execFileAsync, repo.name, f.path) }
         } catch {
           return null // one unreadable file must not sink the index
         }

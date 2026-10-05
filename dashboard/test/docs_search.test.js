@@ -197,3 +197,15 @@ describe('createIndexer with local docs', () => {
     expect((await ix.search('remote')).results.length).toBe(1)
   })
 })
+
+describe('buildDocsIndex keys docs by project id when given one', () => {
+  it('uses repo.id for the stored doc, repo.name for GitHub', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'docsidx-'))
+    try {
+      const built = await buildDocsIndex(fakeExec(), [{ name: 'marvin', id: 'marvin-id' }], path.join(dir, 'i.json'))
+      expect(built.docs[0].repo).toBe('marvin-id')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, session } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, session, shell } from 'electron'
 import { installDevSiteCors } from './dev_site_cors.js'
 import { join, dirname } from 'path'
 import { existsSync, mkdirSync, appendFileSync } from 'fs'
@@ -10,19 +10,21 @@ import { listPipelinePrs, approveMr, denyMr, fetchTicketContext } from './mr_rev
 import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
 import { readDispatchStatus } from './dispatch_status.js'
 import { readHealthStatus, runHealthCheckNow } from './health.js'
-import { discoverDocFirstRepos, readCachedRepos, listRepoDocTree, fetchFileContent } from './docs.js'
+import { readCachedRepos } from './docs.js'
 import { createPortfolio } from './portfolio.js'
 import { listTicketActivity, getTicketTimeline } from './activity.js'
 import { readRegistry, loadBoard, REGISTRY_PATH } from './boards.js'
 import { createTriggerHub, createReconciler } from './triggers.js'
 import { createIndexer, buildDocsIndex } from './docs_search.js'
-import { resolveLocalClone, listLocalTree, readLocalFile, localFileStates } from './docs_local.js'
+import { createDocsService } from './docs_service.js'
+import { searchFiles, isRevealable } from './files_search.js'
+import { readCatalog, readMasterDoc, CATALOG_DIR, MASTER_DOC_PATH } from './catalog.js'
 import { STAGES_DIR } from '../../webhook-server/ticket_stages.js'
 import { DISPATCH_STATE_PATH } from './dispatch_status.js'
 import { createHash } from 'crypto'
 import { createRefreshServer } from './refresh_server.js'
 import { adoptLoginShellPath } from './path.js'
-import { resolveServiceDefaults } from './device_identity.js'
+import { resolveServiceDefaults, resolveDeviceId } from './device_identity.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -171,82 +173,82 @@ function registerActivityHandlers() {
   })
 }
 
+let cachedDeviceId
+const deviceId = () => (cachedDeviceId === undefined ? (cachedDeviceId = resolveDeviceId()) : cachedDeviceId)
+const CATALOG_SCRIPT = join(homedir(), '.agents', 'lib', 'project_catalog.py')
+const AGENTS_PYTHON = join(homedir(), '.agents', 'venv', 'bin', 'python')
+const FIND_FILE_SCRIPT = join(homedir(), '.claude', 'organize', 'find_file.py') // the `findit` command
+
 function registerDocsHandlers() {
-  // Local-first: a repo with a clone on this machine is read from its working tree (so
-  // uncommitted/unpushed docs show, flagged); repos with no clone here fall back to GitHub.
-  const cloneCache = new Map() // repo -> { dir, at }
-  async function localDir(repo) {
-    const hit = cloneCache.get(repo)
-    if (hit && Date.now() - hit.at < 60_000) return hit.dir
-    const dir = await resolveLocalClone(repo)
-    cloneCache.set(repo, { dir, at: Date.now() })
-    return dir
-  }
-  const annotate = (tree, states) =>
-    tree.map((e) => (e.section ? { ...e, items: e.items.map((i) => ({ ...i, state: states[i.path] || null })) } : { ...e, state: states[e.path] || null }))
-  const withLocal = async (repos) => Promise.all(repos.map(async (r) => ({ ...r, local: await localDir(r.name) })))
-
-  async function getLocalDocs() {
-    const repos = new Set()
-    const docs = []
-    for (const r of readCachedRepos().repos) {
-      const dir = await localDir(r.name)
-      if (!dir) continue
-      repos.add(r.name)
-      const states = await localFileStates(dir)
-      for (const f of annotate(listLocalTree(dir), states).flatMap((e) => (e.section ? e.items : [e]))) {
-        try {
-          docs.push({ repo: r.name, path: f.path, label: f.label, content: readLocalFile(dir, f.path), state: f.state })
-        } catch {
-          // unreadable file: skip it, the rest still searches
-        }
-      }
-    }
-    return { repos, docs }
-  }
-
-  // Watch where doc state lives so the open view updates itself: the doc files, and the git refs
-  // (a commit or push changes badges without touching a file). Never `.git/index`: `git status`
-  // rewrites it, which would feed back into a refresh loop.
-  const watchedDirs = new Set()
-  async function watchLocalClones() {
-    for (const r of readCachedRepos().repos) {
-      const dir = await localDir(r.name)
-      if (!dir || watchedDirs.has(dir)) continue
-      watchedDirs.add(dir)
-      triggerHub.watchFiles('docs', [
-        { dir, match: (n) => n === 'CONTEXT.md' || n === 'README.md' },
-        { dir: join(dir, 'docs', 'adr'), match: (n) => n.endsWith('.md') },
-        { dir: join(dir, '.git', 'refs', 'heads'), match: () => true },
-        { dir: join(dir, '.git', 'refs', 'remotes', 'origin'), match: () => true }
-      ])
-    }
-  }
-  watchLocalClones().catch(() => {})
-
-  ipcMain.handle('docs:repos', async () => {
-    const cache = readCachedRepos()
-    return { ...cache, repos: await withLocal(cache.repos) }
+  // The Docs tab is driven by the project catalog (lib/project_catalog.py): every project gets a
+  // card, docs come from a local clone when there is one (so uncommitted edits show), else GitHub.
+  const docsService = createDocsService({
+    getCatalog: () => readCatalog({ deviceId: deviceId() }),
+    exec: execFileAsync,
+    readMaster: () => readMasterDoc(),
+    fallbackRepos: () => readCachedRepos().repos
   })
-  // Full-text search over every browsable doc; the GitHub index rebuilds in the background when stale.
-  const docsIndexer = createIndexer({ build: () => buildDocsIndex(execFileAsync, readCachedRepos().repos), getLocal: getLocalDocs })
+
+  let refreshing = null
+  function refreshCatalog() {
+    if (!refreshing) {
+      refreshing = execFileAsync(AGENTS_PYTHON, [CATALOG_SCRIPT, 'refresh'], { timeout: 240_000 })
+        .catch(() => {}) // a failed refresh keeps the last good catalog (see project_catalog.refresh)
+        .finally(() => (refreshing = null))
+    }
+    return refreshing
+  }
+
+  // Watch where doc state lives so the open view updates itself: each local clone's doc files and
+  // git refs (a commit or push changes badges without touching a file), the catalog files, and the
+  // master doc. Never `.git/index`: `git status` rewrites it, which would feed a refresh loop.
+  const watchedDirs = new Set()
+  function watchSources() {
+    const watch = (dir, match) => {
+      if (watchedDirs.has(`${dir}|${match}`)) return
+      watchedDirs.add(`${dir}|${match}`)
+      triggerHub.watchFiles('docs', [{ dir, match: typeof match === 'function' ? match : (n) => n === match }])
+    }
+    for (const dir of docsService.localDirs()) {
+      watch(dir, (n) => n === 'CONTEXT.md' || n === 'README.md')
+      watch(join(dir, 'docs', 'adr'), (n) => n.endsWith('.md'))
+      watch(join(dir, '.git', 'refs', 'heads'), () => true)
+      watch(join(dir, '.git', 'refs', 'remotes', 'origin'), () => true)
+    }
+    watch(CATALOG_DIR, (n) => /^projects\..+\.json$/.test(n) || n === 'overrides.json')
+    watch(dirname(MASTER_DOC_PATH), '_WHERE-THINGS-ARE.md')
+  }
+  watchSources()
+  if (!readCatalog({ deviceId: deviceId() })) refreshCatalog().then(watchSources) // first run: build it now
+
+  ipcMain.handle('docs:repos', () => docsService.repos())
+  // Full-text search over every card, master and browsable doc; the GitHub part of the index
+  // rebuilds in the background when stale, local docs are read live.
+  const docsIndexer = createIndexer({
+    build: () => buildDocsIndex(execFileAsync, docsService.githubIndexRepos()),
+    getLocal: () => docsService.localDocs()
+  })
   ipcMain.handle('docs:refresh', async () => {
-    const repos = await discoverDocFirstRepos(execFileAsync)
-    cloneCache.clear()
+    await refreshCatalog()
     docsIndexer.reindex()
-    watchLocalClones().catch(() => {})
-    return withLocal(repos)
+    watchSources()
+    return docsService.repos()
   })
   ipcMain.handle('docs:search', (_event, query, opts) => docsIndexer.search(String(query || ''), opts))
-  ipcMain.handle('docs:tree', async (_event, repo) => {
-    const dir = await localDir(repo)
-    if (!dir) return { source: 'github', dir: null, tree: await listRepoDocTree(execFileAsync, repo) }
-    return { source: 'local', dir, tree: annotate(listLocalTree(dir), await localFileStates(dir)) }
+  // "Files on this Mac": the same Spotlight search as the `findit` command, attributed to projects.
+  ipcMain.handle('docs:files', (_event, query) =>
+    searchFiles(String(query || ''), {
+      run: async (q) => (await execFileAsync('/usr/bin/python3', [FIND_FILE_SCRIPT, '--json', q], { timeout: 40_000, maxBuffer: 20 * 1024 * 1024 })).stdout,
+      catalog: readCatalog({ deviceId: deviceId() }),
+      home: homedir()
+    })
+  )
+  ipcMain.handle('docs:reveal', (_event, filePath) => {
+    if (!isRevealable(filePath, homedir()) || !existsSync(filePath)) throw new Error('Not a revealable file')
+    shell.showItemInFolder(filePath)
   })
-  ipcMain.handle('docs:content', async (_event, repo, filePath) => {
-    const dir = await localDir(repo)
-    return dir ? readLocalFile(dir, filePath) : fetchFileContent(execFileAsync, repo, filePath)
-  })
+  ipcMain.handle('docs:tree', (_event, id) => docsService.tree(id))
+  ipcMain.handle('docs:content', (_event, id, filePath) => docsService.content(id, filePath))
 
   // Portfolio tab (CONTEXT.md "Dashboard app -- Portfolio tab"): component library, design rules, guide,
   // evaluation, images. Dev-only: every write is confined to the portfolio repo's templates/.

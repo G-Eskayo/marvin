@@ -572,3 +572,23 @@ def test_trigger_check_is_yellow_and_names_what_was_missed(tmp_path):
     r = hc.check_trigger_coverage(log, now=now)
     assert r["id"] == "triggers:missed" and r["severity"] == "yellow"
     assert r["value"] == 2 and "o/r" in r["detail"] and "o/other" in r["detail"]
+
+
+# ── project catalog freshness ────────────────────────────────────────────────
+
+def test_catalog_check_is_green_when_fresh_amber_when_stale_red_when_missing_or_ancient(tmp_path):
+    now = datetime(2026, 10, 5, 12, tzinfo=timezone.utc)
+    f = tmp_path / "projects.dev.json"
+
+    def write(age_h):
+        f.write_text(json.dumps({"generated_at": (now - timedelta(hours=age_h)).isoformat(), "projects": [{}] * 30}))
+
+    write(1)
+    assert hc.check_catalog_fresh(f, now=now)["severity"] == "green"
+    write(6)
+    assert hc.check_catalog_fresh(f, now=now)["severity"] == "yellow"
+    write(40)
+    assert hc.check_catalog_fresh(f, now=now)["severity"] == "red"
+    assert hc.check_catalog_fresh(tmp_path / "none.json", now=now)["severity"] == "yellow"
+    r = hc.check_catalog_fresh(f, now=now)
+    assert r["id"] == "catalog:fresh" and "30" in r["detail"]

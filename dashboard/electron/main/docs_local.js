@@ -50,7 +50,7 @@ export async function resolveLocalClone(repoName, { candidateDirs = defaultCandi
 
 // Same shape as docs.js's listRepoDocTree so the UI treats both sources alike.
 export function listLocalTree(dir) {
-  const tree = [{ path: 'CONTEXT.md', label: 'CONTEXT.md' }]
+  const tree = existsSync(path.join(dir, 'CONTEXT.md')) ? [{ path: 'CONTEXT.md', label: 'CONTEXT.md' }] : []
   if (existsSync(path.join(dir, 'README.md'))) tree.push({ path: 'README.md', label: 'README.md' })
   try {
     const items = readdirSync(path.join(dir, 'docs', 'adr'))

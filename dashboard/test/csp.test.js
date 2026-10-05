@@ -92,3 +92,13 @@ describe('add project subtab', () => {
     expect(src).toMatch(/Check \(writes nothing\)/)
   })
 })
+
+describe('page layouts in the dashboard', () => {
+  it('shows layout conformance in the Templates tab and as a badge on every page in Site inventory', () => {
+    const src = _read(new URL('../src/components/PortfolioHub.jsx', import.meta.url), 'utf8')
+    expect(src).toMatch(/LayoutDetails/)
+    expect(src).toMatch(/follows layout/)
+    expect(src).toMatch(/legacy layout/)
+    expect(src).toMatch(/layout-\$\{t\.id\}/)
+  })
+})

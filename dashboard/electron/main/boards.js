@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'fs'
 import { homedir } from 'os'
 import path from 'path'
 import { buildBoard } from './board.js'
+import { readOverrides } from './catalog.js'
 import { listTrackedTickets, readStages } from '../../webhook-server/ticket_stages.js'
 import { readDispatchStatus } from './dispatch_status.js'
 
@@ -9,11 +10,19 @@ import { readDispatchStatus } from './dispatch_status.js'
 export const REGISTRY_PATH = path.join(homedir(), '.claude', 'boards', 'registry.json')
 const MARVIN_REPO = 'G-Eskayo/marvin'
 
-export function readRegistry(file = REGISTRY_PATH) {
+// Due dates are decisions, so they come from the shared catalog overrides (the registry file
+// itself is per-machine); an override keyed by project id wins over what the registry holds.
+const projectId = (repo) => repo.split('/')[1].toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+
+export function readRegistry(file = REGISTRY_PATH, overrides = readOverrides()) {
   if (!existsSync(file)) return []
   try {
     const data = JSON.parse(readFileSync(file, 'utf-8'))
-    return Array.isArray(data.boards) ? data.boards : []
+    if (!Array.isArray(data.boards)) return []
+    return data.boards.map((b) => {
+      const o = overrides[projectId(b.repo)] || {}
+      return { ...b, ...(o.due ? { due: o.due, dueHard: !!o.dueHard } : {}) }
+    })
   } catch {
     return []
   }
