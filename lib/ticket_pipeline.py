@@ -345,8 +345,16 @@ def _scan(run, dry_run: bool) -> None:
     for r in repos:
         ready = _unclaimed_ready_tickets() if r == REPO else _unclaimed_ready_tickets(repo=r)
         if ready:
+    import machine_profile
+    import scanner_role
+    go, why = scanner_role.should_scan()   # primary/standby: the standby only scans when the primary has gone quiet
+    if not go:
+        print(f"{LOG_PREFIX} not scanning ({why})", file=sys.stderr)
+        return
+    print(f"{LOG_PREFIX} scanning ({why})", file=sys.stderr)
             candidates.append((r, ready[0], len(ready)))
     if not candidates:
+    scanner_role.write_heartbeat(machine_profile.registry_id())
         print(f"{LOG_PREFIX} no unclaimed ready-for-agent tickets", file=sys.stderr)
         step("Scanning tickets", "none ready")
         summary("no ready tickets")

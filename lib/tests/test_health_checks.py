@@ -606,7 +606,7 @@ def test_machine_state_parity_checks_docs_background_and_data():
 def test_job_placement_flags_missing_stray_and_unplaced_jobs():
     laptop_jobs = [j for j, w in hc.JOB_PLACEMENT.items() if w in ("both", "laptop")]
     assert hc.evaluate_job_placement(laptop_jobs, "laptop")[0] == "green"
-    sev, detail = hc.evaluate_job_placement(laptop_jobs + ["ticket-pipeline", "brand-new"], "laptop")
-    assert sev == "yellow" and "ticket-pipeline" in detail and "brand-new" in detail
+    sev, detail = hc.evaluate_job_placement(laptop_jobs + ["architecture-review", "brand-new"], "laptop")
+    assert sev == "yellow" and "architecture-review" in detail and "brand-new" in detail
     sev, detail = hc.evaluate_job_placement([j for j in laptop_jobs if j != "code-sync-push"], "laptop")
     assert sev == "yellow" and "missing: code-sync-push" in detail
