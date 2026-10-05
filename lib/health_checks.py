@@ -26,7 +26,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cron_health as ch  # noqa: E402
 import machine_profile  # noqa: E402
-from task_dispatch import TAILSCALE_BIN  # noqa: E402  (absolute path -- launchd's PATH omits the shell's additions)
+from task_dispatch import TAILSCALE_BIN, TAILSCALE_ENV  # noqa: E402  (absolute path -- launchd's PATH omits the shell's additions)
 import metrics_registry as mr  # noqa: E402
 
 HOME = Path.home()
@@ -591,7 +591,7 @@ def _tailscale_peer(host: str) -> dict | None:
     peer reports a zero LastSeen, which is treated as 'no timestamp'."""
     try:
         proc = subprocess.run([TAILSCALE_BIN, "status", "--json"],
-                              capture_output=True, text=True, timeout=10)
+                              capture_output=True, text=True, timeout=10, env=TAILSCALE_ENV)
         if proc.returncode != 0:
             return None
         peers = json.loads(proc.stdout).get("Peer") or {}
