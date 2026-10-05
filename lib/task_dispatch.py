@@ -15,6 +15,7 @@ Run standalone: ~/.agents/venv/bin/python task_dispatch.py "command" [--target I
 """
 from __future__ import annotations
 import json
+import os
 import subprocess
 import sys
 import time
@@ -28,6 +29,10 @@ from machine_profile import registry_id, remote_devices, _load_registry  # noqa:
 
 DISPATCH_STATE_PATH = Path.home() / ".claude" / "dispatch-state.json"
 TAILSCALE_BIN = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+# The GUI app's CLI refuses to run without a TERM ("The Tailscale GUI failed to start"), which is exactly what launchd
+# provides. Found 2026-10-05: under launchd it printed that error, and the parse below read it as one online host
+# called "Tailscale", so no peer ever looked reachable.
+TAILSCALE_ENV = {**os.environ, "TERM": "dumb"}
 SSH_OPTS = ["-o", "ConnectTimeout=5", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"]
 
 
@@ -43,11 +48,11 @@ class DispatchResult:
 def _tailscale_online_hosts() -> set[str]:
     """Hostnames Tailscale currently reports as online (not 'offline')."""
     try:
-        proc = subprocess.run([TAILSCALE_BIN, "status"], capture_output=True, text=True, timeout=10)
+        proc = subprocess.run([TAILSCALE_BIN, "status"], capture_output=True, text=True, timeout=10, env=TAILSCALE_ENV)
         online = set()
         for line in proc.stdout.splitlines():
             parts = line.split()
-            if len(parts) < 2:
+            if len(parts) < 2 or parts[0].count(".") != 3:   # a peer row starts with its IP; anything else is not one
                 continue
             hostname = parts[1]
             if "offline" not in line:
