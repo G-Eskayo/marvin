@@ -124,3 +124,11 @@ def test_best_cut_of_an_empty_banner_is_the_centre_and_a_narrow_image_is_returne
     assert cut.size == (960, 600)
     square = Image.new("RGB", (500, 600))
     assert pa.best_cut(square, 1.6).size == (500, 600)
+
+
+def test_published_images_also_go_into_deploy_because_only_deploy_ships_to_production(tmp_path):
+    images, html, deploy = tmp_path / "images", tmp_path / "html", tmp_path / "deploy"
+    _png(images / "mancala.png")
+    pa.publish_images(json.loads(MANIFEST), images, html, deploy)
+    for base in (html / "wp-content" / "uploads" / "generated", deploy / "uploads" / "generated"):
+        assert (base / "mancala-600w.jpg").exists() and (base / "mancala-hero.jpg").exists()

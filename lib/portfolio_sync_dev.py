@@ -27,7 +27,7 @@ import portfolio_apply as pa  # noqa: E402
 STATUS = Path.home() / ".claude" / "portfolio" / "pipeline-status.json"
 
 # repo path (under deploy/) -> path under the dev site's wp-content/
-SYNC_DIRS = {"other-projects": "other-projects", "mu-plugins": "mu-plugins", "longform": "longform"}
+SYNC_DIRS = {"other-projects": "other-projects", "mu-plugins": "mu-plugins", "longform": "longform", "uploads": "uploads"}
 EXCLUDE = ("pipeline-test",)        # deploy-pipeline test markers that exist to prove a deploy, not to be served on dev
 
 
