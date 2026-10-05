@@ -127,7 +127,7 @@ export default function App() {
           })}
         </nav>
         <div className="ml-auto">
-          <DispatchStatusBadge />
+          <DispatchStatusBadge onClick={() => navigate('health', { view: 'agents' })} />
         </div>
       </header>
       <main className="flex-1 overflow-auto">
@@ -136,7 +136,7 @@ export default function App() {
         ) : activeTab === 'mr-review' ? (
           <MrReview nav={nav} onOpenDocs={(projectId, path) => navigate('docs', { projectId, path })} onOpenBoard={(repo) => navigate('activity', { repo })} onOpenTicket={(repo, number) => navigate('activity', { repo, ticketNumber: number })} />
         ) : activeTab === 'health' ? (
-          <HealthDashboard />
+          <HealthDashboard nav={nav} />
         ) : activeTab === 'docs' ? (
           <DocsExplorer nav={nav} onOpenBoard={(repo) => navigate('activity', { repo })} onOpenTicket={(repo, number) => navigate('activity', { repo, ticketNumber: number })} onOpenPr={(repo, number) => navigate('mr-review', { prKey: `${repo}#${number}` })} />
         ) : activeTab === 'portfolio' ? (

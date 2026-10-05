@@ -192,7 +192,7 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
         <a href={pr.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="rounded-md border border-neutral-700 px-4 py-1.5 text-sm text-neutral-300 hover:bg-neutral-800">
           Review on GitHub ↗
         </a>
-        <p className="max-w-[16rem] text-xs text-neutral-600">Merging {pr.repo.split('/')[1]} from here isn't set up yet: the merge gate only runs marvin's tests.</p>
+        <p className="max-w-[16rem] text-xs text-neutral-600">Merging {pr.repo.split('/')[1]} from here isn't set up: its project profile hasn't opted in (merge_from_dashboard).</p>
       </div>
     )
   }

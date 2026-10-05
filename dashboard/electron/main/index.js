@@ -20,6 +20,7 @@ import { createTriggerHub, createReconciler } from './triggers.js'
 import { listOpenPrsAcrossRepos, normalizeSeen, canMergeFromDashboard, repoFromPrUrl, MARVIN_REPO } from './mr_repos.js'
 import { createIndexer, buildDocsIndex, loadIndex } from './docs_search.js'
 import { createDocsService, MASTER_ID } from './docs_service.js'
+import { readMergeableRepos, listProfiles, setDispatch } from './profiles.js'
 import { searchFiles, isRevealable } from './files_search.js'
 import { readCatalog, readMasterDoc, CATALOG_DIR, MASTER_DOC_PATH } from './catalog.js'
 import { STAGES_DIR } from '../../webhook-server/ticket_stages.js'
@@ -27,6 +28,8 @@ import { DISPATCH_STATE_PATH } from './dispatch_status.js'
 import { createHash } from 'crypto'
 import { JOBS_DIR } from './jobs.js'
 import { listAgents } from './agents.js'
+import { buildWorkingNow } from './working.js'
+import { listJobs } from './jobs.js'
 import { readTicketAgents } from './ticket_agents.js'
 import { readToolUsage, isStale as toolUsageStale } from './tool_usage.js'
 import { createRefreshServer } from './refresh_server.js'
@@ -148,11 +151,42 @@ function registerMetricsHandlers() {
 
 function registerDispatchHandlers() {
   ipcMain.handle('dispatch:status', () => readDispatchStatus())
+  // The header indicator: dispatched task + every background agent that is mid-run, on this machine.
+  ipcMain.handle('working:now', () => buildWorkingNow({ dispatch: readDispatchStatus(), jobs: listJobs() }))
 }
 
 function registerHealthHandlers() {
   ipcMain.handle('health:status', () => readHealthStatus())
   ipcMain.handle('health:agents', () => listAgents())
+  // Execution profiles (lib/project_profile.py): which projects the pipeline may work on by itself.
+  ipcMain.handle('profiles:list', () => listProfiles())
+  ipcMain.handle('profiles:setDispatch', async (_event, repo, value) => {
+    if (value === 'on') {
+      // Same native-dialog defense as Approve: turning this on spends model usage and opens PRs by itself.
+      const profile = listProfiles().find((p) => p.repo === repo)
+      const { response } = await dialog.showMessageBox(mainWindow, {
+        type: 'warning',
+        buttons: ['Cancel', 'Turn on'],
+        defaultId: 0,
+        cancelId: 0,
+        message: `Let MARVIN work on ${profile?.name || repo}'s tickets by itself?`,
+        detail: `From the next hourly scan, MARVIN will claim this project's ready tickets, run a planning call and an implementation call on ${profile?.machines.join(', ') || 'its machine'} (this spends model usage), and open pull requests for you to review in MR Review. You can turn it off here at any time.`
+      })
+      if (response !== 1) return { done: false, cancelled: true }
+    }
+    setDispatch(repo, value)
+    return { done: true, cancelled: false }
+  })
+  // A dry run of the whole path (real worktree, real checks, PR body preview; no model call, no GitHub write).
+  ipcMain.handle('profiles:selftest', async (_event, repo) => {
+    if (!listProfiles().some((p) => p.repo === repo)) throw new Error(`No profile for ${repo}`)
+    try {
+      const { stdout } = await execFileAsync(AGENTS_PYTHON, [join(homedir(), '.agents', 'lib', 'project_profile.py'), 'selftest', repo], { timeout: 900_000, maxBuffer: 20 * 1024 * 1024 })
+      return { ok: true, output: stdout }
+    } catch (err) {
+      return { ok: false, output: String(err.stdout || err.stderr || err.message) }
+    }
+  })
   ipcMain.handle('health:ticketAgents', () => readTicketAgents())
   // Tool & skill usage from the session transcripts: rescanned when older than 10 minutes (about 1.5s).
   ipcMain.handle('health:tools', async () => {
@@ -364,7 +398,7 @@ function postJson(webhookUrl, body) {
 function registerMrReviewHandlers() {
   const seenPath = join(app.getPath('userData'), 'mr-seen.json')
 
-  ipcMain.handle('mr:list', () => listPipelinePrs(listOpenPrs))
+  ipcMain.handle('mr:list', () => listPipelinePrs(listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()) }))
 
   // Backs the MR Review tab's status dot -- red/blue/green computed from
   // which pipeline-PR numbers are currently open vs. already marked seen
@@ -387,12 +421,12 @@ function registerMrReviewHandlers() {
     return fetchTicketContext(ticketRef, (n) => ghIssueView(n, repo))
   })
 
-  // The merge gate only knows marvin (its tests, its rebuild), so refuse anything else here,
-  // from the PR url itself, whatever the renderer claims.
+  // marvin's gate is built in; another project needs its profile to opt in. Checked here from the PR url
+  // itself, whatever the renderer claims, and again by the webhook (which is the real enforcement).
   const assertMergeable = (url) => {
     const repo = repoFromPrUrl(url)
-    if (!repo || !canMergeFromDashboard(repo)) {
-      throw new Error(`Merging ${repo || 'this PR'} from the dashboard isn't set up: the merge gate only runs marvin's tests. Review it on GitHub.`)
+    if (!repo || !canMergeFromDashboard(repo, readMergeableRepos())) {
+      throw new Error(`Merging ${repo || 'this PR'} from the dashboard isn't set up: its project profile has not opted in (merge_from_dashboard). Review it on GitHub.`)
     }
   }
 

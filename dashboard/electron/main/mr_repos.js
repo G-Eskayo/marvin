@@ -1,11 +1,11 @@
 // MR Review across projects. The list spans every registered board repo; the
-// merge gate (webhook-server/merge.js) is marvin-only -- it rebases in marvin's
-// checkout, runs marvin's pytest + vitest and rebuilds the dashboard -- so
-// Approve/Deny stay marvin-only until a project has its own merge profile.
+// merge gate (webhook-server/merge.js) is built in for marvin and profile-driven for other projects:
+// they get Approve/Deny only when their profile opts in (merge_from_dashboard).
 export const MARVIN_REPO = 'G-Eskayo/marvin'
 
 export const prKey = (repo, number) => `${repo}#${number}`
-export const canMergeFromDashboard = (repo) => repo === MARVIN_REPO
+// marvin always (its gate is built in); another project only when its profile opted in (profiles.js).
+export const canMergeFromDashboard = (repo, mergeable = new Set()) => repo === MARVIN_REPO || mergeable.has(repo)
 
 // Seen-tracking used to store bare PR numbers (marvin only). Keep reading them, as marvin's.
 export const normalizeSeen = (seen) => seen.map((x) => (typeof x === 'number' ? prKey(MARVIN_REPO, x) : x))

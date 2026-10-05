@@ -162,7 +162,7 @@ def run(issue_number: int, repo: str = REPO) -> dict:
             if profile is None:
                 result = execute_ticket(ticket_ref, subsystem, measure)
             else:
-                clone = pp.resolve_clone(profile, _load_catalog())
+                clone = pp.resolve_clone(profile, _load_catalog(), ensure=True)
                 if clone is None:
                     raise RuntimeError(f"no local clone of {repo} found on this machine (catalog and clone_hints)")
                 measurer = pp.Measurer(profile)

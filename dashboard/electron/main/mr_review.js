@@ -165,7 +165,7 @@ export function parseEvidence(body) {
 // evidence table or a plain fallback card, but approve/deny only ever
 // needed the PR url (see approveMr/denyMr below), so both paths work for
 // either kind.
-export async function listPipelinePrs(listOpenPrs) {
+export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDashboard } = {}) {
   const prs = await listOpenPrs()
   return prs.map((pr) => {
     const hasSchema = hasEvidenceSchema(pr.body)
@@ -176,7 +176,7 @@ export async function listPipelinePrs(listOpenPrs) {
       url: pr.url,
       repo: pr.repo || MARVIN_REPO,
       key: prKey(pr.repo || MARVIN_REPO, pr.number),
-      canMerge: canMergeFromDashboard(pr.repo || MARVIN_REPO),
+      canMerge: canMerge(pr.repo || MARVIN_REPO),
       hasSchema,
       ticketNumber: evidence?.ticketRef ? Number(evidence.ticketRef) : null,
       evidence,

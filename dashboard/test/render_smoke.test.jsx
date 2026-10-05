@@ -82,3 +82,42 @@ describe('TicketAgentsPanel', () => {
     expect(renderToStaticMarkup(<TicketAgentsPanel />)).toBe('')
   })
 })
+
+import { WorkingView } from '../src/components/DispatchStatusBadge.jsx'
+
+describe('the working indicator', () => {
+  const now = Date.parse('2026-10-05T12:10:00Z')
+
+  it('says Idle (with what finished last) instead of vanishing when nothing is running', () => {
+    const html = renderToStaticMarkup(<WorkingView working={{ items: [], last: { label: 'Ticket pipeline', finishedAt: '2026-10-05T12:00:00Z', summary: 'no ready tickets' } }} now={now} />)
+    expect(html).toContain('Idle')
+    expect(html).toContain('Ticket pipeline')
+  })
+
+  it('shows what is running, how long, and how many more', () => {
+    const working = {
+      items: [
+        { kind: 'job', label: 'Project catalog', detail: 'Local folders — 14 found', startedAt: '2026-10-05T12:09:00Z' },
+        { kind: 'task', label: 'ticket #5: x', detail: '', startedAt: '2026-10-05T12:00:00Z' }
+      ],
+      last: null
+    }
+    const html = renderToStaticMarkup(<WorkingView working={working} now={now} />)
+    expect(html).toContain('Project catalog')
+    expect(html).toContain('Local folders')
+    expect(html).toContain('+1 more')
+    expect(html).toContain('1m 0s')
+  })
+
+  it('shows nothing until the first reading arrives', () => {
+    expect(renderToStaticMarkup(<WorkingView working={null} now={now} />)).toBe('')
+  })
+})
+
+import ProfilesPanel from '../src/components/ProfilesPanel.jsx'
+
+describe('ProfilesPanel', () => {
+  it('renders nothing until the profile list arrives (the fetch runs in an effect)', () => {
+    expect(renderToStaticMarkup(<ProfilesPanel />)).toBe('')
+  })
+})
