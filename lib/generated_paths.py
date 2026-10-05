@@ -58,24 +58,63 @@ def _in_rebase(worktree) -> bool:
     return False
 
 
+def _already_on_base(worktree, path: str) -> bool:
+    """Is the PR's own change to `path` already present in main's copy? True when the commit being replayed
+    (REBASE_HEAD), applied IN REVERSE to main's version of the file (context lines ignored: main may have
+    edited the neighbouring lines), goes through cleanly -- i.e. every line
+    it added is there and every line it removed is gone. That is what happens when parallel PRs each add the
+    same thing (finance-os #8, #9, #10 each added the same vitest setup to package.json)."""
+    commit = _git(worktree, "rev-parse", "REBASE_HEAD", check=False)
+    ours = _git(worktree, "show", f":2:{path}", check=False)  # stage 2 = the branch being rebased onto
+    if commit.returncode != 0 or ours.returncode != 0:
+        return False
+    patch = _git(worktree, "diff", f"{commit.stdout.strip()}^", commit.stdout.strip(), "--", path, check=False).stdout
+    if not patch.strip():
+        return False
+    # Content check first, since the apply below ignores context lines: every line the PR added must be in
+    # main's copy (counting repeats), so a loose position match can never "confirm" a change that isn't there.
+    from collections import Counter
+    added = Counter(l[1:].strip() for l in patch.splitlines() if l.startswith("+") and not l.startswith("+++") and l[1:].strip())
+    have = Counter(l.strip() for l in ours.stdout.splitlines())
+    if any(have[line] < n for line, n in added.items()):
+        return False
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        target = Path(tmp) / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(ours.stdout)
+        done = subprocess.run(["git", "apply", "-R", "--check", "-C0", "--ignore-whitespace"], cwd=tmp, input=patch,
+                              capture_output=True, text=True)
+    return done.returncode == 0
+
+
 def resolve_rebase(worktree, rules: list[dict], max_steps: int = 100) -> dict:
     """Finish a rebase that stopped on conflicts, if every conflicted file is generated. During a rebase
     `--ours` is the branch being rebased ONTO (main), so a generated file takes main's copy, is rebuilt with
-    its `regenerate` command if it has one, and the rebase continues. Anything else aborts the rebase."""
+    its `regenerate` command if it has one, and the rebase continues. A non-generated file whose conflict is
+    only that main ALREADY has this PR's change is resolved the same way (main's copy). Anything else aborts.
+    """
+    already: list[str] = []
     for _ in range(max_steps):
         unmerged = [p for p in _git(worktree, "diff", "--name-only", "--diff-filter=U").stdout.split("\n") if p]
         if not unmerged:
             if not _in_rebase(worktree):
-                return {"ok": True}
+                return {"ok": True, "already_on_base": already}
             cont = _git(worktree, "rebase", "--continue", check=False)
             if cont.returncode != 0 and not _git(worktree, "diff", "--name-only", "--diff-filter=U").stdout.strip():
+                # everything this commit did is already on main, so nothing is left to commit: drop it
+                if "nothing to commit" in (cont.stdout + cont.stderr).lower() or "no changes" in (cont.stdout + cont.stderr).lower():
+                    _git(worktree, "rebase", "--skip", check=False)
+                    continue
                 _git(worktree, "rebase", "--abort", check=False)
                 return {"ok": False, "reason": f"rebase could not continue: {(cont.stderr or cont.stdout)[-300:]}"}
             continue
-        real = [p for p in unmerged if not is_generated(p, rules)]
+        redundant = [p for p in unmerged if not is_generated(p, rules) and _already_on_base(worktree, p)]
+        real = [p for p in unmerged if not is_generated(p, rules) and p not in redundant]
         if real:
             _git(worktree, "rebase", "--abort", check=False)
-            return {"ok": False, "reason": "conflicts in files that are not generated: " + ", ".join(real)}
+            return {"ok": False, "reason": "conflicts in files that are neither generated nor already on main: " + ", ".join(real)}
+        already += redundant
         for path in unmerged:
             if _git(worktree, "checkout", "--ours", "--", path, check=False).returncode != 0:
                 _git(worktree, "rm", "-q", "-f", "--", path, check=False)
@@ -85,7 +124,10 @@ def resolve_rebase(worktree, rules: list[dict], max_steps: int = 100) -> dict:
                 if done.returncode != 0:
                     _git(worktree, "rebase", "--abort", check=False)
                     return {"ok": False, "reason": f"regenerating {rule['path']} failed: {(done.stderr or done.stdout)[-300:]}"}
-        _git(worktree, "add", "-A", "--", *[r["path"] for r in rules if os.path.exists(Path(worktree) / r["path"])] or ["."])
+        to_add = [r["path"] for r in rules if os.path.exists(Path(worktree) / r["path"])] + [p for p in redundant if os.path.exists(Path(worktree) / p)]
+        _git(worktree, "add", "-A", "--", *(to_add or ["."]))
+        for gone in (p for p in redundant if not os.path.exists(Path(worktree) / p)):
+            _git(worktree, "rm", "-q", "--cached", "--", gone, check=False)
     _git(worktree, "rebase", "--abort", check=False)
     return {"ok": False, "reason": "gave up resolving generated-file conflicts after too many steps"}
 

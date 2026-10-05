@@ -101,3 +101,52 @@ def test_a_real_code_conflict_is_not_papered_over(repo):
     res = gp.resolve_rebase(repo, RULES)
     assert not res["ok"] and "src.js" in res["reason"]
     assert not (repo / ".git" / "rebase-merge").exists()  # left clean: the rebase was aborted
+
+
+# ── a PR whose change to a file is ALREADY on main (parallel PRs that each added the same thing) ──
+
+def _write_lines(repo, name, lines):
+    (repo / name).write_text("\n".join(lines) + "\n")
+
+
+def test_a_conflict_where_main_already_contains_the_prs_change_takes_mains_copy(repo):
+    _write_lines(repo, "pkg.txt", ["a", "b", "c", "d"]); git(repo, "add", "-A"); git(repo, "commit", "-q", "-m", "pkg")
+    git(repo, "checkout", "-q", "-b", "feature")
+    _write_lines(repo, "pkg.txt", ["a", "B", "c", "d"]); (repo / "src.js").write_text("feature work\n")
+    git(repo, "add", "-A"); git(repo, "commit", "-q", "-m", "feature: b->B and real work")
+    git(repo, "checkout", "-q", "main")
+    _write_lines(repo, "pkg.txt", ["a", "B", "C", "d"])      # main made the SAME change to b, plus a neighbouring one
+    git(repo, "add", "-A"); git(repo, "commit", "-q", "-m", "main: b->B and c->C")
+    git(repo, "checkout", "-q", "feature")
+    assert subprocess.run(["git", "rebase", "main"], cwd=repo, capture_output=True).returncode != 0
+    res = gp.resolve_rebase(repo, RULES)
+    assert res["ok"], res
+    assert (repo / "pkg.txt").read_text() == "a\nB\nC\nd\n"        # main's copy, nothing of the PR's lost
+    assert (repo / "src.js").read_text() == "feature work\n"        # the PR's real work survives
+    assert "pkg.txt" in res.get("already_on_base", [])
+
+
+def test_a_conflict_where_the_pr_has_its_own_different_change_is_not_resolved(repo):
+    _write_lines(repo, "pkg.txt", ["a", "b", "c", "d"]); git(repo, "add", "-A"); git(repo, "commit", "-q", "-m", "pkg")
+    git(repo, "checkout", "-q", "-b", "feature")
+    _write_lines(repo, "pkg.txt", ["a", "MINE", "c", "d"]); git(repo, "add", "-A"); git(repo, "commit", "-q", "-m", "feature")
+    git(repo, "checkout", "-q", "main")
+    _write_lines(repo, "pkg.txt", ["a", "THEIRS", "C", "d"]); git(repo, "add", "-A"); git(repo, "commit", "-q", "-m", "main")
+    git(repo, "checkout", "-q", "feature")
+    assert subprocess.run(["git", "rebase", "main"], cwd=repo, capture_output=True).returncode != 0
+    res = gp.resolve_rebase(repo, RULES)
+    assert not res["ok"] and "pkg.txt" in res["reason"]
+    assert not (repo / ".git" / "rebase-merge").exists()
+
+
+def test_a_commit_that_becomes_empty_is_dropped_not_a_failure(repo):
+    _write_lines(repo, "pkg.txt", ["a", "b", "c", "d"]); git(repo, "add", "-A"); git(repo, "commit", "-q", "-m", "pkg")
+    git(repo, "checkout", "-q", "-b", "feature")
+    _write_lines(repo, "pkg.txt", ["a", "B", "c", "d"]); git(repo, "add", "-A"); git(repo, "commit", "-q", "-m", "feature only changes b")
+    git(repo, "checkout", "-q", "main")
+    _write_lines(repo, "pkg.txt", ["a", "B", "C", "d"]); git(repo, "add", "-A"); git(repo, "commit", "-q", "-m", "main")
+    git(repo, "checkout", "-q", "feature")
+    assert subprocess.run(["git", "rebase", "main"], cwd=repo, capture_output=True).returncode != 0
+    res = gp.resolve_rebase(repo, RULES)
+    assert res["ok"], res
+    assert git(repo, "log", "--oneline", "main..HEAD").strip() == ""   # nothing left of the PR's commit: it was all on main already

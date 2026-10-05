@@ -3,7 +3,7 @@ import { buildBoard } from './board.js'
 
 // Feeds relations.js real data (every board's tickets and PRs, every project's docs) and keeps the
 // result for a minute; invalidated by the same triggers that refresh the boards and docs.
-export function createRelationsService({ getRepos, getBoardData, getDocs, getProjects, getStages = () => ({}), getLive = () => new Set(), ttlMs = 60_000, now = Date.now }) {
+export function createRelationsService({ getRepos, getBoardData, getDocs, getProjects, getStages = () => ({}), getLive = () => new Set(), recheck = () => {}, ttlMs = 60_000, now = Date.now }) {
   let built = null // { at, index, columns }
 
   async function build() {
@@ -61,7 +61,7 @@ export function createRelationsService({ getRepos, getBoardData, getDocs, getPro
     // One-to-one between MR Review and the boards: every open PR paired with its ticket and that ticket's column,
     // and every ticket filed under "In review" checked against an open PR.
     parity: async () => {
-      const b = await ready()
+      const compute = (b) => {
       const rows = b.prs.map((p) => {
         const t = b.index.forPr(p.repo, p.number).tickets.find((x) => x.relation === 'closes')
         const card = t && b.cards.get(`${t.repo}#${t.number}`)
@@ -80,6 +80,14 @@ export function createRelationsService({ getRepos, getBoardData, getDocs, getPro
         ...reviewWithoutPr.map((c) => `Ticket #${c.number} (${c.repo.split('/')[1]}) is filed under In review but has no open PR`)
       ]
       return { prs: rows, reviewWithoutPr, problems, ok: problems.length === 0 }
+      }
+      // Two data sources with different freshness (the local stage log is instant, GitHub's PR list is cached) can
+      // briefly disagree. Never alarm on one snapshot: look again with fresh data and report only what persists.
+      const first = compute(await ready())
+      if (first.ok) return first
+      recheck()
+      built = null
+      return compute(await ready())
     },
     // What is waiting on you, per project, from the same data the boards show.
     overview: async () => {

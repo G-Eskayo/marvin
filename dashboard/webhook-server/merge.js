@@ -136,19 +136,18 @@ export async function defaultGateContext(repo, exec = execFileAsync) {
     runTests: async (cwd, run) => {
       await run(VENV_PYTHON, [PROFILE_SCRIPT, 'verify', repo, cwd])
     },
-    // Only when the project declares generated files; otherwise a conflicted rebase just fails, as before.
-    resolveConflicts: info.generated?.length
-      ? async (cwd) => {
-          try {
-            const { stdout } = await exec(VENV_PYTHON, [GENERATED_SCRIPT, 'resolve-rebase', repo, cwd])
-            return JSON.parse(stdout)
-          } catch (e) {
-            let parsed = null
-            try { parsed = JSON.parse(e.stdout) } catch { /* not JSON */ }
-            return parsed || { ok: false, reason: String(e.message || e) }
-          }
-        }
-      : null
+    // Finishes a conflicted rebase when every conflict is a generated file, or main already has the PR's
+    // change to that file (parallel PRs that each added the same thing). Real conflicts still fail.
+    resolveConflicts: async (cwd) => {
+      try {
+        const { stdout } = await exec(VENV_PYTHON, [GENERATED_SCRIPT, 'resolve-rebase', repo, cwd])
+        return JSON.parse(stdout)
+      } catch (e) {
+        let parsed = null
+        try { parsed = JSON.parse(e.stdout) } catch { /* not JSON */ }
+        return parsed || { ok: false, reason: String(e.message || e) }
+      }
+    }
   }
 }
 

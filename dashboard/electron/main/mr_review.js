@@ -178,6 +178,7 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       repo: pr.repo || MARVIN_REPO,
       key: prKey(pr.repo || MARVIN_REPO, pr.number),
       canMerge: canMerge(pr.repo || MARVIN_REPO),
+      conflicts: pr.mergeable === 'CONFLICTING',
       baseProblem: baseProblem(prs.map((p) => ({ ...p, repo: p.repo || MARVIN_REPO })), { ...pr, repo: pr.repo || MARVIN_REPO }),
       waitingOn: waitingOn(prs.map((p) => ({ ...p, repo: p.repo || MARVIN_REPO })), { ...pr, repo: pr.repo || MARVIN_REPO }),
       hasSchema,

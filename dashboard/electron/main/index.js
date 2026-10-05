@@ -283,7 +283,8 @@ function registerDocsHandlers() {
     },
     getProjects: () => (readCatalog({ deviceId: deviceId() })?.projects || []).filter((p) => p.repo).map((p) => ({ id: p.id, repo: p.repo })),
     getStages: defaultStagesFor,
-    getLive: defaultLiveNumbers
+    getLive: defaultLiveNumbers,
+    recheck: () => { boardDataCache.clear(); openPrsCache.invalidate() }
   })
   triggerHub.onTrigger((t) => {
     if (t.topic === 'activity' || t.topic === 'docs') {

@@ -116,6 +116,53 @@ def _unclaimed_ready_tickets(repo: str = REPO) -> list[dict]:
 MAX_REENGAGE_ATTEMPTS = 3
 
 
+def _requeue_all(repos) -> list[str]:
+    return [f"{r.split('/')[-1]}#{n}" for r in repos for n in _requeue_conflicted_prs(r)]
+
+_CLOSES = __import__("re").compile(r"Closes\s+(?:[\w.-]+/[\w.-]+)?#(\d+)")
+
+
+def _requeue_conflicted_prs(repo: str) -> list[int]:
+    """A PR that GitHub says CONFLICTS with its base can never be merged as it stands, and the first anyone
+    learned was a human clicking Approve (finance-os #9, clarity #48). So the pipeline sends the ticket back
+    by itself: label `needs-reengagement` + a comment saying why, and the existing sent-back loop rebuilds it
+    on the current main. Tickets already sent back, or protected by `pinned`/`held`, are left alone, and any
+    gh failure just means 'try again next scan'."""
+    def gh(*args):
+        return subprocess.run(["gh", *args], capture_output=True, text=True, timeout=30)
+
+    prs = gh("pr", "list", "--repo", repo, "--state", "open", "--limit", "100", "--json", "number,body,mergeable,headRefName")
+    issues = gh("issue", "list", "--repo", repo, "--state", "open", "--limit", "1000", "--json", "number,labels")
+    if prs.returncode != 0 or issues.returncode != 0:
+        return []
+    try:
+        labels_of = {i["number"]: set(ticket_policy.label_names(i)) for i in json.loads(issues.stdout)}
+        pr_list = json.loads(prs.stdout)
+    except (ValueError, KeyError, TypeError):
+        return []
+    sent: list[int] = []
+    for pr in pr_list:
+        m = _CLOSES.search(pr.get("body") or "")
+        if pr.get("mergeable") != "CONFLICTING" or not m:
+            continue
+        n = int(m.group(1))
+        names = labels_of.get(n)
+        if names is None or names & {"needs-reengagement", "pinned", "held"}:
+            continue
+        add = gh("issue", "edit", str(n), "--repo", repo, "--add-label", "needs-reengagement")
+        if add.returncode != 0:  # the label may not exist on this repo yet
+            gh("label", "create", "needs-reengagement", "--repo", repo, "--color", "d93f0b", "--description", "Sent back: rebuild on the current base branch")
+            add = gh("issue", "edit", str(n), "--repo", repo, "--add-label", "needs-reengagement")
+        if add.returncode != 0:
+            continue
+        gh("issue", "comment", str(n), "--repo", repo, "--body",
+           f"PR #{pr['number']} now conflicts with main (something it touches changed after this was built). "
+           f"Sent back automatically: the pipeline will rebuild it on the current main and update the same PR.")
+        print(f"{LOG_PREFIX} {repo}#{n}: PR #{pr['number']} conflicts with main, sent back for rework", file=sys.stderr)
+        sent.append(n)
+    return sent
+
+
 def _attempts(repo: str, number: int) -> int:
     """How many attempts at this ticket got as far as raising a PR. A claim that died earlier (a failed
     fetch, a missing tool) is not an attempt: those are the failure breaker's business, not this budget's."""
@@ -328,6 +375,11 @@ def _scan(run, dry_run: bool) -> None:
         step("Project catalog", "refresh if older than 50 min")
         _refresh_catalog()
         _run_ticket_agents(step, summary)
+
+    if not dry_run:
+        step("Conflicted PRs", "sending back PRs that no longer merge")
+        sent = _requeue_all([REPO, *pp.dispatchable_repos()])
+        step("Conflicted PRs", ", ".join(sent) + " sent back" if sent else "none")
 
     # Cross-ticket circuit breaker, per project: the same failure across different tickets of one
     # project means ITS environment is broken, not the tickets -- stop feeding that project more

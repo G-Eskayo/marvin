@@ -71,3 +71,15 @@ describe('baseProblem: a PR must target the base branch', () => {
     expect((await listPipelinePrs(async () => raw))[0].baseProblem).toMatchObject({ base: 'feature/a' })
   })
 })
+
+describe('conflicts are visible before anyone clicks Approve', () => {
+  it('the MR list carries GitHub\'s mergeable verdict', async () => {
+    const raw = [{ ...pr(48, ['x']), body: '', repo: 'o/r', mergeable: 'CONFLICTING' }, { ...pr(49, ['y']), body: '', repo: 'o/r', mergeable: 'MERGEABLE' }]
+    const list = await listPipelinePrs(async () => raw)
+    expect(list.map((p) => p.conflicts)).toEqual([true, false])
+  })
+  it('UNKNOWN (GitHub has not computed it yet) is not treated as a conflict', async () => {
+    const list = await listPipelinePrs(async () => [{ ...pr(1, ['x']), body: '', repo: 'o/r', mergeable: 'UNKNOWN' }])
+    expect(list[0].conflicts).toBe(false)
+  })
+})

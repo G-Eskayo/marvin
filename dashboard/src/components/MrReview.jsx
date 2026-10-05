@@ -236,13 +236,18 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
         </button>
         <button
           onClick={handleApprove}
-          disabled={status === 'approving' || waiting.length > 0 || !!wrongBase}
+          disabled={status === 'approving' || waiting.length > 0 || !!wrongBase || pr.conflicts}
           title={waiting.length ? `Merge ${waiting.map((w) => '#' + w.number).join(', ')} first` : undefined}
           className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
         >
           {status === 'approving' ? 'Confirming…' : 'Approve & Merge'}
         </button>
       </div>
+      {pr.conflicts && (
+        <p className="max-w-xs text-right text-xs text-red-400">
+          Conflicts with {pr.baseProblem?.expected || 'main'}: it can't merge as it is. Its ticket is sent back automatically and rebuilt on the current {pr.baseProblem?.expected || 'main'}, updating this same PR. Nothing to do here.
+        </p>
+      )}
       {wrongBase && (
         <p className="max-w-xs text-right text-xs text-red-400">
           Targets <span className="font-mono">{wrongBase.base}</span>, not {wrongBase.expected}: merging it here would not put the work on {wrongBase.expected}.{' '}
