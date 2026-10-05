@@ -219,7 +219,7 @@ _GEOM_JS = """([sel, photoSel, boxSel]) => [...document.querySelectorAll(sel)].m
   const ph = el.querySelector(photoSel), bx = el.querySelector(boxSel);
   if (!ph || !bx) return null;
   const pr = ph.getBoundingClientRect(), br = bx.getBoundingClientRect();
-  return {photoHeight: Math.round(pr.height), boxHeight: Math.round(br.height), overlap: Math.round(pr.bottom - br.top)};
+  return {photoHeight: Math.round(pr.height), boxWidth: Math.round(br.width), boxHeight: Math.round(br.height), overlap: Math.round(pr.bottom - br.top)};
 })"""
 
 _LOOK_JS = """([sel, parts, partProps, rules]) => [...document.querySelectorAll(sel)].map(el => {

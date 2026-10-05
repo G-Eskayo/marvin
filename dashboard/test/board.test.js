@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { deriveColumn, buildBoard, COLUMNS } from '../electron/main/board.js'
+import { deriveColumn, buildBoard, COLUMNS, STALE_CLAIM_MS } from '../electron/main/board.js'
 
 const issue = (over = {}) => ({
   number: 1,
@@ -149,5 +149,37 @@ describe('summarizeBoard / projectIdOf', () => {
     expect(projectIdOf('G-Eskayo/Portfolio_Website')).toBe('portfolio-website')
     expect(projectIdOf('G-Eskayo/marvin')).toBe('marvin')
     expect(projectIdOf('G-Eskayo/ML_supervised_learning-Regression-Classification-project')).toBe('ml-supervised-learning-regression-classification-project')
+  })
+})
+
+
+describe('stale claims', () => {
+  const NOW = Date.parse('2026-10-05T12:00:00Z')
+  const iso = (msAgo) => new Date(NOW - msAgo).toISOString()
+  const claimed = (updatedMsAgo) => issue({ labels: labels('claimed:mac-mini'), updatedAt: iso(updatedMsAgo) })
+
+  it('a claim nobody has touched for over a day is not "in progress": it is blocked, saying so', () => {
+    const r = deriveColumn(claimed(3 * 24 * 3600_000), ctx({ now: NOW }))
+    expect(r.column).toBe('blocked')
+    expect(r.reason).toMatch(/mac-mini/)
+    expect(r.reason).toMatch(/3 days/)
+  })
+
+  it('a recently touched claim stays in progress', () => {
+    expect(deriveColumn(claimed(2 * 3600_000), ctx({ now: NOW })).column).toBe('progress')
+  })
+
+  it('a live dispatch or a recent pipeline stage keeps an old-looking claim in progress', () => {
+    expect(deriveColumn(claimed(5 * 24 * 3600_000), ctx({ now: NOW, isLive: true })).column).toBe('progress')
+    const events = [{ stage: 'executing', status: 'started', timestamp: iso(60_000) }]
+    expect(deriveColumn(claimed(5 * 24 * 3600_000), ctx({ now: NOW, events })).column).toBe('progress')
+  })
+
+  it('without an updatedAt there is no basis to call a claim stale', () => {
+    expect(deriveColumn(issue({ labels: labels('claimed:mac-mini') }), ctx({ now: NOW })).column).toBe('progress')
+  })
+
+  it('exposes the threshold (one day)', () => {
+    expect(STALE_CLAIM_MS).toBe(24 * 3600_000)
   })
 })

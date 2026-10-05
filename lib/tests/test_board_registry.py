@@ -66,6 +66,8 @@ def test_discover_registers_repos_that_use_the_pipeline_labels(tmp_path):
                                {"nameWithOwner": "o/without", "isArchived": False},
                                {"nameWithOwner": "o/old", "isArchived": True}])
         repo = args[args.index("--repo") + 1]
+        if args[0] == "issue":
+            return "[]"  # these repos have no tickets at all; only the labels decide
         return json.dumps([{"name": n} for n in labels[repo]])
 
     path = tmp_path / "r.json"
@@ -79,3 +81,17 @@ def test_discover_survives_a_failing_repo_and_a_failing_gh(tmp_path):
         raise RuntimeError("offline")
 
     assert br.discover("o", gh=gh, path=tmp_path / "r.json") == []
+
+
+def test_discover_also_registers_repos_that_have_tickets_but_no_pipeline_label(tmp_path):
+    issues = {"o/tracked": [{"number": 1}], "o/empty": []}
+
+    def gh(args):
+        if args[:2] == ["repo", "list"]:
+            return json.dumps([{"nameWithOwner": r, "isArchived": False} for r in issues])
+        repo = args[args.index("--repo") + 1]
+        if args[0] == "label":
+            return json.dumps([{"name": "bug"}])  # no ready-for-agent anywhere
+        return json.dumps(issues[repo])  # `issue list`
+
+    assert br.discover("o", gh=gh, path=tmp_path / "r.json") == ["o/tracked"]

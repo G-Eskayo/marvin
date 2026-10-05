@@ -74,8 +74,8 @@ def _gh(args: list[str]) -> str:
 
 
 def discover(owner: str, gh=_gh, path: Path | None = None) -> list[str]:
-    """Register a board for every non-archived repo of `owner` that uses the ticket
-    pipeline's labels, so a board exists without anyone remembering to ask for it.
+    """Register a board for every non-archived repo of `owner` that tracks work in issues (has the ticket
+    pipeline's labels, or any issue at all), so a board exists without anyone remembering to ask for it.
     Returns the newly registered repos. Never raises: discovery is best-effort."""
     try:
         repos = json.loads(gh(["repo", "list", owner, "--limit", "100", "--json", "nameWithOwner,isArchived"]))
@@ -91,7 +91,13 @@ def discover(owner: str, gh=_gh, path: Path | None = None) -> list[str]:
             names = {l["name"] for l in json.loads(gh(["label", "list", "--repo", repo, "--limit", "200", "--json", "name"]))}
         except Exception:  # noqa: BLE001
             continue
-        if PIPELINE_LABEL in names:
+        has_tickets = PIPELINE_LABEL in names
+        if not has_tickets:
+            try:  # a repo that tracks work in issues deserves a board even without the pipeline label
+                has_tickets = bool(json.loads(gh(["issue", "list", "--repo", repo, "--state", "all", "--limit", "1", "--json", "number"])))
+            except Exception:  # noqa: BLE001
+                pass
+        if has_tickets:
             ensure_board(repo, path=path)
             added.append(repo)
     return added

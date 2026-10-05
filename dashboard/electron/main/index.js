@@ -24,6 +24,7 @@ import { readCatalog, readMasterDoc, CATALOG_DIR, MASTER_DOC_PATH } from './cata
 import { STAGES_DIR } from '../../webhook-server/ticket_stages.js'
 import { DISPATCH_STATE_PATH } from './dispatch_status.js'
 import { createHash } from 'crypto'
+import { listJobs, JOBS_DIR } from './jobs.js'
 import { createRefreshServer } from './refresh_server.js'
 import { adoptLoginShellPath } from './path.js'
 import { resolveServiceDefaults, resolveDeviceId } from './device_identity.js'
@@ -145,6 +146,7 @@ function registerHealthHandlers() {
 function registerActivityHandlers() {
   ipcMain.handle('activity:list', () => listTicketActivity())
   ipcMain.handle('activity:timeline', (_event, number) => getTicketTimeline(number))
+  ipcMain.handle('activity:jobs', () => listJobs())
 
   // Project boards: only repos in the registry are fetchable, so the renderer
   // can't make the main process shell out to gh for an arbitrary repo.
@@ -387,8 +389,10 @@ app.whenReady().then(() => {
 
   // Local state: watch where it's stored, so every writer (Python, Node, any chat) is covered.
   mkdirSync(STAGES_DIR, { recursive: true })
+  mkdirSync(JOBS_DIR, { recursive: true })
   triggerHub.watchFiles('activity', [
     { dir: STAGES_DIR, match: (n) => n.endsWith('.json') },
+    { dir: JOBS_DIR, match: (n) => n.endsWith('.json') && !n.startsWith('.') },
     { dir: dirname(DISPATCH_STATE_PATH), match: (n) => n === 'dispatch-state.json' },
     { dir: dirname(REGISTRY_PATH), match: (n) => n === 'registry.json' }
   ])

@@ -44,13 +44,17 @@ function defaultLiveNumbers(repo) {
 
 export async function loadBoard(repo, { gh, stagesFor = defaultStagesFor, liveNumbers } = {}) {
   try {
-    const [issuesJson, prsJson] = await Promise.all([
-      gh(['issue', 'list', '--repo', repo, '--state', 'all', '--limit', '200', '--json', 'number,title,state,labels,body,url,createdAt']),
+    // Open tickets are fetched on their own so a long history of closed ones can never crowd them out
+    // (a single newest-200 query would silently drop the oldest open ticket); closed ones are recent only.
+    const fields = 'number,title,state,labels,body,url,createdAt,updatedAt,closedAt'
+    const [openJson, closedJson, prsJson] = await Promise.all([
+      gh(['issue', 'list', '--repo', repo, '--state', 'open', '--limit', '1000', '--json', fields]),
+      gh(['issue', 'list', '--repo', repo, '--state', 'closed', '--limit', '100', '--json', fields]),
       gh(['pr', 'list', '--repo', repo, '--state', 'open', '--limit', '100', '--json', 'number,title,url,state,isDraft,body'])
     ])
     return buildBoard({
       repo,
-      issues: JSON.parse(issuesJson),
+      issues: [...JSON.parse(openJson), ...JSON.parse(closedJson)],
       prs: JSON.parse(prsJson),
       eventsByNumber: stagesFor(repo),
       liveNumbers: liveNumbers || defaultLiveNumbers(repo)

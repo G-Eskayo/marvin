@@ -13,6 +13,9 @@ export const COLUMNS = [
 ]
 
 const REVIEW_STAGES = new Set(['verifying', 'gate', 'merging'])
+// A claim label is a statement, not evidence. With no live dispatch, no recent pipeline stage and no
+// touch on the ticket for a day, it is a stale claim (found 2026-10-05: 14 of them showed as "in progress").
+export const STALE_CLAIM_MS = 24 * 3600_000
 
 const labelNames = (issue) => (issue.labels || []).map((l) => l.name)
 
@@ -40,7 +43,7 @@ function openDependency(issue, openNumbers) {
 }
 
 // First match wins; order is the board's meaning. See CONTEXT.md for the rules.
-export function deriveColumn(issue, { prs = [], events = [], isLive = false, openNumbers = new Set() } = {}) {
+export function deriveColumn(issue, { prs = [], events = [], isLive = false, openNumbers = new Set(), now = Date.now() } = {}) {
   const labels = labelNames(issue)
   const linked = closingPrs(issue, prs)
   const last = events.length ? events[events.length - 1] : null
@@ -64,6 +67,13 @@ export function deriveColumn(issue, { prs = [], events = [], isLive = false, ope
   }
 
   const claim = labels.find((l) => l.startsWith('claimed:'))
+  if (claim && !isLive) {
+    const touched = Math.max(Date.parse(issue.updatedAt) || 0, Date.parse(last?.timestamp) || 0)
+    if (touched && now - touched > STALE_CLAIM_MS) {
+      const days = Math.floor((now - touched) / (24 * 3600_000))
+      return { ...base, column: 'blocked', reason: `Claimed by ${claim.slice('claimed:'.length)} but no activity for ${days} day${days === 1 ? '' : 's'}` }
+    }
+  }
   if (claim || isLive) {
     return { ...base, column: 'progress', reason: claim ? `Claimed by ${claim.slice('claimed:'.length)}` : 'Running now' }
   }
@@ -76,14 +86,14 @@ export function deriveColumn(issue, { prs = [], events = [], isLive = false, ope
   return { ...base, column: 'backlog', reason: 'Not yet triaged' }
 }
 
-export function buildBoard({ repo, issues, prs, eventsByNumber = {}, liveNumbers = new Set() }) {
+export function buildBoard({ repo, issues, prs, eventsByNumber = {}, liveNumbers = new Set(), now = Date.now() }) {
   const openNumbers = new Set(issues.filter((i) => i.state === 'OPEN').map((i) => i.number))
   const columns = COLUMNS.map((c) => ({ ...c, cards: [] }))
   const byId = Object.fromEntries(columns.map((c) => [c.id, c]))
 
   for (const issue of issues) {
     const events = eventsByNumber[issue.number] || []
-    const d = deriveColumn(issue, { prs, events, isLive: liveNumbers.has(issue.number), openNumbers })
+    const d = deriveColumn(issue, { prs, events, isLive: liveNumbers.has(issue.number), openNumbers, now })
     byId[d.column].cards.push({
       number: issue.number,
       title: issue.title,
