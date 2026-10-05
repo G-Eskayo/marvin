@@ -31,6 +31,8 @@ contextBridge.exposeInMainWorld('api', {
   },
   health: {
     status: () => ipcRenderer.invoke('health:status'),
+    agents: () => ipcRenderer.invoke('health:agents'),
+    tools: () => ipcRenderer.invoke('health:tools'),
     refresh: () => ipcRenderer.invoke('health:refresh')
   },
   docs: {
@@ -60,6 +62,8 @@ contextBridge.exposeInMainWorld('api', {
     newImageVariant: (slug, motif) => ipcRenderer.invoke('portfolio:image:variant:new', slug, motif),
     chooseImageVariant: (slug, motif, salt) => ipcRenderer.invoke('portfolio:image:variant:choose', slug, motif, salt),
     addProject: (spec, opts) => ipcRenderer.invoke('portfolio:project:add', spec, opts),
+    pipelineStatus: () => ipcRenderer.invoke('portfolio:pipeline:status'),
+    runPipeline: () => ipcRenderer.invoke('portfolio:pipeline:run'),
     elements: () => ipcRenderer.invoke('portfolio:elements'),
     verifyElement: (id) => ipcRenderer.invoke('portfolio:element:verify', id),
     applyImages: () => ipcRenderer.invoke('portfolio:images:apply'),
@@ -81,8 +85,7 @@ contextBridge.exposeInMainWorld('api', {
   },
   activity: {
     list: () => ipcRenderer.invoke('activity:list'),
-    timeline: (number) => ipcRenderer.invoke('activity:timeline', number),
-    jobs: () => ipcRenderer.invoke('activity:jobs')
+    timeline: (number) => ipcRenderer.invoke('activity:timeline', number)
   },
   triggers: {
     // Fires when something the Activity tab shows has changed (file watch or GitHub ping).

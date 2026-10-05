@@ -163,6 +163,13 @@ def normalize_look(props: dict | None) -> dict | None:
     return out
 
 
+def geometry_close(a: dict | None, b: dict | None, tol: int = 1) -> bool:
+    """Two measured geometries agree when every dimension is within a pixel (sub-pixel layout rounds either way)."""
+    if not a or not b:
+        return a == b
+    return a.keys() == b.keys() and all(abs(a[k] - b[k]) <= tol for k in a)
+
+
 def normalize_markup(markup: str) -> str:
     """Whitespace-insensitive form of generalized markup, so a captured element and its template compare equal."""
     out = re.sub(r"\s+", " ", markup)
@@ -206,7 +213,7 @@ def find_deviations(instances: list[tuple[str, dict]], markup: str | None, look:
             why.add("not recognisable as the element")
         if look and inst["look"] != look:
             why.add("different computed look")
-        if geometry and inst["geometry"] and inst["geometry"] != geometry:
+        if geometry and inst["geometry"] and not geometry_close(inst["geometry"], geometry):
             why.add(f"different geometry {inst['geometry']}")
         if why:
             found.setdefault(url, set()).update(why)
@@ -306,35 +313,56 @@ def _provenance(page, definition: dict) -> dict:
     return result
 
 
+def _cluster(geoms: list[dict]) -> list[dict]:
+    """Geometries that agree to the pixel are one: the representatives of each cluster."""
+    reps: list[dict] = []
+    for g in geoms:
+        if not any(geometry_close(g, r) for r in reps):
+            reps.append(g)
+    return reps
+
+
 def _most_common(items: list):
     from collections import Counter
     return Counter(json.dumps(i, sort_keys=True) for i in items).most_common(1)[0][0] if items else None
 
 
 def capture(element_id: str = "project-card", base: str = BASE, project: Path = PROJECT, inventory: Path = INVENTORY) -> dict:
+    return capture_many([element_id], base, project, inventory)[element_id]
+
+
+def capture_many(element_ids: list[str], base: str = BASE, project: Path = PROJECT, inventory: Path = INVENTORY) -> dict[str, dict]:
+    """Capture several elements in ONE pass over the site (each page is loaded once, not once per element)."""
     from playwright.sync_api import sync_playwright
-    definition = ELEMENTS[element_id]
-    generic = definition.get("rules") is not None            # generalized in the page; the card keeps its own regex path
     pages = [p["url"] for p in json.loads(Path(inventory).read_text())["pages"]]
-    usage, all_geoms, instances, first_page = {}, [], [], None
+    acc = {i: {"usage": {}, "geoms": [], "instances": [], "first": None} for i in element_ids}
+    provenance: dict[str, dict] = {}
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
         page = browser.new_page(viewport={"width": 1440, "height": 900})
         for url in pages:
             page.goto(base + url, wait_until="networkidle")
             page.wait_for_timeout(300)
-            found = page_instances(page, definition)
-            if found:
-                usage[url] = len(found)
-                all_geoms += [f["geometry"] for f in found if f["geometry"]]
-                instances += [(url, f) for f in found]
-                first_page = first_page or url
-        provenance = {}
-        if first_page:
-            page.goto(base + definition["sample_pages"][0], wait_until="networkidle")
-            provenance = _provenance(page, definition)
+            for eid in element_ids:
+                found = page_instances(page, ELEMENTS[eid])
+                if found:
+                    a = acc[eid]
+                    a["usage"][url] = len(found)
+                    a["geoms"] += [f["geometry"] for f in found if f["geometry"]]
+                    a["instances"] += [(url, f) for f in found]
+                    a["first"] = a["first"] or url
+        for eid in element_ids:
+            if acc[eid]["first"]:
+                page.goto(base + ELEMENTS[eid]["sample_pages"][0], wait_until="networkidle")
+                provenance[eid] = _provenance(page, ELEMENTS[eid])
         browser.close()
+    return {eid: _finish(eid, acc[eid], provenance.get(eid, {}), project) for eid in element_ids}
 
+
+def _finish(element_id: str, a: dict, provenance: dict, project: Path) -> dict:
+    definition = ELEMENTS[element_id]
+    generic = definition.get("rules") is not None            # generalized in the page; the card keeps its own regex path
+    instances = a["instances"]
     normalize = (lambda inst: inst["markup"]) if generic else None
     live_markups = [(normalize(i) if normalize else generalize_card(i["html"])) for _, i in instances]
     # The master is the template when the element has one (it is what the generators and the pipeline emit); otherwise
@@ -344,15 +372,15 @@ def capture(element_id: str = "project-card", base: str = BASE, project: Path = 
     conforming = [i for (_, i), m in zip(instances, live_markups) if m == master]
     looks = distinct_looks([i["look"] for _, i in instances])
     look = json.loads(_most_common([i["look"] for i in conforming] or [i["look"] for _, i in instances])) if instances else None
-    geometry = json.loads(_most_common(all_geoms)) if all_geoms else None
+    geometry = json.loads(_most_common(a["geoms"])) if a["geoms"] else None
     deviations = find_deviations(instances, master, look, geometry, normalize)
     result = {
         "id": element_id, "name": definition["name"], "description": definition["description"],
         "fields": definition["fields"], "markup": master, "look": look,
         "distinct_looks": len(looks), "geometry": geometry,
-        "distinct_geometries": len(distinct_looks(all_geoms)), "deviations": deviations, "provenance": provenance,
-        "usage": {"pages": usage, "placements": sum(usage.values())},
-        "captured_from": first_page, "captured_at": datetime.now(timezone.utc).isoformat(),
+        "distinct_geometries": len(_cluster(a["geoms"])), "deviations": deviations, "provenance": provenance,
+        "usage": {"pages": a["usage"], "placements": sum(a["usage"].values())},
+        "captured_from": a["first"], "captured_at": datetime.now(timezone.utc).isoformat(),
     }
     out = Path(project) / "templates" / "elements"
     out.mkdir(parents=True, exist_ok=True)
@@ -362,8 +390,7 @@ def capture(element_id: str = "project-card", base: str = BASE, project: Path = 
 
 def main() -> None:
     ids = sys.argv[1:] or list(ELEMENTS)
-    for i in ids:
-        r = capture(i)
+    for i, r in capture_many(ids).items():
         print(f"{i}: {r['usage']['placements']} placements on {len(r['usage']['pages'])} pages, {r['distinct_looks']} distinct look(s)")
 
 

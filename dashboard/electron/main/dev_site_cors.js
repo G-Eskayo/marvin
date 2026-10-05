@@ -7,6 +7,10 @@ export function withCors(responseHeaders = {}) {
   const headers = { ...responseHeaders }
   for (const k of Object.keys(headers)) if (k.toLowerCase() === 'access-control-allow-origin') delete headers[k]
   headers['Access-Control-Allow-Origin'] = ['*']
+  // Never cache the dev site inside this app: a stylesheet edited on the dev site (the project card's, say) must show
+  // in the previews at once, not after the HTTP cache decides it is stale.
+  for (const k of Object.keys(headers)) if (['cache-control', 'expires', 'etag', 'last-modified'].includes(k.toLowerCase())) delete headers[k]
+  headers['Cache-Control'] = ['no-store']
   return headers
 }
 

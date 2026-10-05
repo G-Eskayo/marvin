@@ -54,3 +54,8 @@ def test_the_dashboard_preview_of_every_captured_element_matches_the_live_site(e
         pytest.skip("element not captured")
     result = pp.verify(element_id)
     assert result["ok"], result["differences"]
+
+
+def test_samples_that_differ_in_size_from_each_other_are_reported(monkeypatch):
+    a, b = {"boxWidth": 280, "boxHeight": 290}, {"boxWidth": 280, "boxHeight": 250}
+    assert pp.pe.geometry_close(a, a) and not pp.pe.geometry_close(a, b)

@@ -15,8 +15,10 @@ never break, slow or change the job it observes. Per machine (logs are not synce
 """
 from __future__ import annotations
 import fcntl
+import functools
 import json
 import os
+import sys
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -100,11 +102,58 @@ def job_run(job: str, label: str | None = None, directory: Path | None = None):
     run._mutate(lambda r: None)  # appear immediately as "running"
     try:
         yield run
+    except SystemExit as e:
+        # sys.exit(0) / sys.exit() is how many scripts end normally; only a non-zero code is a failure
+        if e.code in (None, 0) and not run._failed:
+            run._finish("passed")
+        else:
+            run._finish("failed", run._failed or f"exited with status {e.code}")
+        raise
     except BaseException as e:  # noqa: BLE001
         run._finish("failed", f"{type(e).__name__}: {e}")
         raise
     else:
         run._finish("failed" if run._failed else "passed", run._failed)
+
+
+_CURRENT: list = []  # the active run(s), so any code can call step() without threading `run` through
+
+
+def job_id(default: str) -> str:
+    """launchd names the job it starts in XPC_SERVICE_NAME ("com.marvin.research-colony"), which is
+    how one script run under two schedules (daily-digest / research-colony) gets two run logs. A
+    terminal session sets it to something else, so we fall back to the script's own name."""
+    label = os.environ.get("XPC_SERVICE_NAME", "")
+    if label.startswith("com."):
+        return label.split(".", 2)[2]
+    return default
+
+
+def step(name: str, detail: str = "") -> None:
+    """Report a step on the current run, if there is one. Safe to call anywhere."""
+    if _CURRENT:
+        _CURRENT[-1].step(name, detail)
+
+
+def reported(default_name: str, label: str | None = None):
+    """Decorator for a job's entry point: records the run (start, steps, outcome) under the launchd
+    label's name. One line per script; the script may call `job_events.step(...)` for detail."""
+    def deco(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            jid = job_id(default_name)
+            with job_run(jid, label or jid.replace("-", " ").capitalize()) as run:
+                _CURRENT.append(run)
+                try:
+                    return fn(*args, **kwargs)
+                except SystemExit as e:
+                    if e.code not in (None, 0):
+                        run.fail(f"exited with status {e.code}")
+                    raise
+                finally:
+                    _CURRENT.pop()
+        return wrapper
+    return deco
 
 
 def status_of(doc: dict, now: datetime | None = None) -> str:

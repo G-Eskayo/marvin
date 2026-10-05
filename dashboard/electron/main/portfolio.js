@@ -65,6 +65,7 @@ export function createPortfolio({
   const imageScript = path.join(agentsDir, 'lib', 'portfolio_imagegen.py')
   const addProjectScript = path.join(agentsDir, 'lib', 'portfolio_add_project.py')
   const parityScript = path.join(agentsDir, 'lib', 'portfolio_parity.py')
+  const syncScript = path.join(agentsDir, 'lib', 'portfolio_sync_dev.py')
   const applyScript = path.join(agentsDir, 'lib', 'portfolio_apply.py')
   const inventoryScript = path.join(agentsDir, 'lib', 'portfolio_inventory.py')
   const templatesScript = path.join(agentsDir, 'lib', 'portfolio_templates.py')
@@ -280,6 +281,18 @@ export function createPortfolio({
     }
   }
 
+  // The element pipeline's last result (lib/portfolio_sync_dev.py writes it) and a way to run it from the dashboard.
+  const pipelineStatus = async () => readJson(path.join(dataDir, 'pipeline-status.json'), null)
+
+  async function runPipeline() {
+    try {
+      const { stdout } = await exec(python, [syncScript], { maxBuffer: 5 * 1024 * 1024, timeout: 15 * 60 * 1000 })
+      return JSON.parse(stdout.trim().split('\n').pop())
+    } catch (err) {
+      try { return JSON.parse(String(err.stdout || '').trim().split('\n').pop()) } catch { throw new Error(err.message) }
+    }
+  }
+
   async function deleteImageVariant(slug, motif, salt) {
     await knownProject(slug)
     if (typeof motif !== 'string' || !MOTIF_RE.test(motif)) throw new Error(`Invalid motif: ${JSON.stringify(motif)}`)
@@ -432,5 +445,5 @@ export function createPortfolio({
     return readText(path.join(referenceDir, `${slug}.html`), null)
   }
 
-  return { chrome, inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, templateSource, specimen, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage, imageMotifs, imageVariants, newImageVariant, chooseImageVariant, applyImages, addProject, listElements, verifyElement, deleteImageVariant, variantPreview }
+  return { chrome, inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, templateSource, specimen, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage, imageMotifs, imageVariants, newImageVariant, chooseImageVariant, applyImages, addProject, listElements, verifyElement, pipelineStatus, runPipeline, deleteImageVariant, variantPreview }
 }
