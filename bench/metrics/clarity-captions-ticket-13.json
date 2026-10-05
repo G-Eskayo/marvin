@@ -1,0 +1,44 @@
+[
+  {
+    "timestamp": "2026-10-05T19:07:04.924850+00:00",
+    "metrics": {
+      "caption-core_passed": {
+        "value": 60,
+        "higher_is_better": true
+      },
+      "caption-core_failed": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "tests_passed": {
+        "value": 60,
+        "higher_is_better": true
+      },
+      "tests_failed": {
+        "value": 0,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-05T19:13:17.970698+00:00",
+    "metrics": {
+      "caption-core_passed": {
+        "value": 60,
+        "higher_is_better": true
+      },
+      "caption-core_failed": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "tests_passed": {
+        "value": 60,
+        "higher_is_better": true
+      },
+      "tests_failed": {
+        "value": 0,
+        "higher_is_better": false
+      }
+    }
+  }
+]

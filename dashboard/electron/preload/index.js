@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('api', {
     approve: (pr) => ipcRenderer.invoke('mr:approve', pr),
     deny: (payload) => ipcRenderer.invoke('mr:deny', payload),
     ticketContext: (ticketRef, repo) => ipcRenderer.invoke('mr:ticketContext', ticketRef, repo),
+    parity: () => ipcRenderer.invoke('mr:parity'),
     reviewStatus: () => ipcRenderer.invoke('mr:reviewStatus'),
     markSeen: (prNumbers) => ipcRenderer.invoke('mr:markSeen', prNumbers),
     // Fires whenever the webhook-server's /mr-ready ping reaches this
@@ -94,7 +95,8 @@ contextBridge.exposeInMainWorld('api', {
   },
   activity: {
     list: () => ipcRenderer.invoke('activity:list'),
-    timeline: (number) => ipcRenderer.invoke('activity:timeline', number)
+    timeline: (number) => ipcRenderer.invoke('activity:timeline', number),
+    overview: () => ipcRenderer.invoke('activity:overview')
   },
   triggers: {
     // Fires when something the Activity tab shows has changed (file watch or GitHub ping).

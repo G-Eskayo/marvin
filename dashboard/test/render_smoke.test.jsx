@@ -121,3 +121,10 @@ describe('ProfilesPanel', () => {
     expect(renderToStaticMarkup(<ProfilesPanel />)).toBe('')
   })
 })
+
+describe('parity wording', () => {
+  it('MrReview exports render without crashing (module loads with the new ticket line and summary)', async () => {
+    const mod = await import('../src/components/MrReview.jsx')
+    expect(typeof mod.default).toBe('function')
+  })
+})

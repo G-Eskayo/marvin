@@ -66,6 +66,11 @@ export function deriveColumn(issue, { prs = [], events = [], isLive = false, ope
 
   if (issue.state === 'CLOSED') return { ...base, column: 'done', reason: 'Closed' }
 
+  if (linked.length && labels.includes('needs-reengagement')) {
+    // Denied in review (or failed the merge gate): the PR stays open, but the next move is the agent's, not
+    // yours. MR Review shows the same PR as "sent back", so the two views say the same thing.
+    return { ...base, column: 'blocked', reason: `Sent back from review: waiting for rework (PR #${linked[0].number} still open)` }
+  }
   if (linked.length) {
     return { ...base, column: 'review', reason: `PR #${linked[0].number} open: ${linked[0].title}` }
   }

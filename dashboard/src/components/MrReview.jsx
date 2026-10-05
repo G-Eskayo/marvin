@@ -235,7 +235,66 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
   )
 }
 
-function PrCard({ pr, onApproved, onDenied, onSelect }) {
+const PARITY_STYLE = {
+  ok: 'bg-emerald-950 text-emerald-300',
+  'sent-back': 'bg-amber-950 text-amber-300',
+  'no-ticket': 'bg-red-950 text-red-300',
+  elsewhere: 'bg-red-950 text-red-300'
+}
+const COLUMN_NAME = { backlog: 'Backlog', ready: 'Ready', blocked: 'Blocked', progress: 'In progress', review: 'In review', done: 'Done' }
+
+// The PR's ticket and where it sits on the project's board: the one-to-one between this list and the boards.
+function TicketLine({ row, onOpenTicket }) {
+  if (!row) return null
+  const t = row.ticket
+  return (
+    <p className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+      {t ? (
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onOpenTicket?.(t.repo, t.number)
+          }}
+          className="truncate text-left text-neutral-400 hover:text-white"
+          title="Open this ticket on its board"
+        >
+          closes <span className="font-mono text-neutral-500">#{t.number}</span> {t.title} →
+        </button>
+      ) : (
+        <span className="text-neutral-500">closes no ticket</span>
+      )}
+      <span className={`rounded px-1.5 py-0.5 text-[10px] ${PARITY_STYLE[row.status]}`}>
+        {row.status === 'ok' && 'board: In review ✓'}
+        {row.status === 'sent-back' && 'sent back: waiting for rework'}
+        {row.status === 'no-ticket' && 'no card on any board'}
+        {row.status === 'elsewhere' && `board: ${COLUMN_NAME[t.column]} ✗`}
+      </span>
+    </p>
+  )
+}
+
+function ParitySummary({ parity }) {
+  if (!parity) return null
+  const n = parity.prs.length
+  return (
+    <div className={`rounded border px-3 py-2 text-xs ${parity.ok ? 'border-emerald-900 bg-emerald-950/40 text-emerald-300' : 'border-red-900 bg-red-950/40 text-red-300'}`}>
+      {parity.ok ? (
+        <>Matches the boards: each of the {n} open PR{n === 1 ? '' : 's'} is paired with its ticket, and every ticket under “In review” has a PR here.</>
+      ) : (
+        <>
+          <p className="font-medium">The boards and this list disagree:</p>
+          <ul className="mt-1 list-disc pl-5">
+            {parity.problems.map((p, i) => (
+              <li key={i}>{p}</li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  )
+}
+
+function PrCard({ pr, parity, onOpenTicket, onApproved, onDenied, onSelect }) {
   return (
     <div
       onClick={() => onSelect(pr)}
@@ -261,6 +320,7 @@ function PrCard({ pr, onApproved, onDenied, onSelect }) {
           ) : (
             <p className="text-xs text-amber-400">No structured evidence — needs a manual look</p>
           )}
+          <TicketLine row={parity} onOpenTicket={onOpenTicket} />
         </div>
         {/* Approve/Deny live inside the same clickable card -- stop the
             click from also bubbling up to onSelect and opening the detail
@@ -287,8 +347,10 @@ export default function MrReview({ nav, onOpenDocs, onOpenBoard, onOpenTicket })
   const [prs, setPrs] = useState(null)
   const [error, setError] = useState(null)
   const [selected, setSelected] = useState(null)
+  const [parity, setParity] = useState(null)
 
   function reload() {
+    window.api.mr.parity().then(setParity).catch(() => setParity(null))
     window.api.mr
       .list()
       .then((list) => {
@@ -366,10 +428,13 @@ export default function MrReview({ nav, onOpenDocs, onOpenBoard, onOpenTicket })
         {prs.length} pipeline-raised PR{prs.length === 1 ? '' : 's'} awaiting review. Click a title for the full
         detail view.
       </p>
+      <ParitySummary parity={parity} />
       {prs.map((pr) => (
         <PrCard
-          key={pr.number}
+          key={pr.key}
           pr={pr}
+          parity={parity?.prs.find((r) => r.key === pr.key)}
+          onOpenTicket={onOpenTicket}
           onApproved={reloadAndReturnToList}
           onDenied={reloadAndReturnToList}
           onSelect={setSelected}

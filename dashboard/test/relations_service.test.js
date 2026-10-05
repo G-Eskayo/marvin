@@ -54,3 +54,42 @@ describe('relations service', () => {
     expect(await make().context('unknown')).toEqual({ project: 'unknown', repo: null, adrs: {} })
   })
 })
+
+describe('review parity (MR Review <-> board)', () => {
+  const pr = (n, body, over = {}) => ({ number: n, title: `PR ${n}`, url: `p${n}`, state: 'OPEN', isDraft: false, body, files: [], ...over })
+  const svc = (issues, prs) => make({ getBoardData: async () => ({ issues, prs }) })
+
+  it('pairs each open PR with its ticket and the board column that ticket is in', async () => {
+    const p = await svc([issue(2, { labels: [{ name: 'ready-for-agent' }] })], [pr(7, 'Closes #2')]).parity()
+    expect(p.prs).toHaveLength(1)
+    expect(p.prs[0]).toMatchObject({ number: 7, status: 'ok', ticket: { number: 2, title: 'T2', column: 'review' } })
+    expect(p.ok).toBe(true)
+  })
+
+  it('flags a PR that closes no ticket, so nothing on any board corresponds to it', async () => {
+    const p = await svc([issue(2)], [pr(7, 'just a change')]).parity()
+    expect(p.prs[0]).toMatchObject({ status: 'no-ticket', ticket: null })
+    expect(p.ok).toBe(false)
+    expect(p.problems[0]).toMatch(/PR #7/)
+  })
+
+  it('shows a denied PR as sent back, matching where the board puts its ticket (not as a mismatch)', async () => {
+    const p = await svc([issue(2, { labels: [{ name: 'needs-reengagement' }] })], [pr(7, 'Closes #2')]).parity()
+    expect(p.prs[0]).toMatchObject({ status: 'sent-back', ticket: { column: 'blocked' } })
+    expect(p.ok).toBe(true)
+  })
+
+  it('flags a ticket whose PR is open but which is filed somewhere other than In review', async () => {
+    const p = await svc([issue(2, { state: 'CLOSED' })], [pr(7, 'Closes #2')]).parity()
+    expect(p.prs[0].status).toBe('elsewhere')
+    expect(p.ok).toBe(false)
+  })
+
+  it('counts what is waiting on you per project, from the same data', async () => {
+    const o = await svc(
+      [issue(2), issue(3, { labels: [{ name: 'ready-for-human' }] }), issue(4, { body: 'Blocked by #2' })],
+      [pr(7, 'Closes #2')]
+    ).overview()
+    expect(o['G-Eskayo/marvin']).toMatchObject({ review: 1, needsYou: 1, blocked: 1 })
+  })
+})
