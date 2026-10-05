@@ -37,7 +37,8 @@ contextBridge.exposeInMainWorld('api', {
     repos: () => ipcRenderer.invoke('docs:repos'),
     refresh: () => ipcRenderer.invoke('docs:refresh'),
     tree: (repo) => ipcRenderer.invoke('docs:tree', repo),
-    content: (repo, path) => ipcRenderer.invoke('docs:content', repo, path)
+    content: (repo, path) => ipcRenderer.invoke('docs:content', repo, path),
+    search: (query, opts) => ipcRenderer.invoke('docs:search', query, opts)
   },
   portfolio: {
     components: () => ipcRenderer.invoke('portfolio:components'),

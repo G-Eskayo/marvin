@@ -423,6 +423,24 @@ its ticketing system creates shows up there with drill-down status. Boards live 
   15 min, and a running app is rebuilt once it is >=1h behind (was 2h / 24h, which made a new feature
   take up to a day to show). Trade-off accepted: the relaunch drops unsaved in-tab edits (Portfolio).
 
+### Triggers over polling (decided 2026-10-03)
+
+Principle: **trigger at the place state is stored, not at the places it's written** (writers are
+unbounded: any chat, either machine, raw `gh`, the GitHub UI). Polling stays only as a backstop.
+- **Local state** (`ticket-stages/`, `dispatch-state.json`, `boards/registry.json`): the Electron main
+  process watches the files and emits a debounced `activity` trigger to the renderer. Catches Python
+  and Node writers alike.
+- **GitHub state** (issues, labels, PRs, comments): the webhook-server's change-detector
+  (`webhook-server/gh_watch.js`) sends one conditional request per registered board repo every ~20s
+  against its most-recently-updated issue (304 = free against the rate limit) and, on change, pings the
+  app's `/refresh` port with topics. Real GitHub webhooks were rejected: they need a public URL and the
+  one static ngrok domain belongs to Marlin. The events feed was rejected: it lags by minutes.
+- **Coverage guard**: the 60s backstop poll compares what it fetched with what it last showed; a change
+  no trigger announced is appended to `~/.claude/logs/trigger-misses.jsonl` and surfaces as the
+  `triggers:missed` Health check, so a gap identifies itself instead of waiting to be noticed.
+- **Not built, deliberately**: a rebuild-on-pull trigger (the sync cycle already rebuilds right after it
+  pulls; only the cycle gap + 15-min settle remain) and a Docs-tab trigger (Docs still refreshes by hand).
+
 ## Dashboard app — Portfolio tab (2026-10-02/03)
 
 The portfolio site (`G-Eskayo/portfolio-website-updater`, WordPress + Avada) had visible inconsistency

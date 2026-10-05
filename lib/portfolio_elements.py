@@ -38,6 +38,7 @@ PART_PROPS = {
     "title": _TEXT + ["display"],
     "description": _TEXT,
     "button": _TEXT + _BOX,
+    "*": _TEXT + _BOX,          # any other part (header, sidebar item, heading ...)
 }
 LOOK_PROPS = sorted({p for props in PART_PROPS.values() for p in props})
 # What to ask the browser who set (CSS property names)
@@ -45,6 +46,7 @@ PROVENANCE_PROPS = ["font-family", "color", "filter", "margin-top", "height", "o
 
 ELEMENTS = {
     "project-card": {
+        "template": "project-card",
         "name": "Project card",
         "description": "A project's card: its photo in a fixed frame with the text box overlaying the bottom of it. "
                        "Used on the category hubs, All Projects and the Other Projects footer.",
@@ -61,6 +63,59 @@ ELEMENTS = {
             {"name": "DESCRIPTION", "label": "Description", "type": "text"},
             {"name": "ALSO_HTML", "label": "\"Also: ...\" line (two-category projects only)", "type": "html"},
         ],
+    },
+    "button-github": {
+        "name": "GitHub button", "template": "button-github",
+        "description": "The project's own repository. First button in a project page's action row.",
+        "selector": 'main a.btn[href*="github.com/G-Eskayo"]', "parts": {"button": ""},
+        "rules": [{"attr": "href", "value": "{{REPO_URL}}"}, {"text": "{{LABEL}}"}],
+        "sample_pages": ["/ai-projects/marvin/"],
+        "fields": [{"name": "REPO_URL", "label": "Repository URL", "type": "url"}, {"name": "LABEL", "label": "Label", "type": "text"}],
+    },
+    "button-download": {
+        "name": "Download button", "template": "button-download",
+        "description": "A file attached to a project (report, paper). After the GitHub button, same row.",
+        "selector": "main a.btn[download]", "parts": {"button": ""},
+        "rules": [{"attr": "href", "value": "{{FILE_URL}}"}, {"text": "{{LABEL}}"}],
+        "sample_pages": ["/ai-projects/marvin/"],
+        "fields": [{"name": "FILE_URL", "label": "File URL", "type": "url"}, {"name": "LABEL", "label": "Label", "type": "text"}],
+    },
+    "site-header": {
+        "name": "Site header", "description": "Logo and main menu. Global: identical on every page.",
+        "selector": ".fusion-header-wrapper", "parts": {"header": "", "menu": ".fusion-main-menu > ul > li:first-child > a"}, "rules": [],
+        "part_props": {"header": ["display", "backgroundColor", "paddingTop", "paddingBottom"], "menu": _TEXT + ["textTransform"]},
+        "sample_pages": ["/ai-projects/marvin/"], "fields": [],
+    },
+    "page-title-bar": {
+        "name": "Page title bar", "description": "The dark bar with the page's own title; comes from the page title.",
+        "selector": ".avada-page-titlebar-wrapper", "parts": {"bar": ".fusion-page-title-bar", "title": ".entry-title"},
+        "part_props": {"bar": ["display", "backgroundColor", "paddingTop", "paddingBottom"], "title": _TEXT},
+        "rules": [{"select": ".entry-title", "text": "{{TITLE}}"}],
+        "sample_pages": ["/ai-projects/marvin/"], "fields": [{"name": "TITLE", "label": "Page title", "type": "text"}],
+    },
+    "hub-sidebar": {
+        "name": "Category sidebar", "description": "The category's project list on hub and project pages; the current page is highlighted.",
+        "selector": "nav.hub-sidebar", "parts": {"sidebar": "", "heading": "nav > div:first-child", "item": ".list-group-item:not(.active)", "active": ".list-group-item.active"},
+        "part_props": {"sidebar": ["display", "backgroundColor"], "heading": ["fontSize", "textTransform", "letterSpacing", "color"],
+                       "item": ["fontFamily", "fontSize", "color", "backgroundColor", "paddingTop", "paddingLeft", "borderTopColor"],
+                       "active": ["fontFamily", "fontSize", "color", "backgroundColor", "paddingTop", "paddingLeft", "borderTopColor"]},
+        "rules": [{"select": "nav > div:first-child", "text": "{{CATEGORY}}"}, {"select": ".list-group", "inner": "{{ITEMS_HTML}}"}],
+        "sample_pages": ["/ai-projects/mancala/"],
+        "fields": [{"name": "CATEGORY", "label": "Category", "type": "text"}, {"name": "ITEMS_HTML", "label": "One link per project", "type": "html"}],
+    },
+    "other-projects": {
+        "name": "Other Projects section", "description": "Two project cards under a heading, filled in the browser from the manifest.",
+        "selector": "#other-projects-mount", "parts": {"section": "", "heading": "h2"},
+        "part_props": {"section": ["display"], "heading": _TEXT},
+        "rules": [{"inner": "", "select": ""}, {"attr": "data-category", "value": "{{CATEGORY}}"}, {"attr": "id", "value": "other-projects-mount"}],
+        "sample_pages": ["/ai-projects/mancala/"], "fields": [{"name": "CATEGORY", "label": "Category (only needed outside category URLs)", "type": "text"}],
+    },
+    "site-footer": {
+        "name": "Site footer", "description": "The copyright bar. Global.",
+        "selector": ".fusion-footer", "parts": {"footer": ".fusion-footer-copyright-area", "notice": ".fusion-copyright-notice"},
+        "part_props": {"footer": ["backgroundColor", "paddingTop", "paddingBottom"], "notice": ["fontSize", "color", "textAlign"]},
+        "rules": [{"select": ".fusion-copyright-notice > div", "inner": "© Copyright {{YEAR}} Gil Eskayo"}],
+        "sample_pages": ["/ai-projects/marvin/"], "fields": [],
     },
 }
 
@@ -95,6 +150,36 @@ def generalize_card(markup: str) -> str:
     return out
 
 
+def normalize_look(props: dict | None) -> dict | None:
+    """A font stack is compared by the family actually drawn (the first), since the order of the fallbacks behind it
+    differs between page generations and changes nothing the visitor sees."""
+    if not props:
+        return props
+    out = dict(props)
+    if out.get("fontFamily"):
+        out["fontFamily"] = out["fontFamily"].split(",")[0].strip()
+    return out
+
+
+def normalize_markup(markup: str) -> str:
+    """Whitespace-insensitive form of generalized markup, so a captured element and its template compare equal."""
+    out = re.sub(r"\s+", " ", markup)
+    out = re.sub(r">\s+<", "><", out)
+    return out.strip()
+
+
+def template_markup(template_id: str, project: Path = PROJECT) -> str | None:
+    """The authored markup of a template (leading doc comment dropped), normalized: the master for any element that
+    has a template, because the template is what the generators and the pipeline emit."""
+    root = project / "templates"
+    try:
+        entry = next(t for t in json.loads((root / "templates.json").read_text())["templates"] if t["id"] == template_id)
+        text = (root / entry["file"]).read_text()
+    except (OSError, StopIteration, ValueError):
+        return None
+    return normalize_markup(re.sub(r"\A\s*<!--.*?-->\s*", "", text, count=1, flags=re.DOTALL))
+
+
 def distinct_looks(looks: list[dict]) -> list[dict]:
     seen, out = set(), []
     for look in looks:
@@ -105,14 +190,15 @@ def distinct_looks(looks: list[dict]) -> list[dict]:
     return out
 
 
-def find_deviations(instances: list[tuple[str, dict]], markup: str | None, look: dict | None, geometry: dict | None) -> list[dict]:
+def find_deviations(instances: list[tuple[str, dict]], markup: str | None, look: dict | None, geometry: dict | None, normalize=None) -> list[dict]:
     """Placements that are not the element: hand-built markup, a different computed look, or different geometry.
     These are what the library surfaces for fixing -- the element itself is never changed to fit them."""
     found: dict[str, set] = {}
     for url, inst in instances:
         why = set()
         try:
-            if markup and generalize_card(inst["html"]) != markup:
+            got = normalize(inst) if normalize else generalize_card(inst["html"])
+            if markup and got != markup:
                 why.add("hand-built markup (differs from the element)")
         except ValueError:
             why.add("not recognisable as the element")
@@ -134,27 +220,58 @@ _GEOM_JS = """([sel, photoSel, boxSel]) => [...document.querySelectorAll(sel)].m
   return {photoHeight: Math.round(pr.height), boxHeight: Math.round(br.height), overlap: Math.round(pr.bottom - br.top)};
 })"""
 
-_LOOK_JS = """([sel, parts, partProps]) => [...document.querySelectorAll(sel)].map(el => {
+_LOOK_JS = """([sel, parts, partProps, rules]) => [...document.querySelectorAll(sel)].map(el => {
   const out = {};
   for (const [name, psel] of Object.entries(parts)) {
     const e = psel === '' ? el : el.querySelector(psel);
     if (!e) { out[name] = null; continue; }
     const cs = getComputedStyle(e);
-    out[name] = Object.fromEntries((partProps[name] || []).map(p => [p, cs[p]]));
+    out[name] = Object.fromEntries((partProps[name] || partProps['*'] || []).map(p => [p, cs[p]]));
   }
-  return {look: out, html: el.outerHTML};
+  // Generalize a COPY: apply the element's placeholder rules, then drop what the theme and its scripts add at runtime.
+  const c = el.cloneNode(true);
+  for (const r of (rules || [])) {
+    const nodes = r.select ? [...c.querySelectorAll(r.select)] : [c];
+    for (const n of nodes) {
+      if (r.remove) n.remove();
+      else if (r.attr) n.setAttribute(r.attr, r.value);
+      else if (r.inner !== undefined) n.innerHTML = r.inner;
+      else if (r.text !== undefined) n.textContent = r.text;
+    }
+  }
+  c.querySelectorAll('script, style, noscript').forEach(n => n.remove());
+  const walker = document.createTreeWalker(c, NodeFilter.SHOW_COMMENT);
+  const comments = []; while (walker.nextNode()) comments.push(walker.currentNode);
+  comments.forEach(n => n.remove());
+  const noise = ['lazyloaded', 'lazyload', 'lazyloading', 'ls-is-cached', 'fusion-responsive-typography-calculated'];
+  for (const n of [c, ...c.querySelectorAll('*')]) {
+    for (const a of ['data-fontsize', 'data-lineheight', 'decoding', 'data-orig-src', 'data-orig-sizes', 'srcset', 'sizes', 'loading']) n.removeAttribute(a);
+    if ((n.getAttribute('style') || '').startsWith('--fontSize')) n.removeAttribute('style');
+    noise.forEach(k => n.classList.remove(k));
+    // per-page STATE, not part of the element: the menu item for the page you are on, numbered menu-item classes
+    [...n.classList].filter(k => /^(current[-_]|menu-item-\\d+$|fusion-mobile-menu-item-\\d+$|page_item$|page-item-\\d+$|fusion-mobile-current-nav-item$)/.test(k)).forEach(k => n.classList.remove(k));
+    if (n.getAttribute('class') === '') n.removeAttribute('class');
+  }
+  return {look: out, html: el.outerHTML, markup: c.outerHTML};
 })"""
 
 
 def _page_looks(page, definition: dict) -> list[dict]:
-    return page.evaluate(_LOOK_JS, [definition["selector"], definition["parts"], PART_PROPS])
+    found = page.evaluate(_LOOK_JS, [definition["selector"], definition["parts"], definition.get("part_props") or PART_PROPS, definition.get("rules")])
+    for f in found:
+        f["look"] = {part: normalize_look(props) for part, props in f["look"].items()}
+    return found
 
 
 def page_instances(page, definition: dict) -> list[dict]:
     """Every placement of the element on the current page: its look (part by part), geometry and generalized markup."""
     looks = _page_looks(page, definition)
-    geoms = page.evaluate(_GEOM_JS, [definition["selector"], definition["parts"]["photo"], definition["parts"]["box"]])
-    return [{"look": l["look"], "geometry": g, "html": l["html"]} for l, g in zip(looks, geoms)]
+    if "photo" in definition["parts"] and "box" in definition["parts"]:
+        geoms = page.evaluate(_GEOM_JS, [definition["selector"], definition["parts"]["photo"], definition["parts"]["box"]])
+    else:
+        geoms = [None] * len(looks)
+    return [{"look": l["look"], "geometry": g, "html": l["html"], "markup": normalize_markup(l["markup"]) if definition.get("rules") is not None else None}
+            for l, g in zip(looks, geoms)]
 
 
 def _provenance(page, definition: dict) -> dict:
@@ -187,11 +304,17 @@ def _provenance(page, definition: dict) -> dict:
     return result
 
 
+def _most_common(items: list):
+    from collections import Counter
+    return Counter(json.dumps(i, sort_keys=True) for i in items).most_common(1)[0][0] if items else None
+
+
 def capture(element_id: str = "project-card", base: str = BASE, project: Path = PROJECT, inventory: Path = INVENTORY) -> dict:
     from playwright.sync_api import sync_playwright
     definition = ELEMENTS[element_id]
+    generic = definition.get("rules") is not None            # generalized in the page; the card keeps its own regex path
     pages = [p["url"] for p in json.loads(Path(inventory).read_text())["pages"]]
-    usage, all_looks, all_geoms, instances, markup, first_page = {}, [], [], [], None, None
+    usage, all_geoms, instances, first_page = {}, [], [], None
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
         page = browser.new_page(viewport={"width": 1440, "height": 900})
@@ -201,22 +324,30 @@ def capture(element_id: str = "project-card", base: str = BASE, project: Path = 
             found = page_instances(page, definition)
             if found:
                 usage[url] = len(found)
-                all_looks += [f["look"] for f in found]
                 all_geoms += [f["geometry"] for f in found if f["geometry"]]
                 instances += [(url, f) for f in found]
-                if markup is None:
-                    markup, first_page = generalize_card(found[0]["html"]), url
+                first_page = first_page or url
         provenance = {}
         if first_page:
             page.goto(base + definition["sample_pages"][0], wait_until="networkidle")
             provenance = _provenance(page, definition)
         browser.close()
-    looks = distinct_looks(all_looks)
-    deviations = find_deviations(instances, markup, looks[0] if looks else None, distinct_looks(all_geoms)[0] if all_geoms else None)
+
+    normalize = (lambda inst: inst["markup"]) if generic else None
+    live_markups = [(normalize(i) if normalize else generalize_card(i["html"])) for _, i in instances]
+    # The master is the template when the element has one (it is what the generators and the pipeline emit); otherwise
+    # the form most placements share.
+    master = (template_markup(definition["template"], project) if definition.get("template") else None) \
+        or (json.loads(_most_common(live_markups)) if live_markups else None)
+    conforming = [i for (_, i), m in zip(instances, live_markups) if m == master]
+    looks = distinct_looks([i["look"] for _, i in instances])
+    look = json.loads(_most_common([i["look"] for i in conforming] or [i["look"] for _, i in instances])) if instances else None
+    geometry = json.loads(_most_common(all_geoms)) if all_geoms else None
+    deviations = find_deviations(instances, master, look, geometry, normalize)
     result = {
         "id": element_id, "name": definition["name"], "description": definition["description"],
-        "fields": definition["fields"], "markup": markup, "look": looks[0] if looks else None,
-        "distinct_looks": len(looks), "geometry": distinct_looks(all_geoms)[0] if all_geoms else None,
+        "fields": definition["fields"], "markup": master, "look": look,
+        "distinct_looks": len(looks), "geometry": geometry,
         "distinct_geometries": len(distinct_looks(all_geoms)), "deviations": deviations, "provenance": provenance,
         "usage": {"pages": usage, "placements": sum(usage.values())},
         "captured_from": first_page, "captured_at": datetime.now(timezone.utc).isoformat(),

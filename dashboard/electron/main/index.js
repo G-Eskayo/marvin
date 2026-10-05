@@ -15,6 +15,7 @@ import { createPortfolio } from './portfolio.js'
 import { listTicketActivity, getTicketTimeline } from './activity.js'
 import { readRegistry, loadBoard, REGISTRY_PATH } from './boards.js'
 import { createTriggerHub, createReconciler } from './triggers.js'
+import { createIndexer, buildDocsIndex } from './docs_search.js'
 import { STAGES_DIR } from '../../webhook-server/ticket_stages.js'
 import { DISPATCH_STATE_PATH } from './dispatch_status.js'
 import { createHash } from 'crypto'
@@ -171,7 +172,14 @@ function registerActivityHandlers() {
 
 function registerDocsHandlers() {
   ipcMain.handle('docs:repos', () => readCachedRepos())
-  ipcMain.handle('docs:refresh', () => discoverDocFirstRepos(execFileAsync))
+  // Full-text search over every browsable doc; the index rebuilds in the background when stale.
+  const docsIndexer = createIndexer({ build: () => buildDocsIndex(execFileAsync, readCachedRepos().repos) })
+  ipcMain.handle('docs:refresh', async () => {
+    const repos = await discoverDocFirstRepos(execFileAsync)
+    docsIndexer.reindex()
+    return repos
+  })
+  ipcMain.handle('docs:search', (_event, query, opts) => docsIndexer.search(String(query || ''), opts))
   ipcMain.handle('docs:tree', (_event, repo) => listRepoDocTree(execFileAsync, repo))
   ipcMain.handle('docs:content', (_event, repo, filePath) => fetchFileContent(execFileAsync, repo, filePath))
 
