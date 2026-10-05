@@ -620,9 +620,24 @@ untouched (it is the "legacy profile"); only repos with a profile file use the p
   clarity-captions #7 and marvin #7 would have collided. Non-marvin tickets are keyed `<repo>-<n>`; marvin's
   keep their plain number (nothing existing moves). `gh pr create`/`gh issue comment` now pass `--repo`
   explicitly instead of relying on the process's directory.
-- **Not in this change**: approving/merging a clarity-captions PR from the dashboard. The merge gate
-  (`webhook-server/merge.js`) is still marvin-only; those PRs show "Review on GitHub" until it reads a
-  profile too.
+- **Approving and denying from MR Review (2026-10-05)**: the merge gate now reads the profile too. A project's
+  PRs get Approve/Deny only if its profile says `"merge_from_dashboard": true`; the webhook enforces that
+  itself (not just the screen) and refuses others with `NO_MERGE_PROFILE`. **Deny** needs no profile: the repo
+  comes from the PR URL (it used to be hardcoded to marvin for the ticket comment, claim release, label and
+  close). **Approve** is `gh pr merge` as before, but when the PR is behind its base branch the gate fetches and
+  rebases in the PROJECT's clone against the profile's `base_branch`, then re-runs the profile's required
+  checks in that scratch worktree through `project_profile.py verify` (the same measuring code the pipeline
+  uses, one implementation); a failure goes back to the ticket as structured feedback (a failing XCTest is
+  named). Stage records go to the project's own timeline. marvin-only steps (rebuilding the dashboard app)
+  are skipped. If the machine hosting the webhook lacks a tool the required checks need, approve refuses with
+  `ENV_MISSING` and does NOT send the ticket back for rework (the ticket did nothing wrong).
+  **Verified 2026-10-05 for real**: a branch behind `main` in a local stand-in for GitHub went through the gate's
+  own `rebaseAndRetest` in a scratch worktree of a clarity-captions clone, which called the real `verify`
+  (real `swift test`, clean, 30s) and pushed the rebased branch; a deliberately broken XCTest came back as
+  `GATE_TESTS_FAILED` naming `CaptionCoreTests.ThemeTests/testDarkAndLightBackgroundsAreTold`. The live webhook
+  refuses a project with no profile (`NO_MERGE_PROFILE`) and lets an opted-in one through to the merge step.
+  Not exercised: a real approve of a real PR (it would merge it). clarity-captions is opted in
+  (`merge_from_dashboard: true`) independently of `dispatch`, which is still off.
 
 ## Dashboard app — Portfolio tab (2026-10-02/03)
 
@@ -758,6 +773,13 @@ row, Other Projects footer) plus a stack of **sections** after the title card.
   guard applies); the add-project pipeline and the dashboard's Add project tab accept `layout: long-form`, a lead and sections
   (`## Heading` starts a section). Helicopter Crutches and SkineeDipping are migrated: all 17 project pages now follow a
   layout (15 short, 2 long-form).
+- **More projects converted (2026-10-05):** `lib/portfolio_longform.py` turns a short project page into a long-form one by
+  making each bold heading ("Key Contributions:", "Skills Demonstrated:", "Links:", or a heading tag) its own section;
+  lead, title, subtitle, hero, Stack line and buttons carry over; nothing is dropped (guard) and `--rollback` restores. Eight
+  pages converted: Anomaly Detection, Regression & Classification, Resume Selector, Random Number, Pipeline, MITRE, Mancala,
+  Marketplace Agent (10 long-form pages in all). Left alone, with reasons: Algorithms and Bug Bounty (headings repeat: the
+  blocks need grouping by hand) and the five modern pages (Marvin, Paper Dive, Resume Tailor, Killer Sudoku, Clarity
+  Captions: short by design, no section structure; they become long-form when they get new content, not by restructuring).
 
 ### Element pipeline and the card text box (2026-10-05)
 

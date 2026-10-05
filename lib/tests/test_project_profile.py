@@ -252,3 +252,55 @@ def test_selftest_says_so_when_this_machine_cannot_run_the_required_checks(tmp_p
     profile = {**PROFILE, "clone_hints": [str(tmp_path)]}
     report = pp.selftest(profile, runner=runner_returning([]), have=lambda cap, env: False, catalog={"projects": []})
     assert report["ok"] is False and "swift" in report["error"]
+
+
+# ── the merge gate's view of a profile ──────────────────────────────────────
+
+def test_a_profile_does_not_allow_merging_from_the_dashboard_unless_it_says_so():
+    p = pp._validate({"repo": "G-Eskayo/x", "verify": [{"id": "t", "command": ["true"]}]}, "x")
+    assert p["merge_from_dashboard"] is False
+    q = pp._validate({"repo": "G-Eskayo/x", "merge_from_dashboard": True, "verify": [{"id": "t", "command": ["true"]}]}, "x")
+    assert q["merge_from_dashboard"] is True
+
+
+def test_gate_info_gives_the_gate_the_clone_the_base_branch_and_what_this_machine_lacks(tmp_path):
+    (tmp_path / ".git").mkdir()
+    profile = {**PROFILE, "base_branch": "trunk", "merge_from_dashboard": True, "clone_hints": [str(tmp_path)]}
+    info = pp.gate_info(profile, catalog={"projects": []}, have=lambda cap, env: cap != "swift")
+    assert info == {"repo": "G-Eskayo/proj", "clone": str(tmp_path), "base_branch": "trunk", "merge_from_dashboard": True, "missing_here": ["swift"]}
+
+
+def test_verify_passes_when_every_required_check_is_clean(tmp_path):
+    (tmp_path / "Pkg").mkdir()
+    r = pp.verify_dir(PROFILE, tmp_path, runner=runner_returning([(0, XCTEST_OK)]), have=lambda cap, env: cap == "swift")
+    assert r["ok"] is True and r["kind"] == "passed"
+    assert "60 passed" in r["summary"]
+
+
+def test_verify_fails_with_the_failing_output_when_a_test_fails(tmp_path):
+    (tmp_path / "Pkg").mkdir()
+    out = "Test Case '-[CoreTests.AlignTests testBad]' failed (0.1 seconds).\n" + XCTEST_FAIL
+    r = pp.verify_dir(PROFILE, tmp_path, runner=runner_returning([(1, out)]), have=lambda cap, env: cap == "swift")
+    assert r["ok"] is False and r["kind"] == "failed"
+    assert "2 failed" in r["summary"] and "testBad" in r["output_tail"]
+
+
+def test_verify_reports_a_missing_toolchain_as_env_missing_not_as_a_failure(tmp_path):
+    r = pp.verify_dir(PROFILE, tmp_path, runner=runner_returning([]), have=lambda cap, env: False)
+    assert r["ok"] is False and r["kind"] == "env_missing" and "swift" in r["summary"]
+
+
+def test_verify_reports_a_crash_without_a_summary_as_an_error(tmp_path):
+    (tmp_path / "Pkg").mkdir()
+    r = pp.verify_dir(PROFILE, tmp_path, runner=runner_returning([(1, NO_XCTEST)]), have=lambda cap, env: cap == "swift")
+    assert r["ok"] is False and r["kind"] == "error" and "XCTest" in r["output_tail"]
+
+
+def test_verify_feedback_leads_with_the_failing_lines_even_when_a_long_run_buries_them(tmp_path):
+    (tmp_path / "Pkg").mkdir()
+    noise = "".join(f"Test Case '-[S.T test{i}]' passed (0.0 seconds).\n" for i in range(400))
+    out = "Test Case '-[S.T testBroken]' failed (0.1 seconds).\n" + noise + XCTEST_FAIL
+    r = pp.verify_dir(PROFILE, tmp_path, runner=runner_returning([(1, out)]), have=lambda cap, env: cap == "swift")
+    assert r["kind"] == "failed"
+    assert r["output_tail"].startswith("Test Case '-[S.T testBroken]' failed")  # not lost off the end
+    assert len(r["output_tail"]) <= 4000
