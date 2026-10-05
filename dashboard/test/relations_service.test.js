@@ -93,3 +93,45 @@ describe('review parity (MR Review <-> board)', () => {
     expect(o['G-Eskayo/marvin']).toMatchObject({ review: 1, needsYou: 1, blocked: 1 })
   })
 })
+
+describe('parity does not raise an alarm on a stale snapshot', () => {
+  // The ticket's local stage log says verification passed (so the board files it under In review) a moment
+  // before its PR exists, or the cached GitHub PR list predates it. Looking again with fresh data shows no problem.
+  const raised = { 7: [{ stage: 'verifying', status: 'passed', detail: 'improved', timestamp: '2026-10-05T10:00:00Z' }] }
+  const open = issue(7, { labels: [{ name: 'ready-for-agent' }, { name: 'claimed:mac-mini' }] })
+  const pr = { number: 70, title: 'Implement #7', url: 'p70', body: 'Closes #7', state: 'OPEN', files: [] }
+
+  function stale() {
+    let fresh = false
+    const svc = createRelationsService({
+      getRepos: () => ['G-Eskayo/marvin'],
+      getBoardData: async () => ({ issues: [open], prs: fresh ? [pr] : [] }),
+      getDocs: async () => [], getProjects: () => projects, getStages: () => raised,
+      recheck: () => { fresh = true }
+    })
+    return svc
+  }
+
+  it('re-reads with fresh data before reporting, and reports nothing if the mismatch was only staleness', async () => {
+    const r = await stale().parity()
+    expect(r.problems).toEqual([])
+    expect(r.ok).toBe(true)
+  })
+
+  it('still reports a mismatch that survives a fresh read', async () => {
+    const svc = createRelationsService({
+      getRepos: () => ['G-Eskayo/marvin'],
+      getBoardData: async () => ({ issues: [open], prs: [] }),
+      getDocs: async () => [], getProjects: () => projects, getStages: () => raised, recheck: () => {}
+    })
+    const r = await svc.parity()
+    expect(r.problems[0]).toMatch(/Ticket #7 .* is filed under In review but has no open PR/)
+  })
+
+  it('does not re-read when there is nothing to double-check', async () => {
+    const recheck = vi.fn()
+    const svc = createRelationsService({ getRepos: () => ['G-Eskayo/marvin'], getBoardData: async () => ({ issues: [], prs: [] }), getDocs: async () => [], getProjects: () => projects, recheck })
+    await svc.parity()
+    expect(recheck).not.toHaveBeenCalled()
+  })
+})

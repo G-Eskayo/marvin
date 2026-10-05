@@ -194,7 +194,7 @@ def test_a_scan_with_nothing_ready_leaves_a_run_log_saying_so(monkeypatch):
     run = json.loads((job_events.JOBS_DIR / "ticket-pipeline.json").read_text())["runs"][-1]
     assert run["status"] == "passed" and run["summary"] == "no ready tickets"
     steps = [s["step"] for s in run["steps"]]
-    assert steps == ["Board discovery", "Project catalog", "Circuit breaker", "Scanning tickets"]
+    assert steps == ["Board discovery", "Project catalog", "Conflicted PRs", "Circuit breaker", "Scanning tickets"]
 
 
 def test_a_tripped_breaker_is_visible_in_the_run_log(monkeypatch):
@@ -483,3 +483,51 @@ def test_attempts_count_finished_attempts_not_claims(tmp_path, monkeypatch):
     ts.record_stage(7, "claimed", "started", "claimed:mac-mini", machine="m", repo="o/r")
     ts.record_stage(7, "done", "failed", "Unhandled exception: git fetch", repo="o/r")
     assert tp._attempts("o/r", 7) == 1
+
+
+# ── conflicted PRs are sent back automatically, before a human wastes an approval on them ──
+
+def _pr(number, ticket_ref, mergeable="CONFLICTING", labels=()):
+    return {"number": number, "body": f"Closes {ticket_ref}\n\nAutonomously implemented.", "mergeable": mergeable,
+            "headRefName": f"pipeline/x-{number}", "labels": [{"name": l} for l in labels]}
+
+
+def _requeue(prs, issues, calls):
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        out = prs if "pr" in cmd and "list" in cmd else issues if "issue" in cmd and "list" in cmd else ""
+        return SimpleNamespace(returncode=0, stdout=__import__("json").dumps(out) if out != "" else "", stderr="")
+    return fake_run
+
+
+def test_a_conflicting_pr_sends_its_ticket_back_with_a_reason(monkeypatch):
+    calls = []
+    issues = [{"number": 34, "labels": [{"name": "ready-for-agent"}]}]
+    monkeypatch.setattr(tp.subprocess, "run", _requeue([_pr(48, "o/r#34")], issues, calls))
+    sent = tp._requeue_conflicted_prs("o/r")
+    assert sent == [34]
+    assert any("--add-label" in c and "needs-reengagement" in c for c in calls)
+    comment = [c for c in calls if "comment" in c][0]
+    assert "PR #48" in " ".join(comment) and "main" in " ".join(comment)
+
+
+def test_only_conflicting_prs_whose_ticket_is_not_already_sent_back_are_touched(monkeypatch):
+    calls = []
+    prs = [_pr(48, "o/r#34", "MERGEABLE"), _pr(49, "o/r#35", "UNKNOWN"), _pr(50, "o/r#36"), _pr(51, "o/r#37")]
+    issues = [{"number": 36, "labels": [{"name": "needs-reengagement"}]},                # already sent back
+              {"number": 37, "labels": [{"name": "pinned"}]}]                            # a person's hands off
+    monkeypatch.setattr(tp.subprocess, "run", _requeue(prs, issues, calls))
+    assert tp._requeue_conflicted_prs("o/r") == []
+    assert not any("--add-label" in c for c in calls)
+
+
+def test_a_pr_with_no_ticket_reference_is_left_alone(monkeypatch):
+    calls = []
+    pr = {"number": 60, "body": "hand-made PR", "mergeable": "CONFLICTING", "headRefName": "x", "labels": []}
+    monkeypatch.setattr(tp.subprocess, "run", _requeue([pr], [], calls))
+    assert tp._requeue_conflicted_prs("o/r") == []
+
+
+def test_a_gh_failure_is_swallowed_not_fatal(monkeypatch):
+    monkeypatch.setattr(tp.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=1, stdout="", stderr="boom"))
+    assert tp._requeue_conflicted_prs("o/r") == []
