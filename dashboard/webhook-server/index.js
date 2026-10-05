@@ -121,6 +121,6 @@ server.listen(PORT, () => {
   startChangeWatch({
     getRepos: () => readRegistry().map((b) => b.repo),
     probe: createGithubProbe(),
-    ping: (repo) => forwardRefreshPing(DASHBOARD_REFRESH_URL, (url) => postJson(url, { topics: ['activity', 'mr'], source: `github:${repo}` }))
+    ping: (repo) => (console.log(`[gh-watch] change detected on ${repo} at ${new Date().toISOString()}`), forwardRefreshPing(DASHBOARD_REFRESH_URL, (url) => postJson(url, { topics: ['activity', 'mr'], source: `github:${repo}` })))
   })
 })

@@ -89,6 +89,7 @@ export function searchDocs(index, query, { repo = null, limit = 50 } = {}) {
         headingIndex: section.headingIndex,
         snippet: snippetAround(section.text || section.heading, terms),
         terms,
+        state: doc.state ?? null,
         score
       })
     }
@@ -98,7 +99,7 @@ export function searchDocs(index, query, { repo = null, limit = 50 } = {}) {
 
 // Keeps the index fresh without ever blocking a search on a rebuild unless
 // there is nothing to search yet. `build` and `load` are injected for tests.
-export function createIndexer({ build, load = loadIndex, maxAgeMs = MAX_AGE_MS }) {
+export function createIndexer({ build, load = loadIndex, maxAgeMs = MAX_AGE_MS, getLocal = async () => ({ repos: new Set(), docs: [] }) }) {
   let current = null
   let inflight = null
 
@@ -118,11 +119,15 @@ export function createIndexer({ build, load = loadIndex, maxAgeMs = MAX_AGE_MS }
       let idx = current || load()
       if (idx.docs.length === 0) idx = (await rebuild()) || idx
       else if (isStale(idx, maxAgeMs)) rebuild()
+      // Repos with a local clone are read live from disk (so uncommitted edits are
+      // searchable); only the rest come from the cached GitHub index.
+      const local = await getLocal()
+      const docs = [...idx.docs.filter((d) => !local.repos.has(d.repo)), ...local.docs]
       return {
-        results: searchDocs(idx, query, opts),
+        results: searchDocs({ docs }, query, opts),
         indexedAt: idx.generated_at,
         indexing: inflight !== null,
-        docCount: idx.docs.length
+        docCount: docs.length
       }
     }
   }

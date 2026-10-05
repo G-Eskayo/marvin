@@ -521,7 +521,14 @@ replaced by this automated path**: that gap is what this section closes.
    page created under its hub, manifest entry appended, hub/All Projects/sidebars regenerated, evaluation run. Proven end
    to end on the dev site with a throwaway project (then removed).
 6. De-duplicate page layouts (generator strings vs `templates/*.html` vs 9 legacy pages). (Not started.)
-7. Remaining elements through capture: buttons, sidebar, header, title bar, footers, page layouts. (Not started.)
+7. **Done for buttons, header, title bar, sidebar, Other Projects section, footer (2026-10-05):** captured from the live
+   dev site into the library (generalized in the page by placeholder rules; per-page state such as the current menu item
+   removed; each part records only the properties the element sets; fonts compared by the family drawn). All seven
+   dashboard previews match the live site (parity), and the evaluator checks every element wherever it appears:
+   100 page/viewport combinations, 0 findings. Capturing them also surfaced and fixed the last legacy GitHub links
+   (Anomaly Detection's `href=" https..."` with a stray space, SkineeDipping's WP Coder block). The GitHub rule is now:
+   the page has the canonical button; further plain links into the repo are references. Page layouts (project, hub, All
+   Projects, content) are still to capture. The download button has no live placement yet (library entry from its template).
 
 ## Citation-graph knowledge base (in design, not yet built)
 

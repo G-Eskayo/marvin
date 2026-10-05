@@ -180,3 +180,20 @@ describe('createIndexer', () => {
     expect(build).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('createIndexer with local docs', () => {
+  const remote = { repo: 'm', path: 'CONTEXT.md', label: 'CONTEXT.md', content: '# A\n\nremote only text\n' }
+  const local = { repo: 'm', path: 'CONTEXT.md', label: 'CONTEXT.md', content: '# A\n\nlocal draft text\n', state: 'uncommitted' }
+  const fresh = () => ({ generated_at: new Date().toISOString(), docs: [remote] })
+
+  it('searches the local copy instead of the GitHub copy of the same repo', async () => {
+    const ix = createIndexer({ build: async () => fresh(), load: fresh, getLocal: async () => ({ repos: new Set(['m']), docs: [local] }) })
+    expect((await ix.search('draft')).results[0]).toMatchObject({ repo: 'm', state: 'uncommitted' })
+    expect((await ix.search('remote')).results).toEqual([])
+  })
+
+  it('still searches GitHub copies of repos with no local clone', async () => {
+    const ix = createIndexer({ build: async () => fresh(), load: fresh, getLocal: async () => ({ repos: new Set(['x']), docs: [] }) })
+    expect((await ix.search('remote')).results.length).toBe(1)
+  })
+})

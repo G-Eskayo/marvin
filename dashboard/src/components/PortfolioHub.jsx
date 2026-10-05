@@ -284,7 +284,7 @@ function Specimen({ template, head, element }) {
 }
 
 // A part of the page that wraps every page (not authored per page): shown as it is on the site, with where it comes from.
-function ChromePart({ part, head }) {
+function ChromePart({ part, head, element }) {
   const [open, setOpen] = useState(false)
   return (
     <article className="rounded-lg border border-neutral-800 p-4">
@@ -301,6 +301,7 @@ function ChromePart({ part, head }) {
         {open && <CopyButton text={part.markup} label="Copy markup" />}
       </div>
       {open && <pre className="mt-2 max-h-80 overflow-auto rounded border border-neutral-800 bg-neutral-950 p-3 text-[11px] text-neutral-300">{part.markup}</pre>}
+      {element && <ElementDetails element={element} />}
     </article>
   )
 }
@@ -350,7 +351,7 @@ function Templates() {
         <h2 className="text-sm font-medium uppercase tracking-wide text-neutral-400">Around every page — generated, not authored per page</h2>
         {chrome.length === 0 ? (
           <p className="text-xs text-neutral-500">Not captured yet: start the dev site and use Refresh in Site inventory.</p>
-        ) : chrome.map((c) => <ChromePart key={c.id} part={c} head={head} />)}
+        ) : chrome.map((c) => <ChromePart key={c.id} part={c} head={head} element={elements[c.id]} />)}
       </section>
       {groupTemplates(templates).map((g) => (
         <section key={g.kind} className="flex flex-col gap-4">

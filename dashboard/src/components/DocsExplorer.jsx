@@ -41,6 +41,7 @@ function RepoList({ repos, generatedAt, refreshing, onRefresh, selected, onSelec
                 }`}
               >
                 {repo.name}
+                {repo.local && <span title={`Local clone: ${repo.local}`} className="ml-1 text-[10px] text-emerald-500">●</span>}
               </button>
             </li>
           ))}
@@ -69,15 +70,31 @@ function DocTree({ tree, selectedPath, onSelect }) {
   )
 }
 
+const STATE_BADGE = {
+  uncommitted: { text: 'uncommitted', cls: 'bg-amber-950 text-amber-300', hint: 'Changed on this machine, not committed yet' },
+  unpushed: { text: 'unpushed', cls: 'bg-sky-950 text-sky-300', hint: 'Committed here but not on GitHub yet (vs. last fetched origin/main)' }
+}
+
+function StateBadge({ state }) {
+  const b = STATE_BADGE[state]
+  if (!b) return null
+  return (
+    <span title={b.hint} className={`ml-1 shrink-0 rounded px-1 py-px text-[10px] ${b.cls}`}>
+      {b.text}
+    </span>
+  )
+}
+
 function TreeItem({ item, selected, onSelect }) {
   return (
     <button
       onClick={() => onSelect(item.path)}
-      className={`block w-full truncate rounded px-2 py-1 text-left text-sm transition-colors ${
+      className={`flex w-full items-center rounded px-2 py-1 text-left text-sm transition-colors ${
         selected ? 'bg-neutral-800 text-white' : 'text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200'
       }`}
     >
-      {item.label}
+      <span className="truncate">{item.label}</span>
+      <StateBadge state={item.state} />
     </button>
   )
 }
@@ -175,8 +192,9 @@ function SearchResults({ state, query, onOpen }) {
               onClick={() => onOpen(r)}
               className="w-full rounded-lg border border-neutral-800 bg-neutral-900 p-3 text-left transition-colors hover:border-neutral-600"
             >
-              <p className="text-xs text-neutral-500">
+              <p className="flex items-center text-xs text-neutral-500">
                 {r.repo} / {r.path}
+                <StateBadge state={r.state} />
               </p>
               <p className="mt-0.5 text-sm font-medium text-white">
                 <Highlight text={r.heading || r.label} terms={r.terms} />
@@ -205,6 +223,8 @@ export default function DocsExplorer() {
   const [searchState, setSearchState] = useState(null)
   const [showResults, setShowResults] = useState(false)
   const [pendingHeading, setPendingHeading] = useState(null)
+  const [source, setSource] = useState(null)
+  const [docsTick, setDocsTick] = useState(0)
   const scrollRef = useRef(null)
 
   useEffect(() => {
@@ -230,7 +250,22 @@ export default function DocsExplorer() {
       live = false
       clearTimeout(id)
     }
-  }, [query])
+  }, [query, docsTick])
+
+  // Local docs or git refs changed (file watch in the main process): refresh what is on screen
+  // in place, without resetting scroll or selection.
+  useEffect(() => window.api.triggers.on((t) => t.topic === 'docs' && setDocsTick((n) => n + 1)), [])
+  useEffect(() => {
+    if (docsTick === 0) return
+    window.api.docs.repos().then(setCache).catch(() => {})
+    if (selectedRepo) loadTree(selectedRepo, { keep: true })
+    if (selectedRepo && selectedPath) {
+      window.api.docs
+        .content(selectedRepo, selectedPath)
+        .then((text) => setContent((cur) => (cur === text ? cur : text)))
+        .catch(() => {})
+    }
+  }, [docsTick])
 
   function jumpToHeading(index) {
     const el = scrollRef.current?.querySelectorAll(HEADING_SELECTOR)[index]
@@ -256,9 +291,15 @@ export default function DocsExplorer() {
     }
   }
 
-  function loadTree(repoName) {
-    setTree([])
-    window.api.docs.tree(repoName).then(setTree).catch((err) => setError(String(err)))
+  function loadTree(repoName, { keep = false } = {}) {
+    if (!keep) setTree([])
+    window.api.docs
+      .tree(repoName)
+      .then((r) => {
+        setTree(r.tree)
+        setSource({ source: r.source, dir: r.dir })
+      })
+      .catch((err) => setError(String(err)))
   }
 
   function handleSelectRepo(repoName) {
@@ -321,7 +362,14 @@ export default function DocsExplorer() {
           {showResults ? (
             <SearchResults state={searchState} query={query} onOpen={handleOpenResult} />
           ) : (
-            <DocViewer content={content} loading={loading} error={error} scrollRef={scrollRef} onJump={jumpToHeading} />
+            <>
+              {source && selectedRepo && (
+                <p className="border-b border-neutral-900 px-6 py-1 text-[11px] text-neutral-600">
+                  {source.source === 'local' ? `Reading local clone · ${source.dir.replace(/^\/Users\/[^/]+/, '~')}` : 'Reading GitHub · no clone of this repo on this machine'}
+                </p>
+              )}
+              <DocViewer content={content} loading={loading} error={error} scrollRef={scrollRef} onJump={jumpToHeading} />
+            </>
           )}
         </div>
       </div>
