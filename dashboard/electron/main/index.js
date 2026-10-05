@@ -13,7 +13,7 @@ import { readHealthStatus, runHealthCheckNow } from './health.js'
 import { readCachedRepos } from './docs.js'
 import { createPortfolio } from './portfolio.js'
 import { listTicketActivity, getTicketTimeline } from './activity.js'
-import { readRegistry, loadBoard, fetchBoardData, fetchCompletedData, withProjectStatus, defaultStagesFor, defaultLiveNumbers, REGISTRY_PATH } from './boards.js'
+import { readRegistry, loadBoard, fetchBoardData, fetchCompletedData, withProjectStatus, defaultStagesFor, defaultLiveNumbers, getEvidence, REGISTRY_PATH } from './boards.js'
 import { createRelationsService } from './relations_service.js'
 import { summarizeBoard, buildCompleted } from './board.js'
 import { createTriggerHub, createReconciler } from './triggers.js'
@@ -217,13 +217,13 @@ function registerActivityHandlers() {
   ipcMain.handle('boards:list', () => withProjectStatus(readRegistry(), readCatalog({ deviceId: deviceId() })))
   ipcMain.handle('boards:load', async (_event, repo, source = 'poll') => {
     assertRegistered(repo)
-    const board = await loadBoard(repo, { gh: ghJson, data: await getBoardData(repo, ghJson) })
+    const board = await loadBoard(repo, { gh: ghJson, data: await getBoardData(repo, ghJson), evidence: await getEvidence(repo) })
     reconciler.observe('activity', repo, boardDigest(board), source)
     return board
   })
   ipcMain.handle('boards:summary', async (_event, repo) => {
     assertRegistered(repo)
-    return summarizeBoard(await loadBoard(repo, { gh: ghJson, data: await getBoardData(repo, ghJson) }))
+    return summarizeBoard(await loadBoard(repo, { gh: ghJson, data: await getBoardData(repo, ghJson), evidence: await getEvidence(repo) }))
   })
   // Completed work (all closed tickets + the PRs that closed them), cached 5 min: it only grows slowly.
   const completedCache = new Map()

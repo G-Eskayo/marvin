@@ -47,6 +47,7 @@ import ticket_policy  # noqa: E402
 import project_profile as pp  # noqa: E402
 import ticket_agents  # noqa: E402
 import project_catalog  # noqa: E402
+import ticket_evidence  # noqa: E402
 
 VENV_PYTHON = str(Path.home() / ".agents" / "venv" / "bin" / "python")
 RUN_TICKET_SCRIPT = str(Path.home() / ".agents" / "lib" / "run_ticket.py")
@@ -88,8 +89,34 @@ def _unclaimed_ready_tickets(repo: str = REPO) -> list[dict]:
         return UNSCORED_RANK if r is None else r
 
     ready = [i for i in issues if eligible(i)]
+    facts = _evidence_facts(repo) if ready else None
+    if facts is not None:  # unreadable evidence must not stall dispatch: fall back to the old behaviour
+        kept = []
+        for i in ready:
+            ev = ticket_evidence.evidence_for(i["number"], facts)
+            if ticket_evidence.verdict(ev) == "clear":
+                kept.append(i)
+            else:
+                print(f"{LOG_PREFIX} skip {repo}#{i['number']}: work already exists "
+                      f"({ticket_evidence.verdict(ev)}: {ev[0]['ref']} {ev[0]['detail'][:60]})", file=sys.stderr)
+        ready = kept
     ready.sort(key=lambda i: (rank(i), i["createdAt"]))
     return ready
+
+
+def _evidence_facts(repo: str):
+    """Git/PR facts for the pre-dispatch guard (ticket_evidence), or None if unreadable."""
+    try:
+        if repo == REPO:
+            clone = str(Path.home() / ".agents")
+        else:
+            prof = pp.load_profile(repo)
+            c = pp.resolve_clone(prof) if prof else None
+            clone = str(c) if c else None
+        return ticket_evidence.gather(repo, clone)
+    except Exception as e:  # noqa: BLE001
+        print(f"{LOG_PREFIX} evidence check failed for {repo}: {e}", file=sys.stderr)
+        return None
 
 
 def _refresh_catalog() -> None:
