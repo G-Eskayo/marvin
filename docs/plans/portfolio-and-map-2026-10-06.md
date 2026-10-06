@@ -20,12 +20,12 @@ Story: Gil is building this for his mom's birthday (25 October 2026). He decided
 
 ## 2. MARVIN page
 
-- [ ] Story rewrite: the problem (Claude starts every session cold), what MARVIN does about it, what it does while Gil is away, then proof.
-- [ ] Facts strip regenerated from the repo, never typed: skills, tests, merged PRs, closed issues, machines.
-- [ ] Dashboard tour: one real screenshot per tab (Metrics, MR Review, Health, Docs, Activity, Portfolio), with a line on what each does.
-- [ ] Charts: pipeline failures by cause over time, with fixes marked; bench cost against correctness (`bench/RESULTS.md`). Commit charts exclude `auto-sync` commits.
-- [ ] "Built with MARVIN": links to the pages MARVIN built or runs (Resume Tailor, Paper Dive, the portfolio tooling, the Clarity and Killer Sudoku pipelines), and those pages link back.
-- [ ] The card image and the page header are the same picture (a still frame of the map, until map v2 replaces both).
+- [x] Story rewrite: the problem (Claude starts every session cold), what MARVIN does about it, what it does while Gil is away, then proof.
+- [~] Facts strip: on the page (counted 2026-10-06 from the repo and GitHub); a generator that refreshes it is still to build.
+- [x] Dashboard tour: one real screenshot per tab (Metrics, MR Review, Health, Docs, Activity, Portfolio), with a line on what each does.
+- [x] Charts: pipeline-written PRs merged per week (30, by repo) and failure causes (53 runs). The failure log only covers 2–6 Oct, too short for an over-time chart; bench stays a table (3 data points).
+- [x] "Built with MARVIN": links to the pages MARVIN built or runs (Resume Tailor, Paper Dive, the portfolio tooling, the Clarity and Killer Sudoku pipelines), and those pages link back.
+- [x] The card image and the page header are the same picture (a still frame of the map, until map v2 replaces both).
 
 ## 3. MARVIN map v2
 
@@ -49,7 +49,7 @@ Design questions to settle before building (grill-with-docs): renderer choice (k
 
 ## 4. Paper Dive and Resume Tailor
 
-- [ ] Push the staged repo updates (waiting on Gil: with or without the Fellows mention).
+- [x] Push the staged repo updates (waiting on Gil: with or without the Fellows mention).
 - [ ] Evidence: a citation-graph render from a real run; a side-by-side of a job posting and the resume it produced (Gil picks which).
 - [ ] Short page rewrites in the new voice.
 
