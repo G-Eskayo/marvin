@@ -19,3 +19,14 @@ Domain terms only. No implementation details — see `docs/adr/` for decisions a
   dashboard tab owns its source files. Grouping nodes and machines own no code and can't be opened.
 - **Borrowed node**: shared code (e.g. the common library) that an opened node calls but doesn't
   own. Shown once, faded, at the edge of the cluster. Shared code is never a system node itself.
+- **Live event**: something MARVIN actually did, as it happens — a skill call, a file touched (in
+  MARVIN's own code or a project repo), a recurring job starting/finishing/failing, a pipeline stage
+  change. Each one lands on a system node (and a code node, when that node is open). Live events
+  exist only on the local machine; the website snapshot has none.
+- **Pulse** vs **state**: a live event shows as a pulse — brief, then gone. Machine health and
+  online/offline are states — a lasting tint that changes only when the condition does.
+- **Map surfaces**: the one map, shown three ways — the **wallpaper** (system layer only, live,
+  not clickable), the **map tab** in the dashboard (both layers, live, clickable), and the
+  **snapshot** on the website (both layers, clickable, frozen, public data only).
+- **Locked node**: a private project shown by name on the snapshot but never openable — no code,
+  no live events. Tells visitors what else is in progress without exposing it.
