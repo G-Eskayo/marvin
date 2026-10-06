@@ -163,10 +163,15 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
         names = labels_of.get(n)
         if names is None or names & {"needs-reengagement", "pinned", "held"}:
             continue
-        add = gh("issue", "edit", str(n), "--repo", repo, "--add-label", "needs-reengagement")
+        # The claim from the run that raised this PR must go too: the dispatcher only takes tickets with no claim, so a
+        # sent-back ticket that kept it would never be rebuilt (clarity-captions #51).
+        edit_args = ["issue", "edit", str(n), "--repo", repo, "--add-label", "needs-reengagement"]
+        for claim in sorted(l for l in names if l.startswith("claimed:")):
+            edit_args += ["--remove-label", claim]
+        add = gh(*edit_args)
         if add.returncode != 0:  # the label may not exist on this repo yet
             gh("label", "create", "needs-reengagement", "--repo", repo, "--color", "d93f0b", "--description", "Sent back: rebuild on the current base branch")
-            add = gh("issue", "edit", str(n), "--repo", repo, "--add-label", "needs-reengagement")
+            add = gh(*edit_args)
         if add.returncode != 0:
             continue
         gh("issue", "comment", str(n), "--repo", repo, "--body",

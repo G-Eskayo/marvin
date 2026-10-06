@@ -500,6 +500,18 @@ def _requeue(prs, issues, calls):
     return fake_run
 
 
+def test_sending_a_ticket_back_releases_its_claim_or_nothing_would_ever_rebuild_it(monkeypatch):
+    """clarity-captions #51 sat 'sent back' for hours: it still carried claimed:mac-mini from the run that raised the PR,
+    and the dispatcher only takes tickets with no claim, so the rebuild was never started."""
+    calls = []
+    issues = [{"number": 34, "labels": [{"name": "ready-for-agent"}, {"name": "claimed:mac-mini"}]}]
+    monkeypatch.setattr(tp.subprocess, "run", _requeue([_pr(48, "o/r#34")], issues, calls))
+    assert tp._requeue_conflicted_prs("o/r") == [34]
+    edit = [c for c in calls if "edit" in c][0]
+    assert "needs-reengagement" in edit
+    assert edit[edit.index("--remove-label") + 1] == "claimed:mac-mini"
+
+
 def test_a_conflicting_pr_sends_its_ticket_back_with_a_reason(monkeypatch):
     calls = []
     issues = [{"number": 34, "labels": [{"name": "ready-for-agent"}]}]
