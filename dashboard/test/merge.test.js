@@ -27,7 +27,7 @@ import {
   _defaultRunTests,
   assertTargetsBase
 } from '../webhook-server/merge.js'
-import { MergeFailure, refusal } from '../webhook-server/failure.js'
+import { MergeFailure, refusal, summarizeGateFailure } from '../webhook-server/failure.js'
 
 const realExec = promisify(execFile)
 
@@ -713,5 +713,84 @@ describe('a PR must target the project base branch', () => {
     const exec = vi.fn().mockResolvedValue({ stdout: JSON.stringify({ baseRefName: 'feature/x' }) })
     await expect(mergePr('https://github.com/G-Eskayo/marvin/pull/9', exec, noopRebuild, noopRedispatch)).rejects.toMatchObject({ payload: { code: 'WRONG_BASE' } })
     expect(exec.mock.calls.some((c) => c[1]?.includes('merge'))).toBe(false)
+  })
+})
+
+describe('merges are serialized per repo (a merge queue of one)', () => {
+  const A1 = 'https://github.com/G-Eskayo/clarity-captions/pull/1'
+  const A2 = 'https://github.com/G-Eskayo/clarity-captions/pull/2'
+  const B1 = 'https://github.com/G-Eskayo/finance-os/pull/1'
+
+  // An exec whose `gh pr merge` call stays open until released, recording what was in flight at the same time.
+  function slowMerges() {
+    const state = { active: 0, maxActive: 0, order: [] }
+    const exec = vi.fn(async (cmd, args) => {
+      if (cmd === 'gh' && args[1] === 'merge') {
+        state.order.push(args[2])
+        state.active += 1
+        state.maxActive = Math.max(state.maxActive, state.active)
+        await new Promise((r) => setTimeout(r, 25))
+        state.active -= 1
+      }
+      return { stdout: JSON.stringify({ baseRefName: 'main' }), stderr: '' }
+    })
+    return { state, exec }
+  }
+  const run = (url, exec) => mergePr(url, exec, noopRebuild, noopRedispatch, vi.fn().mockResolvedValue({ gate: false, headRefName: 'x', body: '' }), vi.fn(), vi.fn(), vi.fn(), { gateContext: async () => ({ repo: 'r', clone: '/c', base: 'main', runTests: vi.fn() }) })
+
+  it('two merges in the same repo never run at the same time, and keep their order', async () => {
+    const { state, exec } = slowMerges()
+    await Promise.all([run(A1, exec), run(A2, exec)])
+    expect(state.maxActive).toBe(1)
+    expect(state.order).toEqual([A1, A2])
+  })
+
+  it('merges in different repos do not wait for each other', async () => {
+    const { state, exec } = slowMerges()
+    await Promise.all([run(A1, exec), run(B1, exec)])
+    expect(state.maxActive).toBe(2)
+  })
+
+  it('a failed merge does not block the ones queued behind it', async () => {
+    const exec = vi.fn(async (cmd, args) => {
+      if (cmd === 'gh' && args[1] === 'merge' && args[2] === A1) throw new Error('boom')
+      return { stdout: JSON.stringify({ baseRefName: 'main' }), stderr: '' }
+    })
+    const results = await Promise.allSettled([run(A1, exec), run(A2, exec)])
+    expect(results[0].status).toBe('rejected')
+    expect(results[1].status).toBe('fulfilled')
+  })
+})
+
+describe('a build-machine failure is not a code failure', () => {
+  const PR = 'https://github.com/G-Eskayo/clarity-captions/pull/49'
+  const CTX2 = { repo: 'G-Eskayo/clarity-captions', clone: '/c', base: 'main', runTests: vi.fn(), resolveConflicts: null }
+
+  it('classifies infrastructure signatures as GATE_INFRA, real test failures as GATE_TESTS_FAILED', () => {
+    expect(summarizeGateFailure('Tests failed after rebasing onto main:\n\nerror: unable to attach DB: accessing build database: database is locked').code).toBe('GATE_INFRA')
+    expect(summarizeGateFailure('Tests failed after rebasing onto main:\n\nERROR: No space left on device').code).toBe('GATE_INFRA')
+    expect(summarizeGateFailure('Tests failed after rebasing onto main:\n\nFAILED test/a.test.js::adds').code).toBe('GATE_TESTS_FAILED')
+    expect(summarizeGateFailure('Rebase onto main failed:\n\nCONFLICT').code).toBe('REBASE_CONFLICT')
+  })
+
+  it('refuses without sending the ticket back, so the PR can simply be approved again', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: JSON.stringify({ baseRefName: 'main' }), stderr: '' })
+    const reengage = vi.fn()
+    const gate = vi.fn().mockResolvedValue({ gate: true, headRefName: 'pipeline/x', body: 'Closes G-Eskayo/clarity-captions#35' })
+    const rebase = vi.fn().mockResolvedValue({ ok: false, reason: 'Tests failed after rebasing onto main:\n\nerror: database is locked' })
+    await expect(mergePr(PR, exec, noopRebuild, noopRedispatch, gate, rebase, reengage, vi.fn(), { gateContext: async () => CTX2 }))
+      .rejects.toMatchObject({ payload: { code: 'GATE_INFRA', action: 'escalate' } })
+    expect(reengage).not.toHaveBeenCalled()
+    expect(exec).not.toHaveBeenCalledWith('gh', ['pr', 'merge', PR, '--merge'])
+  })
+
+  it('still sends a genuinely failing PR back', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: JSON.stringify({ baseRefName: 'main' }), stderr: '' })
+    const reengage = vi.fn().mockResolvedValue(undefined)
+    const gate = vi.fn().mockResolvedValue({ gate: true, headRefName: 'pipeline/x', body: 'Closes G-Eskayo/clarity-captions#35' })
+    const rebase = vi.fn().mockResolvedValue({ ok: false, reason: 'Tests failed after rebasing onto main:\n\nFAILED test/a.test.js::adds' })
+    const result = await mergePr(PR, exec, noopRebuild, noopRedispatch, gate, rebase, reengage, vi.fn(), { gateContext: async () => CTX2 })
+    expect(result.reengaged).toBe(true)
+    expect(reengage).toHaveBeenCalledTimes(1)
   })
 })
