@@ -50,8 +50,8 @@ Design questions to settle before building (grill-with-docs): renderer choice (k
 ## 4. Paper Dive and Resume Tailor
 
 - [x] Push the staged repo updates (waiting on Gil: with or without the Fellows mention).
-- [ ] Evidence: a citation-graph render from a real run; a side-by-side of a job posting and the resume it produced (Gil picks which).
-- [ ] Short page rewrites in the new voice.
+- [x] Evidence: a citation-graph render from a real run; a side-by-side of a job posting and the resume it produced (Gil picks which).
+- [x] Short page rewrites in the new voice.
 
 ## 5. Health board: coverage and rework
 
