@@ -111,3 +111,17 @@ describe('createReconciler', () => {
     expect(misses).toEqual([])
   })
 })
+
+import { refetchesGithub } from '../electron/main/triggers.js'
+describe('refetchesGithub: which triggers mean GitHub\'s data may have changed', () => {
+  it('a local file changing (a pipeline stage file, a doc) does not', () => {
+    expect(refetchesGithub({ topic: 'activity', source: 'file:clarity-captions-27.json' })).toBe(false)
+    expect(refetchesGithub({ topic: 'docs', source: 'file:CONTEXT.md' })).toBe(false)
+    expect(refetchesGithub({ topic: 'agents', source: 'file:run.json' })).toBe(false)
+  })
+  it('a ping from the change watcher or the webhook does', () => {
+    expect(refetchesGithub({ topic: 'activity', source: 'ping' })).toBe(true)
+    expect(refetchesGithub({ topic: 'activity', source: 'gh-watch:G-Eskayo/clarity-captions' })).toBe(true)
+    expect(refetchesGithub({ topic: 'activity' })).toBe(true) // unknown source: be safe and refresh
+  })
+})

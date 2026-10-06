@@ -23,7 +23,7 @@ const mergeOps = createMergeOps()
 import { readRegistry, loadBoard, fetchBoardData, fetchCompletedData, withProjectStatus, defaultStagesFor, defaultLiveNumbers, getEvidence, REGISTRY_PATH } from './boards.js'
 import { createRelationsService } from './relations_service.js'
 import { summarizeBoard, buildCompleted } from './board.js'
-import { createTriggerHub, createReconciler } from './triggers.js'
+import { createTriggerHub, createReconciler, refetchesGithub } from './triggers.js'
 import { listOpenPrsAcrossRepos, prListArgs, createListCache, normalizeSeen, canMergeFromDashboard, repoFromPrUrl, MARVIN_REPO } from './mr_repos.js'
 import { createIndexer, buildDocsIndex, loadIndex } from './docs_search.js'
 import { createDocsService, MASTER_ID } from './docs_service.js'
@@ -76,8 +76,11 @@ async function fetchOpenPrs(light) {
   for (const e of errors) console.error(`[mr] could not list PRs for ${e.repo}: ${e.message}`)
   return prs
 }
-// The status dot, the MR list and the merge-order check share one 45s cache; a merge asks for fresh data.
-const openPrsCache = createListCache({ full: () => fetchOpenPrs(false), light: () => fetchOpenPrs(true) }, 45_000)
+// The status dot, the MR list and the merge-order check share one cache; a merge asks for fresh data.
+// Real PR changes are announced within ~20s by the change watcher (a 'mr' or 'activity' ping), which clears it, so the
+// TTL is only a safety net. At 45s this listing alone cost thousands of requests an hour across the registered repos.
+const OPEN_PRS_TTL_MS = 5 * 60_000
+const openPrsCache = createListCache({ full: () => fetchOpenPrs(false), light: () => fetchOpenPrs(true) }, OPEN_PRS_TTL_MS)
 const listOpenPrs = (opts = {}) => openPrsCache.get(opts)
 
 async function ghIssueView(issueNumber, repo = MARVIN_REPO) {
@@ -87,10 +90,13 @@ async function ghIssueView(issueNumber, repo = MARVIN_REPO) {
 
 // Raw tickets + PRs per repo, shared by the board view and the relation index, kept for 30s so the two
 // (and several tabs) don't each hit GitHub; a trigger or reload clears it.
+// Real GitHub changes are announced within ~20s by the change watcher (a cheap REST check) and clear this, so the
+// TTL is only a safety net.
+const BOARD_DATA_TTL_MS = 5 * 60_000
 const boardDataCache = new Map()
 async function getBoardData(repo, gh) {
   const hit = boardDataCache.get(repo)
-  if (hit && Date.now() - hit.at < 30_000) return hit.data
+  if (hit && Date.now() - hit.at < BOARD_DATA_TTL_MS) return hit.data
   const data = await fetchBoardData(repo, gh)
   boardDataCache.set(repo, { at: Date.now(), data })
   return data
@@ -296,7 +302,9 @@ function registerDocsHandlers() {
   })
   triggerHub.onTrigger((t) => {
     if (t.topic === 'activity' || t.topic === 'docs') {
-      boardDataCache.clear()
+      // Local changes (stage files, saved docs) re-derive columns from the cached GitHub data; only a GitHub-side
+      // change refetches it. Clearing it on every local write cost ~10,000 requests an hour (2026-10-06).
+      if (t.topic === 'activity' && refetchesGithub(t)) { boardDataCache.clear(); openPrsCache.invalidate() }
       relations.invalidate()
     }
   })
@@ -562,7 +570,7 @@ app.whenReady().then(() => {
   createRefreshServer((payload = {}) => {
     const topics = Array.isArray(payload.topics) ? payload.topics : ['mr']
     for (const topic of topics) {
-      if (topic === 'mr') mainWindow?.webContents.send('mr:refresh')
+      if (topic === 'mr') { openPrsCache.invalidate(); mainWindow?.webContents.send('mr:refresh') }
       else triggerHub.emit(topic, payload.source || 'ping')
     }
   }).listen(DASHBOARD_REFRESH_PORT, '127.0.0.1')

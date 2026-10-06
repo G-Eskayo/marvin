@@ -60,3 +60,10 @@ export function createReconciler({ lastEmitAt, record, now = Date.now }) {
     }
   }
 }
+
+// A trigger from a local file (a pipeline stage log, a saved doc) changed something on THIS machine; GitHub's own
+// data (tickets, PRs) did not change, so refetching it would only burn the hourly request budget. Pings from the
+// change watcher or the webhook, and anything of unknown origin, do mean GitHub may have changed.
+export function refetchesGithub(trigger) {
+  return !String(trigger?.source ?? '').startsWith('file:')
+}
