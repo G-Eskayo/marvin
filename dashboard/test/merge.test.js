@@ -769,6 +769,7 @@ describe('a build-machine failure is not a code failure', () => {
   it('classifies infrastructure signatures as GATE_INFRA, real test failures as GATE_TESTS_FAILED', () => {
     expect(summarizeGateFailure('Tests failed after rebasing onto main:\n\nerror: unable to attach DB: accessing build database: database is locked').code).toBe('GATE_INFRA')
     expect(summarizeGateFailure('Tests failed after rebasing onto main:\n\nERROR: No space left on device').code).toBe('GATE_INFRA')
+    expect(summarizeGateFailure('Tests failed after rebasing onto main:\n\nFinanceOS unit tests (npm test) cannot run: this project has no test command yet').code).toBe('GATE_INFRA')
     expect(summarizeGateFailure('Tests failed after rebasing onto main:\n\nFAILED test/a.test.js::adds').code).toBe('GATE_TESTS_FAILED')
     expect(summarizeGateFailure('Rebase onto main failed:\n\nCONFLICT').code).toBe('REBASE_CONFLICT')
   })

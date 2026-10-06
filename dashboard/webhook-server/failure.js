@@ -87,9 +87,9 @@ const TEST_NAME_PATTERNS = [
 // XCTest: "Test Case '-[Suite testName]' failed" -> Suite/testName
 const XCTEST_FAILED = /Test Case '-\[(\S+) (\S+)\]' failed/
 
-// Signatures of the BUILD MACHINE failing rather than the PR's code (a locked build database from two builds
-// at once, a full disk, a lost network). These must not send a good PR back for a pointless rebuild.
-const GATE_INFRA = /database is locked|unable to attach db|no space left on device|could not resolve host|operation not permitted|resource temporarily unavailable|too many open files|cannot allocate memory/i
+// Signatures of the BUILD MACHINE or the project's test SETUP failing rather than the PR's code (a locked build
+// database from two builds at once, a full disk, a lost network, a project with no test script yet). These must not send a good PR back for a pointless rebuild.
+const GATE_INFRA = /has no test command|missing script|database is locked|unable to attach db|no space left on device|could not resolve host|operation not permitted|resource temporarily unavailable|too many open files|cannot allocate memory/i
 
 export function summarizeGateFailure(reason) {
   const text = String(reason ?? '')
