@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Mobile backend service — standalone Node process that vets Tailscale device
+         identity via allowlist and exposes a /status endpoint. Runs under launchd's
+         supervision: restarts on crash (KeepAlive: SuccessfulExit false), stays off
+         until explicitly installed (no RunAtLoad). The allowlist is user-managed at
+         ~/.claude/mobile-allowlist.json — see README.md. -->
+    <key>Label</key>
+    <string>com.marvin.mobile-backend</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/node</string>
+        <string>__HOME__/.agents/dashboard/mobile-backend/index.js</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/.claude/logs/mobile-backend.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/.claude/logs/mobile-backend-error.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>__HOME__</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>
