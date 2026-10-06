@@ -10,6 +10,7 @@ import { listPipelinePrs, approveMr, denyMr, fetchTicketContext, sentBackKeys, c
 import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
 import { readDispatchStatus } from './dispatch_status.js'
 import { readHealthStatus, runHealthCheckNow } from './health.js'
+import { readOnboardingPlans } from './onboarding.js'
 import { readCachedRepos } from './docs.js'
 import { createPortfolio } from './portfolio.js'
 import { createPortfolioProxy, portfolioHost } from './portfolio_remote.js'
@@ -212,6 +213,7 @@ function registerHealthHandlers() {
     await runHealthCheckNow(execFileAsync)
     return readHealthStatus()
   })
+  ipcMain.handle('health:onboarding', () => readOnboardingPlans())
 }
 
 function registerActivityHandlers() {

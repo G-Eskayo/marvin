@@ -363,9 +363,66 @@ def test_module_has_public_api():
     assert hasattr(po, "inspect") and callable(po.inspect)
     assert hasattr(po, "plan") and callable(po.plan)
     assert hasattr(po, "main") and callable(po.main)
+    assert hasattr(po, "write_plan") and callable(po.write_plan)
     assert hasattr(po, "TRIAGE_LABELS") and isinstance(po.TRIAGE_LABELS, set)
 
 
 def test_triage_labels_are_the_canonical_five():
     expected = {"needs-triage", "needs-info", "ready-for-agent", "ready-for-human", "wontfix"}
     assert po.TRIAGE_LABELS == expected
+
+
+# ── Persistence: write_plan ──────────────────────────────────────────────
+
+def test_write_plan_creates_json_file(tmp_path):
+    def mock_gh(args):
+        return ""
+
+    output_path = tmp_path / "test-repo.json"
+    result = po.write_plan("test/repo", gh=mock_gh, path=output_path)
+
+    assert output_path.exists()
+    assert "repo" in result
+    assert result["repo"] == "test/repo"
+    assert "generated_at" in result
+    assert "pieces" in result
+
+
+def test_write_plan_atomic_write(tmp_path):
+    def mock_gh(args):
+        return ""
+
+    output_path = tmp_path / "test-repo.json"
+    po.write_plan("test/repo", gh=mock_gh, path=output_path)
+
+    content = output_path.read_text()
+    parsed = json.loads(content)
+    assert isinstance(parsed, dict)
+    assert parsed["repo"] == "test/repo"
+    # tmp file should not exist
+    assert not output_path.with_suffix(".tmp").exists()
+
+
+def test_write_plan_has_iso_timestamp(tmp_path):
+    def mock_gh(args):
+        return ""
+
+    output_path = tmp_path / "test-repo.json"
+    result = po.write_plan("test/repo", gh=mock_gh, path=output_path)
+
+    # Should be ISO format (can be parsed)
+    from datetime import datetime
+    generated = result["generated_at"]
+    parsed = datetime.fromisoformat(generated)
+    assert parsed is not None
+
+
+def test_write_plan_includes_all_pieces(tmp_path):
+    def mock_gh(args):
+        return ""
+
+    output_path = tmp_path / "test-repo.json"
+    result = po.write_plan("test/repo", gh=mock_gh, path=output_path)
+
+    expected_pieces = {"profile", "ci", "triage_labels", "agent_docs", "board", "clone_and_toolchain", "test_command"}
+    assert set(result["pieces"].keys()) == expected_pieces

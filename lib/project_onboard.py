@@ -14,6 +14,7 @@ import json
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -24,6 +25,13 @@ import project_profile as pp
 
 TIMEOUT = 60
 TRIAGE_LABELS = {"needs-triage", "needs-info", "ready-for-agent", "ready-for-human", "wontfix"}
+ONBOARDING_DIR = Path.home() / ".claude" / "onboarding"
+
+
+def onboarding_path(repo: str) -> Path:
+	"""Filesystem-safe path for a repo's onboarding plan."""
+	safe_repo = repo.replace("/", "-")
+	return ONBOARDING_DIR / f"{safe_repo}.json"
 
 
 def _gh(args: list[str]) -> str:
@@ -247,6 +255,26 @@ def plan(facts: dict) -> dict:
         }
 
     return plan_out
+
+
+def write_plan(repo: str, gh=_gh, path: Path | None = None) -> dict:
+    """Generate and persist a plan for a repo.
+    Calls inspect() and plan(), wraps as {"repo": ..., "generated_at": ..., "pieces": {...}},
+    and atomically writes to the onboarding directory. Returns the full document.
+    """
+    facts = inspect(repo, gh)
+    pieces = plan(facts)
+    doc = {
+        "repo": repo,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "pieces": pieces,
+    }
+    output_path = path or onboarding_path(repo)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = output_path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(doc, indent=2) + "\n")
+    tmp.replace(output_path)
+    return doc
 
 
 def main():

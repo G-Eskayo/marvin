@@ -48,6 +48,7 @@ import project_profile as pp  # noqa: E402
 import ticket_agents  # noqa: E402
 import project_catalog  # noqa: E402
 import ticket_evidence  # noqa: E402
+import project_onboard  # noqa: E402
 
 VENV_PYTHON = str(Path.home() / ".agents" / "venv" / "bin" / "python")
 RUN_TICKET_SCRIPT = str(Path.home() / ".agents" / "lib" / "run_ticket.py")
@@ -265,6 +266,22 @@ def _discover_boards() -> list[str]:
     return board_registry.discover(REPO.split("/")[0], extra_repos=_active_project_repos())
 
 
+def _refresh_onboarding_plans() -> None:
+    """Re-plan every registered board repo, one at a time, swallowing per-repo failures."""
+    try:
+        boards = board_registry.list_boards()
+        for board in boards:
+            repo = board.get("repo")
+            if not repo:
+                continue
+            try:
+                project_onboard.write_plan(repo)
+            except Exception as e:  # noqa: BLE001
+                print(f"{LOG_PREFIX} onboarding plan failed for {repo}: {e}", file=sys.stderr)
+    except Exception as e:  # noqa: BLE001
+        print(f"{LOG_PREFIX} onboarding plans refresh failed: {e}", file=sys.stderr)
+
+
 def _ensure_board(repo: str = REPO) -> None:
     # MARVIN starting work on a project creates its dashboard board. Best
     # effort: a registry problem must never block or undo a claim.
@@ -398,6 +415,9 @@ def _scan(run, dry_run: bool) -> None:
         for repo in added:
             print(f"{LOG_PREFIX} registered dashboard board for {repo}", file=sys.stderr)
         step("Board discovery", f"{len(added)} new" if added else "no new projects")
+        step("Project readiness", "refreshing onboarding plans")
+        _refresh_onboarding_plans()
+        step("Project readiness", "plans updated")
         step("Project catalog", "refresh if older than 50 min")
         _refresh_catalog()
         _run_ticket_agents(step, summary)

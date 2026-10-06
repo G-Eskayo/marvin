@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import HealthDrilldown from './HealthDrilldown.jsx'
 import AgentsPanel from './AgentsPanel.jsx'
+import OnboardingPanel from './OnboardingPanel.jsx'
 
 // How long a check is trusted at full color before it starts visually
 // greying out (ADR 0033's Staleness gradient term). All v1 checks run in
@@ -115,6 +116,7 @@ export default function HealthDashboard({ nav }) {
     if (nav?.tab === 'health' && nav.view) setView(nav.view)
   }, [nav?.at])
   const [agents, setAgents] = useState(null)
+  const [onboarding, setOnboarding] = useState(null)
 
   // Agents refresh by trigger (the run-log folder is watched); the poll is only a backstop.
   useEffect(() => {
@@ -126,6 +128,14 @@ export default function HealthDashboard({ nav }) {
       clearInterval(id)
       off()
     }
+  }, [])
+
+  // Onboarding plans refresh on the same schedule as agents (60s poll).
+  useEffect(() => {
+    const loadOnboarding = () => window.api.health.onboarding().then(setOnboarding).catch(() => {})
+    loadOnboarding()
+    const id = setInterval(loadOnboarding, 60_000)
+    return () => clearInterval(id)
   }, [])
 
   function load() {
@@ -171,7 +181,7 @@ export default function HealthDashboard({ nav }) {
   return (
     <div className="p-6">
       <div className="mb-4 flex gap-1">
-        {[['checks', 'Checks'], ['agents', 'Autonomous agents']].map(([id, label]) => (
+        {[['checks', 'Checks'], ['agents', 'Autonomous agents'], ['onboarding', 'Project readiness']].map(([id, label]) => (
           <button
             key={id}
             onClick={() => setView(id)}
@@ -185,6 +195,8 @@ export default function HealthDashboard({ nav }) {
       </div>
       {view === 'agents' ? (
         <AgentsPanel agents={agents} />
+      ) : view === 'onboarding' ? (
+        <OnboardingPanel plans={onboarding || []} />
       ) : (
       <>
       <OverallBadge overall={status.overall} generatedAt={status.generated_at} refreshing={refreshing} onRefresh={handleRefresh} />

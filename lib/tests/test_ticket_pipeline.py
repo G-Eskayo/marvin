@@ -204,7 +204,7 @@ def test_a_scan_with_nothing_ready_leaves_a_run_log_saying_so(monkeypatch):
     run = json.loads((job_events.JOBS_DIR / "ticket-pipeline.json").read_text())["runs"][-1]
     assert run["status"] == "passed" and run["summary"] == "no ready tickets"
     steps = [s["step"] for s in run["steps"]]
-    assert steps == ["Board discovery", "Project catalog", "Conflicted PRs", "Circuit breaker", "Scanning tickets"]
+    assert steps == ["Board discovery", "Project readiness", "Project catalog", "Conflicted PRs", "Circuit breaker", "Scanning tickets"]
 
 
 def test_a_tripped_breaker_is_visible_in_the_run_log(monkeypatch):
@@ -588,3 +588,64 @@ def test_marvins_own_tickets_are_only_offered_to_the_machines_named_for_them(mon
     monkeypatch.setattr(sys, "argv", ["ticket_pipeline.py"])
     tp.main()
     assert asked == ["mac-mini-1"] and tp.MARVIN_MACHINES == ("mac-mini-1",)
+
+
+# ── Onboarding plan refresh ──────────────────────────────────────────────
+
+def test_refresh_onboarding_plans_calls_write_plan_per_repo(monkeypatch):
+    import board_registry as br
+
+    boards = [
+        {"repo": "owner/repo1", "name": "repo1"},
+        {"repo": "owner/repo2", "name": "repo2"},
+    ]
+    write_plan_calls = []
+
+    monkeypatch.setattr(br, "list_boards", lambda: boards)
+    monkeypatch.setattr(tp.project_onboard, "write_plan", lambda repo: write_plan_calls.append(repo) or None)
+
+    tp._refresh_onboarding_plans()
+    assert write_plan_calls == ["owner/repo1", "owner/repo2"]
+
+
+def test_refresh_onboarding_plans_swallows_per_repo_exceptions(monkeypatch, capsys):
+    import board_registry as br
+
+    boards = [
+        {"repo": "owner/repo1", "name": "repo1"},
+        {"repo": "owner/repo2", "name": "repo2"},
+    ]
+    write_plan_calls = []
+
+    def mock_write_plan(repo):
+        write_plan_calls.append(repo)
+        if repo == "owner/repo1":
+            raise ValueError("plan failed")
+
+    monkeypatch.setattr(br, "list_boards", lambda: boards)
+    monkeypatch.setattr(tp.project_onboard, "write_plan", mock_write_plan)
+
+    # Should not raise; should continue to repo2
+    tp._refresh_onboarding_plans()
+    assert write_plan_calls == ["owner/repo1", "owner/repo2"]
+
+    # Error should be logged
+    captured = capsys.readouterr()
+    assert "onboarding plan failed for owner/repo1" in captured.err
+
+
+def test_refresh_onboarding_plans_handles_missing_repo_field(monkeypatch):
+    import board_registry as br
+
+    boards = [
+        {"repo": "owner/repo1", "name": "repo1"},
+        {"name": "invalid"},  # missing repo
+        {"repo": "owner/repo2", "name": "repo2"},
+    ]
+    write_plan_calls = []
+
+    monkeypatch.setattr(br, "list_boards", lambda: boards)
+    monkeypatch.setattr(tp.project_onboard, "write_plan", lambda repo: write_plan_calls.append(repo) or None)
+
+    tp._refresh_onboarding_plans()
+    assert write_plan_calls == ["owner/repo1", "owner/repo2"]
