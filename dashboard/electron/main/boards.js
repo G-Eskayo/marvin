@@ -62,7 +62,7 @@ export function defaultLiveNumbers(repo) {
 // closed ones can never crowd them out (one newest-200 query silently drops the oldest open ticket);
 // closed ones are the 100 most recent. PRs carry their changed files so docs they touch can be linked.
 export async function fetchBoardData(repo, gh) {
-  const fields = 'number,title,state,labels,body,url,createdAt,updatedAt,closedAt'
+  const fields = 'number,title,state,stateReason,labels,body,url,createdAt,updatedAt,closedAt'
   const [openJson, closedJson, prsJson] = await Promise.all([
     gh(['issue', 'list', '--repo', repo, '--state', 'open', '--limit', '1000', '--json', fields]),
     gh(['issue', 'list', '--repo', repo, '--state', 'closed', '--limit', '100', '--json', fields]),
@@ -107,14 +107,18 @@ export function clearEvidenceCache() { evidenceCache.clear() }
 export async function loadBoard(repo, { gh, stagesFor = defaultStagesFor, liveNumbers, data, evidence = {} } = {}) {
   try {
     const { issues, prs } = data || (await fetchBoardData(repo, gh))
-    return buildBoard({
+    const fetchedAt = new Date().toISOString()
+    return {
+      ...buildBoard({
       repo,
       issues,
       prs,
       eventsByNumber: stagesFor(repo),
       liveNumbers: liveNumbers || defaultLiveNumbers(repo),
       evidenceByNumber: evidence
-    })
+      }),
+      fetchedAt
+    }
   } catch (err) {
     throw new Error(`Could not load board for ${repo}: ${err.message}`)
   }

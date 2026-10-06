@@ -112,3 +112,56 @@ describe('listTicketActivity', () => {
       expect(listTicketActivity(statePath, stagesDir)).toEqual([])
     }))
 })
+
+// marvin#127: ticket numbers are per repository. #13 in clarity-captions is not #13 in marvin, but the Activity
+// code asked for timelines and live tasks by bare number, so one project's card showed another's history.
+describe('activity is keyed by project and number, never by number alone (marvin #127)', () => {
+  const CC = 'G-Eskayo/clarity-captions'
+  const MV = 'G-Eskayo/marvin'
+
+  it('getTicketTimeline reads the right project\'s history when both have the same ticket number', () =>
+    withTempDirs(({ stagesDir }) => {
+      recordStage(13, 'claimed', 'started', '', { dir: stagesDir })                          // marvin #13
+      recordStage(13, 'executing', 'started', '', { dir: stagesDir, repo: CC })              // clarity-captions #13
+      recordStage(13, 'done', 'passed', 'merged', { dir: stagesDir, repo: CC })
+      expect(getTicketTimeline(13, stagesDir, MV).map((e) => e.stage)).toEqual(['claimed'])
+      expect(getTicketTimeline(13, stagesDir, CC).map((e) => e.stage)).toEqual(['executing', 'done'])
+      expect(getTicketTimeline(13, stagesDir).map((e) => e.stage)).toEqual(['claimed']) // no repo = marvin, as before
+    }))
+
+  it('listTicketActivity lists every project\'s tickets, each tagged with its repo and a repo#number key', () =>
+    withTempDirs(({ stagesDir, statePath }) => {
+      writeDispatchState(statePath, { busy: false })
+      recordStage(13, 'claimed', 'started', '', { dir: stagesDir })
+      recordStage(13, 'done', 'passed', 'merged', { dir: stagesDir, repo: CC })
+      recordStage(2, 'executing', 'failed', '', { dir: stagesDir, repo: 'G-Eskayo/finance-os' })
+      const rows = listTicketActivity(statePath, stagesDir)
+      expect(rows.map((r) => r.key).sort()).toEqual([`G-Eskayo/finance-os#2`, `${CC}#13`, `${MV}#13`].sort())
+      const cc = rows.find((r) => r.key === `${CC}#13`)
+      expect(cc).toMatchObject({ repo: CC, number: 13, currentStage: 'done' })
+      expect(rows.find((r) => r.key === `${MV}#13`)).toMatchObject({ repo: MV, currentStage: 'claimed' })
+    }))
+
+  it('a running task is matched to its own project: "ticket #13" is marvin, "ticket <repo>#13" is that repo', () =>
+    withTempDirs(({ stagesDir, statePath }) => {
+      recordStage(13, 'executing', 'started', '', { dir: stagesDir })
+      recordStage(13, 'executing', 'started', '', { dir: stagesDir, repo: CC })
+      writeDispatchState(statePath, { busy: true, task: `ticket ${CC}#13: Accessibility pass` })
+      let rows = listTicketActivity(statePath, stagesDir)
+      expect(rows.find((r) => r.key === `${CC}#13`).isLiveNow).toBe(true)
+      expect(rows.find((r) => r.key === `${MV}#13`).isLiveNow).toBe(false)
+
+      writeDispatchState(statePath, { busy: true, task: 'ticket #13: Dashboard thing' })
+      rows = listTicketActivity(statePath, stagesDir)
+      expect(rows.find((r) => r.key === `${MV}#13`).isLiveNow).toBe(true)
+      expect(rows.find((r) => r.key === `${CC}#13`).isLiveNow).toBe(false)
+    }))
+
+  it('does not confuse #13 with #130', () =>
+    withTempDirs(({ stagesDir, statePath }) => {
+      recordStage(13, 'executing', 'started', '', { dir: stagesDir })
+      writeDispatchState(statePath, { busy: true, task: 'ticket #130: something else' })
+      expect(listTicketActivity(statePath, stagesDir)[0].isLiveNow).toBe(false)
+    }))
+})
+

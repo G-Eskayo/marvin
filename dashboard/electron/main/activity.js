@@ -1,4 +1,4 @@
-import { listTrackedTickets, readStages } from '../../webhook-server/ticket_stages.js'
+import { listAllTrackedTickets, readStages } from '../../webhook-server/ticket_stages.js'
 import { readDispatchStatus } from './dispatch_status.js'
 
 // Activity tab (G-Eskayo/marvin#113-117's scope) -- a per-ticket pipeline
@@ -20,18 +20,33 @@ function summarize(events) {
   return { currentStage: last.stage, currentStatus: last.status, costUsd, failed, title }
 }
 
+const MARVIN_REPO = 'G-Eskayo/marvin'
+
+// The dispatch label is `ticket #N: ...` for marvin and `ticket <owner/repo>#N: ...` for any other project, so a
+// bare "#13" appears in both. Match the right form, and not "#130" when asked about #13.
+function taskIsTicket(task, repo, number) {
+  if (!task) return false
+  const n = String(number)
+  const form = repo === MARVIN_REPO ? `ticket #${n}` : `${repo}#${n}`
+  const at = task.indexOf(form)
+  if (at < 0) return false
+  return !/\d/.test(task.charAt(at + form.length))
+}
+
 export function listTicketActivity(statePath, stagesDir) {
-  const tickets = listTrackedTickets(stagesDir)
+  const tickets = listAllTrackedTickets(stagesDir)
   const liveDispatch = readDispatchStatus(statePath)
-  return tickets.map((number) => {
-    const events = readStages(number, stagesDir)
+  return tickets.map(({ repo, number }) => {
+    const events = readStages(number, stagesDir, repo)
     const summary = summarize(events)
     return {
+      repo,
       number,
+      key: `${repo}#${number}`,
       ...summary,
       eventCount: events.length,
       lastEventAt: events.length ? events[events.length - 1].timestamp : null,
-      isLiveNow: liveDispatch.busy && liveDispatch.task?.includes(`#${number}`)
+      isLiveNow: !!(liveDispatch.busy && taskIsTicket(liveDispatch.task, repo, number))
     }
   }).sort((a, b) => {
     // In-flight tickets first, then most-recently-active.
@@ -40,8 +55,9 @@ export function listTicketActivity(statePath, stagesDir) {
   })
 }
 
-export function getTicketTimeline(number, stagesDir) {
-  return readStages(number, stagesDir)
+// One ticket's history. `repo` is required to be right for any project other than marvin (null means marvin).
+export function getTicketTimeline(number, stagesDir, repo = null) {
+  return readStages(number, stagesDir, repo)
 }
 
 export { TERMINAL_STAGE_ORDER }

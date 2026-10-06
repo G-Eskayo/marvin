@@ -16,7 +16,7 @@ export const ARCHIVE_AFTER_DAYS = 14
 const DAY_MS = 86400_000
 
 const TYPE_LABELS = new Set(['bug', 'enhancement', 'documentation', 'research-spike', 'breaking-change', 'question', 'duplicate', 'invalid', 'good first issue', 'help wanted'])
-const STATE_LABELS = new Set(['ready-for-agent', 'ready-for-human', 'needs-triage', 'needs-info', 'needs-reengagement', 'wontfix'])
+const STATE_LABELS = new Set(['hold', 'ready-for-agent', 'ready-for-human', 'needs-triage', 'needs-info', 'needs-reengagement', 'wontfix'])
 
 // What kind of tag a label is, so the board can colour and group them.
 export function labelKind(name) {
@@ -48,17 +48,48 @@ function closingPrs(issue, prs) {
 
 // Dependencies come from either inline "Blocked by #n" or the to-issues
 // template's "## Blocked by" section (bullets of #n refs, or "None ...").
-function openDependencies(issue, openNumbers) {
+function dependencyRefs(issue) {
   const body = issue.body || ''
   const refs = []
   for (const m of body.matchAll(/\bBlocked by\s+(?:[\w.-]+\/[\w.-]+)?#(\d+)/gi)) refs.push(Number(m[1]))
   const sec = body.match(/##\s*Blocked by\s*\n([\s\S]*?)(?=\n##\s|$)/i)
   if (sec) for (const m of sec[1].matchAll(/#(\d+)/g)) refs.push(Number(m[1]))
-  return [...new Set(refs)].filter((n) => openNumbers.has(n))
+  return [...new Set(refs)]
+}
+
+// A ticket that is on hold, or was closed as not planned, will not be finished soon (or ever), so waiting on
+// it would park the dependent forever. Those are not blockers; the dependent's card says it is ignoring them.
+function openDependencies(issue, openNumbers, ignored = new Set()) {
+  return dependencyRefs(issue).filter((n) => openNumbers.has(n) && !ignored.has(n))
+}
+
+const refList = (nums) => nums.map((n) => `#${n}`).join(', ')
+
+// "- [x] done / - [ ] not yet" items in the acceptance criteria (or the whole body if it has no such
+// section), so a half-finished ticket shows how far it got.
+export function checklistProgress(body) {
+  if (!body) return null
+  const sec = body.match(/##\s*Acceptance criteria\s*\n([\s\S]*?)(?=\n##\s|$)/i)
+  const items = [...(sec ? sec[1] : body).matchAll(/^\s*[-*]\s*\[([ xX])\]/gm)]
+  if (!items.length) return null
+  return { done: items.filter((m) => m[1] !== ' ').length, total: items.length }
 }
 
 // First match wins; order is the board's meaning. See CONTEXT.md for the rules.
-export function deriveColumn(issue, { prs = [], events = [], isLive = false, openNumbers = new Set(), now = Date.now() } = {}) {
+export function deriveColumn(issue, ctx = {}) {
+  const result = deriveColumnCore(issue, ctx)
+  if (result.column === 'done') return result
+  const { heldNumbers = new Set(), notPlannedNumbers = new Set() } = ctx
+  const refs = dependencyRefs(issue)
+  const held = refs.filter((n) => heldNumbers.has(n))
+  const dropped = refs.filter((n) => notPlannedNumbers.has(n))
+  const notes = []
+  if (held.length) notes.push(`${refList(held)} ${held.length === 1 ? 'is' : 'are'} on hold, not blocking`)
+  if (dropped.length) notes.push(`${refList(dropped)} ${dropped.length === 1 ? 'was' : 'were'} closed as not planned, not blocking`)
+  return notes.length ? { ...result, reason: `${result.reason} (${notes.join('; ')})` } : result
+}
+
+function deriveColumnCore(issue, { prs = [], events = [], isLive = false, openNumbers = new Set(), heldNumbers = new Set(), notPlannedNumbers = new Set(), now = Date.now() } = {}) {
   const labels = labelNames(issue)
   const linked = closingPrs(issue, prs)
   const last = events.length ? events[events.length - 1] : null
@@ -78,8 +109,9 @@ export function deriveColumn(issue, { prs = [], events = [], isLive = false, ope
     return { ...base, column: 'review', reason: `Pipeline at ${last.stage}` }
   }
 
+  if (labels.includes('hold')) return { ...base, column: 'backlog', reason: 'On hold', held: true }
   if (labels.includes('blocked')) return { ...base, column: 'blocked', reason: 'Labelled blocked' }
-  const deps = openDependencies(issue, openNumbers)
+  const deps = openDependencies(issue, openNumbers, new Set([...heldNumbers, ...notPlannedNumbers]))
   if (deps.length) return { ...base, column: 'blocked', reason: `Blocked by ${deps.map((d) => `#${d}`).join(', ')}, still open` }
   if (last && last.status === 'failed' && !isLive) {
     const why = last.detail ? `: ${last.detail}` : ''
@@ -108,6 +140,9 @@ export function deriveColumn(issue, { prs = [], events = [], isLive = false, ope
 
 export function buildBoard({ repo, issues, prs, eventsByNumber = {}, liveNumbers = new Set(), evidenceByNumber = {}, now = Date.now() }) {
   const openNumbers = new Set(issues.filter((i) => i.state === 'OPEN').map((i) => i.number))
+  const heldNumbers = new Set(issues.filter((i) => i.state === 'OPEN' && labelNames(i).includes('hold')).map((i) => i.number))
+  const notPlannedNumbers = new Set(issues.filter((i) => i.state === 'CLOSED' && i.stateReason === 'NOT_PLANNED').map((i) => i.number))
+  const ignored = new Set([...heldNumbers, ...notPlannedNumbers])
   const columns = COLUMNS.map((c) => ({ ...c, cards: [] }))
   const byId = Object.fromEntries(columns.map((c) => [c.id, c]))
   byId.done.archive = []
@@ -115,7 +150,7 @@ export function buildBoard({ repo, issues, prs, eventsByNumber = {}, liveNumbers
 
   for (const issue of issues) {
     const events = eventsByNumber[issue.number] || []
-    const d = deriveColumn(issue, { prs, events, isLive: liveNumbers.has(issue.number), openNumbers, now })
+    const d = deriveColumn(issue, { prs, events, isLive: liveNumbers.has(issue.number), openNumbers, heldNumbers, notPlannedNumbers, now })
     const names = labelNames(issue)
     const created = Date.parse(issue.createdAt)
     // Git is what happened, labels are what was said: surface work that already exists (lib/ticket_evidence.py).
@@ -130,7 +165,11 @@ export function buildBoard({ repo, issues, prs, eventsByNumber = {}, liveNumbers
       labels: names,
       tags: names.map((name) => ({ name, kind: labelKind(name) })),
       claimedBy: names.find((l) => l.startsWith('claimed:'))?.slice('claimed:'.length) || null,
-      blockedBy: openDependencies(issue, openNumbers),
+      blockedBy: openDependencies(issue, openNumbers, ignored),
+      heldDependencies: dependencyRefs(issue).filter((n) => heldNumbers.has(n)),
+      notPlannedDependencies: dependencyRefs(issue).filter((n) => notPlannedNumbers.has(n)),
+      held: !!d.held,
+      progress: checklistProgress(issue.body),
       createdAt: issue.createdAt,
       closedAt: issue.closedAt || null,
       ageDays: Number.isFinite(created) ? Math.floor((now - created) / DAY_MS) : null,

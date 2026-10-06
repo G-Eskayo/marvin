@@ -36,6 +36,23 @@ export function listTrackedTickets(dir = STAGES_DIR, repo = null) {
     .sort((a, b) => a - b)
 }
 
+// Every tracked ticket in every project: [{ repo, number }]. A marvin ticket's file is `<n>.json`; another
+// project's is `<repo-name>-<n>.json` (the owner is not in the name, so the one owner is assumed).
+const OWNER = 'G-Eskayo'
+export function listAllTrackedTickets(dir = STAGES_DIR) {
+  if (!existsSync(dir)) return []
+  const out = []
+  for (const name of readdirSync(dir)) {
+    if (!name.endsWith('.json')) continue
+    const stem = name.slice(0, -'.json'.length)
+    const plain = stem.match(/^(\d+)$/)
+    const other = stem.match(/^(.+)-(\d+)$/)
+    if (plain) out.push({ repo: MARVIN_REPO, number: parseInt(plain[1], 10) })
+    else if (other) out.push({ repo: `${OWNER}/${other[1]}`, number: parseInt(other[2], 10) })
+  }
+  return out.sort((a, b) => a.repo.localeCompare(b.repo) || a.number - b.number)
+}
+
 export function readStages(ticketNumber, dir = STAGES_DIR, repo = null) {
   const file = stageFile(ticketNumber, dir, repo)
   if (!existsSync(file)) return []

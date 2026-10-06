@@ -68,6 +68,18 @@ function Tag({ tag, active, onClick }) {
   )
 }
 
+// How old the board's data is. Columns are derived from live GitHub data; this says when it was last read.
+function Freshness({ at }) {
+  const [, tick] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 30_000)
+    return () => clearInterval(t)
+  }, [])
+  const mins = Math.max(0, Math.floor((Date.now() - Date.parse(at)) / 60_000))
+  const text = mins < 1 ? 'just now' : mins === 1 ? '1 minute ago' : `${mins} minutes ago`
+  return <p className={`mb-2 text-[11px] ${mins >= 10 ? 'text-amber-400' : 'text-neutral-600'}`}>Board data read {text}</p>
+}
+
 function Card({ card, repo, onSelect, onOpenMr, activeTags, onTag }) {
   return (
     <button
@@ -80,6 +92,14 @@ function Card({ card, repo, onSelect, onOpenMr, activeTags, onTag }) {
       <p className={`mt-1 text-xs ${card.reason && /fail|block|stale|no activity/i.test(card.reason) ? 'text-red-400' : 'text-neutral-500'}`}>{card.reason}</p>
       <div className="mt-2 flex flex-wrap items-center gap-1">
         {card.owner === 'human' && <span className="rounded bg-sky-950 px-1.5 py-0.5 text-[10px] text-sky-300">needs you</span>}
+        {card.progress && (
+          <span
+            className={`rounded px-1.5 py-0.5 font-mono text-[10px] ${card.progress.done === card.progress.total ? 'bg-emerald-950 text-emerald-300' : 'bg-neutral-800 text-neutral-300'}`}
+            title={`${card.progress.done} of ${card.progress.total} checklist items done`}
+          >
+            ☑ {card.progress.done}/{card.progress.total}
+          </span>
+        )}
         {card.tags.filter((t) => !(t.kind === 'state' && (t.name === 'ready-for-agent' || t.name === 'ready-for-human'))).map((t) => (
           <Tag key={t.name} tag={t} active={activeTags.has(t.name)} onClick={onTag} />
         ))}
@@ -220,7 +240,7 @@ function TicketDrilldown({ repo, card, onBack, onOpenMr, onOpenDocs, onOpenTicke
       .ticket(repo, card.number)
       .then(setDetail)
       .catch((e) => setError(cleanIpcError(e)))
-    if (card.hasTimeline) window.api.activity.timeline(card.number).then(setEvents).catch(() => {})
+    if (card.hasTimeline) window.api.activity.timeline(card.number, repo).then(setEvents).catch(() => {})
   }, [repo, card.number, card.hasTimeline])
 
   return (
@@ -494,6 +514,7 @@ export default function ProjectBoard({ onOpenMr, onOpenDocs, onOpenTicket, nav }
           No tickets yet for this project. File them with <code className="text-neutral-200">/to-issues</code> and they appear here by themselves.
         </p>
       )}
+      {view === 'board' && board?.fetchedAt && <Freshness at={board.fetchedAt} />}
       {view === 'board' && board && <TagBar board={board} activeTags={activeTags} onTag={toggleTag} onClear={() => setActiveTags(new Set())} />}
       {view === 'board' && board && (
         <div className="flex gap-4 overflow-x-auto pb-4">
