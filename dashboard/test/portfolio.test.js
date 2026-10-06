@@ -512,3 +512,23 @@ describe('element pipeline', () => {
     expect((await p.runPipeline()).ok).toBe(false)
   })
 })
+
+describe('content templates and the content report (ADR 0051)', () => {
+  it('lists the content templates from templates/content/', async () => {
+    write('templates/content/skill-tool.json', JSON.stringify({ id: 'skill-tool', name: 'Skill or tool', sections: [{ role: 'evidence' }] }))
+    write('templates/content/notes.txt', 'ignored')
+    const list = await p.contentTemplates()
+    expect(list.map((t) => t.id)).toEqual(['skill-tool'])
+    expect(list[0].sections).toEqual([{ role: 'evidence' }])
+  })
+
+  it('runs the content checker and returns its report', async () => {
+    exec.mockResolvedValueOnce({ stdout: JSON.stringify({ templates: ['skill-tool'], pages: { tool: { template: 'skill-tool', findings: [] } } }), stderr: '' })
+    const report = await p.contentReport()
+    expect(report.pages.tool.template).toBe('skill-tool')
+    const [cmd, args] = exec.mock.calls.at(-1)
+    expect(cmd).toMatch(/venv\/bin\/python$/)
+    expect(args[0]).toMatch(/portfolio_content\.py$/)
+    expect(args).toContain('--json')
+  })
+})

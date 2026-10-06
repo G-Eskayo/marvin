@@ -69,6 +69,7 @@ export function createPortfolio({
   const applyScript = path.join(agentsDir, 'lib', 'portfolio_apply.py')
   const inventoryScript = path.join(agentsDir, 'lib', 'portfolio_inventory.py')
   const templatesScript = path.join(agentsDir, 'lib', 'portfolio_templates.py')
+  const contentScript = path.join(agentsDir, 'lib', 'portfolio_content.py')
   const inventoryDir = path.join(dataDir, 'inventory')
   const referenceDir = path.join(templates, 'reference')
 
@@ -445,5 +446,26 @@ export function createPortfolio({
     return readText(path.join(referenceDir, `${slug}.html`), null)
   }
 
-  return { chrome, inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, templateSource, specimen, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage, imageMotifs, imageVariants, newImageVariant, chooseImageVariant, applyImages, addProject, listElements, verifyElement, pipelineStatus, runPipeline, deleteImageVariant, variantPreview }
+  // ── content templates (ADR 0051): what a page should say, and each page's gaps against its template ──
+  async function contentTemplates() {
+    let names = []
+    try {
+      names = (await fsp.readdir(path.join(templates, 'content'))).filter((f) => f.endsWith('.json')).sort()
+    } catch {
+      return []
+    }
+    const out = []
+    for (const f of names) {
+      const t = await readJson(path.join(templates, 'content', f), null)
+      if (t && t.id) out.push(t)
+    }
+    return out
+  }
+
+  async function contentReport() {
+    const { stdout } = await exec(python, [contentScript, '--json'], { maxBuffer: 5 * 1024 * 1024, timeout: 2 * 60 * 1000 })
+    return JSON.parse(stdout)
+  }
+
+  return { contentTemplates, contentReport, chrome, inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, templateSource, specimen, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage, imageMotifs, imageVariants, newImageVariant, chooseImageVariant, applyImages, addProject, listElements, verifyElement, pipelineStatus, runPipeline, deleteImageVariant, variantPreview }
 }

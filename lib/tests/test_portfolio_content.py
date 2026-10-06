@@ -123,3 +123,12 @@ def test_the_evaluation_can_leave_copy_to_its_own_rendered_page_check(tmp_path):
     (tmp_path / "content" / "longform" / "tool.json").write_text(json.dumps(page([{"role": "evidence", "body_html": "<p>A seamless tool.</p>"}])))
     rules = {r["rule"] for r in pc.findings_for_evaluation(tmp_path, include_copy=False)}
     assert "copy-ai-phrase" not in rules and "template-missing-section" in rules
+
+
+def test_manifest_pages_without_a_content_file_are_listed_as_not_on_a_template(tmp_path):
+    (tmp_path / "templates" / "content").mkdir(parents=True)
+    (tmp_path / "content" / "longform").mkdir(parents=True)
+    (tmp_path / "deploy" / "other-projects").mkdir(parents=True)
+    (tmp_path / "deploy" / "other-projects" / "manifest.json").write_text(json.dumps([{"title": "Old Page", "url": "/a/old-page/"}]))
+    report = pc.evaluate(tmp_path)
+    assert report["pages"]["old-page"] == {"template": None, "url": "/a/old-page/", "title": "Old Page", "coverage": None, "findings": []}
