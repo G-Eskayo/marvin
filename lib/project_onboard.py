@@ -64,6 +64,11 @@ def _matches_detect_rule(file_tree: dict, rule: dict) -> bool:
         for path in file_tree:
             if fnmatch.fnmatch(path, glob_pattern):
                 return True
+            if glob_pattern.startswith("**/"):
+                basename = path.rsplit("/", 1)[-1]
+                pattern_suffix = glob_pattern[3:]
+                if fnmatch.fnmatch(basename, pattern_suffix):
+                    return True
     elif "file" in rule:
         if rule["file"] in file_tree:
             return True
@@ -86,6 +91,54 @@ def _get_file_content(repo: str, path: str, gh=_gh) -> str:
     except (json.JSONDecodeError, Exception):
         pass
     return ""
+
+
+def _is_test_file(path: str) -> bool:
+    """Check if a path matches test file naming patterns."""
+    name = path.split("/")[-1]
+    return name.startswith("test_") and name.endswith(".py") or (name.endswith("_test.py"))
+
+
+def _test_touches_machine_local_state(content: str) -> bool:
+    """Check if test content reads machine-local state."""
+    markers = [
+        "Path.home(",
+        "expanduser(",
+        'os.environ["HOME"]',
+        'os.environ.get("HOME"',
+        "~/.claude",
+    ]
+    return any(marker in content for marker in markers)
+
+
+def _all_requirements_pinned(content: str) -> bool:
+    """Check if all requirements in requirements.txt are pinned with ==."""
+    for line in content.split("\n"):
+        line = line.strip()
+        if line and not line.startswith("#"):
+            if "==" not in line:
+                return False
+    return True
+
+
+def _all_pyproject_deps_pinned(content: str) -> bool:
+    """Check if all dependencies in pyproject.toml are pinned with exact versions."""
+    try:
+        import re
+        deps_section = re.search(
+            r'\[project\]\s*dependencies\s*=\s*\[(.*?)\]',
+            content,
+            re.DOTALL
+        )
+        if deps_section:
+            deps_text = deps_section.group(1)
+            for dep in re.findall(r'"([^"]+)"', deps_text):
+                dep = dep.strip()
+                if dep and not re.match(r'.*==.*', dep):
+                    return False
+        return True
+    except Exception:
+        return False
 
 
 def inspect(repo: str, gh=_gh) -> dict:
@@ -111,6 +164,10 @@ def inspect(repo: str, gh=_gh) -> dict:
         "workflow_contents": "",
         "package_json_scripts": {},
         "tools_installed": {},
+        "has_requirements_file": False,
+        "requirements_pinned": False,
+        "python_tests_touch_home": False,
+        "machine_local_test_files": [],
     }
 
     repo_view = gh(["repo", "view", repo, "--json", "visibility,defaultBranchRef"])
@@ -215,6 +272,27 @@ def inspect(repo: str, gh=_gh) -> dict:
         except Exception:
             facts["tools_installed"][tool] = False
 
+    if facts.get("detected_stack") == "python":
+        for req_file in ["requirements.txt", "pyproject.toml"]:
+            if req_file in facts["file_tree"]:
+                facts["has_requirements_file"] = True
+                content = _get_file_content(repo, req_file, gh)
+                if content:
+                    if req_file == "requirements.txt":
+                        facts["requirements_pinned"] = _all_requirements_pinned(content)
+                    elif req_file == "pyproject.toml":
+                        facts["requirements_pinned"] = _all_pyproject_deps_pinned(content)
+                break
+
+        test_files = [p for p in facts["file_tree"] if _is_test_file(p)]
+        machine_local_files = []
+        for test_file in test_files:
+            content = _get_file_content(repo, test_file, gh)
+            if content and _test_touches_machine_local_state(content):
+                machine_local_files.append(test_file)
+        facts["python_tests_touch_home"] = len(machine_local_files) > 0
+        facts["machine_local_test_files"] = machine_local_files
+
     docs_agents_files = {
         "docs/agents/issue-tracker.md",
         "docs/agents/triage-labels.md",
@@ -265,6 +343,16 @@ def plan(facts: dict) -> dict:
             plan_out["test_command"] = {"state": "ok", "reason": "test script found in package.json"}
         else:
             plan_out["test_command"] = {"state": "needs-human", "reason": "no test script in package.json; R5, never guess"}
+    elif detected_stack == "python":
+        problems = []
+        if not facts.get("has_requirements_file"):
+            problems.append("no requirements file (requirements.txt or pyproject.toml)")
+        elif not facts.get("requirements_pinned"):
+            problems.append("requirements file is unpinned")
+        if problems:
+            plan_out["test_command"] = {"state": "needs-human", "reason": "; ".join(problems)}
+        else:
+            plan_out["test_command"] = {"state": "ok", "reason": "pytest is standard for Python"}
     else:
         plan_out["test_command"] = {"state": "needs-human", "reason": "unrecognised stack; cannot determine test command"}
 
@@ -278,7 +366,21 @@ def plan(facts: dict) -> dict:
 
     test_command_state = plan_out.get("test_command", {}).get("state")
     if test_command_state == "needs-human":
-        plan_out["ci"] = {"state": "needs-human", "reason": "cannot wire CI without a known test command"}
+        reason = "cannot wire CI without a known test command"
+        if detected_stack == "python" and facts.get("python_tests_touch_home"):
+            machine_local_files = facts.get("machine_local_test_files", [])
+            files_str = ", ".join(machine_local_files[:3])
+            if len(machine_local_files) > 3:
+                files_str += f", ... ({len(machine_local_files)} total)"
+            reason += f"; tests read machine-local state: {files_str}"
+        plan_out["ci"] = {"state": "needs-human", "reason": reason}
+    elif detected_stack == "python" and facts.get("python_tests_touch_home"):
+        machine_local_files = facts.get("machine_local_test_files", [])
+        files_str = ", ".join(machine_local_files[:3])
+        if len(machine_local_files) > 3:
+            files_str += f", ... ({len(machine_local_files)} total)"
+        reason = f"tests read machine-local state: {files_str}"
+        plan_out["ci"] = {"state": "needs-human", "reason": reason}
     elif matched_stack:
         ci_markers = matched_stack.get("ci_contains_any", [])
         found_ci = any(marker in facts.get("workflow_contents", "") for marker in ci_markers) if ci_markers else False

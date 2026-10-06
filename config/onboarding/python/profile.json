@@ -1,0 +1,21 @@
+{
+  "name": "python",
+  "detect": {
+    "file_glob": "**/*.py"
+  },
+  "priority": 30,
+  "ci_contains_any": ["pytest", "python -m pytest"],
+  "requires_tools": ["python"],
+  "macos_runner": false,
+  "generated_candidates": [
+    {
+      "path": "__pycache__",
+      "confirm": true
+    },
+    {
+      "path": ".venv",
+      "confirm": true
+    }
+  ],
+  "profile_fragment": {}
+}

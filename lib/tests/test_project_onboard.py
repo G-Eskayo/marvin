@@ -616,3 +616,359 @@ def test_generated_paths_ok_when_no_candidates_found():
     result = po.plan(facts)
     assert result["generated_paths"]["state"] == "ok"
     assert result["generated_paths"].get("proposals", []) == []
+
+
+# ── Python stack: test command piece ──────────────────────────────────
+
+def test_python_test_command_ok_with_pinned_requirements():
+    """Python test command is ok when requirements are pinned."""
+    facts = {
+        "detected_stack": "python",
+        "has_requirements_file": True,
+        "requirements_pinned": True,
+        "python_tests_touch_home": False,
+        "workflow_contents": "",
+        "package_json_scripts": {},
+        "tools_installed": {},
+    }
+    result = po.plan(facts)
+    assert result["test_command"]["state"] == "ok"
+    assert "pytest" in result["test_command"]["reason"]
+
+
+def test_python_test_command_needs_human_when_no_requirements_file():
+    """Python test command is needs-human when requirements file is missing."""
+    facts = {
+        "detected_stack": "python",
+        "has_requirements_file": False,
+        "requirements_pinned": False,
+        "python_tests_touch_home": False,
+        "workflow_contents": "",
+        "package_json_scripts": {},
+        "tools_installed": {},
+    }
+    result = po.plan(facts)
+    assert result["test_command"]["state"] == "needs-human"
+    assert "no requirements file" in result["test_command"]["reason"]
+
+
+def test_python_test_command_needs_human_when_requirements_unpinned():
+    """Python test command is needs-human when requirements are unpinned."""
+    facts = {
+        "detected_stack": "python",
+        "has_requirements_file": True,
+        "requirements_pinned": False,
+        "python_tests_touch_home": False,
+        "workflow_contents": "",
+        "package_json_scripts": {},
+        "tools_installed": {},
+    }
+    result = po.plan(facts)
+    assert result["test_command"]["state"] == "needs-human"
+    assert "unpinned" in result["test_command"]["reason"]
+
+
+# ── Python stack: CI piece ────────────────────────────────────────────
+
+def test_python_ci_ok_with_pinned_requirements_and_clean_tests():
+    """Python CI is ok when requirements are pinned and tests are clean."""
+    facts = {
+        "detected_stack": "python",
+        "has_requirements_file": True,
+        "requirements_pinned": True,
+        "python_tests_touch_home": False,
+        "machine_local_test_files": [],
+        "has_workflows": False,
+        "workflow_contents": "",
+        "package_json_scripts": {},
+        "tools_installed": {},
+    }
+    result = po.plan(facts)
+    assert result["test_command"]["state"] == "ok"
+    assert result["ci"]["state"] == "missing"
+
+
+def test_python_ci_needs_human_when_tests_touch_home():
+    """Python CI is needs-human when tests read machine-local state, even if requirements are pinned."""
+    facts = {
+        "detected_stack": "python",
+        "has_requirements_file": True,
+        "requirements_pinned": True,
+        "python_tests_touch_home": True,
+        "machine_local_test_files": ["lib/tests/test_claude_bin.py", "lib/tests/test_profile.py"],
+        "has_workflows": False,
+        "workflow_contents": "",
+        "package_json_scripts": {},
+        "tools_installed": {},
+    }
+    result = po.plan(facts)
+    assert result["test_command"]["state"] == "ok"
+    assert result["ci"]["state"] == "needs-human"
+    assert "machine-local state" in result["ci"]["reason"]
+    assert "test_claude_bin.py" in result["ci"]["reason"]
+
+
+def test_python_ci_needs_human_when_test_command_needs_human():
+    """Python CI is needs-human when test_command is needs-human."""
+    facts = {
+        "detected_stack": "python",
+        "has_requirements_file": False,
+        "requirements_pinned": False,
+        "python_tests_touch_home": False,
+        "machine_local_test_files": [],
+        "has_workflows": False,
+        "workflow_contents": "",
+        "package_json_scripts": {},
+        "tools_installed": {},
+    }
+    result = po.plan(facts)
+    assert result["test_command"]["state"] == "needs-human"
+    assert result["ci"]["state"] == "needs-human"
+    assert "cannot wire CI" in result["ci"]["reason"]
+
+
+# ── Helper function tests ──────────────────────────────────────────────
+
+def test_is_test_file_recognizes_test_py():
+    """_is_test_file recognizes test_*.py patterns."""
+    assert po._is_test_file("lib/tests/test_claude_bin.py")
+    assert po._is_test_file("test_foo.py")
+    assert po._is_test_file("tests/test_bar.py")
+    assert not po._is_test_file("lib/claude_bin.py")
+    assert not po._is_test_file("test_foo.txt")
+
+
+def test_is_test_file_recognizes_py_test():
+    """_is_test_file recognizes *_test.py patterns."""
+    assert po._is_test_file("lib/tests/claude_bin_test.py")
+    assert po._is_test_file("foo_test.py")
+    assert po._is_test_file("tests/bar_test.py")
+    assert not po._is_test_file("lib/claude_bin.py")
+    assert not po._is_test_file("foo_test.txt")
+
+
+def test_test_touches_machine_local_state_with_path_home():
+    """_test_touches_machine_local_state detects Path.home()."""
+    content = "from pathlib import Path\nconfig = Path.home() / '.claude'"
+    assert po._test_touches_machine_local_state(content)
+
+
+def test_test_touches_machine_local_state_with_expanduser():
+    """_test_touches_machine_local_state detects expanduser()."""
+    content = "config_path = os.path.expanduser('~/.claude')"
+    assert po._test_touches_machine_local_state(content)
+
+
+def test_test_touches_machine_local_state_with_os_environ_home():
+    """_test_touches_machine_local_state detects os.environ[\"HOME\"]."""
+    content = 'home_dir = os.environ["HOME"]'
+    assert po._test_touches_machine_local_state(content)
+
+
+def test_test_touches_machine_local_state_with_os_environ_get():
+    """_test_touches_machine_local_state detects os.environ.get(\"HOME\")."""
+    content = 'home_dir = os.environ.get("HOME")'
+    assert po._test_touches_machine_local_state(content)
+
+
+def test_test_touches_machine_local_state_with_literal_path():
+    """_test_touches_machine_local_state detects literal ~/.claude paths."""
+    content = "config = ~/.claude/settings"
+    assert po._test_touches_machine_local_state(content)
+
+
+def test_test_does_not_touch_machine_local_state():
+    """_test_touches_machine_local_state returns false for clean tests."""
+    content = """
+def test_foo():
+    assert 1 + 1 == 2
+
+def test_bar():
+    result = compute_result()
+    assert result == expected
+"""
+    assert not po._test_touches_machine_local_state(content)
+
+
+def test_all_requirements_pinned_with_pinned_deps():
+    """_all_requirements_pinned returns true when all deps use ==."""
+    content = """
+requests==2.31.0
+pytest==7.4.0
+numpy==1.24.0
+"""
+    assert po._all_requirements_pinned(content)
+
+
+def test_all_requirements_pinned_ignores_comments():
+    """_all_requirements_pinned ignores comment lines."""
+    content = """
+# Core dependencies
+requests==2.31.0
+# Testing
+pytest==7.4.0
+"""
+    assert po._all_requirements_pinned(content)
+
+
+def test_all_requirements_pinned_with_unpinned_deps():
+    """_all_requirements_pinned returns false when any dep lacks ==."""
+    content = """
+requests==2.31.0
+pytest>=7.0
+numpy==1.24.0
+"""
+    assert not po._all_requirements_pinned(content)
+
+
+def test_all_requirements_pinned_empty_file():
+    """_all_requirements_pinned returns true for empty requirements."""
+    content = ""
+    assert po._all_requirements_pinned(content)
+
+
+def test_all_requirements_pinned_only_comments():
+    """_all_requirements_pinned returns true for files with only comments."""
+    content = """
+# This is a comment
+# Another comment
+"""
+    assert po._all_requirements_pinned(content)
+
+
+# ── Inspection: Python-specific detection ──────────────────────────────
+
+def test_inspect_detects_python_requirements_file():
+    """inspect() detects has_requirements_file when requirements.txt exists."""
+    def mock_gh(args):
+        if "git/trees" in " ".join(args):
+            return json.dumps({"tree": [
+                {"path": "requirements.txt", "type": "blob"},
+                {"path": "app.py", "type": "blob"},
+            ]})
+        if "requirements.txt" in " ".join(args):
+            import base64
+            return json.dumps({"content": base64.b64encode(b"requests==2.31.0").decode()})
+        return ""
+
+    result = po.inspect("test/repo", gh=mock_gh)
+    assert result["detected_stack"] == "python"
+    assert result["has_requirements_file"] is True
+
+
+def test_inspect_detects_unpinned_requirements():
+    """inspect() detects requirements_pinned as False when deps are unpinned."""
+    def mock_gh(args):
+        if "git/trees" in " ".join(args):
+            return json.dumps({"tree": [
+                {"path": "requirements.txt", "type": "blob"},
+                {"path": "app.py", "type": "blob"},
+            ]})
+        if "requirements.txt" in " ".join(args):
+            import base64
+            content = "requests>=2.31.0\npytest==7.4.0"
+            return json.dumps({"content": base64.b64encode(content.encode()).decode()})
+        return ""
+
+    result = po.inspect("test/repo", gh=mock_gh)
+    assert result["detected_stack"] == "python"
+    assert result["has_requirements_file"] is True
+    assert result["requirements_pinned"] is False
+
+
+def test_inspect_detects_machine_local_tests():
+    """inspect() detects python_tests_touch_home when tests read machine-local state."""
+    def mock_gh(args):
+        if "git/trees" in " ".join(args):
+            return json.dumps({"tree": [
+                {"path": "requirements.txt", "type": "blob"},
+                {"path": "app.py", "type": "blob"},
+                {"path": "lib/tests/test_config.py", "type": "blob"},
+            ]})
+        if "requirements.txt" in " ".join(args):
+            import base64
+            return json.dumps({"content": base64.b64encode(b"requests==2.31.0").decode()})
+        if "test_config.py" in " ".join(args):
+            import base64
+            content = "from pathlib import Path\nconfig = Path.home() / '.claude'"
+            return json.dumps({"content": base64.b64encode(content.encode()).decode()})
+        return ""
+
+    result = po.inspect("test/repo", gh=mock_gh)
+    assert result["detected_stack"] == "python"
+    assert result["python_tests_touch_home"] is True
+    assert "lib/tests/test_config.py" in result["machine_local_test_files"]
+
+
+def test_inspect_detects_pyproject_pinned_requirements():
+    """inspect() detects requirements_pinned via pyproject.toml when deps are pinned."""
+    def mock_gh(args):
+        if "git/trees" in " ".join(args):
+            return json.dumps({"tree": [
+                {"path": "pyproject.toml", "type": "blob"},
+                {"path": "app.py", "type": "blob"},
+            ]})
+        if "pyproject.toml" in " ".join(args):
+            import base64
+            content = '[project]\ndependencies = ["requests==2.31.0", "pytest==7.4.0"]'
+            return json.dumps({"content": base64.b64encode(content.encode()).decode()})
+        return ""
+
+    result = po.inspect("test/repo", gh=mock_gh)
+    assert result["detected_stack"] == "python"
+    assert result["has_requirements_file"] is True
+    assert result["requirements_pinned"] is True
+
+
+def test_inspect_detects_pyproject_unpinned_requirements():
+    """inspect() detects requirements_pinned as False when pyproject.toml deps are unpinned."""
+    def mock_gh(args):
+        if "git/trees" in " ".join(args):
+            return json.dumps({"tree": [
+                {"path": "pyproject.toml", "type": "blob"},
+                {"path": "app.py", "type": "blob"},
+            ]})
+        if "pyproject.toml" in " ".join(args):
+            import base64
+            content = '[project]\ndependencies = ["requests>=2.31.0", "pytest==7.4.0"]'
+            return json.dumps({"content": base64.b64encode(content.encode()).decode()})
+        return ""
+
+    result = po.inspect("test/repo", gh=mock_gh)
+    assert result["detected_stack"] == "python"
+    assert result["has_requirements_file"] is True
+    assert result["requirements_pinned"] is False
+
+
+# ── Real-world fixture: Marvin's repo ──────────────────────────────────
+
+def test_marvin_repo_real_world():
+    """Marvin's own repo: no requirements file + tests touch machine-local state (AC1)."""
+    facts = {
+        "repo": "G-Eskayo/marvin",
+        "detected_stack": "python",
+        "has_requirements_file": False,
+        "requirements_pinned": False,
+        "python_tests_touch_home": True,
+        "machine_local_test_files": [
+            "lib/tests/test_claude_bin.py",
+            "lib/tests/test_project_profile.py",
+            "lib/tests/test_board_registry.py",
+        ],
+        "has_workflows": False,
+        "workflow_contents": "",
+        "package_json_scripts": {},
+        "tools_installed": {"python": True},
+        "profile_exists": False,
+        "board_exists": False,
+        "labels": [],
+        "has_agent_docs": False,
+        "has_claude_md_skills": False,
+        "clone_hint_resolves": False,
+    }
+    result = po.plan(facts)
+    assert result["test_command"]["state"] == "needs-human"
+    assert "no requirements file" in result["test_command"]["reason"]
+    assert result["ci"]["state"] == "needs-human"
+    assert "machine-local state" in result["ci"]["reason"]
+    assert "test_claude_bin.py" in result["ci"]["reason"]
