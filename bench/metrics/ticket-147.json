@@ -1,0 +1,60 @@
+[
+  {
+    "timestamp": "2026-10-06T15:29:04.207348+00:00",
+    "metrics": {
+      "pytest_passed": {
+        "value": 1364,
+        "higher_is_better": true
+      },
+      "pytest_failed": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "vitest_passed": {
+        "value": 679,
+        "higher_is_better": true
+      },
+      "vitest_failed": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "tests_passed": {
+        "value": 2043,
+        "higher_is_better": true
+      },
+      "tests_failed": {
+        "value": 0,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-06T15:42:59.500111+00:00",
+    "metrics": {
+      "pytest_passed": {
+        "value": 1370,
+        "higher_is_better": true
+      },
+      "pytest_failed": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "vitest_passed": {
+        "value": 706,
+        "higher_is_better": true
+      },
+      "vitest_failed": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "tests_passed": {
+        "value": 2076,
+        "higher_is_better": true
+      },
+      "tests_failed": {
+        "value": 0,
+        "higher_is_better": false
+      }
+    }
+  }
+]
