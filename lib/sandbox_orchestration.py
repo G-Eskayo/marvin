@@ -249,10 +249,14 @@ def _create_worktree(repo_path: Path, ticket_ref: str, base_branch: str = "main"
     for stale in (worktree_path, legacy_path):
         subprocess.run(["git", "worktree", "remove", "--force", str(stale)], cwd=repo_path, capture_output=True)
     subprocess.run(["git", "branch", "-D", branch], cwd=repo_path, capture_output=True)
-    subprocess.run(
+    proc = subprocess.run(
         ["git", "worktree", "add", "-b", branch, str(worktree_path), f"origin/{base_branch}"],
-        cwd=repo_path, check=True, capture_output=True,
+        cwd=repo_path, capture_output=True, text=True,
     )
+    if proc.returncode != 0:
+        # check=True used to hide git's own message behind "exit status 128" (a ticket on the macbook failed that way and
+        # nothing said why); the reason has to travel with the failure.
+        raise RuntimeError(f"git worktree add failed in {repo_path} (exit {proc.returncode}): {(proc.stderr or '').strip()[-400:]}")
     return worktree_path
 
 

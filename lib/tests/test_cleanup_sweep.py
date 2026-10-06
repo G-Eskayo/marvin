@@ -223,3 +223,27 @@ def test_default_remove_worktree_preserves_unique_work_before_discarding(tmp_pat
                           capture_output=True, text=True).stdout.split()
     assert len(refs) == 1
     assert not wt.exists()
+
+
+def test_a_failing_worktree_add_says_why(monkeypatch, tmp_path):
+    import sandbox_orchestration as so
+    """The failure used to surface as 'returned non-zero exit status 128' with git's message thrown away."""
+    import subprocess as sp
+    from types import SimpleNamespace
+    real = sp.run
+
+    def fake(cmd, **kw):
+        if cmd[:3] == ["git", "worktree", "add"]:
+            return SimpleNamespace(returncode=128, stdout="", stderr="fatal: invalid reference: origin/main\n")
+        return real(cmd, **kw)
+
+    monkeypatch.setattr(so, "_fetch_base", lambda *a, **k: None)
+    monkeypatch.setattr(so, "_preserve_prior_attempt", lambda *a, **k: None)
+    monkeypatch.setattr(so, "WORKTREES_ROOT", tmp_path / "wts")
+    monkeypatch.setattr(so.subprocess, "run", fake)
+    try:
+        so._create_worktree(tmp_path, "G-Eskayo/marvin#9")
+    except RuntimeError as e:
+        assert "invalid reference: origin/main" in str(e) and "128" in str(e)
+    else:
+        raise AssertionError("expected a RuntimeError")
