@@ -30,9 +30,9 @@ def probe_remote(host: str):
         return None
 
 
-def _row(device_id, info, is_self, state, why=None):
+def _row(device_id, device_entry, is_self, state, why=None):
     busy = state.get("busy") if state else False
-    return {"id": device_id, "kind": info.get("kind"), "self": is_self,
+    return {"id": device_id, "kind": device_entry.get("kind"), "self": is_self,
             "state": "busy" if busy else "idle", "task": (state or {}).get("task") if busy else None,
             "startedAt": (state or {}).get("started_at") if busy else None, "why": why}
 

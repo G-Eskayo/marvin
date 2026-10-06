@@ -649,8 +649,8 @@ def test_apply_labels_idempotent_when_all_present():
 
     result = po._apply_labels("test/repo", facts, gh=mock_gh)
     assert result["action"] == "unchanged"
-    assert len(result["labels"]) == 0
-    assert len(calls) == 0
+    assert not result["labels"]
+    assert not calls
 
 
 def test_apply_labels_partial_creates():
@@ -823,7 +823,7 @@ def test_apply_full_idempotency():
         facts["labels"] = list(po.TRIAGE_LABELS)
         result2 = po.apply("test/repo", facts=facts, profiles_dir=profiles_dir, gh=mock_gh2)
         # Labels should be unchanged, so no new calls
-        assert len([c for c in calls2 if "label" in c and "create" in c]) == 0
+        assert not [c for c in calls2 if "label" in c and "create" in c]
         # Profile should be unchanged
         assert result2["profile"]["action"] == "unchanged"
         # Profile file should not be modified (same content)
@@ -930,7 +930,7 @@ def test_refresh_all_onboarding_plans_with_failure(tmp_path, monkeypatch):
         dir=tmp_path
     )
     assert len(result1["ok"]) == 2
-    assert len(result1["failed"]) == 0
+    assert not result1["failed"]
 
     # Verify files exist
     assert (tmp_path / "repo1.json").exists()

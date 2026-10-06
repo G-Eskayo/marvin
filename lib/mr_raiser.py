@@ -161,7 +161,7 @@ def _default_comment_on_ticket(ticket_ref: str, pr_url: str) -> None:
         check=True, capture_output=True,
     )
     # A reworked ticket was tagged needs-reengagement when it was sent back; it has a fresh PR now, so the
-    # board should stop calling it "sent back". Best effort: the label may simply not be there.
+    # board should stop calling it "sent back". Best effort: the label may not be there.
     subprocess.run(["gh", "issue", "edit", issue_number, *(["--repo", repo] if repo else []),
                     "--remove-label", "needs-reengagement"], capture_output=True)
 

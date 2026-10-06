@@ -419,7 +419,7 @@ def test_a_remote_machine_is_not_blocked_by_this_machines_busy_flag(monkeypatch)
     assert tp._select_for_profile({"machines": ["macbook-pro-1"]})[0] == "macbook-pro-1"  # select_machine already checked it
 
 
-# ── "busy" must mean a ticket is actually running, not just that a flag file says so ─
+# ── "busy" must mean a ticket is actually running, not merely that a flag file says so ─
 
 def test_local_busy_is_true_when_a_ticket_process_is_alive_even_if_the_flag_was_cleared(monkeypatch):
     # The dispatch-state flag is one shared boolean: the first of two overlapping runs to finish resets it while the
