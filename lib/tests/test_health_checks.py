@@ -610,3 +610,36 @@ def test_job_placement_flags_missing_stray_and_unplaced_jobs():
     assert sev == "yellow" and "architecture-review" in detail and "brand-new" in detail
     sev, detail = hc.evaluate_job_placement([j for j in laptop_jobs if j != "code-sync-push"], "laptop")
     assert sev == "yellow" and "missing: code-sync-push" in detail
+
+
+# ── GitHub request budget (the pipeline, merge gate and dashboard all draw on one hourly allowance) ──
+
+def _budget(remaining, limit=5000, reset="2026-10-06T05:00:00Z"):
+    return lambda: {"limit": limit, "remaining": remaining, "resetAt": reset}
+
+
+def test_github_budget_is_green_with_plenty_left():
+    r = hc.check_github_budget(query=_budget(4200))
+    assert r["id"] == "github:budget" and r["severity"] == "green"
+    assert "4,200 of 5,000" in r["detail"] and "resets 05:00 UTC" in r["detail"]
+
+
+def test_github_budget_warns_when_low_and_goes_red_near_empty():
+    assert hc.check_github_budget(query=_budget(900))["severity"] == "yellow"
+    assert hc.check_github_budget(query=_budget(150))["severity"] == "red"
+    r = hc.check_github_budget(query=_budget(0))
+    assert r["severity"] == "red" and "resets" in r["detail"]
+
+
+def test_github_budget_says_so_when_exhausted_makes_the_query_itself_fail():
+    def boom():
+        raise RuntimeError("GraphQL: API rate limit already exceeded for user ID 1")
+    r = hc.check_github_budget(query=boom)
+    assert r["severity"] == "red" and "exhausted" in r["detail"].lower()
+
+
+def test_github_budget_is_yellow_not_red_when_it_simply_cannot_be_read():
+    def offline():
+        raise RuntimeError("could not resolve host")
+    r = hc.check_github_budget(query=offline)
+    assert r["severity"] == "yellow"
