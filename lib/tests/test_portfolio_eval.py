@@ -298,3 +298,23 @@ def test_layout_records_in_the_element_library_are_not_treated_as_elements(tmp_p
     (d / "layout-project-page.json").write_text(json.dumps({"id": "layout-project-page", "kind": "layout", "pages": {}}))
     (d / "site-header.json").write_text(json.dumps({"id": "site-header", "name": "Site header", "usage": {"pages": {}}}))
     assert list(ev.load_elements(tmp_path)) == ["site-header"]
+
+
+# ── media that silently stopped working ──
+# The SkineeDipping demo video lost its <source> in a migration and nothing noticed (2026-10-06).
+
+def test_a_video_with_no_source_is_flagged():
+    assert rules_of(pe.check_media([{"kind": "video", "src": None, "status": None}])) == ["video-no-source"]
+
+
+def test_a_video_whose_file_does_not_load_is_flagged_and_a_working_one_is_not():
+    found = pe.check_media([{"kind": "video", "src": "/wp-content/uploads/a.mp4", "status": 404},
+                            {"kind": "video", "src": "/wp-content/uploads/b.mp4", "status": 206}])
+    assert rules_of(found) == ["video-broken"] and "a.mp4" in found[0]["detail"]
+
+
+def test_a_broken_image_is_flagged_but_a_lazy_placeholder_is_not():
+    found = pe.check_media([{"kind": "img", "src": "/wp-content/uploads/gone.jpg", "broken": True},
+                            {"kind": "img", "src": "data:image/gif;base64,R0lGOD", "broken": True},
+                            {"kind": "img", "src": "/wp-content/uploads/ok.jpg", "broken": False}])
+    assert rules_of(found) == ["image-missing"] and "gone.jpg" in found[0]["detail"]

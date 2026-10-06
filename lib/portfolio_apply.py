@@ -32,6 +32,13 @@ DEV_HTML = HOME / "portfolio-dev" / "wordpress" / "html"
 IMAGES_DIR = HOME / ".claude" / "portfolio" / "images"
 UPLOAD_SUBDIR = "wp-content/uploads/generated"
 WPCLI = "portfolio-website-updater-wpcli-1"
+# wp-cli runs as this admin: with no user, WordPress filters written HTML (kses) and drops tags such as <source>.
+WP_USER = "Gil"
+
+
+def wp_base(interactive: bool = False) -> list[str]:
+    """The wp-cli prefix every portfolio tool uses for the dev site."""
+    return ["docker", "exec", *(["-i"] if interactive else []), WPCLI, "wp", "--path=/var/www/html", f"--user={WP_USER}"]
 BASE = "http://localhost:8080"
 THUMB_SIZE = tuple(portfolio_rules.load_rules()["images"]["thumb_size"])   # card-shaped (the photo frame is roughly 3:2)
 
@@ -104,7 +111,7 @@ def _run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
 
 def regenerate_pages(project: Path = PROJECT, runner=_run) -> list[str]:
     """Regenerate the hub + All Projects pages (and re-wrap their sidebars) on the DEV site. Returns log lines."""
-    wp = ["docker", "exec", WPCLI, "wp", "--path=/var/www/html"]
+    wp = wp_base()
     pages = {}
     listing = runner([*wp, "post", "list", "--post_type=page", "--post_status=publish", "--fields=ID,post_name", "--format=json"])
     if listing.returncode != 0:

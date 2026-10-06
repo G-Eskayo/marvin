@@ -259,7 +259,7 @@ def build_longform_fields(parsed: dict, stack: str | None, hero_url: str | None)
 # ── dev site I/O ────────────────────────────────────────────────────────────
 
 def _wp(runner, *args, input=None):
-    return runner(["docker", "exec", "-i", pa.WPCLI, "wp", "--path=/var/www/html", *args], input=input)
+    return runner([*pa.wp_base(interactive=True), *args], input=input)
 
 
 def _run(cmd, input=None):
