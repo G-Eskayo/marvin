@@ -80,6 +80,14 @@ function Card({ card, repo, onSelect, onOpenMr, activeTags, onTag }) {
       <p className={`mt-1 text-xs ${card.reason && /fail|block|stale|no activity/i.test(card.reason) ? 'text-red-400' : 'text-neutral-500'}`}>{card.reason}</p>
       <div className="mt-2 flex flex-wrap items-center gap-1">
         {card.owner === 'human' && <span className="rounded bg-sky-950 px-1.5 py-0.5 text-[10px] text-sky-300">needs you</span>}
+        {card.progress && (
+          <span
+            className={`rounded px-1.5 py-0.5 font-mono text-[10px] ${card.progress.done === card.progress.total ? 'bg-emerald-950 text-emerald-300' : 'bg-neutral-800 text-neutral-300'}`}
+            title={`${card.progress.done} of ${card.progress.total} checklist items done`}
+          >
+            ☑ {card.progress.done}/{card.progress.total}
+          </span>
+        )}
         {card.tags.filter((t) => !(t.kind === 'state' && (t.name === 'ready-for-agent' || t.name === 'ready-for-human'))).map((t) => (
           <Tag key={t.name} tag={t} active={activeTags.has(t.name)} onClick={onTag} />
         ))}
