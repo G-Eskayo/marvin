@@ -45,7 +45,7 @@ Acceptance criteria:
 - [ ] #136: the cause of the missing background is found and recorded; the agent logs why it did or didn't draw; it recovers after sleep, login and display changes; a script checks recovery.
 - [ ] The website snapshot loads with no console errors and no local paths or private data in it.
 
-Design questions to settle before building (grill-with-docs): renderer choice (keep the current Three.js scene or move to a 2D/3D force graph); how far the drill-down goes (files or functions); which events count as "live".
+Design settled 2026-10-06 (grill-with-docs): see ADR 0049 (one 3D map, two layers, own localhost server, self-healing DesktopLive) and ADR 0050 (public snapshot: allowlist, locked private projects, automatic deploy); terms in `brain-map/CONTEXT.md`. The frozen Mac mini DesktopLive (up 5d20h on 2026-10-06, restart job never installed there) is kept as a live test case: capture evidence for #136 once the new logging exists, then restart it.
 
 ## 4. Paper Dive and Resume Tailor
 
