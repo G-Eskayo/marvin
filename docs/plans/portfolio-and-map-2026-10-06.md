@@ -70,8 +70,18 @@ Gil (2026-10-06): Health should list every auth token and MCP server credential 
 
 ## Bugs found along the way
 
-- [ ] The portfolio pipeline hangs (blocked in `opendir`) when the webhook server launches it, but runs in about 3 minutes from a shell. Diagnose (launchd context vs. the iCloud-synced repo).
+- [ ] **Root cause found (2026-10-06): macOS privacy protection.** Processes started by launchd on the mac-mini may not read `~/Documents` (`ls` gets "Operation not permitted"; `node` blocks, likely on an unanswerable permission prompt), so anything the webhook server runs against the portfolio repo hangs: the pipeline and the Portfolio tab's Content view. Too many stuck reads exhaust node's file thread pool and stall the whole server. Fix: grant `/opt/homebrew/bin/node` (and the venv's Python) Full Disk Access on the mac-mini, or move the repo out of `~/Documents` (also ends the iCloud hazard, portfolio ADR 0003). Gil's decision.
 - [ ] code_sync's stash-and-pop conflicts on generated files (`bench/metrics/health-monitor.*`) and leaves the repo half-merged; treat generated files like the merge gate does.
+
+## 7. Portfolio content system (ADR 0051)
+
+- [x] Content templates: `templates/content/{skill-tool,app-product,system,ml-study}.json`; the four rebuilt pages tagged with type and roles.
+- [x] Guide rewritten (Guide & rules tab): voice, verified claims, privacy, evidence and diagrams, MARVIN links.
+- [x] Content checks (`lib/portfolio_content.py`) in the Evaluation; the pipeline fails on errors only, content findings are warnings.
+- [x] Content view in the Portfolio tab (works on the mac-mini; from the laptop it waits on the privacy fix above).
+- [x] Diagram kit: `templates/diagrams/` theme + starters, `lib/portfolio_diagrams.py new|render`.
+- [x] `portfolio-page` skill, wired.
+- [ ] Pages: Hackathon, Killer Sudoku, Distributed LLM Inference, the five ML pages (and About Me, flagged by the copy check).
 
 ## Order
 
