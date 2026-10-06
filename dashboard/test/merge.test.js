@@ -795,3 +795,37 @@ describe('a build-machine failure is not a code failure', () => {
     expect(reengage).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('merging waits for the repo\'s own CI', () => {
+  const PR = 'https://github.com/G-Eskayo/clarity-captions/pull/57'
+  const CTX3 = { repo: 'G-Eskayo/clarity-captions', clone: '/c', base: 'main', runTests: vi.fn(), resolveConflicts: null }
+  const gate = () => vi.fn().mockResolvedValue({ gate: false, headRefName: 'pipeline/x', body: 'Closes G-Eskayo/clarity-captions#35' })
+  const execWith = (rollup) => vi.fn(async (cmd, args) => ({ stdout: JSON.stringify({ baseRefName: 'main', statusCheckRollup: rollup }), stderr: '' }))
+  const go = (exec, reengage = vi.fn().mockResolvedValue(undefined)) =>
+    mergePr(PR, exec, noopRebuild, noopRedispatch, gate(), vi.fn(), reengage, vi.fn(), { gateContext: async () => CTX3 })
+
+  it('failing checks send the PR back with the check names, and merge nothing', async () => {
+    const exec = execWith([{ __typename: 'CheckRun', name: 'CaptionCore unit tests', status: 'COMPLETED', conclusion: 'FAILURE' }])
+    const reengage = vi.fn().mockResolvedValue(undefined)
+    const result = await go(exec, reengage)
+    expect(result).toMatchObject({ merged: false, reengaged: true, code: 'CI_FAILED' })
+    expect(reengage).toHaveBeenCalledWith(expect.objectContaining({ prUrl: PR, ticketNumber: 35, comment: expect.stringContaining('CaptionCore unit tests') }), exec)
+    expect(exec).not.toHaveBeenCalledWith('gh', ['pr', 'merge', PR, '--merge'])
+  })
+
+  it('running checks refuse without sending it back', async () => {
+    const reengage = vi.fn()
+    await expect(go(execWith([{ __typename: 'CheckRun', name: 'build', status: 'IN_PROGRESS', conclusion: null }]), reengage))
+      .rejects.toMatchObject({ payload: { code: 'CI_PENDING' } })
+    expect(reengage).not.toHaveBeenCalled()
+  })
+
+  it('passing checks, or none at all, merge as before', async () => {
+    for (const rollup of [[{ __typename: 'CheckRun', name: 'a', status: 'COMPLETED', conclusion: 'SUCCESS' }], []]) {
+      const exec = execWith(rollup)
+      const result = await go(exec)
+      expect(result.merged).toBe(true)
+      expect(exec).toHaveBeenCalledWith('gh', ['pr', 'merge', PR, '--merge'])
+    }
+  })
+})

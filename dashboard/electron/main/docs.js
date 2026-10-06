@@ -1,3 +1,4 @@
+import { notebookToMarkdown } from '../../src/lib/ipynb.js'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { homedir } from 'os'
 import path from 'path'
@@ -72,10 +73,34 @@ export async function listRepoDocTree(execFileAsync, repo) {
   } catch {
     // no docs/adr/ yet -- fine, not every repo has ADRs
   }
+  try {
+    const { stdout } = await run(execFileAsync, ['api', `repos/${GH_OWNER}/${repo}/contents`])
+    const books = JSON.parse(stdout)
+      .filter((e) => e.type === 'file' && e.name.endsWith('.ipynb'))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((e) => ({ path: e.name, label: e.name }))
+    if (books.length) tree.push({ section: 'notebooks', items: books })
+  } catch {
+    // listing the root failed: the notebooks section is optional
+  }
   return tree
 }
 
+// What the text search should see: a notebook is searched as the markdown a reader sees (minus the inline images),
+// never as its raw JSON.
+export function searchableText(filePath, content) {
+  return filePath.endsWith('.ipynb') ? notebookToMarkdown(content, { images: false }) : content
+}
+
 export async function fetchFileContent(execFileAsync, repo, filePath) {
+  if (filePath.endsWith('.ipynb')) {
+    // Notebooks carry their images inline and easily pass the contents API's 1 MB base64 limit: ask for the raw bytes.
+    const { stdout } = await execFileAsync(
+      'gh', ['api', '-H', 'Accept: application/vnd.github.raw', `repos/${GH_OWNER}/${repo}/contents/${filePath}`],
+      { maxBuffer: 100 * 1024 * 1024 }
+    )
+    return stdout
+  }
   const { stdout } = await run(execFileAsync, [
     'api', `repos/${GH_OWNER}/${repo}/contents/${filePath}`, '--jq', '.content'
   ])

@@ -17,6 +17,11 @@ const directive = (name) => {
 const DEV = 'http://localhost:8080'
 
 describe('renderer Content Security Policy', () => {
+  it('lets the Docs tab show a README\'s repo-relative images, which resolve to raw.githubusercontent.com', () => {
+    expect(directive('img-src')).toContain('https://raw.githubusercontent.com')
+    expect(directive('script-src')).not.toContain('https://raw.githubusercontent.com')
+  })
+
   it('lets the Portfolio tab show images from the dev site and data: URLs', () => {
     expect(directive('img-src')).toEqual(expect.arrayContaining(["'self'", 'data:', DEV]))
   })

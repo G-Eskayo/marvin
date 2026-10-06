@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import Markdown from './Markdown.jsx'
 import Related, { useRelated } from './Related.jsx'
 import { extractOutline } from '../lib/docs_text.js'
+import { isNotebookPath, notebookToMarkdown } from '../lib/ipynb.js'
 
 function formatTimestamp(iso) {
   if (!iso) return 'never'
@@ -127,7 +128,9 @@ function Outline({ content, onJump }) {
   )
 }
 
-function DocViewer({ content, loading, error, scrollRef, onJump, ctx, onLink, rel, onTicket, onDoc, onPr }) {
+function DocViewer({ content: rawContent, path, loading, error, scrollRef, onJump, ctx, onLink, rel, onTicket, onDoc, onPr }) {
+  // A notebook is converted to markdown here, so the outline, the heading jump and the renderer all see the same text.
+  const content = useMemo(() => (rawContent !== null && isNotebookPath(path) ? notebookToMarkdown(rawContent) : rawContent), [rawContent, path])
   if (error) return <div className="p-6 text-red-400">Failed to load: {error}</div>
   if (loading) return <div className="p-6 text-neutral-500">Loading…</div>
   if (content === null) {
@@ -523,7 +526,7 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
                   </button>
                 </div>
               )}
-              <DocViewer content={content} loading={loading} error={error} scrollRef={scrollRef} onJump={jumpToHeading} ctx={docCtx} onLink={onLink} rel={rel} onTicket={onOpenTicket} onDoc={openDoc} onPr={onOpenPr} />
+              <DocViewer content={content} path={selectedPath} loading={loading} error={error} scrollRef={scrollRef} onJump={jumpToHeading} ctx={docCtx} onLink={onLink} rel={rel} onTicket={onOpenTicket} onDoc={openDoc} onPr={onOpenPr} />
             </>
           )}
         </div>

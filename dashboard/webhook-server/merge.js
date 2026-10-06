@@ -10,6 +10,7 @@ import { sendFeedback } from './deny.js'
 import { parseTicketRef } from '../electron/main/mr_review.js'
 import { repoFromPrUrl, MARVIN_REPO } from '../electron/main/mr_repos.js'
 import { recordStage } from './ticket_stages.js'
+import { assertChecksGreen } from './ci_status.js'
 
 const execFileAsync = promisify(execFile)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -229,6 +230,21 @@ async function mergePrUnqueued(
     if (ticketNumber === null) return
     if (ctx) recordStageFn(ticketNumber, name, status, detail, { repo })
     else recordStageFn(ticketNumber, name, status, detail)
+  }
+
+  // The repo's own CI (GitHub checks), when it has any: failing means the code is wrong and the PR goes back
+  // with the check names; still running means wait. Before the gate, so no machine time is spent on a red PR.
+  try {
+    await assertChecksGreen(prUrl, exec)
+  } catch (e) {
+    if (e instanceof MergeFailure && e.payload.code === 'CI_FAILED' && ticketNumber !== null) {
+      stage('gate', 'failed', `CI_FAILED: ${e.payload.message}`)
+      recordFailureFn({ ticket: ticketNumber, code: 'CI_FAILED', message: e.payload.message })
+      const comment = `**CI: failing checks**\n\n${e.payload.message}\n\nFix what these report, then the ticket will be rebuilt.`
+      await reengage({ prUrl, ticketNumber, reasons: ['Regression/quality'], comment }, exec)
+      return { merged: false, reengaged: true, code: 'CI_FAILED', stage: 'gate', action: 'reengage', reason: comment }
+    }
+    throw e
   }
 
   if (gate) {
