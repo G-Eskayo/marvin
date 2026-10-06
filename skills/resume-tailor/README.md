@@ -17,6 +17,10 @@ A Claude Code skill that maintains a master resume and generates tailored 1-page
 
 ---
 
+## Status
+
+In use since July 2026. It has produced tailored resumes for 12 real applications, and cover letters for some of them. Personal data (the master resume and every tailored output) never leaves the machine.
+
 ## Commands
 
 | Command | What it does |
@@ -80,7 +84,7 @@ Add to your `~/.claude/CLAUDE.md` skill routing table:
 
 ## How tailoring works
 
-1. Fetches the job description (URL or paste)
+1. Fetches the job description (URL or paste). Job sites that render with JavaScript are handled too: on Next.js sites like Dayforce it reads the job data embedded in the page. Workday pages still need the description pasted in.
 2. Researches the company: mission, culture, tech stack, recent news, contacts
 3. Extracts semantic concepts from the JD — not keywords, but ideas, domains, responsibility types
 4. Scores every master resume entry on relevance (0–1) and recency (0–1), combined as `relevance × 0.7 + recency × 0.3`
