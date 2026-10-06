@@ -169,6 +169,7 @@ DISPATCH_STATE_EOF
 trap 'rm -f "$0"; cat > {DISPATCH_STATE_PATH} << 'DISPATCH_IDLE_EOF'
 {idle_json}
 DISPATCH_IDLE_EOF' EXIT
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 if [ -f "$HOME/.claude/.oauth-token" ]; then
   export CLAUDE_CODE_OAUTH_TOKEN="$(cat "$HOME/.claude/.oauth-token")"
 fi
