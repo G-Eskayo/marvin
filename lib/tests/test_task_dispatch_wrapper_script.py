@@ -43,3 +43,13 @@ def test_wrapper_script_marks_busy_then_idle_on_exit():
     assert '"busy": true' in script
     assert '"busy": false' in script
     assert "trap " in script and "EXIT" in script
+
+
+def test_wrapper_script_puts_homebrew_on_path():
+    """Found live 2026-10-05: a ticket dispatched to the macbook over ssh died instantly with FileNotFoundError: 'gh'
+    (an ssh command runs in a non-interactive shell whose PATH has no /opt/homebrew/bin), so no ticket had really run on the
+    laptop and the claim label was left behind."""
+    script = td._build_wrapper_script("echo hi", "task123", "my task")
+    export = [l for l in script.splitlines() if l.startswith("export PATH=")]
+    assert export and "/opt/homebrew/bin" in export[0] and "$PATH" in export[0]
+    assert script.index(export[0]) < script.index("echo hi")   # before the real command runs
