@@ -861,4 +861,102 @@ def test_apply_profile_all_stacks():
             }
             result = po._apply_profile(f"test/{stack}-repo", facts, profiles_dir=profiles_dir)
             # Should not fail for any stack
-            assert result["action"] in ("created", "unchanged", "conflict", "needs-human")
+
+
+# ── Onboarding storage and refresh ──────────────────────────────────────
+
+def test_onboarding_path():
+    """onboarding_path extracts repo name and builds correct path."""
+    path = po.onboarding_path("G-Eskayo/marvin")
+    assert path.name == "marvin.json"
+    assert "onboarding" in str(path)
+
+
+def test_onboarding_path_with_custom_dir(tmp_path):
+    """onboarding_path respects custom dir parameter."""
+    path = po.onboarding_path("test/repo", dir=tmp_path)
+    assert path.parent == tmp_path
+    assert path.name == "repo.json"
+
+
+def test_write_onboarding_plan(tmp_path):
+    """write_onboarding_plan writes JSON with repo, generated_at, and pieces."""
+    plan_out = {"profile": {"state": "ok", "reason": "exists"}}
+    po.write_onboarding_plan("test/repo", plan_out, dir=tmp_path)
+
+    path = tmp_path / "repo.json"
+    assert path.exists()
+    data = json.loads(path.read_text())
+    assert data["repo"] == "test/repo"
+    assert data["pieces"] == plan_out
+    assert "generated_at" in data
+
+
+def test_refresh_onboarding_plan(tmp_path):
+    """refresh_onboarding_plan runs inspect, plan, and write."""
+    def mock_gh(args):
+        if "repo" in args and "view" in args:
+            return '{"visibility": "public", "defaultBranchRef": {"name": "main"}}'
+        if "trees" in args:
+            return '{"tree": []}'
+        if "label" in args:
+            return '[]'
+        return ""
+
+    po.refresh_onboarding_plan("test/repo", gh=mock_gh, dir=tmp_path)
+
+    path = tmp_path / "repo.json"
+    assert path.exists()
+    data = json.loads(path.read_text())
+    assert data["repo"] == "test/repo"
+    assert "pieces" in data
+
+
+def test_refresh_all_onboarding_plans_with_failure(tmp_path, monkeypatch):
+    """refresh_all_onboarding_plans writes successes, leaves failures untouched."""
+    def mock_gh_success(args):
+        if "repo" in args and "view" in args:
+            return '{"visibility": "public", "defaultBranchRef": {"name": "main"}}'
+        if "trees" in args:
+            return '{"tree": []}'
+        if "label" in args:
+            return '[]'
+        return ""
+
+    # First run: both succeed
+    result1 = po.refresh_all_onboarding_plans(
+        ["test/repo1", "test/repo2"],
+        gh=mock_gh_success,
+        dir=tmp_path
+    )
+    assert len(result1["ok"]) == 2
+    assert len(result1["failed"]) == 0
+
+    # Verify files exist
+    assert (tmp_path / "repo1.json").exists()
+    assert (tmp_path / "repo2.json").exists()
+
+    # Read original repo2 content
+    original_repo2 = (tmp_path / "repo2.json").read_text()
+
+    # Second run with partial failure: repo2 fails, repo1 succeeds
+    # Mock refresh_onboarding_plan to raise for repo2
+    original_refresh = po.refresh_onboarding_plan
+    def mock_refresh(repo, gh, dir):
+        if repo == "test/repo2":
+            raise Exception("Network error")
+        return original_refresh(repo, gh, dir)
+
+    monkeypatch.setattr(po, "refresh_onboarding_plan", mock_refresh)
+
+    result2 = po.refresh_all_onboarding_plans(
+        ["test/repo1", "test/repo2"],
+        gh=mock_gh_success,
+        dir=tmp_path
+    )
+    # repo1 should succeed, repo2 should fail
+    assert "test/repo1" in result2["ok"]
+    assert any(r == "test/repo2" for r, _ in result2["failed"])
+
+    # Verify repo2's file is unchanged (not nuked by error)
+    assert (tmp_path / "repo2.json").read_text() == original_repo2

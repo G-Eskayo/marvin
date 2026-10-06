@@ -128,3 +128,51 @@ describe('parity wording', () => {
     expect(typeof mod.default).toBe('function')
   })
 })
+
+import ProjectReadinessPanel from '../src/components/ProjectReadinessPanel.jsx'
+
+describe('ProjectReadinessPanel', () => {
+  it('renders loading state', () => {
+    const html = renderToStaticMarkup(<ProjectReadinessPanel plans={null} loading={true} />)
+    expect(html).toContain('Loading project readiness')
+  })
+
+  it('renders empty state when no plans', () => {
+    const html = renderToStaticMarkup(<ProjectReadinessPanel plans={[]} loading={false} />)
+    expect(html).toContain('No projects registered yet')
+  })
+
+  it('renders projects with readiness chips', () => {
+    const plans = [
+      {
+        repo: 'G-Eskayo/marvin',
+        status: 'planned',
+        generated_at: '2026-10-06T12:00:00Z',
+        pieces: {
+          profile: { state: 'ok', reason: 'exists' },
+          stack: { state: 'needs-human', reason: 'no recognised stack' },
+          board: { state: 'missing', reason: 'not registered' }
+        }
+      }
+    ]
+    const html = renderToStaticMarkup(<ProjectReadinessPanel plans={plans} loading={false} />)
+    expect(html).toContain('marvin')
+    expect(html).toContain('profile')
+    expect(html).toContain('stack')
+    expect(html).toContain('board')
+  })
+
+  it('renders unplanned projects gracefully', () => {
+    const plans = [
+      {
+        repo: 'test/repo',
+        status: 'not_planned_yet',
+        generated_at: null,
+        pieces: null
+      }
+    ]
+    const html = renderToStaticMarkup(<ProjectReadinessPanel plans={plans} loading={false} />)
+    expect(html).toContain('repo')
+    expect(html).toContain('Not scanned yet')
+  })
+})

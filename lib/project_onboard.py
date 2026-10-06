@@ -18,6 +18,7 @@ import json
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -36,6 +37,14 @@ TRIAGE_LABEL_COLORS = {
     "wontfix": "808080",
 }
 CONFIG_ONBOARDING = Path(__file__).resolve().parent.parent / "config" / "onboarding"
+ONBOARDING_DIR = Path.home() / ".claude" / "onboarding"
+
+
+def onboarding_path(repo: str, dir: Path | None = None) -> Path:
+    """Path to the onboarding plan file for a repo: ~/.claude/onboarding/<repo_name>.json"""
+    dir = dir or ONBOARDING_DIR
+    repo_name = repo.split("/")[1]
+    return dir / f"{repo_name}.json"
 
 
 def _load_stack_templates() -> list[dict]:
@@ -410,6 +419,42 @@ def plan(facts: dict) -> dict:
         plan_out["generated_paths"] = {"state": "ok", "reason": "no stack detected; skipping generated paths", "proposals": []}
 
     return plan_out
+
+
+def write_onboarding_plan(repo: str, plan_out: dict, dir: Path | None = None) -> None:
+    """Write the onboarding plan to ~/.claude/onboarding/<repo_name>.json"""
+    dir = dir or ONBOARDING_DIR
+    path = onboarding_path(repo, dir=dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = {
+        "repo": repo,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "pieces": plan_out,
+    }
+    path.write_text(json.dumps(data, indent=2) + "\n")
+
+
+def refresh_onboarding_plan(repo: str, gh=_gh, dir: Path | None = None) -> None:
+    """Refresh the onboarding plan: inspect, plan, write. Raises on failure."""
+    facts = inspect(repo, gh=gh)
+    plan_out = plan(facts)
+    write_onboarding_plan(repo, plan_out, dir=dir)
+
+
+def refresh_all_onboarding_plans(repos: list[str], gh=_gh, dir: Path | None = None) -> dict:
+    """Refresh onboarding plans for all repos, logging failures without blocking successes.
+    Returns {"ok": [repos...], "failed": [(repo, reason), ...]}.
+    On failure, leaves the existing file untouched (never overwrites with error state)."""
+    dir = dir or ONBOARDING_DIR
+    ok = []
+    failed = []
+    for repo in repos:
+        try:
+            refresh_onboarding_plan(repo, gh=gh, dir=dir)
+            ok.append(repo)
+        except Exception as e:  # noqa: BLE001
+            failed.append((repo, str(e)))
+    return {"ok": ok, "failed": failed}
 
 
 def _apply_labels(repo: str, facts: dict, gh=_gh) -> dict:
