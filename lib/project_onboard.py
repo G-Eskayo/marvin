@@ -15,6 +15,7 @@ import json
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -400,6 +401,36 @@ def plan(facts: dict) -> dict:
         plan_out["generated_paths"] = {"state": "ok", "reason": "no stack detected; skipping generated paths", "proposals": []}
 
     return plan_out
+
+
+def onboarding_path(repo: str, directory: str | None = None) -> Path:
+    """Path to the onboarding JSON file for a repo. Name is derived from repo's owner/name."""
+    if directory is None:
+        directory = str(Path.home() / ".claude" / "onboarding")
+    name = repo.split("/")[1] if "/" in repo else repo
+    return Path(directory) / f"{name}.json"
+
+
+def write_plan(repo: str, result: dict, now: datetime | None = None, directory: str | None = None) -> None:
+    """Write a readiness plan to disk atomically. File path is based on repo name."""
+    if now is None:
+        now = datetime.now(timezone.utc)
+    body = {
+        "repo": repo,
+        "generated_at": now.isoformat(),
+        "plan": result,
+    }
+    path = onboarding_path(repo, directory)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_stem(path.stem + ".tmp")
+    try:
+        with open(tmp_path, "w") as f:
+            json.dump(body, f)
+        tmp_path.replace(path)
+    except Exception:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise
 
 
 def main():

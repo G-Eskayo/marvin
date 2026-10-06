@@ -616,3 +616,61 @@ def test_generated_paths_ok_when_no_candidates_found():
     result = po.plan(facts)
     assert result["generated_paths"]["state"] == "ok"
     assert result["generated_paths"].get("proposals", []) == []
+
+
+# ── Write helpers ────────────────────────────────────────────────────────
+
+
+def test_onboarding_path_derives_name_from_repo():
+    """onboarding_path extracts repo name (owner/name -> name.json)."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = po.onboarding_path("G-Eskayo/marvin", directory=tmpdir)
+        assert path.name == "marvin.json"
+        assert str(tmpdir) in str(path)
+
+
+def test_write_plan_creates_json_file():
+    """write_plan writes an atomically-swapped JSON file with correct structure."""
+    import tempfile
+    import json as json_lib
+    from datetime import datetime, timezone
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        repo = "G-Eskayo/test"
+        now = datetime(2026, 10, 6, 12, 0, 0, tzinfo=timezone.utc)
+        result = {"profile": {"state": "ok", "reason": "test"}}
+
+        po.write_plan(repo, result, now=now, directory=tmpdir)
+
+        path = po.onboarding_path(repo, directory=tmpdir)
+        assert path.exists()
+
+        with open(path) as f:
+            data = json_lib.load(f)
+
+        assert data["repo"] == repo
+        assert data["generated_at"] == "2026-10-06T12:00:00+00:00"
+        assert data["plan"] == result
+
+
+def test_write_plan_overwrites_existing_file():
+    """write_plan atomically replaces an existing file."""
+    import tempfile
+    import json as json_lib
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        repo = "G-Eskayo/test"
+        path = po.onboarding_path(repo, directory=tmpdir)
+
+        # Write first version
+        po.write_plan(repo, {"first": True}, directory=tmpdir)
+        with open(path) as f:
+            first = json_lib.load(f)
+        assert first["plan"] == {"first": True}
+
+        # Write second version
+        po.write_plan(repo, {"first": False, "second": True}, directory=tmpdir)
+        with open(path) as f:
+            second = json_lib.load(f)
+        assert second["plan"] == {"first": False, "second": True}

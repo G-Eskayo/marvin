@@ -945,9 +945,9 @@ Pushing workflow files needed `gh auth refresh -h github.com -s workflow` (the g
 - **MR Review:** each PR shows "GitHub checks passed / failed / still running"; Approve is disabled for failing and pending.
 - **Auto send-back:** the pipeline scan (`_requeue_conflicted_prs`) also sends back a PR whose checks genuinely FAILED, naming them. Cancelled / timed-out / still-running checks never trigger a rebuild (the runner's fault, not the code's). The 3-attempt cap still applies.
 
-## Project onboarding (proposed, 2026-10-06)
+## Project onboarding (shipped, 2026-10-06)
 
-Design for turning a repo into a fully wired project from one command: **docs/adr/0036-project-onboarding.md** (status: proposed, awaiting Gil's decisions D1-D4). Not the portfolio "add-project pipeline" (ADR 0034).
+**docs/adr/0036-project-onboarding.md** (status: accepted). The hourly ticket pipeline scan runs `inspect()` and `plan()` for every board's repo, writes readiness summaries to `~/.claude/onboarding/<name>.json`, and the Health → Project readiness panel displays them organized by worst-state-first (missing setup, needs decisions, ready). Built via #141–#143 and #144. Not the portfolio "add-project pipeline" (ADR 0034).
 
 ## GitHub request budget (2026-10-06)
 

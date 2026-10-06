@@ -48,6 +48,7 @@ import project_profile as pp  # noqa: E402
 import ticket_agents  # noqa: E402
 import project_catalog  # noqa: E402
 import ticket_evidence  # noqa: E402
+import project_onboard as po  # noqa: E402
 
 VENV_PYTHON = str(Path.home() / ".agents" / "venv" / "bin" / "python")
 RUN_TICKET_SCRIPT = str(Path.home() / ".agents" / "lib" / "run_ticket.py")
@@ -249,6 +250,42 @@ def _run_ticket_agents(step, summary) -> None:
         step("Ticket agents", f"skipped: {e}")
 
 
+def _run_project_readiness(step) -> None:
+    """Run inspect/plan for every board repo and write onboarding files. One broken repo
+    must not stop the rest from completing."""
+    try:
+        boards = board_registry.list_boards()
+    except Exception as e:  # noqa: BLE001
+        print(f"{LOG_PREFIX} project readiness: failed to list boards: {e}", file=sys.stderr)
+        step("Project readiness", f"skipped: {e}")
+        return
+
+    completed = 0
+    failed = 0
+    for board in boards:
+        repo = board.get("repo")
+        if not repo:
+            continue
+        try:
+            facts = po.inspect(repo)
+            result = po.plan(facts)
+            po.write_plan(repo, result)
+            completed += 1
+        except Exception as e:  # noqa: BLE001
+            print(f"{LOG_PREFIX} project readiness: {repo}: {e}", file=sys.stderr)
+            try:
+                name = repo.split("/")[1] if "/" in repo else repo
+                po.write_plan(repo, {"error": str(e)})
+            except Exception:  # noqa: BLE001
+                pass
+            failed += 1
+
+    summary = f"{completed} projects scanned"
+    if failed:
+        summary += f", {failed} failed"
+    step("Project readiness", summary)
+
+
 def _active_project_repos() -> list[str]:
     """Repos of the catalog's active and recent projects: each deserves a board even before its first ticket."""
     try:
@@ -420,6 +457,7 @@ def _scan(run, dry_run: bool) -> None:
         step("Board discovery", f"{len(added)} new" if added else "no new projects")
         step("Project catalog", "refresh if older than 50 min")
         _refresh_catalog()
+        _run_project_readiness(step)
         _run_ticket_agents(step, summary)
 
     if not dry_run:

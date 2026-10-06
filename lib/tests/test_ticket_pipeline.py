@@ -199,12 +199,16 @@ def test_a_scan_with_nothing_ready_leaves_a_run_log_saying_so(monkeypatch):
     import job_events
     monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda: [])
     monkeypatch.setattr(tp.failure_breaker, "tripped", lambda now=None: [])
+    monkeypatch.setattr(tp.board_registry, "list_boards", lambda: [])
+    monkeypatch.setattr(tp.po, "inspect", lambda repo: {})
+    monkeypatch.setattr(tp.po, "plan", lambda facts: {})
+    monkeypatch.setattr(tp.po, "write_plan", lambda *a, **kw: None)
     monkeypatch.setattr(sys, "argv", ["ticket_pipeline.py"])
     tp.main()
     run = json.loads((job_events.JOBS_DIR / "ticket-pipeline.json").read_text())["runs"][-1]
     assert run["status"] == "passed" and run["summary"] == "no ready tickets"
     steps = [s["step"] for s in run["steps"]]
-    assert steps == ["Board discovery", "Project catalog", "Conflicted PRs", "Circuit breaker", "Scanning tickets"]
+    assert steps == ["Board discovery", "Project catalog", "Project readiness", "Conflicted PRs", "Circuit breaker", "Scanning tickets"]
 
 
 def test_a_tripped_breaker_is_visible_in_the_run_log(monkeypatch):
@@ -624,3 +628,113 @@ def test_ordering_survives_an_unreadable_deadline_source(monkeypatch):
         raise OSError("catalog unreadable")
     monkeypatch.setattr(tp, "_due_for", boom)
     assert [i["number"] for i in tp._unclaimed_ready_tickets()] == [3, 4]
+
+
+# ── Project readiness scan ────────────────────────────────────────────────
+
+
+def test_run_project_readiness_scans_all_boards(monkeypatch, tmp_path):
+    """_run_project_readiness calls inspect and plan for every board, writes files."""
+    import json
+    from datetime import datetime, timezone
+
+    boards = [
+        {"repo": "G-Eskayo/marvin"},
+        {"repo": "G-Eskayo/test"},
+    ]
+    monkeypatch.setattr(tp.board_registry, "list_boards", lambda: boards)
+
+    # Mock inspect/plan to return predictable results
+    plans = {
+        "G-Eskayo/marvin": {"profile": {"state": "ok", "reason": "marvin profile"}},
+        "G-Eskayo/test": {"stack": {"state": "missing", "reason": "no stack"}},
+    }
+
+    def fake_inspect(repo):
+        return {"repo": repo}
+
+    def fake_plan(facts):
+        return plans.get(facts["repo"], {})
+
+    monkeypatch.setattr(tp.po, "inspect", fake_inspect)
+    monkeypatch.setattr(tp.po, "plan", fake_plan)
+
+    calls = []
+    def fake_write_plan(repo, result, **kw):
+        calls.append((repo, result))
+
+    monkeypatch.setattr(tp.po, "write_plan", fake_write_plan)
+
+    step_calls = []
+    def fake_step(*args):
+        step_calls.append(args)
+
+    tp._run_project_readiness(fake_step)
+
+    assert len(calls) == 2
+    assert calls[0][0] == "G-Eskayo/marvin"
+    assert calls[1][0] == "G-Eskayo/test"
+    # Final step call should report completion
+    assert any("2 projects scanned" in str(call) for call in step_calls)
+
+
+def test_run_project_readiness_one_failure_does_not_stop_the_rest(monkeypatch):
+    """_run_project_readiness catches exceptions per repo and continues."""
+    boards = [
+        {"repo": "G-Eskayo/good"},
+        {"repo": "G-Eskayo/bad"},
+        {"repo": "G-Eskayo/also-good"},
+    ]
+    monkeypatch.setattr(tp.board_registry, "list_boards", lambda: boards)
+
+    def fake_inspect(repo):
+        if repo == "G-Eskayo/bad":
+            raise ValueError("bad repo")
+        return {"repo": repo}
+
+    def fake_plan(facts):
+        return {"piece": {"state": "ok", "reason": "ok"}}
+
+    monkeypatch.setattr(tp.po, "inspect", fake_inspect)
+    monkeypatch.setattr(tp.po, "plan", fake_plan)
+
+    calls = []
+    def fake_write_plan(repo, result, **kw):
+        calls.append((repo, result))
+
+    monkeypatch.setattr(tp.po, "write_plan", fake_write_plan)
+
+    step_calls = []
+    def fake_step(*args):
+        step_calls.append(args)
+
+    tp._run_project_readiness(fake_step)
+
+    # Good ones should have written their plans
+    repos_written = [call[0] for call in calls]
+    assert "G-Eskayo/good" in repos_written
+    assert "G-Eskayo/also-good" in repos_written
+    # Bad one should have written an error record
+    assert "G-Eskayo/bad" in repos_written
+    # Summary should mention the failure
+    assert any("1 failed" in str(call) for call in step_calls)
+
+
+def test_scan_includes_project_readiness_step(monkeypatch):
+    """_scan lists Project readiness as one of its steps."""
+    import json
+    import job_events
+
+    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda: [])
+    monkeypatch.setattr(tp.failure_breaker, "tripped", lambda now=None: [])
+    monkeypatch.setattr(tp.board_registry, "list_boards", lambda: [])
+    monkeypatch.setattr(tp.po, "inspect", lambda repo: {})
+    monkeypatch.setattr(tp.po, "plan", lambda facts: {})
+    monkeypatch.setattr(tp.po, "write_plan", lambda *a, **kw: None)
+    monkeypatch.setattr(sys, "argv", ["ticket_pipeline.py"])
+
+    tp.main()
+
+    run = json.loads((job_events.JOBS_DIR / "ticket-pipeline.json").read_text())["runs"][-1]
+    steps = [s["step"] for s in run["steps"]]
+    assert "Project readiness" in steps

@@ -28,6 +28,7 @@ import { listOpenPrsAcrossRepos, prListArgs, createListCache, normalizeSeen, can
 import { createIndexer, buildDocsIndex, loadIndex } from './docs_search.js'
 import { createDocsService, MASTER_ID } from './docs_service.js'
 import { readMergeableRepos, listProfiles, setDispatch } from './profiles.js'
+import { readProjectReadiness } from './project_readiness.js'
 import { searchFiles, isRevealable } from './files_search.js'
 import { readCatalog, readMasterDoc, CATALOG_DIR, MASTER_DOC_PATH } from './catalog.js'
 import { STAGES_DIR } from '../../webhook-server/ticket_stages.js'
@@ -178,6 +179,7 @@ function registerDispatchHandlers() {
 function registerHealthHandlers() {
   ipcMain.handle('health:status', () => readHealthStatus())
   ipcMain.handle('health:agents', () => listAgents())
+  ipcMain.handle('health:readiness', () => readProjectReadiness())
   // Execution profiles (lib/project_profile.py): which projects the pipeline may work on by itself.
   ipcMain.handle('profiles:list', () => listProfiles())
   ipcMain.handle('profiles:setDispatch', async (_event, repo, value) => {
