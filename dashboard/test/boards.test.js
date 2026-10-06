@@ -52,6 +52,14 @@ describe('loadBoard', () => {
     expect(board.columns.find((c) => c.id === 'ready').cards[0].title).toBe('T')
   })
 
+  it('stamps when the data was fetched, so the board can say how fresh it is', async () => {
+    const before = Date.now()
+    const board = await loadBoard('o/r', { gh: async () => '[]', stagesFor: () => ({}), liveNumbers: new Set() })
+    const at = Date.parse(board.fetchedAt)
+    expect(at).toBeGreaterThanOrEqual(before)
+    expect(at).toBeLessThanOrEqual(Date.now())
+  })
+
   it('surfaces a gh failure as an error naming the repo', async () => {
     const gh = async () => {
       throw new Error('auth')
