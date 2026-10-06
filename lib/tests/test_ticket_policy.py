@@ -98,8 +98,9 @@ def test_a_fully_specified_ticket_is_ready_for_an_agent():
     assert v["state"] == "ready-for-agent" and v["category"] == "enhancement"
 
 
-def test_a_ticket_that_needs_a_person_is_ready_for_human():
-    v = tp.triage_verdict(issue(body=GOOD, title="Design session: decide on retention"))
+def test_a_ticket_that_needs_a_person_is_ready_for_human_once_it_says_what_to_do():
+    task = "\n## Your task\n**What I need from you:** a decision.\n**Where:** here.\n**How:** think.\n**What to send back:** a reply.\n"
+    v = tp.triage_verdict(issue(body=GOOD + task, title="Design session: decide on retention"))
     assert v["state"] == "ready-for-human"
 
 
@@ -124,3 +125,42 @@ def test_triage_leaves_parent_prds_and_claimed_tickets_alone():
     assert tp.triage_verdict(issue(body=prd, title="Add the board")) is None
     assert tp.triage_verdict(issue(body="thin", title="PRD: MARVIN Activity Board")) is None
     assert tp.triage_verdict(issue(labels=["claimed:mac-mini"], body="thin")) is None
+
+
+# ── tickets marked for a person must say exactly what to do ─────────────────
+
+GOOD_TASK = """## What to build
+Check the supported languages on the phone.
+
+## Your task
+**What I need from you:** the list of speech languages on your iPhone.
+**Where:** your iPhone 17 Pro, in the Seal app, Settings > Speech languages.
+**How:**
+1. Install the newest build from TestFlight.
+2. Open Settings > Speech languages and tap Copy.
+**What to send back:** paste the copied text as a reply on this ticket.
+
+## Acceptance criteria
+- [ ] The list is recorded
+"""
+
+
+def test_a_complete_your_task_section_has_no_gaps():
+    assert tp.human_task_gaps(GOOD_TASK) == []
+
+
+def test_missing_or_empty_fields_are_named():
+    assert tp.human_task_gaps("## What to build\nx\n") == ["a 'Your task' section", ]
+    body = GOOD_TASK.replace("**Where:** your iPhone 17 Pro, in the Seal app, Settings > Speech languages.\n", "**Where:**\n")
+    assert tp.human_task_gaps(body) == ["Where"]
+    body = GOOD_TASK.replace("**What to send back:** paste the copied text as a reply on this ticket.\n", "")
+    assert tp.human_task_gaps(body) == ["What to send back"]
+
+
+def test_triage_sends_a_person_ticket_without_instructions_back_for_info_instead_of_to_the_person():
+    issue = {"title": "Decide the launch languages", "labels": [],
+             "body": "## What to build\nPick them.\n\n## Acceptance criteria\n- [ ] picked\n"}
+    v = tp.triage_verdict(issue)
+    assert v["state"] == "needs-info" and "Your task" in v["why"]
+    issue["body"] = GOOD_TASK
+    assert tp.triage_verdict(issue)["state"] == "ready-for-human"
