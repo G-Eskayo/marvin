@@ -18,8 +18,8 @@
     <integer>10</integer>
 
     <key>StandardOutPath</key>
-    <string>/Users/gileskayo/.claude/logs/desktoplive.log</string>
+    <string>/Users/gileskayo/.claude/logs/desktoplive-stdio.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/gileskayo/.claude/logs/desktoplive-error.log</string>
+    <string>/Users/gileskayo/.claude/logs/desktoplive-stdio.log</string>
 </dict>
 </plist>
