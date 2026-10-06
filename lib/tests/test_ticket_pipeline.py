@@ -204,7 +204,7 @@ def test_a_scan_with_nothing_ready_leaves_a_run_log_saying_so(monkeypatch):
     run = json.loads((job_events.JOBS_DIR / "ticket-pipeline.json").read_text())["runs"][-1]
     assert run["status"] == "passed" and run["summary"] == "no ready tickets"
     steps = [s["step"] for s in run["steps"]]
-    assert steps == ["Board discovery", "Project catalog", "Conflicted PRs", "Circuit breaker", "Scanning tickets"]
+    assert steps == ["Board discovery", "Onboarding plans", "Project catalog", "Conflicted PRs", "Circuit breaker", "Scanning tickets"]
 
 
 def test_a_tripped_breaker_is_visible_in_the_run_log(monkeypatch):
@@ -216,6 +216,24 @@ def test_a_tripped_breaker_is_visible_in_the_run_log(monkeypatch):
     tp.main()
     run = json.loads((job_events.JOBS_DIR / "ticket-pipeline.json").read_text())["runs"][-1]
     assert "circuit breaker" in run["summary"] and "TRIPPED" in run["steps"][-1]["detail"]
+
+
+def test_onboarding_refresh_failure_does_not_abort_scan(monkeypatch):
+    """A raising refresh_all_onboarding_plans should not stop the rest of _scan."""
+    import json
+    import job_events
+    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda: [])
+    monkeypatch.setattr(tp.failure_breaker, "tripped", lambda now=None: [])
+    # Make refresh_all_onboarding_plans raise
+    monkeypatch.setattr(tp.project_onboard, "refresh_all_onboarding_plans",
+                        lambda repos, gh, dir: (_ for _ in ()).throw(Exception("network error")))
+    monkeypatch.setattr(sys, "argv", ["ticket_pipeline.py"])
+
+    # Should not raise; scan should complete with "no ready tickets" summary
+    tp.main()
+    run = json.loads((job_events.JOBS_DIR / "ticket-pipeline.json").read_text())["runs"][-1]
+    assert run["status"] == "passed"
+    assert "no ready tickets" in run["summary"]
 
 
 # ── what the dispatcher will and will not pick ──────────────────────────────
