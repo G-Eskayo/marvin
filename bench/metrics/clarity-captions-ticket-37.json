@@ -23,5 +23,30 @@
         "higher_is_better": false
       }
     }
+  },
+  {
+    "timestamp": "2026-10-06T01:02:34.688541+00:00",
+    "metrics": {
+      "caption-core_passed": {
+        "value": 138,
+        "higher_is_better": true
+      },
+      "caption-core_failed": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "spike-app_build_ok": {
+        "value": 1,
+        "higher_is_better": true
+      },
+      "tests_passed": {
+        "value": 138,
+        "higher_is_better": true
+      },
+      "tests_failed": {
+        "value": 0,
+        "higher_is_better": false
+      }
+    }
   }
 ]
