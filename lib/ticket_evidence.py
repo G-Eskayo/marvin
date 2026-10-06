@@ -6,7 +6,7 @@ anyway burns a model run to rediscover (or duplicate) that work. `evidence_for` 
 gathered once per repo by `gather`; `verdict` folds the evidence into one of:
 
   in-flight   an open PR, pipeline branch or rescue ref exists  -> never dispatch; a human reviews it
-  looks-done  commits on the base branch mention the ticket     -> never dispatch; a human closes it
+  looks-done  commits on the base branch or a merged PR mention it -> never dispatch; a human closes it
   clear       nothing found                                     -> safe to dispatch
 
 The same evidence feeds the Activity boards (dashboard/electron/main/board.js) so cards show it.
@@ -39,6 +39,9 @@ def evidence_for(n: int, facts: dict) -> list[dict]:
     for r in facts.get("rescue", []):
         if _named(r.rsplit("/", 1)[0], n):
             ev.append({"kind": "rescue-ref", "ref": r, "detail": "a prior run's work was preserved"})
+    for pr in facts.get("merged", []):
+        if _mentions(pr.get("body"), n) or _named(pr.get("headRefName", ""), n):
+            ev.append({"kind": "merged-pr", "ref": f"PR #{pr['number']}", "detail": "merged pull request"})
     for sha, subject in facts.get("commits", []):
         if _mentions(subject, n) and not re.search(r"\brevert", subject, re.I):
             ev.append({"kind": "commit", "ref": sha, "detail": subject})
@@ -49,7 +52,7 @@ def verdict(evidence: list[dict]) -> str:
     kinds = {e["kind"] for e in evidence}
     if kinds & {"open-pr", "branch", "rescue-ref"}:
         return "in-flight"
-    return "looks-done" if "commit" in kinds else "clear"
+    return "looks-done" if kinds & {"commit", "merged-pr"} else "clear"
 
 
 def _sh(args, cwd=None) -> str:
@@ -64,7 +67,10 @@ def gather(repo: str, clone: str | None, base: str = "origin/main") -> dict | No
                    "--json", "number,body,headRefName"])
     if not prs_raw:
         return None
-    facts: dict = {"prs": json.loads(prs_raw), "branches": [], "rescue": [], "commits": []}
+    merged_raw = _sh(["gh", "pr", "list", "-R", repo, "--state", "merged", "--limit", "200",
+                      "--json", "number,body,headRefName"])
+    facts: dict = {"prs": json.loads(prs_raw), "merged": json.loads(merged_raw or "[]"),
+                   "branches": [], "rescue": [], "commits": []}
     if clone:
         subprocess.run(["git", "fetch", "-q", "origin"], cwd=clone, capture_output=True, timeout=TIMEOUT)
         facts["branches"] = [b.strip() for b in _sh(["git", "branch", "-r", "--list", "origin/pipeline/*"], clone).splitlines()]
