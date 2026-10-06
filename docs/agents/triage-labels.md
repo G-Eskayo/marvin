@@ -18,5 +18,7 @@ default naming.
   the issue needs more information (`needs-info`), not a reason to invent a sixth label.
 - `ready-for-agent` specifically means "no further human context needed" — don't apply it to an
   issue that's well-written but still assumes tribal knowledge only a human maintainer has.
+- `ready-for-human` specifically means the ticket tells the person exactly what to do: a `## Your task` section with what is needed, where,
+  how, and what to send back (`human-task-template.md`). Triage enforces it; a person-ticket without it is `needs-info`.
 - Category roles (`bug` / `enhancement`) already exist as GitHub's stock labels on this repo —
   use those as-is, don't create duplicates.

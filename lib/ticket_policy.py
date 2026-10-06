@@ -112,6 +112,26 @@ _HUMAN_TITLE = re.compile(r"\b(design session|decide|choose|pick a|usability tes
 _BUG = re.compile(r"\b(bug|broken|crash(es|ed)?|error|fails?|failing|regression|wrong)\b", re.I)
 
 
+# A ticket handed to the owner must say exactly what to do, so nobody has to ask in a chat what it wants. A "## Your task"
+# section with these four bold fields (docs/agents/human-task-template.md).
+HUMAN_TASK_FIELDS = ("What I need from you", "Where", "How", "What to send back")
+
+
+def human_task_gaps(body: str) -> list[str]:
+    """What is missing from a ticket's 'Your task' section: [] when it names all four fields with content."""
+    m = re.search(r"^##\s*Your task\s*$([\s\S]*?)(?=^##\s|\Z)", body or "", re.I | re.M)
+    if not m:
+        return ["a 'Your task' section"]
+    section = m.group(1)
+    labels = "|".join(re.escape(f) for f in HUMAN_TASK_FIELDS)
+    gaps = []
+    for field in HUMAN_TASK_FIELDS:
+        fm = re.search(rf"\*\*{re.escape(field)}:?\*\*:?([\s\S]*?)(?=\*\*(?:{labels}):?\*\*|\Z)", section, re.I)
+        if not fm or not fm.group(1).strip():
+            gaps.append(field)
+    return gaps
+
+
 def triage_verdict(issue: dict) -> dict | None:
     """What to do with an untriaged ticket, deterministically (no model, no tokens): None if it is
     already triaged or pinned. `state` is one of ready-for-agent / ready-for-human / needs-info."""
@@ -131,5 +151,9 @@ def triage_verdict(issue: dict) -> dict | None:
         return {"state": "needs-info", "category": category, "missing": missing,
                 "why": "missing " + " and ".join(missing)}
     if _HUMAN_TITLE.search(title):
+        gaps = human_task_gaps(body)
+        if gaps:
+            return {"state": "needs-info", "category": category, "missing": gaps,
+                    "why": "for you, but it does not say exactly what to do: needs " + ", ".join(gaps) + " (a 'Your task' section)"}
         return {"state": "ready-for-human", "category": category, "missing": [], "why": "a decision or action only a person can take"}
     return {"state": "ready-for-agent", "category": category, "missing": [], "why": "has a description and acceptance criteria"}

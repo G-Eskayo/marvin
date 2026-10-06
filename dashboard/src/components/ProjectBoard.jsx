@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { cleanIpcError } from '../lib/ipcError.js'
 import { projectIdOf } from '../lib/projects.js'
 import { planInput } from '../lib/ticket_input.js'
+import { parseHumanTask } from '../lib/human_task.js'
 import Markdown from './Markdown.jsx'
 import Related, { useRelated } from './Related.jsx'
 import CompletedView from './CompletedView.jsx'
@@ -275,7 +276,8 @@ function TicketDrilldown({ repo, card, onBack, onOpenMr, onOpenDocs, onOpenTicke
       )}
       {events.length > 0 && <PipelineHistory events={events} />}
       <Related rel={rel} onTicket={onOpenTicket} onDoc={onOpenDocs} onPr={(r, n) => onOpenMr?.(`${r}#${n}`)} />
-      {detail && <TicketReply repo={repo} number={card.number} labels={detail.labels?.map((l) => l.name) || card.labels} state={detail.state} onSent={() => window.api.boards.ticket(repo, card.number).then(setDetail).catch(() => {})} />}
+      {detail && labelsOf(detail, card).includes('ready-for-human') && <HumanTaskPanel body={detail.body} ctx={ctx} />}
+      {detail && <TicketReply repo={repo} number={card.number} labels={labelsOf(detail, card)} sendBack={parseHumanTask(detail.body).fields['What to send back']} state={detail.state} onSent={() => window.api.boards.ticket(repo, card.number).then(setDetail).catch(() => {})} />}
       {detail?.comments?.length > 0 && (
         <div className="mt-4">
           <h3 className="mb-1 text-xs uppercase tracking-wide text-neutral-500">Comments ({detail.comments.length})</h3>
@@ -293,7 +295,34 @@ function TicketDrilldown({ repo, card, onBack, onOpenMr, onOpenDocs, onOpenTicke
 // Across ALL projects: where reviews and decisions are waiting on you, so the right board is one click away
 // (the PRs in MR Review belong to whichever project they came from, not necessarily the board you have open).
 // A box to answer a ticket. What sending will do is shown BEFORE you send (same rules the main process applies).
-function TicketReply({ repo, number, labels, state, onSent }) {
+const labelsOf = (detail, card) => detail.labels?.map((l) => l.name) || card.labels
+
+// A ticket marked for the owner says exactly what to do, where, how and what to send back: shown first. If it does not,
+// that is said plainly instead of leaving the question to a chat.
+function HumanTaskPanel({ body, ctx }) {
+  const t = parseHumanTask(body)
+  if (!t.found || t.missing.length > 0) {
+    return (
+      <div className="mt-4 rounded border border-red-900 bg-red-950/40 p-3 text-sm text-red-200">
+        <p className="font-semibold">This ticket is marked for you, but it does not say exactly what to do.</p>
+        <p className="mt-1 text-xs">{t.found ? `Missing: ${t.missing.join(', ')}.` : 'It has no "Your task" section.'} It should say what is needed from you, where, how to do it, and what to send back. Ask for it to be added before spending time on it.</p>
+      </div>
+    )
+  }
+  return (
+    <div className="mt-4 rounded border border-amber-800 bg-amber-950/30 p-3 text-sm">
+      <h3 className="mb-2 text-xs uppercase tracking-wide text-amber-300">What you need to do</h3>
+      {['What I need from you', 'Where', 'How', 'What to send back'].map((f) => (
+        <div key={f} className="mb-2">
+          <p className="text-xs font-semibold text-amber-200">{f}</p>
+          <Markdown content={t.fields[f]} ctx={ctx} />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function TicketReply({ repo, number, labels, state, sendBack, onSent }) {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState(null)
@@ -318,7 +347,7 @@ function TicketReply({ repo, number, labels, state, onSent }) {
         value={text}
         onChange={(e) => setText(e.target.value)}
         rows={4}
-        placeholder="Your answer, decision or instruction for this ticket"
+        placeholder={sendBack ? `Send back: ${sendBack}`.slice(0, 160) : 'Your answer, decision or instruction for this ticket'}
         className="w-full rounded border border-neutral-700 bg-neutral-950 p-2 text-sm text-neutral-200 outline-none focus:border-blue-600"
       />
       <div className="mt-2 flex items-center gap-3">
