@@ -464,3 +464,12 @@ def test_generated_rules_are_validated():
         pp._validate(_minimal(generated=[{"unless": "x"}]), "p")
     with pytest.raises(ValueError, match="generated"):
         pp._validate(_minimal(generated=[{"path": "a", "regenerate": "npm i"}]), "p")  # a command is a list, not a shell string
+
+
+def test_a_project_with_no_test_script_says_so_instead_of_crashed_or_never_ran(tmp_path):
+    prof = pp._validate({"repo": "o/r", "verify": [{"id": "unit", "label": "Unit tests (npm test)", "cwd": ".", "command": ["npm", "test"],
+                                                   "parser": "vitest", "required": True}]}, "p")
+    runner = runner_returning([(1, 'npm error Missing script: "test"\nnpm error\nnpm error To see a list of scripts, run:\nnpm error   npm run')])
+    r = pp.verify_dir(prof, tmp_path, runner=runner, have=lambda cap, env: True)
+    assert r["ok"] is False and r["kind"] == "error"
+    assert "no test command" in r["summary"] and "crashed or never ran" not in r["summary"]
