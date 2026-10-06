@@ -914,3 +914,7 @@ Pushing workflow files needed `gh auth refresh -h github.com -s workflow` (the g
 - **Merge gate:** before the local rebase/retest, `assertChecksGreen` (`webhook-server/ci_status.js`) reads the PR's `statusCheckRollup`. Failing checks (`CI_FAILED`) send the PR back with the check names; checks still running (`CI_PENDING`) refuse without sending it back; a repo with no CI (`none`) is unaffected; a metadata hiccup does not block.
 - **MR Review:** each PR shows "GitHub checks passed / failed / still running"; Approve is disabled for failing and pending.
 - **Auto send-back:** the pipeline scan (`_requeue_conflicted_prs`) also sends back a PR whose checks genuinely FAILED, naming them. Cancelled / timed-out / still-running checks never trigger a rebuild (the runner's fault, not the code's). The 3-attempt cap still applies.
+
+## Project onboarding (proposed, 2026-10-06)
+
+Design for turning a repo into a fully wired project from one command: **docs/adr/0036-project-onboarding.md** (status: proposed, awaiting Gil's decisions D1-D4). Not the portfolio "add-project pipeline" (ADR 0034).

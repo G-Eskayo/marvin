@@ -35,9 +35,11 @@
     "style": "mancala"
   },
   "marketplace-ml-agent": {
-    "hash": "20c0900412cdcd2382effffffb000000",
+    "chosen": true,
+    "hash": "a2d4ccaa5ba22518aaefffff3c080000",
+    "look": "matrix",
     "salt": 0,
-    "style": "network"
+    "style": "matrix"
   },
   "marvin": {
     "hash": "a22b8282404a9884aaefffffe9000000",
