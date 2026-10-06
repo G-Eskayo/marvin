@@ -99,7 +99,7 @@ contextBridge.exposeInMainWorld('api', {
   },
   activity: {
     list: () => ipcRenderer.invoke('activity:list'),
-    timeline: (number) => ipcRenderer.invoke('activity:timeline', number),
+    timeline: (number, repo) => ipcRenderer.invoke('activity:timeline', number, repo),
     overview: () => ipcRenderer.invoke('activity:overview')
   },
   triggers: {

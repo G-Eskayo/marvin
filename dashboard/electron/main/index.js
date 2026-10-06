@@ -217,7 +217,7 @@ function registerHealthHandlers() {
 
 function registerActivityHandlers() {
   ipcMain.handle('activity:list', () => listTicketActivity())
-  ipcMain.handle('activity:timeline', (_event, number) => getTicketTimeline(number))
+  ipcMain.handle('activity:timeline', (_event, number, repo) => getTicketTimeline(number, undefined, repo || null))
 
   // Project boards: only repos in the registry are fetchable, so the renderer
   // can't make the main process shell out to gh for an arbitrary repo.
