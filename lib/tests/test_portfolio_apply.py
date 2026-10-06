@@ -140,7 +140,7 @@ def test_published_images_also_go_into_deploy_because_only_deploy_ships_to_produ
 
 def test_wp_base_runs_as_the_admin_user():
     cmd = pa.wp_base()
-    assert cmd[:2] == ["docker", "exec"] and pa.WPCLI in cmd
+    assert cmd[0].endswith("docker") and cmd[1] == "exec" and pa.WPCLI in cmd
     assert f"--user={pa.WP_USER}" in cmd and "--path=/var/www/html" in cmd
     assert "-i" not in cmd and "-i" in pa.wp_base(interactive=True)
 
@@ -152,6 +152,6 @@ def test_no_portfolio_tool_builds_its_own_wp_cli_command():
         for n, line in enumerate(f.read_text().splitlines(), 1):
             if re.search(r'"docker",\s*"exec"', line) and "def wp_base" not in line and f.name != "portfolio_apply.py":
                 offenders.append(f"{f.name}:{n}")
-            if f.name == "portfolio_apply.py" and re.search(r'"docker",\s*"exec"', line) and "return" not in line:
+            if f.name == "portfolio_apply.py" and re.search(r'(?:"docker"|DOCKER),\s*"exec"', line) and "return" not in line:
                 offenders.append(f"{f.name}:{n}")
     assert offenders == [], f"use portfolio_apply.wp_base() instead: {offenders}"

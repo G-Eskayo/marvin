@@ -34,11 +34,13 @@ UPLOAD_SUBDIR = "wp-content/uploads/generated"
 WPCLI = "portfolio-website-updater-wpcli-1"
 # wp-cli runs as this admin: with no user, WordPress filters written HTML (kses) and drops tags such as <source>.
 WP_USER = "Gil"
+# Absolute fallback: launchd jobs and plain ssh sessions get a PATH without /usr/local/bin, where Docker Desktop links it.
+DOCKER = shutil.which("docker") or "/usr/local/bin/docker"
 
 
 def wp_base(interactive: bool = False) -> list[str]:
     """The wp-cli prefix every portfolio tool uses for the dev site."""
-    return ["docker", "exec", *(["-i"] if interactive else []), WPCLI, "wp", "--path=/var/www/html", f"--user={WP_USER}"]
+    return [DOCKER, "exec", *(["-i"] if interactive else []), WPCLI, "wp", "--path=/var/www/html", f"--user={WP_USER}"]
 BASE = "http://localhost:8080"
 THUMB_SIZE = tuple(portfolio_rules.load_rules()["images"]["thumb_size"])   # card-shaped (the photo frame is roughly 3:2)
 
