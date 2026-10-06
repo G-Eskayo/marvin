@@ -286,6 +286,40 @@ def check_catalog_fresh(path: Path | None = None, now: datetime | None = None) -
     return _result(cid, label, sev, f"{n} projects, built {age_h:.1f}h ago", value=round(age_h, 1))
 
 
+GITHUB_BUDGET_YELLOW_BELOW = 0.20   # fraction of the hourly allowance
+GITHUB_BUDGET_RED_BELOW = 0.05
+
+
+def _read_github_budget() -> dict:
+    import subprocess
+    p = subprocess.run(["gh", "api", "graphql", "-f", "query={ rateLimit { limit remaining resetAt } }"],
+                       capture_output=True, text=True, timeout=20)
+    if p.returncode != 0:
+        raise RuntimeError((p.stderr or p.stdout).strip()[:200] or "gh failed")
+    return json.loads(p.stdout)["data"]["rateLimit"]
+
+
+def check_github_budget(query=None) -> dict:
+    """The pipeline, the merge gate and the dashboard all draw on ONE hourly GitHub allowance (5,000 GraphQL
+    points). On 2026-10-05 it ran out mid-session and every `gh` call, including opening and merging a PR, was
+    refused with no hint why. This makes the remaining budget visible before it hits zero."""
+    cid, label = "github:budget", "GitHub request budget"
+    try:
+        b = (query or _read_github_budget)()
+    except Exception as exc:  # noqa: BLE001
+        if "rate limit" in str(exc).lower():  # the budget query itself was refused: that IS the answer
+            return _result(cid, label, "red", "exhausted: GitHub is refusing requests until the hourly window resets", value=0)
+        return _result(cid, label, "yellow", f"could not read the budget: {str(exc)[:100]}")
+    limit, left = int(b["limit"]), int(b["remaining"])
+    frac = left / limit if limit else 1
+    sev = "red" if frac < GITHUB_BUDGET_RED_BELOW else "yellow" if frac < GITHUB_BUDGET_YELLOW_BELOW else "green"
+    try:
+        when = datetime.fromisoformat(str(b["resetAt"]).replace("Z", "+00:00")).strftime("%H:%M UTC")
+    except (KeyError, ValueError):
+        when = str(b.get("resetAt", "?"))
+    return _result(cid, label, sev, f"{left:,} of {limit:,} left, resets {when}", value=left)
+
+
 TRIGGER_MISS_LOG = Path.home() / ".claude" / "logs" / "trigger-misses.jsonl"
 TRIGGER_MISS_WINDOW_HOURS = 24
 
@@ -722,6 +756,7 @@ def run_all() -> dict:
     results.append(check_pipeline_breaker())
     results.append(check_trigger_coverage())
     results.append(check_catalog_fresh())
+    results.append(check_github_budget())
     cron_state = ch._load_state()
     cron_now = datetime.now().astimezone()
     for job in discover_launchd_jobs():

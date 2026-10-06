@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-07-03)
+Accepted (2026-07-03). Extended by [[0042]] (2026-10-05) — confirmation now also requires Face ID, and applies to Chat as well as Voice.
 
 ## Context
 

@@ -95,6 +95,13 @@ Domain terms only. No implementation details — see `docs/adr/` for decisions a
   layout — not a pixel copy of the Electron app.
 - **Mobile backend**: the process on a machine in MARVIN's Tailscale network (not on the phone)
   that the app connects to for full MARVIN — real Claude model, skills, memory, dashboard data.
+- **Thread**: the single continuous MARVIN conversation on the phone, shared by Chat and Voice
+  (a spoken exchange shows up as text in the same Thread). Proactive messages from MARVIN land
+  here too. There is one Thread, not a list of conversations.
+- **Session** (in the MARVIN Mobile sense): one underlying Claude Code session behind a stretch of
+  the Thread. The backend rotates to a fresh Session on topic shift or length, carrying a short
+  summary forward; Gil sees one Thread, never the rotations. Every Session is a normal Claude
+  Code session, resumable from a terminal. Thread ≠ Session: one Thread, many Sessions over time.
 - **Online mode**: the app can reach the mobile backend. Full MARVIN capability.
 - **Offline mode**: no connectivity of any kind (true off-grid). Falls back to a small
   local/open-weight model on the phone. Degraded — no skills, no memory read/write, conversational only.
