@@ -1,14 +1,14 @@
-# 0044 — Offline mode uses Apple's Foundation Models framework; MLX is the fallback
+# 0045 — Offline mode uses Apple's Foundation Models framework; MLX is the fallback
 
 ## Status
 
-Accepted (2026-10-05). Supersedes [[0006]]; reopened by [[0038]].
+Accepted (2026-10-05). Supersedes [[0006]]; reopened by [[0039]].
 
 ## Context
 
 [[0006]] chose MLX Swift + a downloaded 4-bit open-weight model for offline mode ([[0003]]),
 written before Apple's Foundation Models framework (iOS 26) was a practical option. Target device
-is now concretely an iPhone 17 Pro on iOS 26 ([[0038]]).
+is now concretely an iPhone 17 Pro on iOS 26 ([[0039]]).
 
 Foundation Models: zero download, native Swift with tool calling and guided (structured) output,
 Apple-maintained — but Apple controls the model and its updates, and its context window is small.

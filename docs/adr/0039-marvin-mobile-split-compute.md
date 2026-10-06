@@ -1,4 +1,4 @@
-# 0038 — MARVIN Mobile splits compute: speech + offline on the phone, thinking on the Mac Mini
+# 0039 — MARVIN Mobile splits compute: speech + offline on the phone, thinking on the Mac Mini
 
 ## Status
 

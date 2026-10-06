@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-07-03). Library choice superseded by [[0039]] (2026-10-05) — backend now drives the headless CLI; the "documented interface, not remote-control" decision stands.
+Accepted (2026-07-03). Library choice superseded by [[0040]] (2026-10-05) — backend now drives the headless CLI; the "documented interface, not remote-control" decision stands.
 
 ## Context
 

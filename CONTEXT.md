@@ -102,6 +102,16 @@ Domain terms only. No implementation details — see `docs/adr/` for decisions a
   the Thread. The backend rotates to a fresh Session on topic shift or length, carrying a short
   summary forward; Gil sees one Thread, never the rotations. Every Session is a normal Claude
   Code session, resumable from a terminal. Thread ≠ Session: one Thread, many Sessions over time.
+- **Proactive delivery**: the one path by which MARVIN reaches Gil unprompted — into the Thread,
+  with a push. Owns quiet hours, batching and the acted-on/ignored record. Every proactive message
+  goes through it regardless of what caused it.
+- **Trigger**: a thing that hands a message to proactive delivery. Event triggers (PR ready,
+  ticket needs an answer, health issue, digests ready) and the calendar-gap trigger (a lull in
+  Gil's schedule) are both triggers; neither is a delivery mechanism of its own.
+- **Quiet hours**: sunset to sunrise at the phone's current location. Non-urgent messages are held
+  and batched until sunrise.
+- **Urgent**: a message allowed through quiet hours — health failures that would otherwise leave
+  MARVIN (or the phone's connection to it) broken overnight. Everything else is non-urgent.
 - **Online mode**: the app can reach the mobile backend. Full MARVIN capability.
 - **Offline mode**: no connectivity of any kind (true off-grid). Falls back to a small
   local/open-weight model on the phone. Degraded — no skills, no memory read/write, conversational only.

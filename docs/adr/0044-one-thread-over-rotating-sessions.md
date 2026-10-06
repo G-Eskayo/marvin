@@ -1,4 +1,4 @@
-# 0043 — Chat and Voice share one continuous Thread backed by rotating, terminal-resumable Sessions
+# 0044 — Chat and Voice share one continuous Thread backed by rotating, terminal-resumable Sessions
 
 ## Status
 
@@ -15,7 +15,7 @@ until context quality degrades.
 ## Decision
 
 Gil sees one Thread shared by Chat and Voice, where proactive messages also arrive. Behind it,
-the backend rotates the underlying headless Claude Code Session ([[0039]]) on topic shift or
+the backend rotates the underlying headless Claude Code Session ([[0040]]) on topic shift or
 length, carrying a short summary forward (same idea as the handoff skill). Each Session is a
 real Claude Code session, resumable from a terminal with `claude --resume`.
 

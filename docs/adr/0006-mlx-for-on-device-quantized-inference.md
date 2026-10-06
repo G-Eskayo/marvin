@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-07-06). Superseded by [[0044]] (2026-10-05) — Foundation Models by default, MLX kept as fallback.
+Accepted (2026-07-06). Superseded by [[0045]] (2026-10-05) — Foundation Models by default, MLX kept as fallback.
 
 ## Context
 

@@ -1,4 +1,4 @@
-# 0042 — Mobile backend admits only Gil's iPhone (Tailscale whois) and gates side effects behind Face ID
+# 0043 — Mobile backend admits only Gil's iPhone (Tailscale whois) and gates side effects behind Face ID
 
 ## Status
 
@@ -6,7 +6,7 @@ Accepted (2026-10-05). Extends [[0005]].
 
 ## Context
 
-The mobile backend ([[0041]]) can trigger real side effects on the Mac Mini — merging/denying PRs,
+The mobile backend ([[0042]]) can trigger real side effects on the Mac Mini — merging/denying PRs,
 and (via [[0005]]) approving Claude Code tool calls from Chat/Voice. Binding to the Tailscale
 address keeps the public internet out, but any device on the tailnet (the laptop today, anything
 added later) could still reach it, and an unlocked phone in someone else's hands could too.

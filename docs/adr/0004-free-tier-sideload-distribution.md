@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-07-03). Superseded by [[0040]] (2026-10-05) — paid Developer account + TestFlight.
+Accepted (2026-07-03). Superseded by [[0041]] (2026-10-05) — paid Developer account + TestFlight.
 
 ## Context
 
