@@ -6,17 +6,17 @@ Gil's direction, 2026-10-06: the pages read as AI-written and undersell the work
 
 wp-cli runs with no user, so WordPress's HTML filter (kses) strips tags it doesn't allow. That is how SkineeDipping lost its video `<source>` (fixed on dev 2026-10-06 by using `<video src>`).
 
-- [ ] Every MARVIN tool that writes page content through wp-cli passes `--user=<admin>` (`portfolio_migrate`, `portfolio_add_project`, `portfolio_apply`, `portfolio_longform` and the one-off fix scripts).
-- [ ] A test fails if a writer omits it.
-- [ ] The evaluator flags any `<video>` with no playable source, and any `<img>` whose file is missing.
+- [x] Every MARVIN tool that writes page content through wp-cli passes `--user=<admin>` (`portfolio_migrate`, `portfolio_add_project`, `portfolio_apply`, `portfolio_longform` and the one-off fix scripts).
+- [x] A test fails if a writer omits it.
+- [x] The evaluator flags any `<video>` with no playable source, and any `<img>` whose file is missing.
 
 ## 1. Clarity Captions page
 
 Story: Gil is building this for his mom's birthday (25 October 2026). He decided to make it after watching her depend on paid captioning services that only work with a network connection and cost a lot. Goal: a free app that works offline. Competitors are never named.
 
-- [ ] Demo mode in the app: a launch flag plays a scripted two-person conversation through the real caption view (speaker colours, line breaks, scroll). Built on a branch with a PR in clarity-captions; it never ships enabled.
-- [ ] Screenshots from the iPhone 17 Pro simulator: captions mid-conversation, the appearance settings, landscape, first run.
-- [ ] Page rewritten in the new voice: the story, how it works for a lay reader, the architecture and the hard problems for a technical reader, an honest "what's left".
+- [x] Demo mode in the app: a launch flag plays a scripted two-person conversation through the real caption view (speaker colours, line breaks, scroll). Built on a branch with a PR in clarity-captions; it never ships enabled.
+- [x] Screenshots from the iPhone 17 Pro simulator: captions mid-conversation, the appearance settings, landscape, first run.
+- [x] Page rewritten in the new voice: the story, how it works for a lay reader, the architecture and the hard problems for a technical reader, an honest "what's left".
 
 ## 2. MARVIN page
 
@@ -53,6 +53,26 @@ Design questions to settle before building (grill-with-docs): renderer choice (k
 - [ ] Evidence: a citation-graph render from a real run; a side-by-side of a job posting and the resume it produced (Gil picks which).
 - [ ] Short page rewrites in the new voice.
 
+## 5. Health board: coverage and rework
+
+Gil (2026-10-06): the Metrics rework is close to what he wants for evaluation and usage; Health should get the same treatment, and cover more of the system.
+
+- [ ] Inventory what runs (launchd jobs, webhook server, pipeline, tunnels, sync, dev site, DesktopLive) against what Health watches; every gap gets a check.
+- [ ] Rework the tab in the Metrics board's style.
+
+## 6. Credentials panel and a self-hosted password manager
+
+Gil (2026-10-06): Health should list every auth token and MCP server credential that needs renewing, warn before each expires, and let him paste in a new one. Secrets belong in a password manager, not the dashboard: the Bitwarden repos ingested into qa-knowledge (clients, server, sdk) are the starting point.
+
+- [ ] Design pass first (security-sensitive): self-hosted server (Vaultwarden vs. Bitwarden's own stack), where it runs (mac-mini, Tailscale-only), how tools read secrets (Bitwarden CLI/SDK), and what the dashboard stores (names, owners and expiry dates only; never secret values).
+- [ ] Inventory every credential in use (GitHub tokens, WordPress app password, MCP servers, ngrok, API keys) with its expiry and how it's renewed.
+- [ ] The panel: expiry warnings, a renew link, and paste-a-new-token that writes to the vault.
+
+## Bugs found along the way
+
+- [ ] The portfolio pipeline hangs (blocked in `opendir`) when the webhook server launches it, but runs in about 3 minutes from a shell. Diagnose (launchd context vs. the iCloud-synced repo).
+- [ ] code_sync's stash-and-pop conflicts on generated files (`bench/metrics/health-monitor.*`) and leaves the repo half-merged; treat generated files like the merge gate does.
+
 ## Order
 
-0 → 1 → 2 → 3 → 4. Clarity comes first because it's the clearest story and its screenshots also feed MARVIN's "built with" section. The map is the largest item and gets its own design pass before code.
+0 → 1 → 2 → 3 → 4, then 5 and 6. Clarity comes first because it's the clearest story and its screenshots also feed MARVIN's "built with" section. The map is the largest item and gets its own design pass before code.
