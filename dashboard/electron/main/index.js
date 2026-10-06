@@ -15,6 +15,7 @@ import { createPortfolio } from './portfolio.js'
 import { listTicketActivity, getTicketTimeline } from './activity.js'
 import { getDeviceStatuses } from './devices.js'
 import { createMergeOps } from './merge_ops.js'
+import { readPrefs } from './prefs.js'
 import { assertInOrder } from './pr_order.js'
 
 const mergeOps = createMergeOps()
@@ -455,17 +456,21 @@ function registerMrReviewHandlers() {
     assertInOrder(await listOpenPrs({ fresh: true }), url)  // checked here, not just greyed out in the UI, so a stale screen can't skip it
     if (!mergeOps.start(url)) return { merged: false, cancelled: true, alreadyMerging: true }
     try {
-      const { response } = await dialog.showMessageBox(mainWindow, {
-        type: 'warning',
-        buttons: ['Cancel', 'Merge PR'],
-        defaultId: 0,
-        cancelId: 0,
-        message: `Merge PR #${number}?`,
-        detail: `This fires the approval webhook and merges ${url} via gh pr merge. This can't be undone from here.`
-      })
-      if (response !== 1) {
-        mergeOps.cancel(url)
-        return { merged: false, cancelled: true }
+      // The Approve & Merge click is the decision. The native popup is opt-in (prefs.json: confirmMerge) -- the
+      // duplicate-start guard above, the merge gate's retest and the base/order checks are what protect a stray click.
+      if (readPrefs(join(app.getPath('userData'), 'prefs.json')).confirmMerge) {
+        const { response } = await dialog.showMessageBox(mainWindow, {
+          type: 'warning',
+          buttons: ['Cancel', 'Merge PR'],
+          defaultId: 0,
+          cancelId: 0,
+          message: `Merge PR #${number}?`,
+          detail: `This fires the approval webhook and merges ${url} via gh pr merge. This can't be undone from here.`
+        })
+        if (response !== 1) {
+          mergeOps.cancel(url)
+          return { merged: false, cancelled: true }
+        }
       }
       const result = await approveMr(url, MR_WEBHOOK_URL, postJson)
       mergeOps.finish(url, result)

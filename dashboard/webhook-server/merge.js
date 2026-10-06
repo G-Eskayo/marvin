@@ -243,8 +243,8 @@ async function mergePrUnqueued(
       const summary = summarizeGateFailure(result.reason)
       if (summary.code === 'GATE_INFRA') {
         // The machine failed, not the PR: leave the ticket and PR alone so it can simply be approved again.
-        stage('gate', 'failed', 'GATE_INFRA: the build machine failed, not the code')
-        throw new MergeFailure(refusal('GATE_INFRA', 'gate', 'the build machine failed while checking this PR, not the PR\'s code',
+        stage('gate', 'failed', 'GATE_INFRA: the build machine or test setup failed, not the code')
+        throw new MergeFailure(refusal('GATE_INFRA', 'gate', 'the build machine or the project\'s test setup failed while checking this PR, not the PR\'s code',
           `Approve it again. The PR was not sent back for rework. What failed: ${summary.comment.slice(0, 300)}`))
       }
       stage('gate', 'failed', `${summary.code}: ${summary.failingTests.length ? summary.failingTests.length + ' failing test(s)' : 'see comment'}`)
