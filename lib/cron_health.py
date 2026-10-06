@@ -36,7 +36,7 @@ HOME = Path.home()
 STATE_PATH = HOME / ".claude" / "logs" / ".cron-health-state.json"
 OUTPUT_PATH = HOME / ".claude" / "logs" / "cron-health.md"
 
-sys.path.insert(0, str(HOME / ".agents" / "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from machine_profile import remote_devices  # noqa: E402
 
 FAILURE_PATTERN = re.compile(
@@ -279,7 +279,7 @@ def _archive_previous_latest() -> str:
     return f"{new_entry}{rest}"
 
 
-sys.path.insert(0, str(__import__("pathlib").Path.home() / ".agents" / "lib"))
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
 import job_events  # noqa: E402  (run log shown in the dashboard's Health tab)
 
 

@@ -24,7 +24,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path.home() / ".agents" / "skills" / "safety-monitor" / "scripts"))
 
 from hook_errors import log_hook_error  # noqa: E402

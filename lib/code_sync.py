@@ -85,7 +85,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from machine_profile import machine_label  # noqa: E402
 from notify import notify  # noqa: E402
 
@@ -316,7 +316,7 @@ def pull(repo: Path) -> None:
     # up naturally, same as any other pending local change.
 
 
-sys.path.insert(0, str(__import__("pathlib").Path.home() / ".agents" / "lib"))
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
 import job_events  # noqa: E402  (run log shown in the dashboard's Health tab)
 
 
