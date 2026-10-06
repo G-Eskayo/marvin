@@ -344,16 +344,16 @@ def fetch_local(path: str) -> tuple[str, set[str], dict, set[str] | None]:
     return text, tree, meta, scripts
 
 
-def render_markdown(repo: str, result: dict) -> str:
+def render_markdown(repo: str, audit_result: dict) -> str:
     out = [f"## {repo}", "",
-           f"{result['summary']['pass']} pass · {result['summary']['warn']} warn · {result['summary']['fail']} fail  ·  "
-           f"{result['stats']['lines']} lines, {result['stats']['images']} image(s), {result['stats']['code_blocks']} code block(s)", "",
+           f"{audit_result['summary']['pass']} pass · {audit_result['summary']['warn']} warn · {audit_result['summary']['fail']} fail  ·  "
+           f"{audit_result['stats']['lines']} lines, {audit_result['stats']['images']} image(s), {audit_result['stats']['code_blocks']} code block(s)", "",
            "| Goal | Score |", "|---|---|"]
     for g in GOALS:
-        s = result["score"][g]
+        s = audit_result["score"][g]
         out.append(f"| {g} | {'n/a' if s is None else f'{int(s * 100)}%'} |")
     out.append("")
-    for f in result["findings"]:
+    for f in audit_result["findings"]:
         if f["status"] in ("warn", "fail", "info"):
             out.append(f"- **{f['status'].upper()}** [{f['goal']}/{f['check']}] {f['message']}" + (f" — {'; '.join(f['evidence'])}" if f["evidence"] else ""))
     return "\n".join(out) + "\n"

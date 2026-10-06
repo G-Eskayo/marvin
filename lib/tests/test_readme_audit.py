@@ -32,8 +32,8 @@ See [the design notes](docs/design.md) and the [license](LICENSE).
 TREE = {"README.md", "docs/images/chart.png", "docs/design.md", "scripts/make_chart.py", "LICENSE"}
 
 
-def by(result, check):
-    return next(f for f in result["findings"] if f["check"] == check)
+def by(audit_result, check):
+    return next(f for f in audit_result["findings"] if f["check"] == check)
 
 
 def test_a_good_readme_has_no_failures():
