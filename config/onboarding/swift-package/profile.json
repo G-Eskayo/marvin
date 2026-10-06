@@ -1,0 +1,26 @@
+{
+  "_readme": "Onboarding template for swift-package projects (lib/project_onboard.py; design in CONTEXT.md 'Per-project execution profiles' and ADR 0036). This is a fragment: apply() merges it onto the skeleton. dispatch is forced OFF and merge_from_dashboard forced FALSE after the merge, regardless of what this template says (hard-coded in apply logic). Check the draft with: ~/.agents/venv/bin/python ~/.agents/lib/project_profile.py selftest <owner/repo> before turning dispatch on.",
+  "executor": {
+    "allowed_tools": [
+      "Bash(swift build*)",
+      "Bash(swift test*)",
+      "Bash(swift package*)"
+    ]
+  },
+  "verify": [
+    {
+      "id": "swift-test",
+      "label": "Package tests (swift test)",
+      "command": [
+        "swift",
+        "test"
+      ],
+      "requires": [
+        "swift"
+      ],
+      "parser": "swift-test",
+      "required": true,
+      "timeout_s": 1500
+    }
+  ]
+}

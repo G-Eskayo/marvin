@@ -362,10 +362,228 @@ def test_module_has_public_api():
     assert hasattr(po, "_gh") and callable(po._gh)
     assert hasattr(po, "inspect") and callable(po.inspect)
     assert hasattr(po, "plan") and callable(po.plan)
+    assert hasattr(po, "apply") and callable(po.apply)
     assert hasattr(po, "main") and callable(po.main)
-    assert hasattr(po, "TRIAGE_LABELS") and isinstance(po.TRIAGE_LABELS, set)
+    assert hasattr(po, "TRIAGE_LABELS") and isinstance(po.TRIAGE_LABELS, dict)
 
 
 def test_triage_labels_are_the_canonical_five():
-    expected = {"needs-triage", "needs-info", "ready-for-agent", "ready-for-human", "wontfix"}
-    assert po.TRIAGE_LABELS == expected
+    expected_names = {"needs-triage", "needs-info", "ready-for-agent", "ready-for-human", "wontfix"}
+    assert set(po.TRIAGE_LABELS.keys()) == expected_names
+
+
+# ── Apply: profile piece ─────────────────────────────────────────────────
+
+def test_apply_profile_creates_draft_for_swift_package(tmp_path):
+    """No existing profile + swift-package detected → drafts correctly."""
+    facts = {
+        "repo": "test/repo",
+        "default_branch": "main",
+        "has_package_swift": True,
+        "labels": [],
+        "machines": [],
+    }
+    result = po._apply_profile("test/repo", facts, profiles_dir=tmp_path)
+
+    assert result["action"] == "created"
+    assert "diff" in result
+    assert result["profile"] is not None
+    assert result["profile"]["repo"] == "test/repo"
+    assert result["profile"]["dispatch"] == "off"
+    assert result["profile"]["merge_from_dashboard"] is False
+
+
+def test_apply_profile_forces_dispatch_off_and_merge_false(tmp_path):
+    """dispatch forced off and merge_from_dashboard forced false even if template says otherwise."""
+    facts = {
+        "repo": "test/repo",
+        "default_branch": "main",
+        "has_package_swift": True,
+        "labels": [],
+        "machines": [],
+    }
+    result = po._apply_profile("test/repo", facts, profiles_dir=tmp_path)
+
+    profile = result["profile"]
+    assert profile["dispatch"] == "off"
+    assert profile["merge_from_dashboard"] is False
+
+
+def test_apply_profile_unchanged_on_second_call(tmp_path):
+    """Second call against its own output (identical file) → unchanged."""
+    facts = {
+        "repo": "test/repo",
+        "default_branch": "main",
+        "has_package_swift": True,
+        "labels": [],
+        "machines": [],
+    }
+
+    # First call creates the profile
+    result1 = po._apply_profile("test/repo", facts, profiles_dir=tmp_path)
+    assert result1["action"] == "created"
+
+    # Write the profile to disk
+    profile_path = tmp_path / "repo.json"
+    profile_path.write_text(json.dumps(result1["profile"], indent=2) + "\n")
+
+    # Second call should find it unchanged
+    result2 = po._apply_profile("test/repo", facts, profiles_dir=tmp_path)
+    assert result2["action"] == "unchanged"
+    assert result2["diff"] == ""
+
+
+def test_apply_profile_conflict_when_edited(tmp_path):
+    """Existing profile edited by person → conflict, file untouched."""
+    facts = {
+        "repo": "test/repo",
+        "default_branch": "main",
+        "has_package_swift": True,
+        "labels": [],
+        "machines": [],
+    }
+
+    # Create an edited profile on disk
+    profile_path = tmp_path / "repo.json"
+    edited = {
+        "repo": "test/repo",
+        "base_branch": "main",
+        "dispatch": "on",  # Edited!
+        "merge_from_dashboard": True,  # Edited!
+        "clone_hints": [],
+    }
+    profile_path.write_text(json.dumps(edited, indent=2) + "\n")
+    original_mtime = profile_path.stat().st_mtime
+
+    # Apply should detect conflict
+    result = po._apply_profile("test/repo", facts, profiles_dir=tmp_path)
+    assert result["action"] == "conflict"
+    assert "diff" in result
+    assert len(result["diff"]) > 0
+
+    # File should be untouched
+    assert profile_path.stat().st_mtime == original_mtime
+    assert "dispatch" in result["diff"]
+
+
+def test_apply_profile_needs_human_for_unsupported_stack(tmp_path):
+    """Unsupported stack (no Package.swift, no other marker) → needs-human."""
+    facts = {
+        "repo": "test/repo",
+        "default_branch": "main",
+        "has_package_swift": False,
+        "labels": [],
+        "machines": [],
+    }
+    result = po._apply_profile("test/repo", facts, profiles_dir=tmp_path)
+
+    assert result["action"] == "needs-human"
+    assert "reason" in result
+    assert result["diff"] == ""
+
+
+# ── Apply: labels piece ──────────────────────────────────────────────────
+
+def test_apply_labels_creates_missing_triage_labels():
+    """Only missing names trigger label create; re-running with all-present makes zero calls."""
+    facts = {
+        "labels": ["bug", "enhancement"],  # Missing triage labels
+        "machines": [],
+    }
+
+    calls = []
+    def mock_gh(args):
+        calls.append(args)
+        return ""  # Simulate label already exists on second call
+
+    result = po._apply_labels("test/repo", facts, machines=[], gh=mock_gh)
+
+    # Should have attempted to create missing labels
+    assert result["action"] == "created"
+    label_create_calls = [c for c in calls if "label" in c and "create" in c]
+    assert len(label_create_calls) > 0
+
+
+def test_apply_labels_idempotent_when_all_present():
+    """All labels present → no gh calls."""
+    facts = {
+        "labels": list(po.TRIAGE_LABELS.keys()),
+        "machines": [],
+    }
+
+    calls = []
+    def mock_gh(args):
+        calls.append(args)
+        return ""
+
+    result = po._apply_labels("test/repo", facts, machines=[], gh=mock_gh)
+
+    assert result["action"] == "unchanged"
+    label_create_calls = [c for c in calls if "label" in c and "create" in c]
+    assert len(label_create_calls) == 0
+
+
+def test_apply_labels_creates_claim_labels_from_machines():
+    """Machines in facts cause claimed:<machine> labels to be created."""
+    facts = {
+        "labels": list(po.TRIAGE_LABELS.keys()),
+        "machines": ["mac-mini", "macbook-pro"],
+    }
+
+    calls = []
+    def mock_gh(args):
+        calls.append(args)
+        return ""
+
+    result = po._apply_labels("test/repo", facts, machines=["mac-mini", "macbook-pro"], gh=mock_gh)
+
+    # Should have created claim labels
+    label_create_calls = [c for c in calls if "label" in c and "create" in c]
+    claim_creates = [c for c in label_create_calls if "claimed:" in " ".join(c)]
+    assert len(claim_creates) > 0
+
+
+# ── Apply: board piece ───────────────────────────────────────────────────
+
+def test_apply_board_delegates_to_ensure_board():
+    """apply_board idempotent on second call."""
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        f.write('{"boards": []}\n')
+        registry_path = Path(f.name)
+
+    try:
+        facts = {"repo": "test/repo"}
+
+        result1 = po._apply_board("test/repo", facts, registry_path=registry_path)
+        assert result1["action"] == "created"
+
+        result2 = po._apply_board("test/repo", facts, registry_path=registry_path)
+        assert result2["action"] == "unchanged"
+    finally:
+        registry_path.unlink()
+
+
+# ── Apply: top-level function ───────────────────────────────────────────
+
+def test_apply_returns_dict_with_all_pieces(tmp_path):
+    """apply() returns dict with labels, board, profile pieces."""
+    facts = {
+        "repo": "test/repo",
+        "default_branch": "main",
+        "has_package_swift": True,
+        "labels": [],
+        "machines": [],
+    }
+
+    def mock_gh(args):
+        return ""
+
+    result = po.apply("test/repo", facts=facts, profiles_dir=tmp_path, gh=mock_gh)
+
+    assert "labels" in result
+    assert "board" in result
+    assert "profile" in result
+    assert "action" in result["labels"]
+    assert "action" in result["board"]
+    assert "action" in result["profile"]
