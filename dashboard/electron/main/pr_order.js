@@ -1,11 +1,14 @@
 // Merge order. Two open PRs that change the same file will conflict once the first lands, which is
 // exactly what the merge gate then reports as REBASE_CONFLICT. So a PR waits on every OLDER open PR in
 // its repo that shares a changed file with it. Derived from the PRs' own file lists each time, never stored.
+// An older PR that cannot merge as it stands (it conflicts with main, or its ticket was sent back and is being rebuilt)
+// is not waited on: waiting for it would hold every newer PR hostage to the rebuild queue (clarity-captions #62/#63/#64,
+// 2026-10-06), and its rebuild lands on whatever main has by then.
 export function waitingOn(prs, pr) {
   if (!Array.isArray(pr.files)) return []
   const mine = new Set(pr.files.map((f) => f.path))
   return prs
-    .filter((o) => o.repo === pr.repo && o.number < pr.number && Array.isArray(o.files))
+    .filter((o) => o.repo === pr.repo && o.number < pr.number && Array.isArray(o.files) && o.mergeable !== 'CONFLICTING' && !o.sentBack)
     .map((o) => ({ number: o.number, title: o.title, url: o.url, shared: o.files.map((f) => f.path).filter((p) => mine.has(p)).sort() }))
     .filter((o) => o.shared.length)
     .sort((a, b) => a.number - b.number)

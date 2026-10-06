@@ -3,6 +3,24 @@ import { waitingOn, assertInOrder } from '../electron/main/pr_order.js'
 
 const pr = (number, files, repo = 'o/r') => ({ number, repo, url: `https://github.com/${repo}/pull/${number}`, title: `PR ${number}`, files: files.map((path) => ({ path })) })
 
+describe('waitingOn: an older PR that cannot merge does not hold up the newer ones', () => {
+  it('skips an older PR that conflicts with main (it will be rebuilt on top of whatever lands first)', () => {
+    const older = { ...pr(62, ['a.swift']), mergeable: 'CONFLICTING' }
+    const newer = pr(63, ['a.swift'])
+    expect(waitingOn([older, newer], newer)).toEqual([])
+  })
+  it('skips an older PR whose ticket was sent back for rework', () => {
+    const older = { ...pr(62, ['a.swift']), sentBack: true }
+    const newer = pr(63, ['a.swift'])
+    expect(waitingOn([older, newer], newer)).toEqual([])
+  })
+  it('still waits on an older PR that is mergeable', () => {
+    const older = { ...pr(62, ['a.swift']), mergeable: 'MERGEABLE' }
+    const newer = pr(63, ['a.swift'])
+    expect(waitingOn([older, newer], newer).map((x) => x.number)).toEqual([62])
+  })
+})
+
 describe('waitingOn: merge older PRs that touch the same files first', () => {
   const prs = [pr(28, ['a.swift', 'n.md']), pr(29, ['b.swift', 'Package.resolved']), pr(30, ['b.swift', 'Package.resolved', 'c.swift']), pr(31, ['Package.resolved'])]
   it('a PR with no overlap with an older one waits on nothing', () => {
