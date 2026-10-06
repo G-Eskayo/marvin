@@ -71,3 +71,7 @@ graphify-out/.graphify_analysis.json
 graphify-out/.graphify_python
 graphify-out/20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]/
 tmp/
+
+# a symlink named node_modules is a file to git, so the "node_modules/" pattern misses it; one was committed by accident and
+# replaced the real directory on pull
+dashboard/node_modules
