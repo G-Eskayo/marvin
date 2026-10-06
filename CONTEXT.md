@@ -79,12 +79,25 @@ Domain terms only. No implementation details — see `docs/adr/` for decisions a
   to `suggestions.md` for review, unimplemented — no new dedicated findings file, reusing the
   queue that already exists for exactly this purpose.
 
-## Voice client (in design, not yet built)
+## MARVIN Mobile (in design, not yet built)
 
-- **Online mode**: the voice client has connectivity to the Agent SDK backend. Full MARVIN capability — real Claude model, existing skills, memory.
-- **Offline mode**: the voice client has no connectivity of any kind (true off-grid — no local network, no cellular, nothing nearby to reach). Falls back to a small local/open-weight model running on-device. Degraded capability — no MARVIN skills, no memory read/write, conversational only.
-- **Agent SDK backend**: the server-side process (Claude Agent SDK) that runs the real MARVIN agent loop — skills, memory, tools. Lives on a machine already in MARVIN's Tailscale network (desktop/laptop), not on the phone.
-- **Voice client**: the native iOS app itself — the thing that captures speech, talks to the Agent SDK backend when reachable, and falls back to the local model when not.
+- **MARVIN Mobile**: the project and naming-convention name for MARVIN's native iPhone app — used
+  for the repo, docs, tickets and code identifiers. Not what the user sees: the installed app's
+  display name is just **MARVIN**. One app, not several — it supersedes the separately-scoped
+  "voice client" from July 2026 and the roadmap's WhatsApp/Telegram companion idea.
+- **Surface**: one of MARVIN Mobile's three top-level ways in — **Voice**, **Chat**, **Dashboard**.
+  All surfaces talk to the same mobile backend; a surface is a view onto MARVIN, not a separate agent.
+- **Voice**: the spoken surface — speech in, speech out. What July's ADRs 0001–0005 called the
+  "voice client" is now this surface, not a standalone app.
+- **Chat**: the typed conversational surface — what the WhatsApp/Telegram companion idea was
+  reaching for, delivered natively instead of through a third-party messenger.
+- **Dashboard**: the phone's view of what the desktop dashboard shows. Same data, phone-shaped
+  layout — not a pixel copy of the Electron app.
+- **Mobile backend**: the process on a machine in MARVIN's Tailscale network (not on the phone)
+  that the app connects to for full MARVIN — real Claude model, skills, memory, dashboard data.
+- **Online mode**: the app can reach the mobile backend. Full MARVIN capability.
+- **Offline mode**: no connectivity of any kind (true off-grid). Falls back to a small
+  local/open-weight model on the phone. Degraded — no skills, no memory read/write, conversational only.
 
 ## Task-dispatch (v1 built and tested; mode 2 built and applied to research-colony)
 
