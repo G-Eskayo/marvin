@@ -188,6 +188,13 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       sentBackKeys = new Set()
     }
   }
+  // Each PR with the facts that decide whether it can be waited on (sent back for rework; conflicts), so merge order skips the
+  // ones that cannot merge as they stand.
+  const withState = prs.map((p) => ({
+    ...p,
+    repo: p.repo || MARVIN_REPO,
+    sentBack: parseTicketRef(p.body || '') !== null && sentBackKeys.has(`${p.repo || MARVIN_REPO}#${parseTicketRef(p.body || '')}`)
+  }))
   return prs.map((pr) => {
     const ticketRef = parseTicketRef(pr.body || '')
     const hasSchema = hasEvidenceSchema(pr.body)
@@ -202,7 +209,7 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       conflicts: pr.mergeable === 'CONFLICTING',
       checks: ciState(pr.statusCheckRollup),
       baseProblem: baseProblem(prs.map((p) => ({ ...p, repo: p.repo || MARVIN_REPO })), { ...pr, repo: pr.repo || MARVIN_REPO }),
-      waitingOn: waitingOn(prs.map((p) => ({ ...p, repo: p.repo || MARVIN_REPO })), { ...pr, repo: pr.repo || MARVIN_REPO }),
+      waitingOn: waitingOn(withState, { ...pr, repo: pr.repo || MARVIN_REPO }),
       hasSchema,
       // The ticket was sent back for rework (marvin #129): approving would merge work that was just rejected.
       sentBack: ticketRef !== null && sentBackKeys.has(`${pr.repo || MARVIN_REPO}#${ticketRef}`),
