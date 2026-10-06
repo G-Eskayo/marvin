@@ -10,6 +10,7 @@ via `inspect()`, and `plan()` is pure over those facts.
 from __future__ import annotations
 
 import base64
+import fnmatch
 import json
 import re
 import subprocess
@@ -24,6 +25,25 @@ import project_profile as pp
 
 TIMEOUT = 60
 TRIAGE_LABELS = {"needs-triage", "needs-info", "ready-for-agent", "ready-for-human", "wontfix"}
+CONFIG_ONBOARDING = Path(__file__).resolve().parent.parent / "config" / "onboarding"
+
+
+def _load_stack_templates() -> list[dict]:
+    """Load all stack templates from config/onboarding/<stack>/, sorted by priority."""
+    stacks = []
+    if CONFIG_ONBOARDING.exists():
+        for stack_dir in sorted(CONFIG_ONBOARDING.iterdir()):
+            if stack_dir.is_dir():
+                profile_path = stack_dir / "profile.json"
+                if profile_path.exists():
+                    try:
+                        with open(profile_path) as f:
+                            stack = json.load(f)
+                            stacks.append(stack)
+                    except (json.JSONDecodeError, OSError):
+                        pass
+    stacks.sort(key=lambda s: s.get("priority", 999))
+    return stacks
 
 
 def _gh(args: list[str]) -> str:
@@ -35,6 +55,37 @@ def _gh(args: list[str]) -> str:
         return result.stdout if result.returncode == 0 else ""
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return ""
+
+
+def _matches_detect_rule(file_tree: dict, rule: dict) -> bool:
+    """Check if a file tree matches a detection rule."""
+    if "file_glob" in rule:
+        glob_pattern = rule["file_glob"]
+        for path in file_tree:
+            if fnmatch.fnmatch(path, glob_pattern):
+                return True
+    elif "file" in rule:
+        if rule["file"] in file_tree:
+            return True
+    return False
+
+
+def _file_content_contains_any(content: str, patterns: list[str]) -> bool:
+    """Check if content contains any of the patterns."""
+    return any(pattern in content for pattern in patterns)
+
+
+def _get_file_content(repo: str, path: str, gh=_gh) -> str:
+    """Fetch file content from GitHub, return empty string on failure."""
+    try:
+        result = gh(["api", f"repos/{repo}/contents/{path}"])
+        if result:
+            data = json.loads(result)
+            if "content" in data:
+                return base64.b64decode(data["content"]).decode()
+    except (json.JSONDecodeError, Exception):
+        pass
+    return ""
 
 
 def inspect(repo: str, gh=_gh) -> dict:
@@ -56,6 +107,10 @@ def inspect(repo: str, gh=_gh) -> dict:
         "workflow_runs_swift_test": False,
         "has_agent_docs": False,
         "has_claude_md_skills": False,
+        "detected_stack": None,
+        "workflow_contents": "",
+        "package_json_scripts": {},
+        "tools_installed": {},
     }
 
     repo_view = gh(["repo", "view", repo, "--json", "visibility,defaultBranchRef"])
@@ -119,20 +174,46 @@ def inspect(repo: str, gh=_gh) -> dict:
     has_workflows = any(p.startswith(".github/workflows/") and p.endswith(".yml") for p in facts["file_tree"])
     facts["has_workflows"] = has_workflows
 
+    workflow_contents_list = []
     if has_workflows:
         for wf_path in facts["file_tree"]:
             if wf_path.startswith(".github/workflows/") and wf_path.endswith(".yml"):
-                try:
-                    wf_raw = gh(["api", f"repos/{repo}/contents/{wf_path}"])
-                    if wf_raw:
-                        wf_data = json.loads(wf_raw)
-                        if "content" in wf_data:
-                            content = base64.b64decode(wf_data["content"]).decode()
-                            if "swift test" in content or "swift build" in content:
-                                facts["workflow_runs_swift_test"] = True
-                                break
-                except Exception:
-                    pass
+                content = _get_file_content(repo, wf_path, gh)
+                if content:
+                    workflow_contents_list.append(content)
+                    if "swift test" in content or "swift build" in content:
+                        facts["workflow_runs_swift_test"] = True
+    facts["workflow_contents"] = "\n".join(workflow_contents_list)
+
+    if "package.json" in facts["file_tree"]:
+        package_json_content = _get_file_content(repo, "package.json", gh)
+        if package_json_content:
+            try:
+                package_json = json.loads(package_json_content)
+                facts["package_json_scripts"] = package_json.get("scripts", {})
+            except json.JSONDecodeError:
+                pass
+
+    stacks = _load_stack_templates()
+    for stack in stacks:
+        detect_rule = stack.get("detect", {})
+        if _matches_detect_rule(facts["file_tree"], detect_rule):
+            if "content_any" in detect_rule:
+                if detect_rule.get("file") == "package.json":
+                    content = _get_file_content(repo, "package.json", gh)
+                    if content and _file_content_contains_any(content, detect_rule["content_any"]):
+                        facts["detected_stack"] = stack.get("name")
+                        break
+            else:
+                facts["detected_stack"] = stack.get("name")
+                break
+
+    for tool in ["swift", "node", "npm", "python", "xcodegen"]:
+        try:
+            result = subprocess.run(["which", tool], capture_output=True, timeout=5)
+            facts["tools_installed"][tool] = result.returncode == 0
+        except Exception:
+            facts["tools_installed"][tool] = False
 
     docs_agents_files = {
         "docs/agents/issue-tracker.md",
@@ -156,7 +237,7 @@ def inspect(repo: str, gh=_gh) -> dict:
 
 
 def plan(facts: dict) -> dict:
-    """Pure logic: map facts to the 6 ADR readiness pieces.
+    """Pure logic: map facts to the ADR readiness pieces.
     Returns {"<piece>": {"state": "ok"|"missing"|"needs-human", "reason": "..."}, ...}
     """
     plan_out = {}
@@ -167,13 +248,57 @@ def plan(facts: dict) -> dict:
     else:
         plan_out["profile"] = {"state": "missing", "reason": "profile not yet created"}
 
-    # CI
-    if facts.get("workflow_runs_swift_test"):
-        plan_out["ci"] = {"state": "ok", "reason": "workflow found running swift test"}
-    elif facts.get("has_workflows"):
-        plan_out["ci"] = {"state": "needs-human", "reason": "workflow exists but does not run swift test"}
+    # Stack detection
+    detected_stack = facts.get("detected_stack")
+    if detected_stack:
+        plan_out["stack"] = {"state": "ok", "reason": f"detected as {detected_stack}"}
     else:
-        plan_out["ci"] = {"state": "missing", "reason": "no CI workflow present"}
+        plan_out["stack"] = {"state": "needs-human", "reason": "no recognised stack markers found; R5, never guess"}
+
+    # Test command (redefined per stack)
+    if detected_stack == "swift-package":
+        plan_out["test_command"] = {"state": "ok", "reason": "swift test is a SwiftPM convention"}
+    elif detected_stack == "xcodegen-app":
+        plan_out["test_command"] = {"state": "ok", "reason": "xcodebuild test is standard for Xcode apps"}
+    elif detected_stack == "node-electron":
+        if facts.get("package_json_scripts", {}).get("test"):
+            plan_out["test_command"] = {"state": "ok", "reason": "test script found in package.json"}
+        else:
+            plan_out["test_command"] = {"state": "needs-human", "reason": "no test script in package.json; R5, never guess"}
+    else:
+        plan_out["test_command"] = {"state": "needs-human", "reason": "unrecognised stack; cannot determine test command"}
+
+    # CI (data-driven from stack template)
+    stacks = _load_stack_templates()
+    matched_stack = None
+    for stack in stacks:
+        if stack.get("name") == detected_stack:
+            matched_stack = stack
+            break
+
+    test_command_state = plan_out.get("test_command", {}).get("state")
+    if test_command_state == "needs-human":
+        plan_out["ci"] = {"state": "needs-human", "reason": "cannot wire CI without a known test command"}
+    elif matched_stack:
+        ci_markers = matched_stack.get("ci_contains_any", [])
+        found_ci = any(marker in facts.get("workflow_contents", "") for marker in ci_markers) if ci_markers else False
+        if found_ci or facts.get("workflow_runs_swift_test"):
+            plan_out["ci"] = {"state": "ok", "reason": f"CI found running {detected_stack} tests"}
+        elif facts.get("has_workflows"):
+            plan_out["ci"] = {"state": "needs-human", "reason": "workflow exists but does not run detected stack tests"}
+        else:
+            plan_out["ci"] = {"state": "missing", "reason": "no CI workflow present"}
+    else:
+        if facts.get("workflow_runs_swift_test"):
+            plan_out["ci"] = {"state": "ok", "reason": "workflow found running tests"}
+        elif facts.get("has_workflows"):
+            plan_out["ci"] = {"state": "needs-human", "reason": "workflow exists but does not run tests"}
+        else:
+            plan_out["ci"] = {"state": "missing", "reason": "no CI workflow present"}
+
+    if matched_stack and matched_stack.get("macos_runner") and facts.get("visibility") == "private":
+        if "cost_warning" not in plan_out["ci"]:
+            plan_out["ci"]["cost_warning"] = "macOS runners cost 10x more on private repos"
 
     # Triage labels
     existing_labels = set(facts.get("labels", []))
@@ -207,44 +332,72 @@ def plan(facts: dict) -> dict:
         plan_out["board"] = {"state": "missing", "reason": "board not yet registered"}
 
     # Clone and toolchain
-    if facts.get("clone_hint_resolves") and facts.get("swift_installed"):
-        plan_out["clone_and_toolchain"] = {
-            "state": "ok",
-            "reason": "clone exists and swift toolchain present",
-        }
-    elif facts.get("clone_hint_resolves"):
-        plan_out["clone_and_toolchain"] = {
-            "state": "missing",
-            "reason": "clone exists but swift toolchain not found; install Xcode or add to PATH",
-        }
-    elif facts.get("profile_exists"):
-        plan_out["clone_and_toolchain"] = {
-            "state": "missing",
-            "reason": "clone not yet created but can be cloned from profile hints",
-        }
-    else:
-        plan_out["clone_and_toolchain"] = {
-            "state": "needs-human",
-            "reason": "no profile with clone_hints; manual clone path required",
-        }
-
-    # Test command (for swift-package shape only)
-    if facts.get("has_package_swift"):
-        if facts.get("workflow_runs_swift_test"):
-            plan_out["test_command"] = {
+    if matched_stack:
+        required_tools = matched_stack.get("requires_tools", [])
+        tools_missing = [t for t in required_tools if not facts.get("tools_installed", {}).get(t)]
+        if facts.get("clone_hint_resolves") and not tools_missing:
+            plan_out["clone_and_toolchain"] = {
                 "state": "ok",
-                "reason": "swift test defined in workflow",
+                "reason": "clone exists and all required tools present",
+            }
+        elif facts.get("clone_hint_resolves") and tools_missing:
+            plan_out["clone_and_toolchain"] = {
+                "state": "missing",
+                "reason": f"clone exists but missing tools: {', '.join(tools_missing)}",
+            }
+        elif facts.get("profile_exists"):
+            plan_out["clone_and_toolchain"] = {
+                "state": "missing",
+                "reason": "clone not yet created but can be cloned from profile hints",
             }
         else:
-            plan_out["test_command"] = {
-                "state": "missing",
-                "reason": "Package.swift found but no test target defined in CI",
+            plan_out["clone_and_toolchain"] = {
+                "state": "needs-human",
+                "reason": "no profile with clone_hints; manual clone path required",
             }
     else:
-        plan_out["test_command"] = {
-            "state": "needs-human",
-            "reason": "not a swift-package project; stack detection required",
-        }
+        if facts.get("clone_hint_resolves") and facts.get("swift_installed"):
+            plan_out["clone_and_toolchain"] = {
+                "state": "ok",
+                "reason": "clone exists and swift toolchain present",
+            }
+        elif facts.get("clone_hint_resolves"):
+            plan_out["clone_and_toolchain"] = {
+                "state": "missing",
+                "reason": "clone exists but toolchain not found; install required tools or add to PATH",
+            }
+        elif facts.get("profile_exists"):
+            plan_out["clone_and_toolchain"] = {
+                "state": "missing",
+                "reason": "clone not yet created but can be cloned from profile hints",
+            }
+        else:
+            plan_out["clone_and_toolchain"] = {
+                "state": "needs-human",
+                "reason": "no profile with clone_hints; manual clone path required",
+            }
+
+    # Generated paths (proposal with confirm flag)
+    if matched_stack:
+        candidates = matched_stack.get("generated_candidates", [])
+        file_tree = facts.get("file_tree", {})
+        proposals = []
+        for candidate in candidates:
+            path = candidate.get("path")
+            if path and path in file_tree:
+                proposal = dict(candidate)
+                proposal["confirm"] = True
+                proposals.append(proposal)
+        if proposals:
+            plan_out["generated_paths"] = {
+                "state": "needs-human",
+                "reason": "generated files found; confirm which to track",
+                "proposals": proposals,
+            }
+        else:
+            plan_out["generated_paths"] = {"state": "ok", "reason": "no tracked generated files detected", "proposals": []}
+    else:
+        plan_out["generated_paths"] = {"state": "ok", "reason": "no stack detected; skipping generated paths", "proposals": []}
 
     return plan_out
 
