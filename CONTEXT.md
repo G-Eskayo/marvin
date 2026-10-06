@@ -938,3 +938,11 @@ Pushing workflow files needed `gh auth refresh -h github.com -s workflow` (the g
 ## Project onboarding (proposed, 2026-10-06)
 
 Design for turning a repo into a fully wired project from one command: **docs/adr/0036-project-onboarding.md** (status: proposed, awaiting Gil's decisions D1-D4). Not the portfolio "add-project pipeline" (ADR 0034).
+
+## GitHub request budget (2026-10-06)
+
+One account, one hourly allowance of 5,000 GraphQL points, shared by the pipeline, the merge gate, and **the dashboard app on every machine** (the Mini and the MacBook each run their own). It ran out three times on 2026-10-05/06.
+- **Cause:** local file triggers (pipeline stage logs, saved docs) cleared the GitHub data caches, so each write refetched all 12 registered projects, and the PR-list cache lived only 45s. About 5,000-10,000 points an hour.
+- **Fix:** only GitHub-sourced triggers (`refetchesGithub`: change-watcher and webhook pings) clear the caches; board data and the open-PR list live 5 minutes; local changes re-derive columns from cached GitHub data. Measured afterwards over 4 minutes with both apps and the pipeline running: ~1,235/hour.
+- **Visible:** Health check `github:budget` (yellow under 20%, red under 5%, red "exhausted" when the query itself is refused).
+- **Gap:** each machine's app is installed separately (`dashboard/scripts/rebuild_and_install.sh`), and a merge only rebuilds the machine it ran on. The MacBook stayed on the old build until rebuilt by hand over ssh. Code reaches it through the 30-minute `code-sync-push`, so a change is not live on the other machine until synced AND reinstalled.
