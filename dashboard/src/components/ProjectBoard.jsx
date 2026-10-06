@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { cleanIpcError } from '../lib/ipcError.js'
 import { projectIdOf } from '../lib/projects.js'
+import { planInput } from '../lib/ticket_input.js'
 import Markdown from './Markdown.jsx'
 import Related, { useRelated } from './Related.jsx'
 import CompletedView from './CompletedView.jsx'
@@ -274,6 +275,7 @@ function TicketDrilldown({ repo, card, onBack, onOpenMr, onOpenDocs, onOpenTicke
       )}
       {events.length > 0 && <PipelineHistory events={events} />}
       <Related rel={rel} onTicket={onOpenTicket} onDoc={onOpenDocs} onPr={(r, n) => onOpenMr?.(`${r}#${n}`)} />
+      {detail && <TicketReply repo={repo} number={card.number} labels={detail.labels?.map((l) => l.name) || card.labels} state={detail.state} onSent={() => window.api.boards.ticket(repo, card.number).then(setDetail).catch(() => {})} />}
       {detail?.comments?.length > 0 && (
         <div className="mt-4">
           <h3 className="mb-1 text-xs uppercase tracking-wide text-neutral-500">Comments ({detail.comments.length})</h3>
@@ -290,6 +292,47 @@ function TicketDrilldown({ repo, card, onBack, onOpenMr, onOpenDocs, onOpenTicke
 
 // Across ALL projects: where reviews and decisions are waiting on you, so the right board is one click away
 // (the PRs in MR Review belong to whichever project they came from, not necessarily the board you have open).
+// A box to answer a ticket. What sending will do is shown BEFORE you send (same rules the main process applies).
+function TicketReply({ repo, number, labels, state, onSent }) {
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState(null)
+  const [error, setError] = useState(null)
+  const plan = planInput(labels, state)
+  const send = async () => {
+    setBusy(true); setError(null); setResult(null)
+    try {
+      const r = await window.api.boards.input(repo, number, text)
+      setResult(r); setText(''); onSent?.()
+    } catch (e) {
+      setError(cleanIpcError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="mt-4 rounded border border-neutral-800 p-3">
+      <h3 className="mb-1 text-xs uppercase tracking-wide text-neutral-500">Reply</h3>
+      <p className={`mb-2 text-xs ${plan.requeue ? 'text-amber-300' : 'text-neutral-500'}`}>{plan.effect}</p>
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        rows={4}
+        placeholder="Your answer, decision or instruction for this ticket"
+        className="w-full rounded border border-neutral-700 bg-neutral-950 p-2 text-sm text-neutral-200 outline-none focus:border-blue-600"
+      />
+      <div className="mt-2 flex items-center gap-3">
+        <button onClick={send} disabled={busy || !text.trim()} className="rounded bg-blue-700 px-3 py-1 text-sm text-white disabled:opacity-40">
+          {busy ? 'Sending…' : plan.requeue ? 'Send and put back in the queue' : 'Send comment'}
+        </button>
+        {result && <span className="text-xs text-green-400">{result.requeued ? 'Sent. The ticket is back in the queue.' : 'Comment posted.'}</span>}
+        {result?.warning && <span className="text-xs text-amber-300">{result.warning}</span>}
+        {error && <span className="text-xs text-red-400">{error}</span>}
+      </div>
+    </div>
+  )
+}
+
 function WaitingOnYou({ boards, onPick, onOpenMr, refreshKey }) {
   const [overview, setOverview] = useState(null)
   useEffect(() => {

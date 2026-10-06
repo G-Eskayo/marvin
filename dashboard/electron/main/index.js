@@ -41,6 +41,7 @@ import { readTicketAgents } from './ticket_agents.js'
 import { readToolUsage, isStale as toolUsageStale } from './tool_usage.js'
 import { createRefreshServer } from './refresh_server.js'
 import { adoptLoginShellPath, adoptSharedGhToken } from './path.js'
+import { postTicketInput } from './ticket_input.js'
 import { resolveServiceDefaults, resolveDeviceId } from './device_identity.js'
 
 const execFileAsync = promisify(execFile)
@@ -250,6 +251,11 @@ function registerActivityHandlers() {
     assertRegistered(repo)
     const out = await ghJson(['issue', 'view', String(Number(number)), '--repo', repo, '--json', 'number,title,body,labels,url,state,comments'])
     return JSON.parse(out)
+  })
+  // The owner's reply on a ticket; if the ticket was waiting on it, it goes back in the queue (src/lib/ticket_input.js).
+  ipcMain.handle('boards:input', async (_event, repo, number, body) => {
+    assertRegistered(repo)
+    return postTicketInput({ repo, number, body })
   })
 }
 
