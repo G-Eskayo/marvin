@@ -142,3 +142,28 @@ def test_a_local_clone_can_be_audited_before_anything_is_pushed(tmp_path):
     assert "docs/a.md" in tree and scripts is None
     f = by(ra.audit(text, tree, meta), "relative-links")
     assert f["status"] == "fail" and f["evidence"] == ["docs/b.md"]
+
+
+def test_a_head_404_is_confirmed_by_a_browser_get_before_a_link_counts_as_dead():
+    import urllib.error
+    import urllib.request
+    import readme_audit as ra
+    calls = []
+
+    class Resp:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def opener(req, timeout=10):
+        calls.append(req.get_method())
+        if req.get_method() == "HEAD":
+            raise urllib.error.HTTPError(req.full_url, 404, "nf", {}, None)
+        return Resp()
+
+    assert ra.http_status("https://x/y", opener=opener) == 200 and calls == ["HEAD", "GET"]
+
+    def always_404(req, timeout=10):
+        raise urllib.error.HTTPError(req.full_url, 404, "nf", {}, None)
+
+    assert ra.http_status("https://x/y", opener=always_404) == 404

@@ -321,6 +321,10 @@ class Measurer:
                     parsed = {"total": 0, "failed": 0, "skipped": 0, "passed": 0}
                 else:
                     self.last_output = out
+                    if "missing script" in out.lower():  # npm: the project has no such script at all
+                        raise MeasureError(f"{t['label']} cannot run: this project has no test command yet "
+                                           f"(npm says: {out.strip().splitlines()[0][:120] if out.strip() else 'missing script'}). "
+                                           f"Add the script, or land the change that adds it, before this can be verified.")
                     raise MeasureError(f"{t['label']} produced no result (crashed or never ran): ...{out[-300:].strip()}")
             row.update(ran=True, output_tail=out[-3000:], failure_lines=_failure_lines(out), **parsed)
             if "build_ok" in parsed:

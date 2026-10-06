@@ -41,7 +41,9 @@ WORKTREES_ROOT = Path.home() / ".agents-pipeline-worktrees"
 
 FLAGSHIP_MODEL = "claude-sonnet-5"
 HAIKU_MODEL = "claude-haiku-4-5-20251001"
-PLAN_TIMEOUT_S = 300
+# Measured 2026-10-05 over 41 real planning calls: finished ones took 85-298s, many at 255-298s, and 8 hit the
+# old 300s wall (about 1 in 5 died for being slow, not wrong). Time costs nothing here; tokens do, so be generous.
+PLAN_TIMEOUT_S = 900
 EXEC_TIMEOUT_S = 900
 
 

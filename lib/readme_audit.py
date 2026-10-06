@@ -271,18 +271,24 @@ def _gh(*args: str) -> str:
     return r.stdout
 
 
-def http_status(url: str, timeout: int = 10) -> int | None:
-    """Status of a link, or None when it cannot be judged (rate limited, blocked, or the network is down)."""
+_BROWSER_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
+
+
+def http_status(url: str, timeout: int = 10, opener=urllib.request.urlopen) -> int | None:
+    """Status of a link, or None when it cannot be judged (rate limited, blocked, or the network is down).
+    A HEAD that says 404/410 is never believed on its own: some sites (Kaggle, 2026-10-05) answer HEAD or a
+    script's User-Agent with 404 while the page is fine in a browser, so only a browser-style GET can declare a link dead."""
     for method in ("HEAD", "GET"):
         try:
-            req = urllib.request.Request(url, method=method, headers={"User-Agent": "readme-audit/1.0"})
-            with urllib.request.urlopen(req, timeout=timeout) as r:
+            ua = "readme-audit/1.0" if method == "HEAD" else _BROWSER_UA
+            req = urllib.request.Request(url, method=method, headers={"User-Agent": ua})
+            with opener(req, timeout=timeout) as r:
                 return r.status
         except urllib.error.HTTPError as e:
-            if e.code in (403, 405, 429, 999):
+            if e.code in (403, 405, 429, 999) or (method == "HEAD" and e.code in (404, 410)):
                 if method == "HEAD":
                     continue
-                return None
+                return None if e.code != 404 else e.code
             return e.code
         except Exception:
             return None

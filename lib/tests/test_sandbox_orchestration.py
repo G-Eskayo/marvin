@@ -737,3 +737,10 @@ def test_a_persistent_fetch_failure_says_what_git_said(monkeypatch, tmp_path):
     import pytest
     with pytest.raises(RuntimeError, match="index.lock exists"):
         so._fetch_base(tmp_path, "main")
+
+
+def test_the_planning_call_gets_longer_than_the_slowest_runs_that_were_seen_to_succeed():
+    """Measured 2026-10-05 over 41 real planning calls: finished ones took 85-298s (many at 255-298s) and 8 hit the
+    old 300s wall -- about 1 in 5 died for being slow, not for being wrong. The limit must clear the observed tail."""
+    import sandbox_orchestration as so
+    assert so.PLAN_TIMEOUT_S >= 600
