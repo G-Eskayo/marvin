@@ -6,7 +6,7 @@ import { homedir } from 'os'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { listSubsystems, readHistory, buildIndex } from './metrics.js'
-import { listPipelinePrs, approveMr, denyMr, fetchTicketContext, sentBackKeys } from './mr_review.js'
+import { listPipelinePrs, approveMr, denyMr, fetchTicketContext, sentBackKeys, clearSentBackLabel } from './mr_review.js'
 import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
 import { readDispatchStatus } from './dispatch_status.js'
 import { readHealthStatus, runHealthCheckNow } from './health.js'
@@ -518,6 +518,14 @@ function registerMrReviewHandlers() {
   })
 
   ipcMain.handle('mr:mergeState', (_event, url) => mergeOps.get(url))
+
+  // The way out of a wrongly shown "sent back": see clearSentBackLabel (refuses while a rework is running).
+  ipcMain.handle('mr:clearSentBack', async (_event, url) => {
+    assertMergeable(url)
+    const result = await clearSentBackLabel(url, execFileAsync)
+    if (result.cleared) openPrsCache.invalidate()
+    return result
+  })
 
   // Same native-dialog defense as mr:approve -- both of Deny's terminal
   // actions have real, visible side effects on GitHub (ADR 0025), and

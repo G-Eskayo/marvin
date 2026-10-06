@@ -1,5 +1,6 @@
 import { cleanIpcError } from '../lib/ipcError.js'
 import { useEffect, useRef, useState } from 'react'
+import { describePrState } from '../lib/prState.js'
 import MrDetail from './MrDetail.jsx'
 
 const MR_LIST_REFRESH_MS = 120000
@@ -160,9 +161,7 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
   const [status, setStatus] = useState('idle') // idle | approving | error | reengaged
   const [errorMessage, setErrorMessage] = useState(null)
   const [showDenyModal, setShowDenyModal] = useState(false)
-  const waiting = pr.waitingOn || []
-  const wrongBase = pr.baseProblem || null
-  const ci = pr.checks || { state: 'none', failing: [], pending: [] }
+  const [clearing, setClearing] = useState(null) // null | 'confirm' | 'working' | 'done' | { failed }
 
   // The merge runs in the main process, so this button can be unmounted (you navigate away) and
   // remounted mid-merge. Ask the main process what this PR is doing, and keep asking while it merges.
@@ -225,60 +224,65 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
     )
   }
 
+  const view = describePrState(pr, { status, errorMessage })
+  const TONE = { ready: 'text-emerald-400', wait: 'text-amber-400', blocked: 'text-red-400', working: 'text-blue-400' }
+
+  async function clearSentBack() {
+    setClearing('working')
+    try {
+      const r = await window.api.mr.clearSentBack(pr.url)
+      if (r.cleared) { setClearing('done'); onApproved?.(null) } // refresh the list: the PR is no longer sent back
+      else { setClearing({ failed: r.reason }) }
+    } catch (err) {
+      setClearing({ failed: cleanIpcError(err) })
+    }
+  }
+
   return (
-    <div className="flex shrink-0 flex-col items-end gap-1">
-      <div className="flex gap-2">
-        <button
-          onClick={() => setShowDenyModal(true)}
-          disabled={status === 'approving'}
-          className="rounded-md border border-neutral-700 px-4 py-1.5 text-sm font-medium text-neutral-300 transition-colors hover:bg-neutral-800 disabled:opacity-50"
-        >
-          Deny
-        </button>
-        <button
-          onClick={handleApprove}
-          disabled={status === 'approving' || waiting.length > 0 || !!wrongBase || pr.conflicts || pr.sentBack || ci.state === 'failing' || ci.state === 'pending'}
-          title={pr.sentBack ? 'Sent back for rework: wait for the reworked PR' : waiting.length ? `Merge ${waiting.map((w) => '#' + w.number).join(', ')} first` : undefined}
-          className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
-        >
-          {status === 'approving' ? 'Confirming…' : 'Approve & Merge'}
-        </button>
-      </div>
-      {pr.sentBack && (
-        <p className="max-w-xs text-right text-xs text-amber-400">
-          Sent back for rework: this PR's ticket was rejected and a reworked version is on its way, so there is nothing to approve here. If the rework is already in and the "needs-reengagement" label is stale, remove it from the ticket.
-        </p>
-      )}
-      {ci.state === 'failing' && (
-        <p className="max-w-xs text-right text-xs text-red-400">
-          GitHub checks failed: {ci.failing.join(', ')}. It is sent back for rework automatically, so there is nothing to approve.
-        </p>
-      )}
-      {ci.state === 'pending' && (
-        <p className="max-w-xs text-right text-xs text-amber-400">GitHub checks are still running ({ci.pending.join(', ')}). Approve once they finish.</p>
-      )}
-      {ci.state === 'passing' && <p className="text-right text-xs text-emerald-400">GitHub checks passed</p>}
-      {pr.conflicts && (
-        <p className="max-w-xs text-right text-xs text-red-400">
-          Conflicts with {pr.baseProblem?.expected || 'main'}: it can't merge as it is. Its ticket is sent back automatically and rebuilt on the current {pr.baseProblem?.expected || 'main'}, updating this same PR. Nothing to do here.
-        </p>
-      )}
-      {wrongBase && (
-        <p className="max-w-xs text-right text-xs text-red-400">
-          Targets <span className="font-mono">{wrongBase.base}</span>, not {wrongBase.expected}: merging it here would not put the work on {wrongBase.expected}.{' '}
-          {wrongBase.parent ? `It is stacked on #${wrongBase.parent.number} — merge that first, then change this PR's base to ${wrongBase.expected}.` : `Change its base to ${wrongBase.expected} on GitHub first.`}
-        </p>
-      )}
-      {waiting.length > 0 && (
-        <p className="max-w-xs text-right text-xs text-amber-400">
-          Merge {waiting.map((w) => `#${w.number}`).join(', ')} first — it changes the same files ({waiting[0].shared.slice(0, 2).join(', ')}), so this one would conflict.
-        </p>
-      )}
-      {status === 'error' && <p className="text-sm text-red-400">Failed: {errorMessage}</p>}
-      {status === 'reengaged' && (
-        <p className="max-w-xs text-right text-sm text-amber-400">
-          Not merged — routed to re-engagement: {errorMessage}
-        </p>
+    <div className="flex shrink-0 flex-col items-end gap-1" data-state={view.kind}>
+      {view.approve !== 'hidden' || view.deny !== 'hidden' ? (
+        <div className="flex gap-2">
+          {view.deny !== 'hidden' && (
+            <button
+              onClick={() => setShowDenyModal(true)}
+              disabled={view.deny === 'disabled'}
+              className="rounded-md border border-neutral-700 px-4 py-1.5 text-sm font-medium text-neutral-300 transition-colors hover:bg-neutral-800 disabled:opacity-50"
+            >
+              Deny
+            </button>
+          )}
+          {view.approve !== 'hidden' && (
+            <button
+              onClick={handleApprove}
+              disabled={view.approve === 'disabled'}
+              className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
+            >
+              Approve &amp; Merge
+            </button>
+          )}
+        </div>
+      ) : null}
+      <p className={`max-w-xs text-right text-sm font-medium ${TONE[view.tone] || ''}`}>{view.headline}</p>
+      {view.detail && <p className="max-w-xs text-right text-xs text-neutral-400">{view.detail}</p>}
+      {view.note && <p className="text-right text-xs text-emerald-400">{view.note}</p>}
+      {view.actions.map((a) =>
+        a.id === 'clearSentBack' ? (
+          <div key={a.id} className="max-w-xs text-right text-xs">
+            {clearing === 'confirm' ? (
+              <span className="text-neutral-300">
+                Clear it?{' '}
+                <button onClick={clearSentBack} className="text-sky-400 hover:underline">Yes, clear</button>
+                {' · '}
+                <button onClick={() => setClearing(null)} className="text-neutral-500 hover:underline">Cancel</button>
+              </span>
+            ) : clearing === 'working' ? (
+              <span className="text-neutral-500">Clearing…</span>
+            ) : (
+              <button onClick={() => setClearing('confirm')} className="text-sky-400 hover:underline">{a.label}</button>
+            )}
+            {clearing && clearing.failed && <p className="mt-1 text-amber-400">{clearing.failed}</p>}
+          </div>
+        ) : null
       )}
       {showDenyModal && (
         <DenyModal
