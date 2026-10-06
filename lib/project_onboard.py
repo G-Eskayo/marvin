@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """Project onboarding: transform a repo into a fully wired MARVIN project.
 
-This module handles the read-only 'plan' stage (ticket #141): gather facts about a project
-and produce a readiness plan without modifying anything. Facts are gathered once per repo
-via `inspect()`, and `plan()` is pure over those facts.
+This module handles both the read-only 'plan' stage (ticket #141) and the 'apply' stage
+(ticket #146): gather facts about a project, produce a readiness plan, and optionally
+apply local changes (labels, board, profile). Facts are gathered once per repo via
+`inspect()`, and `plan()` is pure over those facts. Apply modifies local state only.
 
-    project_onboard.py plan <owner/repo>    outputs JSON readiness plan for the project
+    project_onboard.py plan <owner/repo>              outputs JSON readiness plan
+    project_onboard.py apply <owner/repo> --local     applies local changes (labels, board, profile)
 """
 from __future__ import annotations
 
 import base64
+import difflib
 import fnmatch
 import json
 import re
@@ -25,6 +28,13 @@ import project_profile as pp
 
 TIMEOUT = 60
 TRIAGE_LABELS = {"needs-triage", "needs-info", "ready-for-agent", "ready-for-human", "wontfix"}
+TRIAGE_LABEL_COLORS = {
+    "needs-triage": "d4c5f9",
+    "needs-info": "ffd700",
+    "ready-for-agent": "90ee90",
+    "ready-for-human": "ffb6c1",
+    "wontfix": "808080",
+}
 CONFIG_ONBOARDING = Path(__file__).resolve().parent.parent / "config" / "onboarding"
 
 
@@ -402,16 +412,242 @@ def plan(facts: dict) -> dict:
     return plan_out
 
 
+def _apply_labels(repo: str, facts: dict, gh=_gh) -> dict:
+    """Create missing triage labels. Returns {"action": "created"|"unchanged", "labels": [names...]}.
+    Idempotent: gh label create is only called for genuinely-missing names."""
+    existing = set(facts.get("labels", []))
+    created = []
+
+    for label_name in TRIAGE_LABELS:
+        if label_name not in existing:
+            color = TRIAGE_LABEL_COLORS[label_name]
+            cmd = ["label", "create", label_name, "--repo", repo, "--color", color]
+            gh(cmd)
+            created.append(label_name)
+
+    return {
+        "action": "created" if created else "unchanged",
+        "labels": created,
+    }
+
+
+def _apply_board(repo: str, facts: dict, registry_path: Path | None = None) -> dict:
+    """Register board via board_registry.ensure_board(). Idempotent."""
+    result = br.ensure_board(repo, path=registry_path)
+    return {
+        "action": "created" if result.get("created") else "unchanged",
+        "board": result.get("board"),
+    }
+
+
+def _apply_profile(repo: str, facts: dict, profiles_dir: Path | None = None) -> dict:
+    """Draft profile from stack template, show diff vs. existing, handle conflicts.
+    Returns {"action": "created"|"unchanged"|"conflict"|"needs-human", "diff": str, "profile": dict}.
+    Never overwrites an edited profile."""
+    profiles_dir = profiles_dir or pp.PROFILES_DIR
+    repo_name = repo.split("/")[1]
+    profile_path = profiles_dir / f"{repo_name}.json"
+
+    # Determine stack
+    detected_stack = facts.get("detected_stack")
+    if not detected_stack:
+        return {
+            "action": "needs-human",
+            "reason": "no recognised stack; R5, never guess",
+            "diff": "",
+        }
+
+    # Load template
+    template_path = CONFIG_ONBOARDING / detected_stack / "profile.json"
+    if not template_path.exists():
+        return {
+            "action": "needs-human",
+            "reason": f"no onboarding template for {detected_stack}",
+            "diff": "",
+        }
+
+    try:
+        with open(template_path) as f:
+            template = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {
+            "action": "needs-human",
+            "reason": f"template could not be loaded: {template_path}",
+            "diff": "",
+        }
+
+    # Build skeleton
+    skeleton = {
+        "repo": repo,
+        "base_branch": facts.get("default_branch", "main"),
+        "clone_hints": [],
+        "dispatch": "off",
+        "merge_from_dashboard": False,
+        "verify": [],
+    }
+
+    # Merge template's profile_fragment onto skeleton
+    draft = skeleton.copy()
+    profile_fragment = template.get("profile_fragment", {})
+    if isinstance(profile_fragment, dict):
+        draft.update(profile_fragment)
+
+    # Force dispatch and merge_from_dashboard to safe defaults (R2, AC3)
+    draft["dispatch"] = "off"
+    draft["merge_from_dashboard"] = False
+
+    # Validate the draft
+    try:
+        draft = pp._validate(draft, f"draft profile for {repo}")
+    except (ValueError, TypeError):
+        return {
+            "action": "needs-human",
+            "reason": "profile validation failed",
+            "diff": "",
+        }
+
+    # Check for existing profile
+    if profile_path.exists():
+        existing_text = profile_path.read_text()
+        try:
+            existing = json.loads(existing_text)
+        except json.JSONDecodeError:
+            return {
+                "action": "conflict",
+                "reason": "existing profile is not valid JSON",
+                "diff": "",
+            }
+
+        # Compare: if identical, it's unchanged; if different, it's a conflict
+        draft_text = json.dumps(draft, indent=2) + "\n"
+        if existing_text == draft_text:
+            return {"action": "unchanged", "diff": ""}
+
+        # Diff found: treat as conflict, never overwrite
+        diff_lines = list(difflib.unified_diff(
+            existing_text.splitlines(keepends=True),
+            draft_text.splitlines(keepends=True),
+            fromfile="existing",
+            tofile="draft",
+        ))
+        return {
+            "action": "conflict",
+            "reason": "existing profile differs from draft; edit detected",
+            "diff": "".join(diff_lines),
+        }
+
+    # No existing profile: create it
+    draft_text = json.dumps(draft, indent=2) + "\n"
+    diff_lines = list(difflib.unified_diff(
+        [],
+        draft_text.splitlines(keepends=True),
+        fromfile="/dev/null",
+        tofile=f"config/projects/{repo_name}.json",
+    ))
+
+    return {
+        "action": "created",
+        "diff": "".join(diff_lines),
+        "profile": draft,
+    }
+
+
+def apply(repo: str, facts: dict | None = None, *, profiles_dir: Path | None = None,
+          registry_path: Path | None = None, gh=_gh) -> dict:
+    """Apply local changes: create missing labels, register board, draft profile.
+    Idempotent: running twice produces no changes on the second run.
+
+    Returns: {"labels": {...}, "board": {...}, "profile": {...}} with per-piece
+    "action" (created/unchanged/conflict/needs-human) and "diff" where relevant.
+    Only writes profile file when action is "created" (keeps _apply_profile pure).
+    """
+    if facts is None:
+        facts = inspect(repo, gh=gh)
+
+    labels_result = _apply_labels(repo, facts, gh=gh)
+    board_result = _apply_board(repo, facts, registry_path=registry_path)
+    profile_result = _apply_profile(repo, facts, profiles_dir=profiles_dir)
+
+    # Write profile to disk only if it was created (idempotent)
+    if profile_result.get("action") == "created":
+        profiles_dir = profiles_dir or pp.PROFILES_DIR
+        repo_name = repo.split("/")[1]
+        profile_path = profiles_dir / f"{repo_name}.json"
+        profile_path.parent.mkdir(parents=True, exist_ok=True)
+        profile_text = json.dumps(profile_result["profile"], indent=2) + "\n"
+        profile_path.write_text(profile_text)
+
+    return {
+        "labels": labels_result,
+        "board": board_result,
+        "profile": profile_result,
+    }
+
+
 def main():
-    """CLI entry point: project_onboard.py plan <owner/repo>"""
-    if len(sys.argv) != 3 or sys.argv[1] != "plan":
-        sys.exit("usage: project_onboard.py plan <owner/repo>")
+    """CLI entry point: project_onboard.py plan|apply <owner/repo> [--local]"""
+    if len(sys.argv) < 3:
+        sys.exit("usage: project_onboard.py plan <owner/repo> | apply <owner/repo> --local")
 
+    cmd = sys.argv[1]
     repo = sys.argv[2]
-    facts = inspect(repo)
-    result = plan(facts)
 
-    print(json.dumps(result, indent=2))
+    if cmd == "plan":
+        if len(sys.argv) != 3:
+            sys.exit("usage: project_onboard.py plan <owner/repo>")
+        facts = inspect(repo)
+        result = plan(facts)
+        print(json.dumps(result, indent=2))
+
+    elif cmd == "apply":
+        if len(sys.argv) != 4 or sys.argv[3] != "--local":
+            sys.exit("usage: project_onboard.py apply <owner/repo> --local")
+
+        facts = inspect(repo)
+        result = apply(repo, facts=facts)
+
+        # Print human-readable summary
+        print(f"\nOnboarding apply for {repo} --local:\n")
+
+        # Labels
+        labels = result["labels"]
+        if labels["action"] == "created":
+            print(f"  labels: created {', '.join(labels['labels'])}")
+        else:
+            print(f"  labels: unchanged")
+
+        # Board
+        board = result["board"]
+        if board["action"] == "created":
+            print(f"  board: created {repo}")
+        else:
+            print(f"  board: unchanged")
+
+        # Profile
+        profile = result["profile"]
+        if profile["action"] == "created":
+            print(f"  profile: created config/projects/{repo.split('/')[1]}.json")
+            if profile.get("diff"):
+                print("\n  diff (new file):")
+                for line in profile["diff"].split("\n")[:20]:
+                    if line:
+                        print(f"    {line}")
+        elif profile["action"] == "unchanged":
+            print(f"  profile: unchanged")
+        elif profile["action"] == "conflict":
+            print(f"  profile: conflict — existing differs from draft (edit detected)")
+            if profile.get("diff"):
+                print("\n  diff:")
+                for line in profile["diff"].split("\n")[:30]:
+                    if line:
+                        print(f"    {line}")
+        else:  # needs-human
+            print(f"  profile: needs-human — {profile.get('reason', '')}")
+
+        print()
+
+    else:
+        sys.exit(f"unknown command: {cmd}\nusage: project_onboard.py plan|apply <owner/repo>")
 
 
 if __name__ == "__main__":
