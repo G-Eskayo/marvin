@@ -161,8 +161,10 @@ _RENDERED_JS = """() => {
 
 
 def _wpcli(args: list[str]) -> str | None:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import portfolio_apply as pa
     try:
-        r = subprocess.run(["docker", "exec", WPCLI_CONTAINER, "wp", *args, "--path=/var/www/html"],
+        r = subprocess.run([*pa.wp_base(), *args],
                            capture_output=True, text=True, timeout=60)
         return r.stdout if r.returncode == 0 else None
     except (OSError, subprocess.TimeoutExpired):

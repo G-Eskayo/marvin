@@ -204,6 +204,22 @@ def check_unique_images(thumbnails: dict[str, str]) -> list[dict]:
             for url, names in by_url.items() if len(names) > 1]
 
 
+def check_media(media: list[dict]) -> list[dict]:
+    """Videos with no source or a file that doesn't load, and images that failed to load. A data: URI is a lazy-load
+    placeholder that hasn't been swapped in yet, not a broken image."""
+    out = []
+    for m in media:
+        src = m.get("src")
+        if m.get("kind") == "video":
+            if not src:
+                out.append(_finding("video-no-source", "a <video> has no src and no <source>: it shows an empty player"))
+            elif m.get("status") is not None and not 200 <= int(m["status"]) < 300:
+                out.append(_finding("video-broken", f"{src.rsplit('/', 1)[-1]} returns HTTP {m['status']}"))
+        elif m.get("kind") == "img" and m.get("broken") and src and not src.startswith("data:"):
+            out.append(_finding("image-missing", f"{src.rsplit('/', 1)[-1]} did not load"))
+    return out
+
+
 def check_overflow(viewport_width: int, scroll_width: int) -> list[dict]:
     if scroll_width - viewport_width > 1:
         return [_finding("page-overflow", f"page is {scroll_width}px wide in a {viewport_width}px viewport")]
@@ -248,6 +264,28 @@ _MEASURE_JS = """() => {
 }"""
 
 
+_MEDIA_JS = """() => {
+  const area = document.querySelector('#content') || document.body;
+  const vids = [...area.querySelectorAll('video')].map(v => ({kind: 'video',
+    src: v.getAttribute('src') || (v.querySelector('source[src]') || {getAttribute: () => null}).getAttribute('src')}));
+  const imgs = [...area.querySelectorAll('img')].map(i => ({kind: 'img', src: i.currentSrc || i.getAttribute('src'),
+    broken: i.complete && i.naturalWidth === 0}));
+  return [...vids, ...imgs];
+}"""
+
+
+def _measure_media(page, base: str) -> list[dict]:
+    media = page.evaluate(_MEDIA_JS)
+    for m in media:
+        if m["kind"] == "video" and m["src"]:
+            url = m["src"] if m["src"].startswith("http") else base + m["src"]
+            try:
+                m["status"] = page.request.get(url, headers={"Range": "bytes=0-1023"}).status
+            except Exception:   # noqa: BLE001 -- an unreachable file is a broken video
+                m["status"] = 0
+    return media
+
+
 def run(base: str = "http://localhost:8080", rules: dict | None = None, manifest_path: Path = MANIFEST_PATH) -> dict:
     """Measure the dev site and return {findings, summary, ...}. Needs Playwright."""
     from playwright.sync_api import sync_playwright
@@ -280,6 +318,8 @@ def run(base: str = "http://localhost:8080", rules: dict | None = None, manifest
                 m = page.evaluate(_MEASURE_JS)
                 label = f"{url} @{width}"
                 per_page = check_overflow(m["viewport"], m["scrollWidth"])
+                if width == rules["viewports"][0]:   # media doesn't change with width: check it once per page
+                    per_page += check_media(_measure_media(page, base))
                 if width >= 1100:   # card geometry rules apply to the desktop layouts
                     import portfolio_elements as pe
                     for eid, el in library.items():

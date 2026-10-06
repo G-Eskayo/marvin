@@ -83,7 +83,7 @@ def _run(cmd, input=None):
 
 def create_page(s: dict, content: str, runner=_run) -> int:
     """Create the project page on the dev site under its category hub. Returns the new page's ID."""
-    wp = ["docker", "exec", "-i", pa.WPCLI, "wp", "--path=/var/www/html"]
+    wp = pa.wp_base(interactive=True)
     hub_slug = portfolio_rules.load_rules()["categories"][s["category"]]
     listing = runner([*wp, "post", "list", "--post_type=page", "--post_status=publish", "--fields=ID,post_name,post_parent", "--format=json"])
     if listing.returncode != 0:
