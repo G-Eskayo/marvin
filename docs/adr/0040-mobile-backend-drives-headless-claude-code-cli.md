@@ -1,4 +1,4 @@
-# 0039 — The mobile backend drives the headless Claude Code CLI, not the Agent SDK library
+# 0040 — The mobile backend drives the headless Claude Code CLI, not the Agent SDK library
 
 ## Status
 
@@ -20,7 +20,7 @@ That is plain first-party use of Claude Code under Gil's own login — and it's 
 pipeline already runs ([[0030]]).
 
 Alternatives: Agent SDK + paid API key (clean, but breaks the no-paid-API stance); Agent SDK on
-subscription login (grey zone); local model as primary brain (too weak — see [[0038]]).
+subscription login (grey zone); local model as primary brain (too weak — see [[0039]]).
 
 ## Decision
 

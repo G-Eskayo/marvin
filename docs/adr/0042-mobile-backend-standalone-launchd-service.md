@@ -1,4 +1,4 @@
-# 0041 — The mobile backend is a standalone launchd service on the Mac Mini, Tailscale-only
+# 0042 — The mobile backend is a standalone launchd service on the Mac Mini, Tailscale-only
 
 ## Status
 
@@ -7,8 +7,8 @@ Accepted (2026-10-05)
 ## Context
 
 MARVIN Mobile's Dashboard surface needs the same data the Electron dashboard shows, and Chat/Voice
-need a long-lived process that runs headless Claude Code sessions ([[0039]]) and sends push
-([[0040]]). The Electron app only runs while it's open, and Gil sometimes has it open on the
+need a long-lived process that runs headless Claude Code sessions ([[0040]]) and sends push
+([[0041]]). The Electron app only runs while it's open, and Gil sometimes has it open on the
 laptop rather than the Mac Mini.
 
 Checked 2026-10-05: of the dashboard's main-process modules, only `electron/main/index.js` (the
@@ -22,7 +22,7 @@ dark whenever the desktop app isn't open on the Mac Mini.
 
 Run the mobile backend as its own launchd-managed Node service on the Mac Mini (per [[0032]]),
 importing the dashboard's data modules directly, bound only to the Mac Mini's Tailscale address.
-Same shape as the portfolio backend ([[0036]]).
+Same shape as the portfolio backend ([[0038]]).
 
 ## Consequences
 
