@@ -72,3 +72,14 @@ def test_deploy_pipeline_test_markers_are_not_copied_to_the_dev_site(tmp_path):
     (proj / "deploy/mu-plugins/marvin-pipeline-test.php").write_text("<?php // marker")
     assert "mu-plugins/marvin-pipeline-test.php" not in sd.sync_files(proj, dev)
     assert not (dev / "wp-content/mu-plugins/marvin-pipeline-test.php").exists()
+
+
+def test_the_evaluate_step_fails_on_errors_but_only_reports_warnings():
+    # Content checks (ADR 0051) are heuristics that flag for a person; they must not turn the pipeline red.
+    warn = {"rule": "copy-ai-phrase", "severity": "warning", "page": "/a/", "detail": "x"}
+    err = {"rule": "page-overflow", "severity": "error", "page": "/b/", "detail": "y"}
+    assert sd.judge_evaluation({"findings": []}) == (True, "no findings")
+    ok, detail = sd.judge_evaluation({"findings": [warn, warn]})
+    assert ok and "2 warning(s)" in detail
+    ok, detail = sd.judge_evaluation({"findings": [warn, err]})
+    assert not ok and "1 error(s)" in detail and "page-overflow" in detail

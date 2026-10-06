@@ -48,6 +48,18 @@ def sync_files(project: Path, dev_html: Path) -> list[str]:
     return changed
 
 
+def judge_evaluation(result: dict) -> tuple[bool, str]:
+    """Errors fail the step; warnings (the content heuristics, ADR 0051) are reported but don't."""
+    findings = result.get("findings") or []
+    if not findings:
+        return True, "no findings"
+    errors = [f for f in findings if f.get("severity", "error") == "error"]
+    warnings = len(findings) - len(errors)
+    if errors:
+        return False, f"{len(errors)} error(s), first: {errors[0]['rule']} on {errors[0]['page']}" + (f"; {warnings} warning(s)" if warnings else "")
+    return True, f"no errors; {warnings} warning(s) to review"
+
+
 def _step(name: str, fn) -> dict:
     t = time.time()
     try:
@@ -82,9 +94,7 @@ def run(project: Path = pa.PROJECT, dev_html: Path = pa.DEV_HTML, status_path: P
         return not bad, "every element's dashboard preview matches the live site" if not bad else "; ".join(f"{i}: {d[0]}" for i, d in bad.items())
 
     def evaluate():
-        result = ev.run()
-        n = len(result["findings"])
-        return n == 0, "no findings" if n == 0 else f"{n} finding(s), first: {result['findings'][0]['rule']} on {result['findings'][0]['page']}"
+        return judge_evaluation(ev.run())
 
     plan = {"sync": sync, "pages": pages, "capture": capture, "parity": parity, "evaluate": evaluate, **(steps or {})}
     results = []
