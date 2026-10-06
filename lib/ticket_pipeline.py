@@ -115,6 +115,12 @@ def _unclaimed_ready_tickets(repo: str = REPO) -> list[dict]:
 
 MAX_REENGAGE_ATTEMPTS = 3
 
+# Where marvin's OWN tickets may run (other projects name theirs in config/projects/<repo>.json). The macbook is left out on purpose
+# (2026-10-06): its Python test suite has 18 environment-only failures (paper-dive, the portfolio parity check, variable-tracker),
+# so a ticket verified there can be read as regressed, and its first marvin ticket (#141) stalled in planning and was finished by
+# the mac-mini. Add "macbook-pro-1" here once that suite is clean.
+MARVIN_MACHINES = ("mac-mini-1",)
+
 
 def _requeue_all(repos) -> list[str]:
     return [f"{r.split('/')[-1]}#{n}" for r in repos for n in _requeue_conflicted_prs(r)]
@@ -440,9 +446,7 @@ def _scan(run, dry_run: bool) -> None:
 
     profile = pp.load_profile(repo) if other else None
     step("Choosing a machine")
-    selected = select_machine() if not other else _select_for_profile(profile)
-    if selected is not None and not other and selected[1].get("is_self") and _local_busy():
-        selected = None  # select_machine only read the flag; a live run_ticket means this machine is not free
+    selected = _select_for_profile(profile if other else {"machines": list(MARVIN_MACHINES)})
     if selected is None:
         print(f"{LOG_PREFIX} {where}#{issue_number} ready but no {'suitable ' if other else ''}machine currently available", file=sys.stderr)
         step("Choosing a machine", "none available" if not other else f"none free that can run {repo.split('/')[-1]} ({', '.join(profile.get('machines', [])) or 'no machines listed'})")
