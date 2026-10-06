@@ -16,6 +16,8 @@ Choose the page type and read its template in `templates/content/`: `skill-tool`
 ## 2. Gather and check every fact
 Write down each claim you mean to make and where it was checked: stacks against the code (package.json, imports, languages), counts from the repo or GitHub, usage from real outputs, "the pipeline built it" against merged `pipeline/...` PRs. If a claim can't be checked, cut it. Read the current page first; old copy often states stacks or features the code doesn't have.
 
+Check the other direction too: the repo often has stronger material than the page uses. Look for a headline feature the copy never names (Mancala's notebook has a real minimax AI with alpha-beta pruning, and the old page never said so), charts and figures already in the repo (a confusion matrix, an engagement distribution), metrics the page leaves out, and links that should be there (a GitHub repo, a hub parent, a manifest entry and card for a page published outside the manifest). Lead with the strongest checked thing you find.
+
 ## 3. Capture the evidence
 - **App screenshots:** a debug-only demo mode in the app (Clarity: `-ClarityDemo`, `-ClarityDemoStatic`, `-ClarityDemoSettings`), the iPhone simulator, `xcrun simctl status_bar ... override --time 9:41`, `xcrun simctl io <udid> screenshot`. Resize to 600 px wide.
 - **Dashboard screenshots:** quit the installed MARVIN Metrics app first (its single-instance lock makes a second launch hang), drive the built app with Playwright `_electron`, then reopen it.
