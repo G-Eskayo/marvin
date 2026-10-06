@@ -48,6 +48,7 @@ import project_profile as pp  # noqa: E402
 import ticket_agents  # noqa: E402
 import project_catalog  # noqa: E402
 import ticket_evidence  # noqa: E402
+import project_onboard  # noqa: E402
 
 VENV_PYTHON = str(Path.home() / ".agents" / "venv" / "bin" / "python")
 RUN_TICKET_SCRIPT = str(Path.home() / ".agents" / "lib" / "run_ticket.py")
@@ -219,6 +220,21 @@ def _refresh_catalog() -> None:
             print(f"{LOG_PREFIX} project catalog: " + (f"{res['count']} projects" if res["ok"] else f"refresh failed, kept last good ({res['error']})"), file=sys.stderr)
     except Exception as e:  # noqa: BLE001
         print(f"{LOG_PREFIX} project catalog: {e}", file=sys.stderr)
+
+
+def _refresh_onboarding_plans() -> None:
+    # Refresh onboarding plans for every registered project. Best effort: never block dispatch.
+    try:
+        repos = [b["repo"] for b in board_registry.list_boards()]
+        res = project_onboard.refresh_all_onboarding_plans(repos)
+        ok_count = len(res["ok"])
+        failed_count = len(res["failed"])
+        msg = f"{ok_count} refreshed"
+        if failed_count:
+            msg += f", {failed_count} failed (kept last good)"
+        print(f"{LOG_PREFIX} onboarding plans: {msg}", file=sys.stderr)
+    except Exception as e:  # noqa: BLE001
+        print(f"{LOG_PREFIX} onboarding plans: {e}", file=sys.stderr)
 
 
 def _run_ticket_agents(step, summary) -> None:
@@ -418,6 +434,8 @@ def _scan(run, dry_run: bool) -> None:
         for repo in added:
             print(f"{LOG_PREFIX} registered dashboard board for {repo}", file=sys.stderr)
         step("Board discovery", f"{len(added)} new" if added else "no new projects")
+        _refresh_onboarding_plans()
+        step("Onboarding plans", "refresh for every registered project")
         step("Project catalog", "refresh if older than 50 min")
         _refresh_catalog()
         _run_ticket_agents(step, summary)
