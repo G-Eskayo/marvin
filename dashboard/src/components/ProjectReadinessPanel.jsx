@@ -1,0 +1,117 @@
+import { useState } from 'react'
+
+const SEVERITY_COLOR = {
+  ok: { bg: 'bg-emerald-950', border: 'border-emerald-900', dot: 'bg-emerald-500', text: 'text-emerald-300' },
+  missing: { bg: 'bg-red-950', border: 'border-red-900', dot: 'bg-red-500', text: 'text-red-300' },
+  'needs-human': { bg: 'bg-amber-950', border: 'border-amber-900', dot: 'bg-amber-500', text: 'text-amber-300' },
+  unplanned: { bg: 'bg-neutral-900', border: 'border-neutral-700', dot: 'bg-neutral-600', text: 'text-neutral-400' }
+}
+
+function PieceChip({ name, state, reason }) {
+  const colors = SEVERITY_COLOR[state] || SEVERITY_COLOR.unplanned
+  const [expanded, setExpanded] = useState(false)
+
+  const display = {
+    ok: '✓',
+    missing: '✗',
+    'needs-human': '!',
+    unplanned: '?'
+  }[state] || '?'
+
+  return (
+    <div
+      onClick={() => setExpanded(!expanded)}
+      className={`cursor-pointer rounded border ${colors.border} ${colors.bg} px-2 py-1 text-xs font-medium transition-all hover:opacity-90`}
+    >
+      <span className={`inline-block h-2 w-2 rounded-full ${colors.dot} align-text-top mr-1`} />
+      <span className={colors.text}>{name}</span>
+      {expanded && reason && (
+        <div className="mt-2 border-t border-current pt-2 text-left text-neutral-300">
+          {reason}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default function ProjectReadinessPanel({ plans, loading }) {
+  if (loading) {
+    return <div className="flex h-64 items-center justify-center text-neutral-500">Loading project readiness…</div>
+  }
+
+  if (!plans || plans.length === 0) {
+    return <div className="flex h-64 items-center justify-center text-neutral-500">No projects registered yet</div>
+  }
+
+  const pieces = [
+    'profile',
+    'stack',
+    'test_command',
+    'ci',
+    'triage_labels',
+    'agent_docs',
+    'board',
+    'clone_and_toolchain',
+    'generated_paths'
+  ]
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-neutral-500">
+        Project readiness: one row per registered project, one chip per setup piece. Click a chip to see the reason.
+      </p>
+      <div className="space-y-3">
+        {plans.map((plan) => {
+          const repoName = plan.repo.split('/')[1]
+          const isPlanned = plan.status === 'planned'
+
+          return (
+            <div key={plan.repo} className="rounded-lg border border-neutral-800 bg-neutral-950 p-4">
+              <div className="mb-3">
+                <h3 className="text-sm font-medium text-white">{repoName}</h3>
+                {isPlanned && plan.generated_at && (
+                  <p className="text-xs text-neutral-500">
+                    Scanned: {new Date(plan.generated_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}
+                  </p>
+                )}
+                {!isPlanned && (
+                  <p className="text-xs text-neutral-500">
+                    {plan.status === 'not_planned_yet' ? 'Not scanned yet' : 'Read error'}
+                  </p>
+                )}
+              </div>
+              {isPlanned && plan.pieces ? (
+                <div className="flex flex-wrap gap-2">
+                  {pieces.map((piece) => {
+                    const piece_info = plan.pieces[piece]
+                    const state = piece_info?.state || 'unplanned'
+                    const reason = piece_info?.reason || ''
+                    return (
+                      <PieceChip
+                        key={piece}
+                        name={piece.replace(/_/g, ' ')}
+                        state={state}
+                        reason={reason}
+                      />
+                    )
+                  })}
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2 opacity-50">
+                  {pieces.map((piece) => (
+                    <PieceChip
+                      key={piece}
+                      name={piece.replace(/_/g, ' ')}
+                      state="unplanned"
+                      reason=""
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
