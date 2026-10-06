@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { createServer } from 'http'
 import { createPortfolioProxy, handlePortfolioRequest, portfolioHost } from '../electron/main/portfolio_remote.js'
 
-// ADR 0036: the Portfolio backend runs only on the dev host; other machines call it through a proxy with the same
+// ADR 0038: the Portfolio backend runs only on the dev host; other machines call it through a proxy with the same
 // method names, over the webhook server's POST /portfolio/<method>.
 
 let server

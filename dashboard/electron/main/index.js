@@ -371,7 +371,7 @@ function registerDocsHandlers() {
 
   // Portfolio tab (CONTEXT.md "Dashboard app -- Portfolio tab"): component library, design rules, guide,
   // evaluation, images. Dev-only: every write is confined to the portfolio repo's templates/.
-  // ADR 0036: the backend runs only on the dev host; anywhere else the same methods go to its webhook server.
+  // ADR 0038: the backend runs only on the dev host; anywhere else the same methods go to its webhook server.
   const portfolioAt = portfolioHost({ defaultHost: defaultWebhookHost })
   const localPortfolio = createPortfolio({ exec: execFileAsync })
   const portfolio = portfolioAt.local
