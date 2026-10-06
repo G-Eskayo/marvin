@@ -107,14 +107,18 @@ export function clearEvidenceCache() { evidenceCache.clear() }
 export async function loadBoard(repo, { gh, stagesFor = defaultStagesFor, liveNumbers, data, evidence = {} } = {}) {
   try {
     const { issues, prs } = data || (await fetchBoardData(repo, gh))
-    return buildBoard({
+    const fetchedAt = new Date().toISOString()
+    return {
+      ...buildBoard({
       repo,
       issues,
       prs,
       eventsByNumber: stagesFor(repo),
       liveNumbers: liveNumbers || defaultLiveNumbers(repo),
       evidenceByNumber: evidence
-    })
+      }),
+      fetchedAt
+    }
   } catch (err) {
     throw new Error(`Could not load board for ${repo}: ${err.message}`)
   }

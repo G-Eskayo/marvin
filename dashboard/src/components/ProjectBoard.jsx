@@ -68,6 +68,18 @@ function Tag({ tag, active, onClick }) {
   )
 }
 
+// How old the board's data is. Columns are derived from live GitHub data; this says when it was last read.
+function Freshness({ at }) {
+  const [, tick] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 30_000)
+    return () => clearInterval(t)
+  }, [])
+  const mins = Math.max(0, Math.floor((Date.now() - Date.parse(at)) / 60_000))
+  const text = mins < 1 ? 'just now' : mins === 1 ? '1 minute ago' : `${mins} minutes ago`
+  return <p className={`mb-2 text-[11px] ${mins >= 10 ? 'text-amber-400' : 'text-neutral-600'}`}>Board data read {text}</p>
+}
+
 function Card({ card, repo, onSelect, onOpenMr, activeTags, onTag }) {
   return (
     <button
@@ -502,6 +514,7 @@ export default function ProjectBoard({ onOpenMr, onOpenDocs, onOpenTicket, nav }
           No tickets yet for this project. File them with <code className="text-neutral-200">/to-issues</code> and they appear here by themselves.
         </p>
       )}
+      {view === 'board' && board?.fetchedAt && <Freshness at={board.fetchedAt} />}
       {view === 'board' && board && <TagBar board={board} activeTags={activeTags} onTag={toggleTag} onClear={() => setActiveTags(new Set())} />}
       {view === 'board' && board && (
         <div className="flex gap-4 overflow-x-auto pb-4">
