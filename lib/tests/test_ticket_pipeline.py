@@ -23,6 +23,16 @@ def _isolate_ticket_stages(tmp_path, monkeypatch):
     monkeypatch.setattr(ts, "STAGES_DIR", tmp_path / "ticket-stages")
 
 
+@pytest.fixture(autouse=True)
+def _scan_as_the_primary(monkeypatch):
+    """main() asks scanner_role whether this machine should scan. On the macbook (the standby, with the mac-mini's heartbeat fresh)
+    the answer is no, which made 13 of these tests fail there and not on the mac-mini. The tests are about what a scan does, so
+    they scan as the primary; the standby rule has its own tests (test_scanner_role.py)."""
+    import scanner_role
+    monkeypatch.setattr(scanner_role, "should_scan", lambda: (True, "primary"))
+    monkeypatch.setattr(scanner_role, "write_heartbeat", lambda *a, **k: None)
+
+
 def _issue(number, created, labels=(), title="a ticket"):
     return {"number": number, "title": title, "createdAt": created,
             "labels": [{"name": l} for l in labels]}
