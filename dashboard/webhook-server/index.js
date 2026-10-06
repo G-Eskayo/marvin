@@ -6,11 +6,34 @@ import { loadGhToken } from './gh_auth.js'
 import { failureResponse } from './failure.js'
 import { startChangeWatch, createGithubProbe } from './gh_watch.js'
 import { readRegistry } from '../electron/main/boards.js'
+import { execFile } from 'child_process'
+import { promisify } from 'util'
+import { createPortfolio } from '../electron/main/portfolio.js'
+import { handlePortfolioRequest } from '../electron/main/portfolio_remote.js'
 
 // Authenticate gh/git children from the pipeline's shared credential file (see gh_auth.js).
 const ghTokenSource = loadGhToken()
 
 const PORT = process.env.PORT || 7878
+
+// ADR 0036: this is the dev host, so the Portfolio tab's backend runs here and other machines' dashboards call it.
+const portfolio = createPortfolio({ exec: promisify(execFile) })
+const PORTFOLIO_MAX_BODY = 1024 * 1024   // the largest argument is a project spec, which portfolio.js caps at 200 KB
+
+function readBody(req, limit) {
+  return new Promise((resolve, reject) => {
+    let body = ''
+    req.on('data', (chunk) => {
+      body += chunk
+      if (body.length > limit) {
+        reject(new Error('Body too large'))
+        req.destroy()
+      }
+    })
+    req.on('end', () => resolve(body))
+    req.on('error', reject)
+  })
+}
 // The Electron app's own tiny local server (electron/main/index.js),
 // separate from this process -- see refresh_relay.js for why the hop
 // exists at all.
@@ -49,6 +72,19 @@ const server = createServer(async (req, res) => {
   if (req.method === 'POST' && req.url === '/mr-ready') {
     res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: true }))
     forwardRefreshPing(DASHBOARD_REFRESH_URL, postJson)
+    return
+  }
+
+  if (req.method === 'POST' && req.url.startsWith('/portfolio/')) {
+    let body
+    try {
+      body = await readBody(req, PORTFOLIO_MAX_BODY)
+    } catch (err) {
+      res.writeHead(413, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: false, error: err.message }))
+      return
+    }
+    const { status, json } = await handlePortfolioRequest(portfolio, req.url, body)
+    res.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(json))
     return
   }
 
