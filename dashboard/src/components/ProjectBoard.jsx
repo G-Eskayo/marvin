@@ -220,7 +220,7 @@ function TicketDrilldown({ repo, card, onBack, onOpenMr, onOpenDocs, onOpenTicke
       .ticket(repo, card.number)
       .then(setDetail)
       .catch((e) => setError(cleanIpcError(e)))
-    if (card.hasTimeline) window.api.activity.timeline(card.number).then(setEvents).catch(() => {})
+    if (card.hasTimeline) window.api.activity.timeline(card.number, repo).then(setEvents).catch(() => {})
   }, [repo, card.number, card.hasTimeline])
 
   return (
