@@ -1,0 +1,24 @@
+{
+  "name": "xcodegen-app",
+  "detect": {
+    "file_glob": "**/project.yml"
+  },
+  "priority": 10,
+  "test_detect": {
+    "file_glob": "**/project.yml"
+  },
+  "ci_contains_any": ["xcodebuild", "xcode"],
+  "requires_tools": ["xcodegen", "xcode"],
+  "macos_runner": true,
+  "generated_candidates": [
+    {
+      "path": "DerivedData",
+      "confirm": true
+    },
+    {
+      "path": ".xcodeproj",
+      "confirm": true
+    }
+  ],
+  "profile_fragment": {}
+}
