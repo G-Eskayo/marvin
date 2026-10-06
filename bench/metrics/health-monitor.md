@@ -3294,3 +3294,14 @@
 - **repo:sync:~/.claude@macbook-pro-1**: 0
 - **repo:sync:~/.claude@mac-mini-1**: 0
 
+## 2026-10-06T20:42:23.921077+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **dispatch:lock-age**: 286.93386449999997
+- **catalog:fresh**: 5.5
+- **github:budget**: 4624
+- **repo:integrity:~/.agents**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 0
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
