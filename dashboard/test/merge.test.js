@@ -25,7 +25,8 @@ import {
   rebaseAndRetest,
   defaultGateContext,
   _defaultRunTests,
-  assertTargetsBase
+  assertTargetsBase,
+  assertNotSentBack
 } from '../webhook-server/merge.js'
 import { MergeFailure, refusal, summarizeGateFailure } from '../webhook-server/failure.js'
 
@@ -809,7 +810,7 @@ describe('merging waits for the repo\'s own CI', () => {
     const reengage = vi.fn().mockResolvedValue(undefined)
     const result = await go(exec, reengage)
     expect(result).toMatchObject({ merged: false, reengaged: true, code: 'CI_FAILED' })
-    expect(reengage).toHaveBeenCalledWith(expect.objectContaining({ prUrl: PR, ticketNumber: 35, comment: expect.stringContaining('CaptionCore unit tests') }), exec)
+    expect(reengage).toHaveBeenCalledWith(expect.objectContaining({ prUrl: PR, ticketNumber: '35', comment: expect.stringContaining('CaptionCore unit tests') }), exec)
     expect(exec).not.toHaveBeenCalledWith('gh', ['pr', 'merge', PR, '--merge'])
   })
 
@@ -827,5 +828,53 @@ describe('merging waits for the repo\'s own CI', () => {
       expect(result.merged).toBe(true)
       expect(exec).toHaveBeenCalledWith('gh', ['pr', 'merge', PR, '--merge'])
     }
+  })
+})
+
+describe('a PR whose ticket was sent back for rework cannot be merged (marvin #129)', () => {
+  const PR = 'https://github.com/G-Eskayo/clarity-captions/pull/49'
+  // gh is asked twice: the PR's body (for its ticket), then that ticket's labels.
+  const exec = ({ body = 'Closes G-Eskayo/clarity-captions#35', labels = [] } = {}) =>
+    vi.fn(async (cmd, args) => {
+      if (args[0] === 'pr') return { stdout: JSON.stringify({ body }) }
+      if (args[0] === 'issue') return { stdout: JSON.stringify({ labels: labels.map((name) => ({ name })) }) }
+      throw new Error(`unexpected gh ${args.join(' ')}`)
+    })
+
+  it('refuses when the linked ticket carries needs-reengagement, and says what to do', async () => {
+    await expect(assertNotSentBack(PR, exec({ labels: ['ready-for-agent', 'needs-reengagement'] }))).rejects.toMatchObject({
+      payload: { code: 'SENT_BACK', action: 'escalate', message: expect.stringContaining('rework') }
+    })
+    await expect(assertNotSentBack(PR, exec({ labels: ['needs-reengagement'] }))).rejects.toMatchObject({
+      payload: { remediation: expect.stringContaining('needs-reengagement') }
+    })
+  })
+
+  it('passes a PR whose ticket is not sent back', async () => {
+    await expect(assertNotSentBack(PR, exec({ labels: ['ready-for-agent', 'claimed:mac-mini'] }))).resolves.toBeUndefined()
+  })
+
+  it('passes a PR with no linked ticket (nothing to be sent back)', async () => {
+    const e = exec({ body: 'a hand-written PR with no closing keyword' })
+    await expect(assertNotSentBack(PR, e)).resolves.toBeUndefined()
+    expect(e.mock.calls.some((c) => c[1][0] === 'issue')).toBe(false)
+  })
+
+  it("looks the ticket up in the PR's own repository, not marvin's (ticket numbers are per repo)", async () => {
+    const e = exec({ labels: [] })
+    await assertNotSentBack(PR, e)
+    const issueCall = e.mock.calls.find((c) => c[1][0] === 'issue')[1]
+    expect(issueCall).toEqual(expect.arrayContaining(['35', '--repo', 'G-Eskayo/clarity-captions']))
+  })
+
+  it('does not block on a lookup hiccup (the merge itself would fail loudly anyway)', async () => {
+    await expect(assertNotSentBack(PR, vi.fn().mockRejectedValue(new Error('boom')))).resolves.toBeUndefined()
+    await expect(assertNotSentBack(PR, vi.fn().mockResolvedValue({ stdout: 'not json' }))).resolves.toBeUndefined()
+  })
+
+  it('mergePr refuses before merging anything', async () => {
+    const e = exec({ labels: ['needs-reengagement'] })
+    await expect(mergePr('https://github.com/G-Eskayo/marvin/pull/9', e, noopRebuild, noopRedispatch)).rejects.toMatchObject({ payload: { code: 'SENT_BACK' } })
+    expect(e.mock.calls.some((c) => c[1]?.includes('merge'))).toBe(false)
   })
 })

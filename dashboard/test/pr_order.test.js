@@ -83,3 +83,18 @@ describe('conflicts are visible before anyone clicks Approve', () => {
     expect(list[0].conflicts).toBe(false)
   })
 })
+
+describe('the MR list shows each PR\'s CI state', () => {
+  const chk = (n, status, conclusion) => ({ __typename: 'CheckRun', name: n, status, conclusion })
+  it('carries passing / failing / pending / none from GitHub\'s checks', async () => {
+    const raw = [
+      { ...pr(1, ['a']), body: '', repo: 'o/r', statusCheckRollup: [chk('t', 'COMPLETED', 'SUCCESS')] },
+      { ...pr(2, ['b']), body: '', repo: 'o/r', statusCheckRollup: [chk('t', 'COMPLETED', 'FAILURE')] },
+      { ...pr(3, ['c']), body: '', repo: 'o/r', statusCheckRollup: [chk('t', 'IN_PROGRESS', null)] },
+      { ...pr(4, ['d']), body: '', repo: 'o/r', statusCheckRollup: [] }
+    ]
+    const list = await listPipelinePrs(async () => raw)
+    expect(list.map((p) => p.checks.state)).toEqual(['passing', 'failing', 'pending', 'none'])
+    expect(list[1].checks.failing).toEqual(['t'])
+  })
+})

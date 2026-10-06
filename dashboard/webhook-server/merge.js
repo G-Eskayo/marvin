@@ -197,6 +197,31 @@ export async function assertTargetsBase(prUrl, exec, expectedBase) {
   }
 }
 
+// A ticket that was sent back for rework carries `needs-reengagement` while its PR stays open. The review screen
+// shows that as "sent back: waiting for rework", but nothing stopped the PR being merged anyway (marvin #129), which
+// would land work that was just rejected. Refuse it here, so no caller can bypass the screen. The label is on the
+// ticket, in the PR's OWN repository (ticket numbers are per repo). A lookup hiccup never blocks: the merge itself
+// would fail loudly on its own, same policy as assertTargetsBase.
+export async function assertNotSentBack(prUrl, exec) {
+  let sentBack = false
+  try {
+    const { stdout } = await exec('gh', ['pr', 'view', prUrl, '--json', 'body'])
+    const ticket = parseTicketRef(JSON.parse(stdout).body || '')
+    const repo = repoFromPrUrl(prUrl)
+    if (ticket && repo) {
+      const { stdout: issueOut } = await exec('gh', ['issue', 'view', ticket, '--repo', repo, '--json', 'labels'])
+      sentBack = (JSON.parse(issueOut).labels || []).some((l) => l.name === 'needs-reengagement')
+    }
+  } catch {
+    return
+  }
+  if (sentBack) {
+    throw new MergeFailure(refusal('SENT_BACK', 'request',
+      'this PR\'s ticket was sent back for rework, so the work in this PR was rejected and a reworked version is on its way',
+      'Wait for the reworked PR. If the rework is already in and the "needs-reengagement" label is just stale, remove that label from the ticket and approve again. The PR was not changed.'))
+  }
+}
+
 async function mergePrUnqueued(
   prUrl,
   exec = execFileAsync,
@@ -219,6 +244,7 @@ async function mergePrUnqueued(
   const ctx = repo && repo !== MARVIN_REPO ? await gateContext(repo, exec) : null
 
   await assertTargetsBase(prUrl, exec, ctx ? ctx.base : 'main')
+  await assertNotSentBack(prUrl, exec)
 
   const { gate, headRefName, body } = ctx ? await shouldGateMerge(prUrl, exec, ctx) : await shouldGateMerge(prUrl, exec)
   const ticketNumber = parseTicketRef(body)

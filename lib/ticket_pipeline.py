@@ -122,6 +122,19 @@ def _requeue_all(repos) -> list[str]:
 _CLOSES = __import__("re").compile(r"Closes\s+(?:[\w.-]+/[\w.-]+)?#(\d+)")
 
 
+def _failing_checks(rollup) -> list[str]:
+    """Names of checks that genuinely FAILED. Cancelled / timed-out / still-running checks are the runner's
+    business, not the code's, and must not trigger a rebuild."""
+    out = []
+    for c in rollup or []:
+        if c.get("__typename") == "StatusContext":
+            if c.get("state") in ("FAILURE", "ERROR"):
+                out.append(c.get("context") or "status")
+        elif c.get("status") == "COMPLETED" and c.get("conclusion") == "FAILURE":
+            out.append(c.get("name") or "check")
+    return out
+
+
 def _requeue_conflicted_prs(repo: str) -> list[int]:
     """A PR that GitHub says CONFLICTS with its base can never be merged as it stands, and the first anyone
     learned was a human clicking Approve (finance-os #9, clarity #48). So the pipeline sends the ticket back
@@ -131,7 +144,7 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
     def gh(*args):
         return subprocess.run(["gh", *args], capture_output=True, text=True, timeout=30)
 
-    prs = gh("pr", "list", "--repo", repo, "--state", "open", "--limit", "100", "--json", "number,body,mergeable,headRefName")
+    prs = gh("pr", "list", "--repo", repo, "--state", "open", "--limit", "100", "--json", "number,body,mergeable,headRefName,statusCheckRollup")
     issues = gh("issue", "list", "--repo", repo, "--state", "open", "--limit", "1000", "--json", "number,labels")
     if prs.returncode != 0 or issues.returncode != 0:
         return []
@@ -143,7 +156,8 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
     sent: list[int] = []
     for pr in pr_list:
         m = _CLOSES.search(pr.get("body") or "")
-        if pr.get("mergeable") != "CONFLICTING" or not m:
+        red = _failing_checks(pr.get("statusCheckRollup"))
+        if not m or not (pr.get("mergeable") == "CONFLICTING" or red):
             continue
         n = int(m.group(1))
         names = labels_of.get(n)
@@ -156,9 +170,10 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
         if add.returncode != 0:
             continue
         gh("issue", "comment", str(n), "--repo", repo, "--body",
-           f"PR #{pr['number']} now conflicts with main (something it touches changed after this was built). "
-           f"Sent back automatically: the pipeline will rebuild it on the current main and update the same PR.")
-        print(f"{LOG_PREFIX} {repo}#{n}: PR #{pr['number']} conflicts with main, sent back for rework", file=sys.stderr)
+           (f"PR #{pr['number']}'s GitHub checks failed: {', '.join(red)}. " if red else
+            f"PR #{pr['number']} now conflicts with main (something it touches changed after this was built). ") +
+           "Sent back automatically: the pipeline will rebuild it on the current main and update the same PR.")
+        print(f"{LOG_PREFIX} {repo}#{n}: PR #{pr['number']} {'failed its checks' if red else 'conflicts with main'}, sent back for rework", file=sys.stderr)
         sent.append(n)
     return sent
 

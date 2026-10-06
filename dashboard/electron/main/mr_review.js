@@ -1,5 +1,6 @@
 import { MARVIN_REPO, prKey, canMergeFromDashboard } from './mr_repos.js'
 import { waitingOn, baseProblem } from './pr_order.js'
+import { ciState } from '../../webhook-server/ci_status.js'
 
 // Reads open PRs and identifies which follow the MR pipeline's evidence
 // schema (G-Eskayo/marvin#72, ADR 0024) -- one fixed, structured PR body
@@ -166,9 +167,29 @@ export function parseEvidence(body) {
 // evidence table or a plain fallback card, but approve/deny only ever
 // needed the PR url (see approveMr/denyMr below), so both paths work for
 // either kind.
-export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDashboard } = {}) {
+// "repo#number" for every OPEN ticket in `issues` that was sent back for rework (label `needs-reengagement`).
+export function sentBackKeys(repo, issues) {
+  const keys = new Set()
+  for (const i of issues || []) {
+    if (i && i.state === 'OPEN' && (i.labels || []).some((l) => l.name === 'needs-reengagement')) keys.add(`${repo}#${i.number}`)
+  }
+  return keys
+}
+
+export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDashboard, sentBackTickets = null } = {}) {
   const prs = await listOpenPrs()
+  // Which tickets were sent back for rework ("repo#number" keys), asked once for the repos that have PRs. A failing
+  // lookup never hides a PR: it just means nothing is flagged (the merge webhook refuses sent-back PRs on its own).
+  let sentBackKeys = new Set()
+  if (sentBackTickets) {
+    try {
+      sentBackKeys = await sentBackTickets([...new Set(prs.map((p) => p.repo || MARVIN_REPO))])
+    } catch {
+      sentBackKeys = new Set()
+    }
+  }
   return prs.map((pr) => {
+    const ticketRef = parseTicketRef(pr.body || '')
     const hasSchema = hasEvidenceSchema(pr.body)
     const evidence = hasSchema ? parseEvidence(pr.body) : null
     return {
@@ -179,9 +200,12 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       key: prKey(pr.repo || MARVIN_REPO, pr.number),
       canMerge: canMerge(pr.repo || MARVIN_REPO),
       conflicts: pr.mergeable === 'CONFLICTING',
+      checks: ciState(pr.statusCheckRollup),
       baseProblem: baseProblem(prs.map((p) => ({ ...p, repo: p.repo || MARVIN_REPO })), { ...pr, repo: pr.repo || MARVIN_REPO }),
       waitingOn: waitingOn(prs.map((p) => ({ ...p, repo: p.repo || MARVIN_REPO })), { ...pr, repo: pr.repo || MARVIN_REPO }),
       hasSchema,
+      // The ticket was sent back for rework (marvin #129): approving would merge work that was just rejected.
+      sentBack: ticketRef !== null && sentBackKeys.has(`${pr.repo || MARVIN_REPO}#${ticketRef}`),
       ticketNumber: evidence?.ticketRef ? Number(evidence.ticketRef) : null,
       evidence,
       // Full body, untruncated -- MrDetail.jsx needs the whole thing since

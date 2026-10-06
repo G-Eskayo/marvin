@@ -531,3 +531,28 @@ def test_a_pr_with_no_ticket_reference_is_left_alone(monkeypatch):
 def test_a_gh_failure_is_swallowed_not_fatal(monkeypatch):
     monkeypatch.setattr(tp.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=1, stdout="", stderr="boom"))
     assert tp._requeue_conflicted_prs("o/r") == []
+
+
+def _pr_ci(number, ticket_ref, rollup, mergeable="MERGEABLE"):
+    return {"number": number, "body": f"Closes {ticket_ref}", "mergeable": mergeable, "headRefName": "x", "statusCheckRollup": rollup}
+
+
+def test_a_pr_with_failing_github_checks_is_sent_back_with_the_check_names(monkeypatch):
+    calls = []
+    prs = [_pr_ci(57, "o/r#9", [{"__typename": "CheckRun", "name": "swift test", "status": "COMPLETED", "conclusion": "FAILURE"}])]
+    monkeypatch.setattr(tp.subprocess, "run", _requeue(prs, [{"number": 9, "labels": [{"name": "ready-for-agent"}]}], calls))
+    assert tp._requeue_conflicted_prs("o/r") == [9]
+    comment = " ".join([c for c in calls if "comment" in c][0])
+    assert "swift test" in comment and "#57" in comment
+
+
+def test_checks_that_failed_for_the_runners_sake_or_are_still_running_do_not_send_a_pr_back(monkeypatch):
+    calls = []
+    prs = [_pr_ci(1, "o/r#1", [{"__typename": "CheckRun", "name": "a", "status": "COMPLETED", "conclusion": "CANCELLED"}]),
+           _pr_ci(2, "o/r#2", [{"__typename": "CheckRun", "name": "a", "status": "COMPLETED", "conclusion": "TIMED_OUT"}]),
+           _pr_ci(3, "o/r#3", [{"__typename": "CheckRun", "name": "a", "status": "IN_PROGRESS", "conclusion": None}]),
+           _pr_ci(4, "o/r#4", [{"__typename": "CheckRun", "name": "a", "status": "COMPLETED", "conclusion": "SUCCESS"}]),
+           _pr_ci(5, "o/r#5", [])]
+    issues = [{"number": n, "labels": [{"name": "ready-for-agent"}]} for n in range(1, 6)]
+    monkeypatch.setattr(tp.subprocess, "run", _requeue(prs, issues, calls))
+    assert tp._requeue_conflicted_prs("o/r") == []

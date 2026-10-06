@@ -900,3 +900,17 @@ A profile can declare `"generated": [{"path", "unless"?, "regenerate"?}]` (`lib/
 - **claude-timeout (8 of 41 planning calls):** not random. Planning calls that finish take 85-298s, many at 255-298s, against a 300s wall, so about 1 in 5 died for being slow. `PLAN_TIMEOUT_S` is now 900. Other long steps already had 900.
 - **finance-os "produced no result" (14 records, all `npm error Missing script: "test"`):** finance-os main had no `test` script, so the required unit-test tier could not run at all (these were gate runs on #7 and #10 before #8 landed the script). None of the three repos has GitHub Actions; the dispatch gate and the merge gate ARE the CI. A missing test script is now reported as "this project has no test command yet" and, at the merge gate, refuses WITHOUT sending the PR back (`GATE_INFRA`).
 - **Merge popup:** the native "Merge PR #N?" dialog is now opt-in (`confirmMerge` in the app's `prefs.json`, default off). The Approve & Merge click is the decision; duplicate starts are refused, and the gate retests. Deny/Drop still confirm.
+
+## CI on GitHub (2026-10-06)
+
+None of the repos had CI; the pipeline's dispatch gate and the merge gate were the only checks. Added `.github/workflows/ci.yml` to three repos (PRs: clarity-captions #57, finance-os #12, marvin #138), all green on their first real run:
+- **clarity-captions** (public, free): `macos-26`; `swift test` (140 tests, 2 skipped) and the app build for the iOS Simulator (xcodegen, cached 240 MB speaker model).
+- **finance-os** (private, uses monthly minutes): ubuntu, Node 20; Electron + better-sqlite3 rebuild, `npm test`.
+- **marvin** (public, free): ubuntu, Node 20; dashboard vitest only (561 tests, matches local). The Python suite is NOT in CI: it needs a pinned requirements file and some tests read machine-local state.
+Pushing workflow files needed `gh auth refresh -h github.com -s workflow` (the gh token had no `workflow` scope). Copies of the workflows are in `~/.claude/outbox/ci-workflows/`. Minor: GitHub warns the v4 actions run on Node 20 (deprecated); bump them when v5 is the norm.
+
+## GitHub CI is now part of the merge decision (2026-10-06)
+
+- **Merge gate:** before the local rebase/retest, `assertChecksGreen` (`webhook-server/ci_status.js`) reads the PR's `statusCheckRollup`. Failing checks (`CI_FAILED`) send the PR back with the check names; checks still running (`CI_PENDING`) refuse without sending it back; a repo with no CI (`none`) is unaffected; a metadata hiccup does not block.
+- **MR Review:** each PR shows "GitHub checks passed / failed / still running"; Approve is disabled for failing and pending.
+- **Auto send-back:** the pipeline scan (`_requeue_conflicted_prs`) also sends back a PR whose checks genuinely FAILED, naming them. Cancelled / timed-out / still-running checks never trigger a rebuild (the runner's fault, not the code's). The 3-attempt cap still applies.
