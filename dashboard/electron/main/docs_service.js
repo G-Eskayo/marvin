@@ -1,5 +1,5 @@
 import { existsSync } from 'fs'
-import { listRepoDocTree, fetchFileContent } from './docs.js'
+import { listRepoDocTree, fetchFileContent, searchableText } from './docs.js'
 import { listLocalTree, readLocalFile, localFileStates } from './docs_local.js'
 
 // Everything the Docs tab asks for, driven by the project catalog
@@ -91,7 +91,7 @@ export function createDocsService({ getCatalog, exec, readMaster, fallbackRepos 
       const states = await localFileStates(dir)
       for (const f of listLocalTree(dir).flatMap((e) => (e.section ? e.items : [e]))) {
         try {
-          docs.push({ repo: rec.id, path: f.path, label: f.label, content: readLocalFile(dir, f.path), state: states[f.path] || null })
+          docs.push({ repo: rec.id, path: f.path, label: f.label, content: searchableText(f.path, readLocalFile(dir, f.path)), state: states[f.path] || null })
         } catch {
           // unreadable file: the rest still searches
         }

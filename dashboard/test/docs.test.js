@@ -62,6 +62,31 @@ describe('readCachedRepos', () => {
     }))
 })
 
+describe('notebooks in the doc tree', () => {
+  it('lists root-level .ipynb files under a notebooks section', async () => {
+    const execFileAsync = fakeExec([
+      ['contents/README.md', 'README.md'],
+      ['contents/docs/adr', new Error('404')],
+      ['api repos/G-Eskayo/proj/contents', JSON.stringify([
+        { name: 'b_v2.ipynb', type: 'file' }, { name: 'a_v1.ipynb', type: 'file' }, { name: 'data.csv', type: 'file' }, { name: 'nb.ipynb', type: 'dir' }
+      ])]
+    ])
+    const tree = await listRepoDocTree(execFileAsync, 'proj')
+    expect(tree.find((e) => e.section === 'notebooks').items).toEqual([
+      { path: 'a_v1.ipynb', label: 'a_v1.ipynb' }, { path: 'b_v2.ipynb', label: 'b_v2.ipynb' }
+    ])
+  })
+
+  it('fetches a notebook as raw bytes with a large buffer (the contents API caps base64 at 1 MB)', async () => {
+    const execFileAsync = vi.fn(async () => ({ stdout: '{"cells": []}' }))
+    const text = await fetchFileContent(execFileAsync, 'proj', 'a.ipynb')
+    expect(text).toBe('{"cells": []}')
+    const [, args, opts] = execFileAsync.mock.calls[0]
+    expect(args.join(' ')).toContain('application/vnd.github.raw')
+    expect(opts.maxBuffer).toBeGreaterThan(50 * 1024 * 1024)
+  })
+})
+
 describe('listRepoDocTree', () => {
   it('always includes CONTEXT.md, adds README.md and docs/adr/ only if present', async () => {
     const execFileAsync = fakeExec([

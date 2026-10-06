@@ -91,3 +91,19 @@ describe('localFileStates', () => {
       expect(states['docs/adr/0002-b.md']).toBeUndefined()
     }))
 })
+
+
+describe('notebooks in the local doc tree', () => {
+  it('lists root-level .ipynb files and allows reading them, but not other paths', () =>
+    withRoot(async (root) => {
+      const dir = makeRepo(root, 'proj')
+      writeFileSync(path.join(dir, 'b.ipynb'), '{"cells": []}')
+      writeFileSync(path.join(dir, 'a.ipynb'), '{"cells": []}')
+      writeFileSync(path.join(dir, 'data.csv'), 'x')
+      const section = listLocalTree(dir).find((e) => e.section === 'notebooks')
+      expect(section.items.map((i) => i.path)).toEqual(['a.ipynb', 'b.ipynb'])
+      expect(readLocalFile(dir, 'a.ipynb')).toBe('{"cells": []}')
+      expect(() => readLocalFile(dir, 'data.csv')).toThrow()
+      expect(() => readLocalFile(dir, '../a.ipynb')).toThrow()
+    }))
+})

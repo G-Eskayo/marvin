@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { homedir } from 'os'
 import path from 'path'
-import { listRepoDocTree, fetchFileContent } from './docs.js'
+import { listRepoDocTree, fetchFileContent, searchableText } from './docs.js'
 import { splitSections } from '../../src/lib/docs_text.js'
 
 // Full-text search over every browsable doc of every doc-first repo (the same
@@ -27,7 +27,7 @@ export async function buildDocsIndex(execFileAsync, repos, indexPath = INDEX_PAT
     const fetched = await Promise.all(
       files.map(async (f) => {
         try {
-          return { repo: repo.id || repo.name, path: f.path, label: f.label, content: await fetchFileContent(execFileAsync, repo.name, f.path) }
+          return { repo: repo.id || repo.name, path: f.path, label: f.label, content: searchableText(f.path, await fetchFileContent(execFileAsync, repo.name, f.path)) }
         } catch {
           return null // one unreadable file must not sink the index
         }

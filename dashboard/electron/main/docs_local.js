@@ -10,7 +10,7 @@ import { promisify } from 'util'
 // which files differ from GitHub; repos with no clone here fall back to GitHub.
 const execFileP = promisify(execFile)
 const GH_OWNER = 'G-Eskayo'
-const DOC_PATHS = ['CONTEXT.md', 'README.md', 'docs']
+const DOC_PATHS = ['CONTEXT.md', 'README.md', 'docs', ':(glob)*.ipynb']
 
 async function git(dir, args) {
   const { stdout } = await execFileP('git', ['-C', dir, ...args], { maxBuffer: 10 * 1024 * 1024 })
@@ -61,10 +61,19 @@ export function listLocalTree(dir) {
   } catch {
     // no docs/adr yet
   }
+  try {
+    const books = readdirSync(dir)
+      .filter((n) => n.endsWith('.ipynb'))
+      .sort((a, b) => a.localeCompare(b))
+      .map((n) => ({ path: n, label: n }))
+    if (books.length) tree.push({ section: 'notebooks', items: books })
+  } catch {
+    // unreadable directory
+  }
   return tree
 }
 
-const ALLOWED = /^(CONTEXT\.md|README\.md|docs\/adr\/[^/]+\.md)$/
+const ALLOWED = /^(CONTEXT\.md|README\.md|docs\/adr\/[^/]+\.md|[^/]+\.ipynb)$/
 
 export function readLocalFile(dir, filePath) {
   const normalized = path.posix.normalize(String(filePath))
