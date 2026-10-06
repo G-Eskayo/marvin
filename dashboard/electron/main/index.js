@@ -12,6 +12,7 @@ import { readDispatchStatus } from './dispatch_status.js'
 import { readHealthStatus, runHealthCheckNow } from './health.js'
 import { readCachedRepos } from './docs.js'
 import { createPortfolio } from './portfolio.js'
+import { createPortfolioProxy, portfolioHost } from './portfolio_remote.js'
 import { listTicketActivity, getTicketTimeline } from './activity.js'
 import { getDeviceStatuses } from './devices.js'
 import { createMergeOps } from './merge_ops.js'
@@ -364,7 +365,12 @@ function registerDocsHandlers() {
 
   // Portfolio tab (CONTEXT.md "Dashboard app -- Portfolio tab"): component library, design rules, guide,
   // evaluation, images. Dev-only: every write is confined to the portfolio repo's templates/.
-  const portfolio = createPortfolio({ exec: execFileAsync })
+  // ADR 0036: the backend runs only on the dev host; anywhere else the same methods go to its webhook server.
+  const portfolioAt = portfolioHost({ defaultHost: defaultWebhookHost })
+  const localPortfolio = createPortfolio({ exec: execFileAsync })
+  const portfolio = portfolioAt.local
+    ? localPortfolio
+    : createPortfolioProxy({ baseUrl: `http://${portfolioAt.host}:7878/portfolio`, methods: Object.keys(localPortfolio) })
   ipcMain.handle('portfolio:components', () => portfolio.listComponents())
   ipcMain.handle('portfolio:component:save', (_e, name, html, notes) => portfolio.saveComponent(name, html, notes))
   ipcMain.handle('portfolio:component:create', (_e, name, html, notes) => portfolio.createComponent(name, html, notes))
