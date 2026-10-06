@@ -1,4 +1,4 @@
-import { MARVIN_REPO, prKey, canMergeFromDashboard } from './mr_repos.js'
+import { MARVIN_REPO, prKey, canMergeFromDashboard, repoFromPrUrl } from './mr_repos.js'
 import { waitingOn, baseProblem } from './pr_order.js'
 import { ciState } from '../../webhook-server/ci_status.js'
 
@@ -272,4 +272,23 @@ export async function denyMr({ prUrl, ticketNumber, action, reasons, comment }, 
     throw new Error(`Webhook call failed: ${response.status}`)
   }
   return response
+}
+
+// The way out when a PR is shown as "sent back" but should not be (the label was applied by a mistake or the rework
+// already landed). Removes `needs-reengagement` from the PR's own ticket, unless a rework is actually running (the
+// ticket is claimed), where clearing it would race the rebuild.
+export async function clearSentBackLabel(prUrl, exec) {
+  const repo = repoFromPrUrl(prUrl)
+  const { stdout: prOut } = await exec('gh', ['pr', 'view', prUrl, '--json', 'body'])
+  const ticket = parseTicketRef(JSON.parse(prOut).body || '')
+  if (!ticket || !repo) return { cleared: false, reason: 'This PR has no ticket to clear.' }
+  const { stdout: issueOut } = await exec('gh', ['issue', 'view', ticket, '--repo', repo, '--json', 'labels'])
+  const labels = (JSON.parse(issueOut).labels || []).map((l) => l.name)
+  if (!labels.includes('needs-reengagement')) return { cleared: false, reason: 'Its ticket is not sent back (the label is already gone).' }
+  const claim = labels.find((l) => l.startsWith('claimed:'))
+  if (claim) return { cleared: false, reason: `A rework is running (claimed by ${claim.slice('claimed:'.length)}). Wait for it to finish.` }
+  await exec('gh', ['issue', 'edit', ticket, '--repo', repo, '--remove-label', 'needs-reengagement'])
+  await exec('gh', ['issue', 'comment', ticket, '--repo', repo, '--body',
+    `The "sent back" label was cleared from the dashboard: this PR (${prUrl}) is judged fine as it stands, so it can be reviewed and merged.`])
+  return { cleared: true }
 }

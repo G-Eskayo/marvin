@@ -222,6 +222,23 @@ export async function assertNotSentBack(prUrl, exec) {
   }
 }
 
+// What GitHub says about the PR right now, waiting out "UNKNOWN" (it recomputes a PR's mergeability after every
+// push, including the merge gate's own rebase push, and answers UNKNOWN or a stale "not mergeable" meanwhile).
+export async function mergeableNow(prUrl, exec, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), tries = 6, delayMs = 5000) {
+  let state = 'UNKNOWN'
+  for (let i = 0; i < tries; i++) {
+    try {
+      const { stdout } = await exec('gh', ['pr', 'view', prUrl, '--json', 'mergeable'])
+      state = JSON.parse(stdout).mergeable || 'UNKNOWN'
+    } catch {
+      state = 'UNKNOWN'
+    }
+    if (state !== 'UNKNOWN') return state
+    await sleep(delayMs)
+  }
+  return state
+}
+
 async function mergePrUnqueued(
   prUrl,
   exec = execFileAsync,
@@ -306,14 +323,33 @@ async function mergePrUnqueued(
   }
 
   stage('merging', 'started', '')
-  try {
-    // Transient failures (network, rate limit) are retried with backoff right here, so
-    // a blip never reaches the human or the pipeline as a failure.
-    await withRetry(() => exec('gh', ['pr', 'merge', prUrl, '--merge']), {
-      classify: (e) => classifyFailure({ stage: 'merging', error: e }),
-      ...(sleep ? { sleep } : {})
-    })
-  } catch (error) {
+  let mergeError = null
+  // "Not mergeable" straight after our own rebase push is usually GitHub still recomputing the PR, not a conflict
+  // (finance-os, clarity #66: a good PR was denied and its ticket wrongly sent back). So when merging says that, ask
+  // GitHub whether it really conflicts; only CONFLICTING is a conflict, anything else gets another try.
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      // Transient failures (network, rate limit) are retried with backoff right here, so
+      // a blip never reaches the human or the pipeline as a failure.
+      await withRetry(() => exec('gh', ['pr', 'merge', prUrl, '--merge']), {
+        classify: (e) => classifyFailure({ stage: 'merging', error: e }),
+        ...(sleep ? { sleep } : {})
+      })
+      mergeError = null
+      break
+    } catch (error) {
+      mergeError = error
+      if (classifyFailure({ stage: 'merging', error }).code !== 'NOT_MERGEABLE') break
+      if ((await mergeableNow(prUrl, exec, sleep)) === 'CONFLICTING') break
+    }
+  }
+  if (mergeError) {
+    const error = mergeError
+    if (classifyFailure({ stage: 'merging', error }).code === 'NOT_MERGEABLE' && (await mergeableNow(prUrl, exec, sleep)) !== 'CONFLICTING') {
+      stage('merging', 'failed', 'MERGE_REFUSED: GitHub refuses it but does not report a conflict')
+      throw new MergeFailure(refusal('MERGE_REFUSED', 'merging', 'GitHub refused the merge but does not report a conflict on this PR',
+        'Approve again in a minute. The ticket was not sent back, because nothing says the work is wrong.'))
+    }
     const failure = classifyFailure({ stage: 'merging', error })
     failure.attempts = error.attempts ?? 1
     stage('merging', 'failed', `${failure.code}: ${failure.message}`)

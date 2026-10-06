@@ -41,6 +41,13 @@ function noopRebuild() {
 }
 function noopRedispatch() {}
 
+// A gh whose merge is refused as a conflict and which, asked, confirms the PR really is CONFLICTING.
+const ghConflicting = () => vi.fn(async (cmd, args) => {
+  if (args[0] === 'pr' && args[1] === 'merge') throw new Error('merge conflict')
+  if (args.includes('mergeable')) return { stdout: JSON.stringify({ mergeable: 'CONFLICTING' }), stderr: '' }
+  return { stdout: '', stderr: '' }
+})
+
 describe('mergePr', () => {
   it('rejects a non-GitHub URL without calling exec', async () => {
     const exec = vi.fn()
@@ -61,7 +68,7 @@ describe('mergePr', () => {
   })
 
   it('propagates a failure from the underlying gh call', async () => {
-    const exec = vi.fn().mockRejectedValue(new Error('merge conflict'))
+    const exec = ghConflicting()
     await expect(mergePr('https://github.com/G-Eskayo/marvin/pull/71', exec)).rejects.toThrow('merge conflict')
   })
 
@@ -80,7 +87,7 @@ describe('mergePr', () => {
   })
 
   it('does not trigger a redispatch when the merge itself fails', async () => {
-    const exec = vi.fn().mockRejectedValue(new Error('merge conflict'))
+    const exec = ghConflicting()
     const redispatch = vi.fn()
     await expect(mergePr('https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, redispatch)).rejects.toThrow()
     expect(redispatch).not.toHaveBeenCalled()
@@ -492,7 +499,11 @@ import { recordStage } from '../webhook-server/ticket_stages.js'
 
 const PR = 'https://github.com/G-Eskayo/marvin/pull/71'
 const ticketGate = () => vi.fn().mockResolvedValue({ gate: false, headRefName: 'b', body: 'Closes G-Eskayo/marvin#5' })
-const ghMergeFails = (err) => vi.fn(async (cmd, args) => { if (args[0] === 'pr' && args[1] === 'merge') throw err; return { stdout: '', stderr: '' } })
+const ghMergeFails = (err) => vi.fn(async (cmd, args) => {
+  if (args[0] === 'pr' && args[1] === 'merge') throw err
+  if (args.includes('mergeable')) return { stdout: JSON.stringify({ mergeable: 'CONFLICTING' }), stderr: '' } // a refusal is only a conflict if GitHub agrees
+  return { stdout: '', stderr: '' }
+})
 const noSleep = { sleep: vi.fn().mockResolvedValue(undefined) }
 
 describe('mergePr structured failures', () => {
@@ -876,5 +887,66 @@ describe('a PR whose ticket was sent back for rework cannot be merged (marvin #1
     const e = exec({ labels: ['needs-reengagement'] })
     await expect(mergePr('https://github.com/G-Eskayo/marvin/pull/9', e, noopRebuild, noopRedispatch)).rejects.toMatchObject({ payload: { code: 'SENT_BACK' } })
     expect(e.mock.calls.some((c) => c[1]?.includes('merge'))).toBe(false)
+  })
+})
+
+describe('a "not mergeable" answer that GitHub itself disowns is not a conflict', () => {
+  const PR = 'https://github.com/G-Eskayo/clarity-captions/pull/66'
+  const CTXM = { repo: 'G-Eskayo/clarity-captions', clone: '/c', base: 'main', runTests: vi.fn(), resolveConflicts: null }
+  const notMergeable = () => Object.assign(new Error('Command failed: gh pr merge'), { stderr: 'GraphQL: Pull Request is not mergeable (mergePullRequest)' })
+  const noSleep = async () => {}
+
+  // `mergeableStates` is what `gh pr view --json mergeable` says on each look, in order.
+  function world({ mergeFailures, mergeableStates }) {
+    let merges = 0
+    let looks = 0
+    const exec = vi.fn(async (cmd, args) => {
+      if (args[0] === 'pr' && args[1] === 'merge') {
+        merges += 1
+        if (merges <= mergeFailures) throw notMergeable()
+        return { stdout: '', stderr: '' }
+      }
+      if (args.includes('mergeable')) {
+        const s = mergeableStates[Math.min(looks, mergeableStates.length - 1)]
+        looks += 1
+        return { stdout: JSON.stringify({ mergeable: s }), stderr: '' }
+      }
+      return { stdout: JSON.stringify({ baseRefName: 'main', statusCheckRollup: [] }), stderr: '' }
+    })
+    return { exec, merges: () => merges }
+  }
+  const run = (exec, reengage = vi.fn().mockResolvedValue(undefined)) =>
+    mergePr(PR, exec, noopRebuild, noopRedispatch,
+      vi.fn().mockResolvedValue({ gate: false, headRefName: 'pipeline/x', body: 'Closes G-Eskayo/clarity-captions#27' }),
+      vi.fn(), reengage, vi.fn(), { gateContext: async () => CTXM, sleep: noSleep })
+
+  it('GitHub says MERGEABLE: the first refusal was its status settling after our push, so merge again', async () => {
+    const w = world({ mergeFailures: 1, mergeableStates: ['MERGEABLE'] })
+    const reengage = vi.fn()
+    const result = await run(w.exec, reengage)
+    expect(result.merged).toBe(true)
+    expect(w.merges()).toBe(2)
+    expect(reengage).not.toHaveBeenCalled()
+  })
+
+  it('waits out UNKNOWN (still computing) before deciding either way', async () => {
+    const w = world({ mergeFailures: 1, mergeableStates: ['UNKNOWN', 'UNKNOWN', 'MERGEABLE'] })
+    const result = await run(w.exec)
+    expect(result.merged).toBe(true)
+  })
+
+  it('GitHub says CONFLICTING: a real conflict still sends the PR back', async () => {
+    const w = world({ mergeFailures: 99, mergeableStates: ['CONFLICTING'] })
+    const reengage = vi.fn().mockResolvedValue(undefined)
+    const result = await run(w.exec, reengage)
+    expect(result).toMatchObject({ merged: false, reengaged: true })
+    expect(reengage).toHaveBeenCalledTimes(1)
+  })
+
+  it('GitHub keeps refusing a PR it calls MERGEABLE: say so and do NOT send the ticket back', async () => {
+    const w = world({ mergeFailures: 99, mergeableStates: ['MERGEABLE'] })
+    const reengage = vi.fn()
+    await expect(run(w.exec, reengage)).rejects.toMatchObject({ payload: { code: 'MERGE_REFUSED', action: 'escalate' } })
+    expect(reengage).not.toHaveBeenCalled()
   })
 })
