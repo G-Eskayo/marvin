@@ -99,7 +99,7 @@ def _unclaimed_ready_tickets(repo: str = REPO) -> list[dict]:
                 # Its open PR / branch / rescue ref ARE the first attempt, which is what a rework replaces
                 # (mr_raiser force-with-lease, the old work kept under refs/rescue). Commits already on the
                 # base branch still mean the work landed, and a ticket that keeps bouncing goes to a person.
-                ev = [e for e in ev if e["kind"] == "commit"]
+                ev = [e for e in ev if e["kind"] in ("commit", "merged-pr")]
                 if not ev and _attempts(repo, i["number"]) >= MAX_REENGAGE_ATTEMPTS:
                     print(f"{LOG_PREFIX} skip {repo}#{i['number']}: sent back after {MAX_REENGAGE_ATTEMPTS} reworked PRs, needs a person", file=sys.stderr)
                     continue

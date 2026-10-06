@@ -53,3 +53,18 @@ def test_report_lists_only_tickets_with_evidence():
     assert set(r) == {"21", "4"}
     assert r["21"]["verdict"] == "in-flight" and r["4"]["verdict"] == "looks-done"
     assert r["4"]["evidence"][0]["ref"] == "f34cc8b" or r["4"]["evidence"][0]["kind"] == "commit"
+
+
+def test_merged_pr_that_refs_the_ticket_means_looks_done():
+    facts = {**FACTS, "merged": [{"number": 31, "body": "Refs #7\n\nthe change", "headRefName": "pipeline/x-7"},
+                                  {"number": 32, "body": "Refs #70", "headRefName": "feature/other"}]}
+    ev = te.evidence_for(7, facts)
+    assert [e["kind"] for e in ev] == ["merged-pr"] and ev[0]["ref"] == "PR #31"
+    assert te.verdict(ev) == "looks-done"
+    assert te.evidence_for(8, facts) == []  # #70 is not #7, nor 8
+
+
+def test_merged_pr_and_open_pr_together_stay_in_flight():
+    facts = {**FACTS, "merged": [{"number": 30, "body": "Refs #21", "headRefName": "a"}]}
+    assert te.verdict(te.evidence_for(21, facts)) == "in-flight"
+
