@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 LIB = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(LIB))
@@ -960,3 +963,421 @@ def test_refresh_all_onboarding_plans_with_failure(tmp_path, monkeypatch):
 
     # Verify repo2's file is unchanged (not nuked by error)
     assert (tmp_path / "repo2.json").read_text() == original_repo2
+
+
+# ── PR mode helpers and pure functions ──────────────────────────────────────
+
+
+def test_missing_agent_doc_files_all_present():
+    """_missing_agent_doc_files returns empty list when all docs present."""
+    file_tree = {
+        "docs/agents/issue-tracker.md": "file",
+        "docs/agents/triage-labels.md": "file",
+        "docs/agents/domain.md": "file",
+    }
+    result = po._missing_agent_doc_files(file_tree)
+    assert result == []
+
+
+def test_missing_agent_doc_files_some_missing():
+    """_missing_agent_doc_files returns list of missing files."""
+    file_tree = {
+        "docs/agents/triage-labels.md": "file",
+    }
+    result = po._missing_agent_doc_files(file_tree)
+    assert set(result) == {
+        "docs/agents/issue-tracker.md",
+        "docs/agents/domain.md",
+    }
+
+
+def test_render_issue_tracker_doc():
+    """_render_issue_tracker_doc produces valid markdown with repo name."""
+    result = po._render_issue_tracker_doc("G-Eskayo/marvin")
+    assert "# Issue Tracker" in result
+    assert "G-Eskayo/marvin" in result
+    assert "GitHub Issues" in result
+    assert "`gh`" in result
+
+
+def test_render_triage_labels_doc():
+    """_render_triage_labels_doc produces markdown table with all five roles."""
+    result = po._render_triage_labels_doc()
+    assert "# Triage Labels" in result
+    assert "needs-triage" in result
+    assert "needs-info" in result
+    assert "ready-for-agent" in result
+    assert "ready-for-human" in result
+    assert "wontfix" in result
+
+
+def test_render_domain_doc():
+    """_render_domain_doc produces markdown with single-context layout."""
+    result = po._render_domain_doc()
+    assert "# Domain Docs" in result
+    assert "Single-context" in result
+    assert "CONTEXT.md" in result
+    assert "docs/adr/" in result
+
+
+def test_render_claude_md_block():
+    """_render_claude_md_block produces markdown with format placeholder."""
+    result = po._render_claude_md_block()
+    assert "## Agent skills" in result
+    assert "{repo}" in result
+    formatted = result.format(repo="test/repo")
+    assert "test/repo" in formatted
+
+
+def test_ci_yml_for_stack_swift():
+    """_ci_yml_for_stack returns content for swift-package."""
+    result = po._ci_yml_for_stack("swift-package")
+    assert result is not None
+    assert "swift test" in result
+
+
+def test_ci_yml_for_stack_node():
+    """_ci_yml_for_stack returns content for node-electron."""
+    result = po._ci_yml_for_stack("node-electron")
+    assert result is not None
+
+
+def test_ci_yml_for_stack_none():
+    """_ci_yml_for_stack returns None when stack is None."""
+    result = po._ci_yml_for_stack(None)
+    assert result is None
+
+
+def test_ci_yml_for_stack_unknown():
+    """_ci_yml_for_stack returns None for unknown stack."""
+    result = po._ci_yml_for_stack("unknown-stack")
+    assert result is None
+
+
+def test_check_workflow_scope_present():
+    """_check_workflow_scope returns True when workflow scope is present."""
+    def mock_run(cmd, **kwargs):
+        result = subprocess.CompletedProcess(cmd, 0)
+        result.stdout = "gh version\nToken scopes: repo, admin:org_hook, workflow"
+        result.stderr = ""
+        return result
+
+    result = po._check_workflow_scope(run=mock_run)
+    assert result is True
+
+
+def test_check_workflow_scope_absent():
+    """_check_workflow_scope returns False when workflow scope is absent."""
+    def mock_run(cmd, **kwargs):
+        result = subprocess.CompletedProcess(cmd, 0)
+        result.stdout = "gh version\nToken scopes: repo, admin:org_hook"
+        result.stderr = ""
+        return result
+
+    result = po._check_workflow_scope(run=mock_run)
+    assert result is False
+
+
+def test_check_workflow_scope_command_failure():
+    """_check_workflow_scope returns False on command failure."""
+    def mock_run(cmd, **kwargs):
+        result = subprocess.CompletedProcess(cmd, 1)
+        result.stdout = ""
+        result.stderr = "error"
+        return result
+
+    result = po._check_workflow_scope(run=mock_run)
+    assert result is False
+
+
+def test_pr_files_to_write_all_missing():
+    """_pr_files_to_write includes all docs when missing (except CLAUDE.md)."""
+    facts = {
+        "file_tree": {},
+        "detected_stack": "swift-package",
+        "has_claude_md_skills": False,
+    }
+    plan_out = {
+        "ci": {"state": "missing"},
+    }
+    result = po._pr_files_to_write("test/repo", facts, plan_out)
+
+    assert "docs/agents/issue-tracker.md" in result
+    assert "docs/agents/triage-labels.md" in result
+    assert "docs/agents/domain.md" in result
+    assert ".github/workflows/ci.yml" in result
+    assert "CLAUDE.md" not in result  # Handled separately in _apply_pr
+    assert "test/repo" in result["docs/agents/issue-tracker.md"]
+
+
+def test_pr_files_to_write_partial_missing():
+    """_pr_files_to_write includes only missing docs (except CLAUDE.md)."""
+    facts = {
+        "file_tree": {
+            "docs/agents/issue-tracker.md": "file",
+        },
+        "detected_stack": "swift-package",
+        "has_claude_md_skills": True,
+    }
+    plan_out = {
+        "ci": {"state": "missing"},
+    }
+    result = po._pr_files_to_write("test/repo", facts, plan_out)
+
+    assert "docs/agents/issue-tracker.md" not in result
+    assert "docs/agents/triage-labels.md" in result
+    assert "docs/agents/domain.md" in result
+    assert ".github/workflows/ci.yml" in result
+
+
+def test_pr_files_to_write_ci_needs_human():
+    """_pr_files_to_write excludes CI when state is needs-human."""
+    facts = {
+        "file_tree": {},
+        "detected_stack": None,
+        "has_claude_md_skills": False,
+    }
+    plan_out = {
+        "ci": {"state": "needs-human"},
+    }
+    result = po._pr_files_to_write("test/repo", facts, plan_out)
+
+    assert ".github/workflows/ci.yml" not in result
+
+
+def test_pr_files_to_write_nothing_missing():
+    """_pr_files_to_write returns empty dict when nothing is missing."""
+    facts = {
+        "file_tree": {
+            "docs/agents/issue-tracker.md": "file",
+            "docs/agents/triage-labels.md": "file",
+            "docs/agents/domain.md": "file",
+        },
+        "detected_stack": None,
+        "has_claude_md_skills": True,
+    }
+    plan_out = {
+        "ci": {"state": "ok"},
+    }
+    result = po._pr_files_to_write("test/repo", facts, plan_out)
+
+    assert result == {}
+
+
+def test_merge_claude_md_block_creates_new_file(tmp_path):
+    """_merge_claude_md_block creates CLAUDE.md if neither file exists."""
+    result = po._merge_claude_md_block("test/repo", {}, tmp_path)
+    assert result is True
+    assert (tmp_path / "CLAUDE.md").exists()
+    content = (tmp_path / "CLAUDE.md").read_text()
+    assert "## Agent skills" in content
+    assert "test/repo" in content
+
+
+def test_merge_claude_md_block_merges_into_existing(tmp_path):
+    """_merge_claude_md_block inserts block into existing CLAUDE.md."""
+    claude_path = tmp_path / "CLAUDE.md"
+    claude_path.write_text("# My Project\n\nSome content here.\n")
+
+    result = po._merge_claude_md_block("test/repo", {}, tmp_path)
+    assert result is True
+
+    content = claude_path.read_text()
+    assert "## Agent skills" in content
+    assert "My Project" in content
+    assert "Some content here" in content
+
+
+def test_merge_claude_md_block_idempotent(tmp_path):
+    """_merge_claude_md_block is idempotent — doesn't add block twice."""
+    claude_path = tmp_path / "CLAUDE.md"
+    claude_path.write_text("# My Project\n\n## Agent skills\n\nAlready present.\n")
+
+    result = po._merge_claude_md_block("test/repo", {}, tmp_path)
+    assert result is False
+    assert claude_path.read_text().count("## Agent skills") == 1
+
+
+def test_merge_claude_md_block_uses_agents_md(tmp_path):
+    """_merge_claude_md_block uses AGENTS.md if CLAUDE.md doesn't exist."""
+    agents_path = tmp_path / "AGENTS.md"
+    agents_path.write_text("# Agents Config\n\nSome content.\n")
+
+    result = po._merge_claude_md_block("test/repo", {}, tmp_path)
+    assert result is True
+    assert not (tmp_path / "CLAUDE.md").exists()
+
+    content = agents_path.read_text()
+    assert "## Agent skills" in content
+    assert "Agents Config" in content
+
+
+# ── PR mode integration tests with fixture repo ──────────────────────────────
+
+
+def _run(cmd, cwd=None, **kwargs):
+    """Helper to run git commands in tests."""
+    subprocess.run(cmd, cwd=cwd, check=True, capture_output=True, **kwargs)
+
+
+@pytest.fixture
+def fixture_repo(tmp_path):
+    """Fixture: a bare 'origin' remote and a main-repo clone with initial commit."""
+    origin = tmp_path / "origin.git"
+    origin.mkdir()
+    _run(["git", "init", "-q", "--bare"], cwd=origin)
+
+    main_repo = tmp_path / "main-repo"
+    main_repo.mkdir()
+    _run(["git", "init", "-q"], cwd=main_repo)
+    _run(["git", "config", "user.email", "test@test.com"], cwd=main_repo)
+    _run(["git", "config", "user.name", "Test"], cwd=main_repo)
+    (main_repo / "README.md").write_text("hello\n")
+    _run(["git", "add", "."], cwd=main_repo)
+    _run(["git", "commit", "-q", "-m", "init"], cwd=main_repo)
+    _run(["git", "branch", "-M", "main"], cwd=main_repo)
+    _run(["git", "remote", "add", "origin", str(origin)], cwd=main_repo)
+    _run(["git", "push", "-u", "origin", "main"], cwd=main_repo)
+
+    return {
+        "origin": origin,
+        "main_repo": main_repo,
+        "repo_path": f"file://{origin}",
+    }
+
+
+def test_apply_pr_unchanged_when_nothing_missing(fixture_repo):
+    """_apply_pr returns 'unchanged' when no files are missing and Claude skills exist."""
+    facts = {
+        "file_tree": {
+            "docs/agents/issue-tracker.md": "file",
+            "docs/agents/triage-labels.md": "file",
+            "docs/agents/domain.md": "file",
+        },
+        "default_branch": "main",
+        "detected_stack": None,
+        "has_claude_md_skills": True,
+    }
+    plan_out = {"ci": {"state": "ok"}}
+
+    def mock_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    def mock_gh(args):
+        return ""
+
+    result = po._apply_pr("test/repo", facts, plan_out, gh=mock_gh, run=mock_run)
+
+    assert result["action"] == "unchanged"
+
+
+def test_apply_pr_needs_human_when_scope_missing():
+    """_apply_pr returns needs-human when workflow scope is missing (AC2)."""
+    facts = {
+        "file_tree": {},
+        "default_branch": "main",
+        "detected_stack": "swift-package",
+        "has_claude_md_skills": False,
+    }
+    plan_out = {"ci": {"state": "missing"}}
+
+    def mock_run_no_workflow(cmd, **kwargs):
+        if cmd[0:2] == ["gh", "auth"]:
+            result = subprocess.CompletedProcess(cmd, 0)
+            result.stdout = "Token scopes: repo"
+            result.stderr = ""
+            return result
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    result = po._apply_pr("test/repo", facts, plan_out, run=mock_run_no_workflow)
+
+    assert result["action"] == "needs-human"
+    assert "workflow" in result["reason"]
+    assert result["pr_url"] is None
+
+
+def test_apply_pr_no_git_operations_before_scope_check():
+    """_apply_pr checks workflow scope before any git operations (AC2)."""
+    facts = {
+        "file_tree": {},
+        "default_branch": "main",
+        "detected_stack": "swift-package",
+        "has_claude_md_skills": False,
+    }
+    plan_out = {"ci": {"state": "missing"}}
+
+    calls = {"gh_repo_clone": 0}
+
+    def mock_run_no_workflow(cmd, **kwargs):
+        if cmd[0:2] == ["gh", "auth"]:
+            result = subprocess.CompletedProcess(cmd, 0)
+            result.stdout = "Token scopes: repo"
+            result.stderr = ""
+            return result
+        if cmd[0:3] == ["gh", "repo", "clone"]:
+            calls["gh_repo_clone"] += 1
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    po._apply_pr("test/repo", facts, plan_out, run=mock_run_no_workflow)
+
+    assert calls["gh_repo_clone"] == 0
+
+
+def test_apply_pr_uses_fixed_branch_name():
+    """_apply_pr uses fixed branch name 'onboarding/agent-wiring' (AC4)."""
+    facts = {
+        "file_tree": {},
+        "default_branch": "main",
+        "detected_stack": "swift-package",
+        "has_claude_md_skills": False,
+    }
+    plan_out = {"ci": {"state": "missing"}}
+
+    git_commands = []
+
+    def mock_run(cmd, **kwargs):
+        git_commands.append(cmd)
+        if cmd[0:2] == ["gh", "auth"]:
+            result = subprocess.CompletedProcess(cmd, 0)
+            result.stdout = "Token scopes: repo, workflow"
+            result.stderr = ""
+            return result
+        if cmd[0] == "git" and "checkout" in cmd:
+            if "onboarding/agent-wiring" not in cmd:
+                raise AssertionError(f"Expected onboarding/agent-wiring in {cmd}")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    result = po._apply_pr("test/repo", facts, plan_out, run=mock_run)
+
+    checkout_cmds = [c for c in git_commands if c[0] == "git" and "checkout" in c]
+    assert any("onboarding/agent-wiring" in c for c in checkout_cmds)
+
+
+def test_apply_pr_never_commits_to_default_branch():
+    """_apply_pr never commits or pushes to default_branch (AC4)."""
+    facts = {
+        "file_tree": {},
+        "default_branch": "main",
+        "detected_stack": "swift-package",
+        "has_claude_md_skills": False,
+    }
+    plan_out = {"ci": {"state": "missing"}}
+
+    git_commands = []
+
+    def mock_run(cmd, **kwargs):
+        git_commands.append(cmd)
+        if cmd[0:2] == ["gh", "auth"]:
+            result = subprocess.CompletedProcess(cmd, 0)
+            result.stdout = "Token scopes: repo, workflow"
+            result.stderr = ""
+            return result
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    result = po._apply_pr("test/repo", facts, plan_out, run=mock_run)
+
+    commit_cmds = [c for c in git_commands if c[0] == "git" and "commit" in c]
+    push_cmds = [c for c in git_commands if c[0] == "git" and "push" in c]
+
+    for cmd in commit_cmds + push_cmds:
+        assert "main" not in cmd, f"Command should not reference 'main': {cmd}"
