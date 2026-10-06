@@ -9909,5 +9909,71 @@
         "higher_is_better": false
       }
     }
+  },
+  {
+    "timestamp": "2026-10-06T06:19:37.756794+00:00",
+    "metrics": {
+      "route:intent-routing-collection": {
+        "value": 92,
+        "higher_is_better": true
+      },
+      "catalog:fresh": {
+        "value": 0.8,
+        "higher_is_better": false
+      },
+      "github:budget": {
+        "value": 4795,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.agents@mac-mini-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.agents@macbook-pro-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.claude@mac-mini-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.claude@macbook-pro-1": {
+        "value": 0,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-06T06:34:44.203951+00:00",
+    "metrics": {
+      "route:intent-routing-collection": {
+        "value": 92,
+        "higher_is_better": true
+      },
+      "catalog:fresh": {
+        "value": 0.0,
+        "higher_is_better": false
+      },
+      "github:budget": {
+        "value": 4695,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.agents@mac-mini-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.agents@macbook-pro-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.claude@mac-mini-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.claude@macbook-pro-1": {
+        "value": 0,
+        "higher_is_better": false
+      }
+    }
   }
 ]
