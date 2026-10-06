@@ -588,3 +588,39 @@ def test_marvins_own_tickets_are_only_offered_to_the_machines_named_for_them(mon
     monkeypatch.setattr(sys, "argv", ["ticket_pipeline.py"])
     tp.main()
     assert asked == ["mac-mini-1"] and tp.MARVIN_MACHINES == ("mac-mini-1",)
+
+
+def _ready(number, created, labels=()):
+    return {**_issue(number, created, labels=("ready-for-agent", *labels)), "body": ""}
+
+
+def test_a_newer_ticket_on_a_hard_deadline_project_is_picked_before_older_plain_work(monkeypatch):
+    import json
+    issues = [_ready(1, "2026-09-20T00:00:00Z"), _ready(2, "2026-10-05T00:00:00Z")]
+    monkeypatch.setattr(tp.subprocess, "run", lambda *a, **kw: SimpleNamespace(
+        returncode=0, stdout=json.dumps(issues), stderr=""))
+    monkeypatch.setattr(tp, "_due_for", lambda repo: {"date": "2026-10-25", "hard": True} if repo == "G-Eskayo/captions" else None)
+    plain = tp._unclaimed_ready_tickets(repo="G-Eskayo/other")
+    deadline = tp._unclaimed_ready_tickets(repo="G-Eskayo/captions")
+    candidates = [("G-Eskayo/other", plain[0]), ("G-Eskayo/captions", deadline[-1])]  # its NEWEST ticket
+    assert min(candidates, key=lambda c: tp._order_key(c[1]))[0] == "G-Eskayo/captions"
+
+
+def test_a_priority_label_a_person_set_still_wins_over_a_deadline(monkeypatch):
+    import json
+    issues = [_ready(1, "2026-10-05T00:00:00Z", labels=("priority:p0",)), _ready(2, "2026-09-01T00:00:00Z")]
+    monkeypatch.setattr(tp.subprocess, "run", lambda *a, **kw: SimpleNamespace(
+        returncode=0, stdout=json.dumps(issues), stderr=""))
+    monkeypatch.setattr(tp, "_due_for", lambda repo: {"date": "2026-10-08", "hard": True})
+    assert [i["number"] for i in tp._unclaimed_ready_tickets()] == [1, 2]
+
+
+def test_ordering_survives_an_unreadable_deadline_source(monkeypatch):
+    import json
+    issues = [_ready(4, "2026-02-01T00:00:00Z"), _ready(3, "2026-01-01T00:00:00Z")]
+    monkeypatch.setattr(tp.subprocess, "run", lambda *a, **kw: SimpleNamespace(
+        returncode=0, stdout=json.dumps(issues), stderr=""))
+    def boom(repo):
+        raise OSError("catalog unreadable")
+    monkeypatch.setattr(tp, "_due_for", boom)
+    assert [i["number"] for i in tp._unclaimed_ready_tickets()] == [3, 4]

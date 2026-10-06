@@ -79,7 +79,10 @@ def score_ticket(issue: dict, blocks_count: int, due: dict | None, now: datetime
         if d is not None:
             days = (d - now).total_seconds() / 86400
             hard = bool(due.get("hard"))
-            pts = (20 if days <= 3 else 12 if days <= 14 else 4) if hard else (6 if days <= 7 else 3 if days <= 30 else 0)
+            # A hard deadline is a strong weight from weeks out, not only in the final fortnight (Gil, 2026-10-06; ADR 0047):
+            # enough to put it ahead of ordinary work, not a strict tier, so a high-leverage bug can still slip in ahead.
+            pts = ((30 if days <= 3 else 24 if days <= 14 else 16 if days <= 30 else 8 if days <= 60 else 4) if hard
+                   else (6 if days <= 7 else 3 if days <= 30 else 0))
             if pts:
                 score += pts
                 why.append(f"{'hard' if hard else 'soft'} deadline in {max(0, round(days))} days (+{pts})")

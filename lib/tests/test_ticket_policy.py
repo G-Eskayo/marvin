@@ -164,3 +164,26 @@ def test_triage_sends_a_person_ticket_without_instructions_back_for_info_instead
     assert v["state"] == "needs-info" and "Your task" in v["why"]
     issue["body"] = GOOD_TASK
     assert tp.triage_verdict(issue)["state"] == "ready-for-human"
+
+
+def test_a_hard_deadline_weeks_away_already_outweighs_ordinary_work():
+    # Gil, 2026-10-06: deadline tickets should beat non-deadline ones well before the final fortnight,
+    # as a strong weight, not a strict tier.
+    hard_19_days = tp.score_ticket(issue(), 0, {"date": "2026-10-24", "hard": True}, NOW)[0]
+    old_bug = tp.score_ticket(issue(labels=["bug"], created=50), 0, None, NOW)[0]
+    old_bug_unblocking_two = tp.score_ticket(issue(labels=["bug"], created=50), 2, None, NOW)[0]
+    assert hard_19_days > old_bug
+    assert hard_19_days > old_bug_unblocking_two
+
+
+def test_a_high_leverage_bug_can_still_beat_a_distant_hard_deadline():
+    # Weighting, not a tier: something genuinely urgent elsewhere can slip in ahead.
+    hard_45_days = tp.score_ticket(issue(), 0, {"date": "2026-11-19", "hard": True}, NOW)[0]
+    bug_unblocking_three = tp.score_ticket(issue(labels=["bug"], created=10), 3, None, NOW)[0]
+    assert bug_unblocking_three > hard_45_days
+
+
+def test_hard_deadline_weight_grows_as_the_date_nears():
+    pts = [tp.score_ticket(issue(), 0, {"date": d, "hard": True}, NOW)[0]
+           for d in ("2026-12-30", "2026-11-19", "2026-10-24", "2026-10-15", "2026-10-07")]
+    assert pts == sorted(pts) and len(set(pts)) == len(pts)
