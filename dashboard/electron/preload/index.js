@@ -7,7 +7,8 @@ contextBridge.exposeInMainWorld('api', {
   metrics: {
     index: () => ipcRenderer.invoke('metrics:index'),
     subsystems: () => ipcRenderer.invoke('metrics:subsystems'),
-    history: (subsystem) => ipcRenderer.invoke('metrics:history', subsystem)
+    history: (subsystem) => ipcRenderer.invoke('metrics:history', subsystem),
+    usage: () => ipcRenderer.invoke('metrics:usage')
   },
   mr: {
     list: () => ipcRenderer.invoke('mr:list'),
@@ -47,7 +48,6 @@ contextBridge.exposeInMainWorld('api', {
     status: () => ipcRenderer.invoke('health:status'),
     agents: () => ipcRenderer.invoke('health:agents'),
     ticketAgents: () => ipcRenderer.invoke('health:ticketAgents'),
-    tools: () => ipcRenderer.invoke('health:tools'),
     refresh: () => ipcRenderer.invoke('health:refresh')
   },
   docs: {

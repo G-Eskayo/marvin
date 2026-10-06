@@ -38,7 +38,7 @@ import { listAgents } from './agents.js'
 import { buildWorkingNow } from './working.js'
 import { listJobs } from './jobs.js'
 import { readTicketAgents } from './ticket_agents.js'
-import { readToolUsage, isStale as toolUsageStale } from './tool_usage.js'
+import { getUsageReport } from './usage_report.js'
 import { createRefreshServer } from './refresh_server.js'
 import { adoptLoginShellPath, adoptSharedGhToken } from './path.js'
 import { postTicketInput } from './ticket_input.js'
@@ -165,6 +165,7 @@ function registerMetricsHandlers() {
   ipcMain.handle('metrics:index', () => buildIndex())
   ipcMain.handle('metrics:subsystems', () => listSubsystems())
   ipcMain.handle('metrics:history', (_event, subsystem) => readHistory(subsystem))
+  ipcMain.handle('metrics:usage', () => getUsageReport())
 }
 
 function registerDispatchHandlers() {
@@ -207,15 +208,6 @@ function registerHealthHandlers() {
     }
   })
   ipcMain.handle('health:ticketAgents', () => readTicketAgents())
-  // Tool & skill usage from the session transcripts: rescanned when older than 10 minutes (about 1.5s).
-  ipcMain.handle('health:tools', async () => {
-    let usage = readToolUsage()
-    if (toolUsageStale(usage)) {
-      await execFileAsync(AGENTS_PYTHON, [join(homedir(), '.agents', 'lib', 'tool_usage.py'), 'refresh'], { timeout: 120_000 }).catch(() => {})
-      usage = readToolUsage() || usage
-    }
-    return usage
-  })
   ipcMain.handle('health:refresh', async () => {
     await runHealthCheckNow(execFileAsync)
     return readHealthStatus()

@@ -144,3 +144,9 @@ def test_reading_a_skills_SKILL_md_counts_as_using_that_skill(tmp_path):
 def test_inventory_counts_a_skill_loaded_by_reading_as_used(tmp_path):
     a = agg(tmp_path, use("1", "Read", {"file_path": "/h/.agents/skills/tdd/SKILL.md"}), result("1"), known_skills=["tdd", "zoom-out"])
     assert a["inventory"]["never_used"] == ["zoom-out"]
+
+
+def test_the_scan_says_which_machine_it_came_from(monkeypatch):
+    """The dashboard merges this machine's scan with the other machine's; it needs to tell them apart."""
+    monkeypatch.setattr(tu, "_machine_id", lambda: "macbook-pro-1")
+    assert tu.aggregate([])["machine"] == "macbook-pro-1"

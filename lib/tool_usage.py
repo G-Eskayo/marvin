@@ -36,6 +36,14 @@ OUTCOMES = ("ok", "error", "rejected", "interrupted", "invalid", "unresolved")
 INVALID_MARKERS = ("InputValidationError", "No such tool available", "Unknown skill", "tool_use_error")
 
 
+def _machine_id() -> str:
+    try:
+        import machine_profile
+        return machine_profile.registry_id()
+    except Exception:  # noqa: BLE001
+        return "this-machine"
+
+
 def _parse_ts(s):
     try:
         return datetime.fromisoformat(s.replace("Z", "+00:00"))
@@ -141,7 +149,7 @@ def aggregate(files, now: datetime | None = None, window_days: int = WINDOW_DAYS
     used = {s["name"] for s in skill_rows}
     known = list(known_skills)
     return {
-        "generated_at": now.isoformat(), "window_days": window_days, "files_scanned": len(list(files)),
+        "generated_at": now.isoformat(), "window_days": window_days, "machine": _machine_id(), "files_scanned": len(list(files)),
         "tools": _finish(tools, "name"), "skills": skill_rows, "agents": _finish(agents, "name"),
         "mcp_servers": _finish(servers, "server"),
         "inventory": {"known": len(known), "used": len([k for k in known if k in used]),

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import MetricsScorecard from '@components/MetricsScorecard.jsx'
+import MetricsPage from '@components/MetricsPage.jsx'
 import MrReview from '@components/MrReview.jsx'
 import HealthDashboard from '@components/HealthDashboard.jsx'
 import DocsExplorer from '@components/DocsExplorer.jsx'
@@ -132,7 +132,7 @@ export default function App() {
       </header>
       <main className="flex-1 overflow-auto">
         {activeTab === 'metrics' ? (
-          <MetricsScorecard />
+          <MetricsPage />
         ) : activeTab === 'mr-review' ? (
           <MrReview nav={nav} onOpenDocs={(projectId, path) => navigate('docs', { projectId, path })} onOpenBoard={(repo) => navigate('activity', { repo })} onOpenTicket={(repo, number) => navigate('activity', { repo, ticketNumber: number })} />
         ) : activeTab === 'health' ? (
