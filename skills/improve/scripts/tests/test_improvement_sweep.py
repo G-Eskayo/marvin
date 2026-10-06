@@ -113,3 +113,13 @@ def test_report_outcome_says_queued_when_content_actually_changed():
     assert "queued" in msg
     assert "skipped" not in msg
     assert "quarantined" not in msg
+
+
+def test_known_project_paths_point_where_the_projects_actually_live():
+    # These had drifted to paths that exist on neither Mac (~/resume-tailor, ~/marvin-bench, ~/gileskayo.me), so the
+    # sweep silently skipped them. Resume Tailor lives inside MARVIN as a skill; the bench lives in ~/.agents/bench.
+    import improvement_sweep as sweep
+    home = Path.home()
+    assert sweep.KNOWN_PROJECTS["resume-tailor"] == home / ".agents" / "skills" / "resume-tailor"
+    assert sweep.KNOWN_PROJECTS["marvin-bench"] == home / ".agents" / "bench"
+    assert sweep.KNOWN_PROJECTS["portfolio"] == home / "Documents" / "Projects" / "portfolio-website-updater"

@@ -34,11 +34,11 @@ except ImportError:
 
 KNOWN_PROJECTS: dict[str, Path] = {
     "marvin":        Path.home() / ".agents",
-    "marvin-bench":  Path.home() / "marvin-bench",
-    "resume-tailor": Path.home() / "resume-tailor",
+    "marvin-bench":  Path.home() / ".agents" / "bench",
+    "resume-tailor": Path.home() / ".agents" / "skills" / "resume-tailor",
     "hermes-agent":  Path.home() / "hermes-agent",
     "charter":       Path.home() / "charter",
-    "portfolio":     Path.home() / "gileskayo.me",
+    "portfolio":     Path.home() / "Documents" / "Projects" / "portfolio-website-updater",
 }
 
 
