@@ -2,15 +2,16 @@
 
 The `triage` skill moves an issue through five canonical roles. Each maps to a real label on
 this repo (created 2026-08-19, `setup-matt-pocock-skills` first run) — no overrides from the
-default naming.
+default naming. Colours are auto-created by `project_onboard apply` (ticket #146) and should
+not be manually changed.
 
-| Canonical role    | This repo's label | Meaning                                          |
-|--------------------|--------------------|---------------------------------------------------|
-| `needs-triage`    | `needs-triage`     | Maintainer needs to evaluate                       |
-| `needs-info`      | `needs-info`       | Waiting on reporter for more detail                |
-| `ready-for-agent` | `ready-for-agent`  | Fully specified — an AFK agent can pick this up with no further human context |
-| `ready-for-human` | `ready-for-human`  | Needs human implementation, not agent-suitable     |
-| `wontfix`         | `wontfix`          | Will not be actioned                               |
+| Canonical role    | This repo's label | Colour   | Meaning                                          |
+|--------------------|--------------------|----------|---------------------------------------------------|
+| `needs-triage`    | `needs-triage`     | #d4c5f9  | Maintainer needs to evaluate                       |
+| `needs-info`      | `needs-info`       | #ffd700  | Waiting on reporter for more detail                |
+| `ready-for-agent` | `ready-for-agent`  | #90ee90  | Fully specified — an AFK agent can pick this up with no further human context |
+| `ready-for-human` | `ready-for-human`  | #ffb6c1  | Needs human implementation, not agent-suitable     |
+| `wontfix`         | `wontfix`          | #808080  | Will not be actioned                               |
 
 ## Consumer rules
 
