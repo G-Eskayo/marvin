@@ -107,3 +107,51 @@ describe('notebooks in the local doc tree', () => {
       expect(() => readLocalFile(dir, '../a.ipynb')).toThrow()
     }))
 })
+
+describe('everything under docs/, not only docs/adr/', () => {
+  // The Docs tab used to list only docs/adr/, so audits, guides and write-ups under docs/ were invisible.
+  const addDocs = (dir) => {
+    for (const [rel, text] of [
+      ['docs/audits/content-audit-2026-10-06.md', '# audit'],
+      ['docs/overview.md', '# overview'],
+      ['docs/agents/issue-tracker.md', '# tracker'],
+      ['docs/audits/figure.png', 'not markdown'],
+      ['docs/.cache/hidden.md', 'hidden folder']
+    ]) {
+      mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true })
+      writeFileSync(path.join(dir, rel), text)
+    }
+  }
+
+  it('lists every .md under docs/ grouped by folder, docs/adr/ first, skipping hidden folders and non-markdown', () =>
+    withRoot((root) => {
+      const dir = makeRepo(root, 'proj')
+      addDocs(dir)
+      const sections = listLocalTree(dir).filter((e) => e.section)
+      expect(sections.map((s) => s.section)).toEqual(['docs/adr/', 'docs/', 'docs/agents/', 'docs/audits/'])
+      expect(sections.find((s) => s.section === 'docs/audits/').items).toEqual([
+        { path: 'docs/audits/content-audit-2026-10-06.md', label: 'content-audit-2026-10-06.md' }
+      ])
+      expect(sections.find((s) => s.section === 'docs/').items.map((i) => i.path)).toEqual(['docs/overview.md'])
+      expect(JSON.stringify(sections)).not.toContain('hidden.md')
+    }))
+
+  it('reads any .md under docs/, but still refuses non-markdown, hidden folders and escapes', () =>
+    withRoot((root) => {
+      const dir = makeRepo(root, 'proj')
+      addDocs(dir)
+      expect(readLocalFile(dir, 'docs/audits/content-audit-2026-10-06.md')).toBe('# audit')
+      expect(readLocalFile(dir, 'docs/overview.md')).toBe('# overview')
+      expect(() => readLocalFile(dir, 'docs/audits/figure.png')).toThrow()
+      expect(() => readLocalFile(dir, 'docs/.cache/hidden.md')).toThrow()
+      expect(() => readLocalFile(dir, 'docs/../CONTEXT.md.bak')).toThrow()
+      expect(() => readLocalFile(dir, 'docs/audits/../../../etc/x.md')).toThrow()
+    }))
+
+  it('marks a new, never-committed write-up under docs/ as uncommitted', () =>
+    withRoot(async (root) => {
+      const dir = makeRepo(root, 'proj')
+      addDocs(dir)
+      expect((await localFileStates(dir))['docs/audits/content-audit-2026-10-06.md']).toBe('uncommitted')
+    }))
+})
