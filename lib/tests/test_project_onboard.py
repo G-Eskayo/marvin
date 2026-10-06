@@ -33,9 +33,10 @@ def test_plan_returns_all_required_pieces():
         "workflow_contents": "",
         "package_json_scripts": {},
         "tools_installed": {},
+        "file_tree": {},
     }
     result = po.plan(facts)
-    expected_pieces = {"profile", "stack", "test_command", "ci", "triage_labels", "agent_docs", "board", "clone_and_toolchain", "generated_paths"}
+    expected_pieces = {"profile", "stack", "test_command", "ci", "triage_labels", "agent_docs", "board", "clone_and_toolchain", "generated_paths", "repo_pr"}
     assert set(result.keys()) == expected_pieces
 
 
@@ -327,6 +328,7 @@ def test_plan_with_fully_onboarded_project():
         "package_json_scripts": {},
         "tools_installed": {"swift": True},
         "visibility": "public",
+        "file_tree": {".github/workflows/ci.yml": "file"},
     }
     result = po.plan(facts)
     for piece, info in result.items():
@@ -812,7 +814,7 @@ def test_apply_full_idempotency():
             return ""
 
         # First run
-        result1 = po.apply("test/repo", facts=facts, profiles_dir=profiles_dir, gh=mock_gh1)
+        result1 = po.apply("test/repo", facts=facts, profiles_dir=profiles_dir, local=True, gh=mock_gh1)
         assert result1["labels"]["action"] == "created"
         assert result1["profile"]["action"] == "created"
         # Profile should be written to disk
@@ -821,7 +823,7 @@ def test_apply_full_idempotency():
 
         # Second run: labels and profile already exist now
         facts["labels"] = list(po.TRIAGE_LABELS)
-        result2 = po.apply("test/repo", facts=facts, profiles_dir=profiles_dir, gh=mock_gh2)
+        result2 = po.apply("test/repo", facts=facts, profiles_dir=profiles_dir, local=True, gh=mock_gh2)
         # Labels should be unchanged, so no new calls
         assert len([c for c in calls2 if "label" in c and "create" in c]) == 0
         # Profile should be unchanged
@@ -862,3 +864,395 @@ def test_apply_profile_all_stacks():
             result = po._apply_profile(f"test/{stack}-repo", facts, profiles_dir=profiles_dir)
             # Should not fail for any stack
             assert result["action"] in ("created", "unchanged", "conflict", "needs-human")
+
+
+# ── Workflow scope check (ticket #147) ─────────────────────────────────────
+
+
+def test_check_workflow_scope_when_present():
+    """_check_workflow_scope returns has_scope=True when workflow scope present."""
+    def mock_gh_with_scope(args):
+        if "auth" in args and "status" in args:
+            return "GH_TOKEN=... GitHub user ...\nToken scopes: repo, gist, workflow\n"
+        return ""
+
+    # Mock subprocess for this test
+    original_run = __import__("subprocess").run
+    def mock_run(*args, **kwargs):
+        if args[0][0] == "gh" and "auth" in args[0] and "status" in args[0]:
+            result = __import__("subprocess").CompletedProcess(
+                args=args[0], returncode=0, stdout="",
+                stderr="GH_TOKEN=... GitHub user ...\nToken scopes: repo, gist, workflow\n"
+            )
+            return result
+        return original_run(*args, **kwargs)
+
+    import subprocess as sp_module
+    original_sp_run = sp_module.run
+    sp_module.run = mock_run
+    try:
+        result = po._check_workflow_scope()
+        assert result["has_scope"] is True
+        assert "workflow" in result["message"] or result["message"] == "workflow scope present"
+    finally:
+        sp_module.run = original_sp_run
+
+
+def test_check_workflow_scope_when_missing():
+    """_check_workflow_scope returns has_scope=False with fix message when workflow scope missing."""
+    original_run = __import__("subprocess").run
+    def mock_run(*args, **kwargs):
+        if args[0][0] == "gh" and "auth" in args[0] and "status" in args[0]:
+            result = __import__("subprocess").CompletedProcess(
+                args=args[0], returncode=0, stdout="",
+                stderr="GH_TOKEN=... GitHub user ...\nToken scopes: repo, gist\n"
+            )
+            return result
+        return original_run(*args, **kwargs)
+
+    import subprocess as sp_module
+    original_sp_run = sp_module.run
+    sp_module.run = mock_run
+    try:
+        result = po._check_workflow_scope()
+        assert result["has_scope"] is False
+        assert "workflow" in result["message"] or "gh auth refresh" in result["message"]
+    finally:
+        sp_module.run = original_sp_run
+
+
+# ── Repo PR piece in plan (ticket #147) ──────────────────────────────────
+
+
+def test_plan_repo_pr_ok_when_all_files_present():
+    """plan() includes repo_pr piece with state ok when CI and agent docs present."""
+    facts = {
+        "detected_stack": "swift-package",
+        "has_agent_docs": True,
+        "has_claude_md_skills": True,
+        "file_tree": {".github/workflows/ci.yml": "file"},
+        "package_json_scripts": {},
+        "workflow_contents": "swift test",
+        "tools_installed": {},
+    }
+    result = po.plan(facts)
+    assert "repo_pr" in result
+    assert result["repo_pr"]["state"] == "ok"
+
+
+def test_plan_repo_pr_missing_when_files_absent():
+    """plan() repo_pr piece is missing when CI and docs absent."""
+    facts = {
+        "detected_stack": "swift-package",
+        "has_agent_docs": False,
+        "has_claude_md_skills": False,
+        "file_tree": {},
+        "package_json_scripts": {},
+        "workflow_contents": "",
+        "tools_installed": {},
+    }
+    result = po.plan(facts)
+    assert "repo_pr" in result
+    assert result["repo_pr"]["state"] == "missing"
+
+
+def test_plan_repo_pr_needs_human_when_no_stack():
+    """plan() repo_pr piece is needs-human when no stack detected."""
+    facts = {
+        "detected_stack": None,
+        "has_agent_docs": False,
+        "has_claude_md_skills": False,
+        "file_tree": {},
+        "package_json_scripts": {},
+        "workflow_contents": "",
+        "tools_installed": {},
+    }
+    result = po.plan(facts)
+    assert "repo_pr" in result
+    assert result["repo_pr"]["state"] == "needs-human"
+
+
+def test_plan_repo_pr_needs_human_when_test_command_unknown():
+    """plan() repo_pr piece is needs-human when test_command is needs-human."""
+    facts = {
+        "detected_stack": "node-electron",
+        "has_agent_docs": False,
+        "has_claude_md_skills": False,
+        "file_tree": {},
+        "package_json_scripts": {},  # no test script
+        "workflow_contents": "",
+        "tools_installed": {},
+    }
+    result = po.plan(facts)
+    assert "repo_pr" in result
+    assert result["repo_pr"]["state"] == "needs-human"
+
+
+# ── Repo PR expected_pieces in plan ──────────────────────────────────────
+
+
+def test_plan_returns_repo_pr_in_expected_pieces():
+    """plan() output includes repo_pr piece in addition to existing pieces."""
+    facts = {
+        "repo": "test/repo",
+        "profile_exists": False,
+        "has_workflows": False,
+        "workflow_runs_swift_test": False,
+        "labels": [],
+        "has_agent_docs": False,
+        "has_claude_md_skills": False,
+        "board_exists": False,
+        "clone_hint_resolves": False,
+        "swift_installed": False,
+        "has_package_swift": False,
+        "detected_stack": None,
+        "workflow_contents": "",
+        "package_json_scripts": {},
+        "tools_installed": {},
+    }
+    result = po.plan(facts)
+    expected_pieces = {"profile", "stack", "test_command", "ci", "triage_labels", "agent_docs", "board", "clone_and_toolchain", "generated_paths", "repo_pr"}
+    assert set(result.keys()) == expected_pieces
+
+
+# ── Seed template loading ────────────────────────────────────────────────
+
+
+def test_get_seed_template_loads_github_issue_tracker():
+    """_get_seed_template loads issue-tracker-github.md correctly."""
+    result = po._get_seed_template("issue-tracker-github")
+    assert result
+    assert "Issue Tracker" in result
+    assert "GitHub Issues" in result
+
+
+def test_get_seed_template_loads_triage_labels():
+    """_get_seed_template loads triage-labels.md correctly."""
+    result = po._get_seed_template("triage-labels")
+    assert result
+    assert "needs-triage" in result
+    assert "ready-for-agent" in result
+
+
+def test_get_seed_template_loads_domain():
+    """_get_seed_template loads domain.md correctly."""
+    result = po._get_seed_template("domain")
+    assert result
+    assert "Domain Docs" in result
+    assert "Single-context" in result
+
+
+# ── Apply repo_pr (ticket #147) ──────────────────────────────────────────
+
+
+def test_apply_repo_pr_needs_human_when_no_stack():
+    """_apply_repo_pr returns needs-human when no stack detected."""
+    facts = {"detected_stack": None}
+    result = po._apply_repo_pr("test/repo", facts)
+    assert result["action"] == "needs-human"
+    assert "stack" in result["reason"].lower()
+
+
+def test_apply_repo_pr_needs_human_when_no_clone():
+    """_apply_repo_pr returns needs-human when clone not resolvable."""
+    facts = {
+        "detected_stack": "swift-package",
+        "file_tree": {},
+        "has_agent_docs": False,
+        "has_claude_md_skills": False,
+    }
+    # Mock pp.load_profile to return None
+    original_load = po.pp.load_profile
+    po.pp.load_profile = lambda repo: None
+    try:
+        result = po._apply_repo_pr("test/repo", facts)
+        assert result["action"] == "needs-human"
+        assert "clone" in result["reason"].lower()
+    finally:
+        po.pp.load_profile = original_load
+
+
+def test_apply_repo_pr_unchanged_when_all_files_exist():
+    """_apply_repo_pr returns unchanged when CI and agent docs already present."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        clone_path = Path(tmpdir)
+        (clone_path / ".github" / "workflows").mkdir(parents=True, exist_ok=True)
+        (clone_path / "docs" / "agents").mkdir(parents=True, exist_ok=True)
+
+        facts = {
+            "detected_stack": "swift-package",
+            "default_branch": "main",
+            "file_tree": {
+                ".github/workflows/ci.yml": "file",
+                "docs/agents/issue-tracker.md": "file",
+                "docs/agents/triage-labels.md": "file",
+                "docs/agents/domain.md": "file",
+            },
+            "has_agent_docs": True,
+            "has_claude_md_skills": True,
+        }
+
+        # Mock profile with clone_hints pointing to temp directory
+        original_load = po.pp.load_profile
+        po.pp.load_profile = lambda repo: {"clone_hints": [str(clone_path)]}
+
+        try:
+            result = po._apply_repo_pr("test/repo", facts)
+            assert result["action"] == "unchanged"
+        finally:
+            po.pp.load_profile = original_load
+
+
+def test_apply_checks_workflow_scope_before_git():
+    """_apply_repo_pr checks workflow scope before any git operation."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        clone_path = Path(tmpdir)
+
+        facts = {
+            "detected_stack": "swift-package",
+            "default_branch": "main",
+            "file_tree": {},
+            "has_agent_docs": False,
+            "has_claude_md_skills": False,
+        }
+
+        original_load = po.pp.load_profile
+        po.pp.load_profile = lambda repo: {"clone_hints": [str(clone_path)]}
+
+        # Mock scope check to return False
+        original_check = po._check_workflow_scope
+        po._check_workflow_scope = lambda: {"has_scope": False, "message": "workflow scope missing"}
+
+        git_was_called = []
+        original_run = __import__("subprocess").run
+        def mock_run(*args, **kwargs):
+            if args[0][0] == "git":
+                git_was_called.append(True)
+            return original_run(*args, **kwargs)
+
+        import subprocess as sp_module
+        sp_module.run = mock_run
+
+        try:
+            result = po._apply_repo_pr("test/repo", facts)
+            assert result["action"] == "needs-human"
+            assert "workflow" in result["reason"].lower()
+            assert len(git_was_called) == 0, "git should not be called when scope check fails"
+        finally:
+            sp_module.run = original_run
+            po._check_workflow_scope = original_check
+            po.pp.load_profile = original_load
+
+
+# ── Apply with pr flag ───────────────────────────────────────────────────
+
+
+def test_apply_with_pr_flag_only():
+    """apply(..., pr=True, local=False) creates only repo_pr, not labels/board/profile."""
+    facts = {
+        "detected_stack": None,
+        "labels": [],
+        "has_agent_docs": False,
+        "has_claude_md_skills": False,
+    }
+    result = po.apply("test/repo", facts=facts, pr=True, local=False)
+
+    # Only repo_pr should be present
+    assert "repo_pr" in result
+    assert "labels" not in result
+    assert "board" not in result
+    assert "profile" not in result
+
+
+def test_apply_with_local_flag_only():
+    """apply(..., local=True, pr=False) creates only local pieces."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        profiles_dir = Path(tmpdir)
+        facts = {
+            "repo": "test/repo",
+            "detected_stack": "swift-package",
+            "default_branch": "main",
+            "labels": [],
+        }
+        result = po.apply("test/repo", facts=facts, local=True, pr=False, profiles_dir=profiles_dir)
+
+        # Local pieces should be present
+        assert "labels" in result
+        assert "board" in result
+        assert "profile" in result
+        # repo_pr should not be present
+        assert "repo_pr" not in result
+
+
+def test_apply_with_both_flags():
+    """apply(..., local=True, pr=True) creates both local and repo PR pieces."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        profiles_dir = Path(tmpdir)
+        facts = {
+            "repo": "test/repo",
+            "detected_stack": "swift-package",
+            "default_branch": "main",
+            "labels": [],
+            "has_agent_docs": False,
+            "has_claude_md_skills": False,
+            "file_tree": {},
+        }
+        result = po.apply("test/repo", facts=facts, local=True, pr=True, profiles_dir=profiles_dir)
+
+        # Both should be present
+        assert "labels" in result
+        assert "board" in result
+        assert "profile" in result
+        assert "repo_pr" in result
+
+
+# ── Real-world fixtures extended with repo_pr ────────────────────────────
+
+
+def test_clarity_captions_with_repo_pr():
+    """Clarity-captions fixture extended with repo_pr piece."""
+    facts = {
+        "repo": "G-Eskayo/clarity-captions",
+        "visibility": "public",
+        "detected_stack": "xcodegen-app",
+        "has_package_swift": False,
+        "has_workflows": True,
+        "workflow_contents": "xcodebuild test",
+        "package_json_scripts": {},
+        "tools_installed": {"xcodegen": True, "swift": True},
+        "clone_hint_resolves": True,
+        "profile_exists": True,
+        "board_exists": True,
+        "labels": list(po.TRIAGE_LABELS),
+        "has_agent_docs": True,
+        "has_claude_md_skills": True,
+        "file_tree": {".github/workflows/ci.yml": "file"},
+    }
+    result = po.plan(facts)
+    assert result["repo_pr"]["state"] == "ok"
+
+
+def test_finance_os_with_repo_pr():
+    """Finance-os fixture extended with repo_pr piece."""
+    facts = {
+        "repo": "G-Eskayo/finance-os",
+        "visibility": "private",
+        "detected_stack": "node-electron",
+        "has_workflows": True,
+        "workflow_contents": "npm test",
+        "package_json_scripts": {"test": "vitest"},
+        "tools_installed": {"node": True, "npm": True},
+        "clone_hint_resolves": True,
+        "profile_exists": True,
+        "board_exists": True,
+        "labels": list(po.TRIAGE_LABELS),
+        "has_agent_docs": True,
+        "has_claude_md_skills": True,
+        "file_tree": {".github/workflows/ci.yml": "file"},
+    }
+    result = po.plan(facts)
+    assert result["repo_pr"]["state"] == "ok"

@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Project onboarding: transform a repo into a fully wired MARVIN project.
 
-This module handles both the read-only 'plan' stage (ticket #141) and the 'apply' stage
-(ticket #146): gather facts about a project, produce a readiness plan, and optionally
-apply local changes (labels, board, profile). Facts are gathered once per repo via
-`inspect()`, and `plan()` is pure over those facts. Apply modifies local state only.
+Gathers facts, produces a readiness plan, and applies three classes of changes:
+1. Local: labels, board, profile (ticket #146)
+2. Repo PR: CI workflow, agent docs, CLAUDE.md block (ticket #147)
+
+Facts are gathered once per repo via `inspect()`, and `plan()` is pure over those facts.
 
     project_onboard.py plan <owner/repo>              outputs JSON readiness plan
-    project_onboard.py apply <owner/repo> --local     applies local changes (labels, board, profile)
+    project_onboard.py apply <owner/repo> [--local] [--pr]  applies selected pieces
 """
 from __future__ import annotations
 
@@ -65,6 +66,28 @@ def _gh(args: list[str]) -> str:
         return result.stdout if result.returncode == 0 else ""
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return ""
+
+
+def _check_workflow_scope(gh=_gh) -> dict:
+    """Check if gh has 'workflow' scope. Returns {"has_scope": bool, "message": str}.
+    Message includes the fix ('gh auth refresh -h github.com -s workflow') when missing."""
+    try:
+        result = subprocess.run(
+            ["gh", "auth", "status"], capture_output=True, text=True, timeout=TIMEOUT
+        )
+        output = result.stdout + result.stderr
+        if "workflow" in output and result.returncode == 0:
+            return {"has_scope": True, "message": "workflow scope present"}
+        else:
+            return {
+                "has_scope": False,
+                "message": "workflow scope missing; to enable: gh auth refresh -h github.com -s workflow",
+            }
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return {
+            "has_scope": False,
+            "message": "gh auth status failed; check authentication and try again",
+        }
 
 
 def _matches_detect_rule(file_tree: dict, rule: dict) -> bool:
@@ -409,6 +432,24 @@ def plan(facts: dict) -> dict:
     else:
         plan_out["generated_paths"] = {"state": "ok", "reason": "no stack detected; skipping generated paths", "proposals": []}
 
+    # Repo PR: CI workflow, agent docs, CLAUDE.md block
+    if not detected_stack:
+        plan_out["repo_pr"] = {"state": "needs-human", "reason": "no recognised stack; R5, never guess"}
+    elif not matched_stack:
+        plan_out["repo_pr"] = {"state": "needs-human", "reason": f"no onboarding template for {detected_stack}"}
+    else:
+        # Check if all files are present
+        has_ci = ".github/workflows/ci.yml" in facts.get("file_tree", {})
+        has_agent_docs = facts.get("has_agent_docs", False)
+        has_claude_skills = facts.get("has_claude_md_skills", False)
+
+        if has_ci and has_agent_docs and has_claude_skills:
+            plan_out["repo_pr"] = {"state": "ok", "reason": "CI workflow, agent docs, and CLAUDE.md block present"}
+        elif test_command_state == "needs-human":
+            plan_out["repo_pr"] = {"state": "needs-human", "reason": "cannot wire CI without a known test command"}
+        else:
+            plan_out["repo_pr"] = {"state": "missing", "reason": "missing: repo PR files (CI, agent docs, or CLAUDE.md block)"}
+
     return plan_out
 
 
@@ -552,42 +593,321 @@ def _apply_profile(repo: str, facts: dict, profiles_dir: Path | None = None) -> 
     }
 
 
-def apply(repo: str, facts: dict | None = None, *, profiles_dir: Path | None = None,
-          registry_path: Path | None = None, gh=_gh) -> dict:
-    """Apply local changes: create missing labels, register board, draft profile.
-    Idempotent: running twice produces no changes on the second run.
+def _get_seed_template(template_name: str) -> str:
+    """Load a seed template from skills/setup-matt-pocock-skills/. Return empty string on failure."""
+    skills_dir = Path(__file__).resolve().parent.parent / "skills" / "setup-matt-pocock-skills"
+    template_path = skills_dir / f"{template_name}.md"
+    if template_path.exists():
+        content = template_path.read_text()
+        # Extract the markdown content from inside the triple backticks
+        lines = content.split("\n")
+        in_code = False
+        extracted = []
+        for line in lines:
+            if line.startswith("```"):
+                in_code = not in_code
+                continue
+            if in_code:
+                extracted.append(line)
+        return "\n".join(extracted)
+    return ""
 
-    Returns: {"labels": {...}, "board": {...}, "profile": {...}} with per-piece
-    "action" (created/unchanged/conflict/needs-human) and "diff" where relevant.
-    Only writes profile file when action is "created" (keeps _apply_profile pure).
+
+def _apply_repo_pr(repo: str, facts: dict, *, worktree: Path | None = None, gh=_gh) -> dict:
+    """Create PR with CI workflow, agent docs, and CLAUDE.md block.
+    Returns {"action": "created"|"updated"|"unchanged"|"needs-human"|"conflict", ...}.
+    Checks workflow scope before any git operation (AC2)."""
+
+    # Detect stack
+    detected_stack = facts.get("detected_stack")
+    if not detected_stack:
+        return {
+            "action": "needs-human",
+            "reason": "no recognised stack; R5, never guess",
+            "files": [],
+        }
+
+    # Check if template exists
+    stacks = _load_stack_templates()
+    matched_stack = None
+    for stack in stacks:
+        if stack.get("name") == detected_stack:
+            matched_stack = stack
+            break
+
+    if not matched_stack:
+        return {
+            "action": "needs-human",
+            "reason": f"no onboarding template for {detected_stack}",
+            "files": [],
+        }
+
+    # Check workflow scope BEFORE any git operation (AC2)
+    scope_check = _check_workflow_scope()
+    if not scope_check["has_scope"]:
+        return {
+            "action": "needs-human",
+            "reason": scope_check["message"],
+            "files": [],
+        }
+
+    # Load profile to get clone hints
+    profile = pp.load_profile(repo)
+    if not profile or not profile.get("clone_hints"):
+        return {
+            "action": "needs-human",
+            "reason": "clone required to prepare PR; no profile with clone_hints found",
+            "files": [],
+        }
+
+    # Resolve clone path
+    clone_path = None
+    for hint in profile.get("clone_hints", []):
+        if Path(hint).exists():
+            clone_path = Path(hint)
+            break
+
+    if not clone_path:
+        return {
+            "action": "needs-human",
+            "reason": "clone required to prepare PR; no resolvable clone_hints",
+            "files": [],
+        }
+
+    try:
+        # Determine what files are missing
+        file_tree = facts.get("file_tree", {})
+        has_ci = ".github/workflows/ci.yml" in file_tree
+        has_agent_docs = facts.get("has_agent_docs", False)
+        has_claude_skills = facts.get("has_claude_md_skills", False)
+
+        # If everything exists, return unchanged
+        if has_ci and has_agent_docs and has_claude_skills:
+            return {"action": "unchanged", "files": []}
+
+        # Build the list of files to create
+        files_to_create = {}
+
+        # CI workflow
+        if not has_ci:
+            ci_path = CONFIG_ONBOARDING / detected_stack / "ci.yml"
+            if ci_path.exists():
+                files_to_create[".github/workflows/ci.yml"] = ci_path.read_text()
+
+        # Agent docs
+        if not has_agent_docs:
+            # issue-tracker.md - use GitHub variant since we're using gh CLI
+            issue_tracker = _get_seed_template("issue-tracker-github")
+            if issue_tracker:
+                files_to_create["docs/agents/issue-tracker.md"] = issue_tracker
+
+            # triage-labels.md
+            triage_labels = _get_seed_template("triage-labels")
+            if triage_labels:
+                files_to_create["docs/agents/triage-labels.md"] = triage_labels
+
+            # domain.md - single-context layout
+            domain = _get_seed_template("domain.md")
+            if domain:
+                files_to_create["docs/agents/domain.md"] = domain
+
+        # CLAUDE.md block
+        if not has_claude_skills:
+            claude_block = """## Agent skills
+
+### Issue tracker
+
+GitHub Issues on `{repo}`, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Five canonical triage roles, all real labels on this repo with default naming (no overrides).
+See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+""".format(repo=repo)
+            files_to_create["CLAUDE.md"] = claude_block
+
+        # Clone and prepare branch
+        default_branch = facts.get("default_branch", "main")
+        branch_name = "marvin-onboarding"
+
+        try:
+            subprocess.run(
+                ["git", "-C", str(clone_path), "fetch", "origin"],
+                capture_output=True, text=True, timeout=60, check=False
+            )
+        except Exception:
+            pass
+
+        # Create/reset branch from origin/<default_branch>
+        try:
+            subprocess.run(
+                ["git", "-C", str(clone_path), "checkout", "-B", branch_name, f"origin/{default_branch}"],
+                capture_output=True, text=True, timeout=60, check=True
+            )
+        except subprocess.CalledProcessError:
+            return {
+                "action": "needs-human",
+                "reason": f"could not create/reset branch {branch_name}",
+                "files": [],
+            }
+
+        # Write files to clone
+        for file_path, content in files_to_create.items():
+            target_path = clone_path / file_path
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_text(content)
+
+        # Stage only the files we created (AC1)
+        try:
+            subprocess.run(
+                ["git", "-C", str(clone_path), "add"] + list(files_to_create.keys()),
+                capture_output=True, text=True, timeout=60, check=True
+            )
+        except subprocess.CalledProcessError:
+            return {
+                "action": "needs-human",
+                "reason": "could not stage files",
+                "files": [],
+            }
+
+        # Check if there are actual changes to commit
+        status_result = subprocess.run(
+            ["git", "-C", str(clone_path), "status", "--short"],
+            capture_output=True, text=True, timeout=60, check=True
+        )
+        if not status_result.stdout.strip():
+            return {"action": "unchanged", "files": []}
+
+        # Commit
+        try:
+            subprocess.run(
+                ["git", "-C", str(clone_path), "commit", "-m",
+                 "Onboarding: add CI workflow, agent docs, CLAUDE.md block"],
+                capture_output=True, text=True, timeout=60, check=True
+            )
+        except subprocess.CalledProcessError as e:
+            return {
+                "action": "needs-human",
+                "reason": f"could not commit: {e.stderr or 'unknown error'}",
+                "files": [],
+            }
+
+        # Push to remote
+        try:
+            subprocess.run(
+                ["git", "-C", str(clone_path), "push", "origin", f"{branch_name}:{branch_name}"],
+                capture_output=True, text=True, timeout=60, check=True
+            )
+        except subprocess.CalledProcessError as e:
+            # Check if remote branch has unpushed commits
+            if "non-fast-forward" in (e.stderr or ""):
+                return {
+                    "action": "conflict",
+                    "reason": "remote branch has commits not from this process",
+                    "files": list(files_to_create.keys()),
+                }
+            return {
+                "action": "needs-human",
+                "reason": f"could not push: {e.stderr or 'unknown error'}",
+                "files": list(files_to_create.keys()),
+            }
+
+        # Open or update PR
+        try:
+            result = subprocess.run(
+                ["gh", "pr", "create", "--repo", repo, "--base", default_branch,
+                 "--head", branch_name, "--title", "Onboarding: add CI, agent docs, CLAUDE.md",
+                 "--body", "Automated onboarding changes: CI workflow, agent documentation, and CLAUDE.md skills block."],
+                capture_output=True, text=True, timeout=60, check=True
+            )
+            pr_url = result.stdout.strip()
+            return {
+                "action": "created",
+                "pr_url": pr_url,
+                "files": list(files_to_create.keys()),
+            }
+        except subprocess.CalledProcessError as e:
+            if "already exists" not in (e.stderr or ""):
+                return {
+                    "action": "needs-human",
+                    "reason": f"could not create PR: {e.stderr or 'unknown error'}",
+                    "files": list(files_to_create.keys()),
+                }
+            # PR already exists, get its URL
+            try:
+                view_result = subprocess.run(
+                    ["gh", "pr", "view", branch_name, "--repo", repo, "--json", "url", "-q", ".url"],
+                    capture_output=True, text=True, timeout=60, check=True
+                )
+                pr_url = view_result.stdout.strip()
+                return {
+                    "action": "updated",
+                    "pr_url": pr_url,
+                    "files": list(files_to_create.keys()),
+                }
+            except subprocess.CalledProcessError:
+                return {
+                    "action": "needs-human",
+                    "reason": "PR exists but could not retrieve URL",
+                    "files": list(files_to_create.keys()),
+                }
+
+    except Exception as e:
+        return {
+            "action": "needs-human",
+            "reason": f"unexpected error: {str(e)}",
+            "files": [],
+        }
+
+
+def apply(repo: str, facts: dict | None = None, *, profiles_dir: Path | None = None,
+          registry_path: Path | None = None, local: bool = False, pr: bool = False, gh=_gh) -> dict:
+    """Apply local and/or repo PR changes. Idempotent: running twice produces no changes on second run.
+
+    If local=True: create missing labels, register board, draft profile.
+    If pr=True: create PR with CI workflow, agent docs, and CLAUDE.md block.
+
+    Returns: {"labels": {...}, "board": {...}, "profile": {...}, "repo_pr": {...}} with per-piece
+    "action" and "diff"/"pr_url" where relevant.
     """
     if facts is None:
         facts = inspect(repo, gh=gh)
 
-    labels_result = _apply_labels(repo, facts, gh=gh)
-    board_result = _apply_board(repo, facts, registry_path=registry_path)
-    profile_result = _apply_profile(repo, facts, profiles_dir=profiles_dir)
+    result = {}
 
-    # Write profile to disk only if it was created (idempotent)
-    if profile_result.get("action") == "created":
-        profiles_dir = profiles_dir or pp.PROFILES_DIR
-        repo_name = repo.split("/")[1]
-        profile_path = profiles_dir / f"{repo_name}.json"
-        profile_path.parent.mkdir(parents=True, exist_ok=True)
-        profile_text = json.dumps(profile_result["profile"], indent=2) + "\n"
-        profile_path.write_text(profile_text)
+    if local:
+        labels_result = _apply_labels(repo, facts, gh=gh)
+        board_result = _apply_board(repo, facts, registry_path=registry_path)
+        profile_result = _apply_profile(repo, facts, profiles_dir=profiles_dir)
 
-    return {
-        "labels": labels_result,
-        "board": board_result,
-        "profile": profile_result,
-    }
+        # Write profile to disk only if it was created (idempotent)
+        if profile_result.get("action") == "created":
+            profiles_dir = profiles_dir or pp.PROFILES_DIR
+            repo_name = repo.split("/")[1]
+            profile_path = profiles_dir / f"{repo_name}.json"
+            profile_path.parent.mkdir(parents=True, exist_ok=True)
+            profile_text = json.dumps(profile_result["profile"], indent=2) + "\n"
+            profile_path.write_text(profile_text)
+
+        result["labels"] = labels_result
+        result["board"] = board_result
+        result["profile"] = profile_result
+
+    if pr:
+        repo_pr_result = _apply_repo_pr(repo, facts, gh=gh)
+        result["repo_pr"] = repo_pr_result
+
+    return result
 
 
 def main():
-    """CLI entry point: project_onboard.py plan|apply <owner/repo> [--local]"""
+    """CLI entry point: project_onboard.py plan <owner/repo> | apply <owner/repo> [--local] [--pr]"""
     if len(sys.argv) < 3:
-        sys.exit("usage: project_onboard.py plan <owner/repo> | apply <owner/repo> --local")
+        sys.exit("usage: project_onboard.py plan <owner/repo> | apply <owner/repo> [--local] [--pr]")
 
     cmd = sys.argv[1]
     repo = sys.argv[2]
@@ -600,49 +920,74 @@ def main():
         print(json.dumps(result, indent=2))
 
     elif cmd == "apply":
-        if len(sys.argv) != 4 or sys.argv[3] != "--local":
-            sys.exit("usage: project_onboard.py apply <owner/repo> --local")
+        if len(sys.argv) < 3:
+            sys.exit("usage: project_onboard.py apply <owner/repo> [--local] [--pr]")
+
+        # Parse flags
+        local = "--local" in sys.argv
+        pr = "--pr" in sys.argv
+
+        if not local and not pr:
+            sys.exit("usage: project_onboard.py apply <owner/repo> [--local] [--pr]\nat least one flag required")
 
         facts = inspect(repo)
-        result = apply(repo, facts=facts)
+        result = apply(repo, facts=facts, local=local, pr=pr)
 
         # Print human-readable summary
-        print(f"\nOnboarding apply for {repo} --local:\n")
+        flags_str = " ".join(["--local" if local else "", "--pr" if pr else ""]).strip()
+        print(f"\nOnboarding apply for {repo} {flags_str}:\n")
 
         # Labels
-        labels = result["labels"]
-        if labels["action"] == "created":
-            print(f"  labels: created {', '.join(labels['labels'])}")
-        else:
-            print(f"  labels: unchanged")
+        if "labels" in result:
+            labels = result["labels"]
+            if labels["action"] == "created":
+                print(f"  labels: created {', '.join(labels['labels'])}")
+            else:
+                print(f"  labels: unchanged")
 
         # Board
-        board = result["board"]
-        if board["action"] == "created":
-            print(f"  board: created {repo}")
-        else:
-            print(f"  board: unchanged")
+        if "board" in result:
+            board = result["board"]
+            if board["action"] == "created":
+                print(f"  board: created {repo}")
+            else:
+                print(f"  board: unchanged")
 
         # Profile
-        profile = result["profile"]
-        if profile["action"] == "created":
-            print(f"  profile: created config/projects/{repo.split('/')[1]}.json")
-            if profile.get("diff"):
-                print("\n  diff (new file):")
-                for line in profile["diff"].split("\n")[:20]:
-                    if line:
-                        print(f"    {line}")
-        elif profile["action"] == "unchanged":
-            print(f"  profile: unchanged")
-        elif profile["action"] == "conflict":
-            print(f"  profile: conflict — existing differs from draft (edit detected)")
-            if profile.get("diff"):
-                print("\n  diff:")
-                for line in profile["diff"].split("\n")[:30]:
-                    if line:
-                        print(f"    {line}")
-        else:  # needs-human
-            print(f"  profile: needs-human — {profile.get('reason', '')}")
+        if "profile" in result:
+            profile = result["profile"]
+            if profile["action"] == "created":
+                print(f"  profile: created config/projects/{repo.split('/')[1]}.json")
+                if profile.get("diff"):
+                    print("\n  diff (new file):")
+                    for line in profile["diff"].split("\n")[:20]:
+                        if line:
+                            print(f"    {line}")
+            elif profile["action"] == "unchanged":
+                print(f"  profile: unchanged")
+            elif profile["action"] == "conflict":
+                print(f"  profile: conflict — existing differs from draft (edit detected)")
+                if profile.get("diff"):
+                    print("\n  diff:")
+                    for line in profile["diff"].split("\n")[:30]:
+                        if line:
+                            print(f"    {line}")
+            else:  # needs-human
+                print(f"  profile: needs-human — {profile.get('reason', '')}")
+
+        # Repo PR
+        if "repo_pr" in result:
+            repo_pr = result["repo_pr"]
+            if repo_pr["action"] == "created":
+                print(f"  repo_pr: created — {repo_pr.get('pr_url', '')}")
+            elif repo_pr["action"] == "updated":
+                print(f"  repo_pr: updated — {repo_pr.get('pr_url', '')}")
+            elif repo_pr["action"] == "unchanged":
+                print(f"  repo_pr: unchanged")
+            elif repo_pr["action"] == "conflict":
+                print(f"  repo_pr: conflict — {repo_pr.get('reason', '')}")
+            else:  # needs-human
+                print(f"  repo_pr: needs-human — {repo_pr.get('reason', '')}")
 
         print()
 
