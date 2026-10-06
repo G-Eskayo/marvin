@@ -3,6 +3,7 @@ import { homedir } from 'os'
 import path from 'path'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
+import { groupDocSections, isDocMarkdown } from './doc_paths.js'
 
 // Local-first reading for the Docs tab. The tab used to read only GitHub's
 // default branch, so uncommitted or unpushed doc edits were invisible. For any
@@ -49,18 +50,28 @@ export async function resolveLocalClone(repoName, { candidateDirs = defaultCandi
 }
 
 // Same shape as docs.js's listRepoDocTree so the UI treats both sources alike.
+// Every file under docs/, as repo-relative paths. Hidden folders and node_modules are skipped; depth is bounded so a
+// stray symlink loop or a vendored tree cannot stall the tab.
+function walkDocs(dir, rel = 'docs', depth = 0, out = []) {
+  if (depth > 6) return out
+  let entries
+  try {
+    entries = readdirSync(path.join(dir, rel), { withFileTypes: true })
+  } catch {
+    return out   // no docs/ yet
+  }
+  for (const e of entries) {
+    if (e.name.startsWith('.') || e.name === 'node_modules') continue
+    if (e.isDirectory()) walkDocs(dir, `${rel}/${e.name}`, depth + 1, out)
+    else if (e.isFile()) out.push(`${rel}/${e.name}`)
+  }
+  return out
+}
+
 export function listLocalTree(dir) {
   const tree = existsSync(path.join(dir, 'CONTEXT.md')) ? [{ path: 'CONTEXT.md', label: 'CONTEXT.md' }] : []
   if (existsSync(path.join(dir, 'README.md'))) tree.push({ path: 'README.md', label: 'README.md' })
-  try {
-    const items = readdirSync(path.join(dir, 'docs', 'adr'))
-      .filter((n) => n.endsWith('.md'))
-      .sort((a, b) => a.localeCompare(b))
-      .map((n) => ({ path: `docs/adr/${n}`, label: n }))
-    if (items.length) tree.push({ section: 'docs/adr/', items })
-  } catch {
-    // no docs/adr yet
-  }
+  tree.push(...groupDocSections(walkDocs(dir)))
   try {
     const books = readdirSync(dir)
       .filter((n) => n.endsWith('.ipynb'))
@@ -73,11 +84,11 @@ export function listLocalTree(dir) {
   return tree
 }
 
-const ALLOWED = /^(CONTEXT\.md|README\.md|docs\/adr\/[^/]+\.md|[^/]+\.ipynb)$/
+const ALLOWED_ROOT = /^(CONTEXT\.md|README\.md|[^/]+\.ipynb)$/
 
 export function readLocalFile(dir, filePath) {
   const normalized = path.posix.normalize(String(filePath))
-  if (normalized.split('/').includes('..') || !ALLOWED.test(normalized)) {
+  if (normalized.split('/').includes('..') || !(ALLOWED_ROOT.test(normalized) || isDocMarkdown(normalized))) {
     throw new Error(`Not a readable doc path: ${filePath}`)
   }
   return readFileSync(path.join(dir, normalized), 'utf-8')

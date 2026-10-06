@@ -2,6 +2,7 @@ import { notebookToMarkdown } from '../../src/lib/ipynb.js'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { homedir } from 'os'
 import path from 'path'
+import { groupDocSections } from './doc_paths.js'
 
 // Cross-project documentation browser. Deliberately GitHub-API-backed, not
 // local-filesystem-backed, unlike dispatch_status.js/health.js -- these are
@@ -61,6 +62,18 @@ export async function listRepoDocTree(execFileAsync, repo) {
   const tree = [{ path: 'CONTEXT.md', label: 'CONTEXT.md' }]
   if (await fileExists(execFileAsync, repo, 'README.md')) {
     tree.push({ path: 'README.md', label: 'README.md' })
+  }
+  // One recursive tree call gives every doc under docs/ and the root notebooks; if it fails, fall back to listing
+  // docs/adr/ and the root directly, as before.
+  try {
+    const { stdout } = await run(execFileAsync, ['api', `repos/${GH_OWNER}/${repo}/git/trees/HEAD?recursive=1`])
+    const paths = (JSON.parse(stdout).tree || []).filter((e) => e.type === 'blob').map((e) => e.path)
+    tree.push(...groupDocSections(paths))
+    const books = paths.filter((p) => !p.includes('/') && p.endsWith('.ipynb')).sort((a, b) => a.localeCompare(b)).map((p) => ({ path: p, label: p }))
+    if (books.length) tree.push({ section: 'notebooks', items: books })
+    return tree
+  } catch {
+    // fall through to the two direct listings
   }
   try {
     const { stdout } = await run(execFileAsync, ['api', `repos/${GH_OWNER}/${repo}/contents/docs/adr`])

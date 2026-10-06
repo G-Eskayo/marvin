@@ -129,3 +129,27 @@ describe('fetchFileContent', () => {
     expect(content).toBe(original)
   })
 })
+
+describe('listRepoDocTree lists everything under docs/ (repos with no local clone)', () => {
+  it('groups every .md under docs/ by folder from one recursive tree call, docs/adr/ first', async () => {
+    const execFileAsync = fakeExec([
+      ['contents/README.md', 'README.md'],
+      ['git/trees/HEAD', JSON.stringify({ tree: [
+        { path: 'docs/adr/0002-foo.md', type: 'blob' },
+        { path: 'docs/adr/0001-bar.md', type: 'blob' },
+        { path: 'docs/audits/content-audit.md', type: 'blob' },
+        { path: 'docs/guide.md', type: 'blob' },
+        { path: 'docs/audits/chart.png', type: 'blob' },
+        { path: 'docs/.github/x.md', type: 'blob' },
+        { path: 'src/notes.md', type: 'blob' },
+        { path: 'nb.ipynb', type: 'blob' }
+      ] })]
+    ])
+    const tree = await listRepoDocTree(execFileAsync, 'proj')
+    const sections = tree.filter((e) => e.section)
+    expect(sections.map((s) => s.section)).toEqual(['docs/adr/', 'docs/', 'docs/audits/', 'notebooks'])
+    expect(sections[0].items.map((i) => i.label)).toEqual(['0001-bar.md', '0002-foo.md'])
+    expect(sections[2].items).toEqual([{ path: 'docs/audits/content-audit.md', label: 'content-audit.md' }])
+    expect(sections[3].items).toEqual([{ path: 'nb.ipynb', label: 'nb.ipynb' }])
+  })
+})
