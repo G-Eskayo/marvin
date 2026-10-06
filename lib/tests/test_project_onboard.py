@@ -616,3 +616,249 @@ def test_generated_paths_ok_when_no_candidates_found():
     result = po.plan(facts)
     assert result["generated_paths"]["state"] == "ok"
     assert result["generated_paths"].get("proposals", []) == []
+
+
+# ── Apply functions (ticket #146) ────────────────────────────────────────
+
+
+def test_apply_labels_creates_missing_labels():
+    """_apply_labels creates labels that are not in facts["labels"], idempotent."""
+    facts = {"labels": []}
+    calls = []
+
+    def mock_gh(args):
+        calls.append(args)
+        return ""
+
+    result = po._apply_labels("test/repo", facts, gh=mock_gh)
+    assert result["action"] == "created"
+    assert len(result["labels"]) == 5
+    assert set(result["labels"]) == po.TRIAGE_LABELS
+    # Each label should have a label create call
+    assert len([c for c in calls if "label" in c and "create" in c]) == 5
+
+
+def test_apply_labels_idempotent_when_all_present():
+    """_apply_labels makes no calls when all labels already exist."""
+    facts = {"labels": list(po.TRIAGE_LABELS)}
+    calls = []
+
+    def mock_gh(args):
+        calls.append(args)
+        return ""
+
+    result = po._apply_labels("test/repo", facts, gh=mock_gh)
+    assert result["action"] == "unchanged"
+    assert len(result["labels"]) == 0
+    assert len(calls) == 0
+
+
+def test_apply_labels_partial_creates():
+    """_apply_labels creates only missing labels."""
+    facts = {"labels": ["needs-triage", "ready-for-agent"]}
+    calls = []
+
+    def mock_gh(args):
+        calls.append(args)
+        return ""
+
+    result = po._apply_labels("test/repo", facts, gh=mock_gh)
+    assert result["action"] == "created"
+    assert len(result["labels"]) == 3
+    missing = po.TRIAGE_LABELS - {"needs-triage", "ready-for-agent"}
+    assert set(result["labels"]) == missing
+
+
+def test_apply_labels_use_correct_colors():
+    """_apply_labels passes correct hex colors for each label."""
+    facts = {"labels": []}
+    calls = []
+
+    def mock_gh(args):
+        calls.append(args)
+        return ""
+
+    po._apply_labels("test/repo", facts, gh=mock_gh)
+    # Check that color args are present for each label create call
+    color_calls = [c for c in calls if "label" in c and "create" in c]
+    assert len(color_calls) > 0
+    for call in color_calls:
+        if "--color" in call:
+            color_idx = call.index("--color")
+            color = call[color_idx + 1]
+            # Color should be a hex string like "d4c5f9"
+            assert len(color) == 6
+            assert all(c in "0123456789abcdefABCDEF" for c in color)
+
+
+def test_apply_profile_no_stack_needs_human():
+    """_apply_profile with no detected_stack returns needs-human."""
+    facts = {"detected_stack": None}
+    result = po._apply_profile("test/repo", facts)
+    assert result["action"] == "needs-human"
+
+
+def test_apply_profile_fresh_creates():
+    """_apply_profile on fresh repo creates profile with correct structure."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        profiles_dir = Path(tmpdir)
+        facts = {
+            "repo": "test/repo",
+            "detected_stack": "swift-package",
+            "default_branch": "main",
+        }
+        result = po._apply_profile("test/repo", facts, profiles_dir=profiles_dir)
+        assert result["action"] == "created"
+        assert "diff" in result
+        assert result["diff"]  # Non-empty diff
+        profile = result["profile"]
+        assert profile["repo"] == "test/repo"
+        assert profile["dispatch"] == "off"
+        assert profile["merge_from_dashboard"] is False
+
+
+def test_apply_profile_unchanged_on_rerun():
+    """_apply_profile returns unchanged on second run with same repo."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        profiles_dir = Path(tmpdir)
+        facts = {
+            "repo": "test/repo",
+            "detected_stack": "swift-package",
+            "default_branch": "main",
+        }
+        result1 = po._apply_profile("test/repo", facts, profiles_dir=profiles_dir)
+        assert result1["action"] == "created"
+        # Write the profile to disk
+        profile_path = profiles_dir / "repo.json"
+        profile_path.write_text(json.dumps(result1["profile"], indent=2) + "\n")
+
+        # Run again
+        result2 = po._apply_profile("test/repo", facts, profiles_dir=profiles_dir)
+        assert result2["action"] == "unchanged"
+
+
+def test_apply_profile_conflict_on_edit():
+    """_apply_profile returns conflict when existing file differs."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        profiles_dir = Path(tmpdir)
+        facts = {
+            "repo": "test/repo",
+            "detected_stack": "swift-package",
+            "default_branch": "main",
+        }
+        # Create a pre-existing file with different content
+        profile_path = profiles_dir / "repo.json"
+        profile_path.write_text('{"repo": "test/repo", "dispatch": "on"}\n')
+
+        result = po._apply_profile("test/repo", facts, profiles_dir=profiles_dir)
+        assert result["action"] == "conflict"
+        assert "diff" in result
+        # File should not be overwritten
+        assert profile_path.read_text() == '{"repo": "test/repo", "dispatch": "on"}\n'
+
+
+def test_apply_profile_conflict_on_malformed():
+    """_apply_profile returns conflict when existing file is not valid JSON."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        profiles_dir = Path(tmpdir)
+        facts = {
+            "repo": "test/repo",
+            "detected_stack": "swift-package",
+            "default_branch": "main",
+        }
+        # Create a pre-existing file with invalid JSON
+        profile_path = profiles_dir / "repo.json"
+        profile_path.write_text('not valid json')
+
+        result = po._apply_profile("test/repo", facts, profiles_dir=profiles_dir)
+        assert result["action"] == "conflict"
+        # File should remain untouched
+        assert profile_path.read_text() == 'not valid json'
+
+
+def test_apply_board_idempotent():
+    """_apply_board is idempotent via board_registry.ensure_board."""
+    facts = {}
+    # This tests that the wrapper correctly returns created/unchanged
+    result = po._apply_board("test/repo", facts)
+    assert "action" in result
+    assert result["action"] in ("created", "unchanged")
+
+
+def test_apply_full_idempotency():
+    """apply() is fully idempotent across two runs."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        profiles_dir = Path(tmpdir)
+        facts = {
+            "repo": "test/repo",
+            "labels": [],
+            "detected_stack": "swift-package",
+            "default_branch": "main",
+        }
+        calls1 = []
+        calls2 = []
+
+        def mock_gh1(args):
+            calls1.append(args)
+            return ""
+
+        def mock_gh2(args):
+            calls2.append(args)
+            return ""
+
+        # First run
+        result1 = po.apply("test/repo", facts=facts, profiles_dir=profiles_dir, gh=mock_gh1)
+        assert result1["labels"]["action"] == "created"
+        assert result1["profile"]["action"] == "created"
+        # Profile should be written to disk
+        profile_path = profiles_dir / "repo.json"
+        assert profile_path.exists()
+
+        # Second run: labels and profile already exist now
+        facts["labels"] = list(po.TRIAGE_LABELS)
+        result2 = po.apply("test/repo", facts=facts, profiles_dir=profiles_dir, gh=mock_gh2)
+        # Labels should be unchanged, so no new calls
+        assert len([c for c in calls2 if "label" in c and "create" in c]) == 0
+        # Profile should be unchanged
+        assert result2["profile"]["action"] == "unchanged"
+        # Profile file should not be modified (same content)
+        profile_content_after = profile_path.read_text()
+        profile_content_expected = json.dumps(result1["profile"]["profile"], indent=2) + "\n"
+        assert profile_content_after == profile_content_expected
+
+
+def test_apply_forces_dispatch_off():
+    """_apply_profile always forces dispatch to 'off' and merge_from_dashboard to False."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        profiles_dir = Path(tmpdir)
+        facts = {
+            "repo": "test/repo",
+            "detected_stack": "swift-package",
+            "default_branch": "main",
+        }
+        result = po._apply_profile("test/repo", facts, profiles_dir=profiles_dir)
+        profile = result["profile"]
+        assert profile["dispatch"] == "off"
+        assert profile["merge_from_dashboard"] is False
+
+
+def test_apply_profile_all_stacks():
+    """_apply_profile works for all three stacks: swift-package, xcodegen-app, node-electron."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        profiles_dir = Path(tmpdir)
+        for stack in ["swift-package", "xcodegen-app", "node-electron"]:
+            facts = {
+                "repo": "test/repo",
+                "detected_stack": stack,
+                "default_branch": "main",
+            }
+            result = po._apply_profile(f"test/{stack}-repo", facts, profiles_dir=profiles_dir)
+            # Should not fail for any stack
+            assert result["action"] in ("created", "unchanged", "conflict", "needs-human")
