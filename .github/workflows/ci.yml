@@ -1,0 +1,30 @@
+name: CI
+
+# The dashboard's unit tests on every PR and on main. The Python suite (lib/tests) is not run here yet: it needs a
+# pinned requirements file (chromadb, sentence-transformers, torch) and some tests read machine-local state.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dashboard-tests:
+    name: Dashboard unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npx vitest run
