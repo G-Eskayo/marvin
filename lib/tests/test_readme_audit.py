@@ -167,3 +167,10 @@ def test_a_head_404_is_confirmed_by_a_browser_get_before_a_link_counts_as_dead()
         raise urllib.error.HTTPError(req.full_url, 404, "nf", {}, None)
 
     assert ra.http_status("https://x/y", opener=always_404) == 404
+
+
+def test_percent_encoded_local_paths_resolve_to_files_with_spaces():
+    import readme_audit as ra
+    parsed = ra.parse("![alt](Confusion%20Matrix.jpg)\n\n[doc](docs/My%20Notes.md)\n")
+    finds = {f.check: f for f in ra.check_prove(parsed, {"Confusion Matrix.jpg"})}
+    assert finds["images-exist"].status == "pass"
