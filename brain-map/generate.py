@@ -7,12 +7,15 @@ Live (always current):
   - ~/Library/LaunchAgents/com.marvin.*.plist — recurring cron agents (ADR 0018)
   - ~/.claude/settings.local.json (hooks)   — infrastructure hook wiring (ADR 0019)
   - ~/.claude/marvin-network.json (devices) — registered cross-machine devices (ADR 0020)
+  - ~/.agents/dashboard/src/App.jsx (TABS)  — the dashboard's tabs (ADR 0049)
+  - ~/.claude/catalog/projects.*.json       — active and recent projects (ADR 0049)
 
 Hand-maintained: ./enrichment.json — prose descriptions, non-skill nodes (ChromaDB
 collections, exo/task-dispatch), category grouping, and optional overrides for any
-of the four live-derived node types above (skill_desc_overrides, agent_overrides,
+of the live-derived node types above (skill_desc_overrides, agent_overrides,
 hook_overrides). A missing override for a live-discovered id still produces a node —
-existence is never gated on a hand-authored entry, only its polish is.
+existence is never gated on a hand-authored entry, only its polish is (a skill with
+no skill_categories entry goes under "Other" rather than being dropped).
 
 Run whenever the skill set changes materially (also chained automatically by
 rebuild-manifest.py's PostToolUse hook):
@@ -26,6 +29,7 @@ from __future__ import annotations
 import json
 import plistlib
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -43,6 +47,8 @@ SKILLS_DIR = Path.home() / ".agents" / "skills"
 LAUNCHD_DIR = Path.home() / "Library" / "LaunchAgents"
 SETTINGS_LOCAL_PATH = Path.home() / ".claude" / "settings.local.json"
 NETWORK_PATH = Path.home() / ".claude" / "marvin-network.json"
+DASHBOARD_APP_PATH = Path.home() / ".agents" / "dashboard" / "src" / "App.jsx"
+CATALOG_DIR = Path.home() / ".claude" / "catalog"
 
 
 def first_sentence(desc: str) -> str:
@@ -118,39 +124,62 @@ def normalize_structural(node: dict) -> dict:
 
 # ── ADR 0018: Autonomous Agents live from launchd ───────────────────────────
 
+def load_plist(path: Path) -> dict | None:
+    """Parse a launchd plist the way launchd does. Python's parser rejects some
+    files launchd accepts (e.g. "--" inside an XML comment), which used to drop
+    that agent from the map with no warning — fall back to plutil, and say so
+    if even that fails."""
+    try:
+        with path.open("rb") as f:
+            return plistlib.load(f)
+    except Exception:
+        pass
+    try:
+        out = subprocess.run(["/usr/bin/plutil", "-convert", "xml1", "-o", "-", str(path)],
+                             capture_output=True, check=True, timeout=10).stdout
+        return plistlib.loads(out)
+    except Exception as exc:
+        print(f"WARNING: could not read {path.name} — left off the map: {exc}", file=sys.stderr)
+        return None
+
+
+def describe_schedule(data: dict) -> str | None:
+    """How often a launchd job repeats, or None if it doesn't (a one-off task
+    or an always-on service). See brain-map/CONTEXT.md, "Recurring agent"."""
+    interval = data.get("StartInterval")
+    if isinstance(interval, int) and interval > 0:
+        if interval % 3600 == 0:
+            return f"every {interval // 3600} h"
+        return f"every {max(1, interval // 60)} min"
+    cal = data.get("StartCalendarInterval")
+    entries = cal if isinstance(cal, list) else [cal] if isinstance(cal, dict) else []
+    # launchd sets Day/Month/Year together only for one specific date — a one-off.
+    entries = [e for e in entries if isinstance(e, dict) and not any(k in e for k in ("Day", "Month", "Year"))]
+    if not entries:
+        return None
+    first = entries[0]
+    return f"{first.get('Hour', 0):02d}:{first.get('Minute', 0):02d}"
+
+
 def discover_recurring_agents() -> list[dict]:
-    """A com.marvin.*.plist counts as a recurring agent iff its
-    StartCalendarInterval sets only Hour/Minute — launchd only sets
-    Day/Month/Year together for one specific calendar date (a one-off task,
-    e.g. verify-digest-fix), never for a genuine daily/weekly job. See
-    brain-map/CONTEXT.md. desktoplive itself uses RunAtLoad/KeepAlive instead
-    of a calendar interval, so it's excluded with no special-casing."""
+    """Every com.marvin.*.plist that repeats on a schedule — a daily/weekly
+    calendar time or a fixed interval. One-off tasks and always-on services
+    (RunAtLoad/KeepAlive with no schedule, e.g. desktoplive) are excluded."""
     agents = []
     for plist_path in sorted(LAUNCHD_DIR.glob("com.marvin.*.plist")):
-        try:
-            with plist_path.open("rb") as f:
-                data = plistlib.load(f)
-        except Exception:
+        data = load_plist(plist_path)
+        if data is None:
             continue
-        interval = data.get("StartCalendarInterval")
-        if not isinstance(interval, dict):
+        schedule = describe_schedule(data)
+        if schedule is None:
             continue
-        if any(k in interval for k in ("Day", "Month", "Year")):
-            continue
-        label = data.get("Label", "")
-        agent_id = label.removeprefix("com.marvin.")
+        agent_id = data.get("Label", "").removeprefix("com.marvin.")
         if not agent_id:
             continue
         program_args = data.get("ProgramArguments") or []
         script_path = Path(program_args[-1]) if program_args else None
         fallback_desc = read_docstring_first_sentence(script_path) if script_path else ""
-        hour = interval.get("Hour", 0)
-        minute = interval.get("Minute", 0)
-        agents.append({
-            "id": agent_id,
-            "schedule": f"{hour:02d}:{minute:02d}",
-            "fallback_desc": fallback_desc,
-        })
+        agents.append({"id": agent_id, "schedule": schedule, "fallback_desc": fallback_desc})
     return agents
 
 
@@ -254,6 +283,56 @@ def build_device_children(enrichment: dict) -> list[dict]:
     return children
 
 
+# ── ADR 0049: dashboard tabs and projects, live ─────────────────────────────
+
+def discover_dashboard_tabs() -> list[dict]:
+    """The dashboard's tabs, read from the TABS list in its App.jsx."""
+    try:
+        src = DASHBOARD_APP_PATH.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    block = re.search(r"const TABS\s*=\s*\[(.*?)\]", src, re.S)
+    if not block:
+        return []
+    labels = re.findall(r"label:\s*['\"]([^'\"]+)['\"]", block.group(1))
+    return [{"id": f"{label} tab", "desc": f"Dashboard tab: {label}"} for label in labels]
+
+
+def build_dashboard_trunk() -> dict:
+    tabs = [{"id": t["id"], "cat": "dashboard", "desc": t["desc"],
+             "expandable": False, "expanded": True, "children": []} for t in discover_dashboard_tabs()]
+    return {"id": "Dashboard", "cat": "dashboard",
+            "desc": "The desktop app for watching and steering MARVIN",
+            "expandable": False, "expanded": True, "children": tabs}
+
+
+def discover_projects() -> list[dict]:
+    """Active and recent projects from the newest machine catalog. marvin itself
+    is the root, not a project node; dormant projects are left off."""
+    catalogs = sorted(CATALOG_DIR.glob("projects.*.json"), key=lambda p: p.stat().st_mtime) if CATALOG_DIR.is_dir() else []
+    if not catalogs:
+        return []
+    try:
+        projects = json.loads(catalogs[-1].read_text(encoding="utf-8")).get("projects", [])
+    except (OSError, json.JSONDecodeError):
+        return []
+    out = []
+    for p in projects:
+        if p.get("status") not in ("active", "recent") or p.get("id") == "marvin":
+            continue
+        out.append({"id": p.get("name") or p["id"], "desc": first_sentence(p.get("description") or ""),
+                    "visibility": p.get("visibility") or "LOCAL", "kind": p.get("kind", "")})
+    return sorted(out, key=lambda p: p["id"].lower())
+
+
+def build_projects_trunk() -> dict:
+    children = [{"id": p["id"], "cat": "projects", "desc": p["desc"], "visibility": p["visibility"],
+                 "expandable": False, "expanded": True, "children": []} for p in discover_projects()]
+    return {"id": "Projects", "cat": "projects",
+            "desc": f"{len(children)} active or recent projects MARVIN works on",
+            "expandable": False, "expanded": True, "children": children}
+
+
 def build_tree(manifest: dict, enrichment: dict) -> dict:
     skills = {e["name"]: e for e in manifest["index"]}
 
@@ -288,18 +367,18 @@ def build_tree(manifest: dict, enrichment: dict) -> dict:
         cat = enrichment["skill_categories"].get(name)
         if cat is None:
             uncategorized.append(name)
-            continue
-        by_category[cat].append(build_skill_node(name, cat, enrichment))
+            cat = "other"
+        by_category.setdefault(cat, []).append(build_skill_node(name, cat, enrichment))
 
     if uncategorized:
-        print(f"WARNING: {len(uncategorized)} skill(s) in manifest.json have no category "
-              f"in enrichment.json's skill_categories — omitted from the graph: {uncategorized}",
-              file=sys.stderr)
+        print(f"NOTE: {len(uncategorized)} skill(s) have no category in enrichment.json's "
+              f"skill_categories — shown under Other: {uncategorized}", file=sys.stderr)
 
     skills_trunk_children = []
-    for cat in enrichment["category_order"]:
+    labels = {**enrichment["category_labels"], "other": "Other"}
+    for cat in enrichment["category_order"] + (["other"] if by_category.get("other") else []):
         skills_trunk_children.append({
-            "id": enrichment["category_labels"][cat], "cat": cat, "desc": "",
+            "id": labels[cat], "cat": cat, "desc": "",
             "expandable": False, "expanded": True,
             "children": by_category[cat],
         })
@@ -320,7 +399,7 @@ def build_tree(manifest: dict, enrichment: dict) -> dict:
     root = {
         "id": enrichment["root"]["id"], "cat": "root", "desc": enrichment["root"]["desc"],
         "expandable": False, "expanded": True,
-        "children": [structural[0], skills_trunk] + structural[1:],
+        "children": [structural[0], skills_trunk] + structural[1:] + [build_dashboard_trunk(), build_projects_trunk()],
     }
     return root
 
