@@ -26,35 +26,24 @@ def test_new_copies_the_chosen_starters_and_never_overwrites(tmp_path):
     assert (target / "setup.mmd").read_text() == "edited"
 
 
-def test_find_chrome_returns_the_first_browser_that_exists(tmp_path):
-    real = tmp_path / "Chrome"; real.write_text("")
-    assert pd.find_chrome([tmp_path / "missing", real]) == real
-    assert pd.find_chrome([tmp_path / "missing"]) is None
-
-
-def test_render_builds_one_mermaid_command_per_source_into_the_figures_folder(tmp_path):
+def test_render_reuses_render_diagrams_with_every_source_for_the_page(tmp_path):
     project = make_project(tmp_path)
     pd.new(project, "my-tool", ["setup", "run"])
-    calls = []
-    def runner(cmd, **kw):
-        calls.append(cmd)
-        Path(cmd[cmd.index("-o") + 1]).write_text("<svg/>")
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
-    out = pd.render(project, "my-tool", runner=runner, chrome=Path("/Applications/Chrome"))
+    seen = {}
+    def renderer(diagrams, out_dir):
+        seen.update(diagrams); seen["out"] = out_dir
+        return {n: Path(out_dir) / f"{n}.svg" for n in diagrams}
+    out = pd.render(project, "my-tool", renderer=renderer)
     figures = project / "deploy" / "longform" / "figures" / "my-tool"
-    assert sorted(p.name for p in out) == ["run.svg", "setup.svg"] and all(p.parent == figures for p in out)
-    cmd = calls[0]
-    assert "@mermaid-js/mermaid-cli@11" in " ".join(cmd) and cmd[cmd.index("-c") + 1].endswith("theme.json")
-    assert cmd[cmd.index("-b") + 1] == "white" and "-p" in cmd
+    assert sorted(p.name for p in out) == ["run.svg", "setup.svg"] and seen["out"] == figures
+    assert seen["setup"].startswith("flowchart")
 
 
-def test_render_reports_which_diagram_failed(tmp_path):
+def test_render_reports_which_page_had_no_sources(tmp_path):
     project = make_project(tmp_path)
-    pd.new(project, "my-tool", ["run"])
-    bad = lambda cmd, **kw: SimpleNamespace(returncode=1, stdout="", stderr="Parse error on line 2")
     try:
-        pd.render(project, "my-tool", runner=bad, chrome=Path("/x"))
+        pd.render(project, "nothing-here", renderer=lambda d, o: {})
     except pd.DiagramError as e:
-        assert "run.mmd" in str(e) and "Parse error" in str(e)
+        assert "nothing-here" in str(e)
     else:
         raise AssertionError("expected DiagramError")
