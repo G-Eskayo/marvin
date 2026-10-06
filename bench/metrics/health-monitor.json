@@ -11972,5 +11972,55 @@
         "higher_is_better": false
       }
     }
+  },
+  {
+    "timestamp": "2026-10-06T23:29:03.108012+00:00",
+    "metrics": {
+      "route:intent-routing-collection": {
+        "value": 92,
+        "higher_is_better": true
+      },
+      "catalog:fresh": {
+        "value": 8.3,
+        "higher_is_better": false
+      },
+      "github:budget": {
+        "value": 4993,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.agents@mac-mini-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.claude@mac-mini-1": {
+        "value": 0,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-06T23:44:11.692790+00:00",
+    "metrics": {
+      "route:intent-routing-collection": {
+        "value": 92,
+        "higher_is_better": true
+      },
+      "catalog:fresh": {
+        "value": 8.6,
+        "higher_is_better": false
+      },
+      "github:budget": {
+        "value": 4957,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.agents@mac-mini-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.claude@mac-mini-1": {
+        "value": 0,
+        "higher_is_better": false
+      }
+    }
   }
 ]
