@@ -5,7 +5,8 @@
   "dispatch": "on",
   "merge_from_dashboard": true,
   "machines": [
-    "mac-mini-1"
+    "mac-mini-1",
+    "macbook-pro-1"
   ],
   "clone_hints": [
     "~/Developer/clarity-captions",
