@@ -2,11 +2,12 @@
 
 Domain terms only. No implementation details — see `docs/adr/` for decisions and rationale.
 
-- **Recurring agent**: a `com.marvin.*` launchd job whose `StartCalendarInterval` sets only
-  `Hour`/`Minute` (fires every day at that time). Distinct from a **one-off task**, which sets
-  `Day`/`Month`/`Year` alongside `Hour`/`Minute` (launchd only sets those three for a specific
-  calendar date — e.g. `com.marvin.verify-digest-fix`, which fired once on 2026-07-07). Only
-  recurring agents appear as nodes under the graph's "Autonomous Agents" trunk.
+- **Recurring agent**: a `com.marvin.*` launchd job that repeats on a schedule — a daily or weekly
+  calendar time, or a fixed interval (e.g. the ticket pipeline every 15 minutes). Distinct from a
+  **one-off task**, which sets `Day`/`Month`/`Year` for one specific date (e.g.
+  `com.marvin.verify-digest-fix`, fired once on 2026-07-07), and from an **always-on service**, which
+  runs continuously with no schedule (e.g. the wallpaper app). Only recurring agents appear under the
+  "Autonomous Agents" trunk. (Widened 2026-10-06, #182: interval jobs used to be left out.)
 - **System layer**: the overview — MARVIN's parts (memory, skills, infrastructure, agents,
   machines, dashboard, pipeline, projects) as one tree. The only layer the desktop wallpaper shows.
 - **Code layer**: the code behind one system node, taken from the graphify code graph: its files,
