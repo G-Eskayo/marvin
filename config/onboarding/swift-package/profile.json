@@ -1,0 +1,20 @@
+{
+  "name": "swift-package",
+  "detect": {
+    "file_glob": "**/Package.swift"
+  },
+  "priority": 20,
+  "test_detect": {
+    "file_glob": "**/Package.swift"
+  },
+  "ci_contains_any": ["swift test", "swift build"],
+  "requires_tools": ["swift"],
+  "macos_runner": true,
+  "generated_candidates": [
+    {
+      "path": ".build",
+      "confirm": true
+    }
+  ],
+  "profile_fragment": {}
+}

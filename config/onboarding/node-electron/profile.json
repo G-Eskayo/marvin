@@ -1,0 +1,27 @@
+{
+  "name": "node-electron",
+  "detect": {
+    "file": "package.json",
+    "content_any": ["\"electron\""]
+  },
+  "priority": 20,
+  "test_detect": {
+    "file": "package.json",
+    "content_any": ["\"electron\""]
+  },
+  "ci_contains_any": ["npm test", "npm run test"],
+  "requires_tools": ["node", "npm"],
+  "macos_runner": false,
+  "generated_candidates": [
+    {
+      "path": "node_modules",
+      "confirm": true
+    },
+    {
+      "path": "package-lock.json",
+      "unless": "package.json",
+      "confirm": true
+    }
+  ],
+  "profile_fragment": {}
+}
