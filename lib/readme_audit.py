@@ -24,6 +24,7 @@ import re
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -121,7 +122,7 @@ def check_prove(parsed: dict, tree: set[str]) -> list[Finding]:
     for i in parsed["images"]:
         u = i["url"]
         if u and not re.match(r"^(https?:|data:|//)", u):
-            path = str(PurePosixPath(u.lstrip("/").split("#")[0].split("?")[0]))
+            path = str(PurePosixPath(urllib.parse.unquote(u.lstrip("/").split("#")[0].split("?")[0])))
             if path.startswith("./"):
                 path = path[2:]
             if tree and path not in tree:
@@ -178,7 +179,7 @@ def check_navigate(parsed: dict, tree: set[str], status_of=None) -> list[Finding
                 elif code >= 400:
                     ext_bad.append(f"{u} -> {code}")
         else:
-            path = u.split("#")[0].split("?")[0].lstrip("/")
+            path = urllib.parse.unquote(u.split("#")[0].split("?")[0]).lstrip("/")
             path = path[2:] if path.startswith("./") else path
             if path and tree and path.rstrip("/") not in tree and not any(p.startswith(path.rstrip("/") + "/") for p in tree):
                 rel_bad.append(u)
