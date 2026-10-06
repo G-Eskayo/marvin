@@ -19,7 +19,7 @@ echo "→ Compiling DesktopLive..."
 APP_BUNDLE="$BRAIN_MAP_DIR/DesktopLive/DesktopLive.app"
 APP_BIN_DIR="$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_BIN_DIR"
-( cd "$BRAIN_MAP_DIR/DesktopLive" && swiftc -O main.swift -o "$APP_BIN_DIR/DesktopLive" )
+( cd "$BRAIN_MAP_DIR/DesktopLive" && swiftc -O main.swift EventLog.swift -o "$APP_BIN_DIR/DesktopLive" )
 
 # A bare binary (no .app bundle) leaves LSUIElement/accessory status to a
 # runtime NSApp.setActivationPolicy() call inside applicationDidFinishLaunching

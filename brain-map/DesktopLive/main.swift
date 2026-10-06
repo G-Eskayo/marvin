@@ -8,7 +8,7 @@
 // shipping the menu-bar extra, settings UI, or App Store wrapper around
 // it, since none of that is needed for one fixed local file.
 //
-// Build:  swiftc -O main.swift -o DesktopLive
+// Build:  swiftc -O main.swift EventLog.swift -o DesktopLive   (tests: ./test.sh)
 // Run:    ./DesktopLive [path-to-html]   (defaults to ../index.html)
 
 import Cocoa
@@ -25,6 +25,23 @@ let htmlPath: String = {
     return NSHomeDirectory() + "/.agents/brain-map/index.html"
 }()
 
+// Why the wallpaper did or didn't draw (#136) — see EventLog.swift.
+let eventLog = EventLog(path: URL(fileURLWithPath: NSHomeDirectory() + "/.claude/logs/desktoplive.log"))
+
+func describe(_ screen: NSScreen) -> [String] {
+    let f = screen.frame
+    return ["screen", screen.localizedName,
+            "frame", "\(Int(f.origin.x)),\(Int(f.origin.y)),\(Int(f.width)),\(Int(f.height))",
+            "scale", "\(screen.backingScaleFactor)"]
+}
+
+func screenSet() -> String {
+    NSScreen.screens.map { s in
+        let f = s.frame
+        return "\(s.localizedName)@\(Int(f.width))x\(Int(f.height))"
+    }.joined(separator: ";")
+}
+
 let plainFileURL = URL(fileURLWithPath: htmlPath)
 let readAccessDir = plainFileURL.deletingLastPathComponent()
 
@@ -36,6 +53,7 @@ wallpaperComponents.query = "wallpaper=1"
 let fileURL = wallpaperComponents.url ?? plainFileURL
 
 guard FileManager.default.fileExists(atPath: fileURL.path) else {
+    eventLog.write("exit", "reason", "no page file", "path", fileURL.path)
     FileHandle.standardError.write("DesktopLive: no file at \(fileURL.path)\n".data(using: .utf8)!)
     exit(1)
 }
@@ -55,7 +73,7 @@ let treeDataURL = readAccessDir.appendingPathComponent("tree-data.json")
 let networkURL = URL(fileURLWithPath: NSHomeDirectory() + "/.claude/marvin-network.json")
 let tailscaleBinary = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     var windows: [NSWindow] = []
     var lastMTime: Date?
     var reloadTimer: Timer?
@@ -66,9 +84,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var lastActivityLineCount = 0
     var lastDemoLineCount = 0
     var lastDeviceOnline: [String: Bool] = [:]
+    // Last renderFrame outcome per window ("ok", "missing", "error: ..."),
+    // so only changes get logged, not 24 lines a second.
+    var drawState: [ObjectIdentifier: String] = [:]
+    var sigtermSource: DispatchSourceSignal?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory) // no Dock icon, no menu bar
+        eventLog.write("launch", "pid", "\(ProcessInfo.processInfo.processIdentifier)",
+                       "page", fileURL.absoluteString, "screens", screenSet())
+        observeSystemEvents()
 
         for screen in NSScreen.screens {
             let window = NSWindow(
@@ -90,6 +115,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             let webView = DesktopWebView(frame: screen.frame)
             webView.setValue(false, forKey: "drawsBackground") // avoid a white flash before first paint
+            webView.navigationDelegate = self
+            eventLog.write("window-created", pairs: describe(screen))
             webView.loadFileURL(fileURL, allowingReadAccessTo: readAccessDir)
 
             window.contentView = webView
@@ -152,9 +179,84 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func renderFrame() {
         for window in windows {
+            let id = ObjectIdentifier(window)
+            let screen = window.screen?.localizedName ?? "none"
             (window.contentView as? WKWebView)?.evaluateJavaScript(
-                "if (window.renderFrame) window.renderFrame(performance.now());", completionHandler: nil)
+                "window.renderFrame ? (window.renderFrame(performance.now()), true) : false") { [weak self] result, error in
+                let state: String
+                if let error = error { state = "error: \(error.localizedDescription)" }
+                else { state = (result as? Bool) == true ? "ok" : "missing" }
+                guard let self = self, self.drawState[id] != state else { return }
+                self.drawState[id] = state
+                // "missing" = page not loaded (or crashed) so there's nothing to draw with.
+                eventLog.write("draw", "state", state, "screen", screen)
+            }
         }
+    }
+
+    // Logging only (#174) — acting on these (rebuild windows, reload a dead
+    // page) is #175/#176.
+    func observeSystemEvents() {
+        let ws = NSWorkspace.shared.notificationCenter
+        let events: [(Notification.Name, String)] = [
+            (NSWorkspace.willSleepNotification, "sleep"),
+            (NSWorkspace.didWakeNotification, "wake"),
+            (NSWorkspace.screensDidSleepNotification, "screens-sleep"),
+            (NSWorkspace.screensDidWakeNotification, "screens-wake"),
+            (NSWorkspace.sessionDidResignActiveNotification, "session-inactive"),
+            (NSWorkspace.sessionDidBecomeActiveNotification, "session-active"),
+        ]
+        for (name, label) in events {
+            ws.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                eventLog.write(label, "screens", screenSet(), "windows", self?.windowSet() ?? "")
+            }
+        }
+        NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
+                                               object: nil, queue: .main) { [weak self] _ in
+            eventLog.write("display-change", "screens", screenSet(), "windows", self?.windowSet() ?? "")
+        }
+        // launchd stops jobs (and the daily restart pkills it) with SIGTERM,
+        // which skips applicationWillTerminate — catch it so exits are visible.
+        signal(SIGTERM, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        source.setEventHandler {
+            eventLog.write("exit", "reason", "SIGTERM")
+            exit(0)
+        }
+        source.resume()
+        sigtermSource = source
+    }
+
+    // Each window's current frame, to compare with screenSet() after a change.
+    func windowSet() -> String {
+        windows.map { w in
+            let f = w.frame
+            return "\(w.screen?.localizedName ?? "offscreen")@\(Int(f.width))x\(Int(f.height))"
+        }.joined(separator: ";")
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        eventLog.write("exit", "reason", "terminate")
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        eventLog.write("page-loaded", "screen", webView.window?.screen?.localizedName ?? "none")
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        eventLog.write("page-load-failed", "screen", webView.window?.screen?.localizedName ?? "none",
+                       "error", error.localizedDescription)
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        eventLog.write("page-load-failed", "screen", webView.window?.screen?.localizedName ?? "none",
+                       "error", error.localizedDescription)
+    }
+
+    // WebKit's content process died: the window goes black and stays that way
+    // (no reload yet — #176).
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        eventLog.write("page-process-died", "screen", webView.window?.screen?.localizedName ?? "none")
     }
 
     func mtime() -> Date? {
@@ -170,6 +272,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               let synJSON = try? JSONSerialization.data(withJSONObject: obj["synapses"] ?? []) else {
             // tree-data.json didn't parse (e.g. generate.py mid-write) — fall
             // back to a full reload rather than silently staying stale.
+            eventLog.write("page-reload", "reason", "tree-data.json did not parse")
             for window in windows {
                 (window.contentView as? WKWebView)?.loadFileURL(fileURL, allowingReadAccessTo: readAccessDir)
             }
