@@ -65,6 +65,8 @@ contextBridge.exposeInMainWorld('api', {
     saveComponent: (name, html, notes) => ipcRenderer.invoke('portfolio:component:save', name, html, notes),
     createComponent: (name, html, notes) => ipcRenderer.invoke('portfolio:component:create', name, html, notes),
     previewHead: () => ipcRenderer.invoke('portfolio:preview-head'),
+    contentTemplates: () => ipcRenderer.invoke('portfolio:content:templates'),
+    contentReport: () => ipcRenderer.invoke('portfolio:content:report'),
     rules: () => ipcRenderer.invoke('portfolio:rules'),
     saveRules: (overrides) => ipcRenderer.invoke('portfolio:rules:save', overrides),
     guide: () => ipcRenderer.invoke('portfolio:guide'),

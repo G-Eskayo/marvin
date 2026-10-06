@@ -17,6 +17,7 @@ const SUBTABS = [
   ['inventory', 'Site inventory'],
   ['add', 'Add project'],
   ['guide', 'Guide & rules'],
+  ['content', 'Content'],
   ['evaluation', 'Evaluation'],
   ['images', 'Images']
 ]
@@ -755,6 +756,100 @@ function GuideAndRules() {
 
 // ── Evaluation ──────────────────────────────────────────────────────────────
 
+// ── Content (ADR 0051): what each page should say, from its content template, and what it is missing ──
+function Content() {
+  const [templates, setTemplates] = useState([])
+  const [report, setReport] = useState(null)
+  const [error, setError] = useState(null)
+  const [open, setOpen] = useState(null)
+
+  async function load() {
+    setError(null)
+    try {
+      const [t, r] = await Promise.all([window.api.portfolio.contentTemplates(), window.api.portfolio.contentReport()])
+      setTemplates(t)
+      setReport(r)
+    } catch (err) {
+      setError(errText(err))
+    }
+  }
+  useEffect(() => { load() }, [])
+
+  const pages = Object.entries(report?.pages || {}).sort(([, a], [, b]) => (a.template ? 0 : 1) - (b.template ? 0 : 1) || String(a.title || '').localeCompare(String(b.title || '')))
+  const gaps = (p) => (p.coverage?.missing_roles?.length || 0) + (p.coverage?.missing_evidence?.length || 0) + (p.findings?.length || 0)
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <p className="max-w-3xl text-sm text-neutral-400">
+          Every page has a type, and every type has a content template: the sections in order and the evidence each needs.
+          Pages built from a template show what they are missing; older pages show as not on a template yet. The rules
+          behind this are in Guide &amp; rules.
+        </p>
+        <button className={button} onClick={load}>Refresh</button>
+      </div>
+      {error && <p className="text-sm text-red-400">{error}</p>}
+
+      <section>
+        <h3 className="mb-2 text-xs uppercase tracking-wide text-neutral-500">Templates</h3>
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          {templates.map((t) => (
+            <div key={t.id} className="rounded-lg border border-neutral-800 bg-neutral-900/50 p-4">
+              <div className="flex items-baseline justify-between">
+                <span className="font-medium text-neutral-100">{t.name}</span>
+                <span className="font-mono text-xs text-neutral-500">{t.id}</span>
+              </div>
+              <p className="mt-1 text-xs text-neutral-400">{t.for}</p>
+              <p className="mt-2 text-xs text-neutral-300"><span className="text-neutral-500">Lead: </span>{t.lead}</p>
+              <ol className="mt-3 space-y-1.5">
+                {(t.sections || []).map((sec) => (
+                  <li key={sec.role} className="text-xs">
+                    <span className="font-mono text-neutral-200">{sec.role}</span>
+                    <span className={sec.required ? 'ml-2 text-amber-300' : 'ml-2 text-neutral-500'}>{sec.required ? (sec.only_if ? `required if ${sec.only_if.replaceAll('_', ' ')}` : 'required') : 'optional'}</span>
+                    {(sec.evidence || []).map((e) => <span key={e} className="ml-1.5 rounded bg-neutral-800 px-1.5 py-0.5 text-neutral-300">{e.replace('|', ' or ')}</span>)}
+                    <div className="text-neutral-500">{sec.purpose}</div>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section>
+        <h3 className="mb-2 text-xs uppercase tracking-wide text-neutral-500">Pages</h3>
+        {!report ? <p className="text-sm text-neutral-500">Checking pages…</p> : (
+          <div className="divide-y divide-neutral-800 rounded-lg border border-neutral-800">
+            {pages.map(([slug, pg]) => (
+              <div key={slug} className="p-3">
+                <button className="flex w-full items-center justify-between text-left" onClick={() => setOpen(open === slug ? null : slug)}>
+                  <span className="text-sm text-neutral-100">{pg.title || slug}</span>
+                  <span className="flex items-center gap-2 text-xs">
+                    {pg.template ? <span className="font-mono text-neutral-400">{pg.template}</span> : <span className="text-neutral-500">not on a template yet</span>}
+                    {pg.template && (gaps(pg) === 0
+                      ? <span className="rounded bg-emerald-900/50 px-2 py-0.5 text-emerald-300">complete</span>
+                      : <span className="rounded bg-amber-900/40 px-2 py-0.5 text-amber-300">{gaps(pg)} to fix</span>)}
+                  </span>
+                </button>
+                {open === slug && (
+                  <div className="mt-2 space-y-1 pl-2 text-xs text-neutral-300">
+                    {pg.url && <a className="text-blue-400 hover:underline" href={`${DEV_SITE}${pg.url}`} target="_blank" rel="noreferrer">Open on the dev site</a>}
+                    {(pg.coverage?.missing_roles || []).map((r) => <div key={`r-${r}`}>Missing section: <span className="font-mono">{r}</span></div>)}
+                    {(pg.coverage?.missing_evidence || []).map((m) => <div key={`e-${m.role}-${m.evidence}`}>Section <span className="font-mono">{m.role}</span> needs {m.evidence.replace('|', ' or ')}</div>)}
+                    {(pg.findings || []).map((f, i) => <div key={`f-${i}`}><span className="font-mono text-neutral-400">{f.rule}</span>: {f.detail}</div>)}
+                    {!pg.template && <div className="text-neutral-500">Rebuild this page from a content template to track it here. Its copy is still checked in Evaluation.</div>}
+                    {pg.template && gaps(pg) === 0 && <div className="text-emerald-300">Every required section and its evidence is here.</div>}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  )
+}
+
 function Evaluation() {
   const [result, setResult] = useState(undefined)
   const [running, setRunning] = useState(false)
@@ -1053,7 +1148,7 @@ export default function PortfolioHub() {
         <span className="ml-auto pb-2 text-[11px] text-neutral-600">dev site only · nothing here touches production</span>
       </nav>
       <div className="flex-1 overflow-auto p-6">
-        {tab === 'templates' ? <Templates /> : tab === 'inventory' ? <Inventory /> : tab === 'add' ? <AddProject /> : tab === 'guide' ? <GuideAndRules /> : tab === 'evaluation' ? <Evaluation /> : <Images />}
+        {tab === 'templates' ? <Templates /> : tab === 'inventory' ? <Inventory /> : tab === 'add' ? <AddProject /> : tab === 'guide' ? <GuideAndRules /> : tab === 'content' ? <Content /> : tab === 'evaluation' ? <Evaluation /> : <Images />}
       </div>
     </div>
   )

@@ -142,15 +142,20 @@ def evaluate(project: Path = PROJECT) -> dict:
     templates = {p.stem: json.loads(p.read_text()) for p in sorted((project / "templates" / "content").glob("*.json"))}
     contents = {p.stem: json.loads(p.read_text()) for p in sorted((project / "content" / "longform").glob("*.json"))}
     manifest_path = project / "deploy" / "other-projects" / "manifest.json"
-    urls = {_slug(m["url"]): m["url"] for m in json.loads(manifest_path.read_text())} if manifest_path.exists() else {}
+    manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else []
+    urls = {_slug(m["url"]): m["url"] for m in manifest}
+    titles = {_slug(m["url"]): m.get("title") for m in manifest}
     urls.setdefault("marvin", "/ai-projects/marvin/")
     pages = {}
     for slug, c in contents.items():
         ctype = c.get("content_type") if c.get("content_type") in templates else None
         html = _page_html(c)
         findings = check_copy(html) + check_media_markup(html) + check_has_figure(c)
-        pages[slug] = {"template": ctype, "url": urls.get(slug), "coverage": coverage(c, templates[ctype]) if ctype else None,
+        pages[slug] = {"template": ctype, "url": urls.get(slug), "title": titles.get(slug), "coverage": coverage(c, templates[ctype]) if ctype else None,
                        "findings": findings}
+    for slug in urls:   # manifest pages with no content file yet: listed, not failed
+        if slug not in pages and slug in titles:
+            pages[slug] = {"template": None, "url": urls[slug], "title": titles[slug], "coverage": None, "findings": []}
     for f in check_marvin_links(contents, urls):
         pages[f.pop("page")]["findings"].append(f)
     return {"templates": sorted(templates), "pages": pages}
