@@ -23,6 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import portfolio_rules  # noqa: E402
+import portfolio_content as pc  # noqa: E402
 
 PROJECT = Path.home() / "Documents" / "Projects" / "portfolio-website-updater"
 RULES_PATH = PROJECT / "templates" / "design-rules.json"
@@ -264,6 +265,14 @@ _MEASURE_JS = """() => {
 }"""
 
 
+# The page's own copy: the content area without the generated Other Projects cards (their text belongs to other pages).
+_COPY_JS = """() => {
+  const area = (document.querySelector('#content .post-content') || document.querySelector('#content') || document.body).cloneNode(true);
+  area.querySelectorAll('.other-projects, [data-other-projects], .hub-sidebar, script, style, code, pre').forEach(n => n.remove());
+  return area.innerHTML;
+}"""
+
+
 _MEDIA_JS = """() => {
   const area = document.querySelector('#content') || document.body;
   const vids = [...area.querySelectorAll('video')].map(v => ({kind: 'video',
@@ -318,8 +327,9 @@ def run(base: str = "http://localhost:8080", rules: dict | None = None, manifest
                 m = page.evaluate(_MEASURE_JS)
                 label = f"{url} @{width}"
                 per_page = check_overflow(m["viewport"], m["scrollWidth"])
-                if width == rules["viewports"][0]:   # media doesn't change with width: check it once per page
+                if width == rules["viewports"][0]:   # media and copy don't change with width: check them once per page
                     per_page += check_media(_measure_media(page, base))
+                    per_page += pc.check_copy(page.evaluate(_COPY_JS))
                 if width >= 1100:   # card geometry rules apply to the desktop layouts
                     import portfolio_elements as pe
                     for eid, el in library.items():
@@ -338,6 +348,7 @@ def run(base: str = "http://localhost:8080", rules: dict | None = None, manifest
         browser.close()
 
     findings += check_card_consistency(card_geoms)
+    findings += pc.findings_for_evaluation(include_copy=False)   # content templates, alt text, figures, MARVIN links (ADR 0051)
     labels = [f"{u} @{w}" for w in rules["viewports"] for u in pages] + ["(manifest)"]
     return {"base": base, "rules": rules, "findings": findings, "summary": summarize(findings, labels)}
 
