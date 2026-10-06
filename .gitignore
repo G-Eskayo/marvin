@@ -48,6 +48,10 @@ settings.local.json
 manifest.json
 chroma/
 projects/
+# ...but the per-project execution profiles are versioned (CONTEXT.md 'Per-project execution profiles'): the pattern above
+# was only meant for ~/.claude/projects. finance-os stays local: it names personal data folders and this repo is public.
+!/config/projects/
+/config/projects/finance-os.json
 history.jsonl
 handoffs/
 skills/self-improve/.background_review.lock

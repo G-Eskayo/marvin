@@ -1,0 +1,83 @@
+{
+  "_readme": "How the ticket pipeline builds and verifies G-Eskayo/clarity-captions (lib/project_profile.py; design in CONTEXT.md 'Per-project execution profiles'). dispatch is OFF: the pipeline does nothing with this project until it is set to \"on\". Check it first with: ~/.agents/venv/bin/python ~/.agents/lib/project_profile.py selftest G-Eskayo/clarity-captions merge_from_dashboard is separate from dispatch: it only lets a person approve or deny this project's PRs in the dashboard's MR Review (the webhook re-checks it).",
+  "repo": "G-Eskayo/clarity-captions",
+  "base_branch": "main",
+  "dispatch": "on",
+  "merge_from_dashboard": true,
+  "machines": [
+    "mac-mini-1"
+  ],
+  "clone_hints": [
+    "~/Developer/clarity-captions",
+    "~/Documents/Projects/clarity-captions"
+  ],
+  "env": {
+    "DEVELOPER_DIR": {
+      "first_existing": [
+        "/Applications/Xcode.app/Contents/Developer"
+      ]
+    }
+  },
+  "executor": {
+    "allowed_tools": [
+      "Bash(swift build*)",
+      "Bash(swift test*)",
+      "Bash(swift package*)"
+    ],
+    "notes": "This is Clarity Captions, a native iPhone live-captioning app (working name; the store name is Seal, ADR 0011). Read CLAUDE.md, CONTEXT.md and docs/adr/ first: they define the vocabulary and the decisions already made (notably ADR 0007 free and on-device, ADR 0010 platform-agnostic core, ADR 0012 dim don't dismiss, ADR 0013 radical simplicity for older users). Structure: Packages/CaptionCore is a SwiftPM package holding the platform-agnostic logic with XCTest tests; Apps/Spike is the SwiftUI iPhone app (an XcodeGen project: the .xcodeproj is generated and not committed). Put decisions and logic in CaptionCore as small pure types with unit tests, and keep the SwiftUI layer thin, because the unit tests are the only automated check here. Verify with: cd Packages/CaptionCore && swift test (DEVELOPER_DIR is already set for you). You cannot build or run the iPhone app in this environment, so say plainly in your plan which behavior is untested. Do not change signing, bundle identifiers, the deployment target, package dependencies or ADRs, and add no network access or telemetry."
+  },
+  "verify": [
+    {
+      "id": "caption-core",
+      "label": "CaptionCore unit tests (swift test)",
+      "cwd": "Packages/CaptionCore",
+      "command": [
+        "swift",
+        "test"
+      ],
+      "requires": [
+        "swift",
+        "xcode"
+      ],
+      "parser": "swift-test",
+      "required": true,
+      "timeout_s": 1500
+    },
+    {
+      "id": "spike-app",
+      "label": "Spike app build (iOS Simulator)",
+      "enabled": true,
+      "cwd": "Apps/Spike",
+      "command": [
+        "bash",
+        "-c",
+        "D=$(mktemp -d \"${TMPDIR:-/tmp}/clarity-derived.XXXXXX\"); trap 'rm -rf \"$D\"' EXIT; xcodegen generate && xcodebuild -project CaptionSpike.xcodeproj -scheme CaptionSpike -destination 'generic/platform=iOS Simulator' -derivedDataPath \"$D\" CODE_SIGNING_ALLOWED=NO build"
+      ],
+      "requires": [
+        "xcodegen",
+        "xcode"
+      ],
+      "parser": "xcodebuild",
+      "required": true,
+      "timeout_s": 2400
+    }
+  ],
+  "evidence": {
+    "dev": {
+      "na": "iPhone app: there is no simulator screenshot capture on the pipeline machines yet, so UI changes are reviewed by running the app"
+    }
+  },
+  "setup": [
+    {
+      "id": "diarizer-model",
+      "label": "Link the cached speaker model into the app (fetched once, 234 MB)",
+      "command": [
+        "bash",
+        "-c",
+        "src=\"$HOME/.agents-pipeline-cache/clarity-captions/Sortformer_v2.1.mlmodelc\"; if [ ! -d \"$src\" ]; then mkdir -p \"$(dirname \"$src\")\" && sh scripts/fetch-diarizer-models.sh && mv Apps/Spike/Resources/Models/Sortformer_v2.1.mlmodelc \"$src\"; fi; mkdir -p Apps/Spike/Resources/Models && ln -sfn \"$src\" Apps/Spike/Resources/Models/Sortformer_v2.1.mlmodelc"
+      ],
+      "creates": "Apps/Spike/Resources/Models/Sortformer_v2.1.mlmodelc",
+      "requires": []
+    }
+  ]
+}

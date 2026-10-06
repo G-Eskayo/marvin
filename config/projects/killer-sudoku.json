@@ -1,0 +1,31 @@
+{
+  "_readme": "How the ticket pipeline builds and verifies G-Eskayo/killer-sudoku (lib/project_profile.py; design in CONTEXT.md 'Per-project execution profiles'). dispatch is OFF. merge_from_dashboard lets you approve or deny this project's PRs in the dashboard's MR Review. Check the setup with: ~/.agents/venv/bin/python ~/.agents/lib/project_profile.py selftest G-Eskayo/killer-sudoku",
+  "repo": "G-Eskayo/killer-sudoku",
+  "base_branch": "main",
+  "dispatch": "on",
+  "merge_from_dashboard": true,
+  "clone_mode": "pipeline",
+  "machines": ["mac-mini-1"],
+  "env": {
+    "DEVELOPER_DIR": { "first_existing": ["/Applications/Xcode.app/Contents/Developer"] }
+  },
+  "executor": {
+    "allowed_tools": ["Bash(swift build*)", "Bash(swift test*)", "Bash(swift package*)"],
+    "notes": "This is Killer Sudoku, a native macOS SwiftUI app. Read CLAUDE.md, CONTEXT.md (the vocabulary) and docs/adr/ (decisions already made) first. Structure: Sources/KillerSudokuCore holds the game logic (board, cages, generator, solver, grader, timer, stats) and is covered by Swift Testing tests in Tests/KillerSudokuCoreTests; Sources/KillerSudoku is the SwiftUI layer (a Canvas-drawn board, ADR 0001). desktop-kotlin is a separate Compose Multiplatform port that mirrors the Swift app; do not edit it unless the ticket says so. Put logic in KillerSudokuCore as small pure types with tests written first, and keep the SwiftUI layer thin, because the unit tests are the only automated check here. Verify with: swift test (DEVELOPER_DIR is already set for you). You cannot run the macOS app in this environment, so say plainly in your plan which behavior is untested. Do not change Package.swift targets or platforms, the app icon, or ADRs, and add no network access or telemetry (ADR 0002: local-only distribution)."
+  },
+  "verify": [
+    {
+      "id": "swift-tests",
+      "label": "KillerSudoku Swift tests (swift test)",
+      "cwd": ".",
+      "command": ["swift", "test"],
+      "requires": ["swift", "xcode"],
+      "parser": "swift-test",
+      "required": true,
+      "timeout_s": 1500
+    }
+  ],
+  "evidence": {
+    "dev": { "na": "macOS app: there is no screenshot capture on the pipeline machines yet, so UI changes are reviewed by running the app (scripts/run-app.sh)" }
+  }
+}
