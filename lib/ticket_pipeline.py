@@ -84,11 +84,8 @@ def _unclaimed_ready_tickets(repo: str = REPO) -> list[dict]:
                 and not any(n.startswith("claimed:") for n in names)
                 and not ticket_policy.open_blockers(i, open_numbers))
 
-    def rank(i):
-        r = ticket_policy.priority_rank(i)
-        return UNSCORED_RANK if r is None else r
-
     ready = [i for i in issues if eligible(i)]
+    _score_ready(ready, issues, open_numbers, repo)
     facts = _evidence_facts(repo) if ready else None
     if facts is not None:  # unreadable evidence must not stall dispatch: fall back to the old behaviour
         kept = []
@@ -109,7 +106,7 @@ def _unclaimed_ready_tickets(repo: str = REPO) -> list[dict]:
                 print(f"{LOG_PREFIX} skip {repo}#{i['number']}: work already exists "
                       f"({ticket_evidence.verdict(ev)}: {ev[0]['ref']} {ev[0]['detail'][:60]})", file=sys.stderr)
         ready = kept
-    ready.sort(key=lambda i: (rank(i), i["createdAt"]))
+    ready.sort(key=_order_key)
     return ready
 
 
@@ -321,9 +318,32 @@ def _build_wrapper_command(issue_number: int, repo: str = REPO) -> str:
     )
 
 
+def _due_for(repo: str) -> dict | None:
+    """The project's deadline, from the shared catalog overrides (the same source the ticket agents and the dashboard read)."""
+    import ticket_agents
+    return ticket_agents.due_for_repo(repo)
+
+
+def _score_ready(ready: list[dict], issues: list[dict], open_numbers: set[int], repo: str) -> None:
+    """Stamp each ready ticket with its urgency score (what it unblocks, its project's deadline, type, age), so ordering within
+    a repo and across repos weighs deadlines (ADR 0047). An unreadable deadline must not stall dispatch: score without it."""
+    try:
+        due = _due_for(repo)
+    except Exception:  # noqa: BLE001
+        due = None
+    blocks: dict[int, int] = {}
+    for i in issues:
+        for b in ticket_policy.open_blockers(i, open_numbers):
+            blocks[b] = blocks.get(b, 0) + 1
+    now = datetime.now(timezone.utc)
+    for i in ready:
+        i["_score"] = ticket_policy.score_ticket(i, blocks.get(i["number"], 0), due, now)[0]
+
+
 def _order_key(ticket: dict) -> tuple:
+    """A priority label a person (or the prioritizer) set wins; then the urgency score, deadlines weighing heavily; then age."""
     rank = ticket_policy.priority_rank(ticket)
-    return (UNSCORED_RANK if rank is None else rank, ticket["createdAt"])
+    return (UNSCORED_RANK if rank is None else rank, -ticket.get("_score", 0.0), ticket["createdAt"])
 
 
 def _flag_busy() -> bool:
