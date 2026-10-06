@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { deriveColumn, buildBoard, COLUMNS, STALE_CLAIM_MS } from '../electron/main/board.js'
+import { deriveColumn, buildBoard, COLUMNS, STALE_CLAIM_MS, checklistProgress } from '../electron/main/board.js'
 
 const issue = (over = {}) => ({
   number: 1,
@@ -336,3 +336,77 @@ describe('getEvidence', () => {
     expect(await getEvidence('o/b', { run: async () => { throw new Error('boom') }, now: 1000 })).toEqual({})
   })
 })
+
+// marvin #139: a ticket can be decided about ("on hold", "not planned") and partly finished, and the board must say so.
+describe('on hold and not planned (marvin #139)', () => {
+  const dependsOn1 = (over = {}) => issue({ number: 2, body: '## Blocked by\n\n- #1 The other ticket\n', labels: labels('ready-for-agent'), ...over })
+
+  it('a held ticket sits in the backlog and says it is on hold', () => {
+    const r = deriveColumn(issue({ labels: labels('ready-for-agent', 'hold') }), ctx())
+    expect(r).toMatchObject({ column: 'backlog', held: true })
+    expect(r.reason).toMatch(/on hold/i)
+  })
+
+  it('a held ticket does not count as a blocker, and the dependent ticket says so', () => {
+    const r = deriveColumn(dependsOn1(), ctx({ openNumbers: new Set([1, 2]), heldNumbers: new Set([1]) }))
+    expect(r.column).toBe('ready')
+    expect(r.reason).toMatch(/#1/)
+    expect(r.reason).toMatch(/on hold/i)
+  })
+
+  it('is still blocked by a different open ticket, and mentions the held one it ignores', () => {
+    const t = issue({ number: 3, labels: labels('ready-for-agent'), body: '## Blocked by\n\n- #1 a\n- #2 b\n' })
+    const r = deriveColumn(t, ctx({ openNumbers: new Set([1, 2, 3]), heldNumbers: new Set([1]) }))
+    expect(r.column).toBe('blocked')
+    expect(r.reason).toMatch(/Blocked by #2/)
+    expect(r.reason).toMatch(/#1.*on hold/i)
+  })
+
+  it('a dependency closed as not planned is not a blocker, and the dependent says so', () => {
+    const r = deriveColumn(dependsOn1(), ctx({ openNumbers: new Set([2]), notPlannedNumbers: new Set([1]) }))
+    expect(r.column).toBe('ready')
+    expect(r.reason).toMatch(/#1.*not planned/i)
+  })
+
+  it('a still-open ticket with no hold behaves exactly as before', () => {
+    expect(deriveColumn(dependsOn1(), ctx({ openNumbers: new Set([1, 2]) })).column).toBe('blocked')
+  })
+
+  it('buildBoard works the held and not-planned sets out from the issues themselves', () => {
+    const issues = [
+      issue({ number: 1, labels: labels('hold') }),
+      issue({ number: 2, labels: labels('ready-for-agent'), body: '## Blocked by\n\n- #1 held one\n' }),
+      issue({ number: 3, state: 'CLOSED', stateReason: 'NOT_PLANNED', closedAt: '2026-10-05T00:00:00Z' }),
+      issue({ number: 4, labels: labels('ready-for-agent'), body: '## Blocked by\n\n- #3 dropped one\n' })
+    ]
+    const board = buildBoard({ repo: 'o/r', issues, prs: [] })
+    const cardOf = (n) => board.columns.flatMap((c) => c.cards).find((c) => c.number === n)
+    expect(cardOf(1).held).toBe(true)
+    expect(cardOf(2).blockedBy).toEqual([])
+    expect(cardOf(2).heldDependencies).toEqual([1])
+    expect(cardOf(4).blockedBy).toEqual([])
+    expect(board.columns.find((c) => c.id === 'ready').cards.map((c) => c.number).sort()).toEqual([2, 4])
+  })
+})
+
+describe('partial progress on a card (marvin #139)', () => {
+  it('counts ticked and unticked checklist items in the acceptance criteria', () => {
+    expect(checklistProgress('## What\n\n- [x] not criteria\n\n## Acceptance criteria\n\n- [x] a\n- [ ] b\n- [X] c\n\n## Blocked by\n\n- [ ] ignore')).toEqual({ done: 2, total: 3 })
+  })
+
+  it('falls back to the whole body when there is no acceptance-criteria section', () => {
+    expect(checklistProgress('- [x] one\n- [ ] two')).toEqual({ done: 1, total: 2 })
+  })
+
+  it('is null when there is no checklist', () => {
+    expect(checklistProgress('Just words.')).toBe(null)
+    expect(checklistProgress('')).toBe(null)
+    expect(checklistProgress(undefined)).toBe(null)
+  })
+
+  it('shows up on the card', () => {
+    const board = buildBoard({ repo: 'o/r', issues: [issue({ body: '## Acceptance criteria\n\n- [x] a\n- [ ] b\n' })], prs: [] })
+    expect(board.columns.flatMap((c) => c.cards)[0].progress).toEqual({ done: 1, total: 2 })
+  })
+})
+
