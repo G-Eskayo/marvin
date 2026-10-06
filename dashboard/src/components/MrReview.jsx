@@ -162,6 +162,7 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
   const [showDenyModal, setShowDenyModal] = useState(false)
   const waiting = pr.waitingOn || []
   const wrongBase = pr.baseProblem || null
+  const ci = pr.checks || { state: 'none', failing: [], pending: [] }
 
   // The merge runs in the main process, so this button can be unmounted (you navigate away) and
   // remounted mid-merge. Ask the main process what this PR is doing, and keep asking while it merges.
@@ -236,13 +237,27 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
         </button>
         <button
           onClick={handleApprove}
-          disabled={status === 'approving' || waiting.length > 0 || !!wrongBase || pr.conflicts}
-          title={waiting.length ? `Merge ${waiting.map((w) => '#' + w.number).join(', ')} first` : undefined}
+          disabled={status === 'approving' || waiting.length > 0 || !!wrongBase || pr.conflicts || pr.sentBack || ci.state === 'failing' || ci.state === 'pending'}
+          title={pr.sentBack ? 'Sent back for rework: wait for the reworked PR' : waiting.length ? `Merge ${waiting.map((w) => '#' + w.number).join(', ')} first` : undefined}
           className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
         >
           {status === 'approving' ? 'Confirming…' : 'Approve & Merge'}
         </button>
       </div>
+      {pr.sentBack && (
+        <p className="max-w-xs text-right text-xs text-amber-400">
+          Sent back for rework: this PR's ticket was rejected and a reworked version is on its way, so there is nothing to approve here. If the rework is already in and the "needs-reengagement" label is stale, remove it from the ticket.
+        </p>
+      )}
+      {ci.state === 'failing' && (
+        <p className="max-w-xs text-right text-xs text-red-400">
+          GitHub checks failed: {ci.failing.join(', ')}. It is sent back for rework automatically, so there is nothing to approve.
+        </p>
+      )}
+      {ci.state === 'pending' && (
+        <p className="max-w-xs text-right text-xs text-amber-400">GitHub checks are still running ({ci.pending.join(', ')}). Approve once they finish.</p>
+      )}
+      {ci.state === 'passing' && <p className="text-right text-xs text-emerald-400">GitHub checks passed</p>}
       {pr.conflicts && (
         <p className="max-w-xs text-right text-xs text-red-400">
           Conflicts with {pr.baseProblem?.expected || 'main'}: it can't merge as it is. Its ticket is sent back automatically and rebuilt on the current {pr.baseProblem?.expected || 'main'}, updating this same PR. Nothing to do here.

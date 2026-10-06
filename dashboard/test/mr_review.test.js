@@ -5,6 +5,7 @@ import {
   parseTicketRef,
   fetchTicketContext,
   listPipelinePrs,
+  sentBackKeys,
   approveMr,
   denyMr
 } from '../electron/main/mr_review.js'
@@ -344,3 +345,65 @@ describe('fetchTicketContext', () => {
     expect(result).toEqual({ ticket: null, parent: null })
   })
 })
+
+describe('listPipelinePrs: sent-back tickets (marvin #129)', () => {
+  const CC = 'G-Eskayo/clarity-captions'
+  const prs = () => [
+    { number: 49, title: 'Reworked localization', url: 'https://github.com/G-Eskayo/clarity-captions/pull/49', repo: CC, body: 'Closes G-Eskayo/clarity-captions#35' },
+    { number: 50, title: 'A different ticket', url: 'https://github.com/G-Eskayo/clarity-captions/pull/50', repo: CC, body: 'Closes #36' },
+    { number: 7, title: 'marvin PR citing the same number', url: 'https://github.com/G-Eskayo/marvin/pull/7', repo: 'G-Eskayo/marvin', body: 'Closes #35' },
+    { number: 8, title: 'Hand-written PR, no ticket', url: 'https://github.com/G-Eskayo/marvin/pull/8', repo: 'G-Eskayo/marvin', body: 'no closing keyword' }
+  ]
+
+  it('flags a PR whose ticket is sent back, matching the ticket in the PR\'s own repo only', async () => {
+    const result = await listPipelinePrs(async () => prs(), { sentBackTickets: async () => new Set([`${CC}#35`]) })
+    expect(result.map((r) => [r.number, r.sentBack])).toEqual([[49, true], [50, false], [7, false], [8, false]])
+  })
+
+  it('works for PRs that do not follow the evidence schema (the ticket comes from the closing keyword)', async () => {
+    const result = await listPipelinePrs(async () => prs(), { sentBackTickets: async () => new Set([`${CC}#35`]) })
+    expect(result[0].hasSchema).toBe(false)
+    expect(result[0].sentBack).toBe(true)
+  })
+
+  it('asks only about the repositories that actually have PRs, once each', async () => {
+    const lookup = vi.fn().mockResolvedValue(new Set())
+    await listPipelinePrs(async () => prs(), { sentBackTickets: lookup })
+    expect(lookup).toHaveBeenCalledTimes(1)
+    expect([...lookup.mock.calls[0][0]].sort()).toEqual([CC, 'G-Eskayo/marvin'])
+  })
+
+  it('is false for everything when no lookup is given', async () => {
+    const result = await listPipelinePrs(async () => prs())
+    expect(result.every((r) => r.sentBack === false)).toBe(true)
+  })
+
+  it('a failing lookup never hides a PR or stops the list', async () => {
+    const result = await listPipelinePrs(async () => prs(), { sentBackTickets: async () => { throw new Error('gh down') } })
+    expect(result).toHaveLength(4)
+    expect(result.every((r) => r.sentBack === false)).toBe(true)
+  })
+})
+
+describe('sentBackKeys', () => {
+  const issue = (number, state, labels) => ({ number, state, labels: labels.map((name) => ({ name })) })
+
+  it('collects repo#number for open tickets labelled needs-reengagement', () => {
+    const keys = sentBackKeys('G-Eskayo/clarity-captions', [
+      issue(35, 'OPEN', ['ready-for-agent', 'needs-reengagement']),
+      issue(36, 'OPEN', ['ready-for-agent']),
+      issue(37, 'OPEN', [])
+    ])
+    expect([...keys]).toEqual(['G-Eskayo/clarity-captions#35'])
+  })
+
+  it('ignores closed tickets (a stale label on finished work is not "sent back")', () => {
+    expect(sentBackKeys('G-Eskayo/marvin', [issue(5, 'CLOSED', ['needs-reengagement'])]).size).toBe(0)
+  })
+
+  it('copes with missing fields', () => {
+    expect(sentBackKeys('G-Eskayo/marvin', [{ number: 1, state: 'OPEN' }, null, undefined].filter(Boolean)).size).toBe(0)
+    expect(sentBackKeys('G-Eskayo/marvin', undefined).size).toBe(0)
+  })
+})
+

@@ -6,7 +6,7 @@ import { homedir } from 'os'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { listSubsystems, readHistory, buildIndex } from './metrics.js'
-import { listPipelinePrs, approveMr, denyMr, fetchTicketContext } from './mr_review.js'
+import { listPipelinePrs, approveMr, denyMr, fetchTicketContext, sentBackKeys } from './mr_review.js'
 import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
 import { readDispatchStatus } from './dispatch_status.js'
 import { readHealthStatus, runHealthCheckNow } from './health.js'
@@ -415,7 +415,22 @@ function postJson(webhookUrl, body) {
 function registerMrReviewHandlers() {
   const seenPath = join(app.getPath('userData'), 'mr-seen.json')
 
-  ipcMain.handle('mr:list', () => listPipelinePrs(listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()) }))
+  // Tickets sent back for rework carry `needs-reengagement` while their PR stays open. Read from the board data
+  // the dashboard already caches (30s), so listing PRs costs no extra GitHub calls.
+  const sentBackTickets = async (repos) => {
+    const keys = new Set()
+    const gh = async (args) => (await execFileAsync('gh', args)).stdout
+    for (const repo of repos) {
+      try {
+        const data = await getBoardData(repo, gh)
+        for (const k of sentBackKeys(repo, data.issues)) keys.add(k)
+      } catch {
+        // one repo failing must not hide the others
+      }
+    }
+    return keys
+  }
+  ipcMain.handle('mr:list', () => listPipelinePrs(listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()), sentBackTickets }))
 
   // Backs the MR Review tab's status dot -- red/blue/green computed from
   // which pipeline-PR numbers are currently open vs. already marked seen
