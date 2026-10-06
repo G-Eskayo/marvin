@@ -3,8 +3,7 @@
 logic_auditor.py — judges whether a paper's own argument is internally
 consistent (paper-dive synthesis tool, see marvin-roadmap.md §K's "long-term
 vision" item, scoped down via a grill-with-docs session 2026-07-13). Full
-design: ~/Documents/Projects/experiments/anthropic-fellows-memory-paper/
-docs/logic-auditor-design.md and that project's CONTEXT.md.
+design notes are kept in a separate research project.
 
 Distinct from argument_mapper.py (structural core-claim + "builds on" graph
 only, no judgment of argument quality). v1 scope: the 15 hand-picked seed

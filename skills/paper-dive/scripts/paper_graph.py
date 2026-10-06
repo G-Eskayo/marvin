@@ -16,7 +16,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+# Helpers live next to this file in the standalone repo (G-Eskayo/paper-dive) and in ~/.agents/lib inside MARVIN.
+sys.path[:0] = [str(Path(__file__).resolve().parent), str(Path.home() / ".agents" / "lib")]
 from s2_client import get_with_retry as _get_with_retry
 from s2_client import s2_id as _s2_id
 from s2_client import S2_PAPER_BASE
@@ -160,7 +161,7 @@ def _check_huggingface_reachable() -> None:
     doesn't even need to re-check live."""
     import sys
 
-    sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+    sys.path[:0] = [str(Path(__file__).resolve().parent), str(Path.home() / ".agents" / "lib")]
     from network_reachability import known_status, check_and_record, current_network_id
 
     status = known_status("huggingface.co")
