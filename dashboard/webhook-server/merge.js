@@ -151,6 +151,24 @@ export async function defaultGateContext(repo, exec = execFileAsync) {
   }
 }
 
+// A merge queue of one per repo. Two merges (or a merge gate and a pipeline build) running at once is what
+// produced "Base branch was modified", database-locked builds and rebases against a main that moved mid-gate.
+// Merging one PR changes what every other PR must be tested against, so they go one at a time, in the order
+// asked. A failure never blocks the ones behind it. Different repos do not wait for each other.
+const repoQueues = new Map()
+function inRepoQueue(key, fn) {
+  const prev = repoQueues.get(key) || Promise.resolve()
+  const run = prev.then(fn, fn)
+  const tail = run.catch(() => {})
+  repoQueues.set(key, tail)
+  tail.then(() => { if (repoQueues.get(key) === tail) repoQueues.delete(key) })
+  return run
+}
+
+export function mergePr(prUrl, ...rest) {
+  return inRepoQueue(repoFromPrUrl(prUrl) || '(unknown)', () => mergePrUnqueued(prUrl, ...rest))
+}
+
 function prNumberOf(prUrl) {
   const m = String(prUrl).match(/\/pull\/(\d+)/)
   return m ? Number(m[1]) : 0
@@ -178,7 +196,7 @@ export async function assertTargetsBase(prUrl, exec, expectedBase) {
   }
 }
 
-export async function mergePr(
+async function mergePrUnqueued(
   prUrl,
   exec = execFileAsync,
   rebuild = triggerRebuildIfDashboardChanged,
@@ -223,6 +241,12 @@ export async function mergePr(
       // instead of a raw output wall: this comment is what the ticket's executor reads
       // to decide how to fix its work, so it has to be parseable and to the point.
       const summary = summarizeGateFailure(result.reason)
+      if (summary.code === 'GATE_INFRA') {
+        // The machine failed, not the PR: leave the ticket and PR alone so it can simply be approved again.
+        stage('gate', 'failed', 'GATE_INFRA: the build machine failed, not the code')
+        throw new MergeFailure(refusal('GATE_INFRA', 'gate', 'the build machine failed while checking this PR, not the PR\'s code',
+          `Approve it again. The PR was not sent back for rework. What failed: ${summary.comment.slice(0, 300)}`))
+      }
       stage('gate', 'failed', `${summary.code}: ${summary.failingTests.length ? summary.failingTests.length + ' failing test(s)' : 'see comment'}`)
       recordFailureFn({ ticket: ticketNumber ?? prNumberOf(prUrl), code: summary.code, message: summary.failingTests[0] || 'merge gate failed' })
       // ADR 0025's existing re-engagement path, not a new failure state:

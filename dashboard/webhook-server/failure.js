@@ -19,6 +19,11 @@ const RULES = [
   { code: 'BRANCH_PROTECTION', action: 'escalate', retryable: false,
     test: /protected branch|required status check|required review|branch protection|gh006|gh013/i,
     remediation: 'Branch protection blocked the merge. Satisfy the required checks/reviews, or adjust the rule.' },
+  // GitHub refuses a merge when the base branch moved between it checking and merging (two merges close
+  // together). Nothing is wrong with the PR; trying again, once main has settled, is the right response.
+  { code: 'BASE_MOVED', action: 'retry', retryable: true,
+    test: /base branch was modified|try the merge again/i,
+    remediation: 'main moved while this merged. Retried automatically; if it keeps failing, another merge is racing it.' },
   { code: 'RATE_LIMITED', action: 'retry', retryable: true,
     test: /rate limit|secondary rate|abuse detection/i,
     remediation: 'GitHub rate limit. Retried automatically with backoff; try again shortly if it persists.' },
@@ -82,10 +87,14 @@ const TEST_NAME_PATTERNS = [
 // XCTest: "Test Case '-[Suite testName]' failed" -> Suite/testName
 const XCTEST_FAILED = /Test Case '-\[(\S+) (\S+)\]' failed/
 
+// Signatures of the BUILD MACHINE failing rather than the PR's code (a locked build database from two builds
+// at once, a full disk, a lost network). These must not send a good PR back for a pointless rebuild.
+const GATE_INFRA = /database is locked|unable to attach db|no space left on device|could not resolve host|operation not permitted|resource temporarily unavailable|too many open files|cannot allocate memory/i
+
 export function summarizeGateFailure(reason) {
   const text = String(reason ?? '')
   const isRebase = /^rebase onto main failed/i.test(text)
-  const code = isRebase ? 'REBASE_CONFLICT' : 'GATE_TESTS_FAILED'
+  const code = isRebase ? 'REBASE_CONFLICT' : GATE_INFRA.test(text) ? 'GATE_INFRA' : 'GATE_TESTS_FAILED'
   const body = text.replace(/^[^\n]*:\s*\n+/, '') // drop the "…failed:" header line
   const lines = body.split('\n')
 

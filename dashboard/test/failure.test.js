@@ -24,6 +24,7 @@ describe('classifyFailure', () => {
     ['connect ETIMEDOUT 140.82.112.6:443', 'TRANSIENT_NETWORK', 'retry', true],
     ['socket hang up', 'TRANSIENT_NETWORK', 'retry', true],
     ['HTTP 502: Bad Gateway', 'TRANSIENT_NETWORK', 'retry', true],
+    ['GraphQL: Base branch was modified. Review and try the merge again. (mergePullRequest)', 'BASE_MOVED', 'retry', true],
     ['spawn gh ENOENT', 'TOOL_MISSING', 'escalate', false],
     ['Not a GitHub PR URL: foo', 'INVALID_REQUEST', 'escalate', false],
     ['something nobody has seen before', 'UNKNOWN', 'escalate', false]
