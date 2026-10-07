@@ -68,3 +68,19 @@ def test_merged_pr_and_open_pr_together_stay_in_flight():
     facts = {**FACTS, "merged": [{"number": 30, "body": "Refs #21", "headRefName": "a"}]}
     assert te.verdict(te.evidence_for(21, facts)) == "in-flight"
 
+
+
+def test_merged_design_pr_that_only_points_forward_at_a_ticket_is_not_done_evidence():
+    # clarity-captions PR #70: a design session that says which tickets will implement it.
+    body = ("Closes #3.\n\n- **ADR 0018**: four states. Implemented by #9.\n"
+            "- **ADR 0022**: retention. Implemented by #8 and #52.\nFollow-on filed: #68")
+    facts = {**FACTS, "merged": [{"number": 70, "body": body, "headRefName": "design-3"}]}
+    for n in (9, 8, 52, 68):
+        assert te.evidence_for(n, facts) == [], n
+    assert te.verdict(te.evidence_for(3, facts)) == "looks-done"
+
+
+def test_merged_pr_work_verbs_count_as_done_evidence():
+    for body in ("Fixes #5", "resolved #5", "Implements #5 end to end", "References: #5", "Land work. Refs #5."):
+        facts = {**FACTS, "merged": [{"number": 40, "body": body, "headRefName": "x"}]}
+        assert te.verdict(te.evidence_for(5, facts)) == "looks-done", body

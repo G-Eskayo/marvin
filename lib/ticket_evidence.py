@@ -6,7 +6,7 @@ anyway burns a model run to rediscover (or duplicate) that work. `evidence_for` 
 gathered once per repo by `gather`; `verdict` folds the evidence into one of:
 
   in-flight   an open PR, pipeline branch or rescue ref exists  -> never dispatch; a human reviews it
-  looks-done  commits on the base branch or a merged PR mention it -> never dispatch; a human closes it
+  looks-done  commits on the base branch mention it, or a merged PR claims it -> never dispatch; a human closes it
   clear       nothing found                                     -> safe to dispatch
 
 The same evidence feeds the Activity boards (dashboard/electron/main/board.js) so cards show it.
@@ -22,6 +22,16 @@ TIMEOUT = 60
 
 def _mentions(text: str, n: int) -> bool:
     return bool(re.search(rf"#{n}(?!\d)", text or ""))
+
+
+# A merged PR is done-evidence only when it says it did the work. A bare mention ("Implemented by
+# #9", "Follow-on filed: #68") points forward, and a design PR full of those blocked the very
+# tickets it unblocked (clarity-captions PR #70).
+_WORK = r"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs?|references|implements|addresses)"
+
+
+def _claims(text: str, n: int) -> bool:
+    return bool(re.search(rf"\b{_WORK}\b\s*:?\s*#{n}(?!\d)", text or "", re.I))
 
 
 def _named(ref: str, n: int) -> bool:
@@ -40,7 +50,7 @@ def evidence_for(n: int, facts: dict) -> list[dict]:
         if _named(r.rsplit("/", 1)[0], n):
             ev.append({"kind": "rescue-ref", "ref": r, "detail": "a prior run's work was preserved"})
     for pr in facts.get("merged", []):
-        if _mentions(pr.get("body"), n) or _named(pr.get("headRefName", ""), n):
+        if _claims(pr.get("body"), n) or _named(pr.get("headRefName", ""), n):
             ev.append({"kind": "merged-pr", "ref": f"PR #{pr['number']}", "detail": "merged pull request"})
     for sha, subject in facts.get("commits", []):
         if _mentions(subject, n) and not re.search(r"\brevert", subject, re.I):
