@@ -669,6 +669,38 @@ def test_no_disk_reading_means_no_disk_check():
     assert "disk:space" not in dict((k, s) for k, s, _ in hc.evaluate_machine_state(_mstate(), NOW))
 
 
+# ── job exit codes: found 2026-10-06 the laptop tidy-agent failing nightly since 2026-07-13
+# (PermissionError, no Full Disk Access) with nothing watching -- health-check runs on the
+# mini and only scanned the mini's own logs. launchd's last exit code is read on every machine.
+
+def test_parse_machine_state_reads_job_exits():
+    st = hc.parse_machine_state("job_exits=com.giles.tidy-agent:-:1,com.marvin.desktoplive:1163:0,\n")
+    assert st["job_exits"] == [("com.giles.tidy-agent", None, 1), ("com.marvin.desktoplive", 1163, 0)]
+
+
+def test_job_that_last_exited_nonzero_and_is_not_running_is_red():
+    res = dict((k, (s, d)) for k, s, d in hc.evaluate_machine_state(
+        _mstate(job_exits=[("com.giles.tidy-agent", None, 1), ("com.marvin.daily-digest", None, 0)]), NOW))
+    sev, detail = res["jobs:exit"]
+    assert sev == "red"
+    assert "com.giles.tidy-agent" in detail and "exit 1" in detail and "daily-digest" not in detail
+
+
+def test_running_job_with_old_nonzero_status_is_green():
+    # a KeepAlive job restarted by SIGTERM reports -15 while its new instance runs
+    res = dict((k, (s, d)) for k, s, d in hc.evaluate_machine_state(
+        _mstate(job_exits=[("com.marvin.dashboard-webhook", 10952, -15), ("com.giles.tidy-agent", None, 0)]), NOW))
+    assert res["jobs:exit"][0] == "green"
+
+
+def test_no_job_exit_reading_means_no_exit_check():
+    assert "jobs:exit" not in dict((k, s) for k, s, _ in hc.evaluate_machine_state(_mstate(), NOW))
+
+
+def test_machine_state_script_reports_giles_and_marvin_job_exits():
+    assert "job_exits=" in hc._MACHINE_STATE_SCRIPT and "giles" in hc._MACHINE_STATE_SCRIPT
+
+
 # ── main branch health ──
 
 def test_main_is_green_when_its_last_check_passed(tmp_path):
