@@ -176,7 +176,7 @@ export function sentBackKeys(repo, issues) {
   return keys
 }
 
-export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDashboard, sentBackTickets = null } = {}) {
+export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDashboard, sentBackTickets = null, reworkStatus = null } = {}) {
   const prs = await listOpenPrs()
   // Which tickets were sent back for rework ("repo#number" keys), asked once for the repos that have PRs. A failing
   // lookup never hides a PR: it just means nothing is flagged (the merge webhook refuses sent-back PRs on its own).
@@ -186,6 +186,16 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       sentBackKeys = await sentBackTickets([...new Set(prs.map((p) => p.repo || MARVIN_REPO))])
     } catch {
       sentBackKeys = new Set()
+    }
+  }
+  // Where each sent-back ticket's rework stands (running, queued at position N, paused and why, held, needs a person).
+  // Best effort: without it the card still says it was sent back.
+  let rework = {}
+  if (reworkStatus && sentBackKeys.size) {
+    try {
+      rework = (await reworkStatus()) || {}
+    } catch {
+      rework = {}
     }
   }
   // Each PR with the facts that decide whether it can be waited on (sent back for rework; conflicts), so merge order skips the
@@ -213,6 +223,7 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       hasSchema,
       // The ticket was sent back for rework (marvin #129): approving would merge work that was just rejected.
       sentBack: ticketRef !== null && sentBackKeys.has(`${pr.repo || MARVIN_REPO}#${ticketRef}`),
+      rework: ticketRef !== null && sentBackKeys.has(`${pr.repo || MARVIN_REPO}#${ticketRef}`) ? rework[`${pr.repo || MARVIN_REPO}#${ticketRef}`] || null : null,
       ticketNumber: evidence?.ticketRef ? Number(evidence.ticketRef) : null,
       evidence,
       // Full body, untruncated -- MrDetail.jsx needs the whole thing since

@@ -157,6 +157,16 @@ function DenyModal({ pr, onClose, onDenied }) {
 // Shared by PrCard (the list row) and MrDetail (the deep-dive page) so
 // approve/deny behave and look identical in both places, per Gil's
 // request -- one implementation, not a second copy that could drift.
+const REWORK_TONE = {
+  running: 'border-blue-800 text-blue-300',
+  queued: 'border-amber-800 text-amber-300',
+  paused: 'border-red-800 text-red-300',
+  'needs-person': 'border-red-800 text-red-300',
+  held: 'border-neutral-700 text-neutral-300',
+  blocked: 'border-amber-800 text-amber-300',
+  'not-queued': 'border-red-800 text-red-300'
+}
+
 export function ApproveDenyActions({ pr, onApproved, onDenied }) {
   const [status, setStatus] = useState('idle') // idle | approving | error | reengaged
   const [errorMessage, setErrorMessage] = useState(null)
@@ -265,6 +275,12 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
       <p className={`max-w-xs text-right text-sm font-medium ${TONE[view.tone] || ''}`}>{view.headline}</p>
       {view.detail && <p className="max-w-xs text-right text-xs text-neutral-400">{view.detail}</p>}
       {view.note && <p className="text-right text-xs text-emerald-400">{view.note}</p>}
+      {view.rework && (
+        <div className={`max-w-xs rounded-md border px-2 py-1 text-right text-xs ${REWORK_TONE[view.rework.state] || 'border-neutral-700 text-neutral-300'}`} data-rework={view.rework.state}>
+          <p className="font-medium">{view.rework.headline}</p>
+          <p className="mt-0.5 opacity-80">{view.rework.detail}</p>
+        </div>
+      )}
       {view.actions.map((a) =>
         a.id === 'clearSentBack' ? (
           <div key={a.id} className="max-w-xs text-right text-xs">

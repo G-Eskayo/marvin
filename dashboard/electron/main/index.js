@@ -6,6 +6,7 @@ import { homedir } from 'os'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { listSubsystems, readHistory, buildIndex } from './metrics.js'
+import { getReworkStatus, clearReworkCache } from './rework.js'
 import { listPipelinePrs, approveMr, denyMr, fetchTicketContext, sentBackKeys, clearSentBackLabel } from './mr_review.js'
 import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
 import { readDispatchStatus } from './dispatch_status.js'
@@ -446,7 +447,7 @@ function registerMrReviewHandlers() {
     }
     return keys
   }
-  ipcMain.handle('mr:list', () => listPipelinePrs(listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()), sentBackTickets }))
+  ipcMain.handle('mr:list', () => listPipelinePrs(listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()), sentBackTickets, reworkStatus: getReworkStatus }))
 
   // Backs the MR Review tab's status dot -- red/blue/green computed from
   // which pipeline-PR numbers are currently open vs. already marked seen
@@ -506,6 +507,7 @@ function registerMrReviewHandlers() {
       const result = await approveMr(url, MR_WEBHOOK_URL, postJson)
       mergeOps.finish(url, result)
       openPrsCache.invalidate()  // the list must not keep showing a PR that just merged
+      clearReworkCache()
       return { ...result, cancelled: false }
     } catch (err) {
       mergeOps.fail(url, err.message)

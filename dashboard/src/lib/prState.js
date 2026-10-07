@@ -14,7 +14,7 @@ const MIRRORED_REFUSALS = /^(SENT_BACK|CI_PENDING|CI_FAILED|WRONG_BASE)\b/
 export function describePrState(pr, { status = 'idle', errorMessage = null } = {}) {
   const ci = pr.checks || { state: 'none', failing: [], pending: [] }
   const waiting = pr.waitingOn || []
-  const base = (kind, tone, headline, detail, approve, deny, extra = {}) => ({ kind, tone, headline, detail, approve, deny, actions: [], note: null, ...extra })
+  const base = (kind, tone, headline, detail, approve, deny, extra = {}) => ({ kind, tone, headline, detail, approve, deny, actions: [], note: null, rework: null, ...extra })
   const main = pr.baseProblem?.expected || 'main'
 
   if (status === 'approving') {
@@ -25,7 +25,7 @@ export function describePrState(pr, { status = 'idle', errorMessage = null } = {
     return base('sent-back', 'blocked', 'Sent back for rework',
       "This PR's ticket was rejected, and a reworked version will update this same PR, so there is nothing to approve.",
       'hidden', 'hidden',
-      { actions: [{ id: 'clearSentBack', label: 'The rework is already in? Clear the sent-back label' }] })
+      { rework: pr.rework || null, actions: [{ id: 'clearSentBack', label: 'The rework is already in? Clear the sent-back label' }] })
   }
 
   if (status === 'reengaged') {
