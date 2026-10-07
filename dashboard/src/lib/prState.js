@@ -62,6 +62,11 @@ export function describePrState(pr, { status = 'idle', errorMessage = null } = {
       `${ci.pending.join(', ')} still running. Approve becomes available when they finish.`, 'disabled', 'enabled')
   }
 
+  if (status === 'error' && /^GITHUB_OUTAGE\b/.test(errorMessage || '')) {
+    return base('github-outage', 'wait', 'GitHub is having an outage',
+      'The last merge attempt hit a GitHub server error (githubstatus.com). Nothing is wrong with this PR and it was not sent back. Approve again once GitHub recovers.', 'enabled', 'enabled')
+  }
+
   if (status === 'error' && errorMessage && !MIRRORED_REFUSALS.test(errorMessage)) {
     return base('error', 'blocked', 'The last merge attempt failed', errorMessage, 'enabled', 'enabled')
   }

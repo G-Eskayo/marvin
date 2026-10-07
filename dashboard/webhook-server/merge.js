@@ -96,7 +96,7 @@ export async function baselineFailsOnMain(names, exec = execFileAsync, repoPath 
   }
 }
 
-export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = REPO_PATH, runTests = _defaultRunTests, base = 'main', resolveConflicts = null) {
+export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = REPO_PATH, runTests = _defaultRunTests, base = 'main', resolveConflicts = null, sleep = null) {
   const scratchDir = await mkdtemp(path.join(tmpdir(), 'mr-merge-gate-'))
   try {
     await exec('git', ['fetch', 'origin', base, headRef], { cwd: repoPath })
@@ -120,7 +120,11 @@ export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = 
       return { ok: false, reason: `Tests failed after rebasing onto main:\n\n${testOutputOf(err)}` }
     }
 
-    await exec('git', ['push', '--force-with-lease', 'origin', `HEAD:${headRef}`], { cwd: scratchDir })
+    // The retest above may have taken many minutes; a GitHub blip on the push must not discard it.
+    await withRetry(() => exec('git', ['push', '--force-with-lease', 'origin', `HEAD:${headRef}`], { cwd: scratchDir }), {
+      classify: (e) => classifyFailure({ stage: 'gate', error: e }),
+      ...(sleep ? { sleep } : {})
+    })
     return { ok: true }
   } finally {
     await exec('git', ['worktree', 'remove', '--force', scratchDir], { cwd: repoPath }).catch(() => {})

@@ -27,6 +27,11 @@ const RULES = [
   { code: 'RATE_LIMITED', action: 'retry', retryable: true,
     test: /rate limit|secondary rate|abuse detection/i,
     remediation: 'GitHub rate limit. Retried automatically with backoff; try again shortly if it persists.' },
+  // GitHub itself failing (an incident, not our network): its own 5xx answers. Seen 2026-10-07 when a rebase push
+  // died with "remote: Internal Server Error" after a full retest. The PR is fine; waiting and retrying is the answer.
+  { code: 'GITHUB_OUTAGE', action: 'retry', retryable: true,
+    test: /internal server error|http 500|returned error: 50[0-4]/i,
+    remediation: 'GitHub is having an outage (githubstatus.com). Nothing is wrong with this PR and it was not sent back; approve again once GitHub recovers.' },
   { code: 'TRANSIENT_NETWORK', action: 'retry', retryable: true,
     test: /econnreset|etimedout|enotfound|econnrefused|eai_again|socket hang up|network|timed out|http 50[234]|bad gateway|service unavailable|gateway time-?out/i,
     remediation: 'Transient network or GitHub error. Retried automatically; check connectivity if it persists.' },
