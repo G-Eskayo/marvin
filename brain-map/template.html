@@ -233,6 +233,7 @@
   // events at the OS level) so it reads as background, not a stray app window.
   var WALLPAPER = /[?&]wallpaper=1\b/.test(location.search);
   if (WALLPAPER) document.body.classList.add("wallpaper-mode");
+  /*__SNAPSHOT_FLAG__*/var SNAPSHOT = false;/*__SNAPSHOT_FLAG__*/
 
   // ── palette ──────────────────────────────────────────────────────────
   var CAT = {
@@ -764,7 +765,7 @@
   // instead (see triggerActivity above) — polling here too would risk a
   // double-pulse on the same entry if file:// fetch happens to also work.
   window.triggerActivity = triggerActivity;
-  if (!WALLPAPER) setInterval(pollActivity, 3000);
+  if (!WALLPAPER && !SNAPSHOT) setInterval(pollActivity, 3000);
 
   // yaw/pitch that puts a given node at screen-center, derived directly
   // from project()'s own rotation order (solve x1=0, then y2=0).
@@ -911,7 +912,7 @@
       // undefined for every other node, so this is a no-op elsewhere.
       var liveStatus = hovered.online === undefined ? "" : (hovered.online ? "● online" : "○ offline");
       var descText = [hovered.desc, liveStatus].filter(Boolean).join(" — ");
-      var openHint = hovered.openable ? "click to view code" : "";
+      var openHint = hovered.openable ? "click to view code" : (hovered.locked ? "private — not shown" : "");
       tooltip.innerHTML =
         '<div class="name mono"></div><div class="cat"></div>' +
         (descText ? '<div class="desc"></div>' : "") +
