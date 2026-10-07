@@ -371,9 +371,16 @@ def _score_ready(ready: list[dict], issues: list[dict], open_numbers: set[int], 
 
 
 def _order_key(ticket: dict) -> tuple:
-    """A priority label a person (or the prioritizer) set wins; then the urgency score, deadlines weighing heavily; then age."""
+    """Priority tier first: the label a person (or the prioritizer) set, else the tier the ticket's own score earns
+    (priority_for, the same mapping the prioritizer labels with). Within a tier a labelled ticket goes first, then bugs
+    (#237, ADR 0054), then the
+    urgency score, deadlines weighing heavily, then age. A near hard deadline still lands a tier above a bare bug."""
     rank = ticket_policy.priority_rank(ticket)
-    return (UNSCORED_RANK if rank is None else rank, -ticket.get("_score", 0.0), ticket["createdAt"])
+    labelled = rank is not None  # a label someone set beats the same tier earned by score alone
+    if rank is None:
+        rank = ticket_policy.PRIORITY_LABELS.index(ticket_policy.priority_for(ticket["_score"])) if "_score" in ticket else UNSCORED_RANK
+    is_bug = "bug" in ticket_policy.label_names(ticket)
+    return (rank, not labelled, not is_bug, -ticket.get("_score", 0.0), ticket["createdAt"])
 
 
 def _flag_busy() -> bool:

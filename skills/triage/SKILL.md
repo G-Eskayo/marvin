@@ -24,7 +24,7 @@ Every comment or issue posted to the issue tracker during triage **must** start 
 
 Two **category** roles:
 
-- `bug` — something is broken
+- `bug` — something is broken. Check this on every ticket, whatever it was filed as: a ticket whose Problem describes broken or lost behaviour (a crash, a wrong result, a record that should exist and doesn't) is a `bug`, not an `enhancement`. Bugs are dispatched before features (ADR 0054), so a missed label costs real time.
 - `enhancement` — new feature or improvement
 
 Five **state** roles:

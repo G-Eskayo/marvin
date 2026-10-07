@@ -170,10 +170,16 @@ def test_a_hard_deadline_weeks_away_already_outweighs_ordinary_work():
     # Gil, 2026-10-06: deadline tickets should beat non-deadline ones well before the final fortnight,
     # as a strong weight, not a strict tier.
     hard_19_days = tp.score_ticket(issue(), 0, {"date": "2026-10-24", "hard": True}, NOW)[0]
-    old_bug = tp.score_ticket(issue(labels=["bug"], created=50), 0, None, NOW)[0]
-    old_bug_unblocking_two = tp.score_ticket(issue(labels=["bug"], created=50), 2, None, NOW)[0]
-    assert hard_19_days > old_bug
-    assert hard_19_days > old_bug_unblocking_two
+    old_feature_unblocking_two = tp.score_ticket(issue(labels=["enhancement"], created=50), 2, None, NOW)[0]
+    assert hard_19_days > old_feature_unblocking_two
+
+
+def test_bugs_share_a_tier_with_a_deadline_weeks_away_and_lose_to_one_within_two_weeks():
+    # Gil, 2026-10-07 (#237, ADR 0054): bugs before features. A hard deadline 15-30 days out scores p1, the same tier
+    # as a bare bug (dispatch then puts the bug first); within 14 days it scores p0 and goes ahead of bugs.
+    bug = tp.score_ticket(issue(labels=["bug"]), 0, None, NOW)[0]
+    assert tp.priority_for(tp.score_ticket(issue(), 0, {"date": "2026-10-24", "hard": True}, NOW)[0]) == tp.priority_for(bug) == "priority:p1"
+    assert tp.priority_for(tp.score_ticket(issue(), 0, {"date": "2026-10-15", "hard": True}, NOW)[0]) == "priority:p0"
 
 
 def test_a_high_leverage_bug_can_still_beat_a_distant_hard_deadline():
@@ -216,3 +222,13 @@ def test_bucket_matching_is_exact_and_case_insensitive():
     why = tp.score_ticket(issue(title="[v] lower case"), 0, {**DUE, "excludes": ["V"]}, NOW)[1]
     assert not any("deadline" in w for w in why)
     assert any("deadline" in w for w in tp.score_ticket(issue(title="[VV] two letters"), 0, {**DUE, "excludes": ["V"]}, NOW)[1])
+
+
+# ── bugs first (#237) ───────────────────────────────────────────────────────
+
+def test_a_bare_bug_scores_into_p1_ahead_of_ordinary_features():
+    # Gil, 2026-10-07: bugs are finished before new features and enhancements.
+    bug = tp.score_ticket(issue(labels=["bug"]), 0, None, NOW)[0]
+    assert tp.priority_for(bug) == "priority:p1"
+    feature_unblocking_two = tp.score_ticket(issue(labels=["enhancement"]), 2, None, NOW)[0]
+    assert tp.priority_for(feature_unblocking_two) == "priority:p2"
