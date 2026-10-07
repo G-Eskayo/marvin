@@ -478,6 +478,103 @@ def test_pipeline_breaker_check_is_red_and_names_the_signature_and_tickets_when_
     assert "32" in r["detail"] and "paused" in r["detail"].lower()
 
 
+# ── missing execution profiles for projects with ready tickets ─────────────────
+# A project with ready-for-agent tickets but no profile will never dispatch.
+
+def test_missing_profiles_empty_when_no_repos(monkeypatch):
+    import ticket_agents
+    monkeypatch.setattr(ticket_agents, "board_repos", lambda: [])
+    results = hc.check_missing_profiles()
+    assert results == []
+
+
+def test_missing_profiles_red_when_ready_tickets_but_no_profile(tmp_path, monkeypatch):
+    import ticket_agents
+    profiles_dir = tmp_path / "profiles"
+    profiles_dir.mkdir()
+
+    monkeypatch.setattr(ticket_agents, "ready_elsewhere", lambda snapshot, executable=None: {"owner/project1": 1})
+    monkeypatch.setattr(ticket_agents, "collect", lambda repos, gh=None: {})
+    monkeypatch.setattr(ticket_agents, "board_repos", lambda: ["owner/project1"])
+    monkeypatch.setattr(ticket_agents, "_gh", None)
+
+    results = hc.check_missing_profiles(profiles_dir=profiles_dir)
+    assert len(results) == 1
+    r = results[0]
+    assert r["severity"] == "red"
+    assert r["id"] == "profile:missing:owner/project1"
+    assert r["label"] == "owner/project1"
+    assert r["value"] == 1
+    assert "ready-for-agent" in r["detail"].lower() or "ready" in r["detail"].lower()
+    assert "no execution profile" in r["detail"].lower()
+
+
+def test_missing_profiles_clears_when_profile_exists(tmp_path, monkeypatch):
+    import ticket_agents
+    profiles_dir = tmp_path / "profiles"
+    profiles_dir.mkdir()
+    profile_file = profiles_dir / "project1.json"
+    profile_file.write_text('{"repo": "owner/project1", "verify": [{"id": "test", "command": "echo ok"}]}')
+
+    monkeypatch.setattr(ticket_agents, "ready_elsewhere", lambda snapshot, executable=None: {"owner/project1": 2})
+    monkeypatch.setattr(ticket_agents, "collect", lambda repos, gh=None: {})
+    monkeypatch.setattr(ticket_agents, "board_repos", lambda: ["owner/project1"])
+    monkeypatch.setattr(ticket_agents, "_gh", None)
+
+    results = hc.check_missing_profiles(profiles_dir=profiles_dir)
+    assert len(results) == 0
+
+
+def test_missing_profiles_multiple_projects_sorted(tmp_path, monkeypatch):
+    import ticket_agents
+    profiles_dir = tmp_path / "profiles"
+    profiles_dir.mkdir()
+
+    monkeypatch.setattr(ticket_agents, "ready_elsewhere", lambda snapshot, executable=None: {"zebra/p": 1, "apple/p": 2})
+    monkeypatch.setattr(ticket_agents, "collect", lambda repos, gh=None: {})
+    monkeypatch.setattr(ticket_agents, "board_repos", lambda: ["zebra/p", "apple/p"])
+    monkeypatch.setattr(ticket_agents, "_gh", None)
+
+    results = hc.check_missing_profiles(profiles_dir=profiles_dir)
+    assert len(results) == 2
+    assert results[0]["label"] == "apple/p"
+    assert results[1]["label"] == "zebra/p"
+
+
+def test_missing_profiles_counts_tickets_per_repo(tmp_path, monkeypatch):
+    import ticket_agents
+    profiles_dir = tmp_path / "profiles"
+    profiles_dir.mkdir()
+
+    monkeypatch.setattr(ticket_agents, "ready_elsewhere", lambda snapshot, executable=None: {"owner/project": 3})
+    monkeypatch.setattr(ticket_agents, "collect", lambda repos, gh=None: {})
+    monkeypatch.setattr(ticket_agents, "board_repos", lambda: ["owner/project"])
+    monkeypatch.setattr(ticket_agents, "_gh", None)
+
+    results = hc.check_missing_profiles(profiles_dir=profiles_dir)
+    assert len(results) == 1
+    assert results[0]["value"] == 3
+
+
+def test_missing_profiles_snapshot_passed_directly(tmp_path, monkeypatch):
+    import ticket_agents
+    profiles_dir = tmp_path / "profiles"
+    profiles_dir.mkdir()
+
+    monkeypatch.setattr(ticket_agents, "ready_elsewhere", lambda snapshot, executable=None: {"owner/project": 5})
+    board_repos_called = []
+    collect_called = []
+    monkeypatch.setattr(ticket_agents, "board_repos", lambda: (board_repos_called.append(True), [])[1])
+    monkeypatch.setattr(ticket_agents, "collect", lambda repos, gh=None: (collect_called.append(True), {})[1])
+
+    results = hc.check_missing_profiles(snapshot={}, profiles_dir=profiles_dir)
+
+    assert len(board_repos_called) == 0
+    assert len(collect_called) == 0
+    assert len(results) == 1
+    assert results[0]["value"] == 5
+
+
 # ── per-machine state that silently rots: dashboard build + GitHub credential ──
 # 2026-10-02: Approve "didn't merge" on the laptop for TWO reasons nothing watched:
 # its installed dashboard app was a month behind the code (it only rebuilds where a

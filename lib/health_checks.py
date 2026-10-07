@@ -343,6 +343,37 @@ def check_github_budget(query=None) -> dict:
     return _result(cid, label, sev, f"{left:,} of {limit:,} left, resets {when}", value=left)
 
 
+def check_missing_profiles(snapshot: dict | None = None, repos: list[str] | None = None, gh=None, profiles_dir: Path | None = None) -> list[dict]:
+	"""Projects with ready-for-agent tickets but no execution profile will never dispatch.
+	This check surfaces those projects so profiles can be created and dispatch turned on.
+	Uses `ticket_agents.ready_elsewhere()` to find projects with unclaimed, unblocked,
+	non-pinned ready-for-agent tickets, then checks if each has a profile."""
+	if snapshot is None:
+		import ticket_agents
+		repos = repos or ticket_agents.board_repos()
+		if not repos:
+			return []
+		gh = gh or ticket_agents._gh
+		snapshot = ticket_agents.collect(repos, gh=gh)
+
+	import ticket_agents
+	import project_profile
+
+	ready = ticket_agents.ready_elsewhere(snapshot)  # {repo: count}
+	results = []
+	for repo, count in sorted(ready.items()):
+		profile = project_profile.load_profile(repo, directory=profiles_dir)
+		if profile is not None:
+			continue  # profile exists, nothing to report
+
+		cid = f"profile:missing:{repo}"
+		label = repo
+		detail = f"{count} ready-for-agent ticket(s) waiting to dispatch; no execution profile in config/projects/ — pipeline will not attempt these tickets until the profile is created and dispatch is switched on"
+		results.append(_result(cid, label, "red", detail, value=count))
+
+	return results
+
+
 TRIGGER_MISS_LOG = Path.home() / ".claude" / "logs" / "trigger-misses.jsonl"
 TRIGGER_MISS_WINDOW_HOURS = 24
 
@@ -827,6 +858,7 @@ def run_all() -> dict:
     results.append(check_dispatch_lock())
     results += check_ticket_failure_streaks()
     results.append(check_pipeline_breaker())
+    results += check_missing_profiles()
     results.append(check_trigger_coverage())
     results.append(check_catalog_fresh())
     results.append(check_github_budget())
