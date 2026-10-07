@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+"""
+test_deploy_snapshot.py — Unit tests for deploy_snapshot.py orchestration.
+
+Tests the key functions without requiring Docker, the portfolio dev site, or
+a full git repo. Run: python -m pytest brain-map/tests/test_deploy_snapshot.py -v
+"""
+from __future__ import annotations
+import json
+import tempfile
+from pathlib import Path
+from unittest import mock
+
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import deploy_snapshot as ds
+
+
+def test_scan_for_private_content_finds_home_paths():
+    """Ensure home paths are detected as privacy leaks."""
+    html = '<div>Data stored in /Users/gileskayo/secret</div>'
+    leaks = ds.scan_for_private_content(html)
+    assert any("Users" in leak for leak in leaks), f"Expected home path leak, got {leaks}"
+
+
+def test_scan_for_private_content_finds_tokens():
+    """Ensure token patterns are detected."""
+    html = '<div>API key: sk-ant-abc123xyz</div>'
+    leaks = ds.scan_for_private_content(html)
+    assert any("Anthropic" in leak for leak in leaks), f"Expected token leak, got {leaks}"
+
+
+def test_scan_for_private_content_finds_emails():
+    """Ensure email addresses are detected."""
+    html = '<div>Contact: user@example.com</div>'
+    leaks = ds.scan_for_private_content(html)
+    assert any("email" in leak.lower() for leak in leaks), f"Expected email leak, got {leaks}"
+
+
+def test_scan_for_private_content_allows_public_content():
+    """Ensure public content passes without leaks."""
+    html = '<div>MARVIN is an autonomous agent system.</div>'
+    leaks = ds.scan_for_private_content(html)
+    assert len(leaks) == 0, f"Public content flagged as leak: {leaks}"
+
+
+def test_validate_snapshot_files_requires_html():
+    """Snapshot validation should fail if index.html is missing."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        snapshot_dir = Path(tmpdir)
+
+        # Create only tree-data.json
+        (snapshot_dir / "tree-data.json").write_text('{"tree": {}, "synapses": []}')
+
+        # Mock the SNAPSHOT_DIR
+        with mock.patch.object(ds, "SNAPSHOT_DIR", snapshot_dir):
+            ok, detail = ds.validate_snapshot_files()
+            assert not ok, "Should fail if index.html is missing"
+            assert "index.html" in detail
+
+
+def test_validate_snapshot_files_requires_json():
+    """Snapshot validation should fail if tree-data.json is missing."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        snapshot_dir = Path(tmpdir)
+
+        # Create only index.html
+        (snapshot_dir / "index.html").write_text('<html>SNAPSHOT = true</html>')
+
+        # Mock the SNAPSHOT_DIR
+        with mock.patch.object(ds, "SNAPSHOT_DIR", snapshot_dir):
+            ok, detail = ds.validate_snapshot_files()
+            assert not ok, "Should fail if tree-data.json is missing"
+            assert "tree-data.json" in detail
+
+
+def test_validate_snapshot_files_checks_snapshot_flag():
+    """Snapshot validation should check SNAPSHOT = true."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        snapshot_dir = Path(tmpdir)
+
+        # Create HTML without SNAPSHOT flag
+        (snapshot_dir / "index.html").write_text('<html>SNAPSHOT = false</html>')
+        (snapshot_dir / "tree-data.json").write_text('{"tree": {}, "synapses": []}')
+
+        # Mock the SNAPSHOT_DIR
+        with mock.patch.object(ds, "SNAPSHOT_DIR", snapshot_dir):
+            ok, detail = ds.validate_snapshot_files()
+            assert not ok, "Should fail if SNAPSHOT flag is not true"
+            assert "SNAPSHOT" in detail
+
+
+def test_validate_snapshot_files_accepts_valid_files():
+    """Snapshot validation should pass for well-formed files."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        snapshot_dir = Path(tmpdir)
+
+        # Create valid files
+        (snapshot_dir / "index.html").write_text('<html>SNAPSHOT = true<script></script></html>')
+        (snapshot_dir / "tree-data.json").write_text('{"tree": {"id": "root"}, "synapses": []}')
+
+        # Mock the SNAPSHOT_DIR
+        with mock.patch.object(ds, "SNAPSHOT_DIR", snapshot_dir):
+            ok, detail = ds.validate_snapshot_files()
+            assert ok, f"Valid files should pass: {detail}"
+
+
+def test_log_step_creates_log_directory():
+    """Log function should create the log directory if missing."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        log_file = Path(tmpdir) / "nested" / "dir" / "test.log"
+
+        # Mock the SNAPSHOT_LOG
+        with mock.patch.object(ds, "SNAPSHOT_LOG", log_file):
+            ds.log_step("test-step", True, "test detail")
+            assert log_file.exists(), "Log file should be created"
+            content = log_file.read_text()
+            assert "test-step" in content, "Log should contain step name"
+            assert "test detail" in content, "Log should contain detail"
+
+
+def test_health_check_mark_success():
+    """Health check should mark deployment as successful."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        health_dir = Path(tmpdir)
+
+        # Mock HOME and create health check
+        with mock.patch.object(ds, "HOME", health_dir):
+            ds.health_check_mark_success()
+
+            health_file = health_dir / ".claude" / "health" / "snapshot-deploy.json"
+            assert health_file.exists(), "Health file should be created"
+
+            data = json.loads(health_file.read_text())
+            assert data["status"] == "ok", "Health status should be 'ok'"
+            assert "timestamp" in data, "Health should contain timestamp"
+
+
+def test_health_check_mark_failure():
+    """Health check should mark deployment as failed."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        health_dir = Path(tmpdir)
+
+        # Mock HOME and create health check
+        with mock.patch.object(ds, "HOME", health_dir):
+            ds.health_check_mark_failure("Test failure reason")
+
+            health_file = health_dir / ".claude" / "health" / "snapshot-deploy.json"
+            assert health_file.exists(), "Health file should be created"
+
+            data = json.loads(health_file.read_text())
+            assert data["status"] == "error", "Health status should be 'error'"
+            assert "Test failure reason" in data["message"], "Health should contain failure reason"
+
+
+if __name__ == "__main__":
+    import pytest
+    pytest.main([__file__, "-v"])
