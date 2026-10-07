@@ -146,3 +146,248 @@ def test_plist_that_only_launchd_tolerates_still_counts(tmp_path, monkeypatch):
     monkeypatch.setattr(generate, "LAUNCHD_DIR", tmp_path)
 
     assert [a["id"] for a in generate.discover_recurring_agents()] == ["nightly"]
+
+
+# ── ownership paths and openable (#184) ──────────────────────────────────
+
+def test_skill_nodes_have_ownership_path_and_are_openable():
+    manifest = {"index": [{"name": "diagnose", "calls": []}]}
+    enrichment = json.loads(generate.ENRICHMENT_PATH.read_text())
+
+    tree = generate.build_tree(manifest, enrichment)
+    diagnose_node = [n for n in tree["children"] if n["id"] == "Skills"][0]["children"][0]["children"][0]
+    while diagnose_node.get("id") != "diagnose":
+        for c in diagnose_node.get("children", []):
+            if c.get("id") == "diagnose":
+                diagnose_node = c
+                break
+            else:
+                diagnose_node = c
+
+    # Find diagnose more reliably by walking the tree
+    def find_node(n, id_):
+        if n["id"] == id_:
+            return n
+        for c in n.get("children", []):
+            result = find_node(c, id_)
+            if result:
+                return result
+        return None
+
+    diagnose_node = find_node(tree, "diagnose")
+    assert diagnose_node is not None
+    assert diagnose_node.get("path") == "skills/diagnose"
+    assert diagnose_node.get("openable") is True
+
+
+def test_recurring_agent_nodes_have_ownership_path_when_script_is_resolvable(tmp_path, monkeypatch):
+    # Create a temporary agent script in a mock .agents directory
+    agents_dir = tmp_path / ".agents"
+    agents_dir.mkdir()
+    (agents_dir / "test-agent.py").write_text("#!/usr/bin/env python3\nprint('test')")
+
+    launchd_dir = tmp_path / "LaunchAgents"
+    launchd_dir.mkdir()
+
+    # Mock Path.home() for discover_recurring_agents
+    monkeypatch.setattr(generate, "LAUNCHD_DIR", launchd_dir)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(generate, "SKILLS_DIR", agents_dir / "skills")  # avoid reading real skills
+
+    write_plist(launchd_dir, "com.marvin.test-agent",
+                StartInterval=3600,
+                ProgramArguments=["/usr/bin/env", "python3", str(agents_dir / "test-agent.py")])
+
+    agents = generate.discover_recurring_agents()
+    assert len(agents) > 0
+    test_agent = [a for a in agents if a["id"] == "test-agent"][0]
+    assert test_agent.get("script_path") == "test-agent.py"
+
+
+def test_grouping_nodes_and_machines_do_not_have_path_or_openable():
+    manifest = {"index": [{"name": "tdd", "calls": []}]}
+    enrichment = json.loads(generate.ENRICHMENT_PATH.read_text())
+
+    tree = generate.build_tree(manifest, enrichment)
+
+    # MARVIN root should have no path/openable
+    assert tree.get("path") is None
+    assert tree.get("openable") is None
+
+    # Skills trunk should have no path/openable (it's a grouping node)
+    skills_trunk = [n for n in tree["children"] if n["id"] == "Skills"][0]
+    assert skills_trunk.get("path") is None
+    assert skills_trunk.get("openable") is None
+
+    # Quality category should have no path/openable
+    quality_cat = skills_trunk["children"][0]
+    assert quality_cat.get("path") is None
+    assert quality_cat.get("openable") is None
+
+
+def test_openable_nodes_all_have_path():
+    manifest = json.loads(generate.MANIFEST_PATH.read_text())
+    enrichment = json.loads(generate.ENRICHMENT_PATH.read_text())
+
+    tree = generate.build_tree(manifest, enrichment)
+
+    def walk(node):
+        if node.get("openable") is True:
+            assert node.get("path") is not None, f"Node {node['id']} is openable but has no path"
+        for c in node.get("children", []):
+            walk(c)
+
+    walk(tree)
+
+
+def test_code_layers_are_attached_to_openable_nodes():
+    manifest = json.loads(generate.MANIFEST_PATH.read_text())
+    enrichment = json.loads(generate.ENRICHMENT_PATH.read_text())
+
+    tree = generate.build_tree(manifest, enrichment)
+    generate.attach_code_layers(tree)
+
+    def find_openable(node):
+        if node.get("openable"):
+            assert "code" in node, f"Openable node {node['id']} has no code field"
+            assert isinstance(node["code"], dict)
+            assert "files" in node["code"]
+            assert "functions" in node["code"]
+        for c in node.get("children", []):
+            find_openable(c)
+
+    find_openable(tree)
+
+
+def test_graphify_graph_gracefully_missing_doesnt_crash():
+    # This should not raise even if graphify-out/graph.json doesn't exist
+    graph = generate.load_graphify_graph()
+    # graph can be None or a dict, either is fine
+    assert graph is None or isinstance(graph, dict)
+
+
+def test_code_layer_filters_by_ownership_path():
+    # Create a fixture graph with owned and out-of-path nodes
+    graph = {
+        "nodes": [
+            {
+                "id": "skills_diagnose_main",
+                "label": "main()",
+                "file_type": "code",
+                "source_file": "skills/diagnose/main.py",
+                "source_location": "L1",
+                "community": 1,
+                "community_name": "diagnose"
+            },
+            {
+                "id": "skills_diagnose_helper",
+                "label": "helper()",
+                "file_type": "code",
+                "source_file": "skills/diagnose/helper.py",
+                "source_location": "L5",
+                "community": 1,
+                "community_name": "diagnose",
+                "_callable": True
+            },
+            {
+                "id": "skills_other_func",
+                "label": "other()",
+                "file_type": "code",
+                "source_file": "skills/other/func.py",
+                "source_location": "L1",
+                "community": 2,
+                "community_name": "other",
+                "_callable": True
+            }
+        ],
+        "links": [
+            {"source": "skills_diagnose_main", "target": "skills_diagnose_helper"},
+            {"source": "skills_diagnose_helper", "target": "skills_other_func"}
+        ]
+    }
+
+    code_layer = generate._compute_code_layer(graph, "skills/diagnose")
+
+    # Should include diagnose nodes
+    owned_ids = {n["id"] for nodes in [code_layer["files"], code_layer["functions"]] for n in nodes}
+    assert "skills_diagnose_main" in owned_ids
+    assert "skills_diagnose_helper" in owned_ids
+
+    # Should NOT include out-of-path nodes in owned
+    assert "skills_other_func" not in owned_ids
+
+    # But should identify it as borrowed
+    borrowed_ids = {n["id"] for n in code_layer["borrowed"]}
+    assert "skills_other_func" in borrowed_ids
+
+
+def test_code_layer_excludes_test_files():
+    graph = {
+        "nodes": [
+            {
+                "id": "skills_diagnose_main",
+                "label": "main()",
+                "file_type": "code",
+                "source_file": "skills/diagnose/main.py",
+                "community": 1
+            },
+            {
+                "id": "skills_diagnose_test",
+                "label": "_test_helper()",
+                "file_type": "code",
+                "source_file": "skills/diagnose/tests/test_main.py",
+                "community": 1,
+                "_callable": True
+            }
+        ],
+        "links": []
+    }
+
+    code_layer = generate._compute_code_layer(graph, "skills/diagnose")
+
+    owned_ids = {n["id"] for nodes in [code_layer["files"], code_layer["functions"]] for n in nodes}
+    assert "skills_diagnose_main" in owned_ids
+    assert "skills_diagnose_test" not in owned_ids
+
+
+def test_code_layer_groups_by_community():
+    graph = {
+        "nodes": [
+            {
+                "id": "node1",
+                "label": "File1",
+                "file_type": "code",
+                "source_file": "skills/tdd/file1.py",
+                "community": 1,
+                "community_name": "TDD Core"
+            },
+            {
+                "id": "node2",
+                "label": "func()",
+                "file_type": "code",
+                "source_file": "skills/tdd/func.py",
+                "source_location": "L10",
+                "community": 1,
+                "community_name": "TDD Core",
+                "_callable": True
+            },
+            {
+                "id": "node3",
+                "label": "other()",
+                "file_type": "code",
+                "source_file": "skills/tdd/other.py",
+                "source_location": "L20",
+                "community": 2,
+                "community_name": "Helpers",
+                "_callable": True
+            }
+        ],
+        "links": []
+    }
+
+    code_layer = generate._compute_code_layer(graph, "skills/tdd")
+
+    # Verify community grouping is preserved
+    for node in code_layer["files"] + code_layer["functions"]:
+        assert node["community"] >= 1
+        assert node["community_name"] != ""
