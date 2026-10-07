@@ -12,6 +12,7 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { createPortfolio } from '../electron/main/portfolio.js'
 import { handlePortfolioRequest } from '../electron/main/portfolio_remote.js'
+import { resolveServiceDefaults } from '../electron/main/device_identity.js'
 
 // Authenticate gh/git children from the pipeline's shared credential file (see gh_auth.js).
 const ghTokenSource = loadGhToken()
@@ -40,6 +41,12 @@ function readBody(req, limit) {
 // separate from this process -- see refresh_relay.js for why the hop
 // exists at all.
 const DASHBOARD_REFRESH_URL = process.env.MARVIN_DASHBOARD_REFRESH_URL || 'http://localhost:7879/refresh'
+
+// The mobile backend's refresh listener (best-effort forward; mobile backend may not be running).
+// Resolves to localhost when running on the primary host, or the primary host's Tailscale name otherwise.
+const serviceDefaults = resolveServiceDefaults()
+const MOBILE_REFRESH_PORT = process.env.MARVIN_MOBILE_REFRESH_PORT || '7881'
+const MOBILE_REFRESH_URL = process.env.MARVIN_MOBILE_REFRESH_URL || `http://${serviceDefaults.host}:${MOBILE_REFRESH_PORT}/refresh`
 
 function postJson(url, body) {
   return fetch(url, {
@@ -74,6 +81,7 @@ const server = createServer(async (req, res) => {
   if (req.method === 'POST' && req.url === '/mr-ready') {
     res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: true }))
     forwardRefreshPing(DASHBOARD_REFRESH_URL, postJson)
+    forwardRefreshPing(MOBILE_REFRESH_URL, postJson)
     return
   }
 
@@ -166,6 +174,10 @@ server.listen(PORT, () => {
   startChangeWatch({
     getRepos: () => readRegistry().map((b) => b.repo),
     probe: createGithubProbe(),
-    ping: (repo) => (console.log(`[gh-watch] change detected on ${repo} at ${new Date().toISOString()}`), forwardRefreshPing(DASHBOARD_REFRESH_URL, (url) => postJson(url, { topics: ['activity', 'mr'], source: `github:${repo}` })))
+    ping: (repo) => {
+      console.log(`[gh-watch] change detected on ${repo} at ${new Date().toISOString()}`)
+      forwardRefreshPing(DASHBOARD_REFRESH_URL, (url) => postJson(url, { topics: ['activity', 'mr'], source: `github:${repo}` }))
+      forwardRefreshPing(MOBILE_REFRESH_URL, postJson)
+    }
   })
 })
