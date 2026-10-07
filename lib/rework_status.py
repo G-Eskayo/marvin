@@ -53,6 +53,10 @@ def status_for(ticket: dict, ctx: dict) -> dict:
     if attempts >= cap:
         return {"state": "needs-person", "headline": "Needs you",
                 "detail": f"It has been rebuilt {attempts} times and still does not pass, so the pipeline stopped. Look at the denial comments on its ticket."}
+    if "ready-for-agent" not in names:
+        return {"state": "needs-person", "headline": "Parked: the pipeline stopped trying",
+                "detail": "It failed its automated attempts, so the pipeline took off ready-for-agent (and the claim) to stop retrying. "
+                          "Read the latest comment on the ticket for why, fix that, then add ready-for-agent back and it is rebuilt."}
     if ctx.get("paused"):
         return {"state": "paused", "headline": f"Paused: {ctx.get('project', 'this project')} is not being dispatched",
                 "detail": f"The circuit breaker stopped dispatch after {ctx['paused']}. Nothing starts until that is fixed or cleared."}

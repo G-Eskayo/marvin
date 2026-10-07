@@ -188,6 +188,10 @@ if [ -f "$HOME/.claude/.oauth-token" ]; then
 fi
 if [ -f "$HOME/.claude/.gh-token" ]; then
   export GH_TOKEN="$(cat "$HOME/.claude/.gh-token")"
+  # git itself asks the macOS keychain for credentials, which is locked in a non-interactive shell (every push from the macbook
+  # died with exit 128, 2026-10-07); gh's credential helper reads GH_TOKEN instead. Set through the environment so it reaches
+  # every git call in the run and leaves repo and global config alone.
+  export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0= GIT_CONFIG_KEY_1=credential.helper GIT_CONFIG_VALUE_1="!gh auth git-credential"
 fi
 {command}
 """

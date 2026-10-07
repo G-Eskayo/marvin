@@ -68,7 +68,9 @@ def _commit_and_push(worktree_path: Path, ticket_ref: str) -> str:
     # refs/rescue/ (sandbox_orchestration._preserve_prior_attempt), so replacing it is safe, and the lease
     # means we only replace the tip we last fetched, never someone else's newer push. Pipeline branches only.
     force = ["--force-with-lease"] if branch.startswith("pipeline/") else []
-    subprocess.run(["git", "push", "-u", *force, "origin", branch], cwd=worktree_path, check=True, capture_output=True)
+    pushed = subprocess.run(["git", "push", "-u", *force, "origin", branch], cwd=worktree_path, capture_output=True, text=True)
+    if pushed.returncode != 0:  # keep git's own reason: a bare "exit status 128" hid a locked keychain through three attempts
+        raise RuntimeError(f"git push of {branch} failed: {(pushed.stderr or pushed.stdout).strip()[-400:]}")
     return branch
 
 

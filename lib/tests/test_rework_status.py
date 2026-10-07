@@ -69,3 +69,19 @@ def test_a_ticket_that_is_not_in_the_queue_for_no_stated_reason_says_so_honestly
 
 def test_ordinals():
     assert [rs.ordinal(n) for n in (1, 2, 3, 4, 11, 12, 13, 21, 22, 23)] == ["1st", "2nd", "3rd", "4th", "11th", "12th", "13th", "21st", "22nd", "23rd"]
+
+
+def test_a_ticket_the_pipeline_parked_says_so_instead_of_not_queued():
+    """#148 failed three automated attempts, so the pipeline removed ready-for-agent and the claim. The card then said
+    'Not queued, nothing explains why' although the pipeline had stopped on purpose and the ticket's own comment said so."""
+    s = rs.status_for(ticket(148, labels=("needs-reengagement",)), ctx(queue=[143, 156]))
+    assert s["state"] == "needs-person" and s["headline"].startswith("Parked")
+    assert "ready-for-agent" in s["detail"] and "latest comment" in s["detail"]
+
+
+def test_parked_beats_a_stale_pause_or_blocker_because_nothing_will_run_either_way():
+    assert rs.status_for(ticket(labels=("needs-reengagement",)), ctx(paused="x failed", blockers=[5]))["headline"].startswith("Parked")
+
+
+def test_a_running_ticket_without_ready_for_agent_is_still_running():
+    assert rs.status_for(ticket(labels=("needs-reengagement", "claimed:mac-mini")), ctx())["state"] == "running"

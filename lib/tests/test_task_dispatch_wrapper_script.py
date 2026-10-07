@@ -74,3 +74,22 @@ def test_wrapper_script_calls_refresh_summary_on_start_and_exit():
     lines = script.splitlines()
     refresh_calls = [l for l in lines if 'refresh-summary' in l]
     assert len(refresh_calls) >= 2  # one on start, one in trap
+
+
+def test_wrapper_script_points_git_at_gh_for_credentials_when_there_is_a_token():
+    """Found live 2026-10-07: every ticket run on the macbook failed at `git push` (exit 128: 'failed to get: -25308',
+    'could not read Username'). `gh` was fine (GH_TOKEN), but git itself asks the macOS keychain, which is locked in a
+    non-interactive shell. gh's credential helper reads GH_TOKEN, so git is told to use it instead, through the environment
+    so it reaches every git call in the run and touches no repo or global config."""
+    script = td._build_wrapper_script("echo hi", "task123", "my task", "mac-mini-1")
+    gh_token = script.index('export GH_TOKEN=')
+    assert "export GIT_CONFIG_COUNT=2" in script
+    assert "GIT_CONFIG_KEY_0=credential.helper" in script and "GIT_CONFIG_VALUE_0=" in script   # the empty value clears the keychain helper
+    assert 'GIT_CONFIG_VALUE_1="!gh auth git-credential"' in script
+    assert script.index("GIT_CONFIG_COUNT") > gh_token and script.index("GIT_CONFIG_COUNT") < script.index("echo hi")
+
+
+def test_the_git_credential_override_is_only_set_when_a_token_exists():
+    script = td._build_wrapper_script("echo hi", "task123", "my task", "mac-mini-1")
+    block = script[script.index('if [ -f "$HOME/.claude/.gh-token" ]'):script.index("echo hi")]
+    assert "GIT_CONFIG_COUNT" in block and block.count("fi") >= 1   # inside the same if as GH_TOKEN, so no token means git is left alone
