@@ -101,6 +101,24 @@ Fetch thread history with optional pagination.
 
 **Response**: `200 { "ok": true, "data": [{ id, source, role, text, sessionId, ts }, ...] }` (messages in reverse chronological order, newest first)
 
+## Permission bridge: side-effecting actions
+
+When the mobile client sends a message that triggers a side-effecting tool call (Bash, Edit, Write, etc.), the `permission_hook.js` subprocess intercepts the tool use, creates a pending action, and blocks until the action is approved or denied via these endpoints.
+
+### `GET /pending-actions`
+
+List all pending actions (pending, approved, or denied).
+
+**Response**: `200 { "ok": true, "data": [{ id, toolName, toolInput, summary, sessionId, status, decision, reason, createdAt, resolvedAt }, ...] }`
+
+### `POST /pending-actions/resolve`
+
+Approve or deny a pending action.
+
+**Request body**: `{ "id": "<action-id>", "decision": "allow"|"deny", "reason": "<optional-reason>" }`
+
+**Response**: `200 { "ok": true, "data": { id, ... } }` on success, `400 { "ok": false, "error": "<message>" }` if action is not pending or invalid input
+
 ## Deliberately out of scope
 
-Face ID authentication, write endpoints (beyond /chat), search endpoints — covered in separate tickets (#157, #159, #160). This backend provides read-only access to dashboard data and managed session state for the mobile client.
+Face ID authentication, search endpoints — covered in separate tickets (#157, #160). This backend provides read-only access to dashboard data, managed session state with side-effecting permission gating, and the mobile client.
