@@ -27,6 +27,7 @@ pointing a tool like Plash at for a live desktop wallpaper.
 """
 from __future__ import annotations
 import json
+import math
 import plistlib
 import re
 import subprocess
@@ -399,8 +400,18 @@ def build_tree(manifest: dict, enrichment: dict) -> dict:
     root = {
         "id": enrichment["root"]["id"], "cat": "root", "desc": enrichment["root"]["desc"],
         "expandable": False, "expanded": True,
-        "children": [structural[0], skills_trunk] + structural[1:] + [build_dashboard_trunk(), build_projects_trunk()],
+        "children": [structural[0], skills_trunk] + structural[1:] + [build_dashboard_trunk()],
     }
+    # A project can share its name with a skill (paper-dive is both). Ids key
+    # everything in the page (lookup, layout, synapses), so the project gets
+    # its own id and shows its name as the label.
+    taken: set = set()
+    collect_ids(root, taken)
+    projects = build_projects_trunk()
+    for p in projects["children"]:
+        if p["id"] in taken:
+            p["name"], p["id"] = p["id"], "project:" + p["id"]
+    root["children"].append(projects)
     return root
 
 
@@ -417,6 +428,97 @@ def build_synapses(manifest: dict, enrichment: dict) -> list[dict]:
     return out
 
 
+# ── precomputed layout (#183, ADR 0049) ─────────────────────────────────
+# The dendrite layout the page used to compute in the browser, done here
+# instead so it's the same every run and the browser runs no layout. Covers
+# every node, including children of collapsed forests, so expanding one only
+# reveals positions that were already fixed.
+SEG = [150, 105, 72, 46, 32]
+CONE = [0, 0.85, 0.68, 0.55, 0.5]
+
+
+def _add(a, b): return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
+def _scale(a, s): return (a[0] * s, a[1] * s, a[2] * s)
+def _cross(a, b): return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
+
+def _norm(a):
+    length = math.sqrt(a[0] ** 2 + a[1] ** 2 + a[2] ** 2) or 1
+    return (a[0] / length, a[1] / length, a[2] / length)
+
+
+def _layout_branch(node: dict, pos, dir_, depth: int, out: dict) -> None:
+    out[node["id"]] = pos
+    kids = node.get("children", [])
+    if not kids:
+        return
+    up = (0, 1, 0) if abs(dir_[1]) < 0.99 else (1, 0, 0)
+    u = _norm(_cross(up, dir_))
+    v = _norm(_cross(dir_, u))
+    cone = CONE[min(depth, len(CONE) - 1)]
+    seg = SEG[min(depth, len(SEG) - 1)]
+    for i, kid in enumerate(kids):
+        phi = (i / len(kids)) * math.pi * 2 + depth * 0.9
+        local = cone * (0.5 + 0.5 * ((i % 3) / 2))
+        kid_dir = _norm(_add(_scale(dir_, math.cos(local)),
+                             _scale(_add(_scale(u, math.cos(phi)), _scale(v, math.sin(phi))), math.sin(local))))
+        _layout_branch(kid, _add(pos, _scale(kid_dir, seg)), kid_dir, depth + 1, out)
+
+
+def compute_layout(tree: dict) -> dict[str, list[float]]:
+    """Every node id → its [x, y, z] position, the same for the same tree."""
+    out: dict = {tree["id"]: (0, 0, 0)}
+    kids = tree.get("children", [])
+    golden = math.pi * (3 - math.sqrt(5))
+    for i, kid in enumerate(kids):
+        yv = 1 - (i / (len(kids) - 1)) * 2 if len(kids) > 1 else 0
+        r = math.sqrt(max(0, 1 - yv * yv))
+        dir_ = _norm((math.cos(golden * i) * r, yv, math.sin(golden * i) * r))
+        _layout_branch(kid, _scale(dir_, SEG[0]), dir_, 1, out)
+    _spread(out, fixed=tree["id"])
+    return {id_: [round(c, 2) for c in p] for id_, p in out.items()}
+
+
+MIN_SPACING = 24  # world units; a crowded category's ring of skills can pack tighter than this
+
+
+def _spread(pos: dict, fixed: str, max_rounds: int = 200) -> None:
+    """Push apart any two nodes closer than MIN_SPACING, in a fixed order, so it's deterministic.
+    Nodes already far enough apart never move."""
+    ids = sorted(pos)
+    for _ in range(max_rounds):
+        moved = False
+        for i, a in enumerate(ids):
+            for b in ids[i + 1:]:
+                d = (pos[b][0] - pos[a][0], pos[b][1] - pos[a][1], pos[b][2] - pos[a][2])
+                dist = math.sqrt(d[0] ** 2 + d[1] ** 2 + d[2] ** 2)
+                if dist >= MIN_SPACING:
+                    continue
+                away = _norm(d) if dist > 1e-9 else _norm((1, 0.5 + i % 3, 0.25))
+                gap = MIN_SPACING - dist + 1e-6
+                if a == fixed or b == fixed:
+                    mover, sign = (b, 1) if a == fixed else (a, -1)
+                    pos[mover] = _add(pos[mover], _scale(away, sign * gap))
+                else:
+                    pos[a] = _add(pos[a], _scale(away, -gap / 2))
+                    pos[b] = _add(pos[b], _scale(away, gap / 2))
+                moved = True
+        if not moved:
+            return
+
+
+def attach_layout(tree: dict) -> None:
+    """Store each node's precomputed position on the node as `pos`, so it travels
+    with the tree into index.html and tree-data.json (DesktopLive's live update)."""
+    layout = compute_layout(tree)
+
+    def walk(n: dict) -> None:
+        n["pos"] = layout[n["id"]]
+        for c in n.get("children", []):
+            walk(c)
+    walk(tree)
+
+
 def collect_ids(node: dict, out: set) -> None:
     out.add(node["id"])
     for c in node.get("children", []):
@@ -428,6 +530,7 @@ def main() -> None:
     enrichment = json.loads(ENRICHMENT_PATH.read_text(encoding="utf-8"))
 
     tree = build_tree(manifest, enrichment)
+    attach_layout(tree)
     synapses = build_synapses(manifest, enrichment)
 
     known_ids = set()
