@@ -11,6 +11,8 @@ vi.mock('../webhook-server/ticket_stages.js', () => ({ recordStage: vi.fn() }))
 // Likewise the approve-failure log (shared with lib/failure_breaker.py): never write the
 // real ~/.claude/logs/pipeline-failures.jsonl from a test.
 vi.mock('../webhook-server/failure_log.js', () => ({ recordFailure: vi.fn() }))
+// #225: the post-merge rebase runs after every merged test PR; its results must never land in the real status file.
+vi.mock('../webhook-server/rebase_status.js', () => ({ writeRebaseStatus: vi.fn(), readRebaseStatus: vi.fn(() => ({})) }))
 
 import { execFile, execFileSync } from 'child_process'
 import { promisify } from 'util'
@@ -83,8 +85,33 @@ describe('mergePr', () => {
   it('triggers a ticket-pipeline redispatch after a successful merge, regardless of what was touched', async () => {
     const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
     const redispatch = vi.fn()
-    await mergePr('https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, redispatch)
-    expect(redispatch).toHaveBeenCalledTimes(1)
+    await mergePr('https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, redispatch, undefined, undefined, undefined, undefined,
+      { rebaseOpen: vi.fn().mockResolvedValue([]) })
+    await vi.waitFor(() => expect(redispatch).toHaveBeenCalledTimes(1))
+  })
+
+  // #225: the other open PRs are rebased onto the new main first, and only then does the pipeline scan run, because
+  // that scan sends every PR GitHub calls conflicting back for a full rebuild.
+  it('after a merge, rebases the other open PRs, then redispatches; the merge itself does not wait for them', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const order = []
+    let finishRebases
+    const rebaseOpen = vi.fn(() => new Promise((r) => { finishRebases = () => { order.push('rebased'); r([]) } }))
+    const redispatch = vi.fn(() => order.push('redispatch'))
+    const result = await mergePr('https://github.com/G-Eskayo/marvin/pull/72', exec, noopRebuild, redispatch, undefined, undefined, undefined, undefined, { rebaseOpen })
+    expect(result.merged).toBe(true)
+    await vi.waitFor(() => expect(rebaseOpen).toHaveBeenCalledWith(expect.objectContaining({ repo: 'G-Eskayo/marvin', mergedPrUrl: 'https://github.com/G-Eskayo/marvin/pull/72', base: 'main' })))
+    expect(redispatch).not.toHaveBeenCalled()
+    finishRebases()
+    await vi.waitFor(() => expect(order).toEqual(['rebased', 'redispatch']))
+  })
+
+  it('a failing post-merge rebase still redispatches', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const redispatch = vi.fn()
+    await mergePr('https://github.com/G-Eskayo/marvin/pull/73', exec, noopRebuild, redispatch, undefined, undefined, undefined, undefined,
+      { rebaseOpen: vi.fn().mockRejectedValue(new Error('boom')) })
+    await vi.waitFor(() => expect(redispatch).toHaveBeenCalledTimes(1))
   })
 
   it('does not trigger a redispatch when the merge itself fails', async () => {
@@ -117,7 +144,8 @@ describe('mergePr', () => {
       'https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, noopRedispatch, shouldGateMerge, rebaseAndRetestFn, reengage
     )
 
-    expect(rebaseAndRetestFn).toHaveBeenCalledWith('pipeline/g-eskayo/marvin#5', exec)
+    // marvin's gate finishes a rebase whose only conflicts are its generated files (#225)
+    expect(rebaseAndRetestFn).toHaveBeenCalledWith('pipeline/g-eskayo/marvin#5', exec, expect.any(String), expect.any(Function), 'main', expect.any(Function))
     expect(exec).toHaveBeenCalledWith('gh', ['pr', 'merge', 'https://github.com/G-Eskayo/marvin/pull/71', '--merge'])
     expect(reengage).not.toHaveBeenCalled()
     expect(result).toEqual({ merged: true, reengaged: false, reason: null })

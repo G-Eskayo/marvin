@@ -720,6 +720,15 @@ untouched (it is the "legacy profile"); only repos with a profile file use the p
   environment; recording them as failures would pause the pipeline. Merge failures now carry `project`, so the
   breaker no longer counts another project's failures as marvin's. Webhook error lines start with an ISO time and the
   PR URL.
+- **Re-integrate after every merge (#225, 2026-10-07)**: when a PR merges, the webhook rebases the repo's other open
+  PRs onto the new base by code (`post_merge_rebase.js`), one at a time, queued behind the merge so the Approve
+  response doesn't wait. A clean rebase is retested and pushed, so its own Approve later skips the gate's rebase. A
+  conflict or a red test leaves the PR untouched. Each result goes into the ticket's stage log (`gate`) and
+  `~/.claude/logs/pr-rebase-status.json`, served at `GET /rebase-status` so MR Review on either machine shows it.
+  The pipeline scan (which sends conflicting PRs back for a full rebuild) runs only after the rebases. marvin's
+  generated files (`bench/metrics`, `graphify-out`) get the generated-file resolver too (`generated_paths.rules_for`).
+  Chosen over holding related tickets back, which would only move the bottleneck (Gil); #230 adds cheap conflict
+  resolution and #231 a merge queue.
 - **Approving and denying from MR Review (2026-10-05)**: the merge gate now reads the profile too. A project's
   PRs get Approve/Deny only if its profile says `"merge_from_dashboard": true`; the webhook enforces that
   itself (not just the screen) and refuses others with `NO_MERGE_PROFILE`. **Deny** needs no profile: the repo
