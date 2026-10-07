@@ -20,6 +20,34 @@ const TICKET_PIPELINE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'ticke
 const VENV_PYTHON = path.resolve(__dirname, '..', '..', 'venv', 'bin', 'python')
 const PROFILE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'project_profile.py')
 const GENERATED_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'generated_paths.py')
+const DEFAULT_TEST_TIMEOUT_MS = 1200_000
+
+export async function execWithGroupTimeout(cmd, args, opts, timeoutMs = DEFAULT_TEST_TIMEOUT_MS) {
+  const child = spawn(cmd, args, { ...opts, detached: true })
+  let stdout = '', stderr = ''
+  if (child.stdout) child.stdout.on('data', (d) => { stdout += d })
+  if (child.stderr) child.stderr.on('data', (d) => { stderr += d })
+  const promise = new Promise((resolve, reject) => {
+    child.on('error', reject)
+    child.on('close', (code) => {
+      if (code === 0) resolve()
+      else reject(Object.assign(new Error(`Command failed with exit code ${code}`), { stdout, stderr }))
+    })
+  })
+  let timer
+  return Promise.race([
+    promise,
+    new Promise((resolve, reject) => {
+      timer = setTimeout(() => {
+        try {
+          process.kill(-child.pid, 'SIGKILL')
+        } catch { /* process may have already exited */ }
+        const mins = Math.max(1, Math.round(timeoutMs / 60000))
+        reject(Object.assign(new Error(`Tests did not finish within ${mins} min and were killed, running: ${cmd}`), { stdout, stderr }))
+      }, timeoutMs)
+    })
+  ]).finally(() => clearTimeout(timer))
+}
 
 // ADR 0026: dispatch stays concurrent (no throttling), so two tickets can
 // finish out of order -- whichever merges second may already be behind
@@ -294,7 +322,7 @@ function withGateTimeout(promise, ms) {
 
 async function mergePrUnqueued(
   prUrl,
-  exec = execFileAsync,
+  exec = execWithGroupTimeout,
   rebuild = triggerRebuildIfDashboardChanged,
   redispatch = triggerTicketPipeline,
   shouldGateMerge = _defaultShouldGateMerge,

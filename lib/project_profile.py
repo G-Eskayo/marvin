@@ -16,11 +16,13 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from evidence_capture import TestTimedOut  # noqa: E402
 
 PROFILES_DIR = Path.home() / ".agents" / "config" / "projects"
 PIPELINE_CLONES = Path.home() / ".agents-pipeline-clones"  # dedicated clones: not a working copy, not in iCloud
@@ -275,8 +277,18 @@ def missing_here(profile: dict) -> list[str]:
 # ── measuring ───────────────────────────────────────────────────────────────
 
 def _default_runner(cmd, cwd, env, timeout):
-    proc = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout)
-    return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+    proc = subprocess.Popen(
+        cmd, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, start_new_session=True,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        stdout, stderr = proc.communicate()
+        output = (stdout or "") + (stderr or "")
+        raise TestTimedOut(cmd, timeout, output)
+    return proc.returncode, (stdout or "") + (stderr or "")
 
 
 def _failure_lines(output: str, limit: int = 60) -> list[str]:
@@ -314,7 +326,10 @@ class Measurer:
                     raise EnvMissing(t["id"], missing)
                 self.report["notes"].append(f"{t['label']}: not verified (needs {', '.join(missing)}, not available on this machine)")
                 continue
-            rc, out = self.runner(t["command"], Path(worktree) / t["cwd"], self.env, t["timeout_s"])
+            try:
+                rc, out = self.runner(t["command"], Path(worktree) / t["cwd"], self.env, t["timeout_s"])
+            except TestTimedOut as exc:
+                raise TestTimedOut(exc.command, exc.timeout_s, exc.partial_output) from exc
             parsed = parse_output(t["parser"], out, rc)
             if parsed is None:
                 if any(m in out.lower() for m in _NO_TESTS_MARKERS):
@@ -347,7 +362,10 @@ class Measurer:
             missing = [c for c in st["requires"] if not self.have(c, self.env)]
             if missing:
                 raise EnvMissing(st["id"], missing)
-            rc, out = self.runner(st["command"], worktree / st["cwd"], self.env, st["timeout_s"])
+            try:
+                rc, out = self.runner(st["command"], worktree / st["cwd"], self.env, st["timeout_s"])
+            except TestTimedOut as exc:
+                raise TestTimedOut(exc.command, exc.timeout_s, exc.partial_output) from exc
             if rc != 0:
                 raise MeasureError(f"setup step '{st['label']}' failed: ...{out[-400:].strip()}")
 
@@ -400,6 +418,9 @@ def verify_dir(profile: dict, directory: Path, runner=_default_runner, have=None
         metrics = m(Path(directory))
     except EnvMissing as e:
         return {"ok": False, "kind": "env_missing", "summary": str(e), "tiers": [], "output_tail": ""}
+    except TestTimedOut as e:
+        mins = max(1, round(e.timeout_s / 60))
+        return {"ok": False, "kind": "error", "summary": f"Check did not finish within {mins} min and was killed", "tiers": m.report["tiers"], "output_tail": e.partial_output[-3000:]}
     except MeasureError as e:
         return {"ok": False, "kind": "error", "summary": str(e).split(": ...")[0], "tiers": m.report["tiers"], "output_tail": m.last_output[-3000:] or str(e)}
     bad = []
