@@ -12636,5 +12636,46 @@
         "higher_is_better": false
       }
     }
+  },
+  {
+    "timestamp": "2026-10-07T20:50:13.647480+00:00",
+    "metrics": {
+      "route:intent-routing-collection": {
+        "value": 92,
+        "higher_is_better": true
+      },
+      "profile:missing:G-Eskayo/finance-os": {
+        "value": 1,
+        "higher_is_better": false
+      },
+      "profile:missing:G-Eskayo/nourished": {
+        "value": 1,
+        "higher_is_better": false
+      },
+      "catalog:fresh": {
+        "value": 1.6,
+        "higher_is_better": false
+      },
+      "github:budget": {
+        "value": 3052,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.agents@macbook-pro-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.agents@mac-mini-1": {
+        "value": 1,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.claude@macbook-pro-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.claude@mac-mini-1": {
+        "value": 1,
+        "higher_is_better": false
+      }
+    }
   }
 ]
