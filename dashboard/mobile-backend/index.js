@@ -6,6 +6,7 @@ import path from 'path'
 import { whois, loadAllowlist, isAllowed } from './device_gate.js'
 import { createDashboardApiRouter } from './dashboard_api.js'
 import { createChatApiRouter } from './chat_api.js'
+import { createThreadStore } from './thread_store.js'
 
 const execFileP = promisify(execFile)
 
@@ -37,7 +38,8 @@ function getUptimeSeconds() {
 }
 
 const dashboardApiRouter = createDashboardApiRouter()
-const chatApiRouter = createChatApiRouter()
+const threadStore = createThreadStore()
+const chatApiRouter = createChatApiRouter({ threadStore })
 
 const server = createServer(async (req, res) => {
   // Device gate: check allowlist
