@@ -1,0 +1,3 @@
+{"type":"system","session_id":"session-resume-001"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Continuing from before, here is the rest of the answer."}]}}
+{"type":"result","session_id":"session-resume-001","result":"Continuing from before, here is the rest of the answer.","usage":{"input_tokens":25,"output_tokens":14},"total_cost_usd":0.0018,"duration_ms":389,"is_error":false}
