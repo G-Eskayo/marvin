@@ -22,6 +22,9 @@ describe('Markdown with project context', () => {
   it('parses dash links back into targets', () => {
     expect(parseDashLink('dash://ticket/G-Eskayo/marvin/12')).toEqual({ type: 'ticket', repo: 'G-Eskayo/marvin', number: 12 })
     expect(parseDashLink('dash://doc/marvin/docs/adr/0033-health.md')).toEqual({ type: 'doc', project: 'marvin', path: 'docs/adr/0033-health.md' })
+    // the master map links folders and files on the Mac (2026-10-07); spaces arrive percent-encoded
+    expect(parseDashLink('file:///Users/me/Documents/Projects/My%20App')).toEqual({ type: 'file', path: '/Users/me/Documents/Projects/My App' })
+    expect(parseDashLink('https://github.com/G-Eskayo/marvin')).toBeNull()
     expect(parseDashLink('https://x.com')).toBeNull()
   })
 })

@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, session, shell } from 'electron'
 import { installDevSiteCors } from './dev_site_cors.js'
 import { join, dirname } from 'path'
-import { existsSync, mkdirSync, appendFileSync } from 'fs'
+import { existsSync, mkdirSync, appendFileSync, statSync } from 'fs'
 import { homedir } from 'os'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
@@ -32,7 +32,7 @@ import { listOpenPrsAcrossRepos, prListArgs, createListCache, normalizeSeen, can
 import { createIndexer, buildDocsIndex, loadIndex } from './docs_search.js'
 import { createDocsService, MASTER_ID } from './docs_service.js'
 import { readMergeableRepos, listProfiles, setDispatch } from './profiles.js'
-import { searchFiles, isRevealable } from './files_search.js'
+import { searchFiles, isRevealable, isLinkable, linkAction } from './files_search.js'
 import { readCatalog, readMasterDoc, CATALOG_DIR, MASTER_DOC_PATH } from './catalog.js'
 import { STAGES_DIR } from '../../webhook-server/ticket_stages.js'
 import { DISPATCH_STATE_PATH } from './dispatch_status.js'
@@ -374,6 +374,13 @@ function registerDocsHandlers() {
   ipcMain.handle('docs:reveal', (_event, filePath) => {
     if (!isRevealable(filePath, homedir()) || !existsSync(filePath)) throw new Error('Not a revealable file')
     shell.showItemInFolder(filePath)
+  })
+  // A link in the master map: open a folder or document on this Mac, otherwise just show it in Finder (files_search.js).
+  ipcMain.handle('docs:openLink', async (_event, filePath) => {
+    if (!isLinkable(filePath, homedir()) || !existsSync(filePath)) throw new Error('Not a linkable file')
+    if (linkAction(filePath, statSync(filePath).isDirectory()) === 'reveal') return shell.showItemInFolder(filePath)
+    const err = await shell.openPath(filePath)
+    if (err) throw new Error(err)
   })
   ipcMain.handle('docs:tree', (_event, id) => docsService.tree(id))
   ipcMain.handle('docs:content', (_event, id, filePath) => docsService.content(id, filePath))

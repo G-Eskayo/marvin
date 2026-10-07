@@ -25,8 +25,8 @@ def gh_repo(name, days=1, vis="PUBLIC", archived=False, desc="", lang=None, topi
             "repositoryTopics": [{"name": t} for t in topics]}
 
 
-def local(path, origin=None, days=1, context=False, readme=False, adr=0):
-    return {"path": path, "name": Path(path).name, "origin": origin, "last_activity": iso(days),
+def local(path, origin=None, days=1, context=False, readme=False, adr=0, worktree=False):
+    return {"path": path, "name": Path(path).name, "origin": origin, "last_activity": iso(days), "worktree": worktree,
             "docs": {"context": context, "readme": readme, "adrCount": adr}}
 
 
@@ -274,3 +274,52 @@ def test_no_hardcoded_portfolio_path_outside_default_fallback():
                             capture_output=True, text=True)
     lines = [l for l in result.stdout.split("\n") if l.strip()]
     assert len(lines) == 1 and "_PORTFOLIO_DEFAULT" in lines[0], f"Expected exactly one occurrence in _PORTFOLIO_DEFAULT, found: {lines}"
+
+
+# ── one real copy per project, and a map you can click (2026-10-07) ─────────
+
+H = str(pc.HOME)
+
+
+def test_primary_copy_prefers_a_full_clone_in_developer_over_icloud_and_worktrees():
+    cat = build(github=[gh_repo("clarity-captions")], locals_=[
+        local(f"{H}/Developer/clarity-demo-wt", origin="clarity-captions", days=0, worktree=True),
+        local(f"{H}/Documents/Projects/clarity-captions", origin="clarity-captions", days=1),
+        local(f"{H}/Developer/clarity-captions", origin="clarity-captions", days=2)])
+    p = by_id(cat, "clarity-captions")
+    assert p["primaryPath"] == f"{H}/Developer/clarity-captions"
+    assert p["localPaths"][0] == p["primaryPath"]  # everything that takes "the" path takes the primary
+
+
+def test_primary_copy_override_wins():
+    cat = build(github=[gh_repo("app")], locals_=[local(f"{H}/Developer/app", origin="app"),
+                                                  local(f"{H}/Documents/Projects/app", origin="app")],
+                overrides={"app": {"primaryPath": f"{H}/Documents/Projects/app"}})
+    assert by_id(cat, "app")["primaryPath"] == f"{H}/Documents/Projects/app"
+
+
+def test_primary_copy_is_none_without_a_local_folder():
+    assert by_id(build(github=[gh_repo("remote-only")]), "remote-only")["primaryPath"] is None
+
+
+def test_master_links_each_project_to_docs_and_to_its_folder_and_names_other_copies():
+    cat = build(github=[gh_repo("clarity-captions")], locals_=[
+        local(f"{H}/Developer/clarity-captions", origin="clarity-captions", context=True),
+        local(f"{H}/Documents/Projects/clarity-captions", origin="clarity-captions")])
+    md = pc.render_master(cat)
+    assert "[Docs](dash://doc/clarity-captions/CONTEXT.md)" in md
+    assert f"[Open folder](file://{H}/Developer/clarity-captions)" in md
+    assert f"other copies: [Projects/clarity-captions](file://{H}/Documents/Projects/clarity-captions)" in md
+
+
+def test_master_links_readme_when_there_is_no_context_and_nothing_when_no_docs():
+    cat = build(github=[gh_repo("a"), gh_repo("b")], locals_=[local(f"{H}/Developer/a", origin="a", readme=True),
+                                                              local(f"{H}/Developer/b", origin="b")])
+    md = pc.render_master(cat)
+    assert "[Docs](dash://doc/a/README.md)" in md
+    assert "dash://doc/b/" not in md
+
+
+def test_file_links_escape_spaces():
+    cat = build(locals_=[local(f"{H}/Documents/Projects/My App")])
+    assert f"(file://{H}/Documents/Projects/My%20App)" in pc.render_master(cat)

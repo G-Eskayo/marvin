@@ -12,6 +12,7 @@ synced: local paths differ per machine). Decisions live in the shared
 """
 from __future__ import annotations
 import argparse
+from urllib.parse import quote
 import json
 import re
 import subprocess
@@ -155,6 +156,22 @@ def _topics(repo: dict) -> list[str]:
     return out
 
 
+def choose_primary(paths: list[dict], override: str | None = None) -> str | None:
+    """The one real copy of a project when several folders hold it (clarity-captions had three, 2026-10-07):
+    Gil's override first, then a full clone over a worktree, then ~/Developer over the rest over iCloud ~/Documents
+    (where git + node_modules can hang), then the most recently active. `paths` arrive newest first."""
+    if override:
+        return override
+    if not paths:
+        return None
+    def place(path: str) -> int:
+        if path.startswith(str(HOME / "Developer") + "/"):
+            return 0
+        return 2 if path.startswith(str(HOME / "Documents") + "/") else 1
+    best = min(range(len(paths)), key=lambda i: (bool(paths[i].get("worktree")), place(paths[i]["path"]), i))
+    return paths[best]["path"]
+
+
 def build_catalog(github: list[dict], locals_: list[dict], manifest: list[dict], memory: list[dict],
                   overrides: dict, board_repos: set[str], now: datetime | None = None,
                   docs_probe=None) -> dict:
@@ -247,6 +264,9 @@ def build_catalog(github: list[dict], locals_: list[dict], manifest: list[dict],
         if o.get("name"):
             rec["name"] = o["name"]
         rec["notes"] = o.get("notes", "")
+        rec["primaryPath"] = choose_primary(attached.get(pid, []), o.get("primaryPath"))
+        if rec["primaryPath"] in rec["localPaths"]:
+            rec["localPaths"] = [rec["primaryPath"], *[x for x in rec["localPaths"] if x != rec["primaryPath"]]]
         if rec["kind"] != "portfolio-only":
             rec["status"] = o.get("status") or derive_status(rec["lastActivity"], rec["_archived"], now)
         else:
@@ -275,19 +295,28 @@ def render_master(catalog: dict) -> str:
     L = ["## Projects", "", f"_{len(projs)} projects, discovered automatically from GitHub, local folders, the portfolio site and memory. "
          "Generated; edit decisions in ~/.claude/catalog/overrides.json._", ""]
 
+    def file_link(path: str) -> str:
+        return "file://" + quote(path)
+
     def line(p):
         bits = []
+        doc = "CONTEXT.md" if p["docs"]["context"] else "README.md" if p["docs"]["readme"] else None
+        if doc:
+            bits.append(f"[Docs](dash://doc/{p['id']}/{doc})")
+        primary = p.get("primaryPath") or (p["localPaths"][0] if p["localPaths"] else None)
+        if primary:
+            bits.append(f"[Open folder]({file_link(primary)})")
         if p.get("repo"):
-            bits.append(p["repo"])
-        if p["localPaths"]:
-            bits.append(f"`{p['localPaths'][0]}`")
+            bits.append(f"[{p['repo']}](https://github.com/{p['repo']})")
         bits.append(f"docs: {_docs_summary(p['docs'])}")
         if p.get("portfolio"):
             bits.append(f"site: {p['portfolio']['url']}")
         if p["board"]:
             bits.append("board")
         head = f"- **{p['name']}**" + (f" — {p['description']}" if p.get("description") else "")
-        return head + "\n  " + " · ".join(bits)
+        others = [x for x in p["localPaths"] if x != primary]
+        tail = ("\n  other copies: " + " · ".join(f"[{'/'.join(Path(x).parts[-2:])}]({file_link(x)})" for x in others)) if others else ""
+        return head + "\n  " + " · ".join(bits) + tail
 
     for title, status in groups:
         rows = [p for p in projs if p["status"] == status and p["kind"] != "portfolio-only"]
@@ -427,7 +456,7 @@ def _local_record(p: Path) -> dict:
         except OSError:
             pass
     adr_dir = p / "docs" / "adr"
-    return {"path": str(p), "name": p.name, "origin": origin, "last_activity": last,
+    return {"path": str(p), "name": p.name, "origin": origin, "last_activity": last, "worktree": (p / ".git").is_file(),
             "docs": {"context": (p / "CONTEXT.md").exists(), "readme": (p / "README.md").exists(),
                      "adrCount": len(list(adr_dir.glob("*.md"))) if adr_dir.is_dir() else 0}}
 

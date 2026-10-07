@@ -66,7 +66,8 @@ contextBridge.exposeInMainWorld('api', {
     content: (repo, path) => ipcRenderer.invoke('docs:content', repo, path),
     search: (query, opts) => ipcRenderer.invoke('docs:search', query, opts),
     files: (query) => ipcRenderer.invoke('docs:files', query),
-    reveal: (filePath) => ipcRenderer.invoke('docs:reveal', filePath)
+    reveal: (filePath) => ipcRenderer.invoke('docs:reveal', filePath),
+    openLink: (filePath) => ipcRenderer.invoke('docs:openLink', filePath)
   },
   portfolio: {
     components: () => ipcRenderer.invoke('portfolio:components'),

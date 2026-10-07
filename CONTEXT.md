@@ -505,6 +505,21 @@ nothing connected them. "Where things are" was only the tidy agent's file-filing
 - **The master doc**: `_WHERE-THINGS-ARE.md` keeps its filing sections and gains a generated Projects
   section (grouped by status, each with repo, folder, docs, portfolio page, tags) plus pointers to memory.
   The tidy agent asks `project_catalog.py render` for that section when it writes the file.
+- **One real copy per project (2026-10-07)**: `primaryPath` = `overrides.primaryPath`, else a full clone over a
+  worktree, else `~/Developer` over other folders over iCloud `~/Documents`, else the newest. `localPaths` lists
+  the primary first, so everything that takes "the" path (Docs tab, portfolio lookup) uses the same copy. The map
+  shows the others as "other copies".
+- **The map is clickable (2026-10-07)**: each project has a `[Docs](dash://doc/<id>/CONTEXT.md|README.md)` link
+  (opens in the Docs tab) and an `[Open folder](file://…)` link; knowledge pointers, Documents buckets and inbox
+  items are `file://` links too. `file://` works in any markdown viewer; in the dashboard it goes through
+  `docs:openLink`, allowed only under the search roots plus `~/.claude` and `~/.agents`, never a hidden path below
+  them. Folders and documents open, anything else is only shown in Finder, so a link can never run code.
+- **A failed refresh never empties the list (2026-10-07)**: if `refresh` fails or times out, the map renders the
+  last catalog under a ⚠ line saying how old it is (it hung on local folders at 03:01 that day and the list
+  silently vanished). Health's `catalog:fresh` still flags a stale catalog.
+- **Search covers cloud drives (2026-10-07)**: `findit` and the Docs file search include `~/Library/CloudStorage`
+  (Dropbox etc.); Nourished sat unfound in Dropbox until then. The two root lists (find_file.py `ROOTS`,
+  files_search.js `SEARCH_ROOTS`) must stay in step.
 - **Autonomy**: the catalog refreshes daily with the tidy agent (03:00), hourly inside the
   `ticket-pipeline` run, and on demand (`project_catalog.py refresh`, Docs tab refresh). Health check
   `catalog:fresh` goes amber if this machine's catalog is stale, so silent failure is visible.
