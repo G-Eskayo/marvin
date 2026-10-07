@@ -1,7 +1,26 @@
-# MARVIN ticket triage — 2026-10-07 (proposal, nothing applied yet)
+# MARVIN ticket triage — 2026-10-07 (APPLIED)
 
 Repo: G-Eskayo/marvin, 97 open issues. Evidence gathered from GitHub issues/PRs, the dashboard source
 (board.js, components/), lib/ (health_checks.py, dispatch_concurrency.py) and the installed app build.
+
+## Outcome (applied 2026-10-07, approved by Gil: "do all")
+
+- Open issues: 97 → 74. Closed 24 (16 done/superseded, 8 merged into keepers); 21 put on `hold`; 1 new ticket (#213).
+- **#213** — Holds come back: an "On hold" group on the board, a `Revisit by:` line, and a `revisit` agent.
+  Until #213 ships, find held tickets on GitHub with `label:hold` (they sit in Backlog as "On hold" on the board).
+- Every hold has a comment ending in `Revisit by: <date> — <condition>` (the format #213 will parse).
+- #174 → ready-for-human (only the manual sleep/wake check is left). #94's stale `claimed:macbook-pro` released.
+- #62's promotional comment hidden as spam. The `hold` label didn't exist on the repo; it was created.
+- Brain-map question (#30, #31, #45) still open: held until Map v2 ships (by 2026-10-31), then keep or close as not planned.
+
+## Revisit schedule (holds)
+
+| Revisit by | Tickets | Condition |
+|---|---|---|
+| 2026-10-26 | #93, #94, #97, #102 | After clarity-captions ships; do in working sessions (doc-first), not the pipeline |
+| 2026-10-31 | #30, #31, #45 | Or when Map v2 (#178–#181) ships; decide keep vs not planned |
+| 2026-11-01 | #28, #38 | Retry-storm design work; do in a working session |
+| 2026-12-01 | #44 (with #51), #47, #48, #49, #50, #51, #52, #56 (or when Mobile Voice ships), #65, #66, #67, #68 | Parked research |
 
 ## Key findings
 
@@ -30,7 +49,7 @@ Repo: G-Eskayo/marvin, 97 open issues. Evidence gathered from GitHub issues/PRs,
 | 64 | SCRUM-master orchestration agent | Covered by to-tasklist skill, #93/#94, ADR 0052 dispatch |
 | 69 | Automated design-doc pipeline | Overlaps #93/#94 + ticket agents |
 
-## B. Verify, then close (likely done)
+## B. Verify, then close (verified 2026-10-07: #72 and #121 closed, #174 → ready-for-human)
 | # | Title | Check |
 |---|---|---|
 | 72 | MR-review detail + deny | MrDetail.jsx + Deny modal exist; confirm the PR evidence schema |
