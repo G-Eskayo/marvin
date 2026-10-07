@@ -12517,5 +12517,83 @@
         "higher_is_better": false
       }
     }
+  },
+  {
+    "timestamp": "2026-10-07T03:31:39.172452+00:00",
+    "metrics": {
+      "route:intent-routing-collection": {
+        "value": 92,
+        "higher_is_better": true
+      },
+      "dispatch:lock-age": {
+        "value": 9.7549861,
+        "higher_is_better": false
+      },
+      "catalog:fresh": {
+        "value": 0.9,
+        "higher_is_better": false
+      },
+      "github:budget": {
+        "value": 3765,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.agents@mac-mini-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.agents@macbook-pro-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.claude@mac-mini-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.claude@macbook-pro-1": {
+        "value": 0,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-07T03:46:50.153363+00:00",
+    "metrics": {
+      "route:intent-routing-collection": {
+        "value": 92,
+        "higher_is_better": true
+      },
+      "dispatch:lock-age": {
+        "value": 10.100791583333335,
+        "higher_is_better": false
+      },
+      "catalog:fresh": {
+        "value": 0.2,
+        "higher_is_better": false
+      },
+      "github:budget": {
+        "value": 2977,
+        "higher_is_better": false
+      },
+      "repo:integrity:~/.claude": {
+        "value": 1,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.agents@mac-mini-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.agents@macbook-pro-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.claude@mac-mini-1": {
+        "value": 1,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.claude@macbook-pro-1": {
+        "value": 0,
+        "higher_is_better": false
+      }
+    }
   }
 ]
