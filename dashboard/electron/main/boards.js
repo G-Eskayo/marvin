@@ -37,7 +37,7 @@ export function withProjectStatus(boards, catalog) {
   return boards.map((b) => ({ ...b, status: status[projectIdOf(b.repo)] || 'recent' }))
 }
 
-// Stage events: marvin's tickets by plain number, other projects' as `<repo>-<n>` (ticket_stages.js).
+// Stage events, keyed by project + ticket number (ticket_stages.js).
 export function defaultStagesFor(repo) {
   return Object.fromEntries(listTrackedTickets(undefined, repo).map((n) => [n, readStages(n, undefined, repo)]))
 }

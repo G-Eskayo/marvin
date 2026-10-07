@@ -254,3 +254,14 @@ describe('dashboard API parity', () => {
       }
     }))
 })
+
+import { DEFAULT_STAGES_DIR } from '../mobile-backend/dashboard_api.js'
+import { STAGES_DIR as SHARED_STAGES_DIR } from '../webhook-server/ticket_stages.js'
+
+// #216: the mobile backend read ~/.claude/ticket-stages, a folder nothing writes to (the writers use
+// ~/.claude/logs/ticket-stages), so the app's Activity view was always empty.
+describe('mobile backend stage folder', () => {
+  it('reads the same folder the pipeline writes to', () => {
+    expect(DEFAULT_STAGES_DIR).toBe(SHARED_STAGES_DIR)
+  })
+})
