@@ -100,24 +100,56 @@ describe('listTrackedTickets', () => {
     }))
 })
 
-import { readStages as rs, recordStage as rec, listTrackedTickets as lt } from '../webhook-server/ticket_stages.js'
-import { mkdtempSync as mk, rmSync as rm, existsSync as ex } from 'fs'
+import { readStages as rs, recordStage as rec, listTrackedTickets as lt, listAllTrackedTickets as lat } from '../webhook-server/ticket_stages.js'
+import { mkdtempSync as mk, rmSync as rm, existsSync as ex, readdirSync as ls, writeFileSync as wf } from 'fs'
 import { tmpdir as td } from 'os'
 import pth from 'path'
 
-describe('stage records of other projects', () => {
-  it('keep their own timeline when the ticket number matches marvin\'s, and marvin keeps its plain file', () => {
+// #216: stage files are keyed `<owner>__<repo>-<n>`, the same as lib/ticket_stages.py.
+describe('stage files keyed by project + ticket number', () => {
+  const CLARITY = 'G-Eskayo/clarity-captions'
+  const inTemp = (fn) => {
     const dir = mk(pth.join(td(), 'stages-'))
-    try {
-      rec(7, 'claimed', 'started', "marvin's", { machine: 'm', dir })
-      rec(7, 'claimed', 'started', "clarity's", { machine: 'm', dir, repo: 'G-Eskayo/clarity-captions' })
-      expect(rs(7, dir).map((e) => e.detail)).toEqual(["marvin's"])
-      expect(rs(7, dir, 'G-Eskayo/clarity-captions').map((e) => e.detail)).toEqual(["clarity's"])
-      expect(ex(pth.join(dir, '7.json')) && ex(pth.join(dir, 'clarity-captions-7.json'))).toBe(true)
-      expect(lt(dir)).toEqual([7])
-      expect(lt(dir, 'G-Eskayo/clarity-captions')).toEqual([7])
-    } finally {
-      rm(dir, { recursive: true, force: true })
-    }
-  })
+    try { fn(dir) } finally { rm(dir, { recursive: true, force: true }) }
+  }
+
+  it('two projects with ticket 158 keep separate histories', () => inTemp((dir) => {
+    rec(158, 'claimed', 'started', "marvin's", { machine: 'm', dir })
+    rec(158, 'claimed', 'started', "clarity's", { machine: 'm', dir, repo: CLARITY })
+    expect(rs(158, dir).map((e) => e.detail)).toEqual(["marvin's"])
+    expect(rs(158, dir, CLARITY).map((e) => e.detail)).toEqual(["clarity's"])
+    expect(ls(dir).sort()).toEqual(['g-eskayo__clarity-captions-158.json', 'g-eskayo__marvin-158.json'])
+  }))
+
+  it('marvin is keyed the same with or without the repo given', () => inTemp((dir) => {
+    rec(9, 'claimed', 'started', '', { machine: 'm', dir, repo: 'G-Eskayo/marvin' })
+    rec(9, 'gate', 'started', '', { machine: 'm', dir })
+    expect(ls(dir)).toEqual(['g-eskayo__marvin-9.json'])
+  }))
+
+  it("marvin falls back to its old bare-number file; another project never reads it", () => inTemp((dir) => {
+    wf(pth.join(dir, '158.json'), JSON.stringify([{ stage: 'claimed', status: 'started', detail: 'old' }]))
+    expect(rs(158, dir).map((e) => e.detail)).toEqual(['old'])
+    expect(rs(158, dir, CLARITY)).toEqual([])
+  }))
+
+  it("writing a marvin ticket moves its old bare file to the new key", () => inTemp((dir) => {
+    wf(pth.join(dir, '158.json'), JSON.stringify([{ stage: 'claimed', status: 'started', detail: 'old' }]))
+    rec(158, 'gate', 'started', 'new', { machine: 'm', dir })
+    expect(ex(pth.join(dir, '158.json'))).toBe(false)
+    expect(rs(158, dir).map((e) => e.detail)).toEqual(['old', 'new'])
+  }))
+
+  it('lists tickets per project, and all of them with their repo restored', () => inTemp((dir) => {
+    wf(pth.join(dir, '2.json'), '[]')
+    rec(3, 'claimed', 'started', '', { machine: 'm', dir })
+    rec(5, 'claimed', 'started', '', { machine: 'm', dir, repo: CLARITY })
+    expect(lt(dir)).toEqual([2, 3])
+    expect(lt(dir, CLARITY)).toEqual([5])
+    expect(lat(dir)).toEqual([
+      { repo: CLARITY, number: 5 },
+      { repo: 'G-Eskayo/marvin', number: 2 },
+      { repo: 'G-Eskayo/marvin', number: 3 }
+    ])
+  }))
 })

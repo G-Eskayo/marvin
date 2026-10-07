@@ -688,9 +688,14 @@ untouched (it is the "legacy profile"); only repos with a profile file use the p
   stays open but its ticket is now filed under Blocked as "Sent back from review", and MR Review shows the same
   PR as "sent back", so both views say the same thing about it.
 - **Cross-project identity**: stage records and the failure breaker were keyed by bare ticket number, so
-  clarity-captions #7 and marvin #7 would have collided. Non-marvin tickets are keyed `<repo>-<n>`; marvin's
-  keep their plain number (nothing existing moves). `gh pr create`/`gh issue comment` now pass `--repo`
+  clarity-captions #7 and marvin #7 would have collided. `gh pr create`/`gh issue comment` now pass `--repo`
   explicitly instead of relying on the process's directory.
+- **Stage log keys (#216, 2026-10-07)**: every stage file, marvin's included, is `<owner>__<repo>-<n>.json`,
+  lowercased (`g-eskayo__marvin-158.json`). `__` because the owner itself has a hyphen, so the key can be read
+  back into a repo. Replaces `<n>.json` (marvin) and `<repo>-<n>.json` (owner dropped). Readers fall back to the
+  old `<n>.json` for marvin only; the next write of that ticket moves it. `lib/migrate_ticket_stages.py` moves the
+  rest (dry run by default, `--apply` to move). The mobile backend was reading `~/.claude/ticket-stages`, which
+  nothing writes; it now reads the shared folder.
 - **Approving and denying from MR Review (2026-10-05)**: the merge gate now reads the profile too. A project's
   PRs get Approve/Deny only if its profile says `"merge_from_dashboard": true`; the webhook enforces that
   itself (not just the screen) and refuses others with `NO_MERGE_PROFILE`. **Deny** needs no profile: the repo

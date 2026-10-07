@@ -3,6 +3,7 @@ import path from 'path'
 import { promisify } from 'util'
 import { execFile } from 'child_process'
 import { listTicketActivity } from '../electron/main/activity.js'
+import { STAGES_DIR } from '../webhook-server/ticket_stages.js'
 import { readHealthStatus, HEALTH_STATUS_PATH } from '../electron/main/health.js'
 import { readRegistry, REGISTRY_PATH, withProjectStatus } from '../electron/main/boards.js'
 import { readCatalog, CATALOG_DIR, MASTER_DOC_PATH, readMasterDoc } from '../electron/main/catalog.js'
@@ -11,11 +12,12 @@ import { createDocsService } from '../electron/main/docs_service.js'
 
 const execFileP = promisify(execFile)
 
-const STAGES_DIR = path.join(homedir(), '.claude', 'ticket-stages')
+// The folder the pipeline writes to (#216: this used to be ~/.claude/ticket-stages, which nothing writes).
+export const DEFAULT_STAGES_DIR = STAGES_DIR
 const DISPATCH_STATE_PATH = path.join(homedir(), '.claude', '.dispatch-status.json')
 
 export function createDashboardApiRouter(opts = {}) {
-  const stagesDir = opts.stagesDir ?? STAGES_DIR
+  const stagesDir = opts.stagesDir ?? DEFAULT_STAGES_DIR
   const dispatchStatePath = opts.dispatchStatePath ?? DISPATCH_STATE_PATH
   const healthStatusPath = opts.healthStatusPath ?? HEALTH_STATUS_PATH
   const registryPath = opts.registryPath ?? REGISTRY_PATH
