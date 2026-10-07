@@ -103,28 +103,62 @@ def test_list_tracked_tickets_empty_when_dir_does_not_exist_yet(tmp_path):
         ts2.STAGES_DIR = original
 
 
-# ── tickets of other projects must not collide with marvin's ────────────────
+# ── stage files are keyed by owner + repo + number (#216) ───────────────────
 
-def test_a_ticket_of_another_project_gets_its_own_timeline_even_when_the_number_matches(tmp_path, monkeypatch):
+CLARITY = "G-Eskayo/clarity-captions"
+
+
+def test_two_projects_with_ticket_158_keep_separate_histories(tmp_path, monkeypatch):
     monkeypatch.setattr(ts, "STAGES_DIR", tmp_path)
-    ts.record_stage(7, "claimed", "started", "marvin's", machine="m")
-    ts.record_stage(7, "claimed", "started", "clarity's", machine="m", repo="G-Eskayo/clarity-captions")
-    assert [e["detail"] for e in ts.read_stages(7)] == ["marvin's"]
-    assert [e["detail"] for e in ts.read_stages(7, repo="G-Eskayo/clarity-captions")] == ["clarity's"]
-    assert (tmp_path / "7.json").exists() and (tmp_path / "clarity-captions-7.json").exists()
+    ts.record_stage(158, "claimed", "started", "marvin's", machine="m")
+    ts.record_stage(158, "claimed", "started", "clarity's", machine="m", repo=CLARITY)
+    assert [e["detail"] for e in ts.read_stages(158)] == ["marvin's"]
+    assert [e["detail"] for e in ts.read_stages(158, repo=CLARITY)] == ["clarity's"]
+    assert (tmp_path / "g-eskayo__marvin-158.json").exists()
+    assert (tmp_path / "g-eskayo__clarity-captions-158.json").exists()
 
 
-def test_marvin_tickets_keep_their_plain_number_with_or_without_the_repo_given(tmp_path, monkeypatch):
+def test_marvin_is_keyed_the_same_with_or_without_the_repo_given(tmp_path, monkeypatch):
     monkeypatch.setattr(ts, "STAGES_DIR", tmp_path)
     ts.record_stage(9, "claimed", "started", machine="m", repo="G-Eskayo/marvin")
-    assert (tmp_path / "9.json").exists()
-    assert len(ts.read_stages(9)) == 1
+    ts.record_stage(9, "planning", "started", machine="m")
+    assert [p.name for p in tmp_path.iterdir()] == ["g-eskayo__marvin-9.json"]
+    assert len(ts.read_stages(9)) == 2
 
 
-def test_listing_tracked_tickets_is_per_project(tmp_path, monkeypatch):
+def test_marvin_reads_fall_back_to_the_old_bare_number_file(tmp_path, monkeypatch):
     monkeypatch.setattr(ts, "STAGES_DIR", tmp_path)
+    (tmp_path / "158.json").write_text(json.dumps([{"stage": "claimed", "status": "started", "detail": "old"}]))
+    assert [e["detail"] for e in ts.read_stages(158)] == ["old"]
+
+
+def test_another_project_never_reads_marvins_bare_number_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path)
+    (tmp_path / "158.json").write_text(json.dumps([{"stage": "claimed", "status": "started", "detail": "marvin's"}]))
+    assert ts.read_stages(158, repo=CLARITY) == []
+
+
+def test_writing_a_marvin_ticket_moves_its_old_bare_file_to_the_new_key(tmp_path, monkeypatch):
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path)
+    (tmp_path / "158.json").write_text(json.dumps([{"stage": "claimed", "status": "started", "detail": "old"}]))
+    ts.record_stage(158, "planning", "started", "new", machine="m")
+    assert not (tmp_path / "158.json").exists()
+    assert [e["detail"] for e in ts.read_stages(158)] == ["old", "new"]
+
+
+def test_listing_tracked_tickets_is_per_project_and_includes_marvins_old_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path)
+    (tmp_path / "2.json").write_text("[]")
     ts.record_stage(3, "claimed", "started", machine="m")
-    ts.record_stage(5, "claimed", "started", machine="m", repo="G-Eskayo/clarity-captions")
-    ts.record_stage(8, "claimed", "started", machine="m", repo="G-Eskayo/clarity-captions")
-    assert ts.list_tracked_tickets() == [3]
-    assert ts.list_tracked_tickets(repo="G-Eskayo/clarity-captions") == [5, 8]
+    ts.record_stage(5, "claimed", "started", machine="m", repo=CLARITY)
+    ts.record_stage(8, "claimed", "started", machine="m", repo=CLARITY)
+    assert ts.list_tracked_tickets() == [2, 3]
+    assert ts.list_tracked_tickets(repo=CLARITY) == [5, 8]
+
+
+def test_stage_key_round_trips_an_owner_with_a_hyphen(tmp_path):
+    assert ts.stage_key("G-Eskayo/clarity-captions", 7) == "g-eskayo__clarity-captions-7"
+    assert ts.parse_stage_key("g-eskayo__clarity-captions-7") == ("G-Eskayo/clarity-captions", 7)
+    assert ts.parse_stage_key("g-eskayo__marvin-7") == ("G-Eskayo/marvin", 7)
+    assert ts.parse_stage_key("7") == ("G-Eskayo/marvin", 7)
+    assert ts.parse_stage_key("clarity-captions-7") is None

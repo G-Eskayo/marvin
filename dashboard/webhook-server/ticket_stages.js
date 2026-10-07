@@ -1,10 +1,10 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'fs'
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, renameSync } from 'fs'
 import { homedir } from 'os'
 import path from 'path'
 import { resolveDeviceId } from '../electron/main/device_identity.js'
 
 // Node-side mirror of ~/.agents/lib/ticket_stages.py -- same file format,
-// same path convention (~/.claude/logs/ticket-stages/<n>.json), so one
+// same path convention (~/.claude/logs/ticket-stages/<owner>__<repo>-<n>.json), so one
 // ticket's timeline covers its whole life across both languages: planning/
 // executing/verifying happen in Python (sandbox_orchestration.py), the
 // merge gate's rebase/test/merge/rebuild stages happen here in Node
@@ -15,47 +15,60 @@ const VALID_STAGES = new Set(['claimed', 'planning', 'executing', 'verifying', '
 const VALID_STATUSES = new Set(['started', 'passed', 'failed'])
 
 const MARVIN_REPO = 'G-Eskayo/marvin'
+// Keys are lowercased, so the owner's real spelling is restored from here when a key is read back.
+const KNOWN_OWNERS = { 'g-eskayo': 'G-Eskayo' }
 
-// marvin's tickets keep their plain number; another project's ticket is `<repo>-<n>`, because #7 in
-// clarity-captions is not #7 in marvin (mirrors lib/ticket_stages.py).
+const isMarvin = (repo) => !repo || repo.toLowerCase() === MARVIN_REPO.toLowerCase()
+
+// `<owner>__<repo>-<n>`, lowercased (#216, mirrors lib/ticket_stages.py's stage_key): #7 in clarity-captions is
+// not #7 in marvin, and `__` keeps the key readable back even though the owner itself contains a hyphen.
+export function stageKey(repo, ticketNumber) {
+  const [owner, name] = (repo || MARVIN_REPO).toLowerCase().split('/')
+  return `${owner}__${name}-${ticketNumber}`
+}
+
+// The inverse of stageKey, plus marvin's old bare-number files. null for anything else.
+export function parseStageKey(stem) {
+  if (/^\d+$/.test(stem)) return { repo: MARVIN_REPO, number: parseInt(stem, 10) }
+  const m = stem.match(/^(.+?)__(.+)-(\d+)$/)
+  if (!m) return null
+  const repo = `${KNOWN_OWNERS[m[1]] || m[1]}/${m[2]}`
+  return { repo: isMarvin(repo) ? MARVIN_REPO : repo, number: parseInt(m[3], 10) }
+}
+
 function stageFile(ticketNumber, dir = STAGES_DIR, repo = null) {
-  if (repo && repo !== MARVIN_REPO) return path.join(dir, `${repo.split('/').pop().toLowerCase()}-${ticketNumber}.json`)
-  return path.join(dir, `${ticketNumber}.json`)
+  return path.join(dir, `${stageKey(repo, ticketNumber)}.json`)
+}
+
+// marvin's tickets used to be saved by bare number; until migrate_ticket_stages.py has run, read those too.
+function legacyFile(ticketNumber, dir, repo) {
+  return isMarvin(repo) ? path.join(dir, `${ticketNumber}.json`) : null
+}
+
+function trackedFiles(dir) {
+  if (!existsSync(dir)) return []
+  return readdirSync(dir)
+    .filter((name) => name.endsWith('.json'))
+    .map((name) => parseStageKey(name.slice(0, -'.json'.length)))
+    .filter(Boolean)
 }
 
 export function listTrackedTickets(dir = STAGES_DIR, repo = null) {
-  if (!existsSync(dir)) return []
-  const prefix = repo && repo !== MARVIN_REPO ? `${repo.split('/').pop().toLowerCase()}-` : null
-  return readdirSync(dir)
-    .filter((name) => name.endsWith('.json'))
-    .map((name) => name.replace('.json', ''))
-    .filter((stem) => (prefix ? stem.startsWith(prefix) : true))
-    .map((stem) => (prefix ? stem.slice(prefix.length) : stem))
-    .filter((stem) => /^\d+$/.test(stem))
-    .map((stem) => parseInt(stem, 10))
-    .sort((a, b) => a - b)
+  const want = (isMarvin(repo) ? MARVIN_REPO : repo).toLowerCase()
+  const numbers = trackedFiles(dir).filter((t) => t.repo.toLowerCase() === want).map((t) => t.number)
+  return [...new Set(numbers)].sort((a, b) => a - b)
 }
 
-// Every tracked ticket in every project: [{ repo, number }]. A marvin ticket's file is `<n>.json`; another
-// project's is `<repo-name>-<n>.json` (the owner is not in the name, so the one owner is assumed).
-const OWNER = 'G-Eskayo'
+// Every tracked ticket in every project: [{ repo, number }].
 export function listAllTrackedTickets(dir = STAGES_DIR) {
-  if (!existsSync(dir)) return []
-  const out = []
-  for (const name of readdirSync(dir)) {
-    if (!name.endsWith('.json')) continue
-    const stem = name.slice(0, -'.json'.length)
-    const plain = stem.match(/^(\d+)$/)
-    const other = stem.match(/^(.+)-(\d+)$/)
-    if (plain) out.push({ repo: MARVIN_REPO, number: parseInt(plain[1], 10) })
-    else if (other) out.push({ repo: `${OWNER}/${other[1]}`, number: parseInt(other[2], 10) })
-  }
-  return out.sort((a, b) => a.repo.localeCompare(b.repo) || a.number - b.number)
+  const seen = new Map(trackedFiles(dir).map((t) => [`${t.repo}#${t.number}`, t]))
+  return [...seen.values()].sort((a, b) => a.repo.localeCompare(b.repo) || a.number - b.number)
 }
 
 export function readStages(ticketNumber, dir = STAGES_DIR, repo = null) {
-  const file = stageFile(ticketNumber, dir, repo)
-  if (!existsSync(file)) return []
+  let file = stageFile(ticketNumber, dir, repo)
+  if (!existsSync(file)) file = legacyFile(ticketNumber, dir, repo)
+  if (!file || !existsSync(file)) return []
   try {
     return JSON.parse(readFileSync(file, 'utf-8'))
   } catch {
@@ -86,6 +99,8 @@ export function recordStage(ticketNumber, stage, status, detail = '', { machine,
     title
   }
   mkdirSync(dir, { recursive: true })
+  const legacy = legacyFile(ticketNumber, dir, repo)
+  if (legacy && existsSync(legacy) && !existsSync(stageFile(ticketNumber, dir, repo))) renameSync(legacy, stageFile(ticketNumber, dir, repo))
   const events = readStages(ticketNumber, dir, repo)
   events.push(event)
   writeFileSync(stageFile(ticketNumber, dir, repo), JSON.stringify(events, null, 2))
