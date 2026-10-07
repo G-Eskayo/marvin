@@ -37,24 +37,21 @@ def build_queue(repos, ready, machines) -> list[dict]:
             for i, (repo, t) in enumerate(pairs, 1)]
 
 
-_MACHINE_OF_CLAIM = {"mac-mini": "mac-mini-1", "macbook-pro": "macbook-pro-1"}   # the inverse of ticket_pipeline._label_for_device
-
-
-def running_tickets(repos, fetch) -> list[dict]:
-    """Open tickets carrying a `claimed:<machine>` label: what is being worked on now, on either machine. `fetch(repo)`
-    returns that project's open issues (injected for tests); a project that cannot be read is skipped."""
+def running_tickets(processes, fetch) -> list[dict]:
+    """The tickets being worked on now (live run_ticket processes, see running_tickets.py), each with its title from
+    `fetch(repo)` (that project's open issues, injected for tests). A claim label is NOT used: it outlives the run."""
+    titles: dict[str, dict[int, str]] = {}
     out = []
-    for repo in repos:
-        try:
-            issues = fetch(repo)
-        except Exception as exc:  # noqa: BLE001
-            print(f"[ticket-queue] {repo} unreadable: {exc}", file=sys.stderr)
-            continue
-        for i in issues:
-            claim = next((l["name"].split(":", 1)[1] for l in i.get("labels", []) if l["name"].startswith("claimed:")), None)
-            if claim:
-                out.append({"repo": repo, "project": repo.split("/")[-1], "number": i["number"], "title": i["title"],
-                            "machine": _MACHINE_OF_CLAIM.get(claim, claim)})
+    for p in processes:
+        repo = p["repo"]
+        if repo not in titles:
+            try:
+                titles[repo] = {i["number"]: i["title"] for i in fetch(repo)}
+            except Exception as exc:  # noqa: BLE001
+                print(f"[ticket-queue] {repo} unreadable: {exc}", file=sys.stderr)
+                titles[repo] = {}
+        out.append({"repo": repo, "project": repo.split("/")[-1], "number": p["number"],
+                    "title": titles[repo].get(p["number"], f"#{p['number']}"), "machine": p["machine"]})
     return out
 
 
@@ -79,9 +76,8 @@ def current_queue() -> list[dict]:
 
 def current() -> dict:
     """What the dashboard shows: the tickets running now and the queue behind them."""
-    import project_profile as pp
-    import ticket_pipeline as tp
-    return {"running": running_tickets([tp.REPO, *pp.dispatchable_repos()], _fetch_open), "queue": current_queue()}
+    import running_tickets as rt
+    return {"running": running_tickets(rt.current(), _fetch_open), "queue": current_queue()}
 
 
 if __name__ == "__main__":

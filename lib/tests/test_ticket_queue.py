@@ -51,25 +51,22 @@ def test_a_project_that_cannot_be_read_does_not_hide_the_others():
     assert [r["number"] for r in q] == [1]
 
 
-# --- what is running now: open tickets carrying a claim label, on whichever machine claimed them ---
+# --- what is running now: live processes joined with their titles (a claim label outlives the run, so it is not used) ---
 
-def test_running_tickets_are_the_claimed_open_ones_with_their_machine():
-    issues = {"o/a": [{"number": 1, "title": "x", "labels": [{"name": "claimed:mac-mini"}, {"name": "ready-for-agent"}]},
-                      {"number": 2, "title": "y", "labels": [{"name": "ready-for-agent"}]}],
-              "o/b": [{"number": 7, "title": "z", "labels": [{"name": "claimed:macbook-pro"}]}]}
-    got = tq.running_tickets(["o/a", "o/b"], fetch=lambda repo: issues[repo])
-    assert got == [{"repo": "o/a", "project": "a", "number": 1, "title": "x", "machine": "mac-mini-1"},
-                   {"repo": "o/b", "project": "b", "number": 7, "title": "z", "machine": "macbook-pro-1"}]
+def test_running_tickets_pair_each_process_with_its_title_and_machine():
+    procs = [{"machine": "mac-mini-1", "repo": "o/a", "number": 1}, {"machine": "macbook-pro-1", "repo": "o/b", "number": 7}]
+    issues = {"o/a": [{"number": 1, "title": "x"}], "o/b": [{"number": 7, "title": "z"}]}
+    assert tq.running_tickets(procs, fetch=lambda repo: issues[repo]) == [
+        {"repo": "o/a", "project": "a", "number": 1, "title": "x", "machine": "mac-mini-1"},
+        {"repo": "o/b", "project": "b", "number": 7, "title": "z", "machine": "macbook-pro-1"}]
 
 
-def test_an_unreadable_project_is_skipped_when_listing_running_tickets():
+def test_a_ticket_whose_project_cannot_be_read_still_shows_by_number():
     def fetch(repo):
-        if repo == "o/bad":
-            raise RuntimeError("gh down")
-        return [{"number": 1, "title": "x", "labels": [{"name": "claimed:mac-mini"}]}]
-    assert [r["number"] for r in tq.running_tickets(["o/bad", "o/a"], fetch=fetch)] == [1]
+        raise RuntimeError("gh down")
+    got = tq.running_tickets([{"machine": "m", "repo": "o/bad", "number": 4}], fetch=fetch)
+    assert got[0]["title"] == "#4" and got[0]["machine"] == "m"
 
 
-def test_an_unknown_claim_label_keeps_its_own_name_as_the_machine():
-    got = tq.running_tickets(["o/a"], fetch=lambda r: [{"number": 1, "title": "x", "labels": [{"name": "claimed:node-3"}]}])
-    assert got[0]["machine"] == "node-3"
+def test_nothing_running_is_empty():
+    assert tq.running_tickets([], fetch=lambda r: []) == []
