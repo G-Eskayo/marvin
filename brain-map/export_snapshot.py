@@ -245,6 +245,29 @@ def redact_home_paths(node):
     return node
 
 
+LOCAL_ASSET = re.compile(r"""(?:src|href)=["']\./([^"'?#]+)["']""")
+
+
+def local_assets(html: str) -> list[str]:
+    """Relative files the page loads with src=/href= (vendor scripts, styles), sorted. The data file is
+    fetched, not linked, and is written separately."""
+    return sorted({m for m in LOCAL_ASSET.findall(html) if m != "tree-data.json"})
+
+
+def copy_local_assets(html: str, src_dir: Path, out_dir: Path) -> list[str]:
+    """Copy every local asset the page needs next to it; return the ones that don't exist (export must refuse)."""
+    import shutil
+    missing = []
+    for rel in local_assets(html):
+        src = src_dir / rel
+        if not src.is_file() or ".." in Path(rel).parts:
+            missing.append(rel)
+            continue
+        (out_dir / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, out_dir / rel)
+    return missing
+
+
 def export_snapshot(commit: str = "HEAD", out_dir: str | Path = SNAPSHOT_DIR) -> bool:
     """Generate privacy-filtered snapshot.
 
@@ -325,6 +348,10 @@ def export_snapshot(commit: str = "HEAD", out_dir: str | Path = SNAPSHOT_DIR) ->
         json.dumps({"tree": tree, "synapses": synapses}, ensure_ascii=False), encoding="utf-8"
     )
 
+    missing = copy_local_assets(template, TEMPLATE_PATH.parent, out_dir)
+    if missing:
+        print(f"Snapshot page needs files that don't exist: {missing} — refusing to export", file=sys.stderr)
+        return False
     print(f"Generated {out_dir}/index.html (snapshot, {len(allowlist)} tracked files)")
     return True
 
