@@ -150,3 +150,15 @@ def test_a_commit_that_becomes_empty_is_dropped_not_a_failure(repo):
     res = gp.resolve_rebase(repo, RULES)
     assert res["ok"], res
     assert git(repo, "log", "--oneline", "main..HEAD").strip() == ""   # nothing left of the PR's commit: it was all on main already
+
+
+def test_marvin_has_default_generated_rules_without_a_profile(monkeypatch):
+    # #225: marvin has no project profile, so its generated files (bench/metrics, graphify-out) never got the
+    # resolver and every post-merge rebase would conflict on them.
+    import project_profile as pp
+    monkeypatch.setattr(pp, "load_profile", lambda repo: None)
+    rules = gp.rules_for("G-Eskayo/marvin")
+    assert gp.is_generated("bench/metrics/ticket-158.json", rules)
+    assert gp.is_generated("graphify-out/graph.json", rules)
+    assert not gp.is_generated("lib/ticket_stages.py", rules)
+    assert gp.rules_for("G-Eskayo/other") == []

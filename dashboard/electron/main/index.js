@@ -461,7 +461,12 @@ function registerMrReviewHandlers() {
     }
     return keys
   }
-  ipcMain.handle('mr:list', () => listPipelinePrs(listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()), sentBackTickets, reworkStatus: getReworkStatus }))
+  // Post-merge rebase results live with the webhook (#225), which may be on the other machine.
+  const getRebaseStatus = async () => {
+    const res = await fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/rebase-status'), { signal: AbortSignal.timeout(3000) })
+    return res.ok ? res.json() : {}
+  }
+  ipcMain.handle('mr:list', () => listPipelinePrs(listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()), sentBackTickets, reworkStatus: getReworkStatus, rebaseStatus: getRebaseStatus }))
 
   // Backs the MR Review tab's status dot -- red/blue/green computed from
   // which pipeline-PR numbers are currently open vs. already marked seen

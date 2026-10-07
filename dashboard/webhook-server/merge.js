@@ -11,6 +11,7 @@ import { parseTicketRef } from '../electron/main/mr_review.js'
 import { repoFromPrUrl, MARVIN_REPO } from '../electron/main/mr_repos.js'
 import { recordStage } from './ticket_stages.js'
 import { assertChecksGreen } from './ci_status.js'
+import { rebaseOpenPrs } from './post_merge_rebase.js'
 
 const execFileAsync = promisify(execFile)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -204,17 +205,22 @@ export async function defaultGateContext(repo, exec = execFileAsync) {
     runTests: async (cwd, run) => {
       await run(VENV_PYTHON, [PROFILE_SCRIPT, 'verify', repo, cwd])
     },
-    // Finishes a conflicted rebase when every conflict is a generated file, or main already has the PR's
-    // change to that file (parallel PRs that each added the same thing). Real conflicts still fail.
-    resolveConflicts: async (cwd) => {
-      try {
-        const { stdout } = await exec(VENV_PYTHON, [GENERATED_SCRIPT, 'resolve-rebase', repo, cwd])
-        return JSON.parse(stdout)
-      } catch (e) {
-        let parsed = null
-        try { parsed = JSON.parse(e.stdout) } catch { /* not JSON */ }
-        return parsed || { ok: false, reason: String(e.message || e) }
-      }
+    resolveConflicts: generatedResolver(repo, exec)
+  }
+}
+
+// Finishes a conflicted rebase when every conflict is a generated file, or main already has the PR's change to that
+// file (parallel PRs that each added the same thing). Real conflicts still fail. marvin uses it too (#225), with the
+// default rules in lib/generated_paths.py (it has no project profile).
+function generatedResolver(repo, exec) {
+  return async (cwd) => {
+    try {
+      const { stdout } = await exec(VENV_PYTHON, [GENERATED_SCRIPT, 'resolve-rebase', repo, cwd])
+      return JSON.parse(stdout)
+    } catch (e) {
+      let parsed = null
+      try { parsed = JSON.parse(e.stdout) } catch { /* not JSON */ }
+      return parsed || { ok: false, reason: String(e.message || e) }
     }
   }
 }
@@ -331,7 +337,7 @@ async function mergePrUnqueued(
   recordStageFn = recordStage,
   deps = {}
 ) {
-  const { sleep, recordFailureFn = recordFailure, gateContext = defaultGateContext, baselineFails = null, gateTimeoutMs = GATE_TIMEOUT_MS } = deps
+  const { sleep, recordFailureFn = recordFailure, gateContext = defaultGateContext, baselineFails = null, gateTimeoutMs = GATE_TIMEOUT_MS, rebaseOpen = rebaseOpenPrs } = deps
   if (typeof prUrl !== 'string' || !prUrl.startsWith('https://github.com/')) {
     throw new MergeFailure(classifyFailure({ stage: 'request', error: new Error(`Not a GitHub PR URL: ${prUrl}`) }))
   }
@@ -376,7 +382,7 @@ async function mergePrUnqueued(
     const result = await withGateTimeout(
       Promise.resolve(ctx
         ? rebaseAndRetestFn(headRefName, exec, ctx.clone, ctx.runTests, ctx.base, ctx.resolveConflicts)
-        : rebaseAndRetestFn(headRefName, exec)),
+        : rebaseAndRetestFn(headRefName, exec, REPO_PATH, _defaultRunTests, 'main', generatedResolver(MARVIN_REPO, exec))),
       gateTimeoutMs)
     if (!result.ok) {
       // Structured, concise feedback (code header, failing test names, capped tail)
@@ -468,7 +474,15 @@ async function mergePrUnqueued(
     stage('rebuilding', 'started', 'triggered if the PR touched dashboard/')
     await rebuild(prUrl, exec)
   }
-  redispatch()
+  // #225: re-integrate the repo's other open PRs onto the new base (queued behind this merge, so the response does not
+  // wait), and only then run the pipeline scan, which sends every PR GitHub calls conflicting back for a full rebuild.
+  const integrateRepo = repo || MARVIN_REPO
+  const rebase = (head) => (ctx
+    ? rebaseAndRetestFn(head, exec, ctx.clone, ctx.runTests, ctx.base, ctx.resolveConflicts)
+    : rebaseAndRetestFn(head, exec, REPO_PATH, _defaultRunTests, 'main', generatedResolver(MARVIN_REPO, exec)))
+  inRepoQueue(integrateRepo, () => rebaseOpen({ repo: integrateRepo, mergedPrUrl: prUrl, base: ctx ? ctx.base : 'main', exec, rebase }))
+    .catch(() => {})
+    .then(() => redispatch())
   stage('done', 'passed', `merged: ${prUrl}`)
   return { merged: true, reengaged: false, reason: null }
 }
