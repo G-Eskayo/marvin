@@ -35,6 +35,14 @@ export function parseDashLink(href) {
   if (t) return { type: 'ticket', repo: t[1], number: Number(t[2]) }
   const d = href.match(/^dash:\/\/doc\/([^/]+)\/(.+)$/)
   if (d) return { type: 'doc', project: d[1], path: d[2] }
+  const f = href.match(/^file:\/\/(\/.+)$/)
+  if (f) {
+    try {
+      return { type: 'file', path: decodeURIComponent(f[1]) }
+    } catch {
+      return null
+    }
+  }
   return null
 }
 
@@ -59,10 +67,12 @@ export default function Markdown({ content, ctx, onLink }) {
             href="#"
             onClick={(e) => {
               e.preventDefault()
-              onLink?.(dash)
+              // A folder or file on this Mac opens straight from here, wherever the markdown is shown.
+              if (dash.type === 'file') window.api?.docs?.openLink?.(dash.path)?.catch?.(() => {})
+              else onLink?.(dash)
             }}
             className="rounded bg-blue-950 px-1 text-blue-300 no-underline hover:bg-blue-900"
-            title={dash.type === 'ticket' ? `Open ticket #${dash.number}` : `Open ${dash.path}`}
+            title={dash.type === 'ticket' ? `Open ticket #${dash.number}` : dash.type === 'file' ? `Open on this Mac: ${dash.path}` : `Open ${dash.path}`}
           >
             {children}
           </a>
