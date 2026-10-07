@@ -1,0 +1,13 @@
+{
+  "parallel": true,
+  "max_total": 2,
+  "max_per_project": 1,
+  "machine_slots": {
+    "mac-mini-1": 2,
+    "macbook-pro-1": 1
+  },
+  "guards": {
+    "min_disk_gb": 15,
+    "min_github_budget_pct": 20
+  }
+}
