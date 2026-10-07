@@ -481,16 +481,38 @@ def plan(facts: dict) -> dict:
     return plan_out
 
 
-def write_onboarding_plan(repo: str, plan_out: dict, dir: Path | None = None) -> None:
-    """Write the onboarding plan to ~/.claude/onboarding/<repo_name>.json"""
+def write_onboarding_plan(repo: str, plan_out: dict, dir: Path | None = None, baseline: dict | None = None, offers: dict | None = None) -> None:
+    """Write the onboarding plan to ~/.claude/onboarding/<repo_name>.json
+    Preserves existing baseline and merges offers (new offers win, existing unchanged)."""
     dir = dir or ONBOARDING_DIR
     path = onboarding_path(repo, dir=dir)
     path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Preserve baseline and offers from existing file
+    preserved_baseline = baseline
+    preserved_offers = offers or {}
+    if path.exists():
+        try:
+            existing = json.loads(path.read_text())
+            if preserved_baseline is None and "baseline" in existing.get("pieces", {}):
+                preserved_baseline = existing["pieces"]["baseline"]
+            if not offers and "offers" in existing:
+                preserved_offers = existing["offers"]
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # Add baseline and offers to pieces if they exist
+    if preserved_baseline is not None:
+        plan_out["baseline"] = preserved_baseline
+
     data = {
         "repo": repo,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "pieces": plan_out,
     }
+    if preserved_offers:
+        data["offers"] = preserved_offers
+
     path.write_text(json.dumps(data, indent=2) + "\n")
 
 
@@ -955,6 +977,85 @@ def _apply_pr(repo: str, facts: dict, plan_out: dict, gh=_gh, auth_status: str |
         }
 
 
+def prove(repo: str, profile: dict | None = None, *, selftest_fn=None, dir: Path | None = None) -> dict:
+    """Run selftest and map its result to onboarding vocabulary.
+    Returns {"state": "ok"|"missing"|"needs-human", "offers": {...}, "reason": str, "ran_at": ISO timestamp}
+    - ok: passed → both offers enabled, merge_from_dashboard and dispatch can be turned on
+    - missing: failed or error → both offers disabled (project failures)
+    - needs-human: env_missing or no_clone → both offers disabled (tooling gap, distinct from project failure)"""
+    if selftest_fn is None:
+        selftest_fn = pp.selftest
+    if profile is None:
+        profile = pp.load_profile(repo)
+    if profile is None:
+        return {
+            "state": "needs-human",
+            "offers": {"merge_from_dashboard": False, "dispatch": False},
+            "reason": "no profile yet",
+            "ran_at": datetime.now(timezone.utc).isoformat(),
+        }
+    result = selftest_fn(profile)
+    kind = result.get("kind", "error")
+    if kind == "passed":
+        return {
+            "state": "ok",
+            "offers": {"merge_from_dashboard": True, "dispatch": True},
+            "reason": result.get("error", "baseline passed"),
+            "ran_at": datetime.now(timezone.utc).isoformat(),
+        }
+    elif kind in ("failed", "error"):
+        return {
+            "state": "missing",
+            "offers": {"merge_from_dashboard": False, "dispatch": False},
+            "reason": result.get("error", f"baseline {kind}"),
+            "ran_at": datetime.now(timezone.utc).isoformat(),
+        }
+    else:  # env_missing, no_clone, or other
+        return {
+            "state": "needs-human",
+            "offers": {"merge_from_dashboard": False, "dispatch": False},
+            "reason": result.get("error", f"tooling issue: {kind}"),
+            "ran_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+
+def record_baseline(repo: str, baseline: dict, dir: Path | None = None) -> None:
+    """Record baseline result into the onboarding plan file.
+    Sets pieces['baseline'] and merges offers (baseline's offers win).
+    Idempotent: re-recording the same baseline is safe."""
+    dir = dir or ONBOARDING_DIR
+    path = onboarding_path(repo, dir=dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Read existing file if it exists
+    existing_data = {}
+    if path.exists():
+        try:
+            existing_data = json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # Extract pieces and merge in the baseline
+    pieces = existing_data.get("pieces", {})
+    pieces["baseline"] = baseline
+
+    # Merge offers: baseline's offers win, but existing offers for other keys stay
+    offers = existing_data.get("offers", {})
+    baseline_offers = baseline.get("offers", {})
+    offers.update(baseline_offers)
+
+    # Write back
+    data = {
+        "repo": repo,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "pieces": pieces,
+    }
+    if offers:
+        data["offers"] = offers
+
+    path.write_text(json.dumps(data, indent=2) + "\n")
+
+
 def apply(repo: str, facts: dict | None = None, *, profiles_dir: Path | None = None,
           registry_path: Path | None = None, gh=_gh) -> dict:
     """Apply local changes: create missing labels, register board, draft profile.
@@ -988,9 +1089,9 @@ def apply(repo: str, facts: dict | None = None, *, profiles_dir: Path | None = N
 
 
 def main():
-    """CLI entry point: project_onboard.py plan|apply <owner/repo> [--local|--pr]"""
+    """CLI entry point: project_onboard.py plan|apply|prove <owner/repo> [--local|--pr]"""
     if len(sys.argv) < 3:
-        sys.exit("usage: project_onboard.py plan <owner/repo> | apply <owner/repo> --local|--pr")
+        sys.exit("usage: project_onboard.py plan <owner/repo> | apply <owner/repo> --local|--pr | prove <owner/repo>")
 
     cmd = sys.argv[1]
     repo = sys.argv[2]
@@ -1001,6 +1102,19 @@ def main():
         facts = inspect(repo)
         result = plan(facts)
         print(json.dumps(result, indent=2))
+
+    elif cmd == "prove":
+        if len(sys.argv) != 3:
+            sys.exit("usage: project_onboard.py prove <owner/repo>")
+        result = prove(repo)
+        print(f"\nOnboarding prove for {repo}:\n")
+        print(f"  state: {result['state']}")
+        print(f"  reason: {result['reason']}")
+        print(f"  merge_from_dashboard: {result['offers']['merge_from_dashboard']}")
+        print(f"  dispatch: {result['offers']['dispatch']}")
+        print(f"  ran_at: {result['ran_at']}")
+        print()
+        return
 
     elif cmd == "apply":
         if len(sys.argv) != 4 or sys.argv[3] not in ("--local", "--pr"):
@@ -1088,7 +1202,7 @@ def main():
             print()
 
     else:
-        sys.exit(f"unknown command: {cmd}\nusage: project_onboard.py plan|apply <owner/repo>")
+        sys.exit(f"unknown command: {cmd}\nusage: project_onboard.py plan|apply|prove <owner/repo>")
 
 
 if __name__ == "__main__":
