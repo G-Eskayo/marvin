@@ -128,3 +128,37 @@ test('a regenerated tree pushed live (DesktopLive\'s updateTreeData) takes the p
   assert.ok(moved.Projects[0] > moved.MARVIN[0] + 50 && Math.abs(moved.Projects[1] - moved.MARVIN[1]) < 15, JSON.stringify(moved))
   await page.close()
 })
+
+test('the page counts the frames it actually draws, for DesktopLive\'s liveness check', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const page = await openMap([1280, 800], true)
+  const counts = await page.evaluate(() => {
+    const before = window.framesDrawn
+    let t = performance.now(); for (let i = 0; i < 5; i++) window.renderFrame(t += 1000 / 24)
+    return [before, window.framesDrawn]
+  })
+  assert.equal(counts[1] - counts[0], 5)
+  await page.close()
+})
+
+test('frames arriving almost at once don\'t throw the wallpaper fit off (the 2026-08-26 drift)', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const page = await openMap([1440, 900], true)
+  const extent = () => page.evaluate(() => {
+    const n = window.__map.nodes(), xs = n.map((d) => d.sx), ys = n.map((d) => d.sy)
+    return { w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) }
+  })
+  await frames(page, SETTLE)
+  const settled = await extent()
+  await page.evaluate(() => {
+    for (let i = 0; i < 200; i++) {
+      window.renderFrame((window.__t += 0.001)) // timer ticks bunched up after a stall
+      if (i % 20 === 0) window.renderFrame((window.__t += 1000 / 24))
+    }
+  })
+  await frames(page, SETTLE)
+  const after = await extent()
+  assert.ok(Math.abs(after.w - settled.w) < settled.w * 0.1 && Math.abs(after.h - settled.h) < settled.h * 0.1,
+    `map size went from ${JSON.stringify(settled)} to ${JSON.stringify(after)}`)
+  await page.close()
+})

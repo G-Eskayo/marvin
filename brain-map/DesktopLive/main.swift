@@ -8,7 +8,7 @@
 // shipping the menu-bar extra, settings UI, or App Store wrapper around
 // it, since none of that is needed for one fixed local file.
 //
-// Build:  swiftc -O main.swift EventLog.swift -o DesktopLive   (tests: ./test.sh)
+// Build:  swiftc -O main.swift EventLog.swift Recovery.swift -o DesktopLive   (tests: ./test.sh)
 // Run:    ./DesktopLive [path-to-html]   (defaults to ../index.html)
 
 import Cocoa
@@ -35,6 +35,11 @@ func describe(_ screen: NSScreen) -> [String] {
             "scale", "\(screen.backingScaleFactor)"]
 }
 
+func screenInfo(_ screen: NSScreen) -> ScreenInfo {
+    let id = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0
+    return ScreenInfo(id: id, name: screen.localizedName, frame: screen.frame)
+}
+
 func screenSet() -> String {
     NSScreen.screens.map { s in
         let f = s.frame
@@ -59,6 +64,8 @@ guard FileManager.default.fileExists(atPath: fileURL.path) else {
 }
 
 final class DesktopWebView: WKWebView {
+    var displayID: UInt32 = 0 // the screen this view's window belongs to — the liveness key
+
     // Wallpaper is looked at, not clicked — pass all mouse events through
     // to the desktop/icons underneath, exactly like a real wallpaper.
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -73,8 +80,17 @@ let treeDataURL = readAccessDir.appendingPathComponent("tree-data.json")
 let networkURL = URL(fileURLWithPath: NSHomeDirectory() + "/.claude/marvin-network.json")
 let tailscaleBinary = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
 
+// How long a page may go without drawing a new frame before it's reloaded (#176).
+let livenessLimit: TimeInterval = 20
+
 final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
-    var windows: [NSWindow] = []
+    // One wallpaper window per screen, keyed by display id (#175).
+    var windows: [UInt32: NSWindow] = [:]
+    var webViews: [DesktopWebView] { windows.values.compactMap { $0.contentView as? DesktopWebView } }
+    let liveness = Liveness(limit: livenessLimit)
+    var livenessCheckTimer: Timer?
+    var reconcileWork: DispatchWorkItem?
+    var lastScreenSet = ""
     var lastMTime: Date?
     var reloadTimer: Timer?
     var activityTimer: Timer?
@@ -86,7 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     var lastDeviceOnline: [String: Bool] = [:]
     // Last renderFrame outcome per window ("ok", "missing", "error: ..."),
     // so only changes get logged, not 24 lines a second.
-    var drawState: [ObjectIdentifier: String] = [:]
+    var drawState: [UInt32: String] = [:]
     var sigtermSource: DispatchSourceSignal?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -95,34 +111,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
                        "page", fileURL.absoluteString, "screens", screenSet())
         observeSystemEvents()
 
-        for screen in NSScreen.screens {
-            let window = NSWindow(
-                contentRect: screen.frame,
-                styleMask: [.borderless],
-                backing: .buffered,
-                defer: false,
-                screen: screen
-            )
-            // One level above the desktop picture itself, but still below
-            // the desktop icons layer — the same slot real wallpaper apps use.
-            let desktopLevel = Int(CGWindowLevelForKey(.desktopWindow))
-            window.level = NSWindow.Level(rawValue: desktopLevel + 1)
-            window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
-            window.isOpaque = true
-            window.backgroundColor = NSColor.black
-            window.ignoresMouseEvents = true
-            window.hasShadow = false
-
-            let webView = DesktopWebView(frame: screen.frame)
-            webView.setValue(false, forKey: "drawsBackground") // avoid a white flash before first paint
-            webView.navigationDelegate = self
-            eventLog.write("window-created", pairs: describe(screen))
-            webView.loadFileURL(fileURL, allowingReadAccessTo: readAccessDir)
-
-            window.contentView = webView
-            window.orderBack(nil)
-            windows.append(window)
-        }
+        lastScreenSet = screenSet()
+        applyReconcile()
 
         lastMTime = mtime()
         lastActivityLineCount = currentLines(activityURL).count
@@ -175,18 +165,111 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         renderTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 24.0, repeats: true) { [weak self] _ in
             self?.renderFrame()
         }
+        livenessCheckTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            self?.checkLiveness()
+        }
+    }
+
+    // ── windows (#175): one per screen, matching its frame ──────────────
+
+    func makeWindow(for screen: NSScreen, id: UInt32) -> NSWindow {
+        let window = NSWindow(
+            contentRect: screen.frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false,
+            screen: screen
+        )
+        // One level above the desktop picture itself, but still below
+        // the desktop icons layer — the same slot real wallpaper apps use.
+        let desktopLevel = Int(CGWindowLevelForKey(.desktopWindow))
+        window.level = NSWindow.Level(rawValue: desktopLevel + 1)
+        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
+        window.isOpaque = true
+        window.backgroundColor = NSColor.black
+        window.ignoresMouseEvents = true
+        window.hasShadow = false
+        window.isReleasedWhenClosed = false
+
+        let webView = DesktopWebView(frame: NSRect(origin: .zero, size: screen.frame.size))
+        webView.displayID = id
+        webView.autoresizingMask = [.width, .height]
+        webView.setValue(false, forKey: "drawsBackground") // avoid a white flash before first paint
+        webView.navigationDelegate = self
+        eventLog.write("window-created", pairs: describe(screen))
+        load(webView)
+
+        window.contentView = webView
+        window.orderBack(nil)
+        return window
+    }
+
+    func load(_ webView: DesktopWebView) {
+        liveness.start("\(webView.displayID)", at: Date())
+        webView.loadFileURL(fileURL, allowingReadAccessTo: readAccessDir)
+    }
+
+    // Display changes arrive in bursts (60 identical notifications a second
+    // after a wake, seen in the #174 log), so act once things go quiet.
+    func scheduleReconcile(_ reason: String) {
+        reconcileWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.applyReconcile(reason: reason) }
+        reconcileWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: work)
+    }
+
+    func applyReconcile(reason: String? = nil) {
+        let screens = NSScreen.screens
+        let plan = reconcile(screens: screens.map(screenInfo), windows: windows.mapValues { $0.frame })
+        guard !plan.isEmpty else { return }
+        let before = windowSet()
+        for info in plan.create {
+            guard let screen = screens.first(where: { screenInfo($0).id == info.id }) else { continue }
+            windows[info.id] = makeWindow(for: screen, id: info.id)
+        }
+        for info in plan.resize {
+            windows[info.id]?.setFrame(info.frame, display: true)
+            eventLog.write("window-resized", "screen", info.name,
+                           "frame", "\(Int(info.frame.origin.x)),\(Int(info.frame.origin.y)),\(Int(info.frame.width)),\(Int(info.frame.height))")
+        }
+        for id in plan.remove {
+            windows[id]?.orderOut(nil)
+            windows[id]?.close()
+            windows[id] = nil
+            liveness.forget("\(id)")
+            drawState[id] = nil
+            eventLog.write("window-removed", "display", "\(id)")
+        }
+        if let reason = reason {
+            eventLog.write("windows-rebuilt", "reason", reason, "before", before, "after", windowSet(), "screens", screenSet())
+        }
+    }
+
+    // ── liveness (#176): reload a page that stops drawing ─────────────────
+
+    func checkLiveness() {
+        for (key, seconds) in liveness.stalled(at: Date()) {
+            guard let webView = webViews.first(where: { "\($0.displayID)" == key }) else { liveness.forget(key); continue }
+            eventLog.write("page-reload", "reason", "not drawing", "seconds", "\(Int(seconds))",
+                           "screen", webView.window?.screen?.localizedName ?? "none")
+            load(webView)
+        }
     }
 
     func renderFrame() {
-        for window in windows {
-            let id = ObjectIdentifier(window)
-            let screen = window.screen?.localizedName ?? "none"
-            (window.contentView as? WKWebView)?.evaluateJavaScript(
-                "window.renderFrame ? (window.renderFrame(performance.now()), true) : false") { [weak self] result, error in
+        for webView in webViews {
+            let id = webView.displayID
+            let screen = webView.window?.screen?.localizedName ?? "none"
+            // Returns the page's count of frames really drawn (-1: no page to draw with).
+            webView.evaluateJavaScript(
+                "window.renderFrame ? (window.renderFrame(performance.now()), window.framesDrawn) : -1") { [weak self] result, error in
+                guard let self = self else { return }
+                let frames = (result as? NSNumber)?.intValue ?? -1
+                if frames >= 0 { self.liveness.report("\(id)", frames: frames, at: Date()) }
                 let state: String
                 if let error = error { state = "error: \(error.localizedDescription)" }
-                else { state = (result as? Bool) == true ? "ok" : "missing" }
-                guard let self = self, self.drawState[id] != state else { return }
+                else { state = frames >= 0 ? "ok" : "missing" }
+                guard self.drawState[id] != state else { return }
                 self.drawState[id] = state
                 // "missing" = page not loaded (or crashed) so there's nothing to draw with.
                 eventLog.write("draw", "state", state, "screen", screen)
@@ -194,8 +277,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         }
     }
 
-    // Logging only (#174) — acting on these (rebuild windows, reload a dead
-    // page) is #175/#176.
+    // Logged (#174), and acted on: screen and session changes rebuild the
+    // windows (#175); while the screens sleep, pages aren't expected to draw (#176).
     func observeSystemEvents() {
         let ws = NSWorkspace.shared.notificationCenter
         let events: [(Notification.Name, String)] = [
@@ -208,12 +291,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         ]
         for (name, label) in events {
             ws.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                eventLog.write(label, "screens", screenSet(), "windows", self?.windowSet() ?? "")
+                guard let self = self else { return }
+                eventLog.write(label, "screens", screenSet(), "windows", self.windowSet())
+                switch label {
+                case "sleep", "screens-sleep", "session-inactive":
+                    self.liveness.pause()
+                case "wake", "screens-wake", "session-active":
+                    self.liveness.resume(at: Date())
+                    self.scheduleReconcile(label)
+                default: break
+                }
             }
         }
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
                                                object: nil, queue: .main) { [weak self] _ in
-            eventLog.write("display-change", "screens", screenSet(), "windows", self?.windowSet() ?? "")
+            guard let self = self else { return }
+            // Only a real change is logged; the bursts of identical ones aren't.
+            let screens = screenSet()
+            if screens != self.lastScreenSet {
+                eventLog.write("display-change", "screens", screens, "windows", self.windowSet())
+                self.lastScreenSet = screens
+            }
+            self.scheduleReconcile("display-change")
         }
         // launchd stops jobs (and the daily restart pkills it) with SIGTERM,
         // which skips applicationWillTerminate — catch it so exits are visible.
@@ -229,7 +328,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
     // Each window's current frame, to compare with screenSet() after a change.
     func windowSet() -> String {
-        windows.map { w in
+        windows.values.map { w in
             let f = w.frame
             return "\(w.screen?.localizedName ?? "offscreen")@\(Int(f.width))x\(Int(f.height))"
         }.joined(separator: ";")
@@ -253,10 +352,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
                        "error", error.localizedDescription)
     }
 
-    // WebKit's content process died: the window goes black and stays that way
-    // (no reload yet — #176).
+    // WebKit's content process died: the window would go black and stay that
+    // way, so load the page again (#176).
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        eventLog.write("page-process-died", "screen", webView.window?.screen?.localizedName ?? "none")
+        let screen = webView.window?.screen?.localizedName ?? "none"
+        eventLog.write("page-process-died", "screen", screen)
+        guard let webView = webView as? DesktopWebView else { return }
+        eventLog.write("page-reload", "reason", "page process died", "screen", screen)
+        load(webView)
     }
 
     func mtime() -> Date? {
@@ -273,17 +376,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             // tree-data.json didn't parse (e.g. generate.py mid-write) — fall
             // back to a full reload rather than silently staying stale.
             eventLog.write("page-reload", "reason", "tree-data.json did not parse")
-            for window in windows {
-                (window.contentView as? WKWebView)?.loadFileURL(fileURL, allowingReadAccessTo: readAccessDir)
-            }
+            for webView in webViews { load(webView) }
             return
         }
         let treeStr = String(data: treeJSON, encoding: .utf8) ?? "{}"
         let synStr = String(data: synJSON, encoding: .utf8) ?? "[]"
         let js = "if (window.updateTreeData) window.updateTreeData(\(treeStr), \(synStr));"
-        for window in windows {
-            (window.contentView as? WKWebView)?.evaluateJavaScript(js, completionHandler: nil)
-        }
+        for webView in webViews { webView.evaluateJavaScript(js, completionHandler: nil) }
     }
 
     func currentLines(_ url: URL) -> [String] {
@@ -305,9 +404,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
                   let skill = obj["skill"] as? String else { continue }
             let escaped = skill.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
             let js = "if (window.triggerActivity) window.triggerActivity('\(escaped)');"
-            for window in windows {
-                (window.contentView as? WKWebView)?.evaluateJavaScript(js, completionHandler: nil)
-            }
+            for webView in webViews { webView.evaluateJavaScript(js, completionHandler: nil) }
         }
     }
 
@@ -338,9 +435,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
                 js = "if (window.demoRemoveNode) window.demoRemoveNode('\(escaped)');"
             }
             guard !js.isEmpty else { continue }
-            for window in windows {
-                (window.contentView as? WKWebView)?.evaluateJavaScript(js, completionHandler: nil)
-            }
+            for webView in webViews { webView.evaluateJavaScript(js, completionHandler: nil) }
         }
     }
 
@@ -406,9 +501,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             lastDeviceOnline[deviceId] = online
             let escaped = deviceId.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
             let js = "if (window.setDeviceStatus) window.setDeviceStatus('\(escaped)', \(online));"
-            for window in windows {
-                (window.contentView as? WKWebView)?.evaluateJavaScript(js, completionHandler: nil)
-            }
+            for webView in webViews { webView.evaluateJavaScript(js, completionHandler: nil) }
         }
     }
 }

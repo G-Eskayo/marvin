@@ -935,6 +935,7 @@
   var t0 = performance.now();
 
   var lastFrameTime = null;
+  window.framesDrawn = 0;
   function draw(now) {
     ctx.clearRect(0, 0, W, H);
     var elapsed = (now - t0) / 1000;
@@ -1143,6 +1144,11 @@
     }
 
     if (WALLPAPER && SHOW_BOUNDS) drawBoundsOverlay();
+
+    // Counted only once a whole frame has drawn (a throw above skips it), so
+    // DesktopLive's liveness check (#176) sees a frozen or broken page as a
+    // count that stops changing.
+    window.framesDrawn++;
 
     // Self-schedule via rAF for normal browser/artifact viewing — fine
     // there since a visible, focused tab isn't power-throttled the way a
