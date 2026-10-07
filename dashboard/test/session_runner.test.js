@@ -209,5 +209,46 @@ describe('session_runner', () => {
       expect(events[0].type).toBe('error')
       expect(events[0].message).toContain('exited with code 1')
     })
+
+    it('includes --settings flag with hook config when permissionHookPath is provided', async () => {
+      let capturedArgs = null
+      const mockSpawn = (bin, args) => {
+        capturedArgs = args
+        return createMockChildProcess(loadFixture('plain-reply.ndjson'))
+      }
+
+      for await (const _ of runSession({
+        message: 'test',
+        spawnFn: mockSpawn,
+        permissionHookPath: '/path/to/permission_hook.js'
+      })) {
+        // consume events
+      }
+
+      expect(capturedArgs).toContain('--settings')
+      const settingsIdx = capturedArgs.indexOf('--settings')
+      const settingsJson = JSON.parse(capturedArgs[settingsIdx + 1])
+      expect(settingsJson.hooks.PreToolUse).toBeDefined()
+      expect(settingsJson.hooks.PreToolUse.matcher).toBe('*')
+      expect(settingsJson.hooks.PreToolUse.handler).toBe('exec')
+      expect(settingsJson.hooks.PreToolUse.command).toContain('permission_hook.js')
+    })
+
+    it('session continues past denied tool use', async () => {
+      const fixtureLines = loadFixture('tool-use-denied.ndjson')
+      const mockSpawn = () => createMockChildProcess(fixtureLines)
+
+      const events = []
+      for await (const event of runSession({ message: 'test something', spawnFn: mockSpawn })) {
+        events.push(event)
+      }
+
+      expect(events.length).toBeGreaterThan(0)
+      expect(events[0]).toEqual({ type: 'session', sessionId: 'session-denied-001' })
+      expect(events[1]).toEqual({ type: 'text', text: 'I need to run a test for you.' })
+      expect(events[2]).toEqual({ type: 'tool_use', name: 'Bash', input: { command: 'npm test' } })
+      expect(events[3]).toEqual({ type: 'text', text: 'The tool was denied by the user. Continuing without executing the command.' })
+      expect(events[events.length - 1].type).toBe('result')
+    })
   })
 })

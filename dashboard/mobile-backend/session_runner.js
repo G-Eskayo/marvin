@@ -79,7 +79,7 @@ export function normaliseEvent(rawEvent) {
 
 // Async generator that streams normalised events from a claude CLI session.
 // Spawns the CLI with --output-format stream-json and reads stdout line-by-line.
-export async function* runSession({ message, sessionId, spawnFn, cwd } = {}) {
+export async function* runSession({ message, sessionId, spawnFn, cwd, permissionHookPath } = {}) {
   const claudeBin = resolveClaudeBinary()
   const actualSpawnFn = spawnFn || spawn
   const actualCwd = cwd || homedir()
@@ -92,6 +92,20 @@ export async function* runSession({ message, sessionId, spawnFn, cwd } = {}) {
     '--include-partial-messages',
     '--permission-mode', 'dontAsk'
   ]
+
+  // Add hook configuration if permissionHookPath is provided
+  if (permissionHookPath) {
+    const hookSettings = {
+      hooks: {
+        PreToolUse: {
+          matcher: '*',
+          handler: 'exec',
+          command: `node ${permissionHookPath}`
+        }
+      }
+    }
+    args.push('--settings', JSON.stringify(hookSettings))
+  }
 
   // Add --resume if sessionId is provided
   if (sessionId) {
