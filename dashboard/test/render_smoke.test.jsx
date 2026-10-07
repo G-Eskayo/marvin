@@ -175,4 +175,37 @@ describe('ProjectReadinessPanel', () => {
     expect(html).toContain('repo')
     expect(html).toContain('Not scanned yet')
   })
+
+  it('renders turn-on buttons when offers exist and are enabled', () => {
+    const plans = [
+      {
+        repo: 'G-Eskayo/marvin',
+        status: 'planned',
+        generated_at: '2026-10-06T12:00:00Z',
+        pieces: { profile: { state: 'ok' } },
+        offers: { merge_from_dashboard: true, dispatch: true },
+        current: { dispatch: 'off', mergeFromDashboard: false }
+      }
+    ]
+    const html = renderToStaticMarkup(<ProjectReadinessPanel plans={plans} loading={false} />)
+    expect(html).toContain('Turn on merge-from-dashboard')
+    expect(html).toContain('Turn on dispatch')
+  })
+
+  it('disables buttons when offers are false or missing', () => {
+    const plans = [
+      {
+        repo: 'G-Eskayo/marvin',
+        status: 'planned',
+        generated_at: '2026-10-06T12:00:00Z',
+        pieces: { profile: { state: 'ok' } },
+        offers: { merge_from_dashboard: false, dispatch: false },
+        current: null
+      }
+    ]
+    const html = renderToStaticMarkup(<ProjectReadinessPanel plans={plans} loading={false} />)
+    // Buttons should be present but disabled
+    expect(html).toContain('Turn on merge-from-dashboard')
+    expect(html).toContain('Turn on dispatch')
+  })
 })

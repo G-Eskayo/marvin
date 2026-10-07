@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { cleanIpcError } from '../lib/ipcError.js'
 
 const SEVERITY_COLOR = {
   ok: { bg: 'bg-emerald-950', border: 'border-emerald-900', dot: 'bg-emerald-500', text: 'text-emerald-300' },
@@ -34,7 +35,48 @@ function PieceChip({ name, state, reason }) {
   )
 }
 
-export default function ProjectReadinessPanel({ plans, loading }) {
+function ReadinessAction({ repo, label, offersKey, isOn, plan, onChanged }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+  const canTurnOn = plan.offers?.[offersKey] === true
+  const disabledReason = !canTurnOn && plan.pieces?.baseline?.reason ? `Reason: ${plan.pieces.baseline.reason}` : null
+
+  async function toggle() {
+    setBusy(true)
+    setError(null)
+    try {
+      const handler = offersKey === 'dispatch' ? window.api.readiness.setDispatch : window.api.readiness.setMergeFromDashboard
+      const value = offersKey === 'dispatch' ? 'on' : true
+      await handler(repo, value)
+      await onChanged?.()
+    } catch (e) {
+      setError(cleanIpcError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (isOn) return null
+
+  return (
+    <div className="flex flex-col gap-1">
+      <button
+        onClick={toggle}
+        disabled={!canTurnOn || busy}
+        title={disabledReason || ''}
+        className={`rounded px-2 py-1 text-xs transition-colors ${
+          canTurnOn ? 'bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50' : 'border border-neutral-700 text-neutral-400 bg-neutral-900 cursor-not-allowed opacity-50'
+        }`}
+      >
+        {busy ? `Turning on…` : label}
+      </button>
+      {error && <p className="text-[10px] text-red-400">{error}</p>}
+      {disabledReason && <p className="text-[10px] text-neutral-500">{disabledReason}</p>}
+    </div>
+  )
+}
+
+export default function ProjectReadinessPanel({ plans, loading, onChanged }) {
   if (loading) {
     return <div className="flex h-64 items-center justify-center text-neutral-500">Loading project readiness…</div>
   }
@@ -65,6 +107,8 @@ export default function ProjectReadinessPanel({ plans, loading }) {
         {plans.map((plan) => {
           const repoName = plan.repo.split('/')[1]
           const isPlanned = plan.status === 'planned'
+          const dispatchIsOn = plan.current?.dispatch === 'on'
+          const mergeFromDashboardIsOn = plan.current?.mergeFromDashboard === true
 
           return (
             <div key={plan.repo} className="rounded-lg border border-neutral-800 bg-neutral-950 p-4">
@@ -107,6 +151,26 @@ export default function ProjectReadinessPanel({ plans, loading }) {
                       reason=""
                     />
                   ))}
+                </div>
+              )}
+              {isPlanned && (
+                <div className="mt-4 flex gap-2">
+                  <ReadinessAction
+                    repo={plan.repo}
+                    label="Turn on merge-from-dashboard"
+                    offersKey="merge_from_dashboard"
+                    isOn={mergeFromDashboardIsOn}
+                    plan={plan}
+                    onChanged={onChanged}
+                  />
+                  <ReadinessAction
+                    repo={plan.repo}
+                    label="Turn on dispatch"
+                    offersKey="dispatch"
+                    isOn={dispatchIsOn}
+                    plan={plan}
+                    onChanged={onChanged}
+                  />
                 </div>
               )}
             </div>

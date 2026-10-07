@@ -11,7 +11,7 @@ import { listPipelinePrs, approveMr, denyMr, fetchTicketContext, sentBackKeys, c
 import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
 import { readDispatchStatus } from './dispatch_status.js'
 import { readHealthStatus, runHealthCheckNow } from './health.js'
-import { readOnboardingPlans } from './onboarding.js'
+import { readOnboardingPlans, withProfileState } from './onboarding.js'
 import { readCachedRepos } from './docs.js'
 import { createPortfolio } from './portfolio.js'
 import { createPortfolioProxy, portfolioHost } from './portfolio_remote.js'
@@ -31,7 +31,7 @@ import { createTriggerHub, createReconciler, refetchesGithub } from './triggers.
 import { listOpenPrsAcrossRepos, prListArgs, createListCache, normalizeSeen, canMergeFromDashboard, repoFromPrUrl, MARVIN_REPO } from './mr_repos.js'
 import { createIndexer, buildDocsIndex, loadIndex } from './docs_search.js'
 import { createDocsService, MASTER_ID } from './docs_service.js'
-import { readMergeableRepos, listProfiles, setDispatch } from './profiles.js'
+import { readMergeableRepos, listProfiles, setDispatch, setMergeFromDashboard } from './profiles.js'
 import { searchFiles, isRevealable } from './files_search.js'
 import { readCatalog, readMasterDoc, CATALOG_DIR, MASTER_DOC_PATH } from './catalog.js'
 import { STAGES_DIR } from '../../webhook-server/ticket_stages.js'
@@ -220,7 +220,46 @@ function registerHealthHandlers() {
     await runHealthCheckNow(execFileAsync)
     return readHealthStatus()
   })
-  ipcMain.handle('health:readiness', () => readOnboardingPlans(readRegistry()))
+  ipcMain.handle('health:readiness', () => withProfileState(readOnboardingPlans(readRegistry()), listProfiles()))
+  ipcMain.handle('readiness:setDispatch', async (_event, repo) => {
+    const plans = withProfileState(readOnboardingPlans(readRegistry()), listProfiles())
+    const plan = plans.find((p) => p.repo === repo)
+    if (!plan) throw new Error(`No onboarding plan for ${repo}`)
+    if (plan.offers?.dispatch !== true) throw new Error(`${repo} is not eligible for dispatch (baseline did not pass)`)
+    const profile = listProfiles().find((p) => p.repo === repo)
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      buttons: ['Cancel', 'Turn on'],
+      defaultId: 0,
+      cancelId: 0,
+      message: `Let MARVIN work on ${profile?.name || repo}'s tickets by itself?`,
+      detail: `From the next hourly scan, MARVIN will claim this project's ready tickets, run a planning call and an implementation call on ${profile?.machines.join(', ') || 'its machine'} (this spends model usage), and open pull requests for you to review in MR Review. You can turn it off here at any time.`
+    })
+    if (response !== 1) return { cancelled: true }
+    setDispatch(repo, 'on')
+    return { cancelled: false, current: { dispatch: 'on', mergeFromDashboard: profile?.mergeFromDashboard || false } }
+  })
+  ipcMain.handle('readiness:setMergeFromDashboard', async (_event, repo, value) => {
+    const plans = withProfileState(readOnboardingPlans(readRegistry()), listProfiles())
+    const plan = plans.find((p) => p.repo === repo)
+    if (!plan) throw new Error(`No onboarding plan for ${repo}`)
+    if (value === true && plan.offers?.merge_from_dashboard !== true) throw new Error(`${repo} is not eligible for merge-from-dashboard (baseline did not pass)`)
+    if (value === true) {
+      const profile = listProfiles().find((p) => p.repo === repo)
+      const { response } = await dialog.showMessageBox(mainWindow, {
+        type: 'warning',
+        buttons: ['Cancel', 'Turn on'],
+        defaultId: 0,
+        cancelId: 0,
+        message: `Enable MR Review for ${profile?.name || repo}?`,
+        detail: `PRs become reviewable with Approve/Deny in MR Review. You can turn this off here at any time.`
+      })
+      if (response !== 1) return { cancelled: true }
+    }
+    setMergeFromDashboard(repo, value)
+    const profile = listProfiles().find((p) => p.repo === repo)
+    return { cancelled: false, current: { dispatch: profile?.dispatch || 'off', mergeFromDashboard: value } }
+  })
 }
 
 function registerActivityHandlers() {

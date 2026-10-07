@@ -59,6 +59,10 @@ contextBridge.exposeInMainWorld('api', {
     refresh: () => ipcRenderer.invoke('health:refresh'),
     readiness: () => ipcRenderer.invoke('health:readiness')
   },
+  readiness: {
+    setDispatch: (repo) => ipcRenderer.invoke('readiness:setDispatch', repo),
+    setMergeFromDashboard: (repo, value) => ipcRenderer.invoke('readiness:setMergeFromDashboard', repo, value)
+  },
   docs: {
     repos: () => ipcRenderer.invoke('docs:repos'),
     refresh: () => ipcRenderer.invoke('docs:refresh'),

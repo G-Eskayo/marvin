@@ -997,3 +997,14 @@ What went wrong: a figure test with a quote-style bug turned main red; nothing s
 ## GitHub outages during a merge (2026-10-07)
 
 A GitHub 5xx (`remote: Internal Server Error`, HTTP 500, 503) is classified `GITHUB_OUTAGE` (retryable, never sends a ticket back). The gate's rebase push is retried with backoff so a finished retest is not thrown away, and the PR card says "GitHub is having an outage" (`github-outage` in `prState.js`) with Approve still available. Found when clarity-captions "Implement clarity-captions#8" (Transcript scrollback and retention) failed its merge during a real incident.
+
+## Health switch-on controls for merge-from-dashboard and dispatch (2026-10-07)
+
+Health tab → Project readiness adds two per-project toggle buttons ("Turn on merge-from-dashboard" and "Turn on dispatch"), gated on the onboarding plan's `offers` (both false when the baseline did not pass). Buttons are disabled and explain themselves via the baseline's `reason` when the corresponding offer is not `true`. When enabled:
+- **Turning on merge-from-dashboard** shows a native confirmation dialog explaining that PRs become reviewable with Approve/Deny in MR Review.
+- **Turning on dispatch** shows the existing confirmation (claiming ready tickets, running the planning and implementation calls, opening PRs for review).
+- Turning off requires no gate or dialog.
+
+The two switches are independent: `merge_from_dashboard: true` exists in production (Clarity Captions) with dispatch still off. Each handler writes only its target field to the profile JSON (dispatch-style regex replace), succeeding only if the profile's baseline passed, and returns the updated `current` state so the panel refreshes instantly without refetching onboarding plans.
+
+Existing dispatch toggles in ProfilesPanel (Autonomous agents tab) remain unchanged and ungated, still serving hand-configured profiles without onboarding data. The new readiness-panel controls are strictly additive, do not override the old toggle, and strictly require baseline passage (AC1), confirmation dialogs with detail (AC2), and immediate UI refresh (AC3).

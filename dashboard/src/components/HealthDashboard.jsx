@@ -132,14 +132,17 @@ export default function HealthDashboard({ nav }) {
   }, [])
 
   // Load readiness plans when view switches to readiness
-  useEffect(() => {
-    if (view !== 'readiness') return
+  const loadReadiness = () => {
     setReadinessLoading(true)
     window.api.health
       .readiness()
       .then(setReadiness)
       .catch(() => setReadiness([]))
       .finally(() => setReadinessLoading(false))
+  }
+  useEffect(() => {
+    if (view !== 'readiness') return
+    loadReadiness()
   }, [view])
 
   function load() {
@@ -200,7 +203,7 @@ export default function HealthDashboard({ nav }) {
       {view === 'agents' ? (
         <AgentsPanel agents={agents} />
       ) : view === 'readiness' ? (
-        <ProjectReadinessPanel plans={readiness} loading={readinessLoading} />
+        <ProjectReadinessPanel plans={readiness} loading={readinessLoading} onChanged={loadReadiness} />
       ) : (
       <>
       <OverallBadge overall={status.overall} generatedAt={status.generated_at} refreshing={refreshing} onRefresh={handleRefresh} />

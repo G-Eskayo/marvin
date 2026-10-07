@@ -47,3 +47,14 @@ export function readOnboardingPlans(boards) {
 
   return plans
 }
+
+// Merge in current profile state (dispatch on/off, mergeFromDashboard true/false) keyed by repo.
+export function withProfileState(plans, profiles) {
+  return plans.map((plan) => {
+    const profile = profiles.find((p) => p.repo === plan.repo)
+    return {
+      ...plan,
+      current: profile ? { dispatch: profile.dispatch, mergeFromDashboard: profile.mergeFromDashboard } : null
+    }
+  })
+}
