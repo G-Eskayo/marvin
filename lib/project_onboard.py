@@ -130,6 +130,11 @@ def inspect(repo: str, gh=_gh) -> dict:
         "workflow_contents": "",
         "package_json_scripts": {},
         "tools_installed": {},
+        "has_requirements_file": False,
+        "requirements_pinned": False,
+        "unpinned_dependencies": [],
+        "tests_read_machine_local": False,
+        "machine_local_test_files": [],
     }
 
     repo_view = gh(["repo", "view", repo, "--json", "visibility,defaultBranchRef"])
@@ -252,6 +257,45 @@ def inspect(repo: str, gh=_gh) -> dict:
         except Exception:
             pass
 
+    if "requirements.txt" in facts["file_tree"]:
+        facts["has_requirements_file"] = True
+        req_content = _get_file_content(repo, "requirements.txt", gh)
+        if req_content:
+            unpinned = []
+            for line in req_content.splitlines():
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    if "==" not in line and not (line.startswith("-") or line.startswith("git+")):
+                        unpinned.append(line)
+            if unpinned:
+                facts["unpinned_dependencies"] = unpinned
+                facts["requirements_pinned"] = False
+            else:
+                facts["requirements_pinned"] = True
+    elif "pyproject.toml" in facts["file_tree"]:
+        if "poetry.lock" in facts["file_tree"] or "uv.lock" in facts["file_tree"]:
+            facts["requirements_pinned"] = True
+
+    test_file_patterns = ["test_*.py", "*_test.py", "conftest.py"]
+    test_files = []
+    for path in facts["file_tree"]:
+        for pattern in test_file_patterns:
+            if fnmatch.fnmatch(path.split("/")[-1], pattern):
+                test_files.append(path)
+                break
+
+    machine_local_markers = ["Path.home()", "expanduser", "~/.claude", 'os.environ["HOME"]', "os.getenv(\"HOME\")"]
+    machine_local_test_files_list = []
+    for test_file_path in test_files:
+        test_content = _get_file_content(repo, test_file_path, gh)
+        if test_content:
+            if any(marker in test_content for marker in machine_local_markers):
+                machine_local_test_files_list.append(test_file_path)
+
+    if machine_local_test_files_list:
+        facts["tests_read_machine_local"] = True
+        facts["machine_local_test_files"] = machine_local_test_files_list[:3]
+
     return facts
 
 
@@ -284,6 +328,8 @@ def plan(facts: dict) -> dict:
             plan_out["test_command"] = {"state": "ok", "reason": "test script found in package.json"}
         else:
             plan_out["test_command"] = {"state": "needs-human", "reason": "no test script in package.json; R5, never guess"}
+    elif detected_stack == "python":
+        plan_out["test_command"] = {"state": "ok", "reason": "pytest is a Python convention"}
     else:
         plan_out["test_command"] = {"state": "needs-human", "reason": "unrecognised stack; cannot determine test command"}
 
@@ -295,8 +341,22 @@ def plan(facts: dict) -> dict:
             matched_stack = stack
             break
 
+    python_problems = []
+    if detected_stack == "python":
+        if not facts.get("has_requirements_file") and not facts.get("requirements_pinned"):
+            python_problems.append("missing or unpinned dependencies in requirements.txt")
+        elif not facts.get("requirements_pinned"):
+            unpinned = facts.get("unpinned_dependencies", [])
+            python_problems.append(f"unpinned dependencies: {', '.join(unpinned[:3])}")
+        if facts.get("tests_read_machine_local"):
+            local_files = facts.get("machine_local_test_files", [])
+            files_str = ", ".join(local_files[:3])
+            python_problems.append(f"tests read ~/.claude or Path.home(): {files_str}")
+
     test_command_state = plan_out.get("test_command", {}).get("state")
-    if test_command_state == "needs-human":
+    if python_problems:
+        plan_out["ci"] = {"state": "needs-human", "reason": "; ".join(python_problems)}
+    elif test_command_state == "needs-human":
         plan_out["ci"] = {"state": "needs-human", "reason": "cannot wire CI without a known test command"}
     elif matched_stack:
         ci_markers = matched_stack.get("ci_contains_any", [])
