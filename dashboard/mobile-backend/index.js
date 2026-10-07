@@ -3,10 +3,13 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { homedir } from 'os'
 import path from 'path'
+import { fileURLToPath } from 'url'
 import { whois, loadAllowlist, isAllowed } from './device_gate.js'
 import { createDashboardApiRouter } from './dashboard_api.js'
 import { createChatApiRouter } from './chat_api.js'
 import { createThreadStore } from './thread_store.js'
+import { createPendingActionsStore } from './pending_actions.js'
+import { createPermissionApiRouter } from './permission_api.js'
 
 const execFileP = promisify(execFile)
 
@@ -40,6 +43,8 @@ function getUptimeSeconds() {
 const dashboardApiRouter = createDashboardApiRouter()
 const threadStore = createThreadStore()
 const chatApiRouter = createChatApiRouter({ threadStore })
+const pendingActionStore = createPendingActionsStore()
+const permissionApiRouter = createPermissionApiRouter({ pendingActionStore })
 
 const server = createServer(async (req, res) => {
   // Device gate: check allowlist
@@ -55,8 +60,12 @@ const server = createServer(async (req, res) => {
     return
   }
 
+  // Route through permission API
+  let handled = await permissionApiRouter(req, res)
+  if (handled) return
+
   // Route through dashboard API
-  let handled = await dashboardApiRouter(req, res)
+  handled = await dashboardApiRouter(req, res)
   if (handled) return
 
   // Route through chat API
