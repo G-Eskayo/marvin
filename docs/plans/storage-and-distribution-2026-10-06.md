@@ -1,6 +1,6 @@
 # Plan: storage, cleanup agents and resource distribution (2026-10-06)
 
-Status: **measured, design proposed, nothing changed.** Nothing has been deleted or moved. Every reclaim step below waits for Gil's explicit go-ahead, item by item. Measurements were read-only (`du`, `git`, `gh`, `find -flags`) on both machines, 2026-10-06 ~15:00 MT. Source: the handoff `handoff-2026-10-06-14-30-storage.md`.
+Status (updated 2026-10-06 evening): **reclaim A1/A2/A4(brew)/B1/B3/B4(partial) done with Gil's approval, C2/C5/C6 built and live; mini 13 → 37 GiB free, laptop 94 → 136 GiB free.** Originally: measured, design proposed, nothing changed. Every reclaim step below waits for Gil's explicit go-ahead, item by item. Measurements were read-only (`du`, `git`, `gh`, `find -flags`) on both machines, 2026-10-06 ~15:00 MT. Source: the handoff `handoff-2026-10-06-14-30-storage.md`.
 
 ## 1. The headline
 
@@ -143,26 +143,26 @@ Proposed:
 Each "reclaim" task is a proposal. It runs only after Gil approves that specific item.
 
 **A. Immediate reclaim on the mini (approval needed per item)**
-- [ ] A1. Remove the 14 merged, clean clarity-captions worktrees + branches (~29.6 GiB). Run `_preserve_prior_attempt` first anyway.
-- [ ] A2. Remove the 9 merged, clean marvin worktrees (~2.8 GiB) and the 3 empty finance-os worktrees (1.8 GiB).
+- [x] A1. (done 2026-10-06: 14 removed, 29.9 GiB, branches kept) Remove the 14 merged, clean clarity-captions worktrees + branches (~29.6 GiB). Run `_preserve_prior_attempt` first anyway.
+- [x] A2. (done: 9 marvin + 3 finance-os, 4.6 GiB; the sweep later removed the empty marvin#38) Remove the 9 merged, clean marvin worktrees (~2.8 GiB) and the 3 empty finance-os worktrees (1.8 GiB).
 - [ ] A3. Review the dirty / no-PR worktrees (clarity #37 #44, marvin #148 #30 #38) with Gil: rescue to a branch or drop.
-- [ ] A4. `brew cleanup` (~1.5 GiB), empty Trash (1.0 GiB, Gil looks first).
+- [~] A4. `brew cleanup` done on both (2.4 GiB). Trash not touched.
 - [ ] A5. Check which qwen2.5 Ollama models are used. Unused ones can be re-pulled later (up to 14 GiB).
 
 **B. Immediate reclaim on the laptop (approval needed per item)**
-- [ ] B1. FLUX.1-schnell Hugging Face cache (31 GiB, re-downloadable). Or keep it here as the "large rarely used" tier, Gil's call.
+- [x] B1. (done: FLUX removed, 31 GiB; icon art + source are committed in clarity-captions) FLUX.1-schnell Hugging Face cache (31 GiB, re-downloadable). Or keep it here as the "large rarely used" tier, Gil's call.
 - [ ] B2. Old simulator runtime iOS 26.3, plus iOS DeviceSupport for iOS versions no device runs any more (up to ~13 GiB).
-- [ ] B3. `npm cache clean --force` (11 GiB, rebuilds on demand).
-- [ ] B4. Stale marvin worktrees (2.2 GiB, same merged/clean check as A1).
+- [x] B3. (done: 11 GiB) `npm cache clean --force` (11 GiB, rebuilds on demand).
+- [~] B4. (#32, #35 removed, 1.1 GiB; the other 7 hold work and are listed by the sweep) Stale marvin worktrees (2.2 GiB, same merged/clean check as A1).
 - [ ] B5. Duplicates: `~/Documents/Projects/clarity-captions`, `~/marvin.superseded-by-agents-20260709`, `~/.agents.pre-git-backup-20260709-1422`. Archive or delete, Gil's call.
 
 **C. Fix the cleanup agents (TDD, each its own ticket)**
 - [ ] C1. `run_ticket` / PR-resolution hook releases the worktree once the PR is merged or closed (rescue first).
-- [ ] C2. `cleanup_sweep` made multi-repo via the project catalog, with the current wrong-repo hazard covered by a test, then scheduled daily on both machines.
+- [x] C2. (done: commit 0ea5fcd, job installed and run on both machines) `cleanup_sweep` made multi-repo via the project catalog, with the current wrong-repo hazard covered by a test, then scheduled daily on both machines.
 - [ ] C3. Clarity profile: SwiftPM scratch path in the shared cache, or `.build` removed after verify. Same decision for marvin's `dashboard/node_modules`.
-- [ ] C4. Laptop tidy-agent: grant FDA to the Python it actually runs, or pin the plist to an interpreter that already has it. Then make a failed run visible.
-- [ ] C5. Mini tidy-agent: handle dataless files (skip with a single summary line, or `brctl download` first), and treat a long `filed=0` streak as a signal.
-- [ ] C6. Health tab storage check (§7.4).
+- [~] C4. (waiting on Gil: add Xcode's Python.app to Full Disk Access on the laptop. Also, health-check runs only on the mini, so the laptop's own tidy log is never read: still a gap) Laptop tidy-agent: grant FDA to the Python it actually runs, or pin the plist to an interpreter that already has it. Then make a failed run visible.
+- [x] C5. (done: tidy_agent.materialize downloads evicted files before moving) Mini tidy-agent: handle dataless files (skip with a single summary line, or `brctl download` first), and treat a long `filed=0` streak as a signal.
+- [x] C6. (done: disk:space per machine in the Health tab) Health tab storage check (§7.4).
 
 **D. Portfolio repo move (§6)**
 - [ ] D1. Gil reviews and commits the 60 uncommitted files. Push the 24 commits to a WIP branch.
