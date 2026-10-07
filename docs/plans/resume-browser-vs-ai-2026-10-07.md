@@ -77,3 +77,14 @@ sees its own answer). On the site this would be a priority Gil sets once per pro
   for the rewriting step. Worth its own experiment before calling it a project.
 - **Caveat:** the AI tailor is the reference, not ground truth. A blind A/B (Gil rates two versions per job
   without knowing which is which) would test whether the gap matters to a reader.
+
+## Next steps (2026-10-07)
+
+- **Tickets:** #221 resume page + master PDF → #222 in-browser match box → #223 matched PDF download. Layout/mobile: #219.
+- **Blind A/B test** (`skills/resume-tailor/experiments/blind_ab.py`): 6 jobs chosen for spread (high and low
+  agreement), AI-tailored vs browser-matched (keywords + priority, w = 0.5), both rendered with the same
+  `render_pdf.py` template, randomly labelled X/Y. Gil rates locally in `~/.claude/resume/experiments/blind/rate.html`;
+  the key is kept outside that folder. Score with `blind_ab.py score <ratings.json>`. Both versions share the
+  header and the Education/Training/Achievements sections, so only summary, experience, skills and projects differ.
+- **Export cleanup found while building it** (now in #221): master project bullets include tech-stack lines and
+  `[Project Link]` placeholders, and a title carries italic markup; the public export must clean these.
