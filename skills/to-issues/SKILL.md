@@ -39,6 +39,8 @@ Slices may be 'HITL' or 'AFK'. HITL slices require human interaction, such as an
 
 Split any slice matching one of these before presenting the list in step 4 — don't rely on the user's own "too coarse?" answer to catch what a fixed criterion already would have.
 
+**AFK slices must land in the repo the ticket is filed in.** The ticket pipeline judges a run by measuring *that* repo's tests. If the work actually lives in a different repo (a website, a companion app, a new repo that doesn't exist yet), every run measures "unchanged" and the ticket fails or gets parked even when the agent did the work. clarity-captions #44 (its website) was parked for exactly this reason. Either file the slice in the repo where the code will live, or mark it HITL.
+
 ### 4. Quiz the user
 
 Present the proposed breakdown as a numbered list. For each slice, show:

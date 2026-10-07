@@ -1,28 +1,21 @@
-## 2026-10-07T04:27:49.586518+00:00 — clarity-captions-ticket-9
+## 2026-10-07T04:27:57.429714+00:00 — clarity-captions-ticket-10
 - **caption-core_passed**: 230
 - **caption-core_failed**: 0
 - **spike-app_build_ok**: 1
 - **tests_passed**: 230
 - **tests_failed**: 0
 
-## 2026-10-07T05:08:27.630040+00:00 — clarity-captions-ticket-9
+## 2026-10-07T05:08:55.295203+00:00 — clarity-captions-ticket-10
 - **caption-core_passed**: 230
 - **caption-core_failed**: 0
 - **spike-app_build_ok**: 1
 - **tests_passed**: 230
 - **tests_failed**: 0
 
-## 2026-10-07T05:33:07.288525+00:00 — clarity-captions-ticket-9
+## 2026-10-07T05:59:21.048905+00:00 — clarity-captions-ticket-10
 - **caption-core_passed**: 230
 - **caption-core_failed**: 0
 - **spike-app_build_ok**: 1
 - **tests_passed**: 230
-- **tests_failed**: 0
-
-## 2026-10-07T17:45:54.850210+00:00 — clarity-captions-ticket-9
-- **caption-core_passed**: 260
-- **caption-core_failed**: 0
-- **spike-app_build_ok**: 1
-- **tests_passed**: 260
 - **tests_failed**: 0
 

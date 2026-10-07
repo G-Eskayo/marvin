@@ -1,25 +1,21 @@
 [
   {
-    "timestamp": "2026-10-06T14:34:10.550889+00:00",
+    "timestamp": "2026-10-07T05:30:25.421471+00:00",
     "metrics": {
-      "pytest_passed": {
-        "value": 1351,
+      "caption-core_passed": {
+        "value": 230,
         "higher_is_better": true
       },
-      "pytest_failed": {
+      "caption-core_failed": {
         "value": 0,
         "higher_is_better": false
       },
-      "vitest_passed": {
-        "value": 679,
+      "spike-app_build_ok": {
+        "value": 1,
         "higher_is_better": true
-      },
-      "vitest_failed": {
-        "value": 0,
-        "higher_is_better": false
       },
       "tests_passed": {
-        "value": 2030,
+        "value": 230,
         "higher_is_better": true
       },
       "tests_failed": {
@@ -29,26 +25,22 @@
     }
   },
   {
-    "timestamp": "2026-10-07T06:50:13.077105+00:00",
+    "timestamp": "2026-10-07T16:06:29.972297+00:00",
     "metrics": {
-      "pytest_passed": {
-        "value": 1530,
+      "caption-core_passed": {
+        "value": 254,
         "higher_is_better": true
       },
-      "pytest_failed": {
+      "caption-core_failed": {
         "value": 0,
         "higher_is_better": false
       },
-      "vitest_passed": {
-        "value": 761,
+      "spike-app_build_ok": {
+        "value": 1,
         "higher_is_better": true
-      },
-      "vitest_failed": {
-        "value": 0,
-        "higher_is_better": false
       },
       "tests_passed": {
-        "value": 2291,
+        "value": 254,
         "higher_is_better": true
       },
       "tests_failed": {

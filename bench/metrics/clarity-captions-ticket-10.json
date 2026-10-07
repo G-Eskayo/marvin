@@ -1,25 +1,21 @@
 [
   {
-    "timestamp": "2026-10-07T03:37:58.085867+00:00",
+    "timestamp": "2026-10-07T04:27:57.429714+00:00",
     "metrics": {
-      "pytest_passed": {
-        "value": 1451,
+      "caption-core_passed": {
+        "value": 230,
         "higher_is_better": true
       },
-      "pytest_failed": {
+      "caption-core_failed": {
         "value": 0,
         "higher_is_better": false
       },
-      "vitest_passed": {
-        "value": 728,
+      "spike-app_build_ok": {
+        "value": 1,
         "higher_is_better": true
-      },
-      "vitest_failed": {
-        "value": 0,
-        "higher_is_better": false
       },
       "tests_passed": {
-        "value": 2179,
+        "value": 230,
         "higher_is_better": true
       },
       "tests_failed": {
@@ -29,26 +25,22 @@
     }
   },
   {
-    "timestamp": "2026-10-07T04:05:26.743598+00:00",
+    "timestamp": "2026-10-07T05:08:55.295203+00:00",
     "metrics": {
-      "pytest_passed": {
-        "value": 1451,
+      "caption-core_passed": {
+        "value": 230,
         "higher_is_better": true
       },
-      "pytest_failed": {
+      "caption-core_failed": {
         "value": 0,
         "higher_is_better": false
       },
-      "vitest_passed": {
-        "value": 728,
+      "spike-app_build_ok": {
+        "value": 1,
         "higher_is_better": true
-      },
-      "vitest_failed": {
-        "value": 0,
-        "higher_is_better": false
       },
       "tests_passed": {
-        "value": 2179,
+        "value": 230,
         "higher_is_better": true
       },
       "tests_failed": {
@@ -58,26 +50,22 @@
     }
   },
   {
-    "timestamp": "2026-10-07T06:22:42.708846+00:00",
+    "timestamp": "2026-10-07T05:59:21.048905+00:00",
     "metrics": {
-      "pytest_passed": {
-        "value": 1530,
+      "caption-core_passed": {
+        "value": 230,
         "higher_is_better": true
       },
-      "pytest_failed": {
+      "caption-core_failed": {
         "value": 0,
         "higher_is_better": false
       },
-      "vitest_passed": {
-        "value": 761,
+      "spike-app_build_ok": {
+        "value": 1,
         "higher_is_better": true
-      },
-      "vitest_failed": {
-        "value": 0,
-        "higher_is_better": false
       },
       "tests_passed": {
-        "value": 2291,
+        "value": 230,
         "higher_is_better": true
       },
       "tests_failed": {
