@@ -273,3 +273,12 @@ def test_other_label_failures_are_not_swallowed():
         assert "403" in str(e)
     else:
         raise AssertionError("must not hide a real failure")
+
+
+def test_due_for_repo_carries_the_buckets_a_deadline_does_not_cover(tmp_path):
+    import json
+    p = tmp_path / "overrides.json"
+    p.write_text(json.dumps({"clarity-captions": {"due": "2026-10-25", "dueHard": True, "dueExcludes": ["V", "x"]},
+                             "plain": {"due": "2026-12-01"}}))
+    assert ta.due_for_repo("G-Eskayo/clarity-captions", p) == {"date": "2026-10-25", "hard": True, "excludes": ["V", "X"]}
+    assert ta.due_for_repo("G-Eskayo/plain", p) == {"date": "2026-12-01", "hard": False, "excludes": []}

@@ -61,6 +61,39 @@ export async function _defaultRunTests(cwd, exec) {
 // test suite. Only pushes the rebased branch back if both steps succeed;
 // a conflict or a test failure leaves the branch on origin untouched, and
 // the scratch worktree is always removed regardless of outcome.
+// What a failed test run printed. pytest and vitest write their failures to STDOUT, while execFile's message only
+// says "Command failed", so the reason used to lose the failing test names (clarity of the comment, and the baseline
+// check below, both need them).
+function testOutputOf(err) {
+  const out = String(err?.stdout || '').slice(-6000)
+  const rest = String(err?.stderr || err?.message || err)
+  return out ? `${out}\n${rest}` : rest
+}
+
+// Which of these failing tests ALSO fail on a clean checkout of the base branch? If they do, the PR did not break them:
+// the base was already red. Only pytest ids (`path::name`) can be re-run individually; anything else returns null
+// ("cannot tell"), and the caller behaves as before. Used by the webhook; tests inject their own.
+export async function baselineFailsOnMain(names, exec = execFileAsync, repoPath = REPO_PATH, base = 'main') {
+  if (!names.length || names.some((n) => !n.includes('::'))) return null
+  const dir = await mkdtemp(path.join(tmpdir(), 'mr-baseline-'))
+  try {
+    await exec('git', ['fetch', 'origin', base], { cwd: repoPath })
+    await exec('git', ['worktree', 'add', '--detach', dir, `origin/${base}`], { cwd: repoPath })
+    try {
+      await exec(VENV_PYTHON, ['-m', 'pytest', '-q', '-p', 'no:cacheprovider', ...names], { cwd: dir })
+      return []
+    } catch (e) {
+      const out = String(e?.stdout || '')
+      return out ? names.filter((n) => out.includes(`FAILED ${n}`)) : null
+    }
+  } catch {
+    return null
+  } finally {
+    await exec('git', ['worktree', 'remove', '--force', dir], { cwd: repoPath }).catch(() => {})
+    await rm(dir, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
 export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = REPO_PATH, runTests = _defaultRunTests, base = 'main', resolveConflicts = null) {
   const scratchDir = await mkdtemp(path.join(tmpdir(), 'mr-merge-gate-'))
   try {
@@ -82,7 +115,7 @@ export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = 
     try {
       await runTests(scratchDir, exec)
     } catch (err) {
-      return { ok: false, reason: `Tests failed after rebasing onto main:\n\n${String(err.stderr || err.message || err)}` }
+      return { ok: false, reason: `Tests failed after rebasing onto main:\n\n${testOutputOf(err)}` }
     }
 
     await exec('git', ['push', '--force-with-lease', 'origin', `HEAD:${headRef}`], { cwd: scratchDir })
@@ -250,7 +283,7 @@ async function mergePrUnqueued(
   recordStageFn = recordStage,
   deps = {}
 ) {
-  const { sleep, recordFailureFn = recordFailure, gateContext = defaultGateContext } = deps
+  const { sleep, recordFailureFn = recordFailure, gateContext = defaultGateContext, baselineFails = null } = deps
   if (typeof prUrl !== 'string' || !prUrl.startsWith('https://github.com/')) {
     throw new MergeFailure(classifyFailure({ stage: 'request', error: new Error(`Not a GitHub PR URL: ${prUrl}`) }))
   }
@@ -305,6 +338,16 @@ async function mergePrUnqueued(
         stage('gate', 'failed', 'GATE_INFRA: the build machine or test setup failed, not the code')
         throw new MergeFailure(refusal('GATE_INFRA', 'gate', 'the build machine or the project\'s test setup failed while checking this PR, not the PR\'s code',
           `Approve it again. The PR was not sent back for rework. What failed: ${summary.comment.slice(0, 300)}`))
+      }
+      if (summary.code === 'GATE_TESTS_FAILED' && summary.failingTests.length && baselineFails) {
+        // Did the PR break these, or was the base branch already red? Only a test that passes on the base is the PR's fault.
+        const onBase = await baselineFails(summary.failingTests).catch(() => null)
+        if (Array.isArray(onBase) && summary.failingTests.every((n) => onBase.includes(n))) {
+          stage('gate', 'failed', `MAIN_RED: ${summary.failingTests.length} failing test(s) also fail on ${ctx ? ctx.base : 'main'}`)
+          throw new MergeFailure(refusal('MAIN_RED', 'gate',
+            `${ctx ? ctx.base : 'main'} itself fails ${summary.failingTests.length === 1 ? 'this test' : 'these tests'}, so this PR cannot be judged yet: ${summary.failingTests.slice(0, 3).join(', ')}`,
+            `Fix ${ctx ? ctx.base : 'main'} first, then approve again. The PR was not sent back, because it did not cause this.`))
+        }
       }
       stage('gate', 'failed', `${summary.code}: ${summary.failingTests.length ? summary.failingTests.length + ' failing test(s)' : 'see comment'}`)
       recordFailureFn({ ticket: ticketNumber ?? prNumberOf(prUrl), code: summary.code, message: summary.failingTests[0] || 'merge gate failed' })
