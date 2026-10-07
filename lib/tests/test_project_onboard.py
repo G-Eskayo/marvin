@@ -960,3 +960,95 @@ def test_refresh_all_onboarding_plans_with_failure(tmp_path, monkeypatch):
 
     # Verify repo2's file is unchanged (not nuked by error)
     assert (tmp_path / "repo2.json").read_text() == original_repo2
+
+
+# ── Prove stage: baseline test results ───────────────────────────────────────
+
+def test_prove_returns_missing_when_no_profile():
+    result = po.prove("test/repo", profile=None, selftest_fn=lambda p: {})
+    assert result["state"] == "missing"
+    assert result["offerable"]["merge_from_dashboard"] is False
+    assert result["baseline"] is None
+
+
+def test_prove_returns_ok_when_selftest_passes():
+    def mock_selftest(profile):
+        return {"kind": "passed", "summary": "all tests passed", "metrics": {"test_passed": 10}}
+    result = po.prove("test/repo", profile={"repo": "test/repo"}, selftest_fn=mock_selftest)
+    assert result["state"] == "ok"
+    assert result["offerable"]["merge_from_dashboard"] is True
+    assert result["offerable"]["dispatch"] is True
+    assert result["baseline"]["summary"] == "all tests passed"
+    assert result["baseline"]["metrics"] == {"test_passed": 10}
+
+
+def test_prove_returns_failed_when_selftest_fails():
+    def mock_selftest(profile):
+        return {"kind": "failed", "summary": "2 tests failed", "output_tail": "error details"}
+    result = po.prove("test/repo", profile={"repo": "test/repo"}, selftest_fn=mock_selftest)
+    assert result["state"] == "failed"
+    assert result["offerable"]["merge_from_dashboard"] is False
+    assert "2 tests failed" in result["reason"]
+    assert result["baseline"]["summary"] == "2 tests failed"
+
+
+def test_prove_returns_needs_human_when_env_missing():
+    def mock_selftest(profile):
+        return {"kind": "env_missing", "error": "swift not found"}
+    result = po.prove("test/repo", profile={"repo": "test/repo"}, selftest_fn=mock_selftest)
+    assert result["state"] == "needs-human"
+    assert result["offerable"]["merge_from_dashboard"] is False
+    assert result["baseline"] is None
+
+
+def test_prove_returns_needs_human_when_no_clone():
+    def mock_selftest(profile):
+        return {"kind": "no_clone", "error": "no local clone"}
+    result = po.prove("test/repo", profile={"repo": "test/repo"}, selftest_fn=mock_selftest)
+    assert result["state"] == "needs-human"
+    assert result["offerable"]["dispatch"] is False
+
+
+def test_update_onboarding_plan_piece_adds_piece_to_new_file(tmp_path):
+    po.update_onboarding_plan_piece("test/repo", "baseline", {"state": "ok"}, dir=tmp_path)
+    path = tmp_path / "repo.json"
+    assert path.exists()
+    data = json.loads(path.read_text())
+    assert data["repo"] == "test/repo"
+    assert data["pieces"]["baseline"]["state"] == "ok"
+    assert "proved_at" in data
+
+
+def test_update_onboarding_plan_piece_merges_with_existing_pieces(tmp_path):
+    # Create initial file with one piece
+    initial_data = {
+        "repo": "test/repo",
+        "generated_at": "2026-01-01T00:00:00Z",
+        "pieces": {"profile": {"state": "ok"}}
+    }
+    path = tmp_path / "repo.json"
+    path.write_text(json.dumps(initial_data))
+
+    # Add a new piece
+    po.update_onboarding_plan_piece("test/repo", "baseline", {"state": "ok"}, dir=tmp_path)
+
+    # Verify both pieces exist
+    data = json.loads(path.read_text())
+    assert "profile" in data["pieces"]
+    assert "baseline" in data["pieces"]
+    assert data["generated_at"] == "2026-01-01T00:00:00Z"  # unchanged
+    assert "proved_at" in data  # new timestamp
+
+
+def test_refresh_prove_calls_prove_and_updates_plan(tmp_path):
+    def mock_selftest(profile):
+        return {"kind": "passed", "summary": "baseline ok"}
+    profile = {"repo": "test/repo"}
+    result = po.refresh_prove("test/repo", profile=profile, dir=tmp_path, selftest_fn=mock_selftest)
+
+    assert result["state"] == "ok"
+
+    path = tmp_path / "repo.json"
+    assert path.exists()
+    data = json.loads(path.read_text())
+    assert data["pieces"]["baseline"]["state"] == "ok"

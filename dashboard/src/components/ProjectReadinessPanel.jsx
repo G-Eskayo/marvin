@@ -3,6 +3,7 @@ import { useState } from 'react'
 const SEVERITY_COLOR = {
   ok: { bg: 'bg-emerald-950', border: 'border-emerald-900', dot: 'bg-emerald-500', text: 'text-emerald-300' },
   missing: { bg: 'bg-red-950', border: 'border-red-900', dot: 'bg-red-500', text: 'text-red-300' },
+  failed: { bg: 'bg-red-950', border: 'border-red-900', dot: 'bg-red-500', text: 'text-red-300' },
   'needs-human': { bg: 'bg-amber-950', border: 'border-amber-900', dot: 'bg-amber-500', text: 'text-amber-300' },
   unplanned: { bg: 'bg-neutral-900', border: 'border-neutral-700', dot: 'bg-neutral-600', text: 'text-neutral-400' }
 }
@@ -14,6 +15,7 @@ function PieceChip({ name, state, reason }) {
   const display = {
     ok: '✓',
     missing: '✗',
+    failed: '✗',
     'needs-human': '!',
     unplanned: '?'
   }[state] || '?'
@@ -52,7 +54,8 @@ export default function ProjectReadinessPanel({ plans, loading }) {
     'agent_docs',
     'board',
     'clone_and_toolchain',
-    'generated_paths'
+    'generated_paths',
+    'baseline'
   ]
 
   return (

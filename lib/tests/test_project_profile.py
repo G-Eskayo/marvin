@@ -473,3 +473,73 @@ def test_a_project_with_no_test_script_says_so_instead_of_crashed_or_never_ran(t
     r = pp.verify_dir(prof, tmp_path, runner=runner, have=lambda cap, env: True)
     assert r["ok"] is False and r["kind"] == "error"
     assert "no test command" in r["summary"] and "crashed or never ran" not in r["summary"]
+
+
+# ── selftest: judgment and return kind field ──────────────────────────────────
+
+def test_selftest_returns_kind_passed_when_baseline_passes(tmp_path, monkeypatch):
+    import sandbox_orchestration as so
+    wt = tmp_path / "wt"
+    (wt / "Pkg").mkdir(parents=True)
+    monkeypatch.setattr(so, "_create_worktree", lambda clone, ref, base="main": wt)
+    monkeypatch.setattr(pp, "_cleanup_worktree", lambda *a: None)
+    (tmp_path / ".git").mkdir()
+    profile = {**PROFILE, "clone_hints": [str(tmp_path)]}
+    report = pp.selftest(profile, runner=runner_returning([(0, XCTEST_OK)]), have=lambda cap, env: cap == "swift", catalog={"projects": []})
+    assert report["ok"] is True and report["kind"] == "passed"
+    assert report["summary"] and "60 passed" in report["summary"]
+
+
+def test_selftest_returns_kind_failed_when_baseline_tests_fail(tmp_path, monkeypatch):
+    import sandbox_orchestration as so
+    wt = tmp_path / "wt"
+    (wt / "Pkg").mkdir(parents=True)
+    monkeypatch.setattr(so, "_create_worktree", lambda clone, ref, base="main": wt)
+    monkeypatch.setattr(pp, "_cleanup_worktree", lambda *a: None)
+    (tmp_path / ".git").mkdir()
+    profile = {**PROFILE, "clone_hints": [str(tmp_path)]}
+    out = "Test Case '-[CoreTests.AlignTests testBad]' failed (0.1 seconds).\n" + XCTEST_FAIL
+    report = pp.selftest(profile, runner=runner_returning([(1, out)]), have=lambda cap, env: cap == "swift", catalog={"projects": []})
+    assert report["ok"] is False and report["kind"] == "failed"
+    assert "2 failed" in report["summary"] and report.get("output_tail")
+
+
+def test_selftest_returns_kind_env_missing_when_required_tool_is_missing_pre_check(tmp_path, monkeypatch):
+    (tmp_path / ".git").mkdir()
+    profile = {**PROFILE, "clone_hints": [str(tmp_path)]}
+    report = pp.selftest(profile, runner=runner_returning([]), have=lambda cap, env: False, catalog={"projects": []})
+    assert report["ok"] is False and report["kind"] == "env_missing"
+    assert "swift" in report["error"]
+
+
+def test_selftest_returns_kind_env_missing_when_setup_step_tool_is_missing(tmp_path, monkeypatch):
+    import sandbox_orchestration as so
+    wt = tmp_path / "wt"
+    (wt / "Pkg").mkdir(parents=True)
+    monkeypatch.setattr(so, "_create_worktree", lambda clone, ref, base="main": wt)
+    monkeypatch.setattr(pp, "_cleanup_worktree", lambda *a: None)
+    (tmp_path / ".git").mkdir()
+    prof = {**PROFILE, "setup": [SETUP], "clone_hints": [str(tmp_path)]}
+    report = pp.selftest(prof, runner=runner_returning([]), have=lambda c, e: c != "node", catalog={"projects": []})
+    assert report["ok"] is False and report["kind"] == "env_missing"
+    assert "node" in report["error"]
+
+
+def test_selftest_returns_kind_error_on_measure_crash(tmp_path, monkeypatch):
+    import sandbox_orchestration as so
+    wt = tmp_path / "wt"
+    (wt / "Pkg").mkdir(parents=True)
+    monkeypatch.setattr(so, "_create_worktree", lambda clone, ref, base="main": wt)
+    monkeypatch.setattr(pp, "_cleanup_worktree", lambda *a: None)
+    (tmp_path / ".git").mkdir()
+    profile = {**PROFILE, "clone_hints": [str(tmp_path)]}
+    report = pp.selftest(profile, runner=runner_returning([(1, NO_XCTEST)]), have=lambda cap, env: cap == "swift", catalog={"projects": []})
+    assert report["ok"] is False and report["kind"] == "error"
+    assert "XCTest" in report["error"]
+
+
+def test_selftest_returns_kind_no_clone_when_clone_not_found(tmp_path):
+    profile = {**PROFILE}
+    report = pp.selftest(profile, runner=runner_returning([]), have=lambda cap, env: True, catalog={"projects": []})
+    assert report["ok"] is False and report["kind"] == "no_clone"
+    assert "no local clone" in report["error"]

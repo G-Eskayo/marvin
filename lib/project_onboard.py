@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Project onboarding: transform a repo into a fully wired MARVIN project.
 
-This module handles both the read-only 'plan' stage (ticket #141) and the 'apply' stage
-(ticket #146): gather facts about a project, produce a readiness plan, and optionally
-apply local changes (labels, board, profile). Facts are gathered once per repo via
-`inspect()`, and `plan()` is pure over those facts. Apply modifies local state only.
+This module handles the 'plan' stage (ticket #141), 'apply' stage (ticket #146), and
+'prove' stage (ticket #148): gather facts about a project, produce a readiness plan,
+apply local changes (labels, board, profile), and prove the baseline. Facts are
+gathered once per repo via `inspect()`, and `plan()` is pure over those facts. Apply
+and prove run on request only.
 
     project_onboard.py plan <owner/repo>              outputs JSON readiness plan
     project_onboard.py apply <owner/repo> --local     applies local changes (labels, board, profile)
+    project_onboard.py prove <owner/repo>             runs selftest, updates baseline piece
 """
 from __future__ import annotations
 
@@ -457,6 +459,54 @@ def refresh_all_onboarding_plans(repos: list[str], gh=_gh, dir: Path | None = No
     return {"ok": ok, "failed": failed}
 
 
+def prove(repo: str, profile: dict | None = None, gh=_gh, selftest_fn=None) -> dict:
+    """Prove a project's baseline: run a selftest on a throwaway worktree of the profile's base branch.
+    Returns state (ok|failed|missing|needs-human), reason, offerable (dict of capability flags), baseline metrics."""
+    if selftest_fn is None:
+        selftest_fn = pp.selftest
+    if profile is None:
+        profile = pp.load_profile(repo)
+    if profile is None:
+        return {"state": "missing", "reason": "no profile yet; run apply first", "offerable": {"merge_from_dashboard": False, "dispatch": False}, "baseline": None}
+    r = selftest_fn(profile)
+    if r.get("kind") == "passed":
+        summary = r.get("summary", "baseline tests passed")
+        return {"state": "ok", "reason": summary, "offerable": {"merge_from_dashboard": True, "dispatch": True},
+                "baseline": {"summary": summary, "metrics": r.get("metrics", {})}}
+    elif r.get("kind") in ("env_missing", "no_clone"):
+        return {"state": "needs-human", "reason": r.get("error", "missing tool or clone"), "offerable": {"merge_from_dashboard": False, "dispatch": False}, "baseline": None}
+    elif r.get("kind") in ("failed", "error"):
+        summary = r.get("summary", r.get("error", "baseline run failed"))
+        output_digest = r.get("output_tail", "")
+        reason = f"{summary}\n\n{output_digest}" if output_digest else summary
+        return {"state": "failed", "reason": reason, "offerable": {"merge_from_dashboard": False, "dispatch": False},
+                "baseline": {"summary": summary}}
+    return {"state": "failed", "reason": "unknown selftest result", "offerable": {"merge_from_dashboard": False, "dispatch": False}, "baseline": None}
+
+
+def update_onboarding_plan_piece(repo: str, piece_name: str, piece_data: dict, dir: Path | None = None) -> None:
+    """Update a single piece in the onboarding plan without touching other pieces.
+    If the plan file doesn't exist, creates it with the new piece."""
+    dir = dir or ONBOARDING_DIR
+    path = onboarding_path(repo, dir=dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        data = json.loads(path.read_text())
+    else:
+        data = {"repo": repo, "generated_at": None, "pieces": {}}
+    data.setdefault("pieces", {})
+    data["pieces"][piece_name] = piece_data
+    data["proved_at"] = datetime.now(timezone.utc).isoformat()
+    path.write_text(json.dumps(data, indent=2) + "\n")
+
+
+def refresh_prove(repo: str, profile: dict | None = None, gh=_gh, dir: Path | None = None, selftest_fn=None) -> dict:
+    """Prove a project and update the onboarding plan's baseline piece."""
+    result = prove(repo, profile=profile, gh=gh, selftest_fn=selftest_fn)
+    update_onboarding_plan_piece(repo, "baseline", result, dir=dir)
+    return result
+
+
 def _apply_labels(repo: str, facts: dict, gh=_gh) -> dict:
     """Create missing triage labels. Returns {"action": "created"|"unchanged", "labels": [names...]}.
     Idempotent: gh label create is only called for genuinely-missing names."""
@@ -630,9 +680,9 @@ def apply(repo: str, facts: dict | None = None, *, profiles_dir: Path | None = N
 
 
 def main():
-    """CLI entry point: project_onboard.py plan|apply <owner/repo> [--local]"""
+    """CLI entry point: project_onboard.py plan|apply|prove <owner/repo> [--local]"""
     if len(sys.argv) < 3:
-        sys.exit("usage: project_onboard.py plan <owner/repo> | apply <owner/repo> --local")
+        sys.exit("usage: project_onboard.py plan <owner/repo> | apply <owner/repo> --local | prove <owner/repo>")
 
     cmd = sys.argv[1]
     repo = sys.argv[2]
@@ -691,8 +741,23 @@ def main():
 
         print()
 
+    elif cmd == "prove":
+        if len(sys.argv) != 3:
+            sys.exit("usage: project_onboard.py prove <owner/repo>")
+        profile = pp.load_profile(repo)
+        if profile is None:
+            print(f"no profile for {repo}; run apply first", file=sys.stderr)
+            sys.exit(1)
+        result = refresh_prove(repo, profile=profile)
+        print(f"\nBaseline prove for {repo}:\n")
+        print(f"  state: {result['state']}")
+        print(f"  reason: {result['reason'][:200]}")
+        if result.get("baseline"):
+            print(f"  baseline: {result['baseline'].get('summary', 'N/A')}")
+        print()
+
     else:
-        sys.exit(f"unknown command: {cmd}\nusage: project_onboard.py plan|apply <owner/repo>")
+        sys.exit(f"unknown command: {cmd}\nusage: project_onboard.py plan|apply|prove <owner/repo>")
 
 
 if __name__ == "__main__":
