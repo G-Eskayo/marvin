@@ -20,7 +20,7 @@ import functools  # noqa: E402
 import machine_profile  # noqa: E402
 import project_profile as pp  # noqa: E402
 from build_type_measure import measure, test_command_for  # noqa: E402
-from evidence_capture import capture_dev_evidence, capture_test_results, ticket_touches_ui  # noqa: E402
+from evidence_capture import capture_dev_evidence, capture_test_results, ticket_touches_ui, TestTimedOut  # noqa: E402
 from mr_raiser import raise_mr  # noqa: E402
 from sandbox_orchestration import execute_ticket, _default_executor  # noqa: E402
 from cleanup_sweep import drop_build_output  # noqa: E402
@@ -30,6 +30,7 @@ import ticket_stages as ts  # noqa: E402
 
 REPO = "G-Eskayo/marvin"
 FAILURE_MARKER = "Automated implementation did not pass verification"
+TIMEOUT_MARKER = "Automated verification timed out"
 MAX_CONSECUTIVE_FAILURES = 3
 
 
@@ -55,7 +56,7 @@ def _consecutive_failure_streak(issue_number: int, repo: str = REPO) -> int:
     sessions over 3 days with every attempt reaching an identical
     'unchanged' verdict -- max_iterations=3 only bounds iterations *inside*
     one execute_ticket call, nothing bounded the outer release/redispatch
-    loop across calls."""
+    loop across calls. Timeouts do not count as failures; only FAILURE_MARKER."""
     proc = subprocess.run(
         ["gh", "issue", "view", str(issue_number), "--repo", repo,
          "--json", "comments"],
@@ -208,6 +209,12 @@ def run(issue_number: int, repo: str = REPO) -> dict:
         # This machine lacks a tool the project's required check needs. That is about the machine, not the
         # ticket: no comment, no strike, no breaker entry; the claim goes back so a capable machine can take it.
         outcome = {"raised": False, "pr_url": None, "reason": str(exc), "env_missing": True}
+    except TestTimedOut as exc:
+        # A test or setup step exceeded its timeout: the BUILD MACHINE ran out of time, not the PR's code.
+        # Like env_missing, this is not a ticket failure: release the claim, post a timeout comment (for
+        # visibility), and redispatch so another machine can try.
+        reason = str(exc)
+        outcome = {"raised": False, "pr_url": None, "reason": reason, "timed_out": True}
     except Exception as exc:
         # A crash anywhere in execute_ticket/raise_mr (a planner timeout, a
         # worktree-creation failure, anything) must never skip the cleanup
@@ -223,6 +230,17 @@ def run(issue_number: int, repo: str = REPO) -> dict:
     if not outcome["raised"]:
         if outcome.get("env_missing"):
             _release_claim(issue_number, **kw)
+            ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
+            _trigger_redispatch()
+            return outcome
+        if outcome.get("timed_out"):
+            _release_claim(issue_number, **kw)
+            subprocess.run(
+                ["gh", "issue", "comment", str(issue_number), "--repo", repo, "--body",
+                 f"{TIMEOUT_MARKER}: {outcome['reason']}"],
+                check=False,
+            )
+            ts.record_stage(issue_number, "verifying", "failed", outcome["reason"][:300], **kw)
             ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
             _trigger_redispatch()
             return outcome

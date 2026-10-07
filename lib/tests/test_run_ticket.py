@@ -527,6 +527,26 @@ def test_a_machine_without_the_toolchain_releases_the_claim_without_blaming_the_
     assert out["raised"] is False and "xcode" in out["reason"]
 
 
+def test_a_timed_out_test_releases_the_claim_without_blaming_the_ticket(monkeypatch):
+    _profile_run_setup(monkeypatch)
+
+    def boom(*a, **k):
+        raise rt.TestTimedOut(["pytest", "-q"], 1200, "partial output")
+
+    monkeypatch.setattr(rt, "execute_ticket", boom)
+    calls = {"gh_comment": 0, "breaker": 0, "park": 0}
+    monkeypatch.setattr(rt, "_release_claim", lambda n, repo=rt.REPO: calls.update(release=(n, repo)))
+    monkeypatch.setattr(rt.subprocess, "run", lambda cmd, **kw: calls.update(gh_comment=calls["gh_comment"] + 1) if "issue" in cmd else None)
+    monkeypatch.setattr(rt, "_park_stuck_ticket", lambda *a, **k: calls.update(park=calls["park"] + 1))
+    import failure_breaker as fb
+    monkeypatch.setattr(fb, "record_failure", lambda *a, **k: calls.update(breaker=calls["breaker"] + 1))
+    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda *a, **k: 2)  # timeout is never a strike, even at the cap
+    out = rt.run(7)
+    assert calls["release"] == (7, rt.REPO)
+    assert (calls["gh_comment"], calls["breaker"], calls["park"]) == (1, 0, 0)  # posts a comment but no strike
+    assert out["raised"] is False and "timed out" in out["reason"]
+
+
 def test_a_repo_without_a_profile_is_refused_not_run_with_marvins_assumptions(monkeypatch):
     _profile_run_setup(monkeypatch)
     monkeypatch.setattr(rt, "execute_ticket", lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not run")))
