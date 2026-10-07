@@ -599,13 +599,13 @@ def test_checks_that_failed_for_the_runners_sake_or_are_still_running_do_not_sen
 
 
 def test_marvins_own_tickets_are_only_offered_to_the_machines_named_for_them(monkeypatch):
-    """The macbook's marvin test suite has environment-only failures, so marvin tickets stay on the mac-mini for now."""
+    """Marvin's own tickets name their machines here (the mac-mini first), not in a project profile."""
     monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda: [{"number": 20, "title": "x", "createdAt": "2026-01-01T00:00:00Z", "labels": []}])
     asked = []
     monkeypatch.setattr(tp, "select_machine", lambda target=None: asked.append(target) or None)
     monkeypatch.setattr(sys, "argv", ["ticket_pipeline.py"])
     tp.main()
-    assert asked == ["mac-mini-1"] and tp.MARVIN_MACHINES == ("mac-mini-1",)
+    assert asked == ["mac-mini-1", "macbook-pro-1"] and tp.MARVIN_MACHINES == ("mac-mini-1", "macbook-pro-1")
 
 
 def _ready(number, created, labels=()):

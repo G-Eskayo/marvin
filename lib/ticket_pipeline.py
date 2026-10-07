@@ -113,11 +113,10 @@ def _unclaimed_ready_tickets(repo: str = REPO) -> list[dict]:
 
 MAX_REENGAGE_ATTEMPTS = 3
 
-# Where marvin's OWN tickets may run (other projects name theirs in config/projects/<repo>.json). The macbook is left out on purpose
-# (2026-10-06): its Python test suite has 18 environment-only failures (paper-dive, the portfolio parity check, variable-tracker),
-# so a ticket verified there can be read as regressed, and its first marvin ticket (#141) stalled in planning and was finished by
-# the mac-mini. Add "macbook-pro-1" here once that suite is clean.
-MARVIN_MACHINES = ("mac-mini-1",)
+# Where marvin's OWN tickets may run, in order of preference (other projects name theirs in config/projects/<repo>.json). The macbook
+# joined on 2026-10-07 once its Python and dashboard suites were clean (the parity check, which needs playwright, now skips there);
+# it was left out on 2026-10-06 when 18 environment-only failures could make a ticket verified there read as regressed.
+MARVIN_MACHINES = ("mac-mini-1", "macbook-pro-1")
 
 
 def _refresh_main_health() -> None:
