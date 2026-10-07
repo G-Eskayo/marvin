@@ -363,7 +363,7 @@ async function mergePrUnqueued(
   } catch (e) {
     if (e instanceof MergeFailure && e.payload.code === 'CI_FAILED' && ticketNumber !== null) {
       stage('gate', 'failed', `CI_FAILED: ${e.payload.message}`)
-      recordFailureFn({ ticket: ticketNumber, code: 'CI_FAILED', message: e.payload.message })
+      recordFailureFn({ ticket: ticketNumber, code: 'CI_FAILED', message: e.payload.message, project: repo, prUrl, stage: 'gate' })
       const comment = `**CI: failing checks**\n\n${e.payload.message}\n\nFix what these report, then the ticket will be rebuilt.`
       await reengage({ prUrl, ticketNumber, reasons: ['Regression/quality'], comment }, exec)
       return { merged: false, reengaged: true, code: 'CI_FAILED', stage: 'gate', action: 'reengage', reason: comment }
@@ -403,7 +403,7 @@ async function mergePrUnqueued(
         }
       }
       stage('gate', 'failed', `${summary.code}: ${summary.failingTests.length ? summary.failingTests.length + ' failing test(s)' : 'see comment'}`)
-      recordFailureFn({ ticket: ticketNumber ?? prNumberOf(prUrl), code: summary.code, message: summary.failingTests[0] || 'merge gate failed' })
+      recordFailureFn({ ticket: ticketNumber ?? prNumberOf(prUrl), code: summary.code, message: summary.failingTests[0] || 'merge gate failed', project: repo, prUrl, stage: 'gate' })
       // ADR 0025's existing re-engagement path, not a new failure state:
       // structured comment on both PR and ticket, claim released, tagged
       // needs-reengagement. The PR itself stays open for a human or a
@@ -449,7 +449,7 @@ async function mergePrUnqueued(
     const failure = classifyFailure({ stage: 'merging', error })
     failure.attempts = error.attempts ?? 1
     stage('merging', 'failed', `${failure.code}: ${failure.message}`)
-    recordFailureFn({ ticket: ticketNumber ?? prNumberOf(prUrl), code: failure.code, message: failure.message })
+    recordFailureFn({ ticket: ticketNumber ?? prNumberOf(prUrl), code: failure.code, message: failure.message, project: repo, prUrl, stage: 'merging' })
     if (failure.action === 'reengage' && ticketNumber !== null) {
       // The PR's own work needs changing (e.g. conflicts main moved past): hand it back to
       // the ticket with the detail, the same path the gate uses, instead of dead-ending.
