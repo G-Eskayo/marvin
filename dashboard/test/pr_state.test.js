@@ -67,6 +67,13 @@ describe('describePrState: one headline, only the buttons that make sense', () =
     expect(s.detail).toMatch(/#7/)
   })
 
+  it('a GitHub outage says so, keeps Approve available, and does not blame the PR', () => {
+    const s = state({}, { status: 'error', errorMessage: 'GITHUB_OUTAGE at merging: remote: Internal Server Error' })
+    expect(s).toMatchObject({ kind: 'github-outage', approve: 'enabled', deny: 'enabled' })
+    expect(s.headline).toMatch(/GitHub is having an outage/)
+    expect(s.detail).toMatch(/nothing is wrong with this PR/i)
+  })
+
   it('a previous "sent back for rework" result is shown once, as the PR\'s state, not as an error', () => {
     const s = state({}, { status: 'reengaged', errorMessage: 'REBASE_CONFLICT: ...' })
     expect(s.kind).toBe('sent-back-now')

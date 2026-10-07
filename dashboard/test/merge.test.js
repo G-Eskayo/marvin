@@ -376,6 +376,54 @@ describe('rebaseAndRetest with generated-file conflict resolution', () => {
   })
 })
 
+describe('rebaseAndRetest when GitHub fails the push', () => {
+  function featureFixture() {
+    const f = makeGitFixture()
+    sh('git', ['checkout', '-q', '-b', 'feature'], f.repoDir)
+    writeFileSync(path.join(f.repoDir, 'feature.txt'), 'x\n')
+    sh('git', ['add', '.'], f.repoDir)
+    sh('git', ['commit', '-q', '-m', 'feature work'], f.repoDir)
+    sh('git', ['push', '-u', 'origin', 'feature'], f.repoDir)
+    sh('git', ['checkout', '-q', 'main'], f.repoDir)
+    writeFileSync(path.join(f.repoDir, 'main-moved.txt'), 'y\n')
+    sh('git', ['add', '.'], f.repoDir)
+    sh('git', ['commit', '-q', '-m', 'main moved'], f.repoDir)
+    sh('git', ['push', 'origin', 'main'], f.repoDir)
+    return f
+  }
+  // An exec whose first `fails` pushes die the way GitHub's outage did (remote: Internal Server Error).
+  const flakyPush = (fails) => {
+    let n = 0
+    return async (cmd, args, opts) => {
+      if (cmd === 'git' && args[0] === 'push' && n++ < fails) {
+        throw Object.assign(new Error('Command failed: git push'), { stderr: 'remote: Internal Server Error' })
+      }
+      return realExec(cmd, args, opts)
+    }
+  }
+
+  it('retries the push instead of throwing away the finished retest', async () => {
+    const { root, repoDir } = featureFixture()
+    try {
+      const before = currentRemoteSha(repoDir, 'feature')
+      const runTests = vi.fn().mockResolvedValue(undefined)
+      const result = await rebaseAndRetest('feature', flakyPush(2), repoDir, runTests, 'main', undefined, async () => {})
+      expect(result).toEqual({ ok: true })
+      expect(runTests).toHaveBeenCalledTimes(1)
+      expect(currentRemoteSha(repoDir, 'feature')).not.toBe(before)
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  })
+
+  it('still fails (as an outage, not a bad PR) when GitHub never recovers', async () => {
+    const { root, repoDir } = featureFixture()
+    try {
+      const runTests = vi.fn().mockResolvedValue(undefined)
+      await expect(rebaseAndRetest('feature', flakyPush(99), repoDir, runTests, 'main', undefined, async () => {}))
+        .rejects.toMatchObject({ stderr: expect.stringMatching(/Internal Server Error/), attempts: 4 })
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  })
+})
+
 describe('rebaseAndRetest', () => {
   it('rebases, retests, and pushes the rebased branch when everything passes', async () => {
     const { root, repoDir } = makeGitFixture()

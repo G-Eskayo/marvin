@@ -979,3 +979,7 @@ What went wrong: a figure test with a quote-style bug turned main red; nothing s
 - **The gate is bounded:** a gate that doesn't finish in 40 minutes is cut off and refused as `GATE_INFRA` ("did not finish in time"), never sent back; a merge stuck "Merging…" expires into an error after 45 minutes.
 - **If main is red anyway:** the gate compares the PR's failing tests with main and refuses `MAIN_RED` instead of denying the PR (earlier fix).
 - **clarity-captions' gate clone** is now a dedicated clone outside iCloud (`clone_mode: pipeline`, `~/.agents-pipeline-clones/clarity-captions`); selftest from it: 230 tests, app build ok. Still open: ticket #192 moves the portfolio repo itself out of iCloud ~/Documents (the root of the launchd read hang).
+
+## GitHub outages during a merge (2026-10-07)
+
+A GitHub 5xx (`remote: Internal Server Error`, HTTP 500, 503) is classified `GITHUB_OUTAGE` (retryable, never sends a ticket back). The gate's rebase push is retried with backoff so a finished retest is not thrown away, and the PR card says "GitHub is having an outage" (`github-outage` in `prState.js`) with Approve still available. Found when clarity-captions "Implement clarity-captions#8" (Transcript scrollback and retention) failed its merge during a real incident.
