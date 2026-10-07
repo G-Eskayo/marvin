@@ -106,7 +106,11 @@ def read_docstring_first_sentence(script_path: Path) -> str:
 def build_skill_node(name: str, category: str, enrichment: dict) -> dict:
     override = enrichment["skill_desc_overrides"].get(name)
     desc = override if override else read_skill_description(name)
-    return {"id": name, "cat": category, "desc": desc, "children": [], "expandable": False, "expanded": True}
+    return {
+        "id": name, "cat": category, "desc": desc, "children": [],
+        "expandable": False, "expanded": True,
+        "path": f"skills/{name}", "openable": True
+    }
 
 
 def normalize_structural(node: dict) -> dict:
@@ -180,7 +184,17 @@ def discover_recurring_agents() -> list[dict]:
         program_args = data.get("ProgramArguments") or []
         script_path = Path(program_args[-1]) if program_args else None
         fallback_desc = read_docstring_first_sentence(script_path) if script_path else ""
-        agents.append({"id": agent_id, "schedule": schedule, "fallback_desc": fallback_desc})
+        # Resolve script_path to repo-relative for ownership path
+        repo_path = None
+        if script_path:
+            try:
+                repo_path = str(script_path.relative_to(Path.home() / ".agents"))
+            except (ValueError, OSError):
+                pass
+        agents.append({
+            "id": agent_id, "schedule": schedule, "fallback_desc": fallback_desc,
+            "script_path": repo_path
+        })
     return agents
 
 
@@ -195,10 +209,14 @@ def build_agent_children(enrichment: dict) -> list[dict]:
         desc = f"Cron {agent['schedule']}"
         if agent["fallback_desc"]:
             desc += f" — {agent['fallback_desc']}"
-        children.append({
+        node = {
             "id": agent["id"], "cat": "agents", "desc": desc,
             "expandable": False, "expanded": True, "children": [],
-        })
+        }
+        if agent.get("script_path"):
+            node["path"] = agent["script_path"]
+            node["openable"] = True
+        children.append(node)
     return children
 
 
@@ -232,7 +250,16 @@ def discover_hooks() -> list[dict]:
                 if hook_id in seen:
                     continue
                 fallback_desc = read_docstring_first_sentence(script_path)
-                seen[hook_id] = {"id": hook_id, "trigger": trigger, "fallback_desc": fallback_desc}
+                # Resolve script_path to repo-relative for ownership path
+                repo_path = None
+                try:
+                    repo_path = str(script_path.relative_to(Path.home() / ".agents"))
+                except (ValueError, OSError):
+                    pass
+                seen[hook_id] = {
+                    "id": hook_id, "trigger": trigger, "fallback_desc": fallback_desc,
+                    "script_path": repo_path
+                }
     return sorted(seen.values(), key=lambda h: h["id"])
 
 
@@ -247,10 +274,14 @@ def build_hook_children(enrichment: dict) -> list[dict]:
         desc = f"Hook ({hook['trigger']})"
         if hook["fallback_desc"]:
             desc += f" — {hook['fallback_desc']}"
-        children.append({
+        node = {
             "id": hook["id"], "cat": "infra", "desc": desc,
             "expandable": False, "expanded": True, "children": [],
-        })
+        }
+        if hook.get("script_path"):
+            node["path"] = hook["script_path"]
+            node["openable"] = True
+        children.append(node)
     return children
 
 
@@ -299,9 +330,18 @@ def discover_dashboard_tabs() -> list[dict]:
     return [{"id": f"{label} tab", "desc": f"Dashboard tab: {label}"} for label in labels]
 
 
-def build_dashboard_trunk() -> dict:
-    tabs = [{"id": t["id"], "cat": "dashboard", "desc": t["desc"],
-             "expandable": False, "expanded": True, "children": []} for t in discover_dashboard_tabs()]
+def build_dashboard_trunk(enrichment: dict) -> dict:
+    tab_paths = enrichment.get("dashboard_tab_paths", {})
+    tabs = []
+    for t in discover_dashboard_tabs():
+        node = {"id": t["id"], "cat": "dashboard", "desc": t["desc"],
+                "expandable": False, "expanded": True, "children": []}
+        # Extract label from tab id (e.g., "system tab" → "system")
+        tab_label = t["id"].replace(" tab", "")
+        if tab_label in tab_paths:
+            node["path"] = tab_paths[tab_label]
+            node["openable"] = True
+        tabs.append(node)
     return {"id": "Dashboard", "cat": "dashboard",
             "desc": "The desktop app for watching and steering MARVIN",
             "expandable": False, "expanded": True, "children": tabs}
@@ -400,7 +440,7 @@ def build_tree(manifest: dict, enrichment: dict) -> dict:
     root = {
         "id": enrichment["root"]["id"], "cat": "root", "desc": enrichment["root"]["desc"],
         "expandable": False, "expanded": True,
-        "children": [structural[0], skills_trunk] + structural[1:] + [build_dashboard_trunk()],
+        "children": [structural[0], skills_trunk] + structural[1:] + [build_dashboard_trunk(enrichment)],
     }
     # A project can share its name with a skill (paper-dive is both). Ids key
     # everything in the page (lookup, layout, synapses), so the project gets
@@ -525,12 +565,148 @@ def collect_ids(node: dict, out: set) -> None:
         collect_ids(c, out)
 
 
+# ── code layers (#184, ADR 0049) ──────────────────────────────────────
+# Precomputed code ownership and structure for each skill/agent/hook/dashboard tab.
+# Load graphify-out/graph.json once if present; for each openable node, attach its
+# code layer: owned files/functions grouped by community, borrowed nodes at the edge,
+# all with precomputed layout positions.
+
+def load_graphify_graph() -> dict | None:
+    """Load graphify-out/graph.json if present, else None. Gracefully tolerates
+    absence — the graph is machine-local and not everyone regenerates it."""
+    graphify_path = Path.home() / ".agents" / "graphify-out" / "graph.json"
+    if not graphify_path.exists():
+        return None
+    try:
+        return json.loads(graphify_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def attach_code_layers(tree: dict) -> None:
+    """Walk the tree and attach code-layer data to every openable node.
+    For each openable node, filters the graph to nodes under its ownership path,
+    groups by community, collects call edges, and identifies borrowed nodes."""
+    graph = load_graphify_graph()
+
+    def walk(node: dict) -> None:
+        if node.get("openable"):
+            path = node.get("path", "")
+            if graph and path:
+                code_layer = _compute_code_layer(graph, path)
+            else:
+                code_layer = {"files": [], "functions": [], "edges": [], "borrowed": []}
+            node["code"] = code_layer
+        for c in node.get("children", []):
+            walk(c)
+    walk(tree)
+
+
+def _compute_code_layer(graph: dict, ownership_path: str) -> dict:
+    """Filter and structure code for a single openable node.
+
+    - Owned nodes: source_file under ownership_path, file_type=="code", not under tests/
+    - Borrowed nodes: called by owned nodes but under different path, deduplicated
+    - Edges: calls relationships between all included nodes
+    - Grouped by community (file nodes vs functions)
+    """
+    nodes_list = graph.get("nodes", [])
+    links_list = graph.get("links", [])
+
+    # Build node lookup and identify owned nodes
+    node_by_id: dict[str, dict] = {}
+    owned_node_ids: set = set()
+
+    for node in nodes_list:
+        node_id = node.get("id")
+        if node_id:
+            node_by_id[node_id] = node
+
+        # Check if this node is owned by this path
+        source_file = node.get("source_file", "")
+        if not source_file:
+            continue
+
+        # Skip non-code nodes and test files
+        if node.get("file_type") != "code":
+            continue
+        if source_file.startswith(ownership_path + "/") or source_file == ownership_path:
+            # Exclude test files by default
+            if not ("tests/" in source_file or source_file.startswith("test_")):
+                owned_node_ids.add(node_id)
+
+    # Collect borrowed nodes and edges
+    borrowed_node_ids: set = set()
+    edge_list: list = []
+
+    for link in links_list:
+        source = link.get("source")
+        target = link.get("target")
+        if source and target:
+            # Include edge if source is owned
+            if source in owned_node_ids:
+                edge_list.append(link)
+                # If target is not owned but is code, mark as borrowed
+                if target not in owned_node_ids and target in node_by_id:
+                    target_node = node_by_id[target]
+                    if target_node.get("file_type") == "code":
+                        borrowed_node_ids.add(target)
+
+    # Group owned nodes by community
+    communities: dict[str, list] = {}
+    file_nodes: list = []
+    function_nodes: list = []
+
+    for node_id in owned_node_ids:
+        node = node_by_id[node_id]
+        community = node.get("community", -1)
+        community_name = node.get("community_name", "")
+
+        # Separate file-level nodes (no parent) from function/symbol nodes
+        if "_callable" in node or "_callable_class" in node:
+            function_nodes.append({
+                "id": node_id,
+                "label": node.get("label", ""),
+                "community": community,
+                "community_name": community_name,
+                "source_file": node.get("source_file", ""),
+                "source_location": node.get("source_location", "")
+            })
+        else:
+            file_nodes.append({
+                "id": node_id,
+                "label": node.get("label", ""),
+                "community": community,
+                "community_name": community_name,
+                "source_file": node.get("source_file", "")
+            })
+
+    # Collect borrowed node info
+    borrowed_nodes: list = []
+    for node_id in borrowed_node_ids:
+        node = node_by_id[node_id]
+        borrowed_nodes.append({
+            "id": node_id,
+            "label": node.get("label", ""),
+            "source_file": node.get("source_file", ""),
+            "borrowed": True
+        })
+
+    return {
+        "files": file_nodes,
+        "functions": function_nodes,
+        "edges": edge_list,
+        "borrowed": borrowed_nodes
+    }
+
+
 def main() -> None:
     manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
     enrichment = json.loads(ENRICHMENT_PATH.read_text(encoding="utf-8"))
 
     tree = build_tree(manifest, enrichment)
     attach_layout(tree)
+    attach_code_layers(tree)
     synapses = build_synapses(manifest, enrichment)
 
     known_ids = set()
