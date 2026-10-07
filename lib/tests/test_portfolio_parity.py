@@ -29,6 +29,11 @@ def test_a_missing_part_in_the_preview_is_a_difference():
     assert pp.compare(ELEMENT, {"look": {}, "geometry": ELEMENT["geometry"]})
 
 
+def _has_playwright():
+    import importlib.util
+    return importlib.util.find_spec("playwright") is not None
+
+
 def _live():
     try:
         urllib.request.urlopen("http://localhost:8080/", timeout=3)
@@ -48,7 +53,7 @@ ELEMENT_IDS = ["project-card", "button-github", "site-header", "page-title-bar",
 
 
 @pytest.mark.parametrize("element_id", ELEMENT_IDS)
-@pytest.mark.skipif(not shutil.which("node") or not _live(), reason="needs node and the running dev site")
+@pytest.mark.skipif(not shutil.which("node") or not _has_playwright() or not _live(), reason="needs node, playwright and the running dev site")
 def test_the_dashboard_preview_of_every_captured_element_matches_the_live_site(element_id):
     if not (PROJECT / "templates" / "elements" / f"{element_id}.json").exists():
         pytest.skip("element not captured")
