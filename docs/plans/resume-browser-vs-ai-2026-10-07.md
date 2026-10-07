@@ -80,13 +80,13 @@ sees its own answer). On the site this would be a priority Gil sets once per pro
 
 ## Next steps (2026-10-07)
 
-- **Tickets:** #221 resume page + master PDF → #222 in-browser match box → #223 matched PDF download. Layout/mobile: #219.
+- **Tickets:** portfolio-website-updater #2 resume page + master PDF → #3 in-browser match box → #4 matched PDF download. Layout/mobile: #1. (Moved from marvin #221–#223 and #219 on 2026-10-07: site tickets belong in the site repo.)
 - **Blind A/B test** (`skills/resume-tailor/experiments/blind_ab.py`): 6 jobs chosen for spread (high and low
   agreement), AI-tailored vs browser-matched (keywords + priority, w = 0.5), both rendered with the same
   `render_pdf.py` template, randomly labelled X/Y. Gil rates locally in `~/.claude/resume/experiments/blind/rate.html`;
   the key is kept outside that folder. Score with `blind_ab.py score <ratings.json>`. Both versions share the
   header and the Education/Training/Achievements sections, so only summary, experience, skills and projects differ.
-- **Export cleanup found while building it** (now in #221): master project bullets include tech-stack lines and
+- **Export cleanup found while building it** (now in portfolio-website-updater #2): master project bullets include tech-stack lines and
   `[Project Link]` placeholders, and a title carries italic markup; the public export must clean these.
 
 ## Blind A/B result (rated by Gil, 2026-10-07)
@@ -110,7 +110,7 @@ browser 1 clear win, 1 tie, 1 leaning browser. n = 6, one rater: directional onl
 - In-browser matching is **closer to the AI tailor in reader preference than the 63% overlap suggested**. The
   AI's real edge is domain reasoning on unusual roles (York Space) and small job-specific wording gains.
 - **One-page length budget is mandatory** for the browser version: pick bullets under a character budget, not
-  "top 2". Added to #223.
+  "top 2". Added to portfolio-website-updater #4.
 - **Master resume quality matters as much as the method:** the browser version shows master bullets verbatim, and
   they read as AI-written. A `writing-style` pass on the master improves both versions. Snorkel to be removed or
   marked never-include (Gil's call).
