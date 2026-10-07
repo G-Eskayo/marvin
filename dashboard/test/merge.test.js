@@ -578,7 +578,7 @@ describe('mergePr structured failures', () => {
     const exec = ghMergeFails(Object.assign(new Error('x'), { stderr: 'HTTP 401: Bad credentials' }))
     await mergePr(PR, exec, noopRebuild, noopRedispatch, ticketGate(), undefined, undefined, undefined, noSleep).catch(() => {})
     expect(recordStage).toHaveBeenCalledWith('5', 'merging', 'failed', expect.stringContaining('GH_AUTH_INVALID'))
-    expect(recordFailure).toHaveBeenCalledWith(expect.objectContaining({ ticket: '5', code: 'GH_AUTH_INVALID' }))
+    expect(recordFailure).toHaveBeenCalledWith(expect.objectContaining({ ticket: '5', code: 'GH_AUTH_INVALID', project: 'G-Eskayo/marvin', prUrl: PR, stage: 'merging' }))
   })
 
   it('retries a transient failure with backoff and then merges', async () => {

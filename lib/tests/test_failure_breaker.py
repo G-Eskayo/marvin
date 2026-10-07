@@ -8,6 +8,7 @@ hand. The breaker recognises "the same failure across DIFFERENT tickets" and sto
 dispatch.
 """
 from __future__ import annotations
+import json
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -180,3 +181,15 @@ def test_a_manual_clear_resets_every_projects_trip(monkeypatch, tmp_path):
     assert fb.tripped()
     fb.clear()
     assert fb.tripped() == []
+
+
+def test_merge_refusals_never_trip_the_breaker(tmp_path, monkeypatch):
+    # #215: the dashboard records refused Approve clicks (wrong order, sent back) as kind "refusal". Three of them
+    # on different tickets are the review screen doing its job, not a broken environment.
+    log = tmp_path / "f.jsonl"
+    monkeypatch.setattr(fb, "LOG_PATH", log)
+    now = fb._now()
+    with log.open("w") as f:
+        for ticket in (208, 209, 210):
+            f.write(json.dumps({"t": now.isoformat(), "kind": "refusal", "ticket": ticket, "sig": "merge:OUT_OF_ORDER"}) + "\n")
+    assert fb.tripped(now=now) == []

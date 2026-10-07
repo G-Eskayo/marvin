@@ -4,6 +4,7 @@ import { sendFeedback, dropEntirely } from './deny.js'
 import { forwardRefreshPing } from './refresh_relay.js'
 import { loadGhToken } from './gh_auth.js'
 import { failureResponse } from './failure.js'
+import { recordApproveError, approveErrorLine } from './refusal_log.js'
 import { startChangeWatch, createGithubProbe } from './gh_watch.js'
 import { readRegistry } from '../electron/main/boards.js'
 import { execFile } from 'child_process'
@@ -119,7 +120,8 @@ const server = createServer(async (req, res) => {
       // Structured: code, stage, retryable, action, remediation -- so the dashboard can say
       // what broke and the pipeline can act on it (see failure.js).
       const { status, body } = failureResponse(err)
-      console.error(`approve failed: ${body.error}`)
+      console.error(approveErrorLine(payload.pr_url, body))
+      await recordApproveError(payload.pr_url, body)
       res.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(body))
     }
     return
