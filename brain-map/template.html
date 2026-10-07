@@ -669,6 +669,25 @@
     return maxRatio <= 1e-6 ? 1 : Math.min(1, 1 / maxRatio);
   }
 
+  // ── steady fit (2026-10-07). Outside the wallpaper, re-fitting the silhouette every frame made the whole figure
+  // grow and shrink as it rotated: Gil saw the website snapshot "pulsing". Instead hold the tightest size that fits
+  // a FULL turn (the minimum over sampled yaw angles, with a small allowance for the idle sway), recomputed only
+  // when the window, the visible categories or the node count change. The 3% margin covers the idle sway.
+  var steadyFit = null, steadyKey = "", steadyAt = 0;
+  function computeSteadyFitScale(now) {
+    var key = W + "x" + H + "|" + allNodes.length + "|" + Object.keys(activeCats).filter(function (k) { return activeCats[k]; }).join(",");
+    if (steadyFit !== null && key === steadyKey) return steadyFit;
+    var savedYaw = yaw, savedFit = fitScale, best = 1;
+    fitScale = 1; // measure unscaled; ratioOf divides the current fitScale back out
+    for (var k = 0; k < 24; k++) {
+      yaw = (k * Math.PI * 2) / 24; // absolute angles, so the result doesn't depend on when it's measured
+      best = Math.min(best, computeTargetFitScale());
+    }
+    yaw = savedYaw; fitScale = savedFit;
+    steadyFit = best * 0.97; steadyKey = key; steadyAt = now;
+    return steadyFit;
+  }
+
   // ── debug-only: draw the actual containment boundary as a visible
   // semi-transparent ellipse, so it can be checked against the real running
   // nodes instead of trusting the math blind. Deliberately a flat 2D
@@ -1081,7 +1100,13 @@
     // hand between frames and fed into each frame's fresh generator as its
     // starting condition, which keeps the motion physically continuous
     // across retargets instead of restarting from rest each time.
-    if (fitting()) {
+    if (fitting() && !WALLPAPER) {
+      // Steady target: a plain exponential ease. The spring below, fed its own hand-tracked velocity, settles into a
+      // ~1 s sawtooth around a FIXED target at browser frame rates (measured 2026-10-07: 0.611-0.624 around 0.6205).
+      var steadyTarget = computeSteadyFitScale(now);
+      fitScale += (steadyTarget - fitScale) * (1 - Math.exp(-dt * 4));
+      fitVelocity = 0;
+    } else if (fitting()) {
       var targetFit = computeTargetFitScale();
       // A leaf node swinging near the camera during rotation can spike its
       // projected position in a single frame via the 1/camZ perspective
@@ -1417,7 +1442,10 @@
     open: function (id) { openNodeId = id; },
     close: function () { openNodeId = null; },
     openId: function () { return openNodeId; },
-    showTests: function (v) { if (arguments.length) showTests = !!v; return showTests; }
+    showTests: function (v) { if (arguments.length) showTests = !!v; return showTests; },
+    fitScale: function () { return fitScale; },
+    snapshot: function () { return SNAPSHOT; },
+    steady: function () { return { fit: steadyFit, key: steadyKey }; }
   };
 
   function quadPoint(p0, p1, p2, t) {
