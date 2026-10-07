@@ -11,6 +11,7 @@ import pytest
 LIB = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(LIB))
 
+import subprocess  # noqa: E402
 import cleanup_sweep as cs  # noqa: E402
 
 
@@ -316,3 +317,53 @@ def test_a_failing_worktree_add_says_why(monkeypatch, tmp_path):
         assert "invalid reference: origin/main" in str(e) and "128" in str(e)
     else:
         raise AssertionError("expected a RuntimeError")
+
+
+# ── build output: found 2026-10-06 each clarity worktree holding 2.1 GiB of SwiftPM .build and each
+# marvin worktree 0.3 GiB of dashboard/node_modules for as long as its PR stayed open.
+
+def _git_worktree(tmp_path):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    subprocess.run(["git", "init", "-q", str(wt)], check=True)
+    (wt / ".gitignore").write_text("node_modules/\n.build/\n")
+    return wt
+
+
+def test_drop_build_output_removes_ignored_build_dirs(tmp_path):
+    wt = _git_worktree(tmp_path)
+    (wt / "dashboard" / "node_modules" / "pkg").mkdir(parents=True)
+    (wt / "dashboard" / "node_modules" / "pkg" / "index.js").write_text("x")
+    (wt / "dashboard" / "src").mkdir()
+    (wt / "dashboard" / "src" / "app.js").write_text("keep")
+    removed = cs.drop_build_output(wt, ["dashboard/node_modules", "Packages/CaptionCore/.build"])
+    assert removed == ["dashboard/node_modules"]
+    assert not (wt / "dashboard" / "node_modules").exists()
+    assert (wt / "dashboard" / "src" / "app.js").read_text() == "keep"
+
+
+def test_drop_build_output_unlinks_a_symlink_without_touching_its_target(tmp_path):
+    cache = tmp_path / "shared-cache"
+    (cache / "pkg").mkdir(parents=True)
+    wt = _git_worktree(tmp_path)
+    (wt / "dashboard").mkdir()
+    (wt / "dashboard" / "node_modules").symlink_to(cache)
+    assert cs.drop_build_output(wt, ["dashboard/node_modules"]) == ["dashboard/node_modules"]
+    assert not (wt / "dashboard" / "node_modules").is_symlink()
+    assert (cache / "pkg").is_dir()
+
+
+def test_drop_build_output_refuses_a_path_git_does_not_ignore(tmp_path):
+    wt = _git_worktree(tmp_path)
+    (wt / "src").mkdir()
+    (wt / "src" / "real.py").write_text("work")
+    assert cs.drop_build_output(wt, ["src"]) == []
+    assert (wt / "src" / "real.py").exists()
+
+
+def test_drop_build_output_refuses_paths_outside_the_worktree(tmp_path):
+    wt = _git_worktree(tmp_path)
+    outside = tmp_path / "node_modules"
+    outside.mkdir()
+    assert cs.drop_build_output(wt, ["../node_modules", str(outside)]) == []
+    assert outside.is_dir()

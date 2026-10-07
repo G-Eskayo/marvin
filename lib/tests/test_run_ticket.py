@@ -549,3 +549,62 @@ def test_gh_calls_for_another_project_name_that_project(monkeypatch):
     monkeypatch.setattr(rt.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
     rt._comment_failure(7, "why", repo=CC)
     assert calls[0][calls[0].index("--repo") + 1] == CC
+
+
+# ── build output is dropped when a run ends (storage plan C3): a worktree otherwise keeps its
+# dashboard/node_modules (marvin) or SwiftPM .build (clarity, 2.1 GiB) until the PR merges.
+
+def _capture_drops(monkeypatch):
+    drops = []
+    monkeypatch.setattr(rt, "drop_build_output", lambda wt, rels: drops.append((wt, list(rels))) or [])
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+    return drops
+
+
+def test_build_output_dropped_after_a_raised_pr(monkeypatch):
+    drops = _capture_drops(monkeypatch)
+    monkeypatch.setattr(rt, "execute_ticket", lambda *a: _passing_result())
+    monkeypatch.setattr(rt, "test_command_for", lambda wt: ["pytest", "-q"])
+    monkeypatch.setattr(rt, "capture_test_results", lambda wt, cmd: {"suite": "pytest", "passed": 1, "failed": 0, "total": 1})
+    monkeypatch.setattr(rt, "ticket_touches_ui", lambda wt: False)
+    monkeypatch.setattr(rt, "capture_dev_evidence", lambda wt, touches_ui: {"na": True})
+    monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": True, "pr_url": "http://fake-pr", "reason": None})
+    rt.run(20)
+    assert drops == [(Path("/tmp/fake-worktree"), rt.MARVIN_BUILD_OUTPUT)]
+
+
+def test_build_output_dropped_after_a_failed_run(monkeypatch):
+    drops = _capture_drops(monkeypatch)
+    monkeypatch.setattr(rt, "execute_ticket", lambda *a: _failing_result())
+    monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "no"})
+    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda n, **kw: 0)
+    monkeypatch.setattr(rt, "_comment_failure", lambda *a, **kw: None)
+    monkeypatch.setattr(rt.failure_breaker, "record_failure", lambda *a, **kw: None)
+    monkeypatch.setattr(rt, "_release_claim", lambda *a, **kw: None)
+    rt.run(20)
+    assert drops == [(Path("/tmp/fake-worktree"), rt.MARVIN_BUILD_OUTPUT)]
+
+
+def test_no_worktree_means_nothing_to_drop(monkeypatch):
+    drops = _capture_drops(monkeypatch)
+    def boom(*a):
+        raise RuntimeError("worktree creation failed")
+    monkeypatch.setattr(rt, "execute_ticket", boom)
+    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda n, **kw: 0)
+    monkeypatch.setattr(rt, "_comment_failure", lambda *a, **kw: None)
+    monkeypatch.setattr(rt.failure_breaker, "record_failure", lambda *a, **kw: None)
+    monkeypatch.setattr(rt, "_release_claim", lambda *a, **kw: None)
+    rt.run(20)
+    assert drops == []
+
+
+def test_a_crash_while_dropping_never_breaks_the_run(monkeypatch):
+    monkeypatch.setattr(rt, "drop_build_output", lambda wt, rels: (_ for _ in ()).throw(OSError("busy")))
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+    monkeypatch.setattr(rt, "execute_ticket", lambda *a: _failing_result())
+    monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "no"})
+    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda n, **kw: 0)
+    monkeypatch.setattr(rt, "_comment_failure", lambda *a, **kw: None)
+    monkeypatch.setattr(rt.failure_breaker, "record_failure", lambda *a, **kw: None)
+    monkeypatch.setattr(rt, "_release_claim", lambda *a, **kw: None)
+    assert rt.run(20)["raised"] is False

@@ -81,5 +81,8 @@
       "requires": []
     }
   ],
-  "clone_mode": "pipeline"
+  "clone_mode": "pipeline",
+  "build_output": [
+    "Packages/CaptionCore/.build"
+  ]
 }

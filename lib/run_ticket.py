@@ -23,6 +23,7 @@ from build_type_measure import measure, test_command_for  # noqa: E402
 from evidence_capture import capture_dev_evidence, capture_test_results, ticket_touches_ui  # noqa: E402
 from mr_raiser import raise_mr  # noqa: E402
 from sandbox_orchestration import execute_ticket, _default_executor  # noqa: E402
+from cleanup_sweep import drop_build_output  # noqa: E402
 from ticket_pipeline import _label_for_device, _release  # noqa: E402
 import failure_breaker  # noqa: E402
 import ticket_stages as ts  # noqa: E402
@@ -145,6 +146,22 @@ def parse_ticket_arg(arg: str) -> tuple[str, int]:
     raise ValueError(f"expected a ticket number or owner/repo#number, got {arg!r}")
 
 
+# marvin has no profile (project_profile.py), so its regenerable build output is listed here; another
+# project lists its own under "build_output" in config/projects/<name>.json.
+MARVIN_BUILD_OUTPUT = ["dashboard/node_modules"]
+
+
+def _drop_build_output(worktree_path, profile: dict | None) -> None:
+    """A finished run's worktree stays until its PR merges (cleanup_sweep), so drop the build output now:
+    found 2026-10-06, 2.1 GiB of SwiftPM .build per clarity worktree. Best effort: never fails the run."""
+    if worktree_path is None:
+        return
+    try:
+        drop_build_output(Path(worktree_path), profile.get("build_output", []) if profile else MARVIN_BUILD_OUTPUT)
+    except Exception as exc:
+        print(f"[run_ticket] could not drop build output in {worktree_path}: {exc}", file=sys.stderr)
+
+
 def run(issue_number: int, repo: str = REPO) -> dict:
     ticket_ref = f"{repo}#{issue_number}"
     other = repo != REPO
@@ -154,6 +171,7 @@ def run(issue_number: int, repo: str = REPO) -> dict:
     profile = pp.load_profile(repo) if other else None
     subsystem = f"ticket-{issue_number}" if not other else f"{repo.split('/')[-1].lower()}-ticket-{issue_number}"
     measurer = None
+    worktree_path = None
 
     try:
         if other and profile is None:
@@ -172,10 +190,10 @@ def run(issue_number: int, repo: str = REPO) -> dict:
                     repo_path=clone, base_branch=profile["base_branch"],
                 )
 
+            worktree_path = result.get("worktree_path")
             test_results = None
             dev_evidence = None
             if result["passing"]:
-                worktree_path = result["worktree_path"]
                 if measurer is None:
                     command = test_command_for(worktree_path)
                     test_results = capture_test_results(worktree_path, command)
@@ -199,6 +217,8 @@ def run(issue_number: int, repo: str = REPO) -> dict:
         # raise_mr/_comment_failure/_release_claim/_trigger_redispatch,
         # leaving both permanently claimed with no way to retry.
         outcome = {"raised": False, "pr_url": None, "reason": f"Unhandled exception: {exc}"}
+
+    _drop_build_output(worktree_path, profile)
 
     if not outcome["raised"]:
         if outcome.get("env_missing"):
