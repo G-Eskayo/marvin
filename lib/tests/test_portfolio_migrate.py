@@ -8,8 +8,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import portfolio_migrate as pm  # noqa: E402
+import project_catalog  # noqa: E402
 
-TEMPLATES = Path.home() / "Documents" / "Projects" / "portfolio-website-updater" / "templates"
+TEMPLATES = project_catalog.portfolio_repo_path() / "templates"
 
 HERO = ('<div class="section-container"><div class="container"><div class="row"><div class="col-xs-12">'
         '<img src="/old-stock.jpeg" class="img-responsive" alt=""><div class="card-container"><div class="text-center"><h2 class="h2">The Title</h2></div>'

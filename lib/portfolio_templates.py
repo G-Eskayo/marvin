@@ -23,8 +23,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import portfolio_rules  # noqa: E402
+import project_catalog  # noqa: E402
 
-PROJECT = Path.home() / "Documents" / "Projects" / "portfolio-website-updater"
+PROJECT = project_catalog.portfolio_repo_path()
 ROOT = PROJECT / "templates"
 
 _PLACEHOLDER = re.compile(r"\{\{([A-Z0-9_]+)\}\}")
