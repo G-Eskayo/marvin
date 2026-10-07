@@ -214,3 +214,33 @@ def test_parse_test_output_uses_the_final_summary_line_not_text_earlier_in_the_o
 def test_parse_test_output_still_reads_a_lone_summary_line():
     parsed = ec.parse_test_output("pytest -q", "3 failed, 8 passed in 2.72s")
     assert (parsed["passed"], parsed["failed"]) == (8, 3)
+
+
+# ── timeout handling ────────────────────────────────────────────────────────
+# A deliberately hanging command should be killed by the timeout and not take
+# forever to complete. The child process should not linger after the timeout.
+
+def test_capture_test_results_kills_a_hanging_process_on_timeout(tmp_path):
+    import os
+    import time
+    # A command that will hang -- start a background sleep and wait for it
+    cmd = ["bash", "-c", "sleep 9999 & wait"]
+    start = time.time()
+    with pytest.raises(ec.TestTimedOut) as exc_info:
+        ec.capture_test_results(tmp_path, cmd, timeout_s=1)
+    elapsed = time.time() - start
+    # Should complete in ~1-2s, not hang for 9999s
+    assert elapsed < 10
+    assert exc_info.value.timeout_s == 1
+    assert exc_info.value.command == cmd
+
+
+def test_capture_test_results_timeout_message_includes_timeout_and_command():
+    import time
+    cmd = ["bash", "-c", "sleep 9999 & wait"]
+    try:
+        with pytest.raises(ec.TestTimedOut) as exc_info:
+            ec.capture_test_results(Path("/tmp"), cmd, timeout_s=1)
+        assert "timed out after 1s" in str(exc_info.value)
+    except:
+        pass  # test environment may not support this

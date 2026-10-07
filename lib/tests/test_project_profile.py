@@ -473,3 +473,32 @@ def test_a_project_with_no_test_script_says_so_instead_of_crashed_or_never_ran(t
     r = pp.verify_dir(prof, tmp_path, runner=runner, have=lambda cap, env: True)
     assert r["ok"] is False and r["kind"] == "error"
     assert "no test command" in r["summary"] and "crashed or never ran" not in r["summary"]
+
+
+# ── timeout handling ───────────────────────────────────────────────────────
+# When a tier's command exceeds its timeout, the Measurer should surface the
+# timeout as a kind="error" in verify_dir so the gate can classify it as
+# GATE_INFRA (machine issue, not PR issue).
+
+def test_verify_dir_catches_timeout_from_a_tier(tmp_path):
+    prof = pp._validate({"repo": "o/r", "verify": [{"id": "unit", "label": "Unit tests", "cwd": ".", "command": ["sleep", "9999"],
+                                                   "parser": "exit-code", "required": True, "timeout_s": 1}]}, "p")
+    def timeout_runner(cmd, cwd, env, timeout):
+        raise pp.TestTimedOut(cmd, timeout, "some partial output")
+    r = pp.verify_dir(prof, tmp_path, runner=timeout_runner, have=lambda cap, env: True)
+    assert r["ok"] is False and r["kind"] == "error"
+    assert "did not finish within" in r["summary"]
+    assert "1 min" in r["summary"]
+
+
+def test_measurer_propagates_timeout_from_a_tier(tmp_path):
+    import pytest
+    prof = pp._validate({"repo": "o/r", "verify": [{"id": "unit", "label": "Unit tests", "cwd": ".", "command": ["sleep", "9999"],
+                                                   "parser": "exit-code", "required": True, "timeout_s": 2}]}, "p")
+    def timeout_runner(cmd, cwd, env, timeout):
+        raise pp.TestTimedOut(cmd, timeout, "output so far")
+    m = pp.Measurer(prof, runner=timeout_runner, have=lambda c, e: True)
+    with pytest.raises(pp.TestTimedOut) as exc_info:
+        m(tmp_path)
+    assert exc_info.value.timeout_s == 2
+    assert "sleep" in exc_info.value.command[0]
