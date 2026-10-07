@@ -36,6 +36,9 @@ contextBridge.exposeInMainWorld('api', {
   devices: {
     status: () => ipcRenderer.invoke('devices:status')
   },
+  queue: {
+    list: () => ipcRenderer.invoke('queue:list')
+  },
   profiles: {
     list: () => ipcRenderer.invoke('profiles:list'),
     setDispatch: (repo, value) => ipcRenderer.invoke('profiles:setDispatch', repo, value),
