@@ -306,3 +306,20 @@ def test_exported_html_contains_snapshot_flag_set_true():
     # Verify it was changed
     assert "/*__SNAPSHOT_FLAG__*/var SNAPSHOT = true;" in modified
     assert "/*__SNAPSHOT_FLAG__*/var SNAPSHOT = false;" not in modified
+
+
+# 2026-10-07: the first real snapshot carried 26 /Users/<name>/... strings in scheduled-job nodes' "path" field
+# (a launchd command line). The tree scan only read name/desc/label, so it passed.
+def test_tree_scan_reads_every_field_not_just_name_desc_label():
+    tree = {"name": "root", "children": [{"name": "code-sync", "path": "/Users/someone/.agents/lib/code_sync.py pull"}]}
+    assert export_snapshot.scan_tree_for_leaks(tree, set())
+
+
+def test_home_paths_are_rewritten_to_tilde_everywhere():
+    tree = {"name": "root", "children": [{"name": "job", "path": "/Users/someone/.agents/venv/bin/python /Users/someone/.agents/lib/x.py",
+                                          "meta": {"cmd": ["/Users/someone/.claude/a.md"]}}]}
+    clean = export_snapshot.redact_home_paths(tree)
+    assert "/Users/" not in json.dumps(clean)
+    assert clean["children"][0]["path"] == "~/.agents/venv/bin/python ~/.agents/lib/x.py"
+    assert clean["children"][0]["meta"]["cmd"] == ["~/.claude/a.md"]
+    assert export_snapshot.scan_tree_for_leaks(clean, set()) == []

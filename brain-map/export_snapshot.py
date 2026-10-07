@@ -220,16 +220,29 @@ def scan_tree_for_leaks(tree: dict, allowlist: set[str]) -> list[str]:
                 if (source := file_node.get("source_file")) and source not in allowlist:
                     issues.append(f"Code layer includes untracked file: {source}")
 
-        # Scan textual fields for leaks
-        for field in ["desc", "name", "label"]:
-            if text := node.get(field):
-                issues.extend(scan_for_leaks(str(text)))
-
         for child in node.get("children", []):
             walk(child)
 
     walk(tree)
+    # Textual leaks anywhere in the tree, not just name/desc/label: on 2026-10-07 26 home paths sat in
+    # scheduled-job nodes' "path" field and passed. Scanning the serialized tree covers every field.
+    issues.extend(scan_for_leaks(json.dumps(tree)))
     return issues
+
+
+HOME_PATH = re.compile(r"/Users/[^/\s\"']+")
+
+
+def redact_home_paths(node):
+    """Every string in the tree with the home folder written as ~ (the username is the private part; the rest
+    is MARVIN's public repo layout)."""
+    if isinstance(node, dict):
+        return {k: redact_home_paths(v) for k, v in node.items()}
+    if isinstance(node, list):
+        return [redact_home_paths(v) for v in node]
+    if isinstance(node, str):
+        return HOME_PATH.sub("~", node)
+    return node
 
 
 def export_snapshot(commit: str = "HEAD", out_dir: str | Path = SNAPSHOT_DIR) -> bool:
@@ -267,7 +280,8 @@ def export_snapshot(commit: str = "HEAD", out_dir: str | Path = SNAPSHOT_DIR) ->
     # Anonymize machines
     anonymize_machines(tree)
 
-    # Scan for leaks
+    # Home folder → ~ in every field, then scan everything
+    tree = redact_home_paths(tree)
     leaks = scan_tree_for_leaks(tree, allowlist)
     if leaks:
         print("Privacy scan failed — refusing to export:", file=sys.stderr)
