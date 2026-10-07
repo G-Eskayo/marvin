@@ -85,6 +85,11 @@ def _run_claude(cmd: list[str], **kwargs) -> tuple[str, float]:
     this module makes reports its real cost, not just its text output --
     feeds ticket_stages.py's per-stage cost field, which in turn feeds the
     same metrics_registry anomaly layer the Health tab already uses."""
+    if cmd and cmd[0] == "claude":
+        # Resolve the binary here rather than trusting the inherited PATH: a run started from a shell without
+        # ~/.local/bin (SSH from the laptop, 2026-10-06) failed every re-dispatch until the breaker tripped.
+        from claude_bin import resolve_claude_bin
+        cmd = [resolve_claude_bin(), *cmd[1:]]
     proc = subprocess.run(cmd + ["--output-format", "json"], capture_output=True, text=True, **kwargs)
     try:
         parsed = json.loads(proc.stdout)

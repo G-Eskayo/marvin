@@ -744,3 +744,24 @@ def test_the_planning_call_gets_longer_than_the_slowest_runs_that_were_seen_to_s
     old 300s wall -- about 1 in 5 died for being slow, not for being wrong. The limit must clear the observed tail."""
     import sandbox_orchestration as so
     assert so.PLAN_TIMEOUT_S >= 600
+
+
+def test_claude_is_resolved_even_when_the_inherited_path_lacks_it(monkeypatch, tmp_path):
+    # 2026-10-06: a ticket run started from a shell whose PATH lacked ~/.local/bin (SSH from the laptop)
+    # failed with "No such file or directory: 'claude'", and every re-dispatch inherited the same PATH until
+    # the circuit breaker tripped. The call must resolve the binary itself, not trust the inherited PATH.
+    import sandbox_orchestration as so
+    import claude_bin
+    fake = tmp_path / "claude"
+    fake.write_text("#!/bin/sh\n")
+    fake.chmod(0o755)
+    monkeypatch.setattr(claude_bin.shutil, "which", lambda name, *a, **k: None)
+    monkeypatch.setattr(claude_bin, "_candidates", lambda: (fake,))
+    seen = {}
+    def fake_run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 0, stdout='{"result": "ok", "total_cost_usd": 0}', stderr="")
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+    text, _cost = so._run_claude(["claude", "-p", "hi"], env={"PATH": "/usr/bin:/bin"})
+    assert text == "ok"
+    assert seen["cmd"][0] == str(fake)

@@ -13,3 +13,11 @@ def test_tailscale_status_gets_a_term_and_ignores_error_text(monkeypatch):
     monkeypatch.setattr(td.subprocess, "run", fake_run)
     assert td._tailscale_online_hosts() == {"box"}
     assert seen["env"]["TERM"] == "dumb"
+
+
+def test_the_dispatch_wrapper_puts_the_claude_install_dir_on_path():
+    # Same incident: the wrapper added Homebrew dirs but not ~/.local/bin, where the claude CLI lives.
+    import task_dispatch as td
+    script = td._build_wrapper_script("echo hi", "abc", "label")
+    path_line = next(l for l in script.splitlines() if l.startswith("export PATH="))
+    assert "$HOME/.local/bin" in path_line
