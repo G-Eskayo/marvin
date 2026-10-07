@@ -263,6 +263,148 @@ def test_test_command_needs_human_when_stack_unknown():
     assert result["test_command"]["state"] == "needs-human"
 
 
+def test_test_command_ok_for_python():
+    facts = {"detected_stack": "python", "package_json_scripts": {}, "workflow_contents": "", "tools_installed": {}}
+    result = po.plan(facts)
+    assert result["test_command"]["state"] == "ok"
+    assert "pytest" in result["test_command"]["reason"]
+
+
+# ── Python stack: CI and dependency checks ───────────────────────────────
+
+def test_python_ci_needs_human_when_requirements_missing():
+    """Python project without requirements.txt gets needs-human."""
+    facts = {
+        "detected_stack": "python",
+        "has_requirements_file": False,
+        "requirements_pinned": False,
+        "unpinned_dependencies": [],
+        "tests_read_machine_local": False,
+        "machine_local_test_files": [],
+        "has_workflows": False,
+        "workflow_contents": "",
+        "package_json_scripts": {},
+        "tools_installed": {},
+    }
+    result = po.plan(facts)
+    assert result["ci"]["state"] == "needs-human"
+    assert "dependencies" in result["ci"]["reason"]
+
+
+def test_python_ci_needs_human_when_requirements_unpinned():
+    """Python project with unpinned dependencies gets needs-human."""
+    facts = {
+        "detected_stack": "python",
+        "has_requirements_file": True,
+        "requirements_pinned": False,
+        "unpinned_dependencies": ["requests", "pytest"],
+        "tests_read_machine_local": False,
+        "machine_local_test_files": [],
+        "has_workflows": False,
+        "workflow_contents": "",
+        "package_json_scripts": {},
+        "tools_installed": {},
+    }
+    result = po.plan(facts)
+    assert result["ci"]["state"] == "needs-human"
+    assert "unpinned" in result["ci"]["reason"].lower()
+
+
+def test_python_ci_needs_human_when_tests_read_machine_local():
+    """Python project with machine-local test references gets needs-human."""
+    facts = {
+        "detected_stack": "python",
+        "has_requirements_file": True,
+        "requirements_pinned": True,
+        "unpinned_dependencies": [],
+        "tests_read_machine_local": True,
+        "machine_local_test_files": ["tests/test_config.py"],
+        "has_workflows": False,
+        "workflow_contents": "",
+        "package_json_scripts": {},
+        "tools_installed": {},
+    }
+    result = po.plan(facts)
+    assert result["ci"]["state"] == "needs-human"
+    assert "machine-local" in result["ci"]["reason"].lower() or "~/.claude" in result["ci"]["reason"]
+
+
+def test_python_ci_needs_human_reports_both_problems():
+    """Python project with both problems reports both in reason."""
+    facts = {
+        "detected_stack": "python",
+        "has_requirements_file": True,
+        "requirements_pinned": False,
+        "unpinned_dependencies": ["requests"],
+        "tests_read_machine_local": True,
+        "machine_local_test_files": ["tests/test_config.py"],
+        "has_workflows": False,
+        "workflow_contents": "",
+        "package_json_scripts": {},
+        "tools_installed": {},
+    }
+    result = po.plan(facts)
+    assert result["ci"]["state"] == "needs-human"
+    reason = result["ci"]["reason"]
+    # Both problems should be mentioned
+    assert ("unpinned" in reason.lower() or "dependencies" in reason.lower())
+    assert ("machine-local" in reason.lower() or "~/.claude" in reason.lower() or "Path.home" in reason)
+
+
+def test_python_ci_missing_when_clean():
+    """Python project with pinned requirements and no machine-local tests can have CI generated."""
+    facts = {
+        "detected_stack": "python",
+        "has_requirements_file": True,
+        "requirements_pinned": True,
+        "unpinned_dependencies": [],
+        "tests_read_machine_local": False,
+        "machine_local_test_files": [],
+        "has_workflows": False,
+        "workflow_contents": "",
+        "package_json_scripts": {},
+        "tools_installed": {},
+    }
+    result = po.plan(facts)
+    assert result["ci"]["state"] == "missing"
+
+
+def test_python_ci_ok_when_pytest_workflow_exists():
+    """Python project with pytest in workflow already running is ok."""
+    facts = {
+        "detected_stack": "python",
+        "has_requirements_file": True,
+        "requirements_pinned": True,
+        "unpinned_dependencies": [],
+        "tests_read_machine_local": False,
+        "machine_local_test_files": [],
+        "has_workflows": True,
+        "workflow_contents": "pytest",
+        "package_json_scripts": {},
+        "tools_installed": {},
+    }
+    result = po.plan(facts)
+    assert result["ci"]["state"] == "ok"
+
+
+def test_python_with_pyproject_and_lock_counts_as_pinned():
+    """Python project with pyproject.toml and lock file counts as pinned."""
+    facts = {
+        "detected_stack": "python",
+        "has_requirements_file": False,
+        "requirements_pinned": True,
+        "unpinned_dependencies": [],
+        "tests_read_machine_local": False,
+        "machine_local_test_files": [],
+        "has_workflows": False,
+        "workflow_contents": "",
+        "package_json_scripts": {},
+        "tools_installed": {},
+    }
+    result = po.plan(facts)
+    assert result["ci"]["state"] == "missing"
+
+
 # ── Inspection: integration tests ────────────────────────────────────────
 
 
@@ -298,6 +440,110 @@ def test_inspect_parses_repo_visibility_and_branch():
     result = po.inspect("test/repo", gh=mock_gh)
     assert result["visibility"] == "public"
     assert result["default_branch"] == "develop"
+
+
+def test_inspect_detects_python_stack():
+    """inspect() detects Python stack when .py files exist."""
+    def mock_gh(args):
+        if "repo view" in " ".join(args):
+            return json.dumps({"visibility": "public", "defaultBranchRef": {"name": "main"}})
+        if "trees" in " ".join(args):
+            return json.dumps({"tree": [
+                {"path": "setup.py", "type": "file"},
+                {"path": "lib/main.py", "type": "file"},
+            ]})
+        if "label" in " ".join(args):
+            return "[]"
+        return ""
+
+    result = po.inspect("test/repo", gh=mock_gh)
+    assert result["detected_stack"] == "python"
+
+
+def test_inspect_detects_requirements_file():
+    """inspect() detects requirements.txt and checks pinning."""
+    def mock_gh(args):
+        if "repo view" in " ".join(args):
+            return json.dumps({"visibility": "public", "defaultBranchRef": {"name": "main"}})
+        if "trees" in " ".join(args):
+            return json.dumps({"tree": [
+                {"path": "requirements.txt", "type": "file"},
+                {"path": "main.py", "type": "file"},
+            ]})
+        if "contents/requirements.txt" in " ".join(args):
+            return json.dumps({"content": po.base64.b64encode(b"pytest==7.4.3\nrequests==2.31.0\n").decode()})
+        if "label" in " ".join(args):
+            return "[]"
+        return ""
+
+    result = po.inspect("test/repo", gh=mock_gh)
+    assert result["has_requirements_file"] is True
+    assert result["requirements_pinned"] is True
+    assert result["unpinned_dependencies"] == []
+
+
+def test_inspect_detects_unpinned_dependencies():
+    """inspect() detects unpinned dependencies in requirements.txt."""
+    def mock_gh(args):
+        if "repo view" in " ".join(args):
+            return json.dumps({"visibility": "public", "defaultBranchRef": {"name": "main"}})
+        if "trees" in " ".join(args):
+            return json.dumps({"tree": [
+                {"path": "requirements.txt", "type": "file"},
+                {"path": "main.py", "type": "file"},
+            ]})
+        if "contents/requirements.txt" in " ".join(args):
+            return json.dumps({"content": po.base64.b64encode(b"pytest>=7.0\nrequests\n").decode()})
+        if "label" in " ".join(args):
+            return "[]"
+        return ""
+
+    result = po.inspect("test/repo", gh=mock_gh)
+    assert result["has_requirements_file"] is True
+    assert result["requirements_pinned"] is False
+    assert "pytest>=7.0" in result["unpinned_dependencies"]
+    assert "requests" in result["unpinned_dependencies"]
+
+
+def test_inspect_detects_machine_local_test_references():
+    """inspect() detects tests that reference Path.home() or ~/.claude."""
+    def mock_gh(args):
+        if "repo view" in " ".join(args):
+            return json.dumps({"visibility": "public", "defaultBranchRef": {"name": "main"}})
+        if "trees" in " ".join(args):
+            return json.dumps({"tree": [
+                {"path": "test_main.py", "type": "file"},
+                {"path": "main.py", "type": "file"},
+            ]})
+        if "contents/test_main.py" in " ".join(args):
+            return json.dumps({"content": po.base64.b64encode(b"from pathlib import Path\nconfig = Path.home() / '.claude'\n").decode()})
+        if "label" in " ".join(args):
+            return "[]"
+        return ""
+
+    result = po.inspect("test/repo", gh=mock_gh)
+    assert result["tests_read_machine_local"] is True
+    assert "test_main.py" in result["machine_local_test_files"]
+
+
+def test_inspect_detects_expanduser_in_tests():
+    """inspect() detects tests that use expanduser() with home paths."""
+    def mock_gh(args):
+        if "repo view" in " ".join(args):
+            return json.dumps({"visibility": "public", "defaultBranchRef": {"name": "main"}})
+        if "trees" in " ".join(args):
+            return json.dumps({"tree": [
+                {"path": "test_config.py", "type": "file"},
+            ]})
+        if "contents/test_config.py" in " ".join(args):
+            return json.dumps({"content": po.base64.b64encode(b"path = os.path.expanduser('~/.claude/config')\n").decode()})
+        if "label" in " ".join(args):
+            return "[]"
+        return ""
+
+    result = po.inspect("test/repo", gh=mock_gh)
+    assert result["tests_read_machine_local"] is True
+    assert "test_config.py" in result["machine_local_test_files"]
 
 
 def test_inspect_tolerates_malformed_gh_responses():
@@ -849,11 +1095,11 @@ def test_apply_forces_dispatch_off():
 
 
 def test_apply_profile_all_stacks():
-    """_apply_profile works for all three stacks: swift-package, xcodegen-app, node-electron."""
+    """_apply_profile works for all four stacks: swift-package, xcodegen-app, node-electron, python."""
     import tempfile
     with tempfile.TemporaryDirectory() as tmpdir:
         profiles_dir = Path(tmpdir)
-        for stack in ["swift-package", "xcodegen-app", "node-electron"]:
+        for stack in ["swift-package", "xcodegen-app", "node-electron", "python"]:
             facts = {
                 "repo": "test/repo",
                 "detected_stack": stack,
