@@ -540,11 +540,6 @@ export default function ProjectBoard({ onOpenMr, onOpenDocs, onOpenTicket, nav }
             ))}
           </select>
         )}
-        {repo && (
-          <button onClick={() => onOpenDocs?.(projectIdOf(repo))} className="ml-2 text-xs text-neutral-500 hover:text-neutral-200" title="Open this project's docs">
-            Docs →
-          </button>
-        )}
         {current?.due && (
           <span className={`ml-auto text-xs ${current.dueHard ? 'text-amber-400' : 'text-neutral-500'}`}>
             {current.dueHard ? 'Hard' : 'Soft'} due {current.due}
