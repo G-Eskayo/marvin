@@ -428,16 +428,15 @@ def _github_budget_pct() -> float | None:
 
 
 def _inflight_by_repo(repos) -> dict[str, int]:
-    """Open tickets that carry a claim label, per project: what is already running (or was claimed and not released)."""
-    out: dict[str, int] = {}
-    for r in repos:
-        try:
-            p = subprocess.run(["gh", "issue", "list", "--repo", r, "--state", "open", "--limit", "200", "--json", "labels"],
-                               capture_output=True, text=True, timeout=30)
-            issues = json.loads(p.stdout) if p.returncode == 0 else []
-        except Exception:  # noqa: BLE001
-            issues = []
-        out[r] = sum(1 for i in issues if any(l["name"].startswith("claimed:") for l in i.get("labels", [])))
+    """Tickets being worked on right now, per project, on every reachable machine (live run_ticket processes). A claim label
+    is NOT this: it stays until the PR merges, so tickets waiting in review made the limit look full (found 2026-10-07)."""
+    out = {r: 0 for r in repos}
+    try:
+        import running_tickets
+        for t in running_tickets.current():
+            out[t["repo"]] = out.get(t["repo"], 0) + 1
+    except Exception:  # noqa: BLE001 -- unreadable: count nothing, the per-machine slot check still holds
+        pass
     return out
 
 

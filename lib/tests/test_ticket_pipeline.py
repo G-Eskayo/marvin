@@ -750,3 +750,17 @@ def test_a_failed_dispatch_in_one_project_does_not_stop_the_other(monkeypatch):
     monkeypatch.setattr(tp, "dispatch", flaky)
     tp.main()
     assert len(calls) == 2 and len(got["releases"]) == 1
+
+
+def test_in_flight_means_a_live_run_not_a_claim_label_that_outlives_it(monkeypatch):
+    """Seven claimed tickets (six of them waiting in review) made the scan think parallel dispatch was already full."""
+    import running_tickets
+    monkeypatch.undo()   # the autouse fixtures stub scanning; this reads only running_tickets, which is stubbed next
+    monkeypatch.setattr(running_tickets, "current", lambda: [{"machine": "mac-mini-1", "repo": tp.REPO, "number": 193}])
+    assert tp._inflight_by_repo([tp.REPO, CC]) == {tp.REPO: 1, CC: 0}
+
+
+def test_in_flight_counts_nothing_when_the_process_tables_cannot_be_read(monkeypatch):
+    import running_tickets
+    monkeypatch.setattr(running_tickets, "current", lambda: (_ for _ in ()).throw(OSError("boom")))
+    assert tp._inflight_by_repo([tp.REPO]) == {tp.REPO: 0}
