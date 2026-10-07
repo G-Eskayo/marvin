@@ -18,12 +18,63 @@ User-managed configuration at `~/.claude/mobile-allowlist.json`:
 
 Device names are case-insensitive Tailscale node names (first label of hostname). The allowlist is read on each request; no service restart needed to apply changes.
 
-## Contract: `GET /status`
+## Contract: Read-only Dashboard API
+
+All routes return JSON responses with `{ "ok": <boolean>, "data": <data> | "error": <message> }` format.
+
+### `GET /status`
 
 **Response**:
 - `200 { "ok": true, "status": "up", "uptimeSeconds": <n>, "version": "1.0.0" }` — allowlisted peer
 - `403 { "ok": false, "error": "not allowlisted" }` — peer not in allowlist
-- `403 { "ok": false, "error": "could not resolve remote address" }` — IP resolution failed (should never happen in Tailscale)
+
+### `GET /activity`
+
+Lists ticket activity across projects.
+
+**Response**: `200 { "ok": true, "data": [{ number, repo, key, currentStage, currentStatus, costUsd, failed, title, eventCount, lastEventAt, isLiveNow }, ...] }`
+
+### `GET /health`
+
+System health status.
+
+**Response**: `200 { "ok": true, "data": { generated_at, overall, coverage, anomaly, checks } }`
+
+### `GET /boards`
+
+Board registry with project status.
+
+**Response**: `200 { "ok": true, "data": [{ repo, label, color, due, dueHard, status }, ...] }`
+
+### `GET /boards/ticket?repo=<repo>&number=<number>`
+
+Fetch a single ticket.
+
+**Query parameters**: `repo` (required), `number` (required)
+
+**Response**: `200 { "ok": true, "data": { number, title, body, labels, url, state, comments } }`
+
+### `GET /docs/repos`
+
+List available documentation repos.
+
+**Response**: `200 { "ok": true, "data": { generated_at, repos: [{ id, name, kind, status, local, ... }, ...] } }`
+
+### `GET /docs/tree?id=<id>`
+
+Get file tree for a documentation repo.
+
+**Query parameters**: `id` (required, project ID or `__master__` for master doc)
+
+**Response**: `200 { "ok": true, "data": { source, dir, tree: [{ path, label }, ...] } }`
+
+### `GET /docs/content?id=<id>&path=<path>`
+
+Get file content from a documentation repo.
+
+**Query parameters**: `id` (required), `path` (required, URL-encoded file path)
+
+**Response**: `200 { "ok": true, "data": <file content as string> }`
 
 ## Running it
 
@@ -44,4 +95,4 @@ The service defaults to port 7880; override with `PORT` env var if needed (edit 
 
 ## Deliberately out of scope
 
-Face ID authentication, write endpoints, session rotation — covered in separate tickets (#159, #160, #157, #158). This ticket is the device gate and read-only status endpoint only.
+Face ID authentication, write endpoints, session rotation, search endpoints — covered in separate tickets (#157, #158, #159, #160). This is read-only access to existing data only.
