@@ -323,3 +323,21 @@ def test_home_paths_are_rewritten_to_tilde_everywhere():
     assert clean["children"][0]["path"] == "~/.agents/venv/bin/python ~/.agents/lib/x.py"
     assert clean["children"][0]["meta"]["cmd"] == ["~/.claude/a.md"]
     assert export_snapshot.scan_tree_for_leaks(clean, set()) == []
+
+
+# 2026-10-07: the first deployed snapshot drew nothing, because index.html loads ./vendor/motion.12.42.2.js and only
+# index.html + tree-data.json were exported/uploaded (404). A snapshot must carry every local file its page uses.
+def test_local_assets_lists_relative_scripts_and_styles_but_not_the_data_file():
+    html = '<script src="./vendor/motion.js"></script><link href="./css/a.css"><script src="https://cdn/x.js"></script>' \
+           '<script>fetch("./tree-data.json")</script>'
+    assert export_snapshot.local_assets(html) == ["css/a.css", "vendor/motion.js"]
+
+
+def test_copy_local_assets_copies_them_and_refuses_when_one_is_missing(tmp_path):
+    src, out = tmp_path / "src", tmp_path / "out"
+    (src / "vendor").mkdir(parents=True)
+    (src / "vendor" / "motion.js").write_text("m")
+    assert export_snapshot.copy_local_assets('<script src="./vendor/motion.js"></script>', src, out) == []
+    assert (out / "vendor" / "motion.js").read_text() == "m"
+    missing = export_snapshot.copy_local_assets('<script src="./vendor/gone.js"></script>', src, out)
+    assert missing == ["vendor/gone.js"]

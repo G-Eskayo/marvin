@@ -210,6 +210,15 @@ def upload_to_portfolio(html_file: Path, json_file: Path, dry_run: bool = False)
             if result.returncode != 0:
                 return False, f"failed to copy {remote_name}"
 
+        # Everything else the page loads (./vendor/... scripts): without them it draws nothing (2026-10-07).
+        for sub in sorted(p for p in html_file.parent.iterdir() if p.is_dir()):
+            result = subprocess.run(
+                [DOCKER, "cp", str(sub), f"{WPCLI_CONTAINER}:/var/www/html/{WP_MAP_PATH}/"],
+                capture_output=True, timeout=60
+            )
+            if result.returncode != 0:
+                return False, f"failed to copy {sub.name}/"
+
         return True, f"deployed to /{WP_MAP_PATH}/"
     except subprocess.TimeoutExpired:
         return False, "upload timed out"
