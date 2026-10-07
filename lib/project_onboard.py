@@ -597,6 +597,304 @@ def _apply_profile(repo: str, facts: dict, profiles_dir: Path | None = None) -> 
     }
 
 
+def _check_workflow_scope(auth_status: str | None = None, run=subprocess.run) -> bool:
+    """Check if gh token has workflow scope. Returns False if scope is missing or unparseable."""
+    try:
+        if auth_status is None:
+            result = run(
+                ["gh", "auth", "status"],
+                capture_output=True, text=True, timeout=TIMEOUT
+            )
+            auth_status = result.stderr
+        if not auth_status:
+            return False
+        for line in auth_status.split("\n"):
+            if line.startswith("Token scopes:"):
+                scopes_part = line.split(":", 1)[1].strip().strip("'\"")
+                scopes = [s.strip().strip("'\"") for s in scopes_part.split(",")]
+                return "workflow" in scopes
+        return False
+    except Exception:
+        return False
+
+
+def _render_agent_docs(repo: str) -> dict[str, str]:
+    """Render agent docs files and CLAUDE.md block. Returns {filepath: content, ...}."""
+    files = {}
+
+    issue_tracker_template = """# Issue Tracker
+
+**Type**: GitHub Issues
+**Repo**: {repo} (from `git remote -v`)
+**CLI**: `gh` (must be authenticated — `gh auth status` to check)
+
+## Conventions
+
+- Create an issue: `gh issue create --title "..." --body "..." [--label ...]`
+- Read an issue: `gh issue view <number>`
+- Comment on an issue: `gh issue comment <number> --body "..."`
+- List open issues: `gh issue list`
+- Apply/remove labels: `gh issue edit <number> --add-label "..."` / `--remove-label "..."`
+
+## Consumer rules
+
+- `to-issues` creates new issues via `gh issue create`; it does not assume any project-board
+  automation exists — if this repo uses one, note it here so the skill knows to also add the
+  issue to the right project/column.
+- `triage` reads open issues via `gh issue list` and applies labels from
+  `docs/agents/triage-labels.md` — it does not invent label names not defined there.
+- Never force-push, close, or delete issues without explicit user confirmation — these skills
+  only create/comment/label by default.
+"""
+
+    triage_labels_template = """# Triage Labels
+
+The `triage` skill moves an issue through five canonical roles. Each maps to a string this repo
+actually uses — override any that differ from the default.
+
+| Canonical role   | This repo's label/status | Meaning                                          |
+|-------------------|---------------------------|---------------------------------------------------|
+| `needs-triage`    | `needs-triage`            | Maintainer needs to evaluate                       |
+| `needs-info`      | `needs-info`              | Waiting on reporter for more detail                |
+| `ready-for-agent` | `ready-for-agent`         | Fully specified — an AFK agent can pick this up with no further human context |
+| `ready-for-human` | `ready-for-human`         | Needs human implementation, not agent-suitable     |
+| `wontfix`         | `wontfix`                 | Will not be actioned                               |
+
+## Consumer rules
+
+- `triage` only ever applies one of these five — if a case doesn't clearly fit one, that's a sign
+  the issue needs more information (`needs-info`), not a reason to invent a sixth label.
+- If this repo's issue tracker has no existing label set, the defaults in the right column are
+  fine as-is — create them as real labels/tags rather than leaving them purely conventional.
+- `ready-for-agent` specifically means "no further human context needed" — don't apply it to an
+  issue that's well-written but still assumes tribal knowledge only a human maintainer has.
+"""
+
+    domain_template = """# Domain Docs
+
+**Layout**: Single-context
+
+## Single-context (most repos)
+
+- `CONTEXT.md` at the repo root — the domain glossary. Devoid of implementation details; terms
+  and their meanings only.
+- `docs/adr/` at the repo root — one file per architectural decision, numbered sequentially.
+
+## Consumer rules
+
+- `improve-codebase-architecture`, `diagnose`, and `tdd` read `CONTEXT.md` for domain vocabulary
+  before proposing names for new modules/concepts — a suggestion using a term not in `CONTEXT.md`
+  should either match existing language or trigger adding the new term, not invent parallel
+  vocabulary.
+- These skills read `docs/adr/` for past decisions in the area being touched, and should not
+  re-litigate a settled decision without flagging that they're doing so and why.
+- If `CONTEXT.md`/`docs/adr/` don't exist yet, that's fine — `grill-with-docs` creates them
+  lazily, only when the first term/decision actually resolves. Don't scaffold empty files
+  preemptively.
+"""
+
+    claude_md_block = """## Agent skills
+
+### Issue tracker
+
+GitHub Issues on `{repo}`, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Five canonical triage roles, all real labels on this repo with default naming (no overrides).
+See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+"""
+
+    files["docs/agents/issue-tracker.md"] = issue_tracker_template.format(repo=repo)
+    files["docs/agents/triage-labels.md"] = triage_labels_template
+    files["docs/agents/domain.md"] = domain_template
+    files["_CLAUDE_MD_BLOCK"] = claude_md_block.format(repo=repo)
+
+    return files
+
+
+def _apply_pr(repo: str, facts: dict, plan_out: dict, gh=_gh, auth_status: str | None = None) -> dict:
+    """Apply PR changes: create files and open PR. Idempotent and scoped.
+
+    Returns: {"action": "created"|"updated"|"unchanged"|"needs-human", "pr_url": str, ...}
+    """
+    default_branch = facts.get("default_branch", "main")
+    file_tree = facts.get("file_tree", {})
+
+    files_to_write = {}
+
+    if plan_out.get("ci", {}).get("state") == "missing":
+        detected_stack = facts.get("detected_stack")
+        if detected_stack:
+            template_path = CONFIG_ONBOARDING / detected_stack / "ci.yml"
+            if template_path.exists():
+                try:
+                    ci_content = template_path.read_text()
+                    files_to_write[".github/workflows/ci.yml"] = ci_content
+                except OSError:
+                    pass
+
+    rendered_docs = _render_agent_docs(repo)
+
+    for doc_file in ["docs/agents/issue-tracker.md", "docs/agents/triage-labels.md", "docs/agents/domain.md"]:
+        if doc_file not in file_tree:
+            files_to_write[doc_file] = rendered_docs[doc_file]
+
+    claude_md_block = rendered_docs.get("_CLAUDE_MD_BLOCK", "")
+    if not facts.get("has_claude_md_skills") and claude_md_block:
+        files_to_write["_CLAUDE_MD_APPEND"] = claude_md_block
+
+    if not files_to_write:
+        return {"action": "unchanged"}
+
+    if ".github/workflows/ci.yml" in files_to_write:
+        if not _check_workflow_scope(auth_status=auth_status):
+            return {
+                "action": "needs-human",
+                "reason": "gh token lacks the 'workflow' scope",
+                "how_to_fix": "gh auth refresh -h github.com -s workflow",
+            }
+
+    branch_name = "onboarding/agent-docs-ci"
+
+    try:
+        default_branch_sha_result = gh(["api", f"repos/{repo}/git/ref/heads/{default_branch}"])
+        if not default_branch_sha_result:
+            return {
+                "action": "needs-human",
+                "reason": f"could not fetch {default_branch} ref",
+            }
+        ref_data = json.loads(default_branch_sha_result)
+        default_branch_sha = ref_data.get("object", {}).get("sha")
+        if not default_branch_sha:
+            return {
+                "action": "needs-human",
+                "reason": f"could not determine {default_branch} SHA",
+            }
+    except (json.JSONDecodeError, KeyError):
+        return {
+            "action": "needs-human",
+            "reason": "error fetching default branch ref",
+        }
+
+    try:
+        branch_check = gh(["api", f"repos/{repo}/git/ref/heads/{branch_name}"])
+        if not branch_check:
+            create_result = gh(["api", "-X", "POST", f"repos/{repo}/git/refs",
+                               "-f", f"ref=refs/heads/{branch_name}",
+                               "-f", f"sha={default_branch_sha}"])
+            if not create_result:
+                return {
+                    "action": "needs-human",
+                    "reason": "could not create branch",
+                }
+    except Exception:
+        pass
+
+    claude_append = files_to_write.pop("_CLAUDE_MD_APPEND", None)
+
+    for file_path, content in files_to_write.items():
+        try:
+            existing = gh(["api", f"repos/{repo}/contents/{file_path}",
+                          "-H", f"ref=refs/heads/{branch_name}"])
+            if existing:
+                try:
+                    existing_data = json.loads(existing)
+                    existing_content = base64.b64decode(existing_data.get("content", "")).decode()
+                    if existing_content == content:
+                        continue
+                    sha = existing_data.get("sha")
+                    encoded = base64.b64encode(content.encode()).decode()
+                    gh(["api", "-X", "PUT", f"repos/{repo}/contents/{file_path}",
+                       "-f", f"message=Update {file_path}",
+                       "-f", f"content={encoded}",
+                       "-f", f"sha={sha}",
+                       "-f", f"branch={branch_name}"])
+                except (json.JSONDecodeError, KeyError):
+                    pass
+            else:
+                encoded = base64.b64encode(content.encode()).decode()
+                gh(["api", "-X", "PUT", f"repos/{repo}/contents/{file_path}",
+                   "-f", f"message=Add {file_path}",
+                   "-f", f"content={encoded}",
+                   "-f", f"branch={branch_name}"])
+        except Exception:
+            pass
+
+    if claude_append:
+        try:
+            existing = gh(["api", f"repos/{repo}/contents/CLAUDE.md",
+                          "-H", f"ref=refs/heads/{branch_name}"])
+            if existing:
+                try:
+                    existing_data = json.loads(existing)
+                    existing_content = base64.b64decode(existing_data.get("content", "")).decode()
+                    if "## Agent skills" not in existing_content:
+                        new_content = existing_content.rstrip() + "\n\n" + claude_append + "\n"
+                        sha = existing_data.get("sha")
+                        encoded = base64.b64encode(new_content.encode()).decode()
+                        gh(["api", "-X", "PUT", f"repos/{repo}/contents/CLAUDE.md",
+                           "-f", "message=Add Agent skills section to CLAUDE.md",
+                           "-f", f"content={encoded}",
+                           "-f", f"sha={sha}",
+                           "-f", f"branch={branch_name}"])
+                except (json.JSONDecodeError, KeyError):
+                    pass
+            else:
+                new_content = claude_append + "\n"
+                encoded = base64.b64encode(new_content.encode()).decode()
+                gh(["api", "-X", "PUT", f"repos/{repo}/contents/CLAUDE.md",
+                   "-f", "message=Create CLAUDE.md with Agent skills section",
+                   "-f", f"content={encoded}",
+                   "-f", f"branch={branch_name}"])
+        except Exception:
+            pass
+
+    try:
+        pr_create = gh(["pr", "create", "--repo", repo, "--head", branch_name,
+                       "--base", default_branch,
+                       "--title", "Onboarding: agent docs and CI",
+                       "--body", "Automated agent docs and CI workflow setup"])
+
+        if pr_create and "error" not in pr_create.lower():
+            pr_url = pr_create.strip()
+            return {
+                "action": "created",
+                "pr_url": pr_url,
+                "branch": branch_name,
+                "files": list(files_to_write.keys()) + (["CLAUDE.md"] if claude_append else []),
+            }
+        else:
+            pr_list = gh(["pr", "list", "--repo", repo, "--head", branch_name, "--state", "open"])
+            if pr_list:
+                try:
+                    prs = json.loads(pr_list)
+                    if prs:
+                        pr_url = prs[0].get("url", "")
+                        return {
+                            "action": "updated",
+                            "pr_url": pr_url,
+                            "branch": branch_name,
+                            "files": list(files_to_write.keys()) + (["CLAUDE.md"] if claude_append else []),
+                        }
+                except json.JSONDecodeError:
+                    pass
+
+            return {
+                "action": "needs-human",
+                "reason": "could not create or find PR",
+            }
+    except Exception as e:
+        return {
+            "action": "needs-human",
+            "reason": f"error creating PR: {str(e)}",
+        }
+
+
 def apply(repo: str, facts: dict | None = None, *, profiles_dir: Path | None = None,
           registry_path: Path | None = None, gh=_gh) -> dict:
     """Apply local changes: create missing labels, register board, draft profile.
@@ -630,9 +928,9 @@ def apply(repo: str, facts: dict | None = None, *, profiles_dir: Path | None = N
 
 
 def main():
-    """CLI entry point: project_onboard.py plan|apply <owner/repo> [--local]"""
+    """CLI entry point: project_onboard.py plan|apply <owner/repo> [--local|--pr]"""
     if len(sys.argv) < 3:
-        sys.exit("usage: project_onboard.py plan <owner/repo> | apply <owner/repo> --local")
+        sys.exit("usage: project_onboard.py plan <owner/repo> | apply <owner/repo> --local|--pr")
 
     cmd = sys.argv[1]
     repo = sys.argv[2]
@@ -645,51 +943,89 @@ def main():
         print(json.dumps(result, indent=2))
 
     elif cmd == "apply":
-        if len(sys.argv) != 4 or sys.argv[3] != "--local":
-            sys.exit("usage: project_onboard.py apply <owner/repo> --local")
+        if len(sys.argv) != 4 or sys.argv[3] not in ("--local", "--pr"):
+            sys.exit("usage: project_onboard.py apply <owner/repo> --local|--pr")
 
         facts = inspect(repo)
-        result = apply(repo, facts=facts)
+        plan_out = plan(facts)
 
-        # Print human-readable summary
-        print(f"\nOnboarding apply for {repo} --local:\n")
+        if sys.argv[3] == "--local":
+            result = apply(repo, facts=facts)
 
-        # Labels
-        labels = result["labels"]
-        if labels["action"] == "created":
-            print(f"  labels: created {', '.join(labels['labels'])}")
-        else:
-            print(f"  labels: unchanged")
+            # Print human-readable summary
+            print(f"\nOnboarding apply for {repo} --local:\n")
 
-        # Board
-        board = result["board"]
-        if board["action"] == "created":
-            print(f"  board: created {repo}")
-        else:
-            print(f"  board: unchanged")
+            # Labels
+            labels = result["labels"]
+            if labels["action"] == "created":
+                print(f"  labels: created {', '.join(labels['labels'])}")
+            else:
+                print(f"  labels: unchanged")
 
-        # Profile
-        profile = result["profile"]
-        if profile["action"] == "created":
-            print(f"  profile: created config/projects/{repo.split('/')[1]}.json")
-            if profile.get("diff"):
-                print("\n  diff (new file):")
-                for line in profile["diff"].split("\n")[:20]:
-                    if line:
-                        print(f"    {line}")
-        elif profile["action"] == "unchanged":
-            print(f"  profile: unchanged")
-        elif profile["action"] == "conflict":
-            print(f"  profile: conflict — existing differs from draft (edit detected)")
-            if profile.get("diff"):
-                print("\n  diff:")
-                for line in profile["diff"].split("\n")[:30]:
-                    if line:
-                        print(f"    {line}")
-        else:  # needs-human
-            print(f"  profile: needs-human — {profile.get('reason', '')}")
+            # Board
+            board = result["board"]
+            if board["action"] == "created":
+                print(f"  board: created {repo}")
+            else:
+                print(f"  board: unchanged")
 
-        print()
+            # Profile
+            profile = result["profile"]
+            if profile["action"] == "created":
+                print(f"  profile: created config/projects/{repo.split('/')[1]}.json")
+                if profile.get("diff"):
+                    print("\n  diff (new file):")
+                    for line in profile["diff"].split("\n")[:20]:
+                        if line:
+                            print(f"    {line}")
+            elif profile["action"] == "unchanged":
+                print(f"  profile: unchanged")
+            elif profile["action"] == "conflict":
+                print(f"  profile: conflict — existing differs from draft (edit detected)")
+                if profile.get("diff"):
+                    print("\n  diff:")
+                    for line in profile["diff"].split("\n")[:30]:
+                        if line:
+                            print(f"    {line}")
+            else:  # needs-human
+                print(f"  profile: needs-human — {profile.get('reason', '')}")
+
+            print()
+
+        else:  # --pr
+            result = _apply_pr(repo, facts, plan_out)
+
+            # Print human-readable summary
+            print(f"\nOnboarding apply for {repo} --pr:\n")
+
+            action = result.get("action", "unknown")
+            if action == "unchanged":
+                print(f"  status: no changes needed")
+            elif action == "created":
+                print(f"  status: PR created")
+                print(f"  branch: {result.get('branch', 'unknown')}")
+                print(f"  url: {result.get('pr_url', 'unknown')}")
+                files = result.get("files", [])
+                if files:
+                    print(f"  files: {', '.join(files)}")
+            elif action == "updated":
+                print(f"  status: PR updated")
+                print(f"  branch: {result.get('branch', 'unknown')}")
+                print(f"  url: {result.get('pr_url', 'unknown')}")
+                files = result.get("files", [])
+                if files:
+                    print(f"  files: {', '.join(files)}")
+            elif action == "needs-human":
+                print(f"  status: needs-human")
+                print(f"  reason: {result.get('reason', 'unknown')}")
+                if result.get("how_to_fix"):
+                    print(f"  how_to_fix: {result.get('how_to_fix')}")
+            else:
+                print(f"  status: {action}")
+                if result.get("reason"):
+                    print(f"  reason: {result.get('reason')}")
+
+            print()
 
     else:
         sys.exit(f"unknown command: {cmd}\nusage: project_onboard.py plan|apply <owner/repo>")

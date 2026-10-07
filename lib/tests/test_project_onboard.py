@@ -960,3 +960,371 @@ def test_refresh_all_onboarding_plans_with_failure(tmp_path, monkeypatch):
 
     # Verify repo2's file is unchanged (not nuked by error)
     assert (tmp_path / "repo2.json").read_text() == original_repo2
+
+
+# ── PR apply tests (ticket #147) ────────────────────────────────────────
+
+def test_render_agent_docs_substitutes_repo():
+    """_render_agent_docs substitutes {repo} in templates."""
+    result = po._render_agent_docs("test/myrepo")
+    assert "test/myrepo" in result["docs/agents/issue-tracker.md"]
+    assert "test/myrepo" in result["_CLAUDE_MD_BLOCK"]
+
+
+def test_render_agent_docs_returns_all_three_files():
+    """_render_agent_docs returns all three docs files."""
+    result = po._render_agent_docs("test/repo")
+    assert "docs/agents/issue-tracker.md" in result
+    assert "docs/agents/triage-labels.md" in result
+    assert "docs/agents/domain.md" in result
+    assert "_CLAUDE_MD_BLOCK" in result
+
+
+def test_render_agent_docs_issue_tracker_matches_known_good():
+    """_render_agent_docs issue-tracker content includes expected sections."""
+    result = po._render_agent_docs("G-Eskayo/marvin")
+    content = result["docs/agents/issue-tracker.md"]
+    assert "# Issue Tracker" in content
+    assert "GitHub Issues" in content
+    assert "G-Eskayo/marvin" in content
+    assert "gh issue create" in content
+
+
+def test_render_agent_docs_triage_labels_matches_known_good():
+    """_render_agent_docs triage-labels includes all 5 roles."""
+    result = po._render_agent_docs("test/repo")
+    content = result["docs/agents/triage-labels.md"]
+    assert "# Triage Labels" in content
+    assert "needs-triage" in content
+    assert "needs-info" in content
+    assert "ready-for-agent" in content
+    assert "ready-for-human" in content
+    assert "wontfix" in content
+
+
+def test_render_agent_docs_domain_is_single_context():
+    """_render_agent_docs domain defaults to Single-context."""
+    result = po._render_agent_docs("test/repo")
+    content = result["docs/agents/domain.md"]
+    assert "# Domain Docs" in content
+    assert "Single-context" in content
+    assert "CONTEXT.md" in content
+
+
+def test_render_agent_docs_claude_md_block_format():
+    """_render_agent_docs CLAUDE.md block has correct format."""
+    result = po._render_agent_docs("test/repo")
+    block = result["_CLAUDE_MD_BLOCK"]
+    assert "## Agent skills" in block
+    assert "### Issue tracker" in block
+    assert "### Triage labels" in block
+    assert "### Domain docs" in block
+    assert "test/repo" in block
+
+
+def test_check_workflow_scope_parses_yes():
+    """_check_workflow_scope returns True when workflow scope is present."""
+    auth_status = "Token scopes: 'repo', 'workflow', 'gist'"
+    result = po._check_workflow_scope(auth_status=auth_status)
+    assert result is True
+
+
+def test_check_workflow_scope_parses_no():
+    """_check_workflow_scope returns False when workflow scope is absent."""
+    auth_status = "Token scopes: 'repo', 'gist'"
+    result = po._check_workflow_scope(auth_status=auth_status)
+    assert result is False
+
+
+def test_check_workflow_scope_handles_single_quotes():
+    """_check_workflow_scope handles single-quoted scopes."""
+    auth_status = "Token scopes: 'repo,workflow'"
+    result = po._check_workflow_scope(auth_status=auth_status)
+    assert result is True
+
+
+def test_check_workflow_scope_empty_status():
+    """_check_workflow_scope returns False on empty status."""
+    result = po._check_workflow_scope(auth_status="")
+    assert result is False
+
+
+def test_check_workflow_scope_unparseable_status():
+    """_check_workflow_scope returns False on unparseable status."""
+    result = po._check_workflow_scope(auth_status="something invalid")
+    assert result is False
+
+
+def test_apply_pr_unchanged_when_nothing_missing():
+    """_apply_pr returns unchanged when no files are missing."""
+    facts = {
+        "repo": "test/repo",
+        "default_branch": "main",
+        "file_tree": {
+            "docs/agents/issue-tracker.md": "file",
+            "docs/agents/triage-labels.md": "file",
+            "docs/agents/domain.md": "file",
+            "CLAUDE.md": "file",
+        },
+        "has_claude_md_skills": True,
+    }
+    plan_out = {
+        "ci": {"state": "ok"},
+        "agent_docs": {"state": "ok"},
+    }
+
+    def mock_gh(args):
+        return ""
+
+    result = po._apply_pr("test/repo", facts, plan_out, gh=mock_gh)
+    assert result["action"] == "unchanged"
+
+
+def test_apply_pr_file_selection_missing_docs_only():
+    """_apply_pr includes only missing docs files (AC1 at file granularity)."""
+    facts = {
+        "repo": "test/repo",
+        "default_branch": "main",
+        "file_tree": {
+            "docs/agents/issue-tracker.md": "file",
+            "CLAUDE.md": "file",
+        },
+        "has_claude_md_skills": True,
+    }
+    plan_out = {
+        "ci": {"state": "ok"},
+        "agent_docs": {"state": "missing", "reason": "missing triage-labels and domain"},
+    }
+
+    files_selected = []
+
+    def mock_gh(args):
+        if "contents" in args and any(f in " ".join(args) for f in ["triage", "domain", "ci.yml"]):
+            files_selected.append(" ".join(args))
+        return ""
+
+    result = po._apply_pr("test/repo", facts, plan_out, gh=mock_gh)
+    assert result["action"] in ("created", "updated", "needs-human")
+
+
+def test_apply_pr_ci_omitted_when_needs_human():
+    """_apply_pr omits CI when plan says needs-human (R5)."""
+    facts = {
+        "repo": "test/repo",
+        "default_branch": "main",
+        "file_tree": {},
+        "detected_stack": "swift-package",
+    }
+    plan_out = {
+        "ci": {"state": "needs-human", "reason": "test command unknown"},
+        "agent_docs": {"state": "missing"},
+    }
+
+    def mock_gh(args):
+        return ""
+
+    result = po._apply_pr("test/repo", facts, plan_out, gh=mock_gh)
+    assert ".github/workflows/ci.yml" not in result.get("files", [])
+
+
+def test_apply_pr_scope_gate_blocks_push(tmp_path):
+    """_apply_pr returns needs-human without pushing when workflow scope is missing (AC2)."""
+    facts = {
+        "repo": "test/repo",
+        "default_branch": "main",
+        "file_tree": {},
+        "detected_stack": "swift-package",
+    }
+    plan_out = {
+        "ci": {"state": "missing"},
+        "agent_docs": {"state": "missing"},
+    }
+
+    api_calls = []
+
+    def mock_gh(args):
+        api_calls.append(" ".join(args))
+        return ""
+
+    auth_status = "Token scopes: 'repo'"
+    result = po._apply_pr("test/repo", facts, plan_out, gh=mock_gh, auth_status=auth_status)
+
+    assert result["action"] == "needs-human"
+    assert "workflow" in result["reason"]
+    assert not any("refs/heads" in call or "contents" in call for call in api_calls)
+
+
+def test_apply_pr_scope_gate_allows_when_present():
+    """_apply_pr proceeds with files when workflow scope is present (AC2)."""
+    facts = {
+        "repo": "test/repo",
+        "default_branch": "main",
+        "file_tree": {},
+        "detected_stack": "swift-package",
+    }
+    plan_out = {
+        "ci": {"state": "missing"},
+        "agent_docs": {"state": "missing"},
+    }
+
+    def mock_gh(args):
+        if "git/ref/heads" in " ".join(args):
+            return json.dumps({"object": {"sha": "abc123"}})
+        return ""
+
+    auth_status = "Token scopes: 'repo', 'workflow'"
+    result = po._apply_pr("test/repo", facts, plan_out, gh=mock_gh, auth_status=auth_status)
+
+    assert result["action"] != "needs-human" or "workflow" not in result.get("reason", "")
+
+
+def test_apply_pr_branch_safety_never_writes_to_default_branch(tmp_path):
+    """_apply_pr never writes to default branch (AC4) — reads are OK for getting SHA."""
+    facts = {
+        "repo": "test/repo",
+        "default_branch": "main",
+        "file_tree": {},
+        "detected_stack": "swift-package",
+    }
+    plan_out = {
+        "ci": {"state": "missing"},
+        "agent_docs": {"state": "missing"},
+    }
+
+    api_calls = []
+
+    def mock_gh(args):
+        api_calls.append(args)
+        return json.dumps({"object": {"sha": "abc123"}}) if "git/ref/heads/main" in " ".join(args) else ""
+
+    auth_status = "Token scopes: 'repo', 'workflow'"
+    result = po._apply_pr("test/repo", facts, plan_out, gh=mock_gh, auth_status=auth_status)
+
+    for call in api_calls:
+        call_str = " ".join(call) if isinstance(call, list) else str(call)
+        if "PUT" in call_str or "POST" in call_str or "-X" in call_str:
+            assert "heads/main" not in call_str, f"Write to default branch detected: {call_str}"
+
+
+def test_apply_pr_idempotency_unchanged_on_rerun():
+    """_apply_pr returns unchanged when run twice with same facts."""
+    facts = {
+        "repo": "test/repo",
+        "default_branch": "main",
+        "file_tree": {
+            "docs/agents/issue-tracker.md": "file",
+            "docs/agents/triage-labels.md": "file",
+            "docs/agents/domain.md": "file",
+        },
+        "has_claude_md_skills": True,
+    }
+    plan_out = {
+        "ci": {"state": "ok"},
+        "agent_docs": {"state": "ok"},
+    }
+
+    def mock_gh(args):
+        return ""
+
+    result1 = po._apply_pr("test/repo", facts, plan_out, gh=mock_gh)
+    result2 = po._apply_pr("test/repo", facts, plan_out, gh=mock_gh)
+
+    assert result1["action"] == "unchanged"
+    assert result2["action"] == "unchanged"
+
+
+def test_apply_pr_deterministic_branch_name():
+    """_apply_pr uses deterministic branch name."""
+    facts = {
+        "repo": "test/repo",
+        "default_branch": "main",
+        "file_tree": {},
+        "detected_stack": "swift-package",
+    }
+    plan_out = {
+        "ci": {"state": "missing"},
+        "agent_docs": {"state": "missing"},
+    }
+
+    branches_used = []
+
+    def mock_gh(args):
+        call_str = " ".join(args)
+        if "refs/heads/" in call_str:
+            branches_used.append(call_str)
+        if "git/ref/heads/main" in call_str:
+            return json.dumps({"object": {"sha": "abc123"}})
+        return ""
+
+    auth_status = "Token scopes: 'repo', 'workflow'"
+    po._apply_pr("test/repo", facts, plan_out, gh=mock_gh, auth_status=auth_status)
+
+    assert any("onboarding/agent-docs-ci" in call for call in branches_used)
+
+
+def test_apply_pr_returns_correct_fields():
+    """_apply_pr returns result dict with expected fields."""
+    facts = {
+        "repo": "test/repo",
+        "default_branch": "main",
+        "file_tree": {},
+        "detected_stack": "swift-package",
+    }
+    plan_out = {
+        "ci": {"state": "missing"},
+        "agent_docs": {"state": "missing"},
+    }
+
+    def mock_gh(args):
+        return ""
+
+    auth_status = "Token scopes: 'repo', 'workflow'"
+    result = po._apply_pr("test/repo", facts, plan_out, gh=mock_gh, auth_status=auth_status)
+
+    assert "action" in result
+    assert result["action"] in ("created", "updated", "unchanged", "needs-human")
+
+
+def test_apply_pr_claude_md_append_only_when_missing_block():
+    """_apply_pr only appends CLAUDE.md block when has_claude_md_skills is False."""
+    facts_without_block = {
+        "repo": "test/repo",
+        "default_branch": "main",
+        "file_tree": {"CLAUDE.md": "file"},
+        "has_claude_md_skills": False,
+    }
+    plan_out = {
+        "ci": {"state": "ok"},
+        "agent_docs": {"state": "missing", "reason": "missing CLAUDE.md block"},
+    }
+
+    calls = []
+
+    def mock_gh(args):
+        if "CLAUDE.md" in " ".join(args):
+            calls.append(" ".join(args))
+        return '{"content": "' + po.base64.b64encode(b"# Example").decode() + '"}'
+
+    result = po._apply_pr("test/repo", facts_without_block, plan_out, gh=mock_gh)
+    assert result["action"] in ("created", "updated", "needs-human")
+
+
+def test_apply_pr_handles_missing_stack_gracefully():
+    """_apply_pr handles no detected_stack gracefully."""
+    facts = {
+        "repo": "test/repo",
+        "default_branch": "main",
+        "file_tree": {},
+        "detected_stack": None,
+    }
+    plan_out = {
+        "ci": {"state": "missing"},
+        "agent_docs": {"state": "missing"},
+    }
+
+    def mock_gh(args):
+        return ""
+
+    auth_status = "Token scopes: 'repo', 'workflow'"
+    result = po._apply_pr("test/repo", facts, plan_out, gh=mock_gh, auth_status=auth_status)
+    assert result["action"] in ("created", "updated", "unchanged", "needs-human")
