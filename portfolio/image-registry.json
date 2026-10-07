@@ -19,6 +19,13 @@
     "salt": 0,
     "style": "waveform"
   },
+  "distributed-llm-inference": {
+    "chosen": true,
+    "hash": "228696868c968651aaefffff4a180000",
+    "look": "two-nodes",
+    "salt": 0,
+    "style": "two-nodes"
+  },
   "helicopter-crutches": {
     "hash": "4d29ca5230246870aaefffff44440400",
     "salt": 0,
