@@ -5,6 +5,7 @@ import { homedir } from 'os'
 import path from 'path'
 import { whois, loadAllowlist, isAllowed } from './device_gate.js'
 import { createDashboardApiRouter } from './dashboard_api.js'
+import { createLiveChannel } from './live_channel.js'
 
 const execFileP = promisify(execFile)
 
@@ -36,6 +37,7 @@ function getUptimeSeconds() {
 }
 
 const dashboardApiRouter = createDashboardApiRouter()
+const liveChannelRouter = createLiveChannel()
 
 const server = createServer(async (req, res) => {
   // Device gate: check allowlist
@@ -54,6 +56,10 @@ const server = createServer(async (req, res) => {
   // Route through dashboard API
   const handled = await dashboardApiRouter(req, res)
   if (handled) return
+
+  // Route through live channel
+  const liveHandled = await liveChannelRouter(req, res)
+  if (liveHandled) return
 
   // Single endpoint: GET /status
   if (req.method === 'GET' && req.url === '/status') {

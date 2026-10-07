@@ -76,6 +76,22 @@ Get file content from a documentation repo.
 
 **Response**: `200 { "ok": true, "data": <file content as string> }`
 
+### `GET /live`
+
+Live event stream (Server-Sent Events).
+
+Establishes an SSE connection that delivers push notifications when activity or documentation changes. Watchers only run while at least one client is connected (lazy start/stop), so no background work occurs with no open apps. Reconnecting resumes updates from that point forward; no backlog or catch-up buffer.
+
+**Response headers**: `Content-Type: text/event-stream`, `Cache-Control: no-cache`, `Connection: keep-alive`
+
+**Events**:
+- `event: connected` — stream established, `data: {"ok":true}`
+- `event: trigger` — data changed, `data: {"topic":"<topic>","source":"<source>"}`
+  - `topic`: `"activity"` (ticket stages, dispatch state, registry) or `"docs"` (documentation files)
+  - `source`: file path (e.g., `"file:dispatch-status.json"`) or other origin identifier
+
+**Heartbeat**: Periodic comments (`: heartbeat\n\n`) every ~30s keep TCP connections alive on mobile networks that drop idle connections.
+
 ## Running it
 
 ```bash
