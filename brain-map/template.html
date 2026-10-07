@@ -170,6 +170,18 @@
     background: none; border: none; color: var(--cat-creation); cursor: pointer;
     font-family: inherit; font-size: 11px; margin-left: 8px; padding: 3px 6px;
   }
+  #code-layer-tests-toggle {
+    position: absolute; bottom: 50px; left: 50%; transform: translateX(-50%);
+    font-size: 11px; color: var(--text-secondary); background: rgba(26,26,25,0.92);
+    backdrop-filter: blur(6px);
+    border: 1px solid var(--border); border-radius: 999px; padding: 5px 8px 5px 14px;
+    display: none;
+  }
+  #code-layer-tests-toggle.show { display: block; }
+  #code-layer-tests-toggle button {
+    background: none; border: none; color: var(--cat-creation); cursor: pointer;
+    font-family: inherit; font-size: 11px; margin-left: 8px; padding: 3px 6px;
+  }
 </style>
 
 <div class="viz-root" id="stage">
@@ -200,6 +212,7 @@
     <div id="tooltip"></div>
     <div id="selection-note">Showing connections for <b id="sel-name" class="mono"></b><button id="sel-clear">clear ✕</button></div>
     <div id="code-layer-note">Viewing code for <b id="code-name" class="mono"></b><button id="code-close">← back</button></div>
+    <div id="code-layer-tests-toggle"><span id="tests-label">test files</span><button id="tests-toggle">show</button></div>
 
     <footer class="mono">branches = structure &nbsp;·&nbsp; gold = real wiring (solid <b>calls:</b> · <b>– –</b> undeclared · <b>····</b> hook/cron) &nbsp;·&nbsp; dashed ring = click to open its forest</footer>
   </div>
@@ -964,6 +977,13 @@
   });
   document.getElementById("code-close").addEventListener("click", closeCodeLayer);
 
+  // Toggle test files visibility in code layer
+  document.getElementById("tests-toggle").addEventListener("click", function () {
+    showTests = !showTests;
+    var btn = document.getElementById("tests-toggle");
+    btn.textContent = showTests ? "hide" : "show";
+  });
+
   // Update code layer note visibility and content
   var prevOpenNodeId = null;
   function updateCodeLayerNote() {
@@ -972,9 +992,19 @@
       if (node) {
         document.getElementById("code-layer-note").classList.add("show");
         document.getElementById("code-name").textContent = node.name || node.id;
+        // Show tests toggle only if code layer has test nodes
+        var hasTests = node.code && node.code.tests && node.code.tests.length > 0;
+        if (hasTests) {
+          document.getElementById("code-layer-tests-toggle").classList.add("show");
+          document.getElementById("tests-toggle").textContent = showTests ? "hide" : "show";
+        } else {
+          document.getElementById("code-layer-tests-toggle").classList.remove("show");
+        }
       }
     } else {
       document.getElementById("code-layer-note").classList.remove("show");
+      document.getElementById("code-layer-tests-toggle").classList.remove("show");
+      showTests = false; // Reset when closing
     }
   }
 
@@ -1129,11 +1159,11 @@
       }
     });
 
-    // code layer — owned files/functions and borrowed nodes, only when open
+    // code layer — owned files/functions, test nodes (when toggled), and borrowed nodes, only when open
     if (openNodeId !== null && byId[openNodeId]) {
       var openNode = byId[openNodeId];
       var code = openNode.code;
-      if (code && (code.files.length > 0 || code.functions.length > 0)) {
+      if (code && (code.files.length > 0 || code.functions.length > 0 || (code.tests && code.tests.length > 0 && showTests))) {
         // Draw call edges between owned nodes
         if (code.edges) {
           code.edges.forEach(function (edge) {
@@ -1155,6 +1185,12 @@
         (code.files || []).concat(code.functions || []).forEach(function (n) {
           codeNodeIds[n.id] = n;
         });
+        // Include test nodes if toggled on
+        if (showTests && code.tests) {
+          code.tests.forEach(function (n) {
+            codeNodeIds[n.id] = n;
+          });
+        }
 
         Object.keys(codeNodeIds).forEach(function (nodeId) {
           var codeNode = codeNodeIds[nodeId];
@@ -1371,6 +1407,7 @@
   // Test hook (brain-map/tests/labels.test.mjs): drive frames from outside,
   // fix the camera, and read back what was actually drawn.
   var externalDrive = false, rafId = null;
+  var showTests = false; // Toggle for showing test files in code layer
   window.__map = {
     driveExternally: function () { externalDrive = true; if (rafId !== null) cancelAnimationFrame(rafId); },
     setCamera: function (y, p) { yaw = y; pitch = p; autoRotate = false; cameraTargetNode = null; },
@@ -1378,7 +1415,8 @@
     nodes: function () { return drawnNodes.slice(); },
     open: function (id) { openNodeId = id; },
     close: function () { openNodeId = null; },
-    openId: function () { return openNodeId; }
+    openId: function () { return openNodeId; },
+    showTests: function (v) { if (arguments.length) showTests = !!v; return showTests; }
   };
 
   function quadPoint(p0, p1, p2, t) {

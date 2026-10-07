@@ -391,3 +391,189 @@ def test_code_layer_groups_by_community():
     for node in code_layer["files"] + code_layer["functions"]:
         assert node["community"] >= 1
         assert node["community_name"] != ""
+
+
+def test_code_layer_filters_vendor_paths():
+    """Vendor and generated files should not appear in owned or borrowed."""
+    graph = {
+        "nodes": [
+            {
+                "id": "skills_diagnose_main",
+                "label": "main()",
+                "file_type": "code",
+                "source_file": "skills/diagnose/main.py",
+                "community": 1
+            },
+            {
+                "id": "skills_diagnose_vendor",
+                "label": "motion.min.js",
+                "file_type": "code",
+                "source_file": "skills/diagnose/vendor/motion.12.42.2.js",
+                "community": 1,
+                "_callable": True
+            },
+            {
+                "id": "skills_diagnose_pyc",
+                "label": "compiled",
+                "file_type": "code",
+                "source_file": "skills/diagnose/__pycache__/main.cpython-39.pyc",
+                "community": 1
+            },
+            {
+                "id": "skills_diagnose_dist",
+                "label": "built",
+                "file_type": "code",
+                "source_file": "skills/diagnose/dist/bundle.min.js",
+                "community": 1,
+                "_callable": True
+            }
+        ],
+        "links": [
+            {"source": "skills_diagnose_main", "target": "skills_diagnose_vendor"},
+            {"source": "skills_diagnose_main", "target": "skills_diagnose_pyc"}
+        ]
+    }
+
+    code_layer = generate._compute_code_layer(graph, "skills/diagnose")
+
+    owned_ids = {n["id"] for nodes in [code_layer["files"], code_layer["functions"]] for n in nodes}
+    borrowed_ids = {n["id"] for n in code_layer["borrowed"]}
+
+    # Vendor/generated should be completely absent
+    assert "skills_diagnose_vendor" not in owned_ids
+    assert "skills_diagnose_vendor" not in borrowed_ids
+    assert "skills_diagnose_pyc" not in owned_ids
+    assert "skills_diagnose_pyc" not in borrowed_ids
+    assert "skills_diagnose_dist" not in owned_ids
+    assert "skills_diagnose_dist" not in borrowed_ids
+
+    # Only the main file should be owned
+    assert "skills_diagnose_main" in owned_ids
+
+
+def test_code_layer_bucketing_test_files():
+    """Test files should be bucketed separately in code['tests'], not in owned."""
+    graph = {
+        "nodes": [
+            {
+                "id": "skills_diagnose_main",
+                "label": "main.py",
+                "file_type": "code",
+                "source_file": "skills/diagnose/main.py",
+                "community": 1
+            },
+            {
+                "id": "skills_diagnose_test",
+                "label": "test_main.py",
+                "file_type": "code",
+                "source_file": "skills/diagnose/tests/test_main.py",
+                "community": 1
+            },
+            {
+                "id": "skills_diagnose_test_helper",
+                "label": "test_helper()",
+                "file_type": "code",
+                "source_file": "skills/diagnose/test_helpers.py",
+                "source_location": "L5",
+                "community": 1,
+                "_callable": True
+            }
+        ],
+        "links": []
+    }
+
+    code_layer = generate._compute_code_layer(graph, "skills/diagnose")
+
+    owned_ids = {n["id"] for nodes in [code_layer["files"], code_layer["functions"]] for n in nodes}
+    test_ids = {n["id"] for n in code_layer["tests"]}
+
+    # Main should be owned, tests should be bucketed separately
+    assert "skills_diagnose_main" in owned_ids
+    assert "skills_diagnose_test" in test_ids
+    assert "skills_diagnose_test_helper" in test_ids
+    assert "skills_diagnose_test" not in owned_ids
+    assert "skills_diagnose_test_helper" not in owned_ids
+    # Tests should not leak into owned bucket
+    assert len(test_ids) == 2
+    assert len(owned_ids) == 1
+
+
+def test_code_layer_test_structure():
+    """Test nodes should have same structure as owned nodes (files vs functions)."""
+    graph = {
+        "nodes": [
+            {
+                "id": "skills_tdd_test_file",
+                "label": "test_main.py",
+                "file_type": "code",
+                "source_file": "skills/tdd/tests/test_main.py",
+                "community": 1
+            },
+            {
+                "id": "skills_tdd_test_func",
+                "label": "test_something()",
+                "file_type": "code",
+                "source_file": "skills/tdd/tests/test_main.py",
+                "source_location": "L10",
+                "community": 1,
+                "_callable": True
+            }
+        ],
+        "links": []
+    }
+
+    code_layer = generate._compute_code_layer(graph, "skills/tdd")
+
+    assert "tests" in code_layer
+    assert isinstance(code_layer["tests"], list)
+    assert len(code_layer["tests"]) == 2
+    # Test file and function should both have community info
+    for test_node in code_layer["tests"]:
+        assert "id" in test_node
+        assert "label" in test_node
+        assert "community" in test_node
+        assert "source_file" in test_node
+
+
+def test_code_layer_live_regression_guard_no_vendor_in_borrowing():
+    """Live regression: ensure borrowed nodes never include vendor/generated code."""
+    graph = {
+        "nodes": [
+            {
+                "id": "skills_diagnose_main",
+                "label": "main()",
+                "file_type": "code",
+                "source_file": "skills/diagnose/main.py",
+                "community": 1
+            },
+            {
+                "id": "external_func",
+                "label": "external_func()",
+                "file_type": "code",
+                "source_file": "skills/other/func.py",
+                "source_location": "L5",
+                "community": 2,
+                "_callable": True
+            },
+            {
+                "id": "vendor_motion",
+                "label": "motion.js",
+                "file_type": "code",
+                "source_file": "brain-map/vendor/motion.12.42.2.js",
+                "community": 3
+            }
+        ],
+        "links": [
+            {"source": "skills_diagnose_main", "target": "external_func"},
+            {"source": "skills_diagnose_main", "target": "vendor_motion"}
+        ]
+    }
+
+    code_layer = generate._compute_code_layer(graph, "skills/diagnose")
+
+    borrowed_ids = {n["id"] for n in code_layer["borrowed"]}
+
+    # external_func should be borrowed
+    assert "external_func" in borrowed_ids
+    # vendor_motion should NOT be borrowed, despite being called
+    assert "vendor_motion" not in borrowed_ids

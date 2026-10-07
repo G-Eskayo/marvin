@@ -180,12 +180,14 @@ test('code layer data has correct structure', async (t) => {
     const functionsValid = Array.isArray(code.functions) && code.functions.every(f => f.id && f.label && f.community !== undefined)
     const edgesValid = Array.isArray(code.edges)
     const borrowedValid = Array.isArray(code.borrowed)
+    const testsValid = 'tests' in code && Array.isArray(code.tests)
     return {
       skip: false,
       filesValid,
       functionsValid,
       edgesValid,
-      borrowedValid
+      borrowedValid,
+      testsValid
     }
   })
   if (result.skip) return t.skip('no openable nodes in test tree')
@@ -193,4 +195,61 @@ test('code layer data has correct structure', async (t) => {
   assert.ok(result.functionsValid, 'functions in code layer have incorrect structure')
   assert.ok(result.edgesValid, 'edges in code layer not an array')
   assert.ok(result.borrowedValid, 'borrowed nodes in code layer not an array')
+  assert.ok(result.testsValid, 'code layer missing tests array')
+})
+
+test('tests toggle controls visibility of test nodes', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const page = await openMap()
+  const result = await page.evaluate(() => {
+    const allNodes = window.__map.nodes()
+    const openable = allNodes.find(n => n.openable && n.code && n.code.tests && n.code.tests.length > 0)
+    if (!openable) return { skip: true }
+
+    window.__map.open(openable.id)
+    const initial = window.__map.showTests()
+    window.__map.showTests(true)
+    const afterSet = window.__map.showTests()
+    window.__map.showTests(false)
+    const afterClear = window.__map.showTests()
+
+    return {
+      skip: false,
+      initialFalse: initial === false,
+      toggleWorks: afterSet === true && afterClear === false
+    }
+  })
+  if (result.skip) return t.skip('no openable nodes with test files in test tree')
+  assert.ok(result.initialFalse, 'showTests should default to false')
+  assert.ok(result.toggleWorks, 'showTests toggle does not work correctly')
+})
+
+test('no vendor or generated code appears in code layer', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const page = await openMap()
+  const result = await page.evaluate(() => {
+    const allNodes = window.__map.nodes()
+    const openable = allNodes.filter(n => n.openable)
+    if (openable.length === 0) return { skip: true }
+
+    const vendorPatterns = ['/vendor/', '/node_modules/', '/__pycache__/', '/dist/', '/build/', '.min.js', '.pyc']
+    const hasVendor = openable.some(n => {
+      const code = n.code
+      if (!code) return false
+      const allFiles = [
+        ...code.files,
+        ...code.functions,
+        ...code.borrowed,
+        ...code.tests
+      ]
+      return allFiles.some(f => {
+        const sf = f.source_file || ''
+        return vendorPatterns.some(p => sf.includes(p))
+      })
+    })
+
+    return { skip: false, hasVendor }
+  })
+  if (result.skip) return t.skip('no openable nodes in test tree')
+  assert.ok(!result.hasVendor, 'vendor or generated code found in code layer')
 })
