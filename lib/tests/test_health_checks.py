@@ -522,7 +522,7 @@ def test_missing_profiles_clears_when_profile_exists(tmp_path, monkeypatch):
     monkeypatch.setattr(ticket_agents, "_gh", None)
 
     results = hc.check_missing_profiles(profiles_dir=profiles_dir)
-    assert len(results) == 0
+    assert not results
 
 
 def test_missing_profiles_multiple_projects_sorted(tmp_path, monkeypatch):
@@ -569,8 +569,8 @@ def test_missing_profiles_snapshot_passed_directly(tmp_path, monkeypatch):
 
     results = hc.check_missing_profiles(snapshot={}, profiles_dir=profiles_dir)
 
-    assert len(board_repos_called) == 0
-    assert len(collect_called) == 0
+    assert not board_repos_called
+    assert not collect_called
     assert len(results) == 1
     assert results[0]["value"] == 5
 

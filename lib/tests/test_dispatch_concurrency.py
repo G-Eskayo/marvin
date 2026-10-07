@@ -148,7 +148,7 @@ def test_partition_alive_handles_missing_pid():
     def is_alive(pid):
         return True  # should never be called
     alive, dead = dc.partition_alive(records, is_alive)
-    assert len(alive) == 0 and len(dead) == 2
+    assert not alive and len(dead) == 2
 
 
 def test_read_task_records_globs_json_files_and_skips_malformed():

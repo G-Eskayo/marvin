@@ -1,64 +1,6 @@
 [
   {
-    "timestamp": "2026-10-07T00:51:17.699396+00:00",
-    "metrics": {
-      "pytest_passed": {
-        "value": 1417,
-        "higher_is_better": true
-      },
-      "pytest_failed": {
-        "value": 1,
-        "higher_is_better": false
-      },
-      "vitest_passed": {
-        "value": 708,
-        "higher_is_better": true
-      },
-      "vitest_failed": {
-        "value": 0,
-        "higher_is_better": false
-      },
-      "tests_passed": {
-        "value": 2125,
-        "higher_is_better": true
-      },
-      "tests_failed": {
-        "value": 1,
-        "higher_is_better": false
-      }
-    }
-  },
-  {
-    "timestamp": "2026-10-07T03:08:02.896022+00:00",
-    "metrics": {
-      "pytest_passed": {
-        "value": 1433,
-        "higher_is_better": true
-      },
-      "pytest_failed": {
-        "value": 1,
-        "higher_is_better": false
-      },
-      "vitest_passed": {
-        "value": 721,
-        "higher_is_better": true
-      },
-      "vitest_failed": {
-        "value": 0,
-        "higher_is_better": false
-      },
-      "tests_passed": {
-        "value": 2154,
-        "higher_is_better": true
-      },
-      "tests_failed": {
-        "value": 1,
-        "higher_is_better": false
-      }
-    }
-  },
-  {
-    "timestamp": "2026-10-07T05:49:21.144893+00:00",
+    "timestamp": "2026-10-07T07:11:38.126601+00:00",
     "metrics": {
       "pytest_passed": {
         "value": 1530,
@@ -78,6 +20,35 @@
       },
       "tests_passed": {
         "value": 2291,
+        "higher_is_better": true
+      },
+      "tests_failed": {
+        "value": 0,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-07T16:36:48.602356+00:00",
+    "metrics": {
+      "pytest_passed": {
+        "value": 1543,
+        "higher_is_better": true
+      },
+      "pytest_failed": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "vitest_passed": {
+        "value": 788,
+        "higher_is_better": true
+      },
+      "vitest_failed": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "tests_passed": {
+        "value": 2331,
         "higher_is_better": true
       },
       "tests_failed": {
