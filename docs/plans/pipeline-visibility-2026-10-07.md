@@ -20,10 +20,20 @@ logs, never stored separately.
 
 ## Tickets, in order
 
-1. **#216** Ticket stage logs keyed by project + ticket number (bug; foundation for the strip)
-2. **#215** Record every merge refusal with its PR, stage and time (dashboard and webhook)
-3. **#218** Stop retry storms: hold a ticket after N failed pipeline runs (uses #213's `Revisit by:` convention)
-4. **#217** Pipeline stage strip on PR and ticket cards (blocked by #215, #216)
+1. **#216** Ticket stage logs keyed by project + ticket number. Done: PR #220, migrated on both machines.
+2. **#215** Record every merge refusal with its PR, stage and time. PR #229, as `kind: "refusal"` so the breaker
+   ignores refusals.
+3. **#225** After every merge, rebase the remaining open PRs (no LLM).
+4. **#218** Stop retry storms: hold a ticket after N failed pipeline runs. Before #230, which counts its fallback
+   rebuilds toward this limit.
+5. **#230** Resolve rebase conflicts cheaply (conflict hunks only) before rebuilding a ticket.
+6. **#231** Approve queues the merge: a merge queue for MR Review.
+7. **#226** One naming convention: ticket number first (`#216 <title>`, branch `ticket/216-<slug>`).
+8. **#217** Pipeline stage strip on PR and ticket cards. Uses #226's naming and shows #225's rebases.
+9. **#228** Header button: open a MARVIN session in WezTerm (after #226).
+
+Decided with Gil 2026-10-07: merge conflicts are handled by re-integrating continuously (#225, #230, #231), not by
+holding related tickets back, which would only move the bottleneck.
 
 Related: #213 (holds come back), #126 (real screenshots in UI PRs), #73 (re-engagement pipeline).
 
