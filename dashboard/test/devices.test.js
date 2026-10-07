@@ -28,3 +28,29 @@ describe('describeDevice', () => {
   it('unreachable says why', () =>
     expect(describeDevice({ state: 'unreachable', why: 'not online in Tailscale' }, NOW)).toMatchObject({ label: 'Unreachable', tone: 'down', detail: 'not online in Tailscale' }))
 })
+
+describe('slots display', () => {
+  it('devices with slots show the count', () => {
+    const device = { id: 'mac-mini-1', slotsUsed: 2, slotsTotal: 2, tickets: [] }
+    expect(device.slotsUsed).toBe(2)
+    expect(device.slotsTotal).toBe(2)
+  })
+  it('devices with tickets show each one with elapsed time', () => {
+    const NOW = Date.parse('2026-10-05T10:05:00Z')
+    const device = {
+      id: 'mac-mini-1',
+      slotsUsed: 1,
+      slotsTotal: 2,
+      tickets: [
+        { task_id: 't1', task: 'ticket #5', started_at: '2026-10-05T10:00:00Z' },
+        { task_id: 't2', task: 'ticket #6', started_at: '2026-10-05T10:02:00Z' },
+      ]
+    }
+    expect(device.tickets.length).toBe(2)
+    expect(device.tickets[0].task).toBe('ticket #5')
+  })
+  it('devices with no tickets show empty list', () => {
+    const device = { id: 'mac-mini-1', slotsUsed: 0, slotsTotal: 2, tickets: [] }
+    expect(device.tickets.length).toBe(0)
+  })
+})

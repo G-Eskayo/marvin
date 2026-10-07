@@ -47,6 +47,20 @@ export default function DeviceColumns() {
                 {v.detail && <span className="text-xs text-neutral-500">{v.detail}</span>}
               </p>
             )}
+            {d.slotsUsed !== undefined && d.slotsTotal !== undefined && (
+              <div className="mt-2 text-xs text-neutral-400">
+                <p>{d.slotsUsed} of {d.slotsTotal} slots</p>
+                {d.tickets && d.tickets.length > 0 && (
+                  <div className="mt-1 space-y-1">
+                    {d.tickets.map((ticket) => (
+                      <p key={ticket.task_id} className="text-neutral-500 text-xs">
+                        {ticket.task}{ticket.started_at ? ` · ${formatElapsed(ticket.started_at, now)}` : ''}
+                      </p>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )
       })}

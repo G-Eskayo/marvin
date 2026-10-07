@@ -524,7 +524,8 @@ def _scan(run, dry_run: bool) -> None:
 
     step("Dispatching", f"to {device_id}")
     label = f"ticket {repo}#{issue_number}: {ticket['title'][:40]}" if other else f"ticket #{issue_number}: {ticket['title'][:40]}"
-    result = dispatch(command, target=device_id, mode="async", task_label=label)
+    result = dispatch(command, target=device_id, mode="async", task_label=label,
+                      ticket=str(issue_number), repo=repo if other else REPO)
     if result.ok:
         print(f"{LOG_PREFIX} dispatched {where}#{issue_number} to {device_id}", file=sys.stderr)
         summary(f"dispatched {where}#{issue_number} {ticket['title']} to {device_id}")

@@ -28,6 +28,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from machine_profile import registry_id, remote_devices, _load_registry  # noqa: E402
 
 DISPATCH_STATE_PATH = Path.home() / ".claude" / "dispatch-state.json"
+TASKS_DIR = Path.home() / ".claude" / "dispatch" / "tasks"
+VENV_PYTHON = str(Path.home() / ".agents" / "venv" / "bin" / "python")
+DISPATCH_CONCURRENCY_SCRIPT = str(Path.home() / ".agents" / "lib" / "dispatch_concurrency.py")
 TAILSCALE_BIN = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
 # The GUI app's CLI refuses to run without a TERM ("The Tailscale GUI failed to start"), which is exactly what launchd
 # provides. Found 2026-10-05: under launchd it printed that error, and the parse below read it as one online host
@@ -134,13 +137,13 @@ def select_machine(explicit_target: str | None = None) -> tuple[str, dict] | Non
     return None
 
 
-def _build_wrapper_script(command: str, task_id: str, task_label: str) -> str:
-    """A script that marks the dispatch-state file busy, runs the real
-    command, and on exit (via trap — fires even if the command fails or
-    crashes, not just on clean exit) clears the state file and deletes its
-    own /tmp script file. Self-deleting a running script is safe on
-    Unix/macOS: rm just unlinks the directory entry, the already-open file
-    stays readable to the running interpreter until it exits.
+def _build_wrapper_script(command: str, task_id: str, task_label: str, device_id: str,
+                          ticket: str | None = None, repo: str | None = None) -> str:
+    """A script that records the task to disk, runs the real command, and on exit
+    (via trap — fires even if the command fails or crashes, not just on clean exit)
+    removes the task record and calls refresh-summary. Self-deleting a running
+    script is safe on Unix/macOS: rm just unlinks the directory entry, the
+    already-open file stays readable to the running interpreter until it exits.
 
     Also exports CLAUDE_CODE_OAUTH_TOKEN from ~/.claude/.oauth-token, and
     GH_TOKEN from ~/.claude/.gh-token, on whichever machine actually runs
@@ -159,16 +162,27 @@ def _build_wrapper_script(command: str, task_id: str, task_label: str) -> str:
     deliberately outside code_sync's ~/.claude scope (its .gitignore never
     allow-lists them) — neither ever leaves the machine it's created on."""
     started_at = datetime.now(timezone.utc).isoformat()
-    busy_json = json.dumps({"busy": True, "task": task_label, "task_id": task_id, "started_at": started_at})
-    idle_json = json.dumps({"busy": False})
+    record = {
+        "task_id": task_id,
+        "task": task_label,
+        "machine": device_id,
+        "started_at": started_at,
+    }
+    if ticket:
+        record["ticket"] = ticket
+    if repo:
+        record["repo"] = repo
+    record_json = json.dumps(record)
     return f"""#!/bin/bash
+mkdir -p {TASKS_DIR}
 mkdir -p {DISPATCH_STATE_PATH.parent}
-cat > {DISPATCH_STATE_PATH} << 'DISPATCH_STATE_EOF'
-{busy_json}
-DISPATCH_STATE_EOF
-trap 'rm -f "$0"; cat > {DISPATCH_STATE_PATH} << 'DISPATCH_IDLE_EOF'
-{idle_json}
-DISPATCH_IDLE_EOF' EXIT
+cat > {TASKS_DIR}/$task_id.json << 'TASK_RECORD_EOF'
+{record_json}
+TASK_RECORD_EOF
+# Patch in the real PID
+python -c "import json, sys; r=json.load(open('{TASKS_DIR}/$task_id.json')); r['pid']=$$; json.dump(r, open('{TASKS_DIR}/$task_id.json', 'w'))"
+{VENV_PYTHON} {DISPATCH_CONCURRENCY_SCRIPT} refresh-summary
+trap 'rm -f "$0"; rm -f {TASKS_DIR}/$task_id.json; {VENV_PYTHON} {DISPATCH_CONCURRENCY_SCRIPT} refresh-summary' EXIT
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 if [ -f "$HOME/.claude/.oauth-token" ]; then
   export CLAUDE_CODE_OAUTH_TOKEN="$(cat "$HOME/.claude/.oauth-token")"
@@ -181,10 +195,12 @@ fi
 
 
 def dispatch(command: str, target: str | None = None, mode: str = "sync",
-             timeout: int = 300, task_label: str | None = None) -> DispatchResult:
+             timeout: int = 300, task_label: str | None = None,
+             ticket: str | None = None, repo: str | None = None) -> DispatchResult:
     """Run `command` on an available device. mode: "sync" (wait, capture
     output) or "async" (fire-and-forget, returns immediately). Fails loud,
-    no automatic retry on a different machine."""
+    no automatic retry on a different machine. ticket/repo are optional
+    metadata for the per-task record."""
     selected = select_machine(target)
     if selected is None:
         reason = f"target '{target}' unavailable" if target else "no machine currently available"
@@ -193,7 +209,7 @@ def dispatch(command: str, target: str | None = None, mode: str = "sync",
     device_id, info = selected
     task_id = str(uuid.uuid4())[:8]
     label = task_label or command[:60]
-    script = _build_wrapper_script(command, task_id, label)
+    script = _build_wrapper_script(command, task_id, label, device_id, ticket=ticket, repo=repo)
 
     if info["is_self"]:
         return _run_local(script, mode, timeout)

@@ -18,6 +18,6 @@ def test_tailscale_status_gets_a_term_and_ignores_error_text(monkeypatch):
 def test_the_dispatch_wrapper_puts_the_claude_install_dir_on_path():
     # Same incident: the wrapper added Homebrew dirs but not ~/.local/bin, where the claude CLI lives.
     import task_dispatch as td
-    script = td._build_wrapper_script("echo hi", "abc", "label")
+    script = td._build_wrapper_script("echo hi", "abc", "label", "mac-mini-1")
     path_line = next(l for l in script.splitlines() if l.startswith("export PATH="))
     assert "$HOME/.local/bin" in path_line

@@ -46,3 +46,66 @@ def test_remote_online_idle_or_busy():
 def test_remote_ssh_failure_is_unreachable_not_idle():
     r = rows(remote={"mbp": None})["macbook-pro-1"]  # probe returns None when ssh/read fails
     assert r["state"] == "unreachable" and "ssh" in r["why"].lower()
+
+
+def test_slots_used_and_total_when_provided():
+    """Device rows include slotsUsed/slotsTotal when slot info is available."""
+    def mock_local_slots():
+        return [
+            {"pid": 100, "task_id": "t1", "machine": "mac-mini-1"},
+            {"pid": 101, "task_id": "t2", "machine": "mac-mini-1"},
+        ]
+
+    def mock_remote_slots(host, machine):
+        if host == "mbp" and machine == "macbook-pro-1":
+            return [{"pid": 200, "task_id": "t3", "machine": "macbook-pro-1"}]
+        return None
+
+    r = ds.device_statuses(DEVICES, self_id="mac-mini-1",
+                          local=lambda: {"busy": False},
+                          online=lambda: set(["mbp"]),
+                          probe=lambda h: {"busy": False},
+                          local_slots=mock_local_slots,
+                          remote_slots=mock_remote_slots)
+
+    rows_by_id = {row["id"]: row for row in r}
+    assert rows_by_id["mac-mini-1"]["slotsUsed"] == 2
+    assert rows_by_id["mac-mini-1"]["slotsTotal"] == 2
+    assert rows_by_id["macbook-pro-1"]["slotsUsed"] == 1
+    assert rows_by_id["macbook-pro-1"]["slotsTotal"] == 1
+
+
+def test_slots_absent_when_no_slots_info():
+    """Device rows omit slotsUsed/slotsTotal when slot info is not available."""
+    r = ds.device_statuses(DEVICES, self_id="mac-mini-1",
+                          local=lambda: {"busy": False},
+                          online=lambda: set(["mbp"]),
+                          probe=lambda h: {"busy": False})
+
+    rows_by_id = {row["id"]: row for row in r}
+    assert "slotsUsed" not in rows_by_id["mac-mini-1"]
+    assert "slotsTotal" not in rows_by_id["mac-mini-1"]
+    assert "slotsUsed" not in rows_by_id["macbook-pro-1"]
+    assert "slotsTotal" not in rows_by_id["macbook-pro-1"]
+
+
+def test_tickets_list_included_when_provided():
+    """Device rows include tickets list when slot info is available."""
+    tickets = [
+        {"pid": 100, "task_id": "t1", "task": "ticket #5", "started_at": "2026-10-06T10:00:00Z"},
+        {"pid": 101, "task_id": "t2", "task": "ticket #6", "started_at": "2026-10-06T10:05:00Z"},
+    ]
+
+    def mock_local_slots():
+        return tickets
+
+    r = ds.device_statuses(DEVICES, self_id="mac-mini-1",
+                          local=lambda: {"busy": False},
+                          online=lambda: set(["mbp"]),
+                          probe=lambda h: {"busy": False},
+                          local_slots=mock_local_slots,
+                          remote_slots=lambda h, m: None)
+
+    rows_by_id = {row["id"]: row for row in r}
+    assert rows_by_id["mac-mini-1"]["tickets"] == tickets
+    assert "tickets" not in rows_by_id.get("macbook-pro-1", {})
