@@ -6,6 +6,9 @@ import path from 'path'
 import { whois, loadAllowlist, isAllowed } from './device_gate.js'
 import { createDashboardApiRouter } from './dashboard_api.js'
 import { createChatApiRouter } from './chat_api.js'
+import { createPermissionApiRouter } from './permission_api.js'
+import { createInternalApiRouter, DEFAULT_INTERNAL_PORT } from './internal_api.js'
+import { createPendingActionStore } from './permission_bridge.js'
 
 const execFileP = promisify(execFile)
 
@@ -36,8 +39,13 @@ function getUptimeSeconds() {
   return Math.floor((Date.now() - startTime) / 1000)
 }
 
+// Shared permission action store
+const permissionStore = createPendingActionStore()
+
 const dashboardApiRouter = createDashboardApiRouter()
 const chatApiRouter = createChatApiRouter()
+const permissionApiRouter = createPermissionApiRouter({ store: permissionStore })
+const internalApiRouter = createInternalApiRouter({ store: permissionStore })
 
 const server = createServer(async (req, res) => {
   // Device gate: check allowlist
@@ -61,6 +69,10 @@ const server = createServer(async (req, res) => {
   handled = await chatApiRouter(req, res)
   if (handled) return
 
+  // Route through permission API
+  handled = await permissionApiRouter(req, res)
+  if (handled) return
+
   // Single endpoint: GET /status
   if (req.method === 'GET' && req.url === '/status') {
     res.writeHead(200, { 'Content-Type': 'application/json' }).end(
@@ -76,6 +88,16 @@ const server = createServer(async (req, res) => {
 
   // 404 for unmatched routes
   res.writeHead(404).end()
+})
+
+// Internal API server: loopback only, for hook communication
+const internalServer = createServer((req, res) => {
+  internalApiRouter(req, res)
+})
+
+const internalPort = process.env.INTERNAL_API_PORT || DEFAULT_INTERNAL_PORT
+internalServer.listen(internalPort, '127.0.0.1', () => {
+  console.log(`Internal API listening on http://127.0.0.1:${internalPort}`)
 })
 
 // Resolve Tailscale IP and start listening

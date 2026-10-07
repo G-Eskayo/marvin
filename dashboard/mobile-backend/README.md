@@ -93,6 +93,38 @@ tail -f ~/.claude/logs/mobile-backend.log
 
 The service defaults to port 7880; override with `PORT` env var if needed (edit the plist).
 
+## Permission bridge
+
+Allows the Claude CLI to request tool-use permissions via a hook mechanism. The hook reads stdin (tool name + input), queries the internal API, and writes back an allow/deny decision. Permission requests for read-only tools (Read, Grep, Glob, WebFetch, WebSearch) are approved immediately. Side-effecting tools (Bash, Edit, Write, etc.) create a pending action with a human-readable summary, posted to the mobile dashboard at `GET /pending-actions`.
+
+### Internal API (loopback only)
+
+**POST `/internal/permission-check`**
+
+Called by the CLI hook subprocess. Body: `{ toolName, toolInput }`
+
+**Response**: `{ decision: "allow"|"deny", reason?: "timed_out"|"denied", actionId?: <uuid> }`
+
+### Public API (device-gated)
+
+**GET `/pending-actions`**
+
+Lists pending tool-use decisions.
+
+**Response**: `200 { "ok": true, "actions": [{ id, toolName, toolInput, summary, status, createdAt }, ...] }`
+
+**POST `/pending-actions/:id/approve`**
+
+Approve a pending tool use.
+
+**Response**: `200 { "ok": true }` or `404 { "ok": false, "error": "Action not found" }`
+
+**POST `/pending-actions/:id/deny`**
+
+Deny a pending tool use.
+
+**Response**: `200 { "ok": true }` or `404 { "ok": false, "error": "Action not found" }`
+
 ## Deliberately out of scope
 
-Face ID authentication, write endpoints, session rotation, search endpoints — covered in separate tickets (#157, #158, #159, #160). This is read-only access to existing data only.
+Face ID authentication, write endpoints, session rotation, search endpoints — covered in separate tickets (#157, #158, #160). This is read-only access to existing data only.

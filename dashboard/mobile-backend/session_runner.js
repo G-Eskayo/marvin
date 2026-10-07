@@ -1,14 +1,44 @@
 import { spawn } from 'child_process'
 import { createInterface } from 'readline'
 import { homedir } from 'os'
-import { existsSync } from 'fs'
+import { existsSync, writeFileSync } from 'fs'
 import path from 'path'
+import { fileURLToPath } from 'url'
 
 // Resolve the claude binary. Check ~/.local/bin/claude first, then fall back to PATH lookup.
 function resolveClaudeBinary() {
   const localBin = path.join(homedir(), '.local', 'bin', 'claude')
   if (existsSync(localBin)) return localBin
   return 'claude'
+}
+
+// Generate and write a hook settings file that enables the permission bridge hook
+function getOrCreateHookSettingsPath(timeoutMs = 120000) {
+  const __dirname = path.dirname(fileURLToPath(import.meta.url))
+  const hookScriptPath = path.resolve(__dirname, 'permission_hook.js')
+  const settingsPath = path.join(homedir(), '.claude', 'mobile-backend-permission-settings.json')
+
+  // Build hook config
+  const settings = {
+    hooks: {
+      PreToolUse: [
+        {
+          matcher: '*',
+          hooks: [
+            {
+              type: 'command',
+              command: `node "${hookScriptPath}"`,
+              timeout: Math.ceil((timeoutMs + 1000) / 1000) // Convert to seconds, add 1s margin
+            }
+          ]
+        }
+      ]
+    }
+  }
+
+  // Write settings file
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2))
+  return settingsPath
 }
 
 // Normalise a raw event from the CLI stream-json output.
@@ -79,10 +109,13 @@ export function normaliseEvent(rawEvent) {
 
 // Async generator that streams normalised events from a claude CLI session.
 // Spawns the CLI with --output-format stream-json and reads stdout line-by-line.
-export async function* runSession({ message, sessionId, spawnFn, cwd } = {}) {
+export async function* runSession({ message, sessionId, spawnFn, cwd, timeoutMs } = {}) {
   const claudeBin = resolveClaudeBinary()
   const actualSpawnFn = spawnFn || spawn
   const actualCwd = cwd || homedir()
+
+  // Generate hook settings file and get its path
+  const settingsPath = getOrCreateHookSettingsPath(timeoutMs)
 
   // Build CLI arguments
   const args = [
@@ -90,7 +123,8 @@ export async function* runSession({ message, sessionId, spawnFn, cwd } = {}) {
     '--output-format', 'stream-json',
     '--verbose',
     '--include-partial-messages',
-    '--permission-mode', 'dontAsk'
+    '--permission-mode', 'dontAsk',
+    '--settings', settingsPath
   ]
 
   // Add --resume if sessionId is provided

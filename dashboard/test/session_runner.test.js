@@ -162,6 +162,23 @@ describe('session_runner', () => {
       expect(capturedArgs).toContain('session-resume-001')
     })
 
+    it('includes --settings flag with hook config path', async () => {
+      let capturedArgs = null
+      const mockSpawn = (bin, args) => {
+        capturedArgs = args
+        return createMockChildProcess(loadFixture('plain-reply.ndjson'))
+      }
+
+      for await (const _ of runSession({ message: 'test', spawnFn: mockSpawn })) {
+        // consume events
+      }
+
+      const settingsIndex = capturedArgs.indexOf('--settings')
+      expect(settingsIndex).toBeGreaterThanOrEqual(0)
+      expect(capturedArgs[settingsIndex + 1]).toBeDefined()
+      expect(capturedArgs[settingsIndex + 1]).toMatch(/mobile-backend-permission-settings\.json/)
+    })
+
     it('surfaces spawn ENOENT as error event', async () => {
       const mockSpawn = () => {
         const err = new Error('ENOENT: no such file or directory')
