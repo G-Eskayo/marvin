@@ -939,6 +939,14 @@ None of the repos had CI; the pipeline's dispatch gate and the merge gate were t
 - **marvin** (public, free): ubuntu, Node 20; dashboard vitest only (561 tests, matches local). The Python suite is NOT in CI: it needs a pinned requirements file and some tests read machine-local state.
 Pushing workflow files needed `gh auth refresh -h github.com -s workflow` (the gh token had no `workflow` scope). Copies of the workflows are in `~/.claude/outbox/ci-workflows/`. Minor: GitHub warns the v4 actions run on Node 20 (deprecated); bump them when v5 is the norm.
 
+## Python stack template for project onboarding (2026-10-07)
+
+Added `config/onboarding/python/` stack template (ADR 0036, ticket #144). Detects Python projects from `**/*.py` glob, priority 30 (lowest, so it's a fallback after Swift/xcode/Node). During inspection, checks:
+- `requirements_pinned`: all dependencies in `requirements.txt` must have `==`; if only `pyproject.toml` exists, a lock file (`poetry.lock` or `uv.lock`) counts as pinned.
+- `tests_read_machine_local`: scans `test_*.py`, `*_test.py`, and `conftest.py` files for `Path.home()`, `expanduser()`, `~/.claude`, or `os.environ["HOME"]` — any match flags the project.
+
+During planning, if either condition is unmet, `plan()` marks CI as `needs-human` with both problems named in the reason. If both are clean and no workflow exists yet, CI state is `missing` and the template can be applied. If a pytest workflow already exists, CI is `ok`. The template generates `.github/workflows/ci.yml` with ubuntu-latest and pinned Python 3.11, running `pytest`. Marvin's own repo would hit the machine-local flag (tests read `~/.claude`) and unpinned flag (no `requirements.txt`), keeping its Python suite out of CI until both are fixed — matching the 2026-10-06 decision.
+
 ## GitHub CI is now part of the merge decision (2026-10-06)
 
 - **Merge gate:** before the local rebase/retest, `assertChecksGreen` (`webhook-server/ci_status.js`) reads the PR's `statusCheckRollup`. Failing checks (`CI_FAILED`) send the PR back with the check names; checks still running (`CI_PENDING`) refuse without sending it back; a repo with no CI (`none`) is unaffected; a metadata hiccup does not block.
