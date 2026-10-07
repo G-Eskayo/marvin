@@ -115,3 +115,53 @@ describe('clearSentBackLabel: the way out when the label is wrong', () => {
     expect(await clearSentBackLabel(URL, exec)).toMatchObject({ cleared: false, reason: expect.stringMatching(/no ticket/i) })
   })
 })
+
+import { listPipelinePrs } from '../electron/main/mr_review.js'
+describe('a sent-back PR says where its rework stands', () => {
+  const basePr = { number: 172, title: 'Implement #143', url: 'u', repo: 'G-Eskayo/marvin', body: 'Closes G-Eskayo/marvin#143', files: [] }
+  const status = { state: 'queued', headline: 'Queued: 6th of 9 waiting', detail: 'Nothing is running right now.', position: 6, of: 9 }
+
+  it('the list attaches the status of the PR\'s own ticket, only for sent-back tickets', async () => {
+    const list = await listPipelinePrs(async () => [basePr, { ...basePr, number: 5, body: 'Closes G-Eskayo/marvin#9' }], {
+      sentBackTickets: async () => new Set(['G-Eskayo/marvin#143']),
+      reworkStatus: async () => ({ 'G-Eskayo/marvin#143': status })
+    })
+    expect(list[0].rework).toEqual(status)
+    expect(list[1].rework).toBeNull()
+  })
+
+  it('a failing status lookup never hides or breaks the PR', async () => {
+    const list = await listPipelinePrs(async () => [basePr], {
+      sentBackTickets: async () => new Set(['G-Eskayo/marvin#143']),
+      reworkStatus: async () => { throw new Error('boom') }
+    })
+    expect(list[0].sentBack).toBe(true)
+    expect(list[0].rework).toBeNull()
+  })
+
+  it('the card shows the status next to "sent back", whatever it is', () => {
+    const s = describePrState({ ...ready, sentBack: true, rework: status }, { status: 'idle', errorMessage: null })
+    expect(s.kind).toBe('sent-back')
+    expect(s.rework).toEqual(status)
+  })
+
+  it('without a status it still says it is sent back, and admits it does not know where the rework is', () => {
+    const s = describePrState({ ...ready, sentBack: true }, { status: 'idle', errorMessage: null })
+    expect(s.rework).toBeNull()
+    expect(s.detail).toMatch(/nothing to approve/i)
+  })
+})
+
+import { getReworkStatus, clearReworkCache } from '../electron/main/rework.js'
+describe('getReworkStatus', () => {
+  it('caches for a minute, and a failing report means no status rather than an error', async () => {
+    clearReworkCache()
+    let calls = 0
+    const run = async () => { calls++; return '{"o/r#1":{"state":"queued"}}' }
+    expect(await getReworkStatus({ run, now: 1000 })).toEqual({ 'o/r#1': { state: 'queued' } })
+    await getReworkStatus({ run, now: 30_000 })
+    expect(calls).toBe(1)
+    clearReworkCache()
+    expect(await getReworkStatus({ run: async () => { throw new Error('boom') }, now: 1000 })).toEqual({})
+  })
+})
