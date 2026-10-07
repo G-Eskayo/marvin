@@ -504,6 +504,8 @@ else echo "gh_token=missing"; fi
 # What the dashboard Docs tab does: read a file from GitHub with the shared credential.
 if [ -s "$TOK" ] && GH_TOKEN="$(tr -d '[:space:]' < "$TOK")" /opt/homebrew/bin/gh api repos/G-Eskayo/marvin/contents/README.md --jq .name >/dev/null 2>&1; then echo "docs_access=ok"; else echo "docs_access=failed"; fi
 if /usr/bin/pgrep -x DesktopLive >/dev/null 2>&1; then echo "desktoplive=running"; else echo "desktoplive=stopped"; fi
+# label:pid:last-exit for every MARVIN job (com.giles.* is the tidy agent), so a job failing on a machine health-check doesn't run on is still seen
+echo "job_exits=$(/bin/launchctl list 2>/dev/null | /usr/bin/awk '$3 ~ /^com\.(marvin|giles)\./ {printf "%s:%s:%s,", $3, $1, $2}')"
 echo "jobs=$(/bin/launchctl list 2>/dev/null | /usr/bin/awk '{print $3}' | /usr/bin/grep '^com\.marvin\.' | /usr/bin/sed 's/^com\.marvin\.//' | /usr/bin/sort | /usr/bin/tr '\n' ',')"
 TREE="$HOME/.agents/brain-map/tree-data.json"
 if [ -f "$TREE" ]; then echo "brain_data_ts=$(stat -f %m "$TREE")"; else echo "brain_data_ts="; fi
@@ -558,7 +560,23 @@ def parse_machine_state(text: str) -> dict:
             "desktoplive": raw.get("desktoplive", "").strip(), "brain_data_ts": num("brain_data_ts"),
             "disk_free_kb": num("disk_free_kb"), "disk_total_kb": num("disk_total_kb"),
             "worktrees_kb": num("worktrees_kb"), "worktrees_n": num("worktrees_n"),
-            "jobs": [j for j in raw.get("jobs", "").strip().split(",") if j]}
+            "jobs": [j for j in raw.get("jobs", "").strip().split(",") if j],
+            "job_exits": _parse_job_exits(raw.get("job_exits", ""))}
+
+
+def _parse_job_exits(text: str) -> list[tuple[str, int | None, int]]:
+    """'label:pid:status,...' from `launchctl list` -> [(label, pid or None, last exit status)]."""
+    out = []
+    for item in text.strip().split(","):
+        parts = item.rsplit(":", 2)
+        if len(parts) != 3:
+            continue
+        label, pid, status = parts
+        try:
+            out.append((label, int(pid) if pid.isdigit() else None, int(status)))
+        except ValueError:
+            continue
+    return out
 
 
 # Free-space thresholds (share of the disk). Found 2026-10-06: the mac-mini at 6% free; below ~10% macOS
@@ -616,6 +634,14 @@ def evaluate_machine_state(state: dict, now: datetime) -> list[tuple[str, str, s
         if sev != "green":
             detail += " -- check ~/.claude/logs/mr-pipeline-sweep.md and docs/plans/storage-and-distribution-2026-10-06.md"
         out.append(("disk:space", sev, detail))
+    if state.get("job_exits"):
+        # A running job's status is its previous instance's (a KeepAlive restart shows -15), so only idle jobs count.
+        failed = [(label, status) for label, pid, status in state["job_exits"] if pid is None and status != 0]
+        if failed:
+            out.append(("jobs:exit", "red", "last run failed: " + ", ".join(f"{label} (exit {status})" for label, status in failed)
+                        + " -- read the job's log on this machine (tidy-agent: ~/.claude/organize/agent.err.log)"))
+        else:
+            out.append(("jobs:exit", "green", f"all {len(state['job_exits'])} scheduled jobs last exited cleanly or are running"))
     if state.get("jobs"):
         role = "laptop" if "macbook" in state.get("_device", "") else "mini"
         sev, detail = evaluate_job_placement(state["jobs"], role)
@@ -637,7 +663,7 @@ def check_machine_state_everywhere(reachability: dict[str, str], runner=_run_mac
     ]
     labels = {"dashboard:build": "Dashboard app build", "auth:gh": "GitHub credential", "docs:access": "Docs tab GitHub access",
               "desktoplive:running": "Desktop brain-map background", "brainmap:data": "Brain-map data freshness", "jobs:placement": "Scheduled jobs vs. placement",
-              "disk:space": "Disk space"}
+              "disk:space": "Disk space", "jobs:exit": "Scheduled jobs' last run"}
     for dev, host, reach in devices:
         if reach == "asleep":
             for key, label in labels.items():
