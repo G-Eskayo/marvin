@@ -4,8 +4,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import portfolio_elements as pe  # noqa: E402
+import project_catalog  # noqa: E402
 
-PROJECT = Path.home() / "Documents" / "Projects" / "portfolio-website-updater"
+PROJECT = project_catalog.portfolio_repo_path()
 
 LIVE = ('<div class="col-md-6"><a href="/ai-projects/x/" class="black-image-project-hover"><img decoding="async" src="/u/x.jpg" data-orig-src="/u/x.jpg" alt="" class="img-responsive lazyloaded"></a>'
         '<div class="card-container card-container-lg"><a href="/ai-projects/x/" title="X Title"><h3 class="card-title fusion-responsive-typography-calculated" data-fontsize="26" data-lineheight="35.1px" style="--fontSize: 26; line-height: 1.35;">X Title</h3></a>'

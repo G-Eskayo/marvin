@@ -24,7 +24,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
-PROJECT = Path.home() / "Documents" / "Projects" / "portfolio-website-updater"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import project_catalog  # noqa: E402
+
+PROJECT = project_catalog.portfolio_repo_path()
 MANIFEST_PATH = PROJECT / "deploy" / "other-projects" / "manifest.json"
 OUT_DIR = Path.home() / ".claude" / "portfolio" / "inventory"
 WPCLI_CONTAINER = "portfolio-website-updater-wpcli-1"

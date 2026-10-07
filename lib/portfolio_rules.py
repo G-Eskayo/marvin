@@ -19,7 +19,10 @@ import json
 import sys
 from pathlib import Path
 
-PROJECT = Path.home() / "Documents" / "Projects" / "portfolio-website-updater"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import project_catalog  # noqa: E402
+
+PROJECT = project_catalog.portfolio_repo_path()
 RULES_PATH = PROJECT / "templates" / "design-rules.json"
 
 DEFAULT_RULES = {

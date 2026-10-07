@@ -18,8 +18,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import project_catalog  # noqa: E402
 
-PROJECT = Path.home() / "Documents" / "Projects" / "portfolio-website-updater"
+PROJECT = project_catalog.portfolio_repo_path()
 STARTERS = ("setup", "run", "marvin")
 
 

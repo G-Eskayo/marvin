@@ -19,7 +19,10 @@ import re
 import sys
 from pathlib import Path
 
-PROJECT = Path.home() / "Documents" / "Projects" / "portfolio-website-updater"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import project_catalog  # noqa: E402
+
+PROJECT = project_catalog.portfolio_repo_path()
 
 # Generic-LLM tells from the writing-style skill. Kept short and specific: each one has been seen on this site or is a
 # well-known tic. Matched as whole words, case-insensitively, in visible text only.
