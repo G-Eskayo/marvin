@@ -1,5 +1,10 @@
 # Diagnose — Retrospective
 
+## 2026-10-06 — Storage cleanup + laptop tidy-agent FDA block
+**I:** Added a gotcha: "health is green" only covers the logs the health-check machine actually reads. The laptop tidy-agent failed nightly for about 12 weeks, invisible because health-check runs only on the mini and the mini's identical job was fine.
+**F:** The TCC/FDA root cause is still open. The `/usr/bin/python3` shim's responsible-process identity is a lead, not a verified cause, and Kandji is a possible factor. Not codified (evidence gate; single-machine).
+**S:** Lossless reclaim held: remove only clean merged/empty worktrees, keep branches, and get per-item approval. The rebuilt sweep decides by PR state rather than by worktree age alone.
+
 ## 2026-08-26 — killer-sudoku Kotlin port (UI parity + animation/input bugs)
 **I:** Three new gotcha classes added from the Compose Multiplatform port: (1) mixing `System.nanoTime()` (monotonic) with `System.currentTimeMillis()` (epoch) in one elapsed-time calculation silently kills a canvas animation with no error — found via `println` instrumentation only after two wrong guesses; (2) Compose Desktop doesn't persist focus after the first `requestFocus()` call at launch — a window that loses and regains focus (or after any click) stops accepting key events until focus is explicitly re-requested on each relevant interaction; (3) eyeballing cross-toolkit screenshot comparisons (Skia vs CoreGraphics) is unreliable for pixel-level parity claims — a visual read gave a wrong verdict once, corrected by switching to Pillow+numpy grid-line/glyph-bounds analysis.
 **S:** Same pattern as earlier in the day (see below): every bug was root-caused via real instrumentation (temporary `println` + reading the actual log) or real measurement (pixel analysis), not guessed at from reading the code.
