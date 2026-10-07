@@ -15,7 +15,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import readable_guard  # noqa: E402
 
 # Tests that read the portfolio repo are left out where that repo can't be read from this process
-# (on the mac-mini, a launchd job opening files in iCloud-managed ~/Documents blocks forever, which hung
+# (and, always, inside the merge gate, MARVIN_MERGE_GATE=1: a PR must not be judged on another repo's data).
+# On the mac-mini a launchd job opening files in iCloud-managed ~/Documents blocks forever, which hung
 # the merge gate and the pipeline at collection, 2026-10-06). Checked once, in a child process.
 _portfolio_blocked = None
 _not_collected: list[str] = []
@@ -26,7 +27,7 @@ def pytest_ignore_collect(collection_path, config):
     if collection_path.suffix != ".py" or not collection_path.name.startswith("test_"):
         return None
     if _portfolio_blocked is None:
-        _portfolio_blocked = readable_guard.portfolio_repo_blocked()
+        _portfolio_blocked = readable_guard.exclude_portfolio_tests()
     if not _portfolio_blocked:
         return None
     try:
@@ -91,4 +92,5 @@ def _isolate_ticket_evidence(monkeypatch):
     # The pre-dispatch "does work already exist" guard shells out to gh/git; tests opt in explicitly.
     import ticket_pipeline
     monkeypatch.setattr(ticket_pipeline, "_evidence_facts", lambda repo: None)
-    monkeypatch.setattr(ticket_pipeline, "_requeue_all", lambda repos: [])  # no real gh calls from the scan
+    monkeypatch.setattr(ticket_pipeline, "_requeue_all", lambda repos: [])
+    monkeypatch.setattr(ticket_pipeline, "_background_checks", lambda: None)  # no background test runs from tests  # no real gh calls from the scan

@@ -41,3 +41,20 @@ describe('merge ops (survives the renderer navigating away)', () => {
     expect(ops.get('https://github.com/o/r/pull/6').state).toBe('idle')
   })
 })
+
+describe('a merge that never reports back does not stay "merging" forever', () => {
+  it('expires into an error after the limit, so the card stops saying Merging', () => {
+    const ops = createMergeOps({ maxMergingMs: 1000 })
+    ops.start(URL)
+    const t0 = Date.now()
+    expect(ops.get(URL, t0 + 500).state).toBe('merging')
+    const late = ops.get(URL, t0 + 5000)
+    expect(late.state).toBe('error')
+    expect(late.reason).toMatch(/did not finish|timed out/i)
+  })
+  it('after it expires a new attempt may start', () => {
+    const ops = createMergeOps({ maxMergingMs: 1000 })
+    ops.start(URL)
+    expect(ops.start(URL, Date.now() + 5000)).toBe(true)
+  })
+})

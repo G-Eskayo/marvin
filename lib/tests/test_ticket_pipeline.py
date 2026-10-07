@@ -642,3 +642,14 @@ def test_ordering_survives_an_unreadable_deadline_source(monkeypatch):
         raise OSError("catalog unreadable")
     monkeypatch.setattr(tp, "_due_for", boom)
     assert [i["number"] for i in tp._unclaimed_ready_tickets()] == [3, 4]
+
+
+def test_the_scan_starts_a_main_health_check_in_the_background_and_never_waits_for_it(monkeypatch):
+    started = []
+    monkeypatch.setattr(tp.subprocess, "Popen", lambda cmd, **kw: started.append((cmd, kw)) or SimpleNamespace())
+    tp._refresh_main_health()
+    cmd, kw = started[0]
+    assert cmd[-2:] == [str(tp.Path(tp.__file__).with_name("main_health.py")), "refresh"]
+    assert kw.get("start_new_session") is True       # detached: the scan does not wait on a ~1 minute test run
+    monkeypatch.setattr(tp.subprocess, "Popen", lambda *a, **k: (_ for _ in ()).throw(OSError("no")))
+    tp._refresh_main_health()                        # a failure to start it never breaks the scan

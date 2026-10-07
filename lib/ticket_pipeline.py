@@ -120,6 +120,20 @@ MAX_REENGAGE_ATTEMPTS = 3
 MARVIN_MACHINES = ("mac-mini-1",)
 
 
+def _refresh_main_health() -> None:
+    """Check the base branch on a clean checkout when it has moved (lib/main_health.py), in the background: a red main
+    refuses every marvin merge, and should show in Health before anyone clicks Approve. Best effort, never blocks a scan."""
+    try:
+        subprocess.Popen([sys.executable, str(Path(__file__).with_name("main_health.py")), "refresh"],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    except Exception as e:  # noqa: BLE001
+        print(f"{LOG_PREFIX} main health check not started: {e}", file=sys.stderr)
+
+
+def _background_checks() -> None:
+    _refresh_main_health()
+
+
 def _requeue_all(repos) -> list[str]:
     return [f"{r.split('/')[-1]}#{n}" for r in repos for n in _requeue_conflicted_prs(r)]
 
@@ -441,6 +455,7 @@ def _scan(run, dry_run: bool) -> None:
         _run_ticket_agents(step, summary)
 
     if not dry_run:
+        _background_checks()
         step("Conflicted PRs", "sending back PRs that no longer merge")
         sent = _requeue_all([REPO, *pp.dispatchable_repos()])
         step("Conflicted PRs", ", ".join(sent) + " sent back" if sent else "none")

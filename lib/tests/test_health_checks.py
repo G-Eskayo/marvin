@@ -667,3 +667,30 @@ def test_disk_space_severity_by_free_share(free_pct, expected):
 
 def test_no_disk_reading_means_no_disk_check():
     assert "disk:space" not in dict((k, s) for k, s, _ in hc.evaluate_machine_state(_mstate(), NOW))
+
+
+# ── main branch health ──
+
+def test_main_is_green_when_its_last_check_passed(tmp_path):
+    import json
+    p = tmp_path / "m.json"
+    p.write_text(json.dumps({"sha": "abc1234", "ok": True, "failed": [], "summary": "1137 passed", "checked_at": hc._now().isoformat()}))
+    r = hc.check_main_health(path=p)
+    assert r["id"] == "main:green" and r["severity"] == "green" and "abc1234" in r["detail"]
+
+
+def test_main_is_red_and_names_the_failing_tests(tmp_path):
+    import json
+    p = tmp_path / "m.json"
+    p.write_text(json.dumps({"sha": "def5678", "ok": False, "failed": ["tests/test_a.py::test_x"], "summary": "1 failed", "checked_at": hc._now().isoformat()}))
+    r = hc.check_main_health(path=p)
+    assert r["severity"] == "red"
+    assert "tests/test_a.py::test_x" in r["detail"] and "merges" in r["detail"].lower()
+
+
+def test_main_health_is_yellow_when_never_checked_or_stale(tmp_path):
+    import json
+    assert hc.check_main_health(path=tmp_path / "missing.json")["severity"] == "yellow"
+    p = tmp_path / "old.json"
+    p.write_text(json.dumps({"sha": "a", "ok": True, "failed": [], "summary": "ok", "checked_at": (hc._now() - timedelta(days=2)).isoformat()}))
+    assert hc.check_main_health(path=p)["severity"] == "yellow"
