@@ -2,6 +2,7 @@ import { runSession } from './session_runner.js'
 
 export function createChatApiRouter(opts = {}) {
   const runSessionFn = opts.runSession || runSession
+  const permissionBridge = opts.permissionBridge
 
   // Handler for chat API routes
   return async (req, res) => {
@@ -43,7 +44,7 @@ export function createChatApiRouter(opts = {}) {
 
         let finalSessionId = sessionId
         try {
-          for await (const event of runSessionFn({ message, sessionId })) {
+          for await (const event of runSessionFn({ message, sessionId, bridge: permissionBridge })) {
             // Capture the final sessionId from result events for the next call
             if (event.type === 'result' && event.sessionId) {
               finalSessionId = event.sessionId

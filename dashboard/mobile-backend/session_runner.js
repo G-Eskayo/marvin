@@ -12,8 +12,8 @@ function resolveClaudeBinary() {
 }
 
 // Normalise a raw event from the CLI stream-json output.
-// Returns zero or more normalised events: {type: 'session'|'text'|'tool_use'|'result'|'error', ...}
-export function normaliseEvent(rawEvent) {
+// Returns zero or more normalised events: {type: 'session'|'text'|'tool_use'|'permission_requested'|'permission_resolved'|'result'|'error', ...}
+export function normaliseEvent(rawEvent, bridge) {
   if (!rawEvent) return []
 
   try {
@@ -79,7 +79,8 @@ export function normaliseEvent(rawEvent) {
 
 // Async generator that streams normalised events from a claude CLI session.
 // Spawns the CLI with --output-format stream-json and reads stdout line-by-line.
-export async function* runSession({ message, sessionId, spawnFn, cwd } = {}) {
+// Emits permission lifecycle events (permission_requested, permission_resolved) for side-effecting tools.
+export async function* runSession({ message, sessionId, bridge, spawnFn, cwd, mcpConfigPath } = {}) {
   const claudeBin = resolveClaudeBinary()
   const actualSpawnFn = spawnFn || spawn
   const actualCwd = cwd || homedir()
@@ -90,8 +91,14 @@ export async function* runSession({ message, sessionId, spawnFn, cwd } = {}) {
     '--output-format', 'stream-json',
     '--verbose',
     '--include-partial-messages',
-    '--permission-mode', 'dontAsk'
+    '--permission-mode', 'default',
+    '--permission-prompts', 'host'
   ]
+
+  // Add MCP config if bridge is provided and mcpConfigPath is available
+  if (bridge && mcpConfigPath) {
+    args.push('--mcp-config', mcpConfigPath)
+  }
 
   // Add --resume if sessionId is provided
   if (sessionId) {
@@ -127,7 +134,7 @@ export async function* runSession({ message, sessionId, spawnFn, cwd } = {}) {
   // Yield each normalised event as it arrives
   try {
     for await (const line of rl) {
-      const events = normaliseEvent(line)
+      const events = normaliseEvent(line, bridge)
       for (const evt of events) {
         yield evt
       }
