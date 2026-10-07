@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Hourly reactive map snapshot deployment: check for changes to the system tree (marvin commits
+     that affect generate.py's inputs) and deploy if changed. Runs every hour on the hour.
+     See #188, ADR 0050. Log: ~/.claude/logs/deploy-snapshot-reactive.log
+     Install on the mini (primary automation host): cp this to ~/Library/LaunchAgents/ and `launchctl bootstrap gui/$(id -u) <file>`. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.marvin.snapshot-deploy-reactive</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/gileskayo/.agents/venv/bin/python</string>
+        <string>/Users/gileskayo/.agents/brain-map/scripts/snapshot_deploy_reactive.py</string>
+    </array>
+
+    <!-- Run every hour at :00 -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/gileskayo/marvin</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/gileskayo/.claude/logs/snapshot-deploy-reactive.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/gileskayo/.claude/logs/snapshot-deploy-reactive-error.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/gileskayo</string>
+        <key>PATH</key>
+        <string>/Users/gileskayo/.local/bin:/usr/local/bin:/usr/bin:/bin:/Users/gileskayo/.agents/venv/bin</string>
+        <key>MARVIN_SNAPSHOT_ENABLED</key>
+        <string>1</string>
+    </dict>
+
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>
