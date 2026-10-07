@@ -93,6 +93,14 @@ tail -f ~/.claude/logs/mobile-backend.log
 
 The service defaults to port 7880; override with `PORT` env var if needed (edit the plist).
 
+### `GET /thread?limit=<n>&before=<id>`
+
+Fetch thread history with optional pagination.
+
+**Query parameters**: `limit` (optional, default 50), `before` (optional, cursor ID for pagination)
+
+**Response**: `200 { "ok": true, "data": [{ id, source, role, text, sessionId, ts }, ...] }` (messages in reverse chronological order, newest first)
+
 ## Deliberately out of scope
 
-Face ID authentication, write endpoints, session rotation, search endpoints — covered in separate tickets (#157, #158, #159, #160). This is read-only access to existing data only.
+Face ID authentication, write endpoints (beyond /chat), search endpoints — covered in separate tickets (#157, #159, #160). This backend provides read-only access to dashboard data and managed session state for the mobile client.
