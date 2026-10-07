@@ -34,6 +34,7 @@ describe('onboarding.js', () => {
       repo: 'test/repo',
       generated_at: null,
       pieces: null,
+      offers: null,
       status: 'not_planned_yet'
     })
   })
@@ -42,7 +43,8 @@ describe('onboarding.js', () => {
     const planData = {
       repo: 'test/repo',
       generated_at: '2026-10-06T12:00:00Z',
-      pieces: { profile: { state: 'ok', reason: 'exists' } }
+      pieces: { profile: { state: 'ok', reason: 'exists' } },
+      offers: { merge_from_dashboard: true, dispatch: true }
     }
 
     existsSync.mockReturnValue(true)
@@ -56,6 +58,7 @@ describe('onboarding.js', () => {
       repo: 'test/repo',
       generated_at: '2026-10-06T12:00:00Z',
       pieces: planData.pieces,
+      offers: planData.offers,
       status: 'planned'
     })
   })
@@ -72,6 +75,7 @@ describe('onboarding.js', () => {
       repo: 'test/repo',
       generated_at: null,
       pieces: null,
+      offers: null,
       status: 'read_error'
     })
   })
@@ -87,5 +91,22 @@ describe('onboarding.js', () => {
     expect(result).toHaveLength(2)
     expect(result[0].repo).toBe('G-Eskayo/marvin')
     expect(result[1].repo).toBe('another-owner/another-repo')
+  })
+
+  it('passes through offers from the plan data', () => {
+    const planData = {
+      repo: 'test/repo',
+      generated_at: '2026-10-06T12:00:00Z',
+      pieces: { profile: { state: 'ok' } },
+      offers: { merge_from_dashboard: false, dispatch: true }
+    }
+
+    existsSync.mockReturnValue(true)
+    readFileSync.mockReturnValue(JSON.stringify(planData))
+
+    const boards = [{ repo: 'test/repo' }]
+    const result = readOnboardingPlans(boards)
+
+    expect(result[0].offers).toEqual(planData.offers)
   })
 })

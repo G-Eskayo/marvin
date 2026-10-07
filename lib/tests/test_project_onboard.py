@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 LIB = Path(__file__).resolve().parents[1]
@@ -1574,3 +1575,117 @@ def test_apply_pr_handles_missing_stack_gracefully():
     auth_status = "Token scopes: 'repo', 'workflow'"
     result = po._apply_pr("test/repo", facts, plan_out, gh=mock_gh, auth_status=auth_status)
     assert result["action"] in ("created", "updated", "unchanged", "needs-human")
+
+
+# ── prove and baseline ──────────────────────────────────────────────────────
+
+
+def test_prove_returns_ok_when_selftest_passes():
+    """prove maps selftest passed → state ok with both offers enabled."""
+    selftest_result = {"kind": "passed", "error": "baseline passed"}
+
+    def mock_selftest(profile):
+        return selftest_result
+
+    result = po.prove("test/repo", profile={"repo": "test/repo"}, selftest_fn=mock_selftest)
+    assert result["state"] == "ok"
+    assert result["offers"]["merge_from_dashboard"] is True
+    assert result["offers"]["dispatch"] is True
+    assert "ran_at" in result
+
+
+def test_prove_returns_missing_when_selftest_fails():
+    """prove maps selftest failed → state missing with both offers disabled."""
+    selftest_result = {"kind": "failed", "error": "2 tests failed"}
+
+    def mock_selftest(profile):
+        return selftest_result
+
+    result = po.prove("test/repo", profile={"repo": "test/repo"}, selftest_fn=mock_selftest)
+    assert result["state"] == "missing"
+    assert result["offers"]["merge_from_dashboard"] is False
+    assert result["offers"]["dispatch"] is False
+    assert "2 tests failed" in result["reason"]
+
+
+def test_prove_returns_needs_human_for_env_missing():
+    """prove maps selftest env_missing → state needs-human (distinct from project failure)."""
+    selftest_result = {"kind": "env_missing", "error": "this machine lacks swift"}
+
+    def mock_selftest(profile):
+        return selftest_result
+
+    result = po.prove("test/repo", profile={"repo": "test/repo"}, selftest_fn=mock_selftest)
+    assert result["state"] == "needs-human"
+    assert result["offers"]["merge_from_dashboard"] is False
+    assert result["offers"]["dispatch"] is False
+
+
+def test_prove_needs_human_when_no_profile():
+    """prove returns needs-human when no profile exists."""
+    result = po.prove("test/repo", profile=None, selftest_fn=lambda p: {})
+    assert result["state"] == "needs-human"
+    assert "no profile yet" in result["reason"]
+
+
+def test_record_baseline_writes_baseline_piece(tmp_path):
+    """record_baseline adds baseline to pieces."""
+    baseline_data = {
+        "state": "ok",
+        "offers": {"merge_from_dashboard": True, "dispatch": True},
+        "reason": "baseline passed",
+    }
+    po.record_baseline("test/repo", baseline_data, dir=tmp_path)
+
+    path = po.onboarding_path("test/repo", dir=tmp_path)
+    data = json.loads(path.read_text())
+    assert data["pieces"]["baseline"] == baseline_data
+
+
+def test_record_baseline_merges_offers(tmp_path):
+    """record_baseline merges offers (baseline wins for overlapping keys)."""
+    # Create initial file with some offers
+    initial_data = {
+        "repo": "test/repo",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "pieces": {},
+        "offers": {"other_flag": True},
+    }
+    path = po.onboarding_path("test/repo", dir=tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(initial_data) + "\n")
+
+    # Record baseline with different offers
+    baseline_data = {
+        "state": "ok",
+        "offers": {"merge_from_dashboard": True},
+    }
+    po.record_baseline("test/repo", baseline_data, dir=tmp_path)
+
+    # Check that offers are merged (other_flag persists, merge_from_dashboard added)
+    data = json.loads(path.read_text())
+    assert data["offers"]["other_flag"] is True
+    assert data["offers"]["merge_from_dashboard"] is True
+
+
+def test_write_onboarding_plan_preserves_baseline(tmp_path):
+    """write_onboarding_plan preserves existing baseline across refresh."""
+    # Create initial file with baseline
+    baseline_data = {"state": "ok", "reason": "passed"}
+    initial_data = {
+        "repo": "test/repo",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "pieces": {"baseline": baseline_data},
+        "offers": {},
+    }
+    path = po.onboarding_path("test/repo", dir=tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(initial_data) + "\n")
+
+    # Refresh plan (simulating hourly read-only rescan)
+    new_pieces = {"profile": {"state": "ok"}}
+    po.write_onboarding_plan("test/repo", new_pieces, dir=tmp_path)
+
+    # Check baseline is still there
+    data = json.loads(path.read_text())
+    assert data["pieces"]["baseline"] == baseline_data

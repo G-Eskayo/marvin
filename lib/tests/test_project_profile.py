@@ -228,9 +228,25 @@ def test_selftest_measures_a_real_worktree_shows_the_pr_body_and_always_cleans_u
     profile = {**PROFILE, "base_branch": "main", "dispatch": "off", "machines": [], "clone_hints": [str(tmp_path)]}
     (tmp_path / ".git").mkdir()
     report = pp.selftest(profile, runner=runner_returning([(0, XCTEST_OK)]), have=lambda cap, env: cap == "swift", catalog={"projects": []})
-    assert report["ok"] is True
+    assert report["ok"] is True and report["kind"] == "passed"
     assert "Core tests" in report["pr_body"] and "## Test Results" in report["pr_body"] and "not verified" in report["pr_body"]
     assert removed and removed[0][0] == str(wt)
+
+
+def test_selftest_detects_failing_tests_and_returns_ok_false(tmp_path, monkeypatch):
+    import sandbox_orchestration as so
+    removed = []
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    (wt / "Pkg").mkdir()
+    monkeypatch.setattr(so, "_create_worktree", lambda clone, ref, base="main": wt)
+    monkeypatch.setattr(pp, "_cleanup_worktree", lambda clone, worktree, branch: removed.append(1))
+    profile = {**PROFILE, "base_branch": "main", "clone_hints": [str(tmp_path)]}
+    (tmp_path / ".git").mkdir()
+    report = pp.selftest(profile, runner=runner_returning([(1, XCTEST_FAIL)]), have=lambda cap, env: cap == "swift", catalog={"projects": []})
+    assert report["ok"] is False and report["kind"] == "failed"
+    assert "2 failed" in report["error"]
+    assert removed == [1]
 
 
 def test_selftest_cleans_up_even_when_the_measurement_blows_up(tmp_path, monkeypatch):
@@ -243,15 +259,21 @@ def test_selftest_cleans_up_even_when_the_measurement_blows_up(tmp_path, monkeyp
     (tmp_path / ".git").mkdir()
     profile = {**PROFILE, "clone_hints": [str(tmp_path)]}
     report = pp.selftest(profile, runner=runner_returning([(1, NO_XCTEST)]), have=lambda cap, env: True, catalog={"projects": []})
-    assert report["ok"] is False and "XCTest" in report["error"]
+    assert report["ok"] is False and report["kind"] == "error" and "XCTest" in report["error"]
     assert removed == [1]
+
+
+def test_selftest_says_so_when_no_clone_exists(tmp_path, monkeypatch):
+    profile = {**PROFILE, "clone_hints": [str(tmp_path / "gone")]}
+    report = pp.selftest(profile, runner=runner_returning([]), have=lambda cap, env: True, catalog={"projects": []})
+    assert report["ok"] is False and report["kind"] == "no_clone"
 
 
 def test_selftest_says_so_when_this_machine_cannot_run_the_required_checks(tmp_path, monkeypatch):
     (tmp_path / ".git").mkdir()
     profile = {**PROFILE, "clone_hints": [str(tmp_path)]}
     report = pp.selftest(profile, runner=runner_returning([]), have=lambda cap, env: False, catalog={"projects": []})
-    assert report["ok"] is False and "swift" in report["error"]
+    assert report["ok"] is False and report["kind"] == "env_missing" and "swift" in report["error"]
 
 
 # ── the merge gate's view of a profile ──────────────────────────────────────
