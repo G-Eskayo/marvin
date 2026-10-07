@@ -88,3 +88,31 @@ sees its own answer). On the site this would be a priority Gil sets once per pro
   header and the Education/Training/Achievements sections, so only summary, experience, skills and projects differ.
 - **Export cleanup found while building it** (now in #221): master project bullets include tech-stack lines and
   `[Project Link]` placeholders, and a title carries italic markup; the public export must clean these.
+
+## Blind A/B result (rated by Gil, 2026-10-07)
+
+| Job | Preferred | Gap | Why (Gil's note, paraphrased) |
+|---|---|---|---|
+| DaVita AI SWE | **Browser** | clear | Browser picked better roles; AI version included Snorkel, which Gil wants off the master |
+| Home Depot | AI | big | Browser version ran to **2 pages** |
+| Google AI/ML | AI | small | — |
+| York Space (defense) | Tie | clear both ways | AI chose better projects; browser text "looks more AI-generated" |
+| Tokin' Jew | AI | small | AI a little more specific to the job |
+| Check Point AI Security | AI | small | Browser version ran to **2 pages**, though it "looks a little higher in quality" |
+
+Raw: AI 4, browser 1, tie 1. But 2 of the AI's 4 wins came from the browser version overflowing one page
+(confirmed: job2-X and job6-Y are 2 pages; every other PDF is 1). That's a length-budget bug, not matching
+quality, and in one of them Gil preferred the browser version's content. Without overflow: AI 2 small wins,
+browser 1 clear win, 1 tie, 1 leaning browser. n = 6, one rater: directional only.
+
+### Takeaways
+
+- In-browser matching is **closer to the AI tailor in reader preference than the 63% overlap suggested**. The
+  AI's real edge is domain reasoning on unusual roles (York Space) and small job-specific wording gains.
+- **One-page length budget is mandatory** for the browser version: pick bullets under a character budget, not
+  "top 2". Added to #223.
+- **Master resume quality matters as much as the method:** the browser version shows master bullets verbatim, and
+  they read as AI-written. A `writing-style` pass on the master improves both versions. Snorkel to be removed or
+  marked never-include (Gil's call).
+- **Chrome extension:** viable enough to explore. Matching + length budget + good master text gets close; Chrome's
+  on-device model could add the job-specific wording. Re-run this blind test after those fixes before deciding.
