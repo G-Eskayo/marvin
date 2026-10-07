@@ -187,3 +187,32 @@ def test_hard_deadline_weight_grows_as_the_date_nears():
     pts = [tp.score_ticket(issue(), 0, {"date": d, "hard": True}, NOW)[0]
            for d in ("2026-12-30", "2026-11-19", "2026-10-24", "2026-10-15", "2026-10-07")]
     assert pts == sorted(pts) and len(set(pts)) == len(pts)
+
+
+# ── a deadline covers the project's launch work, not everything in its backlog ──
+
+DUE = {"date": "2026-10-24", "hard": True}
+
+
+def test_a_ticket_in_an_excluded_bucket_gets_no_deadline_weight():
+    """clarity-captions' bucket V (iPad, Mac, Watch, Android) is post-launch: the birthday deadline must not make it urgent."""
+    launch = tp.score_ticket(issue(title="[E] Paid developer account"), 0, {**DUE, "excludes": ["V"]}, NOW)
+    later = tp.score_ticket(issue(title="[V] Apple Watch companion"), 0, {**DUE, "excludes": ["V"]}, NOW)
+    assert launch[0] > later[0]
+    assert not any("deadline" in w for w in later[1])
+    assert any("deadline" in w for w in launch[1])
+
+
+def test_with_no_excluded_buckets_every_ticket_keeps_the_deadline_weight():
+    for title in ("[V] Apple Watch companion", "[E] Paid developer account", "no bucket at all"):
+        assert any("deadline" in w for w in tp.score_ticket(issue(title=title), 0, DUE, NOW)[1])
+
+
+def test_a_ticket_without_a_bucket_prefix_is_never_excluded():
+    assert any("deadline" in w for w in tp.score_ticket(issue(title="Plain title"), 0, {**DUE, "excludes": ["V"]}, NOW)[1])
+
+
+def test_bucket_matching_is_exact_and_case_insensitive():
+    why = tp.score_ticket(issue(title="[v] lower case"), 0, {**DUE, "excludes": ["V"]}, NOW)[1]
+    assert not any("deadline" in w for w in why)
+    assert any("deadline" in w for w in tp.score_ticket(issue(title="[VV] two letters"), 0, {**DUE, "excludes": ["V"]}, NOW)[1])

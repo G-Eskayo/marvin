@@ -1,5 +1,5 @@
 import { createServer } from 'http'
-import { mergePr } from './merge.js'
+import { mergePr, baselineFailsOnMain } from './merge.js'
 import { sendFeedback, dropEntirely } from './deny.js'
 import { forwardRefreshPing } from './refresh_relay.js'
 import { loadGhToken } from './gh_auth.js'
@@ -113,7 +113,7 @@ const server = createServer(async (req, res) => {
       // to re-engagement instead (merged: false, reengaged: true) -- the
       // latter is an expected outcome, not a server error, so it gets a
       // 200 with the real reason attached rather than a bare 500.
-      const result = await mergePr(payload.pr_url)
+      const result = await mergePr(payload.pr_url, undefined, undefined, undefined, undefined, undefined, undefined, undefined, { baselineFails: (names) => baselineFailsOnMain(names) })
       res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(result))
     } catch (err) {
       // Structured: code, stage, retryable, action, remediation -- so the dashboard can say

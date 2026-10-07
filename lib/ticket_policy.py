@@ -67,6 +67,15 @@ def priority_rank(issue: dict) -> int | None:
     return None
 
 
+_BUCKET = re.compile(r"^\s*\[([A-Za-z0-9]+)\]")
+
+
+def bucket_of(issue: dict) -> str | None:
+    """A ticket's bucket: the '[X]' prefix its title carries (clarity-captions uses A-G, L, V, W)."""
+    m = _BUCKET.match(issue.get("title") or "")
+    return m.group(1).upper() if m else None
+
+
 def score_ticket(issue: dict, blocks_count: int, due: dict | None, now: datetime) -> tuple[float, list[str]]:
     """Urgency, with the reasons. Leverage first (what it unblocks), then deadlines, then type and age."""
     score, why = 0.0, []
@@ -74,7 +83,10 @@ def score_ticket(issue: dict, blocks_count: int, due: dict | None, now: datetime
         pts = min(blocks_count * 3, 12)
         score += pts
         why.append(f"unblocks {blocks_count} ticket{'s' if blocks_count != 1 else ''} (+{pts:g})")
-    if due and due.get("date"):
+    # A project deadline covers its launch work, not its whole backlog: tickets in a bucket the project marked as not
+    # part of it (clarity-captions' V: iPad, Mac, Watch, Android) get no deadline weight (Gil, 2026-10-07).
+    excluded = {str(b).upper() for b in (due or {}).get("excludes", [])}
+    if due and due.get("date") and bucket_of(issue) not in excluded:
         d = _parse(due["date"] + "T00:00:00+00:00")
         if d is not None:
             days = (d - now).total_seconds() / 86400

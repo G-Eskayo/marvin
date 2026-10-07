@@ -950,3 +950,54 @@ describe('a "not mergeable" answer that GitHub itself disowns is not a conflict'
     expect(reengage).not.toHaveBeenCalled()
   })
 })
+
+describe('the gate tells a red main apart from a bad PR', () => {
+  const PR = 'https://github.com/G-Eskayo/marvin/pull/173'
+  const pytestFailure = Object.assign(new Error('Command failed: python -m pytest -q'), {
+    stdout: '...\nFAILED tests/test_render_diagrams.py::test_every_figure - AssertionError\n1 failed, 1100 passed in 50s\n', stderr: ''
+  })
+
+  it('the reason carries what the test run printed, not just "Command failed"', async () => {
+    const { root, repoDir } = makeGitFixture()
+    try {
+      sh('git', ['checkout', '-q', '-b', 'feature'], repoDir)
+      writeFileSync(path.join(repoDir, 'f.txt'), 'x\n'); sh('git', ['add', '.'], repoDir); sh('git', ['commit', '-q', '-m', 'feature'], repoDir)
+      sh('git', ['push', '-u', 'origin', 'feature'], repoDir)
+      const r = await rebaseAndRetest('feature', realExec, repoDir, async () => { throw pytestFailure })
+      expect(r.ok).toBe(false)
+      expect(r.reason).toContain('FAILED tests/test_render_diagrams.py::test_every_figure')
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  })
+
+  const world = (baselineFails) => {
+    const exec = vi.fn(async () => ({ stdout: JSON.stringify({ baseRefName: 'main', statusCheckRollup: [] }), stderr: '' }))
+    const rebase = vi.fn().mockResolvedValue({ ok: false, reason: 'Tests failed after rebasing onto main:\n\nFAILED tests/test_render_diagrams.py::test_every_figure - AssertionError' })
+    const reengage = vi.fn().mockResolvedValue(undefined)
+    const gate = vi.fn().mockResolvedValue({ gate: true, headRefName: 'pipeline/x', body: 'Closes G-Eskayo/marvin#147' })
+    const run = () => mergePr(PR, exec, noopRebuild, noopRedispatch, gate, rebase, reengage, vi.fn(), { baselineFails })
+    return { run, reengage }
+  }
+
+  it('if the failing tests ALSO fail on main, refuse without sending the PR back, and name them', async () => {
+    const w = world(async (names) => names)   // every named test fails on main too
+    await expect(w.run()).rejects.toMatchObject({ payload: { code: 'MAIN_RED', action: 'escalate', message: expect.stringContaining('test_render_diagrams') } })
+    expect(w.reengage).not.toHaveBeenCalled()
+  })
+
+  it('if main passes them, the PR really broke them: send it back as before', async () => {
+    const w = world(async () => [])           // none fail on main
+    const result = await w.run()
+    expect(result).toMatchObject({ merged: false, reengaged: true })
+    expect(w.reengage).toHaveBeenCalledTimes(1)
+  })
+
+  it('if only some fail on main, the PR still broke the others: send it back', async () => {
+    const w = world(async () => ['tests/test_other.py::test_x'])  // a different test is red on main; ours are not
+    expect((await w.run()).reengaged).toBe(true)
+  })
+
+  it('no baseline check available (unnamed failures): behave as before', async () => {
+    const w = world(null)
+    expect((await w.run()).reengaged).toBe(true)
+  })
+})

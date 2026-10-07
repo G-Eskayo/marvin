@@ -317,7 +317,8 @@ def due_for_repo(repo, overrides_path: Path = OVERRIDES_PATH):
         return None
     pid = re.sub(r"[^a-z0-9]+", "-", repo.split("/")[-1].lower()).strip("-")
     o = data.get(pid) or {}
-    return {"date": o["due"], "hard": bool(o.get("dueHard"))} if o.get("due") else None
+    return ({"date": o["due"], "hard": bool(o.get("dueHard")), "excludes": [str(b).upper() for b in o.get("dueExcludes", [])]}
+            if o.get("due") else None)
 
 
 def ready_elsewhere(snapshot, executable=None) -> dict[str, int]:
