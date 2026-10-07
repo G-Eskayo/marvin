@@ -6,7 +6,7 @@ instead of something that has to be forensically re-traced by hand each
 time -- exactly what finding PR #119's real failure point required before
 this existed).
 
-One JSON file per ticket: ~/.claude/logs/ticket-stages/<n>.json, an
+One JSON file per ticket: ~/.claude/logs/ticket-stages/<owner>__<repo>-<n>.json, an
 append-only list of {stage, status, detail, timestamp, machine}. Shared
 format with webhook-server/ticket_stages.js (Node) -- the merge gate's
 rebase/test/merge stages happen in the Node process, planning/executing/
@@ -34,14 +34,40 @@ VALID_STATUSES = {"started", "passed", "failed"}
 
 
 MARVIN_REPO = "G-Eskayo/marvin"
+# Keys are lowercased, so the owner's real spelling is restored from here when a key is read back.
+KNOWN_OWNERS = {"g-eskayo": "G-Eskayo"}
+
+
+def stage_key(repo: str | None, ticket_number: int) -> str:
+    """`<owner>__<repo>-<n>`, lowercased (#216): #7 in clarity-captions is not #7 in marvin, and `__` keeps the key
+    readable back even though the owner itself contains a hyphen. repo None means marvin."""
+    owner, name = (repo or MARVIN_REPO).lower().split("/")
+    return f"{owner}__{name}-{ticket_number}"
+
+
+def parse_stage_key(stem: str) -> tuple[str, int] | None:
+    """The inverse of stage_key, plus marvin's old bare-number files. None for anything else."""
+    if stem.isdigit():
+        return MARVIN_REPO, int(stem)
+    owner, sep, rest = stem.partition("__")
+    name, dash, number = rest.rpartition("-")
+    if not (sep and dash and number.isdigit()):
+        return None
+    repo = f"{KNOWN_OWNERS.get(owner, owner)}/{name}"
+    return (MARVIN_REPO if repo.lower() == MARVIN_REPO.lower() else repo), int(number)
+
+
+def _is_marvin(repo: str | None) -> bool:
+    return repo is None or repo.lower() == MARVIN_REPO.lower()
 
 
 def _stage_file(ticket_number: int, repo: str | None = None) -> Path:
-    """marvin's tickets keep their plain number (nothing existing moves). Another project's ticket is
-    keyed `<repo>-<n>`, because #7 in clarity-captions is not #7 in marvin."""
-    if repo and repo != MARVIN_REPO:
-        return STAGES_DIR / f"{repo.split('/')[-1].lower()}-{ticket_number}.json"
-    return STAGES_DIR / f"{ticket_number}.json"
+    return STAGES_DIR / f"{stage_key(repo, ticket_number)}.json"
+
+
+def _legacy_file(ticket_number: int, repo: str | None) -> Path | None:
+    """marvin's tickets used to be saved by bare number; until migrate_ticket_stages.py has run, read those too."""
+    return STAGES_DIR / f"{ticket_number}.json" if _is_marvin(repo) else None
 
 
 def record_stage(
@@ -77,6 +103,9 @@ def record_stage(
     }
     path = _stage_file(ticket_number, repo)
     path.parent.mkdir(parents=True, exist_ok=True)
+    legacy = _legacy_file(ticket_number, repo)
+    if legacy and legacy.exists() and not path.exists():
+        legacy.rename(path)
     events = read_stages(ticket_number, repo)
     events.append(event)
     path.write_text(json.dumps(events, indent=2))
@@ -86,6 +115,8 @@ def record_stage(
 def read_stages(ticket_number: int, repo: str | None = None) -> list[dict]:
     path = _stage_file(ticket_number, repo)
     if not path.exists():
+        path = _legacy_file(ticket_number, repo)
+    if not path or not path.exists():
         return []
     try:
         return json.loads(path.read_text())
@@ -96,16 +127,10 @@ def read_stages(ticket_number: int, repo: str | None = None) -> list[dict]:
 def list_tracked_tickets(repo: str | None = None) -> list[int]:
     if not STAGES_DIR.exists():
         return []
-    prefix = f"{repo.split('/')[-1].lower()}-" if repo and repo != MARVIN_REPO else None
-    numbers = []
+    want = MARVIN_REPO if _is_marvin(repo) else repo
+    numbers = set()
     for p in STAGES_DIR.glob("*.json"):
-        stem = p.stem
-        if prefix:
-            if not stem.startswith(prefix):
-                continue
-            stem = stem[len(prefix):]
-        try:
-            numbers.append(int(stem))
-        except ValueError:
-            continue
+        parsed = parse_stage_key(p.stem)
+        if parsed and parsed[0].lower() == want.lower():
+            numbers.add(parsed[1])
     return sorted(numbers)
