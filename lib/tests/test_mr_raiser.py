@@ -514,3 +514,15 @@ def test_a_project_without_generated_rules_commits_everything_as_before(repo_wit
     wt = repo_with_worktree
     mrr._commit_and_push(wt, "G-Eskayo/marvin#1")
     assert "new_file.txt" in subprocess.run(["git", "show", "--name-only", "--format=", "HEAD"], cwd=wt, capture_output=True, text=True).stdout
+
+
+def test_a_failed_push_says_what_git_said(repo_with_worktree):
+    """Every macbook push died as 'returned non-zero exit status 128' with git's reason thrown away (the locked keychain,
+    2026-10-07), so three attempts were burned and the ticket parked before anyone could see why."""
+    wt = repo_with_worktree
+    _run(["git", "config", "user.email", "t@t.com"], cwd=wt)
+    _run(["git", "config", "user.name", "T"], cwd=wt)
+    _run(["git", "remote", "set-url", "origin", "/nonexistent/remote.git"], cwd=wt)
+    (wt / "x.txt").write_text("x\n")
+    with pytest.raises(RuntimeError, match=r"git push of pipeline/ticket-1 failed.*nonexistent"):
+        mrr._commit_and_push(wt, "G-Eskayo/marvin#1")
