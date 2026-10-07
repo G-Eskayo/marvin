@@ -1,6 +1,6 @@
 # 0052. Parallel ticket dispatch: a dashboard toggle, per-task slots, and guard rails
 
-Date: 2026-10-07. Status: **accepted** (Gil confirmed D1-D4 on 2026-10-07); nothing built yet.
+Date: 2026-10-07. Status: **accepted** (Gil confirmed D1-D4 on 2026-10-07). Built 2026-10-07 in a different order than the task list (see "Built so far").
 
 "Multi-threading" here means **several tickets being worked at once** (separate runs on separate worktrees), not
 threads inside one run.
@@ -122,3 +122,20 @@ Filed 2026-10-07 as tracer-bullet slices (test-first, each shippable on its own)
 5. G-Eskayo/marvin#197 Parallel dispatch: dashboard toggle and limits in the Activity device strip
 6. G-Eskayo/marvin#198 Health check: parallel dispatch is keeping up
 7. G-Eskayo/marvin#199 Parallel dispatch: first live run with two projects at once, reviewed together
+
+## Built so far (2026-10-07)
+
+The toggle was brought forward so it changes behaviour on day one; the per-task records (#193) are still in progress, so for
+now:
+
+- **Done:** `lib/dispatch_concurrency.py` and `config/dispatch.json` (#194: settings, validation, `effective_limit`,
+  `can_start_another` with the disk and GitHub-budget guards); the scan fill loop in `ticket_pipeline._scan` (#195), which
+  tries the next project when one has no machine free and picks the least-loaded allowed machine; the dashboard control and its
+  IPC (#197: `ParallelToggle` above the device columns, `dispatch:getConcurrency` / `dispatch:setConcurrency`, a sync kick on save).
+- **Stand-ins until #193 lands:** the machine running the scan counts its tickets as live `run_ticket` processes
+  (`_local_slots_used`), and the other machine counts as one slot (its busy flag). In-flight tickets per project are the open
+  tickets carrying a `claimed:` label, so a stale claim holds a slot until it is released.
+- **Not done:** per-task records and the "n of m" slot display (#193), the refill on exit (#196), the Health check (#198),
+  and the live two-project run (#199).
+- **Guard rails left to the scan:** a tripped circuit breaker already removes that project from the scan, and the tools check
+  is `pp.missing_here` for this machine; `can_start_another` takes both as injected readers for the machine-level case.

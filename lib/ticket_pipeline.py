@@ -49,6 +49,7 @@ import ticket_agents  # noqa: E402
 import project_catalog  # noqa: E402
 import ticket_evidence  # noqa: E402
 import project_onboard  # noqa: E402
+import dispatch_concurrency  # noqa: E402
 
 VENV_PYTHON = str(Path.home() / ".agents" / "venv" / "bin" / "python")
 RUN_TICKET_SCRIPT = str(Path.home() / ".agents" / "lib" / "run_ticket.py")
@@ -397,21 +398,89 @@ def _local_busy() -> bool:
     return _flag_busy() or _ticket_process_alive()
 
 
-def _select_for_profile(profile: dict):
+def _local_slots_used() -> int:
+    """How many tickets are running on THIS machine: live run_ticket processes (the shared busy flag cannot count, and the
+    first of two overlapping runs to finish clears it). Unreadable means "as many as the flag says", never zero."""
+    try:
+        p = subprocess.run(["pgrep", "-f", "lib/run_ticket.py"], capture_output=True, text=True, timeout=10)
+        n = len([l for l in p.stdout.splitlines() if l.strip()]) if p.returncode == 0 else 0
+    except Exception:  # noqa: BLE001
+        n = 0
+    return max(n, 1 if _flag_busy() else 0)
+
+
+def _free_disk_gb() -> float | None:
+    try:
+        import shutil
+        return shutil.disk_usage(Path.home()).free / 1e9
+    except OSError:
+        return None
+
+
+def _github_budget_pct() -> float | None:
+    """Percent of this hour's GitHub allowance left; None when it cannot be read (an unreadable guard never blocks)."""
+    try:
+        import health_checks
+        b = health_checks._read_github_budget()
+        return 100.0 * int(b["remaining"]) / int(b["limit"])
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _inflight_by_repo(repos) -> dict[str, int]:
+    """Open tickets that carry a claim label, per project: what is already running (or was claimed and not released)."""
+    out: dict[str, int] = {}
+    for r in repos:
+        try:
+            p = subprocess.run(["gh", "issue", "list", "--repo", r, "--state", "open", "--limit", "200", "--json", "labels"],
+                               capture_output=True, text=True, timeout=30)
+            issues = json.loads(p.stdout) if p.returncode == 0 else []
+        except Exception:  # noqa: BLE001
+            issues = []
+        out[r] = sum(1 for i in issues if any(l["name"].startswith("claimed:") for l in i.get("labels", [])))
+    return out
+
+
+def _select_for_profile(profile: dict, settings: dict | None = None, taken: dict | None = None,
+                        local_base: int = 0, refusals: list | None = None):
     """A machine the profile allows, that is free, and (if it is this one) has the tools its required
     checks need. Other machines are trusted to be what the profile says they are; a ticket that proves
-    otherwise is released without blame (run_ticket's EnvMissing path)."""
+    otherwise is released without blame (run_ticket's EnvMissing path).
+
+    With parallel dispatch on (`settings["parallel"]`), "free" means a slot under the machine's effective limit, counting
+    what this scan already started (`taken`) on top of `local_base` running here, and the guard rails must pass; a guard's
+    reason goes into `refusals`, and of the machines that pass the one with the fewest tickets running wins (profile order on ties). The other machine counts as one slot until ticket #193 gives it per-task records."""
+    parallel = bool(settings and settings.get("parallel"))
+    taken = taken if taken is not None else {}
+    viable: list[tuple[int, tuple]] = []
     for device in profile.get("machines", []):
         selected = select_machine(device)
         if selected is None:
             continue
-        if selected[1].get("is_self"):
+        is_self = bool(selected[1].get("is_self"))
+        if is_self:
             # An explicit target skips the busy check for THIS machine (select_machine only checks other
             # machines then), so check it here: never start a second ticket on top of a running one.
-            if _local_busy() or pp.missing_here(profile):
+            if not parallel and _local_busy():
                 continue
+            if pp.missing_here(profile):
+                continue
+        if parallel:
+            used = (local_base if is_self else 0) + taken.get(device, 0)
+            ok, why = dispatch_concurrency.can_start_another(
+                device, settings, slots_in_use=lambda m, used=used: used,
+                disk_free_gb=lambda m, s=is_self: _free_disk_gb() if s else None,
+                github_budget_pct=_github_budget_pct,
+                breaker_tripped=lambda: [],   # a tripped breaker already removed that project from this scan
+                missing_tools=lambda m: [])
+            if not ok:
+                if refusals is not None:
+                    refusals.append(why)
+                continue
+            viable.append((used, selected))   # parallel: spread the load, the idlest machine first
+            continue
         return selected
-    return None
+    return min(viable, key=lambda v: v[0])[1] if viable else None   # min keeps the profile's order on ties
 
 
 def main() -> None:
@@ -478,32 +547,70 @@ def _scan(run, dry_run: bool) -> None:
         summary("dispatch paused by the circuit breaker")
         return
 
+    settings = dispatch_concurrency.load()
+    parallel = bool(settings["parallel"])
     step("Scanning tickets", ", ".join(r.split("/")[-1] for r in repos) + ": ready-for-agent, unclaimed, unblocked")
-    candidates = []
+    pools: dict[str, list] = {}
     for r in repos:
         ready = _unclaimed_ready_tickets() if r == REPO else _unclaimed_ready_tickets(repo=r)
         if ready:
-            candidates.append((r, ready[0], len(ready)))
-    if not candidates:
+            pools[r] = list(ready)
+    if not pools:
         print(f"{LOG_PREFIX} no unclaimed ready-for-agent tickets", file=sys.stderr)
         step("Scanning tickets", "none ready")
         summary("no ready tickets")
         return
 
-    repo, ticket, _count = min(candidates, key=lambda c: _order_key(c[1]))
+    inflight = _inflight_by_repo(repos) if parallel else {}
+    local_base = _local_slots_used() if parallel else 0
+    taken: dict[str, int] = {}
+    started_by_repo: dict[str, int] = {}
+    skipped: set[str] = set()
+    started = 0
+    refusals: list[str] = []
+    ready_total = sum(len(p) for p in pools.values())
+    while True:
+        running = sum(inflight.values()) + started
+        if parallel and running >= settings["max_total"]:
+            if started == 0:
+                step("Choosing a machine", f"{running} running, the limit is {settings['max_total']} at once")
+            break
+        candidates = [(r, pool[0]) for r, pool in pools.items()
+                      if pool and r not in skipped
+                      and (not parallel or inflight.get(r, 0) + started_by_repo.get(r, 0) < settings["max_per_project"])]
+        if not candidates:
+            break
+        repo, ticket = min(candidates, key=lambda c: _order_key(c[1]))
+        outcome = _dispatch_one(repo, ticket, ready_total, step, summary, fail, dry_run, settings, taken, local_base, refusals)
+        if outcome == "started":
+            started += 1
+            started_by_repo[repo] = started_by_repo.get(repo, 0) + 1
+            pools[repo].pop(0)
+        else:
+            skipped.add(repo)           # no machine, or the claim/dispatch failed: another project may still fit
+        if not parallel or dry_run:
+            break                        # off: one ticket per scan, exactly as before
+    if parallel and refusals and not started:
+        step("Choosing a machine", "; ".join(dict.fromkeys(refusals)))
+
+
+def _dispatch_one(repo, ticket, ready_total, step, summary, fail, dry_run, settings, taken, local_base, refusals) -> str:
+    """Claim one ticket and dispatch it. Returns "started", "no-machine" or "failed"."""
     other = repo != REPO
     issue_number = ticket["number"]
     where = f"{repo.split('/')[-1]} " if other else ""
-    step("Scanning tickets", f"{sum(c[2] for c in candidates)} ready; next is {where}#{issue_number} {ticket['title']}")
+    step("Scanning tickets", f"{ready_total} ready; next is {where}#{issue_number} {ticket['title']}")
 
     profile = pp.load_profile(repo) if other else None
     step("Choosing a machine")
-    selected = _select_for_profile(profile if other else {"machines": list(MARVIN_MACHINES)})
+    mine = len(refusals)
+    selected = _select_for_profile(profile if other else {"machines": list(MARVIN_MACHINES)}, settings, taken, local_base, refusals)
     if selected is None:
         print(f"{LOG_PREFIX} {where}#{issue_number} ready but no {'suitable ' if other else ''}machine currently available", file=sys.stderr)
-        step("Choosing a machine", "none available" if not other else f"none free that can run {repo.split('/')[-1]} ({', '.join(profile.get('machines', [])) or 'no machines listed'})")
+        why = "; ".join(dict.fromkeys(refusals[mine:]))
+        step("Choosing a machine", why or ("none available" if not other else f"none free that can run {repo.split('/')[-1]} ({', '.join(profile.get('machines', [])) or 'no machines listed'})"))
         summary(f"{where}#{issue_number} {ticket['title']} is ready but no suitable machine is available")
-        return
+        return "no-machine"
     device_id, _info = selected
     claim_label = _label_for_device(device_id)
     step("Choosing a machine", device_id)
@@ -511,13 +618,13 @@ def _scan(run, dry_run: bool) -> None:
     if dry_run:
         print(f"{LOG_PREFIX} [dry-run] would claim {where}#{issue_number} ({ticket['title']}) "
               f"and dispatch to {device_id} as claimed:{claim_label}", file=sys.stderr)
-        return
+        return "started"
 
     step("Claiming ticket", f"{where}#{issue_number} {ticket['title']}")
     claimed = _claim(issue_number, claim_label, title=ticket["title"], **({"repo": repo} if other else {}))
     if not claimed:
         fail(f"could not claim {where}#{issue_number}")
-        return
+        return "failed"
 
     command = _build_wrapper_command(issue_number, repo) if other else _build_wrapper_command(issue_number)
 
@@ -525,12 +632,14 @@ def _scan(run, dry_run: bool) -> None:
     label = f"ticket {repo}#{issue_number}: {ticket['title'][:40]}" if other else f"ticket #{issue_number}: {ticket['title'][:40]}"
     result = dispatch(command, target=device_id, mode="async", task_label=label)
     if result.ok:
+        taken[device_id] = taken.get(device_id, 0) + 1
         print(f"{LOG_PREFIX} dispatched {where}#{issue_number} to {device_id}", file=sys.stderr)
         summary(f"dispatched {where}#{issue_number} {ticket['title']} to {device_id}")
-    else:
-        print(f"{LOG_PREFIX} dispatch failed for {where}#{issue_number}: {result.error} -- releasing claim", file=sys.stderr)
-        _release(issue_number, claim_label, repo) if other else _release(issue_number, claim_label)
-        fail(f"dispatch of {where}#{issue_number} to {device_id} failed: {result.error}")
+        return "started"
+    print(f"{LOG_PREFIX} dispatch failed for {where}#{issue_number}: {result.error} -- releasing claim", file=sys.stderr)
+    _release(issue_number, claim_label, repo) if other else _release(issue_number, claim_label)
+    fail(f"dispatch of {where}#{issue_number} to {device_id} failed: {result.error}")
+    return "failed"
 
 
 if __name__ == "__main__":
