@@ -5,8 +5,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import portfolio_layouts as pl  # noqa: E402
+import project_catalog  # noqa: E402
 
-PROJECT = Path.home() / "Documents" / "Projects" / "portfolio-website-updater"
+PROJECT = project_catalog.portfolio_repo_path()
 
 PAGE = ('<div class="section-container"><div class="container"><div class="row"><div class="col-xs-12">'
         '<img src="/h.jpg" class="img-responsive" alt=""><div class="card-container"><div class="text-center"><h1 class="h2">T</h1></div>'

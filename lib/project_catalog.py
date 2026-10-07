@@ -27,12 +27,28 @@ CATALOG_DIR = HOME / ".claude" / "catalog"
 OVERRIDES_PATH = CATALOG_DIR / "overrides.json"
 LOCAL_ROOTS = [HOME / "Documents" / "Projects", HOME / "Developer", HOME / "Documents" / "Money-and-Admin" / "budgeting"]
 EXTRA_LOCAL = [HOME / ".agents"]
-PORTFOLIO_MANIFEST = HOME / "Documents" / "Projects" / "portfolio-website-updater" / "deploy" / "other-projects" / "manifest.json"
 MEMORY_DIR = HOME / ".claude" / "projects" / ("-" + str(HOME).strip("/").replace("/", "-")) / "memory"
+
+PORTFOLIO_REPO_ID = "portfolio-website-updater"
+_PORTFOLIO_DEFAULT = HOME / "Documents" / "Projects" / "portfolio-website-updater"
 
 ACTIVE_DAYS, RECENT_DAYS = 30, 180
 STOP = {"ml", "ai", "project", "projects", "using", "and", "the", "of", "for", "in", "a", "an", "powered", "full", "with", "to"}
 MATCH_THRESHOLD = 0.5
+
+
+# ── portfolio repo lookup ───────────────────────────────────────────────────
+
+def portfolio_repo_path() -> Path:
+    import os
+    override = os.environ.get("MARVIN_PORTFOLIO_PATH")
+    if override:
+        return Path(override).expanduser()
+    cat = read_catalog(catalog_path())
+    for p in (cat or {}).get("projects", []):
+        if p.get("id") == PORTFOLIO_REPO_ID and p.get("localPaths"):
+            return Path(p["localPaths"][0])
+    return _PORTFOLIO_DEFAULT
 
 
 # ── pure helpers ────────────────────────────────────────────────────────────
@@ -436,7 +452,9 @@ def discover_local(roots=None, extra=None) -> list[dict]:
     return out
 
 
-def discover_manifest(path: Path = PORTFOLIO_MANIFEST) -> list[dict]:
+def discover_manifest(path: Path | None = None) -> list[dict]:
+    if path is None:
+        path = portfolio_repo_path() / "deploy" / "other-projects" / "manifest.json"
     try:
         data = json.loads(path.read_text())
         return data if isinstance(data, list) else []

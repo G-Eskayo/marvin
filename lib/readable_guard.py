@@ -12,12 +12,15 @@ import subprocess
 import sys
 from pathlib import Path
 
-PORTFOLIO_REPO = Path.home() / "Documents" / "Projects" / "portfolio-website-updater"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import project_catalog  # noqa: E402
+
+PORTFOLIO_REPO = project_catalog.portfolio_repo_path()
 # The file the real-repo tests read first; readable means the repo is usable from this process.
 PORTFOLIO_PROBE = PORTFOLIO_REPO / "templates" / "templates.json"
 
 _PORTFOLIO_IMPORT = re.compile(r"^\s*(?:import|from)\s+portfolio_\w+", re.M)
-_PORTFOLIO_PATH = re.compile(r'"Projects"\s*/\s*"portfolio-website-updater"')
+_PORTFOLIO_PATH = re.compile(r"portfolio_repo_path\s*\(")
 
 
 def readable_within(path: Path, seconds: float = 5) -> bool:

@@ -4,8 +4,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import project_catalog  # noqa: E402
 
-FIGS = Path.home() / "Documents" / "Projects" / "portfolio-website-updater" / "deploy" / "longform" / "figures"
+FIGS = project_catalog.portfolio_repo_path() / "deploy" / "longform" / "figures"
 
 
 def test_every_committed_figure_svg_is_well_formed_xml_with_an_intrinsic_size_and_no_external_references():

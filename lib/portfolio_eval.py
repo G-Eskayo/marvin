@@ -24,8 +24,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import portfolio_rules  # noqa: E402
 import portfolio_content as pc  # noqa: E402
+import project_catalog  # noqa: E402
 
-PROJECT = Path.home() / "Documents" / "Projects" / "portfolio-website-updater"
+PROJECT = project_catalog.portfolio_repo_path()
 RULES_PATH = PROJECT / "templates" / "design-rules.json"
 MANIFEST_PATH = PROJECT / "deploy" / "other-projects" / "manifest.json"
 RESULT_PATH = Path.home() / ".claude" / "portfolio" / "eval-latest.json"

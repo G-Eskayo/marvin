@@ -35,7 +35,7 @@ def test_a_read_that_blocks_counts_as_unreadable_and_returns_in_time(tmp_path):
 def test_test_files_that_read_the_portfolio_repo_are_recognised():
     assert rg.reads_portfolio_repo('import portfolio_templates as pt\n')
     assert rg.reads_portfolio_repo('from portfolio_eval import rules\n')
-    assert rg.reads_portfolio_repo('FIGS = Path.home() / "Documents" / "Projects" / "portfolio-website-updater" / "deploy"\n')
+    assert rg.reads_portfolio_repo('FIGS = project_catalog.portfolio_repo_path() / "deploy"\n')
 
 
 def test_a_test_that_only_names_the_repo_is_not_caught():

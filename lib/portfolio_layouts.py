@@ -19,9 +19,10 @@ from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import portfolio_templates as pt  # noqa: E402
+import project_catalog  # noqa: E402
 
 HOME = Path.home()
-PROJECT = HOME / "Documents" / "Projects" / "portfolio-website-updater"
+PROJECT = project_catalog.portfolio_repo_path()
 INVENTORY = HOME / ".claude" / "portfolio" / "inventory" / "inventory.json"
 BASE = "http://localhost:8080"
 
