@@ -71,6 +71,13 @@ export async function fetchBoardData(repo, gh) {
   return { issues: [...JSON.parse(openJson), ...JSON.parse(closedJson)], prs: JSON.parse(prsJson) }
 }
 
+// A single ticket's detail: number, title, body, labels, URL, state, comments.
+// The gh function must return JSON text (not parse it).
+export async function fetchTicket(repo, number, gh) {
+  const out = await gh(['issue', 'view', String(Number(number)), '--repo', repo, '--json', 'number,title,body,labels,url,state,comments'])
+  return JSON.parse(out)
+}
+
 // Everything closed in this repo (up to 1000 tickets) and the merged PRs that closed them -- the
 // completed-work record. No bodies or comments: this is a list, the drill-down fetches the detail.
 export async function fetchCompletedData(repo, gh) {

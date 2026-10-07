@@ -22,7 +22,7 @@ import { readPrefs } from './prefs.js'
 import { assertInOrder } from './pr_order.js'
 
 const mergeOps = createMergeOps()
-import { readRegistry, loadBoard, fetchBoardData, fetchCompletedData, withProjectStatus, defaultStagesFor, defaultLiveNumbers, getEvidence, REGISTRY_PATH } from './boards.js'
+import { readRegistry, loadBoard, fetchBoardData, fetchCompletedData, withProjectStatus, defaultStagesFor, defaultLiveNumbers, getEvidence, fetchTicket, REGISTRY_PATH } from './boards.js'
 import { createRelationsService } from './relations_service.js'
 import { summarizeBoard, buildCompleted } from './board.js'
 import { createTriggerHub, createReconciler, refetchesGithub } from './triggers.js'
@@ -250,8 +250,7 @@ function registerActivityHandlers() {
   })
   ipcMain.handle('boards:ticket', async (_event, repo, number) => {
     assertRegistered(repo)
-    const out = await ghJson(['issue', 'view', String(Number(number)), '--repo', repo, '--json', 'number,title,body,labels,url,state,comments'])
-    return JSON.parse(out)
+    return fetchTicket(repo, number, ghJson)
   })
   // The owner's reply on a ticket; if the ticket was waiting on it, it goes back in the queue (src/lib/ticket_input.js).
   ipcMain.handle('boards:input', async (_event, repo, number, body) => {
