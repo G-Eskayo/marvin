@@ -7,7 +7,7 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { listSubsystems, readHistory, buildIndex } from './metrics.js'
 import { getReworkStatus, clearReworkCache } from './rework.js'
-import { listPipelinePrs, approveMr, denyMr, fetchTicketContext, sentBackKeys, clearSentBackLabel } from './mr_review.js'
+import { prsForOrderCheck, listPipelinePrs, approveMr, denyMr, fetchTicketContext, sentBackKeys, clearSentBackLabel } from './mr_review.js'
 import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
 import { readDispatchStatus } from './dispatch_status.js'
 import { readHealthStatus, runHealthCheckNow } from './health.js'
@@ -491,7 +491,9 @@ function registerMrReviewHandlers() {
   // fast double-click the way a custom in-page confirm affordance could.
   ipcMain.handle('mr:approve', async (_event, { number, url }) => {
     assertMergeable(url)
-    assertInOrder(await listOpenPrs({ fresh: true }), url)  // checked here, not just greyed out in the UI, so a stale screen can't skip it
+    // Checked here, not just greyed out in the UI, so a stale screen can't skip it. Sent-back PRs are marked the same way
+    // the list marks them, or a newer PR waits forever on one that can't merge (marvin #209).
+    assertInOrder(await prsForOrderCheck(await listOpenPrs({ fresh: true }), sentBackTickets), url)
     if (!mergeOps.start(url)) return { merged: false, cancelled: true, alreadyMerging: true }
     try {
       // The Approve & Merge click is the decision. The native popup is opt-in (prefs.json: confirmMerge) -- the

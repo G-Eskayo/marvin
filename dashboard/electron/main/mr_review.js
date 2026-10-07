@@ -176,6 +176,26 @@ export function sentBackKeys(repo, issues) {
   return keys
 }
 
+// Each PR marked with whether its ticket was sent back for rework, which is what merge order (pr_order.js) needs to skip
+// it. Shared by the review list and the check run on the Approve click, so the two can never disagree (marvin #209).
+export function markSentBack(prs, keys) {
+  return prs.map((p) => {
+    const ticket = parseTicketRef(p.body || '')
+    return { ...p, repo: p.repo || MARVIN_REPO, sentBack: ticket !== null && keys.has(`${p.repo || MARVIN_REPO}#${ticket}`) }
+  })
+}
+
+// The PR list to hand assertInOrder at Approve time. A failing lookup marks nothing sent back (fails closed on order).
+export async function prsForOrderCheck(prs, sentBackTickets) {
+  let keys = new Set()
+  try {
+    keys = await sentBackTickets([...new Set(prs.map((p) => p.repo || MARVIN_REPO))])
+  } catch {
+    keys = new Set()
+  }
+  return markSentBack(prs, keys)
+}
+
 export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDashboard, sentBackTickets = null, reworkStatus = null } = {}) {
   const prs = await listOpenPrs()
   // Which tickets were sent back for rework ("repo#number" keys), asked once for the repos that have PRs. A failing
@@ -200,11 +220,7 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
   }
   // Each PR with the facts that decide whether it can be waited on (sent back for rework; conflicts), so merge order skips the
   // ones that cannot merge as they stand.
-  const withState = prs.map((p) => ({
-    ...p,
-    repo: p.repo || MARVIN_REPO,
-    sentBack: parseTicketRef(p.body || '') !== null && sentBackKeys.has(`${p.repo || MARVIN_REPO}#${parseTicketRef(p.body || '')}`)
-  }))
+  const withState = markSentBack(prs, sentBackKeys)
   return prs.map((pr) => {
     const ticketRef = parseTicketRef(pr.body || '')
     const hasSchema = hasEvidenceSchema(pr.body)

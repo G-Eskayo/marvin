@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { waitingOn, assertInOrder } from '../electron/main/pr_order.js'
+import { prsForOrderCheck } from '../electron/main/mr_review.js'
 
 const pr = (number, files, repo = 'o/r') => ({ number, repo, url: `https://github.com/${repo}/pull/${number}`, title: `PR ${number}`, files: files.map((path) => ({ path })) })
 
@@ -114,5 +115,26 @@ describe('the MR list shows each PR\'s CI state', () => {
     const list = await listPipelinePrs(async () => raw)
     expect(list.map((p) => p.checks.state)).toEqual(['passing', 'failing', 'pending', 'none'])
     expect(list[1].checks.failing).toEqual(['t'])
+  })
+})
+
+// marvin #209 (2026-10-07): the review list skipped sent-back PR #208, but the check run on the Approve click got the
+// raw PR list (no `sentBack` field), so #209 was refused with "Merge #208 first" while #208 was refused as sent back.
+describe('prsForOrderCheck: the Approve-time order check sees sent-back PRs the same way the list does', () => {
+  const raw = () => [
+    { ...pr(208, ['mobile-backend/index.js'], 'G-Eskayo/marvin'), body: 'Closes G-Eskayo/marvin#161', mergeable: 'UNKNOWN' },
+    { ...pr(209, ['mobile-backend/index.js'], 'G-Eskayo/marvin'), body: 'Closes G-Eskayo/marvin#158', mergeable: 'MERGEABLE' }
+  ]
+  it('a newer PR is not held up by an older one whose ticket was sent back', async () => {
+    const prs = await prsForOrderCheck(raw(), async () => new Set(['G-Eskayo/marvin#161']))
+    expect(() => assertInOrder(prs, 'https://github.com/G-Eskayo/marvin/pull/209')).not.toThrow()
+  })
+  it('still waits on the older PR when its ticket was not sent back', async () => {
+    const prs = await prsForOrderCheck(raw(), async () => new Set())
+    expect(() => assertInOrder(prs, 'https://github.com/G-Eskayo/marvin/pull/209')).toThrow(/Merge #208 first/)
+  })
+  it('a failing sent-back lookup falls back to the plain order check rather than throwing', async () => {
+    const prs = await prsForOrderCheck(raw(), async () => { throw new Error('gh down') })
+    expect(() => assertInOrder(prs, 'https://github.com/G-Eskayo/marvin/pull/209')).toThrow(/Merge #208 first/)
   })
 })
