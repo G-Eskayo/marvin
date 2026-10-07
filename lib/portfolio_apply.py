@@ -25,9 +25,10 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import portfolio_rules  # noqa: E402
+import project_catalog  # noqa: E402
 
 HOME = Path.home()
-PROJECT = HOME / "Documents" / "Projects" / "portfolio-website-updater"
+PROJECT = project_catalog.portfolio_repo_path()
 DEV_HTML = HOME / "portfolio-dev" / "wordpress" / "html"
 IMAGES_DIR = HOME / ".claude" / "portfolio" / "images"
 UPLOAD_SUBDIR = "wp-content/uploads/generated"

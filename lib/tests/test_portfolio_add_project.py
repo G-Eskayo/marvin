@@ -10,8 +10,9 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import portfolio_add_project as ap  # noqa: E402
 import portfolio_imagegen as ig  # noqa: E402
+import project_catalog  # noqa: E402
 
-TEMPLATES = Path.home() / "Documents" / "Projects" / "portfolio-website-updater" / "templates"
+TEMPLATES = project_catalog.portfolio_repo_path() / "templates"
 
 MANIFEST = """[
   {

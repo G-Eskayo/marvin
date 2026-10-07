@@ -9,8 +9,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import portfolio_parity as pp  # noqa: E402
+import project_catalog  # noqa: E402
 
-PROJECT = Path.home() / "Documents" / "Projects" / "portfolio-website-updater"
+PROJECT = project_catalog.portfolio_repo_path()
 ELEMENT = {"look": {"title": {"fontFamily": '"Roboto Slab"', "color": "rgb(255, 0, 153)"}}, "geometry": {"photoHeight": 240, "boxHeight": 290, "overlap": 56}}
 
 

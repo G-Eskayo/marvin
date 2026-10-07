@@ -15,6 +15,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import portfolio_templates as pt  # noqa: E402
+import project_catalog  # noqa: E402
 
 ROOT = pt.ROOT
 pytestmark = pytest.mark.skipif(not (ROOT / "templates.json").exists(), reason="portfolio repo templates not on this machine")
@@ -140,7 +141,7 @@ def test_every_template_has_a_specimen_that_renders_cleanly():
 # paragraphs, a different button, inline styles), so the "same" card looked different on hub, All Projects and the
 # footer. These pin it to one file.
 
-PORTFOLIO = Path.home() / "Documents" / "Projects" / "portfolio-website-updater"
+PORTFOLIO = project_catalog.portfolio_repo_path()
 
 
 def _bin_card():

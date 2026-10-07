@@ -236,3 +236,41 @@ def test_refresh_names_the_phase_that_failed(tmp_path):
     out = pc.refresh(path=tmp_path / "p.json", github=boom, local=lambda: [], manifest=lambda: [], memory=lambda: [],
                      overrides=lambda: {}, boards=lambda: set(), now=NOW, report=lambda s, d="": steps.append(s))
     assert out["ok"] is False and "GitHub repos" in out["error"] and "rate limited" in out["error"]
+
+
+# ── portfolio_repo_path lookup ──────────────────────────────────────────────
+
+def test_portfolio_repo_path_env_override_wins(tmp_path, monkeypatch):
+    monkeypatch.setenv("MARVIN_PORTFOLIO_PATH", "/override/path")
+    assert pc.portfolio_repo_path() == Path("/override/path")
+
+
+def test_portfolio_repo_path_uses_catalog_local_paths(tmp_path, monkeypatch):
+    monkeypatch.delenv("MARVIN_PORTFOLIO_PATH", raising=False)
+    cat_path = tmp_path / "catalog.json"
+    cat_path.write_text(json.dumps({
+        "projects": [
+            {"id": "portfolio-website-updater", "localPaths": ["/catalog/portfolio-path"]},
+        ]
+    }))
+    monkeypatch.setattr("project_catalog.catalog_path", lambda: cat_path)
+    assert pc.portfolio_repo_path() == Path("/catalog/portfolio-path")
+
+
+def test_portfolio_repo_path_falls_back_to_default(tmp_path, monkeypatch):
+    monkeypatch.delenv("MARVIN_PORTFOLIO_PATH", raising=False)
+    cat_path = tmp_path / "catalog.json"
+    cat_path.write_text(json.dumps({"projects": []}))
+    monkeypatch.setattr("project_catalog.catalog_path", lambda: cat_path)
+    assert pc.portfolio_repo_path() == pc._PORTFOLIO_DEFAULT
+
+
+def test_no_hardcoded_portfolio_path_outside_default_fallback():
+    import re
+    import subprocess
+    lib_dir = Path(__file__).resolve().parents[1]
+    result = subprocess.run(["grep", "-r", r'"Documents"\s*/\s*"Projects"\s*/\s*"portfolio-website-updater"', ".",
+                             "--include=*.py", "--exclude-dir=__pycache__"], cwd=lib_dir,
+                            capture_output=True, text=True)
+    lines = [l for l in result.stdout.split("\n") if l.strip()]
+    assert len(lines) == 1 and "_PORTFOLIO_DEFAULT" in lines[0], f"Expected exactly one occurrence in _PORTFOLIO_DEFAULT, found: {lines}"
