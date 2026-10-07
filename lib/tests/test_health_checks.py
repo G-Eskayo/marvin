@@ -3,6 +3,7 @@
 """
 from __future__ import annotations
 import json
+import pytest
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -643,3 +644,26 @@ def test_github_budget_is_yellow_not_red_when_it_simply_cannot_be_read():
         raise RuntimeError("could not resolve host")
     r = hc.check_github_budget(query=offline)
     assert r["severity"] == "yellow"
+
+
+# ── disk space: found 2026-10-06 the mac-mini at 94% full (13 GiB free) with nothing
+# watching -- leaked pipeline worktrees, and iCloud then evicting the files jobs read.
+
+def test_parse_machine_state_reads_disk_and_worktrees():
+    st = hc.parse_machine_state("disk_free_kb=13631488\ndisk_total_kb=239075328\nworktrees_kb=41104384\nworktrees_n=33\n")
+    assert st["disk_free_kb"] == 13631488 and st["disk_total_kb"] == 239075328
+    assert st["worktrees_kb"] == 41104384 and st["worktrees_n"] == 33
+
+
+@pytest.mark.parametrize("free_pct,expected", [(30, "green"), (15, "yellow"), (6, "red")])
+def test_disk_space_severity_by_free_share(free_pct, expected):
+    total = 100 * 1024 * 1024
+    res = dict((k, (s, d)) for k, s, d in hc.evaluate_machine_state(
+        _mstate(disk_free_kb=total * free_pct // 100, disk_total_kb=total, worktrees_kb=2 * 1024 * 1024, worktrees_n=4), NOW))
+    sev, detail = res["disk:space"]
+    assert sev == expected
+    assert "GiB free" in detail and "4 pipeline worktrees" in detail
+
+
+def test_no_disk_reading_means_no_disk_check():
+    assert "disk:space" not in dict((k, s) for k, s, _ in hc.evaluate_machine_state(_mstate(), NOW))

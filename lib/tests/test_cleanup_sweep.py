@@ -105,124 +105,193 @@ def test_sweep_stale_claims_default_release_is_ticket_claims_release(monkeypatch
     assert calls == [(7, "mac-mini")]
 
 
-# ── orphaned worktree detection ─────────────────────────────────────────────
+# ── worktree decisions (multi-repo, PR-state driven) ────────────────────────
+# Found 2026-10-06: nothing ever removed a resolved ticket's worktree, the sweep
+# was never scheduled, and it only knew G-Eskayo/marvin -- 39 GiB of merged
+# clarity-captions/marvin/finance-os worktrees on the mac-mini (94% full).
 
-def test_finds_worktree_with_no_matching_open_claim(tmp_path):
-    wt = tmp_path / "pipeline-g-eskayo-marvin-7"
-    wt.mkdir()
-    orphans = cs.find_orphaned_worktrees(
-        list_worktrees=lambda: [(wt, "pipeline/g-eskayo/marvin#7")],
-        list_claimed_open_issues=lambda: [],  # nothing currently claimed/open
-    )
-    assert orphans == [wt]
-
-
-def test_does_not_flag_worktree_with_active_claim(tmp_path):
-    wt = tmp_path / "pipeline-g-eskayo-marvin-7"
-    wt.mkdir()
-    orphans = cs.find_orphaned_worktrees(
-        list_worktrees=lambda: [(wt, "pipeline/g-eskayo/marvin#7")],
-        list_claimed_open_issues=lambda: [_issue(7, ["claimed:mac-mini"], updated_hours_ago=1)],
-    )
-    assert orphans == []
+def _wt(tmp_path, name="pipeline-g-eskayo-clarity-captions-13", repo="G-Eskayo/clarity-captions",
+        branch="pipeline/g-eskayo/clarity-captions#13", ahead=0, dirty=False, age_hours=48):
+    p = tmp_path / name
+    p.mkdir(exist_ok=True)
+    return {"path": p, "branch": branch, "repo": repo, "clone": tmp_path / "clone",
+            "ahead": ahead, "dirty": dirty, "age_hours": age_hours}
 
 
-def test_extracts_issue_number_regardless_of_case_folding():
+@pytest.mark.parametrize("pr_state", ["MERGED", "CLOSED"])
+def test_resolved_pr_is_removed(tmp_path, pr_state):
+    action, _ = cs.decide_worktree(_wt(tmp_path, ahead=1), pr_state=pr_state, claimed=False)
+    assert action == "remove"
+
+
+def test_open_pr_is_kept(tmp_path):
+    action, _ = cs.decide_worktree(_wt(tmp_path, ahead=1), pr_state="OPEN", claimed=False)
+    assert action == "keep"
+
+
+def test_uncommitted_work_is_never_removed_even_when_merged(tmp_path):
+    action, reason = cs.decide_worktree(_wt(tmp_path, dirty=True), pr_state="MERGED", claimed=False)
+    assert action == "review"
+    assert "uncommitted" in reason
+
+
+def test_commits_without_a_pr_are_kept_for_review(tmp_path):
+    action, reason = cs.decide_worktree(_wt(tmp_path, ahead=2), pr_state=None, claimed=False)
+    assert action == "review"
+    assert "no PR" in reason
+
+
+def test_empty_old_attempt_with_no_pr_is_removed(tmp_path):
+    action, _ = cs.decide_worktree(_wt(tmp_path, ahead=0, age_hours=48), pr_state=None, claimed=False)
+    assert action == "remove"
+
+
+def test_a_ticket_that_just_started_is_not_mistaken_for_empty(tmp_path):
+    # A fresh worktree has no PR, no commits, no changes -- exactly like an abandoned one.
+    young = cs.decide_worktree(_wt(tmp_path, age_hours=2), pr_state=None, claimed=False)
+    claimed = cs.decide_worktree(_wt(tmp_path, age_hours=48), pr_state=None, claimed=True)
+    assert young[0] == "keep"
+    assert claimed[0] == "keep"
+
+
+def test_unknown_repo_is_kept(tmp_path):
+    action, _ = cs.decide_worktree(_wt(tmp_path, repo=None), pr_state=None, claimed=False)
+    assert action == "keep"
+
+
+def test_issue_number_comes_from_the_branch():
     assert cs._extract_issue_number("pipeline/g-eskayo/marvin#7") == 7
-    assert cs._extract_issue_number("pipeline/some-other-thing#123") == 123
+    assert cs._extract_issue_number("pipeline/g-eskayo/clarity-captions#123") == 123
     assert cs._extract_issue_number("not-a-pipeline-branch") is None
 
 
-def test_sweep_orphaned_worktrees_removes_worktree_and_branch(tmp_path):
-    wt = tmp_path / "pipeline-g-eskayo-marvin-7"
-    wt.mkdir()
-    removed = []
-    result = cs.sweep_orphaned_worktrees(
-        list_worktrees=lambda: [(wt, "pipeline/g-eskayo/marvin#7")],
-        list_claimed_open_issues=lambda: [],
-        remove_worktree=lambda path, branch: removed.append((path, branch)),
+def test_sweep_looks_up_each_worktree_in_its_own_repo(tmp_path):
+    a = _wt(tmp_path)
+    b = _wt(tmp_path, name="pipeline-g-eskayo-marvin-7", repo="G-Eskayo/marvin", branch="pipeline/g-eskayo/marvin#7")
+    asked, removed = [], []
+
+    def pr_state(repo, branch):
+        asked.append((repo, branch))
+        return {"G-Eskayo/clarity-captions": "MERGED", "G-Eskayo/marvin": "OPEN"}[repo]
+
+    result = cs.sweep_worktrees(
+        list_worktrees=lambda: [a, b],
+        pr_state=pr_state,
+        is_claimed=lambda repo, n: False,
+        remove_worktree=lambda wt: removed.append(wt["path"]) or True,
     )
-    assert removed == [(wt, "pipeline/g-eskayo/marvin#7")]
-    assert result == [wt]
+    assert ("G-Eskayo/clarity-captions", "pipeline/g-eskayo/clarity-captions#13") in asked
+    assert ("G-Eskayo/marvin", "pipeline/g-eskayo/marvin#7") in asked
+    assert removed == [a["path"]]
+    assert [r["path"] for r in result["removed"]] == [a["path"]]
 
 
-def test_does_not_remove_worktree_with_active_claim(tmp_path):
-    wt = tmp_path / "pipeline-g-eskayo-marvin-7"
-    wt.mkdir()
-    removed = []
-    cs.sweep_orphaned_worktrees(
-        list_worktrees=lambda: [(wt, "pipeline/g-eskayo/marvin#7")],
-        list_claimed_open_issues=lambda: [_issue(7, ["claimed:mac-mini"], updated_hours_ago=1)],
-        remove_worktree=lambda path, branch: removed.append((path, branch)),
+def test_sweep_reports_items_needing_review_and_failed_removals(tmp_path):
+    dirty = _wt(tmp_path, dirty=True)
+    stuck = _wt(tmp_path, name="pipeline-g-eskayo-marvin-8", repo="G-Eskayo/marvin", branch="pipeline/g-eskayo/marvin#8")
+    result = cs.sweep_worktrees(
+        list_worktrees=lambda: [dirty, stuck],
+        pr_state=lambda repo, branch: "MERGED",
+        is_claimed=lambda repo, n: False,
+        remove_worktree=lambda wt: False,  # git refused
     )
-    assert removed == []
+    assert [r["path"] for r in result["review"]] == [dirty["path"], stuck["path"]]
+    assert result["removed"] == []
+
+
+def test_default_remove_is_lossless(tmp_path):
+    """Plain `git worktree remove` (never --force) and the branch is kept, so an
+    untracked file makes git refuse and a commit stays reachable."""
+    import subprocess
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+    git = lambda *a, cwd=repo: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=cwd,
+                                              check=True, capture_output=True)
+    (repo / "f").write_text("1")
+    git("add", ".")
+    git("commit", "-qm", "i")
+    wt_path = tmp_path / "wts" / "pipeline-x-7"
+    git("worktree", "add", "-q", "-b", "pipeline/x#7", str(wt_path))
+    (wt_path / "g").write_text("2")
+    git("add", ".", cwd=wt_path)
+    git("commit", "-qm", "work", cwd=wt_path)
+    (wt_path / "untracked.txt").write_text("keep me")
+
+    wt = {"path": wt_path, "branch": "pipeline/x#7", "clone": repo}
+    assert cs._default_remove_worktree(wt) is False
+    assert (wt_path / "untracked.txt").exists()
+
+    (wt_path / "untracked.txt").unlink()
+    assert cs._default_remove_worktree(wt) is True
+    assert not wt_path.exists()
+    branches = subprocess.run(["git", "branch", "--list", "pipeline/x#7"], cwd=repo, capture_output=True, text=True).stdout
+    assert "pipeline/x#7" in branches
+
+
+def test_lists_real_worktrees_with_repo_and_state(tmp_path, monkeypatch):
+    import subprocess
+    origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", "-q", str(origin), str(clone)], check=True, capture_output=True)
+    subprocess.run(["git", "remote", "set-url", "origin", "https://github.com/G-Eskayo/clarity-captions.git"], cwd=clone, check=True)
+    git = lambda *a, cwd=clone: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=cwd,
+                                               check=True, capture_output=True)
+    (clone / "f").write_text("1")
+    git("add", ".")
+    git("commit", "-qm", "i")
+    git("update-ref", "refs/remotes/origin/main", "HEAD")
+    root = tmp_path / "wts"
+    git("worktree", "add", "-q", "-b", "pipeline/g-eskayo/clarity-captions#13", str(root / "pipeline-g-eskayo-clarity-captions-13"))
+    (root / "pipeline-g-eskayo-clarity-captions-13" / "new.txt").write_text("x")
+    (root / "not-a-git-dir").mkdir()
+    monkeypatch.setattr(cs, "WORKTREES_ROOT", root)
+
+    [wt] = cs._default_list_worktrees()
+    assert wt["repo"] == "G-Eskayo/clarity-captions"
+    assert wt["branch"] == "pipeline/g-eskayo/clarity-captions#13"
+    assert wt["clone"].resolve() == clone.resolve()
+    assert wt["ahead"] == 0
+    assert wt["dirty"] is True
+    assert wt["age_hours"] < 1
 
 
 # ── logging (visibility standard matching cron_health.py) ──────────────────
 
 def test_run_daily_sweep_writes_log(log_path, tmp_path):
-    wt = tmp_path / "pipeline-g-eskayo-marvin-9"
-    wt.mkdir()
+    wt = _wt(tmp_path, dirty=True)
     cs.run_daily_sweep(
         list_claimed_open_issues=lambda: [_issue(7, ["claimed:mac-mini"], updated_hours_ago=48)],
-        list_worktrees=lambda: [(wt, "pipeline/g-eskayo/marvin#9")],
+        list_worktrees=lambda: [wt],
+        pr_state=lambda repo, branch: None,
+        is_claimed=lambda repo, n: False,
         release=lambda n, m: None,
-        remove_worktree=lambda path, branch: None,
+        remove_worktree=lambda w: True,
         now=NOW,
     )
-    assert log_path.exists()
     content = log_path.read_text()
-    assert "7" in content
-    assert "mac-mini" in content
+    assert "#7" in content and "mac-mini" in content
+    assert "uncommitted" in content and str(wt["path"]) in content
 
 
 def test_run_daily_sweep_logs_nothing_removed_when_all_clean(log_path):
-    cs.run_daily_sweep(
-        list_claimed_open_issues=lambda: [],
-        list_worktrees=lambda: [],
-        now=NOW,
-    )
-    assert log_path.exists()
-    assert "nothing" in log_path.read_text().lower() or "no stale" in log_path.read_text().lower()
+    cs.run_daily_sweep(list_claimed_open_issues=lambda: [], list_worktrees=lambda: [], now=NOW)
+    assert "nothing" in log_path.read_text().lower()
 
 
 def test_run_daily_sweep_returns_summary_dict(log_path, tmp_path):
     result = cs.run_daily_sweep(
         list_claimed_open_issues=lambda: [_issue(7, ["claimed:mac-mini"], updated_hours_ago=48)],
-        list_worktrees=lambda: [],
+        list_worktrees=lambda: [_wt(tmp_path)],
+        pr_state=lambda repo, branch: "MERGED",
+        is_claimed=lambda repo, n: False,
         release=lambda n, m: None,
+        remove_worktree=lambda w: True,
         now=NOW,
     )
     assert result["stale_claims_released"] == 1
-    assert result["orphaned_worktrees_removed"] == 0
-
-
-def test_default_remove_worktree_preserves_unique_work_before_discarding(tmp_path, monkeypatch):
-    # cleanup_sweep force-removed stale worktrees and deleted their branch blind --
-    # the same data-loss pattern as sandbox_orchestration._create_worktree.
-    import subprocess
-    import cleanup_sweep as cs
-    import sandbox_orchestration as so
-
-    origin = tmp_path / "origin.git"
-    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
-    repo = tmp_path / "repo"
-    subprocess.run(["git", "clone", "-q", str(origin), str(repo)], check=True, capture_output=True)
-    (repo / "f").write_text("1")
-    for args in (["add", "."], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "i"],
-                 ["push", "-q", "origin", "HEAD:main"]):
-        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
-    monkeypatch.setattr(so, "WORKTREES_ROOT", tmp_path / "wts")
-    wt = so._create_worktree(repo, "G-Eskayo/marvin#55")
-    (wt / "half.py").write_text("work\n")
-    monkeypatch.setattr(cs, "REPO_PATH", repo, raising=False)
-
-    cs._default_remove_worktree(wt, "pipeline/g-eskayo/marvin#55")
-
-    refs = subprocess.run(["git", "for-each-ref", "--format=%(refname)", "refs/rescue/"], cwd=repo,
-                          capture_output=True, text=True).stdout.split()
-    assert len(refs) == 1
-    assert not wt.exists()
+    assert result["worktrees_removed"] == 1
+    assert result["worktrees_for_review"] == 0
 
 
 def test_a_failing_worktree_add_says_why(monkeypatch, tmp_path):

@@ -484,6 +484,9 @@ if /usr/bin/pgrep -x DesktopLive >/dev/null 2>&1; then echo "desktoplive=running
 echo "jobs=$(/bin/launchctl list 2>/dev/null | /usr/bin/awk '{print $3}' | /usr/bin/grep '^com\.marvin\.' | /usr/bin/sed 's/^com\.marvin\.//' | /usr/bin/sort | /usr/bin/tr '\n' ',')"
 TREE="$HOME/.agents/brain-map/tree-data.json"
 if [ -f "$TREE" ]; then echo "brain_data_ts=$(stat -f %m "$TREE")"; else echo "brain_data_ts="; fi
+/bin/df -k "$HOME" | /usr/bin/awk 'NR==2 {print "disk_total_kb=" $2; print "disk_free_kb=" $4}'
+WT="$HOME/.agents-pipeline-worktrees"
+if [ -d "$WT" ]; then echo "worktrees_kb=$(/usr/bin/du -sk "$WT" 2>/dev/null | /usr/bin/cut -f1)"; echo "worktrees_n=$(/bin/ls -1 "$WT" | /usr/bin/wc -l | /usr/bin/tr -d ' ')"; fi
 '''
 
 
@@ -497,6 +500,7 @@ JOB_PLACEMENT = {
     "architecture-review": "mini", "auto-fix": "mini", "cron-health": "mini", "health-check": "mini",
     "process-quarantine-reviews": "mini", "verify-digest-fix": "mini",
     "usage-scan": "both",  # hourly: each machine scans its own transcripts for the Metrics tab (lib/usage_report.py)
+    "cleanup-sweep": "both",  # daily: each machine sweeps its own pipeline worktrees (lib/cleanup_sweep.py)
     "dashboard-launch": "laptop", "desktoplive-restart": "laptop",
 }
 
@@ -529,7 +533,15 @@ def parse_machine_state(text: str) -> dict:
     return {"app_built_ts": num("app_built_ts"), "dashboard_commit_ts": num("dashboard_commit_ts"),
             "gh_token": raw.get("gh_token", "").strip(), "docs_access": raw.get("docs_access", "").strip(),
             "desktoplive": raw.get("desktoplive", "").strip(), "brain_data_ts": num("brain_data_ts"),
+            "disk_free_kb": num("disk_free_kb"), "disk_total_kb": num("disk_total_kb"),
+            "worktrees_kb": num("worktrees_kb"), "worktrees_n": num("worktrees_n"),
             "jobs": [j for j in raw.get("jobs", "").strip().split(",") if j]}
+
+
+# Free-space thresholds (share of the disk). Found 2026-10-06: the mac-mini at 6% free; below ~10% macOS
+# evicts iCloud files aggressively, and background jobs then block reading them.
+DISK_YELLOW_BELOW_PCT = 20
+DISK_RED_BELOW_PCT = 10
 
 
 def evaluate_machine_state(state: dict, now: datetime) -> list[tuple[str, str, str]]:
@@ -571,6 +583,16 @@ def evaluate_machine_state(state: dict, now: datetime) -> list[tuple[str, str, s
         days = (now - datetime.fromtimestamp(ts, tz=timezone.utc)).total_seconds() / 86400
         out.append(("brainmap:data", "yellow" if days >= 7 else "green",
                     f"brain-map data last regenerated {days:.0f}d ago" + (" -- it is rebuilt by use on this machine, so an idle machine shows an old picture" if days >= 7 else "")))
+    free, total = state.get("disk_free_kb"), state.get("disk_total_kb")
+    if free is not None and total:
+        pct = 100 * free / total
+        sev = "red" if pct < DISK_RED_BELOW_PCT else "yellow" if pct < DISK_YELLOW_BELOW_PCT else "green"
+        detail = f"{free / 1048576:.0f} GiB free of {total / 1048576:.0f} ({pct:.0f}%)"
+        if state.get("worktrees_kb") is not None:
+            detail += f"; {state.get('worktrees_n') or 0} pipeline worktrees use {state['worktrees_kb'] / 1048576:.1f} GiB"
+        if sev != "green":
+            detail += " -- check ~/.claude/logs/mr-pipeline-sweep.md and docs/plans/storage-and-distribution-2026-10-06.md"
+        out.append(("disk:space", sev, detail))
     if state.get("jobs"):
         role = "laptop" if "macbook" in state.get("_device", "") else "mini"
         sev, detail = evaluate_job_placement(state["jobs"], role)
@@ -591,7 +613,8 @@ def check_machine_state_everywhere(reachability: dict[str, str], runner=_run_mac
         for dev, info in machine_profile.remote_devices().items()
     ]
     labels = {"dashboard:build": "Dashboard app build", "auth:gh": "GitHub credential", "docs:access": "Docs tab GitHub access",
-              "desktoplive:running": "Desktop brain-map background", "brainmap:data": "Brain-map data freshness", "jobs:placement": "Scheduled jobs vs. placement"}
+              "desktoplive:running": "Desktop brain-map background", "brainmap:data": "Brain-map data freshness", "jobs:placement": "Scheduled jobs vs. placement",
+              "disk:space": "Disk space"}
     for dev, host, reach in devices:
         if reach == "asleep":
             for key, label in labels.items():
