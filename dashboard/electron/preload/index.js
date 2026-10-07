@@ -38,7 +38,8 @@ contextBridge.exposeInMainWorld('api', {
   },
   dispatch: {
     getConcurrency: () => ipcRenderer.invoke('dispatch:getConcurrency'),
-    setConcurrency: (settings) => ipcRenderer.invoke('dispatch:setConcurrency', settings)
+    setConcurrency: (settings) => ipcRenderer.invoke('dispatch:setConcurrency', settings),
+    scanNow: () => ipcRenderer.invoke('dispatch:scanNow')
   },
   queue: {
     list: () => ipcRenderer.invoke('queue:list')

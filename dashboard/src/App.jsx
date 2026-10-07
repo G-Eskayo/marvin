@@ -6,6 +6,7 @@ import DocsExplorer from '@components/DocsExplorer.jsx'
 import ActivityBoard from '@components/ActivityBoard.jsx'
 import PortfolioHub from '@components/PortfolioHub.jsx'
 import DispatchStatusBadge from '@components/DispatchStatusBadge.jsx'
+import ActivityHover from '@components/ActivityHover.jsx'
 
 const TABS = [
   { id: 'metrics', label: 'Metrics' },
@@ -127,7 +128,9 @@ export default function App() {
           })}
         </nav>
         <div className="ml-auto">
-          <DispatchStatusBadge onClick={() => navigate('health', { view: 'agents' })} />
+          <ActivityHover>
+            <DispatchStatusBadge onClick={() => navigate('health', { view: 'agents' })} />
+          </ActivityHover>
         </div>
       </header>
       <main className="flex-1 overflow-auto">

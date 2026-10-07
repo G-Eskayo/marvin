@@ -6,13 +6,14 @@ describe('getQueue', () => {
   it('returns the rows, caches, and reports a failed read as an error (never as an empty queue)', async () => {
     clearQueueCache()
     let calls = 0
-    const run = async () => { calls++; return '[{"position":1,"number":5}]' }
-    expect(await getQueue({ run, now: 1000 })).toEqual({ queue: [{ position: 1, number: 5 }], error: null })
+    const run = async () => { calls++; return '{"queue":[{"position":1,"number":5}],"running":[{"number":9,"machine":"mac-mini-1"}]}' }
+    expect(await getQueue({ run, now: 1000 })).toEqual({ queue: [{ position: 1, number: 5 }], running: [{ number: 9, machine: 'mac-mini-1' }], error: null })
     await getQueue({ run, now: 20000 })
     expect(calls).toBe(1)
     clearQueueCache()
     const bad = await getQueue({ run: async () => { throw new Error('gh down') }, now: 1000 })
     expect(bad.queue).toEqual([])
+    expect(bad.running).toEqual([])
     expect(bad.error).toMatch(/gh down/)
   })
 })
