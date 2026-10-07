@@ -47,6 +47,7 @@ contextBridge.exposeInMainWorld('api', {
   profiles: {
     list: () => ipcRenderer.invoke('profiles:list'),
     setDispatch: (repo, value) => ipcRenderer.invoke('profiles:setDispatch', repo, value),
+    setMergeFromDashboard: (repo, value) => ipcRenderer.invoke('profiles:setMergeFromDashboard', repo, value),
     selftest: (repo) => ipcRenderer.invoke('profiles:selftest', repo)
   },
   working: {

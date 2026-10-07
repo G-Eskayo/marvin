@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { cleanIpcError } from '../lib/ipcError.js'
 
 const SEVERITY_COLOR = {
   ok: { bg: 'bg-emerald-950', border: 'border-emerald-900', dot: 'bg-emerald-500', text: 'text-emerald-300' },
@@ -34,7 +35,73 @@ function PieceChip({ name, state, reason }) {
   )
 }
 
+function HealthSwitch({ plan, profiles, onReload }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  const profile = profiles?.find((p) => p.repo === plan.repo)
+  const dispatchOn = profile?.dispatch === 'on'
+  const mergeOn = profile?.mergeFromDashboard === true
+
+  async function handleDispatch() {
+    setBusy(true)
+    setError(null)
+    try {
+      const result = await window.api.profiles.setDispatch(plan.repo, dispatchOn ? 'off' : 'on')
+      if (result.done) await onReload()
+    } catch (e) {
+      setError(cleanIpcError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleMergeFromDashboard() {
+    setBusy(true)
+    setError(null)
+    try {
+      const result = await window.api.profiles.setMergeFromDashboard(plan.repo, !mergeOn)
+      if (result.done) await onReload()
+    } catch (e) {
+      setError(cleanIpcError(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const canDispatch = plan.offers?.dispatch === true
+  const canMerge = plan.offers?.merge_from_dashboard === true
+
+  return (
+    <div className="mt-3 flex flex-wrap gap-2">
+      <button
+        onClick={handleMergeFromDashboard}
+        disabled={!canMerge || mergeOn || busy}
+        className={`rounded px-2 py-1 text-xs disabled:opacity-50 ${mergeOn ? 'border border-neutral-700 text-neutral-300' : 'bg-sky-600 text-white hover:bg-sky-500'}`}
+        title={!canMerge ? 'Project baseline must pass first' : mergeOn ? 'Already enabled' : 'Turn on'}
+      >
+        {mergeOn ? 'Merge from dashboard: on' : 'Turn on merge-from-dashboard…'}
+      </button>
+      <button
+        onClick={handleDispatch}
+        disabled={!canDispatch || dispatchOn || busy}
+        className={`rounded px-2 py-1 text-xs disabled:opacity-50 ${dispatchOn ? 'border border-neutral-700 text-neutral-300' : 'bg-emerald-600 text-white hover:bg-emerald-500'}`}
+        title={!canDispatch ? 'Project baseline must pass first' : dispatchOn ? 'Already enabled' : 'Turn on'}
+      >
+        {dispatchOn ? 'Dispatch: on' : 'Turn on dispatch…'}
+      </button>
+    </div>
+  )
+}
+
 export default function ProjectReadinessPanel({ plans, loading }) {
+  const [profiles, setProfiles] = useState(undefined)
+
+  useEffect(() => {
+    const loadProfiles = () => window.api.profiles.list().then(setProfiles).catch(() => setProfiles([]))
+    loadProfiles()
+  }, [])
+
   if (loading) {
     return <div className="flex h-64 items-center justify-center text-neutral-500">Loading project readiness…</div>
   }
@@ -55,6 +122,8 @@ export default function ProjectReadinessPanel({ plans, loading }) {
     'generated_paths',
     'baseline'
   ]
+
+  const handleReload = () => window.api.profiles.list().then(setProfiles).catch(() => setProfiles([]))
 
   return (
     <div className="space-y-4">
@@ -109,6 +178,7 @@ export default function ProjectReadinessPanel({ plans, loading }) {
                   ))}
                 </div>
               )}
+              {isPlanned && <HealthSwitch plan={plan} profiles={profiles} onReload={handleReload} />}
             </div>
           )
         })}

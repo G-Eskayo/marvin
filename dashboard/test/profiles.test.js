@@ -86,3 +86,27 @@ describe('setDispatch', () => {
       expect(() => setDispatch('o/b', 'on', dir)).toThrow(/dispatch/i)
     }))
 })
+
+import { setMergeFromDashboard } from '../electron/main/profiles.js'
+
+describe('setMergeFromDashboard', () => {
+  const text = '{\n  "_readme": "keep me",\n  "repo": "o/a",\n  "merge_from_dashboard": false,\n  "machines": ["m"]\n}\n'
+
+  it('flips only the merge_from_dashboard value, leaving the rest of the file exactly as it was', () =>
+    withDir((dir) => {
+      put(dir, 'a.json', text)
+      setMergeFromDashboard('o/a', true, dir)
+      expect(readFileSync(path.join(dir, 'a.json'), 'utf-8')).toBe(text.replace('"merge_from_dashboard": false', '"merge_from_dashboard": true'))
+      setMergeFromDashboard('o/a', false, dir)
+      expect(readFileSync(path.join(dir, 'a.json'), 'utf-8')).toBe(text)
+    }))
+
+  it('refuses a value other than true/false, an unknown project, and a profile with no merge_from_dashboard line', () =>
+    withDir((dir) => {
+      put(dir, 'a.json', text)
+      put(dir, 'b.json', '{ "repo": "o/b" }')
+      expect(() => setMergeFromDashboard('o/a', 'maybe', dir)).toThrow(/true or false/i)
+      expect(() => setMergeFromDashboard('o/zzz', true, dir)).toThrow(/no profile/i)
+      expect(() => setMergeFromDashboard('o/b', true, dir)).toThrow(/merge_from_dashboard/i)
+    }))
+})
