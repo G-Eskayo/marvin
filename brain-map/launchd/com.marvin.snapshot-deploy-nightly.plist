@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Nightly map snapshot deployment: rebuild the public map snapshot at 02:00 daily.
+     Generated snapshot is checked for privacy leaks before deploying to the portfolio site.
+     See #188, ADR 0050. Log: ~/.claude/logs/deploy-snapshot.log
+     Install on each machine: cp this to ~/Library/LaunchAgents/ and `launchctl bootstrap gui/$(id -u) <file>`. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.marvin.snapshot-deploy-nightly</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/gileskayo/.agents/venv/bin/python</string>
+        <string>/Users/gileskayo/.agents/brain-map/deploy_snapshot.py</string>
+    </array>
+
+    <!-- Run every day at 02:00 local time -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>2</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/gileskayo/marvin</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/gileskayo/.claude/logs/snapshot-deploy-nightly.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/gileskayo/.claude/logs/snapshot-deploy-nightly-error.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/gileskayo</string>
+        <key>PATH</key>
+        <string>/Users/gileskayo/.local/bin:/usr/local/bin:/usr/bin:/bin:/Users/gileskayo/.agents/venv/bin</string>
+        <key>MARVIN_SNAPSHOT_ENABLED</key>
+        <string>1</string>
+    </dict>
+
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>
