@@ -12,6 +12,39 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import readable_guard  # noqa: E402
+
+# Tests that read the portfolio repo are left out where that repo can't be read from this process
+# (on the mac-mini, a launchd job opening files in iCloud-managed ~/Documents blocks forever, which hung
+# the merge gate and the pipeline at collection, 2026-10-06). Checked once, in a child process.
+_portfolio_blocked = None
+_not_collected: list[str] = []
+
+
+def pytest_ignore_collect(collection_path, config):
+    global _portfolio_blocked
+    if collection_path.suffix != ".py" or not collection_path.name.startswith("test_"):
+        return None
+    if _portfolio_blocked is None:
+        _portfolio_blocked = readable_guard.portfolio_repo_blocked()
+    if not _portfolio_blocked:
+        return None
+    try:
+        source = collection_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    if readable_guard.reads_portfolio_repo(source):
+        _not_collected.append(collection_path.name)
+        return True
+    return None
+
+
+def pytest_terminal_summary(terminalreporter):
+    if _not_collected:
+        terminalreporter.write_line(
+            f"portfolio repo is on this machine but not readable from this process: {len(_not_collected)} test "
+            f"file(s) not collected ({', '.join(sorted(_not_collected))})", yellow=True)
+
 
 @pytest.fixture(autouse=True)
 def _isolate_failure_breaker_log(tmp_path_factory, monkeypatch):
