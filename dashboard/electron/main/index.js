@@ -21,7 +21,8 @@ import { getQueue } from './queue.js'
 import { getConcurrency, setConcurrency, scanNow } from './dispatch_concurrency.js'
 import { createMergeOps } from './merge_ops.js'
 import { readPrefs } from './prefs.js'
-import { assertInOrder } from './pr_order.js'
+import { guardApprove } from './approve_guard.js'
+import { recordRefusal } from '../../webhook-server/refusal_log.js'
 
 const mergeOps = createMergeOps()
 import { readRegistry, loadBoard, fetchBoardData, fetchCompletedData, withProjectStatus, defaultStagesFor, defaultLiveNumbers, getEvidence, REGISTRY_PATH } from './boards.js'
@@ -488,7 +489,7 @@ function registerMrReviewHandlers() {
   const assertMergeable = (url) => {
     const repo = repoFromPrUrl(url)
     if (!repo || !canMergeFromDashboard(repo, readMergeableRepos())) {
-      throw new Error(`Merging ${repo || 'this PR'} from the dashboard isn't set up: its project profile has not opted in (merge_from_dashboard). Review it on GitHub.`)
+      throw Object.assign(new Error(`Merging ${repo || 'this PR'} from the dashboard isn't set up: its project profile has not opted in (merge_from_dashboard). Review it on GitHub.`), { code: 'NO_MERGE_PROFILE' })
     }
   }
 
@@ -497,10 +498,13 @@ function registerMrReviewHandlers() {
   // the renderer -- a native OS-level confirm dialog can't be spoofed by a
   // fast double-click the way a custom in-page confirm affordance could.
   ipcMain.handle('mr:approve', async (_event, { number, url }) => {
-    assertMergeable(url)
     // Checked here, not just greyed out in the UI, so a stale screen can't skip it. Sent-back PRs are marked the same way
-    // the list marks them, or a newer PR waits forever on one that can't merge (marvin #209).
-    assertInOrder(await prsForOrderCheck(await listOpenPrs({ fresh: true }), sentBackTickets), url)
+    // the list marks them, or a newer PR waits forever on one that can't merge (marvin #209). A refusal is recorded (#215).
+    await guardApprove(url, {
+      assertMergeable,
+      loadPrs: async () => prsForOrderCheck(await listOpenPrs({ fresh: true }), sentBackTickets),
+      record: recordRefusal
+    })
     if (!mergeOps.start(url)) return { merged: false, cancelled: true, alreadyMerging: true }
     try {
       // The Approve & Merge click is the decision. The native popup is opt-in (prefs.json: confirmMerge) -- the
