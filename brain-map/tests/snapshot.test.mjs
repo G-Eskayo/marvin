@@ -61,19 +61,19 @@ test('snapshot loads without console errors', async (t) => {
 test('SNAPSHOT flag is set to true in snapshot export', async (t) => {
   if (skipReason) return t.skip(skipReason)
   const page = await openSnapshot()
-  const isSnapshot = await page.evaluate(() => window.SNAPSHOT)
+  // SNAPSHOT is private to the page's script; __map exposes it (window.SNAPSHOT was always undefined)
+  const isSnapshot = await page.evaluate(() => window.__map.snapshot())
   assert.equal(isSnapshot, true, 'SNAPSHOT flag not set to true')
 })
 
 test('snapshot disables activity polling', async (t) => {
   if (skipReason) return t.skip(skipReason)
   const page = await openSnapshot()
-  // Check that pollActivity interval was NOT set
-  // (this is a bit of a black-box test, but we can verify the flag is true)
-  const isSnapshot = await page.evaluate(() => window.SNAPSHOT)
-  const wallpaper = await page.evaluate(() => window.WALLPAPER)
-  assert.equal(isSnapshot, true, 'SNAPSHOT not true')
-  assert.equal(wallpaper, false, 'WALLPAPER should be false for snapshot')
+  // The real behaviour: no live-activity requests (the dashboard map polls every 3 s; the website must not)
+  const polled = []
+  page.on('request', (r) => { if (/activity/i.test(r.url())) polled.push(r.url()) })
+  await page.waitForTimeout(4000)
+  assert.deepEqual(polled, [], 'snapshot polled for live activity')
 })
 
 test('locked project node shows "private — not shown" in tooltip', async (t) => {
@@ -148,4 +148,49 @@ test('public project nodes in snapshot remain openable', async (t) => {
 
   const openId = await page.evaluate(() => window.__map.openId?.())
   assert.equal(openId, result.nodeId, 'Public openable node should open')
+})
+
+// 2026-10-07, Gil on the first website snapshot: "the entire figure is pulsing". The containment zoom re-fit
+// the figure to its silhouette at every rotation angle, so it grew and shrank as it turned. Outside the
+// wallpaper the zoom now holds one size that fits a full turn.
+test('the figure keeps one size while it rotates (no whole-figure pulsing)', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const page = await openSnapshot()
+  await frames(page, SETTLE * 4) // let the fit settle
+  const sizes = []
+  for (let i = 0; i < 20; i++) { // 20 s of auto-rotation, sampled every second
+    await frames(page, SETTLE)
+    sizes.push(await page.evaluate(() => window.__map.fitScale()))
+  }
+  const spread = Math.max(...sizes) / Math.min(...sizes)
+  assert.ok(spread < 1.01, `figure size varied ${((spread - 1) * 100).toFixed(1)}% while rotating: ${sizes.map((s) => s.toFixed(3)).join(' ')}`)
+})
+
+test('the steady size still keeps every node on screen through a full turn', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const page = await openSnapshot()
+  await frames(page, SETTLE * 4)
+  let worst = null
+  for (let i = 0; i < 24; i++) {
+    await frames(page, SETTLE)
+    const off = await page.evaluate(() => window.__map.nodes().filter((n) => n.sx < 0 || n.sy < 0 || n.sx > innerWidth || n.sy > innerHeight).length)
+    if (off) worst = off
+  }
+  assert.equal(worst, null, `${worst} node(s) left the screen during rotation`)
+})
+
+// The 24 fps driven test above passed while the real page still pulsed: at browser frame rates the spring settled
+// into a ~1 s sawtooth around the fixed target. This one runs the page on its own requestAnimationFrame loop.
+test('the figure keeps one size in a real browser frame loop too', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
+  await page.goto(pathToFileURL(path.join(MAP, 'snapshot', 'index.html')).href)
+  await page.waitForTimeout(3000)
+  const sizes = await page.evaluate(async () => {
+    const out = []
+    for (let i = 0; i < 30; i++) { await new Promise((r) => setTimeout(r, 100)); out.push(window.__map.fitScale()) }
+    return out
+  })
+  const spread = Math.max(...sizes) / Math.min(...sizes)
+  assert.ok(spread < 1.002, `figure size varied ${((spread - 1) * 100).toFixed(2)}% in the live loop`)
 })
