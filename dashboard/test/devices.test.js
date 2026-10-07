@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { getDeviceStatuses, clearDeviceCache } from '../electron/main/devices.js'
-import { describeDevice } from '../src/components/DeviceColumns.jsx'
+import { describeDevice, slotsLabel } from '../src/components/DeviceColumns.jsx'
 
 describe('getDeviceStatuses', () => {
   it('returns the rows, caches briefly, and reports a failed check as an error (never as idle)', async () => {
@@ -27,4 +27,15 @@ describe('describeDevice', () => {
   })
   it('unreachable says why', () =>
     expect(describeDevice({ state: 'unreachable', why: 'not online in Tailscale' }, NOW)).toMatchObject({ label: 'Unreachable', tone: 'down', detail: 'not online in Tailscale' }))
+})
+
+describe('slotsLabel', () => {
+  it('returns null when slot data is missing', () => {
+    expect(slotsLabel({ id: 'mac-mini-1' })).toBeNull()
+    expect(slotsLabel({ id: 'mac-mini-1', slotsUsed: 1 })).toBeNull()
+  })
+  it('formats slots as "used of total"', () => {
+    expect(slotsLabel({ id: 'mac-mini-1', slotsUsed: 2, slotsTotal: 4 })).toBe('2 of 4 slots')
+    expect(slotsLabel({ id: 'mac-mini-1', slotsUsed: 0, slotsTotal: 2 })).toBe('0 of 2 slots')
+  })
 })
