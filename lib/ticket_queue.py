@@ -37,6 +37,36 @@ def build_queue(repos, ready, machines) -> list[dict]:
             for i, (repo, t) in enumerate(pairs, 1)]
 
 
+_MACHINE_OF_CLAIM = {"mac-mini": "mac-mini-1", "macbook-pro": "macbook-pro-1"}   # the inverse of ticket_pipeline._label_for_device
+
+
+def running_tickets(repos, fetch) -> list[dict]:
+    """Open tickets carrying a `claimed:<machine>` label: what is being worked on now, on either machine. `fetch(repo)`
+    returns that project's open issues (injected for tests); a project that cannot be read is skipped."""
+    out = []
+    for repo in repos:
+        try:
+            issues = fetch(repo)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[ticket-queue] {repo} unreadable: {exc}", file=sys.stderr)
+            continue
+        for i in issues:
+            claim = next((l["name"].split(":", 1)[1] for l in i.get("labels", []) if l["name"].startswith("claimed:")), None)
+            if claim:
+                out.append({"repo": repo, "project": repo.split("/")[-1], "number": i["number"], "title": i["title"],
+                            "machine": _MACHINE_OF_CLAIM.get(claim, claim)})
+    return out
+
+
+def _fetch_open(repo: str) -> list[dict]:
+    import subprocess
+    p = subprocess.run(["gh", "issue", "list", "--repo", repo, "--state", "open", "--limit", "200", "--json", "number,title,labels"],
+                       capture_output=True, text=True, timeout=30)
+    if p.returncode != 0:
+        raise RuntimeError(p.stderr[:200])
+    return json.loads(p.stdout)
+
+
 def current_queue() -> list[dict]:
     import project_profile as pp
     import ticket_pipeline as tp
@@ -47,5 +77,12 @@ def current_queue() -> list[dict]:
         machines=lambda r: list(tp.MARVIN_MACHINES) if r == tp.REPO else pp.load_profile(r).get("machines", []))
 
 
+def current() -> dict:
+    """What the dashboard shows: the tickets running now and the queue behind them."""
+    import project_profile as pp
+    import ticket_pipeline as tp
+    return {"running": running_tickets([tp.REPO, *pp.dispatchable_repos()], _fetch_open), "queue": current_queue()}
+
+
 if __name__ == "__main__":
-    print(json.dumps(current_queue()))
+    print(json.dumps(current()))

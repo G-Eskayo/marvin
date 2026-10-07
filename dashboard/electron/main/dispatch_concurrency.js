@@ -16,9 +16,9 @@ function defaultRun(args) {
   )
 }
 
-function defaultKick() {
+function defaultKick(job = 'code-sync-push') {
   return new Promise((resolve) =>
-    execFile('launchctl', ['kickstart', `gui/${process.getuid()}/com.marvin.code-sync-push`], () => resolve())
+    execFile('launchctl', ['kickstart', `gui/${process.getuid()}/com.marvin.${job}`], () => resolve())
   )
 }
 
@@ -26,9 +26,16 @@ export async function getConcurrency({ run = defaultRun } = {}) {
   return JSON.parse(await run(['get']))
 }
 
-// Invalid limits are refused with the reason and nothing is saved. A failed sync kick never fails the save.
+// Invalid limits are refused with the reason and nothing is saved. A failed kick never fails the save. Turning parallel
+// on also starts a scan now: the scanner only runs hourly, so without this the switch would seem to do nothing.
 export async function setConcurrency(settings, { run = defaultRun, kick = defaultKick } = {}) {
   const saved = JSON.parse(await run(['set', JSON.stringify(settings)]))
-  try { await kick() } catch { /* the hourly sync still carries it */ }
+  try { await kick('code-sync-push') } catch { /* the hourly sync still carries it */ }
+  if (saved.parallel) { try { await kick('ticket-pipeline') } catch { /* the hourly scan still follows */ } }
   return saved
+}
+
+export async function scanNow({ kick = defaultKick } = {}) {
+  await kick('ticket-pipeline')
+  return { requested: true }
 }
