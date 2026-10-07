@@ -68,6 +68,34 @@ Gil (2026-10-06): Health should list every auth token and MCP server credential 
 - [ ] Inventory every credential in use (GitHub tokens, WordPress app password, MCP servers, ngrok, API keys) with its expiry and how it's renewed.
 - [ ] The panel: expiry warnings, a renew link, and paste-a-new-token that writes to the vault.
 
+Gil (2026-10-07): keep the Health credentials panel above, and add a separate **Password manager** tab for setting
+the manager up on each computer. Desktop dashboard only; not in the MARVIN app for now.
+
+- [ ] Password manager tab (desktop only): per machine (mac-mini, macbook), whether the vault client/CLI is installed,
+      signed in and able to read a test entry, with the setup steps for whatever is missing. Same rule as the panel:
+      no secret values on screen or on disk.
+- [ ] Hide the tab from the mobile backend's routes and the app's tab list, and test that it stays hidden.
+- [ ] Source repo: the lead is the @evolving.ai carousel saved 2026-07-15 (https://www.instagram.com/p/DaVG2Z1gO-r/,
+      "10 GitHub repos ... password management"). Its repo names were only on the image slides, so the export parser
+      recorded none. bitwarden/clients, server and sdk were cloned two days later, but nothing records that they came
+      from that post. Gil to confirm from the slides before the design pass picks Bitwarden vs. Vaultwarden.
+- [ ] Prevent the 2026-10-07 lockout (gh's keychain token unreadable from Claude sessions): sessions fall back to
+      `~/.claude/.gh-token`; Health checks the default `gh` login as well as the file, and warns before expiry; the
+      shared token gets the `workflow` scope.
+
+## 6b. Links Gil finds online get lost
+
+Gil (2026-10-07): he finds GitHub links and ideas on Instagram and elsewhere; some reach MARVIN, many are lost. Today
+the only route was a one-off manual Instagram data export (2026-08-22, saves up to 2026-08-19), parsed from captions
+only. 29 of the 32 AI-related posts had no repo in the caption, so repos shown on image slides were missed (the
+password-manager post is one). Posts saved since 2026-08-19 have never been read.
+
+- [ ] One capture inbox: a share-sheet shortcut (iOS/macOS) that appends a link and an optional note to a file
+      MARVIN reads, so nothing depends on remembering to paste.
+- [ ] Read image slides as well as captions when processing a saved post, so carousels yield their repos.
+- [ ] Idea from a saved post Gil remembers (not found in the 2026-08 export, so probably saved later): let an agent
+      browse a feed on its own for self-improvement. Find the post, then decide whether it fits research-colony.
+
 ## Bugs found along the way
 
 - [ ] **Root cause found (2026-10-06): macOS privacy protection.** Processes started by launchd on the mac-mini may not read `~/Documents` (`ls` gets "Operation not permitted"; `node` blocks, likely on an unanswerable permission prompt), so anything the webhook server runs against the portfolio repo hangs: the pipeline and the Portfolio tab's Content view. Too many stuck reads exhaust node's file thread pool and stall the whole server. Fix: grant `/opt/homebrew/bin/node` (and the venv's Python) Full Disk Access on the mac-mini, or move the repo out of `~/Documents` (also ends the iCloud hazard, portfolio ADR 0003). Gil's decision.
