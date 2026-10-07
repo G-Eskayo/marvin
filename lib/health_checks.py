@@ -286,6 +286,29 @@ def check_catalog_fresh(path: Path | None = None, now: datetime | None = None) -
     return _result(cid, label, sev, f"{n} projects, built {age_h:.1f}h ago", value=round(age_h, 1))
 
 
+MAIN_HEALTH_PATH = Path.home() / ".claude" / "logs" / "main-health.json"
+MAIN_HEALTH_STALE_HOURS = 24
+
+
+def check_main_health(path: Path | None = None, now: datetime | None = None) -> dict:
+    """Is the base branch green? Recorded by lib/main_health.py whenever origin/main moves. A red main refuses every
+    marvin merge (the gate says so by name), so it should be visible BEFORE someone clicks Approve."""
+    cid, label = "main:green", "The main branch passes its tests"
+    path = path or MAIN_HEALTH_PATH
+    now = now or _now()
+    try:
+        d = json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return _result(cid, label, "yellow", "main has not been checked yet on this machine")
+    when = datetime.fromisoformat(str(d.get("checked_at", "")).replace("Z", "+00:00")) if d.get("checked_at") else None
+    if not d.get("ok"):
+        names = ", ".join(d.get("failed", [])[:3]) or d.get("summary", "failing")
+        return _result(cid, label, "red", f"main @ {d.get('sha', '?')} is failing: {names}. Merges are refused until it is fixed", value=len(d.get("failed", [])))
+    if when is None or (now - when).total_seconds() > MAIN_HEALTH_STALE_HOURS * 3600:
+        return _result(cid, label, "yellow", f"last check ({d.get('sha', '?')}) is more than a day old")
+    return _result(cid, label, "green", f"main @ {d.get('sha', '?')}: {d.get('summary', 'passing')}")
+
+
 GITHUB_BUDGET_YELLOW_BELOW = 0.20   # fraction of the hourly allowance
 GITHUB_BUDGET_RED_BELOW = 0.05
 
@@ -781,6 +804,7 @@ def run_all() -> dict:
     results.append(check_trigger_coverage())
     results.append(check_catalog_fresh())
     results.append(check_github_budget())
+    results.append(check_main_health())
     cron_state = ch._load_state()
     cron_now = datetime.now().astimezone()
     for job in discover_launchd_jobs():

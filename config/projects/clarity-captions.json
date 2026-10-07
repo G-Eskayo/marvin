@@ -80,5 +80,6 @@
       "creates": "Apps/Spike/Resources/Models/Sortformer_v2.1.mlmodelc",
       "requires": []
     }
-  ]
+  ],
+  "clone_mode": "pipeline"
 }

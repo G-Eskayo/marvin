@@ -1001,3 +1001,24 @@ describe('the gate tells a red main apart from a bad PR', () => {
     expect((await w.run()).reengaged).toBe(true)
   })
 })
+
+describe('a gate that never finishes is cut off and says so', () => {
+  const PR = 'https://github.com/G-Eskayo/marvin/pull/173'
+  const gate = () => vi.fn().mockResolvedValue({ gate: true, headRefName: 'pipeline/x', body: 'Closes G-Eskayo/marvin#147' })
+  const exec = () => vi.fn(async () => ({ stdout: JSON.stringify({ baseRefName: 'main', statusCheckRollup: [] }), stderr: '' }))
+  const hangs = () => new Promise(() => {})   // a rebase/test run that never returns (the iCloud read that blocked forever)
+
+  it('refuses with GATE_INFRA after the limit, without sending the PR back', async () => {
+    const reengage = vi.fn()
+    await expect(
+      mergePr(PR, exec(), noopRebuild, noopRedispatch, gate(), hangs, reengage, vi.fn(), { gateTimeoutMs: 30 })
+    ).rejects.toMatchObject({ payload: { code: 'GATE_INFRA', message: expect.stringMatching(/timed out|did not finish/i) } })
+    expect(reengage).not.toHaveBeenCalled()
+  })
+
+  it('a gate that finishes in time is untouched', async () => {
+    const ok = vi.fn().mockResolvedValue({ ok: true })
+    const result = await mergePr(PR, exec(), noopRebuild, noopRedispatch, gate(), ok, vi.fn(), vi.fn(), { gateTimeoutMs: 5000 })
+    expect(result.merged).toBe(true)
+  })
+})

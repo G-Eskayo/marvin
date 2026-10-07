@@ -39,7 +39,9 @@ export async function isBehindMain(headRef, exec = execFileAsync, repoPath = REP
 }
 
 export async function _defaultRunTests(cwd, exec) {
-  await exec(VENV_PYTHON, ['-m', 'pytest', '-q'], { cwd })
+  // MARVIN_MERGE_GATE: tests that read ANOTHER repo's data (the portfolio figures) stay out of a PR's gate; they run in the
+  // main-branch health check instead (lib/main_health.py).
+  await exec(VENV_PYTHON, ['-m', 'pytest', '-q'], { cwd, env: { ...process.env, MARVIN_MERGE_GATE: '1' } })
   // Found live 2026-10-01 (PR #119's merge attempt): a `git worktree add`
   // scratch checkout has no dashboard/node_modules at all -- `npx vitest
   // run` hard-fails with a dependency-resolution error wall that has
@@ -80,7 +82,7 @@ export async function baselineFailsOnMain(names, exec = execFileAsync, repoPath 
     await exec('git', ['fetch', 'origin', base], { cwd: repoPath })
     await exec('git', ['worktree', 'add', '--detach', dir, `origin/${base}`], { cwd: repoPath })
     try {
-      await exec(VENV_PYTHON, ['-m', 'pytest', '-q', '-p', 'no:cacheprovider', ...names], { cwd: dir })
+      await exec(VENV_PYTHON, ['-m', 'pytest', '-q', '-p', 'no:cacheprovider', ...names], { cwd: dir, env: { ...process.env, MARVIN_MERGE_GATE: '1' } })
       return []
     } catch (e) {
       const out = String(e?.stdout || '')
@@ -272,6 +274,20 @@ export async function mergeableNow(prUrl, exec, sleep = (ms) => new Promise((r) 
   return state
 }
 
+// The longest a gate (rebase + the project's whole check, including an app build) may take. Nothing used to bound it: a
+// test run that blocked reading an iCloud-managed folder under launchd sat forever, and three approvals of marvin #147
+// vanished with no result (2026-10-06). Past the limit the gate is abandoned and reported as the machine's problem,
+// not the PR's.
+export const GATE_TIMEOUT_MS = 40 * 60_000
+
+function withGateTimeout(promise, ms) {
+  let timer
+  const cut = new Promise((resolve) => {
+    timer = setTimeout(() => resolve({ ok: false, reason: `Tests failed after rebasing onto main:\n\nThe check did not finish within ${Math.max(1, Math.round(ms / 60000))} min and was cut off.` }), ms)
+  })
+  return Promise.race([promise, cut]).finally(() => clearTimeout(timer))
+}
+
 async function mergePrUnqueued(
   prUrl,
   exec = execFileAsync,
@@ -283,7 +299,7 @@ async function mergePrUnqueued(
   recordStageFn = recordStage,
   deps = {}
 ) {
-  const { sleep, recordFailureFn = recordFailure, gateContext = defaultGateContext, baselineFails = null } = deps
+  const { sleep, recordFailureFn = recordFailure, gateContext = defaultGateContext, baselineFails = null, gateTimeoutMs = GATE_TIMEOUT_MS } = deps
   if (typeof prUrl !== 'string' || !prUrl.startsWith('https://github.com/')) {
     throw new MergeFailure(classifyFailure({ stage: 'request', error: new Error(`Not a GitHub PR URL: ${prUrl}`) }))
   }
@@ -325,9 +341,11 @@ async function mergePrUnqueued(
 
   if (gate) {
     stage('gate', 'started', `rebasing onto ${ctx ? ctx.base : 'main'} + retesting`)
-    const result = ctx
-      ? await rebaseAndRetestFn(headRefName, exec, ctx.clone, ctx.runTests, ctx.base, ctx.resolveConflicts)
-      : await rebaseAndRetestFn(headRefName, exec)
+    const result = await withGateTimeout(
+      Promise.resolve(ctx
+        ? rebaseAndRetestFn(headRefName, exec, ctx.clone, ctx.runTests, ctx.base, ctx.resolveConflicts)
+        : rebaseAndRetestFn(headRefName, exec)),
+      gateTimeoutMs)
     if (!result.ok) {
       // Structured, concise feedback (code header, failing test names, capped tail)
       // instead of a raw output wall: this comment is what the ticket's executor reads
@@ -336,7 +354,10 @@ async function mergePrUnqueued(
       if (summary.code === 'GATE_INFRA') {
         // The machine failed, not the PR: leave the ticket and PR alone so it can simply be approved again.
         stage('gate', 'failed', 'GATE_INFRA: the build machine or test setup failed, not the code')
-        throw new MergeFailure(refusal('GATE_INFRA', 'gate', 'the build machine or the project\'s test setup failed while checking this PR, not the PR\'s code',
+        const timedOut = /did not finish within \d+ min/.test(summary.comment)
+        throw new MergeFailure(refusal('GATE_INFRA', 'gate', timedOut
+          ? 'the check on this PR did not finish in time and was cut off. That points at the machine or its setup, not at the PR\'s code'
+          : 'the build machine or the project\'s test setup failed while checking this PR, not the PR\'s code',
           `Approve it again. The PR was not sent back for rework. What failed: ${summary.comment.slice(0, 300)}`))
       }
       if (summary.code === 'GATE_TESTS_FAILED' && summary.failingTests.length && baselineFails) {

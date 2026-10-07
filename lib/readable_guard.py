@@ -39,3 +39,14 @@ def portfolio_repo_blocked(seconds: float = 5) -> bool:
     """True when the repo is on this machine but can't be read from this process. Missing is not
     blocked: those tests already skip themselves when the repo isn't there."""
     return PORTFOLIO_PROBE.exists() and not readable_within(PORTFOLIO_PROBE, seconds)
+
+
+def exclude_portfolio_tests(environ=None, blocked: bool | None = None) -> bool:
+    """Leave the tests that read the portfolio repo out of this run? Yes when the repo cannot be read from this process
+    (the iCloud hang), and ALSO always inside the merge gate (MARVIN_MERGE_GATE=1): a PR to marvin must not be judged on
+    another repo's files. Those tests still run everywhere else, including the main-branch health check."""
+    import os
+    environ = os.environ if environ is None else environ
+    if environ.get("MARVIN_MERGE_GATE") == "1":
+        return True
+    return portfolio_repo_blocked() if blocked is None else blocked
