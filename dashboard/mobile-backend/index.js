@@ -4,6 +4,7 @@ import { promisify } from 'util'
 import { homedir } from 'os'
 import path from 'path'
 import { whois, loadAllowlist, isAllowed } from './device_gate.js'
+import { createDashboardApiRouter } from './dashboard_api.js'
 
 const execFileP = promisify(execFile)
 
@@ -34,13 +35,9 @@ function getUptimeSeconds() {
   return Math.floor((Date.now() - startTime) / 1000)
 }
 
-const server = createServer(async (req, res) => {
-  // Single endpoint: GET /status
-  if (req.method !== 'GET' || req.url !== '/status') {
-    res.writeHead(404).end()
-    return
-  }
+const dashboardApiRouter = createDashboardApiRouter()
 
+const server = createServer(async (req, res) => {
   // Device gate: check allowlist
   const ip = req.socket.remoteAddress || req.connection.remoteAddress
   const peer = await whois(ip)
@@ -54,15 +51,25 @@ const server = createServer(async (req, res) => {
     return
   }
 
-  // Status response
-  res.writeHead(200, { 'Content-Type': 'application/json' }).end(
-    JSON.stringify({
-      ok: true,
-      status: 'up',
-      uptimeSeconds: getUptimeSeconds(),
-      version: '1.0.0'
-    })
-  )
+  // Route through dashboard API
+  const handled = await dashboardApiRouter(req, res)
+  if (handled) return
+
+  // Single endpoint: GET /status
+  if (req.method === 'GET' && req.url === '/status') {
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(
+      JSON.stringify({
+        ok: true,
+        status: 'up',
+        uptimeSeconds: getUptimeSeconds(),
+        version: '1.0.0'
+      })
+    )
+    return
+  }
+
+  // 404 for unmatched routes
+  res.writeHead(404).end()
 })
 
 // Resolve Tailscale IP and start listening
