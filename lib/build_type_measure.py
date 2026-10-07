@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from evidence_capture import capture_test_results  # noqa: E402
+from evidence_capture import capture_test_results, TestTimedOut  # noqa: E402
 
 VENV_PYTHON = str(Path.home() / ".agents" / "venv" / "bin" / "python")
 
@@ -142,7 +142,8 @@ def measure(worktree_path: Path) -> dict:
     2026-10-01 when #41's baseline read 544 against a clean 684.
 
     Raises MeasureError if a suite produced no summary and did not say it found
-    nothing to run: a crash is an error, not a zero."""
+    nothing to run: a crash is an error, not a zero. Raises TestTimedOut if a
+    suite exceeded its timeout."""
     commands = _measure_commands(worktree_path)
     if len(commands) > 1:
         _ensure_dashboard_deps(worktree_path)

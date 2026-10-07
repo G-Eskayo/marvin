@@ -18,8 +18,10 @@ has no reason to know about.
 independently testable without a real subprocess run.
 """
 from __future__ import annotations
+import os
 import re
 import resource
+import signal
 import subprocess
 from pathlib import Path
 from typing import Callable
@@ -82,22 +84,41 @@ def _raise_nofile_limit() -> None:
         resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
 
 
-def capture_test_results(worktree_path: Path, test_command: list[str]) -> dict:
+class TestTimedOut(RuntimeError):
+    """Test command exceeded timeout_s and was killed. Machine did not fail;
+    the test suite ran out of time. Do not count as a failure of the ticket."""
+
+    def __init__(self, command: list[str], timeout_s: int, partial_output: str):
+        self.command = command
+        self.timeout_s = timeout_s
+        self.partial_output = partial_output
+        last_line = [l.strip() for l in partial_output.splitlines() if l.strip()][-1:][0] if partial_output.strip() else ""
+        cmd_hint = last_line or " ".join(command)
+        super().__init__(f"timed out after {timeout_s}s running {cmd_hint}")
+
+
+def capture_test_results(worktree_path: Path, test_command: list[str], timeout_s: int = 1200) -> dict:
     """Run the ticket's real test command inside worktree_path and parse
     its output. `test_command` is caller-supplied (e.g.
     ["pytest", "-q"] or ["npx", "vitest", "run"]) since different
     subsystems use different runners -- this module has no way to know
-    which one a given ticket needs."""
-    result = subprocess.run(
-        test_command, cwd=worktree_path, capture_output=True, text=True,
-        preexec_fn=_raise_nofile_limit,
+    which one a given ticket needs.
+
+    Raises TestTimedOut if the command exceeds timeout_s."""
+    proc = subprocess.Popen(
+        test_command, cwd=worktree_path, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, start_new_session=True, preexec_fn=_raise_nofile_limit,
     )
-    output = result.stdout + result.stderr
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        stdout, stderr = proc.communicate()
+        output = (stdout or "") + (stderr or "")
+        raise TestTimedOut(test_command, timeout_s, output)
+
+    output = (stdout or "") + (stderr or "")
     parsed = parse_test_output(" ".join(test_command), output)
-    # The raw tail travels with the result so a caller can tell a crashed run
-    # (traceback, "command not found", "Too many open files") from a genuine
-    # "no tests ran" -- both parse to None, and treating them alike let a
-    # whole suite silently contribute 0 to a ticket's baseline.
     parsed["output_tail"] = output[-600:]
     return parsed
 

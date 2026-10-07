@@ -25,6 +25,7 @@ import {
   rebaseAndRetest,
   defaultGateContext,
   _defaultRunTests,
+  execWithGroupTimeout,
   assertTargetsBase,
   assertNotSentBack
 } from '../webhook-server/merge.js'
@@ -536,6 +537,14 @@ describe('_defaultRunTests', () => {
     expect(installIndex).toBeGreaterThanOrEqual(0)
     expect(vitestIndex).toBeGreaterThan(installIndex)
   })
+})
+
+describe('execWithGroupTimeout', () => {
+  it('spawns and kills a hanging command when timeout expires', async () => {
+    const promise = execWithGroupTimeout('bash', ['-c', 'sleep 9999 & wait'], {}, 500)
+
+    await expect(promise).rejects.toThrow(/did not finish within \d+ min/)
+  }, { timeout: 5000 })
 })
 
 
