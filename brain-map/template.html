@@ -260,7 +260,11 @@
   function vCross(a, b) { return { x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x }; }
   function vNorm(a) { var l = Math.sqrt(a.x * a.x + a.y * a.y + a.z * a.z) || 1; return { x: a.x / l, y: a.y / l, z: a.z / l }; }
 
-  // ── radial tree layout (dendrite-style, recomputed on expand/collapse) ──
+  // ── radial tree layout (dendrite-style). Each node carries the position
+  // generate.py precomputed for it (#183) as `pos`, so a tree DesktopLive
+  // pushes live through updateTreeData() arrives already placed. The formula
+  // only places nodes the generator never saw (demo nodes, a device coming
+  // online). ──
   var SEG = [150, 105, 72, 46, 32];
   var CONE = [0, 0.85, 0.68, 0.55, 0.5];
 
@@ -288,6 +292,7 @@
   }
 
   function layoutBranch(node, pos, dir, depth) {
+    if (node.pos) pos = { x: node.pos[0], y: node.pos[1], z: node.pos[2] };
     node.x = pos.x; node.y = pos.y; node.z = pos.z; node.depth = depth;
     allNodes.push(node);
     var kids = visibleChildren(node);
@@ -530,6 +535,16 @@
   window.addEventListener("resize", resize);
   resize();
 
+  // The intro text wraps to a different height at each width; the legend
+  // goes under it rather than at a fixed offset that covered it.
+  function placeLegend() {
+    var intro = document.querySelector("header");
+    if (WALLPAPER || !intro) return;
+    document.getElementById("legend").style.top = Math.ceil(intro.getBoundingClientRect().bottom + 8) + "px";
+  }
+  window.addEventListener("resize", placeLegend);
+  placeLegend();
+
   var yaw = 0.6, pitch = -0.2, camDist = 480;
   var dragging = false, moved = false, lastX = 0, lastY = 0;
   var autoRotate = WALLPAPER || !REDUCE_MOTION;
@@ -546,8 +561,12 @@
     pitch = Math.max(-1.4, Math.min(1.4, pitch));
     lastX = ev.clientX; lastY = ev.clientY;
   });
+  // The fit-to-screen below also holds in the browser until the user zooms
+  // by hand; after that, their zoom wins and clipping is theirs to choose.
+  var userZoomed = false;
   canvas.addEventListener("wheel", function (ev) {
     ev.preventDefault();
+    userZoomed = true;
     camDist = Math.max(120, Math.min(1300, camDist + ev.deltaY * 0.55));
   }, { passive: false });
 
@@ -559,7 +578,7 @@
     var y2 = p.y * cp - z1 * sp;
     var z2 = p.y * sp + z1 * cp;
     var camZ = z2 + camDist;
-    var f = focal / Math.max(camZ, 30) * (WALLPAPER ? fitScale : 1);
+    var f = focal / Math.max(camZ, 30) * (fitting() ? fitScale : 1);
     return { sx: W / 2 + x1 * f, sy: H / 2 + y2 * f, depth: camZ, scale: f };
   }
 
@@ -576,6 +595,7 @@
   // different node to the edge. Sketched 2026-07-17, implemented same day
   // after a live report of nodes clipping past the bottom of the screen.
   var fitScale = 1;
+  function fitting() { return WALLPAPER || !userZoomed; }
   var fitVelocity = 0; // hand-tracked between frames — see the spring update in draw() for why
   // Fraction of the live W/H used as the target ellipse's half-axes — 0.49,
   // not 0.5, only to keep the boundary a hair inside the true pixel edge
@@ -583,9 +603,16 @@
   // 1px sliver); functionally this is "the screen's own dimensions", not a
   // fixed size, since W/H are read live from the canvas every frame.
   var FIT_MARGIN_X = 0.49, FIT_MARGIN_Y = 0.49;
-  function ratioOf(sx, sy) {
-    var dx = (sx - W / 2) / fitScale, dy = (sy - H / 2) / fitScale; // divide out the current fitScale already baked into sx/sy
-    return Math.max(Math.abs(dx) / (W * FIT_MARGIN_X), Math.abs(dy) / (H * FIT_MARGIN_Y));
+  function nodeRadius(nd, p) {
+    var depthT = Math.max(0.35, Math.min(1.5, p.scale / 1));
+    var baseR = nd.id === "MARVIN" ? 8 : nd.children.length > 0 ? 6 : 3.6;
+    return (baseR + (synapseDegree[nd.id] || 0) * 0.7) * depthT;
+  }
+  // r: the node's drawn radius, so the whole disc stays inside, not just its centre.
+  function ratioOf(sx, sy, r) {
+    var fs = fitting() ? fitScale : 1;
+    var dx = (sx - W / 2) / fs, dy = (sy - H / 2) / fs; // divide out the current fitScale already baked into sx/sy
+    return Math.max((Math.abs(dx) + (r || 0)) / (W * FIT_MARGIN_X), (Math.abs(dy) + (r || 0)) / (H * FIT_MARGIN_Y));
   }
   function computeTargetFitScale() {
     var maxRatio = 0;
@@ -593,7 +620,7 @@
       var nd = allNodes[i];
       if (nd.cat !== "root" && nd.cat !== "skills-trunk" && !activeCats[nd.cat]) continue;
       var p = project(swayedPos(nd));
-      var r = ratioOf(p.sx, p.sy);
+      var r = ratioOf(p.sx, p.sy, nodeRadius(nd, p));
       if (r > maxRatio) maxRatio = r;
     }
     // Synapse curves bow outward from the straight line between their two
@@ -863,7 +890,7 @@
         (syns.length ? '<div class="edges"></div>' : "") +
         (expandHint ? '<div class="edges" style="border-top:none;padding-top:0;margin-top:2px;font-style:italic;"></div>' : "");
       var parts = tooltip.querySelectorAll(".name, .cat, .desc, .edges");
-      tooltip.querySelector(".name").textContent = hovered.id;
+      tooltip.querySelector(".name").textContent = hovered.name || hovered.id;
       tooltip.querySelector(".cat").textContent = mode === "brain" ? catInfo.brain : catInfo.label;
       if (descText) tooltip.querySelector(".desc").textContent = descText;
       var edgeEls = tooltip.querySelectorAll(".edges");
@@ -924,7 +951,7 @@
     // symptom reported alongside general lag. Clamped to 100ms so a stall
     // (tab backgrounded, a dropped frame) doesn't cause one big jump/lerp
     // snap on the next call.
-    var dt = lastFrameTime === null ? 0 : Math.min(0.1, (now - lastFrameTime) / 1000);
+    var dt = lastFrameTime === null ? 0 : Math.max(0, Math.min(0.1, (now - lastFrameTime) / 1000));
     lastFrameTime = now;
 
     updateActivePulses(now);
@@ -949,7 +976,7 @@
     // hand between frames and fed into each frame's fresh generator as its
     // starting condition, which keeps the motion physically continuous
     // across retargets instead of restarting from rest each time.
-    if (WALLPAPER) {
+    if (fitting()) {
       var targetFit = computeTargetFitScale();
       // A leaf node swinging near the camera during rotation can spike its
       // projected position in a single frame via the 1/camZ perspective
@@ -1026,6 +1053,7 @@
     var projected = visible.map(function (nd) { return { nd: nd, p: projectNode(nd) }; });
     projected.sort(function (a, b) { return b.p.depth - a.p.depth; });
 
+    var discs = [], labelCands = [];
     projected.forEach(function (item) {
       var nd = item.nd, p = item.p;
       var isSel = selected === nd.id;
@@ -1036,10 +1064,8 @@
       var hasChildren = nd.children.length > 0;
 
       var depthT = Math.max(0.35, Math.min(1.5, p.scale / 1));
-      var baseR = nd.id === "MARVIN" ? 8 : hasChildren ? 6 : 3.6;
-      var synDeg = synapseDegree[nd.id] || 0;
       var bf = birthFactor(nd); // 0..1, eases a newly-created node in instead of popping
-      var r = (baseR + synDeg * 0.7) * depthT * bf;
+      var r = nodeRadius(nd, p) * bf;
       // Should be unreachable in normal operation — setDeviceStatus() now
       // removes an offline device from the tree entirely (shrink-out)
       // rather than leaving it greyed in place. Kept as a defensive
@@ -1086,15 +1112,16 @@
       }
       ctx.globalAlpha = 1;
 
+      discs.push({ id: nd.id, sx: p.sx, sy: p.sy, r: r });
       var alwaysLabel = nd.depth <= 2; // MARVIN, the trunks, and the skill sub-categories
-      if (bf > 0.4 && (alwaysLabel || r > 6 || isSel || isHover || isConn || pulse > 0.1)) {
-        ctx.font = (alwaysLabel || pulse > 0.1 ? "600 " : "400 ") + Math.max(9, (alwaysLabel ? 11.5 : 10) * Math.min(1, depthT)) + "px ui-monospace, 'SF Mono', Menlo, Consolas, monospace";
-        var la = bf * (dim ? 0.3 : Math.min(1, 0.6 + depthT * 0.4 + pulse * 0.4));
-        ctx.fillStyle = pulse > 0.1 ? "rgba(" + SYNAPSE_COLOR + "," + la + ")" : alwaysLabel ? "rgba(230,237,243," + la + ")" : "rgba(139,152,165," + la + ")";
-        ctx.textAlign = "center";
-        ctx.fillText(nd.id, p.sx, p.sy - r - 6);
-      }
+      labelCands.push({
+        nd: nd, p: p, r: r, bf: bf, dim: dim, pulse: pulse, depthT: depthT, alwaysLabel: alwaysLabel,
+        isSel: isSel, isHover: isHover,
+        eligible: alwaysLabel || r > 6 || isSel || isHover || isConn || pulse > 0.1
+      });
     });
+    drawnNodes = discs;
+    drawLabels(labelCands, discs, dt);
 
     // dying nodes — frozen at their last real position, shrinking/fading
     // out instead of vanishing the instant they leave the tree
@@ -1131,8 +1158,80 @@
     // reason. Never run both at once: yaw advances by a fixed delta per
     // call (not by elapsed wall-clock time), so two concurrent drivers
     // would double the rotation speed.
-    if (!WALLPAPER) requestAnimationFrame(draw);
+    if (!WALLPAPER && !externalDrive) rafId = requestAnimationFrame(draw);
   }
+
+  // ── labels (#183, ADR 0049) — chosen every frame by priority: selected
+  // or hovered, then pulsing, then MARVIN and the trunks, then categories,
+  // then the rest, bigger (nearer) nodes first. A label is drawn only where
+  // its screen box is free of labels already placed, on screen, and clear
+  // of every other node's dot (a label over a dot reads as one garbled
+  // word). Each label's opacity eases toward shown/hidden rather than
+  // switching, so a label losing its place fades instead of popping. Labels already showing keep their place ahead of newcomers
+  // (so near-equal neighbours don't trade places every frame as nodes sway),
+  // and a newcomer waits until a label fading out of its spot has gone. ──
+  var LABEL_FADE_S = 0.3;
+  var LABEL_YIELD_S = 0.1; // a label pushed out by another fades faster, so the two barely overlap
+  var LABEL_CLEARANCE = 6; // px a newcomer needs around it; a label already showing holds until it touches
+  var labelAlpha = {}; // node id → current opacity 0..1
+  var drawnLabels = [], drawnNodes = [];
+  function labelRank(c) {
+    if (c.isSel || c.isHover) return 5;
+    if (c.pulse > 0.1) return 4;
+    if (c.nd.depth <= 1) return 3;
+    if (c.nd.depth === 2) return 2;
+    return 1;
+  }
+  function boxesOverlap(a, b, pad) {
+    pad = pad || 0;
+    return a.x - pad < b.x + b.w && b.x < a.x + a.w + pad && a.y - pad < b.y + b.h && b.y < a.y + a.h + pad;
+  }
+  function discCoversBox(d, b) {
+    var cx = Math.max(b.x, Math.min(d.sx, b.x + b.w)), cy = Math.max(b.y, Math.min(d.sy, b.y + b.h));
+    return (d.sx - cx) * (d.sx - cx) + (d.sy - cy) * (d.sy - cy) < d.r * d.r;
+  }
+  function drawLabels(cands, discs, dt) {
+    function tier(c) { return labelRank(c) >= 4 ? 2 : (labelAlpha[c.nd.id] > 0 ? 1 : 0); }
+    cands.sort(function (a, b) {
+      return tier(b) - tier(a) || labelRank(b) - labelRank(a) || b.r - a.r || (a.nd.id < b.nd.id ? -1 : 1);
+    });
+    var placed = [], leaving = [], step = dt / LABEL_FADE_S;
+    drawnLabels = [];
+    ctx.textAlign = "center";
+    cands.forEach(function (c) {
+      var nd = c.nd, p = c.p, text = nd.name || nd.id;
+      var size = Math.max(9, (c.alwaysLabel ? 11.5 : 10) * Math.min(1, c.depthT));
+      ctx.font = (c.alwaysLabel || c.pulse > 0.1 ? "600 " : "400 ") + size + "px ui-monospace, 'SF Mono', Menlo, Consolas, monospace";
+      var w = ctx.measureText(text).width;
+      var box = { x: p.sx - w / 2 - 2, y: p.sy - c.r - 6 - size, w: w + 4, h: size + 3 };
+      var a = labelAlpha[nd.id] || 0;
+      var clearance = a > 0 ? 0 : LABEL_CLEARANCE;
+      var crowded = placed.some(function (b) { return boxesOverlap(box, b, clearance); });
+      var want = c.eligible && c.bf > 0.4 && !crowded &&
+        box.x >= 0 && box.y >= 0 && box.x + box.w <= W && box.y + box.h <= H &&
+        !(a === 0 && leaving.some(function (b) { return boxesOverlap(box, b, clearance); })) &&
+        !discs.some(function (d) { return d.id !== nd.id && discCoversBox(d, box); });
+      if (want) placed.push(box); else if (a > 0) leaving.push(box);
+      a = want ? Math.min(1, a + step) : Math.max(0, a - (crowded ? dt / LABEL_YIELD_S : step));
+      labelAlpha[nd.id] = a;
+      if (a <= 0) return;
+      var la = a * c.bf * (c.dim ? 0.3 : Math.min(1, 0.6 + c.depthT * 0.4 + c.pulse * 0.4));
+      ctx.fillStyle = c.pulse > 0.1 ? "rgba(" + SYNAPSE_COLOR + "," + la + ")" : c.alwaysLabel ? "rgba(230,237,243," + la + ")" : "rgba(139,152,165," + la + ")";
+      ctx.fillText(text, p.sx, p.sy - c.r - 6);
+      drawnLabels.push({ text: text, x: box.x, y: box.y, w: box.w, h: box.h, alpha: a, shown: want });
+    });
+  }
+
+  // Test hook (brain-map/tests/labels.test.mjs): drive frames from outside,
+  // fix the camera, and read back what was actually drawn.
+  var externalDrive = false, rafId = null;
+  window.__map = {
+    driveExternally: function () { externalDrive = true; if (rafId !== null) cancelAnimationFrame(rafId); },
+    setCamera: function (y, p) { yaw = y; pitch = p; autoRotate = false; cameraTargetNode = null; },
+    labels: function () { return drawnLabels.slice(); },
+    nodes: function () { return drawnNodes.slice(); }
+  };
+
   function quadPoint(p0, p1, p2, t) {
     var u = 1 - t;
     return {
@@ -1141,6 +1240,6 @@
     };
   }
   window.renderFrame = draw; // DesktopLive's external per-frame drive (wallpaper mode only, see draw() above)
-  if (!WALLPAPER) requestAnimationFrame(draw);
+  if (!WALLPAPER) rafId = requestAnimationFrame(draw);
 })();
 </script>

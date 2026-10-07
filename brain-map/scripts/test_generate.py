@@ -90,6 +90,28 @@ def test_no_catalog_means_no_projects_not_a_crash(tmp_path, monkeypatch):
     assert generate.discover_projects() == []
 
 
+def test_a_project_named_like_a_skill_gets_its_own_id_and_keeps_its_name(tmp_path, monkeypatch):
+    (tmp_path / "projects.some-mac.json").write_text(json.dumps({"projects": [
+        {"id": "paper-dive", "name": "paper-dive", "status": "active", "visibility": "PUBLIC", "kind": "repo", "description": ""},
+    ]}))
+    monkeypatch.setattr(generate, "CATALOG_DIR", tmp_path)
+    manifest = json.loads(generate.MANIFEST_PATH.read_text())
+    enrichment = json.loads(generate.ENRICHMENT_PATH.read_text())
+
+    tree = generate.build_tree(manifest, enrichment)
+
+    projects = next(c for c in tree["children"] if c["id"] == "Projects")["children"]
+    assert [(p["id"], p.get("name")) for p in projects] == [("project:paper-dive", "paper-dive")]
+
+
+def test_every_node_id_in_the_live_tree_is_unique():
+    manifest = json.loads(generate.MANIFEST_PATH.read_text())
+    enrichment = json.loads(generate.ENRICHMENT_PATH.read_text())
+    seen: list = []
+    (walk := lambda n: (seen.append(n["id"]), [walk(c) for c in n.get("children", [])]))(generate.build_tree(manifest, enrichment))
+    assert sorted(i for i in set(seen) if seen.count(i) > 1) == []
+
+
 # ── the live system (guards against anything silently dropping out) ─────
 
 def test_live_tree_contains_every_skill_agent_machine_tab_and_project():
