@@ -85,6 +85,10 @@ JOBS = {
         "22:00",
         [".claude/sync-log.md"],
     ),
+    "cleanup-sweep": (
+        "04:15",
+        [".claude/logs/cleanup-sweep.log", ".claude/logs/cleanup-sweep-error.log"],
+    ),
 }
 
 GRACE_MINUTES = 30
