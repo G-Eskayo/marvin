@@ -629,7 +629,8 @@ def _dispatch_one(repo, ticket, ready_total, step, summary, fail, dry_run, setti
 
     step("Dispatching", f"to {device_id}")
     label = f"ticket {repo}#{issue_number}: {ticket['title'][:40]}" if other else f"ticket #{issue_number}: {ticket['title'][:40]}"
-    result = dispatch(command, target=device_id, mode="async", task_label=label)
+    result = dispatch(command, target=device_id, mode="async", task_label=label,
+                     ticket=str(issue_number), repo=repo if other else REPO)
     if result.ok:
         taken[device_id] = taken.get(device_id, 0) + 1
         print(f"{LOG_PREFIX} dispatched {where}#{issue_number} to {device_id}", file=sys.stderr)

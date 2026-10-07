@@ -1,4 +1,5 @@
-"""dispatch_concurrency: the parallel-dispatch settings and the guard rails (ADR 0052, ticket #194)."""
+"""dispatch_concurrency: the parallel-dispatch settings and the guard rails (ADR 0052, ticket #194).
+Also tests task record tracking, reaping, and dispatch-state summary updates (AC 0193)."""
 import json
 import sys
 from pathlib import Path
@@ -123,3 +124,114 @@ def test_cli_get_prints_settings_and_set_refuses_invalid(tmp_path, monkeypatch, 
     assert dc._cli(["set", json.dumps({**ON, "max_total": 0})]) == 1
     assert "max_total" in capsys.readouterr().err and dc.load()["max_total"] == 3
     assert dc._cli(["set", "{not json"]) == 1
+
+
+# --- task record tracking ---
+
+def test_partition_alive_separates_alive_and_dead_processes():
+    records = [
+        {"task_id": "a", "pid": 1, "machine": "m1"},  # init, always alive
+        {"task_id": "b", "pid": 999999, "machine": "m1"},  # very unlikely to exist
+    ]
+    def is_alive(pid):
+        return pid == 1
+    alive, dead = dc.partition_alive(records, is_alive)
+    assert [r["task_id"] for r in alive] == ["a"]
+    assert [r["task_id"] for r in dead] == ["b"]
+
+
+def test_partition_alive_handles_missing_pid():
+    records = [
+        {"task_id": "a", "machine": "m1"},  # no pid key
+        {"task_id": "b", "pid": None, "machine": "m1"},
+    ]
+    def is_alive(pid):
+        return True  # should never be called
+    alive, dead = dc.partition_alive(records, is_alive)
+    assert len(alive) == 0 and len(dead) == 2
+
+
+def test_read_task_records_globs_json_files_and_skips_malformed():
+    tmp = Path(__import__("tempfile").mkdtemp())
+    try:
+        (tmp / "task1.json").write_text('{"task_id": "t1", "pid": 123}')
+        (tmp / "task2.json").write_text('{"task_id": "t2", "pid": 456}')
+        (tmp / "broken.json").write_text('{not json}')
+        records = dc._read_task_records(tmp)
+        assert len(records) == 2
+        assert {r["task_id"] for r in records} == {"t1", "t2"}
+    finally:
+        import shutil
+        shutil.rmtree(tmp)
+
+
+def test_reap_unlinks_dead_record_files():
+    tmp = Path(__import__("tempfile").mkdtemp())
+    try:
+        (tmp / "t1.json").write_text('{"task_id": "t1"}')
+        (tmp / "t2.json").write_text('{"task_id": "t2"}')
+        dead = [{"task_id": "t1"}, {"task_id": "t2"}]
+        dc._reap(dead, tmp)
+        assert not (tmp / "t1.json").exists()
+        assert not (tmp / "t2.json").exists()
+    finally:
+        import shutil
+        shutil.rmtree(tmp)
+
+
+def test_slots_in_use_reads_and_reaps_dead_and_filters_by_machine():
+    tmp = Path(__import__("tempfile").mkdtemp())
+    try:
+        records = [
+            {"task_id": "a", "pid": 1, "machine": "m1"},
+            {"task_id": "b", "pid": 999999, "machine": "m1"},
+            {"task_id": "c", "pid": 1, "machine": "m2"},
+        ]
+        for r in records:
+            (tmp / f"{r['task_id']}.json").write_text(json.dumps(r))
+
+        def fake_is_alive(pid):
+            return pid == 1
+
+        alive = dc.slots_in_use("m1", is_alive=fake_is_alive, tasks_dir=tmp)
+        assert [r["task_id"] for r in alive] == ["a"]
+
+        assert not (tmp / "b.json").exists()  # reaped
+        assert (tmp / "a.json").exists()
+        assert (tmp / "c.json").exists()  # filtered out, not reaped
+    finally:
+        import shutil
+        shutil.rmtree(tmp)
+
+
+def test_refresh_dispatch_state_summary_busy_when_records_exist(tmp_path, monkeypatch):
+    monkeypatch.setattr(dc, "DISPATCH_STATE_PATH", tmp_path / "state.json")
+    tasks_dir = tmp_path / "tasks"
+    tasks_dir.mkdir()
+
+    records = [
+        {"task_id": "t1", "task": "task one", "started_at": "2026-10-07T10:00:00Z", "pid": 100},
+        {"task_id": "t2", "task": "task two", "started_at": "2026-10-07T10:05:00Z", "pid": 100},
+    ]
+    for r in records:
+        (tasks_dir / f"{r['task_id']}.json").write_text(json.dumps(r))
+
+    def fake_is_alive(pid):
+        return True  # all PIDs are alive for this test
+
+    monkeypatch.setattr(dc, "_pid_alive", fake_is_alive)
+    dc.refresh_dispatch_state_summary(tasks_dir)
+    state = json.loads((tmp_path / "state.json").read_text())
+    assert state["busy"] is True
+    assert state["task_id"] == "t1"  # earliest
+    assert state["started_at"] == "2026-10-07T10:00:00Z"
+
+
+def test_refresh_dispatch_state_summary_idle_when_no_records(tmp_path, monkeypatch):
+    monkeypatch.setattr(dc, "DISPATCH_STATE_PATH", tmp_path / "state.json")
+    tasks_dir = tmp_path / "tasks"
+    tasks_dir.mkdir()
+
+    dc.refresh_dispatch_state_summary(tasks_dir)
+    state = json.loads((tmp_path / "state.json").read_text())
+    assert state == {"busy": False}

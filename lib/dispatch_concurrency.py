@@ -4,15 +4,21 @@
 runs one ticket at a time, as before. `can_start_another` answers "may this machine start another ticket right
 now?" with a plain-language reason when not; every reader is injected, so the rules are tested without a
 network or disk. A guard that cannot be read never blocks (an unreadable budget must not stall dispatch).
+
+Also tracks running tasks via per-task JSON records in TASKS_DIR, reaping dead processes, and maintains a
+dispatch-state summary for the UI (AC 0193).
 """
 from __future__ import annotations
 
 import json
 import os
+import subprocess
 import tempfile
 from pathlib import Path
 
 PATH = Path(__file__).resolve().parents[1] / "config" / "dispatch.json"
+TASKS_DIR = Path.home() / ".claude" / "dispatch" / "tasks"
+DISPATCH_STATE_PATH = Path.home() / ".claude" / "dispatch-state.json"
 MAX_LIMIT = 8
 
 DEFAULTS = {
@@ -125,9 +131,110 @@ def can_start_another(machine: str, settings: dict, *, slots_in_use, disk_free_g
     return True, None
 
 
+def partition_alive(records: list[dict], is_alive) -> tuple[list[dict], list[dict]]:
+    """Split records into (alive processes, dead processes). is_alive is an injected liveness checker
+    (e.g., _pid_alive or a fake for testing)."""
+    alive = []
+    dead = []
+    for rec in records:
+        pid = rec.get("pid")
+        if pid and is_alive(pid):
+            alive.append(rec)
+        else:
+            dead.append(rec)
+    return alive, dead
+
+
+def _pid_alive(pid: int) -> bool:
+    """Check if a PID is alive via os.kill(pid, 0)."""
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, TypeError):
+        return False
+
+
+def _read_task_records(tasks_dir: Path | None = None) -> list[dict]:
+    """Glob *.json files in tasks_dir, skip unreadable/malformed files. Returns list of task records."""
+    tasks_dir = tasks_dir or TASKS_DIR
+    records = []
+    if not tasks_dir.exists():
+        return records
+    for f in tasks_dir.glob("*.json"):
+        try:
+            records.append(json.loads(f.read_text()))
+        except (OSError, ValueError):
+            pass
+    return records
+
+
+def _reap(dead: list[dict], tasks_dir: Path | None = None) -> None:
+    """Unlink dead task record files."""
+    tasks_dir = tasks_dir or TASKS_DIR
+    for rec in dead:
+        task_id = rec.get("task_id")
+        if task_id:
+            (tasks_dir / f"{task_id}.json").unlink(missing_ok=True)
+
+
+def slots_in_use(machine: str | None = None, *, reader=None, is_alive=None, tasks_dir: Path | None = None) -> list[dict]:
+    """Read alive task records, reap the dead ones as a side effect. Filter to machine if provided.
+    Returns the list of alive records (which can be counted for available slot logic).
+    reader and is_alive are injected for testing; defaults are _read_task_records and _pid_alive."""
+    reader = reader or _read_task_records
+    is_alive_fn = is_alive or _pid_alive
+    records = reader(tasks_dir)
+    alive, dead = partition_alive(records, is_alive_fn)
+    if dead:
+        _reap(dead, tasks_dir)
+    if machine:
+        alive = [r for r in alive if r.get("machine") == machine]
+    return alive
+
+
+def slots_in_use_remote(host: str, machine: str, run=None) -> list[dict] | None:
+    """SSH to host and invoke this script's CLI (slots-in-use --machine <machine>); None on failure."""
+    run = run or subprocess.run
+    try:
+        proc = run(
+            ["ssh", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new",
+             host, "python3 -m lib.dispatch_concurrency slots-in-use --machine " + machine],
+            capture_output=True, text=True, timeout=10,
+        )
+        if proc.returncode != 0:
+            return None
+        return json.loads(proc.stdout)
+    except Exception:
+        return None
+
+
+def refresh_dispatch_state_summary(tasks_dir: Path | None = None) -> None:
+    """Recompute dispatch-state.json from alive task records: {"busy": False} if none, else
+    {"busy": True, "task": ..., "task_id": ..., "started_at": ...} from the earliest-started record."""
+    tasks_dir = tasks_dir or TASKS_DIR
+    alive = slots_in_use(tasks_dir=tasks_dir)
+    if not alive:
+        state = {"busy": False}
+    else:
+        earliest = min(alive, key=lambda r: r.get("started_at", ""))
+        state = {
+            "busy": True,
+            "task": earliest.get("task", ""),
+            "task_id": earliest.get("task_id", ""),
+            "started_at": earliest.get("started_at", ""),
+        }
+    DISPATCH_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=DISPATCH_STATE_PATH.parent, suffix=".tmp")
+    with os.fdopen(fd, "w") as f:
+        json.dump(state, f)
+        f.write("\n")
+    os.replace(tmp, DISPATCH_STATE_PATH)
+
+
 def _cli(argv: list[str]) -> int:
     """`dispatch_concurrency.py get` prints the settings; `set '<json>'` validates and saves them (the dashboard's
-    control), exiting 1 with the reasons on stderr if any field is invalid."""
+    control), exiting 1 with the reasons on stderr if any field is invalid. `slots-in-use [--machine ID]` prints
+    alive task records as JSON. `refresh-summary` updates dispatch-state.json."""
     import sys
     if argv[:1] == ["get"]:
         print(json.dumps(load()))
@@ -139,7 +246,16 @@ def _cli(argv: list[str]) -> int:
         except (ValueError, TypeError) as exc:
             print(str(exc), file=sys.stderr)
             return 1
-    print("usage: dispatch_concurrency.py get | set '<json>'", file=sys.stderr)
+    if argv[:1] == ["slots-in-use"]:
+        machine = None
+        if len(argv) >= 3 and argv[1] == "--machine":
+            machine = argv[2]
+        print(json.dumps(slots_in_use(machine)))
+        return 0
+    if argv[:1] == ["refresh-summary"]:
+        refresh_dispatch_state_summary()
+        return 0
+    print("usage: dispatch_concurrency.py get | set '<json>' | slots-in-use [--machine ID] | refresh-summary", file=sys.stderr)
     return 2
 
 
