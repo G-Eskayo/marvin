@@ -102,6 +102,8 @@ def _format_dev_evidence(dev_evidence: dict | None) -> str:
         return "Not available."
     if dev_evidence.get("na"):
         return f"N/A — {dev_evidence.get('reason', 'no UI')}"
+    if dev_evidence.get("error"):
+        return f"⚠ **Screenshot missing: the UI change is not verified in a running app.** {dev_evidence['error']}"
     screenshot = dev_evidence.get("screenshot_path", "")
     description = dev_evidence.get("description", "")
     return f"![Screenshot]({screenshot})\n\n{description}".strip()
