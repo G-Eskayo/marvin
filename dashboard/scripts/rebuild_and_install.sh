@@ -27,6 +27,14 @@ if ! npm run build:mac; then
   codesign --force --deep -s - "$SRC"
 fi
 
+# A build with no signing identity (the mac-mini has none) is "skipped", not failed -- and it leaves Electron's own signature
+# invalid for the repacked app, which macOS then refuses to open (2026-10-06: the dashboard vanished after a rebuild). A valid
+# ad-hoc signature is enough to run it here.
+if [ -d "$SRC" ] && ! codesign --verify --deep --strict "$SRC" >/dev/null 2>&1; then
+  echo "${LOG_PREFIX} signature invalid after the build; signing ad hoc" >&2
+  codesign --force --deep -s - "$SRC"
+fi
+
 if [ ! -d "$SRC" ]; then
   echo "${LOG_PREFIX} build did not produce $SRC" >&2
   exit 1
@@ -42,5 +50,10 @@ cp -R "$SRC" "$DEST"
 
 echo "${LOG_PREFIX} relaunching..."
 open -a "$DEST"
+sleep 6
+if ! pgrep -f "$DEST/Contents/MacOS" >/dev/null; then
+  echo "${LOG_PREFIX} the app did not start after the install" >&2
+  exit 1
+fi
 
 echo "${LOG_PREFIX} done."
