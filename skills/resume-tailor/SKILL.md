@@ -56,6 +56,8 @@ Write `~/.claude/resume/tailored/[slug]-[date]/research.md` with all findings.
 
 Read `~/.claude/resume/master.md` in full.
 
+**Suppressed entries:** an entry whose heading is followed by `<!-- suppress: ... -->` is kept in the master for the record only. Never include it, mention it, or draw facts from it in the resume, cover letter or summary, however relevant it looks. (Added 2026-10-07: Snorkel AI and Nourished Mobile App.)
+
 **Extract from JD:**
 - Job title → use verbatim as the header title line (all-caps). If ambiguous, infer the best match.
 - Semantic concepts: domain areas, responsibility types, tech clusters, cultural signals

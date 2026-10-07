@@ -31,8 +31,13 @@ def words(text: str) -> list[str]:
     return [w for w in re.findall(r"[a-z][a-z0-9+#.\-]*[a-z0-9+#]|[a-z]", text.lower()) if w not in STOP and len(w) > 1]
 
 
+def drop_suppressed(text: str) -> str:
+    """Remove every ### entry whose heading is followed by a `<!-- suppress: ... -->` marker (kept in master only)."""
+    return re.sub(r"^### [^\n]*\n<!-- suppress:.*?-->\n.*?(?=^#{2,3} |\Z)", "", text, flags=re.S | re.M)
+
+
 def strip_comments(text: str) -> str:
-    return re.sub(r"<!--.*?-->", "", text, flags=re.S)
+    return re.sub(r"<!--.*?-->", "", drop_suppressed(text), flags=re.S)
 
 
 def sections(md: str, level: str) -> list[tuple[str, str]]:
