@@ -127,6 +127,15 @@
     ]
   },
 
+  "dashboard_tab_paths": {
+    "metrics": "dashboard/src/components/MetricsPage.jsx",
+    "mr-review": "dashboard/src/components/MrReview.jsx",
+    "health": "dashboard/src/components/HealthDashboard.jsx",
+    "docs": "dashboard/src/components/DocsExplorer.jsx",
+    "activity": "dashboard/src/components/ActivityBoard.jsx",
+    "portfolio": "dashboard/src/components/PortfolioHub.jsx"
+  },
+
   "synapse_labels": {
     "grill-with-docs->grill-me": "calls grill-me's interview process, then layers doc-updates on top",
     "grill-with-docs->lexicon": "calls lexicon to resolve/record terms as they crystallize",

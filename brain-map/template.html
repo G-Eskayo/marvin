@@ -158,6 +158,18 @@
     background: none; border: none; color: var(--cat-project); cursor: pointer;
     font-family: inherit; font-size: 11px; margin-left: 8px; padding: 3px 6px;
   }
+  #code-layer-note {
+    position: absolute; bottom: 50px; left: 50%; transform: translateX(-50%);
+    font-size: 11px; color: var(--text-secondary); background: rgba(26,26,25,0.92);
+    backdrop-filter: blur(6px);
+    border: 1px solid var(--border); border-radius: 999px; padding: 5px 8px 5px 14px;
+    display: none;
+  }
+  #code-layer-note.show { display: block; }
+  #code-layer-note button {
+    background: none; border: none; color: var(--cat-creation); cursor: pointer;
+    font-family: inherit; font-size: 11px; margin-left: 8px; padding: 3px 6px;
+  }
 </style>
 
 <div class="viz-root" id="stage">
@@ -187,6 +199,7 @@
 
     <div id="tooltip"></div>
     <div id="selection-note">Showing connections for <b id="sel-name" class="mono"></b><button id="sel-clear">clear ✕</button></div>
+    <div id="code-layer-note">Viewing code for <b id="code-name" class="mono"></b><button id="code-close">← back</button></div>
 
     <footer class="mono">branches = structure &nbsp;·&nbsp; gold = real wiring (solid <b>calls:</b> · <b>– –</b> undeclared · <b>····</b> hook/cron) &nbsp;·&nbsp; dashed ring = click to open its forest</footer>
   </div>
@@ -548,6 +561,7 @@
   var yaw = 0.6, pitch = -0.2, camDist = 480;
   var dragging = false, moved = false, lastX = 0, lastY = 0;
   var autoRotate = WALLPAPER || !REDUCE_MOTION;
+  var priorCamDist = 480; // saved when opening code layer, restored on close
 
   canvas.addEventListener("mousedown", function (ev) {
     dragging = true; moved = false; autoRotate = false; lastX = ev.clientX; lastY = ev.clientY;
@@ -815,8 +829,8 @@
     renderLegend();
   });
 
-  // ── hover / select / expand ──────────────────────────────────────────
-  var hovered = null, selected = null, hoveredSynapse = null;
+  // ── hover / select / expand / open ───────────────────────────────────
+  var hovered = null, selected = null, hoveredSynapse = null, openNodeId = null;
   var tooltip = document.getElementById("tooltip");
   var selNote = document.getElementById("selection-note");
 
@@ -884,11 +898,13 @@
       // undefined for every other node, so this is a no-op elsewhere.
       var liveStatus = hovered.online === undefined ? "" : (hovered.online ? "● online" : "○ offline");
       var descText = [hovered.desc, liveStatus].filter(Boolean).join(" — ");
+      var openHint = hovered.openable ? "click to view code" : "";
       tooltip.innerHTML =
         '<div class="name mono"></div><div class="cat"></div>' +
         (descText ? '<div class="desc"></div>' : "") +
         (syns.length ? '<div class="edges"></div>' : "") +
-        (expandHint ? '<div class="edges" style="border-top:none;padding-top:0;margin-top:2px;font-style:italic;"></div>' : "");
+        (expandHint ? '<div class="edges" style="border-top:none;padding-top:0;margin-top:2px;font-style:italic;"></div>' : "") +
+        (openHint ? '<div class="edges" style="border-top:none;padding-top:0;margin-top:2px;font-style:italic;"></div>' : "");
       var parts = tooltip.querySelectorAll(".name, .cat, .desc, .edges");
       tooltip.querySelector(".name").textContent = hovered.name || hovered.id;
       tooltip.querySelector(".cat").textContent = mode === "brain" ? catInfo.brain : catInfo.label;
@@ -900,6 +916,7 @@
         idx++;
       }
       if (expandHint) edgeEls[idx].textContent = expandHint;
+      if (openHint) edgeEls[idx].textContent = openHint;
     } else if (hoveredSynapse) {
       tooltip.style.display = "block";
       tooltip.style.left = (mx + 16) + "px";
@@ -916,10 +933,17 @@
   canvas.addEventListener("click", function () {
     if (moved) return; // was a drag, not a click
     if (hovered) {
+      // Openable nodes (skills, agents, hooks, dashboard tabs) toggle code layer view
+      if (hovered.openable) {
+        openNodeId = openNodeId === hovered.id ? null : hovered.id;
+        return;
+      }
+      // Expandable nodes toggle their forest; both can coexist
       if (hovered.expandable) {
         hovered.expanded = !hovered.expanded;
         relayout(true);
       }
+      // Select for synapse tracing
       selected = selected === hovered.id ? null : hovered.id;
       if (selected) { selNote.classList.add("show"); document.getElementById("sel-name").textContent = selected; }
       else selNote.classList.remove("show");
@@ -930,6 +954,29 @@
   document.getElementById("sel-clear").addEventListener("click", function () {
     selected = null; selNote.classList.remove("show");
   });
+
+  // Close code layer view via Esc key or back button
+  function closeCodeLayer() { openNodeId = null; }
+  window.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape" && openNodeId !== null) {
+      closeCodeLayer();
+    }
+  });
+  document.getElementById("code-close").addEventListener("click", closeCodeLayer);
+
+  // Update code layer note visibility and content
+  var prevOpenNodeId = null;
+  function updateCodeLayerNote() {
+    if (openNodeId !== null) {
+      var node = byId[openNodeId];
+      if (node) {
+        document.getElementById("code-layer-note").classList.add("show");
+        document.getElementById("code-name").textContent = node.name || node.id;
+      }
+    } else {
+      document.getElementById("code-layer-note").classList.remove("show");
+    }
+  }
 
   // ── render loop ──────────────────────────────────────────────────────
   var t0 = performance.now();
@@ -956,13 +1003,39 @@
     lastFrameTime = now;
 
     updateActivePulses(now);
+    updateCodeLayerNote();
+
+    // Handle code layer open/close camera transitions
+    if (openNodeId !== null && !dragging) {
+      if (cameraTargetNode === null || cameraTargetNode.id !== openNodeId) {
+        var targetNode = byId[openNodeId];
+        if (targetNode) {
+          priorCamDist = camDist;
+          cameraTargetNode = targetNode;
+          cameraEaseUntil = now + 1000; // 1s ease
+        }
+      }
+    } else if (openNodeId === null && cameraTargetNode) {
+      // Closing code layer — restore prior camDist
+      priorCamDist = camDist;
+      cameraTargetNode = null;
+      cameraEaseUntil = now + 800;
+    }
 
     if (cameraTargetNode && now < cameraEaseUntil && !dragging) {
       var target = facingAngles(cameraTargetNode);
       yaw += (target.yaw - yaw) * 0.045;
       pitch += (target.pitch - pitch) * 0.045;
+      // When code layer is open, ease camera distance closer for detail view
+      var targetDist = openNodeId !== null ? 220 : priorCamDist;
+      camDist += (targetDist - camDist) * 0.045;
     } else {
-      if (cameraTargetNode && now >= cameraEaseUntil) cameraTargetNode = null;
+      if (cameraTargetNode && now >= cameraEaseUntil) {
+        if (openNodeId === null) {
+          camDist = priorCamDist; // finalize the restore
+        }
+        cameraTargetNode = null;
+      }
       if (autoRotate && !dragging) yaw += 0.048 * dt; // ≈ same visual speed as the original 0.0008/call at a 60fps reference
     }
 
@@ -1001,11 +1074,15 @@
     branches.forEach(function (br) {
       if (br.to.cat !== "root" && br.to.cat !== "skills-trunk" && !activeCats[br.to.cat]) return;
       var pa = projectNode(br.from), pb = projectNode(br.to);
+      var isOpenedNode = br.from.id === openNodeId || br.to.id === openNodeId;
       var dim = selected && !(selPartners[br.from.id] || selPartners[br.to.id] || br.from.id === selected || br.to.id === selected) && (br.depth > 1);
+      // Fade system layer when code layer is open, except the opened node itself
+      var fadedByOpen = openNodeId !== null && !isOpenedNode ? 0.15 : 1;
       ctx.beginPath();
       ctx.moveTo(pa.sx, pa.sy);
       ctx.lineTo(pb.sx, pb.sy);
-      ctx.strokeStyle = "rgba(88,166,255," + (dim ? 0.07 : 0.32 - br.depth * 0.032) + ")";
+      var baseAlpha = (dim ? 0.07 : 0.32 - br.depth * 0.032) * fadedByOpen;
+      ctx.strokeStyle = "rgba(88,166,255," + baseAlpha + ")";
       ctx.lineWidth = Math.max(0.6, 3.2 - br.depth * 0.6);
       ctx.stroke();
     });
@@ -1018,7 +1095,10 @@
       var pa = projectNode(na), pb = projectNode(nb);
       var mid = curveMid(pa, pb);
       var isSelRelated = selected && (s.a === selected || s.b === selected);
+      var isOpenedNode = s.a === openNodeId || s.b === openNodeId;
       var dim = selected && !isSelRelated;
+      // Fade system layer when code layer is open, except the opened node itself
+      var fadedByOpen = openNodeId !== null && !isOpenedNode ? 0.15 : 1;
       var isHov = hoveredSynapse === s;
       var pulse = Math.max(pulseIntensityOf(s.a), pulseIntensityOf(s.b));
 
@@ -1026,7 +1106,7 @@
       ctx.moveTo(pa.sx, pa.sy);
       ctx.quadraticCurveTo(mid.sx, mid.sy, pb.sx, pb.sy);
       ctx.setLineDash(s.type === "undeclared" ? [3, 4] : s.type === "hook" ? [1, 4] : []);
-      var alpha = dim ? 0.08 : (isHov || isSelRelated ? 0.85 : 0.35) + pulse * 0.5;
+      var alpha = (dim ? 0.08 : (isHov || isSelRelated ? 0.85 : 0.35) + pulse * 0.5) * fadedByOpen;
       ctx.strokeStyle = "rgba(" + SYNAPSE_COLOR + "," + Math.min(1, alpha) + ")";
       ctx.lineWidth = (isHov || isSelRelated ? 2 : 1.1) + pulse * 1.8;
       ctx.save();
@@ -1048,6 +1128,66 @@
         ctx.restore();
       }
     });
+
+    // code layer — owned files/functions and borrowed nodes, only when open
+    if (openNodeId !== null && byId[openNodeId]) {
+      var openNode = byId[openNodeId];
+      var code = openNode.code;
+      if (code && (code.files.length > 0 || code.functions.length > 0)) {
+        // Draw call edges between owned nodes
+        if (code.edges) {
+          code.edges.forEach(function (edge) {
+            var srcNode = byId[edge.source], tgtNode = byId[edge.target];
+            if (srcNode && tgtNode) {
+              var pa = projectNode(srcNode), pb = projectNode(tgtNode);
+              ctx.beginPath();
+              ctx.moveTo(pa.sx, pa.sy);
+              ctx.lineTo(pb.sx, pb.sy);
+              ctx.strokeStyle = "rgba(156,163,175,0.3)"; // neutral grey for code edges
+              ctx.lineWidth = 0.8;
+              ctx.stroke();
+            }
+          });
+        }
+
+        // Draw file/function nodes (owned code layer)
+        var codeNodeIds = {};
+        (code.files || []).concat(code.functions || []).forEach(function (n) {
+          codeNodeIds[n.id] = n;
+        });
+
+        Object.keys(codeNodeIds).forEach(function (nodeId) {
+          var codeNode = codeNodeIds[nodeId];
+          // Placeholder position: for now, stack near the opened node
+          // Real implementation would use precomputed layout from compute_layout
+          var baseProj = projectNode(openNode);
+          var offsetX = (Math.random() - 0.5) * 30;
+          var offsetY = (Math.random() - 0.5) * 30;
+          var sx = baseProj.sx + offsetX, sy = baseProj.sy + offsetY;
+          var r = 3.5; // function size tier
+          if (!codeNode.source_location) r = 5; // file size tier
+
+          ctx.beginPath();
+          ctx.arc(sx, sy, r, 0, Math.PI * 2);
+          ctx.fillStyle = codeNode.source_location ? "rgba(156,163,175,0.6)" : "rgba(176,190,197,0.8)";
+          ctx.fill();
+        });
+
+        // Draw borrowed nodes faded at the edge
+        if (code.borrowed) {
+          code.borrowed.forEach(function (bNode) {
+            var baseProj = projectNode(openNode);
+            var offsetX = (Math.random() - 0.5) * 60;
+            var offsetY = (Math.random() - 0.5) * 60;
+            var sx = baseProj.sx + offsetX, sy = baseProj.sy + offsetY;
+            ctx.beginPath();
+            ctx.arc(sx, sy, 2.5, 0, Math.PI * 2);
+            ctx.fillStyle = "rgba(156,163,175,0.2)"; // borrowed nodes very faded
+            ctx.fill();
+          });
+        }
+      }
+    }
 
     // nodes, depth-sorted far→near
     var visible = allNodes.filter(function (nd) { return nd.cat === "root" || nd.cat === "skills-trunk" || activeCats[nd.cat]; });
@@ -1235,7 +1375,10 @@
     driveExternally: function () { externalDrive = true; if (rafId !== null) cancelAnimationFrame(rafId); },
     setCamera: function (y, p) { yaw = y; pitch = p; autoRotate = false; cameraTargetNode = null; },
     labels: function () { return drawnLabels.slice(); },
-    nodes: function () { return drawnNodes.slice(); }
+    nodes: function () { return drawnNodes.slice(); },
+    open: function (id) { openNodeId = id; },
+    close: function () { openNodeId = null; },
+    openId: function () { return openNodeId; }
   };
 
   function quadPoint(p0, p1, p2, t) {
