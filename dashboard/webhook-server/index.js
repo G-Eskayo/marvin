@@ -5,6 +5,7 @@ import { forwardRefreshPing } from './refresh_relay.js'
 import { loadGhToken } from './gh_auth.js'
 import { failureResponse } from './failure.js'
 import { recordApproveError, approveErrorLine } from './refusal_log.js'
+import { readRebaseStatus } from './rebase_status.js'
 import { startChangeWatch, createGithubProbe } from './gh_watch.js'
 import { readRegistry } from '../electron/main/boards.js'
 import { execFile } from 'child_process'
@@ -86,6 +87,12 @@ const server = createServer(async (req, res) => {
     }
     const { status, json } = await handlePortfolioRequest(portfolio, req.url, body)
     res.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(json))
+    return
+  }
+
+  // The latest post-merge rebase result per open PR (#225), for MR Review on any machine.
+  if (req.method === 'GET' && req.url === '/rebase-status') {
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(readRebaseStatus()))
     return
   }
 

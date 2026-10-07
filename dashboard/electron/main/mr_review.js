@@ -196,8 +196,17 @@ export async function prsForOrderCheck(prs, sentBackTickets) {
   return markSentBack(prs, keys)
 }
 
-export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDashboard, sentBackTickets = null, reworkStatus = null } = {}) {
+export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDashboard, sentBackTickets = null, reworkStatus = null, rebaseStatus = null } = {}) {
   const prs = await listOpenPrs()
+  // The webhook's post-merge rebase results, by PR url (#225). Best effort: without them a card just doesn't say.
+  let rebased = {}
+  if (rebaseStatus) {
+    try {
+      rebased = (await rebaseStatus()) || {}
+    } catch {
+      rebased = {}
+    }
+  }
   // Which tickets were sent back for rework ("repo#number" keys), asked once for the repos that have PRs. A failing
   // lookup never hides a PR: it just means nothing is flagged (the merge webhook refuses sent-back PRs on its own).
   let sentBackKeys = new Set()
@@ -233,6 +242,7 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       key: prKey(pr.repo || MARVIN_REPO, pr.number),
       canMerge: canMerge(pr.repo || MARVIN_REPO),
       conflicts: pr.mergeable === 'CONFLICTING',
+      rebase: rebased[pr.url] || null,
       checks: ciState(pr.statusCheckRollup),
       baseProblem: baseProblem(prs.map((p) => ({ ...p, repo: p.repo || MARVIN_REPO })), { ...pr, repo: pr.repo || MARVIN_REPO }),
       waitingOn: waitingOn(withState, { ...pr, repo: pr.repo || MARVIN_REPO }),

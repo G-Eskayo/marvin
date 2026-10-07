@@ -132,13 +132,25 @@ def resolve_rebase(worktree, rules: list[dict], max_steps: int = 100) -> dict:
     return {"ok": False, "reason": "gave up resolving generated-file conflicts after too many steps"}
 
 
+# marvin has no project profile; these are the files its own tools rewrite (health monitor, metrics, the graph), which
+# conflicted on every post-merge rebase (#225) and in code_sync.
+MARVIN = "G-Eskayo/marvin"
+MARVIN_GENERATED = [{"path": "bench/metrics"}, {"path": "graphify-out"}]
+
+
+def rules_for(repo: str) -> list[dict]:
+    import project_profile as pp
+    profile = pp.load_profile(repo)
+    if profile is not None:
+        return profile.get("generated", [])
+    return MARVIN_GENERATED if repo.lower() == MARVIN.lower() else []
+
+
 def main() -> None:  # python generated_paths.py resolve-rebase <owner/repo> <worktree>   (exit 0 = resolved)
     import json
-    import project_profile as pp
     if len(sys.argv) != 4 or sys.argv[1] != "resolve-rebase":
         sys.exit("usage: generated_paths.py resolve-rebase <owner/repo> <worktree>")
-    profile = pp.load_profile(sys.argv[2]) or {}
-    res = resolve_rebase(sys.argv[3], profile.get("generated", []))
+    res = resolve_rebase(sys.argv[3], rules_for(sys.argv[2]))
     print(json.dumps(res))
     sys.exit(0 if res["ok"] else 1)
 

@@ -172,3 +172,26 @@ describe('getReworkStatus', () => {
     expect(await getReworkStatus({ run: async () => { throw new Error('boom') }, now: 1000 })).toEqual({})
   })
 })
+
+// #225: what the post-merge rebase found shows on the card before anyone presses Approve.
+describe('describePrState: post-merge rebase', () => {
+  const ready = { checks: { state: 'passing', failing: [], pending: [] }, waitingOn: [] }
+
+  it('a PR rebased clean says so on the ready card', () => {
+    const v = describePrState({ ...ready, rebase: { state: 'clean', after: 229, files: [] } })
+    expect(v.kind).toBe('ready')
+    expect(v.note).toBe('GitHub checks passed · rebased onto main after #229 merged')
+  })
+
+  it('a conflict names the files and the merge that caused it', () => {
+    const v = describePrState({ ...ready, conflicts: true, rebase: { state: 'conflict', after: 229, files: ['a.js', 'b.js'] } })
+    expect(v.kind).toBe('conflict')
+    expect(v.detail).toContain('Since #229 merged it conflicts in a.js, b.js.')
+  })
+
+  it('tests failing after the rebase are shown, and Approve stays available', () => {
+    const v = describePrState({ ...ready, rebase: { state: 'tests_failed', after: 229, files: [] } })
+    expect(v).toMatchObject({ kind: 'tests-after-rebase', tone: 'wait', approve: 'enabled', headline: 'Tests fail on the latest main' })
+    expect(v.detail).toContain('#229')
+  })
+})
