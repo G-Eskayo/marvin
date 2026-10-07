@@ -764,3 +764,33 @@ def test_in_flight_counts_nothing_when_the_process_tables_cannot_be_read(monkeyp
     import running_tickets
     monkeypatch.setattr(running_tickets, "current", lambda: (_ for _ in ()).throw(OSError("boom")))
     assert tp._inflight_by_repo([tp.REPO]) == {tp.REPO: 0}
+
+
+# ── bugs first (#237) ───────────────────────────────────────────────────────
+
+from datetime import datetime, timezone  # noqa: E402
+
+
+def _scored(number, labels=(), blocks=0, due=None, created="2026-10-01T00:00:00Z"):
+    t = {"number": number, "createdAt": created, "labels": [{"name": l} for l in labels], "title": "t", "body": ""}
+    now = datetime(2026, 10, 7, tzinfo=timezone.utc)
+    t["_score"] = tp.ticket_policy.score_ticket(t, blocks, due, now)[0]
+    return t
+
+
+def _first(*tickets):
+    return min(tickets, key=tp._order_key)["number"]
+
+
+def test_a_bare_bug_is_picked_before_a_feature_that_unblocks_two():
+    assert _first(_scored(1, ["enhancement"], blocks=2), _scored(2, ["bug"])) == 2
+
+
+def test_with_the_same_priority_label_a_bug_is_picked_before_a_non_bug():
+    older_feature = _scored(1, ["priority:p2", "enhancement"], blocks=3, created="2026-09-01T00:00:00Z")
+    assert _first(older_feature, _scored(2, ["priority:p2", "bug"])) == 2
+
+
+def test_a_feature_with_a_hard_deadline_three_days_away_still_beats_a_bare_bug():
+    due = {"date": "2026-10-10", "hard": True}
+    assert _first(_scored(1, ["bug"]), _scored(2, ["enhancement"], due=due)) == 2

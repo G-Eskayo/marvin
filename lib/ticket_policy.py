@@ -59,6 +59,8 @@ def stale_claim(issue: dict, now: datetime, hours: int = STALE_CLAIM_HOURS) -> d
 
 # ── priority ────────────────────────────────────────────────────────────────
 
+BUG_WEIGHT = 10  # a bare bug scores p1 (priority_for: >= 10)
+
 def priority_rank(issue: dict) -> int | None:
     for l in label_names(issue):
         m = re.fullmatch(r"priority:p([0-3])", l)
@@ -100,8 +102,9 @@ def score_ticket(issue: dict, blocks_count: int, due: dict | None, now: datetime
                 why.append(f"{'hard' if hard else 'soft'} deadline in {max(0, round(days))} days (+{pts})")
     names = label_names(issue)
     if "bug" in names:
-        score += 4
-        why.append("bug (+4)")
+        # Bugs before features (Gil, 2026-10-07; ADR 0054): a bug on its own lands in p1, ordinary features in p2/p3.
+        score += BUG_WEIGHT
+        why.append(f"bug (+{BUG_WEIGHT})")
     if "breaking-change" in names:
         score += 2
         why.append("breaking change (+2)")
