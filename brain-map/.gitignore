@@ -2,6 +2,7 @@ index.html
 tree-data.json
 activity.jsonl
 demo-events.jsonl
+snapshot/
 DesktopLive/DesktopLive
 DesktopLive/DesktopLive.app
 *.log
