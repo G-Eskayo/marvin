@@ -18,6 +18,7 @@ import { createPortfolioProxy, portfolioHost } from './portfolio_remote.js'
 import { listTicketActivity, getTicketTimeline } from './activity.js'
 import { getDeviceStatuses } from './devices.js'
 import { getQueue } from './queue.js'
+import { getConcurrency, setConcurrency } from './dispatch_concurrency.js'
 import { createMergeOps } from './merge_ops.js'
 import { readPrefs } from './prefs.js'
 import { assertInOrder } from './pr_order.js'
@@ -175,6 +176,8 @@ function registerDispatchHandlers() {
   ipcMain.handle('dispatch:status', () => readDispatchStatus())
   ipcMain.handle('devices:status', () => getDeviceStatuses())
   ipcMain.handle('queue:list', () => getQueue())
+  ipcMain.handle('dispatch:getConcurrency', () => getConcurrency())
+  ipcMain.handle('dispatch:setConcurrency', (_event, settings) => setConcurrency(settings))
   // The header indicator: dispatched task + every background agent that is mid-run, on this machine.
   ipcMain.handle('working:now', () => buildWorkingNow({ dispatch: readDispatchStatus(), jobs: listJobs() }))
 }

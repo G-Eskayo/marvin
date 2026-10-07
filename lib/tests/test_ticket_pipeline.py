@@ -2,6 +2,7 @@
     ~/.agents/venv/bin/python -m pytest lib/tests/test_ticket_pipeline.py -v
 """
 from __future__ import annotations
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -31,6 +32,13 @@ def _scan_as_the_primary(monkeypatch):
     import scanner_role
     monkeypatch.setattr(scanner_role, "should_scan", lambda: (True, "primary"))
     monkeypatch.setattr(scanner_role, "write_heartbeat", lambda *a, **k: None)
+
+
+@pytest.fixture(autouse=True)
+def _parallel_dispatch_off_unless_a_test_says_otherwise(monkeypatch):
+    """config/dispatch.json is the dashboard's setting and may be on on this machine; these tests are about what a scan
+    does by default. The parallel rules have their own tests below."""
+    monkeypatch.setattr(tp.dispatch_concurrency, "load", lambda path=None: json.loads(json.dumps(tp.dispatch_concurrency.DEFAULTS)))
 
 
 def _issue(number, created, labels=(), title="a ticket"):
@@ -653,3 +661,92 @@ def test_the_scan_starts_a_main_health_check_in_the_background_and_never_waits_f
     assert kw.get("start_new_session") is True       # detached: the scan does not wait on a ~1 minute test run
     monkeypatch.setattr(tp.subprocess, "Popen", lambda *a, **k: (_ for _ in ()).throw(OSError("no")))
     tp._refresh_main_health()                        # a failure to start it never breaks the scan
+
+
+# ── parallel dispatch: the scan fills free slots (ADR 0052, ticket #195) ────
+
+BOTH = ["mac-mini-1", "macbook-pro-1"]
+
+
+def _parallel(monkeypatch, marvin=(), cc=(), total=2, per_project=1, local_used=0, inflight=None, disk=100, budget=90):
+    both = {**CC_PROFILE, "machines": BOTH}
+    _setup_projects(monkeypatch, marvin=marvin, cc=cc, profile=both)
+    settings = {**tp.dispatch_concurrency.DEFAULTS, "parallel": True, "max_total": total, "max_per_project": per_project}
+    monkeypatch.setattr(tp.dispatch_concurrency, "load", lambda path=None: settings)
+    monkeypatch.setattr(tp, "_local_slots_used", lambda: local_used)
+    monkeypatch.setattr(tp, "_inflight_by_repo", lambda repos: dict(inflight or {}))
+    monkeypatch.setattr(tp, "_free_disk_gb", lambda: disk)
+    monkeypatch.setattr(tp, "_github_budget_pct", lambda: budget)
+    monkeypatch.setattr(tp, "MARVIN_MACHINES", tuple(BOTH))
+    return _capture(monkeypatch, select=lambda target=None: (target, {"is_self": target == "mac-mini-1"}))
+
+
+def _targets(got):
+    return [kw["target"] for _a, kw in got["dispatches"]]
+
+
+def test_with_parallel_off_a_scan_dispatches_exactly_one_ticket(monkeypatch):
+    got = _parallel(monkeypatch, marvin=[_ticket(5)], cc=[_ticket(9)])
+    monkeypatch.setattr(tp.dispatch_concurrency, "load", lambda path=None: dict(tp.dispatch_concurrency.DEFAULTS))
+    monkeypatch.setattr(tp, "_local_busy", lambda: False)
+    tp.main()
+    assert len(got["dispatches"]) == 1
+
+
+def test_with_parallel_on_two_projects_each_get_a_ticket_in_the_same_scan(monkeypatch):
+    got = _parallel(monkeypatch, marvin=[_ticket(5)], cc=[_ticket(9)])
+    tp.main()
+    assert sorted(c[0] for c in got["claims"]) == [5, 9]
+    assert sorted(_targets(got)) == sorted(BOTH)            # one per machine, never two on the macbook's single slot
+
+
+def test_two_tickets_of_one_project_are_not_started_together_while_its_limit_is_one(monkeypatch):
+    got = _parallel(monkeypatch, marvin=[_ticket(5), _ticket(6, "2026-02-02T00:00:00Z")])
+    tp.main()
+    assert [c[0] for c in got["claims"]] == [5]
+
+
+def test_a_higher_per_project_limit_lets_one_project_use_both_machines(monkeypatch):
+    got = _parallel(monkeypatch, marvin=[_ticket(5), _ticket(6, "2026-02-02T00:00:00Z")], per_project=2)
+    tp.main()
+    assert [c[0] for c in got["claims"]] == [5, 6] and sorted(_targets(got)) == sorted(BOTH)
+
+
+def test_a_ticket_already_in_flight_counts_against_its_projects_limit(monkeypatch):
+    got = _parallel(monkeypatch, marvin=[_ticket(5)], cc=[_ticket(9)], inflight={tp.REPO: 1})
+    tp.main()
+    assert [c[0] for c in got["claims"]] == [9]
+
+
+def test_the_total_limit_counts_tickets_already_running(monkeypatch):
+    got = _parallel(monkeypatch, marvin=[_ticket(5)], cc=[_ticket(9)], total=2, inflight={tp.REPO: 0, CC: 0, "other": 1})
+    tp.main()
+    assert len(got["claims"]) == 1
+
+
+def test_a_full_machine_does_not_stop_another_project_that_can_use_a_free_one(monkeypatch):
+    got = _parallel(monkeypatch, marvin=[_ticket(5)], cc=[_ticket(9)], local_used=2)   # the mini is full
+    monkeypatch.setattr(tp.pp, "load_profile", lambda repo, directory=None: {**CC_PROFILE, "machines": ["mac-mini-1"]} if repo == CC else None)
+    tp.main()
+    assert [c[0] for c in got["claims"]] == [5] and _targets(got) == ["macbook-pro-1"]
+
+
+def test_a_guard_refusal_starts_nothing_and_says_why_in_the_scan_log(monkeypatch):
+    got = _parallel(monkeypatch, marvin=[_ticket(5)], disk=9)
+    monkeypatch.setattr(tp, "MARVIN_MACHINES", ("mac-mini-1",))   # the disk guard reads this machine's disk, not the other's
+    steps = []
+    run = SimpleNamespace(step=lambda name, detail=None: steps.append((name, detail)), summary=lambda *a: None, fail=lambda *a: None)
+    tp._scan(run, dry_run=False)
+    assert got["claims"] == []
+    assert any("disk 9 GB free" in (d or "") for _n, d in steps)
+
+
+def test_a_failed_dispatch_in_one_project_does_not_stop_the_other(monkeypatch):
+    got = _parallel(monkeypatch, marvin=[_ticket(5)], cc=[_ticket(9)])
+    calls = []
+    def flaky(*a, **kw):
+        calls.append(kw["target"])
+        return SimpleNamespace(ok=len(calls) > 1, error="boom")
+    monkeypatch.setattr(tp, "dispatch", flaky)
+    tp.main()
+    assert len(calls) == 2 and len(got["releases"]) == 1

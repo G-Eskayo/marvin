@@ -36,6 +36,10 @@ contextBridge.exposeInMainWorld('api', {
   devices: {
     status: () => ipcRenderer.invoke('devices:status')
   },
+  dispatch: {
+    getConcurrency: () => ipcRenderer.invoke('dispatch:getConcurrency'),
+    setConcurrency: (settings) => ipcRenderer.invoke('dispatch:setConcurrency', settings)
+  },
   queue: {
     list: () => ipcRenderer.invoke('queue:list')
   },
