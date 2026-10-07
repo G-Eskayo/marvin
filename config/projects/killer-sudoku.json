@@ -5,6 +5,7 @@
   "dispatch": "on",
   "merge_from_dashboard": true,
   "clone_mode": "pipeline",
+  "build_output": [".build"],
   "machines": ["mac-mini-1"],
   "env": {
     "DEVELOPER_DIR": { "first_existing": ["/Applications/Xcode.app/Contents/Developer"] }

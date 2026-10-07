@@ -29,6 +29,7 @@ branch is kept, so every commit stays reachable. Ignored build output
 from __future__ import annotations
 import json
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -117,6 +118,32 @@ def _default_is_claimed(repo: str, number: int) -> bool:
 def _default_remove_worktree(wt: dict) -> bool:
     """Lossless removal; False when git refuses (something uncommitted or untracked is there)."""
     return _git(Path(wt["clone"]), "worktree", "remove", str(wt["path"])).returncode == 0
+
+
+def drop_build_output(worktree: Path, rel_paths: list[str]) -> list[str]:
+    """Remove regenerable build output (SwiftPM .build, node_modules) from a pipeline worktree once a ticket run
+    ends; returns what was removed. Only directories inside the worktree that git ignores are removed, and an
+    untracked symlink (node_modules linked to a shared cache) is unlinked, never followed, so work is never lost."""
+    worktree = Path(worktree)
+    root = worktree.resolve()
+    removed = []
+    for rel in rel_paths:
+        if Path(rel).is_absolute() or ".." in Path(rel).parts:
+            continue
+        p = worktree / rel
+        if not (p.is_symlink() or p.is_dir()) or not p.parent.resolve().is_relative_to(root):
+            continue
+        if p.is_symlink():
+            # a "node_modules/" ignore rule matches directories only, so git sees the link as untracked, not ignored
+            if _git(worktree, "ls-files", "--", rel).stdout.strip():
+                continue
+            p.unlink()
+        elif _git(worktree, "check-ignore", "-q", rel).returncode != 0:
+            continue
+        else:
+            shutil.rmtree(p)
+        removed.append(rel)
+    return removed
 
 
 def _extract_issue_number(branch: str) -> int | None:
