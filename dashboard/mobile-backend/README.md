@@ -23,7 +23,27 @@ Device names are case-insensitive Tailscale node names (first label of hostname)
 **Response**:
 - `200 { "ok": true, "status": "up", "uptimeSeconds": <n>, "version": "1.0.0" }` — allowlisted peer
 - `403 { "ok": false, "error": "not allowlisted" }` — peer not in allowlist
-- `403 { "ok": false, "error": "could not resolve remote address" }` — IP resolution failed (should never happen in Tailscale)
+
+## Contract: `POST /chat`
+
+Streams a headless Claude Code session reply as NDJSON. Tracks the session ID internally to resume on the next request (single in-memory session; see #158 for durable persistence and rotation).
+
+**Request**:
+```json
+{
+  "message": "Your message to Claude"
+}
+```
+
+**Response**:
+- `200 application/x-ndjson` — stream of normalised events (one JSON object per line)
+  - `{ "type": "session_start", "sessionId": "..." }`
+  - `{ "type": "text_delta", "text": "..." }`
+  - `{ "type": "tool_use", "toolName": "...", "toolId": "...", "toolInput": {...} }`
+  - `{ "type": "result", "isError": false, "resultText": "...", "costUsd": 0.001, ... }`
+  - `{ "type": "error", "message": "..." }`
+- `400 { "error": "..." }` — invalid request (missing or empty message)
+- `403 { "ok": false, "error": "not allowlisted" }` — peer not in allowlist
 
 ## Running it
 
@@ -44,4 +64,9 @@ The service defaults to port 7880; override with `PORT` env var if needed (edit 
 
 ## Deliberately out of scope
 
-Face ID authentication, write endpoints, session rotation — covered in separate tickets (#159, #160, #157, #158). This ticket is the device gate and read-only status endpoint only.
+Face ID authentication, permission UI for tool approvals, session rotation, durable persistence across restarts — covered in separate tickets:
+- #158: Thread persistence and session rotation
+- #159: Permission bridge for tool approvals
+- Other: Face ID, OAuth, etc.
+
+This ticket (#157) covers just the streaming chat endpoint over one resumable in-memory session.
