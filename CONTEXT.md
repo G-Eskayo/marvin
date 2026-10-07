@@ -711,6 +711,15 @@ untouched (it is the "legacy profile"); only repos with a profile file use the p
   old `<n>.json` for marvin only; the next write of that ticket moves it. `lib/migrate_ticket_stages.py` moves the
   rest (dry run by default, `--apply` to move). The mobile backend was reading `~/.claude/ticket-stages`, which
   nothing writes; it now reads the shared folder.
+- **Merge refusals are recorded, as refusals (#215, 2026-10-07)**: every refused Approve (wrong order, wrong
+  base, sent back, CI still running, project not set up, GitHub refusing without a conflict) goes into
+  `pipeline-failures.jsonl` as `kind: "refusal"`, `sig: merge:<CODE>`, with `pr_url`, `project`, `ticket` and `stage`,
+  and into the ticket's stage log as a failed `merging` stage (`refused <CODE>: …`). Dashboard-side checks record
+  through `approve_guard.js`, webhook-side ones through `refusal_log.js`. **Refusal, not failure**: the circuit breaker
+  counts only `kind: "failure"`, and three order refusals in two hours are the review screen working, not a broken
+  environment; recording them as failures would pause the pipeline. Merge failures now carry `project`, so the
+  breaker no longer counts another project's failures as marvin's. Webhook error lines start with an ISO time and the
+  PR URL.
 - **Approving and denying from MR Review (2026-10-05)**: the merge gate now reads the profile too. A project's
   PRs get Approve/Deny only if its profile says `"merge_from_dashboard": true`; the webhook enforces that
   itself (not just the screen) and refuses others with `NO_MERGE_PROFILE`. **Deny** needs no profile: the repo
