@@ -3,6 +3,7 @@ import Markdown from './Markdown.jsx'
 import Related, { useRelated } from './Related.jsx'
 import { extractOutline } from '../lib/docs_text.js'
 import { isNotebookPath, notebookToMarkdown } from '../lib/ipynb.js'
+import { docsCacheFrom } from '../lib/docs_cache.js'
 
 function formatTimestamp(iso) {
   if (!iso) return 'never'
@@ -303,7 +304,7 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
   const handledNav = useRef(null)
 
   useEffect(() => {
-    window.api.docs.repos().then(setCache).catch(() => {})
+    window.api.docs.repos().then((r) => setCache(docsCacheFrom(r))).catch(() => {})
   }, [])
 
   // Debounced search; a stale response never overwrites a newer query's.
@@ -350,7 +351,7 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
   useEffect(() => window.api.triggers.on((t) => t.topic === 'docs' && setDocsTick((n) => n + 1)), [])
   useEffect(() => {
     if (docsTick === 0) return
-    window.api.docs.repos().then(setCache).catch(() => {})
+    window.api.docs.repos().then((r) => setCache(docsCacheFrom(r))).catch(() => {})
     if (selectedRepo) loadTree(selectedRepo, { keep: true })
     if (selectedRepo && selectedPath) {
       window.api.docs
@@ -426,8 +427,7 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
   async function handleRefresh() {
     setRefreshing(true)
     try {
-      const repos = await window.api.docs.refresh()
-      setCache({ generated_at: new Date().toISOString(), repos })
+      setCache(docsCacheFrom(await window.api.docs.refresh()))
     } catch (err) {
       setError(String(err))
     } finally {
