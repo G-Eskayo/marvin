@@ -526,7 +526,7 @@ JOB_PLACEMENT = {
     "process-quarantine-reviews": "mini", "verify-digest-fix": "mini",
     "usage-scan": "both",  # hourly: each machine scans its own transcripts for the Metrics tab (lib/usage_report.py)
     "cleanup-sweep": "both",  # daily: each machine sweeps its own pipeline worktrees (lib/cleanup_sweep.py)
-    "dashboard-launch": "laptop", "desktoplive-restart": "laptop",
+    "dashboard-launch": "laptop",
 }
 
 
