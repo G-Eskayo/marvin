@@ -9,6 +9,11 @@ export function describeDevice(d, now) {
   return { label: 'Idle', tone: 'idle', detail: null }
 }
 
+export function slotsLabel(d) {
+  if (d.slotsUsed === undefined || d.slotsTotal === undefined) return null
+  return `${d.slotsUsed} of ${d.slotsTotal} slots`
+}
+
 const DOT = { busy: 'bg-blue-500 animate-pulse', down: 'bg-red-500', idle: 'bg-neutral-600' }
 
 // One column per device in marvin-network.json. This machine's column is the same DispatchStatusBadge
@@ -46,6 +51,18 @@ export default function DeviceColumns() {
                 <span className="truncate">{v.label}</span>
                 {v.detail && <span className="text-xs text-neutral-500">{v.detail}</span>}
               </p>
+            )}
+            {slotsLabel(d) && (
+              <p className="mt-1 text-xs text-neutral-400">{slotsLabel(d)}</p>
+            )}
+            {d.tickets && d.tickets.length > 0 && (
+              <div className="mt-2 space-y-1 text-xs text-neutral-400">
+                {d.tickets.map((t) => (
+                  <p key={t.id} className="truncate">
+                    {t.label} {t.started_at && <span className="text-neutral-600">({formatElapsed(t.started_at, now)})</span>}
+                  </p>
+                ))}
+              </div>
             )}
           </div>
         )
