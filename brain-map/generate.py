@@ -148,15 +148,15 @@ def load_plist(path: Path) -> dict | None:
         return None
 
 
-def describe_schedule(data: dict) -> str | None:
+def describe_schedule(plist: dict) -> str | None:
     """How often a launchd job repeats, or None if it doesn't (a one-off task
     or an always-on service). See brain-map/CONTEXT.md, "Recurring agent"."""
-    interval = data.get("StartInterval")
+    interval = plist.get("StartInterval")
     if isinstance(interval, int) and interval > 0:
         if interval % 3600 == 0:
             return f"every {interval // 3600} h"
         return f"every {max(1, interval // 60)} min"
-    cal = data.get("StartCalendarInterval")
+    cal = plist.get("StartCalendarInterval")
     entries = cal if isinstance(cal, list) else [cal] if isinstance(cal, dict) else []
     # launchd sets Day/Month/Year together only for one specific date — a one-off.
     entries = [e for e in entries if isinstance(e, dict) and not any(k in e for k in ("Day", "Month", "Year"))]

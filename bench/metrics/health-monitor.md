@@ -3550,6 +3550,7 @@
 - **repo:sync:~/.claude@mac-mini-1**: 1
 - **repo:sync:~/.claude@macbook-pro-1**: 0
 
+<<<<<<< Updated upstream
 ## 2026-10-07T18:48:41.164787+00:00 — health-monitor
 - **route:intent-routing-collection**: 92
 - **profile:missing:G-Eskayo/finance-os**: 1
@@ -3571,4 +3572,761 @@
 - **repo:sync:~/.agents@mac-mini-1**: 1
 - **repo:sync:~/.claude@macbook-pro-1**: 0
 - **repo:sync:~/.claude@mac-mini-1**: 1
+=======
+## 2026-10-07T04:04:09.931424+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **dispatch:lock-age**: 5.4236772
+- **catalog:fresh**: 0.4
+- **github:budget**: 1640
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 0
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T04:20:56.284665+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **dispatch:lock-age**: 22.594108666666667
+- **catalog:fresh**: 0.7
+- **github:budget**: 4651
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T04:36:07.733694+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **dispatch:lock-age**: 6.508339433333333
+- **catalog:fresh**: 0.1
+- **github:budget**: 4035
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T04:52:56.833668+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **dispatch:lock-age**: 22.262254499999997
+- **catalog:fresh**: 0.4
+- **github:budget**: 3035
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T05:08:14.608014+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.7
+- **github:budget**: 1670
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T05:24:29.226178+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **dispatch:lock-age**: 14.631515049999999
+- **catalog:fresh**: 0.9
+- **github:budget**: 4706
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T05:39:47.794159+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **dispatch:lock-age**: 30.940806866666666
+- **catalog:fresh**: 0.2
+- **github:budget**: 4164
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T05:54:58.901841+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **dispatch:lock-age**: 6.928401016666667
+- **catalog:fresh**: 0.4
+- **github:budget**: 3397
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T06:10:10.293726+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **dispatch:lock-age**: 10.335854283333333
+- **catalog:fresh**: 0.7
+- **github:budget**: 2470
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T06:25:20.781729+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **dispatch:lock-age**: 3.9520924333333336
+- **catalog:fresh**: 0.1
+- **github:budget**: 4428
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T06:40:30.677261+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **dispatch:lock-age**: 13.283945999999998
+- **catalog:fresh**: 0.3
+- **github:budget**: 3680
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T06:55:40.024929+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.6
+- **github:budget**: 2680
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T07:10:49.233566+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **dispatch:lock-age**: 0.4849305166666667
+- **catalog:fresh**: 0.8
+- **github:budget**: 1615
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T07:25:59.007735+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.1
+- **github:budget**: 4151
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T07:41:09.811263+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.4
+- **github:budget**: 3784
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T07:56:20.370762+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.6
+- **github:budget**: 3451
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T08:11:29.333967+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.9
+- **github:budget**: 3199
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T08:26:44.922844+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 1.1
+- **github:budget**: 4780
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T08:41:55.345314+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.2
+- **github:budget**: 4381
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T08:57:04.457002+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.4
+- **github:budget**: 4103
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T09:12:16.932183+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.2
+- **github:budget**: 3789
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T09:27:27.724866+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.5
+- **github:budget**: 4764
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T09:42:38.991219+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.7
+- **github:budget**: 4376
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T09:57:50.380030+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 1.0
+- **github:budget**: 4084
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T10:13:00.825735+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 1.2
+- **github:budget**: 3776
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T10:28:09.687320+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 1.5
+- **github:budget**: 4741
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T10:43:19.326767+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.2
+- **github:budget**: 4366
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T10:58:28.686724+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.4
+- **github:budget**: 4062
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T11:13:38.350179+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.7
+- **github:budget**: 3734
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T11:28:48.147679+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.9
+- **github:budget**: 4763
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T11:43:56.532751+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.2
+- **github:budget**: 4346
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T11:59:05.259846+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.4
+- **github:budget**: 4093
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T12:14:12.900467+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.7
+- **github:budget**: 3759
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T12:29:21.824492+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.9
+- **github:budget**: 4752
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T12:44:32.863665+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.1
+- **github:budget**: 4342
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T12:59:41.740400+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.4
+- **github:budget**: 4039
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T13:14:51.437657+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.7
+- **github:budget**: 3754
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T13:30:00.964540+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.9
+- **github:budget**: 4703
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T13:45:10.873204+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.1
+- **github:budget**: 4348
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T14:00:19.810337+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.4
+- **github:budget**: 4037
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T14:15:28.773946+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.6
+- **github:budget**: 3764
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T14:30:39.139714+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **dispatch:lock-age**: 0.40727636666666667
+- **catalog:fresh**: 0.9
+- **github:budget**: 4721
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T14:45:49.082208+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.1
+- **github:budget**: 4349
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T15:00:57.844970+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **dispatch:lock-age**: 0.7430301333333333
+- **catalog:fresh**: 0.4
+- **github:budget**: 3908
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T15:08:31.957641+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.5
+- **github:budget**: 3597
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T15:16:05.278394+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.6
+- **github:budget**: 3428
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T15:31:14.967610+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.9
+- **github:budget**: 4637
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T15:46:24.504002+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 1.1
+- **github:budget**: 4350
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T16:01:35.029621+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.0
+- **github:budget**: 4090
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T16:16:45.189471+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.3
+- **github:budget**: 2999
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T16:31:53.362822+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.5
+- **github:budget**: 4330
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T16:47:12.738469+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **dispatch:lock-age**: 11.8848093
+- **catalog:fresh**: 0.8
+- **github:budget**: 216
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T17:02:26.084290+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 1.0
+- **github:budget**: 0
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T17:17:38.819557+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 1.3
+- **github:budget**: 4995
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T17:32:59.071564+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 1.5
+- **github:budget**: 4712
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T17:49:21.731154+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **dispatch:lock-age**: 4.369811933333334
+- **catalog:fresh**: 0.1
+- **github:budget**: 4157
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T18:04:41.332149+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **dispatch:lock-age**: 6.4193917166666665
+- **catalog:fresh**: 0.4
+- **github:budget**: 3590
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T18:20:01.447675+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.6
+- **github:budget**: 4957
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T18:35:22.921322+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.9
+- **github:budget**: 4628
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
+## 2026-10-07T18:50:41.297871+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **dispatch:lock-age**: 1.6005740666666666
+- **catalog:fresh**: 0.1
+- **github:budget**: 3105
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T19:06:00.503085+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **dispatch:lock-age**: 3.494269
+- **catalog:fresh**: 0.4
+- **github:budget**: 2823
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T19:21:20.263299+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **dispatch:lock-age**: 0.6980611
+- **catalog:fresh**: 0.6
+- **github:budget**: 4037
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T19:36:39.003381+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **dispatch:lock-age**: 5.18990145
+- **catalog:fresh**: 0.9
+- **github:budget**: 2683
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T19:51:57.430599+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **pipeline:breaker**: 1
+- **catalog:fresh**: 0.2
+- **github:budget**: 1818
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T20:07:14.776710+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **pipeline:breaker**: 1
+- **catalog:fresh**: 0.5
+- **github:budget**: 1142
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T20:22:33.727431+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **pipeline:breaker**: 1
+- **catalog:fresh**: 0.7
+- **github:budget**: 4745
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T20:37:52.232795+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **pipeline:breaker**: 1
+- **catalog:fresh**: 0.0
+- **github:budget**: 3370
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T20:53:17.890837+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **pipeline:breaker**: 1
+- **profile:missing:G-Eskayo/nourished**: 1
+- **catalog:fresh**: 0.3
+- **github:budget**: 3008
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T21:08:37.725825+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **pipeline:breaker**: 1
+- **profile:missing:G-Eskayo/nourished**: 1
+- **catalog:fresh**: 0.6
+- **github:budget**: 2641
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T21:23:57.588701+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **pipeline:breaker**: 1
+- **profile:missing:G-Eskayo/nourished**: 1
+- **catalog:fresh**: 0.8
+- **github:budget**: 4879
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T21:39:17.222766+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **profile:missing:G-Eskayo/nourished**: 1
+- **catalog:fresh**: 1.1
+- **github:budget**: 4550
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-07T21:54:36.429573+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **profile:missing:G-Eskayo/nourished**: 1
+- **profile:missing:G-Eskayo/portfolio-website-updater**: 2
+- **catalog:fresh**: 0.1
+- **github:budget**: 2990
+- **repo:integrity:~/.agents**: 1
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+>>>>>>> Stashed changes
 
