@@ -48,9 +48,9 @@ def sync_files(project: Path, dev_html: Path) -> list[str]:
     return changed
 
 
-def judge_evaluation(result: dict) -> tuple[bool, str]:
+def judge_evaluation(eval_report: dict) -> tuple[bool, str]:
     """Errors fail the step; warnings (the content heuristics, ADR 0051) are reported but don't."""
-    findings = result.get("findings") or []
+    findings = eval_report.get("findings") or []
     if not findings:
         return True, "no findings"
     errors = [f for f in findings if f.get("severity", "error") == "error"]
