@@ -33,9 +33,13 @@ export function describePrState(pr, { status = 'idle', errorMessage = null } = {
       `${errorMessage || 'The merge gate rejected it.'} The ticket will be rebuilt and this PR updated.`, 'hidden', 'hidden')
   }
 
+  // What the post-merge rebase found (#225): {state: clean | conflict | tests_failed | error, after, files}.
+  const rb = pr.rebase || null
+
   if (pr.conflicts) {
+    const since = rb?.state === 'conflict' && rb.files?.length ? `Since #${rb.after} merged it conflicts in ${rb.files.join(', ')}. ` : ''
     return base('conflict', 'blocked', `Conflicts with ${main}`,
-      `It can't merge as it is. Its ticket is sent back automatically and rebuilt on the current ${main}, updating this same PR. Nothing to do here.`, 'hidden', 'hidden')
+      `${since}It can't merge as it is. Its ticket is sent back automatically and rebuilt on the current ${main}, updating this same PR. Nothing to do here.`, 'hidden', 'hidden')
   }
 
   if (ci.state === 'failing') {
@@ -71,6 +75,11 @@ export function describePrState(pr, { status = 'idle', errorMessage = null } = {
     return base('error', 'blocked', 'The last merge attempt failed', errorMessage, 'enabled', 'enabled')
   }
 
-  return base('ready', 'ready', 'Ready to merge', null, 'enabled', 'enabled',
-    { note: ci.state === 'passing' ? 'GitHub checks passed' : null })
+  if (rb?.state === 'tests_failed') {
+    return base('tests-after-rebase', 'wait', 'Tests fail on the latest main',
+      `After #${rb.after} merged, this PR's tests fail once it is rebased onto ${main}. Approve runs them again and sends it back if they still fail.`, 'enabled', 'enabled')
+  }
+
+  const notes = [ci.state === 'passing' ? 'GitHub checks passed' : null, rb?.state === 'clean' ? `rebased onto ${main} after #${rb.after} merged` : null].filter(Boolean)
+  return base('ready', 'ready', 'Ready to merge', null, 'enabled', 'enabled', { note: notes.length ? notes.join(' · ') : null })
 }

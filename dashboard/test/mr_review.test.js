@@ -407,3 +407,14 @@ describe('sentBackKeys', () => {
   })
 })
 
+
+describe('listPipelinePrs: post-merge rebase result (#225)', () => {
+  it("attaches each PR's latest rebase result, and a failing lookup attaches nothing", async () => {
+    const url = 'https://github.com/G-Eskayo/marvin/pull/208'
+    const list = async () => [{ number: 208, title: 't', url, body: '' }]
+    const [withIt] = await listPipelinePrs(list, { rebaseStatus: async () => ({ [url]: { state: 'conflict', after: 229, files: ['a.js'] } }) })
+    expect(withIt.rebase).toEqual({ state: 'conflict', after: 229, files: ['a.js'] })
+    const [without] = await listPipelinePrs(list, { rebaseStatus: async () => { throw new Error('webhook down') } })
+    expect(without.rebase).toBe(null)
+  })
+})
