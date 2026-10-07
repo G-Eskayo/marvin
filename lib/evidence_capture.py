@@ -180,7 +180,15 @@ def capture_dev_evidence(
         return {"na": True, "reason": "no UI"}
 
     capture_screenshot = capture_screenshot or _default_capture_screenshot
-    screenshot_path = capture_screenshot(worktree_path)
+    try:
+        screenshot_path = capture_screenshot(worktree_path)
+    except (subprocess.SubprocessError, OSError, RuntimeError) as e:
+        # A broken screenshot driver must not fail the ticket: on 2026-10-07 it failed every UI ticket, tripped the
+        # circuit breaker and stalled the pipeline. The PR says the screenshot is missing and why, so review sees it.
+        detail = (getattr(e, "stderr", None) or getattr(e, "output", None) or str(e))
+        detail = detail.decode() if isinstance(detail, bytes) else str(detail)
+        last = [l.strip() for l in detail.splitlines() if l.strip() and not l.strip().startswith("at ")]
+        return {"na": False, "error": "capture failed: " + (" / ".join(last[-2:]) if last else type(e).__name__)[:300]}
     return {
         "na": False,
         "screenshot_path": screenshot_path,

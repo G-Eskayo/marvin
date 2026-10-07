@@ -244,3 +244,22 @@ def test_capture_test_results_timeout_message_includes_timeout_and_command():
         assert "timed out after 1s" in str(exc_info.value)
     except:
         pass  # test environment may not support this
+
+
+# 2026-10-07: the screenshot driver times out on both Macs (Playwright never connects to Electron 30's browser
+# endpoint), and that exception failed every UI-touching ticket, tripping the circuit breaker and stalling the
+# whole pipeline. A failed capture is now reported in the PR instead of failing the ticket.
+def test_a_failed_screenshot_is_reported_not_fatal(tmp_path):
+    import subprocess
+
+    def broken(_path):
+        raise subprocess.CalledProcessError(1, ["node", "scripts/capture_screenshot.mjs"], stderr="electron.launch: Timeout 30000ms exceeded.")
+    result = ec.capture_dev_evidence(tmp_path, touches_ui=True, capture_screenshot=broken)
+    assert result["na"] is False
+    assert "capture failed" in result["error"] and "Timeout 30000ms" in result["error"]
+
+
+def test_the_pr_says_loudly_that_the_screenshot_failed():
+    import mr_raiser
+    text = mr_raiser._format_dev_evidence({"na": False, "error": "capture failed: electron.launch: Timeout 30000ms exceeded."})
+    assert "⚠" in text and "not verified" in text and "Timeout 30000ms" in text
