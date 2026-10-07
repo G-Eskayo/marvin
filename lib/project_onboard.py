@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Project onboarding: transform a repo into a fully wired MARVIN project.
 
-This module handles both the read-only 'plan' stage (ticket #141) and the 'apply' stage
-(ticket #146): gather facts about a project, produce a readiness plan, and optionally
-apply local changes (labels, board, profile). Facts are gathered once per repo via
-`inspect()`, and `plan()` is pure over those facts. Apply modifies local state only.
+This module handles the read-only 'plan' stage (ticket #141), the 'apply' stage
+(ticket #146), and 'prove' stage (ticket #148): gather facts about a project, produce
+a readiness plan, apply local changes (labels, board, profile), and prove the project's
+baseline test status. Facts are gathered once per repo via `inspect()`, and `plan()` is
+pure over those facts. Apply and prove modify local state only.
 
     project_onboard.py plan <owner/repo>              outputs JSON readiness plan
     project_onboard.py apply <owner/repo> --local     applies local changes (labels, board, profile)
+    project_onboard.py prove <owner/repo>             proves baseline and records result
 """
 from __future__ import annotations
 
@@ -422,14 +424,115 @@ def plan(facts: dict) -> dict:
 
 
 def write_onboarding_plan(repo: str, plan_out: dict, dir: Path | None = None) -> None:
-    """Write the onboarding plan to ~/.claude/onboarding/<repo_name>.json"""
+    """Write the onboarding plan to ~/.claude/onboarding/<repo_name>.json
+    Preserves any existing baseline and offers fields to avoid data loss on refresh."""
     dir = dir or ONBOARDING_DIR
     path = onboarding_path(repo, dir=dir)
     path.parent.mkdir(parents=True, exist_ok=True)
+    # Read existing file if it exists to preserve baseline and offers
+    baseline = None
+    offers = None
+    if path.exists():
+        try:
+            existing = json.loads(path.read_text())
+            if isinstance(existing.get("pieces"), dict):
+                baseline = existing["pieces"].get("baseline")
+            offers = existing.get("offers")
+        except (json.JSONDecodeError, OSError):
+            pass
     data = {
         "repo": repo,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "pieces": plan_out,
+    }
+    if baseline is not None:
+        data["pieces"]["baseline"] = baseline
+    if offers is not None:
+        data["offers"] = offers
+    path.write_text(json.dumps(data, indent=2) + "\n")
+
+
+def prove(repo: str, profile: dict | None = None, *, selftest_fn=None, dir: Path | None = None) -> dict:
+    """Run selftest on the repo's profile and map the result to onboarding vocabulary.
+
+    Returns a baseline piece in onboarding format:
+    {"state": "ok"|"missing"|"needs-human", "reason": "...", "ran_at": <iso>, "offers": {...}}
+
+    state mapping:
+    - ok: selftest kind is "passed"
+    - needs-human: selftest kind is "env_missing" or "no_clone" (environment gap, not a project failure)
+    - missing: selftest kind is "failed" or "error" (project is genuinely not ready)
+    - no profile yet: no profile exists at all (separate early return)
+    """
+    if selftest_fn is None:
+        selftest_fn = pp.selftest
+
+    if profile is None:
+        profile = pp.load_profile(repo)
+
+    if profile is None:
+        return {"state": "needs-human", "reason": "no profile yet; run apply first", "offers": {"merge_from_dashboard": False, "dispatch": False}}
+
+    result = selftest_fn(profile)
+    kind = result.get("kind")
+    ok = result.get("ok")
+    error = result.get("error", "")
+
+    if ok and kind == "passed":
+        return {
+            "state": "ok",
+            "reason": error or "baseline passes",
+            "ran_at": datetime.now(timezone.utc).isoformat(),
+            "offers": {"merge_from_dashboard": True, "dispatch": True}
+        }
+    elif kind in ("env_missing", "no_clone"):
+        return {
+            "state": "needs-human",
+            "reason": error,
+            "ran_at": datetime.now(timezone.utc).isoformat(),
+            "offers": {"merge_from_dashboard": False, "dispatch": False}
+        }
+    else:  # "failed", "error", or anything else failing
+        return {
+            "state": "missing",
+            "reason": error,
+            "ran_at": datetime.now(timezone.utc).isoformat(),
+            "offers": {"merge_from_dashboard": False, "dispatch": False}
+        }
+
+
+def record_baseline(repo: str, baseline: dict, dir: Path | None = None) -> None:
+    """Merge baseline into the stored onboarding plan as pieces["baseline"] + top-level offers.
+    Preserves every other existing piece. Idempotent read-merge-write pattern.
+    Baseline's offers take precedence over existing offers."""
+    dir = dir or ONBOARDING_DIR
+    path = onboarding_path(repo, dir=dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Read existing plan if it exists
+    pieces = {}
+    existing_offers = {}
+    if path.exists():
+        try:
+            existing = json.loads(path.read_text())
+            if isinstance(existing.get("pieces"), dict):
+                pieces = existing["pieces"].copy()
+            existing_offers = existing.get("offers", {})
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # Merge baseline's offers with existing (baseline takes precedence)
+    offers = {**existing_offers, **baseline.get("offers", {})}
+
+    # Merge baseline into pieces
+    pieces["baseline"] = baseline
+
+    # Write merged result
+    data = {
+        "repo": repo,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "pieces": pieces,
+        "offers": offers,
     }
     path.write_text(json.dumps(data, indent=2) + "\n")
 
@@ -630,9 +733,9 @@ def apply(repo: str, facts: dict | None = None, *, profiles_dir: Path | None = N
 
 
 def main():
-    """CLI entry point: project_onboard.py plan|apply <owner/repo> [--local]"""
+    """CLI entry point: project_onboard.py plan|apply|prove <owner/repo> [--local]"""
     if len(sys.argv) < 3:
-        sys.exit("usage: project_onboard.py plan <owner/repo> | apply <owner/repo> --local")
+        sys.exit("usage: project_onboard.py plan <owner/repo> | apply <owner/repo> --local | prove <owner/repo>")
 
     cmd = sys.argv[1]
     repo = sys.argv[2]
@@ -691,8 +794,31 @@ def main():
 
         print()
 
+    elif cmd == "prove":
+        if len(sys.argv) != 3:
+            sys.exit("usage: project_onboard.py prove <owner/repo>")
+        baseline = prove(repo)
+        record_baseline(repo, baseline)
+        # Print human-readable summary
+        state = baseline.get("state", "unknown")
+        reason = baseline.get("reason", "")
+        print(f"\nOnboarding prove for {repo}:\n")
+        print(f"  state: {state}")
+        if reason:
+            print(f"  reason: {reason}")
+        offers = baseline.get("offers", {})
+        if offers.get("merge_from_dashboard"):
+            print(f"  ✓ merge_from_dashboard enabled")
+        else:
+            print(f"  ✗ merge_from_dashboard disabled")
+        if offers.get("dispatch"):
+            print(f"  ✓ dispatch enabled")
+        else:
+            print(f"  ✗ dispatch disabled")
+        print()
+
     else:
-        sys.exit(f"unknown command: {cmd}\nusage: project_onboard.py plan|apply <owner/repo>")
+        sys.exit(f"unknown command: {cmd}\nusage: project_onboard.py plan|apply|prove <owner/repo>")
 
 
 if __name__ == "__main__":

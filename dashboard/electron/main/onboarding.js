@@ -30,6 +30,7 @@ export function readOnboardingPlans(boards) {
         repo,
         generated_at: data.generated_at,
         pieces: data.pieces,
+        offers: data.offers,
         status: 'planned'
       })
     } catch {

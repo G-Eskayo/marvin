@@ -436,7 +436,7 @@ def selftest(profile: dict, runner=_default_runner, have=None, catalog: dict | N
     profile = _validate(copy.deepcopy(profile), "profile")
     clone = resolve_clone(profile, catalog if catalog is not None else _catalog(), ensure=True)
     if clone is None:
-        return {"ok": False, "error": f"no local clone of {profile['repo']} on this machine"}
+        return {"ok": False, "kind": "no_clone", "error": f"no local clone of {profile['repo']} on this machine"}
     ticket_ref = f"{profile['repo']}#999999"
     branch = f"pipeline/{ticket_ref.lower()}"
     measurer = Measurer(profile, runner=runner, have=have)
@@ -446,7 +446,7 @@ def selftest(profile: dict, runner=_default_runner, have=None, catalog: dict | N
         if t["required"] and t.get("enabled") is not False:
             lacking += [c for c in t["requires"] if not measurer.have(c, measurer.env) and c not in lacking]
     if lacking:
-        return {"ok": False, "clone": str(clone), "error": f"this machine lacks {', '.join(lacking)}, which the required checks need"}
+        return {"ok": False, "kind": "env_missing", "error": f"this machine lacks {', '.join(lacking)}, which the required checks need", "clone": str(clone)}
     worktree = None
     try:
         worktree = so._create_worktree(clone, ticket_ref, ref or profile["base_branch"])
@@ -458,10 +458,23 @@ def selftest(profile: dict, runner=_default_runner, have=None, catalog: dict | N
         body = (f"Closes {ticket_ref}\n\n## Metrics Comparison\n\n{mr_raiser._format_comparison(comparison)}\n\n"
                 f"## Test Results\n\n{mr_raiser._format_test_results(test_results)}\n\n"
                 f"## Dev Environment Evidence\n\n{mr_raiser._format_dev_evidence(dev)}")
-        return {"ok": True, "clone": str(clone), "worktree": str(worktree), "metrics": {k: v["value"] for k, v in baseline.items()},
+        bad = []
+        for t in measurer.report["tiers"]:
+            if not t.get("ran"):
+                continue
+            if t.get("build_ok") == 0:
+                bad.append(t)
+            elif t.get("failed"):
+                bad.append(t)
+        if bad:
+            summary = "; ".join(f"{t['label']}: " + ("build failed" if "build_ok" in t else f"{t['failed']} failed of {t['total']}") for t in bad)
+            return {"ok": False, "kind": "failed", "error": summary, "clone": str(clone), "tiers": measurer.report["tiers"], "notes": measurer.report["notes"]}
+        return {"ok": True, "kind": "passed", "clone": str(clone), "worktree": str(worktree), "metrics": {k: v["value"] for k, v in baseline.items()},
                 "tiers": measurer.report["tiers"], "notes": measurer.report["notes"], "pr_body": body}
-    except (EnvMissing, MeasureError, Exception) as e:  # noqa: BLE001 -- the report says what broke
-        return {"ok": False, "error": str(e), "clone": str(clone)}
+    except EnvMissing as e:
+        return {"ok": False, "kind": "env_missing", "error": str(e), "clone": str(clone)}
+    except (MeasureError, Exception) as e:  # noqa: BLE001 -- the report says what broke
+        return {"ok": False, "kind": "error", "error": str(e), "clone": str(clone)}
     finally:
         if worktree is not None:
             _cleanup_worktree(clone, worktree, branch)

@@ -229,6 +229,7 @@ def test_selftest_measures_a_real_worktree_shows_the_pr_body_and_always_cleans_u
     (tmp_path / ".git").mkdir()
     report = pp.selftest(profile, runner=runner_returning([(0, XCTEST_OK)]), have=lambda cap, env: cap == "swift", catalog={"projects": []})
     assert report["ok"] is True
+    assert report["kind"] == "passed"
     assert "Core tests" in report["pr_body"] and "## Test Results" in report["pr_body"] and "not verified" in report["pr_body"]
     assert removed and removed[0][0] == str(wt)
 
@@ -244,6 +245,7 @@ def test_selftest_cleans_up_even_when_the_measurement_blows_up(tmp_path, monkeyp
     profile = {**PROFILE, "clone_hints": [str(tmp_path)]}
     report = pp.selftest(profile, runner=runner_returning([(1, NO_XCTEST)]), have=lambda cap, env: True, catalog={"projects": []})
     assert report["ok"] is False and "XCTest" in report["error"]
+    assert report["kind"] == "error"
     assert removed == [1]
 
 
@@ -252,6 +254,30 @@ def test_selftest_says_so_when_this_machine_cannot_run_the_required_checks(tmp_p
     profile = {**PROFILE, "clone_hints": [str(tmp_path)]}
     report = pp.selftest(profile, runner=runner_returning([]), have=lambda cap, env: False, catalog={"projects": []})
     assert report["ok"] is False and "swift" in report["error"]
+    assert report["kind"] == "env_missing"
+
+
+def test_selftest_reports_no_clone_when_clone_cannot_be_found_or_created(tmp_path):
+    profile = {**PROFILE, "clone_hints": ["/does/not/exist"]}
+    report = pp.selftest(profile, runner=runner_returning([]), have=lambda cap, env: True, catalog={"projects": []})
+    assert report["ok"] is False and "no local clone" in report["error"]
+    assert report["kind"] == "no_clone"
+
+
+def test_selftest_reports_failed_when_tests_fail(tmp_path, monkeypatch):
+    import sandbox_orchestration as so
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    (wt / "Pkg").mkdir()
+    monkeypatch.setattr(so, "_create_worktree", lambda clone, ref, base="main": wt)
+    monkeypatch.setattr(pp, "_cleanup_worktree", lambda clone, worktree, branch: None)
+    (tmp_path / ".git").mkdir()
+    profile = {**PROFILE, "clone_hints": [str(tmp_path)]}
+    out = "Test Case '-[CoreTests.Bad]' failed (0.1 seconds).\n" + XCTEST_FAIL
+    report = pp.selftest(profile, runner=runner_returning([(1, out)]), have=lambda cap, env: cap == "swift", catalog={"projects": []})
+    assert report["ok"] is False
+    assert report["kind"] == "failed"
+    assert "2 failed" in report["error"]
 
 
 # ── the merge gate's view of a profile ──────────────────────────────────────

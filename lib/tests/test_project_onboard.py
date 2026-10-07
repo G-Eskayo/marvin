@@ -960,3 +960,144 @@ def test_refresh_all_onboarding_plans_with_failure(tmp_path, monkeypatch):
 
     # Verify repo2's file is unchanged (not nuked by error)
     assert (tmp_path / "repo2.json").read_text() == original_repo2
+
+
+# ── Prove and baseline recording ─────────────────────────────────────────
+
+
+def test_prove_maps_selftest_ok_to_onboarding_ok():
+    """Passed selftest becomes onboarding 'ok' with enabled offers."""
+    def fake_selftest(profile):
+        return {"ok": True, "kind": "passed", "error": "baseline passes"}
+
+    baseline = po.prove("test/repo", profile={}, selftest_fn=fake_selftest)
+    assert baseline["state"] == "ok"
+    assert baseline["offers"]["merge_from_dashboard"] is True
+    assert baseline["offers"]["dispatch"] is True
+    assert "ran_at" in baseline
+
+
+def test_prove_maps_selftest_failed_to_onboarding_missing():
+    """Failed selftest becomes onboarding 'missing' with disabled offers."""
+    def fake_selftest(profile):
+        return {"ok": False, "kind": "failed", "error": "2 failed of 10"}
+
+    baseline = po.prove("test/repo", profile={}, selftest_fn=fake_selftest)
+    assert baseline["state"] == "missing"
+    assert baseline["offers"]["merge_from_dashboard"] is False
+    assert baseline["offers"]["dispatch"] is False
+
+
+def test_prove_maps_env_missing_to_onboarding_needs_human():
+    """Env missing selftest becomes onboarding 'needs-human' with disabled offers."""
+    def fake_selftest(profile):
+        return {"ok": False, "kind": "env_missing", "error": "this machine lacks swift"}
+
+    baseline = po.prove("test/repo", profile={}, selftest_fn=fake_selftest)
+    assert baseline["state"] == "needs-human"
+    assert baseline["offers"]["merge_from_dashboard"] is False
+    assert baseline["offers"]["dispatch"] is False
+
+
+def test_prove_maps_no_clone_to_onboarding_needs_human():
+    """No clone selftest becomes onboarding 'needs-human'."""
+    def fake_selftest(profile):
+        return {"ok": False, "kind": "no_clone", "error": "no local clone"}
+
+    baseline = po.prove("test/repo", profile={}, selftest_fn=fake_selftest)
+    assert baseline["state"] == "needs-human"
+
+
+def test_prove_maps_error_to_onboarding_missing():
+    """Error selftest becomes onboarding 'missing'."""
+    def fake_selftest(profile):
+        return {"ok": False, "kind": "error", "error": "crash: ..."}
+
+    baseline = po.prove("test/repo", profile={}, selftest_fn=fake_selftest)
+    assert baseline["state"] == "missing"
+
+
+def test_prove_returns_needs_human_when_no_profile_exists():
+    """When no profile exists, prove returns needs-human without calling selftest."""
+    def fake_selftest(profile):
+        raise AssertionError("should not call selftest if no profile")
+
+    baseline = po.prove("test/repo", profile=None, selftest_fn=fake_selftest)
+    assert baseline["state"] == "needs-human"
+    assert "no profile yet" in baseline["reason"]
+
+
+def test_record_baseline_writes_baseline_to_pieces(tmp_path):
+    """record_baseline merges baseline into pieces['baseline']."""
+    baseline = {"state": "ok", "reason": "passed", "offers": {"merge_from_dashboard": True, "dispatch": True}}
+    po.record_baseline("test/repo", baseline, dir=tmp_path)
+
+    result = json.loads((tmp_path / "repo.json").read_text())
+    assert result["pieces"]["baseline"] == baseline
+    assert result["offers"]["merge_from_dashboard"] is True
+
+
+def test_record_baseline_preserves_other_pieces(tmp_path):
+    """record_baseline preserves existing pieces when merging baseline."""
+    # Write initial plan
+    initial_plan = {
+        "repo": "test/repo",
+        "generated_at": "2026-10-06T00:00:00+00:00",
+        "pieces": {"profile": {"state": "ok", "reason": "exists"}},
+    }
+    (tmp_path / "repo.json").write_text(json.dumps(initial_plan, indent=2) + "\n")
+
+    # Record baseline
+    baseline = {"state": "ok", "reason": "passed", "offers": {"merge_from_dashboard": True, "dispatch": False}}
+    po.record_baseline("test/repo", baseline, dir=tmp_path)
+
+    # Verify both pieces are present
+    result = json.loads((tmp_path / "repo.json").read_text())
+    assert result["pieces"]["profile"]["state"] == "ok"
+    assert result["pieces"]["baseline"]["state"] == "ok"
+
+
+def test_record_baseline_merges_offers(tmp_path):
+    """record_baseline merges offers from baseline with existing offers."""
+    # Write initial plan with offers
+    initial_plan = {
+        "repo": "test/repo",
+        "generated_at": "2026-10-06T00:00:00+00:00",
+        "pieces": {},
+        "offers": {"merge_from_dashboard": False},
+    }
+    (tmp_path / "repo.json").write_text(json.dumps(initial_plan, indent=2) + "\n")
+
+    # Record baseline with different offers
+    baseline = {"state": "ok", "offers": {"merge_from_dashboard": True, "dispatch": True}}
+    po.record_baseline("test/repo", baseline, dir=tmp_path)
+
+    # Verify offers are merged (baseline's values take precedence)
+    result = json.loads((tmp_path / "repo.json").read_text())
+    assert result["offers"]["merge_from_dashboard"] is True
+    assert result["offers"]["dispatch"] is True
+
+
+def test_write_onboarding_plan_preserves_baseline_on_refresh(tmp_path):
+    """write_onboarding_plan preserves baseline from previous run when refreshing."""
+    # Write plan with baseline
+    initial_plan = {
+        "repo": "test/repo",
+        "generated_at": "2026-10-06T00:00:00+00:00",
+        "pieces": {
+            "profile": {"state": "ok"},
+            "baseline": {"state": "ok", "reason": "passed"},
+        },
+        "offers": {"merge_from_dashboard": True},
+    }
+    (tmp_path / "repo.json").write_text(json.dumps(initial_plan, indent=2) + "\n")
+
+    # Call write_onboarding_plan with new pieces (simulating hourly refresh)
+    new_pieces = {"profile": {"state": "ok", "reason": "updated"}, "stack": {"state": "ok"}}
+    po.write_onboarding_plan("test/repo", new_pieces, dir=tmp_path)
+
+    # Verify baseline and offers are preserved
+    result = json.loads((tmp_path / "repo.json").read_text())
+    assert result["pieces"]["baseline"]["state"] == "ok"
+    assert result["offers"]["merge_from_dashboard"] is True
+    assert result["pieces"]["profile"]["reason"] == "updated"  # new plan is applied

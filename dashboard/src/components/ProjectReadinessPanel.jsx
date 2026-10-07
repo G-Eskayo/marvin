@@ -52,7 +52,8 @@ export default function ProjectReadinessPanel({ plans, loading }) {
     'agent_docs',
     'board',
     'clone_and_toolchain',
-    'generated_paths'
+    'generated_paths',
+    'baseline'
   ]
 
   return (
