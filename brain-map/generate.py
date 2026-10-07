@@ -602,11 +602,26 @@ def attach_code_layers(tree: dict) -> None:
     walk(tree)
 
 
+def _is_vendor_or_generated(source_file: str) -> bool:
+    """Check if a source file is vendor code or generated/built output.
+
+    Matches: /vendor/, /node_modules/, /__pycache__/, /dist/, /build/,
+    .min.js, .pyc files."""
+    if not source_file:
+        return False
+    patterns = [
+        "/vendor/", "/node_modules/", "/__pycache__/", "/dist/", "/build/",
+        ".min.js", ".pyc"
+    ]
+    return any(p in source_file for p in patterns)
+
+
 def _compute_code_layer(graph: dict, ownership_path: str) -> dict:
     """Filter and structure code for a single openable node.
 
-    - Owned nodes: source_file under ownership_path, file_type=="code", not under tests/
-    - Borrowed nodes: called by owned nodes but under different path, deduplicated
+    - Owned nodes: source_file under ownership_path, file_type=="code", not vendor/generated/tests
+    - Test nodes: owned but under tests/ or test_* — bucketed separately, toggleable
+    - Borrowed nodes: called by owned nodes but under different path, deduplicated, filtered for vendor
     - Edges: calls relationships between all included nodes
     - Grouped by community (file nodes vs functions)
     """
@@ -616,6 +631,7 @@ def _compute_code_layer(graph: dict, ownership_path: str) -> dict:
     # Build node lookup and identify owned nodes
     node_by_id: dict[str, dict] = {}
     owned_node_ids: set = set()
+    test_node_ids: set = set()
 
     for node in nodes_list:
         node_id = node.get("id")
@@ -627,12 +643,17 @@ def _compute_code_layer(graph: dict, ownership_path: str) -> dict:
         if not source_file:
             continue
 
-        # Skip non-code nodes and test files
+        # Skip non-code nodes and vendor/generated
         if node.get("file_type") != "code":
             continue
+        if _is_vendor_or_generated(source_file):
+            continue
         if source_file.startswith(ownership_path + "/") or source_file == ownership_path:
-            # Exclude test files by default
-            if not ("tests/" in source_file or source_file.startswith("test_")):
+            # Bucket test files separately — files under tests/ or filenames starting with test_
+            filename = source_file.split("/")[-1]
+            if "tests/" in source_file or filename.startswith("test_"):
+                test_node_ids.add(node_id)
+            else:
                 owned_node_ids.add(node_id)
 
     # Collect borrowed nodes and edges
@@ -643,17 +664,16 @@ def _compute_code_layer(graph: dict, ownership_path: str) -> dict:
         source = link.get("source")
         target = link.get("target")
         if source and target:
-            # Include edge if source is owned
+            # Include edge if source is owned (not test)
             if source in owned_node_ids:
                 edge_list.append(link)
-                # If target is not owned but is code, mark as borrowed
+                # If target is not owned but is code and not vendor/generated, mark as borrowed
                 if target not in owned_node_ids and target in node_by_id:
                     target_node = node_by_id[target]
-                    if target_node.get("file_type") == "code":
+                    if target_node.get("file_type") == "code" and not _is_vendor_or_generated(target_node.get("source_file", "")):
                         borrowed_node_ids.add(target)
 
     # Group owned nodes by community
-    communities: dict[str, list] = {}
     file_nodes: list = []
     function_nodes: list = []
 
@@ -692,11 +712,36 @@ def _compute_code_layer(graph: dict, ownership_path: str) -> dict:
             "borrowed": True
         })
 
+    # Collect test node info
+    test_nodes: list = []
+    for node_id in test_node_ids:
+        node = node_by_id[node_id]
+        community = node.get("community", -1)
+        community_name = node.get("community_name", "")
+        if "_callable" in node or "_callable_class" in node:
+            test_nodes.append({
+                "id": node_id,
+                "label": node.get("label", ""),
+                "community": community,
+                "community_name": community_name,
+                "source_file": node.get("source_file", ""),
+                "source_location": node.get("source_location", "")
+            })
+        else:
+            test_nodes.append({
+                "id": node_id,
+                "label": node.get("label", ""),
+                "community": community,
+                "community_name": community_name,
+                "source_file": node.get("source_file", "")
+            })
+
     return {
         "files": file_nodes,
         "functions": function_nodes,
         "edges": edge_list,
-        "borrowed": borrowed_nodes
+        "borrowed": borrowed_nodes,
+        "tests": test_nodes
     }
 
 
