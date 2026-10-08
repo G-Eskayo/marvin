@@ -4,6 +4,7 @@ import { sendFeedback, dropEntirely } from './deny.js'
 import { forwardRefreshPing } from './refresh_relay.js'
 import { loadGhToken } from './gh_auth.js'
 import { failureResponse } from './failure.js'
+import { timeRequest } from '../electron/main/timing.js'
 import { recordApproveError, approveErrorLine } from './refusal_log.js'
 import { readRebaseStatus } from './rebase_status.js'
 import { startChangeWatch, createGithubProbe } from './gh_watch.js'
@@ -73,6 +74,7 @@ function readJsonBody(req) {
 }
 
 const server = createServer(async (req, res) => {
+  timeRequest(req, res) // every route timed into ~/.claude/logs/dashboard-timing.jsonl (#236)
   // mr_raiser.py hits this the moment a PR is raised (any machine) so an
   // already-open dashboard on THIS machine refreshes immediately instead
   // of waiting on its own fallback poll. Responds before the forward
