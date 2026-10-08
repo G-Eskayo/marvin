@@ -15,6 +15,7 @@ import argparse
 import fcntl
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -109,7 +110,7 @@ def crop_card_and_hero(master: object) -> tuple:
     return card_img, hero_img
 
 
-def verify_mflux_help(target: str = "mac-mini") -> task_dispatch.DispatchResult:
+def verify_mflux_help(target: str = "mac-mini-1") -> task_dispatch.DispatchResult:
     """Before install, run mflux-generate --help on the target to verify flag names."""
     cmd = "~/.agents/venv/bin/mflux-generate --help 2>&1 || echo 'mflux not installed yet'"
     return task_dispatch.dispatch(cmd, target=target, task_label="verify-mflux-flags")
@@ -125,7 +126,7 @@ class GenerateResult:
 
 
 def generate(prompt: str, seed: Optional[int] = None, size: tuple = MASTER_SIZE,
-             target: str = "mac-mini") -> tuple:
+             target: str = "mac-mini-1") -> tuple:
     """Generate an image via mflux on the target mac-mini.
 
     Returns (image, seed_used, settings) or raises if generation fails.
@@ -183,7 +184,8 @@ def is_unique(candidate_hash: int, existing_hashes: list[int], min_distance: int
     return True
 
 
-def record_sidecar(slug: str, prompt: str, seed: int, settings: dict, images_dir: Path = IMAGES_DIR) -> Path:
+def record_sidecar(slug: str, prompt: str, seed: int, settings: dict, images_dir: Path = IMAGES_DIR,
+                   style: str = "", mood: str = "") -> Path:
     """Write JSON sidecar next to the PNG with generation metadata."""
     variant_path = images_dir / slug / f"flux-{slug}-{seed}.json"
     variant_path.parent.mkdir(parents=True, exist_ok=True)
@@ -195,6 +197,8 @@ def record_sidecar(slug: str, prompt: str, seed: int, settings: dict, images_dir
         "steps": settings.get("steps", 20),
         "guidance": settings.get("guidance", 7.5),
         "master_size": settings.get("size", [1920, 960]),
+        "style": style,
+        "mood": mood,
     }
 
     variant_path.write_text(json.dumps(sidecar, indent=2))
@@ -211,8 +215,9 @@ class QueuedJobResult:
     error: str = ""
 
 
-def queued_generate(slug: str, prompt: str, seed: Optional[int] = None, target: str = "mac-mini",
-                    images_dir: Path = IMAGES_DIR, registry_path: Path = REGISTRY_PATH) -> QueuedJobResult:
+def queued_generate(slug: str, prompt: str, seed: Optional[int] = None, target: str = "mac-mini-1",
+                    images_dir: Path = IMAGES_DIR, registry_path: Path = REGISTRY_PATH,
+                    style: str = "", mood: str = "") -> QueuedJobResult:
     """Generate an image with single-flight lock (one at a time, queued).
 
     Returns (ok, slug, seed, card_path, hero_path) or (ok=False, error).
@@ -263,7 +268,7 @@ def queued_generate(slug: str, prompt: str, seed: Optional[int] = None, target: 
                 card_img.save(card_path, quality=88)
                 hero_img.save(hero_path, quality=88)
 
-                sidecar = record_sidecar(slug, prompt, seed_used, settings, images_dir)
+                sidecar = record_sidecar(slug, prompt, seed_used, settings, images_dir, style, mood)
 
                 run.summary(f"generated {slug} with seed {seed_used}")
 
@@ -283,40 +288,230 @@ def queued_generate(slug: str, prompt: str, seed: Optional[int] = None, target: 
                 fcntl.flock(lock, fcntl.LOCK_UN)
 
 
+def list_flux_variants(slug: str, registry_path: Path = REGISTRY_PATH, images_dir: Path = IMAGES_DIR) -> dict:
+    """List all FLUX variants for a slug and which (if any) is chosen.
+
+    Returns: {
+        "slug": slug,
+        "variants": [{"seed": int, "card": str, "hero": str, "chosen": bool}, ...],
+        "chosen": {"seed": int} if one is chosen else None
+    }
+    """
+    registry = portfolio_imagegen._load(registry_path)
+    entry = registry.get(slug, {})
+    chosen_seed = entry.get("seed") if entry.get("source") == "flux" else None
+
+    variants = []
+    d = Path(images_dir) / slug
+    if d.is_dir():
+        for sidecar in sorted(d.glob("flux-*-*.json")):
+            m = re.match(r"^flux-(.+)-(\d+)\.json$", sidecar.name)
+            if m:
+                entry_slug = m.group(1)
+                seed = int(m.group(2))
+                if entry_slug == slug:
+                    card_path = d / f"flux-card-{seed}.jpg"
+                    hero_path = d / f"flux-hero-{seed}.jpg"
+                    if card_path.exists() and hero_path.exists():
+                        variants.append({
+                            "seed": seed,
+                            "card": card_path.name,
+                            "hero": hero_path.name,
+                            "chosen": seed == chosen_seed,
+                        })
+
+    return {
+        "slug": slug,
+        "variants": variants,
+        "chosen": {"seed": chosen_seed} if chosen_seed is not None else None,
+    }
+
+
+def choose_flux_variant(slug: str, seed: int, registry_path: Path = REGISTRY_PATH, images_dir: Path = IMAGES_DIR) -> dict:
+    """Mark a FLUX variant as the one in use for the slug.
+
+    Returns: {"slug": slug, "seed": seed, "chosen": True}
+    Raises: ValueError if the variant doesn't exist or seed is invalid.
+    """
+    seed = int(seed)
+    if seed < 0 or seed > 2**31 - 1:
+        raise ValueError(f"invalid seed: {seed}")
+
+    d = Path(images_dir) / slug
+    card_path = d / f"flux-card-{seed}.jpg"
+    hero_path = d / f"flux-hero-{seed}.jpg"
+    sidecar_path = d / f"flux-{slug}-{seed}.json"
+
+    if not (card_path.exists() and hero_path.exists() and sidecar_path.exists()):
+        raise ValueError("that flux variant does not exist")
+
+    sidecar_data = json.loads(sidecar_path.read_text())
+    registry = portfolio_imagegen._load(registry_path)
+    registry[slug] = {
+        "source": "flux",
+        "seed": seed,
+        "prompt": sidecar_data.get("prompt", ""),
+        "style": sidecar_data.get("style", ""),
+        "mood": sidecar_data.get("mood", ""),
+        "chosen": True,
+    }
+    Path(registry_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(registry_path).write_text(json.dumps(registry, indent=2, sort_keys=True))
+
+    return {"slug": slug, "seed": seed, "chosen": True}
+
+
+def delete_flux_variant(slug: str, seed: int, registry_path: Path = REGISTRY_PATH, images_dir: Path = IMAGES_DIR) -> dict:
+    """Delete a FLUX variant (cannot delete the one in use).
+
+    Returns: {"slug": slug, "seed": seed, "deleted": True}
+    Raises: ValueError if variant is in use or doesn't exist.
+    """
+    seed = int(seed)
+    listing = list_flux_variants(slug, registry_path, images_dir)
+    if any(v["chosen"] and v["seed"] == seed for v in listing.get("variants", [])):
+        raise ValueError("that image is the one in use; choose another first, then delete this one")
+
+    d = Path(images_dir) / slug
+    card_path = d / f"flux-card-{seed}.jpg"
+    hero_path = d / f"flux-hero-{seed}.jpg"
+    sidecar_path = d / f"flux-{slug}-{seed}.json"
+
+    if not card_path.exists():
+        raise ValueError("no such image")
+
+    card_path.unlink()
+    if hero_path.exists():
+        hero_path.unlink()
+    if sidecar_path.exists():
+        sidecar_path.unlink()
+
+    return {"slug": slug, "seed": seed, "deleted": True}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("slug", help="project slug")
-    ap.add_argument("--prompt", required=True, help="generation prompt (public text from project description)")
+    ap.add_argument("slug", nargs="?", help="project slug")
+    ap.add_argument("--prompt", help="generation prompt (public text from project description)")
+    ap.add_argument("--generate-from-subject", help="subject line; will call build_prompt with style and mood")
     ap.add_argument("--seed", type=int, default=None, help="random seed (optional, auto-generated if omitted)")
-    ap.add_argument("--target", default="mac-mini", help="dispatch target machine (default: mac-mini)")
+    ap.add_argument("--style", default="", help="art style (for metadata)")
+    ap.add_argument("--mood", default="", help="mood descriptor (for metadata)")
+    ap.add_argument("--target", default="mac-mini-1", help="dispatch target machine (default: mac-mini-1)")
     ap.add_argument("--images-dir", type=Path, default=IMAGES_DIR, help="where to save images")
     ap.add_argument("--registry-path", type=Path, default=REGISTRY_PATH, help="image registry file")
+    ap.add_argument("--list", action="store_true", help="list all FLUX variants for the slug")
+    ap.add_argument("--choose", action="store_true", help="choose a variant (with --seed)")
+    ap.add_argument("--delete", action="store_true", help="delete a variant (with --seed)")
+    ap.add_argument("--styles", action="store_true", help="list available styles and moods")
 
     args = ap.parse_args()
 
-    result = queued_generate(
-        args.slug,
-        args.prompt,
-        args.seed,
-        args.target,
-        args.images_dir,
-        args.registry_path,
-    )
+    if args.styles:
+        import portfolio_styles
+        styles = portfolio_styles.style_names()
+        moods = portfolio_styles.mood_names()
+        catalog = portfolio_styles.load_catalog()
+        default_style = list(styles)[0] if styles else None
+        if default_style:
+            try:
+                default_subject = portfolio_styles.description_for_slug(args.slug) or ""
+            except Exception:
+                default_subject = ""
+        else:
+            default_subject = ""
 
-    if result.ok:
         print(json.dumps({
-            "slug": result.slug,
-            "seed": result.seed,
-            "card": str(result.card_path),
-            "hero": str(result.hero_path),
+            "styles": styles,
+            "moods": moods,
+            "default_style": default_style,
+            "default_subject": portfolio_styles.subject_from_description(default_subject) if default_subject else "",
         }, indent=2))
-        sys.exit(0)
+        return
+
+    if not args.slug:
+        ap.error("slug is required")
+
+    if args.generate_from_subject:
+        import portfolio_styles
+        try:
+            prompt = portfolio_styles.build_prompt(args.generate_from_subject, args.style, args.mood)
+        except ValueError as e:
+            print(json.dumps({"error": str(e)}), file=sys.stderr)
+            sys.exit(1)
+
+        result = queued_generate(
+            args.slug,
+            prompt,
+            args.seed,
+            args.target,
+            args.images_dir,
+            args.registry_path,
+            args.style,
+            args.mood,
+        )
+
+        if result.ok:
+            print(json.dumps({
+                "slug": result.slug,
+                "seed": result.seed,
+                "card": str(result.card_path),
+                "hero": str(result.hero_path),
+            }, indent=2))
+            sys.exit(0)
+        else:
+            print(json.dumps({
+                "error": result.error,
+                "slug": result.slug,
+            }, indent=2), file=sys.stderr)
+            sys.exit(1)
+    elif args.list:
+        print(json.dumps(list_flux_variants(args.slug, args.registry_path, args.images_dir), indent=2))
+    elif args.choose:
+        if args.seed is None:
+            ap.error("--seed is required with --choose")
+        try:
+            print(json.dumps(choose_flux_variant(args.slug, args.seed, args.registry_path, args.images_dir), indent=2))
+        except ValueError as e:
+            print(json.dumps({"error": str(e)}), file=sys.stderr)
+            sys.exit(3)
+    elif args.delete:
+        if args.seed is None:
+            ap.error("--seed is required with --delete")
+        try:
+            print(json.dumps(delete_flux_variant(args.slug, args.seed, args.registry_path, args.images_dir), indent=2))
+        except ValueError as e:
+            print(json.dumps({"error": str(e)}), file=sys.stderr)
+            sys.exit(3)
     else:
-        print(json.dumps({
-            "error": result.error,
-            "slug": result.slug,
-        }, indent=2), file=sys.stderr)
-        sys.exit(1)
+        if not args.prompt:
+            ap.error("--prompt is required for generation")
+
+        result = queued_generate(
+            args.slug,
+            args.prompt,
+            args.seed,
+            args.target,
+            args.images_dir,
+            args.registry_path,
+            args.style,
+            args.mood,
+        )
+
+        if result.ok:
+            print(json.dumps({
+                "slug": result.slug,
+                "seed": result.seed,
+                "card": str(result.card_path),
+                "hero": str(result.hero_path),
+            }, indent=2))
+            sys.exit(0)
+        else:
+            print(json.dumps({
+                "error": result.error,
+                "slug": result.slug,
+            }, indent=2), file=sys.stderr)
+            sys.exit(1)
 
 
 if __name__ == "__main__":

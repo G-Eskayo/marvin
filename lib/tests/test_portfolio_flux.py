@@ -309,3 +309,210 @@ def test_end_to_end_mock_workflow(tmp_path):
 
                 assert rules["images"]["thumb_size"] == [800, 500]
                 assert rules["images"]["hero_size"] == [2200, 600]
+
+
+def test_list_flux_variants_empty(tmp_path):
+    """list_flux_variants returns empty list when no variants exist."""
+    slug = "test-project"
+    images_dir = tmp_path / "images"
+    registry_path = tmp_path / "registry.json"
+
+    registry_path.write_text(json.dumps({}))
+
+    result = pf.list_flux_variants(slug, registry_path, images_dir)
+
+    assert result["slug"] == slug
+    assert result["variants"] == []
+    assert result["chosen"] is None
+
+
+def test_list_flux_variants_finds_existing(tmp_path):
+    """list_flux_variants discovers variant files on disk."""
+    slug = "test-project"
+    images_dir = tmp_path / "images"
+    registry_path = tmp_path / "registry.json"
+
+    slug_dir = images_dir / slug
+    slug_dir.mkdir(parents=True, exist_ok=True)
+
+    _png(slug_dir / "flux-card-42.jpg", (800, 500))
+    _png(slug_dir / "flux-hero-42.jpg", (2200, 600))
+    (slug_dir / f"flux-{slug}-42.json").write_text(json.dumps({
+        "prompt": "test",
+        "seed": 42,
+        "style": "abstract",
+        "mood": "calm",
+    }))
+
+    registry_path.write_text(json.dumps({}))
+
+    result = pf.list_flux_variants(slug, registry_path, images_dir)
+
+    assert len(result["variants"]) == 1
+    assert result["variants"][0]["seed"] == 42
+    assert result["variants"][0]["card"] == "flux-card-42.jpg"
+    assert result["variants"][0]["hero"] == "flux-hero-42.jpg"
+    assert not result["variants"][0]["chosen"]
+
+
+def test_list_flux_variants_marks_chosen(tmp_path):
+    """list_flux_variants marks the chosen variant."""
+    slug = "test-project"
+    images_dir = tmp_path / "images"
+    registry_path = tmp_path / "registry.json"
+
+    slug_dir = images_dir / slug
+    slug_dir.mkdir(parents=True, exist_ok=True)
+
+    _png(slug_dir / "flux-card-42.jpg", (800, 500))
+    _png(slug_dir / "flux-hero-42.jpg", (2200, 600))
+    (slug_dir / f"flux-{slug}-42.json").write_text(json.dumps({"prompt": "test", "seed": 42}))
+
+    registry_path.write_text(json.dumps({
+        slug: {"source": "flux", "seed": 42, "chosen": True}
+    }))
+
+    result = pf.list_flux_variants(slug, registry_path, images_dir)
+
+    assert result["variants"][0]["chosen"]
+    assert result["chosen"]["seed"] == 42
+
+
+def test_choose_flux_variant_updates_registry(tmp_path):
+    """choose_flux_variant marks a variant as chosen in registry."""
+    slug = "test-project"
+    images_dir = tmp_path / "images"
+    registry_path = tmp_path / "registry.json"
+
+    slug_dir = images_dir / slug
+    slug_dir.mkdir(parents=True, exist_ok=True)
+
+    _png(slug_dir / "flux-card-42.jpg", (800, 500))
+    _png(slug_dir / "flux-hero-42.jpg", (2200, 600))
+    (slug_dir / f"flux-{slug}-42.json").write_text(json.dumps({
+        "prompt": "a beautiful landscape",
+        "seed": 42,
+        "style": "impressionist",
+        "mood": "serene",
+    }))
+
+    registry_path.write_text(json.dumps({}))
+
+    result = pf.choose_flux_variant(slug, 42, registry_path, images_dir)
+
+    assert result["slug"] == slug
+    assert result["seed"] == 42
+    assert result["chosen"]
+
+    registry = json.loads(registry_path.read_text())
+    assert registry[slug]["source"] == "flux"
+    assert registry[slug]["seed"] == 42
+    assert registry[slug]["prompt"] == "a beautiful landscape"
+    assert registry[slug]["style"] == "impressionist"
+    assert registry[slug]["mood"] == "serene"
+
+
+def test_choose_flux_variant_nonexistent_fails(tmp_path):
+    """choose_flux_variant raises ValueError if variant doesn't exist."""
+    slug = "test-project"
+    images_dir = tmp_path / "images"
+    registry_path = tmp_path / "registry.json"
+
+    registry_path.write_text(json.dumps({}))
+
+    with pytest.raises(ValueError, match="does not exist"):
+        pf.choose_flux_variant(slug, 42, registry_path, images_dir)
+
+
+def test_delete_flux_variant_removes_files(tmp_path):
+    """delete_flux_variant removes card, hero, and sidecar files."""
+    slug = "test-project"
+    images_dir = tmp_path / "images"
+    registry_path = tmp_path / "registry.json"
+
+    slug_dir = images_dir / slug
+    slug_dir.mkdir(parents=True, exist_ok=True)
+
+    card_path = slug_dir / "flux-card-42.jpg"
+    hero_path = slug_dir / "flux-hero-42.jpg"
+    sidecar_path = slug_dir / f"flux-{slug}-42.json"
+
+    _png(card_path, (800, 500))
+    _png(hero_path, (2200, 600))
+    sidecar_path.write_text(json.dumps({"prompt": "test"}))
+
+    registry_path.write_text(json.dumps({}))
+
+    result = pf.delete_flux_variant(slug, 42, registry_path, images_dir)
+
+    assert result["deleted"]
+    assert not card_path.exists()
+    assert not hero_path.exists()
+    assert not sidecar_path.exists()
+
+
+def test_delete_flux_variant_in_use_fails(tmp_path):
+    """delete_flux_variant raises ValueError if variant is in use."""
+    slug = "test-project"
+    images_dir = tmp_path / "images"
+    registry_path = tmp_path / "registry.json"
+
+    slug_dir = images_dir / slug
+    slug_dir.mkdir(parents=True, exist_ok=True)
+
+    _png(slug_dir / "flux-card-42.jpg", (800, 500))
+    _png(slug_dir / "flux-hero-42.jpg", (2200, 600))
+    (slug_dir / f"flux-{slug}-42.json").write_text(json.dumps({"prompt": "test"}))
+
+    registry_path.write_text(json.dumps({
+        slug: {"source": "flux", "seed": 42, "chosen": True}
+    }))
+
+    with pytest.raises(ValueError, match="in use"):
+        pf.delete_flux_variant(slug, 42, registry_path, images_dir)
+
+
+def test_queued_generate_default_target_is_mac_mini_1():
+    """queued_generate defaults target to mac-mini-1."""
+    sig = pf.queued_generate.__code__
+    assert sig.co_varnames[3] == "target"
+    # Check the default value in the function signature
+    import inspect
+    sig_info = inspect.signature(pf.queued_generate)
+    assert sig_info.parameters["target"].default == "mac-mini-1"
+
+
+def test_task_dispatch_failure_propagates(tmp_path):
+    """queued_generate handles task_dispatch failure cleanly."""
+    slug = "test-project"
+    images_dir = tmp_path / "images"
+    registry_path = tmp_path / "registry.json"
+
+    registry_path.write_text(json.dumps({}))
+
+    mock_result = MagicMock()
+    mock_result.ok = False
+    mock_result.error = "dispatch failed: unknown target"
+
+    with patch("portfolio_flux.task_dispatch.dispatch", return_value=mock_result):
+        with patch("portfolio_flux.job_events.job_run"):
+            result = pf.queued_generate(slug, "test prompt", None, "mac-mini-1", images_dir, registry_path)
+
+            assert not result.ok
+            assert "dispatch failed" in result.error
+
+
+def test_edited_subject_used_verbatim_in_prompt(tmp_path):
+    """Edited subject line is used exactly as provided in build_prompt."""
+    import portfolio_styles
+
+    subject = "custom edited subject"
+    style = "abstract"
+    mood = "calm"
+
+    catalog = portfolio_styles.load_catalog()
+    if style in catalog.get("styles", {}) and mood in catalog.get("moods", {}):
+        prompt = portfolio_styles.build_prompt(subject, style, mood)
+        assert subject in prompt
+        assert style in prompt
+        assert mood in prompt

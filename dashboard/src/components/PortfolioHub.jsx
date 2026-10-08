@@ -945,6 +945,40 @@ function Lightbox({ src, caption, onClose }) {
 
 // One generated variant: its picture and a button to put it in use. Every image ever generated stays here, so a
 // liked one is never lost to a re-roll.
+function FluxVariantTile({ slug, v, onChoose, onDelete, onZoom, busy }) {
+  const [cardSrc, setCardSrc] = useState(null)
+  const [heroSrc, setHeroSrc] = useState(null)
+  useEffect(() => {
+    let live = true
+    window.api.portfolio.fluxVariantPreview(slug, v.seed, 'card').then((d) => live && setCardSrc(d)).catch(() => {})
+    window.api.portfolio.fluxVariantPreview(slug, v.seed, 'hero').then((d) => live && setHeroSrc(d)).catch(() => {})
+    return () => { live = false }
+  }, [slug, v.seed])
+  return (
+    <div className={`flex flex-col gap-2 rounded border p-2 ${v.chosen ? 'border-emerald-600' : 'border-neutral-800'}`}>
+      <div className="grid grid-cols-2 gap-2">
+        <div className="flex flex-col">
+          <p className="mb-1 text-[8px] uppercase tracking-wide text-neutral-600">Card</p>
+          {cardSrc ? <img src={cardSrc} alt="" onClick={() => onZoom(cardSrc, `flux card #${v.seed}`)} className="h-12 w-full cursor-zoom-in rounded object-cover" /> : <div className="h-12 rounded bg-neutral-900" />}
+        </div>
+        <div className="flex flex-col">
+          <p className="mb-1 text-[8px] uppercase tracking-wide text-neutral-600">Hero</p>
+          {heroSrc ? <img src={heroSrc} alt="" onClick={() => onZoom(heroSrc, `flux hero #${v.seed}`)} className="h-12 w-full cursor-zoom-in rounded object-cover" /> : <div className="h-12 rounded bg-neutral-900" />}
+        </div>
+      </div>
+      <div className="flex items-center gap-1">
+        <span className="truncate text-[10px] text-neutral-400">flux #{v.seed}</span>
+        {v.chosen
+          ? <span className="ml-auto rounded bg-emerald-950 px-1.5 py-0.5 text-[10px] text-emerald-300">in use</span>
+          : <>
+              <button disabled={busy} onClick={() => onChoose(v)} className="ml-auto text-[10px] text-blue-400 hover:text-blue-300 disabled:opacity-50">use this</button>
+              <button disabled={busy} onClick={() => onDelete(v)} title="Delete this image" className="text-[10px] text-neutral-500 hover:text-red-400 disabled:opacity-50">delete</button>
+            </>}
+      </div>
+    </div>
+  )
+}
+
 function VariantTile({ slug, v, onChoose, onDelete, onZoom, busy }) {
   const [src, setSrc] = useState(null)
   useEffect(() => {
@@ -977,8 +1011,26 @@ function ImageCard({ item, motifs, onGenerate }) {
   const [variants, setVariants] = useState(null)
   const [theme, setTheme] = useState('default')
   const [zoom, setZoom] = useState(null)
+  const [styleCatalog, setStyleCatalog] = useState(null)
+  const [fluxVariants, setFluxVariants] = useState(null)
+  const [selectedStyle, setSelectedStyle] = useState('')
+  const [selectedMood, setSelectedMood] = useState('')
+  const [subjectLine, setSubjectLine] = useState('')
 
   const loadVariants = useCallback(() => window.api.portfolio.imageVariants(item.slug).then(setVariants).catch((e) => setErr(errText(e))), [item.slug])
+  const loadFluxVariants = useCallback(() => window.api.portfolio.fluxVariants(item.slug).then(setFluxVariants).catch((e) => setErr(errText(e))), [item.slug])
+
+  const loadStyleCatalog = useCallback(async () => {
+    try {
+      const catalog = await window.api.portfolio.imageStyleCatalog()
+      setStyleCatalog(catalog)
+      if (catalog.default_style) setSelectedStyle(catalog.default_style)
+      if (catalog.moods && catalog.moods.length > 0) setSelectedMood(catalog.moods[0])
+      if (catalog.default_subject) setSubjectLine(catalog.default_subject)
+    } catch (e) {
+      setErr(errText(e))
+    }
+  }, [])
 
   useEffect(() => {
     let live = true
@@ -988,7 +1040,13 @@ function ImageCard({ item, motifs, onGenerate }) {
     }
   }, [item.slug, item.generated.exists])
 
-  useEffect(() => { if (open) loadVariants() }, [open, loadVariants])
+  useEffect(() => {
+    if (open) {
+      loadVariants()
+      loadFluxVariants()
+      loadStyleCatalog()
+    }
+  }, [open, loadVariants, loadFluxVariants, loadStyleCatalog])
 
   async function run(fn) {
     setBusy(true)
@@ -1028,6 +1086,27 @@ function ImageCard({ item, motifs, onGenerate }) {
     await loadVariants()
   })
 
+  const generateFluxArt = () => run(async () => {
+    if (!subjectLine.trim()) {
+      setErr('Subject line cannot be empty')
+      return
+    }
+    await window.api.portfolio.generateFluxVariant(item.slug, selectedStyle, selectedMood, subjectLine)
+    await loadFluxVariants()
+  })
+
+  const chooseFlux = (v) => run(async () => {
+    await window.api.portfolio.chooseFluxVariant(item.slug, v.seed)
+    await onGenerate()
+    setPreview(await window.api.portfolio.imagePreview(item.slug))
+    await loadFluxVariants()
+  })
+
+  const removeFlux = (v) => run(async () => {
+    await window.api.portfolio.deleteFluxVariant(item.slug, v.seed)
+    await loadFluxVariants()
+  })
+
   const closeZoom = useCallback(() => setZoom(null), [])
 
   return (
@@ -1058,21 +1137,54 @@ function ImageCard({ item, motifs, onGenerate }) {
         {note && <span className="text-xs text-amber-400">{note}</span>}
       </div>
       {open && (
-        <div className="flex flex-col gap-2 rounded-md border border-neutral-800 bg-neutral-950 p-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <select value={theme} onChange={(e) => setTheme(e.target.value)} className="rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs text-neutral-200">
-              <option value="default">Theme: suggested{variants?.default_motif ? ` (${variants.default_motif})` : ''}</option>
-              {(motifs || []).map((m) => <option key={m} value={m}>{m}</option>)}
-            </select>
-            <button onClick={another} disabled={busy} className={button}>{busy ? 'Generating…' : 'Generate another'}</button>
-          </div>
-          {variants === null ? <p className="text-xs text-neutral-500">Loading…</p> : variants.variants.length === 0 ? (
-            <p className="text-xs text-neutral-500">Nothing generated yet.</p>
-          ) : (
-            <div className="grid grid-cols-3 gap-2">
-              {variants.variants.map((v) => <VariantTile key={`${v.motif}-${v.salt}`} slug={item.slug} v={v} onChoose={choose} onDelete={remove} onZoom={(src, caption) => setZoom({ src, caption: `${item.title} · ${caption}` })} busy={busy} />)}
+        <div className="flex flex-col gap-3 rounded-md border border-neutral-800 bg-neutral-950 p-2">
+          <div className="flex flex-col gap-2 border-b border-neutral-800 pb-3">
+            <div className="text-xs font-medium text-neutral-400">Pattern generator (instant fallback)</div>
+            <div className="flex flex-wrap items-center gap-2">
+              <select value={theme} onChange={(e) => setTheme(e.target.value)} className="rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs text-neutral-200">
+                <option value="default">Theme: suggested{variants?.default_motif ? ` (${variants.default_motif})` : ''}</option>
+                {(motifs || []).map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+              <button onClick={another} disabled={busy} className={button}>{busy ? 'Generating…' : 'Generate another'}</button>
             </div>
-          )}
+            {variants === null ? <p className="text-xs text-neutral-500">Loading…</p> : variants.variants.length === 0 ? (
+              <p className="text-xs text-neutral-500">Nothing generated yet.</p>
+            ) : (
+              <div className="grid grid-cols-3 gap-2">
+                {variants.variants.map((v) => <VariantTile key={`${v.motif}-${v.salt}`} slug={item.slug} v={v} onChoose={choose} onDelete={remove} onZoom={(src, caption) => setZoom({ src, caption: `${item.title} · ${caption}` })} busy={busy} />)}
+              </div>
+            )}
+          </div>
+          <div className="flex flex-col gap-2">
+            <div className="text-xs font-medium text-neutral-400">AI art generation (~1 min)</div>
+            {styleCatalog && (
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <select value={selectedStyle} onChange={(e) => setSelectedStyle(e.target.value)} className="rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs text-neutral-200">
+                    {(styleCatalog.styles || []).map((s) => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                  <select value={selectedMood} onChange={(e) => setSelectedMood(e.target.value)} className="rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs text-neutral-200">
+                    {(styleCatalog.moods || []).map((m) => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
+                <input
+                  type="text"
+                  value={subjectLine}
+                  onChange={(e) => setSubjectLine(e.target.value)}
+                  placeholder="Edit subject line here"
+                  className="rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-xs text-neutral-200 outline-none focus:border-blue-500"
+                />
+                <button onClick={generateFluxArt} disabled={busy} className={primary}>{busy ? 'Generating (about 1 min)…' : 'Generate (AI art, ~1 min)'}</button>
+              </div>
+            )}
+            {fluxVariants !== null && fluxVariants.variants.length > 0 && (
+              <div className="flex flex-col gap-2">
+                <div className="grid grid-cols-2 gap-2">
+                  {fluxVariants.variants.map((v) => <FluxVariantTile key={`flux-${v.seed}`} slug={item.slug} v={v} onChoose={chooseFlux} onDelete={removeFlux} onZoom={(src, caption) => setZoom({ src, caption: `${item.title} · ${caption}` })} busy={busy} />)}
+                </div>
+              </div>
+            )}
+          </div>
           <p className="text-[10px] text-neutral-600">Every image you generate is kept. Pick any as the one in use; the choice stays until you pick another.</p>
         </div>
       )}

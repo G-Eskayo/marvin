@@ -63,6 +63,7 @@ export function createPortfolio({
   const python = path.join(agentsDir, 'venv', 'bin', 'python')
   const evalScript = path.join(agentsDir, 'lib', 'portfolio_eval.py')
   const imageScript = path.join(agentsDir, 'lib', 'portfolio_imagegen.py')
+  const fluxScript = path.join(agentsDir, 'lib', 'portfolio_flux.py')
   const addProjectScript = path.join(agentsDir, 'lib', 'portfolio_add_project.py')
   const parityScript = path.join(agentsDir, 'lib', 'portfolio_parity.py')
   const syncScript = path.join(agentsDir, 'lib', 'portfolio_sync_dev.py')
@@ -467,5 +468,64 @@ export function createPortfolio({
     return JSON.parse(stdout)
   }
 
-  return { contentTemplates, contentReport, chrome, inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, templateSource, specimen, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage, imageMotifs, imageVariants, newImageVariant, chooseImageVariant, applyImages, addProject, listElements, verifyElement, pipelineStatus, runPipeline, deleteImageVariant, variantPreview }
+  // ── FLUX AI art generation ──
+  async function imageStyleCatalog() {
+    const { stdout } = await exec(python, [fluxScript, '--styles'], { maxBuffer: 1024 * 1024, timeout: 5000 })
+    return JSON.parse(stdout)
+  }
+
+  async function fluxVariants(slug) {
+    await knownProject(slug)
+    const { stdout } = await exec(python, [fluxScript, slug, '--list'], { maxBuffer: 1024 * 1024, timeout: 30000 })
+    return JSON.parse(stdout)
+  }
+
+  async function generateFluxVariant(slug, style, mood, subject) {
+    await knownProject(slug)
+    if (typeof style !== 'string' || typeof mood !== 'string') throw new Error('Style and mood must be strings')
+    if (typeof subject !== 'string' || !subject.trim()) throw new Error('Subject cannot be empty')
+
+    const { stdout } = await exec(python, [fluxScript, slug, '--generate-from-subject', subject, '--style', style, '--mood', mood], {
+      maxBuffer: 5 * 1024 * 1024,
+      timeout: 3 * 60 * 1000,
+    })
+    return JSON.parse(stdout)
+  }
+
+  async function chooseFluxVariant(slug, seed) {
+    await knownProject(slug)
+    if (!Number.isInteger(seed) || seed < 0) throw new Error(`Invalid seed: ${JSON.stringify(seed)}`)
+
+    const { stdout } = await exec(python, [fluxScript, slug, '--choose', '--seed', String(seed)], { maxBuffer: 1024 * 1024, timeout: 30000 })
+    return JSON.parse(stdout)
+  }
+
+  async function deleteFluxVariant(slug, seed) {
+    await knownProject(slug)
+    if (!Number.isInteger(seed) || seed < 0) throw new Error(`Invalid seed: ${JSON.stringify(seed)}`)
+
+    try {
+      const { stdout } = await exec(python, [fluxScript, slug, '--delete', '--seed', String(seed)], { maxBuffer: 1024 * 1024, timeout: 30000 })
+      return JSON.parse(stdout)
+    } catch (err) {
+      let reason = null
+      try { reason = JSON.parse(err.stdout || '{}').error } catch { /* not JSON */ }
+      throw new Error(reason || err.message)
+    }
+  }
+
+  async function fluxVariantPreview(slug, seed, kind) {
+    await knownProject(slug)
+    if (!Number.isInteger(seed) || seed < 0) throw new Error('Invalid seed')
+    if (kind !== 'card' && kind !== 'hero') throw new Error('Kind must be "card" or "hero"')
+
+    const filename = `flux-${kind}-${seed}.jpg`
+    try {
+      return 'data:image/jpeg;base64,' + (await fsp.readFile(path.join(imagesDir, slug, filename))).toString('base64')
+    } catch {
+      return null
+    }
+  }
+
+  return { contentTemplates, contentReport, chrome, inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, templateSource, specimen, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage, imageMotifs, imageVariants, newImageVariant, chooseImageVariant, applyImages, addProject, listElements, verifyElement, pipelineStatus, runPipeline, deleteImageVariant, variantPreview, imageStyleCatalog, generateFluxVariant, fluxVariants, chooseFluxVariant, deleteFluxVariant, fluxVariantPreview }
 }
