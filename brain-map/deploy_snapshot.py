@@ -200,9 +200,12 @@ def upload_to_portfolio(html_file: Path, json_file: Path, dry_run: bool = False)
         )
 
         # Copy files into the container using docker cp
-        for local, remote_name in [(html_file, "index.html"), (json_file, "tree-data.json")]:
-            if not local.exists():
-                return False, f"{local.name} not found"
+        for required in (html_file, json_file):
+            if not required.exists():
+                return False, f"{required.name} not found"
+        # every file the snapshot has (index.html, tree-data.json, facts.json, …): copying by name left new files behind
+        for local in sorted(p for p in html_file.parent.iterdir() if p.is_file() and not p.name.startswith(".")):
+            remote_name = local.name
 
             docker_path = f"{WPCLI_CONTAINER}:/var/www/html/{WP_MAP_PATH}/{remote_name}"
             result = subprocess.run(
