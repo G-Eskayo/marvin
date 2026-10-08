@@ -268,3 +268,64 @@ test('embed mode: transparent, no panels, hover works, the wheel scrolls the pag
   }))
   assert.equal(prevented, false, 'the page keeps the wheel (the map handler returns before zooming)')
 })
+
+// 2026-10-08: the website's pages are white; pale labels on a transparent map vanished. ?ink=dark draws dark labels.
+test('embed on a light page: ?ink=dark draws dark labels, the default stays light', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const rgb = (css) => css.startsWith('#') ? [1, 3, 5].map((i) => parseInt(css.slice(i, i + 2), 16)) : css.match(/\d+(\.\d+)?/g).map(Number)
+  const lum = (css) => { const m = rgb(css); return (m[0] * 299 + m[1] * 587 + m[2] * 114) / 1000 }  // canvas reports hex at full opacity
+  for (const [query, dark] of [['?embed=1&ink=dark', true], ['?embed=1', false]]) {
+    const page = await browser.newPage({ viewport: { width: 1000, height: 640 } })
+    await page.goto(pathToFileURL(path.join(MAP, 'snapshot', 'index.html')).href + query)
+    await page.evaluate(() => window.__map.driveExternally())
+    await frames(page, SETTLE * 2)
+    const colors = await page.evaluate(() => window.__map.labels().filter((l) => l.shown).map((l) => l.color))
+    assert.ok(colors.length > 3, 'labels are drawn')
+    const plain = colors.filter((c) => rgb(c).slice(0, 3).join() !== '255,176,59')  // pulsing gold labels are exempt
+    assert.ok(plain.every((c) => (lum(c) < 110) === dark), `${query}: ${plain.slice(0, 3)}`)
+    await page.close()
+  }
+})
+
+// Gil 2026-10-08: no "full screen" link; clicking the empty background on purpose blows the map up to fill the screen.
+async function embedWithFullscreenSpy(query = '?embed=1&ink=dark') {
+  const page = await browser.newPage({ viewport: { width: 1000, height: 640 } })
+  await page.addInitScript(() => {
+    window.__fs = []
+    Element.prototype.requestFullscreen = function () { window.__fs.push('request'); return Promise.resolve() }
+  })
+  await page.goto(pathToFileURL(path.join(MAP, 'snapshot', 'index.html')).href + query)
+  await page.evaluate(() => window.__map.driveExternally())
+  await frames(page, SETTLE)
+  return page
+}
+
+test('embed: a click on empty background asks for full screen; a node click or a non-embed page does not', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const page = await embedWithFullscreenSpy()
+  const box = await page.locator('canvas').first().boundingBox()
+  await page.mouse.click(box.x + 8, box.y + 8)  // a corner: nothing there
+  assert.deepEqual(await page.evaluate(() => window.__fs), ['request'])
+  await page.evaluate(() => { window.__fs = [] })
+  const disc = await page.evaluate(() => window.__map.nodes().find((n) => n.id === 'ticket-pipeline'))
+  await page.mouse.move(box.x + disc.sx, box.y + disc.sy); await frames(page, 2)
+  await page.mouse.click(box.x + disc.sx, box.y + disc.sy)
+  assert.deepEqual(await page.evaluate(() => window.__fs), [], 'clicking a node selects it, no full screen')
+  await page.mouse.click(box.x + 8, box.y + 8)
+  assert.deepEqual(await page.evaluate(() => window.__fs), [], 'the first empty click clears the selection instead')
+  await page.close()
+  const full = await embedWithFullscreenSpy('')
+  const b2 = await full.locator('canvas').first().boundingBox()
+  await full.mouse.click(b2.x + 8, b2.y + 8)
+  assert.deepEqual(await full.evaluate(() => window.__fs), [], 'the full page never asks')
+  await full.close()
+})
+
+test('embed: the empty background shows a zoom-in cursor', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const page = await embedWithFullscreenSpy()
+  const box = await page.locator('canvas').first().boundingBox()
+  await page.mouse.move(box.x + 8, box.y + 8); await frames(page, 2)
+  assert.equal(await page.evaluate(() => document.getElementById('c').style.cursor), 'zoom-in')
+  await page.close()
+})
