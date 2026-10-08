@@ -1108,3 +1108,31 @@ A GitHub 5xx (`remote: Internal Server Error`, HTTP 500, 503) is classified `GIT
     tokens, and records the run for Metrics and Health. Anything new goes through it.
   - **Output contract**: every producer (analyst, health check, digest, job) declares where its output
     goes and who acts on it. Output nobody consumes in time becomes a Health finding, not a silent pile.
+- **North stars** live in `docs/north-stars.md` (moved there 2026-10-08 from the roadmap): two north stars
+  (minimise tokens / maximise capability and quality; MARVIN becomes the OS of Gil's own phone), the
+  guiding principles (compounding leverage, research efficiency, composability, **verified, not
+  assumed**) and the design philosophy (Watts check, Colton check, elegant sufficiency). It is the single
+  source every launch kind with the North-stars layer receives.
+- **North-star fit**: a short section on a ticket or plan saying what it reuses before adding anything
+  new, why it's the simplest sufficient approach, where it saves (or spends) tokens, and what it does for
+  the phone-OS direction. Written when a ticket is **created** and again by the Ticket planner.
+- **Foundation** (ticket label): scaffolding other work will build on, even before anything is formally
+  "blocked by" it. Choosing stays deterministic: the ticket score weighs `foundation` strongly next to
+  "unblocks N", with the reason shown on the card, and no model runs in the dispatch loop. Hard deadlines
+  (ADR 0047) keep their strong weight.
+- **Fit checks** (review time, decided 2026-10-08): every PR shows its north-star fit next to deterministic
+  facts code can measure (new files added, lines added vs. removed, tests added, tokens the ticket cost),
+  each marked ✅ or ⚠️ against the claim. A **Judge** run (clean, no MARVIN context) reads the plan's fit and
+  the diff **only when a fit check flags something**.
+- **Purpose metric**: when a ticket's purpose is measurable (faster, fewer tokens, fewer failures), the
+  ticket states the metric, its baseline, the target and how it's measured. "Done" then means the purpose
+  was reached, not just that the code merged.
+- **Outcome check**: the measurement of a purpose metric. It runs **at PR time** when the effect shows in
+  the worktree (test speed, bench tokens), or **after merge, on a schedule** when it only shows in live use
+  (e.g. #277: refusals over a week). A missed target is flagged, never silently passed.
+- **Missed purpose** (decided 2026-10-08): when an outcome check misses its target, MARVIN always writes a
+  **diagnosis** (a Background analyst run, full Memory) as a ticket comment: what it was meant to do, what
+  happened (numbers), why it fell short (evidence) and the options (iterate with a drafted follow-up,
+  accept, adjust the target, revert), each with its cost and the north star it serves. **Gil decides**
+  anything hard to reverse or where the diagnosis is unsure. MARVIN proceeds alone only on the obvious,
+  reversible next step, and says so on the ticket.
