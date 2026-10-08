@@ -75,14 +75,16 @@ def test_projects_are_active_and_recent_catalog_entries_except_marvin(tmp_path, 
         {"id": "marvin", "name": "marvin", "status": "active", "visibility": "PUBLIC", "kind": "repo", "description": "this system"},
         {"id": "finance-os", "name": "finance-os", "status": "active", "visibility": "PRIVATE", "kind": "repo", "description": "Budgeting app"},
         {"id": "killer-sudoku", "name": "killer-sudoku", "status": "recent", "visibility": "PUBLIC", "kind": "repo", "description": ""},
+        {"id": "archived-project", "name": "archived-project", "status": "archived", "visibility": "PUBLIC", "kind": "repo", "description": ""},
         {"id": "old", "name": "old", "status": "dormant", "visibility": "PUBLIC", "kind": "repo", "description": ""},
     ]}))
     monkeypatch.setattr(generate, "CATALOG_DIR", tmp_path)
 
     projects = {p["id"]: p for p in generate.discover_projects()}
 
-    assert set(projects) == {"finance-os", "killer-sudoku"}
+    assert set(projects) == {"finance-os", "killer-sudoku", "archived-project"}
     assert projects["finance-os"]["visibility"] == "PRIVATE"
+    assert projects["archived-project"]["status"] == "archived"
 
 
 def test_no_catalog_means_no_projects_not_a_crash(tmp_path, monkeypatch):

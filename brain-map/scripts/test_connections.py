@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from connections import builds, runs_on, skill_projects  # noqa: E402
+from connections import builds, runs_on, skill_projects, tracked, documented  # noqa: E402
 
 MACHINES = {"mini": "mac-mini-1", "laptop": "macbook-pro-1"}
 
@@ -85,3 +85,53 @@ def test_machine_roles_from_the_registry_kinds():
     network = {"devices": {"mac-mini-1": {"kind": "desktop"}, "macbook-pro-1": {"kind": "laptop"}}}
     assert machine_roles(network) == {"mini": "mac-mini-1", "laptop": "macbook-pro-1"}
     assert machine_roles({}) == {}
+
+
+def test_tracked_only_projects_with_board_on():
+    projects = [
+        {"id": "finance-os", "name": "finance-os", "board": True},
+        {"id": "killer-sudoku", "name": "killer-sudoku", "board": False},
+        {"id": "clarity-captions", "name": "clarity-captions"},  # no board field
+    ]
+    ids = {"Activity tab", "finance-os", "killer-sudoku", "clarity-captions"}
+    result = pairs(tracked(projects, ids))
+    assert result == [("finance-os", "Activity tab", "tracked")]
+
+
+def test_tracked_skips_projects_not_on_the_map():
+    projects = [{"id": "not-on-map", "name": "not-on-map", "board": True}]
+    ids = {"Activity tab"}  # project not in ids
+    assert tracked(projects, ids) == []
+
+
+def test_tracked_skips_when_activity_tab_not_on_map():
+    projects = [{"id": "finance-os", "name": "finance-os", "board": True}]
+    ids = {"finance-os"}  # Activity tab not in ids
+    assert tracked(projects, ids) == []
+
+
+def test_documented_only_projects_with_context_or_readme():
+    projects = [
+        {"id": "finance-os", "name": "finance-os", "docs": {"context": True, "readme": False}},
+        {"id": "killer-sudoku", "name": "killer-sudoku", "docs": {"context": False, "readme": True}},
+        {"id": "clarity-captions", "name": "clarity-captions", "docs": {"context": False, "readme": False}},
+        {"id": "marvin", "name": "marvin"},  # no docs field
+    ]
+    ids = {"Docs tab", "finance-os", "killer-sudoku", "clarity-captions", "marvin"}
+    result = pairs(documented(projects, ids))
+    assert result == [
+        ("finance-os", "Docs tab", "documented"),
+        ("killer-sudoku", "Docs tab", "documented"),
+    ]
+
+
+def test_documented_skips_projects_not_on_the_map():
+    projects = [{"id": "not-on-map", "name": "not-on-map", "docs": {"context": True}}]
+    ids = {"Docs tab"}  # project not in ids
+    assert documented(projects, ids) == []
+
+
+def test_documented_skips_when_docs_tab_not_on_map():
+    projects = [{"id": "finance-os", "name": "finance-os", "docs": {"context": True}}]
+    ids = {"finance-os"}  # Docs tab not in ids
+    assert documented(projects, ids) == []

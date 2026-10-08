@@ -153,6 +153,8 @@ def test_private_projects_are_locked_nodes():
                         "path": "/some/path",
                         "openable": True,
                         "code": {"files": []},
+                        "ready": False,
+                        "readyNote": "missing: test command",
                     },
                     {
                         "id": "private-project",
@@ -161,6 +163,8 @@ def test_private_projects_are_locked_nodes():
                         "path": "/some/path",
                         "openable": True,
                         "code": {"files": []},
+                        "ready": False,
+                        "readyNote": "missing: test command",
                     },
                     {
                         "id": "local-project",
@@ -169,6 +173,8 @@ def test_private_projects_are_locked_nodes():
                         "path": "/some/path",
                         "openable": True,
                         "code": {"files": []},
+                        "ready": False,
+                        "readyNote": "missing: test command",
                     },
                 ],
             }
@@ -186,6 +192,8 @@ def test_private_projects_are_locked_nodes():
     assert public.get("openable") is True
     assert "path" in public
     assert "code" in public
+    assert "readyNote" in public  # stays visible for public
+    assert public.get("ready") is False  # ready/archived are categorical, not detail
     assert "locked" not in public or not public.get("locked")
 
     # PRIVATE project locked
@@ -193,12 +201,16 @@ def test_private_projects_are_locked_nodes():
     assert "openable" not in private
     assert "path" not in private
     assert "code" not in private
+    assert "readyNote" not in private  # detail stripped
+    assert private.get("ready") is False  # categorical state stays
 
     # Local (null) project locked
     assert local.get("locked") is True
     assert "openable" not in local
     assert "path" not in local
     assert "code" not in local
+    assert "readyNote" not in local  # detail stripped
+    assert local.get("ready") is False  # categorical state stays
 
 
 # ── machine anonymization ────────────────────────────────────────────────

@@ -111,7 +111,7 @@ def sanitize_code_layer(code: dict, allowlist: set[str]) -> dict:
 def lock_private_projects(tree: dict) -> None:
     """Recursively lock all non-PUBLIC project nodes.
 
-    For nodes with visibility != "PUBLIC", strip path/openable/code and set locked=true.
+    For nodes with visibility != "PUBLIC", strip path/openable/code/readyNote and set locked=true.
     Modifies tree in-place.
     """
     def walk(node: dict) -> None:
@@ -121,6 +121,7 @@ def lock_private_projects(tree: dict) -> None:
             node.pop("openable", None)
             node.pop("code", None)
             node.pop("plain", None)  # what a private project is for stays private, like its description
+            node.pop("readyNote", None)  # specific missing-pieces detail is implementation detail, same tier as plain
 
         for child in node.get("children", []):
             walk(child)
