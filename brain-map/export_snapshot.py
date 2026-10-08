@@ -139,7 +139,9 @@ def anonymize_machines(tree: dict) -> None:
     devices = []
 
     def collect_devices(node: dict) -> None:
-        if node.get("cat") == "cross-machine":
+        # only registered devices ("<kind> — added <date> — <hostname>"), not the trunk, exo or task-dispatch, which
+        # share the category and were once renamed from their own descriptions (2026-10-08)
+        if node.get("cat") == "cross-machine" and re.search(r" — added \d{4}-\d{2}-\d{2}", node.get("desc", "")):
             devices.append(node)
         for child in node.get("children", []):
             collect_devices(child)
