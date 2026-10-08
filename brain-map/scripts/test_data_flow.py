@@ -87,7 +87,7 @@ def test_match_threads_exact_path_match():
     assert threads[0]["a"] == "ticket-pipeline"
     assert threads[0]["b"] == "activity tab"
     assert threads[0]["type"] == "feeds"
-    assert len(gaps) == 0
+    assert not gaps
 
 
 def test_match_threads_no_match_different_paths():
@@ -109,7 +109,7 @@ def test_match_threads_no_match_different_paths():
 
     threads, gaps = match_threads(writers, readers)
 
-    assert len(threads) == 0
+    assert not threads
     assert len(gaps) == 2  # one unmatched writer, one unmatched reader
     writer_gap = [g for g in gaps if g["kind"] == "unmatched_writer"][0]
     reader_gap = [g for g in gaps if g["kind"] == "unmatched_reader"][0]
@@ -145,7 +145,7 @@ def test_match_threads_multiple_writers_one_reader():
     assert threads[0]["a"] == "ticket-pipeline"
     assert threads[1]["a"] == "health-check"
     assert all(t["b"] == "docs tab" for t in threads)
-    assert len(gaps) == 0
+    assert not gaps
 
 
 def test_match_threads_one_writer_multiple_readers():
@@ -175,7 +175,7 @@ def test_match_threads_one_writer_multiple_readers():
     assert len(threads) == 2
     assert all(t["a"] == "metrics-registry" for t in threads)
     assert {t["b"] for t in threads} == {"metrics tab", "health tab"}
-    assert len(gaps) == 0
+    assert not gaps
 
 
 def test_match_threads_partial_match():
@@ -217,8 +217,8 @@ def test_match_threads_partial_match():
 def test_match_threads_empty():
     """No writers or readers yields no threads and no gaps."""
     threads, gaps = match_threads([], [])
-    assert len(threads) == 0
-    assert len(gaps) == 0
+    assert not threads
+    assert not gaps
 
 
 if __name__ == "__main__":

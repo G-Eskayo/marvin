@@ -247,19 +247,36 @@ def _refresh_catalog(run=subprocess.run) -> None:
         print(f"{LOG_PREFIX} project catalog: {e}", file=sys.stderr)
 
 
-def _refresh_onboarding_plans() -> None:
-    # Refresh onboarding plans for every registered project. Best effort: never block dispatch.
+def _budget_guard_pct() -> float:
     try:
-        repos = [b["repo"] for b in board_registry.list_boards()]
-        res = project_onboard.refresh_all_onboarding_plans(repos)
-        ok_count = len(res["ok"])
-        failed_count = len(res["failed"])
-        msg = f"{ok_count} refreshed"
-        if failed_count:
-            msg += f", {failed_count} failed (kept last good)"
-        print(f"{LOG_PREFIX} onboarding plans: {msg}", file=sys.stderr)
+        return float(json.loads((Path(__file__).resolve().parent.parent / "config" / "dispatch.json").read_text())
+                     .get("guards", {}).get("min_github_budget_pct", 20))
+    except (OSError, ValueError):
+        return 20.0
+
+
+def _refresh_onboarding_plans(budget=None, min_pct: float | None = None) -> str:
+    """Every registered project, every hour (ADR 0058): re-plan it and apply the safe pieces (labels, board, a profile
+    draft with dispatch off). Stands down when GitHub's budget is under the dispatch guard, since every repo costs calls.
+    Best effort: never blocks dispatch. Returns what it did, for the run log."""
+    budget = budget or _github_budget_pct
+    min_pct = _budget_guard_pct() if min_pct is None else min_pct
+    try:
+        left = budget()
+        if left is not None and left < min_pct:
+            msg = f"skipped: GitHub budget {left:.0f}% < {min_pct:.0f}%"
+        else:
+            repos = [b["repo"] for b in board_registry.list_boards()]
+            res = project_onboard.refresh_all_onboarding_plans(repos, apply_safe=True)
+            msg = f"{len(res['ok'])} refreshed"
+            if res["failed"]:
+                msg += f", {len(res['failed'])} failed (kept last good, marked stale)"
+            if res.get("applied"):
+                msg += "; applied: " + ", ".join(f"{r.split('/')[-1]} ({', '.join(v)})" for r, v in res["applied"].items())
     except Exception as e:  # noqa: BLE001
-        print(f"{LOG_PREFIX} onboarding plans: {e}", file=sys.stderr)
+        msg = f"error: {e}"
+    print(f"{LOG_PREFIX} onboarding plans: {msg}", file=sys.stderr)
+    return msg
 
 
 def _run_ticket_agents(step, summary) -> None:
@@ -533,8 +550,7 @@ def _scan(run, dry_run: bool) -> None:
         for repo in added:
             print(f"{LOG_PREFIX} registered dashboard board for {repo}", file=sys.stderr)
         step("Board discovery", f"{len(added)} new" if added else "no new projects")
-        _refresh_onboarding_plans()
-        step("Onboarding plans", "refresh for every registered project")
+        step("Onboarding plans", _refresh_onboarding_plans())
         step("Project catalog", "refresh if older than 50 min")
         _refresh_catalog()
         _run_ticket_agents(step, summary)
