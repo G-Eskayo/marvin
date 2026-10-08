@@ -1095,6 +1095,11 @@ A GitHub 5xx (`remote: Internal Server Error`, HTTP 500, 503) is classified `GIT
   - **Utility call**: only the output rules (e.g. never a bare ticket number) and telemetry Hooks.
   - **Judge**: only its rubric and the evidence, plus telemetry Hooks. Not even the global Rules, so it isn't
     biased toward MARVIN's own conventions.
+- **Hooks declare their launch kinds** (decided 2026-10-08): safety and telemetry hooks (the merge guard,
+  skill activity) run for every kind; session upkeep (sync, the session report, self-review, handoff prompts,
+  auto-route) runs only for Interactive. "All Hooks" in a kind's layers means every hook declared for it. A
+  session with no launch-kind marker is Interactive: a person started it by hand.
+- **One memory**: every session, wherever it starts, reads and writes the main MARVIN memory.
 - **Full Memory** means the memory index plus reading notes on demand, not every note's full text: the
   session sees that every rule exists and opens the ones that matter.
 - **Work-rules slice**: the Memory rules that change how work gets done (robust over quick, never a bare
