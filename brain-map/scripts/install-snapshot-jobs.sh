@@ -25,7 +25,7 @@ esac
 mkdir -p "$LAUNCHD_DIR"
 
 echo "Installing snapshot deployment jobs..."
-# Mini only: the dev site runs there, and the nightly job also publishes the map to production (ADR 0056).
+# Mini only: the dev site runs there, and the nightly job also publishes the map to production (ADR 0057).
 # lib/health_checks.py JOB_PLACEMENT says "mini" for both, so the Health tab flags them anywhere else.
 if [ "$IS_MINI" -ne 1 ]; then
   echo "Not the mac-mini ($HOSTNAME): skipping. The snapshot jobs run on the mini only."

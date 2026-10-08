@@ -2,7 +2,7 @@
 
 For #189. Decided with Gil 2026-10-08:
 
-- **Auto-update:** the map snapshot publishes itself to production (standing permission for the map only, ADR 0056).
+- **Auto-update:** the map snapshot publishes itself to production (standing permission for the map only, ADR 0057).
   Everything else on the site stays Gil's manual promotion.
 - **Placement:** the MARVIN page hero stays a still image that matches the project card. The page gets its own
   section with the interactive map.
