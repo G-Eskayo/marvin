@@ -1143,3 +1143,13 @@ A GitHub 5xx (`remote: Internal Server Error`, HTTP 500, 503) is classified `GIT
   user level everywhere and read the marker: **no marker means Interactive** (full layers); a marker
   means that kind's declared layers. Automated runs can only get *less* than Interactive, and only by
   declaring so.
+- **Output contracts for today's analysts** (decided 2026-10-08): the backlog (suggestions, quarantine,
+  improvement queue) gets one MARVIN triage pass: promote to a ticket, merge into one, or archive with a
+  reason (moved, never deleted). Architecture review, audit and self-improve review feed **ticket
+  promotion** (to be wired). Research digest attaches findings to the tickets or north stars they relate
+  to. Auto-fix's output is its commits. The safety monitor's flags show on Health with their age. Any
+  analyst whose output goes unconsumed for 30 days shows red on Health as a **cut candidate** (Gil decides).
+- **Morning brief**: the daily digest's real purpose (Gil, 2026-10-08). It is for *Gil*, not a report about
+  MARVIN: the research digest folds into it, and it's part of a wake-up routine that gets Gil into his day.
+  Its consumer is Gil, delivered at the start of his day through MARVIN's single proactive-delivery path
+  (ADR 0046: quiet hours end at sunrise).
