@@ -42,6 +42,7 @@ import { STAGES_DIR } from '../../webhook-server/ticket_stages.js'
 import { DISPATCH_STATE_PATH } from './dispatch_status.js'
 import { createHash } from 'crypto'
 import { JOBS_DIR } from './jobs.js'
+import { openMarvinSession } from './marvin_session.js'
 import { listAgents } from './agents.js'
 import { buildWorkingNow } from './working.js'
 import { listJobs } from './jobs.js'
@@ -199,6 +200,11 @@ function registerDispatchHandlers() {
   ipcMain.handle('dispatch:scanNow', () => scanNow())
   // The header indicator: dispatched task + every background agent that is mid-run, on this machine.
   ipcMain.handle('working:now', () => buildWorkingNow({ dispatch: readDispatchStatus(), jobs: listJobs() }))
+}
+
+function registerSessionHandlers() {
+  // The MARVIN button (marvin#228): a ready MARVIN session in WezTerm on this Mac.
+  ipcMain.handle('marvin:openSession', (_event, request) => openMarvinSession(request))
 }
 
 function registerHealthHandlers() {
@@ -673,6 +679,7 @@ app.whenReady().then(() => {
   registerMrReviewHandlers()
   registerDispatchHandlers()
   registerHealthHandlers()
+  registerSessionHandlers()
   registerDocsHandlers()
   registerActivityHandlers()
   createWindow()
