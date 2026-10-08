@@ -383,6 +383,22 @@ def build_projects_trunk() -> dict:
             "expandable": False, "expanded": True, "children": children}
 
 
+def attach_plain(tree: dict, plain: dict) -> list[str]:
+    """Give each node its kindergarten-simple hover line (enrichment.json `plain`). Returns the ids that have none,
+    so a new node can't quietly appear without one (Gil, 2026-10-08)."""
+    missing = []
+
+    def walk(node):
+        if node["id"] in plain:
+            node["plain"] = plain[node["id"]]
+        else:
+            missing.append(node["id"])
+        for c in node.get("children", []):
+            walk(c)
+    walk(tree)
+    return missing
+
+
 def build_tree(manifest: dict, enrichment: dict) -> dict:
     skills = {e["name"]: e for e in manifest["index"]}
 
@@ -461,6 +477,9 @@ def build_tree(manifest: dict, enrichment: dict) -> dict:
         if p["id"] in taken:
             p["name"], p["id"] = p["id"], "project:" + p["id"]
     root["children"].append(projects)
+    missing = attach_plain(root, enrichment.get("plain", {}))
+    if missing:
+        print(f"WARNING: {len(missing)} node(s) have no plain hover line in enrichment.json: {missing}", file=sys.stderr)
     return root
 
 

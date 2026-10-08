@@ -120,6 +120,7 @@ def lock_private_projects(tree: dict) -> None:
             node.pop("path", None)
             node.pop("openable", None)
             node.pop("code", None)
+            node.pop("plain", None)  # what a private project is for stays private, like its description
 
         for child in node.get("children", []):
             walk(child)

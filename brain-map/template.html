@@ -136,7 +136,10 @@
   }
   #tooltip .name { font-weight: 600; color: var(--text-primary); font-size: 12px; letter-spacing: 0.1px; }
   #tooltip .cat { color: var(--text-secondary); font-size: 10px; margin: 2px 0 6px; letter-spacing: 0.3px; text-transform: uppercase; }
+  /* kindergarten-simple line first (enrichment.json plain), the technical one under it, smaller */
+  #tooltip .plain { color: var(--text-primary); font-family: -apple-system, system-ui, sans-serif; font-size: 13px; line-height: 1.4; margin: 4px 0 6px; }
   #tooltip .desc { color: var(--text-secondary); font-family: -apple-system, system-ui, sans-serif; }
+  #tooltip .plain + .cat + .desc { font-size: 10.5px; color: var(--text-muted); }
   #tooltip .edges { margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--border); color: var(--text-muted); font-size: 10px; line-height: 1.5; }
 
   footer {
@@ -944,7 +947,7 @@
       var descText = [hovered.desc, liveStatus].filter(Boolean).join(" — ");
       var openHint = hovered.openable ? "click to view code" : (hovered.locked ? "private — not shown" : "");
       tooltip.innerHTML =
-        '<div class="name mono"></div><div class="cat"></div>' +
+        '<div class="name mono"></div>' + (hovered.plain ? '<div class="plain"></div>' : "") + '<div class="cat"></div>' +
         (descText ? '<div class="desc"></div>' : "") +
         (syns.length ? '<div class="edges"></div>' : "") +
         (expandHint ? '<div class="edges" style="border-top:none;padding-top:0;margin-top:2px;font-style:italic;"></div>' : "") +
@@ -952,6 +955,7 @@
       var parts = tooltip.querySelectorAll(".name, .cat, .desc, .edges");
       tooltip.querySelector(".name").textContent = hovered.name || hovered.id;
       tooltip.querySelector(".cat").textContent = mode === "brain" ? catInfo.brain : catInfo.label;
+      if (hovered.plain) tooltip.querySelector(".plain").textContent = hovered.plain;
       if (descText) tooltip.querySelector(".desc").textContent = descText;
       var edgeEls = tooltip.querySelectorAll(".edges");
       var idx = 0;
