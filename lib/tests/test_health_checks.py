@@ -1140,3 +1140,35 @@ def test_check_parallel_dispatch_calls_the_real_selector_with_its_keywords(monke
 
     assert calls, "selector was never reached"
     assert result["severity"] in {"green", "yellow", "red"}
+
+
+# ── project tags (ADR 0060, #298) ───────────────────────────────────────────
+
+def _tags(tmp_path, unclear=(), pending=0, at="2026-10-08T12:00:00+00:00"):
+    f = tmp_path / "project-tags.json"
+    f.write_text(json.dumps({"generated_at": at, "pending": pending, "unclear": list(unclear)}))
+    return f
+
+
+def test_project_tags_green_when_every_ticket_is_where_it_belongs(tmp_path):
+    now = datetime(2026, 10, 8, 13, tzinfo=timezone.utc)
+    assert hc.check_project_tags(_tags(tmp_path), now=now)["severity"] == "green"
+
+
+def test_project_tags_lists_unclear_tickets_by_number_and_title(tmp_path):
+    now = datetime(2026, 10, 8, 13, tzinfo=timezone.utc)
+    u = {"repo": "G-Eskayo/marvin", "number": 7, "title": "APNs on the MARVIN page", "candidates": ["marvin-mobile", "portfolio-website-updater"]}
+    r = hc.check_project_tags(_tags(tmp_path, [u]), now=now)
+    assert r["severity"] == "yellow" and r["value"] == 1
+    assert "marvin#7 APNs on the MARVIN page" in r["detail"] and "marvin-mobile or portfolio-website-updater" in r["detail"]
+
+
+def test_project_tags_red_when_drift_grows(tmp_path):
+    now = datetime(2026, 10, 8, 13, tzinfo=timezone.utc)
+    assert hc.check_project_tags(_tags(tmp_path, pending=hc.PROJECT_TAGS_RED_AT), now=now)["severity"] == "red"
+
+
+def test_project_tags_yellow_when_missing_or_stale(tmp_path):
+    now = datetime(2026, 10, 8, 23, tzinfo=timezone.utc)
+    assert hc.check_project_tags(tmp_path / "none.json", now=now)["severity"] == "yellow"
+    assert "hours" in hc.check_project_tags(_tags(tmp_path), now=now)["detail"]

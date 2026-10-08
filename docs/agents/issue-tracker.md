@@ -32,5 +32,10 @@ because its code lives here (the website's tools and map, the mobile backend), a
 
 Create a missing `project:` label with `gh label create` (description: "Work for <project>, filed here because its
 code lives here (ADR 0060)"). An hourly tagger adds the label when a ticket clearly names another project, and lists
-unclear ones for Gil; don't rely on it, label at filing time. Before starting a **new** project or board, check active
-and archived boards and the catalog for one that already covers it (docs/plans/project-boards-2026-10-08.md).
+unclear ones for Gil; don't rely on it, label at filing time. A ticket that only *mentions* other projects (e.g. a
+tool that works across all of them) gets this repo's own label, `project:marvin`, which the tagger leaves alone. The
+tagger's signals are in `config/project_tags.json`; a new project is a new entry there. Before starting a **new** project or board, check active
+and archived boards and the catalog for one that already covers it:
+`~/.agents/venv/bin/python ~/.agents/lib/board_registry.py similar "<what the project is>"`. A `CLOSE` match means
+reopen or extend that one (`project:<id>` + `area:<sub>`) unless Gil says it is separate; `board_registry.py ensure`
+refuses a new board with a close match unless given `--new` (docs/plans/project-boards-2026-10-08.md).

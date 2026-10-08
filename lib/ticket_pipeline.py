@@ -292,8 +292,10 @@ def _run_ticket_agents(step, summary) -> None:
         res = ticket_agents.run(snap, ticket_agents._gh, cfg, datetime.now(timezone.utc),
                                 in_flight=lambda repo: ticket_agents.in_flight_numbers(repo, snap),
                                 due_for=ticket_agents.due_for_repo, executable=executable,
+                                tags_state_path=ticket_agents.project_tagger.STATE_PATH,
                                 report=lambda agent, detail: step(f"Ticket agents · {agent}", detail))
         step("Ticket agents", f"{res['applied']} applied, {res['proposed']} proposed, {res['failed']} failed")
+        _update_board_lifecycle(snap, step)
         elsewhere = ticket_agents.ready_elsewhere(snap, executable)
         if elsewhere:
             def why(r):
@@ -307,6 +309,19 @@ def _run_ticket_agents(step, summary) -> None:
     except Exception as e:  # noqa: BLE001
         print(f"{LOG_PREFIX} ticket agents: {e}", file=sys.stderr)
         step("Ticket agents", f"skipped: {e}")
+
+
+def _update_board_lifecycle(snap, step) -> None:
+    """ADR 0060: a board with nothing open, quiet 14 days, is finished (shown archived); new work reopens it."""
+    try:
+        out = board_registry.update_lifecycle(snap, lambda r: board_registry.last_activity_gh(r, ticket_agents._gh),
+                                              datetime.now(timezone.utc))
+        if out["finished"] or out["reopened"]:
+            step("Board lifecycle", "; ".join(x for x in (
+                "archived " + ", ".join(r.split("/")[1] for r in out["finished"]) if out["finished"] else "",
+                "reopened " + ", ".join(r.split("/")[1] for r in out["reopened"]) if out["reopened"] else "") if x))
+    except Exception as e:  # noqa: BLE001 -- bookkeeping, never blocks dispatch
+        print(f"{LOG_PREFIX} board lifecycle: {e}", file=sys.stderr)
 
 
 def _active_project_repos() -> list[str]:

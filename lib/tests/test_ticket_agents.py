@@ -282,3 +282,43 @@ def test_due_for_repo_carries_the_buckets_a_deadline_does_not_cover(tmp_path):
                              "plain": {"due": "2026-12-01"}}))
     assert ta.due_for_repo("G-Eskayo/clarity-captions", p) == {"date": "2026-10-25", "hard": True, "excludes": ["V", "X"]}
     assert ta.due_for_repo("G-Eskayo/plain", p) == {"date": "2026-12-01", "hard": False, "excludes": []}
+
+
+# ── project_tag (ADR 0060, #298) ────────────────────────────────────────────
+
+TAG_RULES = {"projects": {"marvin-mobile": {"repo": "G-Eskayo/marvin-mobile", "signals": ["MARVIN Mobile", "APNs"]},
+                          "portfolio-website-updater": {"repo": "G-Eskayo/portfolio-website-updater", "signals": ["MARVIN page"]}}}
+
+
+def test_project_tag_labels_clear_tickets_and_records_unclear_ones_for_health(tmp_path):
+    snap = {REPO: {"issues": [issue(1, title="MARVIN Mobile: push key"), issue(2, title="APNs on the MARVIN page"),
+                              issue(3, title="plain marvin work")], "prs": []}}
+    gh = FakeGh()
+    state = tmp_path / "tags.json"
+    res = ta.run(snapshot=snap, gh=gh, cfg={"mode": "propose", "agents": {"project_tag": "act"}}, now=NOW,
+                 audit_path=tmp_path / "a.jsonl", proposals_path=tmp_path / "p.json", in_flight=lambda r: set(),
+                 due_for=lambda r: None, project_rules=TAG_RULES, tags_state_path=state)
+    assert ["issue", "edit", "1", "--repo", REPO, "--add-label", "project:marvin-mobile"] in gh.calls
+    assert res["by_agent"]["project_tag"] == {"mode": "act", "planned": 1}
+    d = json.loads(state.read_text())
+    assert [u["number"] for u in d["unclear"]] == [2] and d["pending"] == 0
+
+
+def test_project_tag_in_propose_mode_counts_the_clear_ones_as_pending(tmp_path):
+    snap = {REPO: {"issues": [issue(1, title="MARVIN Mobile: push key")], "prs": []}}
+    state = tmp_path / "tags.json"
+    ta.run(snapshot=snap, gh=FakeGh(), cfg={"mode": "propose", "agents": {}}, now=NOW, audit_path=tmp_path / "a.jsonl",
+           proposals_path=tmp_path / "p.json", in_flight=lambda r: set(), due_for=lambda r: None,
+           project_rules=TAG_RULES, tags_state_path=state)
+    assert json.loads(state.read_text())["pending"] == 1
+
+
+def test_project_tag_never_puts_back_a_label_a_person_removed(tmp_path):
+    audit = tmp_path / "a.jsonl"
+    audit.write_text(json.dumps({"status": "applied", "agent": "project_tag", "repo": REPO, "number": 1,
+                                 "op": "add_label", "arg": "project:marvin-mobile"}) + "\n")
+    snap = {REPO: {"issues": [issue(1, title="MARVIN Mobile: push key")], "prs": []}}
+    gh = FakeGh()
+    ta.run(snapshot=snap, gh=gh, cfg={"mode": "act", "agents": {}}, now=NOW, audit_path=audit,
+           proposals_path=tmp_path / "p.json", in_flight=lambda r: set(), due_for=lambda r: None, project_rules=TAG_RULES)
+    assert not any("project:marvin-mobile" in c for c in gh.calls)

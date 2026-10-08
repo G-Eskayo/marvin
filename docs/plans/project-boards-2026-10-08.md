@@ -58,6 +58,20 @@ making a new board, MARVIN can check archived boards as well to see if we alread
 - Personal-Website and Portfolio_Website (earlier versions of the portfolio site) archived on GitHub; discovery now
   retires the board of any GitHub-archived repo.
 
+## Built (2026-10-08)
+
+- #296 cross-repo project boards (merged, PR #301); #297 the home overview is with the pipeline.
+- #298 `lib/project_tagger.py` + `config/project_tags.json`, the fifth ticket agent `project_tag` (acts from the start:
+  adds labels only, never re-adds one a person removed, audited). A project qualifies by a signal in the title or two
+  different signals in the body; one qualifying project gets the label, two or more go to Health
+  (`tickets:project-tags`). `project:marvin` = "stays on MARVIN's board" (cross-project tools like the tagger itself).
+- #299 `board_registry.update_lifecycle` (hourly, after the ticket agents): nothing open, no open PR, quiet 14 days
+  (last closed ticket and last push) -> `finishedAt`, which the catalog shows as archived and the dashboard folds
+  away; an open ticket, PR or push reopens it. `board_registry.py similar "<text>"` searches boards + catalog, archived
+  included, by name words and by meaning (nomic-embed-text; a meaning match must be >= 0.6 and lead the next by 0.04,
+  since raw scores cluster at 0.5-0.7). `ensure` refuses a new board with a close match without `--new`; onboarding
+  lists close matches beside a board it creates.
+
 ## Tickets
 
 1. #296 Project boards gather tickets across repos by `project:` label; MARVIN's board folds other projects' tickets.

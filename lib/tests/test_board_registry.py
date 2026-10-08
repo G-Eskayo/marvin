@@ -144,3 +144,105 @@ def test_a_failed_repo_list_retires_nothing(tmp_path):
         raise RuntimeError("offline")
     br.discover("o", gh=gh, path=path)
     assert [b["repo"] for b in br.list_boards(path)] == ["o/live"]
+
+
+# ── archive lifecycle (ADR 0060, #299) ──────────────────────────────────────
+
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+NOW = datetime(2026, 10, 30, 12, tzinfo=timezone.utc)
+
+
+def _ago(days):
+    return (NOW - timedelta(days=days)).isoformat()
+
+
+def _snap(open_issues=0, open_prs=0):
+    return {"issues": [{"number": i} for i in range(open_issues)], "prs": [{"number": i} for i in range(open_prs)]}
+
+
+def test_a_board_with_nothing_open_and_quiet_for_14_days_is_finished(tmp_path):
+    path = tmp_path / "r.json"
+    br.ensure_board("o/done", path=path)
+    out = br.update_lifecycle({"o/done": _snap()}, last_activity=lambda repo: _ago(15), now=NOW, path=path)
+    assert out == {"finished": ["o/done"], "reopened": []}
+    assert br.list_boards(path)[0]["finishedAt"] == NOW.isoformat()
+
+
+def test_not_finished_while_anything_is_open_or_it_was_busy_recently(tmp_path):
+    path = tmp_path / "r.json"
+    for r in ("o/open", "o/pr", "o/recent", "o/never"):
+        br.ensure_board(r, path=path)
+    acts = {"o/open": _ago(30), "o/pr": _ago(30), "o/recent": _ago(3), "o/never": None}
+    out = br.update_lifecycle({"o/open": _snap(open_issues=1), "o/pr": _snap(open_prs=1), "o/recent": _snap(), "o/never": _snap()},
+                              last_activity=acts.get, now=NOW, path=path)
+    assert out["finished"] == []  # a board that never had a ticket is empty, not finished
+
+
+def test_new_work_reopens_a_finished_board(tmp_path):
+    path = tmp_path / "r.json"
+    br.ensure_board("o/back", path=path)
+    br.update_lifecycle({"o/back": _snap()}, last_activity=lambda r: _ago(20), now=NOW, path=path)
+    later = NOW + timedelta(days=5)
+    out = br.update_lifecycle({"o/back": _snap(open_issues=1)}, last_activity=lambda r: _ago(20), now=later, path=path)
+    assert out["reopened"] == ["o/back"] and "finishedAt" not in br.list_boards(path)[0]
+
+
+def test_a_push_after_finishing_also_reopens(tmp_path):
+    path = tmp_path / "r.json"
+    br.ensure_board("o/push", path=path)
+    br.update_lifecycle({"o/push": _snap()}, last_activity=lambda r: _ago(20), now=NOW, path=path)
+    later = NOW + timedelta(days=2)
+    out = br.update_lifecycle({"o/push": _snap()}, last_activity=lambda r: (NOW + timedelta(days=1)).isoformat(), now=later, path=path)
+    assert out["reopened"] == ["o/push"]
+
+
+def test_repos_missing_from_the_snapshot_are_left_alone(tmp_path):
+    path = tmp_path / "r.json"
+    br.ensure_board("o/offline", path=path)
+    out = br.update_lifecycle({}, last_activity=lambda r: _ago(99), now=NOW, path=path)
+    assert out == {"finished": [], "reopened": []}
+
+
+# ── check before a new board ────────────────────────────────────────────────
+
+CANDIDATES = [
+    {"id": "killer-sudoku", "name": "killer-sudoku", "repo": "o/killer-sudoku", "description": "a sudoku game", "status": "archived"},
+    {"id": "finance-os", "name": "finance-os", "repo": "o/finance-os", "description": "budgeting", "status": "active"},
+    {"id": "clarity-captions", "name": "clarity-captions", "repo": "o/clarity-captions", "description": "", "status": "active"},
+]
+
+
+def test_a_shared_name_word_is_a_close_match_even_without_embeddings():
+    res = br.similar("live captions for my mom", CANDIDATES, embed=lambda text, task: None)
+    assert res[0]["id"] == "clarity-captions" and res[0]["close"] is True
+    assert "captions" in res[0]["why"]
+
+
+def test_meaning_counts_only_when_it_clearly_leads():
+    vec = {"q": [1.0, 0.0], "killer-sudoku": [0.8, 0.6], "finance-os": [0.3, 0.95], "clarity-captions": [0.2, 0.98]}
+
+    def embed(text, task):
+        return vec["q"] if task == "query" else vec[text.split(".")[0]]
+
+    res = br.similar("a puzzle game", CANDIDATES, embed=embed)
+    assert res[0]["id"] == "killer-sudoku" and res[0]["close"] is True and res[0]["status"] == "archived"
+    tie = {"q": [1.0, 0.0], "killer-sudoku": [0.7, 0.71], "finance-os": [0.69, 0.72], "clarity-captions": [0.0, 1.0]}
+    res = br.similar("a chess engine", CANDIDATES, embed=lambda t, k: tie["q"] if k == "query" else tie[t.split(".")[0]])
+    assert not any(r["close"] for r in res)
+
+
+def test_nothing_alike_means_no_close_match_and_at_most_three_shown():
+    res = br.similar("weather station", CANDIDATES, embed=lambda t, k: None)
+    assert len(res) <= 3 and not any(r["close"] for r in res)
+
+
+def test_candidates_merge_boards_and_catalog_including_archived_ones():
+    boards = [{"repo": "o/killer-sudoku", "name": "killer-sudoku", "finishedAt": "2026-10-01"}, {"repo": "o/new", "name": "new"}]
+    catalog = [{"id": "killer-sudoku", "name": "killer-sudoku", "repo": "o/killer-sudoku", "description": "a sudoku game", "status": "recent"},
+               {"id": "old-site", "name": "Old Site", "repo": None, "description": "", "status": "archived"}]
+    cands = br.candidates(boards, catalog)
+    by = {c["id"]: c for c in cands}
+    assert by["killer-sudoku"]["status"] == "archived"  # a finished board counts as archived
+    assert by["killer-sudoku"]["description"] == "a sudoku game"
+    assert set(by) == {"killer-sudoku", "new", "old-site"}

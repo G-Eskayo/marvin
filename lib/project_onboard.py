@@ -666,10 +666,20 @@ def _apply_labels(repo: str, facts: dict, gh=_gh) -> dict:
 def _apply_board(repo: str, facts: dict, registry_path: Path | None = None) -> dict:
     """Register board via board_registry.ensure_board(). Idempotent."""
     result = br.ensure_board(repo, path=registry_path)
-    return {
+    out = {
         "action": "created" if result.get("created") else "unchanged",
         "board": result.get("board"),
     }
+    if result.get("created"):
+        # ADR 0060: a new board is shown beside the closest existing projects, archived ones included, so a
+        # duplicate is visible (reopen or extend that one instead). Best effort: no catalog or Ollama = no list.
+        try:
+            close = [m for m in br.similar_now(repo.split("/")[1], registry_path) if m["close"] and m["repo"] != repo]
+            if close:
+                out["similar"] = close
+        except Exception:  # noqa: BLE001
+            pass
+    return out
 
 
 def _apply_profile(repo: str, facts: dict, profiles_dir: Path | None = None) -> dict:
