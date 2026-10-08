@@ -30,9 +30,9 @@ For #189. Decided with Gil 2026-10-08:
 
 ## Tasks
 
-- [ ] 1 embed page, with a browser test (transparent, no panels, hover still works)
-- [ ] 2 publisher, tests first (path guard, no-op, commit scope)
-- [ ] 3 launchd jobs + JOB_PLACEMENT
-- [ ] 4 MARVIN page section on dev
-- [ ] 5 hero matches card
+- [x] 1 embed page (`?embed=1`), with a browser test (transparent, no panels, hover works, page keeps the wheel)
+- [x] 2 publisher `publish_map.py`, 6 tests on a real git origin; wired into `deploy_snapshot.py` (3 tests)
+- [ ] 3 launchd jobs + JOB_PLACEMENT: plists fixed (working dir, PATH, publish on), mini-only installer, JOB_PLACEMENT done; **install after the PR merges** (the jobs run the main checkout)
+- [ ] 4 MARVIN page section on dev: **blocked** 2026-10-08, the mini's iCloud copy of the portfolio repo fails reads (`Interrupted system call`); needs #192
+- [x] 5 hero matches card: `render_map_images.py` cuts both from one frame (written to the mini's portfolio copy, uncommitted, promoted by Gil)
 - [ ] 6 desktop backgrounds regenerated, checked
