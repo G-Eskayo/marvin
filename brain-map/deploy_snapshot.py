@@ -39,6 +39,8 @@ HOME = Path.home()
 SNAPSHOT_DIR = HERE / "snapshot"
 SNAPSHOT_LOG = HOME / ".claude" / "logs" / "deploy-snapshot.log"
 SNAPSHOT_FLAG_ENABLED = bool(int(os.environ.get("MARVIN_SNAPSHOT_ENABLED", "0")))
+# ADR 0056: after the dev deploy passes, also put the map live (only deploy/marvin-map/ in the portfolio repo).
+PUBLISH_ENABLED = bool(int(os.environ.get("MARVIN_SNAPSHOT_PUBLISH", "0")))
 
 # Portfolio deployment via wp-cli (same pattern as portfolio_apply.py)
 WPCLI_CONTAINER = "portfolio-website-updater-wpcli-1"
@@ -254,6 +256,17 @@ def health_check_mark_failure(reason: str) -> None:
     )
 
 
+def publish_to_production() -> tuple[bool, str]:
+    """publish_map.publish() as (ok, detail); a refusal or git failure is a failure, never an exception."""
+    import publish_map
+    try:
+        return True, publish_map.publish(SNAPSHOT_DIR)
+    except publish_map.PublishRefused as e:
+        return False, f"refused: {e}"
+    except Exception as e:  # noqa: BLE001
+        return False, f"{type(e).__name__}: {str(e)[:300]}"
+
+
 def deploy_snapshot(commit: str = "HEAD", dry_run: bool = False, force: bool = False) -> bool:
     """Orchestrate snapshot export and deployment. Returns True on success."""
     start_time = time.time()
@@ -292,7 +305,15 @@ def deploy_snapshot(commit: str = "HEAD", dry_run: bool = False, force: bool = F
         health_check_mark_failure(f"deployment failed: {detail}")
         return False
 
-    # Step 5: Mark as healthy
+    # Step 5: Production, the map only (ADR 0056), and only after every check above passed
+    if PUBLISH_ENABLED and not dry_run:
+        ok, detail = publish_to_production()
+        log_step("publish-production", ok, detail)
+        if not ok:
+            health_check_mark_failure(f"production publish failed: {detail}")
+            return False
+
+    # Step 6: Mark as healthy
     health_check_mark_success()
     elapsed = time.time() - start_time
     log_step("success", True, f"deployed in {elapsed:.1f}s")
