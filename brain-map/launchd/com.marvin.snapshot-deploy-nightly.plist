@@ -40,7 +40,7 @@
         <string>/opt/homebrew/bin:/Users/gileskayo/.local/bin:/usr/local/bin:/usr/bin:/bin:/Users/gileskayo/.agents/venv/bin</string>
         <key>MARVIN_SNAPSHOT_ENABLED</key>
         <string>1</string>
-        <!-- ADR 0056: after the dev deploy passes, publish deploy/marvin-map/ to production -->
+        <!-- ADR 0057: after the dev deploy passes, publish deploy/marvin-map/ to production -->
         <key>MARVIN_SNAPSHOT_PUBLISH</key>
         <string>1</string>
     </dict>
