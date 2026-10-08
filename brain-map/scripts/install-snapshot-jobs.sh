@@ -15,22 +15,27 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LAUNCHD_DIR="$HOME/Library/LaunchAgents"
 
 # Detect machine (primary automation host vs. others)
-HOSTNAME=$(hostname -s)
+# Which machine this is, by hardware id in ~/.claude/marvin-network.json (hostname -s says just "Mac" on the mini).
+HOSTNAME=$("$HOME/.agents/venv/bin/python" -c "import sys; sys.path.insert(0, '$SCRIPT_DIR/../lib'); import machine_profile; print(machine_profile.registry_id())" 2>/dev/null || hostname -s)
 IS_MINI=0
 case "$HOSTNAME" in
-  *"mini"* | *"Mac-mini"* | *"mac-mini"*)
-    IS_MINI=1
-    ;;
+  mac-mini-*) IS_MINI=1 ;;
 esac
 
 mkdir -p "$LAUNCHD_DIR"
 
 echo "Installing snapshot deployment jobs..."
+# Mini only: the dev site runs there, and the nightly job also publishes the map to production (ADR 0056).
+# lib/health_checks.py JOB_PLACEMENT says "mini" for both, so the Health tab flags them anywhere else.
+if [ "$IS_MINI" -ne 1 ]; then
+  echo "Not the mac-mini ($HOSTNAME): skipping. The snapshot jobs run on the mini only."
+  exit 0
+fi
 
 # Always install the nightly job
 NIGHTLY_JOB="$SCRIPT_DIR/launchd/com.marvin.snapshot-deploy-nightly.plist"
 if [ -f "$NIGHTLY_JOB" ]; then
-  echo "Installing nightly job (runs every machine at 02:00)..."
+  echo "Installing nightly job (02:00, mini only)..."
   cp "$NIGHTLY_JOB" "$LAUNCHD_DIR/"
   launchctl bootstrap "gui/$(id -u)" "$LAUNCHD_DIR/com.marvin.snapshot-deploy-nightly.plist" 2>/dev/null || \
     launchctl load "$LAUNCHD_DIR/com.marvin.snapshot-deploy-nightly.plist" 2>/dev/null || \

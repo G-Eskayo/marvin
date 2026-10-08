@@ -10,6 +10,7 @@ import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import path from 'node:path'
+import { readFileSync } from 'node:fs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const MAP = path.resolve(HERE, '..')
@@ -193,4 +194,77 @@ test('the figure keeps one size in a real browser frame loop too', async (t) => 
   })
   const spread = Math.max(...sizes) / Math.min(...sizes)
   assert.ok(spread < 1.002, `figure size varied ${((spread - 1) * 100).toFixed(2)}% in the live loop`)
+})
+
+// 2026-10-08 (#189): Gil saw the snapshot "still missing all the connections". The export built only skill threads.
+test('the snapshot carries every kind of connection, with no machine names in the labels', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const { synapses } = JSON.parse(readFileSync(path.join(MAP, 'snapshot', 'tree-data.json'), 'utf8'))
+  const kinds = new Set(synapses.map((s) => s.type))
+  for (const kind of ['calls', 'hook', 'feeds', 'runs-on', 'builds', 'skill-project']) {
+    assert.ok(kinds.has(kind), `no ${kind} threads in the snapshot`)
+  }
+  const named = synapses.filter((s) => /mac-?mini|macbook|gils-/i.test(s.label))
+  assert.deepEqual(named, [], 'a thread label names a machine; the snapshot anonymises machines')
+})
+
+// Gil 2026-10-08: hovering a node should say, in kindergarten words, what it is and does. Private projects stay quiet.
+async function hoverTooltip(page, id) {
+  await frames(page, SETTLE)
+  const disc = await page.evaluate((id) => window.__map.nodes().find((n) => n.id === id), id)
+  if (!disc) return null
+  const box = await page.locator('canvas').first().boundingBox()
+  await page.mouse.move(box.x + disc.sx, box.y + disc.sy)
+  return page.evaluate(() => {
+    const tip = document.getElementById('tooltip')
+    return { shown: tip.style.display === 'block', name: tip.querySelector('.name')?.textContent,
+      plain: tip.querySelector('.plain')?.textContent || null }
+  })
+}
+
+test('hovering a node shows its plain-words line first; a locked project shows none', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const page = await openSnapshot()
+  const tip = await hoverTooltip(page, 'ticket-pipeline')
+  assert.ok(tip, 'ticket-pipeline is drawn')
+  assert.ok(tip.shown, 'tooltip shows')
+  assert.match(tip.plain || '', /ticket/i)
+  const locked = (await page.evaluate(() => JSON.stringify(window.__map.nodes()))) && (await page.evaluate(() => {
+    const ids = new Set(window.__map.nodes().map((n) => n.id))
+    return [...ids].find((id) => ['eagle project', 'finance-os', 'MechanicGPT'].includes(id)) || null
+  }))
+  if (locked) {
+    const lt = await hoverTooltip(page, locked)
+    assert.equal(lt.plain, null, `${locked} is private: no plain line on the website`)
+  }
+})
+
+// Gil 2026-10-08: on the website, only the 3D map on a transparent background; hover and drag still work, and the
+// mouse wheel scrolls the page instead of zooming the map (docs/plans/map-website-2026-10-08.md).
+test('embed mode: transparent, no panels, hover works, the wheel scrolls the page', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const page = await browser.newPage({ viewport: { width: 1000, height: 640 } })
+  const errors = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  await page.goto(pathToFileURL(path.join(MAP, 'snapshot', 'index.html')).href + '?embed=1')
+  await page.evaluate(() => window.__map.driveExternally())
+  assert.deepEqual(errors, [])
+  const look = await page.evaluate(() => {
+    const vis = (sel) => { const el = document.querySelector(sel); return !!el && getComputedStyle(el).display !== 'none' && getComputedStyle(el).visibility !== 'hidden' }
+    const bg = (el) => getComputedStyle(el).backgroundImage + '|' + getComputedStyle(el).backgroundColor
+    return { html: bg(document.documentElement), body: bg(document.body),
+      header: vis('header'), legend: vis('#legend'), toggle: vis('#mode-toggle'), footer: vis('footer'), hud: vis('.hud-frame') }
+  })
+  assert.equal(look.html, 'none|rgba(0, 0, 0, 0)')
+  assert.equal(look.body, 'none|rgba(0, 0, 0, 0)')
+  assert.deepEqual([look.header, look.legend, look.toggle, look.footer, look.hud], [false, false, false, false, false])
+  const tip = await hoverTooltip(page, 'ticket-pipeline')
+  assert.ok(tip?.shown && tip.plain, 'hover shows the plain line')
+  const box = await page.locator('canvas').first().boundingBox()
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  const prevented = await page.evaluate(() => new Promise((res) => {
+    const ev = new WheelEvent('wheel', { deltaY: -400, bubbles: true, cancelable: true })
+    document.getElementById('c').dispatchEvent(ev); res(ev.defaultPrevented)
+  }))
+  assert.equal(prevented, false, 'the page keeps the wheel (the map handler returns before zooming)')
 })

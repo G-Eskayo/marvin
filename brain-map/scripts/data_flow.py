@@ -122,22 +122,38 @@ def extract_js_path_constants(source: str) -> dict[str, str]:
     return constants
 
 
+def extract_js_reader_paths(source: str) -> list[str]:
+    """Every data path and lib script a dashboard main-process file uses, whatever the constant is called.
+
+    - join(homedir(), 'a', 'b') anywhere -> "~/a/b" (the venv interpreter is skipped: it isn't data)
+    - a 'lib', 'x.py' pair in any join(...) -> "lib/x.py": the tab runs that script, so the script's owner feeds it
+    Order kept, duplicates dropped."""
+    out: list[str] = []
+    for m in re.finditer(r"join\(\s*homedir\(\)\s*((?:,\s*['\"][^'\"]+['\"])+)\s*\)", source):
+        parts = re.findall(r"['\"]([^'\"]+)['\"]", m.group(1))
+        if parts and "venv" not in parts and not (len(parts) >= 2 and parts[-2] == "lib" and parts[-1].endswith(".py")):
+            out.append("~/" + "/".join(parts))
+    for m in re.finditer(r"['\"]lib['\"]\s*,\s*['\"](\w+\.py)['\"]", source):
+        out.append("lib/" + m.group(1))
+    return list(dict.fromkeys(out))
+
+
 def discover_writers(
-    lib_dir: Path, owner_overrides: dict[str, str], tree: dict
+    lib_dir: Path, owner_overrides: dict[str, str], tree: dict,
+    helpers: list[str] | None = None, repo_root: Path | None = None,
 ) -> list[WriterRecord]:
-    """Discover path constants in lib/*.py files, attributed to node ids.
+    """What each map node produces, from lib/*.py, as {node_id, path, source_file} records.
 
-    Attribution:
-      1. If script_path in tree matches the source file → node_id from tree
-      2. Else if module stem in owner_overrides → use override node_id
-      3. Else skip (no attribution found)
-
-    Returns list of {node_id, path, source_file} for each matched constant.
+    A lib script is attributed to a node by (1) the node's `path` (repo-relative) or (2) owner_overrides[module stem];
+    unattributed scripts are skipped. For an attributed script it records:
+      - the script itself ("lib/x.py"): a dashboard tab that runs it is fed by that node;
+      - its own *_PATH/*_DIR constants;
+      - the constants of each helper module it calls (e.g. job_events.job_run writes ~/.claude/logs/jobs for it).
     """
-    writers = []
+    repo_root = repo_root or Path.home() / ".agents"
+    writers: list[WriterRecord] = []
+    script_to_node: dict[str, str] = {}
 
-    # Build a map of script_path -> node_id from the tree
-    script_to_node = {}
     def index_nodes(node: dict) -> None:
         if path := node.get("path"):
             script_to_node[path] = node.get("id", "")
@@ -148,89 +164,62 @@ def discover_writers(
     if not lib_dir.is_dir():
         return writers
 
+    def read(f: Path) -> str:
+        try:
+            return f.read_text(encoding="utf-8")
+        except Exception:
+            return ""
+
+    helper_paths = {h: extract_py_path_constants(read(lib_dir / f"{h}.py")) for h in (helpers or [])}
+
     for py_file in sorted(lib_dir.glob("*.py")):
-        # Skip tests
         if "test" in py_file.name or py_file.name.startswith("_"):
             continue
-
         try:
-            source = py_file.read_text(encoding="utf-8")
-        except Exception:
-            continue
-
-        constants = extract_py_path_constants(source)
-        if not constants:
-            continue
-
-        # Try to attribute this file to a node
-        node_id = None
-
-        # Check direct script_path match (repo-relative)
-        try:
-            repo_rel = str(py_file.relative_to(Path.home() / ".agents"))
-            if repo_rel in script_to_node:
-                node_id = script_to_node[repo_rel]
-        except (ValueError, OSError):
-            pass
-
-        # Check module stem in overrides
-        if not node_id:
-            module_stem = py_file.stem
-            if module_stem in owner_overrides:
-                node_id = owner_overrides[module_stem]
-
+            repo_rel = str(py_file.relative_to(repo_root))
+        except ValueError:
+            repo_rel = f"lib/{py_file.name}"
+        node_id = script_to_node.get(repo_rel) or owner_overrides.get(py_file.stem)
         if not node_id:
             continue
-
-        repo_rel = str(py_file.relative_to(Path.home() / ".agents"))
-        for const_name, path_value in constants.items():
-            writers.append(
-                WriterRecord(node_id=node_id, path=path_value, source_file=repo_rel)
-            )
+        source = read(py_file)
+        found = {repo_rel: None}
+        found.update({v: None for v in extract_py_path_constants(source).values()})
+        for helper, consts in helper_paths.items():
+            if py_file.stem != helper and re.search(rf"\b{re.escape(helper)}\.", source):
+                found.update({v: None for v in consts.values()})
+        for path_value in found:
+            writers.append(WriterRecord(node_id=node_id, path=path_value, source_file=repo_rel))
 
     return writers
 
 
-def discover_readers(tab_readers: dict[str, list[str]], dashboard_dir: Path) -> list[ReaderRecord]:
-    """Discover path constants in hand-listed dashboard reader files.
-
-    For each tab and its file list, scrape constants from that file.
-    Returns list of {tab_id, path, source_file} for each matched constant.
-    """
-    readers = []
-
+def discover_readers(tab_readers: dict[str, list[str]], dashboard_dir: Path,
+                     warnings: list[str] | None = None) -> list[ReaderRecord]:
+    """What each dashboard tab reads or runs, from the main-process files listed per tab node id (enrichment.json
+    `dashboard_tab_readers`, paths relative to dashboard/electron/main). A listed file that doesn't exist is a
+    warning, never a silent skip: that silence hid a wrong folder for weeks (2026-10-08)."""
+    readers: list[ReaderRecord] = []
     for tab_id, file_list in tab_readers.items():
         for file_name in file_list:
-            file_path = dashboard_dir / file_name
-
-            # Try to read the file
+            file_path = (dashboard_dir / file_name).resolve()
             try:
                 source = file_path.read_text(encoding="utf-8")
-            except Exception:
+            except OSError:
+                if warnings is not None:
+                    warnings.append(f"{tab_id}: reader file not found: {file_name} (in {dashboard_dir})")
                 continue
-
-            # Choose parser based on extension
-            if file_path.suffix == ".js" or file_path.suffix == ".jsx":
-                constants = extract_js_path_constants(source)
+            if file_path.suffix in (".js", ".jsx", ".mjs"):
+                paths = extract_js_reader_paths(source)
             elif file_path.suffix == ".py":
-                constants = extract_py_path_constants(source)
+                paths = list(extract_py_path_constants(source).values())
             else:
                 continue
-
-            if not constants:
-                continue
-
-            # Resolve file_name to repo-relative (from dashboard root)
             try:
-                file_repo_rel = str(file_path.relative_to(Path.home() / ".agents"))
-            except (ValueError, OSError):
-                file_repo_rel = file_name
-
-            for const_name, path_value in constants.items():
-                readers.append(
-                    ReaderRecord(tab_id=tab_id, path=path_value, source_file=file_repo_rel)
-                )
-
+                rel = str(file_path.relative_to(Path.home() / ".agents"))
+            except ValueError:
+                rel = file_name
+            readers.extend(ReaderRecord(tab_id=tab_id, path=p, source_file=rel) for p in paths)
     return readers
 
 
@@ -260,23 +249,31 @@ def match_threads(
     matched_writers: set[tuple[str, str, str]] = set()  # (path, source_file, node_id)
     matched_readers: set[tuple[str, str, str]] = set()  # (path, source_file, tab_id)
 
+    by_pair: dict[tuple[str, str], FeedsThread] = {}
+    shared: dict[tuple[str, str], list[str]] = {}
     for path in sorted(all_paths):
         ws = writers_by_path.get(path, [])
         rs = readers_by_path.get(path, [])
 
         for w in ws:
             for r in rs:
-                label = f"Writer path: {path} ← {w['source_file']}"
-                threads.append(
-                    FeedsThread(
-                        a=w["node_id"],
-                        b=r["tab_id"],
-                        label=label,
-                        type="feeds",
-                    )
-                )
+                key = (w["node_id"], r["tab_id"])
+                if key not in by_pair:
+                    by_pair[key] = FeedsThread(a=key[0], b=key[1], label="", type="feeds")
+                    threads.append(by_pair[key])
+                    shared[key] = []
+                if path not in shared[key]:
+                    shared[key].append(path)
                 matched_writers.add((w["path"], w["source_file"], w["node_id"]))
                 matched_readers.add((r["path"], r["source_file"], r["tab_id"]))
+
+    for key, t in by_pair.items():
+        runs = [p for p in shared[key] if p.startswith("lib/")]
+        data = [p for p in shared[key] if not p.startswith("lib/")]
+        t["label"] = "; ".join(filter(None, [
+            ("the tab runs " + ", ".join(runs)) if runs else "",
+            ("the tab reads " + ", ".join(data)) if data else "",
+        ]))
 
     # Report unmatched writers and readers
     for w in writers:

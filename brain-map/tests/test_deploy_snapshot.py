@@ -157,3 +157,46 @@ def test_health_check_mark_failure():
 if __name__ == "__main__":
     import pytest
     pytest.main([__file__, "-v"])
+
+
+# ── ADR 0056: after a passing dev deploy, the map publishes itself to production when MARVIN_SNAPSHOT_PUBLISH=1 ──
+
+def _passing_steps(monkeypatch):
+    monkeypatch.setattr(ds, "run_export_snapshot", lambda c: (True, "ok"))
+    monkeypatch.setattr(ds, "validate_snapshot_files", lambda: (True, "ok"))
+    monkeypatch.setattr(ds, "validate_snapshot_content", lambda: (True, "ok"))
+    monkeypatch.setattr(ds, "upload_to_portfolio", lambda *a: (True, "ok"))
+    monkeypatch.setattr(ds, "log_step", lambda *a: None)
+    marks = []
+    monkeypatch.setattr(ds, "health_check_mark_success", lambda: marks.append("ok"))
+    monkeypatch.setattr(ds, "health_check_mark_failure", lambda why: marks.append("fail: " + why))
+    return marks
+
+
+def test_publishes_to_production_only_when_switched_on(monkeypatch):
+    marks = _passing_steps(monkeypatch)
+    calls = []
+    monkeypatch.setattr(ds, "publish_to_production", lambda: calls.append(1) or (True, "published abc"))
+    monkeypatch.setattr(ds, "PUBLISH_ENABLED", False)
+    assert ds.deploy_snapshot(force=True) and calls == []
+    monkeypatch.setattr(ds, "PUBLISH_ENABLED", True)
+    assert ds.deploy_snapshot(force=True) and calls == [1]
+    assert ds.deploy_snapshot(force=True, dry_run=True) and calls == [1]  # a dry run never publishes
+    assert marks[-1] == "ok"
+
+
+def test_a_refused_or_failed_publish_turns_health_red(monkeypatch):
+    marks = _passing_steps(monkeypatch)
+    monkeypatch.setattr(ds, "PUBLISH_ENABLED", True)
+    monkeypatch.setattr(ds, "publish_to_production", lambda: (False, "refused: would change deploy/longform/x"))
+    assert ds.deploy_snapshot(force=True) is False
+    assert marks[-1].startswith("fail: production publish")
+
+
+def test_the_publish_never_runs_when_a_check_failed(monkeypatch):
+    _passing_steps(monkeypatch)
+    monkeypatch.setattr(ds, "validate_snapshot_content", lambda: (False, "leak"))
+    monkeypatch.setattr(ds, "PUBLISH_ENABLED", True)
+    called = []
+    monkeypatch.setattr(ds, "publish_to_production", lambda: called.append(1) or (True, ""))
+    assert ds.deploy_snapshot(force=True) is False and called == []
