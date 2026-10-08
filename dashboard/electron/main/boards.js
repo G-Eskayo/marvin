@@ -16,6 +16,11 @@ const MARVIN_REPO = 'G-Eskayo/marvin'
 // itself is per-machine); an override keyed by project id wins over what the registry holds.
 const projectId = (repo) => repo.split('/')[1].toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 
+const CROSS_PROJECT_TTL_MS = 5 * 60 * 1000
+const crossProjectCache = new Map()
+
+export function clearCrossProjectCache() { crossProjectCache.clear() }
+
 export function readRegistry(file = REGISTRY_PATH, overrides = readOverrides()) {
   if (!existsSync(file)) return []
   try {
@@ -56,6 +61,41 @@ export function liveTicketNumbers(repo, task) {
 export function defaultLiveNumbers(repo) {
   const live = readDispatchStatus()
   return live.busy ? liveTicketNumbers(repo, live.task) : new Set()
+}
+
+// Issues from other repos that are labelled for this project.
+export async function fetchCrossProjectIssues(repo, registryRepos = [], gh) {
+  const thisProjectId = projectIdOf(repo)
+  const otherRepos = registryRepos.filter((b) => b.repo !== repo).map((b) => b.repo)
+
+  // Skip the call entirely if there are no other registered repos.
+  if (otherRepos.length === 0) return []
+
+  // Check cache first.
+  const cacheKey = `${thisProjectId}:${otherRepos.join(',')}`
+  const hit = crossProjectCache.get(cacheKey)
+  if (hit && Date.now() - hit.at < CROSS_PROJECT_TTL_MS) return hit.issues
+
+  // Fetch: one search call covering all other registered repos with this project's label.
+  const fields = 'number,title,state,stateReason,labels,body,url,createdAt,updatedAt,closedAt,repository'
+  const args = [
+    'search',
+    'issues',
+    '--label', `project:${thisProjectId}`,
+    '--json', fields
+  ]
+  for (const r of otherRepos) args.push('--repo', r)
+
+  const json = await gh(args)
+  const issues = JSON.parse(json).map((issue) => ({
+    ...issue,
+    state: issue.state.toUpperCase(),
+    repo: issue.repository.nameWithOwner
+  }))
+
+  // Cache the result.
+  crossProjectCache.set(cacheKey, { at: Date.now(), issues })
+  return issues
 }
 
 // The raw tickets and open PRs of one repo. Open tickets are fetched on their own so a long history of
@@ -104,19 +144,111 @@ function defaultEvidenceRun(repo) {
 
 export function clearEvidenceCache() { evidenceCache.clear() }
 
-export async function loadBoard(repo, { gh, stagesFor = defaultStagesFor, liveNumbers, data, evidence = {} } = {}) {
+export async function loadBoard(repo, { gh, registryRepos = [], stagesFor = defaultStagesFor, liveNumbers, data, evidence = {} } = {}) {
   try {
-    const { issues, prs } = data || (await fetchBoardData(repo, gh))
-    const fetchedAt = new Date().toISOString()
-    return {
-      ...buildBoard({
+    const { issues: ownIssues, prs } = data || (await fetchBoardData(repo, gh))
+    const thisProjectId = projectIdOf(repo)
+
+    // Partition own issues: separate those with project:<x> labels where x is not this repo.
+    const otherProjectsCount = new Map()
+    const ownIssuesList = ownIssues.filter((issue) => {
+      const labels = (issue.labels || []).map((l) => l.name)
+      for (const label of labels) {
+        if (label.startsWith('project:')) {
+          const foreignProjectId = label.slice('project:'.length)
+          if (foreignProjectId !== thisProjectId) {
+            otherProjectsCount.set(foreignProjectId, (otherProjectsCount.get(foreignProjectId) || 0) + 1)
+            return false
+          }
+        }
+      }
+      return true
+    })
+
+    // Build the board for own repo only.
+    const ownBoard = buildBoard({
       repo,
-      issues,
+      issues: ownIssuesList,
       prs,
       eventsByNumber: stagesFor(repo),
       liveNumbers: liveNumbers || defaultLiveNumbers(repo),
       evidenceByNumber: evidence
-      }),
+    })
+
+    // Fetch and merge cross-project issues.
+    const crossProjectIssues = await fetchCrossProjectIssues(repo, registryRepos, gh)
+
+    // Group cross-project issues by their origin repo.
+    const issuesByForeignRepo = new Map()
+    for (const issue of crossProjectIssues) {
+      const foreignRepo = issue.repo
+      if (!issuesByForeignRepo.has(foreignRepo)) {
+        issuesByForeignRepo.set(foreignRepo, [])
+      }
+      issuesByForeignRepo.get(foreignRepo).push(issue)
+    }
+
+    // Build a board for each foreign repo's issues.
+    const foreignBoards = []
+    for (const [foreignRepo, foreignIssues] of issuesByForeignRepo) {
+      const foreignBoard = buildBoard({
+        repo: foreignRepo,
+        issues: foreignIssues,
+        prs: []
+      })
+      foreignBoards.push({ repo: foreignRepo, board: foreignBoard })
+    }
+
+    // Merge columns: for each column, concatenate own and foreign cards (tagging foreign with repo),
+    // then sort using the same order as buildBoard (oldest-first for open, newest-first for done/archive).
+    const mergedColumns = ownBoard.columns.map((ownCol) => {
+      const merged = { ...ownCol, cards: [...ownCol.cards] }
+      for (const { repo: foreignRepo, board: foreignBoard } of foreignBoards) {
+        const foreignCol = foreignBoard.columns.find((c) => c.id === ownCol.id)
+        if (foreignCol) {
+          for (const card of foreignCol.cards) {
+            merged.cards.push({ ...card, repo: foreignRepo })
+          }
+        }
+      }
+      // Re-sort after merging: oldest-first for open columns, newest-first for done.
+      const newestFirst = (a, b) => (b.closedAt || '').localeCompare(a.closedAt || '')
+      merged.cards.sort(merged.id === 'done' ? newestFirst : (a, b) => a.createdAt.localeCompare(b.createdAt))
+      return merged
+    })
+
+    // Merge archives.
+    const doneCol = mergedColumns.find((c) => c.id === 'done')
+    if (doneCol) {
+      doneCol.archive = [...(doneCol.archive || [])]
+      for (const { repo: foreignRepo, board: foreignBoard } of foreignBoards) {
+        const foreignDone = foreignBoard.columns.find((c) => c.id === 'done')
+        if (foreignDone?.archive) {
+          for (const card of foreignDone.archive) {
+            doneCol.archive.push({ ...card, repo: foreignRepo })
+          }
+        }
+      }
+      const newestFirst = (a, b) => (b.closedAt || '').localeCompare(a.closedAt || '')
+      doneCol.archive.sort(newestFirst)
+    }
+
+    // Build otherProjects array: resolve each foreign project id to a board name if registered.
+    const otherProjects = Array.from(otherProjectsCount.entries()).map(([projectId, count]) => {
+      const board = registryRepos.find((b) => projectIdOf(b.repo) === projectId)
+      return {
+        projectId,
+        count,
+        repo: board?.repo || null,
+        name: board?.name || null
+      }
+    })
+
+    const fetchedAt = new Date().toISOString()
+    return {
+      repo,
+      columns: mergedColumns,
+      otherProjects,
       fetchedAt
     }
   } catch (err) {

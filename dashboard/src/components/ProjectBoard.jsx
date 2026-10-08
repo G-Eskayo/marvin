@@ -90,6 +90,11 @@ function Card({ card, repo, onSelect, onOpenMr, activeTags, onTag }) {
     >
       <p className="text-sm text-white">
         <span className="font-mono text-neutral-500">#{card.number}</span> {card.title}
+        {card.repo && card.repo !== repo && (
+          <span className="ml-2 rounded bg-neutral-800 px-1.5 py-0.5 font-mono text-[10px] text-neutral-400">
+            {card.repo.split('/')[1]}
+          </span>
+        )}
       </p>
       <p className={`mt-1 text-xs ${card.reason && /fail|block|stale|no activity/i.test(card.reason) ? 'text-red-400' : 'text-neutral-500'}`}>{card.reason}</p>
       <div className="mt-2 flex flex-wrap items-center gap-1">
@@ -392,6 +397,36 @@ function WaitingOnYou({ boards, onPick, onOpenMr, refreshKey }) {
   )
 }
 
+// Cross-project tickets tallied by project: folded row with counts, linking to each project's board.
+function OtherProjects({ otherProjects, boards, onPick }) {
+  if (!otherProjects || otherProjects.length === 0) return null
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-1">
+      <span className="mr-1 text-[11px] text-neutral-600">Tickets from other projects</span>
+      {otherProjects.map(({ projectId, count, repo }) => {
+        const board = boards?.find((b) => b.repo === repo)
+        const repoName = repo ? repo.split('/')[1] : projectId
+        if (board) {
+          return (
+            <button
+              key={projectId}
+              onClick={() => onPick?.(repo)}
+              className="rounded border border-neutral-800 px-2 py-1 text-xs text-neutral-400 hover:text-neutral-200"
+            >
+              {board.name} ({count}) →
+            </button>
+          )
+        }
+        return (
+          <span key={projectId} className="rounded px-2 py-1 text-xs text-neutral-600">
+            {repoName} ({count})
+          </span>
+        )
+      })}
+    </div>
+  )
+}
+
 // Every tag on the board with how many cards carry it; click to filter (all selected tags must match).
 function TagBar({ board, activeTags, onTag, onClear }) {
   const counts = new Map()
@@ -460,7 +495,8 @@ export default function ProjectBoard({ onOpenMr, onOpenDocs, onOpenTicket, nav }
       prs: [],
       blockedBy: [],
       reason: '',
-      hasTimeline: false
+      hasTimeline: false,
+      repo
     }
 
   // Open a ticket from a link: same project stays here, another project goes through the app's navigation.
@@ -582,6 +618,7 @@ export default function ProjectBoard({ onOpenMr, onOpenDocs, onOpenTicket, nav }
         </p>
       )}
       {view === 'board' && board?.fetchedAt && <Freshness at={board.fetchedAt} />}
+      {view === 'board' && board && <OtherProjects otherProjects={board.otherProjects} boards={boards} onPick={(r) => { setRepo(r); setView('board'); setSelected(null) }} />}
       {view === 'board' && board && <TagBar board={board} activeTags={activeTags} onTag={toggleTag} onClear={() => setActiveTags(new Set())} />}
       {view === 'board' && board && (
         <div className="flex gap-4 overflow-x-auto pb-4">
