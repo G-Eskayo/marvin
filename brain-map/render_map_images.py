@@ -8,7 +8,7 @@ One frame of snapshot/index.html?embed=1 (2x pixels), on the page's dark backgro
   hero  a 2200:600 band of that same box, centred on MARVIN     -> deploy/longform/figures/marvin/marvin-map-hero.jpg
 
 Writes into a portfolio checkout (default: the dev one); production gets them when Gil promotes the site, they are
-outside the map folder ADR 0056 lets publish itself. Needs Playwright (the mac-mini has it).
+outside the map folder ADR 0057 lets publish itself. Needs Playwright (the mac-mini has it).
     python render_map_images.py [--portfolio DIR] [--snapshot DIR]
 """
 from __future__ import annotations
@@ -88,7 +88,9 @@ def render(snapshot: Path, portfolio: Path, tmp: Path) -> list[Path]:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--snapshot", type=Path, default=HERE / "snapshot")
-    ap.add_argument("--portfolio", type=Path, default=Path.home() / "Documents" / "Projects" / "portfolio-website-updater")
+    sys.path.insert(0, str(HERE.parent / "lib"))
+    import project_catalog  # the repo's real location (moved out of iCloud ~/Documents, #192)
+    ap.add_argument("--portfolio", type=Path, default=project_catalog.portfolio_repo_path())
     ap.add_argument("--tmp", type=Path, default=Path("/tmp"))
     args = ap.parse_args()
     if not (args.snapshot / "index.html").is_file():
