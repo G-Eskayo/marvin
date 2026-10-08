@@ -794,3 +794,32 @@ def test_with_the_same_priority_label_a_bug_is_picked_before_a_non_bug():
 def test_a_feature_with_a_hard_deadline_three_days_away_still_beats_a_bare_bug():
     due = {"date": "2026-10-10", "hard": True}
     assert _first(_scored(1, ["bug"]), _scored(2, ["enhancement"], due=due)) == 2
+
+
+import ticket_pipeline as _tp_for_refresh  # noqa: E402
+_REAL_REFRESH_CATALOG = _tp_for_refresh._refresh_catalog  # captured before the autouse isolation fixture swaps it out
+
+
+# 2026-10-07: on the mini the in-process catalog refresh blocked in opendir() on ~/Documents (a TCC prompt nobody
+# can answer on a headless Mac) and the whole pipeline run hung for hours: no dispatch, no Activity updates.
+# The refresh now runs as a child process with a time limit; a hang costs one refresh, never the run.
+def test_catalog_refresh_runs_in_a_child_process_with_a_time_limit(monkeypatch, capsys):
+    import subprocess
+    import ticket_pipeline as tp
+    monkeypatch.setattr(tp.project_catalog, "is_stale", lambda path, age: True)
+    calls = []
+
+    def hung(args, **kw):
+        calls.append((args, kw.get("timeout")))
+        raise subprocess.TimeoutExpired(args, kw.get("timeout"))
+    _REAL_REFRESH_CATALOG(run=hung)
+    assert calls and calls[0][0][-1] == "refresh" and calls[0][1] and calls[0][1] <= 300
+    assert "timed out" in capsys.readouterr().err
+
+
+def test_catalog_refresh_is_skipped_when_fresh(monkeypatch):
+    import ticket_pipeline as tp
+    monkeypatch.setattr(tp.project_catalog, "is_stale", lambda path, age: False)
+    calls = []
+    _REAL_REFRESH_CATALOG(run=lambda *a, **k: calls.append(a))
+    assert calls == []
