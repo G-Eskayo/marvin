@@ -61,11 +61,10 @@ that uses a paid model, a few times a month.
 4. **What it can do**: use-case cards (layer 2), with "coming next".
 5. The story sections, shorter, each linking to its cards (layer 3).
 
-## Decisions for Gil
+## Decisions (Gil, 2026-10-08)
 
-1. Facts and use-case cards publish themselves like the map (extend ADR 0057), or wait for promotion?
-2. Who writes the first use cases: MARVIN drafts all of them for review in one pass, or Gil writes the flagship ones
-   (MARVIN, the pipeline, the mobile app) and MARVIN drafts the rest?
+1. **Facts and use-case cards publish themselves like the map** (ADR 0057 extended). Story text still waits for Gil.
+2. **MARVIN drafts every use case** in one pass, in Gil's voice; Gil reviews them as one list and edits what's off.
 
 ## Done today, on dev only
 
