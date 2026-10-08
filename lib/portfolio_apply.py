@@ -8,12 +8,14 @@ shared stock photos. Applying is deliberately dev-only and repeatable:
   2. the project manifest's thumbnails point at them (deploy/other-projects/manifest.json in the repo -- a change to
      review, never pushed from here -- and the dev site's own copy of the manifest, which the footer cards read)
   3. the hub and All Projects pages, which embed thumbnails when generated, are regenerated from the manifest
+  4. each project's page hero image is repointed at the same hero image as its card (so they stay in sync)
 
 Nothing here touches production: step 3 talks to the local dev site through a temporary application password that
 is created and revoked in the same run.
 """
 from __future__ import annotations
 
+import base64
 import json
 import re
 import shutil
@@ -47,9 +49,47 @@ THUMB_SIZE = tuple(portfolio_rules.load_rules()["images"]["thumb_size"])   # car
 
 HUBS = list(portfolio_rules.load_rules()["categories"].items())        # (category, hub page slug)
 
+FUSION_CODE = re.compile(r"\[fusion_code\](.*?)\[/fusion_code\]", re.S)
+HERO_IMG = re.compile(r'(<div class="col-xs-12">\s*<img\b[^>]*\bsrc=")([^"]*)(")')
+
 
 def slug_of(url: str) -> str:
     return url.strip("/").split("/")[-1]
+
+
+def page_hero_src(raw: str) -> str | None:
+    """Decode a page's base64 [fusion_code] if present, then extract the hero img's src.
+    Returns None if the markup is not recognized (legacy WP-Coder page, no hero img)."""
+    content = raw
+    m = FUSION_CODE.search(raw)
+    if m:
+        try:
+            content = base64.b64decode(m.group(1)).decode("utf-8")
+        except Exception:
+            return None
+    match = HERO_IMG.search(content)
+    return match.group(2) if match else None
+
+
+def set_page_hero_src(raw: str, new_src: str) -> tuple[str, bool]:
+    """Decode a page's base64 [fusion_code] if present, replace the hero img's src, and re-encode.
+    Returns (new_raw, changed) — changed=False when src already matches or no hero img found (idempotent)."""
+    current = page_hero_src(raw)
+    if current == new_src:
+        return raw, False
+    if current is None:
+        return raw, False
+    m = FUSION_CODE.search(raw)
+    if m:
+        try:
+            content = base64.b64decode(m.group(1)).decode("utf-8")
+            new_content = HERO_IMG.sub(rf"\g<1>{new_src}\g<3>", content)
+            new_raw = raw[:m.start(1)] + base64.b64encode(new_content.encode()).decode() + raw[m.end(1):]
+            return new_raw, True
+        except Exception:
+            return raw, False
+    new_raw = HERO_IMG.sub(rf"\g<1>{new_src}\g<3>", raw)
+    return new_raw, True
 
 
 def best_cut(img: Image.Image, aspect: float) -> Image.Image:
@@ -143,15 +183,41 @@ def regenerate_pages(project: Path = PROJECT, runner=_run) -> list[str]:
 def apply(project: Path = PROJECT, html_dir: Path = DEV_HTML, images_dir: Path = IMAGES_DIR, runner=_run, regenerate: bool = True) -> dict:
     manifest_file = Path(project) / "deploy" / "other-projects" / "manifest.json"
     text = manifest_file.read_text()
-    urls = publish_images(json.loads(text), images_dir, html_dir, Path(project) / "deploy")
+    manifest = json.loads(text)
+    urls = publish_images(manifest, images_dir, html_dir, Path(project) / "deploy")
     new_text, changed = update_manifest_text(text, urls)
     if changed:
         manifest_file.write_text(new_text)
     dev_copy = Path(html_dir) / "wp-content" / "other-projects" / "manifest.json"
     dev_copy.parent.mkdir(parents=True, exist_ok=True)
     dev_copy.write_text(new_text)
+
+    heroes_fixed, hero_warnings = 0, []
+    if urls:
+        from portfolio_migrate import find_page, MigrationError  # local import to avoid circular dependency
+        try:
+            wp = wp_base()
+            pages_r = runner([*wp, "post", "list", "--post_type=page", "--post_status=publish", "--fields=ID,post_name,post_parent", "--format=json"])
+            if pages_r.returncode == 0:
+                pages = json.loads(pages_r.stdout)
+                for entry in manifest:
+                    slug = slug_of(entry["url"])
+                    if slug not in urls:
+                        continue
+                    try:
+                        page = find_page(entry["url"], runner, pages=pages)
+                        raw = runner([*wp, "post", "get", str(page["ID"]), "--field=post_content"]).stdout
+                        new_raw, hero_changed = set_page_hero_src(raw, f"/{UPLOAD_SUBDIR}/{slug}-hero.jpg")
+                        if hero_changed:
+                            runner([*wp, "post", "update", str(page["ID"]), "-"], input=new_raw)
+                            heroes_fixed += 1
+                    except MigrationError as e:
+                        hero_warnings.append(f"{slug}: {str(e)}")
+        except Exception as e:
+            hero_warnings.append(f"hero sync failed: {str(e)}")
+
     log = regenerate_pages(project, runner) if regenerate else []
-    return {"images": len(urls), "manifest_changed": changed, "pages": log}
+    return {"images": len(urls), "manifest_changed": changed, "heroes_fixed": heroes_fixed, "hero_warnings": hero_warnings, "pages": log}
 
 
 def main() -> None:

@@ -1035,6 +1035,11 @@ function ImageCard({ item, motifs, onGenerate }) {
       {zoom && <Lightbox src={zoom.src} caption={zoom.caption} onClose={closeZoom} />}
       <div className="flex items-center gap-2">
         <h3 className="truncate text-sm font-medium text-white">{item.title}</h3>
+        {item.heroMismatch && (
+          <span title={`Page hero: ${item.heroMismatch.pageHero} · Card: ${item.heroMismatch.cardThumbnail}`} className="shrink-0 rounded bg-red-950 px-1.5 py-0.5 text-[10px] text-red-300">
+            hero ≠ card
+          </span>
+        )}
         {item.sharedWith.length > 0 && (
           <span title={`Also used by: ${item.sharedWith.join(', ')}`} className="shrink-0 rounded bg-amber-950 px-1.5 py-0.5 text-[10px] text-amber-300">
             shared ×{item.sharedWith.length + 1}
@@ -1101,7 +1106,10 @@ function Images() {
     setApplied(null)
     try {
       const r = await window.api.portfolio.applyImages()
-      setApplied({ message: `Applied ${r.images} images to the dev site; ${r.manifest_changed} manifest thumbnail${r.manifest_changed === 1 ? '' : 's'} changed (review deploy/other-projects/manifest.json in the repo — nothing was pushed).` })
+      let msg = `Applied ${r.images} images to the dev site; ${r.manifest_changed} manifest thumbnail${r.manifest_changed === 1 ? '' : 's'} changed (review deploy/other-projects/manifest.json in the repo — nothing was pushed).`
+      if (r.heroes_fixed > 0) msg += ` Fixed ${r.heroes_fixed} hero${r.heroes_fixed === 1 ? '' : 's'}.`
+      if (r.hero_warnings && r.hero_warnings.length > 0) msg += ` Warnings: ${r.hero_warnings.join('; ')}`
+      setApplied({ message: msg })
       await load()
     } catch (e) {
       setApplied({ error: errText(e) })

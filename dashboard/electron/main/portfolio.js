@@ -150,12 +150,43 @@ export function createPortfolio({
     return latestEval()
   }
 
+  function stemOf(imagePath) {
+    // Extract the filename stem (without extension and -600w/-hero suffixes).
+    const filename = String(imagePath).split('/').pop() || ''
+    const name = filename.split('.')[0] // remove extension
+    return name.replace(/-(600w|hero)$/, '') // remove sizing suffix
+  }
+
+  function extractHeroSrc(html) {
+    // Extract hero image src from a page's HTML, handling base64 [fusion_code] encoding.
+    // Pattern: <div class="col-xs-12">...<img src="...">
+    let content = html
+    const fusionMatch = /\[fusion_code\](.*?)\[\/fusion_code\]/s.exec(html)
+    if (fusionMatch) {
+      try {
+        content = Buffer.from(fusionMatch[1], 'base64').toString('utf8')
+      } catch {
+        return null
+      }
+    }
+    const heroMatch = /<div class="col-xs-12">\s*<img\b[^>]*\bsrc="([^"]*)"/s.exec(content)
+    return heroMatch ? heroMatch[1] : null
+  }
+
   async function listImages() {
     const manifest = await readJson(manifestFile, null)
     if (!Array.isArray(manifest)) return []
     const registry = await readJson(registryFile, {})
     const byThumb = new Map()
     for (const m of manifest) byThumb.set(m.thumbnail, [...(byThumb.get(m.thumbnail) || []), m.title])
+
+    // Build URL -> reference file map for mismatch detection.
+    const refIndex = await readJson(path.join(referenceDir, 'index.json'), [])
+    const refByUrl = new Map()
+    for (const entry of refIndex) {
+      if (entry.url) refByUrl.set(entry.url, entry.file)
+    }
+
     return Promise.all(
       manifest.map(async (m) => {
         const slug = slugOf(m.url)
@@ -167,13 +198,29 @@ export function createPortfolio({
         } catch {
           /* not generated yet */
         }
+
+        // Check for hero/card mismatch: compare filename stems of page hero and card thumbnail.
+        let heroMismatch = null
+        const refFile = refByUrl.get(m.url)
+        if (refFile) {
+          const refPath = path.join(templates, refFile)
+          const refHtml = await readText(refPath)
+          if (refHtml) {
+            const pageHero = extractHeroSrc(refHtml)
+            if (pageHero && stemOf(m.thumbnail) !== stemOf(pageHero)) {
+              heroMismatch = { pageHero, cardThumbnail: m.thumbnail }
+            }
+          }
+        }
+
         return {
           slug,
           title: m.title,
           url: m.url,
           thumbnail: m.thumbnail,
           sharedWith: (byThumb.get(m.thumbnail) || []).filter((t) => t !== m.title),
-          generated: { exists, path: exists ? file : null, ...(registry[slug] ? { salt: registry[slug].salt, style: registry[slug].style } : {}) }
+          generated: { exists, path: exists ? file : null, ...(registry[slug] ? { salt: registry[slug].salt, style: registry[slug].style } : {}) },
+          heroMismatch
         }
       })
     )

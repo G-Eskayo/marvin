@@ -266,11 +266,12 @@ def _run(cmd, input=None):
     return subprocess.run(cmd, capture_output=True, text=True, timeout=120, input=input)
 
 
-def find_page(url: str, runner=_run) -> dict:
-    r = _wp(runner, "post", "list", "--post_type=page", "--post_status=publish", "--fields=ID,post_name,post_parent", "--format=json")
-    if r.returncode != 0:
-        raise MigrationError("could not reach the dev site's WordPress (is it running?)")
-    pages = json.loads(r.stdout)
+def find_page(url: str, runner=_run, pages: list[dict] | None = None) -> dict:
+    if pages is None:
+        r = _wp(runner, "post", "list", "--post_type=page", "--post_status=publish", "--fields=ID,post_name,post_parent", "--format=json")
+        if r.returncode != 0:
+            raise MigrationError("could not reach the dev site's WordPress (is it running?)")
+        pages = json.loads(r.stdout)
     by_id = {str(p["ID"]): p for p in pages}
     for p in pages:
         parts, cur = [p["post_name"]], p
