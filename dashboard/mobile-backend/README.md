@@ -119,6 +119,53 @@ Approve or deny a pending action.
 
 **Response**: `200 { "ok": true, "data": { id, ... } }` on success, `400 { "ok": false, "error": "<message>" }` if action is not pending or invalid input
 
+## Mobile write actions (Face ID gated)
+
+When the mobile client receives Face ID authentication on the device, three dashboard write endpoints become available.
+
+### `POST /boards/input`
+
+Post an owner comment on a ticket and optionally move it back to ready.
+
+**Request body**: `{ "repo": "<owner>/<repo>", "number": <ticket-number>, "body": "<comment-text>", "confirmed": true }`
+
+Requires `confirmed: true` (Face ID verified on client); missing or false returns `403`.
+
+**Response**: `200 { "ok": true, "data": { posted, requeued, effect, warning? } }`
+
+- `posted: true` — comment was successfully posted to the ticket
+- `requeued: true` — ticket was also moved back to "ready" state (label changes succeeded); `false` if the label change failed (comment still posted)
+- `effect: "awaiting_input" | "awaiting_feedback" | null` — which backlog the ticket was in
+- `warning?: string` — if present, label change failed; user should try again or move the ticket by hand
+
+Errors: `400` if fields are missing/invalid, or `postTicketInput` fails (repo validation, empty comment, etc).
+
+### `POST /mr/approve`
+
+Approve a pull request for merge.
+
+**Request body**: `{ "url": "<pr-url>", "number": <pr-number>, "confirmed": true }`
+
+Requires `confirmed: true`; missing or false returns `403`.
+
+**Response**: `200 { "ok": true, "data": { ...result, cancelled: false } }`
+
+The response body from the merge webhook, plus `cancelled: false` to distinguish from merge-time re-engagement.
+
+Errors: `400` if fields are missing, `confirmed` is missing/false, or the PR fails the merge guard (wrong order, wrong base, sent back for rework, CI pending); `403` if the project profile has not opted in to merging from the dashboard. The error body includes `code` (e.g., `OUT_OF_ORDER`, `NO_MERGE_PROFILE`) and structured details from the webhook if available.
+
+### `POST /mr/deny`
+
+Deny a pull request (send feedback or close).
+
+**Request body**: `{ "url": "<pr-url>", "number": <pr-number>, "ticketNumber": <ticket-number>, "action": "send_feedback"|"drop", "reasons": [<reason-codes>], "comment": "<optional-comment>", "confirmed": true }`
+
+Requires `confirmed: true`; missing or false returns `403`.
+
+**Response**: `200 { "ok": true, "data": { done: true } }`
+
+Errors: `400` if fields are missing/invalid, or the repo is not set up for merging; `500` if the webhook call fails.
+
 ## Deliberately out of scope
 
-Face ID authentication, search endpoints — covered in separate tickets (#157, #160). This backend provides read-only access to dashboard data, managed session state with side-effecting permission gating, and the mobile client.
+Face ID authentication client-side behavior — the mobile app handles biometric verification and only sends `confirmed: true` after it succeeds. Search endpoints (#157). This backend provides read-only access to dashboard data, managed session state with side-effecting permission gating, and Face ID-gated write actions for dashboard initiation of ticket answers and PR review workflows.

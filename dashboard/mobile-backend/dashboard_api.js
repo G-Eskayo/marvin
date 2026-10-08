@@ -9,6 +9,7 @@ import { readRegistry, REGISTRY_PATH, withProjectStatus } from '../electron/main
 import { readCatalog, CATALOG_DIR, MASTER_DOC_PATH, readMasterDoc } from '../electron/main/catalog.js'
 import { resolveDeviceId } from '../electron/main/device_identity.js'
 import { createDocsService } from '../electron/main/docs_service.js'
+import { postTicketInput } from '../electron/main/ticket_input.js'
 
 const execFileP = promisify(execFile)
 
@@ -86,6 +87,52 @@ export function createDashboardApiRouter(opts = {}) {
         res.writeHead(200, { 'Content-Type': 'application/json' }).end(
           JSON.stringify({ ok: true, data })
         )
+        return true
+      }
+
+      // POST /boards/input
+      if (req.method === 'POST' && pathname === '/boards/input') {
+        let body = ''
+        for await (const chunk of req) {
+          body += chunk.toString()
+        }
+
+        let payload
+        try {
+          payload = JSON.parse(body)
+        } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' }).end(
+            JSON.stringify({ ok: false, error: 'Invalid JSON' })
+          )
+          return true
+        }
+
+        const { repo, number, body: commentBody, confirmed } = payload
+
+        if (confirmed !== true) {
+          res.writeHead(403, { 'Content-Type': 'application/json' }).end(
+            JSON.stringify({ ok: false, error: 'Action requires Face ID confirmation (confirmed: true)' })
+          )
+          return true
+        }
+
+        if (!repo || !number || !commentBody) {
+          res.writeHead(400, { 'Content-Type': 'application/json' }).end(
+            JSON.stringify({ ok: false, error: 'Missing required fields: repo, number, body' })
+          )
+          return true
+        }
+
+        try {
+          const result = await postTicketInput({ repo, number, body: commentBody }, exec)
+          res.writeHead(200, { 'Content-Type': 'application/json' }).end(
+            JSON.stringify({ ok: true, data: result })
+          )
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' }).end(
+            JSON.stringify({ ok: false, error: err.message })
+          )
+        }
         return true
       }
 

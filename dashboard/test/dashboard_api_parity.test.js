@@ -253,6 +253,108 @@ describe('dashboard API parity', () => {
         server.close()
       }
     }))
+
+  it('POST /boards/input requires confirmed:true', async () =>
+    withTempDirs(async (dirs) => {
+      const mockExec = vi.fn()
+      const router = createDashboardApiRouter({
+        stagesDir: dirs.stagesDir,
+        dispatchStatePath: dirs.dispatchStatePath,
+        healthStatusPath: dirs.healthStatusPath,
+        registryPath: dirs.registryPath,
+        catalogDir: dirs.catalogDir,
+        masterDocPath: dirs.masterDocPath,
+        deviceId: 'test-device',
+        exec: mockExec
+      })
+
+      const { server, url } = await startTestServer(router)
+      try {
+        // Make a POST request to /boards/input
+        const postUrl = new URL('/boards/input', url)
+        const res = await new Promise((resolve, reject) => {
+          const client = require('http').request(
+            postUrl,
+            { method: 'POST', headers: { 'Content-Type': 'application/json' } },
+            (res) => {
+              let data = ''
+              res.on('data', (chunk) => {
+                data += chunk
+              })
+              res.on('end', () => {
+                resolve({
+                  statusCode: res.statusCode,
+                  body: data ? JSON.parse(data) : null
+                })
+              })
+            }
+          )
+          client.on('error', reject)
+          client.write(JSON.stringify({
+            repo: 'G-Eskayo/test',
+            number: 1,
+            body: 'Test comment',
+            confirmed: false
+          }))
+          client.end()
+        })
+
+        expect(res.statusCode).toBe(403)
+        expect(res.body.ok).toBe(false)
+        expect(res.body.error).toMatch(/Face ID confirmation/)
+      } finally {
+        server.close()
+      }
+    }))
+
+  it('POST /boards/input requires repo, number, and body fields', async () =>
+    withTempDirs(async (dirs) => {
+      const mockExec = vi.fn()
+      const router = createDashboardApiRouter({
+        stagesDir: dirs.stagesDir,
+        dispatchStatePath: dirs.dispatchStatePath,
+        healthStatusPath: dirs.healthStatusPath,
+        registryPath: dirs.registryPath,
+        catalogDir: dirs.catalogDir,
+        masterDocPath: dirs.masterDocPath,
+        deviceId: 'test-device',
+        exec: mockExec
+      })
+
+      const { server, url } = await startTestServer(router)
+      try {
+        const postUrl = new URL('/boards/input', url)
+        const res = await new Promise((resolve, reject) => {
+          const client = require('http').request(
+            postUrl,
+            { method: 'POST', headers: { 'Content-Type': 'application/json' } },
+            (res) => {
+              let data = ''
+              res.on('data', (chunk) => {
+                data += chunk
+              })
+              res.on('end', () => {
+                resolve({
+                  statusCode: res.statusCode,
+                  body: data ? JSON.parse(data) : null
+                })
+              })
+            }
+          )
+          client.on('error', reject)
+          client.write(JSON.stringify({
+            confirmed: true
+          }))
+          client.end()
+        })
+
+        expect(res.statusCode).toBe(400)
+        expect(res.body.ok).toBe(false)
+        expect(res.body.error).toMatch(/Missing required fields/)
+      } finally {
+        server.close()
+      }
+    }))
 })
 
 import { DEFAULT_STAGES_DIR } from '../mobile-backend/dashboard_api.js'
