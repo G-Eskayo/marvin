@@ -95,3 +95,11 @@ def test_refuses_an_empty_snapshot(origin, tmp_path):
     empty = tmp_path / "empty"; empty.mkdir()
     with pytest.raises(publish_map.PublishRefused):
         publish_map.publish(empty, tmp_path / "checkout", remote=str(origin))
+
+
+def test_the_checkout_is_not_somewhere_the_catalog_looks_for_projects():
+    """2026-10-08: it lived in ~/Developer, the catalog took it for the portfolio repo, and page authoring broke."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "lib"))
+    import project_catalog
+    for root in project_catalog.LOCAL_ROOTS:
+        assert root not in publish_map.CHECKOUT.parents, f"{publish_map.CHECKOUT} is under catalog root {root}"
