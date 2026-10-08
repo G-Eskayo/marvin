@@ -238,3 +238,33 @@ test('hovering a node shows its plain-words line first; a locked project shows n
     assert.equal(lt.plain, null, `${locked} is private: no plain line on the website`)
   }
 })
+
+// Gil 2026-10-08: on the website, only the 3D map on a transparent background; hover and drag still work, and the
+// mouse wheel scrolls the page instead of zooming the map (docs/plans/map-website-2026-10-08.md).
+test('embed mode: transparent, no panels, hover works, the wheel scrolls the page', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const page = await browser.newPage({ viewport: { width: 1000, height: 640 } })
+  const errors = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  await page.goto(pathToFileURL(path.join(MAP, 'snapshot', 'index.html')).href + '?embed=1')
+  await page.evaluate(() => window.__map.driveExternally())
+  assert.deepEqual(errors, [])
+  const look = await page.evaluate(() => {
+    const vis = (sel) => { const el = document.querySelector(sel); return !!el && getComputedStyle(el).display !== 'none' && getComputedStyle(el).visibility !== 'hidden' }
+    const bg = (el) => getComputedStyle(el).backgroundImage + '|' + getComputedStyle(el).backgroundColor
+    return { html: bg(document.documentElement), body: bg(document.body),
+      header: vis('header'), legend: vis('#legend'), toggle: vis('#mode-toggle'), footer: vis('footer'), hud: vis('.hud-frame') }
+  })
+  assert.equal(look.html, 'none|rgba(0, 0, 0, 0)')
+  assert.equal(look.body, 'none|rgba(0, 0, 0, 0)')
+  assert.deepEqual([look.header, look.legend, look.toggle, look.footer, look.hud], [false, false, false, false, false])
+  const tip = await hoverTooltip(page, 'ticket-pipeline')
+  assert.ok(tip?.shown && tip.plain, 'hover shows the plain line')
+  const box = await page.locator('canvas').first().boundingBox()
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  const prevented = await page.evaluate(() => new Promise((res) => {
+    const ev = new WheelEvent('wheel', { deltaY: -400, bubbles: true, cancelable: true })
+    document.getElementById('c').dispatchEvent(ev); res(ev.defaultPrevented)
+  }))
+  assert.equal(prevented, false, 'the page keeps the wheel (the map handler returns before zooming)')
+})
