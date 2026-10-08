@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""publish_map.py (ADR 0056): only deploy/marvin-map/ ever reaches the portfolio repo's main, from its own checkout."""
+"""publish_map.py (ADR 0057): only deploy/marvin-map/ ever reaches the portfolio repo's main, from its own checkout."""
 import subprocess
 import sys
 from pathlib import Path

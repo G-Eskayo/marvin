@@ -1,4 +1,4 @@
-# ADR 0056: The map snapshot publishes itself to production
+# ADR 0057: The map snapshot publishes itself to production
 
 **Status:** Accepted (2026-10-08, Gil)
 
