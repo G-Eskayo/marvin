@@ -23,6 +23,7 @@ HANDOFFS_DIR = CLAUDE_DIR / "handoffs"
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 from notify import notify  # noqa: E402
 from claude_bin import resolve_claude_bin as _resolve_claude_bin  # noqa: E402
+import north_stars  # noqa: E402
 
 RESULTS_MD   = Path.home() / "marvin-bench" / "RESULTS.md"
 QA_SCRIPTS   = Path.home() / ".agents" / "skills" / "qa-agent" / "scripts"
@@ -179,11 +180,8 @@ def reviewer_health_summary() -> str:
 
 DIGEST_PROMPT_TEMPLATE = """You are MARVIN's daily improvement analyst. Your job is to review the state of the MARVIN agent system and generate a focused, actionable daily digest.
 
-North-star goal: MINIMIZE token usage while MAXIMIZING capability and quality.
-
-North-star vision (Gil's direction, 2026-10-08): MARVIN eventually becomes the OS of Gil's own phone (AOSP path; MARVIN Mobile is step one). Not a task: use it to break ties toward OS-shaped work (general, reachable from anywhere, linkable, offline-capable, proactive, reliable).
-
-Prioritization lens (Gil's direction, 2026-07-08): when candidates compete for attention, weight compounding leverage — does this item make multiple *future* items cheaper, faster, or newly possible — above standalone value, even over a bigger one-off win. A foundation that makes the next three builds easier beats a bigger isolated win.
+--- NORTH STARS (docs/north-stars.md) ---
+{north_stars}
 
 --- ROADMAP STATUS ---
 {roadmap}
@@ -222,7 +220,7 @@ Two existing capabilities that would multiply in value if connected or merged. E
 One or two things currently in the system that may be carrying cost without measurable benefit. Be specific about what to cut and why.
 
 ## Wild Idea
-One capability that doesn't exist yet but would significantly advance the north-star goal. Creative but grounded — explain the mechanism.
+One capability that doesn't exist yet but would significantly advance one of the north stars. Creative but grounded — explain the mechanism.
 
 ## Quick Win
 One specific improvement actionable in under 2 hours with immediate impact. Name the file and the change.
@@ -270,6 +268,7 @@ def main() -> None:
     reviewer_health = reviewer_health_summary()
 
     prompt = DIGEST_PROMPT_TEMPLATE.format(
+        north_stars=north_stars.load(),
         roadmap=roadmap_summary(),
         handoffs=recent_handoffs_summary(),
         qa_kb=qa_kb_summary(),
