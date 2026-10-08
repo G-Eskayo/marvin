@@ -823,3 +823,83 @@ def test_main_health_is_yellow_when_never_checked_or_stale(tmp_path):
     p = tmp_path / "old.json"
     p.write_text(json.dumps({"sha": "a", "ok": True, "failed": [], "summary": "ok", "checked_at": (hc._now() - timedelta(days=2)).isoformat()}))
     assert hc.check_main_health(path=p)["severity"] == "yellow"
+
+
+# ── disk expansion forecast ──
+
+def test_forecast_days_to_floor_insufficient_history():
+    """Test forecast with too few history points."""
+    history = [{"date": "2026-10-06", "free_kb": 1048576}]
+    result = hc.forecast_days_to_floor(history, 1.0)
+    assert result is None
+
+
+def test_forecast_days_to_floor_healthy_trend():
+    """Test forecast when disk is growing (healthy trend)."""
+    history = [
+        {"date": "2026-10-01", "free_kb": 1048576},
+        {"date": "2026-10-05", "free_kb": 2097152},
+    ]
+    result = hc.forecast_days_to_floor(history, 0.0)
+    assert result is None
+
+
+def test_forecast_days_to_floor_crossing_30_days():
+    """Acceptance criterion: forecast flips severity as trend crosses 30 days to floor."""
+    now = datetime.now(timezone.utc)
+    start_date = now - timedelta(days=30)
+
+    history = []
+    current_free_kb = 50 * 1048576
+
+    for day in range(30):
+        d = start_date + timedelta(days=day)
+        current_free_kb -= 1048576
+        history.append({
+            "date": d.date().isoformat(),
+            "free_kb": current_free_kb,
+        })
+
+    result = hc.forecast_days_to_floor(history, 0.0, floor_gb=15.0)
+    assert result is not None
+
+    if result > 30:
+        forecast_sev = "green"
+    elif result < 7:
+        forecast_sev = "red"
+    else:
+        forecast_sev = "yellow"
+
+    assert forecast_sev in ("red", "yellow"), \
+        f"Trend crossing 30 days should produce red or yellow severity, got {forecast_sev} ({result:.0f} days)"
+
+
+def test_forecast_accounts_for_reclaimable_space():
+    """Test that reclaimable space extends the forecast."""
+    now = datetime.now(timezone.utc)
+    start_date = now - timedelta(days=10)
+
+    history = []
+    for day in range(10):
+        d = start_date + timedelta(days=day)
+        history.append({
+            "date": d.date().isoformat(),
+            "free_kb": (30 - day * 0.5) * 1048576,
+        })
+
+    result_no_reclaim = hc.forecast_days_to_floor(history, 0.0)
+    result_with_reclaim = hc.forecast_days_to_floor(history, 10.0)
+
+    assert result_with_reclaim is not None and result_no_reclaim is not None
+    assert result_with_reclaim > result_no_reclaim, \
+        "Reclaimable space should extend the forecast"
+
+
+def test_forecast_already_below_floor():
+    """Test forecast when already below floor."""
+    history = [
+        {"date": "2026-10-01", "free_kb": 10 * 1048576},
+        {"date": "2026-10-05", "free_kb": 5 * 1048576},
+    ]
+    result = hc.forecast_days_to_floor(history, 1.0, floor_gb=15.0)
+    assert result == 0.0

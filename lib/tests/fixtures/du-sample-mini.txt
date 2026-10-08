@@ -1,0 +1,16 @@
+12345	/Users/gileskayo/.npm/_cacache
+23456	/Users/gileskayo/.pnpm-store
+34567	/Users/gileskayo/Library/Caches/pip
+45678	/Users/gileskayo/Library/Caches/Homebrew
+56789	/Users/gileskayo/Library/Caches/Electron
+67890	/Users/gileskayo/Library/Caches/SwiftPM
+78901	/Users/gileskayo/Library/Developer/Xcode/DerivedData
+89012	/Users/gileskayo/.agents-pipeline-worktrees
+90123	/Users/gileskayo/.agents-pipeline-worktrees/pipeline-g-eskayo-feature-123/.build
+10234	/Users/gileskayo/.agents-pipeline-worktrees/pipeline-g-eskayo-feature-123/node_modules
+11345	/Users/gileskayo/.ollama
+12456	/Users/gileskayo/Library/Mobile Documents
+13567	/Users/gileskayo/.docker
+14678	/Users/gileskayo/Documents
+15789	/Users/gileskayo/Desktop
+16890	/Users/gileskayo/Downloads

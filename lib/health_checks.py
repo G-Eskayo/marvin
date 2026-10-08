@@ -557,6 +557,7 @@ JOB_PLACEMENT = {
     "process-quarantine-reviews": "mini", "verify-digest-fix": "mini",
     "usage-scan": "both",  # hourly: each machine scans its own transcripts for the Metrics tab (lib/usage_report.py)
     "cleanup-sweep": "both",  # daily: each machine sweeps its own pipeline worktrees (lib/cleanup_sweep.py)
+    "storage-ledger": "both",  # daily: each machine logs disk usage and triggers auto-trim when low (lib/storage_ledger.py)
     "dashboard-launch": "laptop",
 }
 
@@ -616,6 +617,62 @@ DISK_YELLOW_BELOW_PCT = 20
 DISK_RED_BELOW_PCT = 10
 
 
+def forecast_days_to_floor(
+    history: list[dict],
+    reclaimable_gb: float,
+    floor_gb: float = 15.0,
+) -> float | None:
+    """Forecast how many days until the machine hits its disk floor (minimum free space).
+
+    Args:
+        history: list of {date, free_kb, ...} dicts from storage_ledger, sorted by date
+        reclaimable_gb: GB that auto-trim could reclaim right now
+        floor_gb: minimum acceptable free space (dispatch.json's min_disk_gb)
+
+    Returns:
+        Days remaining at current shrinkage rate, or None if history is too thin or trend is healthy.
+    """
+    if len(history) < 2:
+        return None
+
+    now_utc = datetime.now(timezone.utc)
+    entries = []
+    for entry in history:
+        try:
+            date = datetime.fromisoformat(entry.get("date", "")).replace(tzinfo=timezone.utc)
+            free_gb = entry.get("free_kb", 0) / 1048576
+            entries.append((date, free_gb))
+        except (ValueError, TypeError):
+            continue
+
+    if len(entries) < 2:
+        return None
+
+    entries.sort(key=lambda x: x[0])
+    oldest_date, oldest_free = entries[0]
+    newest_date, newest_free = entries[-1]
+
+    # Linear regression: slope = (free_gb / day)
+    days_elapsed = (newest_date - oldest_date).days
+    if days_elapsed <= 0:
+        return None
+
+    free_shrunk = newest_free - oldest_free
+    slope_per_day = free_shrunk / days_elapsed
+
+    if slope_per_day >= 0:
+        return None
+
+    current_free = newest_free
+    usable_free = current_free + reclaimable_gb
+    if usable_free < floor_gb:
+        return 0.0
+
+    gb_till_floor = usable_free - floor_gb
+    days_remaining = gb_till_floor / abs(slope_per_day)
+    return max(0.0, days_remaining)
+
+
 def evaluate_machine_state(state: dict, now: datetime) -> list[tuple[str, str, str]]:
     """[(check_key, severity, detail)] for one machine. The dashboard app is a native
     build that only rebuilds where a merge happened, so it silently drifts behind the
@@ -658,13 +715,43 @@ def evaluate_machine_state(state: dict, now: datetime) -> list[tuple[str, str, s
     free, total = state.get("disk_free_kb"), state.get("disk_total_kb")
     if free is not None and total:
         pct = 100 * free / total
-        sev = "red" if pct < DISK_RED_BELOW_PCT else "yellow" if pct < DISK_YELLOW_BELOW_PCT else "green"
+        pct_sev = "red" if pct < DISK_RED_BELOW_PCT else "yellow" if pct < DISK_YELLOW_BELOW_PCT else "green"
         detail = f"{free / 1048576:.0f} GiB free of {total / 1048576:.0f} ({pct:.0f}%)"
         if state.get("worktrees_kb") is not None:
             detail += f"; {state.get('worktrees_n') or 0} pipeline worktrees use {state['worktrees_kb'] / 1048576:.1f} GiB"
-        if sev != "green":
+
+        forecast_sev = "green"
+        try:
+            import storage_ledger
+            device = state.get("_device", "")
+            ledger = storage_ledger.read_ledger(device, days=30)
+            if ledger:
+                import storage_trim
+                candidates = storage_trim.trim_candidates()
+                reclaimable_kb = sum(c["size_kb"] for c in candidates)
+                reclaimable_gb = reclaimable_kb / 1048576
+                days_left = forecast_days_to_floor(ledger, reclaimable_gb)
+                if days_left is not None:
+                    detail += f"; about {days_left:.0f} days of headroom at current growth"
+                    if days_left < 7:
+                        forecast_sev = "red"
+                    elif days_left < 30:
+                        forecast_sev = "yellow"
+        except Exception:
+            pass
+
+        sev_rank = {"red": 2, "yellow": 1, "green": 0}
+        final_sev = "red" if sev_rank.get(pct_sev, 0) >= sev_rank.get(forecast_sev, 0) else forecast_sev
+        if pct_sev == "red" or forecast_sev == "red":
+            final_sev = "red"
+        elif pct_sev == "yellow" or forecast_sev == "yellow":
+            final_sev = "yellow"
+        else:
+            final_sev = "green"
+
+        if final_sev != "green":
             detail += " -- check ~/.claude/logs/mr-pipeline-sweep.md and docs/plans/storage-and-distribution-2026-10-06.md"
-        out.append(("disk:space", sev, detail))
+        out.append(("disk:space", final_sev, detail))
     if state.get("job_exits"):
         # A running job's status is its previous instance's (a KeepAlive restart shows -15), so only idle jobs count.
         failed = [(label, status) for label, pid, status in state["job_exits"] if pid is None and status != 0]
