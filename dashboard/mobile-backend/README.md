@@ -76,6 +76,15 @@ Get file content from a documentation repo.
 
 **Response**: `200 { "ok": true, "data": <file content as string> }`
 
+### `GET /live`
+
+Streams real-time updates as activity or agent changes occur.
+
+**Response**: `200 application/x-ndjson` (chunked, streaming)
+- Each line is a JSON object: `{ "topic": "activity" | "agents", "source": <string> }`
+- Connection stays open until the client closes it
+- Updates stream immediately as triggers fire or refresh pings arrive from the webhook
+
 ## Running it
 
 ```bash
@@ -92,6 +101,8 @@ tail -f ~/.claude/logs/mobile-backend.log
 ```
 
 The service defaults to port 7880; override with `PORT` env var if needed (edit the plist).
+
+The internal refresh listener (receives pings from the webhook-server when changes occur) defaults to port 7881; override with `MARVIN_MOBILE_REFRESH_PORT` env var if needed.
 
 ### `GET /thread?limit=<n>&before=<id>`
 
