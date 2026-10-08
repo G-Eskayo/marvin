@@ -42,14 +42,14 @@ it's marked `archived` in the catalog overrides and the map says so, instead of 
 
 ## Order
 
-1. **Fix the tree read** and make a failed GitHub read keep the last good plan, marked stale (bug, first: everything
+1. **Done:** **Fix the tree read** and make a failed GitHub read keep the last good plan, marked stale (bug, first: everything
    below depends on true data).
-2. **Auto-apply** the safe pieces every hour (labels, profile draft with dispatch off), and open the one-time PR for CI
-   + agent docs. ADR 0058 amends ADR 0036's "apply only on command".
-3. **Readiness on the map and in Health:** new thread types and a per-project "ready / not ready (why)" line.
-4. **Budget:** onboarding skips unchanged repos and backs off below the pipeline's 20% guard.
-5. **Move repos out of iCloud** with the #192 procedure as a command, after Gil approves the batch.
-6. **Archive** state for projects MARVIN should leave alone.
+2. **Done:** **Auto-apply** the safe pieces every hour (labels, profile draft with dispatch off). The one-time PR for CI
+   + agent docs: #259. ADR 0058 amends ADR 0036's "apply only on command".
+3. #260 **Readiness on the map and in Health:** new thread types and a per-project "ready / not ready (why)" line.
+4. #261 **Budget:** onboarding skips unchanged repos and backs off below the pipeline's 20% guard.
+5. #262 **Move repos out of iCloud** with the #192 procedure as a command, after Gil approves the batch.
+6. #263 **Archive** state for projects MARVIN should leave alone.
 
 ## Decisions
 
