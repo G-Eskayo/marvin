@@ -1,0 +1,272 @@
+#!/usr/bin/python3 -IS
+"""gh — the GitHub gate: every `gh` call on this Mac passes through here before reaching the real gh.
+
+Both Macs, the pipeline, its agents, the dashboard and every job share ONE GitHub account allowance, and ~30 places
+call gh on their own. Nothing coordinated them, so a burst tripped GitHub's short-window limit and every caller failed
+at once, then kept retrying into it. This gate (stdlib only, so it starts fast):
+
+  cooldown   when GitHub refuses a call for rate reasons, every caller on this Mac pauses together: a burst refusal
+             60 s, doubling per repeat up to 15 min; an hourly-allowance refusal until GitHub's reset time
+  priority   launchd jobs (com.marvin.*) are background, except the webhook that serves dashboard clicks; people and
+             the dashboard are interactive. MARVIN_GH_PRIORITY overrides.
+  budget     below 20% of the hourly allowance, background calls wait, so the last of it is kept for people
+  spacing    at most 2 background calls at once, and not closer than 0.25 s apart (bursts are what trip the limit)
+  log        ~/.claude/logs/gh-calls.jsonl: who called what, how long, whether it was refused (Health reads it)
+
+A deferred background call exits 75 (EX_TEMPFAIL) with a message containing "rate limit", which existing callers
+already treat as "try again next cycle". A person at a terminal is never captured: prompts work as usual.
+Installed by scripts/install-gh-gate.sh (puts ~/.agents/bin first on PATH). Remove that to bypass it.
+"""
+from __future__ import annotations
+import calendar
+import fcntl
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+DEFERRED_RC = 75
+BURST_COOLDOWN = 60
+MAX_COOLDOWN = 900
+INTERACTIVE_MAX_WAIT = 20
+BUDGET_FLOOR = 0.20
+BUDGET_TTL = 120   # the GraphQL budget query itself costs a point
+BG_SLOTS = 2
+BG_GAP = 0.25
+LOG_MAX_BYTES = 5 * 1024 * 1024
+FALLBACKS = ("/opt/homebrew/bin/gh", "/usr/local/bin/gh")
+
+
+# ── pure decisions ──────────────────────────────────────────────────────────
+
+def classify_refusal(stderr: str) -> str | None:
+    s = (stderr or "").lower()
+    if "secondary rate limit" in s or "abuse detection" in s or "429" in s and "too many" in s:
+        return "burst"
+    if "api rate limit" in s and ("exceeded" in s):
+        return "hourly"
+    return None
+
+
+def priority_of(env) -> str:
+    own = env.get("MARVIN_GH_PRIORITY")
+    if own in ("background", "interactive"):
+        return own
+    svc = env.get("XPC_SERVICE_NAME", "")
+    if svc.startswith("com.marvin.") and svc != "com.marvin.dashboard-webhook":
+        return "background"
+    return "interactive"
+
+
+def decide(priority: str, state: dict, budget: dict | None, now: float) -> tuple[str, float]:
+    """("go", 0) | ("wait", seconds) | ("defer", seconds) | ("refuse", seconds)."""
+    left = (state.get("cooldown_until") or 0) - now
+    if left > 0:
+        if priority == "background":
+            return ("defer", left)
+        return ("wait", left) if left <= INTERACTIVE_MAX_WAIT else ("refuse", left)
+    if priority == "background" and budget and min(budget.get("core", 1), budget.get("graphql", 1)) < BUDGET_FLOOR:
+        return ("defer", 0)
+    return ("go", 0)
+
+
+def after_refusal(state: dict, kind: str, now: float, reset_at: float | None) -> dict:
+    strikes = int(state.get("strikes") or 0) + 1
+    if kind == "hourly" and reset_at:
+        until = reset_at
+    else:
+        until = now + min(BURST_COOLDOWN * 2 ** (strikes - 1), MAX_COOLDOWN)
+    return {**state, "strikes": strikes, "cooldown_until": until, "reason": kind}
+
+
+def after_success(state: dict) -> dict:
+    return {**state, "strikes": 0} if state.get("strikes") else state
+
+
+# ── plumbing ────────────────────────────────────────────────────────────────
+
+def find_real_gh(path: str) -> str | None:
+    me = os.path.realpath(__file__)
+    for d in path.split(":"):
+        c = os.path.join(d, "gh")
+        if d and os.path.isfile(c) and os.access(c, os.X_OK) and os.path.realpath(c) != me:
+            return c
+    return next((c for c in FALLBACKS if os.path.isfile(c) and os.path.realpath(c) != me), None)
+
+
+def _logs() -> Path:
+    d = Path(os.environ.get("HOME", str(Path.home()))) / ".claude" / "logs"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+class _State:
+    """Read-modify-write of gh-gate.json under a lock, shared by every caller on this Mac."""
+
+    def __init__(self):
+        self.path = _logs() / "gh-gate.json"
+        self.lock = open(_logs() / "gh-gate.lock", "a+")
+
+    def __enter__(self) -> dict:
+        fcntl.flock(self.lock, fcntl.LOCK_EX)
+        try:
+            self.data = json.loads(self.path.read_text())
+        except (OSError, ValueError):
+            self.data = {}
+        return self.data
+
+    def __exit__(self, *exc):
+        try:
+            tmp = self.path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(self.data))
+            tmp.replace(self.path)
+        finally:
+            fcntl.flock(self.lock, fcntl.LOCK_UN)
+        return False
+
+
+def _rate_limit(real: str) -> dict | None:
+    """GitHub's own numbers. GraphQL (what gh issue/pr use) is read from GraphQL itself: on 2026-10-08 the REST
+    /rate_limit endpoint said 4,853 GraphQL points were left while GraphQL refused every call at 0."""
+    try:
+        q = subprocess.run([real, "api", "graphql", "-f", "query={rateLimit{limit remaining resetAt}}"],
+                           capture_output=True, text=True, timeout=10)
+        g = json.loads(q.stdout)["data"]["rateLimit"]
+        r = subprocess.run([real, "api", "rate_limit"], capture_output=True, text=True, timeout=10)
+        core = json.loads(r.stdout)["resources"]["core"]
+    except Exception:  # noqa: BLE001
+        return None
+    g_reset = calendar.timegm(time.strptime(g["resetAt"], "%Y-%m-%dT%H:%M:%SZ"))
+    resets = [x for x, left in ((core["reset"], core["remaining"]), (g_reset, g["remaining"])) if left == 0]
+    return {"core": core["remaining"] / max(core["limit"], 1), "graphql": g["remaining"] / max(g["limit"], 1),
+            # when an allowance is really used up, the time it comes back; None = it is not (a burst refusal)
+            "reset": min(resets) if resets else None}
+
+
+def _budget(real: str, now: float) -> dict | None:
+    if os.environ.get("GH_GATE_NO_BUDGET"):
+        return None
+    with _State() as st:
+        b = st.get("budget")
+        if b and now - b.get("at", 0) < BUDGET_TTL:
+            return b
+    fresh = _rate_limit(real)
+    if fresh:
+        fresh["at"] = now
+        with _State() as st:
+            st["budget"] = fresh
+    return fresh
+
+
+def _background_slot():
+    """Hold one of BG_SLOTS lock files; returns the open file (released on exit) or None after a minute."""
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        for i in range(BG_SLOTS):
+            f = open(_logs() / f"gh-gate.slot{i}", "a+")
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                with _State() as st:
+                    gap = BG_GAP - (time.time() - st.get("last_bg", 0))
+                    st["last_bg"] = time.time() + max(gap, 0)
+                if gap > 0:
+                    time.sleep(gap)
+                return f
+            except BlockingIOError:
+                f.close()
+        time.sleep(0.2)
+    return None
+
+
+def _log(row: dict) -> None:
+    try:
+        p = _logs() / "gh-calls.jsonl"
+        if p.exists() and p.stat().st_size > LOG_MAX_BYTES:
+            lines = p.read_text().splitlines()
+            p.write_text("\n".join(lines[len(lines) // 2:]) + "\n")
+        with open(p, "a") as f:
+            f.write(json.dumps(row) + "\n")
+    except OSError:
+        pass
+
+
+def _caller() -> str:
+    """The launchd job, or else the program that ran gh (python3, node, MARVIN Metrics, zsh...)."""
+    job = os.environ.get("MARVIN_JOB") or os.environ.get("XPC_SERVICE_NAME", "")
+    if job and job != "0":
+        return job
+    try:
+        out = subprocess.run(["/bin/ps", "-o", "comm=", "-p", str(os.getppid())], capture_output=True, text=True, timeout=2).stdout
+        return os.path.basename(out.strip()) or "unknown"
+    except Exception:  # noqa: BLE001
+        return "unknown"
+
+
+def _say(msg: str) -> None:
+    sys.stderr.write(f"gh-gate: {msg}\n")
+
+
+def main(argv: list[str]) -> int:
+    real = find_real_gh(os.environ.get("PATH", ""))
+    if not real:
+        _say("the real gh is not installed")
+        return 127
+    prio = priority_of(os.environ)
+    caller = _caller()
+    cmd = " ".join(a for a in argv[:2] if not a.startswith("-"))
+    now = time.time()
+    with _State() as st:
+        state = dict(st)
+    verdict, secs = decide(prio, state, _budget(real, now) if prio == "background" else None, now)
+    if verdict in ("defer", "refuse"):
+        why = (f"cooldown until {time.strftime('%H:%M', time.localtime(state['cooldown_until']))} ({state.get('reason')})"
+               if secs else "the hourly allowance is below 20%, kept for people")
+        _say(f"API rate limit: {prio} call deferred, {why}")
+        _log({"t": now, "caller": caller, "priority": prio, "cmd": cmd, "rc": DEFERRED_RC, "ms": 0, "deferred": verdict})
+        return DEFERRED_RC
+    if verdict == "wait":
+        _say(f"GitHub asked us to slow down; waiting {secs:.0f}s")
+        time.sleep(secs)
+
+    slot = _background_slot() if prio == "background" else None
+    t0 = time.time()
+    try:
+        if sys.stdin.isatty() and sys.stderr.isatty():
+            # a person at a terminal: no capturing, prompts and colours work as usual
+            rc = subprocess.call([real, *argv])
+            err = ""
+        else:
+            p = subprocess.Popen([real, *argv], stderr=subprocess.PIPE)
+            _, raw = p.communicate()
+            rc = p.returncode
+            err = raw.decode("utf-8", "replace")
+            sys.stderr.write(err)
+    finally:
+        if slot:
+            slot.close()
+    ms = int((time.time() - t0) * 1000)
+    kind = classify_refusal(err) if rc else None
+    with _State() as st:
+        if kind:
+            reset = None
+            if kind == "hourly":
+                # GitHub says "API rate limit exceeded" for short bursts too (2026-10-08: refused with 4,860 of 5,000
+                # left). Only a really empty allowance waits for the hourly reset; anything else is a burst.
+                reset = (_rate_limit(real) or {}).get("reset")
+                if not reset:
+                    kind = "burst"
+            st.update(after_refusal(st, kind, time.time(), reset))
+        elif rc == 0:
+            st.update(after_success(st))
+    _log({"t": now, "caller": caller, "priority": prio, "cmd": cmd, "rc": rc, "ms": ms, **({"refused": kind, "said": err.strip()[-200:]} if kind else {})})
+    return rc
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except KeyboardInterrupt:
+        sys.exit(130)

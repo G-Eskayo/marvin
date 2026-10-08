@@ -3,6 +3,7 @@ import { mergePr, baselineFailsOnMain } from './merge.js'
 import { sendFeedback, dropEntirely } from './deny.js'
 import { forwardRefreshPing } from './refresh_relay.js'
 import { loadGhToken } from './gh_auth.js'
+import { useGhGate } from '../electron/main/path.js'
 import { failureResponse } from './failure.js'
 import { timeRequest } from '../electron/main/timing.js'
 import { recordApproveError, approveErrorLine } from './refusal_log.js'
@@ -17,6 +18,8 @@ import { resolveServiceDefaults } from '../electron/main/device_identity.js'
 
 // Authenticate gh/git children from the pipeline's shared credential file (see gh_auth.js).
 const ghTokenSource = loadGhToken()
+// ...and through the GitHub gate (path.js), so dashboard clicks share the cooldown with every other caller.
+useGhGate()
 
 const PORT = process.env.PORT || 7878
 

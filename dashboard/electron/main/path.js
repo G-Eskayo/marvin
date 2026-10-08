@@ -1,5 +1,5 @@
 import { execFileSync } from 'child_process'
-import { readFileSync } from 'fs'
+import { readFileSync, statSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 
@@ -40,4 +40,14 @@ export function adoptSharedGhToken(env = process.env, read = (p) => readFileSync
   } catch {
     return false
   }
+}
+
+// Every gh call goes through the GitHub gate (~/.agents/bin/gh): one cooldown for every caller when GitHub says slow
+// down, background work held back when the hourly allowance runs low, a log of who called what. It must come first on
+// PATH, ahead of Homebrew's gh, whatever the login shell said. Absent = gh as before.
+export function useGhGate(env = process.env, home = homedir(), exists = (p) => { try { return statSync(p).isFile() } catch { return false } }) {
+  const dir = join(home, '.agents', 'bin')
+  if (!exists(join(dir, 'gh'))) return false
+  env.PATH = [dir, ...(env.PATH || '').split(':').filter((p) => p && p !== dir)].join(':')
+  return true
 }

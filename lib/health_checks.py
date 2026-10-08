@@ -418,6 +418,49 @@ def check_catalog_fresh(path: Path | None = None, now: datetime | None = None) -
     return _result(cid, label, sev, f"{n} projects, built {age_h:.1f}h ago", value=round(age_h, 1))
 
 
+GH_CALLS_PATH = Path.home() / ".claude" / "logs" / "gh-calls.jsonl"
+GH_GATE_PATH = Path.home() / ".claude" / "logs" / "gh-gate.json"
+
+
+def check_gh_gate(log_path: Path | None = None, state_path: Path | None = None, now: datetime | None = None) -> dict:
+    """Every gh call on this Mac goes through the GitHub gate (bin/gh). Red while GitHub has us cooling down; yellow
+    when calls were refused or held back in the last hour; always says who used GitHub most."""
+    cid, label = "github:gate", "GitHub calls go through the gate"
+    now = now or _now()
+    t = now.timestamp()
+    try:
+        lines = Path(log_path or GH_CALLS_PATH).read_text().splitlines()
+    except OSError:
+        return _result(cid, label, "yellow", "no gh calls logged on this Mac: the gate is not installed (bin/install-gh-gate.sh)")
+    rows = []
+    for l in lines[-20000:]:
+        try:
+            r = json.loads(l)
+        except ValueError:
+            continue
+        if t - float(r.get("t", 0)) <= 3600:
+            rows.append(r)
+    try:
+        st = json.loads(Path(state_path or GH_GATE_PATH).read_text())
+    except (OSError, ValueError):
+        st = {}
+    by: dict[str, int] = {}
+    for r in rows:
+        name = str(r.get("caller", "?")).replace("com.marvin.", "")
+        by[name] = by.get(name, 0) + 1
+    top = ", ".join(f"{k} {v}" for k, v in sorted(by.items(), key=lambda kv: -kv[1])[:4])
+    refused = sum(1 for r in rows if r.get("refused"))
+    deferred = sum(1 for r in rows if r.get("deferred"))
+    base = f"{len(rows)} calls in the last hour" + (f" ({top})" if top else "")
+    left = float(st.get("cooldown_until") or 0) - t
+    if left > 0:
+        return _result(cid, label, "red", f"cooling down for {left / 60:.0f} more min ({st.get('reason', '?')}): background calls wait, "
+                       f"clicks wait up to 20 s. {base}", value=len(rows))
+    if refused or deferred:
+        return _result(cid, label, "yellow", f"{refused} refused by GitHub, {deferred} deferred by the gate. {base}", value=len(rows))
+    return _result(cid, label, "green", base, value=len(rows))
+
+
 PROJECT_TAGS_PATH = Path.home() / ".claude" / "logs" / "project-tags.json"
 PROJECT_TAGS_RED_AT = 5
 PROJECT_TAGS_STALE_HOURS = 3
@@ -1319,6 +1362,7 @@ def run_all() -> dict:
     results.append(check_catalog_fresh())
     results.append(check_project_tags())
     results.append(check_github_budget())
+    results.append(check_gh_gate())
     results.append(check_main_health())
     cron_state = ch._load_state()
     cron_now = datetime.now().astimezone()

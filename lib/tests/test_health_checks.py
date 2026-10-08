@@ -1172,3 +1172,38 @@ def test_project_tags_yellow_when_missing_or_stale(tmp_path):
     now = datetime(2026, 10, 8, 23, tzinfo=timezone.utc)
     assert hc.check_project_tags(tmp_path / "none.json", now=now)["severity"] == "yellow"
     assert "hours" in hc.check_project_tags(_tags(tmp_path), now=now)["detail"]
+
+
+# ── GitHub gate (bin/gh) ────────────────────────────────────────────────────
+
+def _gate(tmp_path, rows, state=None):
+    log = tmp_path / "gh-calls.jsonl"
+    log.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    st = tmp_path / "gh-gate.json"
+    st.write_text(json.dumps(state or {}))
+    return log, st
+
+
+def test_gh_gate_green_shows_who_used_github_in_the_last_hour(tmp_path):
+    now = datetime(2026, 10, 8, 13, tzinfo=timezone.utc)
+    t = now.timestamp()
+    rows = [{"t": t - 60, "caller": "com.marvin.ticket-pipeline", "rc": 0}] * 3 + [{"t": t - 30, "caller": "MARVIN Metrics", "rc": 0},
+            {"t": t - 7200, "caller": "old", "rc": 0}]
+    r = hc.check_gh_gate(*_gate(tmp_path, rows), now=now)
+    assert r["severity"] == "green" and r["value"] == 4
+    assert "ticket-pipeline 3" in r["detail"] and "old" not in r["detail"]
+
+
+def test_gh_gate_red_during_a_cooldown_and_yellow_after_refusals(tmp_path):
+    now = datetime(2026, 10, 8, 13, tzinfo=timezone.utc)
+    t = now.timestamp()
+    rows = [{"t": t - 60, "caller": "x", "rc": 1, "refused": "burst"}, {"t": t - 50, "caller": "y", "rc": 75, "deferred": "defer"}]
+    red = hc.check_gh_gate(*_gate(tmp_path, rows, {"cooldown_until": t + 90, "reason": "burst"}), now=now)
+    assert red["severity"] == "red" and "cooling down" in red["detail"]
+    yellow = hc.check_gh_gate(*_gate(tmp_path, rows, {"cooldown_until": t - 10}), now=now)
+    assert yellow["severity"] == "yellow" and "1 refused" in yellow["detail"] and "1 deferred" in yellow["detail"]
+
+
+def test_gh_gate_yellow_when_not_installed(tmp_path):
+    r = hc.check_gh_gate(tmp_path / "none.jsonl", tmp_path / "none.json", now=datetime(2026, 10, 8, tzinfo=timezone.utc))
+    assert r["severity"] == "yellow"
