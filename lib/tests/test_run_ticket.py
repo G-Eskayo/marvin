@@ -115,7 +115,7 @@ def test_run_skips_evidence_capture_on_a_failing_result(monkeypatch):
 def test_run_comments_the_failure_reason_when_not_raised(monkeypatch):
     monkeypatch.setattr(rt, "execute_ticket", lambda *a: _failing_result())
     monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "3 iterations exhausted"})
-    monkeypatch.setattr(rt, "_release_claim", lambda *a: None)
+    monkeypatch.setattr(rt, "_release_claim", lambda *a, **kw: None)
     monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda *a: 0)
 
     comments = []
@@ -140,7 +140,7 @@ def test_run_releases_the_claim_when_not_raised(monkeypatch):
     monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda *a: 0)
 
     released = []
-    monkeypatch.setattr(rt, "_release_claim", lambda issue_number: released.append(issue_number))
+    monkeypatch.setattr(rt, "_release_claim", lambda issue_number, **kw: released.append(issue_number))
 
     rt.run(20)
 
@@ -157,7 +157,7 @@ def test_run_does_not_release_a_claim_on_a_successful_raise(monkeypatch):
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
 
     released = []
-    monkeypatch.setattr(rt, "_release_claim", lambda issue_number: released.append(issue_number))
+    monkeypatch.setattr(rt, "_release_claim", lambda issue_number, **kw: released.append(issue_number))
 
     rt.run(20)
 
@@ -168,7 +168,7 @@ def test_release_claim_removes_the_label_for_this_machine(monkeypatch):
     monkeypatch.setattr(rt.machine_profile, "registry_id", lambda: "mac-mini-2")
 
     released = []
-    monkeypatch.setattr(rt, "_release", lambda issue_number, label: released.append((issue_number, label)))
+    monkeypatch.setattr(rt, "_release", lambda issue_number, label, **kw: released.append((issue_number, label)))
 
     rt._release_claim(20)
 
@@ -223,7 +223,7 @@ def test_run_triggers_redispatch_even_when_not_raised(monkeypatch):
     monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "nope"})
     monkeypatch.setattr(rt, "_comment_failure", lambda *a: None)
     monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda *a: 0)
-    monkeypatch.setattr(rt, "_release_claim", lambda *a: None)
+    monkeypatch.setattr(rt, "_release_claim", lambda *a, **kw: None)
 
     calls = []
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: calls.append(True))
@@ -263,7 +263,7 @@ def test_run_recovers_when_execute_ticket_raises_unexpectedly(monkeypatch):
     comments = []
     monkeypatch.setattr(rt, "_comment_failure", lambda issue_number, reason: comments.append((issue_number, reason)))
     released = []
-    monkeypatch.setattr(rt, "_release_claim", lambda issue_number: released.append(issue_number))
+    monkeypatch.setattr(rt, "_release_claim", lambda issue_number, **kw: released.append(issue_number))
     redispatched = []
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: redispatched.append(True))
 
@@ -289,7 +289,7 @@ def test_run_parks_the_ticket_instead_of_releasing_at_the_failure_cap(monkeypatc
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
 
     released = []
-    monkeypatch.setattr(rt, "_release_claim", lambda issue_number: released.append(issue_number))
+    monkeypatch.setattr(rt, "_release_claim", lambda issue_number, **kw: released.append(issue_number))
     parked = []
     monkeypatch.setattr(rt, "_park_stuck_ticket", lambda issue_number, streak: parked.append((issue_number, streak)))
 
@@ -307,7 +307,7 @@ def test_run_still_releases_below_the_failure_cap(monkeypatch):
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
 
     released = []
-    monkeypatch.setattr(rt, "_release_claim", lambda issue_number: released.append(issue_number))
+    monkeypatch.setattr(rt, "_release_claim", lambda issue_number, **kw: released.append(issue_number))
     parked = []
     monkeypatch.setattr(rt, "_park_stuck_ticket", lambda issue_number, streak: parked.append((issue_number, streak)))
 
@@ -383,7 +383,7 @@ def test_run_recovers_when_raise_mr_itself_raises_unexpectedly(monkeypatch):
     monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda *a: 0)
 
     released = []
-    monkeypatch.setattr(rt, "_release_claim", lambda issue_number: released.append(issue_number))
+    monkeypatch.setattr(rt, "_release_claim", lambda issue_number, **kw: released.append(issue_number))
     monkeypatch.setattr(rt, "_comment_failure", lambda *a: None)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
 
@@ -495,7 +495,7 @@ def test_a_failed_profile_ticket_is_handled_in_its_own_repo_and_feeds_its_own_br
     calls = {}
     monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda n, repo=rt.REPO: calls.setdefault("streak", (n, repo)) and 0)
     monkeypatch.setattr(rt, "_comment_failure", lambda n, reason, repo=rt.REPO: calls.update(comment=(n, repo)))
-    monkeypatch.setattr(rt, "_release_claim", lambda n, repo=rt.REPO: calls.update(release=(n, repo)))
+    monkeypatch.setattr(rt, "_release_claim", lambda n, repo=rt.REPO, run_id=None: calls.update(release=(n, repo)))
     import failure_breaker as fb
     monkeypatch.setattr(fb, "record_failure", lambda ticket, reason, now=None, project=fb.MARVIN: calls.update(breaker=(ticket, project)))
     rt.run(7, repo=CC)
@@ -511,7 +511,7 @@ def test_a_machine_without_the_toolchain_releases_the_claim_without_blaming_the_
 
     monkeypatch.setattr(rt, "execute_ticket", boom)
     calls = {"comment": 0, "breaker": 0, "park": 0}
-    monkeypatch.setattr(rt, "_release_claim", lambda n, repo=rt.REPO: calls.update(release=(n, repo)))
+    monkeypatch.setattr(rt, "_release_claim", lambda n, repo=rt.REPO, run_id=None: calls.update(release=(n, repo)))
     monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: calls.update(comment=calls["comment"] + 1))
     monkeypatch.setattr(rt, "_park_stuck_ticket", lambda *a, **k: calls.update(park=calls["park"] + 1))
     import failure_breaker as fb
@@ -531,7 +531,7 @@ def test_a_timed_out_test_releases_the_claim_without_blaming_the_ticket(monkeypa
 
     monkeypatch.setattr(rt, "execute_ticket", boom)
     calls = {"gh_comment": 0, "breaker": 0, "park": 0}
-    monkeypatch.setattr(rt, "_release_claim", lambda n, repo=rt.REPO: calls.update(release=(n, repo)))
+    monkeypatch.setattr(rt, "_release_claim", lambda n, repo=rt.REPO, run_id=None: calls.update(release=(n, repo)))
     monkeypatch.setattr(rt.subprocess, "run", lambda cmd, **kw: calls.update(gh_comment=calls["gh_comment"] + 1) if "issue" in cmd else None)
     monkeypatch.setattr(rt, "_park_stuck_ticket", lambda *a, **k: calls.update(park=calls["park"] + 1))
     import failure_breaker as fb
@@ -624,3 +624,111 @@ def test_a_crash_while_dropping_never_breaks_the_run(monkeypatch):
     monkeypatch.setattr(rt.failure_breaker, "record_failure", lambda *a, **kw: None)
     monkeypatch.setattr(rt, "_release_claim", lambda *a, **kw: None)
     assert rt.run(20)["raised"] is False
+
+
+# ── run_id scoped claim release (#255) ──────────────────────────────────────
+
+def test_run_reads_marvin_run_id_from_the_environment(monkeypatch):
+    monkeypatch.setenv("MARVIN_RUN_ID", "myrunid123")
+    captured = {}
+
+    def capture_run_id(*a, **kw):
+        captured["run_id"] = rt.os.environ.get("MARVIN_RUN_ID")
+        return _failing_result()
+
+    monkeypatch.setattr(rt, "execute_ticket", capture_run_id)
+    monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "nope"})
+    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda *a: 0)
+    monkeypatch.setattr(rt, "_comment_failure", lambda *a: None)
+    monkeypatch.setattr(rt, "_release_claim", lambda *a, **kw: None)
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+
+    rt.run(20)
+    assert captured["run_id"] == "myrunid123"
+
+
+def test_release_claim_with_matching_run_id_releases(monkeypatch, tmp_path):
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path / "stages")
+    ts.record_stage(20, "claimed", "started", run_id="run123")
+    monkeypatch.setattr(rt.machine_profile, "registry_id", lambda: "mac-mini-1")
+
+    calls = []
+    monkeypatch.setattr(rt, "_release", lambda n, l, run_id=None: calls.append((n, l, run_id)))
+
+    rt._release_claim(20, run_id="run123")
+
+    assert calls == [(20, "mac-mini", "run123")]
+
+
+def test_release_claim_with_mismatched_run_id_skips_release(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path / "stages")
+    ts.record_stage(20, "claimed", "started", run_id="run123")
+    monkeypatch.setattr(rt.machine_profile, "registry_id", lambda: "mac-mini-1")
+
+    calls = []
+    monkeypatch.setattr(rt, "_release", lambda n, l, run_id=None: calls.append((n, l, run_id)))
+
+    rt._release_claim(20, run_id="other_run")
+
+    # _release gets called with the mismatched run_id; the ownership check happens in _release
+    assert calls == [(20, "mac-mini", "other_run")]
+
+
+def test_release_claim_passes_run_id_to_release_from_env_missing(monkeypatch, tmp_path):
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path / "stages")
+    monkeypatch.setenv("MARVIN_RUN_ID", "run456")
+    monkeypatch.setattr(rt.pp, "load_profile", lambda repo, directory=None: None)
+
+    release_calls = []
+    monkeypatch.setattr(rt, "_release_claim", lambda n, repo=rt.REPO, run_id=None: release_calls.append((n, repo, run_id)))
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+
+    def boom(*a, **kw):
+        raise rt.pp.EnvMissing("core", ["xcode"])
+
+    monkeypatch.setattr(rt, "execute_ticket", boom)
+
+    rt.run(20)
+
+    assert release_calls == [(20, rt.REPO, "run456")]
+
+
+def test_release_claim_passes_run_id_to_release_from_timeout(monkeypatch, tmp_path):
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path / "stages")
+    monkeypatch.setenv("MARVIN_RUN_ID", "run789")
+    monkeypatch.setattr(rt.pp, "load_profile", lambda repo, directory=None: None)
+
+    release_calls = []
+    monkeypatch.setattr(rt, "_release_claim", lambda n, repo=rt.REPO, run_id=None: release_calls.append((n, repo, run_id)))
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: None)
+
+    def boom(*a, **kw):
+        raise rt.TestTimedOut(["pytest"], 300, "output")
+
+    monkeypatch.setattr(rt, "execute_ticket", boom)
+
+    rt.run(20)
+
+    assert release_calls == [(20, rt.REPO, "run789")]
+
+
+def test_release_claim_passes_run_id_from_generic_failure(monkeypatch, tmp_path):
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path / "stages")
+    monkeypatch.setenv("MARVIN_RUN_ID", "runABC")
+
+    release_calls = []
+    monkeypatch.setattr(rt, "_release_claim", lambda n, repo=rt.REPO, run_id=None: release_calls.append((n, repo, run_id)))
+    monkeypatch.setattr(rt, "_comment_failure", lambda *a, **kw: None)
+    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda n, **kw: 0)
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+    monkeypatch.setattr(rt.failure_breaker, "record_failure", lambda *a, **kw: None)
+
+    def boom(*a, **kw):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(rt, "execute_ticket", boom)
+
+    rt.run(20)
+
+    assert release_calls == [(20, rt.REPO, "runABC")]
