@@ -249,6 +249,41 @@ def check_repo_integrity(display_name: str, rel_path: str) -> dict:
     return _result(cid, label, "green", "clean, no stashes")
 
 
+# ── parallel dispatch capacity (ADR 0052, ticket #198) ─────────────────────
+
+def check_dispatch_keeping_up() -> dict:
+    """Health: a check 'Parallel dispatch is keeping up' (slots idle while
+    tickets wait, and why). Returns green when parallel is off, all machines
+    are busy, or nothing is waiting. Returns yellow with a reason when an
+    idle slot exists but a ready ticket cannot start on it."""
+    import ticket_pipeline as tp
+    cid, label = "dispatch:keeping-up", "Parallel dispatch is keeping up"
+    settings = tp.dispatch_concurrency.load()
+    if not settings.get("parallel"):
+        return _result(cid, label, "green", "parallel dispatch is off")
+    try:
+        pools: dict[str, list] = {}
+        for r in [tp.REPO, *tp.pp.dispatchable_repos()]:
+            ready = tp._unclaimed_ready_tickets(repo=r)
+            if ready:
+                pools[r] = list(ready)
+        if not pools:
+            return _result(cid, label, "green", "no tickets waiting")
+        inflight = tp._inflight_by_repo(list(pools.keys()))
+        local_base = tp._local_slots_used()
+        def profile_for(repo):
+            if repo == tp.REPO:
+                return {"machines": list(tp.MARVIN_MACHINES)}
+            return tp.pp.load_profile(repo)
+        result = tp._idle_slot_report(pools, settings, inflight, local_base, profile_for)
+        if result is None:
+            return _result(cid, label, "green", "dispatch is keeping up")
+        severity, reason = result
+        return _result(cid, label, severity, reason)
+    except Exception as e:  # noqa: BLE001
+        return _result(cid, label, "yellow", f"could not check dispatch capacity: {str(e)[:100]}")
+
+
 # ── pipeline circuit breaker ─────────────────────────────────────────────
 
 def check_pipeline_breaker() -> dict:
@@ -857,6 +892,7 @@ def run_all() -> dict:
     results.append(check_intent_routing_collection())
     results.append(check_dispatch_lock())
     results += check_ticket_failure_streaks()
+    results.append(check_dispatch_keeping_up())
     results.append(check_pipeline_breaker())
     results += check_missing_profiles()
     results.append(check_trigger_coverage())

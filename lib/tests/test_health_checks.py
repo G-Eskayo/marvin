@@ -823,3 +823,31 @@ def test_main_health_is_yellow_when_never_checked_or_stale(tmp_path):
     p = tmp_path / "old.json"
     p.write_text(json.dumps({"sha": "a", "ok": True, "failed": [], "summary": "ok", "checked_at": (hc._now() - timedelta(days=2)).isoformat()}))
     assert hc.check_main_health(path=p)["severity"] == "yellow"
+
+
+# ── parallel dispatch capacity (ADR 0052, ticket #198) ──────────────────────
+
+def test_dispatch_keeping_up_green_when_parallel_off(monkeypatch):
+    import ticket_pipeline as tp
+    monkeypatch.setattr(tp.dispatch_concurrency, "load", lambda path=None: {**tp.dispatch_concurrency.DEFAULTS, "parallel": False})
+    r = hc.check_dispatch_keeping_up()
+    assert r["severity"] == "green" and "off" in r["detail"].lower()
+
+
+def test_dispatch_keeping_up_green_when_nothing_waiting(monkeypatch):
+    import ticket_pipeline as tp
+    monkeypatch.setattr(tp.dispatch_concurrency, "load", lambda path=None: {**tp.dispatch_concurrency.DEFAULTS, "parallel": True})
+    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda repo=tp.REPO: [])
+    monkeypatch.setattr(tp.pp, "dispatchable_repos", lambda directory=None: [])
+    r = hc.check_dispatch_keeping_up()
+    assert r["severity"] == "green" and "no tickets" in r["detail"].lower()
+
+
+def test_dispatch_keeping_up_wraps_idle_slot_report(monkeypatch):
+    import ticket_pipeline as tp
+    monkeypatch.setattr(tp.dispatch_concurrency, "load", lambda path=None: {**tp.dispatch_concurrency.DEFAULTS, "parallel": True})
+    monkeypatch.setattr(tp, "_idle_slot_report", lambda *a, **k: ("yellow", "test reason"))
+    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda repo=tp.REPO: [{"number": 5}])
+    monkeypatch.setattr(tp.pp, "dispatchable_repos", lambda directory=None: [])
+    r = hc.check_dispatch_keeping_up()
+    assert r["severity"] == "yellow" and "test reason" in r["detail"]

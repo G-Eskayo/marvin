@@ -440,6 +440,59 @@ def _inflight_by_repo(repos) -> dict[str, int]:
     return out
 
 
+def _idle_machines(settings: dict, local_base: int) -> list[str]:
+    """Machines with a slot available (used < effective limit)."""
+    out = []
+    for device in settings["machine_slots"].keys():
+        selected = select_machine(device)
+        if selected is None:
+            continue
+        is_self = bool(selected[1].get("is_self"))
+        used = local_base if is_self else 0
+        if used < dispatch_concurrency.effective_limit(settings, device):
+            out.append(device)
+    return out
+
+
+def _idle_slot_report(pools: dict, settings: dict, inflight: dict, local_base: int,
+                      profile_for) -> tuple[str, str] | None:
+    """Returns None for every green case. Otherwise returns ("yellow", reason_string) identifying
+    why a slot sits idle while tickets wait. The four reasons: no suitable machine (3), guard
+    refusal (1), project at limit (2), or nothing eligible (4, catch-all)."""
+    if not settings.get("parallel"):
+        return None
+    running = sum(inflight.values())
+    if running >= settings["max_total"]:
+        return None
+    idle = _idle_machines(settings, local_base)
+    if not idle:
+        return None
+    if not pools:
+        return None
+    candidates = [(r, pool[0]) for r, pool in pools.items()
+                  if pool and inflight.get(r, 0) < settings["max_per_project"]]
+    if not candidates:
+        return ("yellow", f"All projects with ready tickets are at their limit ({settings['max_per_project']} per project)")
+    repo, ticket = min(candidates, key=lambda c: _order_key(c[1]))
+    issue_number = ticket["number"]
+    profile = profile_for(repo)
+    refusals: list[str] = []
+    selected = _select_for_profile(profile, settings, {}, local_base, refusals)
+    if selected is not None:
+        return None
+    if not profile.get("machines"):
+        return ("yellow", f"No machine available: {repo}#{issue_number} lists no machines in its profile")
+    profile_machines = profile.get("machines", [])
+    idle_set = set(idle)
+    profile_set = set(profile_machines)
+    if not (idle_set & profile_set):
+        return ("yellow", f"No suitable machine: {repo}#{issue_number} requires {profile_machines} but idle machines are {idle}")
+    if refusals:
+        reason = refusals[0]
+        return ("yellow", f"Guard refusal on all idle machines for {repo}#{issue_number}: {reason}")
+    return ("yellow", f"Nothing eligible: {repo}#{issue_number} has no viable machine (missing tools or other constraint)")
+
+
 def _select_for_profile(profile: dict, settings: dict | None = None, taken: dict | None = None,
                         local_base: int = 0, refusals: list | None = None):
     """A machine the profile allows, that is free, and (if it is this one) has the tools its required

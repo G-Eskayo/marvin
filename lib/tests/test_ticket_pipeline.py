@@ -764,3 +764,84 @@ def test_in_flight_counts_nothing_when_the_process_tables_cannot_be_read(monkeyp
     import running_tickets
     monkeypatch.setattr(running_tickets, "current", lambda: (_ for _ in ()).throw(OSError("boom")))
     assert tp._inflight_by_repo([tp.REPO]) == {tp.REPO: 0}
+
+
+# ── health check: parallel dispatch is keeping up (ADR 0052, ticket #198) ──
+
+def _profile_for_test(repo):
+    if repo == tp.REPO:
+        return {"machines": list(tp.MARVIN_MACHINES)}
+    elif repo == CC:
+        return {**CC_PROFILE, "machines": BOTH}
+    return None
+
+
+def test_idle_slot_report_green_when_parallel_off(monkeypatch):
+    pools = {tp.REPO: [_ticket(5)]}
+    settings = {**tp.dispatch_concurrency.DEFAULTS, "parallel": False}
+    result = tp._idle_slot_report(pools, settings, {}, 0, _profile_for_test)
+    assert result is None
+
+
+def test_idle_slot_report_green_when_running_at_total_limit(monkeypatch):
+    pools = {tp.REPO: [_ticket(5)]}
+    settings = {**tp.dispatch_concurrency.DEFAULTS, "parallel": True, "max_total": 2}
+    result = tp._idle_slot_report(pools, settings, {tp.REPO: 2}, 0, _profile_for_test)
+    assert result is None
+
+
+def test_idle_slot_report_green_when_no_ready_tickets(monkeypatch):
+    pools = {}
+    settings = {**tp.dispatch_concurrency.DEFAULTS, "parallel": True}
+    result = tp._idle_slot_report(pools, settings, {}, 0, _profile_for_test)
+    assert result is None
+
+
+def test_idle_slot_report_yellow_when_project_at_limit(monkeypatch):
+    monkeypatch.setattr(tp, "select_machine", lambda target=None: (target, {"is_self": target == "mac-mini-1"}))
+    pools = {tp.REPO: [_ticket(5)]}
+    settings = {**tp.dispatch_concurrency.DEFAULTS, "parallel": True, "max_total": 2, "max_per_project": 1}
+    result = tp._idle_slot_report(pools, settings, {tp.REPO: 1}, 0, _profile_for_test)
+    assert result is not None and result[0] == "yellow"
+    assert "limit" in result[1].lower()
+
+
+def test_idle_slot_report_yellow_when_no_suitable_machine(monkeypatch):
+    monkeypatch.setattr(tp, "select_machine", lambda target=None: (target, {"is_self": target == "mac-mini-1"}))
+    monkeypatch.setattr(tp.pp, "missing_here", lambda p: [])
+    pools = {CC: [_ticket(9)]}
+    settings = {**tp.dispatch_concurrency.DEFAULTS, "parallel": True, "max_total": 2}
+    cc_machines_only = {**CC_PROFILE, "machines": ["mac-mini-1"]}
+    def profile_for(repo):
+        if repo == CC:
+            return cc_machines_only
+        return _profile_for_test(repo)
+    result = tp._idle_slot_report(pools, settings, {}, 2, profile_for)
+    assert result is not None and result[0] == "yellow"
+    assert "suitable machine" in result[1].lower()
+
+
+def test_idle_slot_report_yellow_when_guard_refusal(monkeypatch):
+    monkeypatch.setattr(tp, "select_machine", lambda target=None: (target, {"is_self": target == "mac-mini-1"}))
+    monkeypatch.setattr(tp.pp, "missing_here", lambda p: [])
+    monkeypatch.setattr(tp, "_free_disk_gb", lambda: 9)
+    monkeypatch.setattr(tp, "_github_budget_pct", lambda: 90)
+    monkeypatch.setattr(tp, "MARVIN_MACHINES", ("mac-mini-1",))
+    pools = {tp.REPO: [_ticket(5)]}
+    settings = {**tp.dispatch_concurrency.DEFAULTS, "parallel": True, "max_total": 2}
+    result = tp._idle_slot_report(pools, settings, {}, 0, _profile_for_test)
+    assert result is not None and result[0] == "yellow"
+    assert "disk" in result[1].lower() or "guard" in result[1].lower()
+
+
+def test_idle_slot_report_yellow_when_nothing_eligible(monkeypatch):
+    monkeypatch.setattr(tp, "select_machine", lambda target=None: (target, {"is_self": target == "mac-mini-1"}))
+    monkeypatch.setattr(tp.pp, "missing_here", lambda p: ["xcode"])
+    monkeypatch.setattr(tp, "_free_disk_gb", lambda: 100)
+    monkeypatch.setattr(tp, "_github_budget_pct", lambda: 90)
+    monkeypatch.setattr(tp, "MARVIN_MACHINES", ("mac-mini-1",))
+    pools = {tp.REPO: [_ticket(5)]}
+    settings = {**tp.dispatch_concurrency.DEFAULTS, "parallel": True, "max_total": 2}
+    result = tp._idle_slot_report(pools, settings, {}, 0, _profile_for_test)
+    assert result is not None and result[0] == "yellow"
+    assert "eligible" in result[1].lower()
