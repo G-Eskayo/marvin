@@ -249,20 +249,152 @@ def check_repo_integrity(display_name: str, rel_path: str) -> dict:
     return _result(cid, label, "green", "clean, no stashes")
 
 
+# ── sync log stuck detection (cross-machine) ───────────────────────────────
+
+SYNC_LOG_STUCK_YELLOW_AFTER_HOURS = 0.5  # 30 minutes
+SYNC_LOG_STUCK_RED_AFTER_HOURS = 4  # 4 hours
+
+
+def _run_sync_log_remote(host: str) -> str:
+    """Read sync-log.md directly from disk on a remote machine over SSH."""
+    script = "cat \"$HOME/.claude/sync-log.md\" 2>/dev/null || echo"
+    cmd = ["ssh", *SSH_OPTS, host, "bash -s"]
+    proc = subprocess.run(cmd, input=script, capture_output=True, text=True, timeout=10)
+    return proc.stdout if proc.returncode == 0 else ""
+
+
+def _parse_sync_log_entries(text: str) -> list[tuple[str, str, str, datetime]]:
+    """Parse sync-log.md entries. Returns [(machine, repo, status, datetime), ...].
+    Format: ## YYYY-MM-DDTHH:MM:SS — action (machine) [repo]
+            Summary line starting with REFUSING/CONFLICT or normal."""
+    entries = []
+    for m in re.finditer(r"^## (\S+) — ([^\n]+)\n(.*?)(?=\n## |\Z)", text, re.DOTALL | re.MULTILINE):
+        ts_str, header, body = m.group(1), m.group(2), m.group(3)
+        try:
+            ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            continue
+        # Parse header: "action (machine) [repo]"
+        machine_match = re.search(r"\(([^)]+)\)", header)
+        repo_match = re.search(r"\[([^\]]+)\]", header)
+        machine = machine_match.group(1) if machine_match else "unknown"
+        repo = repo_match.group(1) if repo_match else "unknown"
+        status_line = body.strip().split("\n")[0] if body.strip() else ""
+        entries.append((machine, repo, status_line, ts))
+    return entries
+
+
+def check_sync_stuck() -> list[dict]:
+    """Cross-machine: for each (machine, repo), find the latest sync-log entry.
+    If it starts with REFUSING or CONFLICT, walk backward to find when this
+    streak started, and report red/yellow based on duration."""
+    results = []
+    me = machine_profile.registry_id()
+
+    # Collect sync-log from this machine + each remote device.
+    devices = [(me, None)] + [
+        (dev, info.get("tailscale_hostname"))
+        for dev, info in machine_profile.remote_devices().items()
+    ]
+
+    all_entries = []
+    for dev, host in devices:
+        if host is None:
+            text = (HOME / ".claude" / "sync-log.md").read_text() if (HOME / ".claude" / "sync-log.md").exists() else ""
+        else:
+            text = _run_sync_log_remote(host)
+        for machine, repo, status, ts in _parse_sync_log_entries(text):
+            all_entries.append((dev, machine, repo, status, ts))
+
+    # Group by (device, machine, repo), keep latest entry per group.
+    by_key = {}
+    for dev, machine, repo, status, ts in all_entries:
+        key = (dev, machine, repo)
+        if key not in by_key or ts > by_key[key][4]:
+            by_key[key] = (dev, machine, repo, status, ts)
+
+    # Check for stuck entries (REFUSING or CONFLICT prefix).
+    for dev, machine, repo, status, ts in by_key.values():
+        if not status or (not status.startswith("REFUSING") and not status.startswith("CONFLICT")):
+            continue
+
+        # Find when this streak started by walking backward through all_entries.
+        streak_start = ts
+        relevant_entries = sorted([e for e in all_entries if e[1] == machine and e[2] == repo],
+                                  key=lambda e: e[4], reverse=True)
+        for _, m, r, s, t in relevant_entries:
+            if s and (s.startswith("REFUSING") or s.startswith("CONFLICT")):
+                streak_start = t
+            else:
+                break
+
+        age_h = (_now() - streak_start).total_seconds() / 3600
+        sev = "red" if age_h >= SYNC_LOG_STUCK_RED_AFTER_HOURS else "yellow" if age_h >= SYNC_LOG_STUCK_YELLOW_AFTER_HOURS else "green"
+        if sev == "green":
+            continue
+
+        cid = f"sync:stuck:{dev}:{repo}"
+        label = f"Code sync — {dev} {repo}"
+        reason = status.split("\n")[0] if status else "unknown"
+        detail = f"{machine} {repo} not syncing since {streak_start.isoformat()}: {reason}"
+        results.append(_result(cid, label, sev, detail))
+
+    return results
+
+
 # ── pipeline circuit breaker ─────────────────────────────────────────────
+
+def _run_failure_breaker_remote(host: str) -> list[dict]:
+    """Query failure_breaker.py --json on a remote machine over SSH."""
+    script = "python3 ~/.agents/lib/failure_breaker.py --json"
+    cmd = ["ssh", *SSH_OPTS, host, script]
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+    if proc.returncode != 0:
+        return []
+    try:
+        return json.loads(proc.stdout)
+    except (json.JSONDecodeError, ValueError):
+        return []
+
 
 def check_pipeline_breaker() -> dict:
     """Red while the cross-ticket breaker (failure_breaker.py) has paused dispatch:
     the same failure hit several different tickets, i.e. the environment is
-    broken, not the tickets. This is the first automated consumer of pipeline
-    failures -- until it existed, only displays read them."""
+    broken, not the tickets. Cross-machine: queries local machine + each
+    reachable remote device (SSH), merging trips from all machines."""
     import failure_breaker
     cid, label = "pipeline:breaker", "Ticket pipeline circuit breaker"
-    trips = failure_breaker.tripped()
-    if not trips:
+
+    # Local machine trips.
+    all_trips = failure_breaker.tripped()
+
+    # Remote machine trips (if reachable).
+    for device_id, info in machine_profile.remote_devices().items():
+        host = info.get("tailscale_hostname")
+        if not host:
+            continue
+        remote_trips = _run_failure_breaker_remote(host)
+        all_trips.extend(remote_trips)
+
+    if not all_trips:
         return _result(cid, label, "green", "not tripped")
-    detail = "; ".join(f"{t['signature']} across tickets {t['tickets']}" for t in trips)
-    return _result(cid, label, "red", f"dispatch paused -- {detail}", value=len(trips))
+
+    # Merge trips by (project, signature), keeping earliest first_seen for display.
+    trips_by_key = {}
+    for t in all_trips:
+        key = (t.get("project", "G-Eskayo/marvin"), t["signature"])
+        if key not in trips_by_key or t["first_seen"] < trips_by_key[key]["first_seen"]:
+            trips_by_key[key] = t
+
+    trips = list(trips_by_key.values())
+    detail_parts = []
+    for t in trips:
+        first_seen = t["first_seen"]
+        tickets = t["tickets"]
+        sig = t["signature"]
+        detail_parts.append(f"{sig} across tickets {tickets} (since {first_seen})")
+    detail = "dispatch paused by the circuit breaker — " + "; ".join(detail_parts) + ". Fix the cause, then `failure_breaker.py clear`"
+    return _result(cid, label, "red", detail, value=len(trips))
 
 
 CATALOG_YELLOW_AFTER_HOURS = 3
@@ -653,6 +785,78 @@ if [ -d "$WT" ]; then echo "worktrees_kb=$(/usr/bin/du -sk "$WT" 2>/dev/null | /
 '''
 
 
+# Declared deployment steps (ADR 0033 acceptance #3): real incidents where plists were added but the
+# install script never ran. Check that each declared plist is installed and has produced at least one run.
+DECLARED_DEPLOY_STEPS = {
+    "snapshot-deploy": {"ticket": 188, "doc": "docs/adr/0050-snapshot-deploy.md",
+                         "plists": ["com.marvin.snapshot-deploy-nightly.plist", "com.marvin.snapshot-deploy-reactive.plist"],
+                         "job_events_name": "snapshot-deploy"},
+    "dashboard-rebuild": {"ticket": None, "doc": "lib/dashboard_rebuild.py",
+                           "plists": [], "job_events_name": "dashboard-rebuild"},
+}
+
+
+def check_deploy_steps() -> list[dict]:
+    """Red if any declared plist is missing from ~/Library/LaunchAgents.
+    Red if installed but ~/.claude/logs/jobs/{job_events_name}.json has never been written.
+    Cross-machine: local + each reachable remote device."""
+    results = []
+    me = machine_profile.registry_id()
+
+    # Collect plist + job-events state from this machine + each remote device.
+    devices = [(me, None)] + [
+        (dev, info.get("tailscale_hostname"))
+        for dev, info in machine_profile.remote_devices().items()
+    ]
+
+    for dev, host in devices:
+        for name, spec in DECLARED_DEPLOY_STEPS.items():
+            plists = spec.get("plists", [])
+            job_events_name = spec.get("job_events_name", name)
+
+            cid = f"deploy:missing:{dev}:{name}"
+            label = f"Deployment: {dev} {name}"
+
+            # Check if plists are installed (locally only).
+            if dev == me and plists:
+                missing = [p for p in plists if not (LAUNCHAGENTS_DIR / p).exists()]
+                if missing:
+                    results.append(_result(cid, label, "red",
+                                          f"plist(s) not installed: {', '.join(missing)} — run brain-map/scripts/install-snapshot-jobs.sh"))
+                    continue
+            elif host and plists:
+                # Remote check: stat each plist on the remote machine via SSH script.
+                script = "; ".join([f"test -f \"$HOME/Library/LaunchAgents/{p}\" && echo 'ok' || echo 'missing'" for p in plists])
+                cmd = ["ssh", *SSH_OPTS, host, "bash -s"]
+                proc = subprocess.run(cmd, input=script, capture_output=True, text=True, timeout=10)
+                missing = [p for p, line in zip(plists, proc.stdout.splitlines()) if "missing" in line]
+                if missing:
+                    results.append(_result(cid, label, "red",
+                                          f"plist(s) not installed on {dev}: {', '.join(missing)} — run brain-map/scripts/install-snapshot-jobs.sh"))
+                    continue
+
+            # Check if the job has ever run (job_events file exists).
+            job_events_file = HOME / ".claude" / "logs" / "jobs" / f"{job_events_name}.json"
+            if dev == me:
+                if not job_events_file.exists():
+                    results.append(_result(cid, label, "red",
+                                          f"installed but has never actually run — job_events file {job_events_file} does not exist"))
+                    continue
+                results.append(_result(cid, label, "green", f"installed and has run"))
+            else:
+                # Remote check: test if job_events file exists.
+                script = f"test -f \"$HOME/.claude/logs/jobs/{job_events_name}.json\" && echo 'exists' || echo 'missing'"
+                cmd = ["ssh", *SSH_OPTS, host, "bash -s"]
+                proc = subprocess.run(cmd, input=script, capture_output=True, text=True, timeout=10)
+                if "missing" in proc.stdout:
+                    results.append(_result(cid, label, "red",
+                                          f"installed but has never actually run on {dev}"))
+                else:
+                    results.append(_result(cid, label, "green", f"installed and has run on {dev}"))
+
+    return results
+
+
 # Which machine is meant to run each com.marvin.* launchd job. "both" = both machines, "mini" = the primary automation
 # host only (ADR 0032, 0033), "laptop" = only where Gil sits. Edit here when a job is deliberately moved; a job that
 # is not listed is reported as unplaced so a new job cannot silently run on only one machine.
@@ -965,6 +1169,8 @@ def run_all() -> dict:
     results.append(check_dispatch_lock())
     results += check_ticket_failure_streaks()
     results.append(check_pipeline_breaker())
+    results += check_sync_stuck()
+    results += check_deploy_steps()
     results.append(check_parallel_dispatch())
     results += check_missing_profiles()
     results.append(check_trigger_coverage())
