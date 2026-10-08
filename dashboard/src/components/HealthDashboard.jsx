@@ -117,6 +117,7 @@ export default function HealthDashboard({ nav }) {
   }, [nav?.at])
   const [agents, setAgents] = useState(null)
   const [readiness, setReadiness] = useState(null)
+  const [profiles, setProfiles] = useState(null)
   const [readinessLoading, setReadinessLoading] = useState(false)
 
   // Agents refresh by trigger (the run-log folder is watched); the poll is only a backstop.
@@ -131,14 +132,19 @@ export default function HealthDashboard({ nav }) {
     }
   }, [])
 
-  // Load readiness plans when view switches to readiness
+  // Load readiness plans and profiles when view switches to readiness
   useEffect(() => {
     if (view !== 'readiness') return
     setReadinessLoading(true)
-    window.api.health
-      .readiness()
-      .then(setReadiness)
-      .catch(() => setReadiness([]))
+    Promise.all([window.api.health.readiness(), window.api.profiles.list()])
+      .then(([plans, profsList]) => {
+        setReadiness(plans)
+        setProfiles(profsList)
+      })
+      .catch(() => {
+        setReadiness([])
+        setProfiles([])
+      })
       .finally(() => setReadinessLoading(false))
   }, [view])
 
@@ -166,6 +172,12 @@ export default function HealthDashboard({ nav }) {
       load()
       setRefreshing(false)
     }
+  }
+
+  async function reloadReadinessAndProfiles() {
+    const [plans, profsList] = await Promise.all([window.api.health.readiness(), window.api.profiles.list()])
+    setReadiness(plans)
+    setProfiles(profsList)
   }
 
   if (error) {
@@ -200,7 +212,7 @@ export default function HealthDashboard({ nav }) {
       {view === 'agents' ? (
         <AgentsPanel agents={agents} />
       ) : view === 'readiness' ? (
-        <ProjectReadinessPanel plans={readiness} loading={readinessLoading} />
+        <ProjectReadinessPanel plans={readiness} profiles={profiles} loading={readinessLoading} onChanged={reloadReadinessAndProfiles} />
       ) : (
       <>
       <OverallBadge overall={status.overall} generatedAt={status.generated_at} refreshing={refreshing} onRefresh={handleRefresh} />
