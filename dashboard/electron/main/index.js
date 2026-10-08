@@ -26,7 +26,7 @@ import { guardApprove } from './approve_guard.js'
 import { recordRefusal } from '../../webhook-server/refusal_log.js'
 
 const mergeOps = createMergeOps()
-import { readRegistry, loadBoard, fetchBoardData, fetchCompletedData, withProjectStatus, defaultStagesFor, defaultLiveNumbers, getEvidence, REGISTRY_PATH } from './boards.js'
+import { readRegistry, loadBoard, fetchBoardData, fetchCompletedData, withProjectStatus, defaultStagesFor, defaultLiveNumbers, getEvidence, clearCrossProjectCache, REGISTRY_PATH } from './boards.js'
 import { createRelationsService } from './relations_service.js'
 import { summarizeBoard, buildCompleted } from './board.js'
 import { createTriggerHub, createReconciler, refetchesGithub } from './triggers.js'
@@ -301,13 +301,13 @@ function registerActivityHandlers() {
   ipcMain.handle('boards:list', () => withProjectStatus(readRegistry(), readCatalog({ deviceId: deviceId() })))
   ipcMain.handle('boards:load', async (_event, repo, source = 'poll') => {
     assertRegistered(repo)
-    const board = await loadBoard(repo, { gh: ghJson, data: await getBoardData(repo, ghJson), evidence: await getEvidence(repo) })
+    const board = await loadBoard(repo, { gh: ghJson, registryRepos: readRegistry(), data: await getBoardData(repo, ghJson), evidence: await getEvidence(repo) })
     reconciler.observe('activity', repo, boardDigest(board), source)
     return board
   })
   ipcMain.handle('boards:summary', async (_event, repo) => {
     assertRegistered(repo)
-    return summarizeBoard(await loadBoard(repo, { gh: ghJson, data: await getBoardData(repo, ghJson), evidence: await getEvidence(repo) }))
+    return summarizeBoard(await loadBoard(repo, { gh: ghJson, registryRepos: readRegistry(), data: await getBoardData(repo, ghJson), evidence: await getEvidence(repo) }))
   })
   // Completed work (all closed tickets + the PRs that closed them), cached 5 min: it only grows slowly.
   const completedCache = new Map()
@@ -364,13 +364,13 @@ function registerDocsHandlers() {
     getProjects: () => (readCatalog({ deviceId: deviceId() })?.projects || []).filter((p) => p.repo).map((p) => ({ id: p.id, repo: p.repo })),
     getStages: defaultStagesFor,
     getLive: defaultLiveNumbers,
-    recheck: () => { boardDataCache.clear(); openPrsCache.invalidate() }
+    recheck: () => { boardDataCache.clear(); openPrsCache.invalidate(); clearCrossProjectCache() }
   })
   triggerHub.onTrigger((t) => {
     if (t.topic === 'activity' || t.topic === 'docs') {
       // Local changes (stage files, saved docs) re-derive columns from the cached GitHub data; only a GitHub-side
       // change refetches it. Clearing it on every local write cost ~10,000 requests an hour (2026-10-06).
-      if (t.topic === 'activity' && refetchesGithub(t)) { boardDataCache.clear(); openPrsCache.invalidate() }
+      if (t.topic === 'activity' && refetchesGithub(t)) { boardDataCache.clear(); openPrsCache.invalidate(); clearCrossProjectCache() }
       relations.invalidate()
     }
   })
