@@ -6,6 +6,7 @@ import DocsExplorer from '@components/DocsExplorer.jsx'
 import ActivityBoard from '@components/ActivityBoard.jsx'
 import PortfolioHub from '@components/PortfolioHub.jsx'
 import DispatchStatusBadge from '@components/DispatchStatusBadge.jsx'
+import MarvinButton from '@components/MarvinButton.jsx'
 import ActivityHover from '@components/ActivityHover.jsx'
 
 const TABS = [
@@ -127,7 +128,8 @@ export default function App() {
             )
           })}
         </nav>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-3">
+          <MarvinButton />
           <ActivityHover>
             <DispatchStatusBadge onClick={() => navigate('health', { view: 'agents' })} />
           </ActivityHover>

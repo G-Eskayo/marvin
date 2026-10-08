@@ -52,6 +52,10 @@ contextBridge.exposeInMainWorld('api', {
   working: {
     now: () => ipcRenderer.invoke('working:now')
   },
+  marvin: {
+    // Opens a MARVIN session in WezTerm on this Mac: { ticket } for its worktree, or no ticket for home.
+    openSession: (request) => ipcRenderer.invoke('marvin:openSession', request)
+  },
   health: {
     status: () => ipcRenderer.invoke('health:status'),
     agents: () => ipcRenderer.invoke('health:agents'),
