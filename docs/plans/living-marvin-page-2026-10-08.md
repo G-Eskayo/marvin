@@ -61,6 +61,27 @@ that uses a paid model, a few times a month.
 4. **What it can do**: use-case cards (layer 2), with "coming next".
 5. The story sections, shorter, each linking to its cards (layer 3).
 
+## Layer 4: every claim is checked, so the page stays TRUE (Gil, 2026-10-08)
+
+Current is not the same as true. Layers 1-3 keep the page up to date; this layer proves what it says.
+
+- **Claims ledger.** Each factual sentence on the page ("it runs on two Macs", "it proves every change with tests before
+  I see it", "it's open source", "it keeps working while I'm away") is registered with a check that reads the system:
+  the machine registry, the pipeline's verify step and merge gate, the repo's visibility, the scheduled jobs and their
+  last runs. Numbers already come from facts.json.
+- **Nightly truth check.** Runs every check. A claim that no longer holds marks its section **untrue** on the dashboard
+  (Portfolio tab), triggers a redraft of that section (layer 3), and is never left silently on the page.
+- **New copy can't add an unchecked claim.** A drafted section is checked for sentences that state a fact without a
+  ledger entry; those are listed for Gil to either back with a check or cut.
+
+| Section | Updates itself today | Checked as true today |
+|---|---|---|
+| Map | yes (nightly + on change) | yes (built from the system) |
+| Numbers strip | yes (facts.json) | yes (counted from the system) |
+| Hero + card images | regenerated on demand | yes (a picture of the real map) |
+| Lead, story sections | no (#269) | no (layer 4) |
+| What it can do (use cases) | not built yet (#268) | layer 4 |
+
 ## Decisions (Gil, 2026-10-08)
 
 1. **Facts and use-case cards publish themselves like the map** (ADR 0057 extended). Story text still waits for Gil.
