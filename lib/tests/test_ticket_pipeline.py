@@ -864,5 +864,5 @@ def test_scan_summary_reports_breaker_even_when_dispatchable_project_has_no_read
 
     tp._scan(run, dry_run=False)
 
-    # Check that the summary mentions the breaker, not just "no ready tickets".
+    # Check that the summary mentions the breaker, not merely "no ready tickets".
     assert any("circuit breaker" in s.lower() for s in summaries)

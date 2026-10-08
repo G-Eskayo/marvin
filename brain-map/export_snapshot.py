@@ -227,7 +227,7 @@ def scan_tree_for_leaks(tree: dict, allowlist: set[str]) -> list[str]:
             walk(child)
 
     walk(tree)
-    # Textual leaks anywhere in the tree, not just name/desc/label: on 2026-10-07 26 home paths sat in
+    # Textual leaks anywhere in the tree, not only name/desc/label: on 2026-10-07 26 home paths sat in
     # scheduled-job nodes' "path" field and passed. Scanning the serialized tree covers every field.
     issues.extend(scan_for_leaks(json.dumps(tree)))
     return issues
