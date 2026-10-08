@@ -10,7 +10,9 @@ GATE_DIR="$HOME/.agents/bin"
 chmod +x "$GATE_DIR/gh"
 SITE=$("$HOME/.agents/venv/bin/python" -c 'import site; print(site.getsitepackages()[0])')
 PTH="$SITE/marvin_gh_gate.pth"
-echo "import os; d = os.path.expanduser('~/.agents/bin'); p = os.environ.get('PATH', ''); os.environ['PATH'] = p if p.split(':')[:1] == [d] else ':'.join([d] + [x for x in p.split(':') if x and x != d])" > "$PTH"
+# one line, no comprehension or lambda: .pth lines run with separate globals/locals, so Python 3.11 can't see a name
+# defined earlier on the line from inside one (NameError on every startup, found on the mini 2026-10-08)
+echo "import os; os.environ['PATH'] = os.path.expanduser('~/.agents/bin') + ':' + ':'.join(x for x in os.environ.get('PATH', '').split(':') if x and x != os.path.expanduser('~/.agents/bin'))" > "$PTH"
 chflags nohidden "$PTH" 2>/dev/null || true   # a hidden .pth is silently skipped (uv_hidden_pth_gotcha)
 echo "venv hook: $PTH"
 LINE='export PATH="$HOME/.agents/bin:$PATH"  # MARVIN GitHub gate (bin/install-gh-gate.sh)'
