@@ -134,7 +134,7 @@ Proposed:
 1. **Pipeline worktrees are released on resolution.** When a ticket's PR merges or closes, its worktree and branch are removed, after `_preserve_prior_attempt` has rescued anything unique (that primitive already exists).
 2. **The sweep becomes the multi-repo safety net and actually runs.** Driven by the project catalog (each project's repo + base clone), it removes worktrees whose PR is merged/closed or that are empty and older than N days, and leaves dirty or no-PR worktrees alone but reports them. Daily launchd job on both machines, logged.
 3. **Shared build caches.** SwiftPM scratch path in `~/.agents-pipeline-cache/<project>/swiftpm` (`swift test --scratch-path`, or delete `.build` after verify). `node_modules` either symlinked from the base clone when the lockfile matches, or removed after verify.
-4. **A storage health check.** Health tab: free space per machine (warn below 20%, alert below 10%), worktree count and size, last successful sweep and tidy run (a non-zero exit or 7 days of `filed=0` is a failure, not a pass).
+4. **A storage health check.** Health tab: free space per machine (warn below 20%, alert below 10%), worktree count and size, last successful sweep and tidy run (a non-zero exit or 7 days of `filed=0` is a failure, not a pass). **Implemented:** disk ledger (`lib/disk_ledger.py`, appends daily per machine), auto-trim when free% < 20% (`lib/disk_trim.py`), and headroom forecast in days using linear regression of 14-day trend (`lib/health_checks.py` disk:headroom check). See ADR 0056.
 5. **Placement by role** (§5). No striping, no blanket mirroring.
 6. **Portfolio repo moved** (§6), behind a single path constant.
 
@@ -162,7 +162,7 @@ Each "reclaim" task is a proposal. It runs only after Gil approves that specific
 - [x] C3. (done 2026-10-06: chose removal after the run over a shared SwiftPM scratch path, which parallel dispatch would contend on. `run_ticket` calls `cleanup_sweep.drop_build_output` when a run ends, pass or fail; each profile lists `build_output`, marvin defaults to `dashboard/node_modules`. Only git-ignored dirs inside the worktree are removed; an untracked symlink to a shared cache is unlinked, never followed. Existing worktrees are untouched) Clarity profile: SwiftPM scratch path in the shared cache, or `.build` removed after verify. Same decision for marvin's `dashboard/node_modules`.
 - [x] C4. (done 2026-10-06: TCC checks the path `/usr/bin/python3`, not `com.apple.python3`; Gil added that path, laptop run exit 0, filed=38, undo script `~/.claude/organize/undo-20261006-214858.sh`. Visibility: health-check now reads every com.marvin.*/com.giles.* job's launchd last exit code on every machine over ssh (`jobs:exit@<device>`, red when an idle job last exited non-zero)) Laptop tidy-agent: grant FDA to the Python it actually runs, or pin the plist to an interpreter that already has it. Then make a failed run visible.
 - [x] C5. (done: tidy_agent.materialize downloads evicted files before moving) Mini tidy-agent: handle dataless files (skip with a single summary line, or `brctl download` first), and treat a long `filed=0` streak as a signal.
-- [x] C6. (done: disk:space per machine in the Health tab) Health tab storage check (§7.4).
+- [x] C6. (done: disk:space per machine in the Health tab; extended with disk:headroom forecast and auto-trim via ADR 0056) Health tab storage check (§7.4).
 
 **D. Portfolio repo move (§6)**
 - [ ] D1. Gil reviews and commits the 60 uncommitted files. Push the 24 commits to a WIP branch.
