@@ -341,3 +341,20 @@ def test_copy_local_assets_copies_them_and_refuses_when_one_is_missing(tmp_path)
     assert (out / "vendor" / "motion.js").read_text() == "m"
     missing = export_snapshot.copy_local_assets('<script src="./vendor/gone.js"></script>', src, out)
     assert missing == ["vendor/gone.js"]
+
+
+def test_anonymize_machines_renames_only_the_registered_devices():
+    """2026-10-08: the trunk, exo and task-dispatch share cat 'cross-machine' and were renamed from their descriptions
+    ('Registered Machines + Distributed-Systems Primitives'). Only device nodes (desc '<kind> — added <date> ...') change."""
+    from export_snapshot import anonymize_machines
+    tree = {"id": "Cross-Machine Network", "cat": "cross-machine",
+            "desc": "Registered machines + distributed-systems primitives — see ADR 0020", "children": [
+                {"id": "mac-mini-1", "cat": "cross-machine", "desc": "desktop — added 2026-07-06 — gils-mac-mini"},
+                {"id": "macbook-pro-1", "cat": "cross-machine", "desc": "laptop — added 2026-07-06 — host-x"},
+                {"id": "task-dispatch", "cat": "cross-machine", "desc": "General fan-out/merge dispatch primitive (lib/task_dispatch.py)"},
+                {"id": "exo", "cat": "cross-machine", "desc": "Distributed LLM inference across registered devices"}]}
+    anonymize_machines(tree)
+    names = {c["id"]: c.get("name") for c in tree["children"]}
+    assert names == {"mac-mini-1": "Desktop", "macbook-pro-1": "Laptop", "task-dispatch": None, "exo": None}
+    assert tree.get("name") is None
+    assert "gils-mac-mini" not in tree["children"][0]["desc"]

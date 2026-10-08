@@ -3,9 +3,9 @@
 render_map_images.py — the MARVIN page hero and its project card, cut from ONE picture of the website map, so they
 always match (Gil, 2026-10-08) and show only what the public snapshot shows (anonymised machines, locked projects).
 
-One frame of snapshot/index.html?embed=1 at 2200x1375 (the card's 8:5), on the page's dark background:
-  card  the whole frame, scaled to 800x500        -> deploy/uploads/generated/marvin-map-600w.jpg
-  hero  a 2200x600 band through the frame's middle -> deploy/longform/figures/marvin/marvin-map-hero.jpg
+One frame of snapshot/index.html?embed=1 (2x pixels), on the page's dark background, cropped to where the nodes are:
+  card  the nodes' box widened to 8:5, scaled to 800x500        -> deploy/uploads/generated/marvin-map-600w.jpg
+  hero  a 2200:600 band of that same box, centred on MARVIN     -> deploy/longform/figures/marvin/marvin-map-hero.jpg
 
 Writes into a portfolio checkout (default: the dev one); production gets them when Gil promotes the site, they are
 outside the map folder ADR 0056 lets publish itself. Needs Playwright (the mac-mini has it).
@@ -27,35 +27,61 @@ HERO_PATH = "deploy/longform/figures/marvin/marvin-map-hero.jpg"
 PAGE_BG = "radial-gradient(ellipse 90% 70% at 50% 45%, #131a24 0%, #0d1117 62%, #05070a 100%)"
 
 
-def hero_box(frame: tuple[int, int] = FRAME, hero: tuple[int, int] = HERO) -> tuple[int, int, int, int]:
-    """(left, top, right, bottom) of the hero band: full width, centred vertically on the map's middle."""
-    w, h = frame
-    top = (h - hero[1]) // 2
-    return (0, top, hero[0], top + hero[1])
+SCALE = 2  # device pixels per CSS pixel: the hero is 2200 wide, so the box needs the pixels
 
 
-async def _frame(snapshot: Path, out: Path) -> None:
+def card_box(nodes: list[dict], frame=FRAME, pad: float = 0.06, ratio: float = CARD[0] / CARD[1]):
+    """The nodes' bounding box (CSS px) plus padding, widened to `ratio`, kept inside the frame."""
+    xs = [n["sx"] for n in nodes]; ys = [n["sy"] for n in nodes]
+    l, r, t, b = min(xs), max(xs), min(ys), max(ys)
+    w, h = (r - l) * (1 + 2 * pad), (b - t) * (1 + 2 * pad)
+    if w / h < ratio:
+        w = h * ratio
+    else:
+        h = w / ratio
+    w, h = min(w, frame[0]), min(h, frame[1])
+    cx, cy = (l + r) / 2, (t + b) / 2
+    left = min(max(cx - w / 2, 0), frame[0] - w)
+    top = min(max(cy - h / 2, 0), frame[1] - h)
+    return (left, top, left + w, top + h)
+
+
+def hero_box(card: tuple, centre_y: float, ratio: float = HERO[0] / HERO[1]):
+    """A full-width band of the card box at the hero's ratio, centred on `centre_y` (MARVIN), kept inside the box."""
+    l, t, r, b = card
+    h = (r - l) / ratio
+    top = min(max(centre_y - h / 2, t), b - h)
+    return (l, top, r, top + h)
+
+
+async def _frame(snapshot: Path, out: Path) -> list[dict]:
     from playwright.async_api import async_playwright
     async with async_playwright() as p:
         browser = await p.chromium.launch()
-        page = await browser.new_page(viewport={"width": FRAME[0], "height": FRAME[1]})
+        page = await browser.new_page(viewport={"width": FRAME[0], "height": FRAME[1]}, device_scale_factor=SCALE)
         await page.goto((snapshot / "index.html").resolve().as_uri() + "?embed=1", wait_until="load")
         await page.add_style_tag(content=f"html.embed-mode, html.embed-mode body {{ background: {PAGE_BG}; }}")
         await page.wait_for_timeout(4000)  # intro settles, steady fit reached
         await page.screenshot(path=str(out))
+        nodes = await page.evaluate("window.__map.nodes()")
         await browser.close()
+        return nodes
 
 
 def render(snapshot: Path, portfolio: Path, tmp: Path) -> list[Path]:
     from PIL import Image
     frame = tmp / "map-frame.png"
-    asyncio.run(_frame(snapshot, frame))
+    nodes = asyncio.run(_frame(snapshot, frame))
     img = Image.open(frame).convert("RGB")
+    cbox = card_box(nodes)
+    marvin = next((n for n in nodes if n["id"] == "MARVIN"), None)
+    hbox = hero_box(cbox, marvin["sy"] if marvin else (cbox[1] + cbox[3]) / 2)
+    px = lambda box: tuple(round(v * SCALE) for v in box)  # noqa: E731
     card, hero = portfolio / CARD_PATH, portfolio / HERO_PATH
     card.parent.mkdir(parents=True, exist_ok=True)
     hero.parent.mkdir(parents=True, exist_ok=True)
-    img.resize(CARD, Image.LANCZOS).save(card, quality=88)
-    img.crop(hero_box()).save(hero, quality=88)
+    img.crop(px(cbox)).resize(CARD, Image.LANCZOS).save(card, quality=88)
+    img.crop(px(hbox)).resize(HERO, Image.LANCZOS).save(hero, quality=88)
     return [card, hero]
 
 
