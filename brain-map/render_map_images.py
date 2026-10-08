@@ -8,7 +8,7 @@ One frame of snapshot/index.html?embed=1 (2x pixels), on the page's dark backgro
   hero  a 2200:600 band of that same box, centred on MARVIN     -> deploy/longform/figures/marvin/marvin-map-hero.jpg
 
 Writes into a portfolio checkout (default: the dev one); production gets them when Gil promotes the site, they are
-outside the map folder ADR 0056 lets publish itself. Needs Playwright (the mac-mini has it).
+outside the map folder ADR 0057 lets publish itself. Needs Playwright (the mac-mini has it).
     python render_map_images.py [--portfolio DIR] [--snapshot DIR]
 """
 from __future__ import annotations

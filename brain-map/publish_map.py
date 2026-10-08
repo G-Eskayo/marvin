@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-publish_map.py — put the privacy-checked map snapshot live on gileskayo.me (ADR 0056).
+publish_map.py — put the privacy-checked map snapshot live on gileskayo.me (ADR 0057).
 
 The one thing MARVIN may push to the portfolio repo: `deploy/marvin-map/**`. The repo's GitHub action uploads
 `deploy/` to /gileskayo.me/wp-content/, so the live site serves /wp-content/marvin-map/, the same path as the dev site.
@@ -24,7 +24,7 @@ from pathlib import Path
 REMOTE = "https://github.com/G-Eskayo/portfolio-website-updater.git"
 CHECKOUT = Path.home() / "Developer" / "portfolio-map-publisher"
 SNAPSHOT = Path(__file__).parent / "snapshot"
-ALLOWED_PREFIX = "deploy/marvin-map/"   # fixed: the only path ADR 0056 allows
+ALLOWED_PREFIX = "deploy/marvin-map/"   # fixed: the only path ADR 0057 allows
 TARGET = "deploy/marvin-map"           # where the snapshot is copied
 REQUIRED = ("index.html", "tree-data.json")
 PUSH_ATTEMPTS = 3
@@ -98,7 +98,7 @@ def publish(snapshot: Path = SNAPSHOT, checkout: Path = CHECKOUT, remote: str = 
 
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     _git(checkout, "commit", "-q", "-m", f"map: publish the MARVIN map snapshot ({stamp})\n\n"
-         f"Automatic, ADR 0056 in G-Eskayo/marvin: only {ALLOWED_PREFIX} changes. {len(changed)} file(s).")
+         f"Automatic, ADR 0057 in G-Eskayo/marvin: only {ALLOWED_PREFIX} changes. {len(changed)} file(s).")
     for attempt in range(PUSH_ATTEMPTS):
         try:
             _git(checkout, "push", "-q", "origin", "HEAD:main")
