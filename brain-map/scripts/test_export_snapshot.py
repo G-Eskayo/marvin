@@ -370,3 +370,20 @@ def test_anonymize_machines_renames_only_the_registered_devices():
     assert names == {"mac-mini-1": "Desktop", "macbook-pro-1": "Laptop", "task-dispatch": None, "exo": None}
     assert tree.get("name") is None
     assert "gils-mac-mini" not in tree["children"][0]["desc"]
+
+
+def test_write_facts_puts_formatted_facts_next_to_the_map(tmp_path):
+    """facts.json publishes with the map (ADR 0057 extension); its text goes through the same leak scan."""
+    from export_snapshot import write_facts
+    leaks = write_facts(tmp_path, gather=lambda: {"skills": 35, "tests": 2780, "counted_on": "8 October 2026"})
+    import json as _json
+    assert _json.loads((tmp_path / "facts.json").read_text()) == {"skills": "35", "tests": "2,780", "counted_on": "8 October 2026"}
+    assert leaks == []
+
+
+def test_write_facts_failure_writes_nothing_and_does_not_block_the_map(tmp_path):
+    from export_snapshot import write_facts
+    def boom():
+        raise RuntimeError("github down")
+    assert write_facts(tmp_path, gather=boom) == []
+    assert not (tmp_path / "facts.json").exists()
