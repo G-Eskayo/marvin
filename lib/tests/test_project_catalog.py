@@ -217,6 +217,9 @@ def test_run_environment_has_homebrew_on_path_and_the_shared_gh_token(monkeypatc
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
     env = pc.run_env(token_file=token)
     assert "/opt/homebrew/bin" in env["PATH"].split(":")
+    gate = str(pc.HOME / ".agents" / "bin")
+    if (pc.HOME / ".agents" / "bin" / "gh").is_file():  # the GitHub gate, when installed, comes before Homebrew's gh
+        assert env["PATH"].split(":")[0] == gate
     assert env["GH_TOKEN"] == "tok123"
     monkeypatch.setenv("GH_TOKEN", "explicit")
     assert pc.run_env(token_file=token)["GH_TOKEN"] == "explicit"

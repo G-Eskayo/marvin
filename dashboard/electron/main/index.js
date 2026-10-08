@@ -46,7 +46,7 @@ import { listJobs } from './jobs.js'
 import { readTicketAgents } from './ticket_agents.js'
 import { getUsageReport } from './usage_report.js'
 import { createRefreshServer } from './refresh_server.js'
-import { adoptLoginShellPath, adoptSharedGhToken } from './path.js'
+import { adoptLoginShellPath, adoptSharedGhToken, useGhGate } from './path.js'
 import { postTicketInput } from './ticket_input.js'
 import { resolveServiceDefaults, resolveDeviceId } from './device_identity.js'
 
@@ -57,6 +57,7 @@ const execFileAsync = promisify(execFile)
 
 adoptLoginShellPath()
 adoptSharedGhToken()
+useGhGate()
 
 // ADR 0032: the webhook-server this app talks to lives on whichever
 // machine is the primary automation host, not always localhost -- see

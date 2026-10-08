@@ -407,7 +407,8 @@ def run_env(token_file: Path = HOME / ".claude" / ".gh-token") -> dict:
     import os
     env = dict(os.environ)
     parts = env.get("PATH", "").split(":")
-    env["PATH"] = ":".join(_dedupe(["/opt/homebrew/bin", "/usr/local/bin", *parts]))
+    gate = HOME / ".agents" / "bin"  # the GitHub gate (bin/gh) goes first, ahead of Homebrew's gh
+    env["PATH"] = ":".join(_dedupe([*([str(gate)] if (gate / "gh").is_file() else []), "/opt/homebrew/bin", "/usr/local/bin", *parts]))
     if not env.get("GH_TOKEN"):
         try:
             tok = token_file.read_text().strip()

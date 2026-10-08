@@ -47,3 +47,21 @@ describe('adoptSharedGhToken', () => {
     expect(env.GH_TOKEN).toBeUndefined()
   })
 })
+
+import { useGhGate } from '../electron/main/path.js'
+
+describe('useGhGate', () => {
+  it('puts the GitHub gate first on PATH when it is installed, once', () => {
+    const env = { PATH: '/opt/homebrew/bin:/usr/bin' }
+    expect(useGhGate(env, '/h', () => true)).toBe(true)
+    expect(env.PATH).toBe('/h/.agents/bin:/opt/homebrew/bin:/usr/bin')
+    useGhGate(env, '/h', () => true)
+    expect(env.PATH.split(':').filter((p) => p === '/h/.agents/bin').length).toBe(1)
+  })
+
+  it('leaves PATH alone when the gate is not there', () => {
+    const env = { PATH: '/usr/bin' }
+    expect(useGhGate(env, '/h', () => false)).toBe(false)
+    expect(env.PATH).toBe('/usr/bin')
+  })
+})
