@@ -10,6 +10,7 @@ import { createChatApiRouter } from './chat_api.js'
 import { createThreadStore } from './thread_store.js'
 import { createPendingActionsStore } from './pending_actions.js'
 import { createPermissionApiRouter } from './permission_api.js'
+import { createActionsApiRouter } from './actions_api.js'
 
 const execFileP = promisify(execFile)
 
@@ -45,6 +46,7 @@ const threadStore = createThreadStore()
 const chatApiRouter = createChatApiRouter({ threadStore })
 const pendingActionStore = createPendingActionsStore()
 const permissionApiRouter = createPermissionApiRouter({ pendingActionStore })
+const actionsApiRouter = createActionsApiRouter()
 
 const server = createServer(async (req, res) => {
   // Device gate: check allowlist
@@ -62,6 +64,10 @@ const server = createServer(async (req, res) => {
 
   // Route through permission API
   let handled = await permissionApiRouter(req, res)
+  if (handled) return
+
+  // Route through actions API (write operations)
+  handled = await actionsApiRouter(req, res)
   if (handled) return
 
   // Route through dashboard API

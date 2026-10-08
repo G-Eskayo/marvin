@@ -119,6 +119,48 @@ Approve or deny a pending action.
 
 **Response**: `200 { "ok": true, "data": { id, ... } }` on success, `400 { "ok": false, "error": "<message>" }` if action is not pending or invalid input
 
+## Write actions: ticket reply and PR approve/deny
+
+Mobile clients can perform side-effecting actions (ticket replies, PR approvals/denials) after confirming via device Face ID. All three routes require a `confirmed: true` field; requests without it are rejected with `403 { "ok": false, "error": "Action requires confirmation" }`.
+
+### `POST /boards/ticket/reply`
+
+Leave an owner's comment on a ticket and, if the ticket was waiting on it, requeue it automatically.
+
+**Request body**: `{ "repo": "G-Eskayo/repo", "number": <ticket-number>, "body": "<comment-text>", "confirmed": true }`
+
+**Response**:
+- `200 { "ok": true, "data": { "posted": true, "requeued": <boolean>, "effect": "<description>", "warning": "<optional-message>" } }` on success
+- `400 { "ok": false, "error": "<message>" }` on validation error (bad repo/number format, empty body, etc.)
+
+The `effect` field describes what label changes were applied or attempted. The optional `warning` field appears when the comment posted successfully but the label change failed (the answer is still on the ticket, but requires manual requeue).
+
+### `POST /mr/approve`
+
+Approve a pull request for merging via the webhook contract.
+
+**Request body**: `{ "prUrl": "<full-github-pr-url>", "confirmed": true }`
+
+**Response**:
+- `200 { "ok": true, "data": { "merged": <boolean>, "reengaged": <boolean>, "reason": "<optional-reason>" } }` on success
+- `400 { "ok": false, "error": "<structured-error-message>" }` if the webhook returned a structured failure code (e.g., auth, merge conflict)
+- `502 { "ok": false, "error": "<message>" }` if the webhook server is unreachable
+
+The response body from the webhook is passed through unchanged. A `200` can mean either a merge (with `merged: true`) or a re-engagement route (with `reengaged: true`) — callers must check both fields.
+
+### `POST /mr/deny`
+
+Deny a pull request for rework or closure via the webhook contract.
+
+**Request body**: `{ "prUrl": "<full-github-pr-url>", "ticketNumber": <number>, "action": "send_feedback"|"drop", "reasons": ["<reason1>", ...], "comment": "<feedback-text>", "confirmed": true }`
+
+**Response**:
+- `200 { "ok": true, "data": { "done": true } }` on success
+- `400 { "ok": false, "error": "<message>" }` if `action` is invalid (must be "send_feedback" or "drop")
+- `502 { "ok": false, "error": "<message>" }` if the webhook server is unreachable
+
+`send_feedback` posts the comment to the PR, tags the ticket for the rework pipeline, and releases the current merge claim; `drop` closes the PR and ticket.
+
 ## Deliberately out of scope
 
-Face ID authentication, search endpoints — covered in separate tickets (#157, #160). This backend provides read-only access to dashboard data, managed session state with side-effecting permission gating, and the mobile client.
+Face ID authentication itself (handled by the mobile client), search endpoints. This backend provides read-only access to dashboard data, managed session state with side-effecting permission gating, and permission-gated write actions (ticket reply, PR approve/deny).
