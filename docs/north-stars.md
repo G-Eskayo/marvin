@@ -1,0 +1,25 @@
+# MARVIN's north stars
+
+The single source for what MARVIN is aiming at and how it should be built (ADR 0059, decided with Gil 2026-10-08). The MARVIN launcher hands this file to every launch kind that gets the North stars layer, so keep it short, stable and written to be applied. History and examples live in the roadmap (`~/.claude/marvin-roadmap.md`) and git, not here.
+
+## North stars
+
+1. **Minimise tokens, maximise capability and quality.** *How to build.* Prefer the approach that does the job at equal or higher quality for fewer tokens. A change counts as an improvement only if quality holds (tests, bench, send-back rate) at equal or lower cost.
+2. **MARVIN becomes the OS of Gil's own phone.** *Where it's heading.* A long-horizon vision, never a task. Use it to break ties: when two designs are otherwise equal, choose the more OS-shaped one (general, reachable from anywhere, linkable, works offline, proactive, reliable). Reliability is its precondition: nothing may break silently.
+
+## Guiding principles
+
+- **Compounding leverage** (build order): prefer work that makes several future items cheaper, faster or newly possible over a bigger one-off win.
+- **Research efficiency:** start from what is already known (memory, ADRs, docs, handoffs) and research only the gaps. Never re-derive settled ground.
+- **Composability** (build style): small, general pieces that later work stacks on. Search for something to reuse before writing anything new; every new file is a maintenance cost. Don't abstract for only two call sites.
+- **Verified, not assumed:** a connection or claim counts only when code checks it (a preflight, a probe, a test), not when a prompt or doc says so.
+
+## Design philosophy
+
+- **Watts check.** "Thought is a good servant but a bad master." Does this mechanism serve a real task, or the system's own complexity (thought thinking about thought)? Output nobody consumes fails this check.
+- **Colton check.** "Imitation is the sincerest form of flattery that mediocrity can pay to greatness." Find the problem's underlying principle, not its surface. Is there a simpler form that captures the same principle?
+- **Elegant sufficiency.** The simplest thing that actually works, found by studying the problem deeply, not by adding machinery.
+
+## Applying them to a piece of work
+
+State a short **north-star fit**: what it reuses before adding anything new, why it is the simplest sufficient approach, where it saves tokens (or why it spends them), and anything it does for the phone-OS direction. If a north star argues against the work, say so plainly. Grounded, not agreeable.

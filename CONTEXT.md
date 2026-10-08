@@ -1078,3 +1078,33 @@ A GitHub 5xx (`remote: Internal Server Error`, HTTP 500, 503) is classified `GIT
   surface, not a launch kind.
 - **Interactive is the top level**: the most adaptive launch kind, the one that can bring in the others.
 
+- **Delegate, never switch** (decided 2026-10-08): Interactive brings in another launch kind by *starting
+  a run of that kind* ("judge this", "dispatch #276", "run the digest now"). The new run gets exactly its
+  kind's declared layers and its result comes back. A session never changes its own kind mid-conversation:
+  context can't be un-seen, so a Judge must start clean.
+- **Layers per launch kind** (decided 2026-10-08):
+  - **Interactive**: everything (Rules, North stars, full Memory, Lexicon, Skills, Session report, all Hooks).
+  - **Ticket planner**: Rules + the project's notes, North stars, **full Memory** (it decides how a ticket
+    is tackled, and a missed rule sends the whole ticket the wrong way), Lexicon, Skills, all Hooks. No
+    Session report.
+  - **Ticket executor**: Rules + project notes, North stars only *through the plan's north-star fit*, the
+    work-rules slice, Lexicon (tickets are written in its terms), Skills, all Hooks. No Session report.
+  - **Background analyst**: everything except the Session report: full Memory, because its job is
+    reasoning about MARVIN as a whole.
+  - **Utility call**: only the output rules (e.g. never a bare ticket number) and telemetry Hooks.
+  - **Judge**: only its rubric and the evidence, plus telemetry Hooks. Not even the global Rules, so it isn't
+    biased toward MARVIN's own conventions.
+- **Full Memory** means the memory index plus reading notes on demand, not every note's full text: the
+  session sees that every rule exists and opens the ones that matter.
+- **Work-rules slice**: the Memory rules that change how work gets done (robust over quick, never a bare
+  ticket number, test-first, composability, investigate before fixing). Only the Ticket executor uses it.
+  It is **derived, not hand-picked**: notes carry a `work-rule` tag, and a probe fails if a tagged rule
+  doesn't reach the executor.
+- **Scaffolding** (Gil, 2026-10-08): the connecting layer that makes MARVIN's parts work as one system.
+  The common failure found that day was parts that were built but not connected, with connections
+  assumed rather than checked. Two pieces are the center of the design:
+  - **MARVIN launcher**: the *only* way to start a model run. The caller names its launch kind; the
+    launcher assembles that kind's layers, sets the folder and permissions, checks them before spending
+    tokens, and records the run for Metrics and Health. Anything new goes through it.
+  - **Output contract**: every producer (analyst, health check, digest, job) declares where its output
+    goes and who acts on it. Output nobody consumes in time becomes a Health finding, not a silent pile.
