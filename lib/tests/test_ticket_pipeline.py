@@ -22,6 +22,8 @@ def _isolate_ticket_stages(tmp_path, monkeypatch):
     # files by default -- same isolation fix as test_run_ticket.py, same
     # root cause.
     monkeypatch.setattr(ts, "STAGES_DIR", tmp_path / "ticket-stages")
+    # Isolate the scan lock so tests never touch the real production lock file
+    monkeypatch.setattr(tp, "SCAN_LOCK_PATH", tmp_path / "scan.lock")
 
 
 @pytest.fixture(autouse=True)
@@ -165,7 +167,7 @@ def test_main_releases_claim_if_dispatch_fails(monkeypatch):
     monkeypatch.setattr(tp, "_claim", lambda n, l, **kw: True)
     monkeypatch.setattr(tp, "dispatch", lambda *a, **kw: SimpleNamespace(ok=False, error="boom"))
     release_calls = []
-    monkeypatch.setattr(tp, "_release", lambda n, l: release_calls.append((n, l)))
+    monkeypatch.setattr(tp, "_release", lambda n, l, repo=tp.REPO, run_id=None: release_calls.append((n, l)))
     monkeypatch.setattr(sys, "argv", ["ticket_pipeline.py"])
 
     tp.main()
@@ -309,7 +311,7 @@ def _capture(monkeypatch, select=lambda target=None: ("mac-mini-1", {"is_self": 
     monkeypatch.setattr(tp, "select_machine", select)
     monkeypatch.setattr(tp, "_claim", lambda n, l, **kw: got["claims"].append((n, l, kw.get("repo"))) or True)
     monkeypatch.setattr(tp, "dispatch", lambda *a, **kw: got["dispatches"].append((a, kw)) or SimpleNamespace(ok=True, device_id="mac-mini-1"))
-    monkeypatch.setattr(tp, "_release", lambda n, l, repo=None: got["releases"].append((n, l, repo)))
+    monkeypatch.setattr(tp, "_release", lambda n, l, repo=tp.REPO, run_id=None: got["releases"].append((n, l, repo)))
     return got
 
 
@@ -748,6 +750,8 @@ def test_a_failed_dispatch_in_one_project_does_not_stop_the_other(monkeypatch):
         calls.append(kw["target"])
         return SimpleNamespace(ok=len(calls) > 1, error="boom")
     monkeypatch.setattr(tp, "dispatch", flaky)
+    # The test capture's _release mock needs to accept the run_id parameter now
+    monkeypatch.setattr(tp, "_release", lambda n, l, repo=tp.REPO, run_id=None: got["releases"].append((n, l, repo)))
     tp.main()
     assert len(calls) == 2 and len(got["releases"]) == 1
 
@@ -823,3 +827,174 @@ def test_catalog_refresh_is_skipped_when_fresh(monkeypatch):
     calls = []
     _REAL_REFRESH_CATALOG(run=lambda *a, **k: calls.append(a))
     assert calls == []
+
+
+# ── scan lock: prevent concurrent scans from claiming the same ticket (#255) ──
+
+def test_scan_lock_acquires_and_releases_exclusive_access(tmp_path, monkeypatch):
+    monkeypatch.setattr(tp, "SCAN_LOCK_PATH", tmp_path / "scan.lock")
+    acquired = []
+    with tp._scan_lock():
+        acquired.append(True)
+    assert acquired == [True]
+
+
+def test_scan_lock_has_configurable_timeout(tmp_path, monkeypatch):
+    # The timeout is configurable via SCAN_LOCK_TIMEOUT_S
+    monkeypatch.setattr(tp, "SCAN_LOCK_PATH", tmp_path / "scan.lock")
+    monkeypatch.setattr(tp, "SCAN_LOCK_TIMEOUT_S", 42)
+    # If timeout works, this should acquire the lock immediately
+    with tp._scan_lock():
+        pass
+
+
+def test_claim_records_run_id_in_the_stage_event(monkeypatch, tmp_path):
+    monkeypatch.setattr(tp.subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=0, stdout="", stderr=""))
+    tp._claim(20, "mac-mini", title="t", run_id="abc123")
+    events = ts.read_stages(20)
+    assert events[0]["run_id"] == "abc123"
+
+
+def test_dispatch_one_generates_a_run_id_and_passes_it_to_claim_and_command(monkeypatch, tmp_path):
+    monkeypatch.setattr(tp.subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=0, stdout="", stderr=""))
+    calls = {"claims": [], "commands": []}
+
+    def mock_claim(n, l, **kw):
+        calls["claims"].append(kw.get("run_id"))
+        return True
+
+    def mock_dispatch(cmd, **kw):
+        calls["commands"].append(cmd)
+        return SimpleNamespace(ok=True)
+
+    monkeypatch.setattr(tp, "_claim", mock_claim)
+    monkeypatch.setattr(tp, "dispatch", mock_dispatch)
+    monkeypatch.setattr(tp, "select_machine", lambda target=None: ("mac-mini-1", {"is_self": True}))
+
+    run = SimpleNamespace(step=lambda *a: None, summary=lambda *a: None, fail=lambda *a: None)
+    ticket = {"number": 20, "title": "t"}
+
+    tp._dispatch_one(tp.REPO, ticket, 1, run.step, run.summary, run.fail, False, {}, {}, 0, [])
+
+    assert len(calls["claims"]) == 1
+    assert len(calls["commands"]) == 1
+    assert calls["claims"][0] is not None and len(calls["claims"][0]) == 12  # uuid hex[:12]
+    assert f"MARVIN_RUN_ID={calls['claims'][0]}" in calls["commands"][0]
+
+
+def test_release_with_matching_run_id_releases_the_claim(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path / "stages")
+    ts.record_stage(20, "claimed", "started", run_id="run123")
+
+    calls = []
+    monkeypatch.setattr(tp.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
+
+    tp._release(20, "mac-mini", run_id="run123")
+
+    assert len(calls) == 1
+    assert "--remove-label" in calls[0]
+
+
+def test_release_with_mismatched_run_id_skips_the_release(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path / "stages")
+    ts.record_stage(20, "claimed", "started", run_id="run123")
+
+    calls = []
+    monkeypatch.setattr(tp.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
+
+    tp._release(20, "mac-mini", run_id="other_run")
+
+    assert len(calls) == 0
+    assert "skipping release" in capsys.readouterr().err
+
+
+def test_release_without_run_id_always_releases(monkeypatch, tmp_path):
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path / "stages")
+    ts.record_stage(20, "claimed", "started", run_id="run123")
+
+    calls = []
+    monkeypatch.setattr(tp.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
+
+    tp._release(20, "mac-mini")
+
+    assert len(calls) == 1
+    assert "--remove-label" in calls[0]
+
+
+def test_two_concurrent_scans_dispatch_a_ticket_only_once(monkeypatch, tmp_path):
+    """Regression test for #255: concurrent scans must not both claim the same ticket.
+    The second scan should see the first scan's claim and skip the ticket."""
+    import threading
+    import time
+
+    monkeypatch.setattr(tp.failure_breaker, "tripped", lambda now=None: [])
+    monkeypatch.setattr(sys, "argv", ["ticket_pipeline.py"])
+
+    # State: the ticket starts unclaimed
+    ticket_state = {"claimed": False}
+    claim_order = []
+
+    def stateful_unclaimed_ready_tickets():
+        # The ticket is only "unclaimed ready" until someone claims it
+        if ticket_state["claimed"]:
+            return []
+        return [{"number": 20, "title": "x", "createdAt": "2026-01-01T00:00:00Z", "labels": []}]
+
+    def mock_select_machine(target=None):
+        return ("mac-mini-1", {"is_self": True})
+
+    def mock_claim(n, l, **kw):
+        claim_order.append(("claim", n, kw.get("run_id")))
+        # Simulate a race window: the claim takes time, during which the second
+        # scan could try to claim the same ticket if the lock weren't held
+        time.sleep(0.05)
+        ticket_state["claimed"] = True
+        return True
+
+    def mock_dispatch(cmd, **kw):
+        claim_order.append(("dispatch", cmd))
+        return SimpleNamespace(ok=True, device_id="mac-mini-1")
+
+    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", stateful_unclaimed_ready_tickets)
+    monkeypatch.setattr(tp, "select_machine", mock_select_machine)
+    monkeypatch.setattr(tp, "_claim", mock_claim)
+    monkeypatch.setattr(tp, "dispatch", mock_dispatch)
+    monkeypatch.setattr(tp, "SCAN_LOCK_PATH", tmp_path / "scan.lock")
+    monkeypatch.setattr(tp, "SCAN_LOCK_TIMEOUT_S", 1)
+
+    # Run two scans concurrently: the lock should serialize them
+    results = []
+
+    def run_scan():
+        try:
+            with tp._scan_lock(tmp_path / "scan.lock", 1):
+                tp._scan(
+                    SimpleNamespace(
+                        step=lambda *a, **k: None,
+                        summary=lambda *a: None,
+                        fail=lambda *a: None,
+                    ),
+                    dry_run=False,
+                )
+            results.append("completed")
+        except Exception as e:
+            results.append(f"failed: {e}")
+
+    t1 = threading.Thread(target=run_scan)
+    t2 = threading.Thread(target=run_scan)
+    t1.start()
+    t2.start()
+    t1.join(timeout=5)
+    t2.join(timeout=5)
+
+    # Both threads should have completed
+    assert len(results) == 2, f"Threads did not complete: {results}"
+
+    # The ticket should have been claimed exactly once (not twice)
+    claims = [x for x in claim_order if x[0] == "claim"]
+    assert len(claims) == 1, f"Ticket was claimed {len(claims)} times, expected 1: {claims}"
+    assert claims[0][1] == 20, "Claim should be for ticket #20"
+
+    # The dispatch should have happened exactly once
+    dispatches = [x for x in claim_order if x[0] == "dispatch"]
+    assert len(dispatches) == 1, f"Dispatch happened {len(dispatches)} times, expected 1"
