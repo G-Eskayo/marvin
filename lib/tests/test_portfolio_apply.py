@@ -65,20 +65,31 @@ def test_apply_updates_the_repo_manifest_and_the_dev_copy(tmp_path):
     (project / "deploy/other-projects/manifest.json").write_text(MANIFEST)
     _png(images / "mancala.png")
     out = pa.apply(project, html, images, regenerate=False)
-    assert out == {"images": 1, "manifest_changed": 1, "pages": []}
+    assert out["images"] == 1
+    assert out["manifest_changed"] == 1
+    assert out["pages"] == []
+    assert "heroes_fixed" in out and "hero_warnings" in out
     repo = json.loads((project / "deploy/other-projects/manifest.json").read_text())
     dev = json.loads((html / "wp-content/other-projects/manifest.json").read_text())
     assert repo[0]["thumbnail"] == dev[0]["thumbnail"] == "/wp-content/uploads/generated/mancala-600w.jpg"
 
 
-def _runner(fail_on=None):
+def _runner(fail_on=None, mock_pages=None, mock_post_content=None):
     calls = []
+    default_pages = [{"ID": 1, "post_name": n, "post_parent": 0} for n in ("ai-projects", "cybersecurity-projects", "software-engineering", "all-projects")]
 
-    def run(cmd, **_):
+    def run(cmd, input=None, **_):
         calls.append(cmd)
         joined = " ".join(map(str, cmd))
         if "post list" in joined:
-            out = json.dumps([{"ID": 1, "post_name": n} for n in ("ai-projects", "cybersecurity-projects", "software-engineering", "all-projects")])
+            pages_to_use = mock_pages if mock_pages is not None else default_pages
+            out = json.dumps(pages_to_use)
+        elif "post get" in joined and "--field=post_content" in joined:
+            out = mock_post_content if mock_post_content is not None else '<div class="col-xs-12">\n  <img src="/old-hero.jpg" class="img-responsive" alt="">'
+        elif "post update" in joined:
+            if input:
+                run.last_post_update = input
+            out = "Success: Updated post 1.\n"
         elif "user list" in joined:
             out = "admin\n"
         elif "application-password create" in joined:
@@ -89,6 +100,7 @@ def _runner(fail_on=None):
             return SimpleNamespace(returncode=1, stdout="", stderr="boom SECRET-PW")
         return SimpleNamespace(returncode=0, stdout=out, stderr="")
     run.calls = calls
+    run.last_post_update = None
     return run
 
 
@@ -155,3 +167,116 @@ def test_no_portfolio_tool_builds_its_own_wp_cli_command():
             if f.name == "portfolio_apply.py" and re.search(r'(?:"docker"|DOCKER),\s*"exec"', line) and "return" not in line:
                 offenders.append(f"{f.name}:{n}")
     assert offenders == [], f"use portfolio_apply.wp_base() instead: {offenders}"
+
+
+# ── Hero image synchronization (unifies card thumbnail and page hero) ──
+
+
+def test_page_hero_src_extracts_hero_from_plain_fusion_text():
+    raw = '<div class="col-xs-12">\n  <img src="/old-hero.jpg" class="img-responsive" alt="">'
+    assert pa.page_hero_src(raw) == "/old-hero.jpg"
+
+
+def test_page_hero_src_extracts_hero_from_base64_fusion_code():
+    import base64
+    inner = '<div class="col-xs-12">\n  <img src="/encoded-hero.jpg" class="img-responsive" alt="">'
+    raw = f"[fusion_code]{base64.b64encode(inner.encode()).decode()}[/fusion_code]"
+    assert pa.page_hero_src(raw) == "/encoded-hero.jpg"
+
+
+def test_page_hero_src_returns_none_for_unrecognized_markup():
+    assert pa.page_hero_src("legacy page with no recognizable hero") is None
+
+
+def test_set_page_hero_src_updates_plain_fusion_text():
+    raw = '<div class="col-xs-12">\n  <img src="/old.jpg" class="img-responsive" alt="">'
+    new_raw, changed = pa.set_page_hero_src(raw, "/new.jpg")
+    assert changed is True
+    assert pa.page_hero_src(new_raw) == "/new.jpg"
+
+
+def test_set_page_hero_src_updates_base64_fusion_code():
+    import base64
+    inner = '<div class="col-xs-12">\n  <img src="/old.jpg" class="img-responsive" alt="">'
+    raw = f"[fusion_code]{base64.b64encode(inner.encode()).decode()}[/fusion_code]"
+    new_raw, changed = pa.set_page_hero_src(raw, "/new.jpg")
+    assert changed is True
+    assert pa.page_hero_src(new_raw) == "/new.jpg"
+    # Verify base64 is re-encoded
+    assert "[fusion_code]" in new_raw and "[/fusion_code]" in new_raw
+
+
+def test_set_page_hero_src_is_idempotent():
+    raw = '<div class="col-xs-12">\n  <img src="/hero.jpg" class="img-responsive" alt="">'
+    _, changed = pa.set_page_hero_src(raw, "/hero.jpg")
+    assert changed is False
+
+
+def test_set_page_hero_src_returns_unchanged_when_markup_unrecognized():
+    raw = "legacy page with no hero"
+    new_raw, changed = pa.set_page_hero_src(raw, "/new.jpg")
+    assert new_raw == raw and changed is False
+
+
+def test_apply_updates_page_hero_images_to_match_cards(tmp_path):
+    project, html, images = tmp_path / "proj", tmp_path / "html", tmp_path / "images"
+    (project / "deploy/other-projects").mkdir(parents=True)
+    (project / "deploy/other-projects/manifest.json").write_text(MANIFEST)
+    _png(images / "mancala.png")
+    pages = [
+        {"ID": 1, "post_name": "ai-projects", "post_parent": 0},
+        {"ID": 123, "post_name": "mancala", "post_parent": 1},
+    ]
+    page_content = '<div class="col-xs-12">\n  <img src="/old-hero.jpg" class="img-responsive" alt="">'
+    runner = _runner(mock_pages=pages, mock_post_content=page_content)
+    out = pa.apply(project, html, images, runner, regenerate=False)
+    assert out["images"] == 1
+    assert out["manifest_changed"] == 1
+    assert out["heroes_fixed"] == 1
+    assert runner.last_post_update is not None
+    assert pa.page_hero_src(runner.last_post_update) == "/wp-content/uploads/generated/mancala-hero.jpg"
+
+
+def test_apply_is_idempotent_for_heroes(tmp_path):
+    project, html, images = tmp_path / "proj", tmp_path / "html", tmp_path / "images"
+    (project / "deploy/other-projects").mkdir(parents=True)
+    (project / "deploy/other-projects/manifest.json").write_text(MANIFEST)
+    _png(images / "mancala.png")
+    pages = [
+        {"ID": 1, "post_name": "ai-projects", "post_parent": 0},
+        {"ID": 123, "post_name": "mancala", "post_parent": 1},
+    ]
+    hero_url = "/wp-content/uploads/generated/mancala-hero.jpg"
+    page_content = f'<div class="col-xs-12">\n  <img src="{hero_url}" class="img-responsive" alt="">'
+    runner = _runner(mock_pages=pages, mock_post_content=page_content)
+    out = pa.apply(project, html, images, runner, regenerate=False)
+    assert out["heroes_fixed"] == 0  # Already correct, no update needed
+    assert runner.last_post_update is None
+
+
+def test_apply_warns_when_page_not_found(tmp_path):
+    project, html, images = tmp_path / "proj", tmp_path / "html", tmp_path / "images"
+    (project / "deploy/other-projects").mkdir(parents=True)
+    (project / "deploy/other-projects/manifest.json").write_text(MANIFEST)
+    _png(images / "mancala.png")
+    pages = []  # No pages found
+    runner = _runner(mock_pages=pages, mock_post_content="")
+    out = pa.apply(project, html, images, runner, regenerate=False)
+    assert out["images"] == 1
+    assert out["heroes_fixed"] == 0
+    assert len(out["hero_warnings"]) == 1
+    assert "mancala" in out["hero_warnings"][0].lower()
+
+
+def test_apply_handles_missing_docker_gracefully(tmp_path, monkeypatch):
+    project, html, images = tmp_path / "proj", tmp_path / "html", tmp_path / "images"
+    (project / "deploy/other-projects").mkdir(parents=True)
+    (project / "deploy/other-projects/manifest.json").write_text(MANIFEST)
+    _png(images / "mancala.png")
+    monkeypatch.setattr(pa, "DOCKER", "/nonexistent/docker")
+    out = pa.apply(project, html, images, regenerate=False)
+    assert out["images"] == 1
+    assert out["manifest_changed"] == 1
+    assert out["heroes_fixed"] == 0
+    assert len(out["hero_warnings"]) > 0
+    assert "hero sync failed" in out["hero_warnings"][0].lower()
