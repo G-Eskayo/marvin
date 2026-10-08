@@ -9,6 +9,7 @@ const issue = (over = {}) => ({
   body: '',
   url: 'https://github.com/o/r/issues/1',
   createdAt: '2026-10-01T00:00:00Z',
+  repo: 'o/r',
   ...over
 })
 const labels = (...names) => names.map((name) => ({ name }))
@@ -19,9 +20,18 @@ const pr = (over = {}) => ({
   state: 'OPEN',
   isDraft: false,
   body: 'Closes #1',
+  repo: 'o/r',
   ...over
 })
-const ctx = (over = {}) => ({ prs: [], events: [], isLive: false, openNumbers: new Set([1]), ...over })
+const ctx = (over = {}) => ({
+  prs: [],
+  events: [],
+  isLive: false,
+  openNumbers: new Set([1]),
+  heldNumbers: new Set(),
+  notPlannedNumbers: new Set(),
+  ...over
+})
 
 describe('deriveColumn', () => {
   it('puts closed issues in done', () => {
@@ -409,4 +419,5 @@ describe('partial progress on a card (marvin #139)', () => {
     expect(board.columns.flatMap((c) => c.cards)[0].progress).toEqual({ done: 1, total: 2 })
   })
 })
+
 
