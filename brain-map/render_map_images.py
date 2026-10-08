@@ -88,7 +88,9 @@ def render(snapshot: Path, portfolio: Path, tmp: Path) -> list[Path]:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--snapshot", type=Path, default=HERE / "snapshot")
-    ap.add_argument("--portfolio", type=Path, default=Path.home() / "Documents" / "Projects" / "portfolio-website-updater")
+    sys.path.insert(0, str(HERE.parent / "lib"))
+    import project_catalog  # the repo's real location (moved out of iCloud ~/Documents, #192)
+    ap.add_argument("--portfolio", type=Path, default=project_catalog.portfolio_repo_path())
     ap.add_argument("--tmp", type=Path, default=Path("/tmp"))
     args = ap.parse_args()
     if not (args.snapshot / "index.html").is_file():
