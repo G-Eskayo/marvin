@@ -122,4 +122,4 @@ def test_known_project_paths_point_where_the_projects_actually_live():
     home = Path.home()
     assert sweep.KNOWN_PROJECTS["resume-tailor"] == home / ".agents" / "skills" / "resume-tailor"
     assert sweep.KNOWN_PROJECTS["marvin-bench"] == home / ".agents" / "bench"
-    assert sweep.KNOWN_PROJECTS["portfolio"] == home / "Documents" / "Projects" / "portfolio-website-updater"
+    assert sweep.KNOWN_PROJECTS["portfolio"] == home / "Developer" / "portfolio-website-updater"

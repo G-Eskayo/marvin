@@ -31,7 +31,7 @@ EXTRA_LOCAL = [HOME / ".agents"]
 MEMORY_DIR = HOME / ".claude" / "projects" / ("-" + str(HOME).strip("/").replace("/", "-")) / "memory"
 
 PORTFOLIO_REPO_ID = "portfolio-website-updater"
-_PORTFOLIO_DEFAULT = HOME / "Documents" / "Projects" / "portfolio-website-updater"
+_PORTFOLIO_DEFAULT = HOME / "Developer" / "portfolio-website-updater"  # moved out of iCloud ~/Documents, #192
 
 ACTIVE_DAYS, RECENT_DAYS = 30, 180
 STOP = {"ml", "ai", "project", "projects", "using", "and", "the", "of", "for", "in", "a", "an", "powered", "full", "with", "to"}
