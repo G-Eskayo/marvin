@@ -1303,10 +1303,10 @@ def test_refresh_all_onboarding_plans_with_failure(tmp_path, monkeypatch):
     # Second run with partial failure: repo2 fails, repo1 succeeds
     # Mock refresh_onboarding_plan to raise for repo2
     original_refresh = po.refresh_onboarding_plan
-    def mock_refresh(repo, gh, dir):
+    def mock_refresh(repo, gh, dir, **kw):
         if repo == "test/repo2":
             raise Exception("Network error")
-        return original_refresh(repo, gh, dir)
+        return original_refresh(repo, gh, dir, **kw)
 
     monkeypatch.setattr(po, "refresh_onboarding_plan", mock_refresh)
 
@@ -1870,3 +1870,38 @@ def test_a_good_read_clears_the_stale_mark(tmp_path):
         return ""
     assert po.refresh_all_onboarding_plans(["o/repo"], gh=gh, dir=tmp_path)["ok"] == ["o/repo"]
     assert "stale" not in json.loads(po.onboarding_path("o/repo", dir=tmp_path).read_text())
+
+
+def _answering_gh(args):
+    j = " ".join(args)
+    if "repo view" in j:
+        return json.dumps({"visibility": "PUBLIC", "defaultBranchRef": {"name": "main"}})
+    if "trees" in j:
+        return json.dumps({"tree": [{"path": "pyproject.toml", "type": "blob"}]})
+    if "label" in j:
+        return "[]"
+    return ""
+
+
+def test_refresh_applies_the_safe_pieces_then_replans(tmp_path, monkeypatch):
+    """ADR 0058: every hour, after a good read, labels/board/profile-draft are applied without anyone asking."""
+    applied = []
+    monkeypatch.setattr(po, "apply", lambda repo, facts=None, **kw: applied.append(repo) or {
+        "labels": {"action": "created"}, "board": {"action": "unchanged"}, "profile": {"action": "created"}})
+    res = po.refresh_all_onboarding_plans(["o/repo"], gh=_answering_gh, dir=tmp_path, apply_safe=True)
+    assert applied == ["o/repo"] and res["ok"] == ["o/repo"]
+    assert res["applied"] == {"o/repo": ["labels", "profile"]}
+
+
+def test_refresh_never_applies_after_a_failed_read(tmp_path, monkeypatch):
+    applied = []
+    monkeypatch.setattr(po, "apply", lambda repo, facts=None, **kw: applied.append(repo) or {})
+    po.refresh_all_onboarding_plans(["o/repo"], gh=lambda a: "", dir=tmp_path, apply_safe=True)
+    assert applied == []
+
+
+def test_refresh_without_apply_safe_changes_nothing(tmp_path, monkeypatch):
+    applied = []
+    monkeypatch.setattr(po, "apply", lambda repo, facts=None, **kw: applied.append(repo) or {})
+    po.refresh_all_onboarding_plans(["o/repo"], gh=_answering_gh, dir=tmp_path)
+    assert applied == []
