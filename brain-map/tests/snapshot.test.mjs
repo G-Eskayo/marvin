@@ -207,3 +207,34 @@ test('the snapshot carries every kind of connection, with no machine names in th
   const named = synapses.filter((s) => /mac-?mini|macbook|gils-/i.test(s.label))
   assert.deepEqual(named, [], 'a thread label names a machine; the snapshot anonymises machines')
 })
+
+// Gil 2026-10-08: hovering a node should say, in kindergarten words, what it is and does. Private projects stay quiet.
+async function hoverTooltip(page, id) {
+  await frames(page, SETTLE)
+  const disc = await page.evaluate((id) => window.__map.nodes().find((n) => n.id === id), id)
+  if (!disc) return null
+  const box = await page.locator('canvas').first().boundingBox()
+  await page.mouse.move(box.x + disc.sx, box.y + disc.sy)
+  return page.evaluate(() => {
+    const tip = document.getElementById('tooltip')
+    return { shown: tip.style.display === 'block', name: tip.querySelector('.name')?.textContent,
+      plain: tip.querySelector('.plain')?.textContent || null }
+  })
+}
+
+test('hovering a node shows its plain-words line first; a locked project shows none', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const page = await openSnapshot()
+  const tip = await hoverTooltip(page, 'ticket-pipeline')
+  assert.ok(tip, 'ticket-pipeline is drawn')
+  assert.ok(tip.shown, 'tooltip shows')
+  assert.match(tip.plain || '', /ticket/i)
+  const locked = (await page.evaluate(() => JSON.stringify(window.__map.nodes()))) && (await page.evaluate(() => {
+    const ids = new Set(window.__map.nodes().map((n) => n.id))
+    return [...ids].find((id) => ['eagle project', 'finance-os', 'MechanicGPT'].includes(id)) || null
+  }))
+  if (locked) {
+    const lt = await hoverTooltip(page, locked)
+    assert.equal(lt.plain, null, `${locked} is private: no plain line on the website`)
+  }
+})
