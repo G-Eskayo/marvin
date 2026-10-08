@@ -62,6 +62,20 @@ def ensure_board(repo: str, name: str | None = None, due: str | None = None,
     return {"created": created, "board": entry}
 
 
+def retire_board(repo: str, path: Path | None = None) -> bool:
+    """Take a repo's board off the dashboard (its project is archived). Returns whether there was one."""
+    path = path or REGISTRY_PATH
+    data = _load(path)
+    kept = [b for b in data["boards"] if b["repo"] != repo]
+    if len(kept) == len(data["boards"]):
+        return False
+    data["boards"] = kept
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n")
+    tmp.replace(path)
+    return True
+
+
 def list_boards(path: Path | None = None) -> list[dict]:
     return _load(path or REGISTRY_PATH)["boards"]
 
@@ -93,7 +107,13 @@ def discover(owner: str, gh=_gh, path: Path | None = None, extra_repos=()) -> li
         return added
     for r in repos:
         repo = r["nameWithOwner"]
-        if r.get("isArchived") or repo in known:
+        if r.get("isArchived"):
+            # archived on GitHub = finished history: off the dashboard and out of hourly onboarding (2026-10-08)
+            if repo in known:
+                retire_board(repo, path=path)
+                known.discard(repo)
+            continue
+        if repo in known:
             continue
         try:
             names = {l["name"] for l in json.loads(gh(["label", "list", "--repo", repo, "--limit", "200", "--json", "name"]))}
