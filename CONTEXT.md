@@ -1059,8 +1059,8 @@ A GitHub 5xx (`remote: Internal Server Error`, HTTP 500, 503) is classified `GIT
   gets**, in one place, and code delivers them, never the folder a run happens to start in and never a
   prompt claiming something unchecked. "MARVIN is used everywhere" means every launch kind has a
   deliberate set of layers.
-- **The seven launch kinds** (decided 2026-10-08): **Interactive** (Gil working with MARVIN in a terminal or
-  app), **Mobile Chat** (the phone's Thread), **Ticket planner** (decides how to tackle a ticket),
+- **The six launch kinds** (decided 2026-10-08): **Interactive** (Gil working with MARVIN, on any surface),
+  **Ticket planner** (decides how to tackle a ticket),
   **Ticket executor** (changes code in a worktree), **Background analyst** (thinks about MARVIN itself and
   proposes work: digests, reviews, auto-fix, ticket promotion), **Utility call** (one small text job:
   notification text, handoff writing) and **Judge** (checks another run's output, e.g. the safety
@@ -1071,4 +1071,10 @@ A GitHub 5xx (`remote: Internal Server Error`, HTTP 500, 503) is classified `GIT
   claims, refeed) is MARVIN involvement with no model at all, and is preferred when it does the job.
 - **New work declares its kind**: anything new that calls a model must say which launch kind it is (or
   propose a new kind); there is no undeclared way to start a model run.
+- **Surface**: where Gil talks to an Interactive session: the terminal, the **MARVIN button** on the
+  desktop dashboard (opens a pre-configured MARVIN session in WezTerm, #228), or the phone's **MARVIN tab**
+  (the Thread). A surface changes presentation only (phone-friendly replies, links into the app), never
+  which layers of MARVIN context the session gets. So the phone is not a lesser MARVIN. "Mobile Chat" is a
+  surface, not a launch kind.
+- **Interactive is the top level**: the most adaptive launch kind, the one that can bring in the others.
 
