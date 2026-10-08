@@ -83,6 +83,10 @@ def _matches_detect_rule(file_tree: dict, rule: dict) -> bool:
         for path in file_tree:
             if fnmatch.fnmatch(path, glob_pattern):
                 return True
+    elif "file_any" in rule:
+        for filename in rule["file_any"]:
+            if filename in file_tree:
+                return True
     elif "file" in rule:
         if rule["file"] in file_tree:
             return True
@@ -232,7 +236,7 @@ def inspect(repo: str, gh=_gh) -> dict:
                 facts["detected_stack"] = stack.get("name")
                 break
 
-    for tool in ["swift", "node", "npm", "python", "xcodegen"]:
+    for tool in ["swift", "node", "npm", "python", "xcodegen", "pnpm"]:
         try:
             result = subprocess.run(["which", tool], capture_output=True, timeout=5)
             facts["tools_installed"][tool] = result.returncode == 0
@@ -318,12 +322,20 @@ def plan(facts: dict) -> dict:
     else:
         plan_out["stack"] = {"state": "needs-human", "reason": "no recognised stack markers found; R5, never guess"}
 
-    # Test command (redefined per stack)
+    # Load stacks for family-based test-command and CI logic
+    stacks = _load_stack_templates()
+    matched_stack = None
+    for stack in stacks:
+        if stack.get("name") == detected_stack:
+            matched_stack = stack
+            break
+
+    # Test command (redefined per stack, with family-based generalization)
     if detected_stack == "swift-package":
         plan_out["test_command"] = {"state": "ok", "reason": "swift test is a SwiftPM convention"}
     elif detected_stack == "xcodegen-app":
         plan_out["test_command"] = {"state": "ok", "reason": "xcodebuild test is standard for Xcode apps"}
-    elif detected_stack == "node-electron":
+    elif matched_stack and matched_stack.get("family") == "node":
         if facts.get("package_json_scripts", {}).get("test"):
             plan_out["test_command"] = {"state": "ok", "reason": "test script found in package.json"}
         else:
@@ -334,12 +346,6 @@ def plan(facts: dict) -> dict:
         plan_out["test_command"] = {"state": "needs-human", "reason": "unrecognised stack; cannot determine test command"}
 
     # CI (data-driven from stack template)
-    stacks = _load_stack_templates()
-    matched_stack = None
-    for stack in stacks:
-        if stack.get("name") == detected_stack:
-            matched_stack = stack
-            break
 
     python_problems = []
     if detected_stack == "python":
