@@ -650,6 +650,8 @@ if [ -f "$TREE" ]; then echo "brain_data_ts=$(stat -f %m "$TREE")"; else echo "b
 /bin/df -k "$HOME" | /usr/bin/awk 'NR==2 {print "disk_total_kb=" $2; print "disk_free_kb=" $4}'
 WT="$HOME/.agents-pipeline-worktrees"
 if [ -d "$WT" ]; then echo "worktrees_kb=$(/usr/bin/du -sk "$WT" 2>/dev/null | /usr/bin/cut -f1)"; echo "worktrees_n=$(/bin/ls -1 "$WT" | /usr/bin/wc -l | /usr/bin/tr -d ' ')"; fi
+LEDGER="$HOME/.claude/logs/disk-ledger.jsonl"
+if [ -f "$LEDGER" ]; then echo "disk_ledger=$(tail -14 "$LEDGER" | /usr/bin/tr '\n' '|')"; fi
 '''
 
 
@@ -693,11 +695,23 @@ def parse_machine_state(text: str) -> dict:
         v = raw.get(key, "").strip()
         return int(v) if v.isdigit() else None
 
+    # Parse disk-ledger entries (pipe-separated JSON lines)
+    disk_ledger = []
+    ledger_raw = raw.get("disk_ledger", "").strip()
+    if ledger_raw:
+        for entry_str in ledger_raw.split("|"):
+            if entry_str.strip():
+                try:
+                    disk_ledger.append(json.loads(entry_str))
+                except (json.JSONDecodeError, ValueError):
+                    pass
+
     return {"app_built_ts": num("app_built_ts"), "dashboard_commit_ts": num("dashboard_commit_ts"),
             "gh_token": raw.get("gh_token", "").strip(), "docs_access": raw.get("docs_access", "").strip(),
             "desktoplive": raw.get("desktoplive", "").strip(), "brain_data_ts": num("brain_data_ts"),
             "disk_free_kb": num("disk_free_kb"), "disk_total_kb": num("disk_total_kb"),
             "worktrees_kb": num("worktrees_kb"), "worktrees_n": num("worktrees_n"),
+            "disk_ledger": disk_ledger,
             "jobs": [j for j in raw.get("jobs", "").strip().split(",") if j],
             "job_exits": _parse_job_exits(raw.get("job_exits", ""))}
 
@@ -721,6 +735,72 @@ def _parse_job_exits(text: str) -> list[tuple[str, int | None, int]]:
 # evicts iCloud files aggressively, and background jobs then block reading them.
 DISK_YELLOW_BELOW_PCT = 20
 DISK_RED_BELOW_PCT = 10
+
+
+def forecast_days_to_critical(ledger: list[dict], critical_kb: int = 15 * 1048576) -> tuple[str, float, str] | None:
+    """Linear-regress free KB over ledger entries, forecast days until critical.
+
+    Returns (severity, days_forecast, detail) or None if insufficient history.
+    Green ≥30d; yellow <30d with expansion warning; red <7d.
+    """
+    if not ledger or len(ledger) < 2:
+        return None
+
+    import statistics
+
+    # Extract (timestamp_days_since_epoch, free_kb) tuples
+    points = []
+    for entry in sorted(ledger, key=lambda e: e.get("date", "")):
+        try:
+            free_kb = entry.get("free_kb")
+            if free_kb is not None:
+                points.append(free_kb)
+        except (KeyError, TypeError):
+            pass
+
+    if len(points) < 2:
+        return None
+
+    # Linear regression: least-squares fit of free_kb over day index
+    n = len(points)
+    x = list(range(n))  # day index 0..n-1
+    y = points
+
+    x_mean = statistics.mean(x)
+    y_mean = statistics.mean(y)
+
+    numerator = sum((x[i] - x_mean) * (y[i] - y_mean) for i in range(n))
+    denominator = sum((x[i] - x_mean) ** 2 for i in range(n))
+
+    if denominator == 0:
+        return None
+
+    slope = numerator / denominator
+    intercept = y_mean - slope * x_mean
+
+    # If slope >= 0, we're gaining or flat -- no forecast needed
+    if slope >= 0:
+        return ("green", float("inf"), f"{points[-1] / 1048576:.0f} GiB free (stable or growing)")
+
+    # Forecast: how many days from today (index n-1) until free_kb reaches critical?
+    # free_kb = slope * day_index + intercept
+    # critical_kb = slope * day_index_critical + intercept
+    # day_index_critical = (critical_kb - intercept) / slope
+    # days_forward = day_index_critical - (n - 1)
+
+    current_free = points[-1]
+    if current_free <= critical_kb:
+        days_forecast = 0.0  # Already critical
+    else:
+        day_index_critical = (critical_kb - intercept) / slope
+        days_forecast = max(0.0, day_index_critical - (n - 1))
+
+    sev = "red" if days_forecast < 7 else "yellow" if days_forecast < 30 else "green"
+    detail = f"{days_forecast:.0f}d forecast to 15 GiB threshold"
+    if sev != "green":
+        detail += " -- see docs/plans/storage-and-distribution-2026-10-06.md item E2 (external SSD)"
+
+    return (sev, days_forecast, detail)
 
 
 def evaluate_machine_state(state: dict, now: datetime) -> list[tuple[str, str, str]]:
@@ -772,6 +852,12 @@ def evaluate_machine_state(state: dict, now: datetime) -> list[tuple[str, str, s
         if sev != "green":
             detail += " -- check ~/.claude/logs/mr-pipeline-sweep.md and docs/plans/storage-and-distribution-2026-10-06.md"
         out.append(("disk:space", sev, detail))
+    ledger = state.get("disk_ledger")
+    if ledger:
+        forecast = forecast_days_to_critical(ledger, critical_kb=15 * 1048576)
+        if forecast:
+            sev, days, detail = forecast
+            out.append(("disk:headroom", sev, detail))
     if state.get("job_exits"):
         # A running job's status is its previous instance's (a KeepAlive restart shows -15), so only idle jobs count.
         failed = [(label, status) for label, pid, status in state["job_exits"] if pid is None and status != 0]
@@ -801,7 +887,7 @@ def check_machine_state_everywhere(reachability: dict[str, str], runner=_run_mac
     ]
     labels = {"dashboard:build": "Dashboard app build", "auth:gh": "GitHub credential", "docs:access": "Docs tab GitHub access",
               "desktoplive:running": "Desktop brain-map background", "brainmap:data": "Brain-map data freshness", "jobs:placement": "Scheduled jobs vs. placement",
-              "disk:space": "Disk space", "jobs:exit": "Scheduled jobs' last run"}
+              "disk:space": "Disk space", "disk:headroom": "Disk headroom forecast", "jobs:exit": "Scheduled jobs' last run"}
     for dev, host, reach in devices:
         if reach == "asleep":
             for key, label in labels.items():
@@ -1013,6 +1099,25 @@ import job_events  # noqa: E402  (run log shown in the dashboard's Health tab)
 @job_events.reported("health-check", "Health check sweep")
 def _cli() -> None:
     out = write_status()
+
+    # Notify on red disk:headroom (once per device per day)
+    for result in out.get("checks", []):
+        if result.get("id", "").startswith("disk:headroom") and result.get("severity") == "red":
+            try:
+                import disk_forecast_notify as dfn  # noqa: E402
+                device = result["id"].split("@")[1] if "@" in result["id"] else machine_profile.registry_id()
+                # Extract days forecast from detail (rough parse: "N days forecast...")
+                detail = result.get("detail", "")
+                days = 0.0
+                if "forecast" in detail:
+                    import re
+                    match = re.search(r"(\d+\.?\d*)d", detail)
+                    if match:
+                        days = float(match.group(1))
+                dfn.notify_red_headroom(device, days, detail)
+            except Exception:
+                pass
+
     if "--json" in sys.argv:
         print(json.dumps(out, indent=2))
     else:
