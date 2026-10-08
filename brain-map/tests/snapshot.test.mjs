@@ -10,6 +10,7 @@ import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import path from 'node:path'
+import { readFileSync } from 'node:fs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const MAP = path.resolve(HERE, '..')
@@ -193,4 +194,16 @@ test('the figure keeps one size in a real browser frame loop too', async (t) => 
   })
   const spread = Math.max(...sizes) / Math.min(...sizes)
   assert.ok(spread < 1.002, `figure size varied ${((spread - 1) * 100).toFixed(2)}% in the live loop`)
+})
+
+// 2026-10-08 (#189): Gil saw the snapshot "still missing all the connections". The export built only skill threads.
+test('the snapshot carries every kind of connection, with no machine names in the labels', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const { synapses } = JSON.parse(readFileSync(path.join(MAP, 'snapshot', 'tree-data.json'), 'utf8'))
+  const kinds = new Set(synapses.map((s) => s.type))
+  for (const kind of ['calls', 'hook', 'feeds', 'runs-on', 'builds', 'skill-project']) {
+    assert.ok(kinds.has(kind), `no ${kind} threads in the snapshot`)
+  }
+  const named = synapses.filter((s) => /mac-?mini|macbook|gils-/i.test(s.label))
+  assert.deepEqual(named, [], 'a thread label names a machine; the snapshot anonymises machines')
 })
