@@ -60,7 +60,7 @@ making a new board, MARVIN can check archived boards as well to see if we alread
 
 ## Tickets
 
-1. Project boards gather tickets across repos by `project:` label; MARVIN's board folds other projects' tickets.
-2. Dashboard home: one card per project (open, running, needs Gil) as the overarching view.
-3. The project tagger + `config/project_tags.json` + the Health drift check; the filing rule in `issue-tracker.md`.
-4. Archive lifecycle: auto-archive a finished, quiet board; check archived boards (and the catalog) before creating one.
+1. #296 Project boards gather tickets across repos by `project:` label; MARVIN's board folds other projects' tickets.
+2. #297 Dashboard home: one card per project (open, running, needs Gil) as the overarching view.
+3. #298 The project tagger + `config/project_tags.json` + the Health drift check; the filing rule in `issue-tracker.md`.
+4. #299 Archive lifecycle: auto-archive a finished, quiet board; check archived boards (and the catalog) before creating one.
