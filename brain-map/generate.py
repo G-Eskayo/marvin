@@ -36,7 +36,8 @@ from pathlib import Path
 
 # Import data_flow for feeds threads
 sys.path.insert(0, str(Path(__file__).parent / "scripts"))
-import data_flow
+import connections  # noqa: E402
+import data_flow  # noqa: E402
 
 HERE = Path(__file__).parent
 MANIFEST_PATH = Path.home() / ".claude" / "manifest.json"
@@ -54,6 +55,10 @@ SETTINGS_LOCAL_PATH = Path.home() / ".claude" / "settings.local.json"
 NETWORK_PATH = Path.home() / ".claude" / "marvin-network.json"
 DASHBOARD_APP_PATH = Path.home() / ".agents" / "dashboard" / "src" / "App.jsx"
 CATALOG_DIR = Path.home() / ".claude" / "catalog"
+REPO_DIR = HERE.parent  # the checkout this script runs from (a worktree in development)
+LIB_DIR = REPO_DIR / "lib"
+DASHBOARD_MAIN_DIR = REPO_DIR / "dashboard" / "electron" / "main"  # where the tabs' data readers live
+PROJECT_PROFILES_DIR = REPO_DIR / "config" / "projects"
 
 
 def first_sentence(desc: str) -> str:
@@ -472,6 +477,66 @@ def build_synapses(manifest: dict, enrichment: dict) -> list[dict]:
     return out
 
 
+def all_synapses(manifest: dict, enrichment: dict, tree: dict, warn=None) -> list[dict]:
+    """Every gold thread on the map, for generate.py's page and export_snapshot.py's alike (the snapshot used to
+    build only calls/hook threads). Types: calls, undeclared, hook (build_synapses), feeds (data_flow), runs-on,
+    builds, skill-project (connections). Nothing is dropped silently: a missing reader file, a tab key that isn't a
+    node, a type that found nothing and a thread whose end isn't on the map are all warned about.
+    Plan: docs/plans/map-connections-2026-10-08.md."""
+    warn = warn or (lambda msg: print(f"WARNING: {msg}", file=sys.stderr))
+    ids: set = set()
+    collect_ids(tree, ids)
+    synapses = build_synapses(manifest, enrichment)
+
+    tab_readers = enrichment.get("dashboard_tab_readers", {})
+    for tab in tab_readers:
+        if tab not in ids:
+            warn(f"dashboard_tab_readers key {tab!r} is not a node on the map (use the tab node's id, e.g. 'Health tab')")
+    reader_warnings: list[str] = []
+    writers = data_flow.discover_writers(LIB_DIR, enrichment.get("writer_module_owners", {}), tree,
+                                         helpers=enrichment.get("writer_helpers", []), repo_root=REPO_DIR)
+    readers = data_flow.discover_readers(tab_readers, DASHBOARD_MAIN_DIR, reader_warnings)
+    for w in reader_warnings:
+        warn(w)
+    feeds, _gaps = data_flow.match_threads(writers, readers)
+    synapses.extend(feeds)
+
+    try:
+        network = json.loads(NETWORK_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        network = {}
+    placement = connections.read_job_placement(LIB_DIR / "health_checks.py")
+    synapses.extend(connections.runs_on(placement, ids, connections.machine_roles(network)))
+
+    profiles = []
+    for f in sorted(PROJECT_PROFILES_DIR.glob("*.json")):
+        try:
+            profiles.append(json.loads(f.read_text(encoding="utf-8")))
+        except ValueError:
+            warn(f"unreadable project profile {f.name}")
+    synapses.extend(connections.builds(profiles, ids))
+
+    skill_ids = {e["name"] for e in manifest.get("index", [])} & ids
+    project_ids = set()
+
+    def projects_of(node):
+        if node.get("cat") == "projects" and node.get("id") != "Projects":
+            project_ids.add(node["id"])
+        for c in node.get("children", []):
+            projects_of(c)
+    projects_of(tree)
+    synapses.extend(connections.skill_projects(skill_ids, project_ids, enrichment.get("skill_projects", {})))
+
+    for kind in ("feeds", "runs-on", "builds", "skill-project"):
+        if not any(s.get("type") == kind for s in synapses):
+            warn(f"no {kind} threads found: check its source (plan: docs/plans/map-connections-2026-10-08.md)")
+
+    dropped = [s for s in synapses if s["a"] not in ids or s["b"] not in ids]
+    if dropped:
+        warn(f"{len(dropped)} thread(s) reference a node not on the map, dropped: {[(s['a'], s['b']) for s in dropped]}")
+    return [s for s in synapses if s["a"] in ids and s["b"] in ids]
+
+
 # ── precomputed layout (#183, ADR 0049) ─────────────────────────────────
 # The dendrite layout the page used to compute in the browser, done here
 # instead so it's the same every run and the browser runs no layout. Covers
@@ -756,35 +821,7 @@ def main() -> None:
     tree = build_tree(manifest, enrichment)
     attach_layout(tree)
     attach_code_layers(tree)
-    synapses = build_synapses(manifest, enrichment)
-
-    # Add feeds threads from data flow analysis
-    lib_dir = Path.home() / ".agents" / "lib"
-    dashboard_dir = Path.home() / ".agents" / "dashboard" / "src" / "components"
-    owner_overrides = enrichment.get("writer_module_owners", {})
-    tab_readers = enrichment.get("dashboard_tab_readers", {})
-
-    writers = data_flow.discover_writers(lib_dir, owner_overrides, tree)
-    readers = data_flow.discover_readers(tab_readers, dashboard_dir)
-    feeds_threads, gaps = data_flow.match_threads(writers, readers)
-
-    synapses.extend(feeds_threads)
-
-    # Report gaps
-    if gaps:
-        gap_info = [
-            f"{g['kind']}: {g.get('path', '?')} (from {g.get('source_file', '?')})"
-            for g in gaps
-        ]
-        print(f"WARNING: {len(gaps)} data-flow gap(s) — unmatched writer/reader paths: {gap_info}", file=sys.stderr)
-
-    known_ids = set()
-    collect_ids(tree, known_ids)
-    dropped = [s for s in synapses if s["a"] not in known_ids or s["b"] not in known_ids]
-    synapses = [s for s in synapses if s["a"] in known_ids and s["b"] in known_ids]
-    if dropped:
-        print(f"WARNING: {len(dropped)} synapse(s) reference a node not in the tree — dropped: "
-              f"{[(s['a'], s['b']) for s in dropped]}", file=sys.stderr)
+    synapses = all_synapses(manifest, enrichment, tree)
 
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
 
