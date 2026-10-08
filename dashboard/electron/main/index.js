@@ -31,7 +31,7 @@ import { createTriggerHub, createReconciler, refetchesGithub } from './triggers.
 import { listOpenPrsAcrossRepos, prListArgs, createListCache, normalizeSeen, canMergeFromDashboard, repoFromPrUrl, MARVIN_REPO } from './mr_repos.js'
 import { createIndexer, buildDocsIndex, loadIndex } from './docs_search.js'
 import { createDocsService, MASTER_ID } from './docs_service.js'
-import { readMergeableRepos, listProfiles, setDispatch } from './profiles.js'
+import { readMergeableRepos, listProfiles, setDispatch, setMergeFromDashboard } from './profiles.js'
 import { searchFiles, isRevealable } from './files_search.js'
 import { readCatalog, readMasterDoc, CATALOG_DIR, MASTER_DOC_PATH } from './catalog.js'
 import { STAGES_DIR } from '../../webhook-server/ticket_stages.js'
@@ -203,6 +203,23 @@ function registerHealthHandlers() {
       if (response !== 1) return { done: false, cancelled: true }
     }
     setDispatch(repo, value)
+    return { done: true, cancelled: false }
+  })
+  ipcMain.handle('profiles:setMergeFromDashboard', async (_event, repo, value) => {
+    if (value === true) {
+      // Same native-dialog defense as setDispatch: enabling this on allows PRs to be merged from here.
+      const profile = listProfiles().find((p) => p.repo === repo)
+      const { response } = await dialog.showMessageBox(mainWindow, {
+        type: 'warning',
+        buttons: ['Cancel', 'Turn on'],
+        defaultId: 0,
+        cancelId: 0,
+        message: `Review and merge ${profile?.name || repo}'s PRs from the dashboard?`,
+        detail: `This allows PRs to become reviewable and mergeable from the MR Review tab instead of GitHub. You can turn it off here at any time.`
+      })
+      if (response !== 1) return { done: false, cancelled: true }
+    }
+    setMergeFromDashboard(repo, value)
     return { done: true, cancelled: false }
   })
   // A dry run of the whole path (real worktree, real checks, PR body preview; no model call, no GitHub write).

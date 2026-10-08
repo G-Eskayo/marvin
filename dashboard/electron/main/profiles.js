@@ -68,3 +68,14 @@ export function setDispatch(repo, value, dir = PROFILES_DIR) {
   if (!re.test(text)) throw new Error(`${repo}'s profile has no dispatch setting to change`)
   writeFileSync(hit.file, text.replace(re, `$1"${value}"`))
 }
+
+// Flips ONLY the merge_from_dashboard value in the profile's text, so the notes and layout a person wrote are untouched.
+export function setMergeFromDashboard(repo, value, dir = PROFILES_DIR) {
+  if (typeof value !== 'boolean') throw new Error('merge_from_dashboard can only be set to true or false')
+  const hit = readAll(dir).find(({ profile }) => profile.repo === repo)
+  if (!hit) throw new Error(`No profile for ${repo}`)
+  const text = readFileSync(hit.file, 'utf-8')
+  const re = /("merge_from_dashboard"\s*:\s*)(?:true|false)/
+  if (!re.test(text)) throw new Error(`${repo}'s profile has no merge_from_dashboard setting to change`)
+  writeFileSync(hit.file, text.replace(re, `$1${value}`))
+}

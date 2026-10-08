@@ -133,12 +133,12 @@ import ProjectReadinessPanel from '../src/components/ProjectReadinessPanel.jsx'
 
 describe('ProjectReadinessPanel', () => {
   it('renders loading state', () => {
-    const html = renderToStaticMarkup(<ProjectReadinessPanel plans={null} loading={true} />)
+    const html = renderToStaticMarkup(<ProjectReadinessPanel plans={null} profiles={null} loading={true} reload={() => {}} />)
     expect(html).toContain('Loading project readiness')
   })
 
   it('renders empty state when no plans', () => {
-    const html = renderToStaticMarkup(<ProjectReadinessPanel plans={[]} loading={false} />)
+    const html = renderToStaticMarkup(<ProjectReadinessPanel plans={[]} profiles={[]} loading={false} reload={() => {}} />)
     expect(html).toContain('No projects registered yet')
   })
 
@@ -152,14 +152,48 @@ describe('ProjectReadinessPanel', () => {
           profile: { state: 'ok', reason: 'exists' },
           stack: { state: 'needs-human', reason: 'no recognised stack' },
           board: { state: 'missing', reason: 'not registered' }
-        }
+        },
+        offers: { merge_from_dashboard: false, dispatch: false }
       }
     ]
-    const html = renderToStaticMarkup(<ProjectReadinessPanel plans={plans} loading={false} />)
+    const profiles = [{ repo: 'G-Eskayo/marvin', mergeFromDashboard: false, dispatch: 'off' }]
+    const html = renderToStaticMarkup(<ProjectReadinessPanel plans={plans} profiles={profiles} loading={false} reload={() => {}} />)
     expect(html).toContain('marvin')
     expect(html).toContain('profile')
     expect(html).toContain('stack')
     expect(html).toContain('board')
+  })
+
+  it('renders control buttons disabled when offers are false', () => {
+    const plans = [
+      {
+        repo: 'G-Eskayo/test',
+        status: 'planned',
+        generated_at: '2026-10-06T12:00:00Z',
+        pieces: {},
+        offers: { merge_from_dashboard: false, dispatch: false }
+      }
+    ]
+    const profiles = [{ repo: 'G-Eskayo/test', mergeFromDashboard: false, dispatch: 'off' }]
+    const html = renderToStaticMarkup(<ProjectReadinessPanel plans={plans} profiles={profiles} loading={false} reload={() => {}} />)
+    expect(html).toContain('Turn on merge from dashboard')
+    expect(html).toContain('Turn on dispatch')
+  })
+
+  it('renders control buttons enabled when offers are true', () => {
+    const plans = [
+      {
+        repo: 'G-Eskayo/test',
+        status: 'planned',
+        generated_at: '2026-10-06T12:00:00Z',
+        pieces: {},
+        offers: { merge_from_dashboard: true, dispatch: true }
+      }
+    ]
+    const profiles = [{ repo: 'G-Eskayo/test', mergeFromDashboard: false, dispatch: 'off' }]
+    const html = renderToStaticMarkup(<ProjectReadinessPanel plans={plans} profiles={profiles} loading={false} reload={() => {}} />)
+    expect(html).toContain('Turn on merge from dashboard')
+    expect(html).toContain('Turn on dispatch')
   })
 
   it('renders unplanned projects gracefully', () => {
@@ -171,7 +205,7 @@ describe('ProjectReadinessPanel', () => {
         pieces: null
       }
     ]
-    const html = renderToStaticMarkup(<ProjectReadinessPanel plans={plans} loading={false} />)
+    const html = renderToStaticMarkup(<ProjectReadinessPanel plans={plans} profiles={[]} loading={false} reload={() => {}} />)
     expect(html).toContain('repo')
     expect(html).toContain('Not scanned yet')
   })

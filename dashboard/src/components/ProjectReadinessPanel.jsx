@@ -7,6 +7,20 @@ const SEVERITY_COLOR = {
   unplanned: { bg: 'bg-neutral-900', border: 'border-neutral-700', dot: 'bg-neutral-600', text: 'text-neutral-400' }
 }
 
+function ControlButton({ enabled, label, onClick, loading }) {
+  return (
+    <button
+      disabled={!enabled || loading}
+      onClick={onClick}
+      className="rounded px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+      style={enabled ? { borderColor: 'rgb(115, 115, 115)', backgroundColor: 'rgb(23, 23, 23)', color: 'rgb(212, 212, 212)' } : { borderColor: 'rgb(82, 82, 82)', backgroundColor: 'rgb(31, 31, 31)', color: 'rgb(120, 113, 108)' }}
+      title={!enabled ? 'Available once the baseline passes' : ''}
+    >
+      {loading ? 'Saving…' : label}
+    </button>
+  )
+}
+
 function PieceChip({ name, state, reason }) {
   const colors = SEVERITY_COLOR[state] || SEVERITY_COLOR.unplanned
   const [expanded, setExpanded] = useState(false)
@@ -34,7 +48,9 @@ function PieceChip({ name, state, reason }) {
   )
 }
 
-export default function ProjectReadinessPanel({ plans, loading }) {
+export default function ProjectReadinessPanel({ plans, profiles, loading, reload }) {
+  const [loadingStates, setLoadingStates] = useState({})
+
   if (loading) {
     return <div className="flex h-64 items-center justify-center text-neutral-500">Loading project readiness…</div>
   }
@@ -56,6 +72,28 @@ export default function ProjectReadinessPanel({ plans, loading }) {
     'baseline'
   ]
 
+  const getProfileFor = (repo) => profiles?.find((p) => p.repo === repo)
+
+  const handleToggleMergeFromDashboard = async (repo, current) => {
+    setLoadingStates((prev) => ({ ...prev, [`mfd-${repo}`]: true }))
+    try {
+      await window.api.profiles.setMergeFromDashboard(repo, !current)
+      await reload?.()
+    } finally {
+      setLoadingStates((prev) => ({ ...prev, [`mfd-${repo}`]: false }))
+    }
+  }
+
+  const handleToggleDispatch = async (repo, current) => {
+    setLoadingStates((prev) => ({ ...prev, [`dispatch-${repo}`]: true }))
+    try {
+      await window.api.profiles.setDispatch(repo, current === 'on' ? 'off' : 'on')
+      await reload?.()
+    } finally {
+      setLoadingStates((prev) => ({ ...prev, [`dispatch-${repo}`]: false }))
+    }
+  }
+
   return (
     <div className="space-y-4">
       <p className="text-xs text-neutral-500">
@@ -65,6 +103,11 @@ export default function ProjectReadinessPanel({ plans, loading }) {
         {plans.map((plan) => {
           const repoName = plan.repo.split('/')[1]
           const isPlanned = plan.status === 'planned'
+          const profile = getProfileFor(plan.repo)
+          const canMergeFromDashboard = plan.offers?.merge_from_dashboard === true
+          const canDispatch = plan.offers?.dispatch === true
+          const isMergeFromDashboardOn = profile?.mergeFromDashboard === true
+          const isDispatchOn = profile?.dispatch === 'on'
 
           return (
             <div key={plan.repo} className="rounded-lg border border-neutral-800 bg-neutral-950 p-4">
@@ -82,7 +125,7 @@ export default function ProjectReadinessPanel({ plans, loading }) {
                 )}
               </div>
               {isPlanned && plan.pieces ? (
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-2 mb-3">
                   {pieces.map((piece) => {
                     const piece_info = plan.pieces[piece]
                     const state = piece_info?.state || 'unplanned'
@@ -98,7 +141,7 @@ export default function ProjectReadinessPanel({ plans, loading }) {
                   })}
                 </div>
               ) : (
-                <div className="flex flex-wrap gap-2 opacity-50">
+                <div className="flex flex-wrap gap-2 opacity-50 mb-3">
                   {pieces.map((piece) => (
                     <PieceChip
                       key={piece}
@@ -107,6 +150,22 @@ export default function ProjectReadinessPanel({ plans, loading }) {
                       reason=""
                     />
                   ))}
+                </div>
+              )}
+              {isPlanned && (
+                <div className="flex gap-2 border-t border-neutral-700 pt-3">
+                  <ControlButton
+                    enabled={canMergeFromDashboard}
+                    label={isMergeFromDashboardOn ? 'Turn off merge from dashboard' : 'Turn on merge from dashboard'}
+                    onClick={() => handleToggleMergeFromDashboard(plan.repo, isMergeFromDashboardOn)}
+                    loading={loadingStates[`mfd-${plan.repo}`]}
+                  />
+                  <ControlButton
+                    enabled={canDispatch}
+                    label={isDispatchOn ? 'Turn off dispatch' : 'Turn on dispatch'}
+                    onClick={() => handleToggleDispatch(plan.repo, isDispatchOn)}
+                    loading={loadingStates[`dispatch-${plan.repo}`]}
+                  />
                 </div>
               )}
             </div>

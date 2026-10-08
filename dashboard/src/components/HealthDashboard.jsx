@@ -118,6 +118,7 @@ export default function HealthDashboard({ nav }) {
   const [agents, setAgents] = useState(null)
   const [readiness, setReadiness] = useState(null)
   const [readinessLoading, setReadinessLoading] = useState(false)
+  const [profiles, setProfiles] = useState(null)
 
   // Agents refresh by trigger (the run-log folder is watched); the poll is only a backstop.
   useEffect(() => {
@@ -131,16 +132,34 @@ export default function HealthDashboard({ nav }) {
     }
   }, [])
 
-  // Load readiness plans when view switches to readiness
+  // Load readiness plans and profiles when view switches to readiness
   useEffect(() => {
     if (view !== 'readiness') return
     setReadinessLoading(true)
-    window.api.health
-      .readiness()
-      .then(setReadiness)
-      .catch(() => setReadiness([]))
+    Promise.all([
+      window.api.health.readiness().catch(() => []),
+      window.api.profiles.list().catch(() => [])
+    ])
+      .then(([plans, profs]) => {
+        setReadiness(plans)
+        setProfiles(profs)
+      })
       .finally(() => setReadinessLoading(false))
   }, [view])
+
+  const reloadReadiness = async () => {
+    setReadinessLoading(true)
+    try {
+      const [plans, profs] = await Promise.all([
+        window.api.health.readiness().catch(() => []),
+        window.api.profiles.list().catch(() => [])
+      ])
+      setReadiness(plans)
+      setProfiles(profs)
+    } finally {
+      setReadinessLoading(false)
+    }
+  }
 
   function load() {
     window.api.health
@@ -200,7 +219,7 @@ export default function HealthDashboard({ nav }) {
       {view === 'agents' ? (
         <AgentsPanel agents={agents} />
       ) : view === 'readiness' ? (
-        <ProjectReadinessPanel plans={readiness} loading={readinessLoading} />
+        <ProjectReadinessPanel plans={readiness} profiles={profiles} loading={readinessLoading} reload={reloadReadiness} />
       ) : (
       <>
       <OverallBadge overall={status.overall} generatedAt={status.generated_at} refreshing={refreshing} onRefresh={handleRefresh} />
