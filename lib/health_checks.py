@@ -418,6 +418,35 @@ def check_catalog_fresh(path: Path | None = None, now: datetime | None = None) -
     return _result(cid, label, sev, f"{n} projects, built {age_h:.1f}h ago", value=round(age_h, 1))
 
 
+PROJECT_TAGS_PATH = Path.home() / ".claude" / "logs" / "project-tags.json"
+PROJECT_TAGS_RED_AT = 5
+PROJECT_TAGS_STALE_HOURS = 3
+
+
+def check_project_tags(path: Path | None = None, now: datetime | None = None) -> dict:
+    """Tickets that look like another project's but carry no project: label (ADR 0060). Written hourly by the
+    project_tag ticket agent: `pending` = clear ones not labelled yet, `unclear` = ones only Gil can place."""
+    cid, label = "tickets:project-tags", "Tickets are on their project's board"
+    now = now or _now()
+    try:
+        d = json.loads(Path(path or PROJECT_TAGS_PATH).read_text())
+        at = datetime.fromisoformat(d["generated_at"])
+    except (OSError, ValueError, KeyError):
+        return _result(cid, label, "yellow", "the project tagger has not run on this machine yet")
+    age_h = (now - at).total_seconds() / 3600
+    if age_h > PROJECT_TAGS_STALE_HOURS:
+        return _result(cid, label, "yellow", f"the project tagger last ran {age_h:.0f} hours ago (it runs hourly with the ticket agents)")
+    unclear, pending = d.get("unclear") or [], int(d.get("pending") or 0)
+    n = len(unclear) + pending
+    if n == 0:
+        return _result(cid, label, "green", "every ticket that names another project is labelled for it", value=0)
+    parts = [f"{u['repo'].split('/')[-1]}#{u['number']} {u.get('title', '')} ({' or '.join(u.get('candidates', []))}?)" for u in unclear[:5]]
+    detail = (f"{len(unclear)} to place: " + "; ".join(parts) if unclear else "")
+    if pending:
+        detail = (detail + ". " if detail else "") + f"{pending} clear one(s) waiting to be labelled"
+    return _result(cid, label, "red" if n >= PROJECT_TAGS_RED_AT else "yellow", detail, value=n)
+
+
 MAIN_HEALTH_PATH = Path.home() / ".claude" / "logs" / "main-health.json"
 MAIN_HEALTH_STALE_HOURS = 24
 
@@ -1288,6 +1317,7 @@ def run_all() -> dict:
     results += check_missing_profiles()
     results.append(check_trigger_coverage())
     results.append(check_catalog_fresh())
+    results.append(check_project_tags())
     results.append(check_github_budget())
     results.append(check_main_health())
     cron_state = ch._load_state()

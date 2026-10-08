@@ -31,7 +31,7 @@ def local(path, origin=None, days=1, context=False, readme=False, adr=0, worktre
 
 
 def build(github=(), locals_=(), manifest=(), memory=(), overrides=None, boards=()):
-    return pc.build_catalog(list(github), list(locals_), list(manifest), list(memory), overrides or {}, set(boards), now=NOW)
+    return pc.build_catalog(list(github), list(locals_), list(manifest), list(memory), overrides or {}, boards if isinstance(boards, dict) else set(boards), now=NOW)
 
 
 def by_id(cat, pid):
@@ -142,6 +142,13 @@ def test_boards_are_flagged_and_tagged():
     cat = build([gh_repo("marvin")], [], [], boards={"G-Eskayo/marvin"})
     p = by_id(cat, "marvin")
     assert p["board"] is True and "has:board" in p["tags"]
+
+
+def test_a_finished_board_shows_its_project_as_archived_unless_gil_says_otherwise():
+    boards = {"G-Eskayo/done": {"repo": "G-Eskayo/done", "finishedAt": "2026-10-01T00:00:00+00:00"}}
+    assert by_id(build([gh_repo("done", days=1)], [], [], boards=boards), "done")["status"] == "archived"
+    kept = build([gh_repo("done", days=1)], [], [], boards=boards, overrides={"done": {"status": "active"}})
+    assert by_id(kept, "done")["status"] == "active"
 
 
 def test_every_record_carries_a_project_card():

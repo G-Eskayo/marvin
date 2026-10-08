@@ -1,0 +1,31 @@
+{
+  "_readme": "Project tagger rules (lib/project_tagger.py, ADR 0060). A ticket outside a project's own repo gets project:<id> when one project's signal is in its title, or two different signals are in its body, and no other project matches. Anything less is listed for Gil in Health. Signals are whole words/phrases, case-insensitive. Add a project = add an entry.",
+  "projects": {
+    "portfolio-website-updater": {
+      "repo": "G-Eskayo/portfolio-website-updater",
+      "signals": ["portfolio-website-updater", "gileskayo.me", "/wp-content/", "wp-content", "WordPress", "Avada", "Fusion Builder",
+                  "dev site", "MARVIN page", "portfolio page", "portfolio repo", "Portfolio tab", "Images tab", "Templates tab",
+                  "lib/portfolio_", "portfolio_parity", "portfolio_longform", "portfolio_imagegen", "use-cases.json", "facts.json"]
+    },
+    "marvin-mobile": {
+      "repo": "G-Eskayo/marvin-mobile",
+      "signals": ["marvin-mobile", "MARVIN Mobile", "mobile backend", "mobile-backend", "APNs", "iPhone app", "phone app"]
+    },
+    "clarity-captions": {
+      "repo": "G-Eskayo/clarity-captions",
+      "signals": ["clarity-captions", "Clarity Captions", "captioning app"]
+    },
+    "finance-os": {
+      "repo": "G-Eskayo/finance-os",
+      "signals": ["finance-os"]
+    },
+    "killer-sudoku": {
+      "repo": "G-Eskayo/killer-sudoku",
+      "signals": ["killer-sudoku", "Killer Sudoku"]
+    },
+    "nourished": {
+      "repo": "G-Eskayo/nourished",
+      "signals": ["nourished"]
+    }
+  }
+}

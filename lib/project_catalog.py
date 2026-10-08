@@ -268,7 +268,8 @@ def build_catalog(github: list[dict], locals_: list[dict], manifest: list[dict],
         if rec["primaryPath"] in rec["localPaths"]:
             rec["localPaths"] = [rec["primaryPath"], *[x for x in rec["localPaths"] if x != rec["primaryPath"]]]
         if rec["kind"] != "portfolio-only":
-            rec["status"] = o.get("status") or derive_status(rec["lastActivity"], rec["_archived"], now)
+            finished = isinstance(board_repos, dict) and bool((board_repos.get(rec["repo"]) or {}).get("finishedAt"))
+            rec["status"] = o.get("status") or ("archived" if finished else derive_status(rec["lastActivity"], rec["_archived"], now))
         else:
             rec["status"] = o.get("status") or "dormant"
         rec["board"] = bool(rec["repo"] and rec["repo"] in board_repos)
@@ -526,9 +527,10 @@ def discover_memory(directory: Path = MEMORY_DIR) -> list[dict]:
     return out
 
 
-def discover_boards() -> set[str]:
+def discover_boards() -> dict[str, dict]:
+    """{repo: board entry}; a board with `finishedAt` is a finished project (ADR 0060)."""
     import board_registry
-    return {b["repo"] for b in board_registry.list_boards()}
+    return {b["repo"]: b for b in board_registry.list_boards()}
 
 
 def real_refresh(path: Path | None = None, now=None) -> dict:
