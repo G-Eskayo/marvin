@@ -21,3 +21,10 @@ Everything else (page text, the MARVIN page section that embeds the map, images,
 - The map can show something new on the live site without a person looking first. The privacy scan (paths, secrets,
   locked private projects, anonymised machines) is the gate, so a gap in it reaches production. Keep its tests strict.
 - A bad snapshot is fixed by the next publish, or reverted with a normal git revert of `deploy/marvin-map/`.
+
+## Extension (2026-10-08, Gil)
+
+The same folder and the same gate also carry the page's **generated facts** (`facts.json`: counts and lists computed
+from the system) and the **use-case cards** (`use-cases.json`, from the map tree plus reviewed use-case lines), so the
+MARVIN page's numbers and "What it can do" grid stay current without a promotion. Narrative text is not included: it is
+drafted on architecture triggers and promoted by Gil. Plan: `docs/plans/living-marvin-page-2026-10-08.md`.
