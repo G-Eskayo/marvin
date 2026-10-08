@@ -18,6 +18,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -51,7 +52,8 @@ KINDS: dict[str, LaunchKind] = {
     "ticket-executor": LaunchKind("Ticket executor", _layers("rules", "work-rules", "lexicon", "skills", "hooks")),
     "background-analyst": LaunchKind("Background analyst", _layers(*_FULL)),
     "utility-call": LaunchKind("Utility call", _layers("output-rules", "telemetry-hooks")),
-    # A checker must not share the context of what it checks.
+    # A checker must not share the context of what it checks. Known gap: Claude Code still loads the global
+    # CLAUDE.md (only --bare skips it, and --bare needs an API key, which MARVIN deliberately doesn't use).
     "judge": LaunchKind("Judge", _layers("telemetry-hooks")),
 }
 
@@ -97,6 +99,7 @@ class LaunchResult:
     text: str
     cost_usd: float
     exit_code: int
+    stderr: str = ""
 
 
 def _record(log_path: Path, record: dict) -> None:
@@ -109,37 +112,51 @@ def _record(log_path: Path, record: dict) -> None:
         pass
 
 
-def launch(kind: str, prompt: str, *, cwd: Path, model: str, allowed_tools: str, timeout: float,
-           disallowed_tools: str | None = None, permission_mode: str = "dontAsk", env: dict | None = None,
+def launch(kind: str, prompt: str, *, cwd: Path | None = None, model: str | None = None,
+           allowed_tools: str | None = None, disallowed_tools: str | None = None, tools: str | None = None,
+           permission_mode: str | None = "dontAsk", timeout: float | None = None, env: dict | None = None,
            ticket: str | None = None, preflight: Callable[[], None] | None = None,
            log_path: Path | None = None, runner: Callable | None = None) -> LaunchResult:
-    """Start one headless run of `kind`. Raises before spending tokens if the preflight fails."""
+    """Start one headless run of `kind`. Raises before spending tokens if the preflight fails.
+
+    Flags left as None aren't passed, so the caller's leash is exactly what it asks for. A Judge with no
+    folder given runs in a fresh empty one, so it can't see the workspace of what it judges."""
     context = assemble_context(kind)
     if preflight is not None:
         preflight()
     from claude_bin import resolve_claude_bin
-    cmd = [resolve_claude_bin(), "-p", context + prompt, "--model", model, "--permission-mode", permission_mode]
-    if allowed_tools:
-        cmd += ["--allowedTools", allowed_tools]
-    if disallowed_tools:
-        cmd += ["--disallowedTools", disallowed_tools]
+    cmd = [resolve_claude_bin(), "-p", context + prompt]
+    for flag, value in (("--model", model), ("--permission-mode", permission_mode), ("--tools", tools),
+                        ("--allowedTools", allowed_tools or None), ("--disallowedTools", disallowed_tools or None)):
+        if value is not None:
+            cmd += [flag, value]
     cmd += ["--output-format", "json"]
     run_env = {**(env if env is not None else os.environ), KIND_ENV: kind}
+    scratch = tempfile.TemporaryDirectory(prefix="marvin-judge-") if kind == "judge" and cwd is None else None
+    run_cwd = scratch.name if scratch else cwd
     started = time.monotonic()
-    proc = (runner or subprocess.run)(cmd, cwd=cwd, timeout=timeout, env=run_env, capture_output=True, text=True)
     try:
-        parsed = json.loads(proc.stdout)
+        proc = (runner or subprocess.run)(cmd, cwd=run_cwd, timeout=timeout, env=run_env,
+                                          capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    finally:
+        if scratch:
+            scratch.cleanup()
+    try:
+        parsed = json.loads(getattr(proc, "stdout", None))
     except (json.JSONDecodeError, TypeError):
         parsed = None
+    if not isinstance(parsed, dict):
+        parsed = None
     usage = (parsed or {}).get("usage") or {}
-    text = parsed.get("result", proc.stdout) if parsed else proc.stdout
+    text = parsed.get("result", "") if parsed else (getattr(proc, "stdout", None) or "")
     cost = (parsed or {}).get("total_cost_usd", 0.0) or 0.0
+    exit_code = proc.returncode or (1 if parsed and parsed.get("is_error") else 0)
     _record(log_path or LAUNCH_LOG, {
         "at": datetime.now(timezone.utc).isoformat(), "kind": kind, "model": model, "ticket": ticket,
-        "cwd": str(cwd), "exit_code": proc.returncode, "duration_s": round(time.monotonic() - started, 1),
+        "cwd": str(run_cwd) if run_cwd else None, "exit_code": exit_code, "duration_s": round(time.monotonic() - started, 1),
         "cost_usd": cost, "context_chars": len(context),
         "input_tokens": usage.get("input_tokens", 0), "output_tokens": usage.get("output_tokens", 0),
         "cache_read_tokens": usage.get("cache_read_input_tokens", 0),
         "cache_write_tokens": usage.get("cache_creation_input_tokens", 0),
     })
-    return LaunchResult(text, cost, proc.returncode)
+    return LaunchResult(text, cost, exit_code, getattr(proc, "stderr", "") or "")

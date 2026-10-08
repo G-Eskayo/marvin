@@ -114,7 +114,10 @@ export async function* runSession({ message, sessionId, spawnFn, cwd, permission
 
   let child
   try {
-    child = actualSpawnFn(claudeBin, args, { cwd: actualCwd })
+    // The phone's Chat is a surface of an Interactive launch, not a lesser MARVIN (ADR 0059): the marker tells
+    // MARVIN's hooks which kind of run this is.
+    const env = { ...process.env, MARVIN_LAUNCH_KIND: 'interactive' }
+    child = actualSpawnFn(claudeBin, args, { cwd: actualCwd, env })
   } catch (err) {
     yield {
       type: 'error',

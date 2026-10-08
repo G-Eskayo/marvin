@@ -33,6 +33,8 @@ real PRD" both require real reasoning, not a heuristic.
 from __future__ import annotations
 import re
 import subprocess
+
+import marvin_launcher
 from typing import Callable
 
 EVALUATOR_MODEL = "claude-sonnet-5"
@@ -55,11 +57,8 @@ def _default_evaluator(finding_text: str) -> dict:
         f"Finding:\n{finding_text}\n\n"
         "Respond with exactly two lines:\nPROMOTE: yes or no\nREASONING: <one or two sentences>"
     )
-    result = subprocess.run(
-        ["claude", "-p", prompt, "--model", EVALUATOR_MODEL],
-        capture_output=True, text=True, timeout=EVALUATE_TIMEOUT_S,
-    )
-    stdout = result.stdout
+    stdout = marvin_launcher.launch("background-analyst", prompt, model=EVALUATOR_MODEL, permission_mode=None,
+                                    timeout=EVALUATE_TIMEOUT_S).text
     promote_match = PROMOTE_RE.search(stdout)
     reasoning_match = REASONING_RE.search(stdout)
     return {
@@ -75,11 +74,9 @@ def _default_ticket_creator(finding_text: str, reasoning: str) -> str | None:
         "After publishing, end your response with exactly one line: "
         "TICKET_URL: <the issue URL you just created>"
     )
-    result = subprocess.run(
-        ["claude", "-p", prompt, "--model", CREATOR_MODEL],
-        capture_output=True, text=True, timeout=CREATE_TIMEOUT_S,
-    )
-    match = TICKET_URL_RE.search(result.stdout)
+    text = marvin_launcher.launch("background-analyst", prompt, model=CREATOR_MODEL, permission_mode=None,
+                                  timeout=CREATE_TIMEOUT_S).text
+    match = TICKET_URL_RE.search(text)
     return match.group(1) if match else None
 
 

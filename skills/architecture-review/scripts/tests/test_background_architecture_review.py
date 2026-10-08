@@ -100,7 +100,7 @@ def test_run_review_uses_rendered_paths_in_the_prompt(tmp_path, monkeypatch):
     captured = {}
 
     def fake_run(cmd, **kwargs):
-        if cmd[0] == "/usr/bin/true":
+        if cmd[1:2] == ["-p"]:
             captured["prompt"] = cmd[2]
         class Result:
             returncode = 0

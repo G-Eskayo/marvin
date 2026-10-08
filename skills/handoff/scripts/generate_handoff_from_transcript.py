@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
-from claude_bin import resolve_claude_bin as _resolve_claude_bin  # noqa: E402
+import marvin_launcher  # noqa: E402
 
 MAX_MESSAGES = 60
 MAX_BLOCK_CHARS = 800
@@ -123,16 +123,13 @@ def main() -> None:
 
     HANDOFF_DIR.mkdir(parents=True, exist_ok=True)
     try:
-        claude_bin = _resolve_claude_bin()
+        result = marvin_launcher.launch("utility-call", prompt, tools="Read,Write", permission_mode="bypassPermissions",
+                                        timeout=180)
     except FileNotFoundError as exc:
         print(str(exc), file=sys.stderr)
         sys.exit(1)
-    proc = subprocess.run(
-        [claude_bin, "-p", prompt, "--tools", "Read,Write", "--permission-mode", "bypassPermissions", "--output-format", "text"],
-        capture_output=True, text=True, timeout=180,
-    )
-    if proc.returncode != 0:
-        print(f"handoff generation failed: {proc.stderr[:500]}", file=sys.stderr)
+    if result.exit_code != 0:
+        print(f"handoff generation failed: {(result.stderr or result.text)[:500]}", file=sys.stderr)
         sys.exit(1)
     print(f"handoff generated for {timestamp}")
 
