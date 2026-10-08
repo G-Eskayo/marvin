@@ -10,9 +10,12 @@
          (skill code) then ~/.claude (curated config/memory, self-hosted remote).
          ADR 0021 had pushes once a day and pulls only at Claude session start, so a
          machine without a session never pulled and drift ran up to a day.
-         The last step rebuilds the installed dashboard app when it has fallen behind the
-         pulled code (lib/dashboard_rebuild.py). It only ever rebuilt where a merge
-         happened, so other machines silently drifted.
+         Then rebuild the installed dashboard app if it has fallen behind the pulled code
+         (lib/dashboard_rebuild.py). It only ever rebuilt where a merge happened, so other
+         machines silently drifted (found 2026-10-02: a month behind).
+         Finally restart the webhook-server node process if its code changed, since it directly
+         imports from ../electron/main and keeps stale paths in its module graph until restarted
+         (found 2026-10-06: #258 moved portfolio.js but the webhook server kept the old path).
          Steps are separated by a semicolon, not a double ampersand, so one repo's failure cannot skip the
          rest. A sleeping laptop's timer pauses, so after wake the next run lands
          within 30 minutes. -->
@@ -23,7 +26,7 @@
     <array>
         <string>/bin/bash</string>
         <string>-c</string>
-        <string>__HOME__/.agents/venv/bin/python __HOME__/.agents/lib/code_sync.py pull __HOME__/.agents; __HOME__/.agents/venv/bin/python __HOME__/.agents/lib/code_sync.py push __HOME__/.agents; __HOME__/.agents/venv/bin/python __HOME__/.agents/lib/code_sync.py pull __HOME__/.claude; __HOME__/.agents/venv/bin/python __HOME__/.agents/lib/code_sync.py push __HOME__/.claude; __HOME__/.agents/venv/bin/python __HOME__/.agents/lib/dashboard_rebuild.py</string>
+        <string>__HOME__/.agents/venv/bin/python __HOME__/.agents/lib/code_sync.py pull __HOME__/.agents; __HOME__/.agents/venv/bin/python __HOME__/.agents/lib/code_sync.py push __HOME__/.agents; __HOME__/.agents/venv/bin/python __HOME__/.agents/lib/code_sync.py pull __HOME__/.claude; __HOME__/.agents/venv/bin/python __HOME__/.agents/lib/code_sync.py push __HOME__/.claude; __HOME__/.agents/venv/bin/python __HOME__/.agents/lib/dashboard_rebuild.py; __HOME__/.agents/venv/bin/python __HOME__/.agents/lib/webhook_restart.py</string>
     </array>
 
     <key>StartInterval</key>

@@ -767,6 +767,16 @@ APP="/Applications/MARVIN Metrics.app/Contents/Resources/app.asar"
 if [ -f "$APP" ]; then echo "app_built_ts=$(stat -f %m "$APP")"; else echo "app_built_ts="; fi
 git -C "$HOME/.agents" fetch -q origin >/dev/null 2>&1
 echo "dashboard_commit_ts=$(git -C "$HOME/.agents" log -1 --format=%ct origin/main -- dashboard/src dashboard/electron dashboard/index.html dashboard/package.json dashboard/package-lock.json dashboard/electron.vite.config.js dashboard/tailwind.config.js dashboard/postcss.config.js 2>/dev/null)"
+echo "webhook_commit_ts=$(git -C "$HOME/.agents" log -1 --format=%ct origin/main -- dashboard/webhook-server dashboard/electron/main 2>/dev/null)"
+WEBHOOK_PID=$(/bin/launchctl list 2>/dev/null | /usr/bin/awk '$3 ~ /com\.marvin\.dashboard-webhook/ {print $1}')
+if [ -n "$WEBHOOK_PID" ] && [ "$WEBHOOK_PID" != "-" ] && [ "$WEBHOOK_PID" -gt 0 ] 2>/dev/null; then
+  ELAPSED=$(/bin/ps -o etimes= -p "$WEBHOOK_PID" 2>/dev/null | /usr/bin/tr -d ' ')
+  if [ -n "$ELAPSED" ] && [ "$ELAPSED" -gt 0 ] 2>/dev/null; then
+    echo "webhook_server_start_ts=$(($(date +%s) - ELAPSED))"
+  else echo "webhook_server_start_ts="
+  fi
+else echo "webhook_server_start_ts="
+fi
 TOK="$HOME/.claude/.gh-token"
 if [ -s "$TOK" ]; then
   if GH_TOKEN="$(tr -d '[:space:]' < "$TOK")" /opt/homebrew/bin/gh api user --jq .login >/dev/null 2>&1; then echo "gh_token=ok"; else echo "gh_token=invalid"; fi
@@ -914,6 +924,7 @@ def parse_machine_state(text: str) -> dict:
                     pass
 
     return {"app_built_ts": num("app_built_ts"), "dashboard_commit_ts": num("dashboard_commit_ts"),
+            "webhook_server_start_ts": num("webhook_server_start_ts"), "webhook_commit_ts": num("webhook_commit_ts"),
             "gh_token": raw.get("gh_token", "").strip(), "docs_access": raw.get("docs_access", "").strip(),
             "desktoplive": raw.get("desktoplive", "").strip(), "brain_data_ts": num("brain_data_ts"),
             "disk_free_kb": num("disk_free_kb"), "disk_total_kb": num("disk_total_kb"),
@@ -1027,6 +1038,19 @@ def evaluate_machine_state(state: dict, now: datetime) -> list[tuple[str, str, s
         sev = "red" if behind_h >= SYNC_RED_AFTER_HOURS else "yellow" if behind_h >= SYNC_YELLOW_AFTER_HOURS else "green"
         detail = f"installed app built {age:.0f}d ago, {behind_h:.0f}h older than the latest dashboard change -- run dashboard/scripts/rebuild_and_install.sh"
         out.append(("dashboard:build", sev, detail if sev != "green" else "installed app is current"))
+    server_start, webhook_newest = state["webhook_server_start_ts"], state["webhook_commit_ts"]
+    if webhook_newest is None:
+        pass  # no webhook commits, no check
+    elif server_start is None:
+        out.append(("webhook:build", "yellow", "webhook-server is not running"))
+    elif server_start >= webhook_newest:
+        out.append(("webhook:build", "green", "webhook-server is at least as new as the latest webhook code change"))
+    else:
+        behind_h = (webhook_newest - server_start) / 3600
+        age = (now - datetime.fromtimestamp(server_start, tz=timezone.utc)).total_seconds() / 86400
+        sev = "red" if behind_h >= SYNC_RED_AFTER_HOURS else "yellow" if behind_h >= SYNC_YELLOW_AFTER_HOURS else "green"
+        detail = f"webhook-server started {age:.0f}d ago, {behind_h:.0f}h older than the latest webhook code change -- run launchctl kickstart -k gui/$(id -u)/com.marvin.dashboard-webhook"
+        out.append(("webhook:build", sev, detail if sev != "green" else "webhook-server is current"))
     tok = state["gh_token"]
     if tok == "ok":
         out.append(("auth:gh", "green", "shared GitHub token (~/.claude/.gh-token) authenticates"))
@@ -1092,7 +1116,7 @@ def check_machine_state_everywhere(reachability: dict[str, str], runner=_run_mac
         (dev, info.get("tailscale_hostname"), reachability.get(f"machine:{dev}", "yellow"))
         for dev, info in machine_profile.remote_devices().items()
     ]
-    labels = {"dashboard:build": "Dashboard app build", "auth:gh": "GitHub credential", "docs:access": "Docs tab GitHub access",
+    labels = {"dashboard:build": "Dashboard app build", "webhook:build": "Webhook server build", "auth:gh": "GitHub credential", "docs:access": "Docs tab GitHub access",
               "desktoplive:running": "Desktop brain-map background", "brainmap:data": "Brain-map data freshness", "jobs:placement": "Scheduled jobs vs. placement",
               "disk:space": "Disk space", "disk:headroom": "Disk headroom forecast", "jobs:exit": "Scheduled jobs' last run"}
     for dev, host, reach in devices:
