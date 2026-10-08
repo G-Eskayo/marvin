@@ -324,3 +324,33 @@ def test_master_links_readme_when_there_is_no_context_and_nothing_when_no_docs()
 def test_file_links_escape_spaces():
     cat = build(locals_=[local(f"{H}/Documents/Projects/My App")])
     assert f"(file://{H}/Documents/Projects/My%20App)" in pc.render_master(cat)
+
+
+# ── an unreadable folder is skipped, not fatal (2026-10-08, mini's iCloud ~/Documents: "Interrupted system call") ──
+
+class _StuckRoot(type(Path())):
+    """A folder that exists but can't be listed, like the mini's iCloud ~/Documents/Projects."""
+    def iterdir(self):
+        raise InterruptedError(4, "Interrupted system call")
+
+
+def test_discover_local_skips_an_unreadable_root_and_keeps_its_last_known_projects(tmp_path, capsys):
+    good = tmp_path / "Developer"
+    (good / "alpha").mkdir(parents=True)
+    stuck = _StuckRoot(tmp_path / "Documents" / "Projects")
+    stuck.mkdir(parents=True)
+    previous = [{"path": str(stuck / "beta"), "name": "beta", "origin": "beta", "last_activity": "2026-10-01T00:00:00+00:00",
+                 "worktree": False, "docs": {"context": False, "readme": True, "adrCount": 0}},
+                {"path": str(tmp_path / "elsewhere" / "gamma"), "name": "gamma"}]
+    out = pc.discover_local(roots=[stuck, good], extra=[], previous=previous)
+    assert sorted(r["name"] for r in out) == ["alpha", "beta"]  # beta kept from last time, gamma wasn't under it
+    assert "Interrupted system call" in capsys.readouterr().err
+
+
+def test_previous_local_records_come_from_the_last_catalog(tmp_path):
+    cat = {"projects": [{"id": "beta", "name": "beta", "repo": "G-Eskayo/beta", "localPaths": ["/x/Documents/Projects/beta"],
+                         "lastActivity": "2026-10-01T00:00:00+00:00", "docs": {"context": True, "readme": False, "adrCount": 2}}]}
+    recs = pc.previous_local_records(cat)
+    assert recs == [{"path": "/x/Documents/Projects/beta", "name": "beta", "origin": "beta",
+                     "last_activity": "2026-10-01T00:00:00+00:00", "worktree": False,
+                     "docs": {"context": True, "readme": False, "adrCount": 2}}]
