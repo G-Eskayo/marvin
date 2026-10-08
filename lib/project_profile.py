@@ -515,12 +515,25 @@ def _catalog() -> dict:
 
 # ── the headless model's leash ──────────────────────────────────────────────
 
+# Read-only inspection every headless agent (planner and executor, every project) may run (Gil, 2026-10-08,
+# marvin#277). Before this, 59% of all failed tool calls were agents refused by their own allowlist: the repo
+# CLAUDE.md tells them to `graphify query` first, and they naturally reach for `gh pr view` / `git log`.
+# Claude Code checks each part of a compound command, so `git log && git push` is still refused.
+# Never add a subcommand that writes, pushes, deletes or edits GitHub state (tested).
+READ_ONLY_INSPECTION_TOOLS = (
+    "Bash(graphify query*)", "Bash(graphify path*)", "Bash(graphify explain*)",
+    "Bash(gh issue view*)", "Bash(gh issue list*)", "Bash(gh pr view*)", "Bash(gh pr list*)",
+    "Bash(gh pr diff*)", "Bash(gh pr checks*)", "Bash(gh repo view*)", "Bash(gh run view*)", "Bash(gh run list*)",
+    "Bash(git status*)", "Bash(git log*)", "Bash(git diff*)", "Bash(git show*)", "Bash(git blame*)",
+    "Bash(git ls-files*)", "Bash(git rev-parse*)", "Bash(git grep*)",
+)
+
 def executor_tools(profile: dict, clone: Path | None = None) -> tuple[str, str]:
     """(allowed, disallowed) tool strings for the execution call. Editing is allowed (in the worktree);
     the project's real clone is denied so an absolute path can never land a change in it (the lesson of
     marvin #41's executor writing into the real checkout)."""
     ex = profile.get("executor") or {}
-    allowed = ["Read", "Edit", "Write", "Bash(git status*)", *ex.get("allowed_tools", [])]
+    allowed = ["Read", "Edit", "Write", *READ_ONLY_INSPECTION_TOOLS, *ex.get("allowed_tools", [])]
     denied = list(ex.get("denied_tools", []))
     if clone is not None:
         denied += [f"Write({clone}/**)", f"Edit({clone}/**)"]

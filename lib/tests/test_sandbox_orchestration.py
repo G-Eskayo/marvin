@@ -765,3 +765,32 @@ def test_claude_is_resolved_even_when_the_inherited_path_lacks_it(monkeypatch, t
     text, _cost = so._run_claude(["claude", "-p", "hi"], env={"PATH": "/usr/bin:/bin"})
     assert text == "ok"
     assert seen["cmd"][0] == str(fake)
+
+
+def test_planner_and_marvin_executor_share_the_read_only_inspection_rules():
+    """#277: headless agents were refused graphify (which CLAUDE.md tells them to run) and read-only gh/git."""
+    import project_profile as pp
+    plan = so._PLAN_ALLOWED_TOOLS.split(",")
+    exec_ = so._EXEC_ALLOWED_TOOLS.split(",")
+    for rule in pp.READ_ONLY_INSPECTION_TOOLS:
+        assert rule in plan and rule in exec_, rule
+
+
+def test_both_prompts_steer_away_from_refused_shell_habits(monkeypatch, tmp_path):
+    """#277: 17% of headless refusals were ls/find/cat instead of Read/Glob/Grep (and Read on a directory
+    after ls was refused), 8% were allowed commands prefixed with `cd <dir> &&`."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "a plan"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+    so._default_executor(tmp_path, "TICKET-1", None)
+    for call in calls[:2]:
+        prompt = call[call.index("-p") + 1]
+        assert "Glob" in prompt and "Grep" in prompt and "ls" in prompt
+        assert "already" in prompt and "cd" in prompt
