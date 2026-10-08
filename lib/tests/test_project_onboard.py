@@ -681,6 +681,34 @@ def test_triage_labels_are_the_canonical_five():
 # ── Stack detection ──────────────────────────────────────────────────────
 
 
+def test_matches_detect_rule_file_any_with_pnpm_workspace():
+    """_matches_detect_rule detects file_any rule matching pnpm-workspace.yaml."""
+    file_tree = {"pnpm-workspace.yaml": "file", "package.json": "file"}
+    rule = {"file_any": ["pnpm-workspace.yaml", "turbo.json"]}
+    assert po._matches_detect_rule(file_tree, rule) is True
+
+
+def test_matches_detect_rule_file_any_with_turbo_json():
+    """_matches_detect_rule detects file_any rule matching turbo.json."""
+    file_tree = {"turbo.json": "file", "package.json": "file"}
+    rule = {"file_any": ["pnpm-workspace.yaml", "turbo.json"]}
+    assert po._matches_detect_rule(file_tree, rule) is True
+
+
+def test_matches_detect_rule_file_any_with_both():
+    """_matches_detect_rule matches file_any when both files exist (checks first match)."""
+    file_tree = {"pnpm-workspace.yaml": "file", "turbo.json": "file"}
+    rule = {"file_any": ["pnpm-workspace.yaml", "turbo.json"]}
+    assert po._matches_detect_rule(file_tree, rule) is True
+
+
+def test_matches_detect_rule_file_any_no_match():
+    """_matches_detect_rule returns False when file_any has no matching files."""
+    file_tree = {"package.json": "file"}
+    rule = {"file_any": ["pnpm-workspace.yaml", "turbo.json"]}
+    assert po._matches_detect_rule(file_tree, rule) is False
+
+
 def test_detect_swift_package_from_nested_package_swift():
     """Swift package with nested Package.swift (like clarity-captions)."""
     facts = {
@@ -733,6 +761,92 @@ def test_node_electron_without_test_script():
     result = po.plan(facts)
     assert result["test_command"]["state"] == "needs-human"
     assert "never guess" in result["test_command"]["reason"]
+
+
+def test_detect_node_pnpm_turbo_with_test_script():
+    """Node pnpm-turbo monorepo with test script is ok."""
+    facts = {
+        "detected_stack": "node-pnpm-turbo",
+        "package_json_scripts": {"test": "turbo run test"},
+        "workflow_contents": "",
+        "tools_installed": {"node": True, "pnpm": True},
+    }
+    result = po.plan(facts)
+    assert result["stack"]["state"] == "ok"
+    assert result["test_command"]["state"] == "ok"
+
+
+def test_node_pnpm_turbo_without_test_script():
+    """Node pnpm-turbo without test script is needs-human."""
+    facts = {
+        "detected_stack": "node-pnpm-turbo",
+        "package_json_scripts": {},
+        "workflow_contents": "",
+        "tools_installed": {"node": True, "pnpm": True},
+    }
+    result = po.plan(facts)
+    assert result["test_command"]["state"] == "needs-human"
+    assert "never guess" in result["test_command"]["reason"]
+
+
+def test_node_pnpm_turbo_ci_ok_with_turbo_test():
+    """Node pnpm-turbo CI is ok when workflow contains turbo test."""
+    facts = {
+        "detected_stack": "node-pnpm-turbo",
+        "package_json_scripts": {"test": "turbo run test"},
+        "has_workflows": True,
+        "workflow_contents": "turbo test",
+        "tools_installed": {"node": True, "pnpm": True},
+    }
+    result = po.plan(facts)
+    assert result["ci"]["state"] == "ok"
+
+
+def test_node_pnpm_turbo_ci_ok_with_pnpm_test():
+    """Node pnpm-turbo CI is ok when workflow contains pnpm test."""
+    facts = {
+        "detected_stack": "node-pnpm-turbo",
+        "package_json_scripts": {"test": "turbo run test"},
+        "has_workflows": True,
+        "workflow_contents": "pnpm test",
+        "tools_installed": {"node": True, "pnpm": True},
+    }
+    result = po.plan(facts)
+    assert result["ci"]["state"] == "ok"
+
+
+def test_node_pnpm_turbo_ci_missing_no_workflow():
+    """Node pnpm-turbo without CI workflow is missing."""
+    facts = {
+        "detected_stack": "node-pnpm-turbo",
+        "package_json_scripts": {"test": "turbo run test"},
+        "has_workflows": False,
+        "workflow_contents": "",
+        "tools_installed": {"node": True, "pnpm": True},
+    }
+    result = po.plan(facts)
+    assert result["ci"]["state"] == "missing"
+
+
+def test_family_node_both_node_stacks():
+    """Both node-electron and node-pnpm-turbo use family: node for shared test-command logic."""
+    facts_electron = {
+        "detected_stack": "node-electron",
+        "package_json_scripts": {"test": "vitest"},
+        "workflow_contents": "",
+        "tools_installed": {"node": True},
+    }
+    facts_pnpm = {
+        "detected_stack": "node-pnpm-turbo",
+        "package_json_scripts": {"test": "turbo run test"},
+        "workflow_contents": "",
+        "tools_installed": {"node": True, "pnpm": True},
+    }
+    result_electron = po.plan(facts_electron)
+    result_pnpm = po.plan(facts_pnpm)
+    # Both should have ok test_command via family-based check
+    assert result_electron["test_command"]["state"] == "ok"
+    assert result_pnpm["test_command"]["state"] == "ok"
 
 
 def test_cost_warning_for_private_macos_runner():
@@ -1096,11 +1210,11 @@ def test_apply_forces_dispatch_off():
 
 
 def test_apply_profile_all_stacks():
-    """_apply_profile works for all four stacks: swift-package, xcodegen-app, node-electron, python."""
+    """_apply_profile works for all five stacks: swift-package, xcodegen-app, node-electron, node-pnpm-turbo, python."""
     import tempfile
     with tempfile.TemporaryDirectory() as tmpdir:
         profiles_dir = Path(tmpdir)
-        for stack in ["swift-package", "xcodegen-app", "node-electron", "python"]:
+        for stack in ["swift-package", "xcodegen-app", "node-electron", "node-pnpm-turbo", "python"]:
             facts = {
                 "repo": "test/repo",
                 "detected_stack": stack,

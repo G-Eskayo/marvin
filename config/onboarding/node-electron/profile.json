@@ -1,5 +1,6 @@
 {
   "name": "node-electron",
+  "family": "node",
   "detect": {
     "file": "package.json",
     "content_any": ["\"electron\""]
