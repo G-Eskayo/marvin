@@ -243,6 +243,23 @@ describe('fetchCrossProjectIssues', () => {
     expect(calls[0]).toContain('project:marvin')
   })
 
+  it('asks gh search only for fields it supports, and enough of them (gh search has no stateReason; default limit is 30)', async () => {
+    // the fields `gh search issues --json` accepts (gh 2.x); asking for any other fails the whole call
+    const SEARCH_FIELDS = new Set(['assignees', 'author', 'authorAssociation', 'body', 'closedAt', 'commentsCount', 'createdAt', 'id',
+      'isLocked', 'isPullRequest', 'labels', 'number', 'repository', 'state', 'title', 'updatedAt', 'url'])
+    const calls = []
+    const gh = async (args) => { calls.push(args); return '[]' }
+    await fetchCrossProjectIssues('G-Eskayo/marvin', [{ repo: 'G-Eskayo/marvin' }, { repo: 'G-Eskayo/x' }], gh)
+    const fields = calls[0][calls[0].indexOf('--json') + 1].split(',')
+    expect(fields.filter((f) => !SEARCH_FIELDS.has(f))).toEqual([])
+    expect(Number(calls[0][calls[0].indexOf('--limit') + 1])).toBeGreaterThanOrEqual(200)
+  })
+
+  it('a failing search leaves the board loadable with no cross-project tickets', async () => {
+    const gh = async () => { throw new Error('Unknown JSON field') }
+    expect(await fetchCrossProjectIssues('G-Eskayo/marvin', [{ repo: 'G-Eskayo/marvin' }, { repo: 'G-Eskayo/x' }], gh)).toEqual([])
+  })
+
   it('skips the call entirely when there are no other registered repos', async () => {
     const calls = []
     const gh = async (args) => { calls.push(args); return '[]' }
