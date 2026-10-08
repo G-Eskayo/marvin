@@ -29,3 +29,19 @@ password/token (more friction and secret management, little gain over biometrics
 - Face ID is a client-side gate; the backend trusts the allowlisted device to have enforced it.
   Acceptable for a single-user app; a signed per-action assertion could harden it later.
 - Voice-only, hands-busy moments (driving) still need a glance/tap for side effects — accepted.
+
+## Amendment (2026-10-08): Gil's two Macs are allowlisted for development
+
+Gil chose to allowlist the MacBook (`c02f52gpq05ps-macbook-pro`) and the Mac Mini
+(`gils-mac-mini`) alongside the iPhone (`iphone181`), so the iOS simulator on either Mac can
+use the real backend while the app is being built and inspected. This deliberately relaxes the
+"laptop can't control MARVIN by accident" goal of user story 2 in PRD G-Eskayo/marvin#152.
+
+- Low added risk: both Macs already hold full local control of MARVIN (shell, `claude`, `gh`).
+  Allowlisting them adds the backend as one more way in, not new powers.
+- The simulator has no Face ID, so side effects from it rely on simulated biometrics. That is
+  acceptable on Gil's own machines and only there.
+- Repeatable ticket screenshots don't depend on this. The app's `-demo` launch mode uses a
+  built-in fake backend, so screenshots need no allowlisting.
+- Revisit before the app is used day-to-day: drop the Macs from the allowlist if the
+  accidental-control risk starts to matter.
