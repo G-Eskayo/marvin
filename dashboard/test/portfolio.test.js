@@ -149,6 +149,36 @@ describe('images', () => {
     expect(list.find((i) => i.slug === 'mitre').sharedWith).toEqual([])
   })
 
+  it('detects when a page hero does not match its card thumbnail stem', async () => {
+    const hero1 = '<div class="col-xs-12">\n  <img src="/u/blue-keyboard.jpg" class="img-responsive" alt="">'
+    const hero2 = '<div class="col-xs-12">\n  <img src="/u/work001-01.jpg" class="img-responsive" alt="">'
+    write('templates/reference/index.json', JSON.stringify([
+      { slug: 'ai-projects--algorithms', url: '/ai-projects/algorithms/', file: 'reference/ai-projects--algorithms.html' },
+      { slug: 'ai-projects--mancala', url: '/ai-projects/mancala/', file: 'reference/ai-projects--mancala.html' },
+      { slug: 'ai-projects--mitre', url: '/ai-projects/mitre/', file: 'reference/ai-projects--mitre.html' }
+    ]))
+    write('templates/reference/ai-projects--algorithms.html', hero1) // stem: blue-keyboard vs. work001-01 (card)
+    write('templates/reference/ai-projects--mancala.html', hero2)   // stem: work001-01 matches card
+    write('templates/reference/ai-projects--mitre.html', hero2)     // stem: work001-01 matches card
+    const list = await p.listImages()
+    const alg = list.find((i) => i.slug === 'algorithms')
+    expect(alg.heroMismatch).toBeTruthy()
+    expect(alg.heroMismatch.pageHero).toBe('/u/blue-keyboard.jpg')
+    expect(alg.heroMismatch.cardThumbnail).toBe('/u/work001-01.jpg')
+    expect(list.find((i) => i.slug === 'mancala').heroMismatch).toBeNull()
+  })
+
+  it('handles base64-encoded [fusion_code] pages when detecting mismatches', async () => {
+    const hero = '<div class="col-xs-12">\n  <img src="/different-hero.jpg" class="img-responsive" alt="">'
+    const encoded = Buffer.from(hero).toString('base64')
+    write('templates/reference/index.json', JSON.stringify([{ slug: 'ai-projects--algorithms', url: '/ai-projects/algorithms/', file: 'reference/ai-projects--algorithms.html' }]))
+    write('templates/reference/ai-projects--algorithms.html', `[fusion_code]${encoded}[/fusion_code]`)
+    const list = await p.listImages()
+    const alg = list.find((i) => i.slug === 'algorithms')
+    expect(alg.heroMismatch).toBeTruthy()
+    expect(alg.heroMismatch.pageHero).toBe('/different-hero.jpg')
+  })
+
   it('reports whether a generated image exists for each project', async () => {
     mkdirSync(path.join(home, '.claude/portfolio/images'), { recursive: true })
     writeFileSync(path.join(home, '.claude/portfolio/images/mitre.png'), 'png')
