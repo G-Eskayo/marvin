@@ -282,6 +282,8 @@
     "cron-health": "Every day, checks that each scheduled helper really ran.",
     "health-check": "Every 15 minutes, checks each part of MARVIN and flags anything that's not OK.",
     "process-quarantine-reviews": "Uses Gil's reviews of held-back work to judge better next time.",
+    "snapshot-deploy-nightly": "Every night, rebuilds this map, checks it hides private things, and puts it on Gil's website.",
+    "snapshot-deploy-reactive": "When MARVIN changes, rebuilds this map so the website shows the new version.",
     "Cross-Machine Network": "MARVIN's computers, and how they share the work.",
     "mac-mini-1": "The always-on computer at home. It does most of the work.",
     "macbook-pro-1": "Gil's laptop. It helps out when it's open and awake.",
