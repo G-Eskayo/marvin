@@ -64,6 +64,20 @@ mid-merge) until a live session resolves it by hand — the same class of fix
 as the conflict-marker check above, just for the state a run leaves behind
 instead of the content it's about to commit.
 
+Found again, 2026-10-08: a specific stash-pop collision happens when machine
+A has untracked bench/metrics run-logs, and machine B pushes the same paths
+as newly-tracked files (from recording metrics in that session). The merge
+succeeds, but stash pop fails with "untracked files would be overwritten"
+because git can't restore a stash-tracked file on top of an untracked one
+with the same name. For this one specific case (all colliding files are
+bench/metrics/*.json or *.md, excluding index.md), pull() now intelligently
+merges them by timestamp and commits the union, rather than leaving a stash
+behind. The merge logic mirrors metrics_registry.record()'s own format:
+JSON files union-by-timestamp (deduplicate exact matches), markdown files
+union on header-timestamp boundaries. Any other collision shape (non-metrics
+files, mixed collisions) falls through to today's "stash preserved" behavior
+unchanged — the autonomous resolver only acts when safe to do so.
+
 Two more things tuned the same day, both about pull()'s own logging:
 pull() no longer logs (or stashes) a pure no-op — nothing merged, no local
 WIP involved — since logging one just to have said something produced its
@@ -79,6 +93,7 @@ to trail instead; the next real push() (on either machine, from actual work)
 sweeps it up naturally, same as any other pending local change.
 """
 from __future__ import annotations
+import json
 import re
 import subprocess
 import sys
@@ -92,6 +107,12 @@ from notify import notify  # noqa: E402
 DEFAULT_REPO = Path.home() / ".agents"
 LOG_PATH = Path.home() / ".claude" / "sync-log.md"
 CONFLICT_MARKER_RE = re.compile(r"^(<{7}|={7}|>{7})(?: |$)", re.MULTILINE)
+UNTRACKED_OVERWRITE_RE = re.compile(
+    r"(untracked working tree files.*would be overwritten|"
+    r"already exists, no checkout|"
+    r"could not restore untracked files from stash)",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 def _files_with_conflict_markers(repo: Path, files: list[str]) -> list[str]:
@@ -146,6 +167,126 @@ def _stuck_from_previous_run(repo: Path) -> str | None:
         return f"{n_stash} stash(es) left over from a previous failed WIP-restore (`git stash list`)"
 
     return None
+
+
+def _stash_untracked_paths(repo: Path) -> list[str]:
+    """Extract untracked file paths from stash@{0}'s untracked parent.
+    Returns [] if there's no untracked parent in the stash."""
+    output = _git(repo, ["ls-tree", "-r", "--name-only", "stash@{0}^3"])
+    if not output.strip():
+        return []
+    return [line.strip() for line in output.splitlines() if line.strip()]
+
+
+def _is_bench_metrics_runlog(path: str) -> bool:
+    """True for bench/metrics/*.json or bench/metrics/*.md, excluding index.md."""
+    if not path.startswith("bench/metrics/"):
+        return False
+    name = path.split("/")[-1]
+    if name == "index.md":
+        return False
+    return name.endswith(".json") or name.endswith(".md")
+
+
+def _merge_metrics_json(stash_text: str, upstream_text: str) -> str:
+    """Merge two JSON metrics files by timestamp (union-by-timestamp).
+    Parses both as JSON lists, deduplicates by timestamp, sorts ascending."""
+    try:
+        stash_data = json.loads(stash_text)
+        upstream_data = json.loads(upstream_text)
+    except (json.JSONDecodeError, ValueError):
+        return upstream_text
+
+    by_timestamp = {}
+    for entry in stash_data:
+        if isinstance(entry, dict) and "timestamp" in entry:
+            by_timestamp[entry["timestamp"]] = entry
+    for entry in upstream_data:
+        if isinstance(entry, dict) and "timestamp" in entry:
+            by_timestamp[entry["timestamp"]] = entry
+
+    merged = sorted(by_timestamp.values(), key=lambda e: e.get("timestamp", ""))
+    return json.dumps(merged, indent=2)
+
+
+def _merge_metrics_md(stash_text: str, upstream_text: str) -> str:
+    """Merge two markdown metrics files by timestamp.
+    Splits on ^## boundaries, deduplicates by header line's timestamp, sorts."""
+    def split_blocks(text: str) -> list[tuple[str, str]]:
+        parts = re.split(r"^## ", text, flags=re.MULTILINE)
+        blocks = []
+        for part in parts[1:]:
+            lines = part.split("\n", 1)
+            header = lines[0] if lines else ""
+            content = ("\n" + lines[1]) if len(lines) > 1 else ""
+            blocks.append((header, content))
+        return blocks
+
+    stash_blocks = split_blocks(stash_text)
+    upstream_blocks = split_blocks(upstream_text)
+
+    by_header = {}
+    for header, content in stash_blocks:
+        by_header[header] = content
+    for header, content in upstream_blocks:
+        by_header[header] = content
+
+    sorted_headers = sorted(by_header.keys())
+    merged_lines = []
+    for header in sorted_headers:
+        merged_lines.append(f"## {header}{by_header[header]}")
+
+    return "".join(merged_lines)
+
+
+def _resolve_metrics_stash_collision(repo: Path, candidates: list[str]) -> bool:
+    """Resolve stash pop collision for bench/metrics run-log files.
+    Returns True if resolved, False if unrelated conflict found (falls through
+    to existing behavior, leaving stash intact)."""
+    saved_upstream = {}
+    for path in candidates:
+        full_path = repo / path
+        if full_path.exists():
+            try:
+                saved_upstream[path] = full_path.read_text()
+            except Exception:
+                return False
+            full_path.unlink()
+
+    pop_ok, pop_out = _git_ok(repo, ["stash", "pop"])
+    if not pop_ok:
+        for path, content in saved_upstream.items():
+            (repo / path).write_text(content)
+        return False
+
+    merged_files = []
+    for path in candidates:
+        full_path = repo / path
+        if not full_path.exists():
+            continue
+
+        upstream_content = saved_upstream[path]
+        current_content = full_path.read_text()
+
+        if current_content == upstream_content:
+            continue
+
+        if path.endswith(".json"):
+            merged = _merge_metrics_json(current_content, upstream_content)
+        else:
+            merged = _merge_metrics_md(current_content, upstream_content)
+
+        full_path.write_text(merged)
+        merged_files.append(path)
+
+    if merged_files:
+        _git(repo, ["add"] + merged_files)
+        label = machine_label()
+        msg = f"keep both machines' runs ({label}): {', '.join(merged_files)}"
+        _git(repo, ["commit", "-m", msg])
+        _log(repo, "pull", f"resolved untracked metrics collision by merging timestamps", merged_files)
+
+    return True
 
 
 def _log(repo: Path, action: str, summary: str, files: list[str] | None = None) -> None:
@@ -289,6 +430,11 @@ def pull(repo: Path) -> None:
     if stashed:
         pop_ok, pop_out = _git_ok(repo, ["stash", "pop"])
         if not pop_ok:
+            if UNTRACKED_OVERWRITE_RE.search(pop_out):
+                candidates = [p for p in _stash_untracked_paths(repo) if (repo / p).exists()]
+                if candidates and all(_is_bench_metrics_runlog(p) for p in candidates):
+                    if _resolve_metrics_stash_collision(repo, candidates):
+                        return
             _log(repo, "pull", f"pulled cleanly, but restoring local WIP conflicted — stash preserved, resolve by hand (`git stash list` / `git stash pop`):\n{pop_out}")
             notify("MARVIN code-sync CONFLICT", f"WIP restore conflicted after pull [{repo.name}] — check sync-log.md", open_target=str(LOG_PATH))
             return
