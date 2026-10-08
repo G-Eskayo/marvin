@@ -1,5 +1,71 @@
 import { useState } from 'react'
 
+function ActionRow({ repo, repoName, plan, profile, onChanged }) {
+  const [busy, setBusy] = useState(null)
+  const [error, setError] = useState(null)
+
+  async function handleToggle(field, isOn) {
+    setBusy(field)
+    setError(null)
+    try {
+      if (field === 'mergeFromDashboard') {
+        const result = await window.api.health.setMergeFromDashboard(repo, !isOn)
+        if (result.done) onChanged?.()
+      } else if (field === 'dispatch') {
+        const result = await window.api.health.setDispatch(repo, isOn ? 'off' : 'on')
+        if (result.done) onChanged?.()
+      }
+    } catch (err) {
+      setError(String(err.message || err))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const mergeFromDashboardOn = profile?.mergeFromDashboard === true
+  const dispatchOn = profile?.dispatch === 'on'
+  const canEnableMerge = plan?.offers?.merge_from_dashboard === true
+  const canEnableDispatch = plan?.offers?.dispatch === true
+
+  return (
+    <div className="mt-3 flex flex-wrap gap-2">
+      <button
+        onClick={() => handleToggle('mergeFromDashboard', mergeFromDashboardOn)}
+        disabled={busy !== null || (!canEnableMerge && !mergeFromDashboardOn)}
+        className={`rounded px-2 py-1 text-xs font-medium transition-colors ${
+          busy === 'mergeFromDashboard'
+            ? 'opacity-50'
+            : mergeFromDashboardOn
+              ? 'bg-emerald-900 text-emerald-200 hover:bg-emerald-800'
+              : canEnableMerge
+                ? 'bg-neutral-700 text-neutral-300 hover:bg-neutral-600'
+                : 'bg-neutral-900 text-neutral-500 cursor-not-allowed'
+        }`}
+      >
+        {busy === 'mergeFromDashboard' ? 'Saving…' : mergeFromDashboardOn ? 'Merge from dashboard: on' : 'Turn on merge-from-dashboard'}
+      </button>
+
+      <button
+        onClick={() => handleToggle('dispatch', dispatchOn)}
+        disabled={busy !== null || (!canEnableDispatch && !dispatchOn)}
+        className={`rounded px-2 py-1 text-xs font-medium transition-colors ${
+          busy === 'dispatch'
+            ? 'opacity-50'
+            : dispatchOn
+              ? 'bg-emerald-900 text-emerald-200 hover:bg-emerald-800'
+              : canEnableDispatch
+                ? 'bg-neutral-700 text-neutral-300 hover:bg-neutral-600'
+                : 'bg-neutral-900 text-neutral-500 cursor-not-allowed'
+        }`}
+      >
+        {busy === 'dispatch' ? 'Saving…' : dispatchOn ? 'Dispatch: on' : 'Turn on dispatch'}
+      </button>
+
+      {error && <p className="w-full text-xs text-red-400">{error}</p>}
+    </div>
+  )
+}
+
 const SEVERITY_COLOR = {
   ok: { bg: 'bg-emerald-950', border: 'border-emerald-900', dot: 'bg-emerald-500', text: 'text-emerald-300' },
   missing: { bg: 'bg-red-950', border: 'border-red-900', dot: 'bg-red-500', text: 'text-red-300' },
@@ -34,7 +100,7 @@ function PieceChip({ name, state, reason }) {
   )
 }
 
-export default function ProjectReadinessPanel({ plans, loading }) {
+export default function ProjectReadinessPanel({ plans, profiles, loading, onChanged }) {
   if (loading) {
     return <div className="flex h-64 items-center justify-center text-neutral-500">Loading project readiness…</div>
   }
@@ -56,6 +122,8 @@ export default function ProjectReadinessPanel({ plans, loading }) {
     'baseline'
   ]
 
+  const profilesByRepo = Object.fromEntries((profiles || []).map((p) => [p.repo, p]))
+
   return (
     <div className="space-y-4">
       <p className="text-xs text-neutral-500">
@@ -65,6 +133,7 @@ export default function ProjectReadinessPanel({ plans, loading }) {
         {plans.map((plan) => {
           const repoName = plan.repo.split('/')[1]
           const isPlanned = plan.status === 'planned'
+          const profile = profilesByRepo[plan.repo]
 
           return (
             <div key={plan.repo} className="rounded-lg border border-neutral-800 bg-neutral-950 p-4">
@@ -108,6 +177,9 @@ export default function ProjectReadinessPanel({ plans, loading }) {
                     />
                   ))}
                 </div>
+              )}
+              {profile && (
+                <ActionRow repo={plan.repo} repoName={repoName} plan={plan} profile={profile} onChanged={onChanged} />
               )}
             </div>
           )

@@ -32,7 +32,7 @@ import { createTriggerHub, createReconciler, refetchesGithub } from './triggers.
 import { listOpenPrsAcrossRepos, prListArgs, createListCache, normalizeSeen, canMergeFromDashboard, repoFromPrUrl, MARVIN_REPO } from './mr_repos.js'
 import { createIndexer, buildDocsIndex, loadIndex } from './docs_search.js'
 import { createDocsService, MASTER_ID } from './docs_service.js'
-import { readMergeableRepos, listProfiles, setDispatch } from './profiles.js'
+import { readMergeableRepos, listProfiles, setDispatch, setMergeFromDashboard } from './profiles.js'
 import { searchFiles, isRevealable, isLinkable, linkAction } from './files_search.js'
 import { readCatalog, readMasterDoc, CATALOG_DIR, MASTER_DOC_PATH } from './catalog.js'
 import { STAGES_DIR } from '../../webhook-server/ticket_stages.js'
@@ -222,6 +222,66 @@ function registerHealthHandlers() {
     return readHealthStatus()
   })
   ipcMain.handle('health:readiness', () => readOnboardingPlans(readRegistry()))
+  ipcMain.handle('health:setMergeFromDashboard', async (_event, repo, value) => {
+    if (value === true) {
+      const plans = readOnboardingPlans(readRegistry())
+      const plan = plans.find((p) => p.repo === repo)
+      if (!plan?.offers?.merge_from_dashboard) {
+        throw new Error(`${repo} is not ready for merge_from_dashboard`)
+      }
+      const profile = listProfiles().find((p) => p.repo === repo)
+      const { response } = await dialog.showMessageBox(mainWindow, {
+        type: 'warning',
+        buttons: ['Cancel', 'Turn on'],
+        defaultId: 0,
+        cancelId: 0,
+        message: `Enable merge-from-dashboard for ${profile?.name || repo}?`,
+        detail: `Pull requests for this project will become mergeable from MR Review instead of GitHub. You can turn it off here at any time.`
+      })
+      if (response !== 1) return { done: false, cancelled: true }
+    } else {
+      const { response } = await dialog.showMessageBox(mainWindow, {
+        type: 'question',
+        buttons: ['Cancel', 'Turn off'],
+        defaultId: 0,
+        cancelId: 0,
+        message: `Disable merge-from-dashboard for this project?`
+      })
+      if (response !== 1) return { done: false, cancelled: true }
+    }
+    setMergeFromDashboard(repo, value)
+    return { done: true, cancelled: false }
+  })
+  ipcMain.handle('health:setDispatch', async (_event, repo, value) => {
+    if (value === 'on') {
+      const plans = readOnboardingPlans(readRegistry())
+      const plan = plans.find((p) => p.repo === repo)
+      if (!plan?.offers?.dispatch) {
+        throw new Error(`${repo} is not ready for dispatch`)
+      }
+      const profile = listProfiles().find((p) => p.repo === repo)
+      const { response } = await dialog.showMessageBox(mainWindow, {
+        type: 'warning',
+        buttons: ['Cancel', 'Turn on'],
+        defaultId: 0,
+        cancelId: 0,
+        message: `Let MARVIN work on ${profile?.name || repo}'s tickets by itself?`,
+        detail: `From the next hourly scan, MARVIN will claim this project's ready tickets, run a planning call and an implementation call on ${profile?.machines.join(', ') || 'its machine'} (this spends model usage), and open pull requests for you to review in MR Review. You can turn it off here at any time.`
+      })
+      if (response !== 1) return { done: false, cancelled: true }
+    } else {
+      const { response } = await dialog.showMessageBox(mainWindow, {
+        type: 'question',
+        buttons: ['Cancel', 'Turn off'],
+        defaultId: 0,
+        cancelId: 0,
+        message: `Disable dispatch for this project?`
+      })
+      if (response !== 1) return { done: false, cancelled: true }
+    }
+    setDispatch(repo, value)
+    return { done: true, cancelled: false }
+  })
 }
 
 function registerActivityHandlers() {
