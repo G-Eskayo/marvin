@@ -303,7 +303,9 @@
     feeds: { dash: [6, 2], title: "FEEDS THE DASHBOARD (job → tab)" },
     "runs-on": { dash: [1, 2, 6, 2], title: "RUNS ON THIS MAC" },
     builds: { dash: [10, 3], title: "THE PIPELINE BUILDS THIS PROJECT" },
-    "skill-project": { dash: [2, 2], title: "SKILL ↔ ITS PROJECT" }
+    "skill-project": { dash: [2, 2], title: "SKILL ↔ ITS PROJECT" },
+    tracked: { dash: [4, 4], title: "TRACKED IN ACTIVITY TAB" },
+    documented: { dash: [8, 2], title: "DOCUMENTED (CONTEXT.md / README.md)" }
   };
   function synapseKind(s) { return SYNAPSE_KINDS[s.type] || SYNAPSE_KINDS.calls; }
   var SYNAPSE_COLOR = "255,176,59"; // reserved — never a categorical hue, MAGI-amber "electrical" signal
@@ -986,7 +988,8 @@
       // pushed live by DesktopLive's tailscale poll (see setDeviceStatus) —
       // undefined for every other node, so this is a no-op elsewhere.
       var liveStatus = hovered.online === undefined ? "" : (hovered.online ? "● online" : "○ offline");
-      var descText = [hovered.desc, liveStatus].filter(Boolean).join(" — ");
+      var readinessStatus = hovered.archived ? "archived" : (hovered.ready === false ? ("not ready — missing: " + hovered.readyNote) : "");
+      var descText = [hovered.desc, liveStatus, readinessStatus].filter(Boolean).join(" — ");
       var openHint = hovered.openable ? "click to view code" : (hovered.locked ? "private — not shown" : "");
       tooltip.innerHTML =
         '<div class="name mono"></div>' + (hovered.plain ? '<div class="plain"></div>' : "") + '<div class="cat"></div>' +
@@ -1337,7 +1340,7 @@
       // removes an offline device from the tree entirely (shrink-out)
       // rather than leaving it greyed in place. Kept as a defensive
       // fallback only, not the live behavior.
-      var color = nd.online === false ? "#5a5a5a" : CAT[nd.cat].color;
+      var color = nd.archived ? "#404040" : (nd.ready === false ? "#6b5b4a" : (nd.online === false ? "#5a5a5a" : CAT[nd.cat].color));
       var pulse = pulseIntensityOf(nd.id);
 
       if (r < 0.4) return; // still basically zero-sized — nothing to draw yet
