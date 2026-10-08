@@ -787,6 +787,12 @@ through `project_catalog.portfolio_repo_path()`, never a hard-coded path.
 - **Project spec**: the small structured input for a new project (title, category, slug, subtitle, card
   description, body, stack, optional GitHub repo / download file, optional theme). The only thing an LLM
   needs to write.
+- **Claim**: a statement on the MARVIN portfolio page about system capability (e.g., "it runs on two Macs",
+  "it's open source"). Each claim is verifiable against live system state: registered machines, test-gate results,
+  repo visibility, job health. Checked nightly and surfaced to the dashboard.
+- **Claims ledger**: the verification system for portfolio page claims (ADR 0059), layer 4 of the living MARVIN page.
+  Pure-function checkers read system state, return ok/fail status with details. Nightly job logs results, dashboard
+  shows ledger and flags unregistered numeric claims for review.
 - **Add-project pipeline**: the automation that turns a project spec into a finished dev-site change by
   applying the site rules and the element library, then checks it with the evaluation.
 
@@ -908,6 +914,25 @@ row, Other Projects footer) plus a stack of **sections** after the title card.
   Cause it closes: nothing copied `deploy/` to the dev site, and the stylesheet carried a constant `?ver=1.0`, so an edited
   card looked right in one place and stale in another. The version is now the file's mtime, and the dashboard never caches
   dev-site responses.
+
+### Claims ledger (built 2026-10-08, #281)
+
+The MARVIN portfolio page makes system claims (runs on two Macs, proves changes with tests, is open source, keeps working
+away). Without verification, they become stale silently. The ledger (ADR 0059) checks them nightly against live state and
+surfaces results to the dashboard **Content** tab.
+
+- **Ledger source**: `brain-map/scripts/claims.py` (pure functions module, testable with injected `gather`). Defines
+  `CLAIMS` list, one `check_*()` function per claim (reads system data, returns `{ok, detail}`), and `collect()` to run all
+  checks. Four seed claims: "runs on two Macs" (marvin-network.json device count), "proves with tests" (recent verifying pass
+  in ticket stages), "is open source" (repo visibility), "keeps working away" (scheduled job health).
+- **Nightly job**: `com.marvin.claims-ledger-nightly.plist` runs `claims.py --nightly` daily at 02:30 on the mini (only),
+  logs via `job_events`, writes results to `~/.claude/logs/claims-ledger.json` (local, never published). Failures are
+  flagged via stub `flag_for_redraft()` (replaced by real redraft call when #269 ships).
+- **Dashboard wiring**: `portfolio.claimsReport()` spawns `claims.py --json`, returns `{claims, unchecked}`. **Content** tab
+  displays ledger grid (claim name + ok/fail badge + detail) + list of unregistered numeric claims (facts in the HTML not
+  in `CLAIMS`, for Gil to register or cut).
+- **Stub for #269**: `flag_for_redraft()` is one function call, replaced by the redraft trigger when it's built; zero other
+  changes needed.
 
 ## Citation-graph knowledge base (in design, not yet built)
 

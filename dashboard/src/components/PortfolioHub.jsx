@@ -760,15 +760,17 @@ function GuideAndRules() {
 function Content() {
   const [templates, setTemplates] = useState([])
   const [report, setReport] = useState(null)
+  const [claims, setClaims] = useState(null)
   const [error, setError] = useState(null)
   const [open, setOpen] = useState(null)
 
   async function load() {
     setError(null)
     try {
-      const [t, r] = await Promise.all([window.api.portfolio.contentTemplates(), window.api.portfolio.contentReport()])
+      const [t, r, c] = await Promise.all([window.api.portfolio.contentTemplates(), window.api.portfolio.contentReport(), window.api.portfolio.claimsReport()])
       setTemplates(t)
       setReport(r)
+      setClaims(c)
     } catch (err) {
       setError(errText(err))
     }
@@ -843,6 +845,37 @@ function Content() {
                 )}
               </div>
             ))}
+          </div>
+        )}
+      </section>
+
+      <section>
+        <h3 className="mb-2 text-xs uppercase tracking-wide text-neutral-500">Claims ledger</h3>
+        {!claims ? <p className="text-sm text-neutral-500">Checking claims…</p> : (
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
+              {Object.entries(claims.claims || {}).map(([id, claim]) => (
+                <div key={id} className={`rounded-lg border p-3 ${claim.ok ? 'border-emerald-800 bg-emerald-900/20' : 'border-amber-800 bg-amber-900/20'}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1">
+                      <p className={`text-sm font-medium ${claim.ok ? 'text-emerald-300' : 'text-amber-300'}`}>
+                        {claim.ok ? '✓' : '✗'} {claim.text}
+                      </p>
+                      <p className="mt-1 text-xs text-neutral-400">{claim.detail}</p>
+                      <p className="mt-1 text-xs text-neutral-500">({claim.section})</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {(claims.unchecked || []).length > 0 && (
+              <div className="rounded-lg border border-orange-800 bg-orange-900/20 p-3">
+                <p className="text-sm font-medium text-orange-300">Unregistered claims found</p>
+                <ul className="mt-2 space-y-1 text-xs text-neutral-300">
+                  {claims.unchecked.map((u, i) => <li key={i} className="text-orange-200">• {u}</li>)}
+                </ul>
+              </div>
+            )}
           </div>
         )}
       </section>
