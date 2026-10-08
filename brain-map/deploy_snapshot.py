@@ -259,6 +259,18 @@ def health_check_mark_failure(reason: str) -> None:
     )
 
 
+def refresh_skill_index() -> tuple[bool, str]:
+    """Rebuild ~/.claude/manifest.json from the skills on disk. It is otherwise rebuilt only by an interactive-session
+    hook, so on the mini (where the website's map and facts are built) it went 3 days stale. Never fatal."""
+    script = Path.home() / ".agents" / "skills" / "self-improve" / "scripts" / "rebuild-manifest.py"
+    try:
+        p = subprocess.run([sys.executable, str(script)], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=600)
+        line = next((l.strip() for l in p.stderr.splitlines() if "Done." in l), (p.stderr or p.stdout).strip()[-200:])
+        return p.returncode == 0, line
+    except Exception as e:  # noqa: BLE001
+        return False, f"{type(e).__name__}: {e}"
+
+
 def publish_to_production() -> tuple[bool, str]:
     """publish_map.publish() as (ok, detail); a refusal or git failure is a failure, never an exception."""
     import publish_map
@@ -278,6 +290,10 @@ def deploy_snapshot(commit: str = "HEAD", dry_run: bool = False, force: bool = F
     if not enabled:
         log_step("snapshot-disabled", True, "feature flag off (set MARVIN_SNAPSHOT_ENABLED=1 to enable)")
         return True
+
+    # Step 0: the skill index the map and facts are built from (not fatal)
+    ok, detail = refresh_skill_index()
+    log_step("skill-index", ok, detail)
 
     # Step 1: Export snapshot
     ok, detail = run_export_snapshot(commit)
