@@ -167,6 +167,7 @@ def _passing_steps(monkeypatch):
     monkeypatch.setattr(ds, "validate_snapshot_content", lambda: (True, "ok"))
     monkeypatch.setattr(ds, "upload_to_portfolio", lambda *a: (True, "ok"))
     monkeypatch.setattr(ds, "log_step", lambda *a: None)
+    monkeypatch.setattr(ds, "refresh_skill_index", lambda: (True, "ok"))
     marks = []
     monkeypatch.setattr(ds, "health_check_mark_success", lambda: marks.append("ok"))
     monkeypatch.setattr(ds, "health_check_mark_failure", lambda why: marks.append("fail: " + why))
@@ -200,3 +201,36 @@ def test_the_publish_never_runs_when_a_check_failed(monkeypatch):
     called = []
     monkeypatch.setattr(ds, "publish_to_production", lambda: called.append(1) or (True, ""))
     assert ds.deploy_snapshot(force=True) is False and called == []
+
+
+def test_upload_copies_every_snapshot_file_and_folder(tmp_path, monkeypatch):
+    """facts.json (2026-10-08) never reached the dev site: only index.html and tree-data.json were copied by name."""
+    for name in ("index.html", "tree-data.json", "facts.json"):
+        (tmp_path / name).write_text("x")
+    (tmp_path / "vendor").mkdir()
+    copied = []
+
+    class R:
+        returncode = 0
+
+    def run(cmd, **kw):
+        if cmd[1] == "cp":
+            copied.append(Path(cmd[2]).name)
+        return R()
+    monkeypatch.setattr(ds.subprocess, "run", run)
+    ok, _ = ds.upload_to_portfolio(tmp_path / "index.html", tmp_path / "tree-data.json")
+    assert ok and sorted(copied) == ["facts.json", "index.html", "tree-data.json", "vendor"]
+
+
+def test_the_skill_index_is_rebuilt_before_the_export(monkeypatch):
+    """2026-10-08: the mini's ~/.claude/manifest.json was 3 days stale (2 skills missing), and the map + facts are built
+    there. The index is rebuilt first; a failed rebuild is logged and the export goes on with the old one."""
+    order = []
+    _passing_steps(monkeypatch)
+    monkeypatch.setattr(ds, "refresh_skill_index", lambda: order.append("index") or (True, "35 entries"))
+    monkeypatch.setattr(ds, "run_export_snapshot", lambda c: order.append("export") or (True, "ok"))
+    monkeypatch.setattr(ds, "PUBLISH_ENABLED", False)
+    assert ds.deploy_snapshot(force=True)
+    assert order == ["index", "export"]
+    monkeypatch.setattr(ds, "refresh_skill_index", lambda: (False, "boom"))
+    assert ds.deploy_snapshot(force=True)  # not fatal

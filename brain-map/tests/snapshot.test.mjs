@@ -329,3 +329,53 @@ test('embed: the empty background shows a zoom-in cursor', async (t) => {
   assert.equal(await page.evaluate(() => document.getElementById('c').style.cursor), 'zoom-in')
   await page.close()
 })
+
+// Gil 2026-10-08: not full screen — the map pops up in a white bordered box on the same page, still interactive,
+// closed by clicking outside it. The embed asks its page; the page answers; no answer means full screen as before.
+async function framedMap(t, { acknowledge }) {
+  const { mkdtempSync, writeFileSync } = await import('node:fs')
+  const os = await import('node:os')
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'mapframe-'))
+  const src = pathToFileURL(path.join(MAP, 'snapshot', 'index.html')).href + '?embed=1&ink=dark'
+  writeFileSync(path.join(dir, 'host.html'), `<!doctype html><body style="margin:0">
+    <iframe id="m" src="${src}" style="width:900px;height:560px;border:0"></iframe>
+    <script>window.__asked = 0; addEventListener('message', (e) => { if (e.data && e.data.type === 'marvin-map:expand') {
+      window.__asked++; ${acknowledge ? "e.source.postMessage({ type: 'marvin-map:expand-ack' }, '*')" : ''} } })</script></body>`)
+  const page = await browser.newPage({ viewport: { width: 1000, height: 640 } })
+  await page.addInitScript(() => { window.__fs = []; Element.prototype.requestFullscreen = function () { window.__fs.push('request'); return Promise.resolve() } })
+  await page.goto(pathToFileURL(path.join(dir, 'host.html')).href)
+  const frame = page.frames().find((f) => f.url().includes('snapshot'))
+  await frame.waitForFunction(() => window.__map)
+  await frame.evaluate(() => { window.__map.driveExternally(); let t = performance.now(); for (let i = 0; i < 24; i++) window.renderFrame((t += 1000 / 24)) })
+  const box = await page.locator('#m').boundingBox()
+  await page.mouse.click(box.x + 8, box.y + 8)
+  await page.waitForTimeout(700)
+  return { asked: await page.evaluate(() => window.__asked), fs: await frame.evaluate(() => window.__fs), page }
+}
+
+test('framed: an empty-background click asks the page for its popup and does not go full screen when answered', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const r = await framedMap(t, { acknowledge: true })
+  assert.equal(r.asked, 1)
+  assert.deepEqual(r.fs, [])
+  await r.page.close()
+})
+
+test('framed: a page that does not answer still gets full screen', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const r = await framedMap(t, { acknowledge: false })
+  assert.equal(r.asked, 1)
+  assert.deepEqual(r.fs, ['request'])
+  await r.page.close()
+})
+
+test('the popup copy (?modal=1) never asks to expand and shows no zoom-in cursor', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const page = await embedWithFullscreenSpy('?embed=1&ink=dark&modal=1')
+  const box = await page.locator('canvas').first().boundingBox()
+  await page.mouse.move(box.x + 8, box.y + 8); await frames(page, 2)
+  assert.equal(await page.evaluate(() => document.getElementById('c').style.cursor), '')
+  await page.mouse.click(box.x + 8, box.y + 8)
+  assert.deepEqual(await page.evaluate(() => window.__fs), [])
+  await page.close()
+})

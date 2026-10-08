@@ -5,7 +5,7 @@ publish_map.py — put the privacy-checked map snapshot live on gileskayo.me (AD
 The one thing MARVIN may push to the portfolio repo: `deploy/marvin-map/**`. The repo's GitHub action uploads
 `deploy/` to /gileskayo.me/wp-content/, so the live site serves /wp-content/marvin-map/, the same path as the dev site.
 
-Works in its own sparse checkout (only deploy/marvin-map/ on disk), never Gil's working copy, so his uncommitted
+Works in its own sparse checkout (only deploy/marvin-map/ on disk), never Gil's working copy (and outside the catalog's project folders), so his uncommitted
 portfolio changes can't be swept in. Refuses when the commit would touch anything else, or the snapshot is empty.
 No commit when nothing changed. A push that loses a race is rebased onto the new main and retried.
 
@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 
 REMOTE = "https://github.com/G-Eskayo/portfolio-website-updater.git"
-CHECKOUT = Path.home() / "Developer" / "portfolio-map-publisher"
+CHECKOUT = Path.home() / ".agents-pipeline-clones" / "portfolio-map-publisher"  # not under a catalog root: in ~/Developer the catalog took it for the portfolio repo (2026-10-08)
 SNAPSHOT = Path(__file__).parent / "snapshot"
 ALLOWED_PREFIX = "deploy/marvin-map/"   # fixed: the only path ADR 0057 allows
 TARGET = "deploy/marvin-map"           # where the snapshot is copied
