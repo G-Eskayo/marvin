@@ -71,11 +71,18 @@ describe('loadBoard', () => {
 import { withProjectStatus } from '../electron/main/boards.js'
 
 describe('withProjectStatus', () => {
-  const cat = { projects: [{ id: 'marvin', status: 'active' }, { id: 'old-thing', status: 'dormant' }, { id: 'gone', status: 'archived' }] }
+  const cat = { projects: [{ id: 'marvin', status: 'active', lastActivity: '2026-10-05T12:00:00Z' }, { id: 'old-thing', status: 'dormant', lastActivity: '2026-09-01T00:00:00Z' }, { id: 'gone', status: 'archived' }] }
 
   it('adds each board\'s project status from the catalog, matching by project id', () => {
     const out = withProjectStatus([{ repo: 'G-Eskayo/marvin' }, { repo: 'G-Eskayo/Old_Thing' }, { repo: 'G-Eskayo/gone' }], cat)
     expect(out.map((b) => b.status)).toEqual(['active', 'dormant', 'archived'])
+  })
+
+  it('carries through lastActivity from the catalog when present', () => {
+    const out = withProjectStatus([{ repo: 'G-Eskayo/marvin' }, { repo: 'G-Eskayo/Old_Thing' }, { repo: 'G-Eskayo/gone' }], cat)
+    expect(out[0].lastActivity).toBe('2026-10-05T12:00:00Z')
+    expect(out[1].lastActivity).toBe('2026-09-01T00:00:00Z')
+    expect(out[2].lastActivity).toBe(null)
   })
 
   it('treats a board with no catalog entry (or no catalog yet) as recent, never hides it', () => {

@@ -191,3 +191,77 @@ describe('ActivityBanner', () => {
     expect(html.length === 0 || !html.includes('border-red-900')).toBe(true)
   })
 })
+
+import DashboardHome, { formatRelativeTime, buildProjectCards } from '../src/components/DashboardHome.jsx'
+
+describe('formatRelativeTime', () => {
+  const now = Date.parse('2026-10-08T12:00:00Z')
+
+  it('formats recent times as relative (minutes/hours/days)', () => {
+    expect(formatRelativeTime('2026-10-08T11:55:00Z', now)).toBe('5m ago')
+    expect(formatRelativeTime('2026-10-08T10:00:00Z', now)).toBe('2h ago')
+    expect(formatRelativeTime('2026-10-05T12:00:00Z', now)).toBe('3d ago')
+  })
+
+  it('formats old times as dates (weeks or months)', () => {
+    expect(formatRelativeTime('2026-09-30T12:00:00Z', now)).toBe('1w ago')
+    const html = formatRelativeTime('2026-08-08T12:00:00Z', now)
+    expect(html).toMatch(/Aug/)
+  })
+
+  it('says "just now" for times within a minute', () => {
+    expect(formatRelativeTime('2026-10-08T11:59:59Z', now)).toBe('just now')
+  })
+
+  it('returns null for no timestamp', () => {
+    expect(formatRelativeTime(null, now)).toBe(null)
+    expect(formatRelativeTime('', now)).toBe(null)
+  })
+})
+
+describe('buildProjectCards', () => {
+  it('assembles cards with all the data needed for display', () => {
+    const boards = [
+      { repo: 'G-Eskayo/marvin', name: 'marvin', status: 'active', due: '2026-12-01', dueHard: true, lastActivity: '2026-10-08T11:00:00Z' },
+      { repo: 'G-Eskayo/test', name: 'test', status: 'dormant', lastActivity: null }
+    ]
+    const overview = {
+      'G-Eskayo/marvin': { review: 2, needsYou: 1, blocked: 0 }
+    }
+    const summaries = {
+      'G-Eskayo/marvin': { open: 5, running: true }
+    }
+    const cards = buildProjectCards(boards, overview, summaries)
+    expect(cards).toHaveLength(2)
+    expect(cards[0]).toMatchObject({
+      repo: 'G-Eskayo/marvin',
+      name: 'marvin',
+      status: 'active',
+      isArchived: false,
+      open: 5,
+      running: true,
+      review: 2,
+      needsYou: 1,
+      due: '2026-12-01',
+      dueHard: true
+    })
+    expect(cards[1]).toMatchObject({
+      isArchived: false,
+      open: 0,
+      running: false
+    })
+  })
+
+  it('marks archived projects correctly', () => {
+    const boards = [{ repo: 'o/r', name: 'r', status: 'archived' }]
+    const cards = buildProjectCards(boards)
+    expect(cards[0].isArchived).toBe(true)
+  })
+})
+
+describe('DashboardHome', () => {
+  it('renders loading state before boards arrive', () => {
+    const html = renderToStaticMarkup(<DashboardHome onOpenProject={() => {}} />)
+    expect(html).toContain('Loading')
+  })
+})

@@ -410,3 +410,45 @@ describe('partial progress on a card (marvin #139)', () => {
   })
 })
 
+describe('buildBoard live numbers', () => {
+  it('tags cards with isLive when their number is in liveNumbers', () => {
+    const issues = [
+      issue({ number: 1, labels: labels('ready-for-agent') }),
+      issue({ number: 2, labels: labels('ready-for-agent') })
+    ]
+    const board = buildBoard({ repo: 'o/r', issues, prs: [], eventsByNumber: {}, liveNumbers: new Set([1]) })
+    const cards = board.columns.flatMap((c) => c.cards)
+    expect(cards.find((c) => c.number === 1).isLive).toBe(true)
+    expect(cards.find((c) => c.number === 2).isLive).toBe(false)
+  })
+})
+
+describe('summarizeBoard running state', () => {
+  it('returns running: true only when a card is live', () => {
+    const boardWithLive = buildBoard({
+      repo: 'o/r',
+      issues: [
+        issue({ number: 1, labels: labels('ready-for-agent') }),
+        issue({ number: 2, labels: labels('ready-for-agent') })
+      ],
+      prs: [],
+      eventsByNumber: {},
+      liveNumbers: new Set([1])
+    })
+    const summary = summarizeBoard(boardWithLive)
+    expect(summary.running).toBe(true)
+
+    const boardWithoutLive = buildBoard({
+      repo: 'o/r',
+      issues: [
+        issue({ number: 1, labels: labels('ready-for-agent') }),
+        issue({ number: 2, labels: labels('ready-for-agent') })
+      ],
+      prs: [],
+      eventsByNumber: {},
+      liveNumbers: new Set()
+    })
+    const summaryNone = summarizeBoard(boardWithoutLive)
+    expect(summaryNone.running).toBe(false)
+  })
+})
