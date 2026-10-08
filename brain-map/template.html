@@ -214,7 +214,7 @@
     <div id="code-layer-note">Viewing code for <b id="code-name" class="mono"></b><button id="code-close">← back</button></div>
     <div id="code-layer-tests-toggle"><span id="tests-label">test files</span><button id="tests-toggle">show</button></div>
 
-    <footer class="mono">branches = structure &nbsp;·&nbsp; gold = real wiring (solid <b>calls:</b> · <b>– –</b> undeclared · <b>····</b> hook/cron) &nbsp;·&nbsp; dashed ring = click to open its forest</footer>
+    <footer class="mono">branches = structure &nbsp;·&nbsp; gold = real wiring (solid <b>calls:</b> · <b>– –</b> undeclared · <b>····</b> hook/cron · <b>— — —</b> feeds) &nbsp;·&nbsp; dashed ring = click to open its forest</footer>
   </div>
 </div>
 
@@ -956,7 +956,7 @@
       tooltip.style.top = (my + 12) + "px";
       tooltip.innerHTML = '<div class="name mono"></div><div class="cat"></div><div class="desc"></div>';
       tooltip.querySelector(".name").textContent = hoveredSynapse.a + " → " + hoveredSynapse.b;
-      tooltip.querySelector(".cat").textContent = hoveredSynapse.type === "undeclared" ? "REAL, UNDECLARED IN FRONTMATTER" : hoveredSynapse.type === "hook" ? "HOOK / CRON WIRING" : "DECLARED calls:";
+      tooltip.querySelector(".cat").textContent = hoveredSynapse.type === "undeclared" ? "REAL, UNDECLARED IN FRONTMATTER" : hoveredSynapse.type === "hook" ? "HOOK / CRON WIRING" : hoveredSynapse.type === "feeds" ? "DATA FEED (writer → reader)" : "DECLARED calls:";
       tooltip.querySelector(".desc").textContent = hoveredSynapse.label;
     } else {
       tooltip.style.display = "none";
@@ -1161,7 +1161,7 @@
       ctx.beginPath();
       ctx.moveTo(pa.sx, pa.sy);
       ctx.quadraticCurveTo(mid.sx, mid.sy, pb.sx, pb.sy);
-      ctx.setLineDash(s.type === "undeclared" ? [3, 4] : s.type === "hook" ? [1, 4] : []);
+      ctx.setLineDash(s.type === "undeclared" ? [3, 4] : s.type === "hook" ? [1, 4] : s.type === "feeds" ? [6, 2] : []);
       var alpha = (dim ? 0.08 : (isHov || isSelRelated ? 0.85 : 0.35) + pulse * 0.5) * fadedByOpen;
       ctx.strokeStyle = "rgba(" + SYNAPSE_COLOR + "," + Math.min(1, alpha) + ")";
       ctx.lineWidth = (isHov || isSelRelated ? 2 : 1.1) + pulse * 1.8;

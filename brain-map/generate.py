@@ -34,6 +34,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Import data_flow for feeds threads
+sys.path.insert(0, str(Path(__file__).parent / "scripts"))
+import data_flow
+
 HERE = Path(__file__).parent
 MANIFEST_PATH = Path.home() / ".claude" / "manifest.json"
 ENRICHMENT_PATH = HERE / "enrichment.json"
@@ -753,6 +757,26 @@ def main() -> None:
     attach_layout(tree)
     attach_code_layers(tree)
     synapses = build_synapses(manifest, enrichment)
+
+    # Add feeds threads from data flow analysis
+    lib_dir = Path.home() / ".agents" / "lib"
+    dashboard_dir = Path.home() / ".agents" / "dashboard" / "src" / "components"
+    owner_overrides = enrichment.get("writer_module_owners", {})
+    tab_readers = enrichment.get("dashboard_tab_readers", {})
+
+    writers = data_flow.discover_writers(lib_dir, owner_overrides, tree)
+    readers = data_flow.discover_readers(tab_readers, dashboard_dir)
+    feeds_threads, gaps = data_flow.match_threads(writers, readers)
+
+    synapses.extend(feeds_threads)
+
+    # Report gaps
+    if gaps:
+        gap_info = [
+            f"{g['kind']}: {g.get('path', '?')} (from {g.get('source_file', '?')})"
+            for g in gaps
+        ]
+        print(f"WARNING: {len(gaps)} data-flow gap(s) — unmatched writer/reader paths: {gap_info}", file=sys.stderr)
 
     known_ids = set()
     collect_ids(tree, known_ids)

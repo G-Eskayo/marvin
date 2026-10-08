@@ -305,7 +305,9 @@ def export_snapshot(commit: str = "HEAD", out_dir: str | Path = SNAPSHOT_DIR) ->
 
     # Home folder → ~ in every field, then scan everything
     tree = redact_home_paths(tree)
+    synapses = redact_home_paths(synapses)
     leaks = scan_tree_for_leaks(tree, allowlist)
+    leaks.extend(scan_for_leaks(json.dumps(synapses)))
     if leaks:
         print("Privacy scan failed — refusing to export:", file=sys.stderr)
         for leak in leaks:
