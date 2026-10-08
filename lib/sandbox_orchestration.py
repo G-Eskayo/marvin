@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Callable
 
 import metrics_registry as mr
+import project_profile as pp
 import ticket_stages as ts
 
 WORKTREES_ROOT = Path.home() / ".agents-pipeline-worktrees"
@@ -56,7 +57,7 @@ EXEC_TIMEOUT_S = 900
 # either list -- those run as plain `subprocess.run()` calls from
 # `mr_raiser.py`, not from inside a nested Claude session, so they were
 # never subject to this wall to begin with.
-_PLAN_ALLOWED_TOOLS = "Read,Grep,Glob,Bash(gh issue view*),Bash(gh issue list*)"
+_PLAN_ALLOWED_TOOLS = ",".join(["Read", "Grep", "Glob", *pp.READ_ONLY_INSPECTION_TOOLS])
 # Worktrees live in ~/.agents-pipeline-worktrees, a sibling of ~/.agents (not
 # under it), so denying ~/.agents/** blocks writes to the real checkout without
 # touching the executor's own worktree. Edit/Write were previously allowlisted
@@ -66,7 +67,7 @@ WORKTREES_DIR_NAME = ".agents-pipeline-worktrees"
 _EXEC_DISALLOWED_TOOLS = "Write(~/.agents/**),Edit(~/.agents/**)"
 _EXEC_ALLOWED_TOOLS = (
     "Read,Edit,Write,"
-    "Bash(git status*),"
+    + ",".join(pp.READ_ONLY_INSPECTION_TOOLS) + ","
     "Bash(~/.agents/venv/bin/python -m pytest*),"
     # A real live-fire dispatch (G-Eskayo/marvin#21) found the executor
     # naturally reaches for bare `pytest`/`python -m pytest` for its own
@@ -120,7 +121,12 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
         "confirm judgment calls. If existing code already satisfies this "
         "ticket, say so plainly in your plan and act on that rather than "
         "pausing to ask for confirmation; if something is genuinely "
-        "ambiguous, make the most reasonable call yourself and note it."
+        "ambiguous, make the most reasonable call yourself and note it. "
+        # #277: refused shell habits were 25% of all headless refusals.
+        "Your shell is already in the working directory, so never prefix commands with `cd <dir> &&` "
+        "(it makes allowed commands get refused). Use the Read, Glob and Grep tools to look at files "
+        "and folders, not ls/find/cat/grep in Bash; Glob lists a directory, Read can't open one. "
+        "Read-only `graphify query`, `gh` (view/list/diff) and `git` (log/diff/show/blame) are allowed."
     )
     # A project profile (project_profile.py) replaces marvin's assumptions: its own notes, its own leash.
     project_notes = ""

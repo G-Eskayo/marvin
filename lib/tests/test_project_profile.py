@@ -524,3 +524,21 @@ def test_measurer_propagates_timeout_from_a_tier(tmp_path):
         m(tmp_path)
     assert exc_info.value.timeout_s == 2
     assert "sleep" in exc_info.value.command[0]
+
+
+# ── read-only inspection: allowed everywhere (Gil, 2026-10-08, #277) ──────────
+
+def test_every_executor_may_inspect_with_graphify_and_read_only_gh_and_git():
+    allowed, _ = pp.executor_tools({}, clone=Path("/c"))
+    for rule in ("Bash(graphify query*)", "Bash(gh pr view*)", "Bash(gh issue view*)", "Bash(git log*)", "Bash(git diff*)", "Bash(git show*)"):
+        assert rule in allowed.split(","), rule
+
+
+def test_read_only_inspection_never_includes_commands_that_change_things():
+    for rule in pp.READ_ONLY_INSPECTION_TOOLS:
+        cmd = rule.removeprefix("Bash(").removesuffix("*)")
+        assert cmd.split()[0] in {"graphify", "gh", "git"}, rule
+        # nothing that writes, pushes, deletes, merges, or edits GitHub state
+        for verb in ("push", "commit", "merge", "rebase", "reset", "checkout", "branch", "tag", "stash", "clean",
+                     "create", "edit", "close", "comment", "api", "delete", "rm"):
+            assert verb not in cmd.split()[1:], rule
