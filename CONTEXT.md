@@ -1136,3 +1136,10 @@ A GitHub 5xx (`remote: Internal Server Error`, HTTP 500, 503) is classified `GIT
   accept, adjust the target, revert), each with its cost and the north star it serves. **Gil decides**
   anything hard to reverse or where the diagnosis is unsure. MARVIN proceeds alone only on the obvious,
   reversible next step, and says so on the ticket.
+- **MARVIN button is the primary surface** (decided 2026-10-08): the normal way Gil starts a session (right
+  machine, environment, folder and worktree). A **bare `claude`** anywhere is still full Interactive MARVIN,
+  as a safety net for when the button isn't available (dashboard down, SSH, cloud, a new machine).
+- **Launch-kind marker**: the launcher marks each run it starts with its launch kind. MARVIN's hooks run at
+  user level everywhere and read the marker: **no marker means Interactive** (full layers); a marker
+  means that kind's declared layers. Automated runs can only get *less* than Interactive, and only by
+  declaring so.
