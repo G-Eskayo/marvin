@@ -12597,32 +12597,12 @@
     }
   },
   {
-<<<<<<< Updated upstream
-    "timestamp": "2026-10-07T18:48:41.164787+00:00",
-=======
     "timestamp": "2026-10-07T04:04:09.931424+00:00",
->>>>>>> Stashed changes
     "metrics": {
       "route:intent-routing-collection": {
         "value": 92,
         "higher_is_better": true
       },
-<<<<<<< Updated upstream
-      "profile:missing:G-Eskayo/finance-os": {
-        "value": 1,
-        "higher_is_better": false
-      },
-      "triggers:missed": {
-        "value": 1,
-        "higher_is_better": false
-      },
-      "catalog:fresh": {
-        "value": 15.0,
-        "higher_is_better": false
-      },
-      "github:budget": {
-        "value": 3409,
-=======
       "dispatch:lock-age": {
         "value": 5.4236772,
         "higher_is_better": false
@@ -12641,26 +12621,19 @@
       },
       "repo:sync:~/.agents@mac-mini-1": {
         "value": 0,
->>>>>>> Stashed changes
         "higher_is_better": false
       },
       "repo:sync:~/.agents@macbook-pro-1": {
         "value": 0,
         "higher_is_better": false
       },
-<<<<<<< Updated upstream
-      "repo:sync:~/.agents@mac-mini-1": {
-=======
       "repo:sync:~/.claude@mac-mini-1": {
->>>>>>> Stashed changes
         "value": 1,
         "higher_is_better": false
       },
       "repo:sync:~/.claude@macbook-pro-1": {
         "value": 0,
         "higher_is_better": false
-<<<<<<< Updated upstream
-=======
       }
     }
   },
@@ -12694,7 +12667,6 @@
       "repo:sync:~/.agents@mac-mini-1": {
         "value": 1,
         "higher_is_better": false
->>>>>>> Stashed changes
       },
       "repo:sync:~/.claude@mac-mini-1": {
         "value": 1,
@@ -12703,19 +12675,12 @@
     }
   },
   {
-<<<<<<< Updated upstream
-    "timestamp": "2026-10-07T20:50:13.647480+00:00",
-=======
     "timestamp": "2026-10-07T04:36:07.733694+00:00",
->>>>>>> Stashed changes
     "metrics": {
       "route:intent-routing-collection": {
         "value": 92,
         "higher_is_better": true
       },
-<<<<<<< Updated upstream
-      "profile:missing:G-Eskayo/finance-os": {
-=======
       "dispatch:lock-age": {
         "value": 6.508339433333333,
         "higher_is_better": false
@@ -14839,6 +14804,47 @@
     }
   },
   {
+    "timestamp": "2026-10-07T18:48:41.164787+00:00",
+    "metrics": {
+      "route:intent-routing-collection": {
+        "value": 92,
+        "higher_is_better": true
+      },
+      "profile:missing:G-Eskayo/finance-os": {
+        "value": 1,
+        "higher_is_better": false
+      },
+      "triggers:missed": {
+        "value": 1,
+        "higher_is_better": false
+      },
+      "catalog:fresh": {
+        "value": 15.0,
+        "higher_is_better": false
+      },
+      "github:budget": {
+        "value": 3409,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.agents@macbook-pro-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.agents@mac-mini-1": {
+        "value": 1,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.claude@macbook-pro-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.claude@mac-mini-1": {
+        "value": 1,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
     "timestamp": "2026-10-07T18:50:41.297871+00:00",
     "metrics": {
       "route:intent-routing-collection": {
@@ -15199,14 +15205,13 @@
     }
   },
   {
-    "timestamp": "2026-10-07T20:53:17.890837+00:00",
+    "timestamp": "2026-10-07T20:50:13.647480+00:00",
     "metrics": {
       "route:intent-routing-collection": {
         "value": 92,
         "higher_is_better": true
       },
-      "pipeline:breaker": {
->>>>>>> Stashed changes
+      "profile:missing:G-Eskayo/finance-os": {
         "value": 1,
         "higher_is_better": false
       },
@@ -15215,7 +15220,6 @@
         "higher_is_better": false
       },
       "catalog:fresh": {
-<<<<<<< Updated upstream
         "value": 1.6,
         "higher_is_better": false
       },
@@ -15225,7 +15229,38 @@
       },
       "repo:sync:~/.agents@macbook-pro-1": {
         "value": 0,
-=======
+        "higher_is_better": false
+      },
+      "repo:sync:~/.agents@mac-mini-1": {
+        "value": 1,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.claude@macbook-pro-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.claude@mac-mini-1": {
+        "value": 1,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-07T20:53:17.890837+00:00",
+    "metrics": {
+      "route:intent-routing-collection": {
+        "value": 92,
+        "higher_is_better": true
+      },
+      "pipeline:breaker": {
+        "value": 1,
+        "higher_is_better": false
+      },
+      "profile:missing:G-Eskayo/nourished": {
+        "value": 1,
+        "higher_is_better": false
+      },
+      "catalog:fresh": {
         "value": 0.3,
         "higher_is_better": false
       },
@@ -15239,26 +15274,19 @@
       },
       "repo:integrity:~/.claude": {
         "value": 1,
->>>>>>> Stashed changes
         "higher_is_better": false
       },
       "repo:sync:~/.agents@mac-mini-1": {
         "value": 1,
         "higher_is_better": false
       },
-<<<<<<< Updated upstream
-      "repo:sync:~/.claude@macbook-pro-1": {
-=======
       "repo:sync:~/.agents@macbook-pro-1": {
->>>>>>> Stashed changes
         "value": 0,
         "higher_is_better": false
       },
       "repo:sync:~/.claude@mac-mini-1": {
         "value": 1,
         "higher_is_better": false
-<<<<<<< Updated upstream
-=======
       },
       "repo:sync:~/.claude@macbook-pro-1": {
         "value": 0,
@@ -15455,7 +15483,43 @@
       "repo:sync:~/.claude@macbook-pro-1": {
         "value": 0,
         "higher_is_better": false
->>>>>>> Stashed changes
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-08T17:54:26.407452+00:00",
+    "metrics": {
+      "route:intent-routing-collection": {
+        "value": 92,
+        "higher_is_better": true
+      },
+      "profile:missing:G-Eskayo/finance-os": {
+        "value": 1,
+        "higher_is_better": false
+      },
+      "catalog:fresh": {
+        "value": 1.0,
+        "higher_is_better": false
+      },
+      "github:budget": {
+        "value": 3581,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.agents@macbook-pro-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.agents@mac-mini-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.claude@macbook-pro-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.claude@mac-mini-1": {
+        "value": 0,
+        "higher_is_better": false
       }
     }
   }

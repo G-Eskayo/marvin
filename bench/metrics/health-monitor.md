@@ -3550,29 +3550,6 @@
 - **repo:sync:~/.claude@mac-mini-1**: 1
 - **repo:sync:~/.claude@macbook-pro-1**: 0
 
-<<<<<<< Updated upstream
-## 2026-10-07T18:48:41.164787+00:00 — health-monitor
-- **route:intent-routing-collection**: 92
-- **profile:missing:G-Eskayo/finance-os**: 1
-- **triggers:missed**: 1
-- **catalog:fresh**: 15.0
-- **github:budget**: 3409
-- **repo:sync:~/.agents@macbook-pro-1**: 0
-- **repo:sync:~/.agents@mac-mini-1**: 1
-- **repo:sync:~/.claude@macbook-pro-1**: 0
-- **repo:sync:~/.claude@mac-mini-1**: 1
-
-## 2026-10-07T20:50:13.647480+00:00 — health-monitor
-- **route:intent-routing-collection**: 92
-- **profile:missing:G-Eskayo/finance-os**: 1
-- **profile:missing:G-Eskayo/nourished**: 1
-- **catalog:fresh**: 1.6
-- **github:budget**: 3052
-- **repo:sync:~/.agents@macbook-pro-1**: 0
-- **repo:sync:~/.agents@mac-mini-1**: 1
-- **repo:sync:~/.claude@macbook-pro-1**: 0
-- **repo:sync:~/.claude@mac-mini-1**: 1
-=======
 ## 2026-10-07T04:04:09.931424+00:00 — health-monitor
 - **route:intent-routing-collection**: 92
 - **dispatch:lock-age**: 5.4236772
@@ -4169,6 +4146,17 @@
 - **repo:sync:~/.agents@mac-mini-1**: 1
 - **repo:sync:~/.claude@mac-mini-1**: 1
 
+## 2026-10-07T18:48:41.164787+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **profile:missing:G-Eskayo/finance-os**: 1
+- **triggers:missed**: 1
+- **catalog:fresh**: 15.0
+- **github:budget**: 3409
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
 ## 2026-10-07T18:50:41.297871+00:00 — health-monitor
 - **route:intent-routing-collection**: 92
 - **dispatch:lock-age**: 1.6005740666666666
@@ -4265,6 +4253,17 @@
 - **repo:sync:~/.claude@mac-mini-1**: 1
 - **repo:sync:~/.claude@macbook-pro-1**: 0
 
+## 2026-10-07T20:50:13.647480+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **profile:missing:G-Eskayo/finance-os**: 1
+- **profile:missing:G-Eskayo/nourished**: 1
+- **catalog:fresh**: 1.6
+- **github:budget**: 3052
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.agents@mac-mini-1**: 1
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 1
+
 ## 2026-10-07T20:53:17.890837+00:00 — health-monitor
 - **route:intent-routing-collection**: 92
 - **pipeline:breaker**: 1
@@ -4328,5 +4327,13 @@
 - **repo:sync:~/.agents@macbook-pro-1**: 0
 - **repo:sync:~/.claude@mac-mini-1**: 1
 - **repo:sync:~/.claude@macbook-pro-1**: 0
->>>>>>> Stashed changes
+## 2026-10-08T17:54:26.407452+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **profile:missing:G-Eskayo/finance-os**: 1
+- **catalog:fresh**: 1.0
+- **github:budget**: 3581
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.agents@mac-mini-1**: 0
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 0
 
