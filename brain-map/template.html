@@ -259,7 +259,25 @@
   // again, the wheel zooms. Esc or the close button returns. Where a frame can't go full screen (iPhone), the full map
   // opens in a new tab instead. Gil, 2026-10-08: no "full screen" link, the background is the way in.
   function isFullscreen() { return !!(document.fullscreenElement || document.webkitFullscreenElement); }
+  // ?modal=1 is the copy inside the page's popup: it never asks to expand again.
+  var MODAL = /[?&]modal=1\b/.test(location.search);
+  // Gil, 2026-10-08: the map should pop up in a box on the same page, not leave it. Inside a frame, ask the page
+  // (it shows the popup and answers "marvin-map:expand-ack"); a page that doesn't answer gets full screen as before.
   function expandMap() {
+    if (MODAL) return;
+    if (window.parent !== window) {
+      var answered = false;
+      var onAck = function (ev) {
+        if (ev.data && ev.data.type === "marvin-map:expand-ack") { answered = true; window.removeEventListener("message", onAck); }
+      };
+      window.addEventListener("message", onAck);
+      window.parent.postMessage({ type: "marvin-map:expand" }, "*");
+      setTimeout(function () { window.removeEventListener("message", onAck); if (!answered) goFullscreen(); }, 400);
+      return;
+    }
+    goFullscreen();
+  }
+  function goFullscreen() {
     var el = document.documentElement, req = el.requestFullscreen || el.webkitRequestFullscreen;
     if (req && document.fullscreenEnabled !== false) {
       var r = req.call(el);
@@ -973,7 +991,7 @@
     var mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
     var pick = pickAt(mx, my);
     hovered = pick.node; hoveredSynapse = pick.synapse;
-    canvas.style.cursor = EMBED && !isFullscreen() && !hovered && !hoveredSynapse && selected === null && openNodeId === null ? "zoom-in" : "";
+    canvas.style.cursor = EMBED && !MODAL && !isFullscreen() && !hovered && !hoveredSynapse && selected === null && openNodeId === null ? "zoom-in" : "";
 
     if (hovered) {
       tooltip.style.display = "block";
@@ -1042,7 +1060,7 @@
     } else if (!hoveredSynapse) {
       var wasBusy = selected !== null || openNodeId !== null;
       selected = null; selNote.classList.remove("show");
-      if (EMBED && !wasBusy && !isFullscreen()) expandMap();
+      if (EMBED && !MODAL && !wasBusy && !isFullscreen()) expandMap();
     }
   });
   document.getElementById("fs-close").addEventListener("click", function () {
