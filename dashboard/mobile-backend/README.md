@@ -112,6 +112,31 @@ Fetch thread history with optional pagination.
 
 **Response**: `200 { "ok": true, "data": [{ id, source, role, text, sessionId, ts }, ...] }` (messages in reverse chronological order, newest first)
 
+### `POST /offline-batch`
+
+Batch-upload offline exchanges. Idempotent deduplication by client-assigned message ID; new exchanges get a Session-based review for memory curation.
+
+**Request body**: `{ "exchanges": [{ clientId: "<unique-id>", role: "user"|"assistant", text: "<message>", ts?: <unix-ms> }, ...] }`
+
+- `clientId` (required, string): Unique identifier per offline exchange — used for deduplication. Retry safety: re-sending the same batch is a no-op.
+- `role` (required, "user" or "assistant"): Message role.
+- `text` (required, string): Message content.
+- `ts` (optional, unix milliseconds): Override timestamp. If omitted, current time is used.
+
+**Response**:
+- `200 { "ok": true, "data": { added: [<message-ids>], skipped: [<clientIds>], reviewed: <boolean> } }` — success
+  - `added`: IDs of newly-appended messages.
+  - `skipped`: Client IDs of exchanges that were already in the store (dedup).
+  - `reviewed`: Whether a Session review was run (only true if new messages were added).
+- `400 { "ok": false, "error": "<message>" }` — validation failed (empty array, missing required fields, invalid role, etc.)
+
+**Semantics**:
+- All messages are marked with `source: "offline"`.
+- If the batch introduces any new exchanges, they are submitted to a Session for review, which decides what insights are worth saving to memory. The review is framed as offline backlog curation, not a live turn.
+- All new messages in the batch are backfilled with the review's `sessionId` for continuity.
+- Rotation policy (session length threshold) is applied after the review, same as chat turns.
+- Pending summary is NOT consumed by the offline endpoint (only by chat turns).
+
 ## Permission bridge: side-effecting actions
 
 When the mobile client sends a message that triggers a side-effecting tool call (Bash, Edit, Write, etc.), the `permission_hook.js` subprocess intercepts the tool use, creates a pending action, and blocks until the action is approved or denied via these endpoints.
