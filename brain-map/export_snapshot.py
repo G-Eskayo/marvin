@@ -120,6 +120,7 @@ def lock_private_projects(tree: dict) -> None:
             node.pop("path", None)
             node.pop("openable", None)
             node.pop("code", None)
+            node.pop("plain", None)  # what a private project is for stays private, like its description
 
         for child in node.get("children", []):
             walk(child)
@@ -138,7 +139,9 @@ def anonymize_machines(tree: dict) -> None:
     devices = []
 
     def collect_devices(node: dict) -> None:
-        if node.get("cat") == "cross-machine":
+        # only registered devices ("<kind> — added <date> — <hostname>"), not the trunk, exo or task-dispatch, which
+        # share the category and were once renamed from their own descriptions (2026-10-08)
+        if node.get("cat") == "cross-machine" and re.search(r" — added \d{4}-\d{2}-\d{2}", node.get("desc", "")):
             devices.append(node)
         for child in node.get("children", []):
             collect_devices(child)
@@ -283,7 +286,7 @@ def export_snapshot(commit: str = "HEAD", out_dir: str | Path = SNAPSHOT_DIR) ->
     tree = generate.build_tree(manifest, enrichment)
     generate.attach_layout(tree)
     generate.attach_code_layers(tree)
-    synapses = generate.build_synapses(manifest, enrichment)
+    synapses = generate.all_synapses(manifest, enrichment, tree)  # every thread type, same as the local page
 
     # Apply privacy filters
     allowlist = tracked_files_at_commit(commit)

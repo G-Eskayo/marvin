@@ -871,6 +871,9 @@ JOB_PLACEMENT = {
     "usage-scan": "both",  # hourly: each machine scans its own transcripts for the Metrics tab (lib/usage_report.py)
     "cleanup-sweep": "both",  # daily: each machine sweeps its own pipeline worktrees (lib/cleanup_sweep.py)
     "dashboard-launch": "laptop",
+    # the website map (#189): rebuilt nightly and after MARVIN changes on the mini, where the dev site runs; the nightly
+    # job also publishes it to production (ADR 0056), so it must never run on the laptop
+    "snapshot-deploy-nightly": "mini", "snapshot-deploy-reactive": "mini",
 }
 
 
