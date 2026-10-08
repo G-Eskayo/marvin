@@ -293,81 +293,13 @@ async function embedWithFullscreenSpy(query = '?embed=1&ink=dark') {
   await page.addInitScript(() => {
     window.__fs = []
     Element.prototype.requestFullscreen = function () { window.__fs.push('request'); return Promise.resolve() }
+    window.open = function () { window.__fs.push('open'); return null }
   })
   await page.goto(pathToFileURL(path.join(MAP, 'snapshot', 'index.html')).href + query)
   await page.evaluate(() => window.__map.driveExternally())
   await frames(page, SETTLE)
   return page
 }
-
-test('embed: a click on empty background asks for full screen; a node click or a non-embed page does not', async (t) => {
-  if (skipReason) return t.skip(skipReason)
-  const page = await embedWithFullscreenSpy()
-  const box = await page.locator('canvas').first().boundingBox()
-  await page.mouse.click(box.x + 8, box.y + 8)  // a corner: nothing there
-  assert.deepEqual(await page.evaluate(() => window.__fs), ['request'])
-  await page.evaluate(() => { window.__fs = [] })
-  const disc = await page.evaluate(() => window.__map.nodes().find((n) => n.id === 'ticket-pipeline'))
-  await page.mouse.move(box.x + disc.sx, box.y + disc.sy); await frames(page, 2)
-  await page.mouse.click(box.x + disc.sx, box.y + disc.sy)
-  assert.deepEqual(await page.evaluate(() => window.__fs), [], 'clicking a node selects it, no full screen')
-  await page.mouse.click(box.x + 8, box.y + 8)
-  assert.deepEqual(await page.evaluate(() => window.__fs), [], 'the first empty click clears the selection instead')
-  await page.close()
-  const full = await embedWithFullscreenSpy('')
-  const b2 = await full.locator('canvas').first().boundingBox()
-  await full.mouse.click(b2.x + 8, b2.y + 8)
-  assert.deepEqual(await full.evaluate(() => window.__fs), [], 'the full page never asks')
-  await full.close()
-})
-
-test('embed: the empty background shows a zoom-in cursor', async (t) => {
-  if (skipReason) return t.skip(skipReason)
-  const page = await embedWithFullscreenSpy()
-  const box = await page.locator('canvas').first().boundingBox()
-  await page.mouse.move(box.x + 8, box.y + 8); await frames(page, 2)
-  assert.equal(await page.evaluate(() => document.getElementById('c').style.cursor), 'zoom-in')
-  await page.close()
-})
-
-// Gil 2026-10-08: not full screen — the map pops up in a white bordered box on the same page, still interactive,
-// closed by clicking outside it. The embed asks its page; the page answers; no answer means full screen as before.
-async function framedMap(t, { acknowledge }) {
-  const { mkdtempSync, writeFileSync } = await import('node:fs')
-  const os = await import('node:os')
-  const dir = mkdtempSync(path.join(os.tmpdir(), 'mapframe-'))
-  const src = pathToFileURL(path.join(MAP, 'snapshot', 'index.html')).href + '?embed=1&ink=dark'
-  writeFileSync(path.join(dir, 'host.html'), `<!doctype html><body style="margin:0">
-    <iframe id="m" src="${src}" style="width:900px;height:560px;border:0"></iframe>
-    <script>window.__asked = 0; addEventListener('message', (e) => { if (e.data && e.data.type === 'marvin-map:expand') {
-      window.__asked++; ${acknowledge ? "e.source.postMessage({ type: 'marvin-map:expand-ack' }, '*')" : ''} } })</script></body>`)
-  const page = await browser.newPage({ viewport: { width: 1000, height: 640 } })
-  await page.addInitScript(() => { window.__fs = []; Element.prototype.requestFullscreen = function () { window.__fs.push('request'); return Promise.resolve() } })
-  await page.goto(pathToFileURL(path.join(dir, 'host.html')).href)
-  const frame = page.frames().find((f) => f.url().includes('snapshot'))
-  await frame.waitForFunction(() => window.__map)
-  await frame.evaluate(() => { window.__map.driveExternally(); let t = performance.now(); for (let i = 0; i < 24; i++) window.renderFrame((t += 1000 / 24)) })
-  const box = await page.locator('#m').boundingBox()
-  await page.mouse.click(box.x + 8, box.y + 8)
-  await page.waitForTimeout(700)
-  return { asked: await page.evaluate(() => window.__asked), fs: await frame.evaluate(() => window.__fs), page }
-}
-
-test('framed: an empty-background click asks the page for its popup and does not go full screen when answered', async (t) => {
-  if (skipReason) return t.skip(skipReason)
-  const r = await framedMap(t, { acknowledge: true })
-  assert.equal(r.asked, 1)
-  assert.deepEqual(r.fs, [])
-  await r.page.close()
-})
-
-test('framed: a page that does not answer still gets full screen', async (t) => {
-  if (skipReason) return t.skip(skipReason)
-  const r = await framedMap(t, { acknowledge: false })
-  assert.equal(r.asked, 1)
-  assert.deepEqual(r.fs, ['request'])
-  await r.page.close()
-})
 
 test('the popup copy (?modal=1) never asks to expand and shows no zoom-in cursor', async (t) => {
   if (skipReason) return t.skip(skipReason)
@@ -378,4 +310,113 @@ test('the popup copy (?modal=1) never asks to expand and shows no zoom-in cursor
   await page.mouse.click(box.x + 8, box.y + 8)
   assert.deepEqual(await page.evaluate(() => window.__fs), [])
   await page.close()
+})
+
+// Gil 2026-10-08 (second pass): clicking the small map grows it into a big white box ON the page; it must never go full
+// screen or open another page, whatever is clicked, and whether or not the page answers.
+async function framedMap(t, { acknowledge }) {
+  const { mkdtempSync, writeFileSync } = await import('node:fs')
+  const os = await import('node:os')
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'mapframe-'))
+  const src = pathToFileURL(path.join(MAP, 'snapshot', 'index.html')).href + '?embed=1&ink=dark'
+  writeFileSync(path.join(dir, 'host.html'), `<!doctype html><body style="margin:0">
+    <iframe id="m" src="${src}" style="width:900px;height:560px;border:0"></iframe>
+    <script>window.__asked = 0; addEventListener('message', (e) => { if (e.data && e.data.type === 'marvin-map:expand') {
+      window.__asked++; ${acknowledge ? "e.source.postMessage({ type: 'marvin-map:expand-ack' }, '*')" : ''} } })</script></body>`)
+  const page = await browser.newPage({ viewport: { width: 1000, height: 640 } })
+  await page.addInitScript(() => { window.__fs = []; Element.prototype.requestFullscreen = function () { window.__fs.push('request'); return Promise.resolve() }; window.open = function () { window.__fs.push('open'); return null } })
+  await page.goto(pathToFileURL(path.join(dir, 'host.html')).href)
+  const frame = page.frames().find((f) => f.url().includes('snapshot'))
+  await frame.waitForFunction(() => window.__map)
+  await frame.evaluate(() => { window.__map.driveExternally(); let t = performance.now(); for (let i = 0; i < 24; i++) window.renderFrame((t += 1000 / 24)) })
+  const box = await page.locator('#m').boundingBox()
+  await page.mouse.click(box.x + 8, box.y + 8)
+  await page.waitForTimeout(700)
+  return { asked: await page.evaluate(() => window.__asked), fs: await frame.evaluate(() => window.__fs), page }
+}
+
+test('framed: any click on the small map asks the page for the box, and never leaves the page', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  for (const acknowledge of [true, false]) {
+    const r = await framedMap(t, { acknowledge })
+    assert.equal(r.asked, 1, 'an empty-background click asks')
+    const frame = r.page.frames().find((f) => f.url().includes('snapshot'))
+    const disc = await frame.evaluate(() => window.__map.nodes().find((n) => n.id === 'ticket-pipeline'))
+    const box = await r.page.locator('#m').boundingBox()
+    await r.page.mouse.move(box.x + disc.sx, box.y + disc.sy)
+    await frame.evaluate(() => { let t = performance.now(); for (let i = 0; i < 3; i++) window.renderFrame((t += 1000 / 24)) })
+    await r.page.mouse.click(box.x + disc.sx, box.y + disc.sy)
+    await r.page.waitForTimeout(600)
+    assert.equal(await r.page.evaluate(() => window.__asked), 2, 'a node click asks too')
+    assert.deepEqual(await frame.evaluate(() => window.__fs), [], `no full screen, no new page (answered: ${acknowledge})`)
+    await r.page.close()
+  }
+})
+
+test('the small map shows a zoom-in cursor everywhere; the box copy (?modal=1) does not ask again', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const small = await embedWithFullscreenSpy('?embed=1&ink=dark')
+  assert.equal(await small.evaluate(() => getComputedStyle(document.getElementById('c')).cursor), 'zoom-in')
+  await small.close()
+  const page = await embedWithFullscreenSpy('?embed=1&ink=dark&modal=1')
+  const box = await page.locator('canvas').first().boundingBox()
+  await page.mouse.click(box.x + 8, box.y + 8)
+  assert.deepEqual(await page.evaluate(() => window.__fs), [])
+  await page.close()
+})
+
+// Gil: after it's been messed with, and not on a node, it starts rotating again after about 5 seconds; and a reset.
+async function fullMap() {
+  const page = await browser.newPage({ viewport: { width: 1000, height: 640 } })
+  await page.goto(pathToFileURL(path.join(MAP, 'snapshot', 'index.html')).href + '?embed=1&ink=dark&modal=1')
+  await page.evaluate(() => window.__map.driveExternally())
+  await frames(page, SETTLE)
+  return page
+}
+const advance = (page, ms) => frames(page, Math.ceil(ms / STEP))
+
+test('rotation resumes 5 s after the last drag, unless the pointer is on a node', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const page = await fullMap()
+  const box = await page.locator('canvas').first().boundingBox()
+  assert.equal(await page.evaluate(() => window.__map.rotating()), true)
+  await page.mouse.move(box.x + 20, box.y + 20); await page.mouse.down()
+  await page.mouse.move(box.x + 120, box.y + 60, { steps: 4 }); await page.mouse.up()
+  assert.equal(await page.evaluate(() => window.__map.rotating()), false, 'a drag stops it')
+  await advance(page, 3000)
+  assert.equal(await page.evaluate(() => window.__map.rotating()), false, 'still stopped at 3 s')
+  await advance(page, 2500)
+  assert.equal(await page.evaluate(() => window.__map.rotating()), true, 'rotating again after 5 s')
+  // on a node: stays put
+  const disc = await page.evaluate(() => window.__map.nodes().find((n) => n.id === 'ticket-pipeline'))
+  await page.mouse.move(box.x + disc.sx, box.y + disc.sy); await page.mouse.down(); await page.mouse.up()
+  await page.mouse.move(box.x + disc.sx, box.y + disc.sy)
+  await advance(page, 6000)
+  assert.equal(await page.evaluate(() => window.__map.rotating()), false, 'not while selected / on a node')
+  await page.close()
+})
+
+test('Reset puts the view, zoom and selection back and starts rotating', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const page = await fullMap()
+  const start = await page.evaluate(() => window.__map.view())
+  const box = await page.locator('canvas').first().boundingBox()
+  await page.mouse.move(box.x + 20, box.y + 20); await page.mouse.down()
+  await page.mouse.move(box.x + 200, box.y + 120, { steps: 4 }); await page.mouse.up()
+  await page.mouse.wheel(0, -300); await frames(page, 2)
+  const moved = await page.evaluate(() => window.__map.view())
+  assert.notDeepEqual(moved, start)
+  assert.ok(await page.locator('#map-reset').isVisible(), 'Reset shows in the box')
+  await page.click('#map-reset'); await frames(page, 2)
+  const after = await page.evaluate(() => window.__map.view())
+  assert.equal(after.pitch, start.pitch); assert.equal(after.camDist, start.camDist); assert.equal(after.userZoomed, false)
+  assert.equal(await page.evaluate(() => window.__map.rotating()), true)
+  await page.close()
+})
+
+test('the small map has no Reset button; the full page and the box do', async (t) => {
+  if (skipReason) return t.skip(skipReason)
+  const small = await embedWithFullscreenSpy('?embed=1&ink=dark')
+  assert.equal(await small.locator('#map-reset').isVisible(), false)
+  await small.close()
 })
