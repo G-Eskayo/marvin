@@ -1,0 +1,72 @@
+{
+  "FLUX.1-schnell-4bit": {
+    "last_used": "2026-10-08T20:06:19.093183+00:00",
+    "location": "~/.cache/huggingface",
+    "reason": "high-quality image generation for portfolio projects",
+    "size_gb": 6.5,
+    "used_by": "portfolio-flux"
+  },
+  "MiniLM": {
+    "last_used": null,
+    "location": "~/.cache/chroma",
+    "reason": "vector search (Chroma default)",
+    "size_gb": 0.17,
+    "used_by": "core"
+  },
+  "llama-3.2-1b-mlx-4bit": {
+    "last_used": null,
+    "location": "~/.cache/huggingface",
+    "reason": "leftover from exo testing",
+    "size_gb": 0.02,
+    "used_by": "exo-test"
+  },
+  "llama-3.2-3b-mlx-4bit": {
+    "last_used": null,
+    "location": "~/.cache/huggingface",
+    "reason": "leftover from exo testing",
+    "size_gb": 1.9,
+    "used_by": "exo-test"
+  },
+  "nomic-embed-text": {
+    "last_used": null,
+    "location": "~/.ollama/models",
+    "reason": "memory search, routing, embeddings",
+    "size_gb": 0.27,
+    "used_by": "core"
+  },
+  "qwen2.5-14b": {
+    "last_used": null,
+    "location": "~/.ollama/models",
+    "reason": "logic auditing, competing ideas, argument mapper",
+    "size_gb": 9.0,
+    "used_by": "paper-dive"
+  },
+  "qwen2.5-3b": {
+    "last_used": null,
+    "location": "~/.ollama/models",
+    "reason": "logic auditing, competing ideas, argument mapper",
+    "size_gb": 1.9,
+    "used_by": "paper-dive"
+  },
+  "qwen2.5-3b-mlx-4bit": {
+    "last_used": null,
+    "location": "~/.cache/huggingface",
+    "reason": "leftover from exo testing",
+    "size_gb": 1.6,
+    "used_by": "exo-test"
+  },
+  "qwen2.5-7b": {
+    "last_used": null,
+    "location": "~/.ollama/models",
+    "reason": "logic auditing, competing ideas, argument mapper",
+    "size_gb": 4.7,
+    "used_by": "paper-dive"
+  },
+  "specter2": {
+    "last_used": null,
+    "location": "~/.cache/huggingface/models",
+    "reason": "citation graph analysis",
+    "size_gb": 0.84,
+    "used_by": "paper-dive"
+  }
+}
