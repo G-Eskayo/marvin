@@ -53,3 +53,23 @@ ran `gh issue list`/`gh issue edit` when dispatched directly as a plain script).
   settings.json`'s graphify hook-guard) — confirmed those don't apply in `-p` mode without the
   folder being explicitly trusted, which headless dispatch never triggers. Only user-level
   `~/.claude/settings.json`/`settings.local.json` and the per-invocation flags decided here apply.
+
+## Amendment (2026-10-08): read-only inspection allowed for every headless agent
+
+**Why:** a 30-day transcript scan on both Macs (marvin#277) found 59% of *all* failed tool calls were headless
+agents refused by this allowlist, mostly because our own instructions contradicted it: the repo CLAUDE.md tells
+agents to `graphify query` first (23% of refusals), and agents reach for `gh pr view` / `git log` to understand
+context (23%). Each refusal is a wasted turn, against the north star (min tokens, max quality).
+
+**Decision (Gil):** allow `graphify query` and read-only `gh` and `git` for the planner and every executor, via one
+shared list, `project_profile.READ_ONLY_INSPECTION_TOOLS`: `graphify query|path|explain`; `gh issue view|list`,
+`gh pr view|list|diff|checks`, `gh repo view`, `gh run view|list`; `git status|log|diff|show|blame|ls-files|rev-parse|grep`.
+`graphify path|explain` are included because CLAUDE.md names them alongside `query` as read-only lookups.
+
+**Safety holds:**
+- Claude Code checks every part of a compound command. Live-probed: `git log -1 && touch <file>` was refused and no file was created.
+- A test fails if any subcommand that writes, pushes, deletes, merges or edits GitHub state (or `gh api`) enters the list.
+- Known edge, accepted: `git diff --output=<file>` / `git log --output` can write a file. It's low value to an attacker and the agent can already write in its worktree.
+
+**Also:** both prompts now say the shell is already in the worktree (no `cd X &&`, which was 8% of refusals) and to
+use Read/Glob/Grep, not `ls`/`find`/`cat` (17%). clarity-captions' profile note no longer tells agents to `cd` before `swift test`.
