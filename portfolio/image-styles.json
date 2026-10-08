@@ -1,0 +1,22 @@
+{
+  "styles": {
+    "blueprint-line-art": "blueprint line art, white technical linework on deep blue, drafting-table precision",
+    "watercolor": "loose watercolor painting, soft bleeding pigment, visible paper texture",
+    "ink-brush": "ink brush painting, bold expressive strokes, sumi-e style",
+    "low-poly": "low-poly 3D render, faceted geometric shapes, flat shading",
+    "isometric": "isometric illustration, clean 30-degree projection, flat colour blocks",
+    "risograph": "risograph print, limited spot-colour layers, visible grain and misregistration",
+    "paper-cut-out": "paper cut-out collage, layered paper shapes, soft drop shadows",
+    "minimal-vector": "minimal flat vector illustration, simple geometric shapes, generous negative space"
+  },
+  "moods": {
+    "calm": "calm and serene, soft muted tones, gentle lighting",
+    "energetic": "energetic and dynamic, bold contrast, a sense of motion",
+    "nocturnal": "nocturnal, deep shadows, a single warm light source",
+    "warm": "warm palette, amber and terracotta tones",
+    "cool": "cool palette, blues and teals",
+    "monochrome": "monochrome, a single hue with tonal variation only",
+    "sunrise": "sunrise palette, soft pink and gold gradient",
+    "neon": "neon palette, saturated electric colours against a dark background"
+  }
+}
