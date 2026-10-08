@@ -134,6 +134,9 @@ def main() -> None:
         print("breaker cleared")
         return
     trips = tripped()
+    if "--json" in sys.argv:
+        print(json.dumps(trips, indent=2))
+        return
     if not trips:
         print("breaker: not tripped")
     for t in trips:
