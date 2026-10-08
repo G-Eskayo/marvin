@@ -199,8 +199,15 @@ def _caller() -> str:
     if job and job != "0":
         return job
     try:
-        out = subprocess.run(["/bin/ps", "-o", "comm=", "-p", str(os.getppid())], capture_output=True, text=True, timeout=2).stdout
-        return os.path.basename(out.strip()) or "unknown"
+        out = subprocess.run(["/bin/ps", "-o", "command=", "-p", str(os.getppid())], capture_output=True, text=True, timeout=2).stdout
+        words = out.split()
+        # name the script, not the interpreter: "Python" alone said nothing about which job made 85 pr list calls
+        script = next((w for w in words[1:] if w.endswith((".py", ".js", ".sh", ".mjs"))), None)
+        name = os.path.basename(script or (words[0] if words else "")) or "unknown"
+        if not script:
+            mod = next((words[i + 1] for i, w in enumerate(words[:-1]) if w == "-m"), None)
+            name = f"{name} -m {mod}" if mod else name
+        return name
     except Exception:  # noqa: BLE001
         return "unknown"
 
