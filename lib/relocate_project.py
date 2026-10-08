@@ -4,7 +4,8 @@ relocate_project.py — move a project out of iCloud ~/Documents without losing 
 
 Both Macs share ONE iCloud ~/Documents, and background jobs block on it, so projects belong in ~/Developer on each Mac.
 
-  1. copy the whole folder (unpushed commits, uncommitted changes, untracked files, stashes) to <dest_root>/<name>
+  1. copy the whole folder (unpushed commits, uncommitted changes, untracked files, stashes) to <dest_root>/<name>,
+     except rebuildable output git itself ignores (.build, node_modules, DerivedData…): rebuilt on the next build
   2. verify the copy reads the same: commit, `git status`, stash count and `git fsck` for a repo; file list and sizes
      for a plain folder
   3. only then rename the old copy to a hidden `.<name>-old-icloud-<date>` beside it. Nothing is ever deleted.
@@ -46,9 +47,32 @@ def state(path: Path) -> dict:
     return {"git": False, "files": len(files), "bytes": sum(s for _, s in files), "list_hash": hashlib.sha256(json.dumps(files).encode()).hexdigest()}
 
 
-def _copy(src: Path, dest: Path) -> None:
+# Rebuildable output, skipped ONLY when git itself ignores the folder (a tracked folder of the same name is copied).
+# killer-sudoku: 11,243 of its 11,781 files were .build, and reading them out of iCloud one by one took hours.
+BUILD_DIRS = {".build", "DerivedData", "node_modules", ".gradle", "build", "dist", ".next", "__pycache__", ".venv", "venv"}
+
+
+def skippable(src: Path) -> list[str]:
+    """Relative paths of git-ignored build-output folders (not descended into)."""
+    if not (src / ".git").exists():
+        return []
+    found = []
+    for root, dirs, _ in os.walk(src):
+        if ".git" in dirs:
+            dirs.remove(".git")
+        for d in list(dirs):
+            if d in BUILD_DIRS:
+                rel = os.path.relpath(os.path.join(root, d), src)
+                if subprocess.run(["git", "-C", str(src), "check-ignore", "-q", rel + "/"]).returncode == 0:
+                    found.append(rel)
+                    dirs.remove(d)
+    return sorted(found)
+
+
+def _copy(src: Path, dest: Path, skip: list[str] = ()) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
-    p = subprocess.run(["rsync", "-a", f"{src}/", f"{dest}/"], capture_output=True, text=True)
+    excludes = [f"--exclude=/{rel}/" for rel in skip]
+    p = subprocess.run(["rsync", "-a", *excludes, f"{src}/", f"{dest}/"], capture_output=True, text=True)
     if p.returncode != 0:
         raise RelocateRefused(f"copy failed: {p.stderr.strip()[:300]}")
 
@@ -63,15 +87,16 @@ def relocate(src: Path, dest_root: Path, stamp: str | None = None, dry_run: bool
     before = state(src)
     if before.get("git") and not before["fsck_ok"]:
         raise RelocateRefused(f"{src} fails git fsck before the move: fix that first")
+    skip = skippable(src)
     if dry_run:
-        return {"ok": True, "dry_run": True, "src": str(src), "dest": str(dest), "state": before}
-    _copy(src, dest)
+        return {"ok": True, "dry_run": True, "src": str(src), "dest": str(dest), "state": before, "skipped": skip}
+    _copy(src, dest, skip)
     after = state(dest)
     if after != before:
         raise RelocateRefused(f"the copy at {dest} doesn't match {src}; original left in place. before={before} after={after}")
     hidden = src.parent / f".{src.name}-old-icloud-{stamp or date.today().isoformat()}"
     src.rename(hidden)
-    return {"ok": True, "src": str(src), "dest": str(dest), "old_copy": str(hidden), "state": after}
+    return {"ok": True, "src": str(src), "dest": str(dest), "old_copy": str(hidden), "state": after, "skipped": skip}
 
 
 def send_to_host(dest: Path, host: str) -> dict:

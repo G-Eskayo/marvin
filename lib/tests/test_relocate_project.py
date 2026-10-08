@@ -66,3 +66,18 @@ def test_plain_folders_are_compared_by_file_list_and_size(tmp_path):
     (d / "x.md").write_text("hi\n")
     out = rp.relocate(d, tmp_path / "Developer", stamp="s")
     assert out["state"]["git"] is False and (tmp_path / "Developer" / "notes" / "x.md").exists()
+
+
+def test_git_ignored_build_output_is_skipped_but_a_tracked_build_folder_is_not(repo, tmp_path):
+    """killer-sudoku: 11,243 of 11,781 files were .build (SwiftPM output, git-ignored); copying them out of iCloud
+    one by one took hours. Rebuildable output that git ignores is skipped; anything git tracks is always copied."""
+    (repo / ".gitignore").write_text(".build/\nnode_modules/\n")
+    (repo / ".build" / "debug").mkdir(parents=True); (repo / ".build" / "debug" / "x.o").write_text("obj")
+    (repo / "node_modules" / "p").mkdir(parents=True); (repo / "node_modules" / "p" / "i.js").write_text("js")
+    (repo / "build").mkdir(); (repo / "build" / "keep.txt").write_text("tracked")
+    git(repo, "add", ".gitignore", "build/keep.txt"); git(repo, "commit", "-qm", "c2")
+    out = rp.relocate(repo, tmp_path / "Developer", stamp="s")
+    new = tmp_path / "Developer" / "demo"
+    assert not (new / ".build").exists() and not (new / "node_modules").exists()
+    assert (new / "build" / "keep.txt").read_text() == "tracked"
+    assert sorted(out["skipped"]) == [".build", "node_modules"]
