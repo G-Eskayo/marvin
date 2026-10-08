@@ -47,10 +47,10 @@ docs.
 
 ## Tasks (tickets)
 
-1. Style catalog (art styles x moods) as data + a prompt builder from a project's public description.
-2. FLUX engine on the mini: install mflux + 4-bit schnell, a queued generate job, prompt/seed/settings recorded,
+1. #285 Style catalog (art styles x moods) as data + a prompt builder from a project's public description.
+2. #286 FLUX engine on the mini: install mflux + 4-bit schnell, a queued generate job, prompt/seed/settings recorded,
    one master image -> card + hero crops, fingerprint uniqueness.
-3. Images tab: pick art style and mood (and edit the subject line), see variants, choose; the generator stays as an
+3. #287 Images tab: pick art style and mood (and edit the subject line), see variants, choose; the generator stays as an
    instant fallback for abstract looks.
-4. Apply writes card and hero from the same image for every project and fixes page heroes; flags mismatches.
+4. #288 Apply writes card and hero from the same image for every project and fixes page heroes; flags mismatches.
 5. Then: every project (MARVIN included) gets its new image on dev, for Gil to review and promote.
