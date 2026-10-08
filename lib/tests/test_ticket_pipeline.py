@@ -887,3 +887,13 @@ def test_onboarding_pass_stands_down_when_the_github_budget_is_low(monkeypatch):
     monkeypatch.setattr(tp.project_onboard, "refresh_all_onboarding_plans", lambda *a, **k: called.append(1))
     msg = tp._refresh_onboarding_plans(budget=lambda: 5.0, min_pct=20)
     assert called == [] and "budget" in msg
+
+
+def test_onboarding_pass_reports_skipped_count(monkeypatch):
+    """When repos are skipped due to unchanged pushedAt, the message should report skip count."""
+    monkeypatch.setattr(tp.board_registry, "list_boards", lambda: [{"repo": "o/a"}, {"repo": "o/b"}])
+    monkeypatch.setattr(tp.project_onboard, "refresh_all_onboarding_plans",
+                        lambda repos, apply_safe=False:
+                        {"ok": ["o/a"], "failed": [], "applied": {}, "skipped": ["o/b"]})
+    msg = tp._refresh_onboarding_plans(budget=lambda: 80.0, min_pct=20)
+    assert "1 refreshed" in msg and "1 skipped (unchanged since last plan)" in msg

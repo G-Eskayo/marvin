@@ -1905,3 +1905,141 @@ def test_refresh_without_apply_safe_changes_nothing(tmp_path, monkeypatch):
     monkeypatch.setattr(po, "apply", lambda repo, facts=None, **kw: applied.append(repo) or {})
     po.refresh_all_onboarding_plans(["o/repo"], gh=_answering_gh, dir=tmp_path)
     assert applied == []
+
+
+# ── Issue #261: skip inspection when pushedAt hasn't changed ──────────────────────────────
+
+def test_pushed_at_groups_by_owner_and_makes_one_gh_call_per_owner(monkeypatch):
+    """_pushed_at should call `gh repo list <owner> --json name,pushedAt` once per distinct owner."""
+    calls = []
+
+    def gh(args):
+        calls.append(args)
+        j = " ".join(args)
+        if "repo list" in j:
+            if "owner-a" in j:
+                return json.dumps([{"name": "repo1", "pushedAt": "2026-10-07T12:00:00Z"}])
+            elif "owner-b" in j:
+                return json.dumps([{"name": "repo2", "pushedAt": "2026-10-06T10:00:00Z"}])
+        return ""
+
+    repos = ["owner-a/repo1", "owner-a/other", "owner-b/repo2"]
+    result = po._pushed_at(repos, gh=gh)
+    assert result == {"owner-a/repo1": "2026-10-07T12:00:00Z", "owner-b/repo2": "2026-10-06T10:00:00Z"}
+    list_calls = [c for c in calls if "repo list" in " ".join(c)]
+    assert len(list_calls) == 2  # one per owner
+
+
+def test_pushed_at_returns_empty_dict_when_gh_fails(monkeypatch):
+    """If the pushedAt lookup fails, all repos are absent from the map (fail open: inspect anyway)."""
+    result = po._pushed_at(["owner-a/repo1"], gh=lambda args: "")
+    assert result == {}
+
+
+def test_can_skip_when_nothing_pushed_since_generated_at(tmp_path):
+    """_can_skip returns True when pushedAt <= generated_at and plan is not stale."""
+    # Manually create to control generated_at timestamp
+    path = po.onboarding_path("o/repo", dir=tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    plan_data = {
+        "repo": "o/repo",
+        "generated_at": "2026-10-07T12:00:00+00:00",
+        "pieces": {"board": {"state": "ok"}},
+    }
+    path.write_text(json.dumps(plan_data) + "\n")
+    existing = json.loads(path.read_text())
+
+    pushed_at = "2026-10-07T11:59:00Z"  # before generated_at
+    assert po._can_skip("o/repo", existing, pushed_at) is True
+
+
+def test_can_skip_false_when_pushed_after_generated_at(tmp_path):
+    """_can_skip returns False when something was pushed after the plan was generated."""
+    # Manually create to control generated_at timestamp
+    path = po.onboarding_path("o/repo", dir=tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    plan_data = {
+        "repo": "o/repo",
+        "generated_at": "2026-10-07T12:00:00+00:00",
+        "pieces": {"board": {"state": "ok"}},
+    }
+    path.write_text(json.dumps(plan_data) + "\n")
+    existing = json.loads(path.read_text())
+
+    pushed_at = "2026-10-07T12:01:00Z"  # after generated_at
+    assert po._can_skip("o/repo", existing, pushed_at) is False
+
+
+def test_can_skip_false_when_plan_is_stale(tmp_path):
+    """_can_skip returns False when the plan is marked stale, regardless of pushedAt."""
+    plan_data = {
+        "generated_at": "2026-10-07T12:00:00+00:00",
+        "pieces": {"board": {"state": "ok"}},
+        "stale": {"at": "2026-10-08T00:00:00+00:00", "reason": "read error"},
+    }
+    path = po.onboarding_path("o/repo", dir=tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(plan_data) + "\n")
+
+    existing = json.loads(path.read_text())
+    pushed_at = "2026-10-06T10:00:00Z"  # even though no new pushes
+    assert po._can_skip("o/repo", existing, pushed_at) is False
+
+
+def test_can_skip_false_when_no_existing_plan(tmp_path):
+    """_can_skip returns False when there's no existing plan (first run, always inspect)."""
+    pushed_at = "2026-10-07T12:00:00Z"
+    assert po._can_skip("o/repo", None, pushed_at) is False
+
+
+def test_can_skip_false_when_pushed_at_is_none(tmp_path):
+    """_can_skip returns False when pushedAt lookup failed (fail open: always inspect)."""
+    plan_data = {
+        "generated_at": "2026-10-07T12:00:00+00:00",
+        "pieces": {"board": {"state": "ok"}},
+    }
+    po.write_onboarding_plan("o/repo", plan_data["pieces"], dir=tmp_path)
+    existing = json.loads(po.onboarding_path("o/repo", dir=tmp_path).read_text())
+
+    assert po._can_skip("o/repo", existing, None) is False
+
+
+def test_refresh_all_skips_unchanged_repos_and_reports_skipped(tmp_path, monkeypatch):
+    """refresh_all_onboarding_plans should skip repos where nothing was pushed since generated_at."""
+    inspected = []
+
+    def gh(args):
+        j = " ".join(args)
+        if "repo list" in j:
+            if "G-Eskayo" in j:
+                return json.dumps([
+                    {"name": "repo1", "pushedAt": "2026-10-07T12:00:00Z"},
+                    {"name": "repo2", "pushedAt": "2026-10-06T10:00:00Z"},
+                ])
+        return ""
+
+    # Write an existing plan for repo2 that's newer than its last push
+    old_plan = {
+        "generated_at": "2026-10-07T12:00:00+00:00",
+        "pieces": {"board": {"state": "ok"}},
+    }
+    po.write_onboarding_plan("G-Eskayo/repo2", old_plan["pieces"], dir=tmp_path)
+
+    # Patch refresh_onboarding_plan to track which repos get inspected
+    original_refresh = po.refresh_onboarding_plan
+
+    def tracked_refresh(repo, **kw):
+        inspected.append(repo)
+        return []
+
+    monkeypatch.setattr(po, "refresh_onboarding_plan", tracked_refresh)
+
+    res = po.refresh_all_onboarding_plans(
+        ["G-Eskayo/repo1", "G-Eskayo/repo2"],
+        gh=gh, dir=tmp_path
+    )
+
+    # repo1 should be inspected (no prior plan), repo2 should be skipped
+    assert "G-Eskayo/repo1" in inspected
+    assert "G-Eskayo/repo2" not in inspected
+    assert res["skipped"] == ["G-Eskayo/repo2"]
