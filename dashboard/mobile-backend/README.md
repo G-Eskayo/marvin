@@ -130,6 +130,54 @@ Approve or deny a pending action.
 
 **Response**: `200 { "ok": true, "data": { id, ... } }` on success, `400 { "ok": false, "error": "<message>" }` if action is not pending or invalid input
 
+## Dashboard write actions (confirmed-gated)
+
+These endpoints handle side-effecting operations on dashboard items (tickets and PRs). All three require a `confirmed` flag (set to `true` by the mobile client after Face ID verification) — requests with missing or false `confirmed` return `403 { "ok": false, "error": "Confirmed action required" }` with no side effect.
+
+### `POST /boards/ticket/reply`
+
+Post a comment on a ticket and, if the ticket was waiting for owner input, re-queue it.
+
+**Request body**: `{ "repo": "<repo>", "number": <ticket-number>, "body": "<comment>", "confirmed": true }`
+
+**Response**:
+- `200 { "ok": true, "data": { posted: true, requeued: <bool>, effect: "<description>" } }` on success
+- `400 { "ok": false, "error": "<message>" }` on invalid input
+- `403 { "ok": false, "error": "Confirmed action required" }` if `confirmed` is missing or false
+
+### `POST /mr/approve`
+
+Approve and merge a PR via the webhook-server.
+
+**Request body**: `{ "pr_url": "<full-github-pr-url>", "confirmed": true }`
+
+**Response**:
+- `200 { "ok": true, "data": <webhook-response> }` on success (webhook response includes `merged`, `reengaged`, etc.)
+- `500 { "ok": false, "error": "<message>" }` on webhook failure
+- `403 { "ok": false, "error": "Confirmed action required" }` if `confirmed` is missing or false
+
+### `POST /mr/deny`
+
+Deny a PR with structured feedback (send feedback + re-engagement tag, or drop entirely).
+
+**Request body**:
+```json
+{
+  "pr_url": "<full-github-pr-url>",
+  "ticket_number": <originating-ticket-number-or-null>,
+  "action": "send_feedback" | "drop",
+  "reasons": ["<reason>", ...],
+  "comment": "<optional-freetext>",
+  "confirmed": true
+}
+```
+
+**Response**:
+- `200 { "ok": true, "data": <webhook-response> }` on success (webhook response includes `done`)
+- `400 { "ok": false, "error": "<message>" }` on invalid `action` or bad JSON
+- `500 { "ok": false, "error": "<message>" }` on webhook failure
+- `403 { "ok": false, "error": "Confirmed action required" }` if `confirmed` is missing or false
+
 ## Deliberately out of scope
 
-Face ID authentication, search endpoints — covered in separate tickets (#157, #160). This backend provides read-only access to dashboard data, managed session state with side-effecting permission gating, and the mobile client.
+Face ID authentication lives in the mobile client (iOS) per ADR 0043 — this backend only checks the `confirmed` flag it sets. Search endpoints are handled separately. This backend provides read-only access to dashboard data, managed session state with side-effecting permission gating, real-time updates, and the mobile client's write endpoints.
