@@ -1082,3 +1082,32 @@ def test_check_deploy_steps_red_when_job_never_ran(tmp_path, monkeypatch):
     results = hc.check_deploy_steps()
     snap = [r for r in results if "snapshot-deploy" in r["id"]]
     assert snap and any(r["severity"] == "red" and "never actually run" in r["detail"] for r in snap)
+
+
+def test_check_parallel_dispatch_calls_the_real_selector_with_its_keywords(monkeypatch):
+    """Regression: the wrapper in check_parallel_dispatch named its params (s, t, l, rf) while
+    evaluate_parallel_dispatch calls it with taken=/local_base=/refusals=, so every run raised
+    TypeError and health-status.json was never written. Exercise the real wiring end to end."""
+    import dispatch_concurrency
+    import failure_breaker
+    import project_profile as pp
+    import ticket_pipeline as tp
+
+    calls = []
+
+    def real_shaped_select(profile, settings=None, taken=None, local_base=0, refusals=None):
+        calls.append({"taken": taken, "local_base": local_base})
+        return "mac-mini-1"
+
+    monkeypatch.setattr(dispatch_concurrency, "load", lambda: {"parallel": True, "max_total": 2, "max_per_project": 1})
+    monkeypatch.setattr(pp, "dispatchable_repos", lambda: [])
+    monkeypatch.setattr(failure_breaker, "tripped", lambda: [])
+    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda repo: [{"number": 1}])
+    monkeypatch.setattr(tp, "_inflight_by_repo", lambda repos: {r: 0 for r in repos})
+    monkeypatch.setattr(tp, "_local_slots_used", lambda: 0)
+    monkeypatch.setattr(tp, "_select_for_profile", real_shaped_select)
+
+    result = hc.check_parallel_dispatch()
+
+    assert calls, "selector was never reached"
+    assert result["severity"] in {"green", "yellow", "red"}
