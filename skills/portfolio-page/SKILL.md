@@ -8,7 +8,7 @@ tags: [intent:write, intent:portfolio, intent:document, type:skill]
 
 Decisions: MARVIN ADR 0051 (content templates and checks). Rules: the portfolio repo's `templates/GUIDE.md` (also the Guide & rules tab). Voice: the `writing-style` skill's "Portfolio register: sell it". Everything happens on the **dev** site. Never push the portfolio repo: `deploy/` auto-deploys to production and Gil decides when.
 
-Paths: portfolio repo `~/Documents/Projects/portfolio-website-updater` (the dev site and its repo work happen on the mac-mini, `ssh gils-mac-mini`); MARVIN tools in `~/.agents/lib/portfolio_*.py`. Run them with `~/.agents/venv/bin/python`: the system `python3` lacks Playwright and bs4, so rendering and authoring fail under it.
+Paths: portfolio repo `~/Developer/portfolio-website-updater` (moved out of iCloud `~/Documents` on 2026-10-08, #192: each Mac has its own copy now, iCloud no longer syncs them) (the dev site and its repo work happen on the mac-mini, `ssh gils-mac-mini`); MARVIN tools in `~/.agents/lib/portfolio_*.py`. Run them with `~/.agents/venv/bin/python`: the system `python3` lacks Playwright and bs4, so rendering and authoring fail under it.
 
 ## 1. Pick the template
 Choose the page type and read its template in `templates/content/`: `skill-tool`, `app-product`, `system` or `ml-study`. The template gives the lead's job and the sections in order, each with a `role` and the evidence it needs.

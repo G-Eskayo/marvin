@@ -762,6 +762,13 @@ the place to build and break things. **Production** is what customers see; promo
 (a push touching `deploy/` auto-deploys it, so nothing here pushes the portfolio repo). Everything MARVIN builds
 writes to dev only.
 
+**Where the repo lives (since 2026-10-08, #192).** `~/Developer/portfolio-website-updater` on each Mac, outside
+iCloud. It used to be in iCloud-synced `~/Documents/Projects`, which made it ONE folder shared by both Macs; on the
+mini, background jobs blocked forever opening it and then even an ssh shell got `Interrupted system call`. Now each
+Mac has its own copy (both made from the same state: same commit, same uncommitted changes), and iCloud no longer
+keeps them in step. The dev site's WordPress files are separate (`~/portfolio-dev` on the mini). Code finds the repo
+through `project_catalog.portfolio_repo_path()`, never a hard-coded path.
+
 ### Language
 
 - **Element**: one individual kind of thing that appears on the website, defined once: the project card, each

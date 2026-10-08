@@ -38,7 +38,7 @@ KNOWN_PROJECTS: dict[str, Path] = {
     "resume-tailor": Path.home() / ".agents" / "skills" / "resume-tailor",
     "hermes-agent":  Path.home() / "hermes-agent",
     "charter":       Path.home() / "charter",
-    "portfolio":     Path.home() / "Documents" / "Projects" / "portfolio-website-updater",
+    "portfolio":     Path.home() / "Developer" / "portfolio-website-updater",
 }
 
 
