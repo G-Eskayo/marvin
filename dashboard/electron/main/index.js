@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, dialog, session, shell } from 'electron'
+import { instrumentIpc } from './timing.js'
 import { installDevSiteCors } from './dev_site_cors.js'
 import { join, dirname } from 'path'
 import { existsSync, mkdirSync, appendFileSync, statSync } from 'fs'
@@ -48,6 +49,9 @@ import { createRefreshServer } from './refresh_server.js'
 import { adoptLoginShellPath, adoptSharedGhToken } from './path.js'
 import { postTicketInput } from './ticket_input.js'
 import { resolveServiceDefaults, resolveDeviceId } from './device_identity.js'
+
+// Every IPC handler below is timed into ~/.claude/logs/dashboard-timing.jsonl (#236); must run before any is registered.
+instrumentIpc(ipcMain)
 
 const execFileAsync = promisify(execFile)
 
