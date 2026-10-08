@@ -224,14 +224,25 @@ def _evidence_facts(repo: str):
         return None
 
 
-def _refresh_catalog() -> None:
+CATALOG_REFRESH_TIMEOUT_S = 240
+
+
+def _refresh_catalog(run=subprocess.run) -> None:
     # The hourly pipeline run also keeps the project catalog (and the master "Where things are"
-    # doc built from it) current. Best effort: never let it block dispatch.
+    # doc built from it) current. Best effort: never let it block dispatch. It runs as a child process with a
+    # time limit: in-process, on 2026-10-07 it blocked in opendir() on ~/Documents (a TCC prompt nobody can answer
+    # on the headless mini) and hung the whole run for hours. A hang now costs one refresh; the last catalog stays.
     try:
         path = project_catalog.catalog_path()
-        if project_catalog.is_stale(path, 50 * 60):
-            res = project_catalog.real_refresh(path)
-            print(f"{LOG_PREFIX} project catalog: " + (f"{res['count']} projects" if res["ok"] else f"refresh failed, kept last good ({res['error']})"), file=sys.stderr)
+        if not project_catalog.is_stale(path, 50 * 60):
+            return
+        out = run([sys.executable, str(Path(project_catalog.__file__)), "refresh"], capture_output=True, text=True,
+                  timeout=CATALOG_REFRESH_TIMEOUT_S)
+        tail = ((out.stdout or "") + (out.stderr or "")).strip().splitlines()[-1:] if out is not None else []
+        print(f"{LOG_PREFIX} project catalog: " + (tail[0] if tail else "refreshed"), file=sys.stderr)
+    except subprocess.TimeoutExpired:
+        print(f"{LOG_PREFIX} project catalog: refresh timed out after {CATALOG_REFRESH_TIMEOUT_S}s, kept last good "
+              "(on the mini usually a folder under ~/Documents waiting on macOS privacy permission)", file=sys.stderr)
     except Exception as e:  # noqa: BLE001
         print(f"{LOG_PREFIX} project catalog: {e}", file=sys.stderr)
 
