@@ -77,6 +77,40 @@ def _copy(src: Path, dest: Path, skip: list[str] = ()) -> None:
         raise RelocateRefused(f"copy failed: {p.stderr.strip()[:300]}")
 
 
+def open_by(path: Path) -> list[str]:
+    """Programs holding a file open under `path` (lsof, filtered by prefix; one system-wide call is faster than +D)."""
+    try:
+        out = subprocess.run(["/usr/sbin/lsof", "-n", "-P", "+c", "0", "-F", "cn"], capture_output=True, text=True, timeout=60).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    prefix, apps, cmd = str(path) + "/", set(), None
+    for line in out.splitlines():
+        if line.startswith("c"):
+            cmd = line[1:]
+        elif line.startswith("n") and (line[1:] == str(path) or line[1:].startswith(prefix)) and cmd:
+            apps.add(cmd)
+    return sorted(apps)
+
+
+def running_apps() -> set[str]:
+    out = subprocess.run(["/bin/ps", "-axo", "comm="], capture_output=True, text=True).stdout
+    return {Path(l.strip()).name for l in out.splitlines() if l.strip()}
+
+
+# Editors that watch a project without keeping its files open, so lsof can miss them (Xcode, 2026-10-08).
+WATCHING_EDITORS = {"Xcode": ("*.xcodeproj", "*.xcworkspace")}
+
+
+def busy(src: Path) -> list[str]:
+    """Why this folder must not move right now (empty when it may)."""
+    reasons = [f"{app} has files open in it" for app in open_by(src)]
+    running = running_apps()
+    for app, patterns in WATCHING_EDITORS.items():
+        if app in running and any(next(src.rglob(p), None) for p in patterns):
+            reasons.append(f"{app} is running and this is an {app} project: close it first")
+    return reasons
+
+
 def relocate(src: Path, dest_root: Path, stamp: str | None = None, dry_run: bool = False) -> dict:
     src, dest_root = Path(src).expanduser(), Path(dest_root).expanduser()
     if not src.is_dir():
@@ -84,6 +118,9 @@ def relocate(src: Path, dest_root: Path, stamp: str | None = None, dry_run: bool
     dest = dest_root / src.name
     if dest.exists():
         raise RelocateRefused(f"{dest} already exists: compare the two copies by hand first")
+    in_use = busy(src)
+    if in_use:
+        raise RelocateRefused(f"{src} is in use: {'; '.join(in_use)}")
     before = state(src)
     if before.get("git") and not before["fsck_ok"]:
         raise RelocateRefused(f"{src} fails git fsck before the move: fix that first")

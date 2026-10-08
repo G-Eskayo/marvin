@@ -81,3 +81,22 @@ def test_git_ignored_build_output_is_skipped_but_a_tracked_build_folder_is_not(r
     assert not (new / ".build").exists() and not (new / "node_modules").exists()
     assert (new / "build" / "keep.txt").read_text() == "tracked"
     assert sorted(out["skipped"]) == [".build", "node_modules"]
+
+
+def test_refuses_while_an_app_has_the_folder_open(repo, tmp_path, monkeypatch):
+    """2026-10-08: hiding clarity-captions' iCloud copy pulled it out from under Xcode ('The workspace file … has
+    disappeared'). Never move a folder something has open."""
+    monkeypatch.setattr(rp, "open_by", lambda path: ["Xcode"])
+    with pytest.raises(rp.RelocateRefused, match="Xcode"):
+        rp.relocate(repo, tmp_path / "Developer", stamp="s")
+    assert repo.is_dir() and not (tmp_path / "Developer" / "demo").exists()
+
+
+def test_an_xcode_project_is_refused_while_xcode_runs_even_without_open_files(repo, tmp_path, monkeypatch):
+    (repo / "App.xcodeproj").mkdir()
+    monkeypatch.setattr(rp, "open_by", lambda path: [])
+    monkeypatch.setattr(rp, "running_apps", lambda: {"Xcode"})
+    with pytest.raises(rp.RelocateRefused, match="Xcode"):
+        rp.relocate(repo, tmp_path / "Developer", stamp="s")
+    monkeypatch.setattr(rp, "running_apps", lambda: set())
+    assert rp.relocate(repo, tmp_path / "Developer", stamp="s")["ok"]

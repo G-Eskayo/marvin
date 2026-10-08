@@ -9,8 +9,7 @@
     "macbook-pro-1"
   ],
   "clone_hints": [
-    "~/Developer/clarity-captions",
-    "~/Documents/Projects/clarity-captions"
+    "~/Developer/clarity-captions"
   ],
   "env": {
     "DEVELOPER_DIR": {
