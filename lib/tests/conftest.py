@@ -94,3 +94,7 @@ def _isolate_ticket_evidence(monkeypatch):
     monkeypatch.setattr(ticket_pipeline, "_evidence_facts", lambda repo: None)
     monkeypatch.setattr(ticket_pipeline, "_requeue_all", lambda repos: [])
     monkeypatch.setattr(ticket_pipeline, "_background_checks", lambda: None)  # no background test runs from tests  # no real gh calls from the scan
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "real_preflight: run sandbox_orchestration's real worktree preflight (git), not the stub")

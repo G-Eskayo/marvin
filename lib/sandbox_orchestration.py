@@ -115,7 +115,9 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
     # permission to do so, not knowing that's raise_mr's job, done
     # automatically after this function returns -- its own job stops at
     # implementing and locally verifying.
+    _preflight_worktree(worktree_path, ticket_ref)
     autonomy_note = (
+        f"Your shell starts in {worktree_path}, this ticket's own git worktree (checked before you were launched). "
         "You are operating fully autonomously and headlessly -- there is no "
         "human present to answer questions, grant additional permissions, or "
         "confirm judgment calls. If existing code already satisfies this "
@@ -123,7 +125,7 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
         "pausing to ask for confirmation; if something is genuinely "
         "ambiguous, make the most reasonable call yourself and note it. "
         # #277: refused shell habits were 25% of all headless refusals.
-        "Your shell is already in the working directory, so never prefix commands with `cd <dir> &&` "
+        "Since you are already there, never prefix commands with `cd <dir> &&` "
         "(it makes allowed commands get refused). Use the Read, Glob and Grep tools to look at files "
         "and folders, not ls/find/cat/grep in Bash; Glob lists a directory, Read can't open one. "
         "Read-only `graphify query`, `gh` (view/list/diff) and `git` (log/diff/show/blame) are allowed."
@@ -218,6 +220,30 @@ def _preserve_prior_attempt(repo_path: Path, worktree_path: "Path | list[Path]",
     return ref
 
 
+def _branch_for(ticket_ref: str) -> str:
+    return f"pipeline/{ticket_ref.lower().replace(' ', '-')}"
+
+
+def _preflight_worktree(worktree_path: Path, ticket_ref: str) -> None:
+    """Prove, without any model, that the agent is about to start in this ticket's own worktree. The prompt
+    tells the agent where its shell is (Gil, 2026-10-08: "does that mean that they are?"), so the claim must
+    be checked, not assumed. Raises before any tokens are spent; the reason travels with the failure."""
+    path = Path(worktree_path)
+    root = WORKTREES_ROOT.resolve()
+    if not path.is_dir():
+        raise RuntimeError(f"preflight: {path} does not exist, refusing to launch the agent")
+    resolved = path.resolve()
+    if root not in resolved.parents:
+        raise RuntimeError(f"preflight: {resolved} is outside {root}, refusing to launch the agent in a real clone")
+    top = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=path, capture_output=True, text=True)
+    if top.returncode != 0 or Path(top.stdout.strip()).resolve() != resolved:
+        raise RuntimeError(f"preflight: {resolved} is not a git worktree root ({(top.stderr or top.stdout).strip()[:200]})")
+    head = subprocess.run(["git", "symbolic-ref", "--short", "HEAD"], cwd=path, capture_output=True, text=True)
+    want = _branch_for(ticket_ref)
+    if head.stdout.strip() != want:
+        raise RuntimeError(f"preflight: {resolved} is on branch {head.stdout.strip() or '(detached)'}, expected {want}")
+
+
 def _create_worktree(repo_path: Path, ticket_ref: str, base_branch: str = "main") -> Path:
     """Branches explicitly from `origin/main` (fetched fresh first), not
     repo_path's current HEAD -- repo_path is the same shared checkout an
@@ -248,7 +274,7 @@ def _create_worktree(repo_path: Path, ticket_ref: str, base_branch: str = "main"
     produced is first preserved under refs/rescue/<branch>/<timestamp> (kept
     locally and pushed to origin), and only then is the old state discarded."""
     WORKTREES_ROOT.mkdir(parents=True, exist_ok=True)
-    branch = f"pipeline/{ticket_ref.lower().replace(' ', '-')}"
+    branch = _branch_for(ticket_ref)
     # No '#' in the DIRECTORY name (the branch keeps it, cleanup_sweep reads the
     # branch): vite/vitest read '#' in a path as a URL fragment and crash, which
     # silently zeroed every pipeline ticket's vitest count. Worktrees created

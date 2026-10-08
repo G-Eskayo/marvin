@@ -794,3 +794,89 @@ def test_both_prompts_steer_away_from_refused_shell_habits(monkeypatch, tmp_path
         prompt = call[call.index("-p") + 1]
         assert "Glob" in prompt and "Grep" in prompt and "ls" in prompt
         assert "already" in prompt and "cd" in prompt
+
+
+# ── the agent's working directory is checked, not just claimed (Gil, 2026-10-08) ──
+# The prompt tells the agent where its shell is. That claim must be TRUE by construction: a deterministic
+# preflight proves the path is this ticket's own worktree before any tokens are spent, and the prompt
+# names the exact path the process is launched in (same variable), so the two can never drift apart.
+
+REAL_PREFLIGHT = so._preflight_worktree
+
+
+@pytest.fixture(autouse=True)
+def _skip_preflight_for_fake_paths(monkeypatch, request):
+    # Older tests pass a bare tmp_path with a faked subprocess.run; they test prompt/flag wiring, not git.
+    if "real_preflight" not in request.keywords:
+        monkeypatch.setattr(so, "_preflight_worktree", lambda path, ticket_ref: None)
+
+
+def _git(*args, cwd):
+    import subprocess as sp
+    sp.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+
+def _real_worktree(tmp_path, monkeypatch, ticket_ref="G-Eskayo/marvin#999"):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git("init", "-q", "-b", "main", cwd=repo)
+    _git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init", cwd=repo)
+    root = tmp_path / "worktrees"
+    root.mkdir()
+    monkeypatch.setattr(so, "WORKTREES_ROOT", root)
+    branch = so._branch_for(ticket_ref)
+    path = root / branch.replace("/", "-").replace("#", "-")
+    _git("worktree", "add", "-q", "-b", branch, str(path), "main", cwd=repo)
+    return repo, path
+
+
+@pytest.mark.real_preflight
+def test_preflight_accepts_this_tickets_own_worktree(tmp_path, monkeypatch):
+    _, wt = _real_worktree(tmp_path, monkeypatch)
+    REAL_PREFLIGHT(wt, "G-Eskayo/marvin#999")  # no exception
+
+
+@pytest.mark.real_preflight
+def test_preflight_refuses_a_folder_that_is_not_a_git_worktree(tmp_path, monkeypatch):
+    monkeypatch.setattr(so, "WORKTREES_ROOT", tmp_path)
+    plain = tmp_path / "pipeline-g-eskayo-marvin-999"
+    plain.mkdir()
+    with pytest.raises(RuntimeError, match="not a git worktree"):
+        REAL_PREFLIGHT(plain, "G-Eskayo/marvin#999")
+
+
+@pytest.mark.real_preflight
+def test_preflight_refuses_the_real_clone(tmp_path, monkeypatch):
+    repo, _ = _real_worktree(tmp_path, monkeypatch)
+    with pytest.raises(RuntimeError, match="outside"):
+        REAL_PREFLIGHT(repo, "G-Eskayo/marvin#999")
+
+
+@pytest.mark.real_preflight
+def test_preflight_refuses_another_tickets_worktree(tmp_path, monkeypatch):
+    _, wt = _real_worktree(tmp_path, monkeypatch, ticket_ref="G-Eskayo/marvin#999")
+    with pytest.raises(RuntimeError, match="branch"):
+        REAL_PREFLIGHT(wt, "G-Eskayo/marvin#123")
+
+
+@pytest.mark.real_preflight
+def test_a_failed_preflight_spends_no_tokens(tmp_path, monkeypatch):
+    monkeypatch.setattr(so, "WORKTREES_ROOT", tmp_path)
+    launched = []
+    monkeypatch.setattr(so, "_run_claude", lambda *a, **k: launched.append(a) or ("", 0.0))
+    with pytest.raises(RuntimeError):
+        so._default_executor(tmp_path / "missing", "G-Eskayo/marvin#999", None)
+    assert launched == []
+
+
+@pytest.mark.real_preflight
+def test_the_prompt_names_the_exact_directory_the_agent_is_launched_in(tmp_path, monkeypatch):
+    _, wt = _real_worktree(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(so, "_run_claude", lambda cmd, **k: calls.append((cmd, k.get("cwd"))) or ("a plan", 0.0))
+    so._default_executor(wt, "G-Eskayo/marvin#999", None)
+    assert len(calls) == 2
+    for cmd, cwd in calls:
+        prompt = cmd[cmd.index("-p") + 1]
+        assert cwd == wt
+        assert str(wt) in prompt
