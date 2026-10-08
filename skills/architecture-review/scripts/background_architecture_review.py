@@ -38,6 +38,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 from hook_errors import log_hook_error  # noqa: E402
 from claude_bin import resolve_claude_bin as _resolve_claude_bin  # noqa: E402
+import marvin_launcher  # noqa: E402
 
 AGENTS_DIR = Path.home() / ".agents"
 CLAUDE_DIR = Path.home() / ".claude"
@@ -171,7 +172,7 @@ Append your findings to ~/.claude/suggestions.md using the exact entry format fr
 def run_review(chunk: dict, trigger_reason: str, is_threshold_trigger: bool) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     try:
-        claude_bin = _resolve_claude_bin()
+        _resolve_claude_bin()  # fail early and log it when claude is missing
     except FileNotFoundError as exc:
         with LOG_FILE.open("a") as log:
             log.write(f"\n=== run {datetime.now(timezone.utc).isoformat()} ===\n")
@@ -186,18 +187,11 @@ def run_review(chunk: dict, trigger_reason: str, is_threshold_trigger: bool) -> 
         log.write(f"\n=== run {datetime.now(timezone.utc).isoformat()} — chunk: {chunk['name']} — trigger: {trigger_reason} ===\n")
         log.flush()
         try:
-            proc = subprocess.run(
-                [
-                    claude_bin, "-p", prompt,
-                    "--tools", "Read,Write,Edit",
-                    "--permission-mode", "bypassPermissions",
-                    "--output-format", "text",
-                ],
-                stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                timeout=CLAUDE_CALL_TIMEOUT,
-            )
-            log.write(f"=== claude exit {proc.returncode} ===\n")
-            if proc.returncode != 0:
+            result = marvin_launcher.launch("background-analyst", prompt, tools="Read,Write,Edit",
+                                            permission_mode="bypassPermissions", timeout=CLAUDE_CALL_TIMEOUT)
+            log.write(result.text + (f"\n{result.stderr}" if result.stderr else "") + "\n")
+            log.write(f"=== claude exit {result.exit_code} ===\n")
+            if result.exit_code != 0:
                 log.flush()
                 return  # don't advance cursor or sort on a failed run
         except subprocess.TimeoutExpired:

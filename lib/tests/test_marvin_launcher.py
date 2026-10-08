@@ -140,3 +140,70 @@ def test_the_pipeline_planner_and_executor_go_through_the_launcher():
     src = (AGENTS / "lib/sandbox_orchestration.py").read_text()
     assert '["claude", "-p"' not in src
     assert "marvin_launcher" in src
+
+
+# ── marvin#303: every model run goes through the launcher ──────────────────────
+
+import re as _re
+
+# Deliberate exceptions, each with its reason. Anything else that starts `claude -p` fails the guard.
+_EXEMPT = {
+    "bench": "measurement harness: compares profiles, including a no-MARVIN control, on purpose",
+    "lib/dispatch_ticket.sh": "manual ad hoc dispatch to another machine, kept outside the pipeline (ticket_pipeline docstring)",
+}
+_RAW_CALL_PY = _re.compile(r'''\[\s*(["']claude["']|claude_bin\w*)\s*,\s*["']-p["']''')
+_RAW_CALL_SH = _re.compile(r"^\s*claude -p ", _re.M)
+
+
+def _sources():
+    for path in AGENTS.rglob("*"):
+        rel = path.relative_to(AGENTS).as_posix()
+        if path.suffix not in {".py", ".sh"} or not path.is_file():
+            continue
+        if any(part in {"tests", "test", "node_modules", "venv", ".venv", "graphify-out"} for part in path.parts):
+            continue
+        if any(rel == e or rel.startswith(e + "/") for e in _EXEMPT) or rel == "lib/marvin_launcher.py":
+            continue
+        yield rel, path
+
+
+def test_no_model_run_starts_outside_the_launcher():
+    offenders = [rel for rel, path in _sources()
+                 if (_RAW_CALL_SH if path.suffix == ".sh" else _RAW_CALL_PY).search(path.read_text(errors="ignore"))]
+    assert offenders == [], f"start these through marvin_launcher.launch with a launch kind: {offenders}"
+
+
+def test_the_phone_chat_runs_as_an_interactive_launch():
+    src = (AGENTS / "dashboard/mobile-backend/session_runner.js").read_text()
+    assert "MARVIN_LAUNCH_KIND" in src and "'interactive'" in src
+
+
+@pytest.mark.parametrize("module_path, kind", [
+    ("skills/improve/scripts/daily_digest.py", "background-analyst"),
+    ("skills/research-colony/scripts/research_digest.py", "background-analyst"),
+    ("skills/self-improve/scripts/background_review.py", "background-analyst"),
+    ("skills/architecture-review/scripts/background_architecture_review.py", "background-analyst"),
+    ("skills/improve/scripts/auto_fix.py", "background-analyst"),
+    ("lib/ticket_promotion.py", "background-analyst"),
+    ("lib/disk_forecast_notify.py", "utility-call"),
+    ("lib/mr_notification.py", "utility-call"),
+    ("skills/handoff/scripts/generate_handoff_from_transcript.py", "utility-call"),
+    ("skills/safety-monitor/scripts/verify.py", "judge"),
+])
+def test_each_caller_declares_its_launch_kind(module_path, kind):
+    src = (AGENTS / module_path).read_text()
+    assert _re.search(rf'''launch\(\s*["']{kind}["']''', src), f"{module_path} should launch as {kind}"
+
+
+def test_a_judge_runs_in_an_empty_folder_of_its_own(memory, tmp_path):
+    fake = FakeRun()
+    ml.launch("judge", "score it", tools="", log_path=tmp_path / "l.jsonl", runner=fake)
+    (cmd, kw), = fake.calls
+    assert kw["cwd"] and "marvin-judge-" in kw["cwd"]
+    assert cmd[cmd.index("--tools") + 1] == ""
+    assert "--model" not in cmd  # left to the caller
+
+
+def test_a_reported_error_counts_as_a_failed_run(memory, tmp_path):
+    fake = FakeRun(stdout=json.dumps({"result": "boom", "is_error": True}))
+    assert ml.launch("utility-call", "x", log_path=tmp_path / "l.jsonl", runner=fake).exit_code == 1

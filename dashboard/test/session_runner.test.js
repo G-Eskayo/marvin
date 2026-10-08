@@ -162,6 +162,21 @@ describe('session_runner', () => {
       expect(capturedArgs).toContain('session-resume-001')
     })
 
+    it('runs as an Interactive launch: the kind marker reaches claude and its hooks (ADR 0059)', async () => {
+      let capturedOptions = null
+      const mockSpawn = (bin, args, options) => {
+        capturedOptions = options
+        return createMockChildProcess(loadFixture('resume.ndjson'))
+      }
+
+      for await (const _ of runSession({ message: 'hi', spawnFn: mockSpawn })) {
+        // consume events
+      }
+
+      expect(capturedOptions.env.MARVIN_LAUNCH_KIND).toBe('interactive')
+      expect(capturedOptions.env.PATH).toBe(process.env.PATH)
+    })
+
     it('surfaces spawn ENOENT as error event', async () => {
       const mockSpawn = () => {
         const err = new Error('ENOENT: no such file or directory')

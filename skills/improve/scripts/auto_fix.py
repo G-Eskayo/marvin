@@ -47,6 +47,7 @@ SAFE_CATEGORIES = {"NAMING", "VERBOSITY"}
 
 sys.path.insert(0, str(AGENTS_DIR / "lib"))
 from claude_bin import resolve_claude_bin as _resolve_claude_bin  # noqa: E402
+import marvin_launcher  # noqa: E402
 
 
 def _core_files() -> set[Path]:
@@ -204,22 +205,14 @@ def main() -> None:
         backups = backup_files(paths, Path(tmpdir))
 
         try:
-            claude_bin = _resolve_claude_bin()
+            _resolve_claude_bin()  # fail early and log it when claude is missing
         except FileNotFoundError as e:
             log_run(candidates, [], [], skipped=True, reason=str(e))
             return
 
         prompt = build_prompt(candidates)
-        subprocess.run(
-            [
-                claude_bin, "-p", prompt,
-                "--tools", "Read,Edit",
-                "--permission-mode", "bypassPermissions",
-                "--output-format", "text",
-            ],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
-            timeout=300,
-        )
+        marvin_launcher.launch("background-analyst", prompt, tools="Read,Edit",
+                               permission_mode="bypassPermissions", timeout=300)
 
         fixed_ok, reverted = verify_and_revert(paths, backups)
         log_run(candidates, fixed_ok, reverted, skipped=False)
