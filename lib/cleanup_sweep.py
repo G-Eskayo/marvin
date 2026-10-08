@@ -264,10 +264,25 @@ def run_daily_sweep(
     threshold_hours: float = STALE_THRESHOLD_HOURS,
     now: datetime | None = None,
 ) -> dict:
-    """Cron entry point. Runs both sweeps, logs what was removed/released/kept
-    for review (same visibility standard as cron_health.py), returns a summary."""
+    """Cron entry point. Runs sweeps (claims, worktrees, disk ledger, disk trim),
+    logs what was removed/released/kept for review (same visibility standard as
+    cron_health.py), returns a summary."""
     stale = sweep_stale_claims(threshold_hours, list_claimed_open_issues, release, now)
     worktrees = sweep_worktrees(list_worktrees, pr_state, is_claimed, remove_worktree)
+
+    # Disk ledger and trim (log separately via their own functions)
+    try:
+        import disk_ledger as dl  # noqa: E402
+        dl.run_daily_ledger()
+    except Exception:
+        pass
+
+    try:
+        import disk_trim as dt  # noqa: E402
+        dt.trim_with_logging(dry_run=False)
+    except Exception:
+        pass
+
     _write_log(stale, worktrees)
     return {"stale_claims_released": len(stale), "worktrees_removed": len(worktrees["removed"]),
             "worktrees_for_review": len(worktrees["review"])}
