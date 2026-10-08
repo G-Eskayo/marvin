@@ -54,3 +54,25 @@ docs.
    instant fallback for abstract looks.
 4. #288 Apply writes card and hero from the same image for every project and fixes page heroes; flags mismatches.
 5. Then: every project (MARVIN included) gets its new image on dev, for Gil to review and promote.
+
+## Models: reuse first, download only when nothing we have can do it (Gil, 2026-10-08)
+
+Inventory 2026-10-08 (the mini holds almost all of it; 24 GB free):
+
+| Model | Size | Used by |
+|---|---|---|
+| qwen2.5 14b / 7b / 3b (Ollama) | 9.0 / 4.7 / 1.9 GB | paper-dive only (logic auditor, competing ideas, argument mapper) |
+| nomic-embed-text (Ollama, both Macs) | 0.27 GB | core: memory search, routing, embeddings |
+| specter2 (HF) | 0.84 GB | paper-dive citation graph |
+| MiniLM (Chroma default) | 0.17 GB | core vector search |
+| Llama-3.2-3B / Qwen2.5-3B / Llama-3.2-1B, MLX 4-bit (HF) | 1.9 / 1.6 / 0.02 GB | nothing: exo test leftovers |
+| FLUX.1-schnell | gone | the Seal icon run's weights were removed; only the mflux tool is left on the laptop |
+
+Rules:
+- **A shared model list** (`config/models.json`): every model, where it lives, its size, what uses it, when it was last used.
+  A new feature picks from it first; adding a model means a list entry with its reason, and a download only after that.
+- **One heavy model at a time per Mac**, through a queue: Ollama already queues its own requests, but FLUX and the 14b
+  model can't both be loaded on a 16 GB Mac. Jobs wait their turn instead of failing or swapping.
+- **Visible:** the dashboard shows the list, sizes, what uses each, last use, and the queue (what's running, what's waiting).
+- **For the image maker:** FLUX is the only image model, so it is a justified download, but the pre-quantized 4-bit
+  build (~6-10 GB), not the full weights (~30 GB, more than the mini's free space).
