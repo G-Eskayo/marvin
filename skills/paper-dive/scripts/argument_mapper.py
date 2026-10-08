@@ -33,10 +33,25 @@ import sys
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+import model_registry  # noqa: E402
+
 CHROMA_PATH = Path.home() / ".claude" / "chroma"
 COLLECTION_NAME = "paper-knowledge"
 OLLAMA_URL = "http://localhost:11434/api/chat"
-CLAIM_MODEL = "qwen2.5:3b"
+
+def _get_claim_model() -> str:
+    """Get claim extraction model from registry, fall back to hardcoded default."""
+    try:
+        registry = model_registry.ModelRegistry()
+        model = registry.resolve_capability("local-classify-small")
+        if model:
+            return model
+    except Exception:
+        pass
+    return "qwen2.5:3b"
+
+CLAIM_MODEL = _get_claim_model()
 OPENALEX_WORKS_BASE = "https://api.openalex.org/works"
 
 

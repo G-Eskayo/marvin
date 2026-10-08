@@ -22,16 +22,54 @@ fits every stage.
 from __future__ import annotations
 import json
 import re
+import sys
 import urllib.request
+from pathlib import Path
+
+sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+import job_events  # noqa: E402
+import model_queue  # noqa: E402
+import model_registry  # noqa: E402
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
-# Validated 2026-07-13 against all 15 real seed abstracts: 3b (even with a prompt refined to
-# counter its "named attack/method -> conceptual" bias) still misclassified MINJA and
-# many-shot-jailbreaking as conceptual despite both reporting concrete measured attack success
-# rates. 7b was WORSE, not better -- overcorrected to "empirical" broadly and broke two
-# previously-correct survey/benchmark classifications (sok-trust-authorization-mismatch,
-# sorry-bench). 14b fixed both stubborn cases with zero regressions on the rest.
-CLASSIFY_MODEL = "qwen2.5:14b"
+
+
+def _ollama_chat_with_queue(model: str, messages: list[dict], timeout: int = 60) -> str:
+    """Call ollama_chat, acquiring/releasing ModelQueue lock if model is heavy."""
+    registry = model_registry.ModelRegistry()
+    queue = model_queue.ModelQueue()
+    is_heavy = registry.is_heavy(model)
+
+    job_id = None
+    if is_heavy and job_events._CURRENT:
+        # If we're in a job context, use its ID
+        job_id = job_events._CURRENT[-1].record["id"]
+
+    if is_heavy and job_id:
+        queue.acquire(model, job_id, is_heavy=True, timeout=600)
+
+    try:
+        result = ollama_chat(model, messages, timeout)
+        # Track model usage in registry
+        registry.touch_last_used(model)
+        return result
+    finally:
+        if is_heavy and job_id:
+            queue.release(model, job_id)
+
+
+def _get_classify_model() -> str:
+    """Get classification model from registry, fall back to hardcoded default."""
+    try:
+        registry = model_registry.ModelRegistry()
+        model = registry.resolve_capability("local-classify-large")
+        if model:
+            return model
+    except Exception:
+        pass
+    return "qwen2.5:14b"
+
+CLASSIFY_MODEL = _get_classify_model()
 
 PAPER_TYPES = {"empirical", "survey", "benchmark", "conceptual"}
 
@@ -71,7 +109,7 @@ def classify_paper_type(title: str, abstract: str, chat_fn=None) -> str:
     parsed into exactly one of them -- deliberately not guessing/defaulting
     silently, since a wrong type routes the paper to the wrong evaluation
     method downstream."""
-    chat_fn = chat_fn or (lambda messages: ollama_chat(CLASSIFY_MODEL, messages))
+    chat_fn = chat_fn or (lambda messages: _ollama_chat_with_queue(CLASSIFY_MODEL, messages))
     prompt = CLASSIFY_PROMPT.format(title=title, abstract=abstract)
     response = chat_fn([{"role": "user", "content": prompt}]).strip().lower()
 
@@ -82,11 +120,26 @@ def classify_paper_type(title: str, abstract: str, chat_fn=None) -> str:
 
 
 def classify_all(papers: dict[str, tuple[str, str]], chat_fn=None) -> dict[str, str]:
-    """papers: {slug: (title, abstract)}. Returns {slug: type}."""
-    return {
-        slug: classify_paper_type(title, abstract, chat_fn=chat_fn)
-        for slug, (title, abstract) in papers.items()
-    }
+    """papers: {slug: (title, abstract)}. Returns {slug: type}.
+
+    Acquires heavy-model queue lock for the entire batch if CLASSIFY_MODEL is heavy.
+    """
+    registry = model_registry.ModelRegistry()
+    queue = model_queue.ModelQueue()
+    is_heavy = registry.is_heavy(CLASSIFY_MODEL)
+    job_id = f"classify_all_{id(papers)}"
+
+    if is_heavy and not queue.acquire(CLASSIFY_MODEL, job_id, is_heavy=True, timeout=600):
+        raise RuntimeError(f"timeout waiting for {CLASSIFY_MODEL} queue lock")
+
+    try:
+        return {
+            slug: classify_paper_type(title, abstract, chat_fn=chat_fn)
+            for slug, (title, abstract) in papers.items()
+        }
+    finally:
+        if is_heavy:
+            queue.release(CLASSIFY_MODEL, job_id)
 
 
 # ── Layer 1: type-adaptive visible extraction ───────────────────────────────

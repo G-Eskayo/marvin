@@ -22,6 +22,7 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import job_events
+import model_queue
 import model_registry
 import portfolio_imagegen
 import portfolio_rules
@@ -220,7 +221,15 @@ def queued_generate(slug: str, prompt: str, seed: Optional[int] = None, target: 
     LOCK_DIR.mkdir(parents=True, exist_ok=True)
 
     with job_events.job_run("flux-generate", label=f"flux-generate-{slug}") as run:
-        run.step("queue-lock", f"acquiring lock for {slug}")
+        run.step("queue-lock", f"acquiring heavy-model lock for {slug}")
+
+        queue = model_queue.ModelQueue()
+        job_id = run.record["id"]
+
+        if not queue.acquire("FLUX.1-schnell-4bit", job_id, is_heavy=True, timeout=600):
+            error = "timeout waiting for FLUX model lock"
+            run.fail(error)
+            return QueuedJobResult(ok=False, slug=slug, seed=seed or 0, error=error)
 
         with open(FLUX_LOCK_FILE, "w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
@@ -281,6 +290,8 @@ def queued_generate(slug: str, prompt: str, seed: Optional[int] = None, target: 
                 return QueuedJobResult(ok=False, slug=slug, seed=seed or 0, error=error)
             finally:
                 fcntl.flock(lock, fcntl.LOCK_UN)
+
+        queue.release("FLUX.1-schnell-4bit", job_id)
 
 
 def main() -> None:

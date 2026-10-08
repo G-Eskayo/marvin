@@ -23,6 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 import intent_classify  # noqa: E402
+import model_registry as mreg  # noqa: E402
 import model_scope  # noqa: E402
 
 # ── routing table ─────────────────────────────────────────────────────────────
@@ -128,6 +129,25 @@ def skill_allowed(skill_name: str, model: str, manifest: dict | None = None) -> 
             return model_scope.is_allowed(scope, model)
 
     return True
+
+
+def resolve_local_model(capability: str) -> str | None:
+    """Resolve a capability name to a local model.
+
+    Queries the model registry for available models with the given capability,
+    returning the best match (largest/highest-quality model by size).
+
+    Args:
+        capability: Capability name (e.g., 'local-classify-large')
+
+    Returns:
+        Model name if found, None if not registered or unavailable.
+    """
+    try:
+        registry = mreg.ModelRegistry()
+        return registry.resolve_capability(capability)
+    except Exception:
+        return None
 
 
 # ── classifier ────────────────────────────────────────────────────────────────
@@ -299,6 +319,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         choices=["haiku", "sonnet", "opus"],
         help="model tier for skill checking (use with --check-skill)",
     )
+    ap.add_argument(
+        "--local-capability",
+        metavar="CAPABILITY",
+        help="resolve a capability name to a local model (e.g., local-classify-large)",
+    )
     # explicit intent overrides
     for intent in INTENTS:
         ap.add_argument(f"--{intent}", action="store_true", help=f"force {intent} routing")
@@ -328,6 +353,15 @@ def main() -> None:
         allowed = skill_allowed(args.check_skill, args.model)
         print(f"{'allowed' if allowed else 'not allowed'}")
         sys.exit(0 if allowed else 1)
+
+    if args.local_capability:
+        model = resolve_local_model(args.local_capability)
+        if model:
+            print(model)
+            sys.exit(0)
+        else:
+            print(f"error: no local model found for capability '{args.local_capability}'", file=sys.stderr)
+            sys.exit(1)
 
     # explicit intent flag overrides classifier
     forced = next((i for i in INTENTS if getattr(args, i, False)), None)

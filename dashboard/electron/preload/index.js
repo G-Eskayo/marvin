@@ -138,5 +138,8 @@ contextBridge.exposeInMainWorld('api', {
     input: (repo, number, body) => ipcRenderer.invoke('boards:input', repo, number, body),
     summary: (repo) => ipcRenderer.invoke('boards:summary', repo),
     completed: (repo) => ipcRenderer.invoke('boards:completed', repo)
+  },
+  models: {
+    list: () => ipcRenderer.invoke('models:list')
   }
 })

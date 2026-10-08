@@ -26,10 +26,25 @@ import sys
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+import model_registry  # noqa: E402
+
 CHROMA_PATH = Path.home() / ".claude" / "chroma"
 COLLECTION_NAME = "paper-knowledge"
 OLLAMA_URL = "http://localhost:11434/api/chat"
-STANCE_MODEL = "qwen2.5:7b"
+
+def _get_stance_model() -> str:
+    """Get stance classification model from registry, fall back to hardcoded default."""
+    try:
+        registry = model_registry.ModelRegistry()
+        model = registry.resolve_capability("local-classify-medium")
+        if model:
+            return model
+    except Exception:
+        pass
+    return "qwen2.5:7b"
+
+STANCE_MODEL = _get_stance_model()
 
 STANCES = {"supports", "refutes", "mixed", "unrelated"}
 

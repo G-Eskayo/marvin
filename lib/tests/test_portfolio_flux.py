@@ -74,7 +74,7 @@ def test_model_registry_register(tmp_path):
     data = json.loads(registry_path.read_text())
     assert "qwen2.5-14b" in data
     assert data["qwen2.5-14b"]["size_gb"] == 9.0
-    assert data["qwen2.5-14b"]["used_by"] == "paper-dive"
+    assert data["qwen2.5-14b"]["used_by"] == ["paper-dive"]
     assert data["qwen2.5-14b"]["reason"] == "logic auditing"
 
 

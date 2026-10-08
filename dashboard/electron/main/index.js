@@ -20,6 +20,7 @@ import { listTicketActivity, getTicketTimeline } from './activity.js'
 import { getDeviceStatuses } from './devices.js'
 import { getQueue } from './queue.js'
 import { getConcurrency, setConcurrency, scanNow } from './dispatch_concurrency.js'
+import { getModelRegistry } from './models.js'
 import { createMergeOps } from './merge_ops.js'
 import { readPrefs } from './prefs.js'
 import { guardApprove } from './approve_guard.js'
@@ -180,6 +181,7 @@ function registerMetricsHandlers() {
 function registerDispatchHandlers() {
   ipcMain.handle('dispatch:status', () => readDispatchStatus())
   ipcMain.handle('devices:status', () => getDeviceStatuses())
+  ipcMain.handle('models:list', () => getModelRegistry())
   ipcMain.handle('queue:list', () => getQueue())
   ipcMain.handle('dispatch:getConcurrency', () => getConcurrency())
   ipcMain.handle('dispatch:setConcurrency', (_event, settings) => setConcurrency(settings))

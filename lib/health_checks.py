@@ -26,6 +26,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cron_health as ch  # noqa: E402
 import machine_profile  # noqa: E402
+import model_registry as mreg  # noqa: E402
 from task_dispatch import TAILSCALE_BIN, TAILSCALE_ENV  # noqa: E402  (absolute path -- launchd's PATH omits the shell's additions)
 import metrics_registry as mr  # noqa: E402
 
@@ -794,6 +795,8 @@ WT="$HOME/.agents-pipeline-worktrees"
 if [ -d "$WT" ]; then echo "worktrees_kb=$(/usr/bin/du -sk "$WT" 2>/dev/null | /usr/bin/cut -f1)"; echo "worktrees_n=$(/bin/ls -1 "$WT" | /usr/bin/wc -l | /usr/bin/tr -d ' ')"; fi
 LEDGER="$HOME/.claude/logs/disk-ledger.jsonl"
 if [ -f "$LEDGER" ]; then echo "disk_ledger=$(tail -14 "$LEDGER" | /usr/bin/tr '\n' '|')"; fi
+MQ="$HOME/.claude/logs/model-queue.json"
+if [ -f "$MQ" ]; then echo "models_queue=$(/usr/bin/cat "$MQ")"; fi
 '''
 
 
@@ -923,6 +926,15 @@ def parse_machine_state(text: str) -> dict:
                 except (json.JSONDecodeError, ValueError):
                     pass
 
+    # Parse model queue state
+    models_queue = {"locks": {}, "waiters": {}}
+    mq_raw = raw.get("models_queue", "").strip()
+    if mq_raw:
+        try:
+            models_queue = json.loads(mq_raw)
+        except (json.JSONDecodeError, ValueError):
+            pass
+
     return {"app_built_ts": num("app_built_ts"), "dashboard_commit_ts": num("dashboard_commit_ts"),
             "webhook_server_start_ts": num("webhook_server_start_ts"), "webhook_commit_ts": num("webhook_commit_ts"),
             "gh_token": raw.get("gh_token", "").strip(), "docs_access": raw.get("docs_access", "").strip(),
@@ -931,7 +943,8 @@ def parse_machine_state(text: str) -> dict:
             "worktrees_kb": num("worktrees_kb"), "worktrees_n": num("worktrees_n"),
             "disk_ledger": disk_ledger,
             "jobs": [j for j in raw.get("jobs", "").strip().split(",") if j],
-            "job_exits": _parse_job_exits(raw.get("job_exits", ""))}
+            "job_exits": _parse_job_exits(raw.get("job_exits", "")),
+            "models_queue": models_queue}
 
 
 def _parse_job_exits(text: str) -> list[tuple[str, int | None, int]]:
@@ -1101,6 +1114,16 @@ def evaluate_machine_state(state: dict, now: datetime) -> list[tuple[str, str, s
         role = "laptop" if "macbook" in state.get("_device", "") else "mini"
         sev, detail = evaluate_job_placement(state["jobs"], role)
         out.append(("jobs:placement", sev, detail))
+    mq = state.get("models_queue", {})
+    if mq.get("locks") or mq.get("waiters"):
+        locks = mq.get("locks", {})
+        waiters = mq.get("waiters", {})
+        lock_desc = ", ".join(f"{model} (job {data['job_id'][:8]}...)" for model, data in locks.items())
+        waiter_count = len(waiters)
+        detail = f"holding: {lock_desc}" if lock_desc else "no locks"
+        if waiter_count:
+            detail += f"; {waiter_count} job(s) waiting"
+        out.append(("models:queue", "green" if not waiter_count else "yellow", detail))
     return out
 
 
@@ -1118,7 +1141,8 @@ def check_machine_state_everywhere(reachability: dict[str, str], runner=_run_mac
     ]
     labels = {"dashboard:build": "Dashboard app build", "webhook:build": "Webhook server build", "auth:gh": "GitHub credential", "docs:access": "Docs tab GitHub access",
               "desktoplive:running": "Desktop brain-map background", "brainmap:data": "Brain-map data freshness", "jobs:placement": "Scheduled jobs vs. placement",
-              "disk:space": "Disk space", "disk:headroom": "Disk headroom forecast", "jobs:exit": "Scheduled jobs' last run"}
+              "disk:space": "Disk space", "disk:headroom": "Disk headroom forecast", "jobs:exit": "Scheduled jobs' last run",
+              "models:queue": "Model lock/queue state"}
     for dev, host, reach in devices:
         if reach == "asleep":
             for key, label in labels.items():
@@ -1135,6 +1159,12 @@ def check_machine_state_everywhere(reachability: dict[str, str], runner=_run_mac
                 results.append(_result(f"{key}@{dev}", f"{label} -- {dev}", "yellow", f"could not read machine state: {str(exc)[:100]}"))
             continue
         state["_device"] = dev
+
+        # Sync currently-loaded Ollama models to registry on local machine
+        if dev == me and host is None:
+            reg = mreg.ModelRegistry()
+            reg.sync_ollama_models()
+
         for key, sev, detail in evaluate_machine_state(state, _now()):
             results.append(_result(f"{key}@{dev}", f"{labels[key]} -- {dev}", sev, detail))
     return results
