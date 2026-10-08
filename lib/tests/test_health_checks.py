@@ -243,6 +243,7 @@ def test_higher_is_better_only_for_the_one_registered_metric():
 # (neutral); online-but-unreachable or an always-on desktop down => red.
 
 NOW = datetime(2026, 10, 2, 12, 0, tzinfo=timezone.utc)
+H = 3600
 
 
 def _peer(online, hours_ago=None):
@@ -584,6 +585,8 @@ def test_missing_profiles_snapshot_passed_directly(tmp_path, monkeypatch):
 def _mstate(**kw):
     base = {"app_built_ts": int((NOW - timedelta(hours=1)).timestamp()),
             "dashboard_commit_ts": int((NOW - timedelta(hours=3)).timestamp()),
+            "webhook_server_start_ts": int((NOW - timedelta(hours=1)).timestamp()),
+            "webhook_commit_ts": int((NOW - timedelta(hours=3)).timestamp()),
             "gh_token": "ok"}
     base.update(kw)
     return base
@@ -629,6 +632,32 @@ def test_invalid_github_token_is_red_and_says_what_breaks():
 def test_missing_github_token_file_is_yellow_and_valid_is_green():
     assert dict((k, s) for k, s, _ in hc.evaluate_machine_state(_mstate(gh_token="missing"), NOW))["auth:gh"] == "yellow"
     assert dict((k, s) for k, s, _ in hc.evaluate_machine_state(_mstate(gh_token="ok"), NOW))["auth:gh"] == "green"
+
+
+def test_webhook_build_is_green_when_the_server_is_at_least_as_new_as_the_latest_webhook_commit():
+    res = dict((k, (s, d)) for k, s, d in hc.evaluate_machine_state(_mstate(), NOW))
+    assert res.get("webhook:build", ("green", ""))[0] == "green"
+
+
+def test_webhook_build_is_yellow_when_a_few_hours_behind_and_red_when_a_day_or_more_behind():
+    two = hc.evaluate_machine_state(_mstate(webhook_server_start_ts=int((NOW - timedelta(hours=9)).timestamp()),
+                                            webhook_commit_ts=int((NOW - timedelta(hours=3)).timestamp())), NOW)
+    res = dict((k, s) for k, s, _ in two)
+    assert res.get("webhook:build") == "yellow"
+    old = hc.evaluate_machine_state(_mstate(webhook_server_start_ts=int((NOW - timedelta(days=32)).timestamp()),
+                                            webhook_commit_ts=int((NOW - timedelta(hours=1)).timestamp())), NOW)
+    sev, detail = [(s, d) for k, s, d in old if k == "webhook:build"][0]
+    assert sev == "red" and ("31" in detail or "32" in detail)
+
+
+def test_webhook_build_is_yellow_when_server_is_not_running():
+    res = dict((k, s) for k, s, _ in hc.evaluate_machine_state(_mstate(webhook_server_start_ts=None), NOW))
+    assert res.get("webhook:build") == "yellow"
+
+
+def test_webhook_build_skips_when_there_is_no_webhook_commit_to_compare_against():
+    res = dict((k, s) for k, s, _ in hc.evaluate_machine_state(_mstate(webhook_commit_ts=None), NOW))
+    assert "webhook:build" not in res
 
 
 def test_check_machine_state_everywhere_covers_every_device_and_marks_asleep(monkeypatch):
