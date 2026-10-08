@@ -823,3 +823,119 @@ def test_main_health_is_yellow_when_never_checked_or_stale(tmp_path):
     p = tmp_path / "old.json"
     p.write_text(json.dumps({"sha": "a", "ok": True, "failed": [], "summary": "ok", "checked_at": (hc._now() - timedelta(days=2)).isoformat()}))
     assert hc.check_main_health(path=p)["severity"] == "yellow"
+
+
+# ── parallel dispatch: keeping up with the queue ──────────────────────────────
+
+def test_parallel_dispatch_green_when_off():
+    settings = {"parallel": False, "max_total": 2, "max_per_project": 1}
+    pools = {"G-Eskayo/marvin": []}
+    inflight = {"G-Eskayo/marvin": 0}
+    sev, detail = hc.evaluate_parallel_dispatch(settings, pools, inflight, 0, lambda *a, **k: None)
+    assert sev == "green" and "off" in detail.lower()
+
+
+def test_parallel_dispatch_green_when_all_slots_busy():
+    settings = {"parallel": True, "max_total": 2, "max_per_project": 1, "machine_slots": {"mac-mini-1": 2}}
+    pools = {"G-Eskayo/marvin": [{"number": 1}]}
+    inflight = {"G-Eskayo/marvin": 2}
+    sev, detail = hc.evaluate_parallel_dispatch(settings, pools, inflight, 0, lambda *a, **k: None)
+    assert sev == "green" and "2 of 2" in detail
+
+
+def test_parallel_dispatch_green_when_nothing_waiting():
+    settings = {"parallel": True, "max_total": 2, "max_per_project": 1}
+    pools = {"G-Eskayo/marvin": []}
+    inflight = {"G-Eskayo/marvin": 0}
+    sev, detail = hc.evaluate_parallel_dispatch(settings, pools, inflight, 0, lambda *a, **k: None)
+    assert sev == "green" and "nothing waiting" in detail.lower()
+
+
+def test_parallel_dispatch_yellow_project_at_limit():
+    settings = {"parallel": True, "max_total": 2, "max_per_project": 1}
+    pools = {"G-Eskayo/marvin": [{"number": 1}]}
+    inflight = {"G-Eskayo/marvin": 1}
+    sev, detail = hc.evaluate_parallel_dispatch(settings, pools, inflight, 0, lambda *a, **k: None)
+    assert sev == "yellow" and "project at its limit" in detail.lower()
+
+
+def test_parallel_dispatch_yellow_guard_refusal():
+    settings = {"parallel": True, "max_total": 2, "max_per_project": 1}
+    pools = {"G-Eskayo/marvin": [{"number": 1}]}
+    inflight = {"G-Eskayo/marvin": 0}
+    refusals = ["disk 9 GB free on mac-mini-1, minimum 15"]
+
+    def stub_select(profile, s, taken=None, local_base=0, refusals=None):
+        if refusals is not None:
+            refusals.extend(["disk 9 GB free on mac-mini-1, minimum 15"])
+        return None
+
+    sev, detail = hc.evaluate_parallel_dispatch(settings, pools, inflight, 0, stub_select)
+    assert sev == "yellow" and "guard refusal" in detail
+
+
+def test_parallel_dispatch_yellow_no_suitable_machine():
+    settings = {"parallel": True, "max_total": 2, "max_per_project": 1}
+    pools = {"G-Eskayo/marvin": [{"number": 1}]}
+    inflight = {"G-Eskayo/marvin": 0}
+
+    def stub_select(profile, s, taken=None, local_base=0, refusals=None):
+        if refusals is not None:
+            refusals.append("mac-mini-1 is full: 2 of 2 slots in use")
+        return None
+
+    sev, detail = hc.evaluate_parallel_dispatch(settings, pools, inflight, 0, stub_select)
+    assert sev == "yellow" and "no suitable machine" in detail
+
+
+def test_parallel_dispatch_yellow_nothing_eligible_on_unrecognized_refusal():
+    settings = {"parallel": True, "max_total": 2, "max_per_project": 1}
+    pools = {"G-Eskayo/marvin": [{"number": 1}]}
+    inflight = {"G-Eskayo/marvin": 0}
+
+    def stub_select(profile, s, taken=None, local_base=0, refusals=None):
+        if refusals is not None:
+            refusals.append("some unrecognized refusal shape")
+        return None
+
+    sev, detail = hc.evaluate_parallel_dispatch(settings, pools, inflight, 0, stub_select)
+    assert sev == "yellow" and "nothing eligible" in detail
+
+
+def test_classify_stall_reason_guard_refusal():
+    assert hc._classify_stall_reason(["disk 9 GB free, minimum 15"]) == "guard refusal"
+    assert hc._classify_stall_reason(["GitHub request budget 5% left, minimum 20%"]) == "guard refusal"
+    assert hc._classify_stall_reason(["circuit breaker tripped for foo"]) == "guard refusal"
+    assert hc._classify_stall_reason(["lacks tools: python"]) == "guard refusal"
+
+
+def test_classify_stall_reason_no_suitable_machine():
+    assert hc._classify_stall_reason([]) == "no suitable machine"
+    assert hc._classify_stall_reason(["mac-mini-1 is full: 2 of 2 slots in use"]) == "no suitable machine"
+
+
+def test_classify_stall_reason_nothing_eligible():
+    assert hc._classify_stall_reason(["unknown refusal type"]) == "nothing eligible"
+
+
+def test_parallel_dispatch_green_when_idle_slot_and_selectable():
+    settings = {"parallel": True, "max_total": 2, "max_per_project": 1}
+    pools = {"G-Eskayo/marvin": [{"number": 1}]}
+    inflight = {"G-Eskayo/marvin": 0}
+
+    def stub_select(profile, s, taken=None, local_base=0, refusals=None):
+        return ("mac-mini-1", {"is_self": True})
+
+    sev, detail = hc.evaluate_parallel_dispatch(settings, pools, inflight, 0, stub_select)
+    assert sev == "green" and "idle slot" in detail.lower()
+
+
+def test_run_all_includes_parallel_dispatch_check(monkeypatch):
+    import dispatch_concurrency
+    monkeypatch.setattr(dispatch_concurrency, "load", lambda path=None: {"parallel": False})
+    monkeypatch.setattr(hc.mr, "latest", lambda subsystem: None)
+    monkeypatch.setattr(hc.mr, "record", lambda subsystem, metrics: None)
+    monkeypatch.setattr(hc.mr, "compare", lambda subsystem, baseline, current: None)
+    out = hc.run_all()
+    check_ids = {r["id"] for r in out["checks"]}
+    assert "dispatch:parallel" in check_ids

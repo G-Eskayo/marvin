@@ -374,6 +374,113 @@ def check_missing_profiles(snapshot: dict | None = None, repos: list[str] | None
 	return results
 
 
+# ── parallel dispatch: keeping up with the queue ───────────────────────────
+
+_GUARD_MARKERS = ("disk ", "GitHub request budget", "circuit breaker tripped", "lacks tools")
+
+
+def _classify_stall_reason(refusals: list[str]) -> str:
+	"""Classify why a ticket cannot be dispatched based on refusal reasons from the guards."""
+	if any(any(m in r for m in _GUARD_MARKERS) for r in refusals):
+		return "guard refusal"
+	if not refusals or any(" is full:" in r for r in refusals):
+		return "no suitable machine"
+	return "nothing eligible"
+
+
+def evaluate_parallel_dispatch(settings: dict, pools: dict[str, list], inflight: dict[str, int],
+                               local_base: int, select_for_profile) -> tuple[str, str]:
+	"""(severity, detail) for the parallel dispatch queue. Evaluation order:
+	1. Parallel dispatch is off -> green
+	2. All slots are in use -> green
+	3. Nothing waiting -> green
+	4. Repos at their per-project limit -> yellow
+	5. No suitable machine available -> yellow
+	6. Ready ticket and idle slot -> green
+	Pools maps repo -> list of ready tickets. Inflight maps repo -> count of running tickets.
+	select_for_profile(profile, settings, taken, local_base, refusals) -> machine or None."""
+	cid, label = "dispatch:parallel", "Parallel dispatch keeping up"
+
+	if not settings.get("parallel"):
+		return "green", "parallel dispatch is off"
+
+	total_inflight = sum(inflight.values())
+	max_total = settings.get("max_total", 2)
+	if total_inflight >= max_total:
+		return "green", f"{total_inflight} of {max_total} slots in use"
+
+	if not any(pools.values()):
+		return "green", "nothing waiting"
+
+	waiting_repos = sorted([r for r in pools if pools[r]])
+	max_per_project = settings.get("max_per_project", 1)
+
+	at_limit = []
+	eligible = []
+	for repo in waiting_repos:
+		if inflight.get(repo, 0) >= max_per_project:
+			at_limit.append(repo)
+		else:
+			eligible.append(repo)
+
+	if at_limit and not eligible:
+		detail = "project at its limit: " + "; ".join(f"{r} ({inflight[r]} of {max_per_project})" for r in at_limit)
+		return "yellow", detail
+
+	if not eligible:
+		return "green", "idle slot and ready ticket, awaiting the next scan"
+
+	for repo in eligible:
+		profile = {"machines": []}
+		try:
+			import project_profile
+			prof = project_profile.load_profile(repo)
+			if prof:
+				profile = prof
+		except Exception:  # noqa: BLE001
+			pass
+
+		refusals = []
+		machine = select_for_profile(profile, settings, taken={}, local_base=local_base, refusals=refusals)
+		if machine is not None:
+			return "green", "idle slot and ready ticket, awaiting the next scan"
+
+		reason = _classify_stall_reason(refusals)
+		return "yellow", reason
+
+	return "green", "idle slot and ready ticket, awaiting the next scan"
+
+
+def check_parallel_dispatch() -> dict:
+	"""Check if parallel dispatch is keeping up with the queue."""
+	cid, label = "dispatch:parallel", "Parallel dispatch keeping up"
+
+	import dispatch_concurrency
+	import project_profile as pp
+
+	settings = dispatch_concurrency.load()
+	if not settings.get("parallel"):
+		return _result(cid, label, "green", "parallel dispatch is off")
+
+	import ticket_pipeline as tp
+	import failure_breaker
+
+	repos = [tp.REPO, *pp.dispatchable_repos()]
+	breaker_trips = failure_breaker.tripped()
+	repos = [r for r in repos if r not in {t.get("project", tp.REPO) for t in breaker_trips}]
+
+	pools = {r: tp._unclaimed_ready_tickets(repo=r) for r in repos}
+	inflight = tp._inflight_by_repo(repos)
+	local_base = tp._local_slots_used()
+
+	def select_for_profile_impl(profile, s, t, l, rf):
+		return tp._select_for_profile(profile if profile else {"machines": list(tp.MARVIN_MACHINES)},
+		                               s, t, l, rf)
+
+	severity, detail = evaluate_parallel_dispatch(settings, pools, inflight, local_base, select_for_profile_impl)
+	return _result(cid, label, severity, detail)
+
+
 TRIGGER_MISS_LOG = Path.home() / ".claude" / "logs" / "trigger-misses.jsonl"
 TRIGGER_MISS_WINDOW_HOURS = 24
 
@@ -858,6 +965,7 @@ def run_all() -> dict:
     results.append(check_dispatch_lock())
     results += check_ticket_failure_streaks()
     results.append(check_pipeline_breaker())
+    results.append(check_parallel_dispatch())
     results += check_missing_profiles()
     results.append(check_trigger_coverage())
     results.append(check_catalog_fresh())
