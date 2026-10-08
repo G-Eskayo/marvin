@@ -1,21 +1,17 @@
 // Single-shot dev-environment evidence capture for the MR pipeline
 // (G-Eskayo/marvin#77, ADR 0024). Launches this app's built Electron
-// output, waits for the real UI window (not devtools, not a splash
-// screen), screenshots it, and quits -- no REPL, since this runs
-// unattended from evidence_capture.py rather than being driven
-// interactively. Adapted from the `run` skill's Electron driver pattern
-// (~/.agents/skills/run when wired, or the bundled run skill's
-// examples/electron.md) -- same _electron.launch/windows()/screenshot
-// shape, collapsed to one deterministic sequence instead of a
-// stdin-driven command loop.
+// by passing it to Playwright's chromium.launch (treating Electron's
+// binary as a standard Chromium executable), finds the real UI window
+// (not devtools, not a splash screen), screenshots it, and quits.
 //
 // Usage: node capture_screenshot.mjs <output-path>
 // Assumes `npm run build` has already produced ./out/ in this directory
 // (the caller is responsible for that -- this script only launches and
 // shoots, it doesn't build).
-import { _electron as electron } from 'playwright-core'
+import { chromium } from 'playwright-core'
 import path from 'node:path'
 import fs from 'node:fs'
+import { selectContentPage } from '../src/lib/screenshot_capture.js'
 
 const APP_DIR = path.resolve(import.meta.dirname, '..')
 const outputPath = process.argv[2]
@@ -35,23 +31,30 @@ if (!fs.existsSync(path.join(APP_DIR, 'out', 'main', 'index.js'))) {
   process.exit(1)
 }
 
-let app
+let browser = null
+
 try {
-  app = await electron.launch({
+  // Use Playwright's chromium.launch to start Electron as a generic Chromium executable.
+  // This avoids the experimental _electron.launch API which has version-compat issues
+  // with Electron 30.5.1. Playwright owns spawn, stderr-parsing, and the DevTools WS handshake.
+  browser = await chromium.launch({
     executablePath: electronBin,
-    args: ['--no-sandbox', APP_DIR],
-    timeout: 30_000
+    args: [APP_DIR, '--no-sandbox'],
   })
 
-  // Electron has no clean "loaded" signal -- poll for a real content
-  // window (not devtools://) rather than a blind sleep, up to ~10s.
+  // Poll for a real content page (not devtools://) up to ~10s
   let page = null
   const deadline = Date.now() + 10_000
   while (Date.now() < deadline) {
-    page = app.windows().find((w) => !w.url().startsWith('devtools://'))
-    if (page) break
+    const contexts = browser.contexts()
+    if (contexts.length > 0) {
+      const pages = contexts[0].pages()
+      page = selectContentPage(pages)
+      if (page) break
+    }
     await new Promise((r) => setTimeout(r, 200))
   }
+
   if (!page) {
     throw new Error('no real content window appeared within 10s')
   }
@@ -60,6 +63,12 @@ try {
   fs.mkdirSync(path.dirname(outputPath), { recursive: true })
   await page.screenshot({ path: outputPath })
   console.log(outputPath)
+} catch (err) {
+  console.error(err.message || String(err))
+  process.exit(1)
 } finally {
-  if (app) await app.close().catch(() => {})
+  // Close the browser, which also closes the Electron process entirely
+  if (browser) {
+    await browser.close().catch(() => {})
+  }
 }
