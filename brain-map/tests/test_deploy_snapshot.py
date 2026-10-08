@@ -200,3 +200,22 @@ def test_the_publish_never_runs_when_a_check_failed(monkeypatch):
     called = []
     monkeypatch.setattr(ds, "publish_to_production", lambda: called.append(1) or (True, ""))
     assert ds.deploy_snapshot(force=True) is False and called == []
+
+
+def test_upload_copies_every_snapshot_file_and_folder(tmp_path, monkeypatch):
+    """facts.json (2026-10-08) never reached the dev site: only index.html and tree-data.json were copied by name."""
+    for name in ("index.html", "tree-data.json", "facts.json"):
+        (tmp_path / name).write_text("x")
+    (tmp_path / "vendor").mkdir()
+    copied = []
+
+    class R:
+        returncode = 0
+
+    def run(cmd, **kw):
+        if cmd[1] == "cp":
+            copied.append(Path(cmd[2]).name)
+        return R()
+    monkeypatch.setattr(ds.subprocess, "run", run)
+    ok, _ = ds.upload_to_portfolio(tmp_path / "index.html", tmp_path / "tree-data.json")
+    assert ok and sorted(copied) == ["facts.json", "index.html", "tree-data.json", "vendor"]
