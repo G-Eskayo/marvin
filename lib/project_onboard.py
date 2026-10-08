@@ -541,6 +541,53 @@ def mark_plan_stale(repo: str, reason: str, dir: Path | None = None) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n")
 
 
+def _pushed_at(repos: list[str], gh=_gh) -> dict[str, str]:
+    """Fetch pushedAt timestamps for repos, grouped by owner. Returns {"owner/repo": pushedAt_iso}.
+    One `gh repo list` call per distinct owner. On failure for an owner, repos under that owner absent."""
+    by_owner = {}
+    for repo in repos:
+        owner = repo.split("/")[0]
+        if owner not in by_owner:
+            by_owner[owner] = []
+        by_owner[owner].append(repo.split("/")[1])
+
+    result = {}
+    for owner, repo_names in by_owner.items():
+        out = gh(["repo", "list", owner, "--limit", "200", "--json", "name,pushedAt"])
+        if not out:
+            continue
+        try:
+            repos_data = json.loads(out)
+            for repo_info in repos_data:
+                full_repo = f"{owner}/{repo_info['name']}"
+                if repo_info.get("pushedAt"):
+                    result[full_repo] = repo_info["pushedAt"]
+        except (json.JSONDecodeError, KeyError):
+            pass
+    return result
+
+
+def _can_skip(repo: str, existing_plan: dict | None, pushed_at: str | None) -> bool:
+    """Determine if we can skip inspecting a repo based on whether it's been pushed since last plan.
+    Pure function: easy to unit test. Returns False if we should always inspect (first run, stale, lookup failed)."""
+    if existing_plan is None:
+        return False
+    if existing_plan.get("stale"):
+        return False
+    if pushed_at is None:
+        return False
+
+    try:
+        generated_at_str = existing_plan.get("generated_at")
+        if not generated_at_str:
+            return False
+        generated_at = datetime.fromisoformat(generated_at_str.replace("Z", "+00:00"))
+        pushed_at_dt = datetime.fromisoformat(pushed_at.replace("Z", "+00:00"))
+        return pushed_at_dt <= generated_at
+    except (ValueError, AttributeError):
+        return False
+
+
 def refresh_onboarding_plan(repo: str, gh=_gh, dir: Path | None = None, apply_safe: bool = False) -> list[str]:
     """Inspect, (optionally) apply the safe pieces, plan, write. Returns the pieces apply created or changed.
 
@@ -566,11 +613,26 @@ def refresh_onboarding_plan(repo: str, gh=_gh, dir: Path | None = None, apply_sa
 
 def refresh_all_onboarding_plans(repos: list[str], gh=_gh, dir: Path | None = None, apply_safe: bool = False) -> dict:
     """Refresh onboarding plans for all repos, logging failures without blocking successes.
-    Returns {"ok": [repos], "failed": [(repo, reason)], "applied": {repo: [pieces]}}.
+    Returns {"ok": [repos], "failed": [(repo, reason)], "applied": {repo: [pieces]}, "skipped": [repos]}.
+    Skips inspection when pushedAt <= generated_at and plan is not stale.
     On failure the last good plan is kept (never overwritten with an error state), marked stale with the reason."""
     dir = dir or ONBOARDING_DIR
-    ok, failed, applied = [], [], {}
+    pushed_at_map = _pushed_at(repos, gh=gh)
+
+    ok, failed, applied, skipped = [], [], {}, []
     for repo in repos:
+        existing_plan = None
+        try:
+            plan_path = onboarding_path(repo, dir=dir)
+            if plan_path.exists():
+                existing_plan = json.loads(plan_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            pass
+
+        if _can_skip(repo, existing_plan, pushed_at_map.get(repo)):
+            skipped.append(repo)
+            continue
+
         try:
             changed = refresh_onboarding_plan(repo, gh=gh, dir=dir, apply_safe=apply_safe)
             ok.append(repo)
@@ -579,7 +641,7 @@ def refresh_all_onboarding_plans(repos: list[str], gh=_gh, dir: Path | None = No
         except Exception as e:  # noqa: BLE001
             failed.append((repo, str(e)))
             mark_plan_stale(repo, str(e), dir=dir)
-    return {"ok": ok, "failed": failed, "applied": applied}
+    return {"ok": ok, "failed": failed, "applied": applied, "skipped": skipped}
 
 
 def _apply_labels(repo: str, facts: dict, gh=_gh) -> dict:
