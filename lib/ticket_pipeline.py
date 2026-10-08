@@ -269,6 +269,8 @@ def _refresh_onboarding_plans(budget=None, min_pct: float | None = None) -> str:
             repos = [b["repo"] for b in board_registry.list_boards()]
             res = project_onboard.refresh_all_onboarding_plans(repos, apply_safe=True)
             msg = f"{len(res['ok'])} refreshed"
+            if res.get("skipped"):
+                msg += f", {len(res['skipped'])} skipped (unchanged since last plan)"
             if res["failed"]:
                 msg += f", {len(res['failed'])} failed (kept last good, marked stale)"
             if res.get("applied"):
