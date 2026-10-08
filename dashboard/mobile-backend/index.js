@@ -10,6 +10,8 @@ import { createChatApiRouter } from './chat_api.js'
 import { createThreadStore } from './thread_store.js'
 import { createPendingActionsStore } from './pending_actions.js'
 import { createPermissionApiRouter } from './permission_api.js'
+import { createOfflineBatchStore } from './offline_batch_store.js'
+import { createOfflineBatchApiRouter } from './offline_batch_api.js'
 
 const execFileP = promisify(execFile)
 
@@ -45,6 +47,8 @@ const threadStore = createThreadStore()
 const chatApiRouter = createChatApiRouter({ threadStore })
 const pendingActionStore = createPendingActionsStore()
 const permissionApiRouter = createPermissionApiRouter({ pendingActionStore })
+const offlineBatchStore = createOfflineBatchStore()
+const offlineBatchApiRouter = createOfflineBatchApiRouter({ threadStore, offlineBatchStore })
 
 const server = createServer(async (req, res) => {
   // Device gate: check allowlist
@@ -66,6 +70,10 @@ const server = createServer(async (req, res) => {
 
   // Route through dashboard API
   handled = await dashboardApiRouter(req, res)
+  if (handled) return
+
+  // Route through offline batch API
+  handled = await offlineBatchApiRouter(req, res)
   if (handled) return
 
   // Route through chat API

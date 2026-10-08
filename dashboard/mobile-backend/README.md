@@ -101,6 +101,26 @@ Fetch thread history with optional pagination.
 
 **Response**: `200 { "ok": true, "data": [{ id, source, role, text, sessionId, ts }, ...] }` (messages in reverse chronological order, newest first)
 
+### `POST /offline-batch`
+
+Submit a batch of offline exchanges for review and integration into the thread. Offline messages collected on-device are sent here as a transcript; a headless review session applies memory judgment and backfills sessionId onto the batch. Idempotent: same `batchId` returned immediately from cache if already reviewed.
+
+**Request body**:
+```json
+{
+  "batchId": "<unique-batch-id>",
+  "exchanges": [
+    { "role": "user", "text": "..." },
+    { "role": "assistant", "text": "..." }
+  ]
+}
+```
+
+**Response**: 
+- `200 { "ok": true, "data": { "batchId": "<batch-id>", "messageIds": [<id>, ...], "sessionId": "<session-id>" } }` — batch processed and integrated
+- `400 { "ok": false, "error": "<message>" }` — validation error (missing/invalid batchId, invalid exchanges shape, invalid JSON)
+- `500 { "ok": false, "error": "<message>" }` — review session failed (batch remains pending, retry will re-run review only)
+
 ## Permission bridge: side-effecting actions
 
 When the mobile client sends a message that triggers a side-effecting tool call (Bash, Edit, Write, etc.), the `permission_hook.js` subprocess intercepts the tool use, creates a pending action, and blocks until the action is approved or denied via these endpoints.
