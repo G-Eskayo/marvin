@@ -880,3 +880,13 @@ def test_the_prompt_names_the_exact_directory_the_agent_is_launched_in(tmp_path,
     for prompt, cwd in calls:
         assert cwd == wt
         assert str(wt) in prompt
+
+
+def test_the_planner_opens_its_plan_with_a_north_star_fit(monkeypatch, tmp_path):
+    """marvin#276: the plan carries the fit, which is how the executor receives the north stars."""
+    prompts = []
+    monkeypatch.setattr(so, "_launch", lambda kind, prompt, **k: prompts.append((kind, prompt)) or ("a plan", 0.0))
+    so._default_executor(tmp_path, "TICKET-1", None)
+    kinds = dict(prompts)
+    assert "## North-star fit" in kinds["ticket-planner"]
+    assert "a plan" in kinds["ticket-executor"]

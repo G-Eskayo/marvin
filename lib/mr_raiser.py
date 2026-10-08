@@ -170,6 +170,18 @@ def _default_comment_on_ticket(ticket_ref: str, pr_url: str) -> None:
                     "--remove-label", "needs-reengagement"], capture_output=True)
 
 
+def _post_fit_check(ticket_ref: str, worktree_path, pr_url: str) -> None:
+    """North-star fit check as a PR comment (marvin#276). Best effort: it informs review, it never blocks a PR."""
+    try:
+        import fit_check
+        fit_check.post(ticket_ref, Path(worktree_path), pr_url)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[mr_raiser] fit check skipped for {ticket_ref}: {exc}", file=sys.stderr)
+
+
+_default_fit_check = _post_fit_check
+
+
 def raise_mr(
     ticket_ref: str,
     execution_result: dict,
@@ -178,6 +190,7 @@ def raise_mr(
     open_pr: Callable[[str, str, dict, dict | None, dict | None], str] | None = None,
     comment_on_ticket: Callable[[str, str], None] | None = None,
     notify: Callable[[str, str], dict] | None = None,
+    fit_check: Callable[[str, object, str], None] | None = None,
 ) -> dict:
     """Given sandbox_orchestration.execute_ticket's result, raise a PR only
     if verification passed. `test_results` and `dev_evidence` are
@@ -205,6 +218,7 @@ def raise_mr(
 
     pr_url = open_pr(ticket_ref, branch, execution_result["final_comparison"], test_results, dev_evidence)
     comment_on_ticket(ticket_ref, pr_url)
+    (fit_check or _default_fit_check)(ticket_ref, worktree_path, pr_url)
     notify(ticket_ref, pr_url)
 
     return {"raised": True, "pr_url": pr_url, "reason": None}
