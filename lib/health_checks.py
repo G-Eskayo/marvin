@@ -265,6 +265,170 @@ def check_pipeline_breaker() -> dict:
     return _result(cid, label, "red", f"dispatch paused -- {detail}", value=len(trips))
 
 
+def check_pipeline_stopped(now: datetime | None = None) -> dict:
+    """Activity banner view of the circuit breaker: red if tripped locally or
+    remotely. Formats the message for display in the activity tab banner with
+    the exact wording expected by the acceptance criteria."""
+    import failure_breaker
+    cid, label = "pipeline:stopped", "Pipeline stopped by circuit breaker"
+    now = now or _now()
+    me = machine_profile.registry_id()
+    trips_local = failure_breaker.tripped(now=now)
+    trips_remote = []
+    for dev, info in machine_profile.remote_devices().items():
+        if dev == me:
+            continue
+        host = info.get("tailscale_hostname")
+        if not host:
+            continue
+        try:
+            proc = subprocess.run(["ssh", *SSH_OPTS, host, "python3 -c "
+                                  "'import sys; sys.path.insert(0, str(__import__(\"pathlib\").Path.home() / \".agents\" / \"lib\")); "
+                                  "import failure_breaker; import json; "
+                                  "print(json.dumps(failure_breaker.tripped()))'"],
+                                 capture_output=True, text=True, timeout=10)
+            if proc.returncode == 0:
+                try:
+                    remote_trips = json.loads(proc.stdout)
+                    trips_remote.extend([(dev, t) for t in remote_trips])
+                except (json.JSONDecodeError, ValueError):
+                    pass
+        except (subprocess.TimeoutExpired, Exception):
+            pass
+    all_trips = trips_local + [t for _, t in trips_remote]
+    if not all_trips:
+        return _result(cid, label, "green", "pipeline is running")
+    first_trip = min(all_trips, key=lambda t: t["first_seen"])
+    detail = f"Pipeline stopped since {datetime.fromisoformat(first_trip['first_seen']).strftime('%H:%M')}: " \
+             f"{first_trip['signature']}, {len(first_trip.get('tickets', []))} ticket(s). Clear: failure_breaker.py clear"
+    return _result(cid, label, "red", detail, value=len(all_trips))
+
+
+def check_sync_stuck(now: datetime | None = None) -> list[dict]:
+    """Flag repos that are not syncing: their most recent sync-log entry is a
+    REFUSING or conflict marker, not followed by a clean push/pull. Checks both
+    local and remote machines."""
+    cid_base = "sync:stuck"
+    now = now or _now()
+    results = []
+    me = machine_profile.registry_id()
+    devices = [(me, None)] + [
+        (dev, info.get("tailscale_hostname"))
+        for dev, info in machine_profile.remote_devices().items()
+        if dev != me and info.get("tailscale_hostname")
+    ]
+    for dev, host in devices:
+        log_path = HOME / ".claude" / "sync-log.md"
+        try:
+            if host:
+                proc = subprocess.run(["ssh", *SSH_OPTS, host, f"cat {log_path} 2>/dev/null || echo ''"],
+                                     capture_output=True, text=True, timeout=10)
+                log_text = proc.stdout if proc.returncode == 0 else ""
+            else:
+                log_text = log_path.read_text() if log_path.exists() else ""
+        except Exception:
+            log_text = ""
+        if not log_text.strip():
+            continue
+        entries = {}
+        lines = log_text.splitlines()
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            if not line.startswith("## "):
+                i += 1
+                continue
+            try:
+                parts = line[3:].split(" — ")
+                if len(parts) < 2:
+                    i += 1
+                    continue
+                timestamp_str = parts[0].strip()
+                rest = " — ".join(parts[1:])
+                m = re.search(r"\(([^)]+)\)", rest)
+                machine_name = m.group(1) if m else dev
+                repo_match = re.search(r"\[([^\]]+)\]$", rest)
+                repo = repo_match.group(1) if repo_match else None
+                if not repo:
+                    i += 1
+                    continue
+                is_stuck = False
+                reason = ""
+                summary_lines = []
+                i += 1
+                while i < len(lines) and lines[i].strip() and not lines[i].startswith("## "):
+                    summary_lines.append(lines[i])
+                    i += 1
+                summary_text = " ".join(summary_lines)
+                if "REFUSING" in summary_text:
+                    is_stuck = True
+                    if "stash" in summary_text.lower():
+                        reason = "leftover stash"
+                    else:
+                        reason = "conflict markers"
+                elif re.search(r"<<<<<|>>>>|=====", summary_text):
+                    is_stuck = True
+                    reason = "conflict markers"
+                key = (machine_name, repo)
+                if is_stuck:
+                    entries[key] = (timestamp_str, reason)
+                else:
+                    entries.pop(key, None)
+            except Exception:
+                i += 1
+                continue
+        for (machine, repo), (ts_str, reason) in entries.items():
+            cid = f"{cid_base}:{machine}:{repo}"
+            label = f"{repo} sync — {machine}"
+            try:
+                ts = datetime.fromisoformat(ts_str).strftime("%H:%M")
+            except ValueError:
+                ts = ts_str
+            detail = f"{machine} {repo} not syncing since {ts}: {reason}"
+            results.append(_result(cid, label, "red", detail))
+    return results
+
+
+DECLARED_DEPLOYS = {
+    "snapshot-deploy": {"ticket": 188, "launchd_labels": ["com.marvin.snapshot-deploy-nightly", "com.marvin.snapshot-deploy-reactive"]},
+    "dashboard-rebuild": {"ticket": None, "launchd_labels": ["com.marvin.dashboard-rebuild"]},
+}
+
+
+def check_deploy_missing() -> list[dict]:
+    """Check that declared deploys are installed and have produced output. Red if
+    uninstalled or installed but never run."""
+    results = []
+    for name, config in DECLARED_DEPLOYS.items():
+        ticket = config.get("ticket")
+        ticket_str = f" (#{ticket})" if ticket else ""
+        labels = config.get("launchd_labels", [])
+        installed_labels = []
+        for label in labels:
+            plist_path = LAUNCHAGENTS_DIR / f"{label}.plist"
+            if plist_path.exists():
+                installed_labels.append(label)
+        if not installed_labels:
+            cid = f"deploy:missing:{name}"
+            ticket_ref = f" #{ticket}:" if ticket else ":"
+            detail = f"{name}{ticket_str}: closed but launchd job never installed, no {name} built"
+            results.append(_result(cid, f"Deploy: {name}", "red", detail))
+            continue
+        has_output = False
+        for label in installed_labels:
+            log_pattern = HOME / ".claude" / "logs" / f"{label.split('.')[-1]}.log"
+            if log_pattern.parent.glob(f"{label.split('.')[-1]}*.log"):
+                has_output = bool(list(log_pattern.parent.glob(f"{label.split('.')[-1]}*.log")))
+                if has_output:
+                    break
+        if not has_output:
+            cid = f"deploy:missing:{name}"
+            ticket_ref = f" #{ticket}:" if ticket else ":"
+            detail = f"{name}{ticket_str}: installed but never ran (no output found)"
+            results.append(_result(cid, f"Deploy: {name}", "red", detail))
+    return results
+
+
 CATALOG_YELLOW_AFTER_HOURS = 3
 CATALOG_RED_AFTER_HOURS = 24
 
@@ -553,7 +717,7 @@ JOB_PLACEMENT = {
     "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "both", "research-colony": "both",
     "desktoplive": "both", "dashboard-webhook": "both",  # webhook on both until #112 (ADR 0032)
     "ticket-pipeline": "both",  # mini scans; the laptop's copy is a standby that scans only if the mini goes quiet (scanner_role.py)
-    "architecture-review": "mini", "auto-fix": "mini", "cron-health": "mini", "health-check": "mini",
+    "architecture-review": "mini", "auto-fix": "mini", "cron-health": "mini", "health-check": "both",
     "process-quarantine-reviews": "mini", "verify-digest-fix": "mini",
     "usage-scan": "both",  # hourly: each machine scans its own transcripts for the Metrics tab (lib/usage_report.py)
     "cleanup-sweep": "both",  # daily: each machine sweeps its own pipeline worktrees (lib/cleanup_sweep.py)
@@ -858,6 +1022,9 @@ def run_all() -> dict:
     results.append(check_dispatch_lock())
     results += check_ticket_failure_streaks()
     results.append(check_pipeline_breaker())
+    results.append(check_pipeline_stopped())
+    results += check_sync_stuck()
+    results += check_deploy_missing()
     results += check_missing_profiles()
     results.append(check_trigger_coverage())
     results.append(check_catalog_fresh())

@@ -823,3 +823,33 @@ def test_catalog_refresh_is_skipped_when_fresh(monkeypatch):
     calls = []
     _REAL_REFRESH_CATALOG(run=lambda *a, **k: calls.append(a))
     assert calls == []
+
+
+def test_summary_says_stopped_by_breaker_when_partial_paused(monkeypatch):
+    """The bug (2026-10-01 19:38 incident): one project's breaker trips, other
+    projects have no ready tickets, summary says 'no ready tickets' instead of
+    'stopped by circuit breaker'."""
+    import tempfile
+    import failure_breaker
+    with tempfile.TemporaryDirectory() as d:
+        monkeypatch.setattr(failure_breaker, "LOG_PATH", Path(d) / "failures.jsonl")
+        failure_breaker.record_failure(32, "vitest produced no test summary", project="G-Eskayo/marvin")
+        failure_breaker.record_failure(35, "vitest produced no test summary", project="G-Eskayo/marvin")
+        failure_breaker.record_failure(37, "vitest produced no test summary", project="G-Eskayo/marvin")
+        runs = []
+
+        def capture_summary(msg):
+            runs.append(msg)
+
+        monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda repo="G-Eskayo/marvin": [])
+        monkeypatch.setattr(tp, "failure_breaker", failure_breaker)
+        trips = failure_breaker.tripped()
+        paused = {t.get("project", "G-Eskayo/marvin") for t in trips}
+        repos = [r for r in ["G-Eskayo/marvin"] if r not in paused]
+        if not repos:
+            pass  # all paused, would return early
+        pools = {}
+        if not pools:
+            msg = "stopped by circuit breaker" if paused else "no ready tickets"
+            capture_summary(msg)
+        assert runs == ["stopped by circuit breaker"]

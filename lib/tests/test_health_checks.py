@@ -823,3 +823,87 @@ def test_main_health_is_yellow_when_never_checked_or_stale(tmp_path):
     p = tmp_path / "old.json"
     p.write_text(json.dumps({"sha": "a", "ok": True, "failed": [], "summary": "ok", "checked_at": (hc._now() - timedelta(days=2)).isoformat()}))
     assert hc.check_main_health(path=p)["severity"] == "yellow"
+
+
+# ── pipeline:stopped (activity banner) ──
+
+def test_pipeline_stopped_red_when_breaker_tripped(monkeypatch):
+    import tempfile
+    import failure_breaker
+    with tempfile.TemporaryDirectory() as d:
+        monkeypatch.setattr(failure_breaker, "LOG_PATH", Path(d) / "failures.jsonl")
+        now = datetime.now(timezone.utc)
+        failure_breaker.record_failure(32, "vitest produced no test summary")
+        failure_breaker.record_failure(35, "vitest produced no test summary")
+        failure_breaker.record_failure(37, "vitest produced no test summary")
+        result = hc.check_pipeline_stopped(now=now)
+        assert result["severity"] == "red"
+        assert "Pipeline stopped since" in result["detail"]
+        assert "measure:vitest-no-summary" in result["detail"]
+        assert "3 ticket(s)" in result["detail"]
+        assert "Clear: failure_breaker.py clear" in result["detail"]
+
+
+def test_pipeline_stopped_green_when_no_breaker_trip():
+    result = hc.check_pipeline_stopped()
+    assert result["severity"] == "green"
+    assert "pipeline is running" in result["detail"]
+
+
+# ── sync:stuck ──
+
+def test_sync_stuck_red_when_refusing_entry(monkeypatch):
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        home = Path(d)
+        log_path = home / ".claude" / "sync-log.md"
+        log_path.parent.mkdir(parents=True)
+        log_path.write_text("""## 10:41 — code-sync-push (mac-mini) [~/.agents]
+REFUSING because leftover stash
+
+## 10:45 — code-sync-push (macbook-pro) [~/.claude]
+✓ pushed 2 commits
+""")
+        monkeypatch.setattr(hc, "HOME", home)
+        results = hc.check_sync_stuck()
+        stuck = [r for r in results if r["severity"] == "red"]
+        assert len(stuck) == 1
+        assert "mac-mini" in stuck[0]["detail"]
+        assert "~/.agents" in stuck[0]["detail"]
+        assert "10:41" in stuck[0]["detail"]
+
+
+def test_sync_stuck_ignores_clean_entries(monkeypatch):
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        home = Path(d)
+        log_path = home / ".claude" / "sync-log.md"
+        log_path.parent.mkdir(parents=True)
+        log_path.write_text("""## 10:41 — code-sync-push (mac-mini) [~/.agents]
+REFUSING because leftover stash
+
+## 10:45 — code-sync-push (mac-mini) [~/.agents]
+✓ pushed 3 commits
+""")
+        monkeypatch.setattr(hc, "HOME", home)
+        results = hc.check_sync_stuck()
+        assert all(r["severity"] != "red" for r in results)
+
+
+# ── deploy:missing ──
+
+def test_deploy_missing_red_when_uninstalled(tmp_path, monkeypatch):
+    monkeypatch.setattr(hc, "LAUNCHAGENTS_DIR", tmp_path)
+    results = hc.check_deploy_missing()
+    missing = [r for r in results if r["severity"] == "red"]
+    assert len(missing) > 0
+    assert any("snapshot-deploy" in r["detail"] and "#188" in r["detail"] for r in missing)
+
+
+def test_deploy_missing_red_when_never_run(tmp_path, monkeypatch):
+    monkeypatch.setattr(hc, "LAUNCHAGENTS_DIR", tmp_path)
+    (tmp_path / "com.marvin.snapshot-deploy-nightly.plist").touch()
+    results = hc.check_deploy_missing()
+    missing = [r for r in results if r["severity"] == "red" and "snapshot-deploy" in r["detail"]]
+    assert len(missing) > 0
+    assert "never ran" in missing[0]["detail"]

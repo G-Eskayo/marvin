@@ -53,6 +53,7 @@ export default function App() {
   }
   const [reviewStatus, setReviewStatus] = useState(null)
   const [healthOverall, setHealthOverall] = useState(null)
+  const [healthStatus, setHealthStatus] = useState(null)
 
   useEffect(() => {
     let cancelled = false
@@ -89,7 +90,10 @@ export default function App() {
       window.api.health
         .status()
         .then((result) => {
-          if (!cancelled) setHealthOverall(result.overall)
+          if (!cancelled) {
+            setHealthOverall(result.overall)
+            setHealthStatus(result)
+          }
         })
         .catch(() => {})
     }
@@ -145,7 +149,7 @@ export default function App() {
         ) : activeTab === 'portfolio' ? (
           <PortfolioHub />
         ) : (
-          <ActivityBoard nav={nav} onOpenMr={(prKey) => navigate('mr-review', { prKey })} onOpenDocs={(projectId, path) => navigate('docs', { projectId, path })} onOpenTicket={(repo, number) => navigate('activity', { repo, ticketNumber: number })} />
+          <ActivityBoard nav={nav} healthStatus={healthStatus} onOpenMr={(prKey) => navigate('mr-review', { prKey })} onOpenDocs={(projectId, path) => navigate('docs', { projectId, path })} onOpenTicket={(repo, number) => navigate('activity', { repo, ticketNumber: number })} />
         )}
       </main>
     </div>

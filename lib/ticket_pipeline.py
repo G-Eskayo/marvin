@@ -575,7 +575,10 @@ def _scan(run, dry_run: bool) -> None:
     if not pools:
         print(f"{LOG_PREFIX} no unclaimed ready-for-agent tickets", file=sys.stderr)
         step("Scanning tickets", "none ready")
-        summary("no ready tickets")
+        if paused:
+            summary("stopped by circuit breaker")
+        else:
+            summary("no ready tickets")
         return
 
     inflight = _inflight_by_repo(repos) if parallel else {}
