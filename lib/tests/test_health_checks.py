@@ -462,20 +462,115 @@ def test_check_repo_sync_everywhere_marks_an_asleep_laptop_asleep_not_failed(mon
 
 def test_pipeline_breaker_check_is_green_when_not_tripped(monkeypatch):
     import failure_breaker as fb
+    import machine_profile as mp
     monkeypatch.setattr(fb, "tripped", lambda now=None: [])
-    r = hc.check_pipeline_breaker()
-    assert r["id"] == "pipeline:breaker" and r["severity"] == "green"
+    monkeypatch.setattr(mp, "registry_id", lambda: "mac-mini-1")
+    monkeypatch.setattr(mp, "remote_devices", lambda: {})
+    results = hc.check_pipeline_breaker_everywhere({})
+    assert any(r["id"].startswith("pipeline:stopped") and r["severity"] == "green" for r in results)
 
 
 def test_pipeline_breaker_check_is_red_and_names_the_signature_and_tickets_when_tripped(monkeypatch):
     import failure_breaker as fb
+    import machine_profile as mp
     monkeypatch.setattr(fb, "tripped", lambda now=None: [
         {"signature": "measure:vitest-no-summary", "tickets": [32, 35, 37],
          "first_seen": "2026-10-02T01:00:00+00:00", "last_seen": "2026-10-02T01:02:00+00:00", "example": "e"}])
-    r = hc.check_pipeline_breaker()
+    monkeypatch.setattr(mp, "registry_id", lambda: "mac-mini-1")
+    monkeypatch.setattr(mp, "remote_devices", lambda: {})
+    results = hc.check_pipeline_breaker_everywhere({})
+    assert any(r["severity"] == "red" and "measure:vitest-no-summary" in r["detail"] for r in results)
+    assert any("32" in r["detail"] for r in results)
+
+
+# ── pipeline stopped (cross-machine circuit breaker check) ─────────────────
+
+def test_pipeline_stopped_green_when_not_tripped_on_this_machine(monkeypatch):
+    import failure_breaker as fb
+    import machine_profile as mp
+    monkeypatch.setattr(fb, "tripped", lambda now=None: [])
+    monkeypatch.setattr(mp, "registry_id", lambda: "mac-mini-1")
+    monkeypatch.setattr(mp, "remote_devices", lambda: {})
+    results = hc.check_pipeline_breaker_everywhere({})
+    assert len(results) == 1
+    assert results[0]["id"] == "pipeline:stopped@mac-mini-1"
+    assert results[0]["severity"] == "green"
+
+
+def test_pipeline_stopped_red_when_tripped_on_this_machine(monkeypatch):
+    import failure_breaker as fb
+    import machine_profile as mp
+    monkeypatch.setattr(fb, "tripped", lambda now=None: [
+        {"signature": "npm-build-failed", "tickets": [149, 196, 198],
+         "first_seen": "2026-10-07T19:38:29+00:00", "last_seen": "2026-10-07T19:39:00+00:00", "example": "e"}])
+    monkeypatch.setattr(mp, "registry_id", lambda: "mac-mini-1")
+    monkeypatch.setattr(mp, "remote_devices", lambda: {})
+    results = hc.check_pipeline_breaker_everywhere({})
+    assert len(results) == 1
+    r = results[0]
     assert r["severity"] == "red"
-    assert "measure:vitest-no-summary" in r["detail"]
-    assert "32" in r["detail"] and "paused" in r["detail"].lower()
+    assert "npm-build-failed" in r["detail"]
+    assert "19:38" in r["detail"]
+
+
+# ── sync stuck (code-sync blocked by conflicts or stashes) ───────────────
+
+def test_sync_stuck_green_when_log_clean(tmp_path):
+    log = tmp_path / "sync-log.md"
+    log.write_text("## 2026-10-07T10:30:00+00:00 — pull (mac-mini)\nalready up to date\n")
+    results = hc.check_sync_stuck(log_path=log)
+    assert results == []
+
+
+def test_sync_stuck_red_when_refusing(tmp_path):
+    log = tmp_path / "sync-log.md"
+    log.write_text("""## 2026-10-07T10:49:14+00:00 — pull (mac-mini)
+REFUSING to run — 1 stash(es) left over
+
+## 2026-10-07T11:19:00+00:00 — pull (mac-mini)
+REFUSING to run — 1 stash(es) left over""")
+    results = hc.check_sync_stuck(log_path=log)
+    assert len(results) == 1
+    assert results[0]["severity"] == "red"
+    assert "sync:stuck:mac-mini" in results[0]["id"]
+    assert "REFUSING" in results[0]["detail"]
+
+
+def test_sync_stuck_tracks_when_it_started(tmp_path):
+    log = tmp_path / "sync-log.md"
+    log.write_text("""## 2026-10-07T10:30:00+00:00 — pull (mac-mini)
+already up to date
+
+## 2026-10-07T10:49:14+00:00 — pull (mac-mini)
+REFUSING to run — 1 stash(es) left over
+
+## 2026-10-07T11:19:00+00:00 — pull (mac-mini)
+REFUSING to run — 1 stash(es) left over""")
+    results = hc.check_sync_stuck(log_path=log)
+    assert len(results) == 1
+    # The stuck state should be recorded (the earliest REFUSING entry is tracked)
+    assert "REFUSING" in results[0]["detail"]
+    assert "mac-mini" in results[0]["detail"]
+
+
+# ── deploy jobs missing ──────────────────────────────────────────────────
+
+def test_deploy_missing_green_when_plists_present(tmp_path, monkeypatch):
+    monkeypatch.setattr(hc, "LAUNCHAGENTS_DIR", tmp_path)
+    (tmp_path / "com.marvin.snapshot-deploy-nightly.plist").write_text("")
+    (tmp_path / "com.marvin.snapshot-deploy-reactive.plist").write_text("")
+    results = hc.check_deploy_missing()
+    r = [x for x in results if x["id"] == "deploy:missing:snapshot-deploy"][0]
+    assert r["severity"] == "green"
+
+
+def test_deploy_missing_red_when_plists_absent(tmp_path, monkeypatch):
+    monkeypatch.setattr(hc, "LAUNCHAGENTS_DIR", tmp_path)
+    results = hc.check_deploy_missing()
+    r = [x for x in results if x["id"] == "deploy:missing:snapshot-deploy"][0]
+    assert r["severity"] == "red"
+    assert "missing" in r["detail"].lower()
+    assert "install-snapshot-jobs.sh" in r["detail"]
 
 
 # ── missing execution profiles for projects with ready tickets ─────────────────

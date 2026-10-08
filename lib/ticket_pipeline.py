@@ -561,7 +561,7 @@ def _scan(run, dry_run: bool) -> None:
     paused = {t.get("project", REPO) for t in trips}
     repos = [r for r in [REPO, *pp.dispatchable_repos()] if r not in paused]
     if not repos:
-        summary("dispatch paused by the circuit breaker")
+        summary("stopped by circuit breaker: " + ", ".join(sorted(paused)))
         return
 
     settings = dispatch_concurrency.load()
@@ -573,9 +573,12 @@ def _scan(run, dry_run: bool) -> None:
         if ready:
             pools[r] = list(ready)
     if not pools:
-        print(f"{LOG_PREFIX} no unclaimed ready-for-agent tickets", file=sys.stderr)
-        step("Scanning tickets", "none ready")
-        summary("no ready tickets")
+        if paused:
+            summary("stopped by circuit breaker: " + ", ".join(sorted(paused)))
+        else:
+            print(f"{LOG_PREFIX} no unclaimed ready-for-agent tickets", file=sys.stderr)
+            step("Scanning tickets", "none ready")
+            summary("no ready tickets")
         return
 
     inflight = _inflight_by_repo(repos) if parallel else {}

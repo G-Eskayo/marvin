@@ -129,15 +129,20 @@ def tripped(now: datetime | None = None, project: str | None = None) -> list[dic
 
 def main() -> None:
     cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
+    json_out = "--json" in sys.argv
     if cmd == "clear":
         clear()
-        print("breaker cleared")
+        if not json_out:
+            print("breaker cleared")
         return
     trips = tripped()
-    if not trips:
-        print("breaker: not tripped")
-    for t in trips:
-        print(f"TRIPPED {t['signature']} across tickets {t['tickets']} since {t['first_seen']}\n  e.g. {t['example'][:160]}")
+    if json_out:
+        print(json.dumps(trips))
+    else:
+        if not trips:
+            print("breaker: not tripped")
+        for t in trips:
+            print(f"TRIPPED {t['signature']} across tickets {t['tickets']} since {t['first_seen']}\n  e.g. {t['example'][:160]}")
 
 
 if __name__ == "__main__":

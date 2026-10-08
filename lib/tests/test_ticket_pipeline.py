@@ -226,6 +226,23 @@ def test_a_tripped_breaker_is_visible_in_the_run_log(monkeypatch):
     assert "circuit breaker" in run["summary"] and "TRIPPED" in run["steps"][-1]["detail"]
 
 
+def test_stopped_by_breaker_when_paused_project_has_no_ready_tickets(monkeypatch):
+    """When the breaker pauses project A and project B has no ready tickets,
+    the summary should say stopped by breaker, not 'no ready tickets'."""
+    import json
+    import job_events
+    trip = {"signature": "npm-build-failed", "tickets": [149, 196, 198], "first_seen": "t", "example": "e",
+            "project": "G-Eskayo/marvin"}
+    monkeypatch.setattr(tp.failure_breaker, "tripped", lambda now=None: [trip])
+    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda repo="G-Eskayo/marvin": [])
+    monkeypatch.setattr(tp.pp, "dispatchable_repos", lambda: ["owner/other-project"])
+    monkeypatch.setattr(sys, "argv", ["ticket_pipeline.py"])
+    tp.main()
+    run = json.loads((job_events.JOBS_DIR / "ticket-pipeline.json").read_text())["runs"][-1]
+    assert "stopped by circuit breaker" in run["summary"]
+    assert "no ready tickets" not in run["summary"]
+
+
 def test_onboarding_refresh_failure_does_not_abort_scan(monkeypatch):
     """A raising refresh_all_onboarding_plans should not stop the rest of _scan."""
     import json

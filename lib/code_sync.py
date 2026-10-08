@@ -316,6 +316,45 @@ def pull(repo: Path) -> None:
     # up naturally, same as any other pending local change.
 
 
+def parse_log_entries(text: str) -> list[dict]:
+    """Parse sync-log.md entries into structured data.
+
+    Returns list of {ts, action, machine, repo, body} dicts.
+    Lines like:
+        ## 2026-07-10T17:08:00.040933+00:00 — push (mac-mini) [/Users/gileskayo/.agents]
+        committed + pushed 1 file(s)
+    """
+    # Regex: `## ISO_TIMESTAMP — action (machine) [optional repo path]`
+    header_re = re.compile(
+        r"^##\s+(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[^—]*)\s*—\s+(\w+)\s+\(([^)]+)\)(?:\s+\[([^\]]+)\])?$",
+        re.MULTILINE
+    )
+
+    entries = []
+    for match in header_re.finditer(text):
+        ts_str, action, machine, repo_path = match.groups()
+        # Extract the body: lines until the next header
+        start = match.end()
+        next_header = header_re.search(text, start)
+        end = next_header.start() if next_header else len(text)
+        body = text[start:end].strip()
+
+        try:
+            ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        except ValueError:
+            ts = None
+
+        entries.append({
+            "ts": ts,
+            "action": action,
+            "machine": machine,
+            "repo": repo_path or "",
+            "body": body,
+        })
+
+    return entries
+
+
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
 import job_events  # noqa: E402  (run log shown in the dashboard's Health tab)
 

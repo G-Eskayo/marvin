@@ -251,18 +251,182 @@ def check_repo_integrity(display_name: str, rel_path: str) -> dict:
 
 # ── pipeline circuit breaker ─────────────────────────────────────────────
 
-def check_pipeline_breaker() -> dict:
-    """Red while the cross-ticket breaker (failure_breaker.py) has paused dispatch:
-    the same failure hit several different tickets, i.e. the environment is
-    broken, not the tickets. This is the first automated consumer of pipeline
-    failures -- until it existed, only displays read them."""
+def check_pipeline_breaker_everywhere(reachability: dict[str, str], runner=None) -> list[dict]:
+    """Red while the cross-ticket breaker (failure_breaker.py) has paused dispatch on any machine.
+    Cross-machine check: queries local machine directly, and remote machines via SSH."""
     import failure_breaker
-    cid, label = "pipeline:breaker", "Ticket pipeline circuit breaker"
-    trips = failure_breaker.tripped()
-    if not trips:
-        return _result(cid, label, "green", "not tripped")
-    detail = "; ".join(f"{t['signature']} across tickets {t['tickets']}" for t in trips)
-    return _result(cid, label, "red", f"dispatch paused -- {detail}", value=len(trips))
+    cid, label = "pipeline:stopped", "Pipeline stopped by circuit breaker"
+    results = []
+    me = machine_profile.registry_id()
+    devices = [(me, None, "local")] + [
+        (dev, info.get("tailscale_hostname"), reachability.get(f"machine:{dev}", "yellow"))
+        for dev, info in machine_profile.remote_devices().items()
+    ]
+
+    for dev, host, reach in devices:
+        cid_dev = f"pipeline:stopped@{dev}"
+        label_dev = f"Pipeline stopped -- {dev}"
+        if reach == "asleep":
+            results.append(_result(cid_dev, label_dev, "asleep", "cannot check while the machine is asleep"))
+            continue
+        if reach not in ("local", "green"):
+            results.append(_result(cid_dev, label_dev, "yellow", f"machine unreachable ({reach}) -- breaker state unverifiable"))
+            continue
+        try:
+            if host is None:
+                trips = failure_breaker.tripped()
+            else:
+                proc = subprocess.run(
+                    ["ssh", *SSH_OPTS, host, f"{sys.executable} ~/.agents/lib/failure_breaker.py status --json"],
+                    capture_output=True, text=True, timeout=30
+                )
+                if proc.returncode != 0:
+                    results.append(_result(cid_dev, label_dev, "yellow", f"could not read breaker state: ssh failed"))
+                    continue
+                trips = json.loads(proc.stdout)
+        except Exception as exc:
+            results.append(_result(cid_dev, label_dev, "yellow", f"could not read breaker state: {str(exc)[:100]}"))
+            continue
+
+        if not trips:
+            results.append(_result(cid_dev, label_dev, "green", "not tripped"))
+        else:
+            for t in trips:
+                since = _parse_iso_time(t.get("first_seen", ""))
+                since_str = f"{since.strftime('%H:%M')}" if since else "unknown"
+                detail = f"Pipeline stopped since {since_str}: {t['signature']} across tickets {t['tickets']}. Clear: failure_breaker.py clear"
+                results.append(_result(cid_dev, label_dev, "red", detail, value=len(trips)))
+
+    return results
+
+
+def _parse_iso_time(s: str) -> datetime | None:
+    """Parse ISO 8601 timestamp string to datetime, or None if invalid."""
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+
+
+# ── sync stuck (parse sync-log.md for unresolved issues) ─────────────────
+
+def check_sync_stuck(log_path: Path | None = None) -> list[dict]:
+    """Red when code-sync is stuck due to conflicts or stashes from a prior run.
+    One result per (machine, repo) pair that is stuck."""
+    import code_sync
+    log_path = log_path or code_sync.LOG_PATH
+    results = []
+
+    if not log_path.exists():
+        return results
+
+    try:
+        text = log_path.read_text()
+    except OSError:
+        return results
+
+    entries = code_sync.parse_log_entries(text)
+    if not entries:
+        return results
+
+    # Group by (machine, repo): find the latest entry for each
+    by_key: dict[tuple[str, str], dict] = {}
+    for entry in entries:
+        key = (entry["machine"], entry["repo"])
+        by_key[key] = entry
+
+    for (machine, repo), latest in by_key.items():
+        body = latest["body"]
+        if not body.strip().startswith(("REFUSING", "CONFLICT")):
+            continue
+
+        # Walk backward to find when this stuck state started
+        latest_ts = latest["ts"]
+        stuck_since = latest_ts
+        for entry in reversed(entries):
+            if entry["machine"] != machine or entry["repo"] != repo:
+                continue
+            if entry["ts"] is None or entry["ts"] > latest_ts:
+                continue
+            if entry["ts"] == latest_ts:
+                continue  # Skip the latest entry itself
+            if entry["body"].strip().startswith(("REFUSING", "CONFLICT")):
+                # Still stuck, update the start time
+                stuck_since = entry["ts"]
+            else:
+                # Found a non-stuck entry; stuck started after this
+                break
+
+        cid = f"sync:stuck:{machine}:{repo or '.agents'}"
+        label = f"Sync stuck -- {machine} ({repo or '.agents'})"
+        first_line = (body.split("\n")[0] or body).strip()[:80]
+
+        since_str = ""
+        if stuck_since:
+            hours_ago = (_now() - stuck_since).total_seconds() / 3600
+            since_str = f"since {stuck_since.strftime('%H:%M')} ({hours_ago:.0f}h ago)" if hours_ago < 24 else f"since {stuck_since.strftime('%Y-%m-%d %H:%M')}"
+
+        detail = f"{machine} not syncing {since_str}: {first_line}"
+        results.append(_result(cid, label, "red", detail))
+
+    return results
+
+
+# ── deploy jobs missing ──────────────────────────────────────────────────
+
+DEPLOY_STEPS = [
+    {"id": "snapshot-deploy", "label": "Map snapshot deploy (#188)",
+     "plists": ["com.marvin.snapshot-deploy-nightly", "com.marvin.snapshot-deploy-reactive"]},
+    {"id": "dashboard-rebuild", "label": "Dashboard rebuild",
+     "job_log": "dashboard-rebuild"},
+]
+
+
+def check_deploy_missing() -> list[dict]:
+    """Red when a declared deployment step is not properly installed on this machine."""
+    results = []
+
+    for step in DEPLOY_STEPS:
+        cid = f"deploy:missing:{step['id']}"
+        label = f"Deployed: {step['label']}"
+
+        if "plists" in step:
+            # Check if any of the named plists exist in ~/Library/LaunchAgents/
+            missing = []
+            for plist_name in step["plists"]:
+                plist_path = LAUNCHAGENTS_DIR / f"{plist_name}.plist"
+                if not plist_path.exists():
+                    missing.append(plist_name)
+
+            if missing:
+                detail = f"missing {len(missing)} plist(s): {', '.join(missing)}. Run: bash ~/.agents/brain-map/scripts/install-snapshot-jobs.sh"
+                results.append(_result(cid, label, "red", detail))
+            else:
+                results.append(_result(cid, label, "green", f"all {len(step['plists'])} plist(s) installed"))
+
+        elif "job_log" in step:
+            # Check if the job log exists and has recorded a run
+            import job_events
+            log_path = job_events.JOBS_DIR / f"{step['job_log']}.json"
+            try:
+                doc = json.loads(log_path.read_text()) if log_path.exists() else {}
+            except (OSError, json.JSONDecodeError):
+                doc = {}
+
+            status = job_events.status_of(doc)
+            if status == "never":
+                detail = f"job '{step['job_log']}' has never been run. This job is part of the code-sync cycle and runs automatically."
+                results.append(_result(cid, label, "yellow", detail))
+            elif status == "failed":
+                detail = f"job '{step['job_log']}' last failed. Check ~/.claude/logs/jobs/{step['job_log']}.json"
+                results.append(_result(cid, label, "red", detail))
+            elif status == "crashed":
+                detail = f"job '{step['job_log']}' appears to have crashed. Check ~/.claude/logs/jobs/{step['job_log']}.json"
+                results.append(_result(cid, label, "red", detail))
+            else:
+                results.append(_result(cid, label, "green", f"job '{step['job_log']}' last {status}"))
+
+    return results
 
 
 CATALOG_YELLOW_AFTER_HOURS = 3
@@ -857,7 +1021,6 @@ def run_all() -> dict:
     results.append(check_intent_routing_collection())
     results.append(check_dispatch_lock())
     results += check_ticket_failure_streaks()
-    results.append(check_pipeline_breaker())
     results += check_missing_profiles()
     results.append(check_trigger_coverage())
     results.append(check_catalog_fresh())
@@ -874,8 +1037,12 @@ def run_all() -> dict:
         results.append(check_repo_integrity(name, rel))
     reach_results = check_machine_reachability()
     results += reach_results
-    results += check_repo_sync_everywhere({r["id"]: r["severity"] for r in reach_results})
-    results += check_machine_state_everywhere({r["id"]: r["severity"] for r in reach_results})
+    reach_map = {r["id"]: r["severity"] for r in reach_results}
+    results += check_pipeline_breaker_everywhere(reach_map)
+    results += check_sync_stuck()
+    results += check_deploy_missing()
+    results += check_repo_sync_everywhere(reach_map)
+    results += check_machine_state_everywhere(reach_map)
 
     cov = coverage(results)
     anomaly = record_anomaly_metrics(results)
