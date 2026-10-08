@@ -60,6 +60,35 @@ def skill_projects(skill_ids: set[str], project_ids: set[str], overrides: dict[s
             for s, p in sorted(links.items())]
 
 
+def tracked(projects: list[dict], node_ids: set[str]) -> list[dict]:
+    """project -> "Activity tab" for projects with board=True (project status tracked in Activity tab)."""
+    out = []
+    activity_tab = "Activity tab"
+    if activity_tab not in node_ids:
+        return out
+    for p in projects:
+        project_id = p.get("id") or p.get("name")
+        if p.get("board") and project_id in node_ids:
+            out.append(_thread(project_id, activity_tab, "tracked",
+                               f"{project_id} is tracked in the Activity tab (project_catalog.py board field)"))
+    return sorted(out, key=lambda t: t["a"])
+
+
+def documented(projects: list[dict], node_ids: set[str]) -> list[dict]:
+    """project -> "Docs tab" for projects with docs.context or docs.readme."""
+    out = []
+    docs_tab = "Docs tab"
+    if docs_tab not in node_ids:
+        return out
+    for p in projects:
+        project_id = p.get("id") or p.get("name")
+        docs = p.get("docs") or {}
+        if (docs.get("context") or docs.get("readme")) and project_id in node_ids:
+            out.append(_thread(project_id, docs_tab, "documented",
+                               f"{project_id} has documentation (CONTEXT.md or README.md)"))
+    return sorted(out, key=lambda t: t["a"])
+
+
 def read_job_placement(health_checks_py: Path) -> dict[str, str]:
     """JOB_PLACEMENT from lib/health_checks.py, read with ast (no import: the module pulls in the whole health stack)."""
     try:

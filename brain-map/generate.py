@@ -38,6 +38,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / "scripts"))
 import connections  # noqa: E402
 import data_flow  # noqa: E402
+import readiness  # noqa: E402
 
 HERE = Path(__file__).parent
 MANIFEST_PATH = Path.home() / ".claude" / "manifest.json"
@@ -55,6 +56,7 @@ SETTINGS_LOCAL_PATH = Path.home() / ".claude" / "settings.local.json"
 NETWORK_PATH = Path.home() / ".claude" / "marvin-network.json"
 DASHBOARD_APP_PATH = Path.home() / ".agents" / "dashboard" / "src" / "App.jsx"
 CATALOG_DIR = Path.home() / ".claude" / "catalog"
+ONBOARDING_DIR = Path.home() / ".claude" / "onboarding"
 REPO_DIR = HERE.parent  # the checkout this script runs from (a worktree in development)
 LIB_DIR = REPO_DIR / "lib"
 DASHBOARD_MAIN_DIR = REPO_DIR / "dashboard" / "electron" / "main"  # where the tabs' data readers live
@@ -357,7 +359,7 @@ def build_dashboard_trunk(enrichment: dict) -> dict:
 
 
 def discover_projects() -> list[dict]:
-    """Active and recent projects from the newest machine catalog. marvin itself
+    """Active, recent, and archived projects from the newest machine catalog. marvin itself
     is the root, not a project node; dormant projects are left off."""
     catalogs = sorted(CATALOG_DIR.glob("projects.*.json"), key=lambda p: p.stat().st_mtime) if CATALOG_DIR.is_dir() else []
     if not catalogs:
@@ -368,19 +370,70 @@ def discover_projects() -> list[dict]:
         return []
     out = []
     for p in projects:
-        if p.get("status") not in ("active", "recent") or p.get("id") == "marvin":
+        if p.get("status") not in ("active", "recent", "archived") or p.get("id") == "marvin":
             continue
-        out.append({"id": p.get("name") or p["id"], "desc": first_sentence(p.get("description") or ""),
-                    "visibility": p.get("visibility") or "LOCAL", "kind": p.get("kind", "")})
+        out.append({
+            "id": p.get("name") or p["id"],
+            "desc": first_sentence(p.get("description") or ""),
+            "visibility": p.get("visibility") or "LOCAL",
+            "kind": p.get("kind", ""),
+            "repo": p.get("repo", ""),
+            "board": p.get("board", False),
+            "docs": p.get("docs") or {},
+            "status": p.get("status"),
+        })
     return sorted(out, key=lambda p: p["id"].lower())
 
 
 def build_projects_trunk() -> dict:
-    children = [{"id": p["id"], "cat": "projects", "desc": p["desc"], "visibility": p["visibility"],
-                 "expandable": False, "expanded": True, "children": []} for p in discover_projects()]
-    return {"id": "Projects", "cat": "projects",
-            "desc": f"{len(children)} active or recent projects MARVIN works on",
-            "expandable": False, "expanded": True, "children": children}
+    projects = discover_projects()
+    children = []
+    for p in projects:
+        node = {
+            "id": p["id"],
+            "cat": "projects",
+            "desc": p["desc"],
+            "visibility": p["visibility"],
+            "expandable": False,
+            "expanded": True,
+            "children": [],
+            "repo": p["repo"],
+            "board": p["board"],
+            "docs": p["docs"],
+            "status": p["status"],
+        }
+
+        # For archived projects, mark as archived and skip readiness
+        if p["status"] == "archived":
+            node["archived"] = True
+        # For repo projects (not portfolio-only), load and set readiness
+        elif p["kind"] == "repo":
+            # Extract repo shortname from repo field (e.g., "G-Eskayo/finance-os" -> "finance-os")
+            repo_shortname = (p["repo"] or "").split("/")[-1]
+            if repo_shortname:
+                onboarding_path = ONBOARDING_DIR / f"{repo_shortname}.json"
+                try:
+                    plan = json.loads(onboarding_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    plan = None
+            else:
+                plan = None
+
+            result = readiness.project_readiness(plan)
+            node["ready"] = result["ready"]
+            if result["gaps"]:
+                node["readyNote"] = ", ".join(result["gaps"])
+
+        children.append(node)
+
+    return {
+        "id": "Projects",
+        "cat": "projects",
+        "desc": f"{len(children)} active, recent, or archived projects MARVIN works on",
+        "expandable": False,
+        "expanded": True,
+        "children": children
+    }
 
 
 def attach_plain(tree: dict, plain: dict) -> list[str]:
@@ -537,16 +590,23 @@ def all_synapses(manifest: dict, enrichment: dict, tree: dict, warn=None) -> lis
 
     skill_ids = {e["name"] for e in manifest.get("index", [])} & ids
     project_ids = set()
+    project_nodes = []
 
     def projects_of(node):
         if node.get("cat") == "projects" and node.get("id") != "Projects":
             project_ids.add(node["id"])
+            project_nodes.append(node)
         for c in node.get("children", []):
             projects_of(c)
     projects_of(tree)
     synapses.extend(connections.skill_projects(skill_ids, project_ids, enrichment.get("skill_projects", {})))
 
-    for kind in ("feeds", "runs-on", "builds", "skill-project"):
+    # Re-read projects to get their full catalog data for tracked/documented threads
+    projects = discover_projects()
+    synapses.extend(connections.tracked(projects, ids))
+    synapses.extend(connections.documented(projects, ids))
+
+    for kind in ("feeds", "runs-on", "builds", "skill-project", "tracked", "documented"):
         if not any(s.get("type") == kind for s in synapses):
             warn(f"no {kind} threads found: check its source (plan: docs/plans/map-connections-2026-10-08.md)")
 
