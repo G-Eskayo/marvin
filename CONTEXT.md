@@ -1046,3 +1046,29 @@ What went wrong: a figure test with a quote-style bug turned main red; nothing s
 ## GitHub outages during a merge (2026-10-07)
 
 A GitHub 5xx (`remote: Internal Server Error`, HTTP 500, 503) is classified `GITHUB_OUTAGE` (retryable, never sends a ticket back). The gate's rebase push is retried with backoff so a finished retest is not thrown away, and the PR card says "GitHub is having an outage" (`github-outage` in `prState.js`) with Approve still available. Found when clarity-captions "Implement clarity-captions#8" (Transcript scrollback and retention) failed its merge during a real incident.
+
+## MARVIN context and launch kinds (in design, 2026-10-08; tickets #291, #274, #276)
+
+- **MARVIN context**: the layers that make a Claude session *MARVIN* rather than plain Claude: **Rules**
+  (the global CLAUDE.md and its routing table), **North stars** (the roadmap's north-star block),
+  **Memory**, **Lexicon**, **Skills**, the **Session report** (the session-start checklist output) and
+  **Hooks** (telemetry and safety). Not the same as "the MARVIN repo" (`~/.agents`, the code) or "a MARVIN
+  session" (one conversation).
+- **Launch kind**: the category a model run belongs to (e.g. interactive session, ticket planner, ticket
+  executor, background job, mobile Chat). Every launch kind **declares which layers of MARVIN context it
+  gets**, in one place, and code delivers them, never the folder a run happens to start in and never a
+  prompt claiming something unchecked. "MARVIN is used everywhere" means every launch kind has a
+  deliberate set of layers.
+- **The seven launch kinds** (decided 2026-10-08): **Interactive** (Gil working with MARVIN in a terminal or
+  app), **Mobile Chat** (the phone's Thread), **Ticket planner** (decides how to tackle a ticket),
+  **Ticket executor** (changes code in a worktree), **Background analyst** (thinks about MARVIN itself and
+  proposes work: digests, reviews, auto-fix, ticket promotion), **Utility call** (one small text job:
+  notification text, handoff writing) and **Judge** (checks another run's output, e.g. the safety
+  monitor). A **subagent** belongs to its parent's launch kind.
+- **Judge is kept apart on purpose**: a checker must not share the context of what it checks, so it isn't
+  biased toward agreeing with MARVIN ("grounded, not agreeable").
+- **Not every task is a launch**: deterministic code (the four ticket agents: triage, prioritize, stale
+  claims, refeed) is MARVIN involvement with no model at all, and is preferred when it does the job.
+- **New work declares its kind**: anything new that calls a model must say which launch kind it is (or
+  propose a new kind); there is no undeclared way to start a model run.
+
