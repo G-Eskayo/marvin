@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url'
 import { whois, loadAllowlist, isAllowed } from './device_gate.js'
 import { createDashboardApiRouter } from './dashboard_api.js'
 import { createChatApiRouter } from './chat_api.js'
+import { createOfflineBatchApiRouter } from './offline_batch_api.js'
 import { createThreadStore } from './thread_store.js'
 import { createPendingActionsStore } from './pending_actions.js'
 import { createPermissionApiRouter } from './permission_api.js'
@@ -45,6 +46,7 @@ function getUptimeSeconds() {
 const dashboardApiRouter = createDashboardApiRouter()
 const threadStore = createThreadStore()
 const chatApiRouter = createChatApiRouter({ threadStore })
+const offlineBatchApiRouter = createOfflineBatchApiRouter({ threadStore })
 const pendingActionStore = createPendingActionsStore()
 const permissionApiRouter = createPermissionApiRouter({ pendingActionStore })
 const liveChannel = createLiveChannel()
@@ -74,6 +76,10 @@ const server = createServer(async (req, res) => {
 
   // Route through chat API
   handled = await chatApiRouter(req, res)
+  if (handled) return
+
+  // Route through offline batch API
+  handled = await offlineBatchApiRouter(req, res)
   if (handled) return
 
   // Route through live API
