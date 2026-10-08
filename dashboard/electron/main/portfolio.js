@@ -70,6 +70,7 @@ export function createPortfolio({
   const inventoryScript = path.join(agentsDir, 'lib', 'portfolio_inventory.py')
   const templatesScript = path.join(agentsDir, 'lib', 'portfolio_templates.py')
   const contentScript = path.join(agentsDir, 'lib', 'portfolio_content.py')
+  const claimsScript = path.join(agentsDir, 'brain-map', 'scripts', 'claims.py')
   const inventoryDir = path.join(dataDir, 'inventory')
   const referenceDir = path.join(templates, 'reference')
 
@@ -467,5 +468,10 @@ export function createPortfolio({
     return JSON.parse(stdout)
   }
 
-  return { contentTemplates, contentReport, chrome, inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, templateSource, specimen, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage, imageMotifs, imageVariants, newImageVariant, chooseImageVariant, applyImages, addProject, listElements, verifyElement, pipelineStatus, runPipeline, deleteImageVariant, variantPreview }
+  async function claimsReport() {
+    const { stdout } = await exec(python, [claimsScript, '--json'], { maxBuffer: 1 * 1024 * 1024, timeout: 30 * 1000 })
+    return JSON.parse(stdout)
+  }
+
+  return { contentTemplates, contentReport, claimsReport, chrome, inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, templateSource, specimen, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage, imageMotifs, imageVariants, newImageVariant, chooseImageVariant, applyImages, addProject, listElements, verifyElement, pipelineStatus, runPipeline, deleteImageVariant, variantPreview }
 }

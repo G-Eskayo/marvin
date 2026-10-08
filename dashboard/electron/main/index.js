@@ -467,6 +467,7 @@ function registerDocsHandlers() {
   ipcMain.handle('portfolio:guide', () => portfolio.getGuide())
   ipcMain.handle('portfolio:content:templates', () => portfolio.contentTemplates())
   ipcMain.handle('portfolio:content:report', () => portfolio.contentReport())
+  ipcMain.handle('portfolio:claims:report', () => portfolio.claimsReport())
   ipcMain.handle('portfolio:guide:save', (_e, text) => portfolio.saveGuide(text))
   ipcMain.handle('portfolio:eval:latest', () => portfolio.latestEval())
   ipcMain.handle('portfolio:eval:run', () => portfolio.runEval())

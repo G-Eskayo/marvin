@@ -78,6 +78,7 @@ contextBridge.exposeInMainWorld('api', {
     previewHead: () => ipcRenderer.invoke('portfolio:preview-head'),
     contentTemplates: () => ipcRenderer.invoke('portfolio:content:templates'),
     contentReport: () => ipcRenderer.invoke('portfolio:content:report'),
+    claimsReport: () => ipcRenderer.invoke('portfolio:claims:report'),
     rules: () => ipcRenderer.invoke('portfolio:rules'),
     saveRules: (overrides) => ipcRenderer.invoke('portfolio:rules:save', overrides),
     guide: () => ipcRenderer.invoke('portfolio:guide'),

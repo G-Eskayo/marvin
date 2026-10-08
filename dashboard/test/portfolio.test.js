@@ -531,4 +531,15 @@ describe('content templates and the content report (ADR 0051)', () => {
     expect(args[0]).toMatch(/portfolio_content\.py$/)
     expect(args).toContain('--json')
   })
+
+  it('runs the claims ledger and returns its report', async () => {
+    exec.mockResolvedValueOnce({ stdout: JSON.stringify({ claims: { 'two-machines': { ok: true, detail: 'Two machines registered', section: 'introduction', text: 'it runs on two Macs', checked_at: '2026-10-08T02:30:00+00:00' } }, unchecked: [] }), stderr: '' })
+    const report = await p.claimsReport()
+    expect(report.claims['two-machines'].ok).toBe(true)
+    expect(report.claims['two-machines'].text).toBe('it runs on two Macs')
+    const [cmd, args] = exec.mock.calls.at(-1)
+    expect(cmd).toMatch(/venv\/bin\/python$/)
+    expect(args[0]).toMatch(/claims\.py$/)
+    expect(args).toContain('--json')
+  })
 })
