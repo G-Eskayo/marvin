@@ -866,3 +866,24 @@ def test_scan_summary_reports_breaker_even_when_dispatchable_project_has_no_read
 
     # Check that the summary mentions the breaker, not merely "no ready tickets".
     assert any("circuit breaker" in s.lower() for s in summaries)
+
+
+# ── ADR 0058: the hourly onboarding pass applies the safe pieces, and stands down when GitHub's budget is low ──
+
+def test_onboarding_pass_applies_safe_pieces_and_reports_them(monkeypatch):
+    calls = {}
+    monkeypatch.setattr(tp.board_registry, "list_boards", lambda: [{"repo": "o/a"}, {"repo": "o/b"}])
+    monkeypatch.setattr(tp.project_onboard, "refresh_all_onboarding_plans",
+                        lambda repos, apply_safe=False: calls.update(repos=repos, apply_safe=apply_safe) or
+                        {"ok": ["o/a"], "failed": [("o/b", "x")], "applied": {"o/a": ["labels"]}})
+    msg = tp._refresh_onboarding_plans(budget=lambda: 80.0, min_pct=20)
+    assert calls == {"repos": ["o/a", "o/b"], "apply_safe": True}
+    assert "1 refreshed" in msg and "1 failed" in msg and "applied: a (labels)" in msg
+
+
+def test_onboarding_pass_stands_down_when_the_github_budget_is_low(monkeypatch):
+    monkeypatch.setattr(tp.board_registry, "list_boards", lambda: [{"repo": "o/a"}])
+    called = []
+    monkeypatch.setattr(tp.project_onboard, "refresh_all_onboarding_plans", lambda *a, **k: called.append(1))
+    msg = tp._refresh_onboarding_plans(budget=lambda: 5.0, min_pct=20)
+    assert called == [] and "budget" in msg
