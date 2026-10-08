@@ -269,7 +269,8 @@ def test_no_hardcoded_portfolio_path_outside_default_fallback():
     import re
     import subprocess
     lib_dir = Path(__file__).resolve().parents[1]
-    result = subprocess.run(["grep", "-r", r'"Documents"\s*/\s*"Projects"\s*/\s*"portfolio-website-updater"', ".",
+    # any hard-coded location (the old iCloud ~/Documents/Projects one, or ~/Developer since #192)
+    result = subprocess.run(["grep", "-rE", r'(\"Documents\"\s*/\s*\"Projects\"|\"Developer\")\s*/\s*\"portfolio-website-updater\"', ".",
                              "--include=*.py", "--exclude-dir=__pycache__"], cwd=lib_dir,
                             capture_output=True, text=True)
     lines = [l for l in result.stdout.split("\n") if l.strip()]

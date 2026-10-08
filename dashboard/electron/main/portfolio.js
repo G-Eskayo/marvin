@@ -42,7 +42,7 @@ function assertName(name) {
 }
 
 export function createPortfolio({
-  projectDir = path.join(homedir(), 'Documents', 'Projects', 'portfolio-website-updater'),
+  projectDir = path.join(homedir(), 'Developer', 'portfolio-website-updater'), // out of iCloud ~/Documents since #192
   homeDir = homedir(),
   agentsDir = path.join(homedir(), '.agents'),
   exec,
