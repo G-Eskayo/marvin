@@ -130,12 +130,13 @@ now:
 
 - **Done:** `lib/dispatch_concurrency.py` and `config/dispatch.json` (#194: settings, validation, `effective_limit`,
   `can_start_another` with the disk and GitHub-budget guards); the scan fill loop in `ticket_pipeline._scan` (#195), which
-  tries the next project when one has no machine free and picks the least-loaded allowed machine; the dashboard control and its
+  tries the next project when one has no machine free and picks the least-loaded allowed machine; the debounce refill on exit
+  (#196: `redispatch_trigger.py` file-lock leading-edge debounce, called on every exit path); the dashboard control and its
   IPC (#197: `ParallelToggle` above the device columns, `dispatch:getConcurrency` / `dispatch:setConcurrency`, a sync kick on save).
 - **Stand-ins until #193 lands:** the machine running the scan counts its tickets as live `run_ticket` processes
   (`_local_slots_used`), and the other machine counts as one slot (its busy flag). In-flight tickets per project are the open
   tickets carrying a `claimed:` label, so a stale claim holds a slot until it is released.
-- **Not done:** per-task records and the "n of m" slot display (#193), the refill on exit (#196), the Health check (#198),
+- **Not done:** per-task records and the "n of m" slot display (#193), the Health check (#198),
   and the live two-project run (#199).
 - **Guard rails left to the scan:** a tripped circuit breaker already removes that project from the scan, and the tools check
   is `pp.missing_here` for this machine; `can_start_another` takes both as injected readers for the machine-level case.

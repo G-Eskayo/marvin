@@ -27,6 +27,7 @@ from cleanup_sweep import drop_build_output  # noqa: E402
 from ticket_pipeline import _label_for_device, _release  # noqa: E402
 import failure_breaker  # noqa: E402
 import ticket_stages as ts  # noqa: E402
+import redispatch_trigger  # noqa: E402
 
 REPO = "G-Eskayo/marvin"
 FAILURE_MARKER = "Automated implementation did not pass verification"
@@ -117,16 +118,11 @@ def _trigger_redispatch() -> None:
     """This machine has been free since execute_ticket returned above --
     win or lose, rather than sit idle until the next hourly
     ticket_pipeline.py cron tick, check for more unclaimed work right
-    now. Fire-and-forget: ticket_pipeline.py already no-ops safely if
-    nothing's unclaimed or no machine is free, so nothing here needs to
-    check first, and a failed scan shouldn't affect this ticket's own
-    already-decided outcome."""
-    script = Path(__file__).resolve().parent / "ticket_pipeline.py"
-    subprocess.Popen(
-        [sys.executable, str(script)],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    now. Uses redispatch_trigger's debounce so N simultaneous exits
+    don't spawn N separate full scans, just one after a short delay.
+    Fire-and-forget: ticket_pipeline.py already no-ops safely if
+    nothing's unclaimed or no machine is free."""
+    redispatch_trigger.request_scan()
 
 
 def _load_catalog() -> dict:
