@@ -7,6 +7,7 @@ from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
+sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "lib"))
 
 import chromadb
 import pytest
@@ -17,7 +18,17 @@ from competing_ideas import (
     _parse_stance_result,
     build_competing_ideas_map,
     render_markdown,
+    STANCE_MODEL,
 )
+
+
+# ── Model validation: ensure validated choices don't drift ────────────────────
+
+class TestModelChoices:
+    """Regression guard for the model choice noted in the docstring."""
+
+    def test_stance_model_correct(self):
+        assert STANCE_MODEL == "qwen2.5:7b", "stance model was validated; drift indicates design doc is stale"
 
 
 # ── _parse_stance_result ───────────────────────────────────────────────────

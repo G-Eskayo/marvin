@@ -22,8 +22,11 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
 import intent_classify  # noqa: E402
 import model_scope  # noqa: E402
+import model_registry  # noqa: E402
+import machine_profile  # noqa: E402
 
 # ── routing table ─────────────────────────────────────────────────────────────
 
@@ -299,6 +302,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         choices=["haiku", "sonnet", "opus"],
         help="model tier for skill checking (use with --check-skill)",
     )
+    ap.add_argument(
+        "--local-capability",
+        metavar="CAPABILITY",
+        help="resolve a local capability to a model name and check installation status",
+    )
     # explicit intent overrides
     for intent in INTENTS:
         ap.add_argument(f"--{intent}", action="store_true", help=f"force {intent} routing")
@@ -328,6 +336,19 @@ def main() -> None:
         allowed = skill_allowed(args.check_skill, args.model)
         print(f"{'allowed' if allowed else 'not allowed'}")
         sys.exit(0 if allowed else 1)
+
+    if args.local_capability:
+        try:
+            cfg = model_registry.load()
+            model = model_registry.resolve_capability(args.local_capability, config=cfg)
+            installed = model_registry.installed_models(machine=machine_profile.machine_label(), config=cfg)
+            is_present = model in installed
+            status = "installed" if is_present else "not installed"
+            print(json.dumps({"capability": args.local_capability, "model": model, "status": status}))
+            sys.exit(0 if is_present else 1)
+        except KeyError as e:
+            print(f"error: {e}", file=sys.stderr)
+            sys.exit(2)
 
     # explicit intent flag overrides classifier
     forced = next((i for i in INTENTS if getattr(args, i, False)), None)

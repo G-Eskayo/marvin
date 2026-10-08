@@ -22,26 +22,48 @@ fits every stage.
 from __future__ import annotations
 import json
 import re
+import sys
 import urllib.request
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
+
+import model_registry
+import model_queue
+import machine_profile
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
-# Validated 2026-07-13 against all 15 real seed abstracts: 3b (even with a prompt refined to
-# counter its "named attack/method -> conceptual" bias) still misclassified MINJA and
-# many-shot-jailbreaking as conceptual despite both reporting concrete measured attack success
-# rates. 7b was WORSE, not better -- overcorrected to "empirical" broadly and broke two
-# previously-correct survey/benchmark classifications (sok-trust-authorization-mismatch,
-# sorry-bench). 14b fixed both stubborn cases with zero regressions on the rest.
-CLASSIFY_MODEL = "qwen2.5:14b"
+
+def _resolve_models():
+    cfg = model_registry.load()
+    return {
+        "classify": model_registry.resolve_capability("local-classify-medium", config=cfg),
+        "extract": model_registry.resolve_capability("local-extract-small", config=cfg),
+        "judge": model_registry.resolve_capability("local-judge-medium", config=cfg),
+        "judge_large": model_registry.resolve_capability("local-judge-large", config=cfg),
+        "infer": model_registry.resolve_capability("local-infer-large", config=cfg),
+    }
+
+_MODELS = _resolve_models()
+CLASSIFY_MODEL = _MODELS["classify"]
+EXTRACTION_MODEL = _MODELS["extract"]
+JUDGMENT_MODEL = _MODELS["judge"]
+JUDGMENT_MODEL_OVERRIDES = {"benchmark": _MODELS["judge_large"]}
+INFERENCE_MODEL = _MODELS["infer"]
 
 PAPER_TYPES = {"empirical", "survey", "benchmark", "conceptual"}
 
 
-def ollama_chat(model: str, messages: list[dict], timeout: int = 60) -> str:
-    payload = json.dumps({"model": model, "messages": messages, "stream": False}).encode()
-    req = urllib.request.Request(OLLAMA_URL, data=payload, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        data = json.loads(resp.read())
-    return data["message"]["content"]
+def ollama_chat(model: str, messages: list[dict], timeout: int = 60, caller: str = "paper-dive") -> str:
+    cfg = model_registry.load()
+    machine = machine_profile.machine_label()
+    with model_queue.acquire(model, machine, caller, is_heavy_fn=lambda m, c=None: model_registry.is_heavy(m, config=c or cfg)):
+        payload = json.dumps({"model": model, "messages": messages, "stream": False}).encode()
+        req = urllib.request.Request(OLLAMA_URL, data=payload, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read())
+        model_registry.record_usage(model, caller, machine=machine)
+        return data["message"]["content"]
 
 
 CLASSIFY_PROMPT = """Below is an academic paper's title and abstract. Classify what KIND of argument it makes, choosing exactly one of these four types:

@@ -49,6 +49,7 @@ import { createRefreshServer } from './refresh_server.js'
 import { adoptLoginShellPath, adoptSharedGhToken } from './path.js'
 import { postTicketInput } from './ticket_input.js'
 import { resolveServiceDefaults, resolveDeviceId } from './device_identity.js'
+import { getModels, getCurrentQueue, getModelsWithQueue } from './models.js'
 
 // Every IPC handler below is timed into ~/.claude/logs/dashboard-timing.jsonl (#236); must run before any is registered.
 instrumentIpc(ipcMain)
@@ -186,6 +187,12 @@ function registerDispatchHandlers() {
   ipcMain.handle('dispatch:scanNow', () => scanNow())
   // The header indicator: dispatched task + every background agent that is mid-run, on this machine.
   ipcMain.handle('working:now', () => buildWorkingNow({ dispatch: readDispatchStatus(), jobs: listJobs() }))
+}
+
+function registerModelsHandlers() {
+  ipcMain.handle('models:list', () => getModels())
+  ipcMain.handle('models:queue', (_event, machine) => getCurrentQueue(machine))
+  ipcMain.handle('models:withQueue', (_event, machine) => getModelsWithQueue(machine))
 }
 
 function registerHealthHandlers() {
@@ -643,6 +650,7 @@ app.whenReady().then(() => {
   registerMetricsHandlers()
   registerMrReviewHandlers()
   registerDispatchHandlers()
+  registerModelsHandlers()
   registerHealthHandlers()
   registerDocsHandlers()
   registerActivityHandlers()

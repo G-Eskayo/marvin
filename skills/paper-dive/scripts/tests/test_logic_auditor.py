@@ -7,6 +7,7 @@ from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
+sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "lib"))
 
 import pytest
 
@@ -30,7 +31,35 @@ from logic_auditor import (
     needs_second_look,
     build_audit_report,
     render_markdown,
+    CLASSIFY_MODEL,
+    EXTRACTION_MODEL,
+    JUDGMENT_MODEL,
+    JUDGMENT_MODEL_OVERRIDES,
+    INFERENCE_MODEL,
 )
+
+import model_registry
+
+
+# ── Model validation: ensure validated choices don't drift ────────────────────
+
+class TestModelChoices:
+    """Regression guards for the model choices validated in the design doc."""
+
+    def test_classify_model_correct(self):
+        assert CLASSIFY_MODEL == "qwen2.5:14b", "classify model was validated; drift indicates design doc is stale"
+
+    def test_extraction_model_correct(self):
+        assert EXTRACTION_MODEL == "qwen2.5:3b", "extraction model was validated; drift indicates design doc is stale"
+
+    def test_judgment_model_correct(self):
+        assert JUDGMENT_MODEL == "qwen2.5:7b", "judgment model was validated; drift indicates design doc is stale"
+
+    def test_judgment_model_overrides_benchmark(self):
+        assert JUDGMENT_MODEL_OVERRIDES.get("benchmark") == "qwen2.5:14b", "benchmark override was validated"
+
+    def test_inference_model_correct(self):
+        assert INFERENCE_MODEL == "qwen2.5:14b", "inference model was validated; drift indicates design doc is stale"
 
 
 # ── classify_paper_type ──────────────────────────────────────────────────────

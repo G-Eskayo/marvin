@@ -33,18 +33,32 @@ import sys
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
+
+import model_registry
+import machine_profile
+
 CHROMA_PATH = Path.home() / ".claude" / "chroma"
 COLLECTION_NAME = "paper-knowledge"
 OLLAMA_URL = "http://localhost:11434/api/chat"
-CLAIM_MODEL = "qwen2.5:3b"
+
+def _resolve_models():
+    cfg = model_registry.load()
+    return {
+        "claim": model_registry.resolve_capability("local-claim-extract", config=cfg),
+    }
+
+_MODELS = _resolve_models()
+CLAIM_MODEL = _MODELS["claim"]
 OPENALEX_WORKS_BASE = "https://api.openalex.org/works"
 
 
-def ollama_chat(model: str, messages: list[dict], timeout: int = 60) -> str:
+def ollama_chat(model: str, messages: list[dict], timeout: int = 60, caller: str = "paper-dive") -> str:
     payload = json.dumps({"model": model, "messages": messages, "stream": False}).encode()
     req = urllib.request.Request(OLLAMA_URL, data=payload, headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         data = json.loads(resp.read())
+    model_registry.record_usage(model, caller, machine=machine_profile.machine_label())
     return data["message"]["content"]
 
 

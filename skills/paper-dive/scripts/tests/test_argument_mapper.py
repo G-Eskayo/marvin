@@ -7,6 +7,7 @@ from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
+sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "lib"))
 
 import chromadb
 import pytest
@@ -18,7 +19,17 @@ from argument_mapper import (
     enrich_missing_titles,
     build_argument_map,
     render_markdown,
+    CLAIM_MODEL,
 )
+
+
+# ── Model validation: ensure validated choices don't drift ────────────────────
+
+class TestModelChoices:
+    """Regression guard for the model choice validated in the design doc."""
+
+    def test_claim_model_correct(self):
+        assert CLAIM_MODEL == "qwen2.5:3b", "claim model was validated; drift indicates design doc is stale"
 
 
 # ── extract_core_claim ──────────────────────────────────────────────────────

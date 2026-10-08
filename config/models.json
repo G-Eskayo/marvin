@@ -1,0 +1,21 @@
+{
+  "models": [
+    {"name": "qwen2.5:14b", "runtime": "ollama", "used_by": ["paper-dive: local-classify-medium", "paper-dive: local-judge-large", "paper-dive: local-infer-large"], "heavy": true, "reason": "logic_auditor validated 2026-07-13"},
+    {"name": "qwen2.5:7b", "runtime": "ollama", "used_by": ["paper-dive: local-judge-medium", "paper-dive: local-stance-medium"], "heavy": false, "reason": "logic_auditor: judgment on non-benchmark papers, competing_ideas stance detection"},
+    {"name": "qwen2.5:3b", "runtime": "ollama", "used_by": ["paper-dive: local-extract-small", "paper-dive: local-claim-extract"], "heavy": false, "reason": "logic_auditor: extraction layer-1, argument_mapper: claim extraction"},
+    {"name": "nomic-embed-text", "runtime": "ollama", "used_by": ["core: memory search, routing, embeddings"], "heavy": false, "reason": "cross-machine embedding model, both Macs"},
+    {"name": "specter2", "runtime": "hf", "used_by": ["paper-dive: citation graph"], "heavy": false, "reason": "paper-dive: paper embeddings for citation/reference discovery"},
+    {"name": "Llama-3.2-3B-Instruct-4bit", "runtime": "mlx", "used_by": [], "heavy": false, "reason": "exo test leftover — candidate for removal"},
+    {"name": "Qwen2.5-3B-Instruct-4bit", "runtime": "mlx", "used_by": [], "heavy": false, "reason": "exo test leftover — candidate for removal"},
+    {"name": "Llama-3.2-1B-Instruct-4bit", "runtime": "mlx", "used_by": [], "heavy": false, "reason": "exo test leftover — candidate for removal"}
+  ],
+  "capabilities": {
+    "local-classify-medium": "qwen2.5:14b",
+    "local-extract-small": "qwen2.5:3b",
+    "local-claim-extract": "qwen2.5:3b",
+    "local-judge-medium": "qwen2.5:7b",
+    "local-judge-large": "qwen2.5:14b",
+    "local-infer-large": "qwen2.5:14b",
+    "local-stance-medium": "qwen2.5:7b"
+  }
+}
