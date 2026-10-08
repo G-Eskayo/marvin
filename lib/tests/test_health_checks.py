@@ -939,3 +939,146 @@ def test_run_all_includes_parallel_dispatch_check(monkeypatch):
     out = hc.run_all()
     check_ids = {r["id"] for r in out["checks"]}
     assert "dispatch:parallel" in check_ids
+
+
+# ── pipeline circuit breaker (cross-machine) ───────────────────────────────
+
+def test_check_pipeline_breaker_includes_local_trips(monkeypatch):
+    import failure_breaker as fb
+    monkeypatch.setattr(fb, "tripped", lambda now=None, project=None: [
+        {"project": "G-Eskayo/marvin", "signature": "vitest-no-summary", "tickets": [32, 35],
+         "first_seen": "2026-10-02T01:00:00+00:00", "last_seen": "2026-10-02T01:02:00+00:00", "example": "e"}])
+    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
+    r = hc.check_pipeline_breaker()
+    assert r["severity"] == "red"
+    assert "paused" in r["detail"].lower()
+    assert "vitest-no-summary" in r["detail"]
+    assert "2026-10-02T01:00:00" in r["detail"]
+
+
+def test_pipeline_breaker_remote_query_handles_unreachable_machines(monkeypatch):
+    import failure_breaker as fb
+    monkeypatch.setattr(fb, "tripped", lambda now=None, project=None: [])
+    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {
+        "macbook-pro-1": {"kind": "laptop", "tailscale_hostname": "lap"}})
+
+    def fail_ssh(*a, **k):
+        class Fail:
+            returncode = 255
+            stdout = ""
+        return Fail()
+
+    monkeypatch.setattr(hc.subprocess, "run", fail_ssh)
+    r = hc.check_pipeline_breaker()
+    assert r["severity"] == "green"
+
+
+# ── sync stuck detection ────────────────────────────────────────────────────
+
+def test_parse_sync_log_entries_extracts_machine_repo_and_status():
+    text = """## 2026-10-02T12:00:00Z — push-sync (mac-mini-1) [~/.agents]
+REFUSING to push due to unresolved merge conflict
+## 2026-10-02T11:00:00Z — pull-sync (mac-mini-1) [~/.agents]
+pulled successfully
+## 2026-10-02T10:00:00Z — push-sync (macbook-pro-1) [~/.claude]
+CONFLICT detected in working tree
+"""
+    entries = hc._parse_sync_log_entries(text)
+    assert len(entries) == 3
+    assert entries[0] == ("mac-mini-1", "~/.agents", "REFUSING to push due to unresolved merge conflict",
+                          datetime(2026, 10, 2, 12, 0, 0, tzinfo=timezone.utc))
+    assert entries[1][2] == "pulled successfully"
+    assert entries[2][1] == "~/.claude"
+
+
+def test_check_sync_stuck_green_when_no_stuck_entries(monkeypatch, tmp_path):
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+    monkeypatch.setattr(hc.machine_profile, "registry_id", lambda: "mac-mini-1")
+    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "sync-log.md").write_text("""## 2026-10-02T12:00:00Z — push-sync (mac-mini-1) [~/.agents]
+pushed successfully
+""")
+    results = hc.check_sync_stuck()
+    assert not results
+
+
+def test_check_sync_stuck_yellow_when_stuck_between_30min_and_4hours(monkeypatch, tmp_path):
+    now = datetime(2026, 10, 2, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+    monkeypatch.setattr(hc, "_now", lambda: now)
+    monkeypatch.setattr(hc.machine_profile, "registry_id", lambda: "mac-mini-1")
+    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
+    (tmp_path / ".claude").mkdir()
+    # Stuck for 1 hour, which is between 30min (yellow threshold) and 4 hours (red threshold)
+    (tmp_path / ".claude" / "sync-log.md").write_text(f"""## {(now - timedelta(hours=1)).isoformat()} — push-sync (mac-mini-1) [~/.agents]
+REFUSING to push due to unresolved conflict
+""")
+    results = hc.check_sync_stuck()
+    assert len(results) == 1
+    assert results[0]["severity"] == "yellow"
+    assert "~/.agents" in results[0]["detail"]
+
+
+def test_check_sync_stuck_red_when_stuck_over_4_hours(monkeypatch, tmp_path):
+    now = datetime(2026, 10, 2, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+    monkeypatch.setattr(hc, "_now", lambda: now)
+    monkeypatch.setattr(hc.machine_profile, "registry_id", lambda: "mac-mini-1")
+    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
+    (tmp_path / ".claude").mkdir()
+    # Stuck for 6 hours, which exceeds 4 hour red threshold
+    (tmp_path / ".claude" / "sync-log.md").write_text(f"""## {(now - timedelta(hours=6)).isoformat()} — push-sync (mac-mini-1) [~/.agents]
+CONFLICT in working tree
+""")
+    results = hc.check_sync_stuck()
+    assert len(results) == 1
+    assert results[0]["severity"] == "red"
+
+
+# ── deploy steps check ──────────────────────────────────────────────────────
+
+def test_check_deploy_steps_green_when_plist_exists_and_job_ran(tmp_path, monkeypatch):
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+    monkeypatch.setattr(hc, "LAUNCHAGENTS_DIR", tmp_path / "Library" / "LaunchAgents")
+    monkeypatch.setattr(hc.machine_profile, "registry_id", lambda: "mac-mini-1")
+    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
+    agents = tmp_path / ".claude" / "logs" / "jobs"
+    agents.mkdir(parents=True)
+    (agents / "snapshot-deploy.json").write_text("{}")
+    launchagents = tmp_path / "Library" / "LaunchAgents"
+    launchagents.mkdir(parents=True)
+    (launchagents / "com.marvin.snapshot-deploy-nightly.plist").write_text("")
+    (launchagents / "com.marvin.snapshot-deploy-reactive.plist").write_text("")
+
+    results = hc.check_deploy_steps()
+    snap = [r for r in results if "snapshot-deploy" in r["id"]]
+    assert snap and all(r["severity"] == "green" for r in snap)
+
+
+def test_check_deploy_steps_red_when_plist_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+    monkeypatch.setattr(hc, "LAUNCHAGENTS_DIR", tmp_path / "Library" / "LaunchAgents")
+    monkeypatch.setattr(hc.machine_profile, "registry_id", lambda: "mac-mini-1")
+    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
+    launchagents = tmp_path / "Library" / "LaunchAgents"
+    launchagents.mkdir(parents=True)
+
+    results = hc.check_deploy_steps()
+    snap = [r for r in results if "snapshot-deploy" in r["id"]]
+    assert snap and any(r["severity"] == "red" and "not installed" in r["detail"] for r in snap)
+
+
+def test_check_deploy_steps_red_when_job_never_ran(tmp_path, monkeypatch):
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+    monkeypatch.setattr(hc, "LAUNCHAGENTS_DIR", tmp_path / "Library" / "LaunchAgents")
+    monkeypatch.setattr(hc.machine_profile, "registry_id", lambda: "mac-mini-1")
+    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
+    launchagents = tmp_path / "Library" / "LaunchAgents"
+    launchagents.mkdir(parents=True)
+    (launchagents / "com.marvin.snapshot-deploy-nightly.plist").write_text("")
+    (launchagents / "com.marvin.snapshot-deploy-reactive.plist").write_text("")
+
+    results = hc.check_deploy_steps()
+    snap = [r for r in results if "snapshot-deploy" in r["id"]]
+    assert snap and any(r["severity"] == "red" and "never actually run" in r["detail"] for r in snap)

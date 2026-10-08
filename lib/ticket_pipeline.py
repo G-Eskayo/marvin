@@ -560,9 +560,7 @@ def _scan(run, dry_run: bool) -> None:
         step("Circuit breaker", "clear")
     paused = {t.get("project", REPO) for t in trips}
     repos = [r for r in [REPO, *pp.dispatchable_repos()] if r not in paused]
-    if not repos:
-        summary("dispatch paused by the circuit breaker")
-        return
+    breaker_tripped = bool(trips)
 
     settings = dispatch_concurrency.load()
     parallel = bool(settings["parallel"])
@@ -572,10 +570,19 @@ def _scan(run, dry_run: bool) -> None:
         ready = _unclaimed_ready_tickets() if r == REPO else _unclaimed_ready_tickets(repo=r)
         if ready:
             pools[r] = list(ready)
+
+    if not repos:
+        summary("dispatch paused by the circuit breaker")
+        return
+
     if not pools:
         print(f"{LOG_PREFIX} no unclaimed ready-for-agent tickets", file=sys.stderr)
         step("Scanning tickets", "none ready")
-        summary("no ready tickets")
+        # If the breaker is tripped, report that even if there are no ready tickets in dispatchable repos.
+        if breaker_tripped:
+            summary("Pipeline stopped by circuit breaker; no ready tickets elsewhere")
+        else:
+            summary("no ready tickets")
         return
 
     inflight = _inflight_by_repo(repos) if parallel else {}
