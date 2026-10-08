@@ -6,6 +6,7 @@ The single source for what MARVIN is aiming at and how it should be built (ADR 0
 
 1. **Minimise tokens, maximise capability and quality.** *How to build.* Prefer the approach that does the job at equal or higher quality for fewer tokens. A change counts as an improvement only if quality holds (tests, bench, send-back rate) at equal or lower cost.
 2. **MARVIN becomes the OS of Gil's own phone.** *Where it's heading.* A long-horizon vision, never a task. Use it to break ties: when two designs are otherwise equal, choose the more OS-shaped one (general, reachable from anywhere, linkable, works offline, proactive, reliable). Reliability is its precondition: nothing may break silently.
+3. **MARVIN raises the human experience.** *Why it exists.* A Jarvis-like partner that streamlines and optimises its user's life and work and actively protects their balance between the two. It leaves people more capable, present, rested and engaged, never more passive: technology that raises what a human can do and be, not technology that breeds sloth. Built first for its developer, meant to serve anyone who uses it, and humanity in general, as well or better. *Test:* after this, is the user more able and more free, or just doing less? This is the north star that can argue *against* automating something: when doing a thing themselves makes the user better (learning, judgment, their own voice), coach rather than take over.
 
 ## Guiding principles
 
@@ -22,4 +23,4 @@ The single source for what MARVIN is aiming at and how it should be built (ADR 0
 
 ## Applying them to a piece of work
 
-State a short **north-star fit**: what it reuses before adding anything new, why it is the simplest sufficient approach, where it saves tokens (or why it spends them), and anything it does for the phone-OS direction. If a north star argues against the work, say so plainly. Grounded, not agreeable.
+State a short **north-star fit**: what it reuses before adding anything new, why it is the simplest sufficient approach, where it saves tokens (or why it spends them), what it does for the phone-OS direction, and whether it leaves the user more capable or just more passive. If a north star argues against the work, say so plainly. Grounded, not agreeable.

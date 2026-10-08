@@ -1113,7 +1113,10 @@ A GitHub 5xx (`remote: Internal Server Error`, HTTP 500, 503) is classified `GIT
   (minimise tokens / maximise capability and quality; MARVIN becomes the OS of Gil's own phone), the
   guiding principles (compounding leverage, research efficiency, composability, **verified, not
   assumed**) and the design philosophy (Watts check, Colton check, elegant sufficiency). It is the single
-  source every launch kind with the North-stars layer receives.
+  source every launch kind with the North-stars layer receives. **Third north star** (added 2026-10-08):
+  MARVIN raises the human experience. It's a partner that makes its user (and, in the hope, anyone who uses it)
+  more capable, present and balanced, never more passive. It is the *why*, next to the *how* (minimise
+  tokens) and the *where* (phone OS).
 - **North-star fit**: a short section on a ticket or plan saying what it reuses before adding anything
   new, why it's the simplest sufficient approach, where it saves (or spends) tokens, and what it does for
   the phone-OS direction. Written when a ticket is **created** and again by the Ticket planner.
