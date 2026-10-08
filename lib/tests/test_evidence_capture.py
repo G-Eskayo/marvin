@@ -253,13 +253,13 @@ def test_a_failed_screenshot_is_reported_not_fatal(tmp_path):
     import subprocess
 
     def broken(_path):
-        raise subprocess.CalledProcessError(1, ["node", "scripts/capture_screenshot.mjs"], stderr="electron.launch: Timeout 30000ms exceeded.")
+        raise subprocess.CalledProcessError(1, ["node", "scripts/capture_screenshot.mjs"], stderr="Timeout waiting for Electron CDP endpoint")
     result = ec.capture_dev_evidence(tmp_path, touches_ui=True, capture_screenshot=broken)
     assert result["na"] is False
-    assert "capture failed" in result["error"] and "Timeout 30000ms" in result["error"]
+    assert "capture failed" in result["error"] and "Timeout" in result["error"]
 
 
 def test_the_pr_says_loudly_that_the_screenshot_failed():
     import mr_raiser
-    text = mr_raiser._format_dev_evidence({"na": False, "error": "capture failed: electron.launch: Timeout 30000ms exceeded."})
-    assert "⚠" in text and "not verified" in text and "Timeout 30000ms" in text
+    text = mr_raiser._format_dev_evidence({"na": False, "error": "capture failed: Timeout waiting for Electron CDP endpoint"})
+    assert "⚠" in text and "not verified" in text and "Timeout" in text
