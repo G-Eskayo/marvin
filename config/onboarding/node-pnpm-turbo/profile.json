@@ -1,0 +1,38 @@
+{
+  "name": "node-pnpm-turbo",
+  "family": "node",
+  "detect": {
+    "file_any": [
+      "pnpm-workspace.yaml",
+      "turbo.json"
+    ]
+  },
+  "priority": 15,
+  "ci_contains_any": [
+    "pnpm test",
+    "pnpm run test",
+    "turbo run test",
+    "turbo test"
+  ],
+  "requires_tools": [
+    "node",
+    "pnpm"
+  ],
+  "macos_runner": false,
+  "generated_candidates": [
+    {
+      "path": "node_modules",
+      "confirm": true
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "unless": "package.json",
+      "confirm": true
+    },
+    {
+      "path": ".turbo",
+      "confirm": true
+    }
+  ],
+  "profile_fragment": {}
+}
