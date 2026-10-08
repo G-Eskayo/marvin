@@ -27,7 +27,7 @@ export function createThreadStore(opts = {}) {
   }
 
   return {
-    append({ source, role, text, sessionId = null }) {
+    append({ source, role, text, sessionId = null, clientId = null, ts = null }) {
       // Validate source
       const validSources = ['chat', 'voice', 'proactive', 'offline']
       if (!validSources.includes(source)) {
@@ -40,12 +40,21 @@ export function createThreadStore(opts = {}) {
         role,
         text,
         sessionId,
-        ts: Date.now()
+        clientId,
+        ts: ts ?? Date.now()
       }
 
       state.messages.push(message)
       persist()
       return message
+    },
+
+    hasClientId(clientId) {
+      return state.messages.some(m => m.clientId === clientId)
+    },
+
+    findByClientId(clientId) {
+      return state.messages.filter(m => m.clientId === clientId)
     },
 
     backfillSession(messageId, sessionId) {

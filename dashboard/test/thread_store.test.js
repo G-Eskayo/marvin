@@ -51,6 +51,33 @@ describe('thread_store', () => {
       expect(state.messages[0].sessionId).toBeNull()
     })
 
+    it('appends a message with optional clientId', async () => {
+      const store = createThreadStore({ path: path.join(tempDir, 'thread.json') })
+
+      store.append({
+        source: 'offline',
+        role: 'user',
+        text: 'offline message',
+        clientId: 'client-123'
+      })
+
+      const state = store.getState()
+      expect(state.messages[0].clientId).toBe('client-123')
+    })
+
+    it('appends a message with clientId null by default', async () => {
+      const store = createThreadStore({ path: path.join(tempDir, 'thread.json') })
+
+      store.append({
+        source: 'chat',
+        role: 'user',
+        text: 'hello'
+      })
+
+      const state = store.getState()
+      expect(state.messages[0].clientId).toBeNull()
+    })
+
     it('validates source field', async () => {
       const store = createThreadStore({ path: path.join(tempDir, 'thread.json') })
 
@@ -305,6 +332,93 @@ describe('thread_store', () => {
       expect(state).toHaveProperty('currentSessionId')
       expect(state).toHaveProperty('pendingSummary')
       expect(state).toHaveProperty('sessions')
+    })
+  })
+
+  describe('hasClientId', () => {
+    it('returns true if clientId exists in messages', async () => {
+      const store = createThreadStore({ path: path.join(tempDir, 'thread.json') })
+
+      store.append({
+        source: 'offline',
+        role: 'user',
+        text: 'message',
+        clientId: 'client-abc'
+      })
+
+      expect(store.hasClientId('client-abc')).toBe(true)
+    })
+
+    it('returns false if clientId does not exist', async () => {
+      const store = createThreadStore({ path: path.join(tempDir, 'thread.json') })
+
+      store.append({
+        source: 'offline',
+        role: 'user',
+        text: 'message',
+        clientId: 'client-abc'
+      })
+
+      expect(store.hasClientId('client-xyz')).toBe(false)
+    })
+
+    it('survives reload from disk', async () => {
+      const filePath = path.join(tempDir, 'thread.json')
+      const store1 = createThreadStore({ path: filePath })
+
+      store1.append({
+        source: 'offline',
+        role: 'user',
+        text: 'message',
+        clientId: 'client-persisted'
+      })
+
+      const store2 = createThreadStore({ path: filePath })
+      expect(store2.hasClientId('client-persisted')).toBe(true)
+    })
+  })
+
+  describe('findByClientId', () => {
+    it('returns messages with matching clientId', async () => {
+      const store = createThreadStore({ path: path.join(tempDir, 'thread.json') })
+
+      store.append({
+        source: 'offline',
+        role: 'user',
+        text: 'message 1',
+        clientId: 'client-1'
+      })
+      store.append({
+        source: 'offline',
+        role: 'user',
+        text: 'message 2',
+        clientId: 'client-1'
+      })
+      store.append({
+        source: 'offline',
+        role: 'user',
+        text: 'message 3',
+        clientId: 'client-2'
+      })
+
+      const matches = store.findByClientId('client-1')
+      expect(matches).toHaveLength(2)
+      expect(matches[0].text).toBe('message 1')
+      expect(matches[1].text).toBe('message 2')
+    })
+
+    it('returns empty array if no matches', async () => {
+      const store = createThreadStore({ path: path.join(tempDir, 'thread.json') })
+
+      store.append({
+        source: 'offline',
+        role: 'user',
+        text: 'message',
+        clientId: 'client-1'
+      })
+
+      const matches = store.findByClientId('client-nonexistent')
+      expect(matches).toEqual([])
     })
   })
 
