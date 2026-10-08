@@ -76,17 +76,26 @@ export async function fetchCrossProjectIssues(repo, registryRepos = [], gh) {
   const hit = crossProjectCache.get(cacheKey)
   if (hit && Date.now() - hit.at < CROSS_PROJECT_TTL_MS) return hit.issues
 
-  // Fetch: one search call covering all other registered repos with this project's label.
-  const fields = 'number,title,state,stateReason,labels,body,url,createdAt,updatedAt,closedAt,repository'
+  // Fetch: one search call covering all other registered repos with this project's label. `gh search issues`
+  // supports fewer fields than `gh issue list` (no stateReason) and returns 30 by default.
+  const fields = 'number,title,state,labels,body,url,createdAt,updatedAt,closedAt,repository'
   const args = [
     'search',
     'issues',
     '--label', `project:${thisProjectId}`,
+    '--limit', '300',
     '--json', fields
   ]
   for (const r of otherRepos) args.push('--repo', r)
 
-  const json = await gh(args)
+  let json
+  try {
+    json = await gh(args)
+  } catch (e) {
+    // The project's own tickets still show; this part retries on the next load (not cached).
+    console.error(`[boards] cross-project tickets for ${repo} unavailable: ${String(e.message || e).slice(0, 200)}`)
+    return []
+  }
   const issues = JSON.parse(json).map((issue) => ({
     ...issue,
     state: issue.state.toUpperCase(),
