@@ -8,6 +8,8 @@ from pathlib import Path
 LIB = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(LIB))
 
+import json
+
 import ticket_promotion as tp  # noqa: E402
 
 
@@ -105,23 +107,56 @@ def test_default_evaluator_parses_no_decision(monkeypatch):
     assert "standalone win only" in result["reasoning"]
 
 
-# ── default ticket_creator (mocked subprocess, runs to-prd headlessly) ─────
+# ── default ticket_creator: the model writes the ticket, code creates it (marvin#305) ─────
 
-def test_default_ticket_creator_invokes_to_prd_and_returns_ticket_ref(monkeypatch):
+def test_default_ticket_creator_writes_with_a_model_and_creates_a_needs_triage_issue(monkeypatch):
     calls = []
 
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
         class R:
-            stdout = "Published the PRD.\nTICKET_URL: https://github.com/G-Eskayo/marvin/issues/50"
             returncode = 0
+            stderr = ""
+            stdout = (json.dumps({"result": "TITLE: Embed the roadmap sections\n---\n## What to build\nX.\n\n## North-star fit\nReuses Y."})
+                      if "-p" in cmd else json.dumps({"html_url": "https://github.com/G-Eskayo/marvin/issues/50"}))
         return R()
 
     monkeypatch.setattr(tp.subprocess, "run", fake_run)
     ref = tp._default_ticket_creator("some finding text", "unlocks three future items")
 
     prompt = calls[0][calls[0].index("-p") + 1]
-    assert "/to-prd" in prompt
-    assert "some finding text" in prompt
-    assert "unlocks three future items" in prompt
+    assert "some finding text" in prompt and "unlocks three future items" in prompt and "North-star fit" in prompt
+    create = calls[1]
+    assert create[:3] == ["gh", "api", "repos/G-Eskayo/marvin/issues"]
+    assert "title=Embed the roadmap sections" in create and "labels[]=needs-triage" in create
+    body = create[create.index("-f", create.index("title=Embed the roadmap sections")) + 1]
+    assert body.startswith("body=## What to build") and "ticket promotion" in body
     assert ref == "https://github.com/G-Eskayo/marvin/issues/50"
+
+
+def test_a_ticket_the_model_did_not_write_is_not_created(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            returncode, stderr, stdout = 0, "", json.dumps({"result": "I could not do that."})
+        return R()
+
+    monkeypatch.setattr(tp.subprocess, "run", fake_run)
+    assert tp._default_ticket_creator("f", "r") is None
+    assert len(calls) == 1
+
+
+def test_a_finding_that_is_already_done_creates_nothing(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            returncode, stderr, stdout = 0, "", json.dumps({"result": "NOTHING_LEFT"})
+        return R()
+
+    monkeypatch.setattr(tp.subprocess, "run", fake_run)
+    assert tp._default_ticket_creator("f", "r") == tp.NOTHING_LEFT
+    assert len(calls) == 1

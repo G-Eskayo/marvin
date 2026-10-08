@@ -258,7 +258,8 @@ OUTCOME_CHECK_MACHINE = "mac-mini-1"  # one Mac measures and comments, so the tw
 
 
 def _default_outcome_check() -> None:
-    """Purpose metrics whose check date has passed get measured and recorded on their ticket (marvin#304)."""
+    """Purpose metrics whose check date has passed get measured and recorded on their ticket (marvin#304), and the
+    top pending suggestions go through ticket promotion (marvin#305)."""
     try:
         import machine_profile
         if machine_profile.registry_id() != OUTCOME_CHECK_MACHINE:
@@ -267,6 +268,12 @@ def _default_outcome_check() -> None:
         purpose_metrics.run()
     except Exception as exc:  # noqa: BLE001 -- never let it stop the sweep; retried tomorrow
         print(f"[cleanup-sweep] outcome check failed: {exc}", file=sys.stderr)
+    try:
+        # Ticket promotion: the consumer the analysts' suggestions never had (marvin#305), top few per day.
+        import output_contracts
+        output_contracts.run_promotion()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[cleanup-sweep] ticket promotion failed: {exc}", file=sys.stderr)
 
 
 def run_daily_sweep(

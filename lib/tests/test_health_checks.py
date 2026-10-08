@@ -1214,3 +1214,9 @@ def test_missed_purposes_are_red_and_an_unreadable_list_is_yellow():
     assert red[0]["severity"] == "red" and "#277 Allow read-only tools" in red[0]["detail"]
     assert hc.check_missed_purposes(lambda: [])[0]["severity"] == "green"
     assert hc.check_missed_purposes(lambda: (_ for _ in ()).throw(OSError("rate limited")))[0]["severity"] == "yellow"
+
+
+def test_output_contracts_reach_health(monkeypatch):
+    import output_contracts
+    monkeypatch.setattr(output_contracts, "health_findings", lambda: [{"id": "contract:x", "severity": "red"}])
+    assert hc.check_output_contracts() == [{"id": "contract:x", "severity": "red"}]
