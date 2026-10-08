@@ -172,14 +172,29 @@
   "writer_module_owners": {
     "ticket_stages": "ticket-pipeline",
     "project_catalog": "ticket-pipeline",
+    "ticket_evidence": "ticket-pipeline",
+    "ticket_queue": "ticket-pipeline",
     "tool_usage": "usage-scan",
-    "session_usage": "usage-scan"
+    "session_usage": "usage-scan",
+    "usage_report": "usage-scan",
+    "health_checks": "health-check"
   },
 
+  "_writer_helpers": "Modules that write on behalf of their callers: a script calling job_events.job_run feeds the Activity tab's job runs.",
+  "writer_helpers": ["job_events", "ticket_stages"],
+
+  "_dashboard_tab_readers": "Keys are the tab NODE ids; files are relative to dashboard/electron/main. A missing file or key is warned about by generate.py.",
   "dashboard_tab_readers": {
-    "health": ["health.js"],
-    "metrics": ["metrics.js"],
-    "activity": ["activity.js", "../webhook-server/ticket_stages.js"],
-    "docs": ["catalog.js", "docs_service.js", "docs_local.js", "docs.js"]
+    "Health tab": ["health.js"],
+    "Metrics tab": ["metrics.js", "usage_report.js"],
+    "Activity tab": ["activity.js", "jobs.js", "boards.js", "queue.js", "../../webhook-server/ticket_stages.js"],
+    "Docs tab": ["catalog.js", "docs_service.js", "docs_local.js", "docs.js"],
+    "MR Review tab": ["mr_review.js"],
+    "Portfolio tab": ["portfolio.js"]
+  },
+
+  "_skill_projects": "Skill -> project node when the names differ (a project:<skill> node is matched automatically).",
+  "skill_projects": {
+    "portfolio-page": "portfolio-website-updater"
   }
 }

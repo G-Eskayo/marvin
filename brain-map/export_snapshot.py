@@ -283,7 +283,7 @@ def export_snapshot(commit: str = "HEAD", out_dir: str | Path = SNAPSHOT_DIR) ->
     tree = generate.build_tree(manifest, enrichment)
     generate.attach_layout(tree)
     generate.attach_code_layers(tree)
-    synapses = generate.build_synapses(manifest, enrichment)
+    synapses = generate.all_synapses(manifest, enrichment, tree)  # every thread type, same as the local page
 
     # Apply privacy filters
     allowlist = tracked_files_at_commit(commit)

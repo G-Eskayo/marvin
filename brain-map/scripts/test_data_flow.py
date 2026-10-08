@@ -253,3 +253,59 @@ if __name__ == "__main__":
     print("✓ test_match_threads_empty")
 
     print("\nAll tests passed!")
+
+
+# ── 2026-10-08: feeds never drew (docs/plans/map-connections-2026-10-08.md) ──────────────────────────────────
+
+from data_flow import discover_readers, discover_writers, extract_js_reader_paths  # noqa: E402
+
+
+def test_js_reader_paths_any_name_and_lib_scripts():
+    source = '''
+const VENV_PYTHON = path.join(homedir(), '.agents', 'venv', 'bin', 'python')
+const HEALTH_CHECKS_SCRIPT = path.join(homedir(), '.agents', 'lib', 'health_checks.py')
+export const HEALTH_STATUS_PATH = path.join(homedir(), '.claude', 'logs', 'health-status.json')
+  const evalScript = path.join(agentsDir, 'lib', 'portfolio_eval.py')
+'''
+    paths = extract_js_reader_paths(source)
+    assert "~/.claude/logs/health-status.json" in paths
+    assert "lib/health_checks.py" in paths
+    assert "lib/portfolio_eval.py" in paths
+    assert not any("venv" in p for p in paths)  # the interpreter is not data
+
+
+def test_discover_readers_uses_tab_node_ids_and_warns_on_missing_files(tmp_path):
+    (tmp_path / "jobs.js").write_text("export const JOBS_DIR = path.join(homedir(), '.claude', 'logs', 'jobs')\n")
+    warnings = []
+    readers = discover_readers({"Activity tab": ["jobs.js", "gone.js"]}, tmp_path, warnings)
+    assert [(r["tab_id"], r["path"]) for r in readers] == [("Activity tab", "~/.claude/logs/jobs")]
+    assert len(warnings) == 1 and "gone.js" in warnings[0]
+
+
+def _lib(tmp_path, files):
+    lib = tmp_path / "lib"
+    lib.mkdir()
+    for name, src in files.items():
+        (lib / name).write_text(src)
+    return lib
+
+
+def test_writers_include_the_script_itself_and_helper_paths(tmp_path):
+    lib = _lib(tmp_path, {
+        "job_events.py": 'JOBS_DIR = Path.home() / ".claude" / "logs" / "jobs"\n',
+        "ticket_pipeline.py": "import job_events\nwith job_events.job_run('x', 'y'):\n    pass\n",
+        "unowned.py": "import job_events\njob_events.job_run('a', 'b')\n",
+    })
+    tree = {"id": "root", "children": [{"id": "ticket-pipeline", "path": "lib/ticket_pipeline.py", "children": []}]}
+    writers = discover_writers(lib, {}, tree, helpers=["job_events"], repo_root=tmp_path)
+    got = sorted((w["node_id"], w["path"]) for w in writers)
+    assert got == [("ticket-pipeline", "lib/ticket_pipeline.py"), ("ticket-pipeline", "~/.claude/logs/jobs")]
+
+
+def test_match_threads_collapses_duplicate_pairs():
+    writers = [WriterRecord(node_id="usage-scan", path=p, source_file="lib/s.py") for p in ("~/a", "~/b")]
+    readers = [ReaderRecord(tab_id="Metrics tab", path=p, source_file="m.js") for p in ("~/a", "~/b")]
+    threads, gaps = match_threads(writers, readers)
+    assert [(t["a"], t["b"]) for t in threads] == [("usage-scan", "Metrics tab")]
+    assert "~/a" in threads[0]["label"] and "~/b" in threads[0]["label"]
+    assert gaps == []
