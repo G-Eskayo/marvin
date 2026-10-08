@@ -119,3 +119,28 @@ def test_extra_repos_are_not_registered_twice_or_when_malformed(tmp_path):
     path = tmp_path / "r.json"
     br.discover("o", gh=gh, path=path, extra_repos=["o/a", "not a repo", "o/a"])
     assert [b["repo"] for b in br.list_boards(path)] == ["o/a"]
+
+
+def test_archiving_a_repo_on_github_retires_its_board(tmp_path):
+    """2026-10-08: Personal-Website and Portfolio_Website (old versions of the portfolio site) kept their boards, so the
+    hourly onboarding added labels to them. Archiving a repo on GitHub now takes it off the dashboard too."""
+    path = tmp_path / "r.json"
+    br.ensure_board("o/old-site", path=path)
+    br.ensure_board("o/live", path=path)
+
+    def gh(args):
+        if args[:2] == ["repo", "list"]:
+            return json.dumps([{"nameWithOwner": "o/old-site", "isArchived": True},
+                               {"nameWithOwner": "o/live", "isArchived": False}])
+        return "[]"
+    br.discover("o", gh=gh, path=path)
+    assert [b["repo"] for b in br.list_boards(path)] == ["o/live"]
+
+
+def test_a_failed_repo_list_retires_nothing(tmp_path):
+    path = tmp_path / "r.json"
+    br.ensure_board("o/live", path=path)
+    def gh(args):
+        raise RuntimeError("offline")
+    br.discover("o", gh=gh, path=path)
+    assert [b["repo"] for b in br.list_boards(path)] == ["o/live"]
