@@ -605,9 +605,9 @@ def check_parallel_dispatch() -> dict:
 	inflight = tp._inflight_by_repo(repos)
 	local_base = tp._local_slots_used()
 
-	def select_for_profile_impl(profile, s, t, l, rf):
+	def select_for_profile_impl(profile, settings, taken=None, local_base=0, refusals=None):
 		return tp._select_for_profile(profile if profile else {"machines": list(tp.MARVIN_MACHINES)},
-		                               s, t, l, rf)
+		                               settings, taken=taken, local_base=local_base, refusals=refusals)
 
 	severity, detail = evaluate_parallel_dispatch(settings, pools, inflight, local_base, select_for_profile_impl)
 	return _result(cid, label, severity, detail)
