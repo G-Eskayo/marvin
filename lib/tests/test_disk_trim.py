@@ -125,7 +125,7 @@ def test_trim_is_noop_when_disk_healthy(fixture_tree, monkeypatch):
     removed = dt.trim(dry_run=False)
 
     assert (fixture_tree / ".npm" / "_cacache" / "file1").exists() == initial_npm
-    assert len(removed) == 0 or removed == [], "Trim should be a no-op with healthy disk"
+    assert not removed, "Trim should be a no-op with healthy disk"
 
 
 def test_trim_dry_run_changes_nothing(fixture_tree, monkeypatch):

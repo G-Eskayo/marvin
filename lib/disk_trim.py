@@ -230,7 +230,7 @@ def trim(dry_run: bool = False) -> list[dict]:
 
     for trimmer, label in trimmers:
         if dry_run:
-            # In dry run, just record that we would trim
+            # In dry run, only record that we would trim
             removed.append({"path": label, "reclaimed_kb": 0, "dry_run": True})
             continue
 
