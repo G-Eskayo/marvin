@@ -167,5 +167,19 @@
     { "a": "cross-machine-merge", "b": "Cross-Machine Network", "label": "syncs qa-knowledge/research-feed across every device registered here", "type": "hook" }
   ],
 
-  "synapse_label_fallback": "declared calls: dependency"
+  "synapse_label_fallback": "declared calls: dependency",
+
+  "writer_module_owners": {
+    "ticket_stages": "ticket-pipeline",
+    "project_catalog": "ticket-pipeline",
+    "tool_usage": "usage-scan",
+    "session_usage": "usage-scan"
+  },
+
+  "dashboard_tab_readers": {
+    "health": ["health.js"],
+    "metrics": ["metrics.js"],
+    "activity": ["activity.js", "../webhook-server/ticket_stages.js"],
+    "docs": ["catalog.js", "docs_service.js", "docs_local.js", "docs.js"]
+  }
 }

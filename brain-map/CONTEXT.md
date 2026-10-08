@@ -31,3 +31,7 @@ Domain terms only. No implementation details — see `docs/adr/` for decisions a
   **snapshot** on the website (both layers, clickable, frozen, public data only).
 - **Locked node**: a private project shown by name on the snapshot but never openable — no code,
   no live events. Tells visitors what else is in progress without exposing it.
+- **Feeds** (thread kind): a data flow from a library module to a dashboard tab, detected by matching
+  path constants (e.g., `STAGES_DIR = ~/.agents/stages` in writer → `STAGES_DIR = path.join(homedir(), '.agents', 'stages')` in reader).
+  Distinct from `calls:` (direct code dependency), `hook`/`cron` (infrastructure wiring), and `undeclared` (real dependency not in frontmatter).
+  Rendered with a unique dash pattern (`— — —`) per ADR 0055.
