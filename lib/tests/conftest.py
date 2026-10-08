@@ -171,3 +171,16 @@ def _isolate_ticket_evidence(monkeypatch):
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "real_preflight: run sandbox_orchestration's real worktree preflight (git), not the stub")
+
+
+@pytest.fixture(autouse=True)
+def _no_real_github(tmp_path_factory, monkeypatch):
+    # Tests must never reach real GitHub: a suite run was editing a real ticket's labels (marvin#20) and spending the
+    # account's API budget (found 2026-10-08). A `gh` that refuses everything comes first on PATH; tests that need gh
+    # behaviour mock it.
+    import os
+    bin_dir = tmp_path_factory.mktemp("no-gh")
+    fake = bin_dir / "gh"
+    fake.write_text("#!/bin/sh\necho 'gh is disabled in tests' >&2\nexit 1\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
