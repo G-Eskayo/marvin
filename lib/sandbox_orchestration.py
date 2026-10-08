@@ -34,6 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
+import marvin_launcher
 import metrics_registry as mr
 import project_profile as pp
 import ticket_stages as ts
@@ -79,24 +80,12 @@ _EXEC_ALLOWED_TOOLS = (
 )
 
 
-def _run_claude(cmd: list[str], **kwargs) -> tuple[str, float]:
-    """Runs a `claude -p ... --output-format json` call and returns
-    (result_text, cost_usd). Centralized here (2026-10-01, per Gil's ask
-    for usage visibility alongside Health/Metrics) so every claude -p call
-    this module makes reports its real cost, not just its text output --
-    feeds ticket_stages.py's per-stage cost field, which in turn feeds the
-    same metrics_registry anomaly layer the Health tab already uses."""
-    if cmd and cmd[0] == "claude":
-        # Resolve the binary here rather than trusting the inherited PATH: a run started from a shell without
-        # ~/.local/bin (SSH from the laptop, 2026-10-06) failed every re-dispatch until the breaker tripped.
-        from claude_bin import resolve_claude_bin
-        cmd = [resolve_claude_bin(), *cmd[1:]]
-    proc = subprocess.run(cmd + ["--output-format", "json"], capture_output=True, text=True, **kwargs)
-    try:
-        parsed = json.loads(proc.stdout)
-    except json.JSONDecodeError:
-        return proc.stdout, 0.0
-    return parsed.get("result", proc.stdout), parsed.get("total_cost_usd", 0.0) or 0.0
+def _launch(kind: str, prompt: str, *, ticket_ref: str, **kwargs) -> tuple[str, float]:
+    """Every model run this module makes goes through the MARVIN launcher (ADR 0059, marvin#302), which
+    adds the kind's layers of MARVIN context, resolves the claude binary, and records the run with its
+    real cost and tokens. Returns (result_text, cost_usd) for ticket_stages' per-stage cost field."""
+    result = marvin_launcher.launch(kind, prompt, ticket=ticket_ref, **kwargs)
+    return result.text, result.cost_usd
 
 
 def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | None, profile: dict | None = None,
@@ -136,7 +125,6 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
         import project_profile as pp
         notes = pp.executor_notes(profile)
         project_notes = f"\n\nProject notes:\n{notes}" if notes else ""
-    run_kwargs = {"env": env} if env is not None else {}
     # `gh issue view owner/repo#17` is rejected by gh; the working form names the repo with --repo.
     m = re.fullmatch(r"([\w.-]+/[\w.-]+)#(\d+)", ticket_ref)
     view = f"gh issue view {m.group(2)} --repo {m.group(1)}" if m else f"gh issue view {ticket_ref}"
@@ -154,10 +142,9 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
             f"Adjust the plan to address this before trying again."
         )
     ticket_number = _parse_ticket_number(ticket_ref)
-    plan, plan_cost = _run_claude(
-        ["claude", "-p", plan_prompt, "--model", FLAGSHIP_MODEL,
-         "--permission-mode", "dontAsk", "--allowedTools", _PLAN_ALLOWED_TOOLS],
-        cwd=worktree_path, timeout=PLAN_TIMEOUT_S, **run_kwargs,
+    plan, plan_cost = _launch(
+        "ticket-planner", plan_prompt, ticket_ref=ticket_ref, model=FLAGSHIP_MODEL,
+        allowed_tools=_PLAN_ALLOWED_TOOLS, cwd=worktree_path, timeout=PLAN_TIMEOUT_S, env=env,
     )
     _stage(ticket_ref, "executing", "started", "planning call", cost_usd=plan_cost)
 
@@ -182,10 +169,10 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
         f"absolute path elsewhere. {import_advice}\n\n"
         f"Implement this plan in the current working tree:\n\n{plan}"
     )
-    exec_cmd = ["claude", "-p", exec_prompt, "--model", HAIKU_MODEL, "--permission-mode", "dontAsk", "--allowedTools", allowed_tools]
-    if disallowed_tools:
-        exec_cmd += ["--disallowedTools", disallowed_tools]
-    _, exec_cost = _run_claude(exec_cmd, cwd=worktree_path, timeout=EXEC_TIMEOUT_S, **run_kwargs)
+    _, exec_cost = _launch(
+        "ticket-executor", exec_prompt, ticket_ref=ticket_ref, model=HAIKU_MODEL, allowed_tools=allowed_tools,
+        disallowed_tools=disallowed_tools or None, cwd=worktree_path, timeout=EXEC_TIMEOUT_S, env=env,
+    )
     _stage(ticket_ref, "executing", "passed", "execution call", cost_usd=exec_cost)
     return plan
 

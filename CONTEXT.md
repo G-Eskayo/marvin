@@ -1051,7 +1051,7 @@ A GitHub 5xx (`remote: Internal Server Error`, HTTP 500, 503) is classified `GIT
 ## MARVIN context and launch kinds (in design, 2026-10-08; tickets #291, #274, #276)
 
 - **MARVIN context**: the layers that make a Claude session *MARVIN* rather than plain Claude: **Rules**
-  (the global CLAUDE.md and its routing table), **North stars** (the roadmap's north-star block),
+  (the global CLAUDE.md and its routing table), **North stars** (`docs/north-stars.md`),
   **Memory**, **Lexicon**, **Skills**, the **Session report** (the session-start checklist output) and
   **Hooks** (telemetry and safety). Not the same as "the MARVIN repo" (`~/.agents`, the code) or "a MARVIN
   session" (one conversation).
@@ -1109,8 +1109,8 @@ A GitHub 5xx (`remote: Internal Server Error`, HTTP 500, 503) is classified `GIT
     tokens, and records the run for Metrics and Health. Anything new goes through it.
   - **Output contract**: every producer (analyst, health check, digest, job) declares where its output
     goes and who acts on it. Output nobody consumes in time becomes a Health finding, not a silent pile.
-- **North stars** live in `docs/north-stars.md` (moved there 2026-10-08 from the roadmap): two north stars
-  (minimise tokens / maximise capability and quality; MARVIN becomes the OS of Gil's own phone), the
+- **North stars** live in `docs/north-stars.md` (moved there 2026-10-08 from the roadmap): three north stars
+  (minimise tokens / maximise capability and quality; MARVIN becomes the OS of Gil's own phone; MARVIN raises the human experience), the
   guiding principles (compounding leverage, research efficiency, composability, **verified, not
   assumed**) and the design philosophy (Watts check, Colton check, elegant sufficiency). It is the single
   source every launch kind with the North-stars layer receives. **Third north star** (added 2026-10-08):
