@@ -42,7 +42,7 @@ def test_scan_for_private_content_allows_public_content():
     """Ensure public content passes without leaks."""
     html = '<div>MARVIN is an autonomous agent system.</div>'
     leaks = ds.scan_for_private_content(html)
-    assert len(leaks) == 0, f"Public content flagged as leak: {leaks}"
+    assert not leaks, f"Public content flagged as leak: {leaks}"
 
 
 def test_validate_snapshot_files_requires_html():

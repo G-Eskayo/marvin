@@ -31,7 +31,7 @@ EXTRA_LOCAL = [HOME / ".agents"]
 MEMORY_DIR = HOME / ".claude" / "projects" / ("-" + str(HOME).strip("/").replace("/", "-")) / "memory"
 
 PORTFOLIO_REPO_ID = "portfolio-website-updater"
-_PORTFOLIO_DEFAULT = HOME / "Documents" / "Projects" / "portfolio-website-updater"
+_PORTFOLIO_DEFAULT = HOME / "Developer" / "portfolio-website-updater"  # moved out of iCloud ~/Documents, #192
 
 ACTIVE_DAYS, RECENT_DAYS = 30, 180
 STOP = {"ml", "ai", "project", "projects", "using", "and", "the", "of", "for", "in", "a", "an", "powered", "full", "with", "to"}
@@ -461,20 +461,44 @@ def _local_record(p: Path) -> dict:
                      "adrCount": len(list(adr_dir.glob("*.md"))) if adr_dir.is_dir() else 0}}
 
 
-def discover_local(roots=None, extra=None) -> list[dict]:
+def previous_local_records(cat: dict | None) -> list[dict]:
+    """Local records rebuilt from the last catalog, so a folder that can't be read this time keeps its projects."""
+    out = []
+    for p in (cat or {}).get("projects", []):
+        for path in p.get("localPaths") or []:
+            out.append({"path": path, "name": Path(path).name, "origin": (p.get("repo") or "").split("/")[-1] or None,
+                        "last_activity": p.get("lastActivity"), "worktree": False,
+                        "docs": p.get("docs") or {"context": False, "readme": False, "adrCount": 0}})
+    return out
+
+
+def discover_local(roots=None, extra=None, previous=None) -> list[dict]:
+    """Project folders under the local roots. A root that exists but can't be listed (the mini's iCloud ~/Documents
+    answered "Interrupted system call" on 2026-10-08 and failed the whole refresh) is skipped with a warning, and the
+    projects the last catalog had under it are kept (`previous`, default: the last catalog's local records)."""
     out = []
     for root in (LOCAL_ROOTS if roots is None else roots):
         if not root.is_dir():
             continue
-        for child in sorted(root.iterdir()):
-            if child.name.startswith(".") or not child.is_dir():
-                continue
-            if child.name == "experiments":  # a folder of projects, not a project
-                for sub in sorted(child.iterdir()):
-                    if sub.is_dir() and not sub.name.startswith("."):
-                        out.append(_local_record(sub))
-            else:
-                out.append(_local_record(child))
+        try:
+            found = []
+            for child in sorted(root.iterdir()):
+                if child.name.startswith(".") or not child.is_dir():
+                    continue
+                if child.name == "experiments":  # a folder of projects, not a project
+                    for sub in sorted(child.iterdir()):
+                        if sub.is_dir() and not sub.name.startswith("."):
+                            found.append(_local_record(sub))
+                else:
+                    found.append(_local_record(child))
+            out.extend(found)
+        except OSError as e:
+            if previous is None:
+                previous = previous_local_records(read_catalog(catalog_path()))
+            kept = [r for r in previous if r.get("path", "").startswith(str(root) + "/")]
+            print(f"project catalog: can't read {root} ({e}); kept {len(kept)} project(s) from the last catalog",
+                  file=sys.stderr)
+            out.extend(kept)
     for p in (EXTRA_LOCAL if extra is None else extra):
         if p.is_dir():
             out.append(_local_record(p))
