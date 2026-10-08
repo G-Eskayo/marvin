@@ -865,6 +865,7 @@ replaced by this automated path**: that gap is what this section closes.
    Crutches (a long design-process write-up with image/text rows outside the card) and SkineeDipping (a multi-section
    technical write-up). They are a different page type: they need either their sections folded into the card or a second
    "long-form project page" layout in the library: a design decision, not something to automate.
+11. **Done (2026-10-08):** style catalog and prompt builder (`lib/portfolio_styles.py`, `portfolio/image-styles.json`): data file of eight art styles and eight moods, with module functions to load, look up, and build image generation prompts from a project's public description. Task 1 of the image-maker initiative.
 
 ### Long-form project page (decided and built 2026-10-05)
 
