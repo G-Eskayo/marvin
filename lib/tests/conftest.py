@@ -130,6 +130,13 @@ def _isolate_fit_check(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_outcome_check(monkeypatch):
+    # The daily sweep measures purpose metrics and comments on tickets; never from a test.
+    import cleanup_sweep
+    monkeypatch.setattr(cleanup_sweep, "_default_outcome_check", lambda: None)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_project_profiles(tmp_path_factory, monkeypatch):
     # A real config/projects/*.json with dispatch "on" must never change what a test dispatches.
     import project_profile
