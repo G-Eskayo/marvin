@@ -12,6 +12,8 @@ import { createPendingActionsStore } from './pending_actions.js'
 import { createPermissionApiRouter } from './permission_api.js'
 import { createLiveChannel } from './live_channel.js'
 import { createLiveApiRouter } from './live_api.js'
+import { createOfflineApiRouter } from './offline_api.js'
+import { runSession } from './session_runner.js'
 
 const execFileP = promisify(execFile)
 
@@ -45,6 +47,7 @@ function getUptimeSeconds() {
 const dashboardApiRouter = createDashboardApiRouter()
 const threadStore = createThreadStore()
 const chatApiRouter = createChatApiRouter({ threadStore })
+const offlineApiRouter = createOfflineApiRouter({ threadStore, runSessionFn: runSession })
 const pendingActionStore = createPendingActionsStore()
 const permissionApiRouter = createPermissionApiRouter({ pendingActionStore })
 const liveChannel = createLiveChannel()
@@ -74,6 +77,10 @@ const server = createServer(async (req, res) => {
 
   // Route through chat API
   handled = await chatApiRouter(req, res)
+  if (handled) return
+
+  // Route through offline API
+  handled = await offlineApiRouter(req, res)
   if (handled) return
 
   // Route through live API
