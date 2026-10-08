@@ -269,6 +269,12 @@ def _check_digest(label: str, dirpath: Path) -> str | None:
     return f"{label} ready ({f.name}){extra}"
 
 
+def check_morning_brief() -> str | None:
+    """Today's morning brief (marvin#306), shown in full; showing it is what marks it read."""
+    import morning_brief
+    return morning_brief.show_today()
+
+
 def check_daily_digest() -> str | None:
     return _check_digest("today's daily digest", CLAUDE_DIR / "daily-digest")
 
@@ -296,6 +302,9 @@ def main() -> None:
     ) if n]
 
     sections = [identity]
+    brief = _safe(check_morning_brief)
+    if brief:
+        sections.append(brief.replace("# Morning brief", "## Morning brief", 1))
     if notes:
         sections.append("## Session-start checklist\n\n" + "\n".join(f"- {n}" for n in notes))
     else:
