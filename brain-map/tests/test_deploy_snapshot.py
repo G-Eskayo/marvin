@@ -159,7 +159,7 @@ if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 
 
-# ── ADR 0056: after a passing dev deploy, the map publishes itself to production when MARVIN_SNAPSHOT_PUBLISH=1 ──
+# ── ADR 0057: after a passing dev deploy, the map publishes itself to production when MARVIN_SNAPSHOT_PUBLISH=1 ──
 
 def _passing_steps(monkeypatch):
     monkeypatch.setattr(ds, "run_export_snapshot", lambda c: (True, "ok"))

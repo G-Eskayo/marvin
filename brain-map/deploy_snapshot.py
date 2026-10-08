@@ -39,7 +39,7 @@ HOME = Path.home()
 SNAPSHOT_DIR = HERE / "snapshot"
 SNAPSHOT_LOG = HOME / ".claude" / "logs" / "deploy-snapshot.log"
 SNAPSHOT_FLAG_ENABLED = bool(int(os.environ.get("MARVIN_SNAPSHOT_ENABLED", "0")))
-# ADR 0056: after the dev deploy passes, also put the map live (only deploy/marvin-map/ in the portfolio repo).
+# ADR 0057: after the dev deploy passes, also put the map live (only deploy/marvin-map/ in the portfolio repo).
 PUBLISH_ENABLED = bool(int(os.environ.get("MARVIN_SNAPSHOT_PUBLISH", "0")))
 
 # Portfolio deployment via wp-cli (same pattern as portfolio_apply.py)
@@ -305,7 +305,7 @@ def deploy_snapshot(commit: str = "HEAD", dry_run: bool = False, force: bool = F
         health_check_mark_failure(f"deployment failed: {detail}")
         return False
 
-    # Step 5: Production, the map only (ADR 0056), and only after every check above passed
+    # Step 5: Production, the map only (ADR 0057), and only after every check above passed
     if PUBLISH_ENABLED and not dry_run:
         ok, detail = publish_to_production()
         log_step("publish-production", ok, detail)
