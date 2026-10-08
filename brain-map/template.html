@@ -36,12 +36,13 @@
   html.embed-mode .hud-frame, html.embed-mode #stage::after,
   html.embed-mode header, html.embed-mode #legend, html.embed-mode #mode-toggle, html.embed-mode #mode-caption,
   html.embed-mode footer { display: none; }
-  /* full screen from the website: back to the wallpaper's dark look, with a way out that works by touch */
-  html.embed-mode.is-fullscreen, html.embed-mode.is-fullscreen body {
-    background: radial-gradient(ellipse 90% 70% at 50% 45%, #131a24 0%, var(--page-plane) 62%, #05070a 100%); }
-  #fs-close { display: none; position: fixed; top: 16px; right: 16px; z-index: 5; padding: 6px 12px; border-radius: 6px;
-    border: 1px solid var(--border); background: rgba(26,26,25,0.85); color: var(--text-primary); font-size: 12px; cursor: pointer; }
-  html.is-fullscreen #fs-close { display: block; }
+  /* the small preview on a page: the whole map is one button that grows it into the page's box */
+  html.embed-mode.small-map canvas { cursor: zoom-in; }
+  /* Reset: the full page and the box (not the wallpaper, not the small preview) */
+  #map-reset { position: fixed; bottom: 18px; left: 18px; z-index: 5; padding: 6px 12px; border-radius: 6px;
+    border: 1px solid var(--border); background: rgba(26,26,25,0.80); color: var(--text-primary); font-size: 12px; cursor: pointer; }
+  html.embed-mode #map-reset { border-color: #d6d5d0; background: #fff; color: #1f2937; }
+  html.small-map #map-reset, body.wallpaper-mode #map-reset { display: none; }
   #stage { position: fixed; inset: 0; }
   canvas { display: block; width: 100%; height: 100%; cursor: grab; }
   canvas:active { cursor: grabbing; }
@@ -224,7 +225,7 @@
     <div id="mode-caption">Illustrative functional analogy, not literal neuroscience — a lens for asking "what's this cluster's job, and what's it missing a connection to?"</div>
 
     <div id="tooltip"></div>
-    <button id="fs-close" class="mono" aria-label="Close full screen">close ✕</button>
+    <button id="map-reset" class="mono" aria-label="Reset the view">reset view</button>
     <div id="selection-note">Showing connections for <b id="sel-name" class="mono"></b><button id="sel-clear">clear ✕</button></div>
     <div id="code-layer-note">Viewing code for <b id="code-name" class="mono"></b><button id="code-close">← back</button></div>
     <div id="code-layer-tests-toggle"><span id="tests-label">test files</span><button id="tests-toggle">show</button></div>
@@ -252,48 +253,19 @@
   // page shows through, hover and drag kept; the wheel is left to the page so the map never traps scrolling.
   var EMBED = /[?&]embed=1\b/.test(location.search);
   if (EMBED) document.documentElement.classList.add("embed-mode");
+  if (EMBED && !/[?&]modal=1\b/.test(location.search)) document.documentElement.classList.add("small-map");
   // ?ink=dark — for a light page behind the transparent map (gileskayo.me is white): labels drawn dark instead of pale
   var INK_DARK = /[?&]ink=dark\b/.test(location.search);
   var LABEL_RGB = INK_DARK ? "31,41,55" : "230,237,243", LABEL_RGB_DIM = INK_DARK ? "75,85,99" : "139,152,165";
-  // Click the empty background on purpose (embed only) and the map fills the screen, dark like the wallpaper: light ink
-  // again, the wheel zooms. Esc or the close button returns. Where a frame can't go full screen (iPhone), the full map
-  // opens in a new tab instead. Gil, 2026-10-08: no "full screen" link, the background is the way in.
-  function isFullscreen() { return !!(document.fullscreenElement || document.webkitFullscreenElement); }
-  // ?modal=1 is the copy inside the page's popup: it never asks to expand again.
+  // ?modal=1 is the large copy inside the page's box: it never asks to expand again.
   var MODAL = /[?&]modal=1\b/.test(location.search);
-  // Gil, 2026-10-08: the map should pop up in a box on the same page, not leave it. Inside a frame, ask the page
-  // (it shows the popup and answers "marvin-map:expand-ack"); a page that doesn't answer gets full screen as before.
+  var SMALL = EMBED && !MODAL; // the preview on the page: any click grows it into the page's box
+  // Gil, 2026-10-08: clicking the map on the website grows it into a large white box on the SAME page. The map only
+  // asks its page ("marvin-map:expand"); the page draws the box. Nothing here ever goes full screen or opens a page.
   function expandMap() {
-    if (MODAL) return;
-    if (window.parent !== window) {
-      var answered = false;
-      var onAck = function (ev) {
-        if (ev.data && ev.data.type === "marvin-map:expand-ack") { answered = true; window.removeEventListener("message", onAck); }
-      };
-      window.addEventListener("message", onAck);
-      window.parent.postMessage({ type: "marvin-map:expand" }, "*");
-      setTimeout(function () { window.removeEventListener("message", onAck); if (!answered) goFullscreen(); }, 400);
-      return;
-    }
-    goFullscreen();
+    if (!SMALL || window.parent === window) return;
+    window.parent.postMessage({ type: "marvin-map:expand" }, "*");
   }
-  function goFullscreen() {
-    var el = document.documentElement, req = el.requestFullscreen || el.webkitRequestFullscreen;
-    if (req && document.fullscreenEnabled !== false) {
-      var r = req.call(el);
-      if (r && r.catch) r.catch(function () { window.open(location.pathname, "_blank"); });
-    } else {
-      window.open(location.pathname, "_blank");
-    }
-  }
-  function onFullscreenChange() {
-    var on = isFullscreen();
-    document.documentElement.classList.toggle("is-fullscreen", on);
-    LABEL_RGB = INK_DARK && !on ? "31,41,55" : "230,237,243";
-    LABEL_RGB_DIM = INK_DARK && !on ? "75,85,99" : "139,152,165";
-  }
-  document.addEventListener("fullscreenchange", onFullscreenChange);
-  document.addEventListener("webkitfullscreenchange", onFullscreenChange);
   /*__SNAPSHOT_FLAG__*/var SNAPSHOT = false;/*__SNAPSHOT_FLAG__*/
 
   // ── palette ──────────────────────────────────────────────────────────
@@ -648,16 +620,29 @@
 
   var yaw = 0.6, pitch = -0.2, camDist = 480;
   var dragging = false, moved = false, lastX = 0, lastY = 0;
-  var autoRotate = WALLPAPER || !REDUCE_MOTION;
+  var ROTATE_BY_DEFAULT = WALLPAPER || !REDUCE_MOTION;
+  var autoRotate = ROTATE_BY_DEFAULT;
+  // Gil, 2026-10-08: after someone has turned or zoomed it, and the pointer isn't on a node (nothing selected or
+  // open), it starts turning again after about 5 seconds. Times are draw() frame times, so tests can drive them.
+  var IDLE_RESUME_MS = 5000, frameNow = 0, lastInteraction = -Infinity;
+  function touched() { lastInteraction = frameNow; }
+  var DEFAULT_VIEW = { yaw: 0.6, pitch: -0.2, camDist: 480 };
+  function resetView() {
+    yaw = DEFAULT_VIEW.yaw; pitch = DEFAULT_VIEW.pitch; camDist = DEFAULT_VIEW.camDist; userZoomed = false;
+    selected = null; if (typeof selNote !== "undefined") selNote.classList.remove("show");
+    openNodeId = null; cameraTargetNode = null;
+    autoRotate = ROTATE_BY_DEFAULT; lastInteraction = -Infinity;
+  }
   var priorCamDist = 480; // saved when opening code layer, restored on close
 
   canvas.addEventListener("mousedown", function (ev) {
-    dragging = true; moved = false; autoRotate = false; lastX = ev.clientX; lastY = ev.clientY;
+    dragging = true; moved = false; autoRotate = false; touched(); lastX = ev.clientX; lastY = ev.clientY;
   });
   window.addEventListener("mouseup", function () { dragging = false; });
   window.addEventListener("mousemove", function (ev) {
     if (!dragging) return;
     if (Math.abs(ev.clientX - lastX) > 2 || Math.abs(ev.clientY - lastY) > 2) moved = true;
+    touched();
     yaw += (ev.clientX - lastX) * 0.006;
     pitch += (ev.clientY - lastY) * 0.006;
     pitch = Math.max(-1.4, Math.min(1.4, pitch));
@@ -667,9 +652,9 @@
   // by hand; after that, their zoom wins and clipping is theirs to choose.
   var userZoomed = false;
   canvas.addEventListener("wheel", function (ev) {
-    if (EMBED && !isFullscreen()) return; // inside a web page the wheel scrolls the page
+    if (SMALL) return; // the preview on the page: the wheel scrolls the page
     ev.preventDefault();
-    userZoomed = true;
+    userZoomed = true; autoRotate = false; touched();
     camDist = Math.max(120, Math.min(1300, camDist + ev.deltaY * 0.55));
   }, { passive: false });
 
@@ -993,7 +978,6 @@
     var mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
     var pick = pickAt(mx, my);
     hovered = pick.node; hoveredSynapse = pick.synapse;
-    canvas.style.cursor = EMBED && !MODAL && !isFullscreen() && !hovered && !hoveredSynapse && selected === null && openNodeId === null ? "zoom-in" : "";
 
     if (hovered) {
       tooltip.style.display = "block";
@@ -1045,6 +1029,7 @@
 
   canvas.addEventListener("click", function () {
     if (moved) return; // was a drag, not a click
+    if (SMALL) { expandMap(); return; } // the preview: any click grows it into the page's box
     if (hovered) {
       // Openable nodes (skills, agents, hooks, dashboard tabs) toggle code layer view
       if (hovered.openable) {
@@ -1061,14 +1046,10 @@
       if (selected) { selNote.classList.add("show"); document.getElementById("sel-name").textContent = selected; }
       else selNote.classList.remove("show");
     } else if (!hoveredSynapse) {
-      var wasBusy = selected !== null || openNodeId !== null;
       selected = null; selNote.classList.remove("show");
-      if (EMBED && !MODAL && !wasBusy && !isFullscreen()) expandMap();
     }
   });
-  document.getElementById("fs-close").addEventListener("click", function () {
-    (document.exitFullscreen || document.webkitExitFullscreen).call(document);
-  });
+  document.getElementById("map-reset").addEventListener("click", resetView);
   document.getElementById("sel-clear").addEventListener("click", function () {
     selected = null; selNote.classList.remove("show");
   });
@@ -1119,6 +1100,7 @@
   var lastFrameTime = null;
   window.framesDrawn = 0;
   function draw(now) {
+    frameNow = now;
     ctx.clearRect(0, 0, W, H);
     var elapsed = (now - t0) / 1000;
     CURRENT_ELAPSED = elapsed;
@@ -1171,6 +1153,8 @@
         }
         cameraTargetNode = null;
       }
+      if (!autoRotate && ROTATE_BY_DEFAULT && !dragging && !hovered && selected === null && openNodeId === null &&
+          now - lastInteraction > IDLE_RESUME_MS) autoRotate = true;
       if (autoRotate && !dragging) yaw += 0.048 * dt; // ≈ same visual speed as the original 0.0008/call at a 60fps reference
     }
 
@@ -1530,7 +1514,10 @@
     showTests: function (v) { if (arguments.length) showTests = !!v; return showTests; },
     fitScale: function () { return fitScale; },
     snapshot: function () { return SNAPSHOT; },
-    steady: function () { return { fit: steadyFit, key: steadyKey }; }
+    steady: function () { return { fit: steadyFit, key: steadyKey }; },
+    rotating: function () { return autoRotate; },
+    view: function () { return { yaw: yaw, pitch: pitch, camDist: camDist, userZoomed: userZoomed }; },
+    reset: resetView
   };
 
   function quadPoint(p0, p1, p2, t) {
