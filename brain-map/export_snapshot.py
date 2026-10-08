@@ -271,6 +271,23 @@ def copy_local_assets(html: str, src_dir: Path, out_dir: Path) -> list[str]:
     return missing
 
 
+def write_facts(out_dir: Path, gather=None) -> list[str]:
+    """facts.json for the MARVIN page (living page, layer 1; ADR 0057 extension). Returns leak findings, if any.
+    A failure to gather writes nothing and never blocks the map: the page keeps the numbers it was written with."""
+    sys.path.insert(0, str(HERE / "scripts"))
+    import facts as facts_mod
+    try:
+        data = facts_mod.formatted((gather or facts_mod.gather)())
+    except Exception as e:  # noqa: BLE001
+        print(f"facts not written: {e}", file=sys.stderr)
+        return []
+    text = json.dumps(data, indent=2, ensure_ascii=False)
+    leaks = scan_for_leaks(text)
+    if not leaks:
+        (Path(out_dir) / "facts.json").write_text(text + "\n", encoding="utf-8")
+    return leaks
+
+
 def export_snapshot(commit: str = "HEAD", out_dir: str | Path = SNAPSHOT_DIR) -> bool:
     """Generate privacy-filtered snapshot.
 
@@ -353,6 +370,10 @@ def export_snapshot(commit: str = "HEAD", out_dir: str | Path = SNAPSHOT_DIR) ->
         json.dumps({"tree": tree, "synapses": synapses}, ensure_ascii=False), encoding="utf-8"
     )
 
+    fact_leaks = write_facts(out_dir)
+    if fact_leaks:
+        print(f"Privacy scan failed on facts.json — refusing to export: {fact_leaks}", file=sys.stderr)
+        return False
     missing = copy_local_assets(template, TEMPLATE_PATH.parent, out_dir)
     if missing:
         print(f"Snapshot page needs files that don't exist: {missing} — refusing to export", file=sys.stderr)
