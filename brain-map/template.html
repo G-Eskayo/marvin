@@ -31,6 +31,11 @@
     color: var(--text-primary);
   }
   .mono { font-family: ui-monospace, "SF Mono", "Menlo", "Consolas", monospace; }
+  /* ?embed=1 (website): the map alone on a transparent background; the hover tooltip and the code-layer notes stay */
+  html.embed-mode, html.embed-mode body { background: transparent; }
+  html.embed-mode .hud-frame, html.embed-mode #stage::after,
+  html.embed-mode header, html.embed-mode #legend, html.embed-mode #mode-toggle, html.embed-mode #mode-caption,
+  html.embed-mode footer { display: none; }
   #stage { position: fixed; inset: 0; }
   canvas { display: block; width: 100%; height: 100%; cursor: grab; }
   canvas:active { cursor: grabbing; }
@@ -236,6 +241,10 @@
   // events at the OS level) so it reads as background, not a stray app window.
   var WALLPAPER = /[?&]wallpaper=1\b/.test(location.search);
   if (WALLPAPER) document.body.classList.add("wallpaper-mode");
+  // ?embed=1 — the website's MARVIN page (docs/plans/map-website-2026-10-08.md): only the 3D map, transparent so the
+  // page shows through, hover and drag kept; the wheel is left to the page so the map never traps scrolling.
+  var EMBED = /[?&]embed=1\b/.test(location.search);
+  if (EMBED) document.documentElement.classList.add("embed-mode");
   /*__SNAPSHOT_FLAG__*/var SNAPSHOT = false;/*__SNAPSHOT_FLAG__*/
 
   // ── palette ──────────────────────────────────────────────────────────
@@ -607,6 +616,7 @@
   // by hand; after that, their zoom wins and clipping is theirs to choose.
   var userZoomed = false;
   canvas.addEventListener("wheel", function (ev) {
+    if (EMBED) return; // inside a web page the wheel scrolls the page
     ev.preventDefault();
     userZoomed = true;
     camDist = Math.max(120, Math.min(1300, camDist + ev.deltaY * 0.55));
