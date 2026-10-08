@@ -1,4 +1,5 @@
 import ProjectBoard from './ProjectBoard.jsx'
+import ActivityBanner from './ActivityBanner.jsx'
 import DeviceColumns from './DeviceColumns.jsx'
 import NextUpQueue from './NextUpQueue.jsx'
 import ParallelToggle from './ParallelToggle.jsx'
@@ -9,6 +10,7 @@ import ParallelToggle from './ParallelToggle.jsx'
 export default function ActivityBoard({ onOpenMr, onOpenDocs, onOpenTicket, nav }) {
   return (
     <>
+      <ActivityBanner />
       <DeviceColumns />
       <ParallelToggle />
       <NextUpQueue onOpenTicket={onOpenTicket} />

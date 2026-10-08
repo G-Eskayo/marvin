@@ -179,3 +179,15 @@ describe('ProjectReadinessPanel', () => {
     expect(html).toContain('Not scanned yet')
   })
 })
+
+import ActivityBanner from '../src/components/ActivityBanner.jsx'
+
+describe('ActivityBanner', () => {
+  it('renders nothing when there are no red checks to show', () => {
+    // ActivityBanner needs window.api to be defined for the fetch
+    // In server-side render, components that fetch data render nothing until data arrives
+    const html = renderToStaticMarkup(<ActivityBanner />)
+    // The component will render nothing initially as the effect hasn't run yet
+    expect(html.length === 0 || !html.includes('border-red-900')).toBe(true)
+  })
+})

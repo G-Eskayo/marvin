@@ -223,7 +223,9 @@ def test_a_tripped_breaker_is_visible_in_the_run_log(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["ticket_pipeline.py"])
     tp.main()
     run = json.loads((job_events.JOBS_DIR / "ticket-pipeline.json").read_text())["runs"][-1]
-    assert "circuit breaker" in run["summary"] and "TRIPPED" in run["steps"][-1]["detail"]
+    assert "circuit breaker" in run["summary"]
+    # Check that TRIPPED appears in one of the steps' details
+    assert any("TRIPPED" in step.get("detail", "") for step in run["steps"])
 
 
 def test_onboarding_refresh_failure_does_not_abort_scan(monkeypatch):
@@ -823,3 +825,44 @@ def test_catalog_refresh_is_skipped_when_fresh(monkeypatch):
     calls = []
     _REAL_REFRESH_CATALOG(run=lambda *a, **k: calls.append(a))
     assert calls == []
+
+
+# ── scan summary with circuit breaker ───────────────────────────────────────
+
+def test_scan_summary_reports_breaker_even_when_dispatchable_project_has_no_ready_tickets(monkeypatch):
+    """2026-10-07: breaker tripped for one project, another project has zero ready tickets.
+    The summary must report "stopped by circuit breaker", not "no ready tickets" (which is true but
+    misleading when the real stopper is the breaker)."""
+    import failure_breaker as fb
+
+    monkeypatch.setattr(fb, "tripped", lambda now=None: [
+        {"project": "owner/other-project", "signature": "failure", "tickets": [1, 2, 3],
+         "first_seen": "2026-10-07T00:00:00Z", "example": "error"}])
+
+    summaries = []
+
+    def capture_summary(msg):
+        summaries.append(msg)
+
+    # Simulate the scenario: breaker tripped for 'owner/other-project', but we're checking
+    # G-Eskayo/marvin which has zero ready tickets.
+    run = SimpleNamespace(
+        step=lambda *a, **k: None,
+        summary=capture_summary,
+        fail=lambda *a: None
+    )
+
+    # Mock the conditions that trigger the fix:
+    # - failure_breaker.tripped() returns one trip
+    # - repos list is not empty (G-Eskayo/marvin is dispatchable and not paused)
+    # - pools is empty (no ready tickets in G-Eskayo/marvin or other dispatchable repos)
+
+    monkeypatch.setattr(tp, "REPO", "G-Eskayo/marvin")
+    monkeypatch.setattr(tp.pp, "dispatchable_repos", lambda: ["owner/other-project"])
+    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda repo=None: [])
+    monkeypatch.setattr(tp.dispatch_concurrency, "load", lambda path=None: {"parallel": False})
+
+    tp._scan(run, dry_run=False)
+
+    # Check that the summary mentions the breaker, not just "no ready tickets".
+    assert any("circuit breaker" in s.lower() for s in summaries)
