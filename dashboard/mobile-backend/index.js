@@ -13,12 +13,57 @@ import { createPendingActionsStore } from './pending_actions.js'
 import { createPermissionApiRouter } from './permission_api.js'
 import { createLiveChannel } from './live_channel.js'
 import { createLiveApiRouter } from './live_api.js'
+import { createActionsApiRouter } from './actions_api.js'
+import { postTicketInput } from '../electron/main/ticket_input.js'
+import { approveMr, denyMr } from '../electron/main/mr_review.js'
+import { resolveServiceDefaults } from '../electron/main/device_identity.js'
 
 const execFileP = promisify(execFile)
 
 const TAILSCALE_BIN = '/Applications/Tailscale.app/Contents/MacOS/Tailscale'
 const PORT = process.env.PORT || 7880
 const ALLOWLIST_PATH = path.join(homedir(), '.claude', 'mobile-allowlist.json')
+
+// Resolve webhook URLs the same way Electron does (ADR 0032)
+const { host: defaultWebhookHost } = resolveServiceDefaults()
+const MR_WEBHOOK_URL = process.env.MARVIN_MR_WEBHOOK_URL || `http://${defaultWebhookHost}:7878/approve`
+const MR_DENY_WEBHOOK_URL = process.env.MARVIN_MR_DENY_WEBHOOK_URL || `http://${defaultWebhookHost}:7878/deny`
+
+// POST JSON to a webhook URL
+async function postJson(url, payload) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify(payload)
+    const urlObj = new URL(url)
+    const options = {
+      hostname: urlObj.hostname,
+      port: urlObj.port,
+      path: urlObj.pathname + urlObj.search,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body)
+      }
+    }
+
+    const http = urlObj.protocol === 'https:' ? require('https') : require('http')
+    const req = http.request(options, (res) => {
+      let data = ''
+      res.on('data', (chunk) => { data += chunk })
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(data)
+          resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, status: res.statusCode, json: async () => json })
+        } catch {
+          resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, status: res.statusCode, json: async () => ({ error: data }) })
+        }
+      })
+    })
+
+    req.on('error', reject)
+    req.write(body)
+    req.end()
+  })
+}
 
 // Resolve this machine's Tailscale IPv4 address. Fails loud and exits non-zero if unresolvable.
 async function resolveTailscaleIp() {
@@ -52,6 +97,14 @@ const permissionApiRouter = createPermissionApiRouter({ pendingActionStore })
 const liveChannel = createLiveChannel()
 const liveApiRouter = createLiveApiRouter(liveChannel)
 
+// Actions API: confirmed-gated write operations (ticket reply, MR approve/deny)
+const actionsApiRouter = createActionsApiRouter({
+  postTicketInputFn: postTicketInput,
+  approveMrFn: (prUrl, post) => approveMr(prUrl, MR_WEBHOOK_URL, post),
+  denyMrFn: (payload, post) => denyMr(payload, MR_DENY_WEBHOOK_URL, post),
+  postJson
+})
+
 const server = createServer(async (req, res) => {
   // Device gate: check allowlist
   const ip = req.socket.remoteAddress || req.connection.remoteAddress
@@ -68,6 +121,10 @@ const server = createServer(async (req, res) => {
 
   // Route through permission API
   let handled = await permissionApiRouter(req, res)
+  if (handled) return
+
+  // Route through actions API (ticket reply, MR approve/deny)
+  handled = await actionsApiRouter(req, res)
   if (handled) return
 
   // Route through dashboard API
