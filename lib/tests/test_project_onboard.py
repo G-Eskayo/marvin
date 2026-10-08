@@ -1258,7 +1258,7 @@ def test_refresh_onboarding_plan(tmp_path):
     def mock_gh(args):
         if "repo" in args and "view" in args:
             return '{"visibility": "public", "defaultBranchRef": {"name": "main"}}'
-        if "trees" in args:
+        if "trees" in " ".join(args):
             return '{"tree": []}'
         if "label" in args:
             return '[]'
@@ -1278,7 +1278,7 @@ def test_refresh_all_onboarding_plans_with_failure(tmp_path, monkeypatch):
     def mock_gh_success(args):
         if "repo" in args and "view" in args:
             return '{"visibility": "public", "defaultBranchRef": {"name": "main"}}'
-        if "trees" in args:
+        if "trees" in " ".join(args):
             return '{"tree": []}'
         if "label" in args:
             return '[]'
@@ -1319,8 +1319,10 @@ def test_refresh_all_onboarding_plans_with_failure(tmp_path, monkeypatch):
     assert "test/repo1" in result2["ok"]
     assert any(r == "test/repo2" for r, _ in result2["failed"])
 
-    # Verify repo2's file is unchanged (not nuked by error)
-    assert (tmp_path / "repo2.json").read_text() == original_repo2
+    # repo2's plan is kept (not nuked by the error), now marked stale with why (ADR 0058)
+    kept, before = json.loads((tmp_path / "repo2.json").read_text()), json.loads(original_repo2)
+    assert kept["pieces"] == before["pieces"]
+    assert kept["stale"]["reason"] == "Network error"
 
 
 # ── PR apply tests (ticket #147) ────────────────────────────────────────
@@ -1803,3 +1805,68 @@ def test_write_onboarding_plan_preserves_baseline(tmp_path):
     # Check baseline is still there
     data = json.loads(path.read_text())
     assert data["pieces"]["baseline"] == baseline_data
+
+
+# ── 2026-10-08: the tree was never read, and failed reads looked like an empty repo (ADR 0058) ────────────────
+
+def test_inspect_reads_the_tree_with_a_get_request():
+    """`gh api <url> --field recursive=true` is a POST: GitHub answered 404 and every repo looked empty."""
+    seen = []
+
+    def gh(args):
+        seen.append(args)
+        if "trees" in " ".join(args):
+            return json.dumps({"tree": [{"path": "pyproject.toml", "type": "blob"}]})
+        return ""
+
+    facts = po.inspect("test/repo", gh=gh)
+    tree_call = next(a for a in seen if "trees" in " ".join(a))
+    assert "--field" not in tree_call and "-f" not in tree_call and "-F" not in tree_call
+    assert any("recursive=1" in a for a in tree_call)
+    assert "pyproject.toml" in facts["file_tree"]
+
+
+def test_inspect_lists_the_github_reads_that_failed():
+    facts = po.inspect("test/repo", gh=lambda args: "")
+    assert set(facts["read_errors"]) >= {"repo view", "file tree", "labels"}
+
+
+def test_inspect_has_no_read_errors_when_github_answers():
+    def gh(args):
+        j = " ".join(args)
+        if "repo view" in j:
+            return json.dumps({"visibility": "PUBLIC", "defaultBranchRef": {"name": "main"}})
+        if "trees" in j:
+            return json.dumps({"tree": []})
+        if "label" in j:
+            return "[]"
+        return ""
+    assert po.inspect("test/repo", gh=gh)["read_errors"] == []
+
+
+def test_a_failed_read_keeps_the_last_good_plan_and_marks_it_stale(tmp_path):
+    good = {"board": {"state": "ok", "reason": "board registered"},
+            "triage_labels": {"state": "ok", "reason": "all 5 triage labels present"}}
+    po.write_onboarding_plan("o/repo", dict(good), dir=tmp_path)
+    res = po.refresh_all_onboarding_plans(["o/repo"], gh=lambda args: "", dir=tmp_path)
+    assert res["ok"] == [] and res["failed"][0][0] == "o/repo"
+    kept = json.loads(po.onboarding_path("o/repo", dir=tmp_path).read_text())
+    assert kept["pieces"]["triage_labels"]["state"] == "ok"
+    assert "GitHub" in kept["stale"]["reason"]
+
+
+def test_a_good_read_clears_the_stale_mark(tmp_path):
+    po.write_onboarding_plan("o/repo", {"board": {"state": "ok", "reason": "x"}}, dir=tmp_path)
+    po.refresh_all_onboarding_plans(["o/repo"], gh=lambda args: "", dir=tmp_path)
+
+    def gh(args):
+        j = " ".join(args)
+        if "repo view" in j:
+            return json.dumps({"visibility": "PUBLIC", "defaultBranchRef": {"name": "main"}})
+        if "trees" in j:
+            return json.dumps({"tree": []})
+        if "label" in j:
+            return "[]"
+        return ""
+    assert po.refresh_all_onboarding_plans(["o/repo"], gh=gh, dir=tmp_path)["ok"] == ["o/repo"]
+    assert "stale" not in json.loads(po.onboarding_path("o/repo", dir=tmp_path).read_text())

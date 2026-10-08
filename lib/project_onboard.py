@@ -139,9 +139,14 @@ def inspect(repo: str, gh=_gh) -> dict:
         "unpinned_dependencies": [],
         "tests_read_machine_local": False,
         "machine_local_test_files": [],
+        # essential GitHub reads that failed: an empty answer is NOT an empty repo (ADR 0058). refresh refuses to
+        # write a plan built from these and keeps the last good one, marked stale.
+        "read_errors": [],
     }
 
     repo_view = gh(["repo", "view", repo, "--json", "visibility,defaultBranchRef"])
+    if not repo_view:
+        facts["read_errors"].append("repo view")
     if repo_view:
         try:
             data = json.loads(repo_view)
@@ -154,10 +159,11 @@ def inspect(repo: str, gh=_gh) -> dict:
     if not facts["default_branch"]:
         facts["default_branch"] = "main"
 
-    tree_api = gh([
-        "api", f"repos/{repo}/git/trees/{facts['default_branch']}",
-        "--field", "recursive=true"
-    ])
+    # A GET with the query in the URL: `--field recursive=true` made gh send a POST, GitHub answered 404, and every
+    # repo read as empty ("no recognised stack") from the day onboarding shipped until 2026-10-08.
+    tree_api = gh(["api", f"repos/{repo}/git/trees/{facts['default_branch']}?recursive=1"])
+    if not tree_api:
+        facts["read_errors"].append("file tree")
     if tree_api:
         try:
             tree_data = json.loads(tree_api)
@@ -171,6 +177,8 @@ def inspect(repo: str, gh=_gh) -> dict:
             pass
 
     labels_raw = gh(["label", "list", "--repo", repo, "--json", "name"])
+    if not labels_raw:
+        facts["read_errors"].append("labels")
     if labels_raw:
         try:
             labels_data = json.loads(labels_raw)
@@ -522,9 +530,23 @@ def write_onboarding_plan(repo: str, plan_out: dict, dir: Path | None = None, ba
     path.write_text(json.dumps(data, indent=2) + "\n")
 
 
+def mark_plan_stale(repo: str, reason: str, dir: Path | None = None) -> None:
+    """Keep the last good plan, saying since when and why it couldn't be refreshed."""
+    path = onboarding_path(repo, dir=dir or ONBOARDING_DIR)
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return
+    data["stale"] = {"at": datetime.now(timezone.utc).isoformat(), "reason": reason}
+    path.write_text(json.dumps(data, indent=2) + "\n")
+
+
 def refresh_onboarding_plan(repo: str, gh=_gh, dir: Path | None = None) -> None:
-    """Refresh the onboarding plan: inspect, plan, write. Raises on failure."""
+    """Refresh the onboarding plan: inspect, plan, write. Raises on failure, including a failed GitHub read: a plan
+    built from no data would say every piece is missing (2026-10-08, all 13 plans during a quota outage)."""
     facts = inspect(repo, gh=gh)
+    if facts.get("read_errors"):
+        raise RuntimeError(f"couldn't read {repo} from GitHub ({', '.join(facts['read_errors'])})")
     plan_out = plan(facts)
     write_onboarding_plan(repo, plan_out, dir=dir)
 
@@ -542,6 +564,7 @@ def refresh_all_onboarding_plans(repos: list[str], gh=_gh, dir: Path | None = No
             ok.append(repo)
         except Exception as e:  # noqa: BLE001
             failed.append((repo, str(e)))
+            mark_plan_stale(repo, str(e), dir=dir)
     return {"ok": ok, "failed": failed}
 
 
