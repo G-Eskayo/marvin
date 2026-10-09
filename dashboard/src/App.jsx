@@ -5,6 +5,7 @@ import HealthDashboard from '@components/HealthDashboard.jsx'
 import DocsExplorer from '@components/DocsExplorer.jsx'
 import ActivityBoard from '@components/ActivityBoard.jsx'
 import PortfolioHub from '@components/PortfolioHub.jsx'
+import SuggestionsPage from '@components/SuggestionsPage.jsx'
 import DispatchStatusBadge from '@components/DispatchStatusBadge.jsx'
 import MarvinButton from '@components/MarvinButton.jsx'
 import ActivityHover from '@components/ActivityHover.jsx'
@@ -15,6 +16,7 @@ const TABS = [
   { id: 'health', label: 'Health' },
   { id: 'docs', label: 'Docs' },
   { id: 'activity', label: 'Activity' },
+  { id: 'suggestions', label: 'Suggestions' },
   { id: 'portfolio', label: 'Portfolio' }
 ]
 
@@ -144,6 +146,8 @@ export default function App() {
           <HealthDashboard nav={nav} />
         ) : activeTab === 'docs' ? (
           <DocsExplorer nav={nav} onOpenBoard={(repo) => navigate('activity', { repo })} onOpenTicket={(repo, number) => navigate('activity', { repo, ticketNumber: number })} onOpenPr={(repo, number) => navigate('mr-review', { prKey: `${repo}#${number}` })} />
+        ) : activeTab === 'suggestions' ? (
+          <SuggestionsPage />
         ) : activeTab === 'portfolio' ? (
           <PortfolioHub />
         ) : (
