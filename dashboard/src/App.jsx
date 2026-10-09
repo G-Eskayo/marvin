@@ -3,6 +3,7 @@ import MetricsPage from '@components/MetricsPage.jsx'
 import MrReview from '@components/MrReview.jsx'
 import HealthDashboard from '@components/HealthDashboard.jsx'
 import DocsExplorer from '@components/DocsExplorer.jsx'
+import FilesExplorer from '@components/FilesExplorer.jsx'
 import ActivityBoard from '@components/ActivityBoard.jsx'
 import PortfolioHub from '@components/PortfolioHub.jsx'
 import DispatchStatusBadge from '@components/DispatchStatusBadge.jsx'
@@ -14,6 +15,7 @@ const TABS = [
   { id: 'mr-review', label: 'MR Review' },
   { id: 'health', label: 'Health' },
   { id: 'docs', label: 'Docs' },
+  { id: 'files', label: 'Files' },
   { id: 'activity', label: 'Activity' },
   { id: 'portfolio', label: 'Portfolio' }
 ]
@@ -144,6 +146,8 @@ export default function App() {
           <HealthDashboard nav={nav} />
         ) : activeTab === 'docs' ? (
           <DocsExplorer nav={nav} onOpenBoard={(repo) => navigate('activity', { repo })} onOpenTicket={(repo, number) => navigate('activity', { repo, ticketNumber: number })} onOpenPr={(repo, number) => navigate('mr-review', { prKey: `${repo}#${number}` })} />
+        ) : activeTab === 'files' ? (
+          <FilesExplorer />
         ) : activeTab === 'portfolio' ? (
           <PortfolioHub />
         ) : (
