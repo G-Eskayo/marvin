@@ -22,15 +22,21 @@ import fcntl
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 STATE_PATH = Path.home() / ".claude" / "logs" / "sessions-active.json"
 LIVE_S = 45 * 60
 KEEP_S = 4 * 3600
 CLAIM_LOG = Path.home() / ".claude" / "logs" / "session-claims.log"
+REMOTE_PORT = 7878
+REMOTE_TIMEOUT_S = 0.3
+REMOTE_CACHE_S = 60
 
 
 # ── which file is this, across worktrees ────────────────────────────────────
@@ -61,6 +67,77 @@ def _k(key) -> str:
     return f"{key[0] or ''}|{key[1]}"
 
 
+# ── remote peers (cross-Mac visibility) ─────────────────────────────────────
+
+def _my_hardware_uuid() -> str:
+    """This machine's hardware UUID from cache, "" on any error (never blocks)."""
+    try:
+        p = Path.home() / ".claude" / "machine-profile.json"
+        if p.exists():
+            return json.loads(p.read_text()).get("hardware_uuid", "")
+    except (OSError, ValueError):
+        pass
+    return ""
+
+
+def remote_peers(registry_path: str | None = None) -> dict[str, dict]:
+    """Map of {device_id: info} for every peer (other hardware_uuid in the registry), never a crash."""
+    registry_path = registry_path or str(Path.home() / ".claude" / "marvin-network.json")
+    my_uuid = _my_hardware_uuid()
+    try:
+        with open(registry_path) as f:
+            registry = json.load(f)
+        if not isinstance(registry, dict):
+            return {}
+        return {
+            device_id: info
+            for device_id, info in registry.items()
+            if isinstance(info, dict) and info.get("hardware_uuid") != my_uuid and info.get("hardware_uuid")
+            and info.get("tailscale_hostname")
+        }
+    except (OSError, ValueError):
+        return {}
+
+
+def fetch_remote_sessions(host: str, port: int = REMOTE_PORT, timeout: float = REMOTE_TIMEOUT_S) -> dict | None:
+    """Fetch live sessions from a remote machine's webhook server, return None on any failure (never raises)."""
+    try:
+        url = f"http://{host}:{port}/sessions"
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            data = json.loads(resp.read())
+            sessions = data.get("sessions")
+            if not isinstance(sessions, dict):
+                return None
+            for s in sessions.values():
+                if not isinstance(s, dict) or not isinstance(s.get("files", {}), dict):
+                    return None
+            return sessions
+    except (OSError, urllib.error.URLError, socket.timeout, socket.gaierror, json.JSONDecodeError, ValueError):
+        return None
+
+
+def remote_sessions(st: dict, now: float, peers: dict | None = None,
+                   fetch: callable | None = None) -> dict[str, dict]:
+    """Cached remote sessions by device_id, re-fetching at most once per REMOTE_CACHE_S across all callers."""
+    peers = peers or remote_peers()
+    fetch = fetch or fetch_remote_sessions
+    remote = st.setdefault("remote", {})
+    out = {}
+    for device_id, info in peers.items():
+        host = info.get("tailscale_hostname")
+        if not host:
+            continue
+        cached = remote.get(device_id, {})
+        fetched_at = cached.get("fetched_at", 0)
+        if now - fetched_at < REMOTE_CACHE_S:
+            sessions = cached.get("sessions", {})
+        else:
+            sessions = fetch(host) or {}
+            remote[device_id] = {"fetched_at": now, "sessions": sessions}
+        out[device_id] = sessions
+    return out
+
+
 # ── the list (pure) ─────────────────────────────────────────────────────────
 
 def _session(st: dict, sid: str) -> dict:
@@ -79,26 +156,37 @@ def record_edit(st: dict, sid: str, key, now: float) -> None:
     s["last"] = now
 
 
-def overlaps(st: dict, sid: str, key, now: float) -> list[dict]:
+def overlaps(st: dict, sid: str, key, now: float, remote: dict | None = None) -> list[dict]:
     k = _k(key)
     out = []
     for other, s in (st.get("sessions") or {}).items():
         if other == sid or now - s.get("last", 0) > LIVE_S or k not in s.get("files", {}):
             continue
         out.append({"session": other, "request": s.get("request", ""), "file_at": s["files"][k]})
+    if remote:
+        for device_id, sessions in remote.items():
+            for other, s in (sessions or {}).items():
+                if now - s.get("last", 0) > LIVE_S or k not in s.get("files", {}):
+                    continue
+                out.append({"session": other, "request": s.get("request", ""), "file_at": s["files"][k], "machine": device_id})
     return out
 
 
-def pre_edit(st: dict, sid: str, key, now: float) -> str | None:
+def pre_edit(st: dict, sid: str, key, now: float, remote: dict | None = None) -> str | None:
     """Why this edit should pause, or None. Each (this session, other session, file) is asked about once."""
     asked = st.setdefault("asked", {})
-    new = [o for o in overlaps(st, sid, key, now) if f"{sid}|{o['session']}|{_k(key)}" not in asked]
+    all_overlaps = overlaps(st, sid, key, now, remote)
+    new = [o for o in all_overlaps if f"{sid}|{o.get('machine') or ''}|{o['session']}|{_k(key)}" not in asked]
     if not new:
         return None
     for o in new:
-        asked[f"{sid}|{o['session']}|{_k(key)}"] = now
-    lines = [f"Another MARVIN session on this Mac edited {key[1]} {max(0, int((now - o['file_at']) / 60))} min ago"
-             + (f'. It is working on: "{o["request"]}"' if o["request"] else "") for o in new]
+        asked[f"{sid}|{o.get('machine') or ''}|{o['session']}|{_k(key)}"] = now
+    lines = []
+    for o in new:
+        machine = o.get("machine")
+        location = f"on {machine}" if machine else "on this Mac"
+        lines.append(f"Another MARVIN session {location} edited {key[1]} {max(0, int((now - o['file_at']) / 60))} min ago"
+                     + (f'. It is working on: "{o["request"]}"' if o["request"] else ""))
     return ("; ".join(lines) + ". Check it isn't building the same thing before going on "
             "(this is asked once per file; ~/.agents/lib/session_work.py list shows every live session).")
 
@@ -188,7 +276,8 @@ def handle(kind: str, payload: dict, now: float | None = None) -> str | None:
                     _start_claim(top, ticket)
                 return None
             if kind == "pre":
-                why = pre_edit(st, sid, key, now)
+                remote = remote_sessions(st, now)
+                why = pre_edit(st, sid, key, now, remote)
                 if why:
                     return json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
                                                               "permissionDecisionReason": why}})

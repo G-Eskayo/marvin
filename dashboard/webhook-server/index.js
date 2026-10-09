@@ -11,6 +11,7 @@ import { failureResponse } from './failure.js'
 import { timeRequest } from '../electron/main/timing.js'
 import { recordApproveError, approveErrorLine } from './refusal_log.js'
 import { readRebaseStatus } from './rebase_status.js'
+import { readLiveSessions } from './sessions.js'
 import { startChangeWatch, createGithubProbe } from './gh_watch.js'
 import { readRegistry } from '../electron/main/boards.js'
 import { execFile } from 'child_process'
@@ -122,6 +123,11 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'GET' && req.url === '/rebase-status') {
     res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(readRebaseStatus()))
+    return
+  }
+
+  if (req.method === 'GET' && req.url === '/sessions') {
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ sessions: readLiveSessions() }))
     return
   }
 
