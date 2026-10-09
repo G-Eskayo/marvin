@@ -49,7 +49,7 @@ function noopRedispatch() {}
 // By default, all PRs pass code review (clean). Tests can override.
 function execWithCodeReviewDefaults(innerMockFn) {
   return vi.fn(async (cmd, args, ...rest) => {
-    if (cmd === 'python' && Array.isArray(args) && args.some(a => a && a.includes('review'))) {
+    if (String(cmd).endsWith('/python') && Array.isArray(args) && args.some(a => a && a.includes('review'))) {
       // Code review gate Python call: return clean by default
       return Promise.resolve({ stdout: JSON.stringify({ clean: true, findings: [] }), stderr: '' })
     }
@@ -260,7 +260,7 @@ describe('mergePr', () => {
   it('code review gate: clean review allows merge to proceed', async () => {
     const exec = vi.fn()
     exec.mockImplementation((cmd, args) => {
-      if (cmd === 'python' && args.includes('review')) {
+      if (String(cmd).endsWith('/python') && args.includes('review')) {
         // Code review gate call
         return Promise.resolve({ stdout: JSON.stringify({ clean: true, findings: [] }), stderr: '' })
       }
@@ -281,7 +281,7 @@ describe('mergePr', () => {
   it('code review gate: findings block merge and reengages, posting feedback to PR and ticket', async () => {
     const exec = vi.fn()
     exec.mockImplementation((cmd, args) => {
-      if (cmd === 'python' && args.includes('review')) {
+      if (String(cmd).endsWith('/python') && args.includes('review')) {
         return Promise.resolve({
           stdout: JSON.stringify({
             clean: false,
@@ -317,7 +317,7 @@ describe('mergePr', () => {
     const exec = vi.fn()
     let codeReviewCalled = false
     exec.mockImplementation((cmd, args) => {
-      if (cmd === 'python' && args.includes('review')) {
+      if (String(cmd).endsWith('/python') && args.includes('review')) {
         codeReviewCalled = true
       }
       if (cmd === 'gh' && args[1] === 'view' && args.includes('statusCheckRollup')) {
@@ -347,7 +347,7 @@ describe('mergePr', () => {
         callOrder.push('ci-check')
         return Promise.resolve({ stdout: JSON.stringify({ statusCheckRollup: [] }), stderr: '' })
       }
-      if (cmd === 'python' && args.includes('review')) {
+      if (String(cmd).endsWith('/python') && args.includes('review')) {
         callOrder.push('code-review')
         return Promise.resolve({ stdout: JSON.stringify({ clean: true, findings: [] }), stderr: '' })
       }
@@ -375,7 +375,7 @@ describe('mergePr', () => {
   it('code review gate: PR with no linked ticket results in a code review error', async () => {
     const exec = vi.fn()
     exec.mockImplementation((cmd, args) => {
-      if (cmd === 'python' && args.includes('review')) {
+      if (String(cmd).endsWith('/python') && args.includes('review')) {
         return Promise.resolve({
           stdout: JSON.stringify({ clean: false, findings: ['lib/foo.py:1 — issue'] }),
           stderr: ''
@@ -407,7 +407,7 @@ describe('mergePr', () => {
     const exec = vi.fn()
     let codeReviewCalled = false
     exec.mockImplementation((cmd, args) => {
-      if (cmd === 'python' && args.includes('review')) {
+      if (String(cmd).endsWith('/python') && args.includes('review')) {
         codeReviewCalled = true
         return Promise.resolve({ stdout: JSON.stringify({ clean: true, findings: [] }), stderr: '' })
       }
@@ -431,7 +431,7 @@ describe('mergePr', () => {
   it('code review gate: script execution failure escalates as GATE_INFRA, PR not sent back', async () => {
     const exec = vi.fn()
     exec.mockImplementation((cmd, args) => {
-      if (cmd === 'python' && args.includes('review')) {
+      if (String(cmd).endsWith('/python') && args.includes('review')) {
         throw new Error('ENOENT: command not found')
       }
       return Promise.resolve({ stdout: '', stderr: '' })
@@ -813,7 +813,7 @@ import { recordStage } from '../webhook-server/ticket_stages.js'
 const PR = 'https://github.com/G-Eskayo/marvin/pull/71'
 const ticketGate = () => vi.fn().mockResolvedValue({ gate: false, headRefName: 'b', body: 'Closes G-Eskayo/marvin#5' })
 const ghMergeFails = (err) => vi.fn(async (cmd, args) => {
-  if (cmd === 'python' && args.includes('review')) return Promise.resolve({ stdout: JSON.stringify({ clean: true, findings: [] }), stderr: '' })
+  if (String(cmd).endsWith('/python') && args.includes('review')) return Promise.resolve({ stdout: JSON.stringify({ clean: true, findings: [] }), stderr: '' })
   if (args[0] === 'pr' && args[1] === 'merge') throw err
   if (args.includes('mergeable')) return { stdout: JSON.stringify({ mergeable: 'CONFLICTING' }), stderr: '' } // a refusal is only a conflict if GitHub agrees
   return { stdout: '', stderr: '' }
@@ -841,7 +841,7 @@ describe('mergePr structured failures', () => {
   it('retries a transient failure with backoff and then merges', async () => {
     let calls = 0
     const exec = vi.fn(async (cmd, args) => {
-      if (cmd === 'python' && args.includes('review')) return Promise.resolve({ stdout: JSON.stringify({ clean: true, findings: [] }), stderr: '' })
+      if (String(cmd).endsWith('/python') && args.includes('review')) return Promise.resolve({ stdout: JSON.stringify({ clean: true, findings: [] }), stderr: '' })
       if (args[0] === 'pr' && args[1] === 'merge') {
         calls += 1
         if (calls < 3) throw Object.assign(new Error('x'), { stderr: 'connect ETIMEDOUT' })
