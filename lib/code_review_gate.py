@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Code review gate for merge PRs (ticket #96). A diff-local correctness/quality pass.
+"""Code review (ticket #96). A diff-local correctness/quality pass by a judge model.
 
-Runs after CI and rebase checks pass, before merge. Fetches the PR diff and sends it to a judge
-for a one-line verdict (clean or findings). If findings, the PR is sent back for rework.
+Runs inside the build loop, before a PR exists (sandbox_orchestration.execute_ticket): must-fix findings go
+back to the builder in the same run, notes ride along on the PR. Approve no longer reviews code; it only
+checks the PR merges cleanly (2026-10-09: reviewing at Approve spent Gil's click to learn what the build
+could have found an hour earlier).
 
 Usage:
-    code_review_gate.py review <pr-url>   # prints JSON result to stdout
+    code_review_gate.py review <pr-url>   # prints JSON result to stdout (review an existing PR by hand)
 """
 from __future__ import annotations
 
@@ -45,12 +47,17 @@ Do NOT report cosmetic changes.
 
 Respond with exactly one line: VERDICT: clean  or  VERDICT: findings
 
-If you found issues, follow with bullets (one per line, starting with `-`):
-- file:line — summary of the issue (one short sentence)
+If you found issues, follow with bullets (one per line, starting with `-`), each tagged:
+- [must-fix] file:line — summary   (a real defect: wrong result, crash, data loss, security hole, a test that
+  doesn't test what it claims or that touches real external systems)
+- [note] file:line — summary       (worth knowing but not wrong: performance, polish, clarity, missing UI hint)
 
 If clean, stop after the VERDICT line."""
 
     return f"{rubric}\n\nDIFF:\n\n{diff}"
+
+
+_TAG = re.compile(r"\[([A-Za-z-]+[^\]]*)\]\s*(.*)")
 
 
 def parse_verdict(text: str) -> dict:
@@ -77,15 +84,19 @@ def parse_verdict(text: str) -> dict:
 
     # Parse the verdict
     if "VERDICT: clean" in verdict_line:
-        return {"clean": True, "findings": []}
+        return {"clean": True, "findings": [], "notes": []}
     elif "VERDICT: findings" in verdict_line:
         # Collect subsequent bullet lines
-        findings = []
+        findings, notes = [], []
         for line in lines[verdict_idx + 1:]:
             line = line.strip()
             if line.startswith("- "):
-                findings.append(line[2:])  # Remove "- " prefix
-        return {"clean": False, "findings": findings}
+                m = _TAG.match(line[2:])
+                if m and m.group(1).lower() == "note":
+                    notes.append(m.group(2))
+                else:  # must-fix, untagged, or an unknown tag: ambiguity never resolves to safe
+                    findings.append(m.group(2) if m and m.group(1).lower() == "must-fix" else line[2:])
+        return {"clean": not findings, "findings": findings, "notes": notes}
     else:
         return {"clean": None, "error": f"unparseable judge output: unexpected VERDICT format: {verdict_line[:100]}"}
 
@@ -111,10 +122,39 @@ def run_review(
     diff = fetch(pr_url)
     if diff is None:
         return {"clean": None, "error": "failed to fetch PR diff"}
+    return review_diff(diff, launch=launch)
 
+
+def worktree_diff(worktree: Path, base: str = "main", run=subprocess.run) -> str | None:
+    """Everything the build changed against origin/<base> (or <base>): committed, uncommitted and new files.
+    None when git can't produce it (missing base, not a repo)."""
+    def git(*a, check=True):
+        return run(["git", *a], cwd=worktree, capture_output=True, text=True, check=check, timeout=60)
+    try:
+        ref = f"origin/{base}" if git("rev-parse", "--verify", "-q", f"origin/{base}", check=False).returncode == 0 else base
+        mb = git("merge-base", ref, "HEAD").stdout.strip()
+        out = git("diff", "-M", mb).stdout
+        for path in git("ls-files", "--others", "--exclude-standard").stdout.splitlines():
+            # --no-index exits 1 when the files differ, which they always do here
+            out += git("diff", "--no-index", "--", "/dev/null", path, check=False).stdout
+        return out
+    except (subprocess.SubprocessError, OSError):
+        return None
+
+
+def review_worktree(worktree: Path, base: str = "main", *, launch: Callable | None = None) -> dict:
+    """Review a build's changes before any PR exists."""
+    diff = worktree_diff(worktree, base)
+    if diff is None:
+        return {"clean": None, "error": f"could not diff the worktree against {base}"}
+    return review_diff(diff, launch=launch)
+
+
+def review_diff(diff: str, *, launch: Callable | None = None) -> dict:
+    """Judge one diff. {"clean": True|False, "findings": [must-fix], "notes": [...]} or {"clean": None, "error"}."""
     # Empty diff: clean, no model call
     if not diff.strip():
-        return {"clean": True, "findings": []}
+        return {"clean": True, "findings": [], "notes": []}
 
     # Import marvin_launcher here to avoid circular dependency
     if launch is None:
