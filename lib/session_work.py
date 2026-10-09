@@ -89,18 +89,85 @@ def overlaps(st: dict, sid: str, key, now: float) -> list[dict]:
     return out
 
 
-def pre_edit(st: dict, sid: str, key, now: float) -> str | None:
+def pre_edit(st: dict, sid: str, key, now: float, remote_urls: list[str] | tuple = (),
+             _fetch_impl=None) -> str | None:
     """Why this edit should pause, or None. Each (this session, other session, file) is asked about once."""
     asked = st.setdefault("asked", {})
-    new = [o for o in overlaps(st, sid, key, now) if f"{sid}|{o['session']}|{_k(key)}" not in asked]
+    local = overlaps(st, sid, key, now)
+    remote = remote_overlaps(st, sid, key, now, remote_urls, _fetch_impl)
+    new = [o for o in local + remote if f"{sid}|{o['session']}|{_k(key)}" not in asked]
     if not new:
         return None
     for o in new:
         asked[f"{sid}|{o['session']}|{_k(key)}"] = now
-    lines = [f"Another MARVIN session on this Mac edited {key[1]} {max(0, int((now - o['file_at']) / 60))} min ago"
-             + (f'. It is working on: "{o["request"]}"' if o["request"] else "") for o in new]
+
+    def format_line(o):
+        location = "on this Mac" if "@" not in o["session"] else f"on {o['session'].split('@')[1]}"
+        line = f"Another MARVIN session {location} edited {key[1]} {max(0, int((now - o['file_at']) / 60))} min ago"
+        if o.get("request"):
+            line += f'. It is working on: "{o["request"]}"'
+        return line
+
+    lines = [format_line(o) for o in new]
     return ("; ".join(lines) + ". Check it isn't building the same thing before going on "
             "(this is asked once per file; ~/.agents/lib/session_work.py list shows every live session).")
+
+
+def fetch_remote_sessions(url: str, timeout: float = 0.3) -> dict | None:
+    """Fetch active sessions from a remote Mac's webhook server, or None if unreachable."""
+    try:
+        import urllib.request
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            return json.loads(response.read())
+    except Exception:
+        return None
+
+
+def remote_overlaps(st: dict, sid: str, key, now: float, remote_urls: list[str] | tuple = (),
+                   _fetch_impl=None) -> list[dict]:
+    """Overlaps with remote Mac sessions. Each overlap tagged with mac name inferred from URL."""
+    if _fetch_impl is None:
+        _fetch_impl = fetch_remote_sessions
+    if not remote_urls:
+        return []
+
+    # Cache remote fetches for 60s to avoid hammering the network on repeated edits
+    cache_key = "_remote_fetch_cache"
+    cache_age_key = "_remote_fetch_cache_time"
+    cached = st.setdefault(cache_key, {})
+    cached_time = st.get(cache_age_key, 0)
+    if now - cached_time >= 60:
+        cached.clear()
+        st[cache_age_key] = now
+
+    out = []
+    for url in remote_urls:
+        # Use URL as cache key
+        if url not in cached:
+            cached[url] = _fetch_impl(url, timeout=0.3)
+        remote_data = cached[url]
+        if not isinstance(remote_data, dict):
+            continue
+
+        mac_name = url.split("://")[1].split(":")[0] if "://" in url else "unknown"
+        sessions = remote_data.get("sessions") or {}
+        if not isinstance(sessions, dict):
+            continue
+
+        for remote_sid, s in sessions.items():
+            # Skip stale sessions
+            if now - s.get("last", 0) > LIVE_S:
+                continue
+            k = _k(key)
+            files = s.get("files") or {}
+            if k in files:
+                out.append({
+                    "session": f"{remote_sid}@{mac_name}",
+                    "request": s.get("request", ""),
+                    "file_at": files[k]
+                })
+    return out
 
 
 def prune(st: dict, now: float) -> None:
@@ -164,6 +231,21 @@ def _start_claim(top: str, ticket: int) -> None:
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
 
 
+def _get_remote_urls() -> list[str]:
+    """Get remote Mac session URLs from the network registry."""
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import machine_profile
+        devices = machine_profile.remote_devices()
+        urls = []
+        for device_id, info in devices.items():
+            hostname = info.get("tailscale_hostname") or device_id
+            urls.append(f"http://{hostname}:7878/sessions")
+        return urls
+    except Exception:
+        return []
+
+
 def handle(kind: str, payload: dict, now: float | None = None) -> str | None:
     """Returns what the hook should print (only `pre` ever prints, and only to ask)."""
     now = now if now is not None else time.time()
@@ -188,7 +270,8 @@ def handle(kind: str, payload: dict, now: float | None = None) -> str | None:
                     _start_claim(top, ticket)
                 return None
             if kind == "pre":
-                why = pre_edit(st, sid, key, now)
+                remote_urls = _get_remote_urls()
+                why = pre_edit(st, sid, key, now, remote_urls=remote_urls)
                 if why:
                     return json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
                                                               "permissionDecisionReason": why}})
