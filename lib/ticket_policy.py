@@ -204,3 +204,85 @@ def triage_verdict(issue: dict, recheck: bool = False) -> dict | None:
                     "why": "for you, but it does not say exactly what to do: needs " + ", ".join(gaps) + " (a 'Your task' section)"}
         return {"state": "ready-for-human", "category": category, "missing": [], "why": "a decision or action only a person can take"}
     return {"state": "ready-for-agent", "category": category, "missing": [], "why": "has a description and acceptance criteria"}
+
+
+# ── revisit (on-hold tickets) ──────────────────────────────────────────────────
+
+def parse_revisit_comment(body: str) -> dict | None:
+    """Parse 'Revisit by: YYYY-MM-DD [— condition]' from a comment body. Case-insensitive.
+    Mirrors dashboard/src/lib/revisit.js line for line."""
+    if not body or not isinstance(body, str):
+        return None
+    match = re.search(r"Revisit by:\s*(\d{4}-\d{2}-\d{2})\s*(?:[—-]\s*(.+))?", body, re.I)
+    if not match:
+        return None
+    date = match.group(1)
+    condition = match.group(2).strip() if match.group(2) else None
+    try:
+        datetime.fromisoformat(date + "T00:00:00Z")
+    except (ValueError, TypeError):
+        return None
+    return {"date": date, "condition": condition}
+
+
+def _is_valid_date(datestring: str) -> bool:
+    """Helper: is a comment's createdAt timestamp valid?"""
+    if not datestring:
+        return False
+    return _parse(datestring) is not None
+
+
+def latest_revisit(comments: list) -> dict | None:
+    """Return the newest valid 'Revisit by:' comment from a list. Newest-by-createdAt wins;
+    valid dates are preferred over invalid ones. Mirrors dashboard/src/lib/revisit.js."""
+    if not isinstance(comments, list):
+        return None
+    best = None
+    for comment in comments:
+        if not isinstance(comment, dict):
+            continue
+        parsed = parse_revisit_comment(comment.get("body", ""))
+        if not parsed:
+            continue
+        comment_date = comment.get("createdAt", "")
+        is_comment_date_valid = _is_valid_date(comment_date)
+        if best is None:
+            best = {**parsed, "createdAt": comment_date, "isValid": is_comment_date_valid}
+            continue
+        is_best_date_valid = best.get("isValid", False)
+        # Prefer valid dates over invalid ones.
+        if is_comment_date_valid and not is_best_date_valid:
+            best = {**parsed, "createdAt": comment_date, "isValid": is_comment_date_valid}
+        # If both valid or both invalid, prefer the later one.
+        elif is_comment_date_valid == is_best_date_valid:
+            if comment_date and best.get("createdAt") and comment_date > best.get("createdAt", ""):
+                best = {**parsed, "createdAt": comment_date, "isValid": is_comment_date_valid}
+    if not best:
+        return None
+    return {"date": best["date"], "condition": best["condition"]}
+
+
+def is_revisit_due(revisit: dict | None, now: datetime, ref_issue_state: dict | None = None) -> bool:
+    """Is a revisit condition met? If no revisit, False (never guess).
+    date passed OR (condition is a #N ref AND that issue is closed).
+    ref_issue_state: {number: {"state": "OPEN"|"CLOSED"}} as from ticket_agents.plan_revisit."""
+    if not revisit or not isinstance(revisit, dict):
+        return False
+    date_str = revisit.get("date", "")
+    condition = revisit.get("condition", "")
+    try:
+        revisit_date = datetime.fromisoformat(date_str + "T00:00:00Z")
+    except (ValueError, TypeError):
+        return False
+    if now >= revisit_date:
+        return True
+    if condition and condition.startswith("#"):
+        try:
+            ref_number = int(condition[1:].split()[0])  # "#N" or "#N text"
+        except (ValueError, IndexError):
+            return False
+        if ref_issue_state and isinstance(ref_issue_state, dict):
+            ref_info = ref_issue_state.get(ref_number)
+            if ref_info and isinstance(ref_info, dict):
+                return ref_info.get("state") == "CLOSED"
+    return False

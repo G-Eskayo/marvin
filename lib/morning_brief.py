@@ -163,18 +163,34 @@ def _auto_merge_report() -> str | None:
     return auto_merge_shadow.report_line_anywhere()
 
 
+def _revisited(now: datetime) -> list[dict]:
+    """Tickets returned from hold in the last day (revisit agent)."""
+    import ticket_agents
+    since = now - timedelta(days=1)
+    out = []
+    for line in (ticket_agents.AUDIT_PATH.read_text().splitlines() if ticket_agents.AUDIT_PATH.exists() else []):
+        try:
+            rec = json.loads(line)
+            if (rec.get("agent") == "revisit" and rec.get("op") == "remove_label" and rec.get("arg") == "hold" and
+                rec.get("status") == "applied" and datetime.fromisoformat(rec["at"]) >= since):
+                out.append({"number": rec["number"], "title": rec.get("title", ""), "repo": rec.get("repo", "G-Eskayo/marvin")})
+        except (json.JSONDecodeError, KeyError, ValueError):
+            continue
+    return out
+
+
 def default_sources(now: datetime) -> dict[str, Callable]:
     return {"open_prs": _open_prs, "red_checks": _red_checks, "human_tickets": _human_tickets,
-            "launches": lambda: _launches(now), "merged": lambda: _merged(now), "deadlines": lambda: _deadlines(now),
-            "top_tickets": _top_tickets, "digest_idea": lambda: _digest_idea(now),
+            "launches": lambda: _launches(now), "merged": lambda: _merged(now), "revisited": lambda: _revisited(now),
+            "deadlines": lambda: _deadlines(now), "top_tickets": _top_tickets, "digest_idea": lambda: _digest_idea(now),
             "research_idea": lambda: _research_idea(now), "late_night": lambda: _late_night(now),
             "auto_merge": _auto_merge_report}
 
 
 _SOURCE_NAMES = {"open_prs": "open PRs", "red_checks": "Health", "human_tickets": "tickets waiting on you",
-                 "launches": "the launch log", "merged": "merged PRs", "deadlines": "deadlines",
-                 "top_tickets": "top tickets", "digest_idea": "the daily digest", "research_idea": "the research digest",
-                 "late_night": "last night's sessions", "auto_merge": "auto-merge's shadow report"}
+                 "launches": "the launch log", "merged": "merged PRs", "revisited": "the revisit agent",
+                 "deadlines": "deadlines", "top_tickets": "top tickets", "digest_idea": "the daily digest",
+                 "research_idea": "the research digest", "late_night": "last night's sessions", "auto_merge": "auto-merge's shadow report"}
 
 
 def gather(now: datetime, sources: dict[str, Callable] | None = None) -> dict:
@@ -206,6 +222,7 @@ def render(data: dict, now: datetime) -> str:
 
     runs = data.get("launches") or []
     merged = data.get("merged") or []
+    revisited = data.get("revisited") or []
     overnight = []
     if runs:
         by_kind: dict[str, int] = {}
@@ -215,6 +232,7 @@ def render(data: dict, now: datetime) -> str:
         overnight.append(f"- {len(runs)} model runs (" + ", ".join(f"{n} {k}" for k, n in sorted(by_kind.items()))
                          + f"), ${cost:.2f}")
     overnight += [f"- Merged {_ref(p, pr=True)}" for p in merged]
+    overnight += [f"- Returned from hold: {_ref(t)}" for t in revisited]
     lines += ["## Overnight", "", *(overnight or ["- Quiet: no model runs or merges in the last day."]), ""]
 
     today = []

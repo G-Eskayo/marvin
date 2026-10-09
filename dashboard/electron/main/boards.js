@@ -111,6 +111,7 @@ export async function fetchCrossProjectIssues(repo, registryRepos = [], gh) {
 // The raw tickets and open PRs of one repo. Open tickets are fetched on their own so a long history of
 // closed ones can never crowd them out (one newest-200 query silently drops the oldest open ticket);
 // closed ones are the 100 most recent. PRs carry their changed files so docs they touch can be linked.
+// Hold comments are fetched only if any open issue has the 'hold' label (conditional, not always parallel).
 export async function fetchBoardData(repo, gh) {
   const fields = 'number,title,state,stateReason,labels,body,url,createdAt,updatedAt,closedAt'
   const [openJson, closedJson, prsJson] = await Promise.all([
@@ -118,7 +119,19 @@ export async function fetchBoardData(repo, gh) {
     gh(['issue', 'list', '--repo', repo, '--state', 'closed', '--limit', '100', '--json', fields]),
     gh(['pr', 'list', '--repo', repo, '--state', 'open', '--limit', '100', '--json', 'number,title,url,state,isDraft,body,files'])
   ])
-  return { issues: [...JSON.parse(openJson), ...JSON.parse(closedJson)], prs: JSON.parse(prsJson) }
+  const openIssues = JSON.parse(openJson)
+  let holdComments = {}
+  if (openIssues.some((i) => (i.labels || []).some((l) => l.name === 'hold'))) {
+    try {
+      const holdCommentsJson = await gh(['issue', 'list', '--repo', repo, '--state', 'open', '--label', 'hold', '--limit', '1000', '--json', 'number,comments'])
+      for (const issue of JSON.parse(holdCommentsJson)) {
+        if (issue.comments) holdComments[issue.number] = issue.comments
+      }
+    } catch {
+      // gh failure on this call must not take down the whole board load
+    }
+  }
+  return { issues: [...openIssues, ...JSON.parse(closedJson)], prs: JSON.parse(prsJson), holdComments }
 }
 
 // Everything closed in this repo (up to 1000 tickets) and the merged PRs that closed them -- the
@@ -176,13 +189,15 @@ export async function loadBoard(repo, { gh, registryRepos = [], stagesFor = defa
     })
 
     // Build the board for own repo only.
+    const { holdComments = {} } = data || {}
     const ownBoard = buildBoard({
       repo,
       issues: ownIssuesList,
       prs,
       eventsByNumber: stagesFor(repo),
       liveNumbers: liveNumbers || defaultLiveNumbers(repo),
-      evidenceByNumber: evidence
+      evidenceByNumber: evidence,
+      holdComments
     })
 
     // Fetch and merge cross-project issues.

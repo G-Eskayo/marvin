@@ -137,8 +137,12 @@ function Card({ card, repo, onSelect, onOpenMr, activeTags, onTag }) {
 
 function Column({ column, repo, onSelect, onOpenMr, activeTags, onTag, onAllCompleted }) {
   const [showArchive, setShowArchive] = useState(false)
+  const [showHold, setShowHold] = useState(false)
   const visible = column.cards.filter((c) => [...activeTags].every((t) => c.labels.includes(t)))
   const archive = column.archive || []
+  const isBacklog = column.id === 'backlog'
+  const openCards = isBacklog ? visible.filter((c) => !c.labels.includes('hold')) : visible
+  const heldCards = isBacklog ? visible.filter((c) => c.labels.includes('hold')) : []
   return (
     <div className="flex w-72 shrink-0 flex-col">
       <div className={`mb-2 flex items-center justify-between border-b-2 pb-1 ${COLUMN_STYLE[column.id]}`}>
@@ -151,10 +155,37 @@ function Column({ column, repo, onSelect, onOpenMr, activeTags, onTag, onAllComp
         </button>
       )}
       <div className="flex flex-col gap-2">
-        {visible.map((card) => (
+        {openCards.map((card) => (
           <Card key={card.number} card={card} repo={repo} onSelect={onSelect} onOpenMr={onOpenMr} activeTags={activeTags} onTag={onTag} />
         ))}
-        {visible.length === 0 && <p className="py-2 text-xs italic text-neutral-700">Nothing here</p>}
+        {openCards.length === 0 && heldCards.length === 0 && <p className="py-2 text-xs italic text-neutral-700">Nothing here</p>}
+        {isBacklog && heldCards.length > 0 && (
+          <div className="mt-2">
+            <button onClick={() => setShowHold(!showHold)} className="text-xs text-neutral-500 hover:text-neutral-300">
+              {showHold ? '▾' : '▸'} On hold · {heldCards.length}
+            </button>
+            {showHold && (
+              <div className="mt-2 flex flex-col gap-1 opacity-70">
+                {heldCards.map((card) => (
+                  <div key={card.number} className="rounded border border-neutral-900 px-2 py-1">
+                    <button onClick={() => onSelect(card)} className="truncate w-full text-left text-xs text-neutral-400 hover:text-neutral-300" title={card.title}>
+                      <span className="font-mono text-neutral-600">#{card.number}</span> {card.title}
+                    </button>
+                    {card.revisit && (
+                      <p className="mt-0.5 text-xs text-neutral-600">
+                        Revisit by: {card.revisit.date}
+                        {card.revisit.condition && ` — ${card.revisit.condition}`}
+                      </p>
+                    )}
+                    {card.revisit === null && (
+                      <p className="mt-0.5 text-xs text-amber-600">⚠ no revisit line set</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         {column.id === 'done' && (
           <button onClick={onAllCompleted} className="mt-1 text-left text-xs text-neutral-500 hover:text-neutral-300">
             All completed work →

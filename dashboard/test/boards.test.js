@@ -181,6 +181,85 @@ describe('loadBoard', () => {
   })
 })
 
+describe('fetchBoardData', () => {
+  it('includes hold comments when a held issue exists', async () => {
+    const calls = []
+    const gh = async (args) => {
+      calls.push(args)
+      if (args[0] === 'issue' && args.includes('closed')) return JSON.stringify([])
+      if (args[0] === 'issue' && args.includes('hold')) {
+        return JSON.stringify([
+          { number: 5, comments: [{ body: 'Some comment' }, { body: 'Revisit by: 2026-10-20' }] }
+        ])
+      }
+      if (args[0] === 'issue') {
+        return JSON.stringify([
+          { number: 5, title: 'Held ticket', state: 'OPEN', labels: [{ name: 'hold' }], body: '', url: 'u', createdAt: '2026-10-01T00:00:00Z' }
+        ])
+      }
+      return JSON.stringify([])
+    }
+    const result = await (await import('../electron/main/boards.js')).fetchBoardData('o/r', gh)
+    expect(result.holdComments[5]).toBeDefined()
+    expect(result.holdComments[5].length).toBe(2)
+    expect(calls.some((c) => c[0] === 'issue' && c.includes('hold'))).toBe(true)
+  })
+
+  it('does not fetch hold comments when no held issues exist', async () => {
+    const calls = []
+    const gh = async (args) => {
+      calls.push(args)
+      if (args[0] === 'issue' && args.includes('closed')) return JSON.stringify([])
+      if (args[0] === 'issue') {
+        return JSON.stringify([
+          { number: 1, title: 'Regular ticket', state: 'OPEN', labels: [{ name: 'ready-for-agent' }], body: '', url: 'u', createdAt: '2026-10-01T00:00:00Z' }
+        ])
+      }
+      return JSON.stringify([])
+    }
+    await (await import('../electron/main/boards.js')).fetchBoardData('o/r', gh)
+    expect(calls.map((c) => c[0])).toEqual(['issue', 'issue', 'pr'])
+    expect(calls.some((c) => c[0] === 'issue' && c.includes('hold'))).toBe(false)
+  })
+
+  it('returns empty holdComments on gh fetch failure', async () => {
+    const calls = []
+    const gh = async (args) => {
+      calls.push(args)
+      if (args[0] === 'issue' && args.includes('closed')) return JSON.stringify([])
+      if (args[0] === 'issue' && args.includes('hold')) {
+        throw new Error('rate limit')
+      }
+      if (args[0] === 'issue') {
+        return JSON.stringify([
+          { number: 5, title: 'Held', state: 'OPEN', labels: [{ name: 'hold' }], body: '', url: 'u', createdAt: '2026-10-01T00:00:00Z' }
+        ])
+      }
+      return JSON.stringify([])
+    }
+    const result = await (await import('../electron/main/boards.js')).fetchBoardData('o/r', gh)
+    expect(result.holdComments).toEqual({})
+  })
+
+  it('handles malformed JSON in hold comments response', async () => {
+    const gh = async (args) => {
+      if (args[0] === 'issue' && args.includes('closed')) return JSON.stringify([])
+      if (args[0] === 'issue' && args.includes('hold')) {
+        throw new Error('parsing failure')
+      }
+      if (args[0] === 'issue') {
+        return JSON.stringify([
+          { number: 5, title: 'Held', state: 'OPEN', labels: [{ name: 'hold' }], body: '', url: 'u', createdAt: '2026-10-01T00:00:00Z' }
+        ])
+      }
+      return JSON.stringify([])
+    }
+    const result = await (await import('../electron/main/boards.js')).fetchBoardData('o/r', gh)
+    expect(result.holdComments).toEqual({})
+  })
+})
+
+import { fetchBoardData } from '../electron/main/boards.js'
 import { withProjectStatus } from '../electron/main/boards.js'
 
 describe('withProjectStatus', () => {
