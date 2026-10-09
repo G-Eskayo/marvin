@@ -495,6 +495,20 @@ def plan(facts: dict) -> dict:
     return plan_out
 
 
+def _load_offers(repo: str, dir: Path | None = None) -> dict:
+    """Load the offers dict from the onboarding plan file.
+    Returns {} if the file doesn't exist, has malformed JSON, or lacks the offers key."""
+    dir = dir or ONBOARDING_DIR
+    path = onboarding_path(repo, dir=dir)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+        return data.get("offers", {})
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
 def write_onboarding_plan(repo: str, plan_out: dict, dir: Path | None = None, baseline: dict | None = None, offers: dict | None = None) -> None:
     """Write the onboarding plan to ~/.claude/onboarding/<repo_name>.json
     Preserves existing baseline and merges offers (new offers win, existing unchanged)."""
@@ -588,13 +602,14 @@ def _can_skip(repo: str, existing_plan: dict | None, pushed_at: str | None) -> b
         return False
 
 
-def refresh_onboarding_plan(repo: str, gh=_gh, dir: Path | None = None, apply_safe: bool = False) -> list[str]:
+def refresh_onboarding_plan(repo: str, gh=_gh, dir: Path | None = None, apply_safe: bool = False, auth_status: str | None = None) -> list[str]:
     """Inspect, (optionally) apply the safe pieces, plan, write. Returns the pieces apply created or changed.
 
     Raises on failure, including a failed GitHub read: a plan built from no data would say every piece is missing
     (2026-10-08, all 13 plans during a quota outage), and nothing is ever applied from such data.
     apply_safe (ADR 0058): labels, board and a drafted profile (dispatch off) are applied, then the repo is re-read so
-    the written plan shows the result."""
+    the written plan shows the result. Also attempts to open an onboarding PR if ci or agent_docs are missing and
+    no onboarding_pr offer has been recorded yet (ADR 0058)."""
     facts = inspect(repo, gh=gh)
     if facts.get("read_errors"):
         raise RuntimeError(f"couldn't read {repo} from GitHub ({', '.join(facts['read_errors'])})")
@@ -607,11 +622,34 @@ def refresh_onboarding_plan(repo: str, gh=_gh, dir: Path | None = None, apply_sa
             if facts.get("read_errors"):
                 raise RuntimeError(f"couldn't re-read {repo} from GitHub after applying {changed}")
     plan_out = plan(facts)
-    write_onboarding_plan(repo, plan_out, dir=dir)
+
+    # Wire up the onboarding PR when apply_safe is enabled and the gate conditions are met
+    pr_offers: dict | None = None
+    if apply_safe:
+        ci_missing = plan_out.get("ci", {}).get("state") == "missing"
+        agent_docs_missing = plan_out.get("agent_docs", {}).get("state") == "missing"
+        existing_offers = _load_offers(repo, dir=dir)
+        pr_already_offered = existing_offers.get("onboarding_pr") is not None
+
+        if (ci_missing or agent_docs_missing) and not pr_already_offered:
+            pr_result = _apply_pr(repo, facts, plan_out, gh=gh, auth_status=auth_status)
+            if pr_result.get("action") in ("created", "updated"):
+                # Record the offer so we never open the PR twice
+                pr_offers = existing_offers.copy()
+                pr_offers["onboarding_pr"] = {
+                    "pr_url": pr_result.get("pr_url"),
+                    "branch": pr_result.get("branch"),
+                    "opened_at": datetime.now(timezone.utc).isoformat(),
+                }
+                if "onboarding_pr" not in changed:
+                    changed.append("onboarding_pr")
+            # On "needs-human" or "unchanged", write nothing new (next hour retries)
+
+    write_onboarding_plan(repo, plan_out, dir=dir, offers=pr_offers)
     return changed
 
 
-def refresh_all_onboarding_plans(repos: list[str], gh=_gh, dir: Path | None = None, apply_safe: bool = False) -> dict:
+def refresh_all_onboarding_plans(repos: list[str], gh=_gh, dir: Path | None = None, apply_safe: bool = False, auth_status: str | None = None) -> dict:
     """Refresh onboarding plans for all repos, logging failures without blocking successes.
     Returns {"ok": [repos], "failed": [(repo, reason)], "applied": {repo: [pieces]}, "skipped": [repos]}.
     Skips inspection when pushedAt <= generated_at and plan is not stale.
@@ -634,7 +672,7 @@ def refresh_all_onboarding_plans(repos: list[str], gh=_gh, dir: Path | None = No
             continue
 
         try:
-            changed = refresh_onboarding_plan(repo, gh=gh, dir=dir, apply_safe=apply_safe)
+            changed = refresh_onboarding_plan(repo, gh=gh, dir=dir, apply_safe=apply_safe, auth_status=auth_status)
             ok.append(repo)
             if changed:
                 applied[repo] = changed
