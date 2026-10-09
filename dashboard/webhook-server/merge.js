@@ -331,6 +331,33 @@ export async function assertNotSentBack(prUrl, exec) {
   }
 }
 
+// Only a human's Approve reaches mergePr (dashboard and phone), so that click is the "ready" decision for a draft.
+// Before this, a draft ran the whole rebase-and-retest gate and then failed at merge with "Pull Request is still
+// a draft", reported as UNKNOWN (clarity-captions #77/#78, 2026-10-09). Mark it ready first, say so on the PR, and
+// refuse plainly if GitHub won't. A lookup hiccup never blocks, same policy as assertTargetsBase.
+export async function readyIfDraft(prUrl, exec) {
+  let isDraft = false
+  try {
+    const { stdout } = await exec('gh', ['pr', 'view', prUrl, '--json', 'isDraft'])
+    isDraft = JSON.parse(stdout).isDraft === true
+  } catch {
+    return false
+  }
+  if (!isDraft) return false
+  try {
+    await exec('gh', ['pr', 'ready', prUrl])
+  } catch (error) {
+    const reason = String(error?.stderr || error?.message || error).split('\n')[0]
+    throw new MergeFailure(refusal('PR_DRAFT', 'request',
+      `this PR is a draft and GitHub would not mark it ready: ${reason}`,
+      'Mark it "Ready for review" on GitHub, then approve again. The PR was not changed or sent back.'))
+  }
+  try {
+    await exec('gh', ['pr', 'comment', prUrl, '--body', 'Marked ready for review because the owner pressed Approve on this draft.'])
+  } catch {}
+  return true
+}
+
 // What GitHub says about the PR right now, waiting out "UNKNOWN" (it recomputes a PR's mergeability after every
 // push, including the merge gate's own rebase push, and answers UNKNOWN or a stale "not mergeable" meanwhile).
 export async function mergeableNow(prUrl, exec, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), tries = 6, delayMs = 5000) {
@@ -385,6 +412,7 @@ async function mergePrUnqueued(
 
   await assertTargetsBase(prUrl, exec, ctx ? ctx.base : 'main')
   await assertNotSentBack(prUrl, exec)
+  await readyIfDraft(prUrl, exec)
 
   const { gate, behind = false, headRefName, body } = ctx ? await shouldGateMerge(prUrl, exec, ctx) : await shouldGateMerge(prUrl, exec)
   const ticketNumber = parseTicketRef(body)
