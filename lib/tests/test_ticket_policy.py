@@ -90,7 +90,7 @@ def test_existing_priority_label_is_read_as_a_rank():
 
 # ── triage ──────────────────────────────────────────────────────────────────
 
-GOOD = "## What to build\n\nA thing.\n\n## Acceptance criteria\n\n- [ ] works\n- [ ] tested\n"
+GOOD = "## What to build\n\nA thing.\n\n## How we'll try to break it\n\nEmpty input, a dependency down.\n\n## Acceptance criteria\n\n- [ ] works\n- [ ] tested\n"
 
 
 def test_a_fully_specified_ticket_is_ready_for_an_agent():
@@ -248,9 +248,9 @@ def test_foundation_work_is_weighted_with_its_reason_but_a_near_hard_deadline_st
 
 # 2026-10-09: #240, #218, #230, #217 sat in needs-info with full Problem / Solution / Acceptance write-ups.
 def test_a_solution_or_approach_section_counts_as_what_to_build_and_acceptance_needs_no_criteria_word():
-    body = "## Problem\n\nx\n\n## Solution\n\ndo y\n\n## Acceptance\n\n- [ ] it works\n"
+    body = "## Problem\n\nx\n\n## Solution\n\ndo y\n\n## Acceptance\n\n- [ ] it works\n\n## How we'll try to break it\n\nbad input\n"
     assert tp.triage_verdict(issue(body=body))["state"] == "ready-for-agent"
-    body2 = "## Approach\n\ndo y\n\n## Acceptance criteria\n\n- [ ] it works\n"
+    body2 = "## Approach\n\ndo y\n\n## Acceptance criteria\n\n- [ ] it works\n\n## How we'll try to break it\n\nbad input\n"
     assert tp.triage_verdict(issue(body=body2))["state"] == "ready-for-agent"
 
 
@@ -260,13 +260,56 @@ def test_a_placeholder_is_still_not_ready():
 
 
 def test_recheck_looks_again_at_a_needs_info_ticket():
-    body = "## Solution\n\ndo y\n\n## Acceptance\n\n- [ ] it works\n"
+    body = "## Solution\n\ndo y\n\n## Acceptance\n\n- [ ] it works\n\n## How we'll try to break it\n\nbad input\n"
     assert tp.triage_verdict(issue(labels=["needs-info"], body=body)) is None          # normal pass: left alone
     assert tp.triage_verdict(issue(labels=["needs-info"], body=body), recheck=True)["state"] == "ready-for-agent"
 
 
 def test_problem_what_or_convention_with_acceptance_criteria_is_ready():
     for head in ("Problem", "What", "Convention (agreed with Gil 2026-10-07)"):
-        body = f"## {head}\n\nx\n\n## Acceptance criteria\n\n- [ ] it works\n"
+        body = f"## {head}\n\nx\n\n## Acceptance criteria\n\n- [ ] it works\n\n## How we'll try to break it\n\nbad input\n"
         assert tp.triage_verdict(issue(body=body))["state"] == "ready-for-agent", head
     assert tp.triage_verdict(issue(body="## Whatever\n\nx\n\n## Acceptance\n\n- [ ] y\n"))["state"] == "needs-info"
+
+
+
+# ADR 0063 gate 1 (#335): a build ticket says how we'll try to break it, or it isn't ready.
+NO_BREAK = "## What to build\n\nA thing.\n\n## Acceptance criteria\n\n- [ ] works\n"
+
+
+def test_a_build_ticket_without_a_break_it_section_needs_info_naming_it():
+    v = tp.triage_verdict(issue(body=NO_BREAK))
+    assert v["state"] == "needs-info" and any("break it" in m for m in v["missing"])
+
+
+def test_common_spellings_of_the_section_count():
+    for head in ("How we'll try to break it", "How we will try to break it", "How we\u2019ll break it", "Misuse cases"):
+        body = NO_BREAK + f"\n## {head}\n\nA dependency failing.\n"
+        assert tp.triage_verdict(issue(body=body))["state"] == "ready-for-agent", head
+
+
+def test_an_empty_or_tbd_section_does_not_count():
+    for filler in ("", "TBD", "  tbd.  ", "- [ ] TBD", "N/A", "\n\n"):
+        body = NO_BREAK + f"\n## How we'll try to break it\n\n{filler}\n"
+        assert tp.triage_verdict(issue(body=body))["state"] == "needs-info", repr(filler)
+
+
+def test_the_heading_inside_a_code_block_does_not_count():
+    body = NO_BREAK + "\n```\n## How we'll try to break it\nbad input\n```\n"
+    assert tp.triage_verdict(issue(body=body))["state"] == "needs-info"
+
+
+def test_research_and_decision_tickets_are_exempt():
+    assert tp.triage_verdict(issue(body=NO_BREAK, labels=["research"]))["state"] == "ready-for-agent"
+    task = "\n## Your task\n**What I need from you:** a decision.\n**Where:** here.\n**How:** think.\n**What to send back:** a reply.\n"
+    assert tp.triage_verdict(issue(body=NO_BREAK + task, title="Design session: decide retention"))["state"] == "ready-for-human"
+
+
+def test_a_huge_body_is_handled():
+    body = NO_BREAK + "\n## How we'll try to break it\n\n" + ("x " * 200_000)
+    assert tp.triage_verdict(issue(body=body))["state"] == "ready-for-agent"
+
+
+def test_the_next_section_ends_the_break_it_section():
+    body = "## What to build\n\nA thing.\n\n## How we'll try to break it\n\n## Acceptance criteria\n\n- [ ] works\n"
+    assert tp.triage_verdict(issue(body=body))["state"] == "needs-info"  # empty section, followed by another heading

@@ -156,6 +156,22 @@ def human_task_gaps(body: str) -> list[str]:
     return gaps
 
 
+_BREAK_HEAD = re.compile(r"^##\s*(how we(?:'|\u2019|\s+wi)ll\s+(?:try\s+to\s+)?break\s+it|misuse cases)\b.*$", re.I | re.M)
+_FILLER = re.compile(r"^(?:-\s*\[[ x]\]\s*)?(tbd|todo|n/?a|none|-+)\.?$", re.I)
+
+
+def has_break_it(body: str) -> bool:
+    """Is there a 'How we'll try to break it' section with at least one real line? Code blocks don't count."""
+    text = re.sub(r"```.*?```", "", body or "", flags=re.S)
+    for m in _BREAK_HEAD.finditer(text):
+        rest = text[m.end():]
+        nxt = re.search(r"^##\s", rest, re.M)
+        section = rest[: nxt.start()] if nxt else rest
+        if any(l.strip() and not _FILLER.match(l.strip()) for l in section.splitlines()):
+            return True
+    return False
+
+
 def triage_verdict(issue: dict, recheck: bool = False) -> dict | None:
     """What to do with an untriaged ticket, deterministically (no model, no tokens): None if it is
     already triaged or pinned. `state` is one of ready-for-agent / ready-for-human / needs-info.
@@ -175,6 +191,9 @@ def triage_verdict(issue: dict, recheck: bool = False) -> dict | None:
     has_what = bool(re.search(r"##\s*(What to build|What|Summary|Description|Solution|Approach|Proposal|Design|Build|Problem|Convention)\b", body, re.I))
     has_ac = bool(re.search(r"##\s*Acceptance(?:\s+criteria)?\b[\s\S]*?- \[[ x]\]", body, re.I))
     missing = [m for m, ok in (("a 'What to build' section", has_what), ("acceptance criteria", has_ac)) if not ok]
+    # ADR 0063 gate 1 (#335): a build ticket says how we'll try to break it. Research and decision tickets are exempt.
+    if not missing and "research" not in names and not _HUMAN_TITLE.search(title) and not has_break_it(body):
+        missing.append("a 'How we'll try to break it' section (the misuse cases, plus attacks if it faces outside)")
     if missing:
         return {"state": "needs-info", "category": category, "missing": missing,
                 "why": "missing " + " and ".join(missing)}

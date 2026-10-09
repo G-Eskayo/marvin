@@ -85,7 +85,7 @@ def test_prioritize_skips_pinned_tickets_and_tickets_already_at_the_right_priori
 
 # ── triage ──────────────────────────────────────────────────────────────────
 
-GOOD = "## What to build\n\nA thing.\n\n## Acceptance criteria\n\n- [ ] works\n"
+GOOD = "## What to build\n\nA thing.\n\n## How we'll try to break it\n\nEmpty input.\n\n## Acceptance criteria\n\n- [ ] works\n"
 
 
 def test_triage_marks_a_well_specified_ticket_ready_and_categorises_it():
@@ -343,7 +343,7 @@ def test_a_missing_label_is_created_when_gh_reports_it_on_stderr_as_the_real_gh_
 
 def test_triage_looks_again_at_needs_info_it_set_once_the_ticket_is_complete(tmp_path):
     """The documented loop 'you answer -> triaged again' never ran: needs-info was a final state."""
-    good = "## Solution\n\ndo y\n\n## Acceptance\n\n- [ ] it works\n"
+    good = "## Solution\n\ndo y\n\n## Acceptance\n\n- [ ] it works\n\n## How we'll try to break it\n\nbad input\n"
     audit = tmp_path / "a.jsonl"
     audit.write_text(json.dumps({"status": "applied", "agent": "triage", "repo": REPO, "number": 7, "op": "add_label", "arg": "needs-info"}) + "\n")
     issues = [issue(7, labels=["needs-info"], body=good), issue(8, labels=["needs-info"], body=good)]  # 8: a person set it
