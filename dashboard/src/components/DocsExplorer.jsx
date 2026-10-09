@@ -307,14 +307,18 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
     window.api.docs.repos().then((r) => setCache(docsCacheFrom(r))).catch(() => {})
   }, [])
 
-  // Debounced search; a stale response never overwrites a newer query's.
+  // Debounced search; a stale response never overwrites a newer query's. Only a new QUERY opens the results: a docs
+  // change (docsTick) re-runs the search quietly, or a doc opened from a result got yanked back to the list (2026-10-09).
+  const lastQuery = useRef(null)
   useEffect(() => {
     if (!query.trim()) {
       setSearchState(null)
       setShowResults(false)
+      lastQuery.current = query
       return
     }
-    setShowResults(true)
+    if (lastQuery.current !== query) setShowResults(true)
+    lastQuery.current = query
     let live = true
     const id = setTimeout(() => {
       window.api.docs

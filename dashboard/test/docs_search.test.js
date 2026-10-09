@@ -209,3 +209,28 @@ describe('buildDocsIndex keys docs by project id when given one', () => {
     }
   })
 })
+
+describe('createIndexer: local docs are read once, not on every keystroke (2026-10-09: searches took up to 20 s)', () => {
+  const idx = { generated_at: new Date().toISOString(), docs: [{ repo: 'r', path: 'a.md', label: 'a.md', content: '# A\nalpha' }] }
+  const local = (word) => ({ repos: new Set(['l']), docs: [{ repo: 'l', path: 'b.md', label: 'b.md', content: `# B\n${word}` }] })
+
+  it('answers from memory after the first read', async () => {
+    let reads = 0
+    const ix = createIndexer({ build: async () => idx, load: () => idx, getLocal: async () => { reads += 1; return local('beta') } })
+    await ix.search('beta')
+    await ix.search('beta')
+    await ix.search('alpha')
+    expect(reads).toBe(1)
+  })
+
+  it('a docs change refreshes in the background; the next search sees it without waiting', async () => {
+    let word = 'beta'
+    const ix = createIndexer({ build: async () => idx, load: () => idx, getLocal: async () => local(word) })
+    expect((await ix.search('beta')).results.length).toBe(1)
+    word = 'gamma'
+    ix.localChanged()
+    await ix.search('beta')            // served from memory while the refresh runs
+    await new Promise((r) => setTimeout(r, 0))
+    expect((await ix.search('gamma')).results.length).toBe(1)
+  })
+})
