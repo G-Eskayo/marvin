@@ -22,6 +22,10 @@ describe('renderer Content Security Policy', () => {
     expect(directive('script-src')).not.toContain('https://raw.githubusercontent.com')
   })
 
+  it('lets PR recordings stream from the main process (prmedia:), and nothing else plays from outside', () => {
+    expect(directive('media-src')).toEqual(["'self'", 'prmedia:'])
+  })
+
   it('lets the Portfolio tab show images from the dev site and data: URLs', () => {
     expect(directive('img-src')).toEqual(expect.arrayContaining(["'self'", 'data:', DEV]))
   })

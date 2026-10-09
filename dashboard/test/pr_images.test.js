@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, readdirSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
 import { parsePrImages, resolvePrImageUrl, createImageLoader } from '../electron/main/pr_images.js'
+import { mediaFileFor, sniffMime } from '../electron/main/pr_images.js'
 
 const CTX = { repo: 'G-Eskayo/clarity-captions', headRef: 'design/v1-polish-mocks' }
 const RAW = 'https://raw.githubusercontent.com/G-Eskayo/clarity-captions/design/v1-polish-mocks'
@@ -25,8 +26,8 @@ describe('parsePrImages: every image in a PR description, in order', () => {
   it('finds each mock-up with its section heading as the group and the line above as its caption', () => {
     const images = parsePrImages(MOCKS_BODY, CTX)
     expect(images).toEqual([
-      { url: `${RAW}/docs/design/mocks/2026-10-09/01-main-captioning.png`, alt: 'Main screen', group: '1 · Main screen while captioning', caption: 'Gear top-left (icon only, theme-colored), small Stop circle at the top middle.' },
-      { url: `${RAW}/docs/design/mocks/2026-10-09/02-paused-save-new.png`, alt: 'Paused', group: '2 · Paused (after pressing X)', caption: 'Start captions top-middle, captions dimmed, SAVE then NEW stacked under Start.' }
+      { url: `${RAW}/docs/design/mocks/2026-10-09/01-main-captioning.png`, kind: 'image', alt: 'Main screen', group: '1 · Main screen while captioning', caption: 'Gear top-left (icon only, theme-colored), small Stop circle at the top middle.' },
+      { url: `${RAW}/docs/design/mocks/2026-10-09/02-paused-save-new.png`, kind: 'image', alt: 'Paused', group: '2 · Paused (after pressing X)', caption: 'Start captions top-middle, captions dimmed, SAVE then NEW stacked under Start.' }
     ])
   })
 
@@ -118,6 +119,7 @@ describe('createImageLoader: bytes fetched in the main process, handed over as d
     const r = await loader.load('https://raw.githubusercontent.com/o/r/b/clip.gif')
     expect(r.ok).toBe(true)
     expect(r.dataUrl.startsWith('data:image/gif;base64,')).toBe(true)
+    expect(r).toMatchObject({ kind: 'image', mime: 'image/gif' })
   })
 
   it('sends the GitHub credential to GitHub hosts only, so private repos load and the token goes nowhere else', async () => {
@@ -158,7 +160,7 @@ describe('createImageLoader: bytes fetched in the main process, handed over as d
 
   it('refuses something that is not an image (an HTML error page served as 200)', async () => {
     const loader = createImageLoader({ fetchFn: vi.fn().mockResolvedValue(response(Buffer.from('<html>login</html>'))) })
-    expect(await loader.load('https://raw.githubusercontent.com/o/r/b/x')).toEqual({ ok: false, reason: 'not an image' })
+    expect(await loader.load('https://raw.githubusercontent.com/o/r/b/x')).toEqual({ ok: false, reason: 'not an image or recording' })
   })
 
   it('reports a network error in plain words', async () => {
@@ -200,5 +202,98 @@ describe('createImageLoader: bytes fetched in the main process, handed over as d
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+// Owner, 2026-10-09: for anything visual he wants to SEE it working -- recordings that play, GIFs that animate.
+describe('parsePrImages: screen recordings too', () => {
+  it('finds <video src>, <video><source>, links to recordings, bare recording URLs and bare GitHub attachments', () => {
+    const body = [
+      '## Recordings',
+      'Start, pause, save:',
+      '<video src="https://github.com/user-attachments/assets/11111111-2222-3333-4444-555555555555.mp4" controls></video>',
+      '<video controls>',
+      '  <source src="docs/rec/pause.webm" type="video/webm">',
+      '</video>',
+      '- [Launch dance](https://raw.githubusercontent.com/o/r/b/launch.mov)',
+      'https://raw.githubusercontent.com/o/r/b/copy.mp4?raw=true',
+      'https://github.com/user-attachments/assets/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      'See https://github.com/user-attachments/assets/ffffffff-bbbb-cccc-dddd-eeeeeeeeeeee in prose: not shown',
+      '[spec](https://example.com/spec.html) is a plain link: not shown'
+    ].join('\n')
+    const items = parsePrImages(body, CTX)
+    expect(items.map((i) => [i.kind, i.url])).toEqual([
+      ['video', 'https://github.com/user-attachments/assets/11111111-2222-3333-4444-555555555555.mp4'],
+      ['video', `${RAW}/docs/rec/pause.webm`],
+      ['video', 'https://raw.githubusercontent.com/o/r/b/launch.mov'],
+      ['video', 'https://raw.githubusercontent.com/o/r/b/copy.mp4?raw=true'],
+      ['auto', 'https://github.com/user-attachments/assets/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee']
+    ])
+    expect(items[0]).toMatchObject({ group: 'Recordings', caption: 'Start, pause, save' })
+    expect(items[2].caption).toBe('Launch dance')
+  })
+
+  it('a GIF is an image (it animates in <img>), and an ![](x.mp4) is a recording', () => {
+    const items = parsePrImages(`![dance](${RAW}/a.gif) ![rec](${RAW}/b.mp4)`, CTX)
+    expect(items.map((i) => i.kind)).toEqual(['image', 'video'])
+  })
+
+  it('never turns an image URL inside ![]() into a second bare-URL entry', () => {
+    expect(parsePrImages(`![x](https://raw.githubusercontent.com/o/r/b/x.mp4)`, CTX)).toHaveLength(1)
+  })
+})
+
+const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypisom', 'ascii'), Buffer.alloc(16)])
+const MOV = Buffer.concat([Buffer.from([0, 0, 0, 0x14]), Buffer.from('ftypqt  ', 'ascii'), Buffer.alloc(16)])
+const WEBM = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(16)])
+
+describe('createImageLoader: recordings are cached to disk and streamed, not inlined', () => {
+  it('sniffs mp4, mov and webm', () => {
+    expect(sniffMime(MP4)).toBe('video/mp4')
+    expect(sniffMime(MOV)).toBe('video/quicktime')
+    expect(sniffMime(WEBM)).toBe('video/webm')
+  })
+
+  it('writes a recording to the cache and returns a prmedia:// address the protocol serves', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'pr-media-'))
+    try {
+      const loader = createImageLoader({ fetchFn: vi.fn().mockResolvedValue(response(MP4)), cacheDir: dir })
+      const r = await loader.load('https://github.com/user-attachments/assets/abc', 'auto')
+      expect(r).toMatchObject({ ok: true, kind: 'video', mime: 'video/mp4' })
+      expect(r.src).toMatch(/^prmedia:\/\/media\/[0-9a-f]{64}$/)
+      const id = r.src.split('/').pop()
+      expect(mediaFileFor(dir, id)).toMatchObject({ mime: 'video/mp4' })
+      const again = createImageLoader({ fetchFn: vi.fn(), cacheDir: dir })
+      expect(await again.load('https://github.com/user-attachments/assets/abc')).toMatchObject({ ok: true, kind: 'video', src: r.src })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('allows recordings up to the larger cap, but not images', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'pr-media-'))
+    try {
+      const big = Buffer.concat([MP4, Buffer.alloc(3000)])
+      const loader = createImageLoader({ fetchFn: vi.fn().mockResolvedValue(response(big)), cacheDir: dir, maxBytes: 1000, maxVideoBytes: 10_000 })
+      expect((await loader.load('https://raw.githubusercontent.com/o/r/b/rec.mp4', 'video')).ok).toBe(true)
+      const bigPng = Buffer.concat([PNG, Buffer.alloc(3000)])
+      const images = createImageLoader({ fetchFn: vi.fn().mockResolvedValue(response(bigPng)), cacheDir: dir, maxBytes: 1000, maxVideoBytes: 10_000 })
+      expect(await images.load('https://raw.githubusercontent.com/o/r/b/x.png', 'auto')).toMatchObject({ ok: false, reason: expect.stringMatching(/too large/) })
+      const huge = createImageLoader({ fetchFn: vi.fn().mockResolvedValue(response(MP4, { length: 500_000 })), cacheDir: dir, maxVideoBytes: 10_000 })
+      expect(await huge.load('https://raw.githubusercontent.com/o/r/b/huge.mp4', 'video')).toMatchObject({ ok: false, reason: expect.stringMatching(/too large/) })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('says so when a recording arrives with no cache to put it in', async () => {
+    const loader = createImageLoader({ fetchFn: vi.fn().mockResolvedValue(response(WEBM)) })
+    expect(await loader.load('https://raw.githubusercontent.com/o/r/b/x.webm')).toMatchObject({ ok: false, reason: expect.stringMatching(/media cache/) })
+  })
+
+  it('mediaFileFor serves only a 64-hex id inside the cache, never a path', () => {
+    expect(mediaFileFor('/tmp', '../../etc/passwd')).toBeNull()
+    expect(mediaFileFor('/tmp', 'abc')).toBeNull()
+    expect(mediaFileFor(null, 'a'.repeat(64))).toBeNull()
   })
 })

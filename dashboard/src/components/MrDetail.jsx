@@ -182,7 +182,7 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
       </div>
 
       {pr.images?.length > 0 && (
-        <Section title={`Images (${pr.images.length})`}>
+        <Section title={`Images & recordings (${pr.images.length})`}>
           <PrImages images={pr.images} />
         </Section>
       )}
