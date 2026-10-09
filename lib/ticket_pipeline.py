@@ -220,7 +220,17 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
             continue
         n = int(m.group(1))
         names = labels_of.get(n)
-        if names is None or names & {"needs-reengagement", "pinned", "held"}:
+        if names is None or names & {"pinned", "held"}:
+            continue
+        if "needs-reengagement" in names:
+            # Already sent back, but its PR still conflicts: the rebuild hasn't happened (#257 sat 12 hours, still
+            # claimed). A repair makes the rebuild unnecessary; anything else stays the sent-back loop's business.
+            if not red and pr.get("mergeable") == "CONFLICTING" and _try_conflict_repair(repo, pr)["outcome"] == "repaired":
+                gh("issue", "edit", str(n), "--repo", repo, "--remove-label", "needs-reengagement")
+                gh("issue", "comment", str(n), "--repo", repo, "--body",
+                   f"PR #{pr['number']}'s conflict with main was resolved automatically and pushed, so no rebuild is needed: "
+                   f"the sent-back flag is cleared and the PR is ready for review.")
+                print(f"{LOG_PREFIX} {repo}#{n}: sent-back PR #{pr['number']} repaired instead of rebuilt", file=sys.stderr)
             continue
         files: list[str] = []
         if not red:
