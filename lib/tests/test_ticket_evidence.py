@@ -84,3 +84,19 @@ def test_merged_pr_work_verbs_count_as_done_evidence():
     for body in ("Fixes #5", "resolved #5", "Implements #5 end to end", "References: #5", "Land work. Refs #5."):
         facts = {**FACTS, "merged": [{"number": 40, "body": body, "headRefName": "x"}]}
         assert te.verdict(te.evidence_for(5, facts)) == "looks-done", body
+
+
+# 2026-10-09: #213 and #259 were skipped as "looks-done" because docs commits only LISTED them.
+def test_a_commit_counts_only_when_it_says_it_did_the_ticket():
+    yes = ["Hooks at user level, launch-kind aware (#291)", "Project tagger and archive lifecycle (#298, #299; ADR 0060)",
+           "Implement G-Eskayo/marvin#296", "Fixes #12: board loads", "closes #12", "board refresh (refs #12)"]
+    no = ["Plan: steps 1-2 done, tickets #259-#263 for the rest", "docs: ticket triage applied; revisit #213 later",
+          "Follow-on filed: #68", "see #12 and #13 for context",
+          "docs: ticket triage 2026-10-07 applied; revisit schedule for holds (#213)"]
+    import ticket_evidence as te
+    for s in yes:
+        n = int(__import__("re").findall(r"#(\d+)", s)[0])
+        assert te._commit_claims(s, n), s
+    for s in no:
+        n = int(__import__("re").findall(r"#(\d+)", s)[0])
+        assert not te._commit_claims(s, n), s
