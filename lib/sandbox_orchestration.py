@@ -36,6 +36,7 @@ from typing import Callable
 
 import marvin_launcher
 import metrics_registry as mr
+import test_change_rule  # noqa: E402
 import project_profile as pp
 import ticket_stages as ts
 
@@ -139,6 +140,12 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
         f"Open the plan with a short '## North-star fit' section, against the north stars above: what it reuses "
         f"before adding anything, why it is the simplest sufficient approach, where it saves or spends tokens, and "
         f"whether it leaves the user more capable. If the ticket states a fit, check it against the code and correct it."
+        # ADR 0063: tests try to break it, and come first.
+        f" Then list the tests you will write FIRST: one for each case in the ticket's 'How we'll try to break it' "
+        f"section (and its Attacks list, if any), plus any misuse the section missed (bad, empty, huge or malformed "
+        f"input; each dependency failing; repeats and concurrency; wrong permissions; stale state; a person's "
+        f"mistakes). Test against the real collaborator wherever a mock could hide its rules. Verify fails when code "
+        f"changes without a test changing."
     )
     if feedback is not None:
         plan_prompt += (
@@ -347,6 +354,11 @@ def execute_ticket(
         comparison = mr.compare(subsystem, baseline, current)
 
         if comparison["passing"]:
+            # ADR 0063 gate 2 (#336): code that changed without a test changing doesn't pass, whatever the metrics say
+            tests_ok, why = test_change_rule.check_worktree(worktree_path, base_branch, _test_rules(ticket_ref))
+            if not tests_ok:
+                comparison = {**comparison, "passing": False, "verdict": "no tests changed", "tests": why}
+        if comparison["passing"]:
             _stage(ticket_ref, "verifying", "passed", comparison.get("verdict", ""))
             return {
                 "passing": True,
@@ -368,6 +380,18 @@ def execute_ticket(
             f"(max_iterations). Final verdict: {comparison['verdict'] if comparison else 'none'}."
         ),
     }
+
+
+def _test_rules(ticket_ref: str) -> dict:
+    """What counts as code and as tests for this ticket's project (test_change_rule.py)."""
+    repo = _ticket_repo(ticket_ref)
+    if repo is None:
+        return test_change_rule.MARVIN_RULES
+    try:
+        import project_profile as pp
+        return test_change_rule.rules_for_profile(pp.load_profile(repo))
+    except Exception:  # noqa: BLE001 -- unreadable profile: the generic rules still apply
+        return test_change_rule.rules_for_profile(None)
 
 
 def _ticket_repo(ticket_ref: str) -> str | None:
