@@ -173,3 +173,14 @@ def test_code_that_handles_credentials_is_core():
     for path in ("dashboard/webhook-server/gh_auth.js", "dashboard/electron/main/path.js", "lib/mobile_auth.py",
                  "lib/gh_token_store.py", "config/secrets.json"):
         assert decide([f(path)])["verdict"] == "ask", path
+
+
+# Found by the mutation check (#339) on this very PR: two behaviours nothing pinned down.
+def test_an_ordinary_file_in_an_existing_folder_is_owned():
+    assert amp.area("lib/project_tagger.py", RULES, TOP) == "owned"
+    assert amp.area("skills/route/scripts/route.py", RULES, TOP | {"skills"}) == "owned"
+
+
+def test_deleted_lines_count_toward_the_size_limit():
+    assert decide([f("lib/x.py", add=1000, rem=600)])["verdict"] == "ask"
+    assert decide([f("lib/x.py", add=900, rem=600)])["verdict"] == "auto"
