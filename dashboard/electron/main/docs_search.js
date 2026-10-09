@@ -68,13 +68,24 @@ function snippetAround(text, terms) {
 
 const count = (hay, needle) => hay.split(needle).length - 1
 
+// A doc is split into sections once, not on every search (docs are kept in memory between searches).
+const sectionCache = new WeakMap()
+function sectionsOf(doc) {
+  let hit = sectionCache.get(doc)
+  if (!hit || hit.content !== doc.content) {
+    hit = { content: doc.content, sections: splitSections(doc.content) }
+    sectionCache.set(doc, hit)
+  }
+  return hit.sections
+}
+
 export function searchDocs(index, query, { repo = null, limit = 50 } = {}) {
   const terms = (query || '').toLowerCase().split(/\s+/).filter(Boolean)
   if (terms.length === 0) return []
   const results = []
   for (const doc of index.docs) {
     if (repo && doc.repo !== repo) continue
-    for (const section of splitSections(doc.content)) {
+    for (const section of sectionsOf(doc)) {
       const body = section.text.toLowerCase()
       const head = section.heading.toLowerCase()
       const label = doc.label.toLowerCase()
@@ -102,6 +113,28 @@ export function searchDocs(index, query, { repo = null, limit = 50 } = {}) {
 export function createIndexer({ build, load = loadIndex, maxAgeMs = MAX_AGE_MS, getLocal = async () => ({ repos: new Set(), docs: [] }) }) {
   let current = null
   let inflight = null
+  // Local clones' docs, read once and kept: re-reading every project's docs from disk on every keystroke made a search
+  // take up to 20 s (2026-10-09). A docs change (localChanged) refreshes them in the background; searches meanwhile
+  // use what was read last, and only the very first search waits for a read.
+  let local = null
+  let localDirty = false
+  let localInflight = null
+  function refreshLocal() {
+    if (!localInflight) {
+      localDirty = false
+      localInflight = Promise.resolve()
+        .then(() => getLocal())
+        .then((l) => (local = l))
+        .catch(() => local)
+        .finally(() => (localInflight = null))
+    }
+    return localInflight
+  }
+  async function localDocs() {
+    if (!local) return (await refreshLocal()) || { repos: new Set(), docs: [] }
+    if (localDirty) refreshLocal()
+    return local
+  }
 
   function rebuild() {
     if (!inflight) {
@@ -115,14 +148,17 @@ export function createIndexer({ build, load = loadIndex, maxAgeMs = MAX_AGE_MS, 
 
   return {
     reindex: rebuild,
+    localChanged() {
+      localDirty = true
+    },
     async search(query, opts) {
       let idx = current || load()
       if (idx.docs.length === 0) idx = (await rebuild()) || idx
       else if (isStale(idx, maxAgeMs)) rebuild()
       // Repos with a local clone are read live from disk (so uncommitted edits are
       // searchable); only the rest come from the cached GitHub index.
-      const local = await getLocal()
-      const docs = [...idx.docs.filter((d) => !local.repos.has(d.repo)), ...local.docs]
+      const here = await localDocs()
+      const docs = [...idx.docs.filter((d) => !here.repos.has(d.repo)), ...here.docs]
       return {
         results: searchDocs({ docs }, query, opts),
         indexedAt: idx.generated_at,

@@ -188,15 +188,10 @@ export default function DashboardHome({ onOpenProject }) {
             <span>Archived ({archived.length})</span>
           </button>
           {showArchived && (
-            <div className="space-y-1">
+            // The same card as an active project, dimmed: one look for every board (Gil, 2026-10-09).
+            <div className="grid auto-fit gap-4 opacity-60" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))' }}>
               {archived.map((card) => (
-                <button
-                  key={card.repo}
-                  onClick={() => onOpenProject(card.repo)}
-                  className="block w-full rounded px-3 py-2 text-left text-sm text-neutral-500 transition-colors hover:bg-neutral-800/30 hover:text-neutral-300"
-                >
-                  {card.name}
-                </button>
+                <ProjectCard key={card.repo} card={card} onOpen={onOpenProject} />
               ))}
             </div>
           )}

@@ -540,8 +540,6 @@ export default function ProjectBoard({ onOpenMr, onOpenDocs, onOpenTicket, nav }
     )
   }
   const current = boards?.find((b) => b.repo === repo)
-  const working = (boards || []).filter((b) => b.status !== 'dormant' && b.status !== 'archived')
-  const dormant = (boards || []).filter((b) => b.status === 'dormant' || b.status === 'archived')
   const boardIsEmpty = board && board.columns.every((c) => c.cards.length === 0 && !(c.archive || []).length)
 
   if (selected) {
@@ -551,30 +549,12 @@ export default function ProjectBoard({ onOpenMr, onOpenDocs, onOpenTicket, nav }
   return (
     <div className="p-6">
       <WaitingOnYou boards={boards} onPick={(r) => { setRepo(r); setView('board'); setSelected(null) }} onOpenMr={onOpenMr} refreshKey={repo} />
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        {working.map((b) => (
-          <button
-            key={b.repo}
-            onClick={() => setRepo(b.repo)}
-            className={`rounded-full px-3 py-1 text-sm ${b.repo === repo ? 'bg-neutral-700 text-white' : 'text-neutral-400 hover:text-neutral-200'}`}
-          >
-            {b.name}
-          </button>
-        ))}
-        {dormant.length > 0 && (
-          <select
-            value={dormant.some((b) => b.repo === repo) ? repo : ''}
-            onChange={(e) => e.target.value && setRepo(e.target.value)}
-            className="rounded-full border border-neutral-800 bg-neutral-950 px-2 py-1 text-xs text-neutral-500"
-            title="Boards of projects nobody has touched in months: kept, just out of the way"
-          >
-            <option value="">Dormant boards ({dormant.length})</option>
-            {dormant.map((b) => (
-              <option key={b.repo} value={b.repo}>
-                {b.name} ({b.status})
-              </option>
-            ))}
-          </select>
+      {/* One way to switch projects: the cards on the Activity home ("← All projects"). This header only says which
+          board this is (2026-10-09, Gil: the pills here duplicated the cards). */}
+      <div className="mb-4 flex flex-wrap items-baseline gap-3">
+        <h2 className="text-xl font-semibold text-white">{current?.name || repo?.split('/')[1] || 'Project'}</h2>
+        {current?.status && current.status !== 'active' && (
+          <span className="rounded-full border border-neutral-800 px-2 py-0.5 text-xs text-neutral-500">{current.status}</span>
         )}
         {current?.due && (
           <span className={`ml-auto text-xs ${current.dueHard ? 'text-amber-400' : 'text-neutral-500'}`}>

@@ -435,6 +435,8 @@ function registerDocsHandlers() {
     build: () => buildDocsIndex(execFileAsync, docsService.githubIndexRepos()),
     getLocal: () => docsService.localDocs()
   })
+  // A docs change refreshes the search's in-memory copy of local docs in the background (docs_search.js).
+  triggerHub.onTrigger((t) => { if (t.topic === 'docs') docsIndexer.localChanged() })
   ipcMain.handle('docs:refresh', async () => {
     await refreshCatalog()
     docsIndexer.reindex()
