@@ -655,6 +655,17 @@ def evaluate_parallel_dispatch(settings: dict, pools: dict[str, list], inflight:
 	return "green", "idle slot and ready ticket, awaiting the next scan"
 
 
+def check_missed_purposes(list_missed=None) -> list[dict]:
+    """Tickets that promised a measurable effect and missed it (marvin#304): red until someone decides
+    (fix, accept or revert; the diagnosis is on the ticket)."""
+    import purpose_metrics as pm
+    try:
+        missed = (list_missed or (lambda: pm.labelled_issues("G-Eskayo/marvin", pm.MISSED_LABEL)))()
+    except Exception as exc:  # noqa: BLE001
+        return [_result("purpose:missed", "Purpose metrics", "yellow", f"couldn't read missed purposes: {exc}")]
+    return pm.health_findings(missed)  # closed or not: red until the label comes off (accepted, fixed or reverted)
+
+
 def check_parallel_dispatch() -> dict:
 	"""Check if parallel dispatch is keeping up with the queue."""
 	cid, label = "dispatch:parallel", "Parallel dispatch keeping up"
@@ -1357,6 +1368,7 @@ def run_all() -> dict:
     results += check_sync_stuck()
     results += check_deploy_steps()
     results.append(check_parallel_dispatch())
+    results += check_missed_purposes()
     results += check_missing_profiles()
     results.append(check_trigger_coverage())
     results.append(check_catalog_fresh())

@@ -1207,3 +1207,10 @@ def test_gh_gate_red_during_a_cooldown_and_yellow_after_refusals(tmp_path):
 def test_gh_gate_yellow_when_not_installed(tmp_path):
     r = hc.check_gh_gate(tmp_path / "none.jsonl", tmp_path / "none.json", now=datetime(2026, 10, 8, tzinfo=timezone.utc))
     assert r["severity"] == "yellow"
+
+
+def test_missed_purposes_are_red_and_an_unreadable_list_is_yellow():
+    red = hc.check_missed_purposes(lambda: [{"number": 277, "title": "Allow read-only tools", "state": "closed"}])
+    assert red[0]["severity"] == "red" and "#277 Allow read-only tools" in red[0]["detail"]
+    assert hc.check_missed_purposes(lambda: [])[0]["severity"] == "green"
+    assert hc.check_missed_purposes(lambda: (_ for _ in ()).throw(OSError("rate limited")))[0]["severity"] == "yellow"

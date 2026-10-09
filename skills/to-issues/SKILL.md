@@ -80,6 +80,15 @@ Avoid specific file paths or code snippets — they go stale fast. Exception: if
 
 Short, against `docs/north-stars.md` (MARVIN repo): what it reuses before adding anything, why it's the simplest sufficient approach, where it saves or spends tokens, what it does for the phone-OS direction, and whether it leaves the user more capable or just more passive. If a north star argues against the slice, say so. Scaffolding other work will build on gets the `foundation` label.
 
+## Purpose metric
+
+Only when the slice's purpose is measurable (faster, fewer tokens, fewer refusals): name a measure registered in `lib/purpose_metrics.py` (add one there if none fits; a ticket never supplies a command), with a baseline you measured, a target and a date to check. Add the `purpose-metric` label. The daily outcome check measures it after that date and comments the result; a miss gets a missed-purpose diagnosis and turns Health red.
+
+- **Measure:** headless-refusal-rate
+- **Baseline:** 14.3
+- **Target:** -70%
+- **Check on:** 2026-10-16
+
 ## Acceptance criteria
 
 - [ ] Criterion 1
