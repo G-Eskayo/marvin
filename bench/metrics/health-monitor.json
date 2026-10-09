@@ -16580,5 +16580,87 @@
         "higher_is_better": false
       }
     }
+  },
+  {
+    "timestamp": "2026-10-09T02:29:19.153667+00:00",
+    "metrics": {
+      "route:intent-routing-collection": {
+        "value": 92,
+        "higher_is_better": true
+      },
+      "catalog:fresh": {
+        "value": 1.7,
+        "higher_is_better": false
+      },
+      "tickets:project-tags": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "github:budget": {
+        "value": 4098,
+        "higher_is_better": false
+      },
+      "github:gate": {
+        "value": 1550,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.agents@mac-mini-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.claude@mac-mini-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.claude@macbook-pro-1": {
+        "value": 0,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-09T02:44:57.846353+00:00",
+    "metrics": {
+      "route:intent-routing-collection": {
+        "value": 92,
+        "higher_is_better": true
+      },
+      "catalog:fresh": {
+        "value": 2.0,
+        "higher_is_better": false
+      },
+      "tickets:project-tags": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "github:budget": {
+        "value": 3564,
+        "higher_is_better": false
+      },
+      "github:gate": {
+        "value": 1369,
+        "higher_is_better": false
+      },
+      "main:green": {
+        "value": 1,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.agents@mac-mini-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.agents@macbook-pro-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.claude@mac-mini-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.claude@macbook-pro-1": {
+        "value": 0,
+        "higher_is_better": false
+      }
+    }
   }
 ]
