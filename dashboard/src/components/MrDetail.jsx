@@ -4,6 +4,7 @@ import { projectIdOf } from '../lib/projects.js'
 import Related, { useRelated } from './Related.jsx'
 import PrImages from './PrImages.jsx'
 import Decisions from './Decisions.jsx'
+import IssueBodyView from './IssueBody.jsx'
 
 // Full evidence-schema drill-down for one MR (G-Eskayo/marvin#72, ADR
 // 0024) plus its linked ticket/parent-PRD requirements, design, and
@@ -98,23 +99,23 @@ function DeviceSection({ device }) {
   return <p className="font-mono text-sm text-neutral-200">{device}</p>
 }
 
-// Renders an issue's raw body as preformatted text rather than pulling in
-// a markdown-rendering dependency for one drill-down section -- structure
-// (headers, lists) stays legible even unrendered, and this ticket's own
-// acceptance criteria only asks that requirements/design/tasks show up,
-// not that they render as styled markdown.
-function IssueBody({ label, issue }) {
+// A linked ticket or parent PRD, rendered for reading (owner, 2026-10-09: "format descriptions in tickets instead of just
+// having them as scrollable text boxes"); see IssueBody.jsx.
+function IssueBody({ label, issue, repo, onOpenTicket, onOpenDocs }) {
   if (!issue) {
     return <p className="text-sm text-neutral-500">Not available.</p>
   }
   return (
     <div>
-      <p className="mb-2 text-sm font-medium text-neutral-300">
-        {label} #{issue.number} — {issue.title}
+      <p className="mb-3 text-sm font-medium text-neutral-300">
+        {label} #{issue.number}: {issue.title}
       </p>
-      <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md bg-neutral-950 p-3 text-xs text-neutral-300">
-        {issue.body}
-      </pre>
+      <IssueBodyView
+        body={issue.body}
+        updatedAt={issue.updatedAt}
+        ctx={repo ? { repo } : null}
+        onLink={(l) => (l.type === 'ticket' ? onOpenTicket?.(l.repo, l.number) : onOpenDocs?.(l.project, l.path))}
+      />
     </div>
   )
 }
@@ -220,9 +221,12 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
         </>
       ) : (
         <Section title="PR Description (no structured evidence template)">
-          <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-md bg-neutral-950 p-3 text-xs text-neutral-300">
-            {pr.rawBody}
-          </pre>
+          <IssueBodyView
+            body={pr.rawBody}
+            ctx={{ repo: pr.repo }}
+            headRef={pr.headRef}
+            onLink={(l) => (l.type === 'ticket' ? onOpenTicket?.(l.repo, l.number) : onOpenDocs?.(l.project, l.path))}
+          />
         </Section>
       )}
 
@@ -232,7 +236,7 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
         ) : error ? (
           <p className="text-sm text-red-400">Failed to load: {error}</p>
         ) : (
-          <IssueBody label="Ticket" issue={context.ticket} />
+          <IssueBody label="Ticket" issue={context.ticket} repo={pr.repo} onOpenTicket={onOpenTicket} onOpenDocs={onOpenDocs} />
         )}
       </Section>
 
@@ -242,7 +246,7 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
         ) : error ? (
           <p className="text-sm text-red-400">Failed to load: {error}</p>
         ) : (
-          <IssueBody label="Parent" issue={context.parent} />
+          <IssueBody label="Parent" issue={context.parent} repo={pr.repo} onOpenTicket={onOpenTicket} onOpenDocs={onOpenDocs} />
         )}
       </Section>
 

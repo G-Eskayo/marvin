@@ -6,6 +6,7 @@ import { projectIdOf } from '../lib/projects.js'
 import { planInput } from '../lib/ticket_input.js'
 import { parseHumanTask } from '../lib/human_task.js'
 import Markdown from './Markdown.jsx'
+import IssueBody from './IssueBody.jsx'
 import Related, { useRelated } from './Related.jsx'
 import CompletedView from './CompletedView.jsx'
 
@@ -233,13 +234,18 @@ function PipelineHistory({ events }) {
   )
 }
 
-function TicketDrilldown({ repo, card, onBack, onOpenMr, onOpenDocs, onOpenTicket }) {
+function TicketDrilldown({ repo, card, boardCards, onBack, onOpenMr, onOpenDocs, onOpenTicket }) {
   const [detail, setDetail] = useState(null)
   const [events, setEvents] = useState([])
   const [error, setError] = useState(null)
   const [ctx, setCtx] = useState(null)
   const rel = useRelated(() => window.api.relations.ticket(repo, card.number), [repo, card.number])
   const ticketDecisions = useMemo(() => (detail?.body ? summarizeDecisions(detail.body) : null), [detail?.body])
+  // Titles of tickets on this board, so a "#123" in the body reads "#123 Title" with no extra lookup.
+  // Keyed on the titles' text, not the board object: a poll that changes nothing must not re-render the body.
+  const titlesKey = (boardCards || []).map((k) => `${k.number}\u0000${k.title}`).join('\u0001')
+  const titles = useMemo(() => Object.fromEntries((boardCards || []).map((k) => [`${repo}#${k.number}`, k.title])), [titlesKey, repo])
+  const onLink = useMemo(() => (l) => (l.type === 'ticket' ? onOpenTicket?.(l.repo, l.number) : onOpenDocs?.(l.project, l.path)), [onOpenTicket, onOpenDocs])
 
   useEffect(() => {
     window.api.relations.context(projectIdOf(repo)).then(setCtx).catch(() => {})
@@ -274,12 +280,9 @@ function TicketDrilldown({ repo, card, onBack, onOpenMr, onOpenDocs, onOpenTicke
       </div>
       {error && <p className="mt-4 text-red-400">Failed to load ticket: {error}</p>}
       {detail && (
-        <div className="mt-4 rounded border border-neutral-800 bg-neutral-900 p-4 text-sm">
-          {detail.body ? (
-            <Markdown content={detail.body} ctx={ctx} onLink={(l) => (l.type === 'ticket' ? onOpenTicket?.(l.repo, l.number) : onOpenDocs?.(l.project, l.path))} />
-          ) : (
-            <p className="text-neutral-500">(no description)</p>
-          )}
+        <div className="mt-6">
+          {/* Formatted for reading, not a text box (owner, 2026-10-09); the Decisions section is shown by <Decisions> below. */}
+          <IssueBody body={detail.body} updatedAt={detail.updatedAt} ctx={ctx} titles={titles} stripDecisions={Boolean(ticketDecisions?.present)} onLink={onLink} />
         </div>
       )}
       {/* A ticket waiting on the owner's choices (needs-info) is answered here; all required answered moves it to ready-for-agent. */}
@@ -302,9 +305,14 @@ function TicketDrilldown({ repo, card, onBack, onOpenMr, onOpenDocs, onOpenTicke
         <div className="mt-4">
           <h3 className="mb-1 text-xs uppercase tracking-wide text-neutral-500">Comments ({detail.comments.length})</h3>
           {detail.comments.slice(-5).map((c, i) => (
-            <pre key={i} className="mb-2 whitespace-pre-wrap rounded border border-neutral-800 p-2 font-mono text-xs text-neutral-400">
-              {c.body}
-            </pre>
+            <div key={i} className="mb-3 border-l-2 border-neutral-800 pl-4">
+              {(c.author || c.createdAt) && (
+                <p className="mb-1 text-xs text-neutral-500">
+                  {c.author?.login || c.author || ''}{c.createdAt ? ` · ${new Date(c.createdAt).toLocaleString()}` : ''}
+                </p>
+              )}
+              <IssueBody body={c.body} ctx={ctx} titles={titles} compact stripDecisions={false} onLink={onLink} />
+            </div>
           ))}
         </div>
       )}
@@ -514,6 +522,8 @@ export default function ProjectBoard({ onOpenMr, onOpenDocs, onOpenTicket, nav }
       repo
     }
 
+  const allCards = useMemo(() => board?.columns.flatMap((c) => [...c.cards, ...(c.archive || [])]) || [], [board])
+
   // Open a ticket from a link: same project stays here, another project goes through the app's navigation.
   const openTicket = (r, n) => (r === repo ? setSelected(cardFor(n)) : onOpenTicket?.(r, n))
 
@@ -558,7 +568,7 @@ export default function ProjectBoard({ onOpenMr, onOpenDocs, onOpenTicket, nav }
   const boardIsEmpty = board && board.columns.every((c) => c.cards.length === 0 && !(c.archive || []).length)
 
   if (selected) {
-    return <TicketDrilldown repo={repo} card={selected} onBack={() => setSelected(null)} onOpenMr={onOpenMr} onOpenDocs={onOpenDocs} onOpenTicket={openTicket} />
+    return <TicketDrilldown repo={repo} card={selected} boardCards={allCards} onBack={() => setSelected(null)} onOpenMr={onOpenMr} onOpenDocs={onOpenDocs} onOpenTicket={openTicket} />
   }
 
   return (
