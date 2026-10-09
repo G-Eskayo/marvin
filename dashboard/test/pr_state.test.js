@@ -61,10 +61,10 @@ describe('describePrState: one headline, only the buttons that make sense', () =
     expect(s.headline).toMatch(/#29/)
   })
 
-  it('a wrong base is explained with what to do', () => {
-    const s = state({ baseProblem: { base: 'feature/a', expected: 'main', parent: { number: 7 } } })
+  it('a wrong base with no open parent PR is blocked and says what to do', () => {
+    const s = state({ baseProblem: { base: 'feature/a', expected: 'main', parent: null } })
     expect(s).toMatchObject({ kind: 'wrong-base', approve: 'hidden' })
-    expect(s.detail).toMatch(/#7/)
+    expect(s.detail).toMatch(/Change its base to main/)
   })
 
   it('a GitHub outage says so, keeps Approve available, and does not blame the PR', () => {
@@ -193,5 +193,12 @@ describe('describePrState: post-merge rebase', () => {
     const v = describePrState({ ...ready, rebase: { state: 'tests_failed', after: 229, files: [] } })
     expect(v).toMatchObject({ kind: 'tests-after-rebase', tone: 'wait', approve: 'enabled', headline: 'Tests fail on the latest main' })
     expect(v.detail).toContain('#229')
+  })
+
+  it('a PR stacked on an open parent is waiting, not an error, and says it moves onto main by itself', () => {
+    const s = state({ baseProblem: { base: 'ticket/215-parent', expected: 'main', parent: { number: 307, title: 'North stars single source' } } })
+    expect(s).toMatchObject({ kind: 'stacked', tone: 'wait', approve: 'disabled' })
+    expect(s.headline).toContain('#307 North stars single source')
+    expect(s.detail).toMatch(/moved onto main automatically/)
   })
 })

@@ -100,4 +100,35 @@ describe('rebase status store', () => {
   it('reads a missing or corrupt file as empty', () => {
     expect(readRebaseStatus('/nonexistent/s.json')).toEqual({})
   })
+
+  it('a PR stacked on the merged one is moved onto main and then rebased, so its work cannot miss main', async () => {
+    const calls = []
+    const exec = vi.fn(async (cmd, args) => {
+      calls.push(args.join(' '))
+      if (args[0] === 'pr' && args[1] === 'view') return { stdout: JSON.stringify({ headRefName: 'ticket/215-parent' }), stderr: '' }
+      if (args[0] === 'pr' && args[1] === 'list') {
+        return { stdout: JSON.stringify([pr(230, 216, { baseRefName: 'ticket/215-parent' }), pr(231, 217, { baseRefName: 'ticket/999-other' })]), stderr: '' }
+      }
+      if (args[0] === 'pr' && args[1] === 'edit') return { stdout: '', stderr: '' }
+      throw new Error(`unexpected ${args.join(' ')}`)
+    })
+    const rebase = vi.fn(async () => ({ ok: true }))
+    const entries = await rebaseOpenPrs({ repo: REPO, mergedPrUrl: MERGED, exec, rebase, recordStageFn: vi.fn(), writeStatus: vi.fn(), now: NOW })
+    expect(calls).toContain(`pr edit https://github.com/${REPO}/pull/230 --base main`)
+    expect(calls.some((c) => c.includes('pull/231 --base'))).toBe(false)  // stacked on something else: left alone
+    expect(rebase).toHaveBeenCalledWith('ticket/216-x')
+    expect(entries).toEqual([expect.objectContaining({ pr: 230, state: 'clean', retargetedFrom: 'ticket/215-parent' })])
+  })
+
+  it('a retarget GitHub refuses leaves the PR stacked and says so', async () => {
+    const exec = vi.fn(async (cmd, args) => {
+      if (args[1] === 'view') return { stdout: JSON.stringify({ headRefName: 'ticket/215-parent' }), stderr: '' }
+      if (args[1] === 'list') return { stdout: JSON.stringify([pr(230, 216, { baseRefName: 'ticket/215-parent' })]), stderr: '' }
+      throw new Error('HTTP 422')
+    })
+    const rebase = vi.fn(async () => ({ ok: true }))
+    const entries = await rebaseOpenPrs({ repo: REPO, mergedPrUrl: MERGED, exec, rebase, recordStageFn: vi.fn(), writeStatus: vi.fn(), now: NOW })
+    expect(rebase).not.toHaveBeenCalled()
+    expect(entries).toEqual([expect.objectContaining({ pr: 230, state: 'error', reason: expect.stringContaining('couldn\'t move it onto main') })])
+  })
 })

@@ -47,6 +47,16 @@ export function describePrState(pr, { status = 'idle', errorMessage = null } = {
       `${ci.failing.join(', ')}. It is sent back for rework automatically, so there is nothing to approve.`, 'hidden', 'hidden')
   }
 
+  if (pr.baseProblem?.parent) {
+    // Stacked on another open PR: it waits for that one, and is moved onto main automatically when it merges.
+    const b = pr.baseProblem
+    const parent = `#${b.parent.number}${b.parent.title ? ` ${b.parent.title}` : ''}`
+    return base('stacked', 'wait', `Stacked on ${parent}`,
+      `It builds on ${parent}. Approve that one first: when it merges, this PR is moved onto ${b.expected} automatically, ` +
+        `rebased and retested, and Approve becomes available here. Until then merging it would not put the work on ${b.expected}.`,
+      'disabled', 'enabled')
+  }
+
   if (pr.baseProblem) {
     const b = pr.baseProblem
     return base('wrong-base', 'blocked', `Targets ${b.base}, not ${b.expected}`,
