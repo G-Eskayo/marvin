@@ -1167,3 +1167,18 @@ def test_two_concurrent_scans_dispatch_a_ticket_only_once(monkeypatch, tmp_path)
     # The dispatch should have happened exactly once
     dispatches = [x for x in claim_order if x[0] == "dispatch"]
     assert len(dispatches) == 1, f"Dispatch happened {len(dispatches)} times, expected 1"
+
+
+# Research tickets (Gil 2026-10-09): one at a time, only when no build work is waiting.
+def test_research_waits_while_any_build_ticket_is_ready():
+    issues = [_issue(1, "2026-01-01T00:00:00Z", labels=["ready-for-agent", "research"]),
+              _issue(2, "2026-01-02T00:00:00Z", labels=["ready-for-agent"])]
+    assert [i["number"] for i in tp._unclaimed_ready_tickets(issues=issues)] == [2]
+
+
+def test_research_runs_when_nothing_else_is_ready_one_at_a_time():
+    issues = [_issue(1, "2026-01-01T00:00:00Z", labels=["ready-for-agent", "research"]),
+              _issue(3, "2026-01-03T00:00:00Z", labels=["ready-for-agent", "research"])]
+    assert [i["number"] for i in tp._unclaimed_ready_tickets(issues=issues)] == [1]
+    running = issues + [_issue(5, "2026-01-05T00:00:00Z", labels=["ready-for-agent", "research", "claimed:mac-mini"])]
+    assert tp._unclaimed_ready_tickets(issues=running) == []

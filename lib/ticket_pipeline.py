@@ -154,7 +154,14 @@ def _unclaimed_ready_tickets(repo: str = REPO, issues: list[dict] | None = None)
                       f"({ticket_evidence.verdict(ev)}: {ev[0]['ref']} {ev[0]['detail'][:60]})", file=sys.stderr)
         ready = kept
     ready.sort(key=_order_key)
-    return ready
+    # Research tickets (label `research`, Gil 2026-10-09): only when no build work is waiting, and one at a time.
+    def is_research(i):
+        return "research" in ticket_policy.label_names(i)
+    builds = [i for i in ready if not is_research(i)]
+    if builds:
+        return builds
+    research_running = any(is_research(i) and any(n.startswith("claimed:") for n in ticket_policy.label_names(i)) for i in issues)
+    return [] if research_running else ready[:1]
 
 
 MAX_REENGAGE_ATTEMPTS = 3
