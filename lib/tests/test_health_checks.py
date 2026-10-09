@@ -156,7 +156,7 @@ def test_check_cron_job_log_returns_none_for_unmapped_job():
 
 # ── repo integrity ────────────────────────────────────────────────────────
 
-def test_check_repo_integrity_yellow_on_leftover_stash(tmp_path, monkeypatch):
+def test_check_repo_integrity_red_on_leftover_stash(tmp_path, monkeypatch):
     class FakeProc:
         def __init__(self, stdout):
             self.stdout = stdout
@@ -166,10 +166,16 @@ def test_check_repo_integrity_yellow_on_leftover_stash(tmp_path, monkeypatch):
             return FakeProc("stash@{0}: WIP on main: abc123 msg\n")
         return FakeProc("")
 
+    def fake_stash_file_names(repo):
+        return ["file1.txt", "file2.txt"]
+
     monkeypatch.setattr(hc.subprocess, "run", fake_run)
+    monkeypatch.setattr(hc.code_sync, "_stash_file_names", fake_stash_file_names)
     result = hc.check_repo_integrity("~/.agents", ".agents")
-    assert result["severity"] == "yellow"
+    assert result["severity"] == "red"
     assert result["value"] == 1
+    assert "file1.txt" in result["detail"]
+    assert "file2.txt" in result["detail"]
 
 
 def test_check_repo_integrity_red_on_unresolved_conflict(monkeypatch):
@@ -338,7 +344,7 @@ def test_tailscale_peer_parses_online_state_and_last_seen(monkeypatch):
 # one pure evaluator judges it.
 
 def _state(**kw):
-    base = {"head": "abc1234", "stashes": 0, "conflicts": 0, "fetch_ok": True,
+    base = {"head": "abc1234", "stashes": 0, "stash_files": [], "conflicts": 0, "fetch_ok": True,
             "behind": 0, "behind_oldest_ts": None, "ahead": 0, "ahead_oldest_ts": None}
     base.update(kw)
     return base
@@ -349,11 +355,12 @@ def _ago(hours):
 
 
 def test_parse_repo_state_reads_key_value_output():
-    text = "head=abc1234\nstashes=7\nconflicts=0\nfetch_ok=1\nbehind=2\nbehind_oldest_ts=1759000000\nahead=0\nahead_oldest_ts=\n"
+    text = "head=abc1234\nstashes=7\nstash_files=file1.txt|file2.txt|\nconflicts=0\nfetch_ok=1\nbehind=2\nbehind_oldest_ts=1759000000\nahead=0\nahead_oldest_ts=\n"
     st = hc.parse_repo_state(text)
     assert st["head"] == "abc1234" and st["stashes"] == 7 and st["fetch_ok"] is True
     assert st["behind"] == 2 and st["behind_oldest_ts"] == 1759000000
     assert st["ahead_oldest_ts"] is None
+    assert st["stash_files"] == ["file1.txt", "file2.txt"]
 
 
 def test_evaluate_repo_sync_green_when_converged_and_clean():
@@ -362,9 +369,10 @@ def test_evaluate_repo_sync_green_when_converged_and_clean():
 
 
 def test_evaluate_repo_sync_stashes_block_sync_and_are_flagged():
-    sev, detail, value = hc.evaluate_repo_sync(_state(stashes=7), NOW)
-    assert sev == "yellow"
+    sev, detail, value = hc.evaluate_repo_sync(_state(stashes=7, stash_files=["file1.txt", "file2.txt"]), NOW)
+    assert sev == "red"
     assert "7" in detail and "block" in detail.lower()
+    assert "file1.txt" in detail and "file2.txt" in detail
     assert value == 7
 
 
@@ -391,8 +399,10 @@ def test_evaluate_repo_sync_fetch_failure_is_yellow_not_silently_green():
 
 
 def test_evaluate_repo_sync_reports_the_worst_condition():
-    sev, _, _ = hc.evaluate_repo_sync(_state(stashes=2, behind=9, behind_oldest_ts=_ago(40)), NOW)
+    sev, detail, _ = hc.evaluate_repo_sync(_state(stashes=2, stash_files=["a.txt"], behind=9, behind_oldest_ts=_ago(40)), NOW)
     assert sev == "red"
+    # Both stash and behind contribute to the red verdict
+    assert "stash" in detail.lower() and "behind" in detail.lower()
 
 
 def test_repo_state_script_against_real_git_repos(tmp_path):
