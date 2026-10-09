@@ -55,6 +55,7 @@ _SESSION_START = " && ".join([
     f"{PY} {AGENTS}/lib/session_start_report.py",
 ])
 _ALL, _INTERACTIVE = frozenset({"all"}), frozenset({"interactive"})
+_EDITS = "Write|Edit|MultiEdit|NotebookEdit"
 
 HOOKS: list[Hook] = [
     Hook("PreToolUse", _py("lib/gh_merge_guard.py"), _ALL, "Bash"),
@@ -69,6 +70,11 @@ HOOKS: list[Hook] = [
     Hook("PostToolUse", _py("brain-map/scripts/skill_activity.py"), _ALL),
     Hook("SessionStart", ("/bin/sh", "-c", _SESSION_START), _INTERACTIVE),
     Hook("UserPromptSubmit", _py("skills/route/scripts/auto_route_hook.py"), _INTERACTIVE),
+    # Sessions know what other sessions are working on (#326, ADR 0062): every session's request and edits go on
+    # the live list; a person's session is asked before editing a file another live session edited.
+    Hook("UserPromptSubmit", (*_py("lib/session_work.py"), "hook", "prompt"), _ALL),
+    Hook("PostToolUse", (*_py("lib/session_work.py"), "hook", "post"), _ALL, _EDITS),
+    Hook("PreToolUse", (*_py("lib/session_work.py"), "hook", "pre"), _INTERACTIVE, _EDITS),
 ]
 
 
