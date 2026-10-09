@@ -229,15 +229,31 @@ export function markSentBack(prs, keys) {
   })
 }
 
+// Why a PR can't be approved as it stands, whatever else merges first, or null: the blockers that hide or hold its own
+// Approve. Merge order skips a PR with one (pr_order.js), so it never holds up newer PRs that touch the same files.
+// Waiting for checks is not one: that PR is approvable soon. Unknown files never count, so a light list fails closed.
+export function ownBlocker(pr, uiPathsFor = () => []) {
+  if (ciState(pr.statusCheckRollup).state === 'failing') return 'GitHub checks failed'
+  if (needsImages(pr, uiPathsFor)) return 'needs images'
+  if (vagueness(pr.body || '')) return 'asks you to choose without options'
+  const dec = summarizeDecisions(pr.body || '')
+  if (dec?.problems?.length || dec?.pending?.length) return 'decisions to answer'
+  return null
+}
+
+export function markBlocked(prs, uiPathsFor = () => []) {
+  return prs.map((p) => ({ ...p, blocked: ownBlocker(p, uiPathsFor) }))
+}
+
 // The PR list to hand assertInOrder at Approve time. A failing lookup marks nothing sent back (fails closed on order).
-export async function prsForOrderCheck(prs, sentBackTickets) {
+export async function prsForOrderCheck(prs, sentBackTickets, uiPathsFor = () => []) {
   let keys = new Set()
   try {
     keys = await sentBackTickets([...new Set(prs.map((p) => p.repo || MARVIN_REPO))])
   } catch {
     keys = new Set()
   }
-  return markSentBack(prs, keys)
+  return markBlocked(markSentBack(prs, keys), uiPathsFor)
 }
 
 // A UI change whose description shows no image (marvin #374): {files} for the card, or null. Only judged when the list
@@ -301,7 +317,7 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
   }
   // Each PR with the facts that decide whether it can be waited on (sent back for rework; conflicts), so merge order skips the
   // ones that cannot merge as they stand.
-  const withState = markSentBack(prs, sentBackKeys)
+  const withState = markBlocked(markSentBack(prs, sentBackKeys), uiPathsFor)
   return prs.map((pr) => {
     const ticketRef = parseTicketRef(pr.body || '')
     const hasSchema = hasEvidenceSchema(pr.body)

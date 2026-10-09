@@ -263,3 +263,12 @@ def test_the_pr_says_loudly_that_the_screenshot_failed():
     import mr_raiser
     text = mr_raiser._format_dev_evidence({"na": False, "error": "capture failed: Timeout waiting for Electron CDP endpoint"})
     assert "⚠" in text and "not verified" in text and "Timeout" in text
+
+
+def test_ui_files_matches_the_dashboards_rule_src_lib_helpers_are_not_screens():
+    """Same rule as dashboard/webhook-server/ui_evidence.js (#389 was flagged for a capture helper in src/lib)."""
+    from evidence_capture import ui_files
+    assert ui_files(["dashboard/src/lib/screenshot_capture.js", "dashboard/src/lib/prState.js"]) == []
+    screens = ["dashboard/src/App.jsx", "dashboard/src/index.css", "dashboard/src/components/X.jsx",
+               "dashboard/src/components/sub/y.js", "dashboard/src/assets/logo.svg", "dashboard/src/lib/Widget.jsx"]
+    assert ui_files(screens) == screens

@@ -138,3 +138,57 @@ describe('prsForOrderCheck: the Approve-time order check sees sent-back PRs the 
     expect(() => assertInOrder(prs, 'https://github.com/G-Eskayo/marvin/pull/209')).toThrow(/Merge #208 first/)
   })
 })
+
+// 2026-10-09: one PR missing screenshots (#358) held every newer PR touching index.js hostage -- #378, #371 and #389 sat
+// greyed out "waiting for #358" while #358 itself could never be approved until someone added images. An older PR that
+// is stuck on its own (no images, a vague ask, open decisions, failing checks, wrong base) is skipped like a conflict is.
+describe('waitingOn: an older PR stuck on its own blocker does not hold up the newer ones', () => {
+  it('skips an older PR marked blocked', () => {
+    const older = { ...pr(358, ['dashboard/electron/main/index.js']), blocked: 'needs images' }
+    const newer = pr(378, ['dashboard/electron/main/index.js'])
+    expect(waitingOn([older, newer], newer)).toEqual([])
+  })
+  it('still waits on an older PR that is only waiting for its checks (it will be approvable soon)', () => {
+    const older = { ...pr(10, ['a.js']), blocked: null }
+    expect(waitingOn([older, pr(11, ['a.js'])], pr(11, ['a.js'])).map((x) => x.number)).toEqual([10])
+  })
+  it('a chain unjams: 388 -> 363 -> 362, with 362 blocked, 388 waits only on 363', () => {
+    const prs = [{ ...pr(362, ['CONTEXT.md']), blocked: 'needs images' }, pr(363, ['CONTEXT.md', 'lib/ticket_pipeline.py']), pr(388, ['lib/ticket_pipeline.py'])]
+    expect(waitingOn(prs, prs[1])).toEqual([])
+    expect(waitingOn(prs, prs[2]).map((x) => x.number)).toEqual([363])
+  })
+  it('the merge gate agrees: assertInOrder lets the newer one through', () => {
+    const older = { ...pr(358, ['x.js']), blocked: 'needs images' }
+    const newer = pr(378, ['x.js'])
+    expect(() => assertInOrder([older, newer], newer.url)).not.toThrow()
+  })
+})
+
+describe('prsForOrderCheck marks PRs stuck on their own, so the Approve click agrees with the card', () => {
+  const ui = (n, files, body = 'no pictures', extra = {}) => ({ ...pr(n, files), body, ...extra })
+  it('a UI change without images is blocked; with an image it is not', async () => {
+    const [a, b] = await prsForOrderCheck([ui(1, ['dashboard/src/components/X.jsx']), ui(2, ['dashboard/src/components/X.jsx'], '![s](https://x/y.png)')], async () => new Set())
+    expect(a.blocked).toMatch(/images/)
+    expect(b.blocked).toBeNull()
+  })
+  it('failing checks, a vague ask and open decisions block; pending checks do not', async () => {
+    const failing = ui(1, ['lib/a.py'], 'x', { statusCheckRollup: [{ name: 't', status: 'COMPLETED', conclusion: 'FAILURE' }] })
+    const pending = ui(2, ['lib/a.py'], 'x', { statusCheckRollup: [{ name: 't', status: 'IN_PROGRESS', conclusion: null }] })
+    const vague = ui(3, ['lib/a.py'], '## Open questions\n\nShould we use A or B?')
+    const out = await prsForOrderCheck([failing, pending, vague], async () => new Set())
+    expect(out[0].blocked).toMatch(/checks/)
+    expect(out[1].blocked).toBeNull()
+    expect(out[2].blocked).toBeTruthy()
+  })
+  it('a PR whose files are unknown is never marked blocked (fails closed: it is still waited on)', async () => {
+    const [a] = await prsForOrderCheck([{ number: 1, repo: 'o/r', url: 'u', body: 'none' }], async () => new Set())
+    expect(a.blocked).toBeNull()
+  })
+  it('uses the project\'s own UI paths', async () => {
+    const p = ui(1, ['Apps/Main/Home.swift'])
+    const [plain] = await prsForOrderCheck([p], async () => new Set())
+    const [own] = await prsForOrderCheck([p], async () => new Set(), () => ['Apps/**/*.swift'])
+    expect(plain.blocked).toBeNull()
+    expect(own.blocked).toMatch(/images/)
+  })
+})
