@@ -17,7 +17,8 @@ export async function assertCodeReviewClean(
 ) {
   let result
   try {
-    const { stdout } = await exec('python', [scriptPath, 'review', prUrl])
+    // The venv interpreter, like every other gate: launchd's PATH has no bare `python` on the mini.
+    const { stdout } = await exec(VENV_PYTHON, [scriptPath, 'review', prUrl])
     result = JSON.parse(stdout)
   } catch (e) {
     // Script failed to run (ENOENT, parse error, etc.) — machine/tooling fault
@@ -25,7 +26,7 @@ export async function assertCodeReviewClean(
       'GATE_INFRA',
       'gate',
       'the code-review check failed to run, not the PR\'s code',
-      'Approve it again. The PR was not sent back for rework.'
+      `Approve it again. The PR was not sent back for rework. Details: ${String(e && e.message || e).slice(0, 200)}`
     ))
   }
 
