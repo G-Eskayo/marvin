@@ -123,6 +123,13 @@ def _isolate_launch_log(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_fit_check(monkeypatch):
+    # Raising a PR posts a north-star fit check (gh); tests opt in by passing fit_check explicitly.
+    import mr_raiser
+    monkeypatch.setattr(mr_raiser, "_default_fit_check", lambda *a: None)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_project_profiles(tmp_path_factory, monkeypatch):
     # A real config/projects/*.json with dispatch "on" must never change what a test dispatches.
     import project_profile

@@ -134,7 +134,11 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
         f"concise, concrete implementation plan covering its 'What to build' section "
         f"and every acceptance criterion. Also read its comments ({view} --comments): "
         f"any denial feedback or earlier failure notes there are requirements for this attempt. "
-        f"Plan only -- do not edit any files yet."
+        f"Plan only -- do not edit any files yet. "
+        # marvin#276: the executor sees the north stars only through this section of the plan.
+        f"Open the plan with a short '## North-star fit' section, against the north stars above: what it reuses "
+        f"before adding anything, why it is the simplest sufficient approach, where it saves or spends tokens, and "
+        f"whether it leaves the user more capable. If the ticket states a fit, check it against the code and correct it."
     )
     if feedback is not None:
         plan_prompt += (
