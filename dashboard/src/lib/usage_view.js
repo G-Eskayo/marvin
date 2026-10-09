@@ -127,4 +127,64 @@ export function machineFreshness(m, now = Date.now()) {
   return { state: 'ok', text: `updated ${agoText(now - Math.max(...stamps))}` }
 }
 
+export function autonomousSeries(rows, { days = 30, end, metric = 'output' } = {}) {
+  const list = dayList(days, end || new Date().toISOString().slice(0, 10))
+  const idx = new Map(list.map((d, i) => [d, { day: d, autonomous: 0, interactive: 0, total: 0, share: 0 }]))
+  for (const r of rows) {
+    const cell = idx.get(r.day)
+    if (!cell) continue
+    const v = valueOf(r, metric)
+    if (r.autonomous) cell.autonomous += v
+    else cell.interactive += v
+    cell.total += v
+  }
+  for (const cell of idx.values()) {
+    cell.share = cell.total > 0 ? cell.autonomous / cell.total : 0
+  }
+  return list.map((d) => idx.get(d))
+}
+
+export function weeklySeries(rows, { weeks = 4, end, metric = 'output' } = {}) {
+  const endDate = new Date(`${end || new Date().toISOString().slice(0, 10)}T00:00:00Z`)
+  const weekList = Array.from({ length: weeks }, (_, i) => {
+    const d = new Date(endDate)
+    d.setUTCDate(d.getUTCDate() - (weeks - 1 - i) * 7)
+    return d.toISOString().slice(0, 10)
+  })
+  const idx = new Map(weekList.map((w) => [w, { day: w, autonomous: 0, interactive: 0, total: 0, share: 0 }]))
+
+  for (const r of rows) {
+    const rDate = new Date(`${r.day}T00:00:00Z`)
+    const daysSince = Math.floor((endDate - rDate) / (1000 * 60 * 60 * 24))
+    const weekIndex = Math.floor(daysSince / 7)
+    if (weekIndex < 0 || weekIndex >= weeks) continue
+    const weekKey = weekList[weeks - 1 - weekIndex]
+    const cell = idx.get(weekKey)
+    if (!cell) continue
+    const v = valueOf(r, metric)
+    if (r.autonomous) cell.autonomous += v
+    else cell.interactive += v
+    cell.total += v
+  }
+  for (const cell of idx.values()) {
+    cell.share = cell.total > 0 ? cell.autonomous / cell.total : 0
+  }
+  return weekList.map((w) => idx.get(w))
+}
+
+export function jobTable(machines, which = 'all') {
+  const byKey = new Map()
+  for (const m of pick(machines, which)) {
+    for (const j of m.tokens?.by_job || []) {
+      const key = `${j.kind}:${j.job}`
+      const cur = byKey.get(key) || { kind: j.kind, job: j.job, output_tokens: 0, cost_usd: 0, runs: 0 }
+      cur.output_tokens += j.output_tokens || 0
+      cur.cost_usd += j.cost_usd || 0
+      cur.runs += j.runs || 0
+      byKey.set(key, cur)
+    }
+  }
+  return [...byKey.values()].sort((a, b) => b.output_tokens - a.output_tokens)
+}
+
 export const USAGE_KINDS = KINDS

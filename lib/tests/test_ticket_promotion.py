@@ -160,3 +160,57 @@ def test_a_finding_that_is_already_done_creates_nothing(monkeypatch):
     monkeypatch.setattr(tp.subprocess, "run", fake_run)
     assert tp._default_ticket_creator("f", "r") == tp.NOTHING_LEFT
     assert len(calls) == 1
+
+
+# ── job label tracking (autonomous run accounting) ──────────────────────────
+
+def test_default_evaluator_passes_ticket_promotion_job_label(monkeypatch):
+    import marvin_launcher
+    launches = []
+
+    def fake_launch(kind, prompt, **kwargs):
+        launches.append({"kind": kind, "ticket": kwargs.get("ticket")})
+        class R:
+            text = "PROMOTE: yes\nREASONING: test"
+            returncode = 0
+            stderr = ""
+        return R()
+
+    monkeypatch.setattr(marvin_launcher, "launch", fake_launch)
+    monkeypatch.setattr(tp, "marvin_launcher", marvin_launcher)
+    tp._default_evaluator("some finding text")
+
+    assert len(launches) == 1
+    assert launches[0]["ticket"] == "ticket-promotion"
+
+
+def test_default_ticket_creator_passes_ticket_promotion_job_label(monkeypatch):
+    import marvin_launcher
+    launches = []
+
+    def fake_launch(kind, prompt, **kwargs):
+        launches.append({"kind": kind, "ticket": kwargs.get("ticket")})
+        class R:
+            text = "TITLE: Test\n---\n## What to build\nTest."
+            returncode = 0
+            stderr = ""
+        return R()
+
+    monkeypatch.setattr(marvin_launcher, "launch", fake_launch)
+    monkeypatch.setattr(tp, "marvin_launcher", marvin_launcher)
+
+    # Mock gh api for issue creation
+    calls = []
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            returncode = 0
+            stderr = ""
+            stdout = json.dumps({"html_url": "https://github.com/G-Eskayo/marvin/issues/1"})
+        return R()
+    monkeypatch.setattr(tp.subprocess, "run", fake_run)
+
+    tp._default_ticket_creator("finding", "reasoning")
+
+    assert len(launches) == 1
+    assert launches[0]["ticket"] == "ticket-promotion"

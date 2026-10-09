@@ -427,6 +427,36 @@ def check_catalog_fresh(path: Path | None = None, now: datetime | None = None) -
     return _result(cid, label, sev, f"{n} projects, built {age_h:.1f}h ago", value=round(age_h, 1))
 
 
+def check_autonomous_share(usage_path: Path | None = None) -> dict:
+    """Autonomous run share metric: informational only, not gating or pausing. Purely observational.
+    Checks the most recent day only, not a window average."""
+    cid, label = "tokens:autonomous-share", "Autonomous run token share"
+    path = usage_path or (HOME / ".claude" / "logs" / "token-usage.json")
+    if not path.exists():
+        return _result(cid, label, "yellow", "no scan yet — run session_usage.py refresh")
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        return _result(cid, label, "yellow", f"unreadable: {exc}")
+    rows = data.get("rows", [])
+    if not rows:
+        return _result(cid, label, "green", "no runs in window", value=0.0)
+    # Get the most recent day
+    latest_day = max((r.get("day") for r in rows), default=None)
+    if latest_day is None:
+        return _result(cid, label, "green", "no runs in window", value=0.0)
+    # Sum only rows from the latest day
+    latest_rows = [r for r in rows if r.get("day") == latest_day]
+    total_output = sum(r.get("output", 0) for r in latest_rows)
+    if total_output == 0:
+        return _result(cid, label, "green", f"no runs on {latest_day}", value=0.0)
+    # Count output tokens from autonomous runs vs interactive
+    autonomous_output = sum(r.get("output", 0) for r in latest_rows if r.get("autonomous"))
+    share = autonomous_output / total_output if total_output > 0 else 0.0
+    sev = "yellow" if share > 0.5 else "green"
+    return _result(cid, label, sev, f"{share:.1%} autonomous on {latest_day}", value=round(share, 2))
+
+
 GH_CALLS_PATH = Path.home() / ".claude" / "logs" / "gh-calls.jsonl"
 GH_GATE_PATH = Path.home() / ".claude" / "logs" / "gh-gate.json"
 
@@ -1413,6 +1443,7 @@ def run_all() -> dict:
     results += check_missing_profiles()
     results.append(check_trigger_coverage())
     results.append(check_catalog_fresh())
+    results.append(check_autonomous_share())
     results.append(check_project_tags())
     results.append(check_github_budget())
     results.append(check_gh_gate())

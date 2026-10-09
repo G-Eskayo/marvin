@@ -99,3 +99,127 @@ def test_refresh_writes_the_result_with_the_machine_name(tmp_path, monkeypatch):
     tu.refresh(out_path=out, root=root, now=NOW)
     data = json.loads(out.read_text())
     assert data["machine"] == "mac-mini-1" and data["totals"]["messages"] == 1
+
+
+def test_autonomous_classification_independent_of_kind(tmp_path):
+    f = write(tmp_path, "a.jsonl", [
+        line("interactive", entry="cli"),           # autonomous=False
+        line("headless", entry="sdk-cli"),          # autonomous=True
+        line("subagent_cli", entry="cli", side=True),      # autonomous=False (interactive spawned subagent)
+        line("subagent_headless", entry="sdk-cli", side=True),  # autonomous=True (headless spawned subagent)
+    ])
+    r = tu.aggregate([f], now=NOW)
+    # Check that autonomous field is present and correctly classified in every row
+    for row in r["rows"]:
+        assert "autonomous" in row
+    autonomy_values = {(row["kind"], row["autonomous"]) for row in r["rows"]}
+    assert autonomy_values == {
+        ("interactive", False), ("headless", True), ("subagent", False), ("subagent", True)
+    }
+
+
+def test_by_job_aggregates_launches_from_same_kind_and_job(tmp_path):
+    launches = tmp_path / "launches.jsonl"
+    launches.write_text(
+        json.dumps({"at": "2026-10-05T10:00:00Z", "kind": "background-analyst", "ticket": "daily-digest", "output_tokens": 100, "cost_usd": 0.01}) + "\n"
+        + json.dumps({"at": "2026-10-05T11:00:00Z", "kind": "background-analyst", "ticket": "daily-digest", "output_tokens": 150, "cost_usd": 0.015}) + "\n"
+    )
+    r = tu.aggregate([], now=NOW, launches_path=launches)
+    job = next((j for j in r["by_job"] if j["job"] == "daily-digest"), None)
+    assert job and job["output_tokens"] == 250 and job["cost_usd"] == 0.025 and job["runs"] == 2
+
+
+def test_by_job_missing_or_empty_doesnt_crash(tmp_path):
+    missing_path = tmp_path / "nonexistent.jsonl"
+    r = tu.aggregate([], now=NOW, launches_path=missing_path)
+    assert r["by_job"] == []
+
+
+def test_by_job_skips_malformed_json_lines(tmp_path):
+    launches = tmp_path / "launches.jsonl"
+    launches.write_text(
+        json.dumps({"at": "2026-10-05T10:00:00Z", "kind": "background-analyst", "ticket": "auto-fix", "output_tokens": 50, "cost_usd": 0.005}) + "\n"
+        + "not json at all\n"  # malformed, skipped
+        + json.dumps({"at": "2026-10-05T11:00:00Z", "kind": "background-analyst", "ticket": "auto-fix", "output_tokens": 75, "cost_usd": 0.0075}) + "\n"
+    )
+    r = tu.aggregate([], now=NOW, launches_path=launches)
+    job = next((j for j in r["by_job"] if j["job"] == "auto-fix"), None)
+    assert job and job["output_tokens"] == 125
+
+
+def test_by_job_handles_null_tokens_and_cost(tmp_path):
+    launches = tmp_path / "launches.jsonl"
+    launches.write_text(
+        json.dumps({"at": "2026-10-05T10:00:00Z", "kind": "background-analyst", "ticket": "self-improve", "output_tokens": None, "cost_usd": None}) + "\n"
+    )
+    r = tu.aggregate([], now=NOW, launches_path=launches)
+    job = next((j for j in r["by_job"] if j["job"] == "self-improve"), None)
+    assert job and job["output_tokens"] == 0 and job["cost_usd"] == 0.0
+
+
+def test_by_job_excludes_old_launches_outside_window(tmp_path):
+    launches = tmp_path / "launches.jsonl"
+    launches.write_text(
+        json.dumps({"at": "2026-08-01T10:00:00Z", "kind": "background-analyst", "ticket": "old-job", "output_tokens": 100, "cost_usd": 0.01}) + "\n"
+        + json.dumps({"at": "2026-10-05T10:00:00Z", "kind": "background-analyst", "ticket": "recent-job", "output_tokens": 50, "cost_usd": 0.005}) + "\n"
+    )
+    r = tu.aggregate([], now=NOW, window_days=30, launches_path=launches)
+    jobs = {j["job"]: j for j in r["by_job"]}
+    assert "recent-job" in jobs and "old-job" not in jobs
+
+
+def test_by_job_skips_launch_with_null_ticket(tmp_path):
+    launches = tmp_path / "launches.jsonl"
+    launches.write_text(
+        json.dumps({"at": "2026-10-05T10:00:00Z", "kind": "background-analyst", "ticket": None, "output_tokens": 100, "cost_usd": 0.01}) + "\n"
+        + json.dumps({"at": "2026-10-05T10:00:00Z", "kind": "background-analyst", "ticket": "valid-job", "output_tokens": 50, "cost_usd": 0.005}) + "\n"
+    )
+    r = tu.aggregate([], now=NOW, launches_path=launches)
+    jobs = {j["job"]: j for j in r["by_job"]}
+    assert "valid-job" in jobs and len([j for j in r["by_job"] if j["job"] is None or j["job"] == "None"]) == 0
+
+
+def test_by_job_skips_non_dict_json_lines(tmp_path):
+    launches = tmp_path / "launches.jsonl"
+    launches.write_text(
+        json.dumps({"at": "2026-10-05T10:00:00Z", "kind": "background-analyst", "ticket": "job1", "output_tokens": 100, "cost_usd": 0.01}) + "\n"
+        + '"just a string"\n'
+        + '[1,2,3]\n'
+        + json.dumps({"at": "2026-10-05T10:00:00Z", "kind": "background-analyst", "ticket": "job2", "output_tokens": 50, "cost_usd": 0.005}) + "\n"
+    )
+    r = tu.aggregate([], now=NOW, launches_path=launches)
+    jobs = {j["job"] for j in r["by_job"]}
+    assert jobs == {"job1", "job2"}
+
+
+def test_by_job_skips_truncated_final_line(tmp_path):
+    launches = tmp_path / "launches.jsonl"
+    launches.write_text(
+        json.dumps({"at": "2026-10-05T10:00:00Z", "kind": "background-analyst", "ticket": "job1", "output_tokens": 100, "cost_usd": 0.01}) + "\n"
+        + json.dumps({"at": "2026-10-05T10:00:00Z", "kind": "background-analyst", "ticket": "job2", "output_tokens": 50, "cost_usd": 0.005})
+        + "\n{\"incomplete\":"  # truncated partial line
+    )
+    r = tu.aggregate([], now=NOW, launches_path=launches)
+    jobs = {j["job"] for j in r["by_job"]}
+    assert jobs == {"job1", "job2"}
+
+
+def test_by_job_handles_unrecognized_future_entrypoint_without_exception(tmp_path):
+    launches = tmp_path / "launches.jsonl"
+    launches.write_text(
+        json.dumps({"at": "2026-10-05T10:00:00Z", "kind": "future-kind", "ticket": "job1", "output_tokens": 100, "cost_usd": 0.01}) + "\n"
+    )
+    r = tu.aggregate([], now=NOW, launches_path=launches)
+    jobs = [j for j in r["by_job"] if j["job"] == "job1"]
+    assert len(jobs) == 1 and jobs[0]["kind"] == "future-kind"
+
+
+def test_by_job_handles_exact_float_cost_assertion(tmp_path):
+    launches = tmp_path / "launches.jsonl"
+    launches.write_text(
+        json.dumps({"at": "2026-10-05T10:00:00Z", "kind": "background-analyst", "ticket": "daily-digest", "output_tokens": 100, "cost_usd": 0.01}) + "\n"
+        + json.dumps({"at": "2026-10-05T11:00:00Z", "kind": "background-analyst", "ticket": "daily-digest", "output_tokens": 150, "cost_usd": 0.015}) + "\n"
+    )
+    r = tu.aggregate([], now=NOW, launches_path=launches)
+    job = next((j for j in r["by_job"] if j["job"] == "daily-digest"), None)
+    assert job and abs(job["cost_usd"] - 0.025) < 1e-9

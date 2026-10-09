@@ -1230,3 +1230,150 @@ def test_output_contracts_reach_health(monkeypatch):
     import output_contracts
     monkeypatch.setattr(output_contracts, "health_findings", lambda: [{"id": "contract:x", "severity": "red"}])
     assert hc.check_output_contracts() == [{"id": "contract:x", "severity": "red"}]
+
+
+# ── autonomous share ─────────────────────────────────────────────────────
+
+def test_check_autonomous_share_missing_file_is_yellow(tmp_path, monkeypatch):
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+    result = hc.check_autonomous_share()
+    assert result["severity"] == "yellow"
+    assert "no scan yet" in result["detail"]
+
+
+def test_check_autonomous_share_unreadable_file_is_yellow(tmp_path, monkeypatch):
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+    (tmp_path / ".claude" / "logs").mkdir(parents=True)
+    (tmp_path / ".claude" / "logs" / "token-usage.json").write_text("invalid json")
+    result = hc.check_autonomous_share()
+    assert result["severity"] == "yellow"
+    assert "unreadable" in result["detail"]
+
+
+def test_check_autonomous_share_no_runs_is_green(tmp_path, monkeypatch):
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+    (tmp_path / ".claude" / "logs").mkdir(parents=True)
+    (tmp_path / ".claude" / "logs" / "token-usage.json").write_text(json.dumps({"rows": []}))
+    result = hc.check_autonomous_share()
+    assert result["severity"] == "green"
+    assert result["value"] == 0.0
+
+
+def test_check_autonomous_share_at_50_percent_is_green(tmp_path, monkeypatch):
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+    (tmp_path / ".claude" / "logs").mkdir(parents=True)
+    data = {
+        "rows": [
+            {"day": "2026-10-06", "kind": "headless", "autonomous": True, "output": 50},
+            {"day": "2026-10-06", "kind": "interactive", "autonomous": False, "output": 50},
+        ]
+    }
+    (tmp_path / ".claude" / "logs" / "token-usage.json").write_text(json.dumps(data))
+    result = hc.check_autonomous_share()
+    assert result["severity"] == "green"
+    assert result["value"] == 0.5
+
+
+def test_check_autonomous_share_above_50_is_yellow(tmp_path, monkeypatch):
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+    (tmp_path / ".claude" / "logs").mkdir(parents=True)
+    data = {
+        "rows": [
+            {"day": "2026-10-06", "kind": "headless", "autonomous": True, "output": 51},
+            {"day": "2026-10-06", "kind": "interactive", "autonomous": False, "output": 49},
+        ]
+    }
+    (tmp_path / ".claude" / "logs" / "token-usage.json").write_text(json.dumps(data))
+    result = hc.check_autonomous_share()
+    assert result["severity"] == "yellow"
+    assert abs(result["value"] - 0.51) < 0.01
+
+
+def test_check_autonomous_share_counts_headless_and_subagent_as_autonomous(tmp_path, monkeypatch):
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+    (tmp_path / ".claude" / "logs").mkdir(parents=True)
+    data = {
+        "rows": [
+            {"day": "2026-10-06", "kind": "headless", "autonomous": True, "output": 30},
+            {"day": "2026-10-06", "kind": "subagent", "autonomous": True, "output": 20},
+            {"day": "2026-10-06", "kind": "interactive", "autonomous": False, "output": 50},
+        ]
+    }
+    (tmp_path / ".claude" / "logs" / "token-usage.json").write_text(json.dumps(data))
+    result = hc.check_autonomous_share()
+    assert abs(result["value"] - 0.5) < 0.01
+    # 50% autonomous is AT the threshold; severity is yellow only if > 0.5, so this is green
+    assert result["severity"] == "green"
+
+
+def test_check_autonomous_share_checks_only_the_latest_day_not_window_average(tmp_path, monkeypatch):
+    """Regression test: old version summed across all days in the window. New version checks latest day only."""
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+    (tmp_path / ".claude" / "logs").mkdir(parents=True)
+    data = {
+        "rows": [
+            # Older day: 80% autonomous (would trigger yellow in window-average mode)
+            {"day": "2026-10-03", "kind": "headless", "autonomous": True, "output": 80},
+            {"day": "2026-10-03", "kind": "interactive", "autonomous": False, "output": 20},
+            # Latest day: 20% autonomous (should be green)
+            {"day": "2026-10-06", "kind": "headless", "autonomous": True, "output": 20},
+            {"day": "2026-10-06", "kind": "interactive", "autonomous": False, "output": 80},
+        ]
+    }
+    (tmp_path / ".claude" / "logs" / "token-usage.json").write_text(json.dumps(data))
+    result = hc.check_autonomous_share()
+    # Latest day is 2026-10-06: 20 autonomous / 100 total = 20% -> green
+    assert result["severity"] == "green", f"Expected green for 20% on latest day, got {result['severity']}"
+    assert abs(result["value"] - 0.2) < 0.01
+    assert "2026-10-06" in result["detail"], "Detail should mention the checked day"
+
+
+def test_check_autonomous_share_with_zero_output_on_latest_day(tmp_path, monkeypatch):
+    """Latest day with data checked: 2026-10-05 (100 autonomous / 150 total = 66.7%) -> yellow."""
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+    (tmp_path / ".claude" / "logs").mkdir(parents=True)
+    data = {
+        "rows": [
+            # Latest day in data
+            {"day": "2026-10-05", "kind": "headless", "autonomous": True, "output": 100},
+            {"day": "2026-10-05", "kind": "interactive", "autonomous": False, "output": 50},
+        ]
+    }
+    (tmp_path / ".claude" / "logs" / "token-usage.json").write_text(json.dumps(data))
+    result = hc.check_autonomous_share()
+    # 2026-10-05 has 100/(100+50) = 66.7% > 50% -> yellow
+    assert result["severity"] == "yellow"
+    assert abs(result["value"] - (100/150)) < 0.01
+    assert "2026-10-05" in result["detail"], "Should mention the checked day"
+
+
+def test_check_autonomous_share_with_all_cache_runs_no_zero_division_error(tmp_path, monkeypatch):
+    """A day where every row has output: 0 (all-cache runs) should not cause ZeroDivisionError."""
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+    (tmp_path / ".claude" / "logs").mkdir(parents=True)
+    data = {
+        "rows": [
+            {"day": "2026-10-05", "kind": "headless", "autonomous": True, "output": 0},
+            {"day": "2026-10-05", "kind": "interactive", "autonomous": False, "output": 0},
+        ]
+    }
+    (tmp_path / ".claude" / "logs" / "token-usage.json").write_text(json.dumps(data))
+    result = hc.check_autonomous_share()
+    assert result["severity"] == "green"
+    assert result["value"] == 0.0
+
+
+def test_check_autonomous_share_with_no_recent_data_reports_latest_day_available(tmp_path, monkeypatch):
+    """No rows near "now" (stale/clock-skewed machine) should report actual latest day."""
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+    (tmp_path / ".claude" / "logs").mkdir(parents=True)
+    data = {
+        "rows": [
+            {"day": "2026-09-01", "kind": "headless", "autonomous": True, "output": 50},
+            {"day": "2026-09-01", "kind": "interactive", "autonomous": False, "output": 50},
+        ]
+    }
+    (tmp_path / ".claude" / "logs" / "token-usage.json").write_text(json.dumps(data))
+    result = hc.check_autonomous_share()
+    assert result["severity"] == "green"
+    assert "2026-09-01" in result["detail"], "Detail should mention the actual latest day in data"

@@ -212,7 +212,7 @@ def main() -> None:
 
         prompt = build_prompt(candidates)
         marvin_launcher.launch("background-analyst", prompt, tools="Read,Edit",
-                               permission_mode="bypassPermissions", timeout=300)
+                               permission_mode="bypassPermissions", timeout=300, ticket="auto-fix")
 
         fixed_ok, reverted = verify_and_revert(paths, backups)
         log_run(candidates, fixed_ok, reverted, skipped=False)

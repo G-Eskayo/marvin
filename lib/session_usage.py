@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 HOME = Path.home()
 TRANSCRIPTS = HOME / ".claude" / "projects"
 OUT_PATH = HOME / ".claude" / "logs" / "token-usage.json"
+LAUNCHES_LOG = HOME / ".claude" / "logs" / "launches.jsonl"
 WINDOW_DAYS = 30
 TOP_TICKETS = 40
 
@@ -73,6 +74,11 @@ def _kind(d) -> str:
     return "subagent" if d.get("isSidechain") else ("interactive" if d.get("entrypoint") in (None, "cli") else "headless")
 
 
+def _autonomous(d) -> bool:
+    """Autonomous classification: independent of kind/isSidechain. True if entrypoint is neither None nor "cli"."""
+    return d.get("entrypoint") not in (None, "cli")
+
+
 def _blank():
     return {f: 0 for f in FIELDS}
 
@@ -97,7 +103,7 @@ def find_transcripts(root: Path, window_days: int = WINDOW_DAYS, now: datetime |
     return sorted(out)
 
 
-def aggregate(files, now: datetime | None = None, window_days: int = WINDOW_DAYS) -> dict:
+def aggregate(files, now: datetime | None = None, window_days: int = WINDOW_DAYS, launches_path: Path | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(days=window_days)
     messages = {}  # message id -> record; the latest line of a message wins
@@ -120,16 +126,53 @@ def aggregate(files, now: datetime | None = None, window_days: int = WINDOW_DAYS
                 continue
             project, ticket = attribute(d.get("cwd"))
             messages[msg["id"]] = {
-                "day": when.date().isoformat(), "kind": _kind(d), "model": msg.get("model") or "?", "project": project, "ticket": ticket,
+                "day": when.date().isoformat(), "kind": _kind(d), "autonomous": _autonomous(d), "model": msg.get("model") or "?", "project": project, "ticket": ticket,
                 "usage": {"input": u.get("input_tokens", 0) or 0, "output": u.get("output_tokens", 0) or 0,
                           "cache_write": u.get("cache_creation_input_tokens", 0) or 0, "cache_read": u.get("cache_read_input_tokens", 0) or 0}}
     totals, rows, projects, tickets = _blank(), defaultdict(_blank), defaultdict(_blank), defaultdict(_blank)
     for m in messages.values():
         _add(totals, m["usage"])
-        _add(rows[(m["day"], m["kind"], m["model"])], m["usage"])
+        _add(rows[(m["day"], m["kind"], m["model"], m["autonomous"])], m["usage"])
         _add(projects[(m["project"], m["kind"])], m["usage"])
         if m["ticket"] is not None:
             _add(tickets[(m["project"], m["ticket"])], m["usage"])
+
+    # Aggregate by_job from launches.jsonl
+    by_job = []
+    launches_path = launches_path or LAUNCHES_LOG
+    if launches_path.exists():
+        by_job_dict = defaultdict(lambda: {"output_tokens": 0, "cost_usd": 0.0, "runs": 0})
+        try:
+            for line in launches_path.read_text(errors="ignore").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    launch = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(launch, dict):
+                    continue
+                when = _parse_ts(launch.get("at"))
+                if when is None or when < cutoff:
+                    continue
+                kind = launch.get("kind", "")
+                ticket = launch.get("ticket")
+                if ticket is None:
+                    continue
+                key = (kind, ticket)
+                output = launch.get("output_tokens") or 0
+                cost = launch.get("cost_usd") or 0.0
+                by_job_dict[key]["output_tokens"] += output
+                by_job_dict[key]["cost_usd"] += cost
+                by_job_dict[key]["runs"] += 1
+        except OSError:
+            pass
+        by_job = sorted(
+            ({"kind": k, "job": j, "output_tokens": v["output_tokens"], "cost_usd": v["cost_usd"], "runs": v["runs"]}
+             for (k, j), v in by_job_dict.items()),
+            key=lambda x: -x["output_tokens"]
+        )
+
     by_project: dict = {}
     for (project, kind), rec in projects.items():
         p = by_project.setdefault(project, {"project": project, **_blank(), "by_kind": {}})
@@ -139,9 +182,10 @@ def aggregate(files, now: datetime | None = None, window_days: int = WINDOW_DAYS
     return {
         "generated_at": now.isoformat(), "window_days": window_days, "machine": machine_id(), "files_scanned": len(list(files)),
         "totals": totals,
-        "rows": [{"day": d, "kind": k, "model": mo, **rec} for (d, k, mo), rec in sorted(rows.items())],
+        "rows": [{"day": d, "kind": k, "model": mo, "autonomous": a, **rec} for (d, k, mo, a), rec in sorted(rows.items())],
         "by_project": sorted(by_project.values(), key=lambda p: -p["output"]),
         "by_ticket": sorted(({"project": p, "ticket": t, **rec} for (p, t), rec in tickets.items()), key=lambda x: -x["output"])[:TOP_TICKETS],
+        "by_job": by_job,
     }
 
 

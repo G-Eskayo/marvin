@@ -167,3 +167,57 @@ def test_run_review_still_advances_state_on_a_zero_claude_exit(tmp_path, monkeyp
 
     assert len(calls) == 2  # claude call + sort_suggestions.py call
     assert bar.LOCK_FILE.exists()
+
+
+def test_background_architecture_review_calls_launch_with_ticket_tag(tmp_path, monkeypatch):
+    """Verify that background_architecture_review.run_review() calls launch() with ticket='architecture-review' for autonomous accounting."""
+    import marvin_launcher
+    launches = []
+
+    def fake_launch(kind, prompt, **kwargs):
+        launches.append({"kind": kind, "ticket": kwargs.get("ticket")})
+        class R:
+            text = "# Architecture review"
+            exit_code = 0
+            stderr = ""
+        return R()
+
+    monkeypatch.setattr(marvin_launcher, "launch", fake_launch)
+    monkeypatch.setattr(bar, "marvin_launcher", marvin_launcher)
+    monkeypatch.setattr(bar, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(bar, "CURSOR_FILE", tmp_path / "state" / "chunk-cursor.json")
+    monkeypatch.setattr(bar, "LOCK_FILE", tmp_path / "state" / ".last-run")
+    monkeypatch.setattr(bar, "LOG_FILE", tmp_path / "state" / "background-review.log")
+    monkeypatch.setattr(bar, "SUGGESTIONS_FILE", tmp_path / "suggestions.md")
+
+    bar.run_review({"name": "test-chunk", "paths": []}, "test reason", False)
+
+    assert len(launches) == 1
+    assert launches[0]["ticket"] == "architecture-review", "background_architecture_review.run_review() must tag launch() with ticket='architecture-review'"
+
+
+def test_background_architecture_review_on_launch_failure_surfaces_exception(tmp_path, monkeypatch):
+    """If launch() raises an exception, it should propagate rather than being silently caught."""
+    import marvin_launcher
+    launches = []
+
+    def fake_launch(kind, prompt, **kwargs):
+        launches.append(kwargs.get("ticket"))
+        raise TimeoutError("test timeout")
+
+    monkeypatch.setattr(marvin_launcher, "launch", fake_launch)
+    monkeypatch.setattr(bar, "marvin_launcher", marvin_launcher)
+    monkeypatch.setattr(bar, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(bar, "CURSOR_FILE", tmp_path / "state" / "chunk-cursor.json")
+    monkeypatch.setattr(bar, "LOCK_FILE", tmp_path / "state" / ".last-run")
+    monkeypatch.setattr(bar, "LOG_FILE", tmp_path / "state" / "background-review.log")
+    monkeypatch.setattr(bar, "SUGGESTIONS_FILE", tmp_path / "suggestions.md")
+
+    try:
+        bar.run_review({"name": "test-chunk", "paths": []}, "test reason", False)
+        assert False, "Expected TimeoutError to propagate"
+    except TimeoutError:
+        pass
+
+    assert len(launches) == 1
+    assert launches[0] == "architecture-review"
