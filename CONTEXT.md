@@ -347,6 +347,27 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
 - **Hearing about it**: an "Auto-merged" list in the dashboard, each with a one-click Revert; the morning brief opens
   with one line ("auto-merged since yesterday: N, all green"); a phone push only when something goes wrong (a revert,
   main red, a trust ramp reset).
+- **Revert** (for now): undoes at once (a revert commit after a quick test run, no Approve wait); asks Gil for an
+  optional one-line reason (what #73's learning step uses); sends the ticket back with that reason as its new
+  requirement; resets the trust ramp for that area or project (its next 5 PRs wait for Gil).
+- **Safety brake**: auto-merges go one at a time, each waiting for main-health to pass on the previous one; a red main
+  pauses all auto-merging everywhere (phone push naming the likely PR) until main is green again; when the red appears
+  within 30 min of an auto-merge and that PR's own tests fail on main, it is reverted automatically, once per incident
+  (if that doesn't fix main, everything waits for Gil); no quiet hours.
+- **The governor** (Gil's addition; #327 widened): an observer over the whole system that sees which sections are busy
+  (ticket builds, auto-merge, research, background jobs, live sessions) and their priority, knows the limits (GitHub
+  allowance, machine load, token budget, review backlog), and sets each section's dial: open it up when resources are
+  free, throttle lower-priority sections when they are tight. Auto-merge pace is one dial (one at a time by default).
+  The throttle button is the governor's on/off.
+- **Switching on**: 3 days of **shadow mode** on the mini (where merges happen; laptop use doesn't matter): every PR
+  card shows what auto-merge would have done and its mutation score while Gil keeps approving. Then a report (would
+  have merged N; any Gil would have denied) surfaces in the next session's start report, the morning brief and an MR
+  Review banner. Auto-merge switches on **only when Gil says yes**; until then it keeps shadowing.
+- **Deciding the area**: one readable rules file lists owned and core paths; the rules file is itself core (auto-merge
+  can never widen its own permissions); one core file anywhere in a PR makes the whole PR wait. **New folders need no
+  permission** (Gil): a new folder inherits its parent's area; a brand-new top-level folder counts as owned, but at
+  most 3 a week auto-merge (past that, they wait: a burst of folders usually means sprawl). Health tracks file, folder
+  and repo-size growth, and the output-contracts check (#305) flags files nothing reads, so growth stays bounded.
 
 ## Dashboard app — Files tab (in design, 2026-08-27)
 
