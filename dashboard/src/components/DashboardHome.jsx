@@ -94,6 +94,9 @@ function ProjectCard({ card, onOpen }) {
 }
 
 export default function DashboardHome({ onOpenProject }) {
+  // Every hook before any early return: a hook after the "no boards yet" return ran only once boards loaded, and
+  // React blanked the Activity tab (error #310, 2026-10-09).
+  const [showArchived, setShowArchived] = useState(false)
   const [boards, setBoards] = useState(null)
   const [overview, setOverview] = useState(null)
   const [summaries, setSummaries] = useState({})
@@ -163,7 +166,6 @@ export default function DashboardHome({ onOpenProject }) {
   const cards = buildProjectCards(boards, overview, summaries)
   const active = cards.filter((c) => !c.isArchived)
   const archived = cards.filter((c) => c.isArchived)
-  const [showArchived, setShowArchived] = useState(false)
 
   return (
     <div className="max-w-6xl space-y-6 p-6">
