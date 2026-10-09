@@ -19,7 +19,8 @@ import { ciState } from '../../webhook-server/ci_status.js'
 export const EVIDENCE_HEADERS = {
   metrics: '## Metrics Comparison',
   testResults: '## Test Results',
-  devEvidence: '## Dev Environment Evidence'
+  devEvidence: '## Dev Environment Evidence',
+  mutation: '## Mutation Score'
 }
 
 export function hasEvidenceSchema(body) {
@@ -104,6 +105,38 @@ function parseDevEvidenceSection(section) {
   }
 }
 
+function parseMutationSection(section) {
+  if (!section) return null
+  // Parse format like: "80% (4/5)" or "unknown (npx not found)" or "no mutable lines"
+  const percentMatch = section.match(/(\d+(?:\.\d+)?)\%\s*\((\d+)\/(\d+)\)/)
+  const unknownMatch = section.match(/unknown\s*\(([^)]+)\)/)
+  const noMutableMatch = section.match(/no mutable lines/i)
+
+  if (percentMatch) {
+    return {
+      status: 'ok',
+      score: Number(percentMatch[1]),
+      killed: Number(percentMatch[2]),
+      total: Number(percentMatch[3])
+    }
+  } else if (unknownMatch) {
+    return {
+      status: 'unknown',
+      reason: unknownMatch[1].trim()
+    }
+  } else if (noMutableMatch) {
+    return {
+      status: 'ok',
+      score: 100,
+      killed: 0,
+      total: 0,
+      reason: 'no mutable lines'
+    }
+  }
+
+  return null
+}
+
 export function parseTicketRef(body) {
   const match = body.match(/\b(?:Closes|Fixes|Resolves)\s+(?:[\w.-]+\/[\w.-]+)?#(\d+)/i)
   return match ? match[1] : null
@@ -152,6 +185,7 @@ export function parseEvidence(body) {
     ...metrics,
     testResults: parseTestResultsSection(extractSection(body, EVIDENCE_HEADERS.testResults)),
     devEvidence: parseDevEvidenceSection(extractSection(body, EVIDENCE_HEADERS.devEvidence)),
+    mutation: parseMutationSection(extractSection(body, EVIDENCE_HEADERS.mutation)),
     ticketRef: parseTicketRef(body)
   }
 }

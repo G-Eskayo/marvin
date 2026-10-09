@@ -31,7 +31,11 @@ const PIPELINE_BODY = `Closes G-Eskayo/marvin#42
 
 ## Dev Environment Evidence
 
-N/A — no UI`
+N/A — no UI
+
+## Mutation Score
+
+80% (4/5)`
 
 const MANUAL_SCHEMA_BODY = `Closes #75
 
@@ -124,8 +128,26 @@ describe('parseEvidence', () => {
       metrics: [],
       testResults: null,
       devEvidence: null,
+      mutation: null,
       ticketRef: '70' // ticketRef parses from anywhere in the body, independent of the schema sections
     })
+  })
+
+  it('extracts mutation score when present', () => {
+    const evidence = parseEvidence(PIPELINE_BODY)
+    expect(evidence.mutation).toEqual({ status: 'ok', score: 80, killed: 4, total: 5 })
+  })
+
+  it('parses unknown mutation status with reason', () => {
+    const body = `Closes #42\n## Mutation Score\n\nunknown (npx not found)`
+    const evidence = parseEvidence(body)
+    expect(evidence.mutation).toEqual({ status: 'unknown', reason: 'npx not found' })
+  })
+
+  it('parses no mutable lines mutation status', () => {
+    const body = `Closes #42\n## Mutation Score\n\nno mutable lines`
+    const evidence = parseEvidence(body)
+    expect(evidence.mutation).toEqual({ status: 'ok', score: 100, killed: 0, total: 0, reason: 'no mutable lines' })
   })
 })
 
