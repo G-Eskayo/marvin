@@ -1,4 +1,6 @@
-import { useEffect, useState } from 'react'
+import Decisions from './Decisions.jsx'
+import { summarizeDecisions } from '../../webhook-server/decisions.js'
+import { useEffect, useMemo, useState } from 'react'
 import { cleanIpcError } from '../lib/ipcError.js'
 import { projectIdOf } from '../lib/projects.js'
 import { planInput } from '../lib/ticket_input.js'
@@ -237,6 +239,7 @@ function TicketDrilldown({ repo, card, onBack, onOpenMr, onOpenDocs, onOpenTicke
   const [error, setError] = useState(null)
   const [ctx, setCtx] = useState(null)
   const rel = useRelated(() => window.api.relations.ticket(repo, card.number), [repo, card.number])
+  const ticketDecisions = useMemo(() => (detail?.body ? summarizeDecisions(detail.body) : null), [detail?.body])
 
   useEffect(() => {
     window.api.relations.context(projectIdOf(repo)).then(setCtx).catch(() => {})
@@ -277,6 +280,18 @@ function TicketDrilldown({ repo, card, onBack, onOpenMr, onOpenDocs, onOpenTicke
           ) : (
             <p className="text-neutral-500">(no description)</p>
           )}
+        </div>
+      )}
+      {/* A ticket waiting on the owner's choices (needs-info) is answered here; all required answered moves it to ready-for-agent. */}
+      {detail && ticketDecisions?.present && (
+        <div className="mt-4">
+          <Decisions
+            key={JSON.stringify(ticketDecisions.questions)}
+            repo={repo}
+            number={card.number}
+            decisions={ticketDecisions}
+            onSubmitted={() => window.api.boards.ticket(repo, card.number).then(setDetail).catch(() => {})}
+          />
         </div>
       )}
       {events.length > 0 && <PipelineHistory events={events} />}

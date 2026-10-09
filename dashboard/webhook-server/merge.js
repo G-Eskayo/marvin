@@ -6,6 +6,7 @@ import path from 'path'
 import { classifyFailure, summarizeGateFailure, withRetry, MergeFailure, refusal } from './failure.js'
 import { recordFailure } from './failure_log.js'
 import { assertUiEvidence } from './ui_evidence.js'
+import { assertDecisions } from './decisions_gate.js'
 import { fileURLToPath } from 'url'
 import { sendFeedback } from './deny.js'
 import { parseTicketRef } from '../electron/main/mr_review.js'
@@ -404,7 +405,7 @@ async function mergePrUnqueued(
   recordStageFn = recordStage,
   deps = {}
 ) {
-  const { sleep, recordFailureFn = recordFailure, gateContext = defaultGateContext, baselineFails = null, gateTimeoutMs = GATE_TIMEOUT_MS, rebaseOpen = checkOpenPrs, uiEvidence = assertUiEvidence } = deps
+  const { sleep, recordFailureFn = recordFailure, gateContext = defaultGateContext, baselineFails = null, gateTimeoutMs = GATE_TIMEOUT_MS, rebaseOpen = checkOpenPrs, uiEvidence = assertUiEvidence, decisions = assertDecisions } = deps
   if (typeof prUrl !== 'string' || !prUrl.startsWith('https://github.com/')) {
     throw new MergeFailure(classifyFailure({ stage: 'request', error: new Error(`Not a GitHub PR URL: ${prUrl}`) }))
   }
@@ -419,6 +420,8 @@ async function mergePrUnqueued(
   await readyIfDraft(prUrl, exec)
   // A UI change merges only with images the owner has seen (marvin #374). Before any gate work: refusing is cheap.
   await uiEvidence(prUrl, exec, ctx ? ctx.uiPaths : [])
+  // A PR that asks the owner to choose merges only once he has answered, in its Decisions section (2026-10-09).
+  await decisions(prUrl, exec)
 
   const { gate, behind = false, headRefName, body } = ctx ? await shouldGateMerge(prUrl, exec, ctx) : await shouldGateMerge(prUrl, exec)
   const ticketNumber = parseTicketRef(body)

@@ -3,6 +3,7 @@ import { EvidenceTable, ApproveDenyActions } from './MrReview.jsx'
 import { projectIdOf } from '../lib/projects.js'
 import Related, { useRelated } from './Related.jsx'
 import PrImages from './PrImages.jsx'
+import Decisions from './Decisions.jsx'
 
 // Full evidence-schema drill-down for one MR (G-Eskayo/marvin#72, ADR
 // 0024) plus its linked ticket/parent-PRD requirements, design, and
@@ -118,7 +119,7 @@ function IssueBody({ label, issue }) {
   )
 }
 
-export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs, onOpenBoard, onOpenTicket }) {
+export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs, onOpenBoard, onOpenTicket, onChanged }) {
   const rel = useRelated(() => window.api.relations.pr(pr.repo, pr.number), [pr.repo, pr.number])
   const [context, setContext] = useState(null)
   const [error, setError] = useState(null)
@@ -180,6 +181,17 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
         </div>
         <ApproveDenyActions pr={pr} onApproved={onApproved} onDenied={onDenied} />
       </div>
+
+      {/* What the PR asks the owner to choose: answered here, and Approve waits until the required ones are. */}
+      {pr.decisions?.present && (
+        <Decisions
+          key={JSON.stringify(pr.decisions.questions)}
+          repo={pr.repo}
+          number={pr.number}
+          decisions={pr.decisions}
+          onSubmitted={() => onChanged?.()}
+        />
+      )}
 
       {pr.images?.length > 0 && (
         <Section title={`Images & recordings (${pr.images.length})`}>

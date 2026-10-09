@@ -9,7 +9,7 @@
 
 // Refusals the screen already explains with a state of its own. If one of these is left over from an earlier
 // click it is stale as soon as the state changes, so it is never shown as an error.
-const MIRRORED_REFUSALS = /^(SENT_BACK|CI_PENDING|CI_FAILED|WRONG_BASE|NO_UI_EVIDENCE)\b/
+const MIRRORED_REFUSALS = /^(SENT_BACK|CI_PENDING|CI_FAILED|WRONG_BASE|NO_UI_EVIDENCE|DECISIONS_PENDING|DECISIONS_UNSTRUCTURED)\b/
 
 export function describePrState(pr, { status = 'idle', errorMessage = null } = {}) {
   const ci = pr.checks || { state: 'none', failing: [], pending: [] }
@@ -62,6 +62,23 @@ export function describePrState(pr, { status = 'idle', errorMessage = null } = {
     return base('needs-images', 'blocked', 'Needs images',
       `It changes how the app looks${shown ? ` (${shown})` : ''} but its description shows no screenshots. ` +
         'Add images of the changed screens to the PR, and Approve appears here.', 'hidden', 'enabled')
+  }
+
+  // The owner's rule (2026-10-09): if a PR asks him to choose, it gives him options to answer, and it can't be approved
+  // until the required ones are answered. Asking in prose, or a broken Decisions section, is too vague to approve.
+  const dec = pr.decisions
+  if (pr.vague || dec?.problems?.length) {
+    const why = pr.vague ? pr.vague.reasons[0] : dec.problems[0]
+    return base('needs-options', 'blocked', 'Too vague: needs options',
+      `It asks you to choose something but gives you no way to answer (${why}). Send it back so the author lists the ` +
+        'choices as a Decisions section; then you pick from buttons here.', 'hidden', 'enabled',
+      { actions: [{ id: 'sendBackForOptions', label: 'Send back for options' }] })
+  }
+  if (dec?.pending?.length) {
+    const n = dec.pending.length
+    return base('decisions-pending', 'wait', 'Answer the decisions first',
+      `${n} decision${n === 1 ? '' : 's'} still open (${dec.pending.join(', ')}). Pick your answers in the Decisions section ` +
+        'and submit; Approve becomes available once every required one is answered.', 'disabled', 'enabled')
   }
 
   if (pr.baseProblem?.parent) {

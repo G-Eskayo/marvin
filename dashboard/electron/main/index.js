@@ -3,7 +3,7 @@ import { pathToFileURL } from 'url'
 import { instrumentIpc } from './timing.js'
 import { installDevSiteCors } from './dev_site_cors.js'
 import { join, dirname } from 'path'
-import { existsSync, mkdirSync, appendFileSync, statSync } from 'fs'
+import { existsSync, mkdirSync, appendFileSync, statSync, readFileSync } from 'fs'
 import { homedir } from 'os'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
@@ -27,6 +27,7 @@ import { createMergeOps } from './merge_ops.js'
 import { readPrefs } from './prefs.js'
 import { guardApprove } from './approve_guard.js'
 import { recordRefusal } from '../../webhook-server/refusal_log.js'
+import { submitDecisions, sendBackForOptions } from './decisions_submit.js'
 
 const mergeOps = createMergeOps()
 import { readRegistry, loadBoard, fetchBoardData, fetchCompletedData, withProjectStatus, defaultStagesFor, defaultLiveNumbers, getEvidence, clearCrossProjectCache, REGISTRY_PATH } from './boards.js'
@@ -598,9 +599,12 @@ function registerMrReviewHandlers() {
       mainWindow?.webContents.send('mr:refresh')
     }
   })
+  // MARVIN_MR_FIXTURE=<file.json> (gh pr list JSON) shows a fixed PR list instead of GitHub's: used to screenshot card
+  // states no open PR happens to be in (e.g. "Too vague: needs options") for the owner's image rule.
+  const fixturePrs = process.env.MARVIN_MR_FIXTURE ? async () => JSON.parse(readFileSync(process.env.MARVIN_MR_FIXTURE, 'utf8')) : null
   ipcMain.handle('mr:list', () => {
-    listOpenPrs().then((prs) => stackRetarget.check(prs)).catch(() => {})
-    return listPipelinePrs(listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets, autoMergeShadow: getAutoMergeShadow, uiPathsFor: (repo) => readUiPaths(repo) })
+    if (!fixturePrs) listOpenPrs().then((prs) => stackRetarget.check(prs)).catch(() => {})
+    return listPipelinePrs(fixturePrs || listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets, autoMergeShadow: getAutoMergeShadow, uiPathsFor: (repo) => readUiPaths(repo) })
   })
 
   // Backs the MR Review tab's status dot -- red/blue/green computed from
@@ -680,6 +684,25 @@ function registerMrReviewHandlers() {
   })
 
   ipcMain.handle('mr:mergeState', (_event, url) => mergeOps.get(url))
+
+  // The owner's answers to a Decisions section, on a PR or a ticket (2026-10-09): written into the description, then
+  // recorded as a comment. See decisions_submit.js.
+  ipcMain.handle('decisions:submit', async (_event, { repo, number, answers }) => {
+    const result = await submitDecisions({ repo, number, answers }, { exec: execFileAsync })
+    githubChanged(null)
+    return result
+  })
+
+  // "Too vague: needs options": ask the author to restate the questions as a Decisions section.
+  ipcMain.handle('mr:sendBackForOptions', async (_event, { url, ticketNumber, reasons }) => {
+    assertMergeable(url)
+    const result = await sendBackForOptions({ prUrl: url, ticketNumber, reasons }, {
+      exec: execFileAsync,
+      deny: (payload) => denyMr(payload, MR_DENY_WEBHOOK_URL, postJson)
+    })
+    githubChanged(null)
+    return result
+  })
 
   // The way out of a wrongly shown "sent back": see clearSentBackLabel (refuses while a rework is running).
   ipcMain.handle('mr:clearSentBack', async (_event, url) => {

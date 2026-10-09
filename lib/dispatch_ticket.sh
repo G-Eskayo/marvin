@@ -77,6 +77,11 @@ don't guess the machine name). Then write a final summary (what you
 built, what you verified, any problems, screenshot paths, any merge-order
 notes) to ~/dispatch_issue${ISSUE_NUMBER}_report.md on this machine.
 
+If your PR needs the owner to choose anything (design options, open
+questions), put them in a Decisions section in the PR description, in the
+format of ~/.agents/docs/agents/decisions-format.md. Never ask in prose:
+a PR that asks without options can't be approved.
+
 Work autonomously without stopping for confirmation. For a genuine
 blocker (not a design judgment call -- make the most reasonable choice
 for those, consistent with this codebase's existing patterns, and note it
