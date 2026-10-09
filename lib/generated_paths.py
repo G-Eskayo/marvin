@@ -11,8 +11,10 @@ conflict on them. Rather than untrack them, a project profile declares them:
 * regenerate  how to rebuild it; used when a rebase conflicts on it (otherwise main's copy is taken)
 
 Two uses, one implementation: `unstage_generated` keeps them out of a pipeline PR's commit, and
-`resolve_rebase` lets the merge gate finish a rebase whose ONLY conflicts are in generated files.
-A conflict in real code is never papered over.
+`resolve_rebase` lets the merge gate (and the scan's conflict repair, conflict_repair.py) finish a rebase whose
+only conflicts are safe ones: generated files, changes main already has, and spots where both sides only ADDED lines
+(two PRs appending tests to the same file, #314): both are kept, main's first. A conflict where either side changed
+or removed an existing line is never papered over.
 """
 from __future__ import annotations
 
@@ -88,6 +90,60 @@ def _already_on_base(worktree, path: str) -> bool:
     return done.returncode == 0
 
 
+def merge_insertions(base: str, ours: str, theirs: str) -> str | None:
+    """Three-way merge that only resolves hunks where BOTH sides inserted lines at the same spot (the original had
+    nothing there): ours (main) first, then theirs (the PR), once if they are identical. None if any hunk changes or
+    removes an original line -- that is a real conflict."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = []
+        for name, text in (("ours", ours), ("base", base), ("theirs", theirs)):
+            f = Path(tmp) / name
+            f.write_text(text)
+            paths.append(str(f))
+        done = subprocess.run(["git", "merge-file", "-p", "--diff3", "-L", "ours", "-L", "base", "-L", "theirs", *paths],
+                              capture_output=True, text=True)
+    if done.returncode < 0 or done.returncode > 127:
+        return None
+    out, section, hunk = [], None, {"ours": [], "base": [], "theirs": []}
+    for line in done.stdout.splitlines(keepends=True):
+        if line.startswith("<<<<<<< ours"):
+            section, hunk = "ours", {"ours": [], "base": [], "theirs": []}
+        elif line.startswith("||||||| base") and section == "ours":
+            section = "base"
+        elif line.startswith("=======") and section == "base":
+            section = "theirs"
+        elif line.startswith(">>>>>>> theirs") and section == "theirs":
+            if any(l.strip() for l in hunk["base"]):
+                return None
+            o, t = hunk["ours"], hunk["theirs"]
+            if t[:len(o)] == o:      # the PR added what main added, and more: main's lines once, then the rest
+                out += o + t[len(o):]
+            elif o[:len(t)] == t:    # main already has everything the PR added here
+                out += o
+            else:
+                out += o + t
+            section = None
+        elif section:
+            hunk[section].append(line)
+        else:
+            out.append(line)
+    return None if section else "".join(out)
+
+
+def _both_inserted(worktree, path: str) -> bool:
+    """Resolve `path` in place when its conflict is only insertions on both sides. Stage 1 = the common original
+    (absent when both sides created the file), 2 = main (being rebased onto), 3 = the PR's commit."""
+    stages = {n: _git(worktree, "show", f":{n}:{path}", check=False) for n in (1, 2, 3)}
+    if stages[2].returncode != 0 or stages[3].returncode != 0:
+        return False
+    merged = merge_insertions(stages[1].stdout if stages[1].returncode == 0 else "", stages[2].stdout, stages[3].stdout)
+    if merged is None:
+        return False
+    (Path(worktree) / path).write_text(merged)
+    return _git(worktree, "add", "--", path, check=False).returncode == 0
+
+
 def resolve_rebase(worktree, rules: list[dict], max_steps: int = 100) -> dict:
     """Finish a rebase that stopped on conflicts, if every conflicted file is generated. During a rebase
     `--ours` is the branch being rebased ONTO (main), so a generated file takes main's copy, is rebuilt with
@@ -95,11 +151,12 @@ def resolve_rebase(worktree, rules: list[dict], max_steps: int = 100) -> dict:
     only that main ALREADY has this PR's change is resolved the same way (main's copy). Anything else aborts.
     """
     already: list[str] = []
+    inserted: list[str] = []
     for _ in range(max_steps):
         unmerged = [p for p in _git(worktree, "diff", "--name-only", "--diff-filter=U").stdout.split("\n") if p]
         if not unmerged:
             if not _in_rebase(worktree):
-                return {"ok": True, "already_on_base": already}
+                return {"ok": True, "already_on_base": already, "both_inserted": sorted(set(inserted))}
             cont = _git(worktree, "rebase", "--continue", check=False)
             if cont.returncode != 0 and not _git(worktree, "diff", "--name-only", "--diff-filter=U").stdout.strip():
                 # everything this commit did is already on main, so nothing is left to commit: drop it
@@ -110,11 +167,17 @@ def resolve_rebase(worktree, rules: list[dict], max_steps: int = 100) -> dict:
                 return {"ok": False, "reason": f"rebase could not continue: {(cont.stderr or cont.stdout)[-300:]}"}
             continue
         redundant = [p for p in unmerged if not is_generated(p, rules) and _already_on_base(worktree, p)]
-        real = [p for p in unmerged if not is_generated(p, rules) and p not in redundant]
+        candidates = [p for p in unmerged if not is_generated(p, rules) and p not in redundant]
+        both = [p for p in candidates if _both_inserted(worktree, p)]
+        inserted += both
+        real = [p for p in candidates if p not in both]
         if real:
             _git(worktree, "rebase", "--abort", check=False)
-            return {"ok": False, "reason": "conflicts in files that are neither generated nor already on main: " + ", ".join(real)}
+            return {"ok": False, "reason": "real conflicts (an existing line changed on both sides) in: " + ", ".join(real), "files": real}
         already += redundant
+        unmerged = [p for p in unmerged if p not in both]  # already merged and staged above
+        if not unmerged:
+            continue
         for path in unmerged:
             if _git(worktree, "checkout", "--ours", "--", path, check=False).returncode != 0:
                 _git(worktree, "rm", "-q", "-f", "--", path, check=False)

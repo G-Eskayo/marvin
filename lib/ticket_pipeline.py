@@ -162,6 +162,38 @@ def _failing_checks(rollup) -> list[str]:
     return out
 
 
+_REPAIR_BUDGET = None
+FLAGGED_PATH = Path.home() / ".claude" / "logs" / "conflict-flagged.json"
+
+
+def _try_conflict_repair(repo: str, pr: dict) -> dict:
+    """The cheap fix before any rebuild (conflict_repair.py): rebase resolving only safe conflicts, test, push."""
+    global _REPAIR_BUDGET
+    import conflict_repair
+    if _REPAIR_BUDGET is None:
+        _REPAIR_BUDGET = conflict_repair.Budget()
+    try:
+        return conflict_repair.attempt(repo, pr, _REPAIR_BUDGET)
+    except Exception as e:  # noqa: BLE001 -- a broken repair falls back to today's behaviour
+        return {"outcome": "rebuild", "files": [], "reason": f"repair crashed: {e}"}
+
+
+def _flagged_before(url: str, sha: str) -> bool:
+    try:
+        return json.loads(FLAGGED_PATH.read_text()).get(url) == sha
+    except (OSError, ValueError):
+        return False
+
+
+def _mark_flagged(url: str, sha: str) -> None:
+    try:
+        data = json.loads(FLAGGED_PATH.read_text()) if FLAGGED_PATH.exists() else {}
+        data[url] = sha
+        FLAGGED_PATH.write_text(json.dumps(data, indent=1))
+    except (OSError, ValueError):
+        pass
+
+
 def _requeue_conflicted_prs(repo: str) -> list[int]:
     """A PR that GitHub says CONFLICTS with its base can never be merged as it stands, and the first anyone
     learned was a human clicking Approve (finance-os #9, clarity #48). So the pipeline sends the ticket back
@@ -171,7 +203,7 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
     def gh(*args):
         return subprocess.run(["gh", *args], capture_output=True, text=True, timeout=30)
 
-    prs = gh("pr", "list", "--repo", repo, "--state", "open", "--limit", "100", "--json", "number,body,mergeable,headRefName,statusCheckRollup")
+    prs = gh("pr", "list", "--repo", repo, "--state", "open", "--limit", "100", "--json", "number,url,body,mergeable,headRefName,headRefOid,statusCheckRollup")
     issues = gh("issue", "list", "--repo", repo, "--state", "open", "--limit", "1000", "--json", "number,labels")
     if prs.returncode != 0 or issues.returncode != 0:
         return []
@@ -190,6 +222,28 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
         names = labels_of.get(n)
         if names is None or names & {"needs-reengagement", "pinned", "held"}:
             continue
+        files: list[str] = []
+        if not red:
+            # A conflict: try the cheap fix first (2026-10-09, #314). Most are two PRs appending to the same file.
+            fix = _try_conflict_repair(repo, pr)
+            if fix["outcome"] == "repaired":
+                gh("pr", "comment", str(pr["number"]), "--repo", repo, "--body",
+                   f"Conflict with main resolved automatically: {fix.get('detail', '')} Rebased onto main and pushed; nothing was rebuilt.")
+                print(f"{LOG_PREFIX} {repo}#{n}: PR #{pr['number']} conflict repaired ({fix.get('detail', '')})", file=sys.stderr)
+                continue
+            if fix["outcome"] == "later":
+                continue  # out of repair budget this scan: try again next scan rather than rebuild
+            files = fix.get("files") or []
+            if not str(pr.get("headRefName", "")).startswith("pipeline/"):
+                # Made by hand, not by the pipeline: an agent rebuild would replace someone's work. Flag it, once per commit.
+                url, sha = pr.get("url") or f"{repo}#{pr['number']}", pr.get("headRefOid") or ""
+                if not _flagged_before(url, sha):
+                    gh("pr", "comment", str(pr["number"]), "--repo", repo, "--body",
+                       f"This PR conflicts with main{' in ' + ', '.join(files) if files else ''}, and the conflict is a real one "
+                       f"(the same existing lines changed on both sides), so it could not be resolved automatically. It was made "
+                       f"by hand, so it is not sent for an agent rebuild: rebase it onto main, or ask MARVIN to.")
+                    _mark_flagged(url, sha)
+                continue
         # The claim from the run that raised this PR must go too: the dispatcher only takes tickets with no claim, so a
         # sent-back ticket that kept it would never be rebuilt (clarity-captions #51).
         edit_args = ["issue", "edit", str(n), "--repo", repo, "--add-label", "needs-reengagement"]
@@ -203,7 +257,8 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
             continue
         gh("issue", "comment", str(n), "--repo", repo, "--body",
            (f"PR #{pr['number']}'s GitHub checks failed: {', '.join(red)}. " if red else
-            f"PR #{pr['number']} now conflicts with main (something it touches changed after this was built). ") +
+            f"PR #{pr['number']} now conflicts with main{' in ' + ', '.join(files) if files else ''} (the same lines changed on both "
+            f"sides, so it could not be resolved automatically). ") +
            "Sent back automatically: the pipeline will rebuild it on the current main and update the same PR.")
         print(f"{LOG_PREFIX} {repo}#{n}: PR #{pr['number']} {'failed its checks' if red else 'conflicts with main'}, sent back for rework", file=sys.stderr)
         sent.append(n)

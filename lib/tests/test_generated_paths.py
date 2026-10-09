@@ -162,3 +162,46 @@ def test_marvin_has_default_generated_rules_without_a_profile(monkeypatch):
     assert gp.is_generated("graphify-out/graph.json", rules)
     assert not gp.is_generated("lib/ticket_stages.py", rules)
     assert gp.rules_for("G-Eskayo/other") == []
+
+
+# ── both sides only added at the same spot (2026-10-09, #314) ───────────────
+
+def test_both_sides_appending_to_the_same_file_keeps_both_main_first(repo):
+    _diverge(repo, {"src.js": "a\nfeature test\n"}, {"src.js": "a\nmain test\n"})
+    assert subprocess.run(["git", "rebase", "main"], cwd=repo, capture_output=True).returncode != 0
+    res = gp.resolve_rebase(repo, RULES)
+    assert res["ok"], res
+    assert (repo / "src.js").read_text() == "a\nmain test\nfeature test\n"
+    assert res["both_inserted"] == ["src.js"]
+
+
+def test_the_same_insertion_on_both_sides_is_kept_once(repo):
+    _diverge(repo, {"src.js": "a\nsame\nfeature only\n"}, {"src.js": "a\nsame\n"})
+    git(repo, "checkout", "-q", "main"); (repo / "src.js").write_text("a\nsame\n")
+    git(repo, "checkout", "-q", "feature")
+    subprocess.run(["git", "rebase", "main"], cwd=repo, capture_output=True)
+    res = gp.resolve_rebase(repo, RULES)
+    assert res["ok"], res
+    assert (repo / "src.js").read_text().count("same\n") == 1
+
+
+def test_an_edit_to_an_existing_line_is_still_a_real_conflict(repo):
+    (repo / "src.js").write_text("a\nb\n"); git(repo, "add", "-A"); git(repo, "commit", "-q", "-m", "two lines")
+    _diverge(repo, {"src.js": "a\nb by feature\n"}, {"src.js": "a\nb by main\n"})
+    assert subprocess.run(["git", "rebase", "main"], cwd=repo, capture_output=True).returncode != 0
+    res = gp.resolve_rebase(repo, RULES)
+    assert not res["ok"] and "src.js" in res["reason"]
+
+
+def test_one_file_appended_and_one_really_conflicting_is_not_resolved(repo):
+    (repo / "other.js").write_text("x\n"); git(repo, "add", "-A"); git(repo, "commit", "-q", "-m", "other")
+    _diverge(repo, {"src.js": "a\nfeature\n", "other.js": "x by feature\n"}, {"src.js": "a\nmain\n", "other.js": "x by main\n"})
+    subprocess.run(["git", "rebase", "main"], cwd=repo, capture_output=True)
+    res = gp.resolve_rebase(repo, RULES)
+    assert not res["ok"] and "other.js" in res["reason"]
+
+
+def test_merge_with_insertions_splits_hunks():
+    base, ours, theirs = "a\nz\n", "a\nmain1\nz\n", "a\nfeat1\nz\n"
+    assert gp.merge_insertions(base, ours, theirs) == "a\nmain1\nfeat1\nz\n"
+    assert gp.merge_insertions("a\nb\n", "a\nB\n", "a\nbb\n") is None

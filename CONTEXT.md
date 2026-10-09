@@ -728,6 +728,14 @@ untouched (it is the "legacy profile"); only repos with a profile file use the p
   changes (`sharedFiles`); otherwise it merges directly, and main-health (which re-runs the suite on every main move and
   refuses merges while main is red) catches the rare cross-file break. Unknown overlap = retest. MR Review's refresh is
   the safety net for a missed stack move (`stack_retarget.js`). The pipeline scan still runs after the checks.
+- **A conflict gets the cheap fix before any rebuild (2026-10-09, #314)**: the hourly scan used to send every
+  conflicting PR's ticket back for a full agent rebuild. Now `conflict_repair.py` first rebases it in a scratch worktree,
+  resolving only safe conflicts (`generated_paths.resolve_rebase`: generated files, changes main already has, and spots
+  where both sides only ADDED lines, kept main-first), runs the merge gate's tests and pushes with
+  `--force-with-lease`; the PR gets a comment saying what was resolved. A real conflict (an existing line changed on
+  both sides) on a hand-made PR (not `pipeline/`) is flagged on the PR once per commit and never sent for an agent
+  rebuild; on a pipeline PR it is sent back as before, naming the files. Two repairs per scan; a commit that failed a
+  repair isn't retried. The Approve gate's resolver gained the same both-added rule.
 - **Approving and denying from MR Review (2026-10-05)**: the merge gate now reads the profile too. A project's
   PRs get Approve/Deny only if its profile says `"merge_from_dashboard": true`; the webhook enforces that
   itself (not just the screen) and refuses others with `NO_MERGE_PROFILE`. **Deny** needs no profile: the repo
