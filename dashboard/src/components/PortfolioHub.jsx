@@ -1251,6 +1251,29 @@ function Images() {
 
 // ── Hub ─────────────────────────────────────────────────────────────────────
 
+// "Open dev site" (marvin#377): the dev site in Google Chrome, reusing the tab that already has it. Messages show
+// inline under the button, the way the MARVIN button shows them.
+export function OpenDevSiteButton({ open = () => window.api.portfolio.openDevSite() }) {
+  const [state, setState] = useState({ busy: false, message: null, error: false })
+  async function go() {
+    setState({ busy: true, message: null, error: false })
+    let result
+    try { result = await open() } catch (e) { result = { ok: false, error: errText(e) } }
+    if (result?.ok) setState({ busy: false, message: result.action === 'focused' ? 'Took you to the open tab' : 'Opened in Chrome', error: false })
+    else setState({ busy: false, message: result?.error || 'Could not open the dev site', error: true })
+  }
+  return (
+    <div className="relative mb-2 ml-3">
+      <button onClick={go} disabled={state.busy} title={`Open ${DEV_SITE} in Google Chrome, or go to the tab that already has it`} className={button}>
+        {state.busy ? 'Opening…' : 'Open dev site'}
+      </button>
+      {state.message && (
+        <p className={`absolute right-0 z-20 mt-1 w-max max-w-md text-right text-xs ${state.error ? 'text-red-400' : 'text-neutral-500'}`}>{state.message}</p>
+      )}
+    </div>
+  )
+}
+
 export default function PortfolioHub() {
   const [tab, setTab] = useState('templates')
   return (
@@ -1266,6 +1289,7 @@ export default function PortfolioHub() {
           </button>
         ))}
         <span className="ml-auto pb-2 text-[11px] text-neutral-600">dev site only · nothing here touches production</span>
+        <OpenDevSiteButton />
       </nav>
       <div className="flex-1 overflow-auto p-6">
         {tab === 'templates' ? <Templates /> : tab === 'inventory' ? <Inventory /> : tab === 'add' ? <AddProject /> : tab === 'guide' ? <GuideAndRules /> : tab === 'content' ? <Content /> : tab === 'evaluation' ? <Evaluation /> : <Images />}
