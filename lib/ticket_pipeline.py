@@ -413,6 +413,7 @@ def _run_ticket_agents(step, summary) -> None:
                                 report=lambda agent, detail: step(f"Ticket agents · {agent}", detail))
         step("Ticket agents", f"{res['applied']} applied, {res['proposed']} proposed, {res['failed']} failed")
         _update_board_lifecycle(snap, step)
+        _auto_merge_shadow(step)
         elsewhere = ticket_agents.ready_elsewhere(snap, executable)
         if elsewhere:
             def why(r):
@@ -426,6 +427,17 @@ def _run_ticket_agents(step, summary) -> None:
     except Exception as e:  # noqa: BLE001
         print(f"{LOG_PREFIX} ticket agents: {e}", file=sys.stderr)
         step("Ticket agents", f"skipped: {e}")
+
+
+def _auto_merge_shadow(step) -> None:
+    """ADR 0064 (#341): what auto-merge would do with each open PR, recorded until Gil switches it on."""
+    try:
+        import auto_merge_shadow
+        seen = auto_merge_shadow.run()
+        would = sum(1 for s in seen if s["current"]["verdict"] == "auto")
+        step("Auto-merge shadow", f"{len(seen)} open PR(s), {would} it would merge; {auto_merge_shadow.report()['line']}")
+    except Exception as e:  # noqa: BLE001 -- bookkeeping, never blocks dispatch
+        print(f"{LOG_PREFIX} auto-merge shadow: {e}", file=sys.stderr)
 
 
 def _update_board_lifecycle(snap, step) -> None:

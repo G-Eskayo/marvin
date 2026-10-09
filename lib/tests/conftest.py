@@ -152,6 +152,13 @@ def _isolate_ticket_stages_everywhere(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_auto_merge_shadow(monkeypatch):
+    # The shadow step reads real PRs and writes the real shadow state; tests opt in by replacing it.
+    import ticket_pipeline
+    monkeypatch.setattr(ticket_pipeline, "_auto_merge_shadow", lambda step: None)
+
+
+@pytest.fixture(autouse=True)
 def _no_real_conflict_repair(monkeypatch):
     # The scan's conflict repair rebases, tests and force-pushes real branches; tests opt in by replacing it.
     import ticket_pipeline

@@ -98,6 +98,11 @@ export function describePrState(pr, { status = 'idle', errorMessage = null } = {
       `After #${rb.after} merged, this PR's tests fail once it is rebased onto ${main}. Approve runs them again and sends it back if they still fail.`, 'enabled', 'enabled')
   }
 
-  const notes = [ci.state === 'passing' ? 'GitHub checks passed' : null, rb?.state === 'clean' ? `still merges cleanly onto ${main} after #${rb.after} merged` : null].filter(Boolean)
+  // Auto-merge's shadow verdict (ADR 0064, #341): what it WOULD do, shown while Gil keeps approving.
+  const am = pr.autoMerge
+  const amNote = !am ? null : am.verdict === 'auto'
+    ? `Auto-merge (shadow): would merge${am.score != null ? ` (tests caught ${am.score}% of planted bugs)` : ''}`
+    : `Auto-merge (shadow): would wait for you: ${(am.reasons || [])[0] || 'see the rules'}`
+  const notes = [ci.state === 'passing' ? 'GitHub checks passed' : null, rb?.state === 'clean' ? `still merges cleanly onto ${main} after #${rb.after} merged` : null, amNote].filter(Boolean)
   return base('ready', 'ready', 'Ready to merge', null, 'enabled', 'enabled', { note: notes.length ? notes.join(' · ') : null })
 }
