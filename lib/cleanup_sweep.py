@@ -44,7 +44,7 @@ from sandbox_orchestration import WORKTREES_ROOT  # noqa: E402
 OUTPUT_PATH = Path.home() / ".claude" / "logs" / "mr-pipeline-sweep.md"
 STALE_THRESHOLD_HOURS = 24
 EMPTY_MIN_AGE_HOURS = 24
-ISSUE_NUMBER_RE = re.compile(r"#(\d+)$")
+ISSUE_NUMBER_RE = re.compile(r"#(\d+)$|^ticket/(\d+)(?:-|$)")  # pipeline/…#N, or ticket/<n>-<slug> (#226)
 GITHUB_REPO_RE = re.compile(r"github\.com[:/]([^/]+/[^/]+?)(?:\.git)?/?$")
 
 
@@ -148,7 +148,7 @@ def drop_build_output(worktree: Path, rel_paths: list[str]) -> list[str]:
 
 def _extract_issue_number(branch: str) -> int | None:
     match = ISSUE_NUMBER_RE.search(branch)
-    return int(match.group(1)) if match else None
+    return int(match.group(1) or match.group(2)) if match else None
 
 
 def find_stale_claims(
