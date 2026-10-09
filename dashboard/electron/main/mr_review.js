@@ -2,6 +2,7 @@ import { MARVIN_REPO, prKey, canMergeFromDashboard, repoFromPrUrl } from './mr_r
 import { waitingOn, baseProblem } from './pr_order.js'
 import { ciState } from '../../webhook-server/ci_status.js'
 import { uiFiles, hasImage } from '../../webhook-server/ui_evidence.js'
+import { parsePrImages } from './pr_images.js'
 
 // Reads open PRs and identifies which follow the MR pipeline's evidence
 // schema (G-Eskayo/marvin#72, ADR 0024) -- one fixed, structured PR body
@@ -316,6 +317,8 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       autoMerge: shadow[pr.url]?.current || null,
       checks: ciState(pr.statusCheckRollup),
       needsImages: needsImages(pr, uiPathsFor),
+      // Every image in the description (mock-ups, screenshots, frame strips), for the detail view's gallery.
+      images: parsePrImages(pr.body || '', { repo: pr.repo || MARVIN_REPO, headRef: pr.headRefName }),
       baseProblem: baseProblem(prs.map((p) => ({ ...p, repo: p.repo || MARVIN_REPO })), { ...pr, repo: pr.repo || MARVIN_REPO }),
       waitingOn: waitingOn(withState, { ...pr, repo: pr.repo || MARVIN_REPO }),
       hasSchema,

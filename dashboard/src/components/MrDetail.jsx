@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { EvidenceTable, ApproveDenyActions } from './MrReview.jsx'
 import { projectIdOf } from '../lib/projects.js'
 import Related, { useRelated } from './Related.jsx'
+import PrImages from './PrImages.jsx'
 
 // Full evidence-schema drill-down for one MR (G-Eskayo/marvin#72, ADR
 // 0024) plus its linked ticket/parent-PRD requirements, design, and
@@ -49,19 +50,42 @@ function TestResultsSection({ testResults }) {
   )
 }
 
-function DevEvidenceSection({ devEvidence }) {
+// The evidence screenshot, matched to its resolved entry in the PR's images (a repo-relative path resolves to the PR branch).
+export function evidenceImage(screenshot, images) {
+  if (!screenshot) return null
+  const tail = String(screenshot).replace(/^\.?\//, '')
+  return (images || []).find((img) => img.url === screenshot || img.url.endsWith(`/${tail}`)) || null
+}
+
+function DevEvidenceSection({ devEvidence, images }) {
   if (!devEvidence) {
     return <p className="text-sm text-neutral-500">Not available.</p>
   }
   if (devEvidence.na) {
     return <p className="text-sm text-neutral-500">N/A — {devEvidence.reason || 'no UI'}</p>
   }
+  const shot = evidenceImage(devEvidence.screenshot, images)
   return (
     <div className="text-sm">
-      {devEvidence.screenshot && (
+      {shot ? (
+        <PrImages images={[{ ...shot, group: null }]} />
+      ) : devEvidence.screenshot && (
         <p className="mb-1 font-mono text-xs text-neutral-400">Screenshot: {devEvidence.screenshot}</p>
       )}
-      {devEvidence.description && <p className="text-neutral-300">{devEvidence.description}</p>}
+      {devEvidence.description && <p className="mt-2 text-neutral-300">{devEvidence.description}</p>}
+    </div>
+  )
+}
+
+// A UI change with no image in its description can't be approved (marvin #374); say so where the images would be.
+function NeedsImages({ needsImages }) {
+  return (
+    <div className="rounded-lg border border-amber-700 bg-amber-950/40 p-4 text-sm text-amber-200">
+      <p className="font-semibold">Needs images</p>
+      <p className="mt-1 text-amber-300/90">This PR changes how something looks but its description has no screenshots or mock-ups, so it can't be approved yet.</p>
+      {needsImages.files?.length > 0 && (
+        <p className="mt-2 font-mono text-xs text-amber-400/80">{needsImages.files.slice(0, 8).join(', ')}{needsImages.files.length > 8 ? ` +${needsImages.files.length - 8} more` : ''}</p>
+      )}
     </div>
   )
 }
@@ -157,6 +181,13 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
         <ApproveDenyActions pr={pr} onApproved={onApproved} onDenied={onDenied} />
       </div>
 
+      {pr.images?.length > 0 && (
+        <Section title={`Images (${pr.images.length})`}>
+          <PrImages images={pr.images} />
+        </Section>
+      )}
+      {!pr.images?.length && pr.needsImages && <NeedsImages needsImages={pr.needsImages} />}
+
       {pr.hasSchema ? (
         <>
           <Section title="Device">
@@ -172,7 +203,7 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
           </Section>
 
           <Section title="Dev Environment Evidence">
-            <DevEvidenceSection devEvidence={pr.evidence.devEvidence} />
+            <DevEvidenceSection devEvidence={pr.evidence.devEvidence} images={pr.images} />
           </Section>
         </>
       ) : (
