@@ -7,7 +7,7 @@ import { readDispatchStatus } from './dispatch_status.js'
 // fact instead of something that has to be forensically re-traced by hand
 // (exactly what finding PR #119's real failure point required before
 // ticket_stages.py/.js existed).
-const TERMINAL_STAGE_ORDER = ['claimed', 'planning', 'executing', 'verifying', 'gate', 'merging', 'rebuilding', 'done']
+const TERMINAL_STAGE_ORDER = ['claimed', 'planning', 'executing', 'verifying', 'gate', 'merging', 'versioning', 'rebuilding', 'done']
 
 function summarize(events) {
   if (events.length === 0) return { currentStage: null, currentStatus: null, costUsd: 0, failed: false, title: null }
