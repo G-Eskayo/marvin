@@ -32,7 +32,7 @@ export function assertInOrder(prs, url) {
   const bp = baseProblem(prs, pr)
   if (bp) {
     throw refused('WRONG_BASE', `This PR targets "${bp.base}", not ${bp.expected}, so merging it would not put the work on ${bp.expected}.` +
-      (bp.parent ? ` It is stacked on #${bp.parent.number}: merge #${bp.parent.number} first, then change this PR's base to ${bp.expected}.` : ` Change its base to ${bp.expected} on GitHub first.`))
+      (bp.parent ? ` It is stacked on #${bp.parent.number}: merge #${bp.parent.number} first; this PR is then moved onto ${bp.expected} automatically.` : ` Change its base to ${bp.expected} on GitHub first.`))
   }
   const w = waitingOn(prs, pr)
   if (w.length) {
