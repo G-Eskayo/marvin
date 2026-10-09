@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import threading
 import time
 import pytest
 
@@ -533,12 +534,89 @@ def _pr(number, ticket_ref, mergeable="CONFLICTING", labels=()):
             "headRefName": f"pipeline/x-{number}", "labels": [{"name": l} for l in labels]}
 
 
-def _requeue(prs, issues, calls):
+def _requeue(prs, issues, calls, now=None):
+    """`now` maps a PR number to what GitHub says about it at send-back time; by default it hasn't changed."""
     def fake_run(cmd, **kw):
         calls.append(cmd)
+        if "pr" in cmd and "view" in cmd:
+            n = int(cmd[cmd.index("view") + 1])
+            cur = (now or {}).get(n, next((p for p in prs if p["number"] == n), None))
+            if isinstance(cur, Exception):
+                return SimpleNamespace(returncode=1, stdout="", stderr=str(cur))
+            return SimpleNamespace(returncode=0, stdout=__import__("json").dumps(cur), stderr="")
         out = prs if "pr" in cmd and "list" in cmd else issues if "issue" in cmd and "list" in cmd else ""
         return SimpleNamespace(returncode=0, stdout=__import__("json").dumps(out) if out != "" else "", stderr="")
     return fake_run
+
+
+# ── a PR that moved on since the scan listed it is never sent back (#386) ──
+
+def test_a_pr_repaired_by_another_scan_since_the_list_is_not_sent_back(monkeypatch):
+    """2026-10-09: #358 was repaired and pushed at 21:39:53; an overlapping scan holding an older list sent #102 back
+    33 s later and rebuilt it from scratch."""
+    calls = []
+    _repair(monkeypatch, {"outcome": "rebuild", "files": ["dashboard/src/App.jsx"]})
+    listed = {**_pr(358, "o/r#102"), "headRefOid": "old"}
+    now = {358: {**listed, "headRefOid": "new", "mergeable": "MERGEABLE"}}
+    monkeypatch.setattr(tp.subprocess, "run", _requeue([listed], [{"number": 102, "labels": []}], calls, now))
+    assert tp._requeue_conflicted_prs("o/r") == []
+    assert not any("needs-reengagement" in c for c in calls)
+
+
+def test_a_pr_whose_head_moved_is_not_sent_back_even_if_github_still_says_conflicting(monkeypatch):
+    calls = []
+    _repair(monkeypatch, {"outcome": "rebuild", "files": []})
+    listed = {**_pr(358, "o/r#102"), "headRefOid": "old"}
+    now = {358: {**listed, "headRefOid": "new"}}   # mergeability not recomputed yet
+    monkeypatch.setattr(tp.subprocess, "run", _requeue([listed], [{"number": 102, "labels": []}], calls, now))
+    assert tp._requeue_conflicted_prs("o/r") == []
+
+
+def test_unknown_mergeability_at_send_back_time_waits_for_the_next_scan(monkeypatch):
+    calls = []
+    _repair(monkeypatch, {"outcome": "rebuild", "files": []})
+    listed = {**_pr(358, "o/r#102"), "headRefOid": "a"}
+    now = {358: {**listed, "mergeable": "UNKNOWN"}}
+    monkeypatch.setattr(tp.subprocess, "run", _requeue([listed], [{"number": 102, "labels": []}], calls, now))
+    assert tp._requeue_conflicted_prs("o/r") == []
+
+
+def test_a_failed_recheck_never_sends_back(monkeypatch):
+    for bad in (RuntimeError("gh down"), "not json", None, [], {"mergeable": None}):
+        calls = []
+        _repair(monkeypatch, {"outcome": "rebuild", "files": []})
+        listed = {**_pr(358, "o/r#102"), "headRefOid": "a"}
+        now = {358: bad}
+        monkeypatch.setattr(tp.subprocess, "run", _requeue([listed], [{"number": 102, "labels": []}], calls, now))
+        assert tp._requeue_conflicted_prs("o/r") == [], bad
+
+
+def test_checks_that_went_green_since_the_list_are_not_sent_back(monkeypatch):
+    calls = []
+    red = [{"name": "tests", "status": "COMPLETED", "conclusion": "FAILURE"}]
+    listed = {**_pr(48, "o/r#34", "MERGEABLE"), "headRefOid": "a", "statusCheckRollup": red}
+    now = {48: {**listed, "statusCheckRollup": [{"name": "tests", "status": "COMPLETED", "conclusion": "SUCCESS"}]}}
+    monkeypatch.setattr(tp.subprocess, "run", _requeue([listed], [{"number": 34, "labels": []}], calls, now))
+    assert tp._requeue_conflicted_prs("o/r") == []
+
+
+def test_a_pr_that_still_conflicts_on_the_same_commit_is_still_sent_back(monkeypatch):
+    calls = []
+    _repair(monkeypatch, {"outcome": "rebuild", "files": ["a.py"]})
+    listed = {**_pr(48, "o/r#34"), "headRefOid": "a"}
+    monkeypatch.setattr(tp.subprocess, "run", _requeue([listed], [{"number": 34, "labels": []}], calls))
+    assert tp._requeue_conflicted_prs("o/r") == [34]
+
+
+# ── the hold label stops the pipeline (#387) ──
+
+def test_a_ticket_on_hold_is_never_sent_back(monkeypatch):
+    for label in ("hold", "held", "pinned"):
+        calls = []
+        _repair(monkeypatch, {"outcome": "rebuild", "files": []})
+        monkeypatch.setattr(tp.subprocess, "run", _requeue([_pr(358, "o/r#102")], [{"number": 102, "labels": [{"name": label}]}], calls))
+        assert tp._requeue_conflicted_prs("o/r") == [], label
+        assert not any("edit" in c or "comment" in c for c in calls), label
 
 
 def test_sending_a_ticket_back_releases_its_claim_or_nothing_would_ever_rebuild_it(monkeypatch):
@@ -1209,3 +1287,70 @@ def test_research_runs_when_nothing_else_is_ready_one_at_a_time():
     assert [i["number"] for i in tp._unclaimed_ready_tickets(issues=issues)] == [1]
     running = issues + [_issue(5, "2026-01-05T00:00:00Z", labels=["ready-for-agent", "research", "claimed:mac-mini"])]
     assert tp._unclaimed_ready_tickets(issues=running) == []
+
+
+def test_a_ticket_on_hold_is_never_dispatched():
+    issues = [_issue(102, "2026-01-01T00:00:00Z", labels=["ready-for-agent", "hold"]),
+              _issue(103, "2026-01-02T00:00:00Z", labels=["ready-for-agent", "held"]),
+              _issue(104, "2026-01-03T00:00:00Z", labels=["ready-for-agent"])]
+    assert [i["number"] for i in tp._unclaimed_ready_tickets(issues=issues)] == [104]
+
+
+# ── a busy scan lock skips the scan instead of running alongside it (#385) ──
+
+def test_a_busy_scan_lock_reports_it_was_not_acquired(tmp_path, monkeypatch):
+    import fcntl
+    lock = tmp_path / "scan.lock"
+    monkeypatch.setattr(tp, "SCAN_LOCK_PATH", lock)
+    monkeypatch.setattr(tp, "SCAN_LOCK_TIMEOUT_S", 0.2)
+    with tp._scan_lock() as got:
+        assert got is True
+    holder = open(lock, "w")
+    fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        with tp._scan_lock() as got:
+            assert got is False
+    finally:
+        holder.close()
+    with tp._scan_lock() as got:   # freed when the holder goes away
+        assert got is True
+
+
+def test_main_skips_the_scan_while_another_scan_holds_the_lock(tmp_path, monkeypatch, capsys):
+    import fcntl
+    lock = tmp_path / "scan.lock"
+    monkeypatch.setattr(tp, "SCAN_LOCK_PATH", lock)
+    monkeypatch.setattr(tp, "SCAN_LOCK_TIMEOUT_S", 0.2)
+    scans = []
+    monkeypatch.setattr(tp, "_scan", lambda run, dry_run: scans.append(dry_run))
+    monkeypatch.setattr(sys, "argv", ["ticket_pipeline.py"])
+    holder = open(lock, "w")
+    fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        tp.main()
+    finally:
+        holder.close()
+    assert scans == []
+    assert "another scan" in capsys.readouterr().err
+    tp.main()
+    assert scans == [False]
+
+
+def test_concurrent_mains_run_one_scan_at_a_time(tmp_path, monkeypatch):
+    monkeypatch.setattr(tp, "SCAN_LOCK_PATH", tmp_path / "scan.lock")
+    monkeypatch.setattr(tp, "SCAN_LOCK_TIMEOUT_S", 0.1)
+    monkeypatch.setattr(sys, "argv", ["ticket_pipeline.py"])
+    active, peak = [0], [0]
+    gate = threading.Lock()
+
+    def slow_scan(run, dry_run):
+        with gate:
+            active[0] += 1; peak[0] = max(peak[0], active[0])
+        time.sleep(0.5)
+        with gate:
+            active[0] -= 1
+
+    monkeypatch.setattr(tp, "_scan", slow_scan)
+    threads = [threading.Thread(target=tp.main) for _ in range(4)]
+    [t.start() for t in threads]; [t.join() for t in threads]
+    assert peak[0] == 1
