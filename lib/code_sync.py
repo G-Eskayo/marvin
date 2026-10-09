@@ -164,6 +164,12 @@ def _stuck_from_previous_run(repo: Path) -> str | None:
     stash = _git(repo, ["stash", "list"])
     n_stash = len([line for line in stash.splitlines() if line.strip()])
     if n_stash:
+        files = _stash_file_names(repo)
+        if files:
+            files_str = ", ".join(files[:5])  # limit to first 5 for readability
+            if len(files) > 5:
+                files_str += f" + {len(files) - 5} more"
+            return f"{n_stash} stash(es) left over from a previous failed WIP-restore (`git stash list`) — stash@{{0}} touches: {files_str}"
         return f"{n_stash} stash(es) left over from a previous failed WIP-restore (`git stash list`)"
 
     return None
@@ -176,6 +182,22 @@ def _stash_untracked_paths(repo: Path) -> list[str]:
     if not output.strip():
         return []
     return [line.strip() for line in output.splitlines() if line.strip()]
+
+
+def _stash_file_names(repo: Path) -> list[str]:
+    """Get all tracked and untracked file names from stash@{0}.
+    Combines tracked files (stash@{0}) + untracked files (stash@{0}^3).
+    Returns [] if stash doesn't exist or can't be read."""
+    tracked = []
+    untracked = _stash_untracked_paths(repo)
+
+    # Get tracked files from the main stash
+    output = _git(repo, ["diff-tree", "--no-commit-id", "--name-only", "-r", "stash@{0}^..stash@{0}"])
+    if output.strip():
+        tracked = [line.strip() for line in output.splitlines() if line.strip()]
+
+    # Deduplicate and return
+    return sorted(set(tracked + untracked))
 
 
 def _is_bench_metrics_runlog(path: str) -> bool:

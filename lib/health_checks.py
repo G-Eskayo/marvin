@@ -24,6 +24,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import code_sync  # noqa: E402
 import cron_health as ch  # noqa: E402
 import machine_profile  # noqa: E402
 from task_dispatch import TAILSCALE_BIN, TAILSCALE_ENV  # noqa: E402  (absolute path -- launchd's PATH omits the shell's additions)
@@ -241,7 +242,15 @@ def check_repo_integrity(display_name: str, rel_path: str) -> dict:
     except subprocess.TimeoutExpired:
         return _result(cid, label, "yellow", "git stash list timed out")
     if n_stash:
-        return _result(cid, label, "yellow", f"{n_stash} stash(es) present — blocks code-sync until resolved", value=n_stash)
+        files = code_sync._stash_file_names(repo)
+        if files:
+            files_str = ", ".join(files[:5])
+            if len(files) > 5:
+                files_str += f" + {len(files) - 5} more"
+            detail = f"{n_stash} stash(es) present — blocks code-sync until resolved. Affected files: {files_str}"
+        else:
+            detail = f"{n_stash} stash(es) present — blocks code-sync until resolved"
+        return _result(cid, label, "red", detail, value=n_stash)
     status = subprocess.run(["git", "-C", str(repo), "status", "--short"],
                             capture_output=True, text=True, timeout=10)
     if re.search(r"^(UU|AA|DD) ", status.stdout, re.MULTILINE):
@@ -744,6 +753,14 @@ cd "$HOME/$REPO_REL" 2>/dev/null || { echo "fetch_ok=0"; echo "head="; exit 0; }
 git fetch -q origin >/dev/null 2>&1 && echo "fetch_ok=1" || echo "fetch_ok=0"
 echo "head=$(git rev-parse --short HEAD 2>/dev/null)"
 echo "stashes=$(git stash list 2>/dev/null | wc -l | tr -d ' ')"
+# Extract tracked files from stash@{0}
+if git rev-parse stash@{0} >/dev/null 2>&1; then
+  tracked=$(git diff-tree --no-commit-id --name-only -r stash@{0}^..stash@{0} 2>/dev/null | tr '\n' '|')
+  untracked=$(git ls-tree -r --name-only stash@{0}^3 2>/dev/null | tr '\n' '|')
+  echo "stash_files=${tracked}${untracked}"
+else
+  echo "stash_files="
+fi
 echo "conflicts=$(git status --porcelain 2>/dev/null | grep -cE '^(UU|AA|DD) ')"
 echo "behind=$(git rev-list --count HEAD..origin/main 2>/dev/null)"
 echo "behind_oldest_ts=$(git log --format=%ct HEAD..origin/main 2>/dev/null | tail -1)"
@@ -765,9 +782,14 @@ def parse_repo_state(text: str) -> dict:
         v = raw.get(key, "").strip()
         return int(v) if v.isdigit() else None
 
+    # Parse stash_files from pipe-delimited list, filtering empty strings
+    stash_files_str = raw.get("stash_files", "").strip()
+    stash_files = [f for f in stash_files_str.split("|") if f]
+
     return {
         "head": raw.get("head", "").strip(),
         "stashes": num("stashes") or 0,
+        "stash_files": stash_files,
         "conflicts": num("conflicts") or 0,
         "fetch_ok": raw.get("fetch_ok", "0").strip() == "1",
         "behind": num("behind") or 0,
@@ -796,7 +818,15 @@ def evaluate_repo_sync(state: dict, now: datetime) -> tuple[str, str, int | None
     if state["conflicts"]:
         findings.append(("red", "unresolved merge conflict in working tree"))
     if state["stashes"]:
-        findings.append(("yellow", f"{state['stashes']} stash(es) present -- code-sync refuses to run until resolved; blocks sync"))
+        files = state.get("stash_files", [])
+        if files:
+            files_str = ", ".join(files[:5])
+            if len(files) > 5:
+                files_str += f" + {len(files) - 5} more"
+            msg = f"{state['stashes']} stash(es) block code-sync -- Affected files: {files_str}"
+        else:
+            msg = f"{state['stashes']} stash(es) block code-sync"
+        findings.append(("red", msg))
     if not state["fetch_ok"]:
         findings.append(("yellow", "git fetch failed -- cannot verify convergence"))
     age_finding(state["behind"], state["behind_oldest_ts"], "behind origin")
@@ -843,6 +873,9 @@ def check_repo_sync_everywhere(reachability: dict[str, str], runner=_run_repo_st
                 results.append(_result(cid, label, "yellow", f"could not read sync state: {str(exc)[:120]}"))
                 continue
             sev, detail, value = evaluate_repo_sync(state, _now())
+            # Downgrade stash severity for remote machines: they don't block local sync
+            if sev == "red" and reach != "local" and state["stashes"] and not state["conflicts"]:
+                sev = "yellow"
             results.append(_result(cid, label, sev, detail, value=value))
     return results
 
