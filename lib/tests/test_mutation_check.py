@@ -385,3 +385,38 @@ def test_unknown_and_nothing_to_mutate_read_back_too():
     assert re.search(r"unknown\s*\(([^)]+)\)", unknown) and "%" not in unknown.split("\n", 2)[2].split("\n")[0]
     nothing = mc.render_section({"status": "ok", "score": 1.0, "mutants_total": 0, "killed": 0, "survived": [], "unmeasured": []})
     assert re.search(r"no mutable lines", nothing, re.I)
+
+
+# Found by running the check on itself (50% at first): four behaviours no test exercised.
+def test_or_and_and_are_really_swapped(repo):
+    either = "def either(a, b):\n    return a or b\n"
+    tests = _IMPORT + ("import either\ndef test_e():\n    assert either.either(True, False) is True\n"
+                       "    assert either.either(False, False) is False\n    assert either.either(False, True) is True\n")
+    base = _branch_with(repo, {"lib/either.py": either, "lib/tests/test_either.py": tests})
+    r = mc.run_mutation_check(repo, "feature", "main", base)
+    assert r["mutants_total"] > 0 and not r["unmeasured"] and r["score"] == 1.0
+
+
+def test_a_not_inside_a_list_is_really_dropped(repo):
+    src = "def none_of(a, b):\n    return all([not a, not b])\n"
+    tests = _IMPORT + ("import none_of\ndef test_n():\n    assert none_of.none_of(False, False) is True\n"
+                       "    assert none_of.none_of(True, False) is False\n    assert none_of.none_of(False, True) is False\n")
+    base = _branch_with(repo, {"lib/none_of.py": src, "lib/tests/test_none_of.py": tests})
+    r = mc.run_mutation_check(repo, "feature", "main", base)
+    assert r["mutants_total"] > 0 and not r["unmeasured"] and r["score"] == 1.0
+
+
+def test_unknown_reports_nothing_killed(repo):
+    base = _branch_with(repo, {"lib/orphan.py": "def f(x):\n    return x > 1\n"})
+    r = mc.run_mutation_check(repo, "feature", "main", base)
+    assert r["status"] == "unknown" and r["killed"] == 0 and r["survived"] == []
+
+
+def test_the_command_line_prints_json_and_exits_nonzero_when_unknown(repo):
+    base = _branch_with(repo, {"lib/orphan.py": "def f(x):\n    return x > 1\n"})
+    script = str(Path(mc.__file__))
+    p = subprocess.run([sys.executable, script, "run", "G-Eskayo/marvin", str(repo), base], capture_output=True, text=True)
+    assert p.returncode == 1 and json.loads(p.stdout.strip().splitlines()[-1])["status"] == "unknown"
+    git(repo, "checkout", "-q", "main")
+    p2 = subprocess.run([sys.executable, script, "run", "G-Eskayo/marvin", str(repo), base, "main"], capture_output=True, text=True)
+    assert p2.returncode == 0 and json.loads(p2.stdout.strip().splitlines()[-1])["mutants_total"] == 0
