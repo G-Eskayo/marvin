@@ -254,6 +254,21 @@ def _write_log(stale: list[dict], worktrees: dict) -> None:
     OUTPUT_PATH.write_text(existing + f"\n## {timestamp}\n\n{body}")
 
 
+OUTCOME_CHECK_MACHINE = "mac-mini-1"  # one Mac measures and comments, so the two never race (the primary host)
+
+
+def _default_outcome_check() -> None:
+    """Purpose metrics whose check date has passed get measured and recorded on their ticket (marvin#304)."""
+    try:
+        import machine_profile
+        if machine_profile.registry_id() != OUTCOME_CHECK_MACHINE:
+            return
+        import purpose_metrics
+        purpose_metrics.run()
+    except Exception as exc:  # noqa: BLE001 -- never let it stop the sweep; retried tomorrow
+        print(f"[cleanup-sweep] outcome check failed: {exc}", file=sys.stderr)
+
+
 def run_daily_sweep(
     list_claimed_open_issues: Callable[[], list[dict]] | None = None,
     list_worktrees: Callable[[], list[dict]] | None = None,
@@ -282,6 +297,8 @@ def run_daily_sweep(
         dt.trim_with_logging(dry_run=False)
     except Exception:
         pass
+
+    _default_outcome_check()
 
     _write_log(stale, worktrees)
     return {"stale_claims_released": len(stale), "worktrees_removed": len(worktrees["removed"]),
