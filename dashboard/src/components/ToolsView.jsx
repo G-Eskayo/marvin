@@ -50,7 +50,7 @@ function Stat({ label, value, hint, bad }) {
   )
 }
 
-function Table({ rows, keys, nameKey = 'name', showVia = false, kind }) {
+function Table({ rows, keys, nameKey = 'name', showVia = false, kind, showPurpose = false, showCauses = false }) {
   const callsOf = (r) => (kind === 'all' ? r.calls : r.by_kind?.[kind] || 0)
   const shown = rows.filter((r) => callsOf(r) > 0)
   if (shown.length === 0) return <p className="text-xs text-neutral-600">Nothing for this filter.</p>
@@ -59,8 +59,10 @@ function Table({ rows, keys, nameKey = 'name', showVia = false, kind }) {
       <thead>
         <tr className="text-left text-xs text-neutral-500">
           <th className="pb-1 font-normal">Name</th>
+          {showPurpose && <th className="pb-1 font-normal">Purpose</th>}
           <th className="pb-1 text-right font-normal">Calls</th>
           <th className="pb-1 text-right font-normal" title="errors + invalid calls, as a share of all calls (all runs)">Failed</th>
+          <th className="pb-1 text-right font-normal" title="expected non-zero exits (grep no match, tests failing)">Expected</th>
           <th className="pb-1 text-right font-normal" title="wrong parameters, tool used before its schema was loaded, unknown skill">Invalid</th>
           <th className="pb-1 text-right font-normal" title="you declined the call">Declined</th>
           <th className="pb-1 pl-4 font-normal">Last 30 days (each cell is a day)</th>
@@ -70,6 +72,7 @@ function Table({ rows, keys, nameKey = 'name', showVia = false, kind }) {
       <tbody className="font-mono text-neutral-300">
         {shown.map((r) => {
           const rate = r.calls ? (r.error + r.invalid) / r.calls : 0
+          const expectedRate = r.calls ? (r.expected || 0) / r.calls : 0
           return (
             <tr key={r[nameKey]} className="border-t border-neutral-900">
               <td className="max-w-[16rem] truncate py-1 pr-2" title={r[nameKey]}>
@@ -82,8 +85,10 @@ function Table({ rows, keys, nameKey = 'name', showVia = false, kind }) {
                   </span>
                 )}
               </td>
+              {showPurpose && <td className="py-1 pr-2 text-xs text-neutral-400 max-w-xs truncate" title={r.purpose}>{r.purpose}</td>}
               <td className="py-1 text-right">{callsOf(r).toLocaleString()}</td>
               <td className={`py-1 text-right ${rate > 0.25 ? 'text-amber-300' : ''}`}>{pct(rate)}</td>
+              <td className={`py-1 text-right ${expectedRate > 0.1 ? 'text-blue-400' : 'text-neutral-600'}`}>{(r.expected || 0)}</td>
               <td className={`py-1 text-right ${r.invalid ? 'text-red-400' : 'text-neutral-600'}`}>{r.invalid}</td>
               <td className="py-1 text-right text-neutral-500">{r.rejected}</td>
               <td className="py-1 pl-4"><Strip byDay={r.by_day} keys={keys} /></td>
@@ -137,8 +142,8 @@ export default function ToolsView({ machines, which }) {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Calls" value={totalCalls.toLocaleString()} hint={`${tools.length} different tools`} />
         <Stat label="Failed" value={pct(totalCalls ? failed / totalCalls : 0)} hint={`${failed.toLocaleString()} calls`} />
+        <Stat label="Expected" value={tools.reduce((s, t) => s + (t.expected || 0), 0)} hint="expected non-zero exits (e.g. grep, tests)" />
         <Stat label="Invalid calls" value={invalid} hint="used wrongly: bad params, unloaded schema, unknown skill" bad={invalid > 0} />
-        <Stat label="Our skills used" value={`${inventory.used} / ${inventory.known}`} hint={`${inventory.never_used.length} never fired`} bad={inventory.never_used.length > 0} />
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -156,11 +161,11 @@ export default function ToolsView({ machines, which }) {
       </div>
 
       <Section title="Tools" hint="Built-in and MCP tools, by number of calls.">
-        <Table rows={tools.filter((r) => match(r)).slice(0, 40)} keys={keys} kind={kind} />
+        <Table rows={tools.filter((r) => match(r)).slice(0, 40)} keys={keys} kind={kind} showPurpose />
       </Section>
 
       <Section title="Our skills" hint="Loaded through the Skill tool or by reading the skill's SKILL.md (how CLAUDE.md's routing table invokes most of them).">
-        <Table rows={skills.filter((r) => match(r))} keys={keys} showVia kind={kind} />
+        <Table rows={skills.filter((r) => match(r))} keys={keys} showVia kind={kind} showPurpose />
         {inventory.never_used.length > 0 && (
           <div className="mt-3">
             <p className="text-xs text-amber-300">Never fired in {scans[0].tools.window_days} days ({inventory.never_used.length} of ours):</p>
@@ -177,13 +182,22 @@ export default function ToolsView({ machines, which }) {
       {servers.length > 0 && <Section title="MCP servers"><Table rows={servers.filter((r) => match(r, 'server'))} keys={keys} nameKey="server" kind={kind} /></Section>}
       {agents.length > 0 && <Section title="Subagents spawned"><Table rows={agents.filter((r) => match(r))} keys={keys} kind={kind} /></Section>}
 
-      <Section title="Recent failures" hint="Newest first. Declined and interrupted calls are included so you can see what was stopped.">
+      <Section title="Recent failures" hint="Newest first. Includes expected non-zero exits (grep, tests) for auditability. Declined and interrupted calls shown for context.">
         <div className="flex flex-col gap-1">
-          {failures.filter((f) => !q || f.tool.toLowerCase().includes(q)).slice(0, 20).map((f, i) => (
-            <p key={i} className="truncate rounded border border-neutral-900 px-2 py-1 text-xs text-neutral-500" title={f.message}>
-              <span className="text-neutral-300">{f.tool}</span> <span className={f.outcome === 'invalid' ? 'text-red-400' : 'text-amber-400'}>{f.outcome}</span> · {ago(f.at)} · {f.kind}
-              {which === 'all' && machines.length > 1 ? ` · ${f.machine}` : ''} · {f.message}
-            </p>
+          {failures.filter((f) => !q || f.tool.toLowerCase().includes(q) || (f.cause || '').toLowerCase().includes(q)).slice(0, 20).map((f, i) => (
+            <div key={i} className="rounded border border-neutral-900 px-2 py-1 text-xs">
+              <p className="text-neutral-500">
+                <span className="text-neutral-300">{f.tool}</span> {f.input && <span className="text-neutral-600">({f.input})</span>}
+                {' '}
+                <span className={f.outcome === 'invalid' ? 'text-red-400' : f.outcome === 'expected' ? 'text-blue-400' : 'text-amber-400'}>{f.outcome}</span>
+                {' '}
+                {f.cause && <span className="text-neutral-500">• {f.cause}</span>}
+                {' '}
+                <span className="text-neutral-600">{ago(f.at)} · {f.kind}</span>
+                {which === 'all' && machines.length > 1 ? <span className="text-neutral-600"> · {f.machine}</span> : ''}
+              </p>
+              <p className="text-neutral-600 truncate" title={f.message}>{f.message}</p>
+            </div>
           ))}
         </div>
       </Section>
