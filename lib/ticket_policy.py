@@ -204,3 +204,72 @@ def triage_verdict(issue: dict, recheck: bool = False) -> dict | None:
                     "why": "for you, but it does not say exactly what to do: needs " + ", ".join(gaps) + " (a 'Your task' section)"}
         return {"state": "ready-for-human", "category": category, "missing": [], "why": "a decision or action only a person can take"}
     return {"state": "ready-for-agent", "category": category, "missing": [], "why": "has a description and acceptance criteria"}
+
+
+# ── revisit (on hold, waiting for a condition) ──────────────────────────────
+
+_REVISIT_LINE = re.compile(r"^\s*Revisit\s+by:\s*(\d{4}-\d{2}-\d{2})\s*(?:[-–—]\s*(.+))?$", re.IGNORECASE | re.MULTILINE)
+
+
+def parse_revisit_comment(comment: dict) -> dict | None:
+    """Parse a 'Revisit by: YYYY-MM-DD [— condition]' comment. Returns {date, condition, ref} or None."""
+    if not comment or not isinstance(comment, dict):
+        return None
+    body = comment.get("body", "")
+    if not body:
+        return None
+    m = _REVISIT_LINE.search(body)
+    if not m:
+        return None
+    date_str, condition = m.group(1), (m.group(2) or "").strip()
+    try:
+        datetime.strptime(date_str, "%Y-%m-%d")
+    except ValueError:
+        return None
+    ref = None
+    if condition:
+        ref_m = re.search(r"#(\d+)", condition)
+        if ref_m:
+            ref = int(ref_m.group(1))
+    return {"date": date_str, "condition": condition if condition else None, "ref": ref}
+
+
+def latest_revisit(comments: list[dict] | None) -> dict | None:
+    """Find the newest 'Revisit by:' comment by createdAt. Returns the parsed dict or None.
+    When multiple comments have the same timestamp, the last one in the list wins."""
+    if not comments:
+        return None
+    candidates = []
+    for i, c in enumerate(comments):
+        parsed = parse_revisit_comment(c)
+        if parsed:
+            created = _parse(c.get("createdAt"))
+            if created:
+                candidates.append((created, i, parsed))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    return candidates[0][2]
+
+
+def is_revisit_due(revisit: dict | None, now: datetime, open_numbers: set[int] | None = None) -> bool:
+    """Is a revisit due? True if the date has passed, OR if the ref'd ticket is closed.
+    Date and ref are independent triggers: either can make it due."""
+    if not revisit:
+        return False
+    open_numbers = open_numbers or set()
+    date_str = revisit.get("date")
+    if not date_str:
+        return False
+    try:
+        due_date = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return False
+    # Date trigger: date has passed
+    if now.date() >= due_date.date():
+        return True
+    # Ref trigger: the ref'd ticket is closed (not in open_numbers)
+    ref = revisit.get("ref")
+    if ref and ref not in open_numbers:
+        return True
+    return False

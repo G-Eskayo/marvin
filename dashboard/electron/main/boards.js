@@ -111,14 +111,27 @@ export async function fetchCrossProjectIssues(repo, registryRepos = [], gh) {
 // The raw tickets and open PRs of one repo. Open tickets are fetched on their own so a long history of
 // closed ones can never crowd them out (one newest-200 query silently drops the oldest open ticket);
 // closed ones are the 100 most recent. PRs carry their changed files so docs they touch can be linked.
+// Also fetch comments on held tickets so the board can display their revisit lines.
 export async function fetchBoardData(repo, gh) {
   const fields = 'number,title,state,stateReason,labels,body,url,createdAt,updatedAt,closedAt'
-  const [openJson, closedJson, prsJson] = await Promise.all([
+  const [openJson, closedJson, prsJson, holdCommentsJson] = await Promise.all([
     gh(['issue', 'list', '--repo', repo, '--state', 'open', '--limit', '1000', '--json', fields]),
     gh(['issue', 'list', '--repo', repo, '--state', 'closed', '--limit', '100', '--json', fields]),
-    gh(['pr', 'list', '--repo', repo, '--state', 'open', '--limit', '100', '--json', 'number,title,url,state,isDraft,body,files'])
+    gh(['pr', 'list', '--repo', repo, '--state', 'open', '--limit', '100', '--json', 'number,title,url,state,isDraft,body,files']),
+    gh(['issue', 'list', '--repo', repo, '--state', 'open', '--label', 'hold', '--limit', '1000', '--json', 'number,comments'])
   ])
-  return { issues: [...JSON.parse(openJson), ...JSON.parse(closedJson)], prs: JSON.parse(prsJson) }
+  const holdComments = {}
+  try {
+    const holdIssues = JSON.parse(holdCommentsJson)
+    for (const issue of holdIssues) {
+      if (issue.comments) {
+        holdComments[issue.number] = issue.comments
+      }
+    }
+  } catch {
+    // If parsing fails, just proceed without the hold comments
+  }
+  return { issues: [...JSON.parse(openJson), ...JSON.parse(closedJson)], prs: JSON.parse(prsJson), holdComments }
 }
 
 // Everything closed in this repo (up to 1000 tickets) and the merged PRs that closed them -- the
@@ -156,7 +169,7 @@ export function clearEvidenceCache() { evidenceCache.clear() }
 
 export async function loadBoard(repo, { gh, registryRepos = [], stagesFor = defaultStagesFor, liveNumbers, data, evidence = {} } = {}) {
   try {
-    const { issues: ownIssues, prs } = data || (await fetchBoardData(repo, gh))
+    const { issues: ownIssues, prs, holdComments = {} } = data || (await fetchBoardData(repo, gh))
     const thisProjectId = projectIdOf(repo)
 
     // Partition own issues: separate those with project:<x> labels where x is not this repo.
@@ -182,7 +195,8 @@ export async function loadBoard(repo, { gh, registryRepos = [], stagesFor = defa
       prs,
       eventsByNumber: stagesFor(repo),
       liveNumbers: liveNumbers || defaultLiveNumbers(repo),
-      evidenceByNumber: evidence
+      evidenceByNumber: evidence,
+      holdComments
     })
 
     // Fetch and merge cross-project issues.

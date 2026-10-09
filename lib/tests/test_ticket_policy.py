@@ -313,3 +313,109 @@ def test_a_huge_body_is_handled():
 def test_the_next_section_ends_the_break_it_section():
     body = "## What to build\n\nA thing.\n\n## How we'll try to break it\n\n## Acceptance criteria\n\n- [ ] works\n"
     assert tp.triage_verdict(issue(body=body))["state"] == "needs-info"  # empty section, followed by another heading
+
+
+# ── revisit (on hold, waiting for a condition) ──────────────────────────────
+
+def comment(body, created=0):
+    return {"body": body, "createdAt": iso(created)}
+
+
+def test_parse_revisit_date_only():
+    c = tp.parse_revisit_comment(comment("Revisit by: 2026-11-01"))
+    assert c == {"date": "2026-11-01", "condition": None, "ref": None}
+
+
+def test_parse_revisit_date_and_condition():
+    c = tp.parse_revisit_comment(comment("Revisit by: 2026-11-01 — when clarity-captions ships"))
+    assert c == {"date": "2026-11-01", "condition": "when clarity-captions ships", "ref": None}
+
+
+def test_parse_revisit_accepts_hyphen_not_em_dash():
+    c = tp.parse_revisit_comment(comment("Revisit by: 2026-11-01 - after Terry's review"))
+    assert c == {"date": "2026-11-01", "condition": "after Terry's review", "ref": None}
+
+
+def test_parse_revisit_extracts_ref_number_from_condition():
+    c = tp.parse_revisit_comment(comment("Revisit by: 2026-11-01 — when #42 ships"))
+    assert c == {"date": "2026-11-01", "condition": "when #42 ships", "ref": 42}
+    c = tp.parse_revisit_comment(comment("Revisit by: 2026-11-01 — #17 is done"))
+    assert c == {"date": "2026-11-01", "condition": "#17 is done", "ref": 17}
+
+
+def test_parse_revisit_case_insensitive():
+    c = tp.parse_revisit_comment(comment("REVISIT BY: 2026-11-01"))
+    assert c == {"date": "2026-11-01", "condition": None, "ref": None}
+
+
+def test_parse_revisit_no_match_returns_none():
+    assert tp.parse_revisit_comment(comment("let me revisit this later")) is None
+    assert tp.parse_revisit_comment(comment("something else")) is None
+    assert tp.parse_revisit_comment(comment("")) is None
+
+
+def test_parse_revisit_malformed_dates():
+    assert tp.parse_revisit_comment(comment("Revisit by: next month")) is None
+    assert tp.parse_revisit_comment(comment("Revisit by: 2026-13-45")) is None
+    assert tp.parse_revisit_comment(comment("Revisit by: 2026-11")) is None
+
+
+def test_parse_revisit_handles_missing_body():
+    assert tp.parse_revisit_comment({"createdAt": iso()}) is None
+    assert tp.parse_revisit_comment({}) is None
+
+
+def test_latest_revisit_picks_newest_by_created_date():
+    c1 = comment("Revisit by: 2026-11-01", created=3)
+    c2 = comment("Revisit by: 2026-12-01", created=0.5)  # newer
+    assert tp.latest_revisit([c1, c2])["date"] == "2026-12-01"
+
+
+def test_latest_revisit_skips_non_matching_comments():
+    c1 = comment("Revisit by: 2026-11-01")
+    c2 = comment("something else")
+    c3 = comment("Revisit by: 2026-12-01")
+    assert tp.latest_revisit([c1, c2, c3])["date"] == "2026-12-01"
+
+
+def test_latest_revisit_empty_list_returns_none():
+    assert tp.latest_revisit([]) is None
+    assert tp.latest_revisit(None) is None
+
+
+def test_latest_revisit_all_malformed_returns_none():
+    assert tp.latest_revisit([comment("bad"), comment("also bad")]) is None
+
+
+def test_is_revisit_due_past_date():
+    r = tp.parse_revisit_comment(comment("Revisit by: 2026-10-01"))
+    assert tp.is_revisit_due(r, NOW) is True
+
+
+def test_is_revisit_due_today():
+    r = tp.parse_revisit_comment(comment("Revisit by: 2026-10-05"))
+    assert tp.is_revisit_due(r, NOW) is True
+
+
+def test_is_revisit_due_future_date():
+    r = tp.parse_revisit_comment(comment("Revisit by: 2026-10-10"))
+    assert tp.is_revisit_due(r, NOW) is False
+
+
+def test_is_revisit_due_with_ref_open_not_due():
+    r = tp.parse_revisit_comment(comment("Revisit by: 2026-12-01 — when #42 ships"))
+    assert tp.is_revisit_due(r, NOW, open_numbers={42}) is False
+
+
+def test_is_revisit_due_with_ref_closed_due():
+    r = tp.parse_revisit_comment(comment("Revisit by: 2026-12-01 — when #42 ships"))
+    assert tp.is_revisit_due(r, NOW, open_numbers={}) is True  # ref #42 is not open
+
+
+def test_is_revisit_due_with_ref_open_date_past_due():
+    r = tp.parse_revisit_comment(comment("Revisit by: 2026-10-01 — when #42 ships"))
+    assert tp.is_revisit_due(r, NOW, open_numbers={42}) is True  # date trigger overrides ref
+
+
+def test_is_revisit_due_none_never_due():
+    assert tp.is_revisit_due(None, NOW) is False

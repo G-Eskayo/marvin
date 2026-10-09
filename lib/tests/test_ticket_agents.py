@@ -249,6 +249,138 @@ def test_ready_work_only_counts_as_waiting_when_the_executor_cannot_run_that_pro
     assert ta.ready_elsewhere(snap, executable={"G-Eskayo/marvin", cc}) == {}
 
 
+# ── revisit agent ──────────────────────────────────────────────────────────
+
+def test_plan_revisit_past_due_removes_hold_and_adds_triage():
+    comments = {1: [{"body": "Revisit by: 2026-10-01", "createdAt": iso()}]}
+    acts = ta.plan_revisit(REPO, [issue(1, labels=["hold"])], comments, set(), NOW)
+    assert ops(acts, number=1, op="remove_label")[0]["arg"] == "hold"
+    assert ops(acts, number=1, op="add_label")[0]["arg"] == "needs-triage"
+    assert ops(acts, number=1, op="comment")
+
+
+def test_plan_revisit_future_due_no_action():
+    comments = {1: [{"body": "Revisit by: 2026-10-10", "createdAt": iso()}]}
+    acts = ta.plan_revisit(REPO, [issue(1, labels=["hold"])], comments, set(), NOW)
+    assert acts == []
+
+
+def test_plan_revisit_ref_open_not_due():
+    comments = {1: [{"body": "Revisit by: 2026-12-01 — when #2 ships", "createdAt": iso()}]}
+    acts = ta.plan_revisit(REPO, [issue(1, labels=["hold"])], comments, {2}, NOW)
+    assert acts == []
+
+
+def test_plan_revisit_ref_closed_due():
+    comments = {1: [{"body": "Revisit by: 2026-12-01 — when #2 ships", "createdAt": iso()}]}
+    acts = ta.plan_revisit(REPO, [issue(1, labels=["hold"])], comments, set(), NOW)
+    assert len(ops(acts, number=1, op="remove_label")) >= 1
+
+
+def test_plan_revisit_no_revisit_line_no_action():
+    acts = ta.plan_revisit(REPO, [issue(1, labels=["hold"])], {}, set(), NOW)
+    assert acts == []
+
+
+def test_plan_revisit_skips_pinned():
+    comments = {1: [{"body": "Revisit by: 2026-10-01", "createdAt": iso()}]}
+    acts = ta.plan_revisit(REPO, [issue(1, labels=["hold", "pinned"])], comments, set(), NOW)
+    assert acts == []
+
+
+def test_plan_revisit_comment_names_the_date():
+    comments = {1: [{"body": "Revisit by: 2026-10-01 — when clarity ships", "createdAt": iso()}]}
+    acts = ta.plan_revisit(REPO, [issue(1, labels=["hold"])], comments, set(), NOW)
+    c = ops(acts, op="comment")[0]
+    assert "2026-10-01" in c["arg"]
+    assert "Automated ticket agent:" in c["arg"]
+
+
+def test_plan_revisit_separate_comments_per_ticket():
+    comments = {1: [{"body": "Revisit by: 2026-10-01 — reason A", "createdAt": iso()}],
+                2: [{"body": "Revisit by: 2026-10-01 — reason B", "createdAt": iso()}]}
+    acts = ta.plan_revisit(REPO, [issue(1, labels=["hold"]), issue(2, labels=["hold"])], comments, set(), NOW)
+    c1 = [a for a in ops(acts, number=1, op="comment")]
+    c2 = [a for a in ops(acts, number=2, op="comment")]
+    assert len(c1) == 1 and len(c2) == 1
+    assert c1[0]["arg"] != c2[0]["arg"]  # different ticket numbers
+
+
+def test_plan_revisit_different_repos_independent():
+    repo2 = "G-Eskayo/clarity-captions"
+    comments = {1: [{"body": "Revisit by: 2026-10-01", "createdAt": iso()}]}
+    acts1 = ta.plan_revisit(REPO, [issue(1, labels=["hold"])], comments, set(), NOW)
+    acts2 = ta.plan_revisit(repo2, [issue(1, labels=["hold"])], comments, set(), NOW)
+    assert len(acts1) == len(acts2)  # same structure but separate proposals
+
+
+def test_plan_revisit_stale_comments_still_found():
+    old_comment = {"body": "Revisit by: 2026-10-01", "createdAt": iso(100)}
+    comments = {1: [{"body": "old unrelated", "createdAt": iso(50)}, old_comment]}
+    acts = ta.plan_revisit(REPO, [issue(1, labels=["hold"])], comments, set(), NOW)
+    assert len(acts) > 0  # found the old one, newest wins
+
+
+def test_plan_revisit_missing_comments_dict_entry_no_crash():
+    acts = ta.plan_revisit(REPO, [issue(1, labels=["hold"])], {}, set(), NOW)
+    assert acts == []
+
+
+def test_collect_hold_comments_calls_gh_once_per_repo():
+    calls = []
+
+    def recording_gh(args):
+        calls.append(args)
+        return '[]'
+
+    ta.collect_hold_comments(REPO, recording_gh)
+    assert len(calls) == 1
+    assert calls[0][0] == 'issue'
+    assert 'hold' in calls[0]  # verify --label hold was passed
+
+
+def test_write_revisit_state_creates_json():
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        path = Path(d) / "state.json"
+        ta.write_revisit_state([{"number": 5, "title": "Test"}], path, "2026-10-05T12:00:00+00:00")
+        data = json.loads(path.read_text())
+        assert data["no_revisit"] == [{"number": 5, "title": "Test"}]
+        assert data["generated_at"] == "2026-10-05T12:00:00+00:00"
+
+
+def test_revisit_agent_off_switch():
+    cfg = {"mode": "propose", "agents": {"revisit": "off"}}
+    snap = {REPO: {"issues": [issue(1, labels=["hold"])], "prs": []}}
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        res = ta.run(snapshot=snap, gh=FakeGh(), cfg=cfg, now=NOW,
+                     audit_path=Path(d) / "a.jsonl", proposals_path=Path(d) / "p.json",
+                     in_flight=lambda r: set(), due_for=lambda r: None)
+    assert res["by_agent"].get("revisit", {}).get("planned", 0) == 0  # no revisit proposals
+
+
+def test_revisit_propose_mode_records_but_does_not_apply():
+    cfg = {"mode": "propose", "agents": {}}
+    snap = {REPO: {"issues": [issue(1, labels=["hold"])], "prs": []}}
+
+    def mock_gh(args):
+        if "hold" in args:
+            return json.dumps([{"number": 1, "comments": [{"body": "Revisit by: 2026-10-01", "createdAt": iso()}]}])
+        return ""
+
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        res = ta.run(snapshot=snap, gh=mock_gh, cfg=cfg, now=NOW,
+                     audit_path=Path(d) / "a.jsonl", proposals_path=Path(d) / "p.json",
+                     in_flight=lambda r: set(), due_for=lambda r: None)
+        # We fetch comments to generate proposals, but don't make any label/comment edits
+        proposals = json.loads((Path(d) / "p.json").read_text())
+        assert any(p["agent"] == "revisit" for p in proposals.get("proposals", []))
+        # All audit entries should be "proposed", not "applied"
+        assert all(json.loads(l)["status"] == "proposed" for l in (Path(d) / "a.jsonl").read_text().splitlines())
+
+
 def test_adding_a_label_the_repo_has_never_had_creates_it_first():
     calls = []
 

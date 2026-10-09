@@ -1230,3 +1230,70 @@ def test_output_contracts_reach_health(monkeypatch):
     import output_contracts
     monkeypatch.setattr(output_contracts, "health_findings", lambda: [{"id": "contract:x", "severity": "red"}])
     assert hc.check_output_contracts() == [{"id": "contract:x", "severity": "red"}]
+
+
+# ── hold revisit ────────────────────────────────────────────────────────────
+
+def test_check_hold_revisit_yellow_when_missing():
+    result = hc.check_hold_revisit(path=Path("/nonexistent"))
+    assert result["severity"] == "yellow"
+    assert "has not run" in result["detail"]
+
+
+def test_check_hold_revisit_yellow_when_stale(tmp_path):
+    now = datetime(2026, 10, 8, 12, tzinfo=timezone.utc)
+    stale = (now - timedelta(hours=25)).isoformat()
+    path = tmp_path / "hold-revisit.json"
+    path.write_text(json.dumps({"generated_at": stale, "no_revisit": []}))
+    result = hc.check_hold_revisit(path=path, now=now)
+    assert result["severity"] == "yellow"
+    assert "hours ago" in result["detail"]
+
+
+def test_check_hold_revisit_green_when_fresh_and_empty(tmp_path):
+    now = datetime(2026, 10, 8, 12, tzinfo=timezone.utc)
+    fresh = now.isoformat()
+    path = tmp_path / "hold-revisit.json"
+    path.write_text(json.dumps({"generated_at": fresh, "no_revisit": []}))
+    result = hc.check_hold_revisit(path=path, now=now)
+    assert result["severity"] == "green"
+    assert result["value"] == 0
+
+
+def test_check_hold_revisit_yellow_when_tickets_without_revisit_lines(tmp_path):
+    now = datetime(2026, 10, 8, 12, tzinfo=timezone.utc)
+    fresh = now.isoformat()
+    path = tmp_path / "hold-revisit.json"
+    path.write_text(json.dumps({
+        "generated_at": fresh,
+        "no_revisit": [
+            {"number": 5, "title": "Waiting on clarity-captions"},
+            {"number": 12, "title": "External blocker"}
+        ]
+    }))
+    result = hc.check_hold_revisit(path=path, now=now)
+    assert result["severity"] == "yellow"
+    assert "2 " in result["detail"]  # count of items without revisit lines
+    assert "#5 Waiting on clarity-captions" in result["detail"]
+
+
+def test_check_hold_revisit_detail_truncates_long_lists(tmp_path):
+    now = datetime(2026, 10, 8, 12, tzinfo=timezone.utc)
+    fresh = now.isoformat()
+    path = tmp_path / "hold-revisit.json"
+    no_revisit = [{"number": i, "title": f"Hold {i}"} for i in range(1, 20)]
+    path.write_text(json.dumps({
+        "generated_at": fresh,
+        "no_revisit": no_revisit
+    }))
+    result = hc.check_hold_revisit(path=path, now=now)
+    assert "#1 Hold 1" in result["detail"]
+    assert "#19 Hold 19" not in result["detail"]  # truncated
+
+
+def test_check_hold_revisit_malformed_json_is_yellow(tmp_path):
+    path = tmp_path / "hold-revisit.json"
+    path.write_text("{bad json")
+    result = hc.check_hold_revisit(path=path, now=datetime(2026, 10, 8, tzinfo=timezone.utc))
+    assert result["severity"] == "yellow"
+    assert "has not run" in result["detail"]

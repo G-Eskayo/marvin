@@ -473,6 +473,8 @@ def check_gh_gate(log_path: Path | None = None, state_path: Path | None = None, 
 PROJECT_TAGS_PATH = Path.home() / ".claude" / "logs" / "project-tags.json"
 PROJECT_TAGS_RED_AT = 5
 PROJECT_TAGS_STALE_HOURS = 3
+HOLD_REVISIT_PATH = Path.home() / ".claude" / "logs" / "hold-revisit-state.json"
+HOLD_REVISIT_STALE_HOURS = 3
 
 
 def check_project_tags(path: Path | None = None, now: datetime | None = None) -> dict:
@@ -497,6 +499,26 @@ def check_project_tags(path: Path | None = None, now: datetime | None = None) ->
     if pending:
         detail = (detail + ". " if detail else "") + f"{pending} clear one(s) waiting to be labelled"
     return _result(cid, label, "red" if n >= PROJECT_TAGS_RED_AT else "yellow", detail, value=n)
+
+
+def check_hold_revisit(path: Path | None = None, now: datetime | None = None) -> dict:
+    """Tickets labelled 'hold' without a 'Revisit by:' line. Written hourly by the revisit ticket agent."""
+    cid, label = "tickets:hold-revisit", "Hold tickets have revisit dates"
+    now = now or _now()
+    try:
+        d = json.loads(Path(path or HOLD_REVISIT_PATH).read_text())
+        at = datetime.fromisoformat(d["generated_at"])
+    except (OSError, ValueError, KeyError):
+        return _result(cid, label, "yellow", "the revisit agent has not run on this machine yet")
+    age_h = (now - at).total_seconds() / 3600
+    if age_h > HOLD_REVISIT_STALE_HOURS:
+        return _result(cid, label, "yellow", f"the revisit agent last ran {age_h:.0f} hours ago (it runs hourly with the ticket agents)")
+    no_revisit = d.get("no_revisit") or []
+    if not no_revisit:
+        return _result(cid, label, "green", "every hold ticket has a revisit date", value=0)
+    parts = [f"#{t['number']} {t.get('title', '')}" for t in no_revisit[:5]]
+    detail = f"{len(no_revisit)} without revisit lines: " + "; ".join(parts)
+    return _result(cid, label, "yellow", detail, value=len(no_revisit))
 
 
 MAIN_HEALTH_PATH = Path.home() / ".claude" / "logs" / "main-health.json"
