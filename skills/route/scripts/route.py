@@ -24,6 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 import intent_classify  # noqa: E402
 import model_scope  # noqa: E402
+import model_registry  # noqa: E402
 
 # ── routing table ─────────────────────────────────────────────────────────────
 
@@ -299,6 +300,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         choices=["haiku", "sonnet", "opus"],
         help="model tier for skill checking (use with --check-skill)",
     )
+    ap.add_argument(
+        "--local-capability",
+        metavar="NAME",
+        help="look up a local capability in the model registry and report installed models as JSON",
+    )
     # explicit intent overrides
     for intent in INTENTS:
         ap.add_argument(f"--{intent}", action="store_true", help=f"force {intent} routing")
@@ -328,6 +334,30 @@ def main() -> None:
         allowed = skill_allowed(args.check_skill, args.model)
         print(f"{'allowed' if allowed else 'not allowed'}")
         sys.exit(0 if allowed else 1)
+
+    if args.local_capability:
+        try:
+            models = model_registry.resolve_capability(args.local_capability)
+            reg = model_registry.ModelRegistry()
+            installed = []
+            for model_name in models:
+                meta = reg.get(model_name)
+                if meta:
+                    installed.append({
+                        "name": model_name,
+                        "size_gb": meta.get("size_gb"),
+                        "location": meta.get("location"),
+                        "last_used": meta.get("last_used"),
+                    })
+            print(json.dumps({"capability": args.local_capability, "models": installed}))
+            sys.exit(0 if installed else 1)
+        except KeyError:
+            print(json.dumps({
+                "error": f"Unknown capability {args.local_capability!r}",
+                "capability": args.local_capability,
+                "models": []
+            }), file=sys.stderr)
+            sys.exit(1)
 
     # explicit intent flag overrides classifier
     forced = next((i for i in INTENTS if getattr(args, i, False)), None)
