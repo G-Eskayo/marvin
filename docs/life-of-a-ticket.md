@@ -344,7 +344,7 @@ now. Fixes: 🟡 Prioritize, 🔴 Recovery.
 | Ticket | Fixes | State |
 |---|---|---|
 | #321 Health metrics files stop conflicting on every sync | 🔴 Sync collisions | being built on the mini |
-| **NEW** Deploy on merge: pull, restart servers and apps, alarm when an app isn't running | 🔴 Deploy | — |
+| **#329** Deploy on merge: pull, restart servers and apps, alarm when an app isn't running | 🔴 Deploy | — |
 | #240 A failed run keeps its claim | 🔴 Recovery | ❓ |
 | #213 Holds come back (On-hold group, revisit date) | 🔴 Recovery | ready |
 | #126 Screenshots / render check for UI PRs | 🔴 UI bugs reach main | ready |
@@ -365,7 +365,7 @@ now. Fixes: 🟡 Prioritize, 🔴 Recovery.
 
 | Ticket | Fixes | Relies on |
 |---|---|---|
-| **NEW** Auto-merge for low-risk PRs (you get a summary) | 🔴 #1: Approve waits 9.4 h | Deploy on merge, #126, #96 |
+| **#335–#344** Auto-merge for low-risk PRs (designed: ADR 0064; tests that try to break it: ADR 0063) | 🔴 #1: Approve waits 9.4 h | #329 deploy on merge, #126, #96 |
 | #231 Approve queues the merge (merge queue) | 🟡 Merge | #230 · ❓ |
 | #327 Throttle = full power, held only by the real bottleneck | 🔴 throughput | tier 1–2 + auto-merge · 🟣 design |
 
@@ -376,7 +376,7 @@ now. Fixes: 🟡 Prioritize, 🔴 Recovery.
 
 **Tier 5 — chains waiting on you** (🔴)
 
-- **NEW:** a "needs you" list ranked by how much each item unblocks.
+- **#330:** a "needs you" list ranked by how much each item unblocks.
 - 🟣 **#153 Push key** → unblocks #162, #163, #164, #165, #167 (MARVIN Mobile)
 - 🟣 **#174 Map logs why it drew** → unblocks #175–#181, #186 (Map v2). An agent can do this one: move it to ready-for-agent.
 - 🟣 Decisions: #43 bench triggering · #44 vector index · #45 map findings · #46 model-adaptive harness
@@ -384,7 +384,7 @@ now. Fixes: 🟡 Prioritize, 🔴 Recovery.
 
 **Tier 6 — sessions on both Macs** (🔴)
 
-**NEW:** share the "working on" list between the Macs (#326 covers one Mac).
+**#331:** share the "working on" list between the Macs (#326 covers one Mac).
 
 **Tier 7 — goals become tickets** (⚪ the big loop)
 
