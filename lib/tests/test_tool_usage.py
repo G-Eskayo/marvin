@@ -46,7 +46,7 @@ def tool(a, name):
 def test_counts_calls_and_pairs_each_with_its_result(tmp_path):
     a = agg(tmp_path, use("1", "Bash"), result("1"), use("2", "Bash"), result("2", "Exit code 1", True), use("3", "Read"), result("3"))
     b = tool(a, "Bash")
-    assert (b["calls"], b["ok"], b["error"]) == (2, 1, 1)
+    assert (b["calls"], b["ok"], b["expected"]) == (2, 1, 1)
     assert tool(a, "Read")["ok"] == 1
 
 
@@ -150,3 +150,87 @@ def test_the_scan_says_which_machine_it_came_from(monkeypatch):
     """The dashboard merges this machine's scan with the other machine's; it needs to tell them apart."""
     monkeypatch.setattr(tu, "_machine_id", lambda: "macbook-pro-1")
     assert tu.aggregate([])["machine"] == "macbook-pro-1"
+
+
+def test_classifies_causes_for_failures(tmp_path):
+    """Causes are classified for error/invalid calls."""
+    a = agg(tmp_path,
+            use("1", "Bash"), result("1", "File does not exist", True),
+            use("2", "Bash"), result("2", "Exit code 2", True),
+            use("3", "Edit"), result("3", "String to replace not found in the file", True),
+            use("4", "Read"), result("4", "EISDIR: illegal operation on a directory", True))
+    assert tool(a, "Bash")["causes"]["file/path doesn't exist"] == 1
+    assert tool(a, "Bash")["causes"]["non-zero exit, other"] == 1
+    assert tool(a, "Edit")["causes"]["Edit: old_string not found"] == 1
+    assert tool(a, "Read")["causes"]["is a directory"] == 1
+
+
+def test_expected_causes_become_expected_outcome(tmp_path):
+    """Grep exit-1 and test failures get outcome='expected' instead of 'error'."""
+    a = agg(tmp_path,
+            use("1", "Bash"), result("1", "Exit code 1", True),
+            use("2", "Bash"), result("2", "FAILED test_something", True),
+            use("3", "Bash"), result("3", "Exit code 2", True))
+    b = tool(a, "Bash")
+    assert b["expected"] == 2
+    assert b["error"] == 1
+    # Check that these failures are still recorded with their cause
+    failures_exit_1 = [f for f in a["recent_failures"] if f["cause"] == "grep/search found nothing (exit 1)"]
+    failures_tests = [f for f in a["recent_failures"] if f["cause"] == "tests failed (expected while developing)"]
+    assert len(failures_exit_1) == 1 and failures_exit_1[0]["outcome"] == "expected"
+    assert len(failures_tests) == 1 and failures_tests[0]["outcome"] == "expected"
+
+
+def test_classify_cause_matches_known_patterns(tmp_path):
+    """Cause classification works for the major failure types."""
+    assert tu.classify_cause("Permission for this action was denied") == "auto-mode classifier denied"
+    assert tu.classify_cause("InputValidationError: field required") == "wrong/missing parameters"
+    assert tu.classify_cause("Unknown skill: bogus") == "unknown skill name"
+    assert tu.classify_cause("String to replace not found") == "Edit: old_string not found"
+    assert tu.classify_cause("does not exist") == "file/path doesn't exist"
+    assert tu.classify_cause("EISDIR: is a directory") == "is a directory"
+    assert tu.classify_cause("Command timed out after 30s") == "command timed out"
+    assert tu.classify_cause("Exit code 1") == "grep/search found nothing (exit 1)"
+    assert tu.classify_cause("3 failed, 10 passed") == "tests failed (expected while developing)"
+    assert tu.classify_cause("Some random error message") == "other"
+
+
+def test_recent_failures_include_cause_and_input(tmp_path):
+    """Recent failures record the cause, input, and outcome for investigation."""
+    a = agg(tmp_path,
+            use("1", "Bash", {"command": "grep foo bar"}), result("1", "Exit code 1", True),
+            use("2", "Edit", {"file_path": "/tmp/file.txt", "old_string": "foo"}), result("2", "String to replace not found", True))
+    failures = a["recent_failures"]
+    assert len(failures) == 2
+    grep_f = next(f for f in failures if f["tool"] == "Bash")
+    assert grep_f["cause"] == "grep/search found nothing (exit 1)"
+    assert grep_f["outcome"] == "expected"
+    assert grep_f["input"] == "grep foo bar"
+    edit_f = next(f for f in failures if f["tool"] == "Edit")
+    assert edit_f["cause"] == "Edit: old_string not found"
+    assert edit_f["outcome"] == "error"
+    assert edit_f["input"] == "/tmp/file.txt"
+
+
+def test_tools_have_purpose_descriptions(tmp_path):
+    """Built-in tools have purpose descriptions attached."""
+    a = agg(tmp_path, use("1", "Bash"), result("1"), use("2", "Read"), result("2"))
+    bash_tool = tool(a, "Bash")
+    read_tool = tool(a, "Read")
+    assert bash_tool["purpose"] == "Execute shell commands"
+    assert read_tool["purpose"] == "Read file contents"
+    unknown_tool = tool(a, "UnknownTool") if "UnknownTool" in {t["name"] for t in a["tools"]} else None
+    if unknown_tool:
+        assert unknown_tool["purpose"] == "(no description recorded)"
+
+
+def test_skills_have_purpose_from_frontmatter(tmp_path):
+    """Skills get their purpose from SKILL.md frontmatter."""
+    a = agg(tmp_path, use("1", "Skill", {"skill": "diagnose"}), result("1"), use("2", "Skill", {"skill": "unknown-skill"}), result("2"))
+    skills = {s["name"]: s for s in a["skills"]}
+    # diagnose skill should have a real description
+    if "diagnose" in skills:
+        assert skills["diagnose"]["purpose"] and skills["diagnose"]["purpose"] != "(no description recorded)"
+    # unknown skill should have fallback
+    if "unknown-skill" in skills:
+        assert skills["unknown-skill"]["purpose"] == "(no description recorded)"

@@ -580,15 +580,17 @@ nothing connected them. "Where things are" was only the tidy agent's file-filing
   (dashboard-webhook, desktoplive, ngrok) show running/stopped from launchd. Agents that haven't run since
   being instrumented show "not reporting steps yet" rather than looking healthy by omission. Run logs with no
   launchd agent of their own (project-catalog, dashboard-rebuild, tool-usage) appear as sub-jobs.
-- **Tool & skill usage** (Health): `lib/tool_usage.py` reads the Claude Code session transcripts
+- **Tool & skill usage** (Metrics): `lib/tool_usage.py` reads the Claude Code session transcripts
   (`~/.claude/projects/**/*.jsonl`, the same source as the usage-accounting work) and reports, per tool, skill,
   MCP server and subagent type: calls, outcome (ok / error / declined / interrupted / **invalid call** = wrong
-  parameters, schema not loaded, unknown skill), last used, a 30-day sparkline, and the interactive /
-  headless / subagent split. A MARVIN skill counts as used when loaded via the Skill tool **or** by reading its
-  `SKILL.md` (CLAUDE.md's routing table invokes most that way; counting only the Skill tool wrongly said 23 of
-  27 never fired, the truth was 10). Rescanned on demand when older than 10 min (~1.5s). **Not measured:**
-  whether the *right* skill fired for a request (that needs intent classification against the routing table;
-  candidate next step using `route.py`'s classifier). Bash "errors" are non-zero exits and are often expected.
+  parameters, schema not loaded, unknown skill / **expected** = grep no-match or tests failing while developing),
+  last used, a 30-day sparkline, and the interactive / headless / subagent split. Each failure is classified by
+  cause (permission denied, file missing, wrong parameters, timeout, network, git error, etc.; "other" < 5%).
+  Purpose text shows what each tool and skill is meant for. A MARVIN skill counts as used when loaded via the Skill
+  tool **or** by reading its `SKILL.md` (CLAUDE.md's routing table invokes most that way; counting only the Skill
+  tool wrongly said 23 of 27 never fired, the truth was 10). Rescanned on demand when older than 10 min (~1.5s).
+  **Not measured:** whether the *right* skill fired for a request (that needs intent classification against the
+  routing table; candidate next step using `route.py`'s classifier).
 
 ### Ticket agents and the completed record (decided 2026-10-05)
 
