@@ -26,10 +26,15 @@ import sys
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
+import model_registry  # noqa: E402
+
 CHROMA_PATH = Path.home() / ".claude" / "chroma"
 COLLECTION_NAME = "paper-knowledge"
 OLLAMA_URL = "http://localhost:11434/api/chat"
-STANCE_MODEL = "qwen2.5:7b"
+_stance_model_list = model_registry.resolve_capability("local-judge-medium")
+STANCE_MODEL = _stance_model_list[0]
+assert STANCE_MODEL == "qwen2.5:7b", f"Regression: expected qwen2.5:7b, got {STANCE_MODEL}"
 
 STANCES = {"supports", "refutes", "mixed", "unrelated"}
 
