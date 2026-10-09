@@ -248,3 +248,140 @@ def test_mutant_sampling_is_deterministic_across_runs(repo):
 
     # With deterministic sampling, both runs should select the same mutants
     assert sample1_keys == sample2_keys, "Sampling should be deterministic across runs"
+
+
+# 2026-10-09 review: '_changed_lines' read the path with the first "b/" in "diff --git a/lib/x.py b/lib/x.py" -- and
+# "lib/" contains "b/" -- so every lib/ file got a garbled name, no mutants, and a perfect score.
+def test_changed_lines_names_every_file_correctly_including_lib_paths_new_files_and_spaces(repo):
+    base = git(repo, "rev-parse", "HEAD")
+    (repo / "lib" / "math_utils.py").write_text("def add(a, b):\n    return a + b\n\ndef sub(a, b):\n    return a - b\n")
+    (repo / "lib" / "new_mod.py").write_text("X = 1\n")
+    (repo / "lib" / "with space.py").write_text("Y = 2\n")
+    git(repo, "add", "-A"); git(repo, "commit", "-qm", "work")
+    changed = mc._changed_lines(str(repo), base, "HEAD")
+    assert set(changed) == {"lib/math_utils.py", "lib/new_mod.py", "lib/with space.py"}
+    assert changed["lib/math_utils.py"] == {3, 4, 5}
+    assert changed["lib/new_mod.py"] == {1}
+
+
+def test_a_deleted_file_has_no_lines_to_mutate(repo):
+    base = git(repo, "rev-parse", "HEAD")
+    git(repo, "rm", "-q", "lib/math_utils.py"); git(repo, "commit", "-qm", "gone")
+    assert mc._changed_lines(str(repo), base, "HEAD") == {}
+
+
+# ── 2026-10-09 review: the engine has to really plant bugs and really run the tests ─────────────────────────────
+
+def _branch_with(repo, files: dict, msg="work"):
+    git(repo, "checkout", "-q", "-b", "feature")
+    for rel, text in files.items():
+        p = repo / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text)
+    git(repo, "add", "-A"); git(repo, "commit", "-q", "-m", msg)
+    return git(repo, "merge-base", "main", "feature")
+
+
+_IMPORT = "import sys\nfrom pathlib import Path\nsys.path.insert(0, str(Path(__file__).resolve().parents[1]))\n"
+SIGN = "def sign(x):\n    if x > 0:\n        return 1\n    if x < 0:\n        return -1\n    return 0\n"
+
+
+def test_weak_tests_let_planted_bugs_survive_and_the_score_says_so(repo):
+    base = _branch_with(repo, {"lib/signs.py": SIGN,
+                               "lib/tests/test_signs.py": _IMPORT + "import signs\ndef test_pos():\n    assert signs.sign(5) == 1\n"})
+    r = mc.run_mutation_check(repo, "feature", "main", base)
+    assert r["status"] == "ok" and r["mutants_total"] > 0
+    assert r["survived"] and 0 <= r["score"] < 1
+    assert all(s["file"] == "lib/signs.py" for s in r["survived"])
+
+
+def test_thorough_tests_catch_every_planted_bug(repo):
+    tests = _IMPORT + ("import signs\ndef test_all():\n    assert signs.sign(5) == 1\n    assert signs.sign(-5) == -1\n"
+                       "    assert signs.sign(0) == 0\n    assert signs.sign(1) == 1\n    assert signs.sign(-1) == -1\n")
+    base = _branch_with(repo, {"lib/signs.py": SIGN, "lib/tests/test_signs.py": tests})
+    r = mc.run_mutation_check(repo, "feature", "main", base)
+    assert r["status"] == "ok" and r["mutants_total"] > 0 and r["score"] == 1.0 and not r["survived"]
+
+
+def test_the_checkout_is_left_exactly_as_it_was(repo):
+    base = _branch_with(repo, {"lib/signs.py": SIGN,
+                               "lib/tests/test_signs.py": _IMPORT + "import signs\ndef test_pos():\n    assert signs.sign(5) == 1\n"})
+    mc.run_mutation_check(repo, "feature", "main", base)
+    assert git(repo, "status", "--porcelain") == ""
+    assert (repo / "lib" / "signs.py").read_text() == SIGN
+
+
+def test_a_planted_bug_that_hangs_times_out_and_counts_as_caught(repo, monkeypatch):
+    base = _branch_with(repo, {"lib/signs.py": SIGN,
+                               "lib/tests/test_signs.py": _IMPORT + "import signs\ndef test_pos():\n    assert signs.sign(5) == 1\n"})
+    calls = {"n": 0}
+
+    def fake(cwd, tests, timeout):
+        calls["n"] += 1
+        return "pass" if calls["n"] == 1 else "timeout"      # the clean baseline passes; every mutant hangs
+    monkeypatch.setattr(mc, "_run_tests", fake)
+    r = mc.run_mutation_check(repo, "feature", "main", base)
+    assert r["status"] == "ok" and r["score"] == 1.0 and r["killed"] == r["mutants_total"] > 0
+
+
+def test_a_real_timeout_is_reported_as_timeout(repo):
+    (repo / "lib" / "tests" / "test_hang.py").write_text("import time\ndef test_h():\n    time.sleep(30)\n")
+    assert mc._run_tests(str(repo), ["lib/tests/test_hang.py"], timeout=2) == "timeout"
+
+
+def test_code_with_no_test_to_run_is_unknown_not_a_score(repo):
+    base = _branch_with(repo, {"lib/orphan.py": "def f(x):\n    return x > 1\n"})
+    r = mc.run_mutation_check(repo, "feature", "main", base)
+    assert r["status"] == "unknown" and r["score"] is None and r["unmeasured"]
+
+
+def test_js_changes_are_unmeasured_for_now_never_scored(repo):
+    base = _branch_with(repo, {"dashboard/src/x.js": "export const f = (a) => a > 1\n"})
+    r = mc.run_mutation_check(repo, "feature", "main", base)
+    assert r["status"] == "unknown" and r["score"] is None
+
+
+def test_a_mutant_counts_only_on_changed_lines(repo):
+    base = _branch_with(repo, {"lib/math_utils.py": "def add(a, b):\n    return a + b\n\ndef big(x):\n    return x > 100\n",
+                               "lib/tests/test_math_utils.py": _IMPORT + "import math_utils\ndef test_big():\n    assert math_utils.big(101)\n    assert not math_utils.big(100)\n"})
+    r = mc.run_mutation_check(repo, "feature", "main", base)
+    lines = {m["line"] for m in r["survived"] + r["unmeasured"]} | set(r.get("killed_lines", []))
+    assert lines and all(l >= 4 for l in lines)          # add() on lines 1-2 was unchanged
+
+
+def test_the_no_mutate_pragma_is_honoured(repo):
+    base = _branch_with(repo, {"lib/critical.py": "def validate(x):\n    return x != 0  # no-mutate\n",
+                               "lib/tests/test_critical.py": _IMPORT + "import critical\ndef test_v():\n    assert critical.validate(5)\n"})
+    r = mc.run_mutation_check(repo, "feature", "main", base)
+    assert r["mutants_total"] == 0 and r["status"] == "ok"
+
+
+def test_a_survivor_shows_the_original_line(repo):
+    base = _branch_with(repo, {"lib/signs.py": SIGN,
+                               "lib/tests/test_signs.py": _IMPORT + "import signs\ndef test_pos():\n    assert signs.sign(5) == 1\n"})
+    r = mc.run_mutation_check(repo, "feature", "main", base)
+    src = SIGN.splitlines()
+    assert r["survived"] and all(s["snippet"] == src[s["line"] - 1].strip() for s in r["survived"])
+
+
+# One writer for the PR-body section (review 2026-10-09): the card (mr_review.js parseMutationSection) reads
+# "NN% (k/n)" and the shadow mode (auto_merge_shadow.mutation_score) reads "**Score:** NN%".
+def test_the_section_reads_back_in_both_readers():
+    import re
+    md = mc.render_section({"status": "ok", "score": 0.75, "mutants_total": 8, "killed": 6,
+                            "survived": [{"file": "lib/x.py", "line": 3, "operator": "flip-comparison", "snippet": "if a > b:"},
+                                         {"file": "lib/x.py", "line": 7, "operator": "return-none", "snippet": "return out"}],
+                            "unmeasured": []})
+    assert md.startswith("## Mutation Score")
+    assert re.search(r"(\d+(?:\.\d+)?)%\s*\((\d+)/(\d+)\)", md).groups() == ("75", "6", "8")
+    assert re.search(r"\*\*score:\*\*\s*(\d{1,3})\s*%", md, re.I).group(1) == "75"
+    assert "lib/x.py" in md and "if a > b:" in md
+
+
+def test_unknown_and_nothing_to_mutate_read_back_too():
+    import re
+    unknown = mc.render_section({"status": "unknown", "score": None, "reason": "no test file for it", "mutants_total": 2,
+                                 "killed": 0, "survived": [], "unmeasured": [{"file": "lib/y.py", "line": 1}]})
+    assert re.search(r"unknown\s*\(([^)]+)\)", unknown) and "%" not in unknown.split("\n", 2)[2].split("\n")[0]
+    nothing = mc.render_section({"status": "ok", "score": 1.0, "mutants_total": 0, "killed": 0, "survived": [], "unmeasured": []})
+    assert re.search(r"no mutable lines", nothing, re.I)
