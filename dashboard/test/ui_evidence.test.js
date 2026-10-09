@@ -37,6 +37,17 @@ describe('which changed files are UI', () => {
     ])).toBe(false)
   })
 
+  it('leaves the dashboard\'s helper logic in src/lib alone: it changes no screen (#389 was flagged for a capture helper)', () => {
+    expect(touchesUi(['dashboard/src/lib/screenshot_capture.js', 'dashboard/src/lib/prState.js', 'dashboard/src/lib/linkify.js'])).toBe(false)
+    expect(touchesUi(['dashboard/src/lib/markdown_images.test.js'])).toBe(false)
+  })
+
+  it('still counts every dashboard screen: components, the app shell, styles and the entry point', () => {
+    for (const f of ['dashboard/src/components/PrCard.jsx', 'dashboard/src/components/sub/thing.js', 'dashboard/src/App.jsx',
+      'dashboard/src/index.css', 'dashboard/src/main.jsx', 'dashboard/src/assets/logo.svg', 'dashboard/src/lib/Widget.jsx'])
+      expect(touchesUi([f]), f).toBe(true)
+  })
+
   it('adds a project\'s own patterns to the defaults', () => {
     const files = ['Apps/Spike/Sources/SettingsSheet.swift', 'Packages/CaptionCore/Tests/X.swift']
     expect(touchesUi(files)).toBe(false)

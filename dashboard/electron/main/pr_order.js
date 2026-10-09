@@ -3,12 +3,14 @@
 // its repo that shares a changed file with it. Derived from the PRs' own file lists each time, never stored.
 // An older PR that cannot merge as it stands (it conflicts with main, or its ticket was sent back and is being rebuilt)
 // is not waited on: waiting for it would hold every newer PR hostage to the rebuild queue (clarity-captions #62/#63/#64,
-// 2026-10-06), and its rebuild lands on whatever main has by then.
+// 2026-10-06), and its rebuild lands on whatever main has by then. The same goes for an older PR stuck on its own
+// blocker (`blocked`: no images, a vague ask, open decisions, failing checks): one PR missing screenshots held #378,
+// #371 and #389 hostage on 2026-10-09 while it could never be approved itself.
 export function waitingOn(prs, pr) {
   if (!Array.isArray(pr.files)) return []
   const mine = new Set(pr.files.map((f) => f.path))
   return prs
-    .filter((o) => o.repo === pr.repo && o.number < pr.number && Array.isArray(o.files) && o.mergeable !== 'CONFLICTING' && !o.sentBack)
+    .filter((o) => o.repo === pr.repo && o.number < pr.number && Array.isArray(o.files) && o.mergeable !== 'CONFLICTING' && !o.sentBack && !o.blocked)
     .map((o) => ({ number: o.number, title: o.title, url: o.url, shared: o.files.map((f) => f.path).filter((p) => mine.has(p)).sort() }))
     .filter((o) => o.shared.length)
     .sort((a, b) => a.number - b.number)
