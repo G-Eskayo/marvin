@@ -897,3 +897,76 @@ def test_onboarding_pass_reports_skipped_count(monkeypatch):
                         {"ok": ["o/a"], "failed": [], "applied": {}, "skipped": ["o/b"]})
     msg = tp._refresh_onboarding_plans(budget=lambda: 80.0, min_pct=20)
     assert "1 refreshed" in msg and "1 skipped (unchanged since last plan)" in msg
+
+
+# ── cheap repair before any rebuild (2026-10-09, #314) ──────────────────────
+
+def _repair(monkeypatch, outcome):
+    seen = []
+    def fake(repo, pr):
+        seen.append(pr["number"])
+        return outcome
+    monkeypatch.setattr(tp, "_try_conflict_repair", fake)
+    return seen
+
+
+def test_a_conflict_the_repair_resolves_is_pushed_and_never_sent_back(monkeypatch):
+    calls = []
+    seen = _repair(monkeypatch, {"outcome": "repaired", "detail": "both sides added to lib/tests/test_x.py; tests pass"})
+    monkeypatch.setattr(tp.subprocess, "run", _requeue([_pr(48, "o/r#34")], [{"number": 34, "labels": []}], calls))
+    assert tp._requeue_conflicted_prs("o/r") == []
+    assert seen == [48]
+    assert not any("needs-reengagement" in c for c in calls)
+    comment = [c for c in calls if "comment" in c][0]
+    assert comment[1:4] == ["pr", "comment", "48"] and "both sides added" in " ".join(comment)
+
+
+def test_a_hand_made_pr_is_never_sent_for_an_agent_rebuild_it_is_flagged_once(monkeypatch):
+    calls = []
+    _repair(monkeypatch, {"outcome": "rebuild", "files": ["lib/x.py"]})
+    pr = {**_pr(48, "o/r#34"), "headRefName": "marvin-304-purpose-metrics"}
+    monkeypatch.setattr(tp.subprocess, "run", _requeue([pr], [{"number": 34, "labels": []}], calls))
+    monkeypatch.setattr(tp, "_flagged_before", lambda url, sha: False)
+    marks = []
+    monkeypatch.setattr(tp, "_mark_flagged", lambda url, sha: marks.append(url))
+    assert tp._requeue_conflicted_prs("o/r") == []
+    assert not any("needs-reengagement" in c for c in calls)
+    comment = " ".join([c for c in calls if "comment" in c][0])
+    assert "lib/x.py" in comment and "by hand" in comment
+    assert marks
+
+
+def test_a_hand_made_pr_already_flagged_for_this_commit_is_not_commented_again(monkeypatch):
+    calls = []
+    _repair(monkeypatch, {"outcome": "rebuild", "files": ["lib/x.py"]})
+    pr = {**_pr(48, "o/r#34"), "headRefName": "marvin-304-purpose-metrics"}
+    monkeypatch.setattr(tp.subprocess, "run", _requeue([pr], [{"number": 34, "labels": []}], calls))
+    monkeypatch.setattr(tp, "_flagged_before", lambda url, sha: True)
+    tp._requeue_conflicted_prs("o/r")
+    assert not any("comment" in c for c in calls)
+
+
+def test_a_pipeline_pr_with_a_real_conflict_is_sent_back_naming_the_files(monkeypatch):
+    calls = []
+    _repair(monkeypatch, {"outcome": "rebuild", "files": ["lib/a.py", "lib/b.py"]})
+    monkeypatch.setattr(tp.subprocess, "run", _requeue([_pr(48, "o/r#34")], [{"number": 34, "labels": []}], calls))
+    assert tp._requeue_conflicted_prs("o/r") == [34]
+    comment = " ".join([c for c in calls if "comment" in c][0])
+    assert "lib/a.py" in comment and "lib/b.py" in comment
+
+
+def test_out_of_repair_budget_waits_for_the_next_scan_instead_of_rebuilding(monkeypatch):
+    calls = []
+    _repair(monkeypatch, {"outcome": "later"})
+    monkeypatch.setattr(tp.subprocess, "run", _requeue([_pr(48, "o/r#34")], [{"number": 34, "labels": []}], calls))
+    assert tp._requeue_conflicted_prs("o/r") == []
+    assert not any("needs-reengagement" in c or "comment" in c for c in calls)
+
+
+def test_failing_checks_are_not_a_conflict_and_skip_the_repair(monkeypatch):
+    calls = []
+    seen = _repair(monkeypatch, {"outcome": "repaired", "detail": "x"})
+    pr = {**_pr(48, "o/r#34", "MERGEABLE"), "statusCheckRollup": [{"name": "tests", "status": "COMPLETED", "conclusion": "FAILURE"}]}
+    monkeypatch.setattr(tp.subprocess, "run", _requeue([pr], [{"number": 34, "labels": []}], calls))
+    assert tp._requeue_conflicted_prs("o/r") == [34]
+    assert seen == []

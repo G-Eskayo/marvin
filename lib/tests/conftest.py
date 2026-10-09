@@ -152,6 +152,15 @@ def _isolate_ticket_stages_everywhere(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_conflict_repair(monkeypatch):
+    # The scan's conflict repair rebases, tests and force-pushes real branches; tests opt in by replacing it.
+    import ticket_pipeline
+    monkeypatch.setattr(ticket_pipeline, "_try_conflict_repair", lambda repo, pr: {"outcome": "rebuild", "files": []})
+    monkeypatch.setattr(ticket_pipeline, "_flagged_before", lambda url, sha: False)
+    monkeypatch.setattr(ticket_pipeline, "_mark_flagged", lambda url, sha: None)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_ticket_evidence(monkeypatch):
     # The pre-dispatch "does work already exist" guard shells out to gh/git; tests opt in explicitly.
     import ticket_pipeline
