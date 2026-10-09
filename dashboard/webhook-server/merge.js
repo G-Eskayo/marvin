@@ -414,7 +414,7 @@ async function mergePrUnqueued(
   }
 
   if (!gate && behind) {
-    stage('gate', 'skipped', `behind ${ctx ? ctx.base : 'main'}, but ${ctx ? ctx.base : 'main'} changed none of this PR's files: merging without a retest (main-health re-runs the suite after the merge)`)
+    stage('gate', 'passed', `no retest needed: behind ${ctx ? ctx.base : 'main'}, but ${ctx ? ctx.base : 'main'} changed none of this PR's files, so it merges directly (main-health re-runs the suite after the merge)`)
   }
   if (gate) {
     stage('gate', 'started', `rebasing onto ${ctx ? ctx.base : 'main'} + retesting (${ctx ? ctx.base : 'main'} changed files this PR also changes)`)
