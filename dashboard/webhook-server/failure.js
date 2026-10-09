@@ -9,7 +9,7 @@
 //   reengage -- the ticket's work needs changing; sent back to the ticket with detail
 //   escalate -- needs a human (credentials, tooling, branch protection, unknown)
 
-const RULES = [
+export const RULES = [
   { code: 'GH_AUTH_INVALID', action: 'escalate', retryable: false,
     test: /bad credentials|http 401|authentication failed|could not read username|requires authentication|token.*(invalid|expired)|invalid.*token/i,
     remediation: 'GitHub rejected the credential. Fix ~/.claude/.gh-token on the machine running the webhook (the Health tab shows auth:gh per machine).' },
@@ -45,6 +45,8 @@ const RULES = [
     test: /not a github pr url/i,
     remediation: 'The request did not contain a valid GitHub PR URL.' }
 ]
+
+export const REMEDIATION_BY_CODE = Object.fromEntries(RULES.filter(r => r.remediation).map(r => [r.code, r.remediation]))
 
 const EVIDENCE_MAX = 600
 

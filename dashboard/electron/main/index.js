@@ -593,7 +593,7 @@ function registerMrReviewHandlers() {
   })
   ipcMain.handle('mr:list', () => {
     listOpenPrs().then((prs) => stackRetarget.check(prs)).catch(() => {})
-    return listPipelinePrs(listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets, autoMergeShadow: getAutoMergeShadow })
+    return listPipelinePrs(listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets, autoMergeShadow: getAutoMergeShadow, stagesDir: STAGES_DIR, liveDispatch: readDispatchStatus() })
   })
 
   // Backs the MR Review tab's status dot -- red/blue/green computed from

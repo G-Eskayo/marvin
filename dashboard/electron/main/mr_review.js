@@ -1,6 +1,8 @@
 import { MARVIN_REPO, prKey, canMergeFromDashboard, repoFromPrUrl } from './mr_repos.js'
 import { waitingOn, baseProblem } from './pr_order.js'
 import { ciState } from '../../webhook-server/ci_status.js'
+import { taskIsTicket } from './activity.js'
+import { readStages } from '../../webhook-server/ticket_stages.js'
 
 // Reads open PRs and identifies which follow the MR pipeline's evidence
 // schema (G-Eskayo/marvin#72, ADR 0024) -- one fixed, structured PR body
@@ -230,7 +232,7 @@ export async function prsForOrderCheck(prs, sentBackTickets) {
   return markSentBack(prs, keys)
 }
 
-export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDashboard, sentBackTickets = null, reworkStatus = null, rebaseStatus = null, closedTickets = null, autoMergeShadow = null } = {}) {
+export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDashboard, sentBackTickets = null, reworkStatus = null, rebaseStatus = null, closedTickets = null, autoMergeShadow = null, stagesDir = null, liveDispatch = null } = {}) {
   const prs = await listOpenPrs()
   // The webhook's post-merge rebase results, by PR url (#225). Best effort: without them a card just doesn't say.
   let rebased = {}
@@ -279,6 +281,28 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       rework = {}
     }
   }
+  // Pipeline stages (#161): where each ticket is in its lifecycle. Best effort.
+  // Stages are organized by stage name for deriveSegments: { stage: [...events] }
+  let stagesByTicket = new Map()
+  if (stagesDir) {
+    for (const pr of prs) {
+      const ticketRef = parseTicketRef(pr.body || '')
+      if (ticketRef && !stagesByTicket.has(ticketRef)) {
+        try {
+          const events = readStages(Number(ticketRef), stagesDir, pr.repo || MARVIN_REPO)
+          const byStage = {}
+          for (const e of events || []) {
+            if (!e.stage) continue
+            if (!byStage[e.stage]) byStage[e.stage] = []
+            byStage[e.stage].push(e)
+          }
+          stagesByTicket.set(ticketRef, byStage)
+        } catch {
+          stagesByTicket.set(ticketRef, {})
+        }
+      }
+    }
+  }
   // Each PR with the facts that decide whether it can be waited on (sent back for rework; conflicts), so merge order skips the
   // ones that cannot merge as they stand.
   const withState = markSentBack(prs, sentBackKeys)
@@ -286,6 +310,8 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
     const ticketRef = parseTicketRef(pr.body || '')
     const hasSchema = hasEvidenceSchema(pr.body)
     const evidence = hasSchema ? parseEvidence(pr.body) : null
+    const stages = ticketRef ? stagesByTicket.get(ticketRef) || [] : []
+    const isLiveNow = liveDispatch ? taskIsTicket(liveDispatch.task, pr.repo || MARVIN_REPO, Number(ticketRef)) && liveDispatch.busy : false
     return {
       number: pr.number,
       title: pr.title,
@@ -307,6 +333,8 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       rework: ticketRef !== null && sentBackKeys.has(`${pr.repo || MARVIN_REPO}#${ticketRef}`) ? rework[`${pr.repo || MARVIN_REPO}#${ticketRef}`] || null : null,
       ticketNumber: evidence?.ticketRef ? Number(evidence.ticketRef) : null,
       evidence,
+      stages,
+      isLiveNow,
       // Full body, untruncated -- MrDetail.jsx needs the whole thing since
       // it's exactly the "drill in and actually read it" view; PrCard.jsx
       // truncates its own display slice for the compact list card.

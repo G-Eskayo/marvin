@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { EvidenceTable, ApproveDenyActions } from './MrReview.jsx'
 import { projectIdOf } from '../lib/projects.js'
 import Related, { useRelated } from './Related.jsx'
+import PipelineHistory from './PipelineHistory.jsx'
 
 // Full evidence-schema drill-down for one MR (G-Eskayo/marvin#72, ADR
 // 0024) plus its linked ticket/parent-PRD requirements, design, and
@@ -91,6 +92,7 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
   const rel = useRelated(() => window.api.relations.pr(pr.repo, pr.number), [pr.repo, pr.number])
   const [context, setContext] = useState(null)
   const [error, setError] = useState(null)
+  const [timeline, setTimeline] = useState([])
 
   useEffect(() => {
     let cancelled = false
@@ -105,6 +107,22 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
       })
       .catch((err) => {
         if (!cancelled) setError(String(err))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [pr.ticketNumber])
+
+  useEffect(() => {
+    let cancelled = false
+    if (!pr.ticketNumber) return
+    window.api.activity
+      .timeline(pr.ticketNumber, pr.repo)
+      .then((events) => {
+        if (!cancelled) setTimeline(events)
+      })
+      .catch(() => {
+        if (!cancelled) setTimeline([])
       })
     return () => {
       cancelled = true
@@ -191,6 +209,12 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
           <IssueBody label="Parent" issue={context.parent} />
         )}
       </Section>
+
+      {timeline.length > 0 && (
+        <Section title="Pipeline History">
+          <PipelineHistory events={timeline} />
+        </Section>
+      )}
 
       <Related
         rel={rel}

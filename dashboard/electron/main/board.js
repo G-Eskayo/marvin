@@ -237,3 +237,15 @@ export function buildCompleted({ issues, prs = [] }) {
   }
   return { items, months, total: items.length }
 }
+
+// Extract stages with their latest event, for use by deriveSegments.
+// Input: flat array of events. Output: { stage1: [...events], stage2: [...events], ... }
+export function latestPerStage(events) {
+  const byStage = {}
+  for (const e of events || []) {
+    if (!e.stage) continue
+    if (!byStage[e.stage]) byStage[e.stage] = []
+    byStage[e.stage].push(e)
+  }
+  return byStage
+}
