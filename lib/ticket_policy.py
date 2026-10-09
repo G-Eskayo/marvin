@@ -172,7 +172,7 @@ def triage_verdict(issue: dict, recheck: bool = False) -> dict | None:
     category = None if names & {"bug", "enhancement"} else ("bug" if _BUG.search(title) else "enhancement")
     # A ticket that says what to build under another common heading counts (#240, #218, #230, #217 sat parked for
     # writing "Solution"); "## Acceptance" with checkboxes counts as criteria.
-    has_what = bool(re.search(r"##\s*(What to build|Summary|Description|Solution|Approach|Proposal|Design|Build)\b", body, re.I))
+    has_what = bool(re.search(r"##\s*(What to build|What|Summary|Description|Solution|Approach|Proposal|Design|Build|Problem|Convention)\b", body, re.I))
     has_ac = bool(re.search(r"##\s*Acceptance(?:\s+criteria)?\b[\s\S]*?- \[[ x]\]", body, re.I))
     missing = [m for m, ok in (("a 'What to build' section", has_what), ("acceptance criteria", has_ac)) if not ok]
     if missing:
