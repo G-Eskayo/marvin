@@ -11,7 +11,7 @@ import { parseTicketRef } from '../electron/main/mr_review.js'
 import { repoFromPrUrl, MARVIN_REPO } from '../electron/main/mr_repos.js'
 import { recordStage } from './ticket_stages.js'
 import { assertChecksGreen } from './ci_status.js'
-import { rebaseOpenPrs } from './post_merge_rebase.js'
+import { checkOpenPrs } from './post_merge_rebase.js'
 
 const execFileAsync = promisify(execFile)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -32,7 +32,7 @@ export async function execWithGroupTimeout(cmd, args, opts, timeoutMs = DEFAULT_
     child.on('error', reject)
     child.on('close', (code) => {
       if (code === 0) resolve({ stdout, stderr })  // callers read it (gh pr list/view); resolving nothing broke them silently
-      else reject(Object.assign(new Error(`Command failed with exit code ${code}`), { stdout, stderr }))
+      else reject(Object.assign(new Error(`Command failed with exit code ${code}`), { stdout, stderr, code }))
     })
   })
   let timer
@@ -48,6 +48,32 @@ export async function execWithGroupTimeout(cmd, args, opts, timeoutMs = DEFAULT_
       }, timeoutMs)
     })
   ]).finally(() => clearTimeout(timer))
+}
+
+// The overlap rule (Gil 2026-10-09): a PR behind main is retested only when main changed a file the PR also changes
+// since the two split. Different files cannot conflict in git; a cross-file break (one PR renames what another
+// calls) is rare and is caught minutes later by main-health, which re-runs the suite on every main move and refuses
+// merges while main is red. The same files are where conflicts and interactions concentrate, so those get the retest.
+export async function sharedFiles(headRef, exec = execFileAsync, repoPath = REPO_PATH, base = 'main') {
+  await exec('git', ['fetch', 'origin', base, headRef], { cwd: repoPath })
+  const split = (await exec('git', ['merge-base', `origin/${base}`, `origin/${headRef}`], { cwd: repoPath })).stdout.trim()
+  const changed = async (to) => new Set((await exec('git', ['diff', '--name-only', split, to], { cwd: repoPath })).stdout.split('\n').filter(Boolean))
+  const [onBase, inPr] = await Promise.all([changed(`origin/${base}`), changed(`origin/${headRef}`)])
+  return [...inPr].filter((f) => onBase.has(f)).sort()
+}
+
+// Would the PR still merge onto main? Answered by git merge-tree: no checkout, no tests, no push, seconds. Exit 1 is
+// a conflict (the conflicted files follow the tree id); any other failure is an error, never reported as a conflict.
+export async function conflictsWithBase(headRef, exec = execFileAsync, repoPath = REPO_PATH, base = 'main') {
+  await exec('git', ['fetch', 'origin', base, headRef], { cwd: repoPath })
+  try {
+    await exec('git', ['merge-tree', '--write-tree', '--name-only', '--no-messages', `origin/${base}`, `origin/${headRef}`], { cwd: repoPath })
+    return { conflict: false, files: [] }
+  } catch (err) {
+    if (err?.code !== 1) throw err
+    const files = String(err.stdout || '').split('\n').slice(1).map((l) => l.trim()).filter(Boolean)
+    return { conflict: true, files: [...new Set(files)].sort() }
+  }
 }
 
 // ADR 0026: dispatch stays concurrent (no throttling), so two tickets can
@@ -165,16 +191,26 @@ export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = 
 // applies. Fails open (gate: false) on any error -- a hiccup in this
 // metadata fetch is a reason to fall back to today's direct-merge
 // behavior, not a reason to block an otherwise-fine merge.
-async function _defaultShouldGateMerge(prUrl, exec, ctx = null) {
+// Behind main is not enough on its own (the overlap rule, sharedFiles above): only a PR whose files main also changed
+// is rebased and retested. When the overlap can't be worked out, it is retested, to be safe.
+export async function defaultShouldGateMerge(prUrl, exec, ctx = null) {
+  let headRefName = null, body = ''
   try {
     const { stdout } = await exec('gh', ['pr', 'view', prUrl, '--json', 'headRefName,body'])
-    const { headRefName, body } = JSON.parse(stdout)
+    ;({ headRefName, body } = JSON.parse(stdout))
+    body = body || ''
     const behind = ctx ? await isBehindMain(headRefName, exec, ctx.clone, ctx.base) : await isBehindMain(headRefName, exec)
-    return { gate: behind, headRefName, body: body || '' }
+    if (!behind) return { gate: false, behind: false, shared: [], headRefName, body }
+    let shared = null
+    try {
+      shared = ctx ? await sharedFiles(headRefName, exec, ctx.clone, ctx.base) : await sharedFiles(headRefName, exec)
+    } catch { /* unknown overlap: retest */ }
+    return { gate: shared === null || shared.length > 0, behind: true, shared: shared || [], headRefName, body }
   } catch {
-    return { gate: false, headRefName: null, body: '' }
+    return { gate: false, behind: false, shared: [], headRefName, body }
   }
 }
+const _defaultShouldGateMerge = defaultShouldGateMerge
 
 // What the gate needs for a project other than marvin, from that project's execution profile
 // (lib/project_profile.py). Refuses -- as coded failures, not exceptions the HTTP layer would call
@@ -337,7 +373,7 @@ async function mergePrUnqueued(
   recordStageFn = recordStage,
   deps = {}
 ) {
-  const { sleep, recordFailureFn = recordFailure, gateContext = defaultGateContext, baselineFails = null, gateTimeoutMs = GATE_TIMEOUT_MS, rebaseOpen = rebaseOpenPrs } = deps
+  const { sleep, recordFailureFn = recordFailure, gateContext = defaultGateContext, baselineFails = null, gateTimeoutMs = GATE_TIMEOUT_MS, rebaseOpen = checkOpenPrs } = deps
   if (typeof prUrl !== 'string' || !prUrl.startsWith('https://github.com/')) {
     throw new MergeFailure(classifyFailure({ stage: 'request', error: new Error(`Not a GitHub PR URL: ${prUrl}`) }))
   }
@@ -350,7 +386,7 @@ async function mergePrUnqueued(
   await assertTargetsBase(prUrl, exec, ctx ? ctx.base : 'main')
   await assertNotSentBack(prUrl, exec)
 
-  const { gate, headRefName, body } = ctx ? await shouldGateMerge(prUrl, exec, ctx) : await shouldGateMerge(prUrl, exec)
+  const { gate, behind = false, headRefName, body } = ctx ? await shouldGateMerge(prUrl, exec, ctx) : await shouldGateMerge(prUrl, exec)
   const ticketNumber = parseTicketRef(body)
   // Every call below is a no-op (not an error) when ticketNumber is null
   // -- a manually-authored PR with no linked ticket has nothing to record
@@ -377,8 +413,11 @@ async function mergePrUnqueued(
     throw e
   }
 
+  if (!gate && behind) {
+    stage('gate', 'skipped', `behind ${ctx ? ctx.base : 'main'}, but ${ctx ? ctx.base : 'main'} changed none of this PR's files: merging without a retest (main-health re-runs the suite after the merge)`)
+  }
   if (gate) {
-    stage('gate', 'started', `rebasing onto ${ctx ? ctx.base : 'main'} + retesting`)
+    stage('gate', 'started', `rebasing onto ${ctx ? ctx.base : 'main'} + retesting (${ctx ? ctx.base : 'main'} changed files this PR also changes)`)
     const result = await withGateTimeout(
       Promise.resolve(ctx
         ? rebaseAndRetestFn(headRefName, exec, ctx.clone, ctx.runTests, ctx.base, ctx.resolveConflicts)
@@ -474,13 +513,11 @@ async function mergePrUnqueued(
     stage('rebuilding', 'started', 'triggered if the PR touched dashboard/')
     await rebuild(prUrl, exec)
   }
-  // #225: re-integrate the repo's other open PRs onto the new base (queued behind this merge, so the response does not
-  // wait), and only then run the pipeline scan, which sends every PR GitHub calls conflicting back for a full rebuild.
+  // #225 (overlap rule, 2026-10-09): move stacked PRs onto the base and conflict-check the other open PRs (queued
+  // behind this merge, so the response does not wait; no tests, no pushes), then run the pipeline scan.
   const integrateRepo = repo || MARVIN_REPO
-  const rebase = (head) => (ctx
-    ? rebaseAndRetestFn(head, exec, ctx.clone, ctx.runTests, ctx.base, ctx.resolveConflicts)
-    : rebaseAndRetestFn(head, exec, REPO_PATH, _defaultRunTests, 'main', generatedResolver(MARVIN_REPO, exec)))
-  inRepoQueue(integrateRepo, () => rebaseOpen({ repo: integrateRepo, mergedPrUrl: prUrl, base: ctx ? ctx.base : 'main', exec, rebase }))
+  const check = (head) => conflictsWithBase(head, exec, ctx ? ctx.clone : REPO_PATH, ctx ? ctx.base : 'main')
+  inRepoQueue(integrateRepo, () => rebaseOpen({ repo: integrateRepo, mergedPrUrl: prUrl, base: ctx ? ctx.base : 'main', exec, check }))
     .catch((e) => console.error(`[post-merge] ${integrateRepo}: after ${prUrl}: ${String(e?.message || e).slice(0, 300)}`))
     .then(() => redispatch())
   stage('done', 'passed', `merged: ${prUrl}`)

@@ -90,7 +90,7 @@ describe('mergePr', () => {
     await vi.waitFor(() => expect(redispatch).toHaveBeenCalledTimes(1))
   })
 
-  // #225: the other open PRs are rebased onto the new main first, and only then does the pipeline scan run, because
+  // #225 (overlap rule): the other open PRs are conflict-checked against the new main first (no tests, no pushes), and only then does the pipeline scan run, because
   // that scan sends every PR GitHub calls conflicting back for a full rebuild.
   it('after a merge, rebases the other open PRs, then redispatches; the merge itself does not wait for them', async () => {
     const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })

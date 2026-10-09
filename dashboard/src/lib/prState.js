@@ -90,6 +90,6 @@ export function describePrState(pr, { status = 'idle', errorMessage = null } = {
       `After #${rb.after} merged, this PR's tests fail once it is rebased onto ${main}. Approve runs them again and sends it back if they still fail.`, 'enabled', 'enabled')
   }
 
-  const notes = [ci.state === 'passing' ? 'GitHub checks passed' : null, rb?.state === 'clean' ? `rebased onto ${main} after #${rb.after} merged` : null].filter(Boolean)
+  const notes = [ci.state === 'passing' ? 'GitHub checks passed' : null, rb?.state === 'clean' ? `still merges cleanly onto ${main} after #${rb.after} merged` : null].filter(Boolean)
   return base('ready', 'ready', 'Ready to merge', null, 'enabled', 'enabled', { note: notes.length ? notes.join(' · ') : null })
 }
