@@ -97,13 +97,30 @@ def _quarantine() -> tuple[list[datetime], list[datetime]]:
     return pending, consumed
 
 
+def _digest(folder: str) -> Callable[[], tuple[list[datetime], list[datetime]]]:
+    """A day's digest is consumed when that day's morning brief is built from it (marvin#306)."""
+    def state():
+        import morning_brief
+        briefs = {d.date() for d in morning_brief.brief_dates()}
+        days = sorted({_day(p.name) for p in (CLAUDE / folder).glob("*.md") if re.match(_DATE, p.name)})
+        return [d for d in days if d.date() not in briefs], [d for d in days if d.date() in briefs]
+    return state
+
+
+def _brief() -> tuple[list[datetime], list[datetime]]:
+    import morning_brief
+    read = {d.date() for d in morning_brief.read_dates()}
+    return [d for d in morning_brief.brief_dates() if d.date() not in read], morning_brief.read_dates()
+
+
 CONTRACTS: list[Contract] = [
     Contract("architecture-review", "~/.claude/suggestions.md",
              f"ticket promotion (daily, top {PROMOTE_PER_DAY}, as needs-triage tickets) or Gil", 14, _suggestions),
     Contract("improvement-sweep", "~/.claude/improvement-queue.md", "auto-fix (naming/verbosity) or Gil", 14, _queue),
     Contract("safety-monitor", "~/.claude/quarantine.md", "Gil's approve/deny review", 7, _quarantine),
-    Contract("daily-digest", "~/.claude/digest/<day>.md", "the morning brief (#306)", 1, None),
-    Contract("research-digest", "~/.claude/research-digest/<day>.md", "the morning brief (#306)", 1, None),
+    Contract("daily-digest", "~/.claude/daily-digest/<day>.md", "the morning brief", 1, _digest("daily-digest")),
+    Contract("research-digest", "~/.claude/research-digest/<day>.md", "the morning brief", 1, _digest("research-digest")),
+    Contract("morning-brief", "~/.claude/briefs/<day>.md", "Gil, at the first session of the day", 1, _brief),
 ]
 
 
