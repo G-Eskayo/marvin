@@ -89,6 +89,14 @@ Only when the slice's purpose is measurable (faster, fewer tokens, fewer refusal
 - **Target:** -70%
 - **Check on:** 2026-10-16
 
+## How we'll try to break it
+
+Required for every build slice (ADR 0063, `docs/north-stars.md` "Tests try to break it"); triage won't mark the issue ready without it. List the concrete ways a person or the system could use *or misuse* this slice, each of which gets a test written first: bad / empty / huge / malformed input, each dependency failing (network, GitHub refusing, disk, missing or corrupt files), repeats, concurrency and wrong order, wrong permissions or machine, stale state, a person's mistakes. Name the real collaborator to test against where a mock could hide its rules.
+
+**If the slice faces outside** (a website form or text box, an endpoint, a port, a tunnel, a device link, anything that reads outside text into a model), add an **Attacks** list too: injection (SQL, command, prompt), XSS, CSRF, forged or replayed requests, auth bypass, path traversal, oversized payloads, flooding, secrets in logs. It must resist and fail closed.
+
+Research and decision issues are exempt.
+
 ## Acceptance criteria
 
 - [ ] Criterion 1
