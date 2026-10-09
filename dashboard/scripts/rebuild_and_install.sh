@@ -12,6 +12,11 @@ SRC="dist/mac-arm64/${APP_NAME}"
 DEST="/Applications/${APP_NAME}"
 LOG_PREFIX="[rebuild-and-install]"
 
+# Build what was just merged, not whatever this checkout had: the merge happens on GitHub and code-sync pulls it a little
+# later, so a rebuild started right after a merge raced the pull and reinstalled the old app (2026-10-08, PR #317).
+echo "${LOG_PREFIX} pulling the merged code..."
+"$HOME/.agents/venv/bin/python" "$HOME/.agents/lib/code_sync.py" pull "$HOME/.agents" || echo "${LOG_PREFIX} pull failed; building what is here" >&2
+
 # Install first: a rebuild must not assume node_modules is current. The laptop's
 # build failed on a missing dependency (react-markdown) added on another machine.
 echo "${LOG_PREFIX} installing dependencies..."
@@ -54,6 +59,13 @@ sleep 6
 if ! pgrep -f "$DEST/Contents/MacOS" >/dev/null; then
   echo "${LOG_PREFIX} the app did not start after the install" >&2
   exit 1
+fi
+
+# The merge server is a long-running node process: it keeps the code it started with until restarted (it ran Oct 5 code
+# on Oct 8, so a merged fix to the merge flow didn't apply). This script runs detached, so restarting it is safe.
+if launchctl print "gui/$(id -u)/com.marvin.dashboard-webhook" >/dev/null 2>&1; then
+  echo "${LOG_PREFIX} restarting the merge server on the new code..."
+  launchctl kickstart -k "gui/$(id -u)/com.marvin.dashboard-webhook" || echo "${LOG_PREFIX} merge server restart failed" >&2
 fi
 
 echo "${LOG_PREFIX} done."
