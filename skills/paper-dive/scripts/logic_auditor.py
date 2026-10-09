@@ -22,16 +22,19 @@ fits every stage.
 from __future__ import annotations
 import json
 import re
+import sys
 import urllib.request
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
+import model_registry  # noqa: E402
+import model_queue  # noqa: E402
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
-# Validated 2026-07-13 against all 15 real seed abstracts: 3b (even with a prompt refined to
-# counter its "named attack/method -> conceptual" bias) still misclassified MINJA and
-# many-shot-jailbreaking as conceptual despite both reporting concrete measured attack success
-# rates. 7b was WORSE, not better -- overcorrected to "empirical" broadly and broke two
-# previously-correct survey/benchmark classifications (sok-trust-authorization-mismatch,
-# sorry-bench). 14b fixed both stubborn cases with zero regressions on the rest.
-CLASSIFY_MODEL = "qwen2.5:14b"
+# Model selection via capability names (validated 2026-07-13):
+_classify_model_list = model_registry.resolve_capability("local-classify-medium")
+CLASSIFY_MODEL = _classify_model_list[0]  # Use first available model for the capability
+assert CLASSIFY_MODEL == "qwen2.5:14b", f"Regression: expected qwen2.5:14b, got {CLASSIFY_MODEL}"
 
 PAPER_TYPES = {"empirical", "survey", "benchmark", "conceptual"}
 
@@ -92,8 +95,9 @@ def classify_all(papers: dict[str, tuple[str, str]], chat_fn=None) -> dict[str, 
 # ── Layer 1: type-adaptive visible extraction ───────────────────────────────
 # Model: qwen2.5:3b, validated in the design's spot-check (task 11) -- clean,
 # accurate Toulmin extraction on real abstracts, no hallucinated content.
-
-EXTRACTION_MODEL = "qwen2.5:3b"
+_extraction_model_list = model_registry.resolve_capability("local-extract-small")
+EXTRACTION_MODEL = _extraction_model_list[0]
+assert EXTRACTION_MODEL == "qwen2.5:3b", f"Regression: expected qwen2.5:3b, got {EXTRACTION_MODEL}"
 
 # Field names per paper type, per docs/logic-auditor-design.md's table.
 # Order matters -- it's both the prompt's requested response order and
@@ -215,7 +219,9 @@ def extract_all(papers: dict[str, tuple[str, str, str]], chat_fn=None) -> dict[s
 # "(no findings)" on papers with genuinely strong support. Notably the
 # mirror image of the classifier result (7b was a regression there) --
 # reinforces that model size must be validated per-task, not assumed.
-JUDGMENT_MODEL = "qwen2.5:7b"
+_judgment_model_list = model_registry.resolve_capability("local-judge-medium")
+JUDGMENT_MODEL = _judgment_model_list[0]
+assert JUDGMENT_MODEL == "qwen2.5:7b", f"Regression: expected qwen2.5:7b, got {JUDGMENT_MODEL}"
 
 # benchmark judgment specifically needs 14b, not the 7b default -- found
 # 2026-07-13 reviewing flagged results (task 19): 7b called StrongREJECT's
@@ -230,7 +236,10 @@ JUDGMENT_MODEL = "qwen2.5:7b"
 # since their own evidence genuinely has no comparison at all). The other
 # 3 paper types stay on 7b -- no evidence of a problem there, no reason to
 # pay for a bigger model where the cheaper one already works.
-JUDGMENT_MODEL_OVERRIDES = {"benchmark": "qwen2.5:14b"}
+_inference_model_list = model_registry.resolve_capability("local-inference-large")
+_inference_model = _inference_model_list[0]
+assert _inference_model == "qwen2.5:14b", f"Regression: expected qwen2.5:14b for inference, got {_inference_model}"
+JUDGMENT_MODEL_OVERRIDES = {"benchmark": _inference_model}
 
 _GENERAL_FALLACY_CHECKLIST = (
     "hasty generalization, circular reasoning, false dichotomy, unfalsifiable claims, "

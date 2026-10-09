@@ -69,13 +69,14 @@ def test_model_registry_register(tmp_path):
     registry_path = tmp_path / "models.json"
     registry = model_registry.ModelRegistry(registry_path)
 
-    registry.register("qwen2.5-14b", "~/.ollama/models", 9.0, "paper-dive", "logic auditing")
+    registry.register("qwen2.5:14b", "~/.ollama/models", 9.0, "paper-dive", "logic auditing")
 
     data = json.loads(registry_path.read_text())
-    assert "qwen2.5-14b" in data
-    assert data["qwen2.5-14b"]["size_gb"] == 9.0
-    assert data["qwen2.5-14b"]["used_by"] == "paper-dive"
-    assert data["qwen2.5-14b"]["reason"] == "logic auditing"
+    models = data.get("models", {})
+    assert "qwen2.5:14b" in models
+    assert models["qwen2.5:14b"]["size_gb"] == 9.0
+    assert models["qwen2.5:14b"]["used_by"] == "paper-dive"
+    assert models["qwen2.5:14b"]["reason"] == "logic auditing"
 
 
 def test_model_registry_touch_last_used(tmp_path):
@@ -83,14 +84,16 @@ def test_model_registry_touch_last_used(tmp_path):
     registry_path = tmp_path / "models.json"
     registry = model_registry.ModelRegistry(registry_path)
 
-    registry.register("qwen2.5-14b", "~/.ollama/models", 9.0, "paper-dive", "logic auditing")
-    before = json.loads(registry_path.read_text())["qwen2.5-14b"].get("last_used")
+    registry.register("qwen2.5:14b", "~/.ollama/models", 9.0, "paper-dive", "logic auditing")
+    models = json.loads(registry_path.read_text()).get("models", {})
+    before = models["qwen2.5:14b"].get("last_used")
 
     import time
     time.sleep(0.01)
-    registry.touch_last_used("qwen2.5-14b")
+    registry.touch_last_used("qwen2.5:14b")
 
-    after = json.loads(registry_path.read_text())["qwen2.5-14b"].get("last_used")
+    models = json.loads(registry_path.read_text()).get("models", {})
+    after = models["qwen2.5:14b"].get("last_used")
     assert after > before if before else True
 
 
@@ -103,10 +106,11 @@ def test_model_registry_atomic_write(tmp_path):
     registry.register("model-2", "path2", 2.0, "user2", "reason2")
 
     data = json.loads(registry_path.read_text())
-    assert "model-1" in data
-    assert "model-2" in data
-    assert data["model-1"]["size_gb"] == 1.0
-    assert data["model-2"]["size_gb"] == 2.0
+    models = data.get("models", {})
+    assert "model-1" in models
+    assert "model-2" in models
+    assert models["model-1"]["size_gb"] == 1.0
+    assert models["model-2"]["size_gb"] == 2.0
 
 
 def test_disk_guard_passes_when_headroom_sufficient(tmp_path):
