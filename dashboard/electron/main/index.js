@@ -8,6 +8,7 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { listSubsystems, readHistory, buildIndex } from './metrics.js'
 import { getReworkStatus, clearReworkCache } from './rework.js'
+import { createGithubState, repoOfSource } from './github_state.js'
 import { prsForOrderCheck, listPipelinePrs, approveMr, denyMr, fetchTicketContext, sentBackKeys, clearSentBackLabel } from './mr_review.js'
 import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
 import { readDispatchStatus } from './dispatch_status.js'
@@ -18,7 +19,7 @@ import { createPortfolio } from './portfolio.js'
 import { createPortfolioProxy, portfolioHost } from './portfolio_remote.js'
 import { listTicketActivity, getTicketTimeline } from './activity.js'
 import { getDeviceStatuses } from './devices.js'
-import { getQueue } from './queue.js'
+import { getQueue, clearQueueCache } from './queue.js'
 import { getConcurrency, setConcurrency, scanNow } from './dispatch_concurrency.js'
 import { createMergeOps } from './merge_ops.js'
 import { readPrefs } from './prefs.js'
@@ -30,7 +31,7 @@ import { readRegistry, loadBoard, fetchBoardData, fetchCompletedData, withProjec
 import { createRelationsService } from './relations_service.js'
 import { summarizeBoard, buildCompleted } from './board.js'
 import { createTriggerHub, createReconciler, refetchesGithub } from './triggers.js'
-import { listOpenPrsAcrossRepos, prListArgs, createListCache, normalizeSeen, canMergeFromDashboard, repoFromPrUrl, MARVIN_REPO } from './mr_repos.js'
+import { listOpenPrsAcrossRepos, prListArgs, normalizeSeen, canMergeFromDashboard, repoFromPrUrl, MARVIN_REPO } from './mr_repos.js'
 import { createIndexer, buildDocsIndex, loadIndex } from './docs_search.js'
 import { createDocsService, MASTER_ID } from './docs_service.js'
 import { readMergeableRepos, listProfiles, setDispatch, setMergeFromDashboard } from './profiles.js'
@@ -79,37 +80,44 @@ const ghListOpenPrs = (light) => async (repo) => {
   return JSON.parse(stdout)
 }
 
+// The dashboard's memory of GitHub (github_state.js, #318): every GitHub read below is answered from the last-known
+// state of its repo until the change watch says that repo changed, the person's own action needs fresh data, or a
+// 30-minute safety refresh. Tab switches and timers never reach GitHub on their own.
+const githubState = createGithubState()
+// A change somewhere: re-read just that repo when the ping says which, else everything.
+function githubChanged(source) {
+  const repo = repoOfSource(source)
+  if (repo) githubState.changed(repo)
+  else githubState.changedAll()
+  clearCrossProjectCache()
+}
+
 // Every registered project's open PRs (MR Review spans projects; only marvin's can be merged from
-// here -- see mr_repos.js). A failing repo is logged and skipped, never fatal to the list.
-async function fetchOpenPrs(light) {
-  const { prs, errors } = await listOpenPrsAcrossRepos(readRegistry().map((b) => b.repo), ghListOpenPrs(light))
+// here -- see mr_repos.js). A failing repo is logged and skipped, never fatal to the list. Each repo's list comes
+// from memory unless that repo changed, so the status dot (every 2 min) and the MR list cost nothing while idle.
+// A full listing also answers a light one. `fresh` (a merge) re-reads every repo.
+async function fetchOpenPrs(light, fresh = false) {
+  const perRepo = (repo) => {
+    const full = () => githubState.get('prs', repo, () => ghListOpenPrs(false)(repo), { fresh })
+    if (!light) return full()
+    return githubState.get('prs-light', repo, () => ghListOpenPrs(true)(repo), { fresh })
+  }
+  const { prs, errors } = await listOpenPrsAcrossRepos(readRegistry().map((b) => b.repo), perRepo)
   for (const e of errors) console.error(`[mr] could not list PRs for ${e.repo}: ${e.message}`)
   return prs
 }
-// The status dot, the MR list and the merge-order check share one cache; a merge asks for fresh data.
-// Real PR changes are announced within ~20s by the change watcher (a 'mr' or 'activity' ping), which clears it, so the
-// TTL is only a safety net. At 45s this listing alone cost thousands of requests an hour across the registered repos.
-const OPEN_PRS_TTL_MS = 5 * 60_000
-const openPrsCache = createListCache({ full: () => fetchOpenPrs(false), light: () => fetchOpenPrs(true) }, OPEN_PRS_TTL_MS)
-const listOpenPrs = (opts = {}) => openPrsCache.get(opts)
+const listOpenPrs = ({ light = false, fresh = false } = {}) => fetchOpenPrs(light, fresh)
+// Sent-back tickets' rework status spans every project (lib/rework_status.py reads GitHub): same rule as the queue.
+const reworkFromMemory = () => githubState.get('rework', null, () => { clearReworkCache(); return getReworkStatus() }, { safetyMs: 10 * 60_000 })
 
 async function ghIssueView(issueNumber, repo = MARVIN_REPO) {
   const { stdout } = await execFileAsync('gh', ['issue', 'view', String(issueNumber), '--repo', repo, '--json', 'number,title,body'])
   return JSON.parse(stdout)
 }
 
-// Raw tickets + PRs per repo, shared by the board view and the relation index, kept for 30s so the two
-// (and several tabs) don't each hit GitHub; a trigger or reload clears it.
-// Real GitHub changes are announced within ~20s by the change watcher (a cheap REST check) and clear this, so the
-// TTL is only a safety net.
-const BOARD_DATA_TTL_MS = 5 * 60_000
-const boardDataCache = new Map()
-async function getBoardData(repo, gh) {
-  const hit = boardDataCache.get(repo)
-  if (hit && Date.now() - hit.at < BOARD_DATA_TTL_MS) return hit.data
-  const data = await fetchBoardData(repo, gh)
-  boardDataCache.set(repo, { at: Date.now(), data })
-  return data
+// Raw tickets + PRs per repo, shared by the board view and the relation index: from memory until that repo changes.
+function getBoardData(repo, gh) {
+  return githubState.get('board', repo, () => fetchBoardData(repo, gh))
 }
 
 // Event-driven refresh for the Activity tab (CONTEXT.md "Triggers over polling").
@@ -181,7 +189,9 @@ function registerMetricsHandlers() {
 function registerDispatchHandlers() {
   ipcMain.handle('dispatch:status', () => readDispatchStatus())
   ipcMain.handle('devices:status', () => getDeviceStatuses())
-  ipcMain.handle('queue:list', () => getQueue())
+  // The queue and running list span every project and come from GitHub labels: from memory until anything changes,
+  // with a 10-minute safety refresh (the Python helper keeps its own 60 s cache, so it is cleared before a real read).
+  ipcMain.handle('queue:list', () => githubState.get('queue', null, () => { clearQueueCache(); return getQueue() }, { safetyMs: 10 * 60_000 }))
   ipcMain.handle('dispatch:getConcurrency', () => getConcurrency())
   ipcMain.handle('dispatch:setConcurrency', (_event, settings) => setConcurrency(settings))
   ipcMain.handle('dispatch:scanNow', () => scanNow())
@@ -310,15 +320,10 @@ function registerActivityHandlers() {
     assertRegistered(repo)
     return summarizeBoard(await loadBoard(repo, { gh: ghJson, registryRepos: readRegistry(), data: await getBoardData(repo, ghJson), evidence: await getEvidence(repo) }))
   })
-  // Completed work (all closed tickets + the PRs that closed them), cached 5 min: it only grows slowly.
-  const completedCache = new Map()
+  // Completed work (all closed tickets + the PRs that closed them): from memory until that repo changes.
   ipcMain.handle('boards:completed', async (_event, repo) => {
     assertRegistered(repo)
-    const hit = completedCache.get(repo)
-    if (hit && Date.now() - hit.at < 300_000) return hit.value
-    const value = buildCompleted(await fetchCompletedData(repo, ghJson))
-    completedCache.set(repo, { at: Date.now(), value })
-    return value
+    return githubState.get('completed', repo, async () => buildCompleted(await fetchCompletedData(repo, ghJson)))
   })
   ipcMain.handle('boards:ticket', async (_event, repo, number) => {
     assertRegistered(repo)
@@ -365,13 +370,13 @@ function registerDocsHandlers() {
     getProjects: () => (readCatalog({ deviceId: deviceId() })?.projects || []).filter((p) => p.repo).map((p) => ({ id: p.id, repo: p.repo })),
     getStages: defaultStagesFor,
     getLive: defaultLiveNumbers,
-    recheck: () => { boardDataCache.clear(); openPrsCache.invalidate(); clearCrossProjectCache() }
+    recheck: () => githubChanged(null)
   })
   triggerHub.onTrigger((t) => {
     if (t.topic === 'activity' || t.topic === 'docs') {
       // Local changes (stage files, saved docs) re-derive columns from the cached GitHub data; only a GitHub-side
       // change refetches it. Clearing it on every local write cost ~10,000 requests an hour (2026-10-06).
-      if (t.topic === 'activity' && refetchesGithub(t)) { boardDataCache.clear(); openPrsCache.invalidate(); clearCrossProjectCache() }
+      if (t.topic === 'activity' && refetchesGithub(t)) githubChanged(t.source)
       relations.invalidate()
     }
   })
@@ -531,7 +536,7 @@ function registerMrReviewHandlers() {
     const res = await fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/rebase-status'), { signal: AbortSignal.timeout(3000) })
     return res.ok ? res.json() : {}
   }
-  ipcMain.handle('mr:list', () => listPipelinePrs(listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()), sentBackTickets, reworkStatus: getReworkStatus, rebaseStatus: getRebaseStatus }))
+  ipcMain.handle('mr:list', () => listPipelinePrs(listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus }))
 
   // Backs the MR Review tab's status dot -- red/blue/green computed from
   // which pipeline-PR numbers are currently open vs. already marked seen
@@ -595,7 +600,7 @@ function registerMrReviewHandlers() {
       }
       const result = await approveMr(url, MR_WEBHOOK_URL, postJson)
       mergeOps.finish(url, result)
-      openPrsCache.invalidate()  // the list must not keep showing a PR that just merged
+      githubChanged(null)  // the list must not keep showing a PR that just merged
       clearReworkCache()
       return { ...result, cancelled: false }
     } catch (err) {
@@ -610,7 +615,7 @@ function registerMrReviewHandlers() {
   ipcMain.handle('mr:clearSentBack', async (_event, url) => {
     assertMergeable(url)
     const result = await clearSentBackLabel(url, execFileAsync)
-    if (result.cleared) openPrsCache.invalidate()
+    if (result.cleared) githubChanged(null)
     return result
   })
 
@@ -634,7 +639,7 @@ function registerMrReviewHandlers() {
       return { done: false, cancelled: true }
     }
     await denyMr({ prUrl: url, ticketNumber, action, reasons, comment }, MR_DENY_WEBHOOK_URL, postJson)
-    openPrsCache.invalidate()
+    githubChanged(null)
     return { done: true, cancelled: false }
   })
 }
@@ -665,7 +670,7 @@ app.whenReady().then(() => {
   createRefreshServer((payload = {}) => {
     const topics = Array.isArray(payload.topics) ? payload.topics : ['mr']
     for (const topic of topics) {
-      if (topic === 'mr') { openPrsCache.invalidate(); mainWindow?.webContents.send('mr:refresh') }
+      if (topic === 'mr') { githubChanged(payload.source); mainWindow?.webContents.send('mr:refresh') }
       else triggerHub.emit(topic, payload.source || 'ping')
     }
   }).listen(DASHBOARD_REFRESH_PORT, '127.0.0.1')

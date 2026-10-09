@@ -16,7 +16,7 @@ const MARVIN_REPO = 'G-Eskayo/marvin'
 // itself is per-machine); an override keyed by project id wins over what the registry holds.
 const projectId = (repo) => repo.split('/')[1].toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 
-const CROSS_PROJECT_TTL_MS = 5 * 60 * 1000
+const CROSS_PROJECT_TTL_MS = 30 * 60 * 1000  // a safety net: index.js clears it whenever GitHub says something changed (#318)
 const crossProjectCache = new Map()
 
 export function clearCrossProjectCache() { crossProjectCache.clear() }
