@@ -563,6 +563,18 @@ function registerMrReviewHandlers() {
     return keys
   }
   // Post-merge rebase results live with the webhook (#225), which may be on the other machine.
+  // Auto-merge's shadow state (#341) lives with the mini's merge server, like the rebase results.
+  const getAutoMergeShadow = async () => {
+    const res = await fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/auto-merge-shadow'), { signal: AbortSignal.timeout(3000) })
+    return res.ok ? res.json() : {}
+  }
+  ipcMain.handle('mr:autoMergeReport', async () => {
+    try {
+      return (await getAutoMergeShadow()).last_report || null
+    } catch {
+      return null
+    }
+  })
   const getRebaseStatus = async () => {
     const res = await fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/rebase-status'), { signal: AbortSignal.timeout(3000) })
     return res.ok ? res.json() : {}
@@ -581,7 +593,7 @@ function registerMrReviewHandlers() {
   })
   ipcMain.handle('mr:list', () => {
     listOpenPrs().then((prs) => stackRetarget.check(prs)).catch(() => {})
-    return listPipelinePrs(listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets })
+    return listPipelinePrs(listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets, autoMergeShadow: getAutoMergeShadow })
   })
 
   // Backs the MR Review tab's status dot -- red/blue/green computed from

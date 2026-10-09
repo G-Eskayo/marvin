@@ -157,17 +157,24 @@ def _late_night(now: datetime) -> str | None:
     return latest.strftime("%H:%M") if latest else None
 
 
+def _auto_merge_report() -> str | None:
+    """Auto-merge's shadow report line once it is ready (ADR 0064, #341), else None."""
+    import auto_merge_shadow
+    return auto_merge_shadow.report_line_anywhere()
+
+
 def default_sources(now: datetime) -> dict[str, Callable]:
     return {"open_prs": _open_prs, "red_checks": _red_checks, "human_tickets": _human_tickets,
             "launches": lambda: _launches(now), "merged": lambda: _merged(now), "deadlines": lambda: _deadlines(now),
             "top_tickets": _top_tickets, "digest_idea": lambda: _digest_idea(now),
-            "research_idea": lambda: _research_idea(now), "late_night": lambda: _late_night(now)}
+            "research_idea": lambda: _research_idea(now), "late_night": lambda: _late_night(now),
+            "auto_merge": _auto_merge_report}
 
 
 _SOURCE_NAMES = {"open_prs": "open PRs", "red_checks": "Health", "human_tickets": "tickets waiting on you",
                  "launches": "the launch log", "merged": "merged PRs", "deadlines": "deadlines",
                  "top_tickets": "top tickets", "digest_idea": "the daily digest", "research_idea": "the research digest",
-                 "late_night": "last night's sessions"}
+                 "late_night": "last night's sessions", "auto_merge": "auto-merge's shadow report"}
 
 
 def gather(now: datetime, sources: dict[str, Callable] | None = None) -> dict:
@@ -191,7 +198,8 @@ def _ref(item: dict, pr: bool = False) -> str:
 def render(data: dict, now: datetime) -> str:
     day = now.astimezone().strftime("%A %Y-%m-%d")
     lines = [f"# Morning brief, {day}", ""]
-    needs = [f"- Review {_ref(p, pr=True)}" for p in data.get("open_prs") or []]
+    needs = [f"- {data['auto_merge']}"] if data.get("auto_merge") else []
+    needs += [f"- Review {_ref(p, pr=True)}" for p in data.get("open_prs") or []]
     needs += [f"- {c['label']}: {c['detail']}" for c in data.get("red_checks") or []]
     needs += [f"- Your task: {_ref(t)}" for t in data.get("human_tickets") or []]
     lines += ["## Needs you", "", *(needs or ["- Nothing is waiting on you."]), ""]
