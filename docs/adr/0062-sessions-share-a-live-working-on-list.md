@@ -24,3 +24,5 @@ pipeline built the same five fixes in parallel, and the pipeline built ticket #3
 - ~70 ms per edit for the hooks. Hooks load when a session starts: open sessions need a restart to join.
 - The list is per Mac; the other Mac's sessions are not seen (the pipeline is covered by claims). A shared-file
   edit that is fine (CONTEXT.md) asks once and then goes through.
+  - **#331** closes this: a cached `GET /sessions` call to the other Mac's webhook server, same trust model as the
+    other routes on that server.
