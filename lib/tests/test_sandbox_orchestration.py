@@ -890,3 +890,55 @@ def test_the_planner_opens_its_plan_with_a_north_star_fit(monkeypatch, tmp_path)
     kinds = dict(prompts)
     assert "## North-star fit" in kinds["ticket-planner"]
     assert "a plan" in kinds["ticket-executor"]
+
+
+
+# ── ADR 0063 gate 2 (#336): verify needs a test change when code changed ──────
+
+def _improving():
+    calls = {"n": 0}
+
+    def measure(wt):
+        calls["n"] += 1
+        return {"accuracy": _metric(0.8 if calls["n"] == 1 else 0.9)}   # baseline, then better
+    return measure
+
+
+def _writes(files):
+    def executor(worktree_path, ticket_ref, feedback):
+        for rel, text in files.items():
+            p = worktree_path / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(text)
+        return "wrote"
+    return executor
+
+
+def test_code_without_a_test_change_does_not_pass_verify_and_tells_the_agent_why(git_repo, metrics_dir):
+    seen = []
+
+    def executor(worktree_path, ticket_ref, feedback):
+        seen.append(feedback)
+        (worktree_path / "lib").mkdir(exist_ok=True)
+        (worktree_path / "lib" / "feature.py").write_text("def f():\n    return 1\n")
+        return "code only"
+
+    result = so.execute_ticket("TICKET-1", "test-subsystem", measure=_improving(),
+                               executor=executor, repo_path=git_repo, max_iterations=2)
+    assert result["passing"] is False
+    assert seen[1] and "How we'll try to break it" in str(seen[1])
+
+
+def test_code_with_a_test_passes_verify(git_repo, metrics_dir):
+    ex = _writes({"lib/feature.py": "def f():\n    return 1\n",
+                  "lib/tests/test_feature.py": "def test_f():\n    assert True\n"})
+    result = so.execute_ticket("TICKET-1", "test-subsystem", measure=_improving(),
+                               executor=ex, repo_path=git_repo)
+    assert result["passing"] is True
+
+
+def test_docs_only_work_passes_verify(git_repo, metrics_dir):
+    ex = _writes({"docs/notes.md": "# notes\n"})
+    result = so.execute_ticket("TICKET-1", "test-subsystem", measure=_improving(),
+                               executor=ex, repo_path=git_repo)
+    assert result["passing"] is True
