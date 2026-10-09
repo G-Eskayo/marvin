@@ -121,6 +121,26 @@ def changes_in(worktree: Path, base: str = "main") -> list[dict]:
     return list(out.values())
 
 
+def staged_changes(repo: Path) -> list[dict]:
+    """What is staged for the next commit (the direct-commit check, #337)."""
+    out: dict[str, dict] = {}
+    for line in _git(repo, "diff", "--cached", "-M", "--name-status").splitlines():
+        parts = line.split("\t")
+        out[parts[-1]] = {"path": parts[-1], "status": parts[0], "added": [], "removed": []}
+    current = None
+    for l in _git(repo, "diff", "--cached", "-M", "-U0").splitlines():
+        if l.startswith("+++ "):
+            current = l[6:] if l.startswith("+++ b/") else None
+        elif current in out and l.startswith("+") and not l.startswith("+++"):
+            out[current]["added"].append(l[1:])
+        elif current in out and l.startswith("-") and not l.startswith("---"):
+            out[current]["removed"].append(l[1:])
+    for c in out.values():
+        if c["status"].startswith("D") and not c["removed"]:
+            c["removed"] = ["(deleted)"]
+    return list(out.values())
+
+
 def check_worktree(worktree: Path, base: str, rules: dict) -> tuple[bool, str]:
     try:
         return check(changes_in(Path(worktree), base), rules)

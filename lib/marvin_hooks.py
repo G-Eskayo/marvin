@@ -139,6 +139,8 @@ if __name__ == "__main__":
         gate(args[1], args[3:])
     elif args == ["install"]:
         install()
+        import commit_check  # the direct-commit check (ADR 0063 gate 4, #337) in ~/.agents' git hooks
+        print("commit check:", commit_check.install_hook(AGENTS))
         strays = stray_memories()
         print(f"hooks installed in {USER_SETTINGS}; memory -> {MAIN_MEMORY}")
         if strays:
