@@ -544,3 +544,62 @@ def test_a_failing_fit_check_never_blocks_the_pr(monkeypatch):
     import fit_check
     monkeypatch.setattr(fit_check, "post", lambda *a: (_ for _ in ()).throw(RuntimeError("gh down")))
     mrr._post_fit_check("G-Eskayo/marvin#1", "/nowhere", "http://fake")  # must not raise
+
+
+# ── simulator screenshot formatting ────────────────────────────────────────
+
+def test_formats_simulator_screenshots_with_one_image_per_caption():
+    """New simulator format: each screenshot gets its own caption with screen name and appearance."""
+    dev_evidence = {
+        "na": False,
+        "screenshots": [
+            {"screen": "Home", "path": "docs/evidence/home_light_portrait.png", "appearance": "light", "orientation": "portrait"},
+            {"screen": "Settings", "path": "docs/evidence/settings_dark_landscape.png", "appearance": "dark", "orientation": "landscape"},
+        ],
+    }
+    text = mrr._format_dev_evidence(dev_evidence)
+    assert "![**Home** (light, portrait)](docs/evidence/home_light_portrait.png)" in text
+    assert "![**Settings** (dark, landscape)](docs/evidence/settings_dark_landscape.png)" in text
+
+
+def test_formats_mixed_success_and_failure_scenarios():
+    """When some scenarios succeeded and some failed, both are shown."""
+    dev_evidence = {
+        "na": False,
+        "screenshots": [
+            {"screen": "Home", "path": "docs/evidence/home_light_portrait.png", "appearance": "light", "orientation": "portrait"},
+        ],
+        "failed": [
+            {"screen": "Settings", "reason": "app crashed"},
+        ],
+    }
+    text = mrr._format_dev_evidence(dev_evidence)
+    assert "![**Home** (light, portrait)]" in text
+    assert "⚠ **Failed scenarios:**" in text
+    assert "**Settings**: app crashed" in text
+
+
+def test_formats_all_failed_scenarios_with_error_message():
+    """When all scenarios failed, the error is clearly shown."""
+    dev_evidence = {
+        "na": False,
+        "error": "all 2 scenario(s) failed to capture",
+        "failed": [
+            {"screen": "Home", "reason": "simulator timeout"},
+            {"screen": "Settings", "reason": "app launch failed"},
+        ],
+    }
+    text = mrr._format_dev_evidence(dev_evidence)
+    assert "all 2 scenario(s) failed to capture" in text
+
+
+def test_simulator_format_doesnt_break_old_format():
+    """Old single-screenshot format should still work unchanged."""
+    old_format = {
+        "na": False,
+        "screenshot_path": "docs/evidence/pipeline-ticket-1.png",
+        "description": "Live screenshot captured from the running app.",
+    }
+    text = mrr._format_dev_evidence(old_format)
+    assert "![Screenshot](docs/evidence/pipeline-ticket-1.png)" in text
+    assert "Live screenshot captured from the running app." in text

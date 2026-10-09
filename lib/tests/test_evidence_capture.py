@@ -263,3 +263,81 @@ def test_the_pr_says_loudly_that_the_screenshot_failed():
     import mr_raiser
     text = mr_raiser._format_dev_evidence({"na": False, "error": "capture failed: Timeout waiting for Electron CDP endpoint"})
     assert "⚠" in text and "not verified" in text and "Timeout" in text
+
+
+# ── ticket_touches_ui (with generalized ui_paths) ──────────────────────────
+
+def test_ticket_touches_ui_detects_dashboard_changes(tmp_path):
+    """ticket_touches_ui with default paths should detect dashboard/src/ changes."""
+    # Create a git repo with a dashboard change
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, capture_output=True, check=True)
+
+    # Create a commit on main
+    (repo / "dashboard" / "src").mkdir(parents=True)
+    (repo / "dashboard" / "src" / "component.jsx").write_text("// old")
+    subprocess.run(["git", "add", "-A"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "initial"], cwd=repo, capture_output=True, check=True)
+
+    # Create a feature branch with dashboard changes
+    subprocess.run(["git", "checkout", "-b", "feature"], cwd=repo, capture_output=True, check=True)
+    (repo / "dashboard" / "src" / "component.jsx").write_text("// new")
+    subprocess.run(["git", "add", "-A"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "update"], cwd=repo, capture_output=True, check=True)
+
+    # ticket_touches_ui should return True
+    assert ec.ticket_touches_ui(repo) is True
+
+
+def test_ticket_touches_ui_ignores_non_ui_changes(tmp_path):
+    """ticket_touches_ui should return False for non-UI changes."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, capture_output=True, check=True)
+
+    # Create a commit on main
+    (repo / "lib").mkdir(parents=True)
+    (repo / "lib" / "utils.py").write_text("# old")
+    subprocess.run(["git", "add", "-A"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "initial"], cwd=repo, capture_output=True, check=True)
+
+    # Create a feature branch with non-UI changes
+    subprocess.run(["git", "checkout", "-b", "feature"], cwd=repo, capture_output=True, check=True)
+    (repo / "lib" / "utils.py").write_text("# new")
+    subprocess.run(["git", "add", "-A"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "update"], cwd=repo, capture_output=True, check=True)
+
+    # ticket_touches_ui should return False
+    assert ec.ticket_touches_ui(repo) is False
+
+
+def test_ticket_touches_ui_accepts_custom_ui_paths(tmp_path):
+    """ticket_touches_ui should accept caller-supplied ui_paths."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, capture_output=True, check=True)
+
+    # Create a commit on main
+    (repo / "lib").mkdir(parents=True)
+    (repo / "lib" / "ui_helpers.py").write_text("# old")
+    subprocess.run(["git", "add", "-A"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "initial"], cwd=repo, capture_output=True, check=True)
+
+    # Create a feature branch with changes to lib/
+    subprocess.run(["git", "checkout", "-b", "feature"], cwd=repo, capture_output=True, check=True)
+    (repo / "lib" / "ui_helpers.py").write_text("# new")
+    subprocess.run(["git", "add", "-A"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "update"], cwd=repo, capture_output=True, check=True)
+
+    # With default paths, should return False
+    assert ec.ticket_touches_ui(repo) is False
+
+    # With custom paths including lib/, should return True
+    assert ec.ticket_touches_ui(repo, ui_paths=("lib/",)) is True

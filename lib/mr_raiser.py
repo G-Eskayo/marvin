@@ -102,6 +102,29 @@ def _format_dev_evidence(dev_evidence: dict | None) -> str:
         return "Not available."
     if dev_evidence.get("na"):
         return f"N/A — {dev_evidence.get('reason', 'no UI')}"
+
+    # Handle new simulator-based multi-screenshot format
+    if dev_evidence.get("screenshots"):
+        lines = []
+        for shot in dev_evidence["screenshots"]:
+            screen = shot.get("screen", "")
+            path = shot.get("path", "")
+            appearance = shot.get("appearance", "light")
+            orientation = shot.get("orientation", "portrait")
+            caption = f"**{screen}** ({appearance}, {orientation})"
+            lines.append(f"![{caption}]({path})\n\n{caption}")
+
+        # Append failed scenarios if any
+        if dev_evidence.get("failed"):
+            lines.append("\n---\n\n⚠ **Failed scenarios:**")
+            for failed in dev_evidence["failed"]:
+                screen = failed.get("screen", "")
+                reason = failed.get("reason", "")
+                lines.append(f"- **{screen}**: {reason}")
+
+        return "\n\n".join(lines)
+
+    # Handle old format: single screenshot or error
     if dev_evidence.get("error"):
         return f"⚠ **Screenshot missing: the UI change is not verified in a running app.** {dev_evidence['error']}"
     screenshot = dev_evidence.get("screenshot_path", "")

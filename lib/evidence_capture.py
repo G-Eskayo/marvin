@@ -129,18 +129,31 @@ def capture_test_results(worktree_path: Path, test_command: list[str], timeout_s
 UI_PATH_PREFIXES = ("dashboard/src/", "dashboard/electron/")
 
 
-def _is_ui_path(changed_file: str) -> bool:
-    return any(changed_file.startswith(prefix) for prefix in UI_PATH_PREFIXES)
+def _is_ui_path(changed_file: str, prefixes: tuple[str, ...] = UI_PATH_PREFIXES) -> bool:
+    return any(changed_file.startswith(prefix) for prefix in prefixes)
 
 
-def ticket_touches_ui(worktree_path: Path, base_branch: str = "main") -> bool:
+def ticket_touches_ui(
+    worktree_path: Path,
+    base_branch: str = "main",
+    ui_paths: tuple[str, ...] | None = None,
+) -> bool:
     """True if this ticket's diff (against base_branch) includes any file
-    under a UI-associated path."""
+    under a UI-associated path.
+
+    Args:
+        worktree_path: Path to the git worktree
+        base_branch: Base branch to diff against (default "main")
+        ui_paths: Tuple of path prefixes to consider as UI (default UI_PATH_PREFIXES)
+    """
+    if ui_paths is None:
+        ui_paths = UI_PATH_PREFIXES
+
     result = subprocess.run(
         ["git", "diff", "--name-only", f"{base_branch}...HEAD"],
         cwd=worktree_path, capture_output=True, text=True,
     )
-    return any(_is_ui_path(f) for f in result.stdout.splitlines())
+    return any(_is_ui_path(f, ui_paths) for f in result.stdout.splitlines())
 
 
 def _default_capture_screenshot(worktree_path: Path) -> str:

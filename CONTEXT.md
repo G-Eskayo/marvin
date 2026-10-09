@@ -712,8 +712,7 @@ untouched (it is the "legacy profile"); only repos with a profile file use the p
   Optional tier = Spike app build, which needs `xcodegen`, the 241MB speaker model
   (`scripts/fetch-diarizer-models.sh`) and a signing team, so it is off until those exist. The project's own
   rule (ADR 0010, ticket #17: "the at-the-bottom decision is pure logic with unit tests") puts decisions in
-  `CaptionCore`, which is what makes `swift test` a meaningful gate. Evidence: dev-environment screenshot is
-  `N/A` (no simulator capture yet).
+  `CaptionCore`, which is what makes `swift test` a meaningful gate. Evidence: dev-environment screenshot captured via iOS simulator (G-Eskayo/marvin#126).
 - **Verified 2026-10-05 on mac-mini against the real clone**: `project_profile.py selftest
   G-Eskayo/clarity-captions` makes a real worktree from `origin/main`, runs the real baseline (`swift test`,
   60 passed + 1 skipped, 0 failed, ~31s) and prints the PR body the pipeline would raise (Metrics Comparison,

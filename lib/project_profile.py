@@ -261,6 +261,20 @@ def have(capability: str, env: dict, which=shutil.which) -> bool:
         return bool(dev) and (Path(dev) / "usr" / "bin" / "xcodebuild").exists()
     if capability in ("swift", "xcodegen"):
         return which(capability, path=env.get("PATH")) is not None
+    if capability == "simulator":
+        # Check for iOS runtime (not just xcode or watchOS/tvOS)
+        try:
+            result = subprocess.run(
+                ["xcrun", "simctl", "list", "runtimes", "--json"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode != 0:
+                return False
+            runtimes = json.loads(result.stdout)
+            return any(r.get("identifier", "").startswith("com.apple.CoreSimulator.SimRuntime.iOS-")
+                      for r in runtimes.get("runtimes", []))
+        except Exception:
+            return False
     return which(capability, path=env.get("PATH")) is not None
 
 
@@ -308,11 +322,13 @@ class Measurer:
         self.have = have or (lambda cap, e: globals()["have"](cap, e))
         self.report: dict = {"tiers": [], "notes": []}
         self.last_output = ""
+        self.worktree_path: Path | None = None  # Set by __call__ so evidence() can access it
 
     def __call__(self, worktree: Path) -> dict:
         metrics: dict = {}
         passed = failed = 0
         self.report = {"tiers": [], "notes": []}
+        self.worktree_path = Path(worktree)
         self._setup(Path(worktree))
         for t in self.profile["verify"]:
             row = {"id": t["id"], "label": t["label"], "ran": False}
@@ -376,8 +392,90 @@ class Measurer:
         if tests:
             test_results = {"suite": " + ".join(t["label"] for t in tests), "passed": sum(t["passed"] for t in tests),
                             "failed": sum(t["failed"] for t in tests), "total": sum(t["total"] for t in tests)}
+
+        # Try to capture simulator screenshots if configured and the ticket touches UI
+        dev_evidence = self._capture_dev_evidence_if_configured()
+        if dev_evidence is not None:
+            return test_results, dev_evidence
+
+        # Fallback: no capture configured
         reason = ((self.profile.get("evidence") or {}).get("dev") or {}).get("na", "no dev-environment capture configured for this project")
         return test_results, {"na": True, "reason": reason}
+
+    def _capture_dev_evidence_if_configured(self) -> dict | None:
+        """Capture dev evidence if the profile has capture scenarios configured and this ticket touches UI.
+        Returns None if capture is not configured (falls back to static na in evidence())."""
+        if not self.worktree_path:
+            return None
+
+        # Check if capture scenarios are configured
+        capture_scenarios = ((self.profile.get("evidence") or {}).get("dev") or {}).get("capture")
+        if not capture_scenarios:
+            return None
+
+        # Check if the ticket touches UI using the configured UI paths
+        try:
+            import evidence_capture as ec
+            ui_paths = self.profile.get("ui_paths", ec.UI_PATH_PREFIXES)
+            if not ec.ticket_touches_ui(self.worktree_path, ui_paths=ui_paths):
+                # Ticket doesn't touch UI, so no capture needed
+                return {"na": True, "reason": "no UI"}
+        except Exception:
+            # If we can't determine UI status, skip capture
+            return None
+
+        # Now try to capture screenshots
+        try:
+            import simulator_capture as sc
+            results = sc.capture_scenarios(self.worktree_path, capture_scenarios)
+            if not results:
+                return {"na": True, "reason": "no scenarios configured"}
+
+            # Build the evidence dict from the results
+            screenshots = []
+            failed_scenarios = []
+            for r in results:
+                if r.get("ok"):
+                    screenshots.append({
+                        "screen": r.get("screen"),
+                        "path": r.get("path"),
+                        "appearance": r.get("appearance", "light"),
+                        "orientation": r.get("orientation", "portrait"),
+                    })
+                else:
+                    failed_scenarios.append({
+                        "screen": r.get("screen"),
+                        "reason": r.get("reason"),
+                    })
+
+            if screenshots:
+                return {
+                    "na": False,
+                    "screenshots": screenshots,
+                    "failed": failed_scenarios if failed_scenarios else None,
+                }
+            elif failed_scenarios:
+                return {
+                    "na": False,
+                    "error": f"all {len(failed_scenarios)} scenario(s) failed to capture",
+                    "failed": failed_scenarios,
+                }
+        except TestTimedOut as exc:
+            return {
+                "na": False,
+                "error": f"screenshot capture timed out after {exc.timeout_s}s",
+            }
+        except EnvMissing as exc:
+            # Machine doesn't have the tools; this is not a ticket failure
+            raise exc
+        except Exception as e:
+            # Capture failure is not a ticket failure; PR just notes it's missing
+            return {
+                "na": False,
+                "error": f"screenshot capture failed: {str(e)[:300]}",
+            }
+
+        return None
 
     def pr_note(self) -> str:
         return "\n".join(self.report["notes"])
