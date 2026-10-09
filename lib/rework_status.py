@@ -34,6 +34,21 @@ def _minutes(since: datetime | None, now: datetime) -> str:
     return f"{m} min" if m < 120 else f"{m // 60} h"
 
 
+def _read_diagnosis(ticket_number: int, repo: str) -> dict | None:
+    """Read the latest diagnosis for a ticket from denial_diagnosis.jsonl."""
+    try:
+        import denial_diagnosis as dd
+        # repo can be either "marvin" or "G-Eskayo/marvin"; match both
+        full_repo = repo if "/" in repo else f"G-Eskayo/{repo}"
+        recs = [r for r in dd._read() if r.get("ticket") == ticket_number and r.get("project") == full_repo]
+        if recs:
+            latest = max(recs, key=lambda r: r.get("_t", datetime.min(timezone.utc)))
+            return {"kind": latest.get("diagnosis_kind"), "route": latest.get("route")}
+    except (ImportError, Exception):
+        pass
+    return None
+
+
 def status_for(ticket: dict, ctx: dict) -> dict:
     """One of: running, held, needs-person, paused, blocked, queued, not-queued. `ctx`: queue (identifiers, in dispatch
     order), key (this ticket's identifier, default its number), attempts (PRs already raised), max_attempts,
@@ -42,36 +57,48 @@ def status_for(ticket: dict, ctx: dict) -> dict:
     me = ctx.get("key", ticket["number"])
     attempts, cap = ctx.get("attempts", 0), ctx.get("max_attempts", 3)
     now = ctx.get("now") or datetime.now(timezone.utc)
+    project = ctx.get("project", "G-Eskayo/marvin")
+
+    result = {}
 
     claim = next((n[len("claimed:"):] for n in names if n.startswith("claimed:")), None)
     if claim:
-        return {"state": "running", "headline": "Being rebuilt right now",
+        result = {"state": "running", "headline": "Being rebuilt right now",
                 "detail": f"Running on {claim} for {_minutes(ctx.get('claim_started'), now)} (attempt {attempts + 1} of {cap}). It updates this same PR when it finishes."}
-    if names & {"held", "pinned"}:
-        return {"state": "held", "headline": "On hold",
+    elif names & {"held", "pinned"}:
+        result = {"state": "held", "headline": "On hold",
                 "detail": "A person asked the pipeline not to touch this ticket (held or pinned), so it will not be rebuilt until that label is removed."}
-    if attempts >= cap:
-        return {"state": "needs-person", "headline": "Needs you",
+    elif attempts >= cap:
+        result = {"state": "needs-person", "headline": "Needs you",
                 "detail": f"It has been rebuilt {attempts} times and still does not pass, so the pipeline stopped. Look at the denial comments on its ticket."}
-    if "ready-for-agent" not in names:
-        return {"state": "needs-person", "headline": "Parked: the pipeline stopped trying",
+    elif "ready-for-agent" not in names:
+        result = {"state": "needs-person", "headline": "Parked: the pipeline stopped trying",
                 "detail": "It failed its automated attempts, so the pipeline took off ready-for-agent (and the claim) to stop retrying. "
                           "Read the latest comment on the ticket for why, fix that, then add ready-for-agent back and it is rebuilt."}
-    if ctx.get("paused"):
-        return {"state": "paused", "headline": f"Paused: {ctx.get('project', 'this project')} is not being dispatched",
+    elif ctx.get("paused"):
+        result = {"state": "paused", "headline": f"Paused: {ctx.get('project', 'this project')} is not being dispatched",
                 "detail": f"The circuit breaker stopped dispatch after {ctx['paused']}. Nothing starts until that is fixed or cleared."}
-    if ctx.get("blockers"):
-        return {"state": "blocked", "headline": "Waiting on another ticket",
+    elif ctx.get("blockers"):
+        result = {"state": "blocked", "headline": "Waiting on another ticket",
                 "detail": "It cannot start until " + ", ".join(f"#{b}" for b in ctx["blockers"]) + " is closed."}
-    queue = ctx.get("queue", [])
-    if me in queue:
-        pos, total = queue.index(me) + 1, len(queue)
-        running = ctx.get("running") or []
-        now_running = f"Running now: {'; '.join(running)}." if running else "Nothing is running right now, so it starts at the next scan (after any merge, or on the hour)."
-        return {"state": "queued", "headline": f"Queued: {ordinal(pos)} of {total} waiting", "position": pos, "of": total,
-                "detail": f"Tickets run one at a time per machine, ordered by priority, deadline and age. {now_running}"}
-    return {"state": "not-queued", "headline": "Not queued",
-            "detail": "It is not in the dispatch queue and nothing explains why (no hold, pause or blocker). Check its labels and the scan log."}
+    else:
+        queue = ctx.get("queue", [])
+        if me in queue:
+            pos, total = queue.index(me) + 1, len(queue)
+            running = ctx.get("running") or []
+            now_running = f"Running now: {'; '.join(running)}." if running else "Nothing is running right now, so it starts at the next scan (after any merge, or on the hour)."
+            result = {"state": "queued", "headline": f"Queued: {ordinal(pos)} of {total} waiting", "position": pos, "of": total,
+                    "detail": f"Tickets run one at a time per machine, ordered by priority, deadline and age. {now_running}"}
+        else:
+            result = {"state": "not-queued", "headline": "Not queued",
+                    "detail": "It is not in the dispatch queue and nothing explains why (no hold, pause or blocker). Check its labels and the scan log."}
+
+    # Add diagnosis if available
+    diagnosis = _read_diagnosis(ticket["number"], project)
+    if diagnosis:
+        result["diagnosis"] = diagnosis
+
+    return result
 
 
 def collect(repos: list[str] | None = None) -> dict:
