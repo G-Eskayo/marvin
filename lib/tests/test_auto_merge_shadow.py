@@ -138,3 +138,25 @@ def test_a_revert_stays_recorded_even_if_a_merged_outcome_arrives_later(state):
     sh.record_outcome(pr(6)["url"], "reverted", path=state)
     sh.record_outcome(pr(6)["url"], "merged", path=state)          # the hourly run catching up must not erase it
     assert [d["number"] for d in sh.report(path=state, now=T0 + 4 * DAY)["disagreements"]] == [6]
+
+
+# Scoring moved here from Approve (review of #339 / PR #351): one unscored PR per hourly run.
+def test_the_score_line_written_by_the_mutation_check_is_read():
+    assert sh.mutation_score("## Mutation Score\n\n**Score:** 87% (7/8) of planted bugs caught by this PR's tests.\n") == 87
+    assert sh.mutation_score("## Mutation Score\n\n**Score:** 100% (0/0): no mutable lines\n") == 100
+    assert sh.mutation_score("## Mutation Score\n\nScore: unknown (no test file for it). Auto-merge waits.\n") is None
+
+
+def test_one_pr_is_picked_for_scoring_the_oldest_without_a_score_for_its_current_commit():
+    prs = [{"url": "u3", "number": 3, "body": "", "headRefOid": "c3"},
+           {"url": "u1", "number": 1, "body": "**Score:** 90% (9/10)", "headRefOid": "c1"},
+           {"url": "u2", "number": 2, "body": "", "headRefOid": "c2"}]
+    assert sh.pick_unscored(prs, scored={})["url"] == "u2"
+    assert sh.pick_unscored(prs, scored={"u2": "c2"})["url"] == "u3"          # already scored at this commit
+    assert sh.pick_unscored(prs, scored={"u2": "old", "u3": "c3"})["url"] == "u2"   # a new commit gets a new score
+    assert sh.pick_unscored(prs[1:2], scored={}) is None
+
+
+def test_a_pr_whose_score_is_stale_after_a_new_push_is_rescored():
+    pr_ = {"url": "u1", "number": 1, "body": "**Score:** 90% (9/10)", "headRefOid": "new"}
+    assert sh.pick_unscored([pr_], scored={"u1": "old"})["url"] == "u1"
