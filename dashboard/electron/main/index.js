@@ -9,6 +9,7 @@ import { promisify } from 'util'
 import { listSubsystems, readHistory, buildIndex } from './metrics.js'
 import { getReworkStatus, clearReworkCache } from './rework.js'
 import { createGithubState, repoOfSource } from './github_state.js'
+import { createStackRetarget } from './stack_retarget.js'
 import { prsForOrderCheck, listPipelinePrs, approveMr, denyMr, fetchTicketContext, sentBackKeys, clearSentBackLabel } from './mr_review.js'
 import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
 import { readDispatchStatus } from './dispatch_status.js'
@@ -543,7 +544,22 @@ function registerMrReviewHandlers() {
     const res = await fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/rebase-status'), { signal: AbortSignal.timeout(3000) })
     return res.ok ? res.json() : {}
   }
-  ipcMain.handle('mr:list', () => listPipelinePrs(listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus }))
+  // Safety net for stacked PRs whose parent merged without the post-merge move (stack_retarget.js). Reads the PR list
+  // already in memory; asks GitHub only about an orphaned PR, at most every 5 minutes each.
+  const stackRetarget = createStackRetarget({
+    gh: async (args) => (await execFileAsync('gh', args)).stdout,
+    onMoved: (moved) => {
+      for (const m of moved) {
+        console.error(`[stack-retarget] moved PR #${m.number} (${m.repo}) onto main: its parent #${m.parent} had merged`)
+        githubChanged(`github:${m.repo}`)
+      }
+      mainWindow?.webContents.send('mr:refresh')
+    }
+  })
+  ipcMain.handle('mr:list', () => {
+    listOpenPrs().then((prs) => stackRetarget.check(prs)).catch(() => {})
+    return listPipelinePrs(listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus })
+  })
 
   // Backs the MR Review tab's status dot -- red/blue/green computed from
   // which pipeline-PR numbers are currently open vs. already marked seen

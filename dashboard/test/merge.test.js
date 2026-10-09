@@ -568,6 +568,12 @@ describe('_defaultRunTests', () => {
 })
 
 describe('execWithGroupTimeout', () => {
+  it('returns the command output: the merge server reads it (pr list, pr view) and got undefined before, 2026-10-09', async () => {
+    const out = await execWithGroupTimeout('bash', ['-c', 'echo hello; echo oops >&2'], {}, 5000)
+    expect(out.stdout).toBe('hello\n')
+    expect(out.stderr).toBe('oops\n')
+  })
+
   it('spawns and kills a hanging command when timeout expires', async () => {
     const promise = execWithGroupTimeout('bash', ['-c', 'sleep 9999 & wait'], {}, 500)
 

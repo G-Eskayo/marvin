@@ -31,7 +31,7 @@ export async function execWithGroupTimeout(cmd, args, opts, timeoutMs = DEFAULT_
   const promise = new Promise((resolve, reject) => {
     child.on('error', reject)
     child.on('close', (code) => {
-      if (code === 0) resolve()
+      if (code === 0) resolve({ stdout, stderr })  // callers read it (gh pr list/view); resolving nothing broke them silently
       else reject(Object.assign(new Error(`Command failed with exit code ${code}`), { stdout, stderr }))
     })
   })
@@ -481,7 +481,7 @@ async function mergePrUnqueued(
     ? rebaseAndRetestFn(head, exec, ctx.clone, ctx.runTests, ctx.base, ctx.resolveConflicts)
     : rebaseAndRetestFn(head, exec, REPO_PATH, _defaultRunTests, 'main', generatedResolver(MARVIN_REPO, exec)))
   inRepoQueue(integrateRepo, () => rebaseOpen({ repo: integrateRepo, mergedPrUrl: prUrl, base: ctx ? ctx.base : 'main', exec, rebase }))
-    .catch(() => {})
+    .catch((e) => console.error(`[post-merge] ${integrateRepo}: after ${prUrl}: ${String(e?.message || e).slice(0, 300)}`))
     .then(() => redispatch())
   stage('done', 'passed', `merged: ${prUrl}`)
   return { merged: true, reengaged: false, reason: null }
