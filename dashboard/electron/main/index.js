@@ -52,11 +52,15 @@ import { buildWorkingNow } from './working.js'
 import { listJobs } from './jobs.js'
 import { readTicketAgents } from './ticket_agents.js'
 import { getUsageReport } from './usage_report.js'
-import { createRefreshServer } from './refresh_server.js'
+import { startRefreshServer, parseRefreshPort } from './refresh_server.js'
+import { isEvidenceCapture, installCaptureGuard } from './capture_mode.js'
 import { adoptLoginShellPath, adoptSharedGhToken, useGhGate } from './path.js'
 import { postTicketInput } from './ticket_input.js'
 import { createImageLoader, mediaFileFor } from './pr_images.js'
 import { resolveServiceDefaults, resolveDeviceId } from './device_identity.js'
+
+// The pipeline's screenshot copy runs unattended beside the real dashboard: log, never show a modal (#384).
+if (isEvidenceCapture(process.env)) installCaptureGuard(process)
 
 // Every IPC handler below is timed into ~/.claude/logs/dashboard-timing.jsonl (#236); must run before any is registered.
 instrumentIpc(ipcMain)
@@ -80,7 +84,8 @@ const MR_DENY_WEBHOOK_URL = process.env.MARVIN_MR_DENY_WEBHOOK_URL || `http://${
 // Where the webhook-server process forwards its /mr-ready ping (see
 // dashboard/webhook-server/refresh_relay.js) so an already-open window
 // refreshes immediately instead of waiting on its own fallback poll.
-const DASHBOARD_REFRESH_PORT = Number(process.env.MARVIN_DASHBOARD_REFRESH_PORT) || 7879
+// 0 = ephemeral (the evidence-capture copy); junk falls back to 7879.
+const DASHBOARD_REFRESH_PORT = parseRefreshPort(process.env.MARVIN_DASHBOARD_REFRESH_PORT)
 
 const ghListOpenPrs = (light) => async (repo) => {
   const { stdout } = await execFileAsync('gh', prListArgs(repo, { light }))
@@ -776,13 +781,14 @@ app.whenReady().then(() => {
   triggerHub.onTrigger((t) => mainWindow?.webContents.send('trigger', t))
 
   // External pings (webhook-server): bare = the legacy "MR list changed"; with topics = what changed.
-  createRefreshServer((payload = {}) => {
+  // Port already taken (another dashboard running) = one log line, not a crash (#384).
+  startRefreshServer((payload = {}) => {
     const topics = Array.isArray(payload.topics) ? payload.topics : ['mr']
     for (const topic of topics) {
       if (topic === 'mr') { githubChanged(payload.source); mainWindow?.webContents.send('mr:refresh') }
       else triggerHub.emit(topic, payload.source || 'ping')
     }
-  }).listen(DASHBOARD_REFRESH_PORT, '127.0.0.1')
+  }, { port: DASHBOARD_REFRESH_PORT, host: '127.0.0.1' })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

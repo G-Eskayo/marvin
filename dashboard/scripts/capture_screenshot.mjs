@@ -11,7 +11,7 @@
 import { chromium } from 'playwright-core'
 import path from 'node:path'
 import fs from 'node:fs'
-import { selectContentPage } from '../src/lib/screenshot_capture.js'
+import { selectContentPage, captureLaunchEnv } from '../src/lib/screenshot_capture.js'
 
 const APP_DIR = path.resolve(import.meta.dirname, '..')
 const outputPath = process.argv[2]
@@ -40,6 +40,9 @@ try {
   browser = await chromium.launch({
     executablePath: electronBin,
     args: [APP_DIR, '--no-sandbox'],
+    // Ephemeral refresh port + capture flag: this copy must never collide with
+    // the installed dashboard's port 7879 or pop a main-process error dialog (#384).
+    env: captureLaunchEnv(process.env),
   })
 
   // Poll for a real content page (not devtools://) up to ~10s
