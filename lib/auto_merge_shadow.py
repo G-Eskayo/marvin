@@ -177,6 +177,13 @@ def switch_on(by: str, path: Path = STATE_PATH, now: float | None = None) -> str
     return "on"
 
 
+def pick_unscored(prs: list[dict], scored: dict) -> dict | None:
+    """The oldest open PR whose current commit hasn't been scored yet (a new push means a new score)."""
+    todo = [p for p in prs if scored.get(p["url"]) != p.get("headRefOid")
+            and (mutation_score(p.get("body", "")) is None or p["url"] in scored)]
+    return min(todo, key=lambda p: p["number"]) if todo else None
+
+
 # ── the hourly run (real GitHub and git; on the mini) ───────────────────────
 
 def _gh(args):
@@ -186,12 +193,46 @@ def _gh(args):
     return subprocess.run(["gh", *args], capture_output=True, text=True, check=True, timeout=60, env=run_env()).stdout
 
 
+def _score_one(prs: list[dict], repo: str, path: Path) -> None:
+    """Score one unscored PR with the mutation check (#339) in a scratch worktree, and write the section into its body
+    (one per hourly run: each check can take 10 minutes). Best effort; no check installed = nothing scored."""
+    import subprocess
+    import tempfile
+    try:
+        import mutation_check as mc
+        mc.render_section, mc.merge_bodies                       # the reviewed engine (PR #351)
+    except (ImportError, AttributeError):
+        return
+    st = _read(path) or {}
+    pr = pick_unscored(prs, st.get("scored", {}))
+    if pr is None:
+        return
+    clone = Path.home() / ".agents"
+    scratch = Path(tempfile.mkdtemp(prefix="shadow-mutation-"))
+    try:
+        subprocess.run(["git", "fetch", "-q", "origin", "main", pr["headRefName"]], cwd=clone, timeout=120, check=True)
+        subprocess.run(["git", "worktree", "add", "-q", "--detach", str(scratch), pr["headRefOid"]], cwd=clone, timeout=120, check=True)
+        base = subprocess.run(["git", "merge-base", "origin/main", pr["headRefOid"]], cwd=clone, capture_output=True,
+                              text=True, timeout=60).stdout.strip()
+        result = mc.run_mutation_check(str(scratch), pr["headRefName"], "main", base)
+        body = mc.merge_bodies(pr.get("body") or "", mc.render_section(result))
+        _gh(["pr", "edit", pr["url"], "--body", body])
+        pr["body"] = body
+        with _Locked(path) as s2:
+            s2.setdefault("scored", {})[pr["url"]] = pr["headRefOid"]
+    except Exception as e:  # noqa: BLE001 -- try again next hour
+        print(f"auto-merge shadow: scoring PR #{pr['number']} failed: {e}", file=sys.stderr)
+    finally:
+        subprocess.run(["git", "worktree", "remove", "--force", str(scratch)], cwd=clone, capture_output=True, timeout=60)
+
+
 def run(repo: str = "G-Eskayo/marvin", path: Path = STATE_PATH) -> list[dict]:
     """Verdicts for every open PR in `repo`, and the outcome of PRs that closed since. Best effort."""
     import subprocess
     import trust_ramp
     prs = json.loads(_gh(["pr", "list", "--repo", repo, "--state", "open", "--limit", "100",
-                          "--json", "number,url,title,body,files"]))
+                          "--json", "number,url,title,body,files,headRefName,headRefOid"]))
+    _score_one(prs, repo, path)
     clone = Path.home() / ".agents"
     tops = {l for l in subprocess.run(["git", "ls-tree", "--name-only", "-d", "origin/main"], cwd=clone,
                                       capture_output=True, text=True).stdout.split()}
