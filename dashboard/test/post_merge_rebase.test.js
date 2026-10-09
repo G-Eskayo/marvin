@@ -65,10 +65,23 @@ describe('rebaseOpenPrs', () => {
     expect(entries.map((e) => e.state)).toEqual(['error', 'clean'])
   })
 
-  it('a failing PR list means nothing to do, not a crash', async () => {
+  it('a failing PR list is not a crash, but it is said out loud: logged and recorded against the merged PR', async () => {
     const exec = vi.fn(async () => { throw new Error('gh down') })
-    const entries = await rebaseOpenPrs({ repo: REPO, mergedPrUrl: MERGED, exec, rebase: vi.fn(), recordStageFn: vi.fn(), writeStatus: vi.fn() })
-    expect(entries).toEqual([])
+    const writeStatus = vi.fn()
+    const log = vi.fn()
+    const entries = await rebaseOpenPrs({ repo: REPO, mergedPrUrl: MERGED, exec, rebase: vi.fn(), recordStageFn: vi.fn(), writeStatus, log, now: NOW })
+    expect(entries).toEqual([expect.objectContaining({ url: MERGED, pr: 229, state: 'error' })])
+    expect(entries[0].reason).toMatch(/could not list the open PRs.*gh down/)
+    expect(writeStatus).toHaveBeenCalledWith(entries)
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/post-merge.*gh down/))
+  })
+
+  it('an exec that returns no output (the bug that kept this from ever running) is reported, not swallowed', async () => {
+    const exec = vi.fn(async () => undefined)
+    const log = vi.fn()
+    const entries = await rebaseOpenPrs({ repo: REPO, mergedPrUrl: MERGED, exec, rebase: vi.fn(), recordStageFn: vi.fn(), writeStatus: vi.fn(), log, now: NOW })
+    expect(entries[0].state).toBe('error')
+    expect(log).toHaveBeenCalled()
   })
 
   it('a PR with no linked ticket is still rebased, with no stage-log entry', async () => {

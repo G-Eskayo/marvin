@@ -17,26 +17,34 @@ export function conflictFiles(text) {
 
 const prNumber = (url) => Number(String(url).match(/\/pull\/(\d+)/)?.[1] ?? 0)
 
-export async function rebaseOpenPrs({ repo, mergedPrUrl, base = 'main', exec, rebase, recordStageFn = recordStage, writeStatus = writeRebaseStatus, now = () => new Date() }) {
+export async function rebaseOpenPrs({ repo, mergedPrUrl, base = 'main', exec, rebase, recordStageFn = recordStage, writeStatus = writeRebaseStatus, now = () => new Date(), log = (m) => console.error(m) }) {
+  const after = prNumber(mergedPrUrl)
   let prs
   try {
-    const { stdout } = await exec('gh', ['pr', 'list', '--repo', repo, '--state', 'open', '--limit', '100',
+    const out = await exec('gh', ['pr', 'list', '--repo', repo, '--state', 'open', '--limit', '100',
       '--json', 'number,url,headRefName,baseRefName,isCrossRepository,body'])
-    prs = JSON.parse(stdout)
-    if (!Array.isArray(prs)) return []
-  } catch {
-    return []
+    prs = JSON.parse(out?.stdout ?? '')
+    if (!Array.isArray(prs)) throw new Error('the PR list was not a list')
+  } catch (e) {
+    // Said out loud: this failed silently on every merge until 2026-10-09 (the exec returned no output), so stacked
+    // PRs were never moved onto main. The MR Review safety net (stack_retarget.js) catches what this misses.
+    const reason = `After PR #${after} merged, could not list the open PRs to rebase them: ${String(e?.message || e)}`.slice(0, 300)
+    log(`[post-merge] ${repo}: ${reason}`)
+    const entries = [{ url: mergedPrUrl, pr: after, state: 'error', files: [], after, at: now().toISOString(), reason }]
+    try { writeStatus(entries) } catch { /* fail-soft */ }
+    return entries
   }
-  const after = prNumber(mergedPrUrl)
   const entries = []
   // A PR stacked on the one just merged still targets that PR's branch, and GitHub only retargets it when the branch
   // is deleted (merges here keep it). Left alone it can never reach main: merged there, its work silently misses main
   // and its ticket never closes. So move it onto the base branch first, then it is rebased like any other.
   let mergedHead = null
   try {
-    const { stdout } = await exec('gh', ['pr', 'view', mergedPrUrl, '--json', 'headRefName'])
-    mergedHead = JSON.parse(stdout).headRefName || null
-  } catch { /* no head known: nothing to retarget */ }
+    const out = await exec('gh', ['pr', 'view', mergedPrUrl, '--json', 'headRefName'])
+    mergedHead = JSON.parse(out?.stdout ?? '').headRefName || null
+  } catch (e) {
+    log(`[post-merge] ${repo}: could not read PR #${after}'s branch, so PRs stacked on it were not moved onto ${base}: ${String(e?.message || e).slice(0, 200)}`)
+  }
   const retargeted = new Map()
   for (const pr of prs.filter((p) => mergedHead && p.baseRefName === mergedHead && !p.isCrossRepository)) {
     try {
