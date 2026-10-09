@@ -29,6 +29,25 @@ export async function rebaseOpenPrs({ repo, mergedPrUrl, base = 'main', exec, re
   }
   const after = prNumber(mergedPrUrl)
   const entries = []
+  // A PR stacked on the one just merged still targets that PR's branch, and GitHub only retargets it when the branch
+  // is deleted (merges here keep it). Left alone it can never reach main: merged there, its work silently misses main
+  // and its ticket never closes. So move it onto the base branch first, then it is rebased like any other.
+  let mergedHead = null
+  try {
+    const { stdout } = await exec('gh', ['pr', 'view', mergedPrUrl, '--json', 'headRefName'])
+    mergedHead = JSON.parse(stdout).headRefName || null
+  } catch { /* no head known: nothing to retarget */ }
+  const retargeted = new Map()
+  for (const pr of prs.filter((p) => mergedHead && p.baseRefName === mergedHead && !p.isCrossRepository)) {
+    try {
+      await exec('gh', ['pr', 'edit', pr.url, '--base', base])
+      retargeted.set(pr.url, pr.baseRefName)
+      pr.baseRefName = base
+    } catch (e) {
+      entries.push({ url: pr.url, pr: pr.number, state: 'error', files: [], after, at: now().toISOString(),
+        reason: `PR #${after} merged but couldn't move it onto ${base}: ${String(e?.message || e)}`.slice(0, 300) })
+    }
+  }
   for (const pr of prs.filter((p) => p.url !== mergedPrUrl && p.baseRefName === base && !p.isCrossRepository)) {
     let state, files = [], reason = ''
     try {
@@ -40,7 +59,8 @@ export async function rebaseOpenPrs({ repo, mergedPrUrl, base = 'main', exec, re
       state = 'error'
       reason = String(e?.message || e)
     }
-    entries.push({ url: pr.url, pr: pr.number, state, files, after, at: now().toISOString(), reason: reason.slice(0, 300) })
+    entries.push({ url: pr.url, pr: pr.number, state, files, after, at: now().toISOString(), reason: reason.slice(0, 300),
+      ...(retargeted.has(pr.url) ? { retargetedFrom: retargeted.get(pr.url) } : {}) })
     const ref = parseTicketRef(pr.body || '')
     if (ref !== null) {
       const detail = state === 'clean' ? `rebased onto ${base} after PR #${after} merged`
