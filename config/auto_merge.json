@@ -1,0 +1,63 @@
+{
+  "_readme": "Auto-merge rules (ADR 0064, lib/auto_merge_policy.py). This file is itself core: changing it always waits for Gil, so auto-merge can never widen its own permissions. Paths are matched case-insensitively (macOS file systems ignore case). core = always waits for Gil, whatever the ticket; ui = waits until the render check passed (#126); dependencies = manifests and lockfiles: adding or upgrading code from outside always waits. A path under none of these is owned if its top-level folder exists in the repo; a brand-new top-level folder is owned, at most new_top_level_per_week a week.",
+  "core": [
+    "config/auto_merge.json",
+    "lib/auto_merge_policy.py",
+    "lib/trust_ramp.py",
+    "lib/auto_merge*.py",
+    "dashboard/webhook-server/merge.js",
+    "dashboard/webhook-server/post_merge_rebase.js",
+    "dashboard/webhook-server/merge_queue*.js",
+    "dashboard/webhook-server/auto_merge*.js",
+    "lib/generated_paths.py",
+    "lib/marvin_hooks.py",
+    "lib/gh_merge_guard.py",
+    "lib/session_work.py",
+    ".claude/**",
+    ".githooks/**",
+    "config/allowlist*",
+    "lib/allowlist*",
+    "bin/gh",
+    "bin/install-gh-gate.sh",
+    "lib/code_sync.py",
+    "lib/cross_machine_merge.py",
+    "lib/disk_trim.py",
+    "lib/cleanup_sweep.py",
+    "lib/relocate_project.py",
+    "**/*secret*",
+    "**/*token*",
+    "**/*.pem",
+    "**/*.key",
+    "**/*auth*",
+    "dashboard/electron/main/path.js",
+    "dashboard/webhook-server/gh_auth.js"
+  ],
+  "ui": [
+    "dashboard/src/**",
+    "dashboard/index.html"
+  ],
+  "dependencies": [
+    "**/package.json",
+    "**/package-lock.json",
+    "**/pnpm-lock.yaml",
+    "**/yarn.lock",
+    "**/requirements*.txt",
+    "**/pyproject.toml",
+    "**/Pipfile*",
+    "**/uv.lock",
+    "**/poetry.lock",
+    "**/Package.swift",
+    "**/Package.resolved",
+    "**/Podfile*",
+    "**/Gemfile*",
+    "**/go.mod",
+    "**/go.sum",
+    "**/Cargo.*"
+  ],
+  "max_changed_lines": 1500,
+  "always_ask_repos": [
+    "G-Eskayo/finance-os"
+  ],
+  "home_repo": "G-Eskayo/marvin",
+  "new_top_level_per_week": 3
+}
