@@ -17,6 +17,8 @@ const execFileAsync = promisify(execFile)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const REPO_PATH = path.resolve(__dirname, '..', '..')
 const REBUILD_SCRIPT = path.resolve(__dirname, '..', 'scripts', 'rebuild_and_install.sh')
+const DASHBOARD_REBUILD = path.resolve(__dirname, '..', '..', 'lib', 'dashboard_rebuild.py')
+const DEPLOY_PING_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'deploy_ping.py')
 const TICKET_PIPELINE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'ticket_pipeline.py')
 const VENV_PYTHON = path.resolve(__dirname, '..', '..', 'venv', 'bin', 'python')
 const PROFILE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'project_profile.py')
@@ -373,7 +375,7 @@ async function mergePrUnqueued(
   recordStageFn = recordStage,
   deps = {}
 ) {
-  const { sleep, recordFailureFn = recordFailure, gateContext = defaultGateContext, baselineFails = null, gateTimeoutMs = GATE_TIMEOUT_MS, rebaseOpen = checkOpenPrs } = deps
+  const { sleep, recordFailureFn = recordFailure, gateContext = defaultGateContext, baselineFails = null, gateTimeoutMs = GATE_TIMEOUT_MS, rebaseOpen = checkOpenPrs, ping = triggerDeployPingIfMerged } = deps
   if (typeof prUrl !== 'string' || !prUrl.startsWith('https://github.com/')) {
     throw new MergeFailure(classifyFailure({ stage: 'request', error: new Error(`Not a GitHub PR URL: ${prUrl}`) }))
   }
@@ -512,6 +514,12 @@ async function mergePrUnqueued(
     // marvin-only: the dashboard app is rebuilt when a merged PR touched dashboard/.
     stage('rebuilding', 'started', 'triggered if the PR touched dashboard/')
     await rebuild(prUrl, exec)
+    // Restart the webhook server on this machine if it touched webhook/ or main code
+    stage('webhook-restart', 'started', 'triggered if the PR touched webhook-server/ or electron/main')
+    await triggerWebhookRestartIfTouched(prUrl, exec)
+    // After a marvin merge, ping other Macs to pull and rebuild (fire-and-forget).
+    stage('deploy-ping', 'started', 'pinging other machines to pull and rebuild')
+    ping()
   }
   // #225 (overlap rule, 2026-10-09): move stacked PRs onto the base and conflict-check the other open PRs (queued
   // behind this merge, so the response does not wait; no tests, no pushes), then run the pipeline scan.
@@ -542,7 +550,42 @@ export async function triggerRebuildIfDashboardChanged(prUrl, exec = execFileAsy
   }
   if (!touched.some((p) => p.startsWith('dashboard/'))) return
 
-  spawnFn(REBUILD_SCRIPT, [], { detached: true, stdio: 'ignore' }).unref()
+  spawnFn(VENV_PYTHON, [DASHBOARD_REBUILD, '--force-relaunch'], { detached: true, stdio: 'ignore' }).unref()
+}
+
+// Restart the webhook server if a merge touched code it runs.
+// Same fire-and-forget pattern: don't block the merge, errors are swallowed.
+// The --force-relaunch flag skips the "don't interrupt a running server" guard
+// but still respects debounce and backoff.
+export async function triggerWebhookRestartIfTouched(prUrl, exec = execFileAsync, spawnFn = spawn) {
+  let touched
+  try {
+    const { stdout } = await exec('gh', ['pr', 'view', prUrl, '--json', 'files', '--jq', '.files[].path'])
+    touched = stdout.split('\n').filter(Boolean)
+  } catch {
+    return
+  }
+  // Restart if touched webhook server code (webhook-server or the electron main process it controls)
+  // but skip test-only changes
+  if (!touched.some((p) => (p.startsWith('dashboard/webhook-server/') || p.startsWith('dashboard/electron/main')) && !p.startsWith('dashboard/test/'))) return
+
+  spawnFn(VENV_PYTHON, [path.resolve(__dirname, '..', '..', 'lib', 'webhook_restart.py'), '--force-relaunch'], { detached: true, stdio: 'ignore' }).unref()
+}
+
+// After a marvin-repo merge, ping other Macs to pull the code and rebuild.
+// Fire-and-forget on each device (skip offline, don't block merge). The ping runs
+// a script that pulls ~/.agents and ~/.claude, then (delayed ~2min past the rebuild
+// settle window) triggers dashboard_rebuild and webhook_restart. This ensures every
+// machine runs the merged code within ~5 minutes, even if it was asleep or offline
+// during the merge. Only for marvin (not other projects), since only marvin has code
+// in ~/.agents that other Macs should pull.
+export function triggerDeployPingIfMerged(ctx = null, spawnFn = spawn) {
+  if (ctx) return  // Only for marvin repo (ctx is null), not other projects
+  try {
+    spawnFn(VENV_PYTHON, [DEPLOY_PING_SCRIPT], { detached: true, stdio: 'ignore' }).unref()
+  } catch {
+    // Fire-and-forget: spawn errors are logged elsewhere if needed, but never block the merge
+  }
 }
 
 // A merge means whichever machine implemented this ticket has been free

@@ -18,7 +18,7 @@ NOW = 1_800_000_000
 
 def d(**kw):
     base = dict(app_built_ts=NOW - 10 * H, dashboard_commit_ts=NOW - 6 * H, app_running=False,
-                last_attempt_ts=None, now=NOW)
+                last_attempt_ts=None, now=NOW, force_relaunch=False)
     base.update(kw)
     return dr.decide(**base)
 
@@ -72,3 +72,28 @@ def test_only_files_that_go_into_the_app_count_as_a_dashboard_change():
     paths = " ".join(dr.APP_SOURCE_PATHS)
     assert "dashboard/src" in paths and "dashboard/electron" in paths and "package.json" in paths
     assert "webhook-server" not in paths and "dashboard/test" not in paths
+
+
+def test_settle_threshold_is_two_minutes():
+    # A change 90s old still skips; a change 125s old rebuilds.
+    assert d(app_built_ts=NOW - 10 * H, dashboard_commit_ts=NOW - 90)[0] == "skip"
+    assert d(app_built_ts=NOW - 10 * H, dashboard_commit_ts=NOW - 125)[0] == "rebuild"
+
+
+def test_force_relaunch_flag_only_overrides_interrupt_guard():
+    # --force-relaunch skips ONLY the "don't interrupt running app" guard.
+    # Debounce (SETTLE_SECONDS) and backoff-after-failure still apply.
+    # A commit 30s old + app running + force_relaunch=True -> skip (too fresh, settle check comes first)
+    assert d(app_built_ts=NOW - 30 * 60, dashboard_commit_ts=NOW - 30, app_running=True, force_relaunch=True)[0] == "skip"
+    # A commit settled + app only 30min behind + app running + NOT forced -> skip (don't interrupt)
+    assert d(app_built_ts=NOW - 30 * 60, dashboard_commit_ts=NOW - 200, app_running=True, force_relaunch=False)[0] == "skip"
+    # A commit settled + app only 30min behind + app running + forced -> rebuild (skip the interrupt guard)
+    assert d(app_built_ts=NOW - 30 * 60, dashboard_commit_ts=NOW - 200, app_running=True, force_relaunch=True)[0] == "rebuild"
+
+
+def test_backoff_applies_even_with_force_relaunch():
+    # Backoff happens before the force-relaunch check, so a broken build still backs off.
+    # Recent attempt + force_relaunch=True -> still skip (backoff applies)
+    assert d(app_built_ts=NOW - 10 * H, dashboard_commit_ts=NOW - 200, app_running=False, last_attempt_ts=NOW - 1 * H, force_relaunch=True)[0] == "skip"
+    # Old attempt + settled commit + not running + forced -> rebuild
+    assert d(app_built_ts=NOW - 10 * H, dashboard_commit_ts=NOW - 200, app_running=False, last_attempt_ts=NOW - 7 * H, force_relaunch=True)[0] == "rebuild"

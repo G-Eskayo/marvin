@@ -31,18 +31,19 @@ SETTLE_SECONDS = 60              # let a fresh change settle before restarting
 BACKOFF_SECONDS = 6 * 3600       # minimum gap between attempts
 
 
-def decide(*, server_start_ts, webhook_commit_ts, last_attempt_ts, now) -> tuple[str, str]:
+def decide(*, server_start_ts, webhook_commit_ts, last_attempt_ts, now, force_relaunch=False) -> tuple[str, str]:
     """('restart' | 'skip', reason)."""
     if webhook_commit_ts is None:
         return "skip", "no webhook commit to compare against"
-    if last_attempt_ts is not None and now - last_attempt_ts < BACKOFF_SECONDS:
-        return "skip", "backing off after a recent restart attempt"
     if server_start_ts is None:
         return "restart", "webhook server is not running"
     if server_start_ts >= webhook_commit_ts:
         return "skip", "server is current"
     if now - webhook_commit_ts < SETTLE_SECONDS:
         return "skip", "latest webhook change is too fresh -- letting it settle"
+    # Check backoff AFTER settle, so a failed restart still backs off even with a fresh commit
+    if last_attempt_ts is not None and now - last_attempt_ts < BACKOFF_SECONDS:
+        return "skip", "backing off after a recent restart attempt"
     behind = now - server_start_ts
     return "restart", f"server started {behind / 3600:.0f}h ago, {(webhook_commit_ts - server_start_ts) / 3600:.0f}h behind the latest code change"
 
@@ -82,12 +83,20 @@ def _facts(now: int) -> dict:
                 last_attempt_ts=_mtime(ATTEMPT_FILE), now=now)
 
 
-def main() -> None:
+def main(force_relaunch: bool = False) -> None:
+    import argparse
     import job_events
+
+    # Parse --force-relaunch flag if running as __main__
+    if force_relaunch is False:  # Default value, check for CLI args
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--force-relaunch", action="store_true", help="skip 'too fresh' guard (debounce and backoff still apply)")
+        args = parser.parse_args()
+        force_relaunch = args.force_relaunch
+
     with job_events.job_run("webhook-restart", "Webhook server restart check") as run:
         now = int(time.time())
-        run.step("Checking", "is the webhook server behind the code?")
-        action, reason = decide(**_facts(now))
+        action, reason = decide(**_facts(now), force_relaunch=force_relaunch)
         print(f"[webhook-restart] {action}: {reason}", file=sys.stderr)
         run.step("Decision", f"{action}: {reason}")
         run.summary(f"{action}: {reason}")

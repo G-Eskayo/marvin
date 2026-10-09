@@ -597,7 +597,7 @@ def _mstate(**kw):
             "dashboard_commit_ts": int((NOW - timedelta(hours=3)).timestamp()),
             "webhook_server_start_ts": int((NOW - timedelta(hours=1)).timestamp()),
             "webhook_commit_ts": int((NOW - timedelta(hours=3)).timestamp()),
-            "gh_token": "ok"}
+            "gh_token": "ok", "app_running": True}
     base.update(kw)
     return base
 
@@ -668,6 +668,71 @@ def test_webhook_build_is_yellow_when_server_is_not_running():
 def test_webhook_build_skips_when_there_is_no_webhook_commit_to_compare_against():
     res = dict((k, s) for k, s, _ in hc.evaluate_machine_state(_mstate(webhook_commit_ts=None), NOW))
     assert "webhook:build" not in res
+
+
+# ── dashboard:running (new check: process-level liveness) ────────────────────
+
+def test_dashboard_running_is_red_when_app_not_running_but_installed():
+    # The exact 2026-10-09 scenario: app installed but process died, notice stays at ground truth.
+    res = dict((k, (s, d)) for k, s, d in hc.evaluate_machine_state(_mstate(app_running=False, app_built_ts=int((NOW - timedelta(hours=1)).timestamp())), NOW))
+    assert res.get("dashboard:running", (None, ""))[0] == "red"
+    assert "not running" in res.get("dashboard:running", ("", ""))[1]
+
+
+def test_dashboard_running_is_green_when_app_running_and_current():
+    res = dict((k, (s, d)) for k, s, d in hc.evaluate_machine_state(_mstate(app_running=True,
+                                                                              app_built_ts=int((NOW - timedelta(hours=1)).timestamp()),
+                                                                              dashboard_commit_ts=int((NOW - timedelta(hours=2)).timestamp())), NOW))
+    assert res.get("dashboard:running", (None, ""))[0] == "green"
+
+
+def test_dashboard_running_is_yellow_when_running_but_behind():
+    res = dict((k, (s, d)) for k, s, d in hc.evaluate_machine_state(_mstate(app_running=True,
+                                                                              app_built_ts=int((NOW - timedelta(days=20)).timestamp()),
+                                                                              dashboard_commit_ts=int((NOW - timedelta(hours=1)).timestamp())), NOW))
+    assert res.get("dashboard:running", (None, ""))[0] == "yellow"
+
+
+def test_parse_machine_state_handles_app_running_key():
+    st = hc.parse_machine_state("app_built_ts=1759000000\napp_running=1\ndashboard_commit_ts=1759100000\n")
+    assert st.get("app_running") is True
+    st0 = hc.parse_machine_state("app_built_ts=1759000000\napp_running=0\ndashboard_commit_ts=1759100000\n")
+    assert st0.get("app_running") is False
+
+
+def test_parse_machine_state_garbled_input_does_not_crash():
+    # Bad input: partial line, missing app_running key entirely, older remote not carrying it.
+    st = hc.parse_machine_state("app_built_ts=1759000000\ndashboard_commit_ts\ngh_token=ok\n")
+    # Should default safely, not throw
+    assert isinstance(st.get("app_built_ts"), (int, type(None)))
+
+
+def test_parse_machine_state_stale_remote_missing_app_running_field():
+    """Regression guard: remote running pre-#329 _MACHINE_STATE_SCRIPT (no app_running= line at all).
+
+    When a remote's lib is older and doesn't emit app_running= line at all (not garbled, not missing,
+    just not in the output), health_checks should default app_running to None and NOT fire a red
+    dashboard:running alert for a machine just running older but otherwise-fine code.
+    """
+    # Simulate output from a pre-#329 remote (no app_running line)
+    st = hc.parse_machine_state("app_built_ts=1759000000\ndashboard_commit_ts=1759100000\ngh_token=ok\n")
+    # app_running should default to None (not present in output)
+    assert st.get("app_running") is None
+    # When app_running is None, the dashboard:running check should not red
+    res = list(hc.evaluate_machine_state(st, NOW))
+    running_checks = [s for k, s, d in res if k == "dashboard:running"]
+    # Should either be absent (not checked) or not red
+    assert len(running_checks) == 0 or running_checks[0] != "red"
+
+
+def test_dashboard_running_missing_app_built_ts_is_not_confused_with_not_running():
+    # Never installed (app_built_ts=None) is different from "installed but not running".
+    res = dict((k, (s, d)) for k, s, d in hc.evaluate_machine_state(_mstate(app_built_ts=None, app_running=False), NOW))
+    # dashboard:running check should not red on never-installed (different scenario from crashed app)
+    # The dashboard:build check handles the "not installed" case separately
+    running = [s for k, s, _ in hc.evaluate_machine_state(_mstate(app_built_ts=None, app_running=False), NOW) if k == "dashboard:running"]
+    # Should either be absent (not checked) or not red (since there's no app to run)
+    assert len(running) == 0 or running[0] != "red"
 
 
 def test_check_machine_state_everywhere_covers_every_device_and_marks_asleep(monkeypatch):

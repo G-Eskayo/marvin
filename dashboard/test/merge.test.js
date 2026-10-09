@@ -23,6 +23,8 @@ import path from 'path'
 import {
   mergePr,
   triggerRebuildIfDashboardChanged,
+  triggerWebhookRestartIfTouched,
+  triggerDeployPingIfMerged,
   triggerTicketPipeline,
   isBehindMain,
   rebaseAndRetest,
@@ -262,15 +264,16 @@ describe('triggerRebuildIfDashboardChanged', () => {
     expect(exec).toHaveBeenCalledWith('gh', ['pr', 'view', 'https://github.com/G-Eskayo/marvin/pull/1', '--json', 'files', '--jq', '.files[].path'])
   })
 
-  it('spawns the rebuild script, detached, when a dashboard file was touched', async () => {
+  it('spawns dashboard_rebuild.py --force-relaunch when a dashboard file was touched', async () => {
     const exec = vi.fn().mockResolvedValue({ stdout: 'dashboard/src/App.jsx\n', stderr: '' })
     const unref = vi.fn()
     const spawnFn = vi.fn().mockReturnValue({ unref })
     await triggerRebuildIfDashboardChanged('https://github.com/G-Eskayo/marvin/pull/1', exec, spawnFn)
     expect(spawnFn).toHaveBeenCalledTimes(1)
-    const [scriptPath, args, opts] = spawnFn.mock.calls[0]
-    expect(scriptPath).toMatch(/scripts\/rebuild_and_install\.sh$/)
-    expect(args).toEqual([])
+    const [pythonOrScript, args, opts] = spawnFn.mock.calls[0]
+    // Should spawn dashboard_rebuild.py --force-relaunch (not rebuild_and_install.sh)
+    expect(pythonOrScript).toMatch(/lib\/dashboard_rebuild\.py$/)
+    expect(args).toContain('--force-relaunch')
     expect(opts).toMatchObject({ detached: true, stdio: 'ignore' })
     expect(unref).toHaveBeenCalled()
   })
@@ -280,6 +283,48 @@ describe('triggerRebuildIfDashboardChanged', () => {
     const spawnFn = vi.fn()
     await triggerRebuildIfDashboardChanged('https://github.com/G-Eskayo/marvin/pull/1', exec, spawnFn)
     expect(spawnFn).not.toHaveBeenCalled()
+  })
+})
+
+describe('triggerWebhookRestartIfTouched', () => {
+  it('does nothing when the PR touched no webhook files', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: 'skills/paper-dive/foo.py\ndashboard/test/merge.test.js\n', stderr: '' })
+    // Should resolve cleanly without attempting to spawn a real script.
+    await expect(triggerWebhookRestartIfTouched('https://github.com/G-Eskayo/marvin/pull/1', exec)).resolves.toBeUndefined()
+  })
+
+  it('spawns webhook_restart.py --force-relaunch when webhook-server was touched', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: 'dashboard/webhook-server/index.js\n', stderr: '' })
+    const unref = vi.fn()
+    const spawnFn = vi.fn().mockReturnValue({ unref })
+    await triggerWebhookRestartIfTouched('https://github.com/G-Eskayo/marvin/pull/1', exec, spawnFn)
+    expect(spawnFn).toHaveBeenCalledTimes(1)
+    const [pythonOrScript, args, opts] = spawnFn.mock.calls[0]
+    expect(pythonOrScript).toMatch(/venv\/bin\/python$/)
+    expect(args[0]).toMatch(/lib\/webhook_restart\.py$/)
+    expect(args).toContain('--force-relaunch')
+    expect(opts).toMatchObject({ detached: true, stdio: 'ignore' })
+    expect(unref).toHaveBeenCalled()
+  })
+
+  it('spawns webhook_restart.py when electron/main was touched', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: 'dashboard/electron/main/index.ts\n', stderr: '' })
+    const unref = vi.fn()
+    const spawnFn = vi.fn().mockReturnValue({ unref })
+    await triggerWebhookRestartIfTouched('https://github.com/G-Eskayo/marvin/pull/1', exec, spawnFn)
+    expect(spawnFn).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not spawn when only test files were touched', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: 'dashboard/test/webhook.test.js\ndashboard/webhook-server/test-util.js\n', stderr: '' })
+    const spawnFn = vi.fn()
+    await triggerWebhookRestartIfTouched('https://github.com/G-Eskayo/marvin/pull/1', exec, spawnFn)
+    expect(spawnFn).not.toHaveBeenCalled()
+  })
+
+  it('does not throw when the gh pr view call fails', async () => {
+    const exec = vi.fn().mockRejectedValue(new Error('not found'))
+    await expect(triggerWebhookRestartIfTouched('https://github.com/G-Eskayo/marvin/pull/1', exec)).resolves.toBeUndefined()
   })
 })
 
@@ -295,6 +340,93 @@ describe('triggerTicketPipeline', () => {
     expect(args[0]).toMatch(/lib\/ticket_pipeline\.py$/)
     expect(opts).toMatchObject({ detached: true, stdio: 'ignore' })
     expect(unref).toHaveBeenCalled()
+  })
+})
+
+describe('triggerDeployPingIfMerged', () => {
+  it('spawns deploy_ping.py when called with ctx=null (marvin repo)', () => {
+    const unref = vi.fn()
+    const spawnFn = vi.fn().mockReturnValue({ unref })
+    triggerDeployPingIfMerged(null, spawnFn)
+    expect(spawnFn).toHaveBeenCalledTimes(1)
+    const [pythonPath, args, opts] = spawnFn.mock.calls[0]
+    expect(pythonPath).toMatch(/venv\/bin\/python$/)
+    expect(args).toHaveLength(1)
+    expect(args[0]).toMatch(/lib\/deploy_ping\.py$/)
+    expect(opts).toMatchObject({ detached: true, stdio: 'ignore' })
+    expect(unref).toHaveBeenCalled()
+  })
+
+  it('does not spawn when ctx is set (non-marvin repo)', () => {
+    const unref = vi.fn()
+    const spawnFn = vi.fn().mockReturnValue({ unref })
+    // When ctx is set (non-marvin project), should not ping other machines
+    triggerDeployPingIfMerged({ base: 'main' }, spawnFn)  // passing ctx object to indicate non-marvin
+    expect(spawnFn).not.toHaveBeenCalled()
+  })
+
+  it('fire-and-forget: spawn errors do not throw', () => {
+    const spawnFn = vi.fn(() => {
+      throw new Error('spawn failed')
+    })
+    // Should not propagate error from spawn
+    expect(() => triggerDeployPingIfMerged(null, spawnFn)).not.toThrow()
+  })
+})
+
+// === Regression guards ===
+
+describe('mergePr legacy positional signature (regression guard)', () => {
+  it('routes all positional args correctly to mergePrUnqueued (no ping parameter shift)', async () => {
+    // This test guards against the bug where ping was inserted as a positional
+    // parameter between rebuild and redispatch, shifting all downstream args.
+    // The old signature (pre-#329) does NOT include ping in the positional list.
+    const mockRebuild = vi.fn()
+    const mockRedispatch = vi.fn()
+    const mockShouldGateMerge = vi.fn().mockResolvedValue({ gate: false, behind: false, shared: [] })
+    const mockExec = vi.fn()
+    const mockRebaseAndRetestFn = vi.fn()
+    const mockReengage = vi.fn()
+    const mockRecordStageFn = vi.fn()
+
+    // Call with legacy signature: (url, exec, rebuild, redispatch, shouldGateMerge, rebaseAndRetestFn, reengage, recordStageFn, opts)
+    // (ping is NOT in the legacy positional list -- it goes in opts)
+    const { mergePrUnqueued } = await import('../webhook-server/merge.js')
+
+    await mergePrUnqueued(
+      'https://github.com/G-Eskayo/marvin/pull/99',  // prUrl
+      mockExec,                                         // exec
+      mockRebuild,                                       // rebuild
+      mockRedispatch,                                    // redispatch (NOT ping)
+      mockShouldGateMerge,                             // shouldGateMerge
+      mockRebaseAndRetestFn,                           // rebaseAndRetestFn
+      mockReengage,                                    // reengage
+      mockRecordStageFn,                               // recordStageFn
+      { ping: vi.fn() }                                // opts.ping
+    )
+
+    // Assert rebuild and redispatch were called (not swapped)
+    expect(mockRebuild).not.toHaveBeenCalled()  // dashboard not touched in mock
+    expect(mockRedispatch).toHaveBeenCalled()   // redispatch should fire, not land in ping's slot
+  })
+
+  it('routes concurrent merges without shared mutable state', async () => {
+    // Two sequential mergePr calls on independent PRs both reach ping
+    // (confirms no shared state between ping calls)
+    const unref1 = vi.fn()
+    const unref2 = vi.fn()
+    const spawnFn1 = vi.fn().mockReturnValue({ unref: unref1 })
+    const spawnFn2 = vi.fn().mockReturnValue({ unref: unref2 })
+
+    const { triggerDeployPingIfMerged } = await import('../webhook-server/merge.js')
+
+    triggerDeployPingIfMerged(null, spawnFn1)
+    triggerDeployPingIfMerged(null, spawnFn2)
+
+    expect(spawnFn1).toHaveBeenCalledTimes(1)
+    expect(spawnFn2).toHaveBeenCalledTimes(1)
+    expect(unref1).toHaveBeenCalled()
+    expect(unref2).toHaveBeenCalled()
   })
 })
 

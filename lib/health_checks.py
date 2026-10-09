@@ -887,6 +887,7 @@ def check_repo_sync_everywhere(reachability: dict[str, str], runner=_run_repo_st
 _MACHINE_STATE_SCRIPT = r'''
 APP="/Applications/MARVIN Metrics.app/Contents/Resources/app.asar"
 if [ -f "$APP" ]; then echo "app_built_ts=$(stat -f %m "$APP")"; else echo "app_built_ts="; fi
+if /usr/bin/pgrep -f "MARVIN Metrics.app/Contents/MacOS" >/dev/null 2>&1; then echo "app_running=1"; else echo "app_running=0"; fi
 git -C "$HOME/.agents" fetch -q origin >/dev/null 2>&1
 echo "dashboard_commit_ts=$(git -C "$HOME/.agents" log -1 --format=%ct origin/main -- dashboard/src dashboard/electron dashboard/index.html dashboard/package.json dashboard/package-lock.json dashboard/electron.vite.config.js dashboard/tailwind.config.js dashboard/postcss.config.js 2>/dev/null)"
 echo "webhook_commit_ts=$(git -C "$HOME/.agents" log -1 --format=%ct origin/main -- dashboard/webhook-server dashboard/electron/main 2>/dev/null)"
@@ -1035,6 +1036,14 @@ def parse_machine_state(text: str) -> dict:
         v = raw.get(key, "").strip()
         return int(v) if v.isdigit() else None
 
+    def bool_from_int(key):
+        v = raw.get(key, "").strip()
+        if v == "1":
+            return True
+        elif v == "0":
+            return False
+        return None
+
     # Parse disk-ledger entries (pipe-separated JSON lines)
     disk_ledger = []
     ledger_raw = raw.get("disk_ledger", "").strip()
@@ -1046,7 +1055,8 @@ def parse_machine_state(text: str) -> dict:
                 except (json.JSONDecodeError, ValueError):
                     pass
 
-    return {"app_built_ts": num("app_built_ts"), "dashboard_commit_ts": num("dashboard_commit_ts"),
+    return {"app_built_ts": num("app_built_ts"), "app_running": bool_from_int("app_running"),
+            "dashboard_commit_ts": num("dashboard_commit_ts"),
             "webhook_server_start_ts": num("webhook_server_start_ts"), "webhook_commit_ts": num("webhook_commit_ts"),
             "gh_token": raw.get("gh_token", "").strip(), "docs_access": raw.get("docs_access", "").strip(),
             "desktoplive": raw.get("desktoplive", "").strip(), "brain_data_ts": num("brain_data_ts"),
@@ -1151,6 +1161,7 @@ def evaluate_machine_state(state: dict, now: datetime) -> list[tuple[str, str, s
     and a GitHub credential can expire without anything noticing."""
     out = []
     built, newest = state["app_built_ts"], state["dashboard_commit_ts"]
+    running = state.get("app_running")
     if built is None:
         out.append(("dashboard:build", "yellow", "dashboard app is not installed"))
     elif newest is None or built >= newest:
@@ -1161,6 +1172,19 @@ def evaluate_machine_state(state: dict, now: datetime) -> list[tuple[str, str, s
         sev = "red" if behind_h >= SYNC_RED_AFTER_HOURS else "yellow" if behind_h >= SYNC_YELLOW_AFTER_HOURS else "green"
         detail = f"installed app built {age:.0f}d ago, {behind_h:.0f}h older than the latest dashboard change -- run dashboard/scripts/rebuild_and_install.sh"
         out.append(("dashboard:build", sev, detail if sev != "green" else "installed app is current"))
+
+    # Check if the app is actually running (ground truth, independent of rebuild staleness)
+    if built is not None and running is False:
+        out.append(("dashboard:running", "red", "dashboard app is installed but not running -- it may have crashed or been force-quit"))
+    elif built is not None and running is True:
+        if newest is not None and built < newest:
+            behind_h = (newest - built) / 3600
+            if behind_h > 15 / 60:  # 15 minutes in hours
+                out.append(("dashboard:running", "yellow", f"dashboard app is running but {behind_h:.0f}h behind the latest code"))
+            else:
+                out.append(("dashboard:running", "green", "dashboard app is running and current"))
+        else:
+            out.append(("dashboard:running", "green", "dashboard app is running"))
     server_start, webhook_newest = state["webhook_server_start_ts"], state["webhook_commit_ts"]
     if webhook_newest is None:
         pass  # no webhook commits, no check

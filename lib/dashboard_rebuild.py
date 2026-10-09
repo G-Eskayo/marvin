@@ -30,17 +30,15 @@ APP_SOURCE_PATHS = ("dashboard/src", "dashboard/electron", "dashboard/index.html
                     "dashboard/package-lock.json", "dashboard/electron.vite.config.js",
                     "dashboard/tailwind.config.js", "dashboard/postcss.config.js")
 
-SETTLE_SECONDS = 15 * 60         # let a fresh change finish landing before building
+SETTLE_SECONDS = 2 * 60          # let a fresh change finish landing before building
 FORCE_AFTER_SECONDS = 3600       # rebuild even a running app once this far behind
 BACKOFF_SECONDS = 6 * 3600       # minimum gap between attempts
 
 
-def decide(*, app_built_ts, dashboard_commit_ts, app_running, last_attempt_ts, now) -> tuple[str, str]:
+def decide(*, app_built_ts, dashboard_commit_ts, app_running, last_attempt_ts, now, force_relaunch=False) -> tuple[str, str]:
     """('rebuild' | 'skip', reason)."""
     if dashboard_commit_ts is None:
         return "skip", "no dashboard commit to compare against"
-    if last_attempt_ts is not None and now - last_attempt_ts < BACKOFF_SECONDS:
-        return "skip", "backing off after a recent rebuild attempt"
     if app_built_ts is None:
         return "rebuild", "no dashboard app installed"
     if app_built_ts >= dashboard_commit_ts:
@@ -48,7 +46,11 @@ def decide(*, app_built_ts, dashboard_commit_ts, app_running, last_attempt_ts, n
     if now - dashboard_commit_ts < SETTLE_SECONDS:
         return "skip", "latest dashboard change is too fresh -- letting it settle"
     behind = now - app_built_ts
-    if app_running and behind < FORCE_AFTER_SECONDS:
+    # Check backoff AFTER settle, so a broken build still backs off even with a fresh commit
+    if last_attempt_ts is not None and now - last_attempt_ts < BACKOFF_SECONDS:
+        return "skip", "backing off after a recent rebuild attempt"
+    # Don't interrupt a running app unless forced or if it's way behind
+    if app_running and behind < FORCE_AFTER_SECONDS and not force_relaunch:
         return "skip", "app is running and only slightly behind -- not interrupting"
     return "rebuild", f"installed app is {behind / 3600:.0f}h behind the latest dashboard change"
 
@@ -68,12 +70,20 @@ def _facts(now: int) -> dict:
                 app_running=running, last_attempt_ts=_mtime(ATTEMPT_FILE), now=now)
 
 
-def main() -> None:
+def main(force_relaunch: bool = False) -> None:
+    import argparse
     import job_events
+
+    # Parse --force-relaunch flag if running as __main__
+    if force_relaunch is False:  # Default value, check for CLI args
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--force-relaunch", action="store_true", help="skip 'don't interrupt running app' guard (debounce and backoff still apply)")
+        args = parser.parse_args()
+        force_relaunch = args.force_relaunch
+
     with job_events.job_run("dashboard-rebuild", "Dashboard app rebuild check") as run:
         now = int(time.time())
-        run.step("Checking", "is the installed app behind the code?")
-        action, reason = decide(**_facts(now))
+        action, reason = decide(**_facts(now), force_relaunch=force_relaunch)
         print(f"[dashboard-rebuild] {action}: {reason}", file=sys.stderr)
         run.step("Decision", f"{action}: {reason}")
         run.summary(f"{action}: {reason}")
@@ -82,10 +92,12 @@ def main() -> None:
         ATTEMPT_FILE.parent.mkdir(parents=True, exist_ok=True)
         ATTEMPT_FILE.write_text(str(now))  # recorded BEFORE building so a failure still backs off
         env_path = f"/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:{HOME}/.local/bin"
-        run.step("Rebuilding", "build + install running in the background (log: ~/.claude/logs/dashboard-rebuild.log)")
-        with LOG_FILE.open("a") as log:
-            subprocess.Popen(["/bin/bash", str(SCRIPT)], stdout=log, stderr=log, env={"HOME": str(HOME), "PATH": env_path},
-                             start_new_session=True)
+        run.step("Rebuilding", "build + install")
+        # Non-blocking: spawn the build and let it proceed independently so merge isn't delayed
+        from subprocess import Popen
+        p = Popen(["/bin/bash", str(SCRIPT)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                  env={"HOME": str(HOME), "PATH": env_path})
+        run.summary(f"rebuild launched (pid {p.pid})")
 
 
 if __name__ == "__main__":
