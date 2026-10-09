@@ -1,4 +1,5 @@
 """The MARVIN button's session launcher (marvin#228): a ready Interactive MARVIN session in WezTerm."""
+import json
 import subprocess
 from pathlib import Path
 
@@ -66,9 +67,140 @@ def test_spawns_into_the_running_wezterm_and_falls_back_to_starting_it(tmp_path)
         return subprocess.CompletedProcess(cmd, 1 if cmd[1:3] == ["cli", "spawn"] else 0, "", "no mux")
 
     started = []
-    ms.open_in_wezterm(tmp_path, wezterm="/x/wezterm", run=run, start=lambda cmd: started.append(cmd))
-    assert calls[0][:4] == ["/x/wezterm", "cli", "spawn", "--new-window"]
+    ms.open_in_wezterm(tmp_path, wezterm="/x/wezterm", run=run, start=lambda cmd: started.append(cmd),
+                       state_file=tmp_path / "window.json", identity=lambda run: None)
+    spawn = next(c for c in calls if c[1:3] == ["cli", "spawn"])
+    assert spawn[:4] == ["/x/wezterm", "cli", "spawn", "--new-window"]
     assert started and started[0][:2] == ["/x/wezterm", "start"]
+
+
+class FakeWezTerm:
+    """A WezTerm mux: windows hold panes; `cli spawn` adds a pane to a window or a new one, `cli list` reports them."""
+
+    def __init__(self, windows=None, fail_spawn=False):
+        self.windows = {w: list(p) for w, p in (windows or {}).items()}
+        self.next_pane = 100
+        self.fail_spawn = fail_spawn
+        self.spawns = []
+
+    def __call__(self, cmd, **kw):
+        if cmd[1:3] == ["cli", "list"]:
+            rows = [{"window_id": w, "pane_id": p} for w, panes in self.windows.items() for p in panes]
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(rows), "")
+        if cmd[1:3] == ["cli", "spawn"]:
+            self.spawns.append(cmd)
+            if self.fail_spawn:
+                return subprocess.CompletedProcess(cmd, 1, "", "no mux")
+            if "--window-id" in cmd:
+                window = int(cmd[cmd.index("--window-id") + 1])
+                if window not in self.windows:
+                    return subprocess.CompletedProcess(cmd, 1, "", "window not found")
+            else:
+                window = max(self.windows, default=-1) + 1
+                self.windows[window] = []
+            self.next_pane += 1
+            self.windows[window].append(self.next_pane)
+            return subprocess.CompletedProcess(cmd, 0, f"{self.next_pane}\n", "")
+        raise AssertionError(f"unexpected command {cmd}")
+
+
+def _open(tmp_path, wez, gui="2279 Wed Sep 30 15:46:12 2026", started=None):
+    ms.open_in_wezterm(tmp_path, wezterm="/x/wezterm", run=wez, state_file=tmp_path / "window.json",
+                       identity=lambda run: gui, start=(started.append if started is not None else lambda c: None))
+
+
+def test_a_second_press_opens_a_tab_in_the_window_the_first_press_opened(tmp_path):
+    wez = FakeWezTerm({0: [1, 2]})  # Gil's own window
+    _open(tmp_path, wez)
+    _open(tmp_path, wez)
+    _open(tmp_path, wez)
+    assert "--new-window" in wez.spawns[0]
+    assert wez.spawns[1][wez.spawns[1].index("--window-id") + 1] == "1"
+    assert "--new-window" not in wez.spawns[2] and "--window-id" in wez.spawns[2]
+    assert wez.windows == {0: [1, 2], 1: [101, 102, 103]}  # Gil's window untouched, one MARVIN window, three tabs
+
+
+def test_a_closed_marvin_window_means_the_next_press_opens_a_new_window(tmp_path):
+    wez = FakeWezTerm({0: [1]})
+    _open(tmp_path, wez)
+    del wez.windows[1]  # Gil closed it
+    _open(tmp_path, wez)
+    assert "--new-window" in wez.spawns[1]
+    _open(tmp_path, wez)
+    assert wez.spawns[2][wez.spawns[2].index("--window-id") + 1] == "1"  # remembers the replacement
+
+
+def test_after_wezterm_restarts_a_reused_window_id_is_never_trusted(tmp_path):
+    """Window ids restart at 0, so a saved id from the last run may now be one of Gil's own windows."""
+    wez = FakeWezTerm({0: [1]})
+    _open(tmp_path, wez)  # MARVIN window = 1
+    restarted = FakeWezTerm({0: [1], 1: [2]})  # new run: window 1 exists but isn't ours
+    _open(tmp_path, restarted, gui="4100 Fri Oct  9 21:00:00 2026")
+    assert "--new-window" in restarted.spawns[0]
+
+
+def test_unknown_wezterm_identity_never_reuses_a_window(tmp_path):
+    wez = FakeWezTerm({})
+    _open(tmp_path, wez, gui=None)
+    _open(tmp_path, wez, gui=None)
+    assert all("--new-window" in s for s in wez.spawns)
+
+
+def test_a_window_that_vanishes_between_check_and_spawn_still_gets_a_session(tmp_path):
+    wez = FakeWezTerm({})
+    _open(tmp_path, wez)
+    real_call = wez.__call__
+
+    def racing(cmd, **kw):
+        if cmd[1:3] == ["cli", "spawn"] and "--window-id" in cmd:
+            wez.windows.pop(0, None)  # closed just now
+        return real_call(cmd, **kw)
+
+    ms.open_in_wezterm(tmp_path, wezterm="/x/wezterm", run=racing, state_file=tmp_path / "window.json",
+                       identity=lambda run: "2279 x", start=lambda c: None)
+    assert "--new-window" in wez.spawns[-1]
+
+
+def test_a_corrupt_or_foreign_state_file_is_ignored_not_fatal(tmp_path):
+    for junk in ("{not json", "[]", '{"gui": "2279 Wed Sep 30 15:46:12 2026", "window_id": "zero"}', ""):
+        (tmp_path / "window.json").write_text(junk)
+        wez = FakeWezTerm({0: [1]})
+        _open(tmp_path, wez)
+        assert "--new-window" in wez.spawns[0]
+
+
+def test_starting_wezterm_from_scratch_forgets_the_old_window(tmp_path):
+    wez = FakeWezTerm({})
+    _open(tmp_path, wez)
+    assert (tmp_path / "window.json").exists()
+    dead = FakeWezTerm({}, fail_spawn=True)
+    started = []
+    _open(tmp_path, dead, started=started)
+    assert started and not (tmp_path / "window.json").exists()
+
+
+def test_concurrent_presses_open_one_window_not_two(tmp_path):
+    import threading
+    wez = FakeWezTerm({})
+    lock = threading.Lock()
+
+    def slow(cmd, **kw):
+        with lock:
+            return wez(cmd, **kw)
+
+    threads = [threading.Thread(target=_open, args=(tmp_path, slow)) for _ in range(6)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert len(wez.windows) == 1 and len(wez.windows[0]) == 6
+
+
+def test_gui_identity_reads_the_wezterm_gui_process_and_its_start_time():
+    ps = ("  301 Mon Oct  5 09:00:00 2026     /usr/sbin/cfprefsd\n"
+          " 2279 Wed Sep 30 15:46:12 2026     /Applications/WezTerm.app/Contents/MacOS/wezterm-gui\n")
+    run = lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, ps, "")
+    assert ms.gui_identity(run) == "2279 Wed Sep 30 15:46:12 2026"
+    assert ms.gui_identity(lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, ps.splitlines()[0], "")) is None
+    assert ms.gui_identity(lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, "", "denied")) is None
 
 
 def test_a_missing_wezterm_is_a_clear_error(monkeypatch):
