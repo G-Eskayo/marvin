@@ -256,195 +256,31 @@ describe('mergePr', () => {
     expect(result.reason).toContain('boom')
   })
 
-  // Test 16: Clean review → merge proceeds
-  it('code review gate: clean review allows merge to proceed', async () => {
-    const exec = vi.fn()
-    exec.mockImplementation((cmd, args) => {
-      if (String(cmd).endsWith('/python') && args.includes('review')) {
-        // Code review gate call
-        return Promise.resolve({ stdout: JSON.stringify({ clean: true, findings: [] }), stderr: '' })
-      }
-      // All other calls (gh pr view, etc.)
-      return Promise.resolve({ stdout: '', stderr: '' })
-    })
-    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: false, headRefName: 'some-branch', body: 'Closes G-Eskayo/marvin#5' })
-
-    const result = await mergePr(
-      'https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, noopRedispatch, shouldGateMerge
-    )
-
-    expect(result.merged).toBe(true)
-    expect(exec).toHaveBeenCalledWith('gh', ['pr', 'merge', 'https://github.com/G-Eskayo/marvin/pull/71', '--merge'])
-  })
-
-  // Test 17: Findings found; sendFeedback is called
-  it('code review gate: findings block merge and reengages, posting feedback to PR and ticket', async () => {
-    const exec = vi.fn()
-    exec.mockImplementation((cmd, args) => {
-      if (String(cmd).endsWith('/python') && args.includes('review')) {
-        return Promise.resolve({
-          stdout: JSON.stringify({
-            clean: false,
-            findings: ['lib/foo.py:42 — unused variable x', 'lib/bar.py:10 — missing type annotation']
-          }),
-          stderr: ''
-        })
-      }
-      return Promise.resolve({ stdout: '', stderr: '' })
-    })
-    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: false, headRefName: 'some-branch', body: 'Closes G-Eskayo/marvin#5' })
-    const reengage = vi.fn().mockResolvedValue(undefined)
-
-    const result = await mergePr(
-      'https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, noopRedispatch,
-      shouldGateMerge, vi.fn(), reengage
-    )
-
-    expect(reengage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        prUrl: 'https://github.com/G-Eskayo/marvin/pull/71',
-        ticketNumber: '5',
-        reasons: ['Regression/quality'],
-        comment: expect.stringContaining('lib/foo.py:42')
-      }),
-      exec
-    )
-    expect(result).toMatchObject({ merged: false, reengaged: true, code: 'CODE_REVIEW_FOUND' })
-  })
-
-  // Test 18: PR that already fails CI never triggers code review script
-  it('code review gate: PR that failed CI does not trigger code review script call', async () => {
-    const exec = vi.fn()
-    let codeReviewCalled = false
-    exec.mockImplementation((cmd, args) => {
-      if (String(cmd).endsWith('/python') && args.includes('review')) {
-        codeReviewCalled = true
-      }
-      if (cmd === 'gh' && args[1] === 'view' && args.includes('statusCheckRollup')) {
-        // CI checks fail
-        return Promise.resolve({ stdout: JSON.stringify({ statusCheckRollup: [{ name: 'failing-check', status: 'COMPLETED', conclusion: 'FAILURE' }] }), stderr: '' })
-      }
-      return Promise.resolve({ stdout: '', stderr: '' })
-    })
-    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: false, headRefName: 'some-branch', body: 'Closes G-Eskayo/marvin#5' })
-    const reengage = vi.fn().mockResolvedValue(undefined)
-
-    await mergePr(
-      'https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, noopRedispatch,
-      shouldGateMerge, vi.fn(), reengage
-    )
-
-    expect(codeReviewCalled).toBe(false)
-    expect(reengage).toHaveBeenCalled()  // But reengage was called for CI failure, not code review
-  })
-
-  // Test 19: Code review script call ordering (after gate/CI, before merge)
-  it('code review gate: script is called after CI checks but before gh pr merge', async () => {
-    const callOrder = []
-    const exec = vi.fn()
-    exec.mockImplementation((cmd, args) => {
-      if (cmd === 'gh' && args[1] === 'view' && args.includes('statusCheckRollup')) {
-        callOrder.push('ci-check')
-        return Promise.resolve({ stdout: JSON.stringify({ statusCheckRollup: [] }), stderr: '' })
-      }
-      if (String(cmd).endsWith('/python') && args.includes('review')) {
-        callOrder.push('code-review')
-        return Promise.resolve({ stdout: JSON.stringify({ clean: true, findings: [] }), stderr: '' })
-      }
-      if (cmd === 'gh' && args[1] === 'merge') {
-        callOrder.push('merge')
-        return Promise.resolve({ stdout: '', stderr: '' })
-      }
-      return Promise.resolve({ stdout: '', stderr: '' })
-    })
-    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: false, headRefName: 'some-branch', body: 'Closes G-Eskayo/marvin#5' })
-
-    await mergePr('https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, noopRedispatch, shouldGateMerge)
-
-    expect(callOrder).toContain('ci-check')
-    expect(callOrder).toContain('code-review')
-    expect(callOrder).toContain('merge')
-    const ciIdx = callOrder.indexOf('ci-check')
-    const reviewIdx = callOrder.indexOf('code-review')
-    const mergeIdx = callOrder.indexOf('merge')
-    expect(reviewIdx).toBeGreaterThan(ciIdx)
-    expect(mergeIdx).toBeGreaterThan(reviewIdx)
-  })
-
-  // Test 20: PR with no linked ticket doesn't try to post ticket comment
-  it('code review gate: PR with no linked ticket results in a code review error', async () => {
-    const exec = vi.fn()
-    exec.mockImplementation((cmd, args) => {
-      if (String(cmd).endsWith('/python') && args.includes('review')) {
-        return Promise.resolve({
-          stdout: JSON.stringify({ clean: false, findings: ['lib/foo.py:1 — issue'] }),
-          stderr: ''
-        })
-      }
-      // For pr view (no ticket reference)
-      if (cmd === 'gh' && args[1] === 'view' && args[2] && args[2].includes('pull')) {
-        return Promise.resolve({ stdout: JSON.stringify({ body: '', baseRefName: 'main' }), stderr: '' })
-      }
-      return Promise.resolve({ stdout: '', stderr: '' })
-    })
-
-    const reengage = vi.fn().mockResolvedValue(undefined)
-
-    // A code review with no linked ticket will result in a code review error being thrown
-    // (since there's no ticketNumber, the error doesn't get converted to a reengage)
-    await expect(mergePr(
-      'https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, noopRedispatch,
-      undefined, vi.fn(), reengage
-    )).rejects.toMatchObject({
-      payload: { code: 'CODE_REVIEW_FOUND' }
-    })
-
-    expect(reengage).not.toHaveBeenCalled()
-  })
-
-  // Test 21: A PR sent back for rework is refused earlier by assertNotSentBack, without re-running review
-  it('code review gate: already-sent-back PR is refused by assertNotSentBack, not re-reviewed', async () => {
-    const exec = vi.fn()
-    let codeReviewCalled = false
-    exec.mockImplementation((cmd, args) => {
-      if (String(cmd).endsWith('/python') && args.includes('review')) {
-        codeReviewCalled = true
-        return Promise.resolve({ stdout: JSON.stringify({ clean: true, findings: [] }), stderr: '' })
-      }
-      if (cmd === 'gh' && args[1] === 'view' && args[2] && args[2].includes('pull')) {
-        // pr view call for body
-        return Promise.resolve({ stdout: JSON.stringify({ body: 'Closes G-Eskayo/marvin#5' }), stderr: '' })
-      }
-      if (cmd === 'gh' && args[1] === 'view' && args[2] && !args[2].includes('pull')) {
-        // issue view call (for checking labels on ticket)
-        return Promise.resolve({ stdout: JSON.stringify({ labels: [{ name: 'needs-reengagement' }] }), stderr: '' })
-      }
-      return Promise.resolve({ stdout: '', stderr: '' })
-    })
-
-    await expect(mergePr('https://github.com/G-Eskayo/marvin/pull/71', exec)).rejects.toThrow()
-
-    expect(codeReviewCalled).toBe(false)
-  })
-
-  // Test 22: exec failure for code review script is GATE_INFRA, not sent back
-  it('code review gate: script execution failure escalates as GATE_INFRA, PR not sent back', async () => {
-    const exec = vi.fn()
-    exec.mockImplementation((cmd, args) => {
-      if (String(cmd).endsWith('/python') && args.includes('review')) {
-        throw new Error('ENOENT: command not found')
+  // Approve only checks the PR merges cleanly (2026-10-09). Code review runs in the build loop before the PR
+  // opens (sandbox_orchestration.execute_ticket), so Approve never calls it: a review that would find issues,
+  // or one that can't even run, must not stop or send back a PR Gil approved.
+  it.each([
+    ['would find issues', () => Promise.resolve({ stdout: JSON.stringify({ clean: false, findings: ['x.py:1 — bug'] }), stderr: '' })],
+    ['cannot run', () => { throw new Error('spawn python ENOENT') }],
+  ])('Approve never runs the code review (a review that %s changes nothing)', async (_label, review) => {
+    let reviewCalled = false
+    const exec = vi.fn((cmd, args) => {
+      if (String(cmd).endsWith('python') && args.some((a) => String(a).includes('code_review_gate'))) {
+        reviewCalled = true
+        return review()
       }
       return Promise.resolve({ stdout: '', stderr: '' })
     })
     const shouldGateMerge = vi.fn().mockResolvedValue({ gate: false, headRefName: 'some-branch', body: 'Closes G-Eskayo/marvin#5' })
     const reengage = vi.fn()
 
-    await expect(mergePr('https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, noopRedispatch, shouldGateMerge)).rejects.toMatchObject({
-      payload: { code: 'GATE_INFRA', action: 'escalate' }
-    })
+    const result = await mergePr('https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, noopRedispatch,
+      shouldGateMerge, vi.fn(), reengage)
 
-    // reengage should NOT have been called (it's an escalate, not a reengage)
+    expect(reviewCalled).toBe(false)
     expect(reengage).not.toHaveBeenCalled()
+    expect(result.merged).toBe(true)
+    expect(exec).toHaveBeenCalledWith('gh', ['pr', 'merge', 'https://github.com/G-Eskayo/marvin/pull/71', '--merge'])
   })
 })
 
