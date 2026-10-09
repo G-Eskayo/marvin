@@ -3,10 +3,10 @@
 
 Runs only after sandbox_orchestration.execute_ticket (G-Eskayo/marvin#3)
 returns a passing result. Commits and pushes the worktree's branch, opens a
-pull request referencing the originating ticket with the metrics
-comparison, test results, and dev-environment evidence attached (the fixed
-PR evidence schema -- G-Eskayo/marvin#72, ADR 0024), and posts a summary
-comment back onto the ticket.
+pull request referencing the originating ticket with the machine device,
+metrics comparison, test results, and dev-environment evidence attached
+(the fixed PR evidence schema -- G-Eskayo/marvin#72, ADR 0024), and posts a
+summary comment back onto the ticket.
 
 Deliberately does not know sandbox_orchestration's branch-naming convention
 -- reads the worktree's actual current branch via git rather than
@@ -25,6 +25,7 @@ from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mr_notification import notify_mr_ready as _default_notify_mr_ready  # noqa: E402
+import machine_profile  # noqa: E402
 
 
 def _current_branch(worktree_path: Path) -> str:
@@ -121,6 +122,16 @@ def _format_code_review(review: dict | None) -> str:
     return text
 
 
+def _format_device() -> str:
+    """Stamp the machine that raised this PR, identified by stable hardware UUID. Catches failures
+    (e.g. ~/.claude permission issues in sandboxed/headless runs) and falls back, rather than
+    letting a dependency's failure block PR-raising."""
+    try:
+        return machine_profile.registry_id()
+    except Exception:  # noqa: BLE001
+        return "unknown-machine"
+
+
 def _repo_of(ticket_ref: str) -> str | None:
     """'G-Eskayo/clarity-captions#7' -> 'G-Eskayo/clarity-captions'. gh must be told which repo: the
     process's own directory is not a reliable stand-in once more than one project is in play."""
@@ -138,6 +149,8 @@ def _default_open_pr(
     body = (
         f"Closes {ticket_ref}\n\n"
         f"Autonomously implemented and verified by the MR pipeline.\n\n"
+        f"## Device\n\n"
+        f"{_format_device()}\n\n"
         f"## Metrics Comparison\n\n"
         f"{_format_comparison(comparison)}\n\n"
         f"## Test Results\n\n"

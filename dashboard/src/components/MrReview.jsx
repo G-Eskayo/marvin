@@ -391,11 +391,18 @@ function PrCard({ pr, parity, onOpenTicket, onApproved, onDenied, onSelect }) {
             {pr.repo !== 'G-Eskayo/marvin' && <span className="rounded bg-sky-950 px-1.5 py-0.5 font-sans text-[10px] font-normal text-sky-300">{pr.repo.split('/')[1]}</span>}
           </p>
           {pr.hasSchema ? (
-            pr.evidence.subsystem && (
-              <p className="text-xs text-neutral-500">
-                {pr.evidence.subsystem} <VerdictBadge verdict={pr.evidence.verdict} />
-              </p>
-            )
+            <>
+              {pr.evidence.subsystem && (
+                <p className="text-xs text-neutral-500">
+                  {pr.evidence.subsystem} <VerdictBadge verdict={pr.evidence.verdict} />
+                </p>
+              )}
+              {pr.evidence.device && (
+                <p className="mt-1 text-xs text-neutral-500">
+                  Device: <span className="font-mono text-neutral-300">{pr.evidence.device}</span>
+                </p>
+              )}
+            </>
           ) : (
             <p className="text-xs text-amber-400">No structured evidence — needs a manual look</p>
           )}
