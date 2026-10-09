@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import time
 import pytest
 
 LIB = Path(__file__).resolve().parents[1]
@@ -999,6 +1000,32 @@ def test_a_sent_back_ticket_the_repair_cannot_fix_is_left_as_it_is(monkeypatch):
 
 
 # ── scan lock: prevent concurrent scans from claiming the same ticket (#255) ──
+
+def test_scan_lock_reads_the_patched_path_at_call_time(tmp_path, monkeypatch):
+    # 2026-10-09: the default was bound at import, so patching SCAN_LOCK_PATH did nothing and every test that ran
+    # main() took the REAL ~/.claude/dispatch/scan.lock -- waiting out the 120 s timeout whenever the live pipeline
+    # held it, which stalled merge-gate test runs (and the owner's Approve) for many minutes.
+    lock = tmp_path / "isolated" / "scan.lock"
+    monkeypatch.setattr(tp, "SCAN_LOCK_PATH", lock)
+    with tp._scan_lock():
+        assert lock.exists()
+
+
+def test_scan_lock_reads_the_patched_timeout_at_call_time(tmp_path, monkeypatch):
+    import fcntl
+    lock = tmp_path / "scan.lock"
+    monkeypatch.setattr(tp, "SCAN_LOCK_PATH", lock)
+    monkeypatch.setattr(tp, "SCAN_LOCK_TIMEOUT_S", 0.2)
+    holder = open(lock, "w")
+    fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)   # someone else holds it
+    try:
+        start = time.time()
+        with tp._scan_lock():
+            pass
+        assert time.time() - start < 5, "must honor the patched timeout, not the 120 s default"
+    finally:
+        holder.close()
+
 
 def test_scan_lock_acquires_and_releases_exclusive_access(tmp_path, monkeypatch):
     monkeypatch.setattr(tp, "SCAN_LOCK_PATH", tmp_path / "scan.lock")
