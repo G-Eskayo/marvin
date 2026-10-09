@@ -10,6 +10,9 @@ contextBridge.exposeInMainWorld('api', {
     history: (subsystem) => ipcRenderer.invoke('metrics:history', subsystem),
     usage: () => ipcRenderer.invoke('metrics:usage')
   },
+  decisions: {
+    submit: (payload) => ipcRenderer.invoke('decisions:submit', payload)
+  },
   mr: {
     list: () => ipcRenderer.invoke('mr:list'),
     // Confirmation happens in the main process via a native dialog, not here --
@@ -17,6 +20,7 @@ contextBridge.exposeInMainWorld('api', {
     approve: (pr) => ipcRenderer.invoke('mr:approve', pr),
     mergeState: (url) => ipcRenderer.invoke('mr:mergeState', url),
     clearSentBack: (url) => ipcRenderer.invoke('mr:clearSentBack', url),
+    sendBackForOptions: (payload) => ipcRenderer.invoke('mr:sendBackForOptions', payload),
     deny: (payload) => ipcRenderer.invoke('mr:deny', payload),
     ticketContext: (ticketRef, repo) => ipcRenderer.invoke('mr:ticketContext', ticketRef, repo),
     // A PR description image as a data: URL, fetched by the main process (private repos need the credential).

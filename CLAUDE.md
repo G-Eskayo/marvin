@@ -11,6 +11,11 @@ GitHub Issues on `G-Eskayo/marvin`, via the `gh` CLI. See `docs/agents/issue-tra
 Five canonical triage roles, all real labels on this repo with default naming (no overrides).
 See `docs/agents/triage-labels.md`.
 
+### Decisions for the owner
+
+A PR or ticket that needs the owner to choose something carries a Decisions section, never a question in prose.
+See `docs/agents/decisions-format.md`.
+
 ### Domain docs
 
 Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.

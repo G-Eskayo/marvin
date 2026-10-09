@@ -172,6 +172,7 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
   const [errorMessage, setErrorMessage] = useState(null)
   const [showDenyModal, setShowDenyModal] = useState(false)
   const [clearing, setClearing] = useState(null) // null | 'confirm' | 'working' | 'done' | { failed }
+  const [optionsAsk, setOptionsAsk] = useState(null) // null | 'working' | 'done' | { failed }
 
   // The merge runs in the main process, so this button can be unmounted (you navigate away) and
   // remounted mid-merge. Ask the main process what this PR is doing, and keep asking while it merges.
@@ -237,6 +238,17 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
   const view = describePrState(pr, { status, errorMessage })
   const TONE = { ready: 'text-emerald-400', wait: 'text-amber-400', blocked: 'text-red-400', working: 'text-blue-400' }
 
+  // "Too vague: needs options" (2026-10-09): one click asks the author to restate the questions as a Decisions section.
+  async function sendBackForOptions() {
+    setOptionsAsk('working')
+    try {
+      await window.api.mr.sendBackForOptions({ url: pr.url, ticketNumber: pr.ticketNumber ?? pr.ticketRef ?? null, reasons: pr.vague?.reasons || pr.decisions?.problems || [] })
+      setOptionsAsk('done')
+    } catch (err) {
+      setOptionsAsk({ failed: cleanIpcError(err) })
+    }
+  }
+
   async function clearSentBack() {
     setClearing('working')
     try {
@@ -297,6 +309,17 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
               <button onClick={() => setClearing('confirm')} className="text-sky-400 hover:underline">{a.label}</button>
             )}
             {clearing && clearing.failed && <p className="mt-1 text-amber-400">{clearing.failed}</p>}
+          </div>
+        ) : a.id === 'sendBackForOptions' ? (
+          <div key={a.id} className="max-w-xs text-right text-xs">
+            {optionsAsk === 'working' ? (
+              <span className="text-neutral-500">Sending…</span>
+            ) : optionsAsk === 'done' ? (
+              <span className="text-emerald-400">Sent back: the author will restate the questions with options.</span>
+            ) : (
+              <button onClick={sendBackForOptions} className="rounded-md border border-sky-700 px-3 py-1 text-sm text-sky-300 hover:bg-sky-950">{a.label}</button>
+            )}
+            {optionsAsk && optionsAsk.failed && <p className="mt-1 text-amber-400">{optionsAsk.failed}</p>}
           </div>
         ) : null
       )}
@@ -487,10 +510,22 @@ export default function MrReview({ nav, onOpenDocs, onOpenBoard, onOpenTicket })
     reload()
   }
 
+  // Decisions were answered on the open PR: refresh it in place (its card state and Approve depend on them).
+  function reloadKeepSelected() {
+    window.api.mr
+      .list()
+      .then((list) => {
+        setPrs(list)
+        setSelected((cur) => (cur ? list.find((p) => p.key === cur.key) || cur : cur))
+      })
+      .catch(() => {})
+  }
+
   if (selected) {
     return (
       <MrDetail
         pr={selected}
+        onChanged={reloadKeepSelected}
         onOpenDocs={onOpenDocs}
         onOpenBoard={onOpenBoard}
         onOpenTicket={onOpenTicket}

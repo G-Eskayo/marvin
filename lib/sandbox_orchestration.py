@@ -148,6 +148,11 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
         f"input; each dependency failing; repeats and concurrency; wrong permissions; stale state; a person's "
         f"mistakes). Test against the real collaborator wherever a mock could hide its rules. Verify fails when code "
         f"changes without a test changing."
+        # Owner rule 2026-10-09: choices for the owner are never asked in prose (docs/agents/decisions-format.md).
+        f" If anything needs the owner to choose (a design option, an open question), do not guess silently and do "
+        f"not ask in prose: list it in the plan as a Decisions section in the format of docs/agents/decisions-format.md "
+        f"(\"<!-- marvin:decisions -->\", \"### id: question\", \"- [ ]\" options), so the PR can carry it and he answers "
+        f"with buttons; a PR that asks in prose can't be approved."
     )
 
     # Check if a prior design doc exists (true only on iteration ≥2 within one execute_ticket call)

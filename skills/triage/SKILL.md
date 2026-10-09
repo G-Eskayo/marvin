@@ -80,7 +80,7 @@ Show counts and a one-line summary per issue. Let the maintainer pick.
 6. **Apply the outcome:**
    - `ready-for-agent` — post an agent brief comment ([AGENT-BRIEF.md](AGENT-BRIEF.md)).
    - `ready-for-human` — same structure as an agent brief, but note why it can't be delegated (judgment calls, external access, design decisions, manual testing).
-   - `needs-info` — post triage notes (template below).
+   - `needs-info` — post triage notes (template below). When what's missing is a choice the **owner** has to make, put it in the issue body as a Decisions section ([decisions-format.md](../../docs/agents/decisions-format.md)) so he answers with buttons on the ticket page; answering every required one moves the ticket to `ready-for-agent`.
    - `wontfix` (bug) — polite explanation, then close.
    - `wontfix` (enhancement) — write to `.out-of-scope/`, link to it from a comment, then close ([OUT-OF-SCOPE.md](OUT-OF-SCOPE.md)).
    - `needs-triage` — apply the role. Optional comment if there's partial progress.

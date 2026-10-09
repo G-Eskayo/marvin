@@ -3,6 +3,7 @@ import { waitingOn, baseProblem } from './pr_order.js'
 import { ciState } from '../../webhook-server/ci_status.js'
 import { uiFiles, hasImage } from '../../webhook-server/ui_evidence.js'
 import { parsePrImages } from './pr_images.js'
+import { summarizeDecisions, vagueness } from '../../webhook-server/decisions.js'
 
 // Reads open PRs and identifies which follow the MR pipeline's evidence
 // schema (G-Eskayo/marvin#72, ADR 0024) -- one fixed, structured PR body
@@ -317,6 +318,10 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       autoMerge: shadow[pr.url]?.current || null,
       checks: ciState(pr.statusCheckRollup),
       needsImages: needsImages(pr, uiPathsFor),
+      // Choices the PR asks the owner to make (its Decisions section), and whether it asks in prose with nowhere to
+      // answer (2026-10-09): either one holds Approve until it is answered or restated.
+      decisions: summarizeDecisions(pr.body || ''),
+      vague: vagueness(pr.body || ''),
       // Every image in the description (mock-ups, screenshots, frame strips), for the detail view's gallery.
       images: parsePrImages(pr.body || '', { repo: pr.repo || MARVIN_REPO, headRef: pr.headRefName }),
       baseProblem: baseProblem(prs.map((p) => ({ ...p, repo: p.repo || MARVIN_REPO })), { ...pr, repo: pr.repo || MARVIN_REPO }),
