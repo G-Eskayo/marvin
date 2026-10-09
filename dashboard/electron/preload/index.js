@@ -19,6 +19,8 @@ contextBridge.exposeInMainWorld('api', {
     clearSentBack: (url) => ipcRenderer.invoke('mr:clearSentBack', url),
     deny: (payload) => ipcRenderer.invoke('mr:deny', payload),
     ticketContext: (ticketRef, repo) => ipcRenderer.invoke('mr:ticketContext', ticketRef, repo),
+    // A PR description image as a data: URL, fetched by the main process (private repos need the credential).
+    image: (url) => ipcRenderer.invoke('mr:image', url),
     parity: () => ipcRenderer.invoke('mr:parity'),
     reviewStatus: () => ipcRenderer.invoke('mr:reviewStatus'),
     autoMergeReport: () => ipcRenderer.invoke('mr:autoMergeReport'),
