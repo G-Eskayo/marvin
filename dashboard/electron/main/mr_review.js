@@ -17,6 +17,7 @@ import { ciState } from '../../webhook-server/ci_status.js'
 // trigger, not the thing that does the merge. Denying (ADR 0025) follows
 // the same trigger-not-executor shape, via a second webhook endpoint.
 export const EVIDENCE_HEADERS = {
+  device: '## Device',
   metrics: '## Metrics Comparison',
   testResults: '## Test Results',
   devEvidence: '## Dev Environment Evidence'
@@ -150,6 +151,7 @@ export function parseEvidence(body) {
   const metrics = parseMetricsSection(extractSection(body, EVIDENCE_HEADERS.metrics))
   return {
     ...metrics,
+    device: extractSection(body, EVIDENCE_HEADERS.device) || null,
     testResults: parseTestResultsSection(extractSection(body, EVIDENCE_HEADERS.testResults)),
     devEvidence: parseDevEvidenceSection(extractSection(body, EVIDENCE_HEADERS.devEvidence)),
     ticketRef: parseTicketRef(body)

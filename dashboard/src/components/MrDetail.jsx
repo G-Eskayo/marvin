@@ -135,6 +135,9 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
           </a>
           <p className="mt-1 text-xs text-neutral-500">
             Project: <span className="text-neutral-300">{pr.repo.split('/')[1]}</span>
+            {pr.hasSchema && pr.evidence.device && (
+              <> · Device: <span className="text-neutral-300">{pr.evidence.device}</span></>
+            )}
             {onOpenDocs && (
               <button onClick={() => onOpenDocs(projectIdOf(pr.repo))} className="ml-2 text-neutral-400 hover:text-white">
                 Docs →

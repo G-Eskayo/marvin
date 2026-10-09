@@ -255,6 +255,7 @@ def test_default_open_pr_body_uses_the_evidence_schema_headers(monkeypatch):
     mrr._default_open_pr("G-Eskayo/marvin#1", "pipeline/ticket-1", comparison)
 
     body = calls[0][calls[0].index("--body") + 1]
+    assert "## Device" in body
     assert "## Metrics Comparison" in body
     assert "## Test Results" in body
     assert "## Dev Environment Evidence" in body
@@ -262,7 +263,8 @@ def test_default_open_pr_body_uses_the_evidence_schema_headers(monkeypatch):
     # up to the *next* "## " header, so getting the order wrong would
     # silently corrupt every section after the swapped one.
     assert (
-        body.index("## Metrics Comparison")
+        body.index("## Device")
+        < body.index("## Metrics Comparison")
         < body.index("## Test Results")
         < body.index("## Dev Environment Evidence")
     )
@@ -544,3 +546,23 @@ def test_a_failing_fit_check_never_blocks_the_pr(monkeypatch):
     import fit_check
     monkeypatch.setattr(fit_check, "post", lambda *a: (_ for _ in ()).throw(RuntimeError("gh down")))
     mrr._post_fit_check("G-Eskayo/marvin#1", "/nowhere", "http://fake")  # must not raise
+
+
+def test_default_open_pr_includes_device_in_body(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "https://github.com/G-Eskayo/marvin/pull/99\n"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(mrr.subprocess, "run", fake_run)
+    monkeypatch.setattr(mrr.machine_profile, "registry_id", lambda: "mac-mini")
+    comparison = {"subsystem": "route-classifier", "verdict": "improved", "metrics": {}}
+    mrr._default_open_pr("G-Eskayo/marvin#1", "pipeline/ticket-1", comparison)
+
+    body = calls[0][calls[0].index("--body") + 1]
+    assert "## Device" in body
+    assert "mac-mini" in body

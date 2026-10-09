@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import machine_profile  # noqa: E402
 from mr_notification import notify_mr_ready as _default_notify_mr_ready  # noqa: E402
 
 
@@ -109,6 +110,10 @@ def _format_dev_evidence(dev_evidence: dict | None) -> str:
     return f"![Screenshot]({screenshot})\n\n{description}".strip()
 
 
+def _format_device() -> str:
+    return machine_profile.registry_id()
+
+
 def _repo_of(ticket_ref: str) -> str | None:
     """'G-Eskayo/clarity-captions#7' -> 'G-Eskayo/clarity-captions'. gh must be told which repo: the
     process's own directory is not a reliable stand-in once more than one project is in play."""
@@ -126,6 +131,8 @@ def _default_open_pr(
     body = (
         f"Closes {ticket_ref}\n\n"
         f"Autonomously implemented and verified by the MR pipeline.\n\n"
+        f"## Device\n\n"
+        f"{_format_device()}\n\n"
         f"## Metrics Comparison\n\n"
         f"{_format_comparison(comparison)}\n\n"
         f"## Test Results\n\n"

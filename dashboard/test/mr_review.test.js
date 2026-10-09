@@ -12,6 +12,33 @@ import {
 
 const PIPELINE_BODY = `Closes G-Eskayo/marvin#42
 
+## Device
+
+mac-mini
+
+## Metrics Comparison
+
+**Subsystem**: route.py
+**Verdict**: improved
+
+| Metric | Baseline | Current | Delta | Direction |
+|---|---|---|---|---|
+| accuracy | 0.72 | 0.81 | +0.09 | up |
+| cost_usd | 0.045 | 0.038 | -0.007 | down |
+
+## Test Results
+
+**Suite**: pytest
+**Passed**: 12
+**Failed**: 0
+**Total**: 12
+
+## Dev Environment Evidence
+
+N/A — no UI`
+
+const PIPELINE_BODY_WITHOUT_DEVICE = `Closes G-Eskayo/marvin#42
+
 ## Metrics Comparison
 
 **Subsystem**: route.py
@@ -36,6 +63,10 @@ N/A — no UI`
 const MANUAL_SCHEMA_BODY = `Closes #75
 
 Built manually in a live session, but following the standard evidence format.
+
+## Device
+
+macbook-pro
 
 ## Metrics Comparison
 
@@ -73,6 +104,10 @@ describe('hasEvidenceSchema', () => {
   it('rejects a PR missing even one required section', () => {
     const partial = PIPELINE_BODY.replace('## Dev Environment Evidence\n\nN/A — no UI', '')
     expect(hasEvidenceSchema(partial)).toBe(false)
+  })
+
+  it('accepts a PR with all three required sections but missing Device (backward compatibility)', () => {
+    expect(hasEvidenceSchema(PIPELINE_BODY_WITHOUT_DEVICE)).toBe(true)
   })
 
   it('rejects a non-string body without throwing', () => {
@@ -116,12 +151,23 @@ describe('parseEvidence', () => {
     expect(parseEvidence(MANUAL_SCHEMA_BODY).ticketRef).toBe('75')
   })
 
+  it('extracts the device when present', () => {
+    expect(parseEvidence(PIPELINE_BODY).device).toBe('mac-mini')
+    expect(parseEvidence(MANUAL_SCHEMA_BODY).device).toBe('macbook-pro')
+  })
+
+  it('returns device: null when the Device header is absent', () => {
+    const evidence = parseEvidence(PIPELINE_BODY_WITHOUT_DEVICE)
+    expect(evidence.device).toBe(null)
+  })
+
   it('returns nulls for missing evidence sections rather than throwing, independent of ticketRef', () => {
     const evidence = parseEvidence(NON_SCHEMA_BODY)
     expect(evidence).toEqual({
       subsystem: null,
       verdict: null,
       metrics: [],
+      device: null,
       testResults: null,
       devEvidence: null,
       ticketRef: '70' // ticketRef parses from anywhere in the body, independent of the schema sections
