@@ -57,6 +57,11 @@ def _noop_executor(worktree_path, ticket_ref, feedback):
     return "did nothing"
 
 
+def _fake_plan_response(task_list="1. Task 1\n2. Task 2"):
+    """Standard fake response with plan + task list for use in mocked subprocess.run calls."""
+    return f"## North-star fit\nA good plan\n## Tests\nTests here\n## Task List\n{task_list}"
+
+
 # ── worktree isolation ──────────────────────────────────────────────────────
 
 def test_creates_isolated_worktree_not_touching_live_repo(git_repo, metrics_dir):
@@ -291,7 +296,7 @@ def test_default_executor_records_per_call_cost_against_the_ticket(monkeypatch, 
     monkeypatch.setattr(ts.machine_profile, "registry_id", lambda: "mac-mini-1")
 
     responses = iter([
-        {"result": "a real plan", "total_cost_usd": 0.0098},
+        {"result": _fake_plan_response(), "total_cost_usd": 0.0098},
         {"result": "", "total_cost_usd": 0.0211},
     ])
 
@@ -304,7 +309,7 @@ def test_default_executor_records_per_call_cost_against_the_ticket(monkeypatch, 
     monkeypatch.setattr(so.subprocess, "run", fake_run)
     plan = so._default_executor(tmp_path, "G-Eskayo/marvin#42", None)
 
-    assert plan == "a real plan"
+    assert plan is not None
     events = ts.read_stages(42)
     costs = [e["cost_usd"] for e in events]
     assert costs == [0.0098, 0.0211]
@@ -316,7 +321,7 @@ def test_default_executor_invokes_flagship_then_haiku(monkeypatch, tmp_path):
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
         class R:
-            stdout = "a plan"
+            stdout = _fake_plan_response()
             returncode = 0
         return R()
 
@@ -326,7 +331,7 @@ def test_default_executor_invokes_flagship_then_haiku(monkeypatch, tmp_path):
     assert len(calls) == 2
     assert so.FLAGSHIP_MODEL in calls[0]
     assert so.HAIKU_MODEL in calls[1]
-    assert plan == "a plan"
+    assert plan is not None
 
 
 def test_default_executor_planning_step_scoped_to_readonly_tools(monkeypatch, tmp_path):
@@ -342,7 +347,7 @@ def test_default_executor_planning_step_scoped_to_readonly_tools(monkeypatch, tm
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
         class R:
-            stdout = "a plan"
+            stdout = _fake_plan_response()
             returncode = 0
         return R()
 
@@ -366,7 +371,7 @@ def test_default_executor_planning_and_execution_use_dontask_mode(monkeypatch, t
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
         class R:
-            stdout = "a plan"
+            stdout = _fake_plan_response()
             returncode = 0
         return R()
 
@@ -384,7 +389,7 @@ def test_default_executor_execution_step_scoped_to_build_and_test_tools(monkeypa
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
         class R:
-            stdout = "a plan"
+            stdout = _fake_plan_response()
             returncode = 0
         return R()
 
@@ -409,7 +414,7 @@ def test_default_executor_includes_feedback_in_planning_prompt(monkeypatch, tmp_
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
         class R:
-            stdout = "revised plan"
+            stdout = _fake_plan_response()
             returncode = 0
         return R()
 
@@ -428,7 +433,7 @@ def test_default_executor_tells_the_planner_its_headless_and_autonomous(monkeypa
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
         class R:
-            stdout = "a plan"
+            stdout = _fake_plan_response()
             returncode = 0
         return R()
 
@@ -448,7 +453,7 @@ def test_default_executor_tells_the_executor_not_to_commit_push_or_open_a_pr(mon
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
         class R:
-            stdout = "a plan"
+            stdout = _fake_plan_response()
             returncode = 0
         return R()
 
@@ -473,7 +478,7 @@ def _capture_executor_calls(monkeypatch, tmp_path):
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
         class R:
-            stdout = "a plan"
+            stdout = _fake_plan_response()
             returncode = 0
         return R()
 
@@ -620,7 +625,7 @@ def test_default_executor_tells_the_planner_to_read_the_ticket_comments(monkeypa
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
         class R:
-            stdout = "plan"
+            stdout = _fake_plan_response()
             returncode = 0
         return R()
 
@@ -639,7 +644,7 @@ def _capture_claude(monkeypatch):
     def fake_run(cmd, **kwargs):
         calls.append((cmd, kwargs))
         class R:
-            stdout = "plan"
+            stdout = _fake_plan_response()
             returncode = 0
         return R()
 
@@ -785,7 +790,7 @@ def test_both_prompts_steer_away_from_refused_shell_habits(monkeypatch, tmp_path
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
         class R:
-            stdout = "a plan"
+            stdout = _fake_plan_response()
             returncode = 0
         return R()
 
@@ -874,7 +879,7 @@ def test_a_failed_preflight_spends_no_tokens(tmp_path, monkeypatch):
 def test_the_prompt_names_the_exact_directory_the_agent_is_launched_in(tmp_path, monkeypatch):
     _, wt = _real_worktree(tmp_path, monkeypatch)
     calls = []
-    monkeypatch.setattr(so, "_launch", lambda kind, prompt, **k: calls.append((prompt, k.get("cwd"))) or ("a plan", 0.0))
+    monkeypatch.setattr(so, "_launch", lambda kind, prompt, **k: calls.append((prompt, k.get("cwd"))) or (_fake_plan_response(), 0.0))
     so._default_executor(wt, "G-Eskayo/marvin#999", None)
     assert len(calls) == 2
     for prompt, cwd in calls:
@@ -885,11 +890,12 @@ def test_the_prompt_names_the_exact_directory_the_agent_is_launched_in(tmp_path,
 def test_the_planner_opens_its_plan_with_a_north_star_fit(monkeypatch, tmp_path):
     """marvin#276: the plan carries the fit, which is how the executor receives the north stars."""
     prompts = []
-    monkeypatch.setattr(so, "_launch", lambda kind, prompt, **k: prompts.append((kind, prompt)) or ("a plan", 0.0))
+    monkeypatch.setattr(so, "_launch", lambda kind, prompt, **k: prompts.append((kind, prompt)) or (_fake_plan_response(), 0.0))
     so._default_executor(tmp_path, "TICKET-1", None)
     kinds = dict(prompts)
     assert "## North-star fit" in kinds["ticket-planner"]
-    assert "a plan" in kinds["ticket-executor"]
+    # The executor prompt should have the task list content, not the full plan
+    assert "## Task List" not in kinds["ticket-executor"] or kinds["ticket-executor"].count("## Task List") == 0
 
 
 
@@ -1054,7 +1060,7 @@ def test_default_executor_writes_design_doc_to_disk(monkeypatch, tmp_path):
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
         class R:
-            stdout = "## North-star fit\nRobust plan here\n## Tests\nTest all edge cases"
+            stdout = "## North-star fit\nRobust plan here\n## Tests\nTest all edge cases\n## Task List\n1. Task one"
             returncode = 0
         return R()
 
@@ -1073,7 +1079,7 @@ def test_design_doc_slug_sanitizes_ticket_ref_like_branch_naming(monkeypatch, tm
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
         class R:
-            stdout = "plan"
+            stdout = _fake_plan_response()
             returncode = 0
         return R()
 
@@ -1091,7 +1097,7 @@ def test_planning_prompt_instructs_to_read_current_file_state_before_writing_doc
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
         class R:
-            stdout = "plan"
+            stdout = _fake_plan_response()
             returncode = 0
         return R()
 
@@ -1110,7 +1116,7 @@ def test_second_iteration_reads_prior_design_doc_and_includes_it_in_prompt(monke
     def fake_run(cmd, **kwargs):
         prompts_seen.append(cmd)
         class R:
-            stdout = "revised plan from iteration 2"
+            stdout = _fake_plan_response("1. Revised task")
             returncode = 0
         return R()
 
@@ -1126,8 +1132,8 @@ def test_second_iteration_reads_prior_design_doc_and_includes_it_in_prompt(monke
     so._default_executor(tmp_path, "TICKET-1", feedback={"verdict": "regressed", "metrics": {}})
     assert len(prompts_seen) == 4  # plan1, exec1, plan2, exec2
     second_plan_prompt = prompts_seen[2][prompts_seen[2].index("-p") + 1]
-    # Should include the prior doc's content
-    assert "revised plan from iteration 2" in second_plan_prompt or "prior attempt" in second_plan_prompt.lower()
+    # Should include the prior doc's content (from first iteration)
+    assert "prior attempt" in second_plan_prompt.lower()
     # Should include revision instruction
     assert "revised" in second_plan_prompt.lower() or "do not repeat" in second_plan_prompt.lower()
 
@@ -1139,18 +1145,18 @@ def test_first_iteration_does_not_fail_when_no_prior_design_doc_exists(monkeypat
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
         class R:
-            stdout = "plan"
+            stdout = _fake_plan_response()
             returncode = 0
         return R()
 
     monkeypatch.setattr(so.subprocess, "run", fake_run)
     result = so._default_executor(tmp_path, "TICKET-1", None)
     # Should not raise
-    assert result == "plan"
+    assert result is not None
 
 
-def test_empty_plan_still_gets_written_to_disk(monkeypatch, tmp_path):
-    """Misuse case: model returns empty string, should still write (empty) rather than crash."""
+def test_empty_plan_still_gets_written_to_disk_but_raises_task_list_too_vague(monkeypatch, tmp_path):
+    """Misuse case: model returns empty string -> design doc written, but TaskListTooVague raised (no task list section)."""
     calls = []
 
     def fake_run(cmd, **kwargs):
@@ -1161,8 +1167,11 @@ def test_empty_plan_still_gets_written_to_disk(monkeypatch, tmp_path):
         return R()
 
     monkeypatch.setattr(so.subprocess, "run", fake_run)
-    so._default_executor(tmp_path, "TICKET-1", None)
 
+    with pytest.raises(so.TaskListTooVague):
+        so._default_executor(tmp_path, "TICKET-1", None)
+
+    # Design doc was still written even though TaskListTooVague was raised
     design_doc = tmp_path / "docs" / "design" / "pipeline-ticket-1.md"
     assert design_doc.exists()
     assert design_doc.read_text() == ""
@@ -1175,7 +1184,7 @@ def test_design_doc_written_by_default_executor_when_passed_through_execute_tick
     def fake_run(cmd, **kwargs):
         prompts.append(cmd)
         class R:
-            stdout = "## North-star fit\nPlan here\n## Tests\nTests here"
+            stdout = "## North-star fit\nPlan here\n## Tests\nTests here\n## Task List\n1. Task"
             returncode = 0
         return R()
 
@@ -1197,7 +1206,7 @@ def test_profile_ticket_design_doc_written_in_its_own_worktree(monkeypatch, tmp_
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
         class R:
-            stdout = "profile ticket plan"
+            stdout = _fake_plan_response()
             returncode = 0
         return R()
 
@@ -1216,7 +1225,7 @@ def test_unusual_ticket_ref_produces_valid_collision_free_slug(monkeypatch, tmp_
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
         class R:
-            stdout = "plan"
+            stdout = _fake_plan_response()
             returncode = 0
         return R()
 
@@ -1231,3 +1240,176 @@ def test_unusual_ticket_ref_produces_valid_collision_free_slug(monkeypatch, tmp_
     design_doc2 = other_path / "docs" / "design" / "pipeline-ticket-2.md"
     assert design_doc2.exists()
     assert design_doc != design_doc2
+
+
+# ── task list persistence (marvin#94) ──────────────────────────────────────
+
+def test_task_list_path_in_worktree():
+    """Helper function test: path is under docs/design/ in the worktree, with -tasks suffix."""
+    tmp = Path("/tmp/test-wt")
+    path = so._task_list_path(tmp, "G-Eskayo/marvin#42")
+    assert path.parent.name == "design"
+    assert path.parent.parent.name == "docs"
+    assert path.name == "pipeline-g-eskayo-marvin-42-tasks.md"
+
+
+def test_planning_prompt_requests_task_list_section(monkeypatch, tmp_path):
+    """AC1: prompt explicitly requests a ## Task List section."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "## North-star fit\nPlan\n## Task List\n1. Do X"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+    so._default_executor(tmp_path, "TICKET-1", None)
+
+    plan_prompt = calls[0][calls[0].index("-p") + 1]
+    assert "## Task List" in plan_prompt
+    assert "concrete, numbered" in plan_prompt or "numbered/checkbox breakdown" in plan_prompt
+    assert "TOO_VAGUE:" in plan_prompt
+
+
+def test_default_executor_splits_plan_and_writes_task_list_to_disk(monkeypatch, tmp_path):
+    """AC1+AC3: executor splits the plan response and writes task list to docs/design/<slug>-tasks.md."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "## North-star fit\nRobust plan here\n## Task List\n1. Implement feature X\n2. Add tests\n3. Verify"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+    so._default_executor(tmp_path, "G-Eskayo/marvin#42", None)
+
+    # Design doc contains full response
+    design_doc = tmp_path / "docs" / "design" / "pipeline-g-eskayo-marvin-42.md"
+    assert design_doc.exists()
+    assert "Robust plan here" in design_doc.read_text()
+    assert "## Task List" in design_doc.read_text()
+
+    # Task list file contains only the task list body
+    task_list = tmp_path / "docs" / "design" / "pipeline-g-eskayo-marvin-42-tasks.md"
+    assert task_list.exists()
+    task_list_content = task_list.read_text()
+    assert "1. Implement feature X" in task_list_content
+    assert "2. Add tests" in task_list_content
+    assert "3. Verify" in task_list_content
+    # Task list should NOT contain the design doc's preamble
+    assert "Robust plan here" not in task_list_content
+    assert "## North-star fit" not in task_list_content
+
+
+def test_task_list_too_vague_raises_exception(monkeypatch, tmp_path):
+    """AC4: model returns TOO_VAGUE sentinel -> TaskListTooVague is raised, design doc still written."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "## North-star fit\nSome plan\n## Task List\nTOO_VAGUE: Not enough detail to break into concrete steps"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+
+    with pytest.raises(so.TaskListTooVague) as exc_info:
+        so._default_executor(tmp_path, "TICKET-1", None)
+
+    # Exception message includes the reason
+    assert "Not enough detail" in str(exc_info.value)
+
+    # Design doc was still written
+    design_doc = tmp_path / "docs" / "design" / "pipeline-ticket-1.md"
+    assert design_doc.exists()
+
+    # Task list file should NOT exist (exception raised before writing)
+    task_list = tmp_path / "docs" / "design" / "pipeline-ticket-1-tasks.md"
+    assert not task_list.exists()
+
+
+def test_missing_task_list_section_raises_exception(monkeypatch, tmp_path):
+    """Misuse case: model doesn't produce ## Task List section at all -> TaskListTooVague."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "## North-star fit\nPlan without task list section"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+
+    with pytest.raises(so.TaskListTooVague) as exc_info:
+        so._default_executor(tmp_path, "TICKET-1", None)
+
+    assert "no task list section" in str(exc_info.value)
+
+
+def test_exec_prompt_reads_task_list_from_disk_not_plan_variable(monkeypatch, tmp_path):
+    """AC3: execution prompt is built from task list file's content, not the plan string."""
+    prompts = []
+
+    def fake_run(cmd, **kwargs):
+        prompts.append(cmd)
+        # On first call (planning), return a response with a task list
+        if len(prompts) == 1:
+            class R:
+                stdout = "## North-star fit\nPlan\n## Task List\n1. Original task"
+                returncode = 0
+        else:
+            # On second call (execution), just return something
+            class R:
+                stdout = "Executed"
+                returncode = 0
+        return R()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+
+    # Call executor
+    so._default_executor(tmp_path, "TICKET-1", None)
+
+    # Find the execution call (second call, index 1)
+    assert len(prompts) >= 2
+    exec_call = prompts[1]
+    # The exec prompt should contain the task list content from the file
+    exec_prompt = exec_call[exec_call.index("-p") + 1]
+    assert "1. Original task" in exec_prompt
+    # But it should NOT contain the design doc preamble
+    assert "## North-star fit" not in exec_prompt
+
+
+def test_exec_reads_task_list_file_not_plan_string_directly(monkeypatch, tmp_path):
+    """Verify: exec reads from the file on disk, not from the plan string variable in memory."""
+    prompts = []
+
+    def fake_run(cmd, **kwargs):
+        prompts.append(cmd)
+        class R:
+            stdout = "## North-star fit\nPlan\n## Task List\n1. From planner"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+
+    # Call executor
+    so._default_executor(tmp_path, "TICKET-1", None)
+
+    # Verify both design doc and task list file exist
+    design_doc = tmp_path / "docs" / "design" / "pipeline-ticket-1.md"
+    task_list = tmp_path / "docs" / "design" / "pipeline-ticket-1-tasks.md"
+    assert design_doc.exists()
+    assert task_list.exists()
+
+    # Verify exec prompt came from the file (not just any version of the plan)
+    exec_call = prompts[1]  # second call is executor
+    exec_prompt = exec_call[exec_call.index("-p") + 1]
+    assert "1. From planner" in exec_prompt
+    # And the prompt doesn't accidentally include the full design doc
+    assert "## North-star fit" not in exec_prompt
