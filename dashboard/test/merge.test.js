@@ -14,11 +14,6 @@ vi.mock('../webhook-server/ticket_stages.js', () => ({ recordStage: vi.fn() }))
 vi.mock('../webhook-server/failure_log.js', () => ({ recordFailure: vi.fn() }))
 // #225: the post-merge rebase runs after every merged test PR; its results must never land in the real status file.
 vi.mock('../webhook-server/rebase_status.js', () => ({ writeRebaseStatus: vi.fn(), readRebaseStatus: vi.fn(() => ({})) }))
-// PR body upsert should not call real gh during tests
-vi.mock('../webhook-server/pr_body_section.js', () => ({
-  upsertMutationSection: vi.fn().mockResolvedValue(undefined),
-  renderMutationSection: vi.fn((result) => result ? `## Mutation Score\n\n${result.score}` : 'No result')
-}))
 
 import { execFile, execFileSync } from 'child_process'
 import { promisify } from 'util'
@@ -35,8 +30,7 @@ import {
   _defaultRunTests,
   execWithGroupTimeout,
   assertTargetsBase,
-  assertNotSentBack,
-  runMutationCheck
+  assertNotSentBack
 } from '../webhook-server/merge.js'
 import { MergeFailure, refusal, summarizeGateFailure } from '../webhook-server/failure.js'
 
@@ -163,11 +157,9 @@ describe('mergePr', () => {
     const shouldGateMerge = vi.fn().mockResolvedValue({ gate: true, headRefName: 'pipeline/g-eskayo/marvin#5', body: 'Closes G-Eskayo/marvin#5' })
     const rebaseAndRetestFn = vi.fn().mockResolvedValue({ ok: true })
     const reengage = vi.fn()
-    const runMutationCheckMock = vi.fn().mockResolvedValue({ status: 'ok', score: 1.0, mutants_total: 0, killed: 0, survived: [], unmeasured: [] })
 
     const result = await mergePr(
-      'https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, noopRedispatch, shouldGateMerge, rebaseAndRetestFn, reengage, undefined,
-      { runMutationCheck: runMutationCheckMock, rebaseOpen: vi.fn().mockResolvedValue([]) }
+      'https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, noopRedispatch, shouldGateMerge, rebaseAndRetestFn, reengage
     )
 
     // marvin's gate finishes a rebase whose only conflicts are its generated files (#225)
@@ -182,98 +174,15 @@ describe('mergePr', () => {
     const shouldGateMerge = vi.fn().mockResolvedValue({ gate: true, headRefName: 'pipeline/g-eskayo/marvin#5', body: 'Closes G-Eskayo/marvin#5' })
     const rebaseAndRetestFn = vi.fn().mockResolvedValue({ ok: true })
     const recordStageFn = vi.fn()
-    const runMutationCheckMock = vi.fn().mockResolvedValue({ status: 'ok', score: 1.0, mutants_total: 0, killed: 0, survived: [], unmeasured: [] })
 
     await mergePr(
       'https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, noopRedispatch,
-      shouldGateMerge, rebaseAndRetestFn, vi.fn(), recordStageFn,
-      { runMutationCheck: runMutationCheckMock, rebaseOpen: vi.fn().mockResolvedValue([]) }
+      shouldGateMerge, rebaseAndRetestFn, vi.fn(), recordStageFn
     )
 
     const stages = recordStageFn.mock.calls.map(([, stage, status]) => `${stage}:${status}`)
-    expect(stages).toEqual(['gate:started', 'gate:passed', 'mutation:started', 'mutation:passed', 'merging:started', 'merging:passed', 'rebuilding:started', 'done:passed'])
+    expect(stages).toEqual(['gate:started', 'gate:passed', 'merging:started', 'merging:passed', 'rebuilding:started', 'done:passed'])
     expect(recordStageFn.mock.calls.every(([ticketNumber]) => ticketNumber === '5')).toBe(true)
-  })
-
-  it('runs mutation check after the gate passes for marvin PRs', async () => {
-    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
-    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: true, headRefName: 'pipeline/g-eskayo/marvin#5', body: 'Closes G-Eskayo/marvin#5' })
-    const rebaseAndRetestFn = vi.fn().mockResolvedValue({ ok: true })
-    const recordStageFn = vi.fn()
-
-    // Mock the mutation check call
-    const mutationCheckResult = { status: 'ok', score: 0.8, mutants_total: 5, killed: 4, survived: [{ file: 'lib/a.py', line: 10, operator: 'Lt->Gt', snippet: 'x > 0' }], unmeasured: [] }
-    const runMutationCheckMock = vi.fn().mockResolvedValue(mutationCheckResult)
-
-    await mergePr(
-      'https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, noopRedispatch,
-      shouldGateMerge, rebaseAndRetestFn, vi.fn(), recordStageFn,
-      { runMutationCheck: runMutationCheckMock, rebaseOpen: vi.fn().mockResolvedValue([]) }
-    )
-
-    const stages = recordStageFn.mock.calls.map(([, stage, status]) => `${stage}:${status}`)
-    expect(stages).toContain('mutation:passed')
-    expect(stages).toContain('mutation:started')
-    expect(runMutationCheckMock).toHaveBeenCalled()
-  })
-
-  it('records mutation:failed when mutation check status is unknown', async () => {
-    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
-    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: false, headRefName: 'some-branch', body: 'Closes G-Eskayo/marvin#5' })
-    const recordStageFn = vi.fn()
-
-    // Mock a failed mutation check
-    const failedResult = { status: 'unknown', mutants_total: 0, score: null, killed: 0, survived: [], unmeasured: [], reason: 'npx not found' }
-    const runMutationCheckMock = vi.fn().mockResolvedValue(failedResult)
-
-    await mergePr(
-      'https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, noopRedispatch,
-      shouldGateMerge, vi.fn(), vi.fn(), recordStageFn,
-      { runMutationCheck: runMutationCheckMock, rebaseOpen: vi.fn().mockResolvedValue([]) }
-    )
-
-    const stages = recordStageFn.mock.calls.map(([, stage, status]) => `${stage}:${status}`)
-    expect(stages).toContain('mutation:failed')
-  })
-
-  it('mutation check is never run for non-marvin PRs', async () => {
-    const exec = vi.fn().mockResolvedValue({ stdout: JSON.stringify({ statusCheckRollup: [] }), stderr: '' })
-    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: false, headRefName: 'some-branch', body: 'Closes clarity-captions#10' })
-    const recordStageFn = vi.fn()
-
-    // Set up repo context to indicate non-marvin
-    const ctx = { repo: 'G-Eskayo/clarity-captions', clone: '/tmp/clarity', base: 'main', runTests: vi.fn(), resolveConflicts: vi.fn() }
-    const gateContext = vi.fn().mockResolvedValue(ctx)
-
-    await mergePr(
-      'https://github.com/G-Eskayo/clarity-captions/pull/10', exec, noopRebuild, noopRedispatch,
-      shouldGateMerge, vi.fn(), vi.fn(), recordStageFn, { gateContext }
-    )
-
-    const stages = recordStageFn.mock.calls.map(([, stage]) => stage)
-    expect(stages).not.toContain('mutation')
-  })
-
-  it('regression: mutation check with generic exec mock does not throw on marvin PRs', async () => {
-    // #1010 regression: pre-existing tests that call mergePr with a generic exec mock
-    // but don't inject deps.runMutationCheck caused runMutationCheck to be called with
-    // a mocked exec that can't handle git fetch/worktree/python calls. Result shape
-    // validation in runMutationCheck and defensive guards in mergePr should make this safe.
-    const genericExec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
-    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: false, headRefName: 'pipeline/g-eskayo/marvin#5', body: 'Closes G-Eskayo/marvin#5' })
-    const recordStageFn = vi.fn()
-
-    // This should not throw or hang
-    const result = await mergePr(
-      'https://github.com/G-Eskayo/marvin/pull/71', genericExec, noopRebuild, noopRedispatch,
-      shouldGateMerge, vi.fn(), vi.fn(), recordStageFn
-    )
-
-    // Should complete gracefully
-    expect(result.merged).toBe(true)
-    // Mutation check should still be recorded (just with unknown status since exec mocks don't understand the git commands)
-    const stages = recordStageFn.mock.calls.map(([, stage, status]) => `${stage}:${status}`)
-    expect(stages).toContain('mutation:failed') // unknown status maps to failed in the gate
   })
 
   it('records gate:failed and nothing after, when the rebase/retest fails (no false merging/done events)', async () => {
