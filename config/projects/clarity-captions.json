@@ -63,8 +63,42 @@
     }
   ],
   "evidence": {
+    "ui_paths": [
+      "Apps/**/*.swift",
+      "Apps/**/*.plist",
+      "design/**",
+      "Packages/CaptionCore/Sources/CaptionCore/CaptionStyle.swift"
+    ],
     "dev": {
-      "na": "iPhone app: there is no simulator screenshot capture on the pipeline machines yet, so UI changes are reviewed by running the app"
+      "ios_simulator": {
+        "project_dir": "Apps/Spike",
+        "prepare": [
+          [
+            "xcodegen",
+            "generate"
+          ]
+        ],
+        "project": "CaptionSpike.xcodeproj",
+        "scheme": "CaptionSpike",
+        "simulator": "iPhone 17 Pro",
+        "bundle_id": "com.gileskayo.captions",
+        "configuration": "Debug",
+        "scenes": [
+          {
+            "name": "captions",
+            "args": [
+              "-ClarityDemoStatic"
+            ]
+          },
+          {
+            "name": "settings",
+            "args": [
+              "-ClarityDemoStatic",
+              "-ClarityDemoSettings"
+            ]
+          }
+        ]
+      }
     }
   },
   "setup": [

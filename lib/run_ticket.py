@@ -198,7 +198,7 @@ def run(issue_number: int, repo: str = REPO) -> dict:
                     test_results = capture_test_results(worktree_path, command)
                     dev_evidence = capture_dev_evidence(worktree_path, ticket_touches_ui(worktree_path))
                 else:
-                    test_results, dev_evidence = measurer.evidence()
+                    test_results, dev_evidence = measurer.evidence(worktree_path)
                     if test_results is not None:
                         test_results["notes"] = measurer.pr_note()
 

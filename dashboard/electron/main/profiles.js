@@ -25,6 +25,13 @@ export function readMergeableRepos(dir = PROFILES_DIR) {
   return repos
 }
 
+// A project's own UI paths (evidence.ui_paths), added to ui_evidence.js's defaults for the "Needs images" card (#374).
+export function readUiPaths(repo, dir = PROFILES_DIR) {
+  const hit = readAll(dir).find(({ profile }) => profile.repo === repo)
+  const paths = hit?.profile?.evidence?.ui_paths
+  return Array.isArray(paths) ? paths.filter((p) => typeof p === 'string') : []
+}
+
 function readAll(dir) {
   let names = []
   try {

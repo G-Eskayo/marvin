@@ -289,7 +289,7 @@ def test_gate_info_gives_the_gate_the_clone_the_base_branch_and_what_this_machin
     (tmp_path / ".git").mkdir()
     profile = {**PROFILE, "base_branch": "trunk", "merge_from_dashboard": True, "clone_hints": [str(tmp_path)]}
     info = pp.gate_info(profile, catalog={"projects": []}, have=lambda cap, env: cap != "swift")
-    assert info == {"repo": "G-Eskayo/proj", "clone": str(tmp_path), "base_branch": "trunk", "merge_from_dashboard": True, "missing_here": ["swift"], "generated": []}
+    assert info == {"repo": "G-Eskayo/proj", "clone": str(tmp_path), "base_branch": "trunk", "merge_from_dashboard": True, "missing_here": ["swift"], "generated": [], "ui_paths": []}
 
 
 def test_verify_passes_when_every_required_check_is_clean(tmp_path):
