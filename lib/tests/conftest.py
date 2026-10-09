@@ -170,7 +170,7 @@ def _no_real_code_review(monkeypatch):
 def _no_real_conflict_repair(monkeypatch):
     # The scan's conflict repair rebases, tests and force-pushes real branches; tests opt in by replacing it.
     import ticket_pipeline
-    monkeypatch.setattr(ticket_pipeline, "_try_conflict_repair", lambda repo, pr: {"outcome": "rebuild", "files": []})
+    monkeypatch.setattr(ticket_pipeline, "_try_conflict_repair", lambda repo, pr: {"outcome": "rebuild", "files": [], "cost_usd": 0.0})
     monkeypatch.setattr(ticket_pipeline, "_flagged_before", lambda url, sha: False)
     monkeypatch.setattr(ticket_pipeline, "_mark_flagged", lambda url, sha: None)
 
