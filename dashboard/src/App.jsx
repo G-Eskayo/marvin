@@ -145,7 +145,7 @@ export default function App() {
         ) : activeTab === 'portfolio' ? (
           <PortfolioHub />
         ) : (
-          <ActivityBoard nav={nav} onOpenMr={(prKey) => navigate('mr-review', { prKey })} onOpenDocs={(projectId, path) => navigate('docs', { projectId, path })} onOpenTicket={(repo, number) => navigate('activity', { repo, ticketNumber: number })} />
+          <ActivityBoard nav={nav} onOpenMr={(prKey) => navigate('mr-review', { prKey })} onOpenDocs={(projectId, path) => navigate('docs', { projectId, path })} onOpenTicket={(repo, number) => navigate('activity', { repo, ticketNumber: number })} onOpenProject={(repo) => navigate('activity', { repo })} />
         )}
       </main>
     </div>

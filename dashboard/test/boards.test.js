@@ -184,7 +184,7 @@ describe('loadBoard', () => {
 import { withProjectStatus } from '../electron/main/boards.js'
 
 describe('withProjectStatus', () => {
-  const cat = { projects: [{ id: 'marvin', status: 'active' }, { id: 'old-thing', status: 'dormant' }, { id: 'gone', status: 'archived' }] }
+  const cat = { projects: [{ id: 'marvin', status: 'active', lastActivity: '2026-10-08T12:00:00Z' }, { id: 'old-thing', status: 'dormant', lastActivity: null }, { id: 'gone', status: 'archived', lastActivity: '2026-01-01T00:00:00Z' }] }
 
   it('adds each board\'s project status from the catalog, matching by project id', () => {
     const out = withProjectStatus([{ repo: 'G-Eskayo/marvin' }, { repo: 'G-Eskayo/Old_Thing' }, { repo: 'G-Eskayo/gone' }], cat)
@@ -194,6 +194,17 @@ describe('withProjectStatus', () => {
   it('treats a board with no catalog entry (or no catalog yet) as recent, never hides it', () => {
     expect(withProjectStatus([{ repo: 'G-Eskayo/unknown' }], cat)[0].status).toBe('recent')
     expect(withProjectStatus([{ repo: 'G-Eskayo/marvin' }], null)[0].status).toBe('recent')
+  })
+
+  it('passes through lastActivity from the catalog', () => {
+    const out = withProjectStatus([{ repo: 'G-Eskayo/marvin' }, { repo: 'G-Eskayo/Old_Thing' }], cat)
+    expect(out[0].lastActivity).toBe('2026-10-08T12:00:00Z')
+    expect(out[1].lastActivity).toBe(null)
+  })
+
+  it('sets lastActivity to undefined when no catalog is provided', () => {
+    const out = withProjectStatus([{ repo: 'G-Eskayo/marvin' }], null)
+    expect(out[0].lastActivity).toBeUndefined()
   })
 })
 

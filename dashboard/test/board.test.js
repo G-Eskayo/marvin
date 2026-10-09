@@ -420,4 +420,23 @@ describe('partial progress on a card (marvin #139)', () => {
   })
 })
 
+describe('dashboard home: running tickets and summary', () => {
+  it('tags cards that are live (dispatch running)', () => {
+    const board = buildBoard({ repo: 'o/r', issues: [issue({ number: 1 }), issue({ number: 2 })], prs: [], liveNumbers: new Set([1]) })
+    const cards = board.columns.flatMap((c) => c.cards)
+    expect(cards.find((c) => c.number === 1).isLive).toBe(true)
+    expect(cards.find((c) => c.number === 2).isLive).toBe(false)
+  })
+
+  it('summarizeBoard reports running:true when any live card exists', () => {
+    const board = buildBoard({ repo: 'o/r', issues: [issue({ number: 1 })], prs: [], liveNumbers: new Set([1]) })
+    expect(summarizeBoard(board).running).toBe(true)
+  })
+
+  it('summarizeBoard reports running:false when no cards are live', () => {
+    const board = buildBoard({ repo: 'o/r', issues: [issue({ number: 1 })], prs: [], liveNumbers: new Set() })
+    expect(summarizeBoard(board).running).toBe(false)
+  })
+})
+
 
