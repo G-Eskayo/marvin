@@ -37,6 +37,7 @@ import { createIndexer, buildDocsIndex, loadIndex } from './docs_search.js'
 import { createDocsService, MASTER_ID } from './docs_service.js'
 import { readMergeableRepos, listProfiles, setDispatch, setMergeFromDashboard } from './profiles.js'
 import { searchFiles, isRevealable, isLinkable, linkAction } from './files_search.js'
+import { listOutboxTree, readOutboxFile } from './outbox.js'
 import { readCatalog, readMasterDoc, CATALOG_DIR, MASTER_DOC_PATH } from './catalog.js'
 import { STAGES_DIR } from '../../webhook-server/ticket_stages.js'
 import { DISPATCH_STATE_PATH } from './dispatch_status.js'
@@ -465,6 +466,10 @@ function registerDocsHandlers() {
   })
   ipcMain.handle('docs:tree', (_event, id) => docsService.tree(id))
   ipcMain.handle('docs:content', (_event, id, filePath) => docsService.content(id, filePath))
+
+  // Files tab (outbox): read-only local file viewer
+  ipcMain.handle('outbox:tree', () => listOutboxTree())
+  ipcMain.handle('outbox:content', (_event, relPath) => readOutboxFile(relPath))
 
   // Portfolio tab (CONTEXT.md "Dashboard app -- Portfolio tab"): component library, design rules, guide,
   // evaluation, images. Dev-only: every write is confined to the portfolio repo's templates/.

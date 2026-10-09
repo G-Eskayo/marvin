@@ -76,6 +76,10 @@ contextBridge.exposeInMainWorld('api', {
     reveal: (filePath) => ipcRenderer.invoke('docs:reveal', filePath),
     openLink: (filePath) => ipcRenderer.invoke('docs:openLink', filePath)
   },
+  outbox: {
+    tree: () => ipcRenderer.invoke('outbox:tree'),
+    content: (relPath) => ipcRenderer.invoke('outbox:content', relPath)
+  },
   portfolio: {
     components: () => ipcRenderer.invoke('portfolio:components'),
     saveComponent: (name, html, notes) => ipcRenderer.invoke('portfolio:component:save', name, html, notes),
