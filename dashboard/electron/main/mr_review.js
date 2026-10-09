@@ -340,6 +340,8 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       vague: vagueness(pr.body || ''),
       // Every image in the description (mock-ups, screenshots, frame strips), for the detail view's gallery.
       images: parsePrImages(pr.body || '', { repo: pr.repo || MARVIN_REPO, headRef: pr.headRefName }),
+      // The PR's own branch: repo-relative images in its description resolve there.
+      headRef: pr.headRefName || null,
       baseProblem: baseProblem(prs.map((p) => ({ ...p, repo: p.repo || MARVIN_REPO })), { ...pr, repo: pr.repo || MARVIN_REPO }),
       waitingOn: waitingOn(withState, { ...pr, repo: pr.repo || MARVIN_REPO }),
       hasSchema,
