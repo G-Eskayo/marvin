@@ -44,4 +44,4 @@ def project_readiness(plan: dict | None) -> dict:
             label = PIECE_LABELS.get(key, key.replace("_", " "))
             gaps.append(label)
 
-    return {"ready": len(gaps) == 0, "gaps": gaps}
+    return {"ready": not gaps, "gaps": gaps}

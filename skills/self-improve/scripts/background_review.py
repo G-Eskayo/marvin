@@ -136,8 +136,8 @@ def run_review(handoff_content: str) -> None:
         log.write(f"\n=== run {datetime.now(timezone.utc).isoformat()} ===\n")
         log.flush()
         # No TTY here to approve anything, and none of Read/Write/Edit needs approving anyway —
-        # Bash/WebFetch/Agent are simply not in the toolset, which is the actual safety boundary.
-        # Without bypassPermissions the run just stalls on a prompt no one can answer (confirmed live).
+        # Bash/WebFetch/Agent are not in the toolset, which is the actual safety boundary.
+        # Without bypassPermissions the run stalls on a prompt no one can answer (confirmed live).
         result = marvin_launcher.launch("background-analyst", prompt, tools="Read,Write,Edit",
                                         permission_mode="bypassPermissions")
         log.write(result.text + (f"\n{result.stderr}" if result.stderr else "") + "\n")

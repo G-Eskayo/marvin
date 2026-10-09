@@ -51,8 +51,8 @@ def _read(path: Path) -> dict | None:
     return data
 
 
-def _entry(data: dict, key: str, name: str) -> dict:
-    return data["repos"].setdefault(key, {"name": name, "streak": NEEDED if key in STARTS_OPEN else 0, "seen": [], "last_reset": None})
+def _entry(state: dict, key: str, name: str) -> dict:
+    return state["repos"].setdefault(key, {"name": name, "streak": NEEDED if key in STARTS_OPEN else 0, "seen": [], "last_reset": None})
 
 
 def record(repo: str, pr: int, event: str, path: Path = STATE_PATH, reason: str = "", now: float | None = None) -> dict:

@@ -107,9 +107,9 @@ def _load(path: Path) -> dict:
     return json.loads(path.read_text()) if path.exists() else {}
 
 
-def _save(path: Path, data: dict) -> None:
+def _save(path: Path, settings: dict) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2) + "\n")
+    tmp.write_text(json.dumps(settings, indent=2) + "\n")
     tmp.replace(path)
 
 

@@ -120,7 +120,7 @@ def acquire(model: str, machine: str, caller: str, queue_dir: Path | None = None
                 if not alive:
                     break
                 # In a real implementation, this would sleep and check periodically
-                # For now, just proceed (tests mock this behavior)
+                # For now, proceed (tests mock this behavior)
                 break
 
             # Create task record
