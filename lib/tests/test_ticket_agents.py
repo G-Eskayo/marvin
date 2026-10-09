@@ -351,3 +351,10 @@ def test_triage_looks_again_at_needs_info_it_set_once_the_ticket_is_complete(tmp
     assert ops(acts, number=7, op="remove_label") and ops(acts, number=7, op="add_label", arg="ready-for-agent")
     assert not ops(acts, number=8)
     assert not ops(acts, number=7, op="comment")
+
+
+def test_triage_leaves_a_ticket_the_pipeline_parked_alone():
+    """Parking sets needs-info (run_ticket._park_stuck_ticket). Triage didn't set it, so it must neither re-ready a
+    well-written parked ticket (another round of builds) nor overwrite the cause with a template complaint (#133)."""
+    parked = issue(133, labels=["needs-info", "enhancement"], body=GOOD)
+    assert ta.plan_triage(REPO, [parked], owned_needs_info=frozenset()) == []
