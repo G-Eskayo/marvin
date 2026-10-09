@@ -1,10 +1,13 @@
 import { buildRelationIndex } from './relations.js'
 import { buildBoard } from './board.js'
 
+const RECHECK_MS = 5 * 60_000
+
 // Feeds relations.js real data (every board's tickets and PRs, every project's docs) and keeps the
 // result for a minute; invalidated by the same triggers that refresh the boards and docs.
 export function createRelationsService({ getRepos, getBoardData, getDocs, getProjects, getStages = () => ({}), getLive = () => new Set(), recheck = () => {}, ttlMs = 60_000, now = Date.now }) {
   let built = null // { at, index, columns }
+  let lastRecheck = -Infinity
 
   async function build() {
     const tickets = []
@@ -83,9 +86,15 @@ export function createRelationsService({ getRepos, getBoardData, getDocs, getPro
       }
       // Two data sources with different freshness (the local stage log is instant, GitHub's PR list is cached) can
       // briefly disagree. Never alarm on one snapshot: look again with fresh data and report only what persists.
+      // A real, lasting mismatch would otherwise re-read every repo on every call (~45 GitHub calls each time the MR
+      // list refreshed: the dashboard's top GitHub cost, 2026-10-08). So: re-read only the repos involved, at most
+      // once per RECHECK_MS; in between, the mismatch is reported as it stands.
       const first = compute(await ready())
-      if (first.ok) return first
-      recheck()
+      if (first.ok || now() - lastRecheck < RECHECK_MS) return first
+      lastRecheck = now()
+      const repos = [...new Set([...first.prs.filter((r) => r.status !== 'ok' && r.status !== 'sent-back').map((r) => r.repo),
+        ...first.reviewWithoutPr.map((c) => c.repo)])]
+      recheck(repos)
       built = null
       return compute(await ready())
     },
