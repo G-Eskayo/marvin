@@ -6,6 +6,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import { whois, loadAllowlist, isAllowed } from './device_gate.js'
 import { createDashboardApiRouter } from './dashboard_api.js'
+import { createDashboardGhApiRouter } from './dashboard_gh_api.js'
 import { createChatApiRouter } from './chat_api.js'
 import { createOfflineBatchApiRouter } from './offline_batch_api.js'
 import { createThreadStore } from './thread_store.js'
@@ -54,6 +55,7 @@ function getUptimeSeconds() {
 }
 
 const dashboardApiRouter = createDashboardApiRouter()
+const dashboardGhApiRouter = createDashboardGhApiRouter({ mrWebhookUrl: MR_WEBHOOK_URL })
 const threadStore = createThreadStore()
 const chatApiRouter = createChatApiRouter({ threadStore })
 const offlineBatchApiRouter = createOfflineBatchApiRouter({ threadStore })
@@ -94,6 +96,10 @@ const server = createServer(async (req, res) => {
 
   // Route through dashboard API
   handled = await dashboardApiRouter(req, res)
+  if (handled) return
+
+  // Route through dashboard GitHub API (board/MR/relations routes)
+  handled = await dashboardGhApiRouter(req, res)
   if (handled) return
 
   // Route through chat API
