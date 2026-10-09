@@ -108,7 +108,8 @@ async function fetchOpenPrs(light, fresh = false) {
 }
 const listOpenPrs = ({ light = false, fresh = false } = {}) => fetchOpenPrs(light, fresh)
 // Sent-back tickets' rework status spans every project (lib/rework_status.py reads GitHub): same rule as the queue.
-const reworkFromMemory = () => githubState.get('rework', null, () => { clearReworkCache(); return getReworkStatus() }, { safetyMs: 10 * 60_000 })
+// #324: at most one run every 5 minutes, however many change pings arrive (each run reads every project).
+const reworkFromMemory = () => githubState.get('rework', null, () => { clearReworkCache(); return getReworkStatus() }, { safetyMs: 10 * 60_000, minIntervalMs: 5 * 60_000 })
 
 async function ghIssueView(issueNumber, repo = MARVIN_REPO) {
   const { stdout } = await execFileAsync('gh', ['issue', 'view', String(issueNumber), '--repo', repo, '--json', 'number,title,body'])
