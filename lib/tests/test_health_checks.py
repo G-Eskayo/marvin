@@ -1230,3 +1230,96 @@ def test_output_contracts_reach_health(monkeypatch):
     import output_contracts
     monkeypatch.setattr(output_contracts, "health_findings", lambda: [{"id": "contract:x", "severity": "red"}])
     assert hc.check_output_contracts() == [{"id": "contract:x", "severity": "red"}]
+
+
+# ── Autonomous share check ──────────────────────────────────────────────────
+
+def test_check_autonomous_share_green_when_file_missing(tmp_path):
+    missing_path = tmp_path / "nonexistent.json"
+    r = hc.check_autonomous_share(usage_path=missing_path)
+    assert r["severity"] == "green" and "not yet run" in r["detail"]
+
+
+def test_check_autonomous_share_green_when_no_rows(tmp_path):
+    usage_path = tmp_path / "usage.json"
+    usage_path.write_text(json.dumps({"rows": []}))
+    r = hc.check_autonomous_share(usage_path=usage_path)
+    assert r["severity"] == "green" and "no usage rows" in r["detail"]
+
+
+def test_check_autonomous_share_green_when_rows_have_no_day_field(tmp_path):
+    usage_path = tmp_path / "usage.json"
+    usage_path.write_text(json.dumps({"rows": [{"kind": "headless", "autonomous": True, "output": 100}]}))
+    r = hc.check_autonomous_share(usage_path=usage_path)
+    assert r["severity"] == "green" and "day field" in r["detail"]
+
+
+def test_check_autonomous_share_green_when_total_output_is_zero(tmp_path):
+    usage_path = tmp_path / "usage.json"
+    usage_path.write_text(json.dumps({"rows": [
+        {"day": "2026-10-05", "kind": "headless", "autonomous": True, "output": 0},
+        {"day": "2026-10-05", "kind": "interactive", "autonomous": False, "output": 0}
+    ]}))
+    r = hc.check_autonomous_share(usage_path=usage_path)
+    assert r["severity"] == "green" and "idle day" in r["detail"]
+
+
+def test_check_autonomous_share_green_when_share_exactly_50_percent(tmp_path):
+    usage_path = tmp_path / "usage.json"
+    usage_path.write_text(json.dumps({"rows": [
+        {"day": "2026-10-05", "kind": "headless", "autonomous": True, "output": 100},
+        {"day": "2026-10-05", "kind": "interactive", "autonomous": False, "output": 100}
+    ]}))
+    r = hc.check_autonomous_share(usage_path=usage_path)
+    assert r["severity"] == "green" and r["value"] == 50.0
+
+
+def test_check_autonomous_share_yellow_when_share_above_50_percent(tmp_path):
+    usage_path = tmp_path / "usage.json"
+    usage_path.write_text(json.dumps({"rows": [
+        {"day": "2026-10-05", "kind": "headless", "autonomous": True, "output": 101},
+        {"day": "2026-10-05", "kind": "interactive", "autonomous": False, "output": 100}
+    ]}))
+    r = hc.check_autonomous_share(usage_path=usage_path)
+    assert r["severity"] == "yellow" and r["value"] == 50.2
+
+
+def test_check_autonomous_share_yellow_when_100_percent_autonomous(tmp_path):
+    usage_path = tmp_path / "usage.json"
+    usage_path.write_text(json.dumps({"rows": [
+        {"day": "2026-10-05", "kind": "headless", "autonomous": True, "output": 500},
+        {"day": "2026-10-05", "kind": "interactive", "autonomous": False, "output": 0}
+    ]}))
+    r = hc.check_autonomous_share(usage_path=usage_path)
+    assert r["severity"] == "yellow" and r["value"] == 100.0 and "100%" in r["detail"]
+
+
+def test_check_autonomous_share_never_red_or_has_pause_cap_fields(tmp_path):
+    usage_path = tmp_path / "usage.json"
+    for auto_tokens, inter_tokens in [(0, 100), (50, 50), (75, 25), (100, 0)]:
+        usage_path.write_text(json.dumps({"rows": [
+            {"day": "2026-10-05", "kind": "headless", "autonomous": True, "output": auto_tokens},
+            {"day": "2026-10-05", "kind": "interactive", "autonomous": False, "output": inter_tokens}
+        ]}))
+        r = hc.check_autonomous_share(usage_path=usage_path)
+        assert r["severity"] in ("green", "yellow"), f"Unexpected severity: {r['severity']} for {auto_tokens}/{inter_tokens}"
+        assert "pause" not in r, "autonomous share check should not have a pause field"
+        assert "cap" not in r, "autonomous share check should not have a cap field"
+
+
+def test_check_autonomous_share_uses_latest_day_when_multiple_present(tmp_path):
+    usage_path = tmp_path / "usage.json"
+    usage_path.write_text(json.dumps({"rows": [
+        {"day": "2026-10-03", "kind": "headless", "autonomous": True, "output": 200},
+        {"day": "2026-10-03", "kind": "interactive", "autonomous": False, "output": 800},
+        {"day": "2026-10-05", "kind": "headless", "autonomous": True, "output": 100},
+        {"day": "2026-10-05", "kind": "interactive", "autonomous": False, "output": 50}
+    ]}))
+    r = hc.check_autonomous_share(usage_path=usage_path)
+    assert "2026-10-05" in r["detail"] and r["value"] == 66.7 and r["severity"] == "yellow"
+
+
+def test_run_all_includes_autonomous_share_check():
+    r = hc.run_all()
+    check_ids = [c["id"] for c in r["checks"]]
+    assert "usage:autonomous-share" in check_ids
