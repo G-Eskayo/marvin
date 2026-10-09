@@ -339,3 +339,15 @@ def test_a_missing_label_is_created_when_gh_reports_it_on_stderr_as_the_real_gh_
     ta.apply_action({"repo": REPO, "number": 5, "op": "add_label", "arg": "priority:p3"}, gh)
     assert ["label", "create", "priority:p3", "--repo", REPO] in calls
     assert sum(1 for c in calls if c[:2] == ["issue", "edit"]) == 2
+
+
+def test_triage_looks_again_at_needs_info_it_set_once_the_ticket_is_complete(tmp_path):
+    """The documented loop 'you answer -> triaged again' never ran: needs-info was a final state."""
+    good = "## Solution\n\ndo y\n\n## Acceptance\n\n- [ ] it works\n"
+    audit = tmp_path / "a.jsonl"
+    audit.write_text(json.dumps({"status": "applied", "agent": "triage", "repo": REPO, "number": 7, "op": "add_label", "arg": "needs-info"}) + "\n")
+    issues = [issue(7, labels=["needs-info"], body=good), issue(8, labels=["needs-info"], body=good)]  # 8: a person set it
+    acts = ta.plan_triage(REPO, issues, owned_needs_info=ta.owned_needs_info(audit, REPO))
+    assert ops(acts, number=7, op="remove_label") and ops(acts, number=7, op="add_label", arg="ready-for-agent")
+    assert not ops(acts, number=8)
+    assert not ops(acts, number=7, op="comment")

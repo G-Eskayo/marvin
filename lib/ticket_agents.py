@@ -105,9 +105,16 @@ def plan_prioritize(repo, issues, due, owned, now):
     return out
 
 
-def plan_triage(repo, issues):
+def plan_triage(repo, issues, owned_needs_info=frozenset()):
     out = []
     for t in issues:
+        if t["number"] in owned_needs_info and "needs-info" in pol.label_names(t):
+            # "you answer -> triaged again": a ticket this agent parked is looked at again once it is complete
+            v = pol.triage_verdict(t, recheck=True)
+            if v and v["state"] != "needs-info":
+                out.append(_act("triage", repo, t, "remove_label", "needs-info", "now " + v["why"]))
+                out.append(_act("triage", repo, t, "add_label", v["state"], v["why"]))
+            continue
         v = pol.triage_verdict(t)
         if not v:
             continue
@@ -185,6 +192,17 @@ def owned_priorities(path: Path, repo: str) -> dict[int, str]:
     return owned
 
 
+def owned_needs_info(path: Path, repo: str) -> set[int]:
+    """Tickets the triage agent marked needs-info (and hasn't taken it off since): it may look at them again;
+    a needs-info a person set stays theirs."""
+    owned: set[int] = set()
+    for r in _read_audit(path):
+        if r.get("status") != "applied" or r.get("agent") != "triage" or r.get("repo") != repo or r.get("arg") != "needs-info":
+            continue
+        (owned.add if r["op"] == "add_label" else owned.discard)(r["number"])
+    return owned
+
+
 def refeed_counts(path: Path, repo: str) -> dict[int, int]:
     counts: dict[int, int] = {}
     for r in _read_audit(path):
@@ -240,7 +258,7 @@ def run(snapshot, gh, cfg, now, audit_path=AUDIT_PATH, proposals_path=PROPOSALS_
         if modes["prioritize"] != "off":
             planned += plan_prioritize(repo, issues, due_for(repo), owned_priorities(audit_path, repo), now)
         if modes["triage"] != "off":
-            planned += plan_triage(repo, issues)
+            planned += plan_triage(repo, issues, owned_needs_info(audit_path, repo))
         if repo in executable:  # claims and re-queues belong to the executor, so only projects it can run
             if modes["stale_claims"] != "off":
                 planned += plan_stale_claims(repo, issues, in_flight(repo), now)
