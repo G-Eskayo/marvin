@@ -526,3 +526,21 @@ def test_a_failed_push_says_what_git_said(repo_with_worktree):
     (wt / "x.txt").write_text("x\n")
     with pytest.raises(RuntimeError, match=r"git push of pipeline/ticket-1 failed.*nonexistent"):
         mrr._commit_and_push(wt, "G-Eskayo/marvin#1")
+
+
+def test_a_raised_pr_gets_a_north_star_fit_check(repo_with_worktree):
+    # marvin#276: every pipeline PR shows its fit next to measured facts.
+    checked = []
+    result = mrr.raise_mr(
+        "G-Eskayo/marvin#1", _passing_result(repo_with_worktree),
+        open_pr=lambda *a: "http://fake/pr/9", comment_on_ticket=lambda *a: None, notify=lambda *a: {},
+        fit_check=lambda ticket, worktree, url: checked.append((ticket, worktree, url)),
+    )
+    assert result["raised"] is True
+    assert checked == [("G-Eskayo/marvin#1", _passing_result(repo_with_worktree)["worktree_path"], "http://fake/pr/9")]
+
+
+def test_a_failing_fit_check_never_blocks_the_pr(monkeypatch):
+    import fit_check
+    monkeypatch.setattr(fit_check, "post", lambda *a: (_ for _ in ()).throw(RuntimeError("gh down")))
+    mrr._post_fit_check("G-Eskayo/marvin#1", "/nowhere", "http://fake")  # must not raise

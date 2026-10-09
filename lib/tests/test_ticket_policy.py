@@ -232,3 +232,15 @@ def test_a_bare_bug_scores_into_p1_ahead_of_ordinary_features():
     assert tp.priority_for(bug) == "priority:p1"
     feature_unblocking_two = tp.score_ticket(issue(labels=["enhancement"]), 2, None, NOW)[0]
     assert tp.priority_for(feature_unblocking_two) == "priority:p2"
+
+
+def test_foundation_work_is_weighted_with_its_reason_but_a_near_hard_deadline_still_wins():
+    # Design session 2026-10-08 (#276): scaffolding other work builds on weighs strongly next to "unblocks N";
+    # hard deadlines (ADR 0047) keep their strong weight.
+    plain = tp.score_ticket(issue(labels=["enhancement"]), 0, None, NOW)
+    foundation = tp.score_ticket(issue(labels=["enhancement", "foundation"]), 0, None, NOW)
+    assert foundation[0] - plain[0] == tp.FOUNDATION_WEIGHT
+    assert any("foundation" in why for why in foundation[1])
+    assert tp.priority_for(foundation[0]) == "priority:p2"
+    hard_19_days = tp.score_ticket(issue(), 0, {"date": "2026-10-24", "hard": True}, NOW)[0]
+    assert hard_19_days > tp.score_ticket(issue(labels=["foundation"]), 1, None, NOW)[0]
