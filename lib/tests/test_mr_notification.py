@@ -145,7 +145,7 @@ def test_default_push_notify_invokes_headless_claude(monkeypatch):
     mn._default_push_notify("a test message")
 
     cmd = calls[0]
-    assert "claude" in cmd
+    assert cmd[0].endswith("claude")
     assert "-p" in cmd
     prompt = cmd[cmd.index("-p") + 1]
     assert "a test message" in prompt

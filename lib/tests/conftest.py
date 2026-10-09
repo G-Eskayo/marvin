@@ -116,6 +116,13 @@ def _isolate_job_events(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_launch_log(tmp_path_factory, monkeypatch):
+    # Every launched run is recorded for Metrics and Health; tests must never write the real launch log.
+    import marvin_launcher
+    monkeypatch.setattr(marvin_launcher, "LAUNCH_LOG", tmp_path_factory.mktemp("launches") / "launches.jsonl")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_project_profiles(tmp_path_factory, monkeypatch):
     # A real config/projects/*.json with dispatch "on" must never change what a test dispatches.
     import project_profile
