@@ -69,3 +69,27 @@
 - **repo:sync:~/.claude@mac-mini-1**: 0
 - **repo:sync:~/.claude@macbook-pro-1**: 0
 
+## 2026-10-09T09:29:57.988838+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **dispatch:lock-age**: 26.464945866666667
+- **catalog:fresh**: 0.6
+- **tickets:project-tags**: 0
+- **github:budget**: 4661
+- **github:gate**: 1077
+- **repo:sync:~/.agents@mac-mini-1**: 0
+- **repo:sync:~/.agents@macbook-pro-1**: 2
+- **repo:sync:~/.claude@mac-mini-1**: 0
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
+## 2026-10-09T09:45:36.253269+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **dispatch:lock-age**: 8.795704133333334
+- **catalog:fresh**: 0.8
+- **tickets:project-tags**: 0
+- **github:budget**: 4336
+- **github:gate**: 1160
+- **repo:sync:~/.agents@mac-mini-1**: 0
+- **repo:sync:~/.agents@macbook-pro-1**: 2
+- **repo:sync:~/.claude@mac-mini-1**: 0
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+
