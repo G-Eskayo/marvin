@@ -268,7 +268,10 @@ def main(argv: list[str]) -> int:
             st.update(after_refusal(st, kind, time.time(), reset))
         elif rc == 0:
             st.update(after_success(st))
-    _log({"t": now, "caller": caller, "priority": prio, "cmd": cmd, "rc": rc, "ms": ms, **({"refused": kind, "said": err.strip()[-200:]} if kind else {})})
+    where = {"cwd": os.getcwd().replace(os.environ.get("HOME", "~"), "~")[-80:]}
+    if os.environ.get("PYTEST_CURRENT_TEST"):  # a test reaching real GitHub is a bug: say which one
+        where["test"] = os.environ["PYTEST_CURRENT_TEST"][:160]
+    _log({"t": now, "caller": caller, "priority": prio, "cmd": cmd, "rc": rc, "ms": ms, **where, **({"refused": kind, "said": err.strip()[-200:]} if kind else {})})
     return rc
 
 
