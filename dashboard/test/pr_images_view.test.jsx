@@ -43,8 +43,8 @@ const basePr = {
 describe('MrDetail shows the PR\'s images near the top', () => {
   it('has an Images section with the count, above the description', () => {
     const html = renderToStaticMarkup(<MrDetail pr={{ ...basePr, images: IMAGES }} onBack={() => {}} />)
-    expect(html).toContain('Images (3)')
-    expect(html.indexOf('Images (3)')).toBeLessThan(html.indexOf('PR Description'))
+    expect(html).toContain('Images &amp; recordings (3)')
+    expect(html.indexOf('Images &amp; recordings (3)')).toBeLessThan(html.indexOf('PR Description'))
   })
   it('says "Needs images" for a UI change with none, and nothing extra for a non-UI PR', () => {
     const needs = renderToStaticMarkup(<MrDetail pr={{ ...basePr, images: [], needsImages: { files: ['Apps/Spike/Sources/ContentView.swift'] } }} onBack={() => {}} />)
@@ -52,7 +52,7 @@ describe('MrDetail shows the PR\'s images near the top', () => {
     expect(needs).toContain('ContentView.swift')
     const plain = renderToStaticMarkup(<MrDetail pr={{ ...basePr, images: [], needsImages: null }} onBack={() => {}} />)
     expect(plain).not.toContain('Needs images')
-    expect(plain).not.toContain('Images (')
+    expect(plain).not.toContain('Images &amp; recordings')
   })
 })
 
@@ -72,6 +72,16 @@ describe('listPipelinePrs carries the images to the detail view', () => {
       number: 5, title: 't', url: 'https://github.com/G-Eskayo/finance-os/pull/5', repo: 'G-Eskayo/finance-os', headRefName: 'feat/x',
       body: '## Screens\n![bills](docs/bills.png)'
     }])
-    expect(prs[0].images).toEqual([{ url: 'https://raw.githubusercontent.com/G-Eskayo/finance-os/feat/x/docs/bills.png', alt: 'bills', group: 'Screens', caption: 'bills' }])
+    expect(prs[0].images).toEqual([{ url: 'https://raw.githubusercontent.com/G-Eskayo/finance-os/feat/x/docs/bills.png', kind: 'image', alt: 'bills', group: 'Screens', caption: 'bills' }])
+  })
+})
+
+describe('PrImages with recordings', () => {
+  it('asks the loader with each item\'s kind, so a recording gets the bigger cap and the disk cache', () => {
+    // Static render runs no effects; the kind travels through useLoadedImages, checked here via the item list.
+    const items = [{ url: 'https://raw.githubusercontent.com/o/r/b/rec.mp4', kind: 'video', group: 'Recordings', caption: 'Pause and save' }]
+    const html = renderToStaticMarkup(<PrImages images={items} loadImage={vi.fn(() => new Promise(() => {}))} />)
+    expect(html).toContain('▶ Pause and save')
+    expect(html).toContain('Recordings')
   })
 })

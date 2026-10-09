@@ -1,4 +1,5 @@
-import { app, BrowserWindow, ipcMain, dialog, session, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, session, shell, protocol, net } from 'electron'
+import { pathToFileURL } from 'url'
 import { instrumentIpc } from './timing.js'
 import { installDevSiteCors } from './dev_site_cors.js'
 import { join, dirname } from 'path'
@@ -52,7 +53,7 @@ import { getUsageReport } from './usage_report.js'
 import { createRefreshServer } from './refresh_server.js'
 import { adoptLoginShellPath, adoptSharedGhToken, useGhGate } from './path.js'
 import { postTicketInput } from './ticket_input.js'
-import { createImageLoader } from './pr_images.js'
+import { createImageLoader, mediaFileFor } from './pr_images.js'
 import { resolveServiceDefaults, resolveDeviceId } from './device_identity.js'
 
 // Every IPC handler below is timed into ~/.claude/logs/dashboard-timing.jsonl (#236); must run before any is registered.
@@ -620,8 +621,8 @@ function registerMrReviewHandlers() {
   // decision in G-Eskayo/marvin#72's evidence schema (ADR 0024).
   // PR description images for the detail view's gallery: fetched here with the shared GitHub credential (private repos),
   // capped and cached, and handed to the renderer as data: URLs, which its CSP allows. The token never reaches the page.
-  const prImages = createImageLoader({ cacheDir: join(app.getPath('userData'), 'pr-image-cache') })
-  ipcMain.handle('mr:image', (_event, url) => prImages.load(String(url || '')))
+  const prImages = createImageLoader({ cacheDir: prMediaDir() })
+  ipcMain.handle('mr:image', (_event, url, kind) => prImages.load(String(url || ''), kind || null))
 
   ipcMain.handle('mr:ticketContext', (_event, ticketRef, repo = MARVIN_REPO) => {
     if (repo !== MARVIN_REPO && !readRegistry().some((b) => b.repo === repo)) throw new Error(`No board registered for ${repo}`)
@@ -713,7 +714,17 @@ function registerMrReviewHandlers() {
   })
 }
 
+// PR recordings (screen recordings in PR descriptions) are cached by the main process and streamed to the PR detail's
+// <video> players from here, with byte ranges so they can seek. Only ids of files already in the cache are served.
+const prMediaDir = () => join(app.getPath('userData'), 'pr-image-cache')
+protocol.registerSchemesAsPrivileged([{ scheme: 'prmedia', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } }])
+
 app.whenReady().then(() => {
+  protocol.handle('prmedia', (request) => {
+    const found = mediaFileFor(prMediaDir(), new URL(request.url).pathname.replace(/^\/+/, ''))
+    if (!found) return new Response('not found', { status: 404 })
+    return net.fetch(pathToFileURL(found.file).toString(), { headers: request.headers })
+  })
   installDevSiteCors(session.defaultSession)   // previews need the dev site's web fonts (see dev_site_cors.js)
   registerMetricsHandlers()
   registerMrReviewHandlers()
