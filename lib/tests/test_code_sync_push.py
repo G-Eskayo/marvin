@@ -75,3 +75,22 @@ def test_push_no_ops_when_truly_nothing_to_do(tmp_path, monkeypatch):
 
     after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=clone, capture_output=True, text=True).stdout.strip()
     assert before == after
+
+
+def test_stuck_from_previous_run_includes_stashed_file_names(tmp_path, monkeypatch):
+    """When a stash is left behind, the error message names the touched files."""
+    monkeypatch.setattr(cs, "LOG_PATH", tmp_path / "unused-log.md")
+    monkeypatch.setattr(cs, "notify", lambda *a, **kw: None)
+
+    clone = _make_origin_and_clone(tmp_path)
+
+    # Create a stash with some tracked files
+    (clone / "file.md").write_text("modified\n")
+    (clone / "new-file.txt").write_text("untracked\n")
+    _git(clone, "stash", "push", "-u", "-m", "test stash")
+
+    # Call _stuck_from_previous_run and check that file names are included
+    result = cs._stuck_from_previous_run(clone)
+    assert result is not None
+    assert "stash@{0} touches:" in result
+    assert "file.md" in result or "new-file.txt" in result

@@ -9,6 +9,20 @@ function formatTick(iso) {
   }
 }
 
+function CustomTooltip({ active, payload, label }) {
+  if (active && payload && payload.length) {
+    const data = payload[0].payload
+    return (
+      <div className="rounded border border-neutral-600 bg-neutral-800 p-2 text-xs text-neutral-100">
+        <p>{formatTick(data.timestamp)}</p>
+        <p className="font-semibold">{payload[0].value}</p>
+        {data.machine && <p className="text-neutral-400">{data.machine}</p>}
+      </div>
+    )
+  }
+  return null
+}
+
 // One small chart per metric rather than one combined chart -- metrics on
 // wildly different scales (e.g. a percentage next to a token count) would
 // be unreadable stacked on shared axes, and "legible to a lay person" is
@@ -36,10 +50,7 @@ function MetricChart({ name, points, higherIsBetter }) {
             <CartesianGrid strokeDasharray="3 3" stroke="#262626" />
             <XAxis dataKey="timestamp" tickFormatter={formatTick} stroke="#525252" fontSize={11} />
             <YAxis stroke="#525252" fontSize={11} width={40} />
-            <Tooltip
-              labelFormatter={formatTick}
-              contentStyle={{ background: '#171717', border: '1px solid #404040', fontSize: 12 }}
-            />
+            <Tooltip content={<CustomTooltip />} />
             <Line type="monotone" dataKey="value" stroke="#60a5fa" strokeWidth={2} dot={{ r: 3 }} />
           </LineChart>
         </ResponsiveContainer>
@@ -89,7 +100,8 @@ export default function SubsystemDrilldown({ subsystem, onBack }) {
                 .filter((snapshot) => metricName in snapshot.metrics)
                 .map((snapshot) => ({
                   timestamp: snapshot.timestamp,
-                  value: snapshot.metrics[metricName].value
+                  value: snapshot.metrics[metricName].value,
+                  machine: snapshot.machine
                 }))
               const higherIsBetter = history[history.length - 1].metrics[metricName].higher_is_better
               return (
