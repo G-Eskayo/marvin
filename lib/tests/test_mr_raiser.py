@@ -14,6 +14,13 @@ sys.path.insert(0, str(LIB))
 import mr_raiser as mrr  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def stub_machine_profile(monkeypatch):
+    """Stub machine_profile.registry_id to prevent hermetic tests from shelling
+    out to ioreg/sysctl/scutil or writing ~/.claude/machine-profile.json."""
+    monkeypatch.setattr(mrr.machine_profile, "registry_id", lambda: "test-machine")
+
+
 def _run(cmd, cwd):
     subprocess.run(cmd, cwd=cwd, check=True, capture_output=True)
 
@@ -266,6 +273,88 @@ def test_default_open_pr_body_uses_the_evidence_schema_headers(monkeypatch):
         < body.index("## Test Results")
         < body.index("## Dev Environment Evidence")
     )
+
+
+def test_default_open_pr_includes_device_section_when_registry_id_succeeds(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "https://github.com/G-Eskayo/marvin/pull/99\n"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(mrr.subprocess, "run", fake_run)
+    monkeypatch.setattr(mrr.machine_profile, "registry_id", lambda: "mac-mini")
+    comparison = {"subsystem": "route-classifier", "verdict": "improved", "metrics": {}}
+    mrr._default_open_pr("G-Eskayo/marvin#1", "pipeline/ticket-1", comparison)
+
+    body = calls[0][calls[0].index("--body") + 1]
+    assert "## Device" in body
+    assert "mac-mini" in body
+
+
+def test_device_section_is_ordered_first_in_evidence_schema(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "https://github.com/G-Eskayo/marvin/pull/99\n"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(mrr.subprocess, "run", fake_run)
+    monkeypatch.setattr(mrr.machine_profile, "registry_id", lambda: "macbook-pro")
+    comparison = {"subsystem": "route-classifier", "verdict": "improved", "metrics": {}}
+    mrr._default_open_pr("G-Eskayo/marvin#1", "pipeline/ticket-1", comparison)
+
+    body = calls[0][calls[0].index("--body") + 1]
+    assert (
+        body.index("## Device")
+        < body.index("## Metrics Comparison")
+        < body.index("## Test Results")
+        < body.index("## Dev Environment Evidence")
+    )
+
+
+def test_format_device_returns_registry_id(monkeypatch):
+    monkeypatch.setattr(mrr.machine_profile, "registry_id", lambda: "test-device")
+    result = mrr._format_device()
+    assert result == "test-device"
+
+
+def test_format_device_falls_back_when_registry_id_raises(monkeypatch):
+    def raising_registry_id():
+        raise Exception("Permission denied")
+    monkeypatch.setattr(mrr.machine_profile, "registry_id", raising_registry_id)
+    result = mrr._format_device()
+    assert result == "unknown-machine"
+
+
+def test_default_open_pr_still_succeeds_when_device_formatting_fails(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "https://github.com/G-Eskayo/marvin/pull/99\n"
+            returncode = 0
+        return R()
+
+    def raising_registry_id():
+        raise Exception("Registry lookup failed")
+
+    monkeypatch.setattr(mrr.subprocess, "run", fake_run)
+    monkeypatch.setattr(mrr.machine_profile, "registry_id", raising_registry_id)
+    comparison = {"subsystem": "route-classifier", "verdict": "improved", "metrics": {}}
+    url = mrr._default_open_pr("G-Eskayo/marvin#1", "pipeline/ticket-1", comparison)
+
+    assert url == "https://github.com/G-Eskayo/marvin/pull/99"
+    body = calls[0][calls[0].index("--body") + 1]
+    assert "## Device" in body
+    assert "unknown-machine" in body
 
 
 def test_default_open_pr_includes_test_results_section_when_supplied(monkeypatch):

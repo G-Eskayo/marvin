@@ -12,6 +12,10 @@ import {
 
 const PIPELINE_BODY = `Closes G-Eskayo/marvin#42
 
+## Device
+
+mac-mini
+
 ## Metrics Comparison
 
 **Subsystem**: route.py
@@ -40,6 +44,10 @@ N/A — no UI
 const MANUAL_SCHEMA_BODY = `Closes #75
 
 Built manually in a live session, but following the standard evidence format.
+
+## Device
+
+macbook-pro
 
 ## Metrics Comparison
 
@@ -128,6 +136,7 @@ describe('parseEvidence', () => {
       metrics: [],
       testResults: null,
       devEvidence: null,
+      device: null,
       mutation: null,
       ticketRef: '70' // ticketRef parses from anywhere in the body, independent of the schema sections
     })
@@ -148,6 +157,33 @@ describe('parseEvidence', () => {
     const body = `Closes #42\n## Mutation Score\n\nno mutable lines`
     const evidence = parseEvidence(body)
     expect(evidence.mutation).toEqual({ status: 'ok', score: 100, killed: 0, total: 0, reason: 'no mutable lines' })
+  })
+
+  it('extracts device when present', () => {
+    const evidence = parseEvidence(PIPELINE_BODY)
+    expect(evidence.device).toBe('mac-mini')
+  })
+
+  it('extracts different device value for manual schema body', () => {
+    const evidence = parseEvidence(MANUAL_SCHEMA_BODY)
+    expect(evidence.device).toBe('macbook-pro')
+  })
+
+  it('returns null for device when the ## Device header is absent', () => {
+    const evidence = parseEvidence(NON_SCHEMA_BODY)
+    expect(evidence.device).toBeNull()
+  })
+
+  it('returns null for device when the section is blank', () => {
+    const body = `Closes #42\n\n## Device\n\n## Metrics Comparison\n\n**Subsystem**: test`
+    const evidence = parseEvidence(body)
+    expect(evidence.device).toBeNull()
+  })
+
+  it('does not throw when device section content contains malformed content', () => {
+    const body = `Closes #42\n## Device\n\nsome## device##value\n\n## Metrics Comparison\n\n**Subsystem**: test`
+    const evidence = parseEvidence(body)
+    expect(evidence.device).toBe('some## device##value')
   })
 })
 
