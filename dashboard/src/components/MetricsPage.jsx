@@ -2,18 +2,21 @@ import { useEffect, useState } from 'react'
 import MetricsScorecard from './MetricsScorecard.jsx'
 import ToolsView from './ToolsView.jsx'
 import UsageView from './UsageView.jsx'
+import GithubView from './GithubView.jsx'
 import { machineFreshness } from '../lib/usage_view.js'
 
 const SECTIONS = [
   { id: 'tools', label: 'Tools & skills' },
   { id: 'usage', label: 'Usage' },
+  { id: 'github', label: 'GitHub' },
   { id: 'pipeline', label: 'Pipeline results' }
 ]
 
 const FRESH_STYLE = { ok: 'text-neutral-500', unreachable: 'text-red-400', 'no-data': 'text-amber-400' }
 
 // What MARVIN is actually doing: which tools and skills get used (and whether it goes well), how much the sessions use, and the
-// pipeline's benchmark results. Tools and Usage cover both machines; pick one to look at it alone.
+// pipeline's benchmark results, and what spends the shared GitHub allowance. Tools, Usage and GitHub cover both machines; pick one
+// to look at it alone.
 export default function MetricsPage() {
   const [section, setSection] = useState('tools')
   const [which, setWhich] = useState('all')
@@ -64,7 +67,7 @@ export default function MetricsPage() {
               })}
             </p>
           )}
-          {section === 'tools' ? <ToolsView machines={machines} which={which} /> : <UsageView machines={machines} which={which} />}
+          {section === 'tools' ? <ToolsView machines={machines} which={which} /> : section === 'github' ? <GithubView machines={machines} which={which} /> : <UsageView machines={machines} which={which} />}
         </>
       )}
     </div>

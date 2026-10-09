@@ -93,3 +93,27 @@ def test_a_peer_that_answers_but_has_no_scan_yet_is_reachable_and_gets_asked_to_
     peer = next(m for m in r["machines"] if not m["this"])
     assert peer["reachable"] is True and peer["tools"] is None
     assert any("usage_report.py scan" in c for _h, c in ssh.calls)
+
+
+def test_each_machine_carries_its_github_use(monkeypatch, tmp_path):
+    setup(monkeypatch, tmp_path, doc("mac-mini-1", 1), doc("mac-mini-1", 1))
+    monkeypatch.setattr(ur, "local_github", lambda: {"machine": "mac-mini-1", "hours": [], "top": []})
+
+    class WithGithub(Peers):
+        def __call__(self, host, command, timeout=20):
+            if "github_usage.py" in command:
+                self.calls.append((host, command))
+                return json.dumps({"machine": "macbook-pro-1", "hours": [{"total": 3}], "top": []})
+            return super().__call__(host, command, timeout)
+
+    r = ur.report(now=NOW, ssh=WithGithub({"tool-usage.json": doc("macbook-pro-1", 5), "token-usage.json": doc("macbook-pro-1", 5)}))
+    by = {m["machine"]: m for m in r["machines"]}
+    assert by["mac-mini-1"]["github"]["machine"] == "mac-mini-1"
+    assert by["macbook-pro-1"]["github"]["hours"][0]["total"] == 3
+
+
+def test_a_peer_without_the_github_summary_still_reports(monkeypatch, tmp_path):
+    setup(monkeypatch, tmp_path, doc("mac-mini-1", 1), doc("mac-mini-1", 1))
+    monkeypatch.setattr(ur, "local_github", lambda: None)
+    r = ur.report(now=NOW, ssh=Peers({"tool-usage.json": doc("macbook-pro-1", 5), "token-usage.json": doc("macbook-pro-1", 5)}))
+    assert all(m["github"] is None for m in r["machines"])

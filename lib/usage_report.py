@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""This machine's tool and token usage plus the other machine's, in one JSON for the dashboard's Metrics tab.
+"""This machine's tool, token and GitHub usage plus the other machine's, in one JSON for the dashboard's Metrics tab.
 
 Each machine scans its own Claude session transcripts (lib/tool_usage.py, lib/session_usage.py) and keeps the result in
 ~/.claude/logs/. Those files are NOT synced (they can quote commands and error output), so the other machine's are read over ssh
@@ -84,6 +84,23 @@ def _peer_docs(host: str, ssh) -> tuple[dict | None, dict | None, bool]:
     return out[0], out[1], answered
 
 
+def local_github() -> dict | None:
+    """This Mac's GitHub use, from the gh gate's logs (lib/github_usage.py): cheap, so read live."""
+    try:
+        import github_usage
+        return github_usage.summarize(github_usage.read_jsonl(github_usage.CALLS_PATH),
+                                      github_usage.read_jsonl(github_usage.BUDGET_PATH), datetime.now(timezone.utc))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _peer_github(host: str, ssh) -> dict | None:
+    try:
+        return json.loads(ssh(host, f"{AGENTS_PYTHON} ~/.agents/lib/github_usage.py", timeout=30))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
 def report(now: datetime | None = None, ssh=default_ssh) -> dict:
     now = now or datetime.now(timezone.utc)
     tools, tokens = _read(TOOL_PATH), _read(TOKEN_PATH)
@@ -94,7 +111,7 @@ def report(now: datetime | None = None, ssh=default_ssh) -> dict:
             tools, tokens = _read(TOOL_PATH), _read(TOKEN_PATH)
         except Exception:  # noqa: BLE001  a failed scan must not hide what was already there
             pass
-    machines = [{"machine": this_machine(), "this": True, "reachable": True, "tools": tools, "tokens": tokens}]
+    machines = [{"machine": this_machine(), "this": True, "reachable": True, "tools": tools, "tokens": tokens, "github": local_github()}]
     for dev, host in peer_machines().items():
         ptools, ptokens, reachable = _peer_docs(host, ssh)
         old = any(d is None or (_age_min(d, now) or 1e9) > STALE_PEER_MIN for d in (ptools, ptokens))
@@ -104,7 +121,8 @@ def report(now: datetime | None = None, ssh=default_ssh) -> dict:
                 ptools, ptokens, _ = _peer_docs(host, ssh)
             except (OSError, ValueError, subprocess.SubprocessError):
                 pass
-        machines.append({"machine": dev, "this": False, "reachable": reachable, "tools": ptools, "tokens": ptokens})
+        machines.append({"machine": dev, "this": False, "reachable": reachable, "tools": ptools, "tokens": ptokens,
+                         "github": _peer_github(host, ssh) if reachable else None})
     return {"generated_at": now.isoformat(), "machines": machines}
 
 

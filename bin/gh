@@ -158,6 +158,7 @@ def _budget(real: str, now: float) -> dict | None:
         fresh["at"] = now
         with _State() as st:
             st["budget"] = fresh
+        _append("gh-budget.jsonl", fresh)  # the Metrics tab charts the allowance over time (lib/github_usage.py)
     return fresh
 
 
@@ -179,6 +180,18 @@ def _background_slot():
                 f.close()
         time.sleep(0.2)
     return None
+
+
+def _append(name: str, row: dict) -> None:
+    try:
+        p = _logs() / name
+        if p.exists() and p.stat().st_size > LOG_MAX_BYTES:
+            lines = p.read_text().splitlines()
+            p.write_text("\n".join(lines[len(lines) // 2:]) + "\n")
+        with open(p, "a") as f:
+            f.write(json.dumps(row) + "\n")
+    except OSError:
+        pass
 
 
 def _log(row: dict) -> None:
