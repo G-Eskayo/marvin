@@ -64,7 +64,8 @@ def test_an_unmeasured_contract_says_who_will_consume_it():
 
 def test_every_producer_has_a_contract():
     names = {c.producer for c in oc.CONTRACTS}
-    assert {"architecture-review", "improvement-sweep", "safety-monitor", "daily-digest", "research-digest"} <= names
+    assert {"architecture-review", "improvement-sweep", "safety-monitor", "daily-digest", "research-digest",
+            "morning-brief"} <= names
 
 
 def test_promotion_takes_the_top_pending_suggestions_up_to_the_cap_and_records_the_decision():
@@ -84,3 +85,20 @@ def test_a_promotion_that_made_no_ticket_stays_pending_and_a_finished_one_is_res
     text = oc.promote_pending(SUGGESTIONS, NOW, limit=2, promote=lambda finding: next(decisions))
     assert text.count("**Status**: pending") == 1
     assert "**Status**: resolved 2026-10-08 (ticket promotion: its own updates say nothing remains)" in text
+
+
+def test_a_digest_is_consumed_by_that_days_brief_and_a_brief_by_being_read(tmp_path, monkeypatch):
+    import morning_brief
+    monkeypatch.setattr(oc, "CLAUDE", tmp_path)
+    monkeypatch.setattr(morning_brief, "BRIEFS", tmp_path / "briefs")
+    (tmp_path / "daily-digest").mkdir()
+    for day in ("2026-10-06", "2026-10-07", "2026-10-07-merged"):
+        (tmp_path / "daily-digest" / f"{day}.md").write_text("x")
+    (tmp_path / "briefs").mkdir()
+    (tmp_path / "briefs" / "2026-10-07.md").write_text("brief")
+    pending, consumed = oc._digest("daily-digest")()
+    assert [d.date().isoformat() for d in pending] == ["2026-10-06"]
+    assert [d.date().isoformat() for d in consumed] == ["2026-10-07"]
+    assert [d.date().isoformat() for d in oc._brief()[0]] == ["2026-10-07"]
+    (tmp_path / "briefs" / "2026-10-07.read").write_text("now")
+    assert oc._brief()[0] == []
