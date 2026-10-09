@@ -344,6 +344,9 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   mock could hide them. Outward-facing work is also attacked like an adversary would. Enforced at five gates (ADR
   0063): ticket section, verify, a mutation check (≥ 80 % of planted bugs caught to auto-merge), a commit check for
   direct commits (a stated reason to skip), and the Health trend.
+- **Hearing about it**: an "Auto-merged" list in the dashboard, each with a one-click Revert; the morning brief opens
+  with one line ("auto-merged since yesterday: N, all green"); a phone push only when something goes wrong (a revert,
+  main red, a trust ramp reset).
 
 ## Dashboard app — Files tab (in design, 2026-08-27)
 
