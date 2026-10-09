@@ -63,6 +63,7 @@ export function createPortfolio({
   const python = path.join(agentsDir, 'venv', 'bin', 'python')
   const evalScript = path.join(agentsDir, 'lib', 'portfolio_eval.py')
   const imageScript = path.join(agentsDir, 'lib', 'portfolio_imagegen.py')
+  const fluxScript = path.join(agentsDir, 'lib', 'portfolio_flux.py')
   const addProjectScript = path.join(agentsDir, 'lib', 'portfolio_add_project.py')
   const parityScript = path.join(agentsDir, 'lib', 'portfolio_parity.py')
   const syncScript = path.join(agentsDir, 'lib', 'portfolio_sync_dev.py')
@@ -218,6 +219,7 @@ export function createPortfolio({
           title: m.title,
           url: m.url,
           thumbnail: m.thumbnail,
+          description: m.description,
           sharedWith: (byThumb.get(m.thumbnail) || []).filter((t) => t !== m.title),
           generated: { exists, path: exists ? file : null, ...(registry[slug] ? { salt: registry[slug].salt, style: registry[slug].style } : {}) },
           heroMismatch
@@ -514,5 +516,60 @@ export function createPortfolio({
     return JSON.parse(stdout)
   }
 
-  return { contentTemplates, contentReport, chrome, inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, templateSource, specimen, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage, imageMotifs, imageVariants, newImageVariant, chooseImageVariant, applyImages, addProject, listElements, verifyElement, pipelineStatus, runPipeline, deleteImageVariant, variantPreview }
+  // ── FLUX variants: AI art generation with style + mood selection ──
+  async function imageStyleCatalog() {
+    const { stdout } = await exec(python, [fluxScript, 'dummy', '--styles'], { maxBuffer: 1024 * 1024, timeout: 5000 })
+    return JSON.parse(stdout)
+  }
+
+  async function fluxVariants(slug) {
+    await knownProject(slug)
+    const { stdout } = await exec(python, [fluxScript, slug, '--list'], { maxBuffer: 1024 * 1024, timeout: 5000 })
+    return JSON.parse(stdout)
+  }
+
+  async function generateFluxVariant(slug, subject, style, mood) {
+    const entry = await knownProject(slug)
+    if (typeof subject !== 'string' || !subject.trim()) throw new Error('Subject is required')
+    if (typeof style !== 'string' || !style.trim()) throw new Error('Style is required')
+    if (typeof mood !== 'string' || !mood.trim()) throw new Error('Mood is required')
+    await exec(python, [fluxScript, slug, '--subject', subject, '--style', style, '--mood', mood],
+      { maxBuffer: 1024 * 1024, timeout: 3 * 60 * 1000 })
+    const variants = await fluxVariants(slug)
+    return variants.variants.length > 0 ? variants.variants[variants.variants.length - 1] : null
+  }
+
+  async function chooseFluxVariant(slug, seed) {
+    await knownProject(slug)
+    if (!Number.isInteger(seed) || seed < 0) throw new Error('Invalid seed')
+    const { stdout } = await exec(python, [fluxScript, slug, '--choose', String(seed)], { maxBuffer: 1024 * 1024, timeout: 5000 })
+    return JSON.parse(stdout)
+  }
+
+  async function deleteFluxVariant(slug, seed) {
+    await knownProject(slug)
+    if (!Number.isInteger(seed) || seed < 0) throw new Error('Invalid seed')
+    try {
+      const { stdout } = await exec(python, [fluxScript, slug, '--delete', String(seed)], { maxBuffer: 1024 * 1024, timeout: 5000 })
+      return JSON.parse(stdout)
+    } catch (err) {
+      let reason = null
+      try { reason = JSON.parse(err.stdout || '{}').error } catch { /* not JSON */ }
+      throw new Error(reason || err.message)
+    }
+  }
+
+  async function fluxVariantPreview(slug, seed, type = 'card') {
+    await knownProject(slug)
+    if (!Number.isInteger(seed) || seed < 0) throw new Error('Invalid seed')
+    if (type !== 'card' && type !== 'hero') throw new Error('Type must be card or hero')
+    try {
+      const filename = `flux-${type}-${seed}.jpg`
+      return 'data:image/jpeg;base64,' + (await fsp.readFile(path.join(imagesDir, slug, filename))).toString('base64')
+    } catch {
+      return null
+    }
+  }
+
+  return { contentTemplates, contentReport, chrome, inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, templateSource, specimen, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage, imageMotifs, imageVariants, newImageVariant, chooseImageVariant, applyImages, addProject, listElements, verifyElement, pipelineStatus, runPipeline, deleteImageVariant, variantPreview, imageStyleCatalog, fluxVariants, generateFluxVariant, chooseFluxVariant, deleteFluxVariant, fluxVariantPreview }
 }
