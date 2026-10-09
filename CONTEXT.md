@@ -309,7 +309,7 @@ then) — a real, current fragility, not a hypothetical one.
   Gil's approve/deny = peer review. Not just a metaphor — it's the actual justification for why the
   sandbox and the metrics-comparison step both exist as hard requirements, not nice-to-haves.
 
-## Auto-merge (in design, 2026-10-09, #332)
+## Auto-merge (designed 2026-10-09, #332, ADR 0064)
 
 Why: a pipeline PR waits a median 9.4 h for Gil's Approve while building takes ~25 min, and only 5 pipeline PRs have
 ever been closed unmerged. Gil approves almost everything; the wait is the cost.
@@ -368,6 +368,9 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   permission** (Gil): a new folder inherits its parent's area; a brand-new top-level folder counts as owned, but at
   most 3 a week auto-merge (past that, they wait: a burst of folders usually means sprawl). Health tracks file, folder
   and repo-size growth, and the output-contracts check (#305) flags files nothing reads, so growth stays bounded.
+- **Dependencies and size**: adding or upgrading a dependency (package.json, requirements, a Swift package manifest)
+  always waits for Gil (supply-chain trust); more than 1,500 changed lines (tests included) waits too (the ticket was
+  probably too big). Design complete: ADR 0064.
 
 ## Dashboard app — Files tab (in design, 2026-08-27)
 
