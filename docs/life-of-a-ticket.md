@@ -331,6 +331,71 @@ The problems we know about, most flow-blocking first. Each has a next step.
 
 ---
 
+## The road to green: every ticket, in the order they depend on each other
+
+*Mapped 2026-10-09. Each row says which non-green zone it fixes. **NEW** = no ticket yet. ❓ = waiting on your answer
+(`needs-info`). 🟣 = a step only you can do. Tickets lower down rely on the ones above.*
+
+**Step 0 — switches, no code (minutes).** Let the prioritize, stale-claims and refeed agents act, as triage does
+now. Fixes: 🟡 Prioritize, 🔴 Recovery.
+
+**Tier 1 — foundations** (nothing blocks them; most others build on them)
+
+| Ticket | Fixes | State |
+|---|---|---|
+| #321 Health metrics files stop conflicting on every sync | 🔴 Sync collisions | being built on the mini |
+| **NEW** Deploy on merge: pull, restart servers and apps, alarm when an app isn't running | 🔴 Deploy | — |
+| #240 A failed run keeps its claim | 🔴 Recovery | ❓ |
+| #213 Holds come back (On-hold group, revisit date) | 🔴 Recovery | ready |
+| #126 Screenshots / render check for UI PRs | 🔴 UI bugs reach main | ready |
+| #130 Machine resources panel (disk, memory, CPU, GPU) | feeds the throttle | ready |
+
+**Tier 2 — builds on tier 1**
+
+| Ticket | Fixes | Relies on |
+|---|---|---|
+| #218 Stop retry storms | 🔴 Recovery | #213 · ❓ |
+| #93 → #94 A design doc, then a task list, for each ticket | fewer sent-backs | — |
+| #96 Code review as a second check in the merge gate | safety for auto-merge | — |
+| #230 Model-assisted conflict resolution (the hard case) | 🟡 Merge | ❓ |
+| #217 Stage strip: see where a ticket failed | 🟡 Review | ❓ |
+| #279 Metrics + Health redo · #278 why tool calls fail · #236 dashboard speed | 🟡 visibility | #279 ❓ |
+
+**Tier 3 — the big flow unlocks**
+
+| Ticket | Fixes | Relies on |
+|---|---|---|
+| **NEW** Auto-merge for low-risk PRs (you get a summary) | 🔴 #1: Approve waits 9.4 h | Deploy on merge, #126, #96 |
+| #231 Approve queues the merge (merge queue) | 🟡 Merge | #230 · ❓ |
+| #327 Throttle = full power, held only by the real bottleneck | 🔴 throughput | tier 1–2 + auto-merge · 🟣 design |
+
+**Tier 4 — more projects flowing** (🔴 other projects' dispatch is off)
+
+#235 Portfolio pipeline profile 🟣 → #259 Onboarding opens each project's CI PR → #150 First real onboarding run 🟣
+→ #199 First live run with two projects at once 🟣
+
+**Tier 5 — chains waiting on you** (🔴)
+
+- **NEW:** a "needs you" list ranked by how much each item unblocks.
+- 🟣 **#153 Push key** → unblocks #162, #163, #164, #165, #167 (MARVIN Mobile)
+- 🟣 **#174 Map logs why it drew** → unblocks #175–#181, #186 (Map v2). An agent can do this one: move it to ready-for-agent.
+- 🟣 Decisions: #43 bench triggering · #44 vector index · #45 map findings · #46 model-adaptive harness
+- 🟣 Also yours: #154 mobile repo · #189 map snapshot review · #262 repos out of iCloud · #270 MARVIN page · #284 promote website · #134 TMOG
+
+**Tier 6 — sessions on both Macs** (🔴)
+
+**NEW:** share the "working on" list between the Macs (#326 covers one Mac).
+
+**Tier 7 — goals become tickets** (⚪ the big loop)
+
+#275 North-star scorecard ❓ → #40 Open-loop resurfacing → #38 Contradiction / QA sweep, plus every
+"faster / fewer / cheaper" ticket carrying a purpose metric (a small change to the to-issues skill).
+
+**Waiting on your answers** (❓, they block the tiers above): #240, #218, #230, #231, #217, #279, #275, and the
+undesigned #73 (re-engagement) and #81 (token budget cap).
+
+---
+
 ## Glossary
 
 | Word | For a five-year-old | For a professional |
