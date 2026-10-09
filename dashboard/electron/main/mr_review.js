@@ -1,6 +1,8 @@
 import { MARVIN_REPO, prKey, canMergeFromDashboard, repoFromPrUrl } from './mr_repos.js'
 import { waitingOn, baseProblem } from './pr_order.js'
 import { ciState } from '../../webhook-server/ci_status.js'
+import { readStages } from '../../webhook-server/ticket_stages.js'
+import { taskIsTicket } from './activity.js'
 
 // Reads open PRs and identifies which follow the MR pipeline's evidence
 // schema (G-Eskayo/marvin#72, ADR 0024) -- one fixed, structured PR body
@@ -230,7 +232,7 @@ export async function prsForOrderCheck(prs, sentBackTickets) {
   return markSentBack(prs, keys)
 }
 
-export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDashboard, sentBackTickets = null, reworkStatus = null, rebaseStatus = null, closedTickets = null, autoMergeShadow = null } = {}) {
+export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDashboard, sentBackTickets = null, reworkStatus = null, rebaseStatus = null, closedTickets = null, autoMergeShadow = null, stagesDir = null, liveDispatch = null } = {}) {
   const prs = await listOpenPrs()
   // The webhook's post-merge rebase results, by PR url (#225). Best effort: without them a card just doesn't say.
   let rebased = {}
@@ -282,35 +284,60 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
   // Each PR with the facts that decide whether it can be waited on (sent back for rework; conflicts), so merge order skips the
   // ones that cannot merge as they stand.
   const withState = markSentBack(prs, sentBackKeys)
+  // Read dispatch status if provided
+  let dispatchStatus = null
+  if (liveDispatch) {
+    try {
+      dispatchStatus = liveDispatch()
+    } catch {
+      dispatchStatus = null
+    }
+  }
   return prs.map((pr) => {
     const ticketRef = parseTicketRef(pr.body || '')
     const hasSchema = hasEvidenceSchema(pr.body)
     const evidence = hasSchema ? parseEvidence(pr.body) : null
+    const prRepo = pr.repo || MARVIN_REPO
+    // Read stage log for the linked ticket
+    let events = []
+    let isLiveNow = false
+    if (ticketRef && stagesDir) {
+      try {
+        events = readStages(ticketRef, stagesDir, prRepo)
+        isLiveNow = !!(dispatchStatus && taskIsTicket(dispatchStatus.task, prRepo, ticketRef))
+      } catch {
+        events = []
+        isLiveNow = false
+      }
+    }
     return {
       number: pr.number,
       title: pr.title,
       url: pr.url,
-      repo: pr.repo || MARVIN_REPO,
-      key: prKey(pr.repo || MARVIN_REPO, pr.number),
-      canMerge: canMerge(pr.repo || MARVIN_REPO),
+      repo: prRepo,
+      key: prKey(prRepo, pr.number),
+      canMerge: canMerge(prRepo),
       conflicts: pr.mergeable === 'CONFLICTING',
       rebase: rebased[pr.url] || null,
       autoMerge: shadow[pr.url]?.current || null,
       checks: ciState(pr.statusCheckRollup),
-      baseProblem: baseProblem(prs.map((p) => ({ ...p, repo: p.repo || MARVIN_REPO })), { ...pr, repo: pr.repo || MARVIN_REPO }),
-      waitingOn: waitingOn(withState, { ...pr, repo: pr.repo || MARVIN_REPO }),
+      baseProblem: baseProblem(prs.map((p) => ({ ...p, repo: p.repo || MARVIN_REPO })), { ...pr, repo: prRepo }),
+      waitingOn: waitingOn(withState, { ...pr, repo: prRepo }),
       hasSchema,
       // The ticket was sent back for rework (marvin #129): approving would merge work that was just rejected.
-      sentBack: ticketRef !== null && sentBackKeys.has(`${pr.repo || MARVIN_REPO}#${ticketRef}`),
+      sentBack: ticketRef !== null && sentBackKeys.has(`${prRepo}#${ticketRef}`),
       ticketRef,
-      ticketClosed: ticketRef !== null && closedKeys.has(`${pr.repo || MARVIN_REPO}#${ticketRef}`),
-      rework: ticketRef !== null && sentBackKeys.has(`${pr.repo || MARVIN_REPO}#${ticketRef}`) ? rework[`${pr.repo || MARVIN_REPO}#${ticketRef}`] || null : null,
+      ticketClosed: ticketRef !== null && closedKeys.has(`${prRepo}#${ticketRef}`),
+      rework: ticketRef !== null && sentBackKeys.has(`${prRepo}#${ticketRef}`) ? rework[`${prRepo}#${ticketRef}`] || null : null,
       ticketNumber: evidence?.ticketRef ? Number(evidence.ticketRef) : null,
       evidence,
       // Full body, untruncated -- MrDetail.jsx needs the whole thing since
       // it's exactly the "drill in and actually read it" view; PrCard.jsx
       // truncates its own display slice for the compact list card.
-      rawBody: hasSchema ? null : pr.body || ''
+      rawBody: hasSchema ? null : pr.body || '',
+      // Stage events for the linked ticket (stage strip)
+      events,
+      isLiveNow
     }
   })
 }
