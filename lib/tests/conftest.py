@@ -174,6 +174,15 @@ def pytest_configure(config):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_machine_profile(monkeypatch):
+    # metrics_registry._machine() lazy-imports machine_profile and calls machine_label(),
+    # which shells out to hardware probes and writes the real ~/.claude/machine-profile.json.
+    # This must be mocked for all tests to match the codebase's suite-wide isolation rule.
+    import machine_profile
+    monkeypatch.setattr(machine_profile, "machine_label", lambda: "test-machine")
+
+
+@pytest.fixture(autouse=True)
 def _no_real_github(tmp_path_factory, monkeypatch):
     # Tests must never reach real GitHub: a suite run was editing a real ticket's labels (marvin#20) and spending the
     # account's API budget (found 2026-10-08). A `gh` that refuses everything comes first on PATH; tests that need gh

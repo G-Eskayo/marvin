@@ -156,20 +156,25 @@ def test_check_cron_job_log_returns_none_for_unmapped_job():
 
 # ── repo integrity ────────────────────────────────────────────────────────
 
-def test_check_repo_integrity_yellow_on_leftover_stash(tmp_path, monkeypatch):
+def test_check_repo_integrity_red_on_leftover_stash(tmp_path, monkeypatch):
     class FakeProc:
         def __init__(self, stdout):
             self.stdout = stdout
+            self.returncode = 0
 
     def fake_run(cmd, **kw):
-        if "stash" in cmd:
+        if "stash list" in " ".join(cmd):
             return FakeProc("stash@{0}: WIP on main: abc123 msg\n")
+        elif "stash show" in " ".join(cmd):
+            # Return filenames of stashed files
+            return FakeProc("file1.txt\nfile2.md\n")
         return FakeProc("")
 
     monkeypatch.setattr(hc.subprocess, "run", fake_run)
     result = hc.check_repo_integrity("~/.agents", ".agents")
-    assert result["severity"] == "yellow"
+    assert result["severity"] == "red"
     assert result["value"] == 1
+    assert "file1.txt" in result["detail"] or "file2.md" in result["detail"]
 
 
 def test_check_repo_integrity_red_on_unresolved_conflict(monkeypatch):
@@ -363,9 +368,17 @@ def test_evaluate_repo_sync_green_when_converged_and_clean():
 
 def test_evaluate_repo_sync_stashes_block_sync_and_are_flagged():
     sev, detail, value = hc.evaluate_repo_sync(_state(stashes=7), NOW)
-    assert sev == "yellow"
+    assert sev == "red"
     assert "7" in detail and "block" in detail.lower()
     assert value == 7
+
+
+def test_evaluate_repo_sync_stashes_include_filenames_when_available():
+    state = _state(stashes=2)
+    state["stash_files"] = "file1.txt,file2.md"
+    sev, detail, value = hc.evaluate_repo_sync(state, NOW)
+    assert sev == "red"
+    assert "file1.txt" in detail or "file2.md" in detail
 
 
 def test_evaluate_repo_sync_conflict_is_red():
@@ -440,7 +453,7 @@ def test_check_repo_sync_everywhere_covers_local_and_reachable_remote(monkeypatc
 
     by_id = {r["id"]: r for r in results}
     assert by_id["repo:sync:~/.agents@mac-mini-1"]["severity"] == "green"
-    assert by_id["repo:sync:~/.agents@macbook-pro-1"]["severity"] == "yellow"
+    assert by_id["repo:sync:~/.agents@macbook-pro-1"]["severity"] == "red"
     assert ("lap", ".agents") in calls
 
 

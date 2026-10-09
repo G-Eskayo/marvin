@@ -241,7 +241,18 @@ def check_repo_integrity(display_name: str, rel_path: str) -> dict:
     except subprocess.TimeoutExpired:
         return _result(cid, label, "yellow", "git stash list timed out")
     if n_stash:
-        return _result(cid, label, "yellow", f"{n_stash} stash(es) present — blocks code-sync until resolved", value=n_stash)
+        # Get stashed filenames for visibility
+        try:
+            files_output = subprocess.run(["git", "-C", str(repo), "stash", "show", "--name-only", "-u", "stash@{0}"],
+                                        capture_output=True, text=True, timeout=10)
+            files = files_output.stdout.strip().split('\n') if files_output.returncode == 0 else []
+            file_list = ", ".join(f[:40] for f in files if f.strip())[:120]  # Cap display
+            detail = f"{n_stash} stash(es) present — blocks code-sync until resolved"
+            if file_list:
+                detail += f" ({file_list})"
+        except subprocess.TimeoutExpired:
+            detail = f"{n_stash} stash(es) present — blocks code-sync until resolved"
+        return _result(cid, label, "red", detail, value=n_stash)
     status = subprocess.run(["git", "-C", str(repo), "status", "--short"],
                             capture_output=True, text=True, timeout=10)
     if re.search(r"^(UU|AA|DD) ", status.stdout, re.MULTILINE):
@@ -744,6 +755,7 @@ cd "$HOME/$REPO_REL" 2>/dev/null || { echo "fetch_ok=0"; echo "head="; exit 0; }
 git fetch -q origin >/dev/null 2>&1 && echo "fetch_ok=1" || echo "fetch_ok=0"
 echo "head=$(git rev-parse --short HEAD 2>/dev/null)"
 echo "stashes=$(git stash list 2>/dev/null | wc -l | tr -d ' ')"
+echo "stash_files=$(git stash show --name-only -u stash@{0} 2>/dev/null | tr '\n' ',' | sed 's/,$//')"
 echo "conflicts=$(git status --porcelain 2>/dev/null | grep -cE '^(UU|AA|DD) ')"
 echo "behind=$(git rev-list --count HEAD..origin/main 2>/dev/null)"
 echo "behind_oldest_ts=$(git log --format=%ct HEAD..origin/main 2>/dev/null | tail -1)"
@@ -768,6 +780,7 @@ def parse_repo_state(text: str) -> dict:
     return {
         "head": raw.get("head", "").strip(),
         "stashes": num("stashes") or 0,
+        "stash_files": raw.get("stash_files", "").strip(),
         "conflicts": num("conflicts") or 0,
         "fetch_ok": raw.get("fetch_ok", "0").strip() == "1",
         "behind": num("behind") or 0,
@@ -796,7 +809,11 @@ def evaluate_repo_sync(state: dict, now: datetime) -> tuple[str, str, int | None
     if state["conflicts"]:
         findings.append(("red", "unresolved merge conflict in working tree"))
     if state["stashes"]:
-        findings.append(("yellow", f"{state['stashes']} stash(es) present -- code-sync refuses to run until resolved; blocks sync"))
+        detail = f"{state['stashes']} stash(es) present -- code-sync refuses to run until resolved; blocks sync"
+        if state.get("stash_files"):
+            files = state["stash_files"][:120]  # Cap display
+            detail += f" ({files})"
+        findings.append(("red", detail))
     if not state["fetch_ok"]:
         findings.append(("yellow", "git fetch failed -- cannot verify convergence"))
     age_finding(state["behind"], state["behind_oldest_ts"], "behind origin")
