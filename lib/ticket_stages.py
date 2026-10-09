@@ -73,7 +73,7 @@ def _legacy_file(ticket_number: int, repo: str | None) -> Path | None:
 def record_stage(
     ticket_number: int, stage: str, status: str, detail: str = "",
     machine: str | None = None, cost_usd: float | None = None, title: str | None = None,
-    repo: str | None = None,
+    repo: str | None = None, run_id: str | None = None,
 ) -> dict:
     if stage not in VALID_STAGES:
         raise ValueError(f"unknown stage: {stage!r} (expected one of {sorted(VALID_STAGES)})")
@@ -100,6 +100,10 @@ def record_stage(
         # GitHub) -- readers take it from whichever event in a ticket's
         # timeline has it, not every event.
         "title": title,
+        # Run id for claim ownership -- allows stale runs to avoid releasing
+        # another run's claim. Included even when None so it's consistently
+        # present in the event dict, but only checked/compared when non-None.
+        "run_id": run_id,
     }
     path = _stage_file(ticket_number, repo)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -134,3 +138,16 @@ def list_tracked_tickets(repo: str | None = None) -> list[int]:
         if parsed and parsed[0].lower() == want.lower():
             numbers.add(parsed[1])
     return sorted(numbers)
+
+
+def claim_owner(ticket_number: int, repo: str | None = None) -> str | None:
+    """Returns the run_id of the most recent 'claimed' event for this ticket,
+    or None if there is no claimed event (legacy data, unreadable file, etc).
+    A None result means "no one owns this claim" -> permissive, allowing a
+    release without checking. A non-None result means this run_id must match
+    the releasing run's id to proceed."""
+    stages = read_stages(ticket_number, repo)
+    for event in reversed(stages):
+        if event.get("stage") == "claimed":
+            return event.get("run_id")
+    return None
