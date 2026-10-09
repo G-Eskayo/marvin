@@ -220,8 +220,166 @@ def readiness():
     s.save("flow-readiness.svg")
 
 
+def diamond(s, cx, cy, w, h, lines, kind="warn", size=14):
+    """A yes/no question."""
+    pts = f"{cx},{cy - h / 2} {cx + w / 2},{cy} {cx},{cy + h / 2} {cx - w / 2},{cy}"
+    s.parts.append(f"<polygon points='{pts}' fill='{FILL[kind]}' stroke='{EDGE[kind]}' stroke-width='2'/>")
+    lh = size + 4
+    top = cy - (len(lines) - 1) * lh / 2 + size / 3
+    for i, ln in enumerate(lines):
+        s.text(cx, top + i * lh, ln, size, weight="700" if i == 0 else "400")
+
+
+# ── 4. Ticket states: the labels a ticket carries, and what moves it ─────────────────────────────────────
+
+def states():
+    s = Svg(1240, 760, "Ticket states — the labels a ticket carries, and what moves it along")
+    s.legend(66)
+    B = 74
+    s.box(40, 110, 220, B, ["NEW", "just filed, no state"], "warn", 14)
+    s.box(330, 110, 240, B, ["needs-info", "something's missing"], "warn", 14)
+    s.box(330, 230, 240, B, ["ready-for-human", "needs you (login, choice)"], "you", 14)
+    s.box(330, 350, 240, B, ["ready-for-agent", "an agent can build it"], "ok", 14)
+    s.box(640, 350, 240, B, ["claimed:<machine>", "being built — hands off"], "ok", 14)
+    s.box(950, 350, 250, B, ["PR open", "waiting for your Approve"], "warn", 14)
+    s.box(950, 500, 250, B, ["MERGED → closed", "card moves to Done"], "ok", 14)
+    s.box(640, 500, 240, B, ["needs-reengagement", "sent back: rebuild it"], "bad", 14)
+    s.box(950, 640, 250, B, ["ARCHIVED", "whole board quiet 14 days"], "plan", 14)
+    s.box(40, 350, 220, B, ["pinned / held", "agents never touch it"], "plan", 14)
+    s.arrow(260, 147, 326, 147, label="triage", ly=139)
+    s.arrow(260, 160, 326, 260, label="triage", lx=318, ly=215, anchor="start")
+    s.arrow(260, 170, 326, 380, label="triage", lx=262, ly=330, anchor="end")
+    s.path("M 450 110 V 92 H 150 V 106", "#d97706")
+    s.text(300, 86, "you answer → triaged again", 13, "#d97706", weight="700")
+    s.arrow(450, 304, 450, 346, "#4f46e5")
+    s.arrow(570, 387, 636, 387, label="scan", ly=379)
+    s.arrow(880, 387, 946, 387, label="PR raised", ly=379)
+    s.arrow(1075, 424, 1075, 496, label="you Approve", lx=1085, ly=465, anchor="start")
+    s.arrow(1075, 574, 1075, 636, "#9ca3af", "later", lx=1085, ly=612, anchor="start")
+    s.arrow(1000, 424, 884, 520, "#dc2626", "deny / conflict / CI fail", lx=930, ly=455)
+    s.path("M 640 537 H 600 V 400 H 574", "#dc2626", None)
+    s.text(592, 470, "rebuild", 13, "#dc2626", "end", "700")
+    s.text(620, 735, "A label is the ticket's state: the pipeline only ever reads labels, so what you see on GitHub is the truth.", 14, "#4b5563")
+    s.save("ticket-states.svg")
+
+
+# ── 5. Where the time goes in one ticket's life ──────────────────────────────────────────────────────────
+
+def timeline():
+    segs = [  # label, typical minutes (my estimate from logs), kind
+        ("wait for triage", 30, "ok"), ("wait for a scan", 30, "ok"), ("build + verify", 25, "ok"),
+        ("WAIT FOR YOUR APPROVE", 564, "bad"), ("merge gate", 2, "ok"), ("WAIT FOR DEPLOY", 45, "bad"),
+    ]
+    total = sum(m for _, m, _ in segs)
+    s = Svg(1240, 420, "Where the time goes — one typical ticket, idea to running")
+    s.legend(66)
+    x, y, W = 40, 130, 1160
+    for label, mins, kind in segs:
+        w = max(W * mins / total, 4)
+        s.parts.append(f"<rect x='{x}' y='{y}' width='{w}' height='70' fill='{EDGE[kind]}' stroke='white' stroke-width='2'/>")
+        if w > 90:
+            s.text(x + w / 2, y + 32, label, 14, "white", weight="700")
+            s.text(x + w / 2, y + 52, f"~{mins / 60:.1f} h (measured median)" if mins >= 120 else f"~{mins} min", 13, "white")
+        x += w
+    s.text(40, 240, "Small slices (left): triage ~30 min, scan ~30 min, build ~25 min, merge ~2 min — the machine parts are fast.", 15, "#111827", "start")
+    s.text(40, 270, "Big slices (red): waiting for Approve (median 9.4 h over the last 46 pipeline PRs) and for the code to reach both Macs.", 15, "#dc2626", "start", "700")
+    s.text(40, 300, "So: the fastest way to more flow is not faster agents, it is less waiting (auto-merge for low-risk PRs, deploy on merge).", 15, "#111827", "start")
+    s.text(40, 360, "Approve wait is measured (PR opened → merged, 2026-10-02 to 10-09). The other slices are estimates: hourly scans, 10–40 min builds, 30-min sync.", 13, "#6b7280", "start")
+    s.save("where-time-goes.svg")
+
+
+# ── 6. The merge gate: the questions Approve asks ────────────────────────────────────────────────────────
+
+def gate():
+    s = Svg(1240, 1060, "The merge gate — the questions it asks when you press Approve")
+    s.legend(66)
+    cx = 470
+    qs = [(170, ["Does it target main?"]), (310, ["Was its ticket", "sent back?"]), (450, ["Do its GitHub", "checks pass?"]),
+          (590, ["Is it behind main?"]), (730, ["Did main change", "files it changes?"])]
+    for cy, lines in qs:
+        diamond(s, cx, cy, 300, 100, lines)
+    for i in range(len(qs) - 1):
+        s.arrow(cx, qs[i][0] + 50, cx, qs[i + 1][0] - 52, label="yes" if i != 1 else "no", lx=cx + 12, ly=(qs[i][0] + qs[i + 1][0]) / 2 + 4, anchor="start")
+    R = 760
+    s.box(R, 135, 430, 70, ["REFUSED: WRONG_BASE", "stacked PR: merge its parent first (moves itself)"], "warn", 13)
+    s.box(R, 275, 430, 70, ["REFUSED: SENT_BACK", "a rebuild will update this same PR"], "warn", 13)
+    s.box(R, 415, 430, 70, ["WAIT (running) or SENT BACK (failed)", "failing checks go back to the ticket"], "warn", 13)
+    s.box(40, 555, 250, 70, ["MERGE NOW", "seconds"], "ok", 14)
+    s.box(40, 695, 250, 70, ["MERGE NOW", "'no retest needed'"], "ok", 14)
+    s.box(R, 695, 430, 70, ["REBASE + RETEST", "the full suite on the rebased branch (≤ 40 min)"], "ok", 13)
+    s.arrow(cx + 150, 170, R - 4, 170, label="no", ly=162)
+    s.arrow(cx + 150, 310, R - 4, 310, label="yes", ly=302)
+    s.arrow(cx + 150, 450, R - 4, 450, label="no", ly=442)
+    s.arrow(cx - 150, 590, 294, 590, label="no", ly=582)
+    s.arrow(cx - 150, 730, 294, 730, label="no", ly=722)
+    s.arrow(cx + 150, 730, R - 4, 730, label="yes", ly=722)
+    diamond(s, 975, 860, 300, 100, ["Do the tests pass?"], "warn")
+    s.arrow(975, 765, 975, 808)
+    s.box(40, 900, 330, 70, ["MERGE", "then everything in 'After the merge'"], "ok", 14)
+    s.box(R, 960, 430, 70, ["NOT MERGED", "main already red? → MAIN_RED, nothing sent back; else sent back"], "bad", 12)
+    s.arrow(825, 860, 374, 935, label="yes", lx=600, ly=890)
+    s.arrow(975, 910, 975, 956, label="no", lx=985, ly=940, anchor="start")
+    s.text(620, 1050, "Can't tell if files overlap? It retests, to be safe. The machine broke, not the code? GATE_INFRA: approve again.", 13, "#4b5563")
+    s.save("merge-gate.svg")
+
+
+# ── 7. After the merge, in order ─────────────────────────────────────────────────────────────────────────
+
+def after_merge():
+    s = Svg(1240, 600, "After the merge — what happens on its own, in order")
+    s.legend(66)
+    steps = [
+        ("1  STACKED PRs MOVE", ["a PR built on this one is", "pointed at main"], "ok"),
+        ("2  CONFLICT CHECK", ["every other open PR, in", "seconds (no tests, no push)"], "ok"),
+        ("3  APP REBUILDS", ["if dashboard/ changed;", "merge server restarts"], "warn"),
+        ("4  MAIN-HEALTH", ["the full suite on main;", "red = merges refused"], "warn"),
+        ("5  NEXT SCAN", ["the next ticket starts", "right away"], "ok"),
+    ]
+    x, y, w, h = 30, 130, 220, 110
+    for i, (t, lines, kind) in enumerate(steps):
+        s.box(x + i * 240, y, w, h, [t, *lines], kind, 13)
+        if i:
+            s.arrow(x + i * 240 - 18, y + h / 2, x + i * 240 - 4, y + h / 2)
+    s.box(30, 300, 460, 80, ["SAFETY NET for step 1", "MR Review's refresh moves any PR whose parent merged"], "ok", 13)
+    s.box(510, 300, 460, 80, ["IF STEP 2 FINDS A CONFLICT", "the hourly scan tries the cheap repair first"], "ok", 13)
+    s.box(30, 410, 460, 80, ["🔴 Laptop + mini get the code", "via code_sync, every 30 min (slow)"], "bad", 13)
+    s.box(510, 410, 460, 80, ["🔴 Mini app didn't relaunch once", "after a rebuild (2026-10-09)"], "bad", 13)
+    s.arrow(140, 240, 140, 296, "#16a34a")
+    s.arrow(390, 240, 690, 296, "#16a34a")
+    s.text(620, 560, "Steps 1–5 take minutes. What's slow is step 0: the new code reaching every Mac and every long-running program.", 14, "#4b5563")
+    s.save("after-merge.svg")
+
+
+# ── 8. When a PR conflicts ───────────────────────────────────────────────────────────────────────────────
+
+def conflicts():
+    s = Svg(1240, 760, "When a PR conflicts with main — cheap repair first, then who does what")
+    s.legend(66)
+    s.box(470, 110, 300, 70, ["GitHub: CONFLICTING", "found by the after-merge check or the scan"], "warn", 13)
+    s.box(420, 230, 400, 80, ["CHEAP REPAIR (conflict_repair.py)", "rebase in a scratch copy; resolve only safe conflicts:", "generated files · already on main · both only ADDED"], "ok", 12)
+    s.arrow(620, 180, 620, 226)
+    diamond(s, 620, 400, 300, 100, ["All conflicts safe,", "and tests pass?"], "warn")
+    s.arrow(620, 310, 620, 348)
+    s.box(940, 365, 270, 70, ["PUSHED ✅", "comment says what was resolved"], "ok", 13)
+    s.arrow(770, 400, 936, 400, label="yes", ly=392)
+    diamond(s, 620, 560, 300, 100, ["Made by the", "pipeline?"], "warn")
+    s.arrow(620, 450, 620, 508, label="no (a real conflict)", lx=632, ly=485, anchor="start")
+    s.box(940, 525, 270, 70, ["SENT BACK", "rebuilt on main; files named"], "warn", 13)
+    s.box(30, 525, 300, 70, ["FLAGGED FOR YOU", "once per commit; never auto-rebuilt"], "you", 13)
+    s.arrow(770, 560, 936, 560, label="yes", ly=552)
+    s.arrow(470, 560, 334, 560, label="no (hand-made)", ly=552)
+    s.text(620, 690, "Safe = nobody's existing line was changed on both sides. Anything else is a real conflict and is never papered over.", 14, "#4b5563")
+    s.text(620, 715, "Max 2 repairs per scan (each runs the tests). A commit that failed a repair isn't retried; a new push gets a new try.", 13, "#6b7280")
+    s.save("conflicts.svg")
+
+
 if __name__ == "__main__":
     life()
     architecture()
     readiness()
+    states()
+    timeline()
+    gate()
+    after_merge()
+    conflicts()
     print("wrote", ", ".join(p.name for p in sorted(OUT.glob("*.svg"))))

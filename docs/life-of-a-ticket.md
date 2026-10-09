@@ -15,7 +15,7 @@ and how far we are from "constant flow". Written 2026-10-09, after a night of fi
   - 🟣 **Your step.**
 - **Short on time?** Read [The 30-second version](#the-30-second-version), then look at the pictures.
 - **Words you might not know** are in the [Glossary](#glossary) at the end.
-- **To update the pictures** after a fix: `~/.agents/venv/bin/python ~/.agents/docs/diagrams/make_pipeline_diagrams.py`.
+- **There are 8 pictures.** They're drawn by a script, so they stay up to date. **To update them** after a fix: `~/.agents/venv/bin/python ~/.agents/docs/diagrams/make_pipeline_diagrams.py`.
 
 ---
 
@@ -29,6 +29,11 @@ and how far we are from "constant flow". Written 2026-10-09, after a night of fi
 
 When it works, you only touch step 4. When it doesn't, something in the [red list](#where-it-breaks-the-red-list)
 is usually the reason.
+
+**Where the time actually goes** (measured over the last 46 pipeline PRs): the machine parts take minutes, and the
+waiting takes hours.
+
+![Where the time goes](docs/diagrams/where-time-goes.svg)
 
 ---
 
@@ -75,6 +80,10 @@ Each step answers four questions: **What happens? Who does it? How long? What ca
 - **What can go wrong:** until today it was **propose-only**. It worked out what to do but changed nothing, so
   **53 tickets had no state and the pipeline saw nothing to do.** That's why both Macs were idle. Switched on tonight:
   138 label changes, and **20 tickets became ready**.
+
+**Every state a ticket can be in, and what moves it:**
+
+![Ticket states](docs/diagrams/ticket-states.svg)
 
 ### 4 · Prioritize 🟡
 
@@ -124,7 +133,8 @@ Each step answers four questions: **What happens? Who does it? How long? What ca
 - **What happens:** the dashboard's **MR Review** tab shows one card per PR. Each card has **one headline** and only the
   buttons that make sense, for example "Ready to merge", "Conflicts with main" or "Its ticket is already closed".
 - **What can go wrong:**
-  - 🔴 **Every PR waits for you,** even small, green, low-risk ones. This is the biggest brake on "constant flow"
+  - 🔴 **Every PR waits for you,** even small, green, low-risk ones: a **median of 9.4 hours** per PR over the last
+    46. This is the biggest brake on "constant flow"
     (see [Where you want to be](#where-you-want-to-be)).
   - 🔴 **UI bugs reach main.** Nothing screenshots or clicks through a UI change before merge (#126). Tonight a
     pipeline-built screen blanked the Activity tab. React's hook rules are now tested on every file, but a full
@@ -139,6 +149,8 @@ Each step answers four questions: **What happens? Who does it? How long? What ca
   - After **3** reworked PRs, a ticket goes to a person instead of looping.
 
 ### 11 · The merge gate 🟢 *(reworked 2026-10-09, ADR 0061)*
+
+![The merge gate's questions](docs/diagrams/merge-gate.svg)
 
 The gate asks two questions:
 
@@ -159,6 +171,8 @@ Before the gate it also checks three things:
 - GitHub closes the ticket. The board moves the card to **Done**.
 
 ### 13 · After the merge 🟡
+
+![After the merge, in order](docs/diagrams/after-merge.svg)
 
 Several things happen automatically, in order:
 
@@ -208,6 +222,10 @@ Several things happen automatically, in order:
 ## The merge edge cases ("the zoo")
 
 Everything that happens around merges, including the strange cases we hit tonight.
+
+**The most common one, a conflict, as a picture:**
+
+![When a PR conflicts](docs/diagrams/conflicts.svg)
 
 | Situation | What MARVIN does now | Since |
 |---|---|---|
@@ -289,7 +307,7 @@ The problems we know about, most flow-blocking first. Each has a next step.
 
 | # | 🔴 Problem | What it does to flow | Next step |
 |---|---|---|---|
-| 1 | **Every PR waits for your Approve** | Work stops at review, even small green PRs | Auto-merge for low-risk PRs (green, small, no shared files, not touching the gate itself); you get a summary |
+| 1 | **Every PR waits for your Approve** | Work stops at review: **median 9.4 h** per PR (last 46), even small green ones | Auto-merge for low-risk PRs (green, small, no shared files, not touching the gate itself); you get a summary |
 | 2 | **Recovery agents are propose-only** (stale claims, refeed) | Sent-back or stale tickets park instead of retrying (#255 sat 12 h) | Let them act, starting with "sent back and still claimed, nothing running" |
 | 3 | **Prioritize is propose-only until 10-12** | The most important work isn't reliably first | Let it act (it only changes `priority:` labels) |
 | 4 | **Deploy lags and restarts are manual** | Merged code isn't running for 30–60+ min; the mini's app was down tonight | Pull on merge (not every 30 min); always restart the merge server and app after a rebuild; Health alarm when the app isn't running |

@@ -51,7 +51,8 @@ export function parseDashLink(href) {
 // A repo-relative image in a README (docs/images/x.png) points at the repo, not at the app: resolve it on GitHub.
 export function resolveImage(src, repo) {
   if (!src || !repo || /^([a-z]+:|\/\/|data:)/i.test(src)) return src
-  return `https://raw.githubusercontent.com/G-Eskayo/${repo}/HEAD/${src.replace(/^\.?\//, '')}`
+  const full = repo.includes('/') ? repo : `G-Eskayo/${repo}`  // the Docs tab passes owner/repo (catalog), others a bare name
+  return `https://raw.githubusercontent.com/${full}/HEAD/${src.replace(/^\.?\//, '')}`
 }
 
 export default function Markdown({ content, ctx, onLink }) {
