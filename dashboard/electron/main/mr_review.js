@@ -1,6 +1,7 @@
 import { MARVIN_REPO, prKey, canMergeFromDashboard, repoFromPrUrl } from './mr_repos.js'
 import { waitingOn, baseProblem } from './pr_order.js'
 import { ciState } from '../../webhook-server/ci_status.js'
+import { uiFiles, hasImage } from '../../webhook-server/ui_evidence.js'
 
 // Reads open PRs and identifies which follow the MR pipeline's evidence
 // schema (G-Eskayo/marvin#72, ADR 0024) -- one fixed, structured PR body
@@ -237,7 +238,17 @@ export async function prsForOrderCheck(prs, sentBackTickets) {
   return markSentBack(prs, keys)
 }
 
-export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDashboard, sentBackTickets = null, reworkStatus = null, rebaseStatus = null, closedTickets = null, autoMergeShadow = null } = {}) {
+// A UI change whose description shows no image (marvin #374): {files} for the card, or null. Only judged when the list
+// carried the PR's files (the light list for the status dot doesn't), so a missing field never flags a PR.
+function needsImages(pr, uiPathsFor) {
+  if (!Array.isArray(pr.files)) return null
+  let own = []
+  try { own = uiPathsFor(pr.repo || MARVIN_REPO) || [] } catch { own = [] }
+  const files = uiFiles(pr.files.map((f) => f?.path), own)
+  return files.length && !hasImage(pr.body || '') ? { files } : null
+}
+
+export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDashboard, sentBackTickets = null, reworkStatus = null, rebaseStatus = null, closedTickets = null, autoMergeShadow = null, uiPathsFor = () => [] } = {}) {
   const prs = await listOpenPrs()
   // The webhook's post-merge rebase results, by PR url (#225). Best effort: without them a card just doesn't say.
   let rebased = {}
@@ -304,6 +315,7 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       rebase: rebased[pr.url] || null,
       autoMerge: shadow[pr.url]?.current || null,
       checks: ciState(pr.statusCheckRollup),
+      needsImages: needsImages(pr, uiPathsFor),
       baseProblem: baseProblem(prs.map((p) => ({ ...p, repo: p.repo || MARVIN_REPO })), { ...pr, repo: pr.repo || MARVIN_REPO }),
       waitingOn: waitingOn(withState, { ...pr, repo: pr.repo || MARVIN_REPO }),
       hasSchema,

@@ -14,6 +14,9 @@ vi.mock('../webhook-server/ticket_stages.js', () => ({ recordStage: vi.fn() }))
 vi.mock('../webhook-server/failure_log.js', () => ({ recordFailure: vi.fn() }))
 // #225: the post-merge rebase runs after every merged test PR; its results must never land in the real status file.
 vi.mock('../webhook-server/rebase_status.js', () => ({ writeRebaseStatus: vi.fn(), readRebaseStatus: vi.fn(() => ({})) }))
+// marvin #374's image gate asks GitHub for the PR's files and body, which these fakes don't answer (it fails closed).
+// Its own tests, including mergePr refusing a UI change with no image, are in ui_evidence.test.js.
+vi.mock('../webhook-server/ui_evidence.js', () => ({ assertUiEvidence: vi.fn(async () => {}) }))
 
 import { execFile, execFileSync } from 'child_process'
 import { promisify } from 'util'

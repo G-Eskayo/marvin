@@ -165,6 +165,99 @@ def _default_capture_screenshot(worktree_path: Path) -> str:
     return str(relative_output)
 
 
+# ── UI changes carry images (marvin #374) ────────────────────────────────────
+# The same rules as dashboard/webhook-server/ui_evidence.js (which refuses Approve on a UI change with no image), so
+# "the pipeline captured screenshots" and "the gate lets it merge" agree on what counts as a UI change. A project adds
+# its own paths with evidence.ui_paths in its profile.
+DEFAULT_UI_PATTERNS = (
+    "dashboard/src/**", "**/*.xcassets/**", "**/*.xcstrings", "**/*.storyboard", "**/*.xib",
+    "**/*View.swift", "**/Views/**/*.swift", "**/*.jsx", "**/*.tsx", "**/*.css", "**/*.html",
+)
+
+
+def glob_to_regex(glob: str) -> re.Pattern:
+    """'**/' matches zero or more folders, '**' anything, '*' anything but a slash; everything else is literal."""
+    out, i = "", 0
+    while i < len(glob):
+        c = glob[i]
+        if glob.startswith("**/", i):
+            out += "(?:.*/)?"; i += 3; continue
+        if glob.startswith("**", i):
+            out += ".*"; i += 2; continue
+        out += "[^/]*" if c == "*" else re.escape(c)
+        i += 1
+    return re.compile(f"^{out}$")
+
+
+def ui_files(files, extra_patterns=()) -> list[str]:
+    own = [p for p in (extra_patterns or []) if isinstance(p, str) and p]
+    patterns = [glob_to_regex(p) for p in (*DEFAULT_UI_PATTERNS, *own)]
+    return [f for f in (files or []) if isinstance(f, str) and f and any(r.match(f) for r in patterns)]
+
+
+def changed_files(worktree_path: Path, base_branch: str = "main") -> list[str]:
+    result = subprocess.run(["git", "diff", "--name-only", f"{base_branch}...HEAD"], cwd=worktree_path,
+                            capture_output=True, text=True)
+    return result.stdout.splitlines()
+
+
+def _run_checked(run, cmd, cwd=None):
+    try:
+        return run(cmd, cwd=cwd, check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as e:
+        detail = "\n".join(str(x) for x in (e.stderr, e.output) if x)
+        lines = [l.strip() for l in detail.splitlines() if "error" in l.lower()] or [l.strip() for l in detail.splitlines() if l.strip()]
+        raise RuntimeError(f"{cmd[0]} failed: {' / '.join(lines[-2:])[:300]}") from e
+
+
+def capture_ios_simulator(worktree_path: Path, cfg: dict, run=subprocess.run, sleep=None) -> list[dict]:
+    """Builds an iOS app for the simulator (signing off), launches each configured scene (launch arguments, e.g. a
+    debug-only demo mode) in light and dark, and screenshots it into the worktree, so the images ride along in the
+    pipeline's commit. Proven by hand on the Mac Mini on 2026-10-09. Returns [{path (relative), caption}]. Raises
+    ValueError for an incomplete config and RuntimeError (with the tool's own error line) when a step fails.
+    simctl cannot tap or rotate, so scenes are reached through launch arguments only."""
+    import tempfile
+    import time
+    sleep = sleep or time.sleep
+    required = ("project_dir", "project", "scheme", "simulator", "bundle_id")
+    if not isinstance(cfg, dict) or any(not cfg.get(k) for k in required) or not cfg.get("scenes"):
+        raise ValueError(f"evidence.dev.ios_simulator needs {', '.join(required)} and at least one scene")
+    project_dir = Path(worktree_path) / cfg["project_dir"]
+    for cmd in cfg.get("prepare", []):
+        _run_checked(run, list(cmd), cwd=project_dir)
+    configuration = cfg.get("configuration", "Debug")
+    derived = Path(tempfile.mkdtemp(prefix="ios-evidence-"))
+    _run_checked(run, ["xcodebuild", "-project", cfg["project"], "-scheme", cfg["scheme"],
+                       "-destination", f"platform=iOS Simulator,name={cfg['simulator']}", "-configuration", configuration,
+                       "CODE_SIGNING_ALLOWED=NO", "-derivedDataPath", str(derived), "build"], cwd=project_dir)
+    apps = sorted((derived / "Build" / "Products" / f"{configuration}-iphonesimulator").glob("*.app"))
+    if not apps:
+        raise RuntimeError("xcodebuild failed: no .app was built for the simulator")
+    try:
+        run(["xcrun", "simctl", "boot", cfg["simulator"]], check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as e:
+        # Already running is fine. simctl says so on a different line from its "error" line, so read all of it.
+        if "current state: booted" not in f"{e.stderr or ''}\n{e.output or ''}".lower():
+            _run_checked(run, ["xcrun", "simctl", "boot", cfg["simulator"]])
+    _run_checked(run, ["xcrun", "simctl", "install", "booted", str(apps[0])])
+    out_dir = Path("docs") / "evidence" / Path(worktree_path).name
+    (Path(worktree_path) / out_dir).mkdir(parents=True, exist_ok=True)
+    shots = []
+    for appearance in cfg.get("appearances", ["light", "dark"]):
+        _run_checked(run, ["xcrun", "simctl", "ui", "booted", "appearance", appearance])
+        for scene in cfg["scenes"]:
+            try:
+                run(["xcrun", "simctl", "terminate", "booted", cfg["bundle_id"]], capture_output=True)
+            except Exception:  # noqa: BLE001 -- not running is fine
+                pass
+            _run_checked(run, ["xcrun", "simctl", "launch", "booted", cfg["bundle_id"], *scene.get("args", [])])
+            sleep(cfg.get("wait_s", 4))
+            rel = out_dir / f"{scene['name']}-{appearance}.png"
+            _run_checked(run, ["xcrun", "simctl", "io", "booted", "screenshot", str(Path(worktree_path) / rel)])
+            shots.append({"path": str(rel), "caption": f"{scene['name']}, {appearance}"})
+    return shots
+
+
 def capture_dev_evidence(
     worktree_path: Path,
     touches_ui: bool,

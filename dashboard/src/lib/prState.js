@@ -9,7 +9,7 @@
 
 // Refusals the screen already explains with a state of its own. If one of these is left over from an earlier
 // click it is stale as soon as the state changes, so it is never shown as an error.
-const MIRRORED_REFUSALS = /^(SENT_BACK|CI_PENDING|CI_FAILED|WRONG_BASE)\b/
+const MIRRORED_REFUSALS = /^(SENT_BACK|CI_PENDING|CI_FAILED|WRONG_BASE|NO_UI_EVIDENCE)\b/
 
 export function describePrState(pr, { status = 'idle', errorMessage = null } = {}) {
   const ci = pr.checks || { state: 'none', failing: [], pending: [] }
@@ -53,6 +53,15 @@ export function describePrState(pr, { status = 'idle', errorMessage = null } = {
   if (ci.state === 'failing') {
     return base('checks-failed', 'blocked', 'GitHub checks failed',
       `${ci.failing.join(', ')}. It is sent back for rework automatically, so there is nothing to approve.`, 'hidden', 'hidden')
+  }
+
+  // The owner's hard rule (marvin #374): a change to how the app looks is approved only with images to look at.
+  if (pr.needsImages) {
+    const files = pr.needsImages.files || []
+    const shown = files.slice(0, 3).join(', ') + (files.length > 3 ? ` and ${files.length - 3} more` : '')
+    return base('needs-images', 'blocked', 'Needs images',
+      `It changes how the app looks${shown ? ` (${shown})` : ''} but its description shows no screenshots. ` +
+        'Add images of the changed screens to the PR, and Approve appears here.', 'hidden', 'enabled')
   }
 
   if (pr.baseProblem?.parent) {

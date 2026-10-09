@@ -5,6 +5,7 @@ import { tmpdir } from 'os'
 import path from 'path'
 import { classifyFailure, summarizeGateFailure, withRetry, MergeFailure, refusal } from './failure.js'
 import { recordFailure } from './failure_log.js'
+import { assertUiEvidence } from './ui_evidence.js'
 import { fileURLToPath } from 'url'
 import { sendFeedback } from './deny.js'
 import { parseTicketRef } from '../electron/main/mr_review.js'
@@ -241,7 +242,9 @@ export async function defaultGateContext(repo, exec = execFileAsync) {
     runTests: async (cwd, run) => {
       await run(VENV_PYTHON, [PROFILE_SCRIPT, 'verify', repo, cwd])
     },
-    resolveConflicts: generatedResolver(repo, exec)
+    resolveConflicts: generatedResolver(repo, exec),
+    // The project's own UI paths, added to ui_evidence.js's defaults (marvin #374).
+    uiPaths: Array.isArray(info.ui_paths) ? info.ui_paths : []
   }
 }
 
@@ -400,7 +403,7 @@ async function mergePrUnqueued(
   recordStageFn = recordStage,
   deps = {}
 ) {
-  const { sleep, recordFailureFn = recordFailure, gateContext = defaultGateContext, baselineFails = null, gateTimeoutMs = GATE_TIMEOUT_MS, rebaseOpen = checkOpenPrs } = deps
+  const { sleep, recordFailureFn = recordFailure, gateContext = defaultGateContext, baselineFails = null, gateTimeoutMs = GATE_TIMEOUT_MS, rebaseOpen = checkOpenPrs, uiEvidence = assertUiEvidence } = deps
   if (typeof prUrl !== 'string' || !prUrl.startsWith('https://github.com/')) {
     throw new MergeFailure(classifyFailure({ stage: 'request', error: new Error(`Not a GitHub PR URL: ${prUrl}`) }))
   }
@@ -413,6 +416,8 @@ async function mergePrUnqueued(
   await assertTargetsBase(prUrl, exec, ctx ? ctx.base : 'main')
   await assertNotSentBack(prUrl, exec)
   await readyIfDraft(prUrl, exec)
+  // A UI change merges only with images the owner has seen (marvin #374). Before any gate work: refusing is cheap.
+  await uiEvidence(prUrl, exec, ctx ? ctx.uiPaths : [])
 
   const { gate, behind = false, headRefName, body } = ctx ? await shouldGateMerge(prUrl, exec, ctx) : await shouldGateMerge(prUrl, exec)
   const ticketNumber = parseTicketRef(body)

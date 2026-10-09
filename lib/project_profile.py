@@ -386,14 +386,30 @@ class Measurer:
             if rc != 0:
                 raise MeasureError(f"setup step '{st['label']}' failed: ...{out[-400:].strip()}")
 
-    def evidence(self) -> tuple[dict | None, dict]:
-        """(test_results, dev_evidence) in the shapes mr_raiser formats into the PR body."""
+    def evidence(self, worktree: Path | None = None) -> tuple[dict | None, dict]:
+        """(test_results, dev_evidence) in the shapes mr_raiser formats into the PR body. With a worktree and an
+        evidence.dev.ios_simulator config, a UI change is screenshotted in the simulator (marvin #374)."""
         tests = [t for t in self.report["tiers"] if t.get("ran") and "total" in t]
         test_results = None
         if tests:
             test_results = {"suite": " + ".join(t["label"] for t in tests), "passed": sum(t["passed"] for t in tests),
                             "failed": sum(t["failed"] for t in tests), "total": sum(t["total"] for t in tests)}
-        reason = ((self.profile.get("evidence") or {}).get("dev") or {}).get("na", "no dev-environment capture configured for this project")
+        evidence = self.profile.get("evidence") or {}
+        dev_cfg = evidence.get("dev") or {}
+        if worktree is not None and dev_cfg.get("ios_simulator"):
+            import evidence_capture as ec
+            changed = ec.ui_files(ec.changed_files(Path(worktree), self.profile.get("base_branch", "main")), evidence.get("ui_paths", []))
+            if not changed:
+                return test_results, {"na": True, "reason": "no UI change"}
+            try:
+                shots = ec.capture_ios_simulator(Path(worktree), dev_cfg["ios_simulator"])
+            except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as e:
+                # Never fails the ticket (a broken driver stalled the pipeline on 2026-10-07); the PR says why, and the
+                # dashboard refuses Approve on a UI change with no image (NO_UI_EVIDENCE), so it can't slip through.
+                return test_results, {"na": False, "error": f"capture failed: {e}"[:400]}
+            return test_results, {"na": False, "screenshots": shots,
+                                  "description": f"iOS Simulator screenshots of the changed app ({', '.join(changed[:3])}{'…' if len(changed) > 3 else ''})."}
+        reason = dev_cfg.get("na", "no dev-environment capture configured for this project")
         return test_results, {"na": True, "reason": reason}
 
     def pr_note(self) -> str:
@@ -414,7 +430,9 @@ def gate_info(profile: dict, catalog: dict | None = None, have=None) -> dict:
             missing += [c for c in t["requires"] if not check(c, env) and c not in missing]
     return {"repo": profile["repo"], "clone": str(clone) if clone else None, "base_branch": profile["base_branch"],
             "merge_from_dashboard": profile["merge_from_dashboard"], "missing_here": missing,
-            "generated": profile["generated"]}
+            "generated": profile["generated"],
+            # The project's own UI paths for the image gate (marvin #374), added to ui_evidence.js's defaults.
+            "ui_paths": [p for p in (profile.get("evidence") or {}).get("ui_paths", []) if isinstance(p, str)]}
 
 
 def _failure_digest(tiers: list[dict], limit: int = 4000) -> str:

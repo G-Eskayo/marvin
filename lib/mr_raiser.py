@@ -98,15 +98,27 @@ def _format_test_results(test_results: dict | None) -> str:
     return text
 
 
-def _format_dev_evidence(dev_evidence: dict | None) -> str:
+def _image_url(path: str, repo: str | None, branch: str | None) -> str:
+    """A PR description can't show a repo-relative image, so point at the file on the pushed branch (#374)."""
+    if not repo or not branch or path.startswith(("http://", "https://")):
+        return path
+    from urllib.parse import quote
+    return f"https://github.com/{repo}/blob/{quote(branch, safe='/')}/{quote(path, safe='/')}?raw=true"
+
+
+def _format_dev_evidence(dev_evidence: dict | None, repo: str | None = None, branch: str | None = None) -> str:
     if not dev_evidence:
         return "Not available."
     if dev_evidence.get("na"):
         return f"N/A — {dev_evidence.get('reason', 'no UI')}"
     if dev_evidence.get("error"):
         return f"⚠ **Screenshot missing: the UI change is not verified in a running app.** {dev_evidence['error']}"
-    screenshot = dev_evidence.get("screenshot_path", "")
     description = dev_evidence.get("description", "")
+    shots = dev_evidence.get("screenshots")
+    if shots:
+        images = "\n\n".join(f"![{s.get('caption', 'Screenshot')}]({_image_url(s['path'], repo, branch)})" for s in shots)
+        return f"{description}\n\n{images}".strip()
+    screenshot = _image_url(dev_evidence.get("screenshot_path", ""), repo, branch)
     return f"![Screenshot]({screenshot})\n\n{description}".strip()
 
 
@@ -156,7 +168,7 @@ def _default_open_pr(
         f"## Test Results\n\n"
         f"{_format_test_results(test_results)}\n\n"
         f"## Dev Environment Evidence\n\n"
-        f"{_format_dev_evidence(dev_evidence)}\n\n"
+        f"{_format_dev_evidence(dev_evidence, _repo_of(ticket_ref), branch)}\n\n"
         f"## Code Review\n\n"
         f"{_format_code_review(comparison.get('code_review'))}"
     )

@@ -438,7 +438,7 @@ def test_default_open_pr_includes_screenshot_reference_for_a_ui_ticket(monkeypat
     mrr._default_open_pr("G-Eskayo/marvin#1", "pipeline/ticket-1", comparison, dev_evidence=dev_evidence)
 
     body = calls[0][calls[0].index("--body") + 1]
-    assert "![Screenshot](docs/evidence/pipeline-ticket-1.png)" in body
+    assert "![Screenshot](https://github.com/G-Eskayo/marvin/blob/pipeline/ticket-1/docs/evidence/pipeline-ticket-1.png?raw=true)" in body  # #374: a PR body cannot show a repo-relative image
     assert "Live screenshot captured from the running app." in body
 
 

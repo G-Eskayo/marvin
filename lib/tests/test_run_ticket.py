@@ -444,7 +444,7 @@ class FakeMeasurer:
     def __call__(self, worktree):
         return {}
 
-    def evidence(self):
+    def evidence(self, worktree=None):
         return {"suite": "Core tests", "passed": 60, "failed": 0, "total": 61}, {"na": True, "reason": "no simulator capture"}
 
     def pr_note(self):
