@@ -6,6 +6,7 @@ import { parseHumanTask } from '../lib/human_task.js'
 import Markdown from './Markdown.jsx'
 import Related, { useRelated } from './Related.jsx'
 import CompletedView from './CompletedView.jsx'
+import { StageStrip } from './StageStrip.jsx'
 
 // Backstop only: triggers (window.api.triggers) drive refreshes; a poll that
 // finds a change no trigger announced is logged as a gap.
@@ -128,6 +129,7 @@ function Card({ card, repo, onSelect, onOpenMr, activeTags, onTag }) {
         ))}
         {card.ageDays != null && card.closedAt == null && <span className="ml-auto text-[10px] text-neutral-600">{card.ageDays}d old</span>}
       </div>
+      {card.hasTimeline && <StageStrip stages={card.stages} isLiveNow={card.isLive} now={Date.now()} onStageClick={() => onSelect(card)} />}
     </button>
   )
 }

@@ -32,6 +32,15 @@ const REVIEW_STAGES = new Set(['verifying', 'gate', 'merging'])
 // touch on the ticket for a day, it is a stale claim (found 2026-10-05: 14 of them showed as "in progress").
 export const STALE_CLAIM_MS = 24 * 3600_000
 
+// Latest event per stage key, used by stage-strip for the horizontal timeline.
+function latestPerStage(events) {
+  const latest = {}
+  for (const event of events) {
+    if (event.stage) latest[event.stage] = event
+  }
+  return latest
+}
+
 const labelNames = (issue) => (issue.labels || []).map((l) => l.name)
 
 function closingPrs(issue, prs) {
@@ -178,6 +187,7 @@ export function buildBoard({ repo, issues, prs, eventsByNumber = {}, liveNumbers
       owner: d.owner,
       prs: d.prs,
       hasTimeline: events.length > 0,
+      stages: latestPerStage(events),
       isLive: liveNumbers.has(issue.number)
     }
     // Closed long ago -> archive (never deleted, just out of the way). A closed ticket with no date stays visible.

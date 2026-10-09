@@ -60,4 +60,4 @@ export function getTicketTimeline(number, stagesDir, repo = null) {
   return readStages(number, stagesDir, repo)
 }
 
-export { TERMINAL_STAGE_ORDER }
+export { TERMINAL_STAGE_ORDER, taskIsTicket }

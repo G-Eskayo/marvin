@@ -2,6 +2,7 @@ import { cleanIpcError } from '../lib/ipcError.js'
 import { useEffect, useRef, useState } from 'react'
 import { describePrState } from '../lib/prState.js'
 import MrDetail from './MrDetail.jsx'
+import { StageStrip } from './StageStrip.jsx'
 
 const MR_LIST_REFRESH_MS = 120000
 
@@ -418,6 +419,7 @@ function PrCard({ pr, parity, onOpenTicket, onApproved, onDenied, onSelect }) {
           {pr.rawBody.length > 400 ? '…' : ''}
         </p>
       )}
+      {pr.ticketRef && Object.keys(pr.stages).length > 0 && <StageStrip stages={pr.stages} rebase={pr.rebase} isLiveNow={pr.isLiveNow} now={Date.now()} onStageClick={() => onSelect(pr)} />}
     </div>
   )
 }

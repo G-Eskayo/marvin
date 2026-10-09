@@ -9,7 +9,7 @@
 //   reengage -- the ticket's work needs changing; sent back to the ticket with detail
 //   escalate -- needs a human (credentials, tooling, branch protection, unknown)
 
-const RULES = [
+export const RULES = [
   { code: 'GH_AUTH_INVALID', action: 'escalate', retryable: false,
     test: /bad credentials|http 401|authentication failed|could not read username|requires authentication|token.*(invalid|expired)|invalid.*token/i,
     remediation: 'GitHub rejected the credential. Fix ~/.claude/.gh-token on the machine running the webhook (the Health tab shows auth:gh per machine).' },
@@ -159,3 +159,8 @@ export function failureResponse(error) {
     body: { merged: false, error: `${payload.code} at ${payload.stage}: ${payload.message}`, ...payload }
   }
 }
+
+// Remediation messages derived from RULES + all refusal() call sites, so dashboard and webhook share one source.
+export const REMEDIATION_BY_CODE = Object.fromEntries(
+  RULES.filter((r) => r.remediation).map((r) => [r.code, r.remediation])
+)
