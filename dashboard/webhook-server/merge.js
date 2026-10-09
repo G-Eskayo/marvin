@@ -13,6 +13,7 @@ import { repoFromPrUrl, MARVIN_REPO } from '../electron/main/mr_repos.js'
 import { recordStage } from './ticket_stages.js'
 import { assertChecksGreen } from './ci_status.js'
 import { checkOpenPrs } from './post_merge_rebase.js'
+import { applyVersionBump } from './changelog.js'
 
 const execFileAsync = promisify(execFile)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -544,6 +545,16 @@ async function mergePrUnqueued(
     throw new MergeFailure(failure)
   }
   stage('merging', 'passed', '')
+  if (!ctx && ticketNumber !== null) {
+    stage('versioning', 'started', '')
+    try {
+      await applyVersionBump({ ticketNumber, prUrl }, exec, REPO_PATH)
+      stage('versioning', 'passed', '')
+    } catch (e) {
+      stage('versioning', 'failed', String(e?.message || e).slice(0, 300))
+      recordFailureFn({ ticket: ticketNumber, code: 'VERSION_BUMP_FAILED', message: String(e?.message || e), project: repo, prUrl, stage: 'versioning' })
+    }
+  }
   if (!ctx) {
     // marvin-only: the dashboard app is rebuilt when a merged PR touched dashboard/.
     stage('rebuilding', 'started', 'triggered if the PR touched dashboard/')
