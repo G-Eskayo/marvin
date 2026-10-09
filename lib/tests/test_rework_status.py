@@ -85,3 +85,27 @@ def test_parked_beats_a_stale_pause_or_blocker_because_nothing_will_run_either_w
 
 def test_a_running_ticket_without_ready_for_agent_is_still_running():
     assert rs.status_for(ticket(labels=("needs-reengagement", "claimed:mac-mini")), ctx())["state"] == "running"
+
+
+def test_collect_reads_each_projects_open_issues_once(monkeypatch):
+    # #324: the queue and the sent-back tickets come from one issue list per project, not two.
+    import json as _json
+    import subprocess as _sp
+    import ticket_pipeline as tp
+    import rework_status as rs
+    calls = []
+    issues = [{"number": 5, "title": "Sent back", "labels": [{"name": "needs-reengagement"}], "body": "", "createdAt": "2026-10-01T00:00:00Z"},
+              {"number": 6, "title": "Ready", "labels": [{"name": "ready-for-agent"}], "body": "", "createdAt": "2026-10-02T00:00:00Z"}]
+
+    def fake_run(cmd, **kw):
+        if cmd[:3] == ["gh", "issue", "list"]:
+            calls.append(cmd)
+            return _sp.CompletedProcess(cmd, 0, _json.dumps(issues), "")
+        return _sp.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(_sp, "run", fake_run)
+    monkeypatch.setattr(tp, "_attempts", lambda repo, n: 0)
+    out = rs.collect(repos=["G-Eskayo/marvin", "G-Eskayo/clarity-captions"])
+    assert len(calls) == 2
+    assert set(out) == {"G-Eskayo/marvin#5", "G-Eskayo/clarity-captions#5"}
+    assert out["G-Eskayo/marvin#5"]["state"] in {"queued", "not-queued", "blocked", "paused", "running", "held", "needs-person", "parked"}

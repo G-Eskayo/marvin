@@ -85,9 +85,13 @@ def collect(repos: list[str] | None = None) -> dict:
     now = datetime.now(timezone.utc)
     repos = repos or [tp.REPO, *pp.dispatchable_repos()]
     # The same order the scan uses: every eligible ticket across projects, by priority, then urgency, then age.
+    # One read of each project's open tickets answers both the queue and which tickets were sent back (#324).
+    open_by_repo = {r: tp._open_issues(r) for r in repos}
     eligible = []
     for r in repos:
-        for t in tp._unclaimed_ready_tickets(repo=r):
+        if open_by_repo[r] is None:
+            continue
+        for t in tp._unclaimed_ready_tickets(repo=r, issues=open_by_repo[r]):
             eligible.append((r, t))
     eligible.sort(key=lambda rt: tp._order_key(rt[1]))
     queue = [f"{r}#{t['number']}" for r, t in eligible]
@@ -100,13 +104,10 @@ def collect(repos: list[str] | None = None) -> dict:
     tripped = {t.get("project", tp.REPO): f"{t['signature']} failed across tickets {', '.join(map(str, t['tickets']))}" for t in failure_breaker.tripped()}
     out = {}
     for r in repos:
-        p = subprocess.run(["gh", "issue", "list", "-R", r, "--state", "open", "--label", "needs-reengagement", "--limit", "100",
-                            "--json", "number,title,labels,body"], capture_output=True, text=True, timeout=30)
-        if p.returncode != 0:
+        if open_by_repo[r] is None:
             continue
-        issues = json.loads(p.stdout)
-        open_numbers = {i["number"] for i in issues}
-        for t in issues:
+        open_numbers = {i["number"] for i in open_by_repo[r]}
+        for t in (i for i in open_by_repo[r] if "needs-reengagement" in _names(i)):
             n = t["number"]
             stages = ts.read_stages(n, None if r == tp.REPO else r)
             starts = [e["timestamp"] for e in stages if e.get("stage") == "claimed" and e.get("status") == "started"]

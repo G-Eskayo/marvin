@@ -65,10 +65,8 @@ def _label_for_device(device_id: str) -> str:
 UNSCORED_RANK = 2  # a ticket the prioritizer hasn't scored yet counts as middle priority
 
 
-def _unclaimed_ready_tickets(repo: str = REPO) -> list[dict]:
-    """What this machine may dispatch next, in order: ready-for-agent, unclaimed, not pinned, and with
-    no open blocker, highest priority first and oldest first among equals. One call fetches every open
-    ticket because whether a blocker is still open depends on the others."""
+def _open_issues(repo: str = REPO) -> list[dict] | None:
+    """Every open ticket in `repo`, in one call (None when GitHub can't be read)."""
     proc = subprocess.run(
         ["gh", "issue", "list", "--repo", repo, "--state", "open", "--limit", "1000",
          "--json", "number,title,labels,createdAt,body"],
@@ -76,8 +74,19 @@ def _unclaimed_ready_tickets(repo: str = REPO) -> list[dict]:
     )
     if proc.returncode != 0:
         print(f"{LOG_PREFIX} gh issue list failed: {proc.stderr[:300]}", file=sys.stderr)
-        return []
-    issues = json.loads(proc.stdout)
+        return None
+    return json.loads(proc.stdout)
+
+
+def _unclaimed_ready_tickets(repo: str = REPO, issues: list[dict] | None = None) -> list[dict]:
+    """What this machine may dispatch next, in order: ready-for-agent, unclaimed, not pinned, and with
+    no open blocker, highest priority first and oldest first among equals. One call fetches every open
+    ticket because whether a blocker is still open depends on the others; a caller that already has that
+    list passes it in (#324)."""
+    if issues is None:
+        issues = _open_issues(repo)
+        if issues is None:
+            return []
     open_numbers = {i["number"] for i in issues}
 
     def eligible(i):
