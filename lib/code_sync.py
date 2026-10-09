@@ -95,6 +95,7 @@ sweeps it up naturally, same as any other pending local change.
 from __future__ import annotations
 import json
 import re
+import os
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -138,8 +139,9 @@ def _git(repo: Path, args: list[str]) -> str:
     return result.stdout
 
 
-def _git_ok(repo: Path, args: list[str]) -> tuple[bool, str]:
-    result = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True)
+def _git_ok(repo: Path, args: list[str], env: dict | None = None) -> tuple[bool, str]:
+    result = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True,
+                            env={**os.environ, **env} if env else None)
     return result.returncode == 0, (result.stdout + result.stderr)
 
 
@@ -305,7 +307,7 @@ def _resolve_metrics_stash_collision(repo: Path, candidates: list[str]) -> bool:
         _git(repo, ["add"] + merged_files)
         label = machine_label()
         msg = f"keep both machines' runs ({label}): {', '.join(merged_files)}"
-        _git(repo, ["commit", "-m", msg])
+        _git_ok(repo, ["commit", "-m", msg], env={"MARVIN_COMMIT_KIND": "auto-sync"})
         _log(repo, "pull", f"resolved untracked metrics collision by merging timestamps", merged_files)
 
     return True
@@ -397,7 +399,8 @@ def push(repo: Path) -> None:
     changed_files = [line[3:].strip() for line in _git(repo, ["status", "--porcelain"]).splitlines() if line.strip()]
     _git(repo, ["add", "-A"])
     msg = f"auto-sync ({label}): {len(changed_files)} file(s) changed\n\n" + "\n".join(f"- {f}" for f in changed_files[:20])
-    commit_ok, commit_out = _git_ok(repo, ["commit", "-m", msg])
+    # marks its commit for the direct-commit check (#337): never blocked, but code swept up without tests is logged
+    commit_ok, commit_out = _git_ok(repo, ["commit", "-m", msg], env={"MARVIN_COMMIT_KIND": "auto-sync"})
     if not commit_ok:
         _log(repo, "push", f"commit failed:\n{commit_out}", changed_files)
         return
