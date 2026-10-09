@@ -309,6 +309,42 @@ then) — a real, current fragility, not a hypothetical one.
   Gil's approve/deny = peer review. Not just a metaphor — it's the actual justification for why the
   sandbox and the metrics-comparison step both exist as hard requirements, not nice-to-haves.
 
+## Auto-merge (in design, 2026-10-09, #332)
+
+Why: a pipeline PR waits a median 9.4 h for Gil's Approve while building takes ~25 min, and only 5 pipeline PRs have
+ever been closed unmerged. Gil approves almost everything; the wait is the cost.
+
+### Language
+
+- **Auto-merge**: a PR merges without Gil's Approve because it is low-risk; Gil sees it in a summary afterwards.
+- **Low-risk**: judged by **what a PR touches**, not its size (size only as a generous sanity cap). Green checks,
+  the merge gate passing and a green main are always required.
+- **Owned area**: a process Gil has handed to MARVIN to run and improve: pipeline workings (scanner, agent
+  instructions, conflict repair, evidence checks), background jobs (digests, research colony, self-improve, sweeps,
+  morning brief, skills), ticket and board upkeep (triage/priority/tagging rules, catalog, boards, docs, READMEs,
+  lexicon, the map), and Health + Metrics (fixes; its redesign, #279, is a separate session). Its low-level tickets
+  auto-merge.
+- **Core area**: always waits for Gil, whatever the ticket: the merge gate and auto-merge itself (so it can never
+  loosen its own rules), hooks / settings / permissions, sync, secrets, and anything that deletes files.
+- Gil's standing boundary (2026-07-08): MARVIN owns its own systems' fixes and improvements, "things that don't affect
+  core files or deleting my files".
+
+### Decided so far
+
+- What a PR touches decides, not how big it is.
+- The four owned areas above; the core area above.
+- **Other projects earn it with a trust ramp**: a test command Gil trusts and dispatch on; the profile names the
+  project's own core paths (always ask); the first **5** pipeline PRs wait for Gil, and if all merge without a denial
+  and nothing breaks after, auto-merge switches on for that project. A denial or a merge that breaks its tests resets
+  the ramp to 5. **finance-os always asks** (real financial data).
+- **A test tries to break it** (Gil's definition of TDD here): every feasible way a person or the system could use
+  *or misuse* the change, checking it behaves appropriately: bad, empty, huge and malformed input; each dependency
+  failing (network, GitHub refusing, disk, missing or corrupt files); repeats, concurrency and wrong order; wrong
+  permissions or machine; stale state; a person's mistakes. Tested against the real collaborator's rules wherever a
+  mock could hide them. Outward-facing work is also attacked like an adversary would. Enforced at five gates (ADR
+  0063): ticket section, verify, a mutation check (≥ 80 % of planted bugs caught to auto-merge), a commit check for
+  direct commits (a stated reason to skip), and the Health trend.
+
 ## Dashboard app — Files tab (in design, 2026-08-27)
 
 - **Files tab**: a read-only viewer tab in the MARVIN dashboard (`~/.agents/dashboard`, alongside
