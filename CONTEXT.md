@@ -663,7 +663,7 @@ nothing connected them. "Where things are" was only the tidy agent's file-filing
   with how long each took and the merged PR that closed it (from its `Closes #n`). Clicking one opens the
   same drill-down (docs it referenced, tickets it relates to). The Done column's Archive is only a
   convenience; this is the record.
-- **Four ticket agents** (`lib/ticket_agents.py`, rules in pure `lib/ticket_policy.py`), run inside the
+- **Five ticket agents** (`lib/ticket_agents.py`, rules in pure `lib/ticket_policy.py`), run inside the
   hourly ticket-pipeline scan across every board repo. They change only **labels and comments**, write every
   change to `~/.claude/logs/ticket-agent-actions.jsonl` with the ticket's labels before (so it is
   reversible), cap at 30 changes per pass, and never touch a `pinned` ticket:
@@ -677,6 +677,11 @@ nothing connected them. "Where things are" was only the tidy agent's file-filing
   4. **refeed** - a denied or gate-failed ticket (`needs-reengagement`, which nothing used to read) goes back
      to `ready-for-agent` with a note; after 2 re-queues it goes to `ready-for-human`. The planner prompt now
      also reads the ticket comments (`gh issue view --comments`), which is where the denial feedback lives.
+  5. **revisit** - a ticket with the `hold` label and a `Revisit by: YYYY-MM-DD [— condition]` comment is
+     returned to `needs-triage` when the date arrives or its condition ticket closes. Holds without an explicit
+     revisit line are flagged in Health so they don't silently rot forever (ADR ???, #213). Write pattern:
+     `Revisit by: 2026-11-01` (date only) or `Revisit by: 2026-11-01 — when #42 ships` (date plus condition;
+     the condition can name a condition ticket #N, which is checked for closure independent of the date).
 - **Modes** (`config/ticket_agents.json`): `auto` = propose until `act_after` (2026-10-12), then act. In
   propose mode an agent lists what it would change and changes nothing; the review screen is Health ->
   Autonomous agents -> Ticket agents. **stale_claims and refeed are pinned to propose** until a person edits

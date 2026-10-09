@@ -351,3 +351,92 @@ def test_triage_looks_again_at_needs_info_it_set_once_the_ticket_is_complete(tmp
     assert ops(acts, number=7, op="remove_label") and ops(acts, number=7, op="add_label", arg="ready-for-agent")
     assert not ops(acts, number=8)
     assert not ops(acts, number=7, op="comment")
+
+
+# ── revisit (holds, #213) ───────────────────────────────────────────────────
+
+def comment(body):
+    return {"body": body, "createdAt": iso()}
+
+
+def test_revisit_past_due_date_removes_hold_and_adds_needs_triage():
+    import ticket_policy as pol
+    past_comment = comment("Revisit by: 2026-10-01 — when Terry's review is done")
+    issues = [issue(1, labels=["hold"], body="Working on it\n" + past_comment["body"])]
+    comments_by_number = {1: [past_comment]}
+    acts = ta.plan_revisit(REPO, issues, comments_by_number, {1, 2, 3}, NOW)
+    remove_hold = ops(acts, number=1, op="remove_label", arg="hold")
+    add_triage = ops(acts, number=1, op="add_label", arg="needs-triage")
+    assert remove_hold and add_triage
+    assert any("2026-10-01" in str(a) for a in acts)
+
+
+def test_revisit_with_ref_to_closed_ticket_is_due_regardless_of_date():
+    past_comment = comment("Revisit by: 2026-12-01 — when #42 is done")
+    issues = [issue(1, labels=["hold"], body="Test")]
+    comments_by_number = {1: [past_comment]}
+    acts = ta.plan_revisit(REPO, issues, comments_by_number, {1, 2, 3}, NOW)  # #42 not in open_numbers
+    assert ops(acts, number=1, op="remove_label", arg="hold")
+
+
+def test_revisit_with_ref_to_open_ticket_is_not_due():
+    comment_text = comment("Revisit by: 2026-12-01 — when #42 ships")
+    issues = [issue(1, labels=["hold"], body="Test")]
+    comments_by_number = {1: [comment_text]}
+    acts = ta.plan_revisit(REPO, issues, comments_by_number, {42, 1, 2}, NOW)  # #42 is open
+    assert not ops(acts, number=1, op="remove_label", arg="hold")
+
+
+def test_hold_with_no_revisit_line_is_not_actioned():
+    issues = [issue(1, labels=["hold"], body="No revisit line")]
+    acts = ta.plan_revisit(REPO, issues, {}, {1, 2, 3}, NOW)
+    assert acts == []
+
+
+def test_pinned_hold_is_never_touched():
+    comment_text = comment("Revisit by: 2026-10-01")
+    issues = [issue(1, labels=["hold", "pinned"], body="Test")]
+    comments_by_number = {1: [comment_text]}
+    acts = ta.plan_revisit(REPO, issues, comments_by_number, {1, 2, 3}, NOW)
+    assert acts == []
+
+
+def test_two_due_holds_both_act_with_own_comments():
+    c1 = comment("Revisit by: 2026-10-01 — reason A")
+    c2 = comment("Revisit by: 2026-10-01 — reason B")
+    issues = [
+        issue(1, labels=["hold"], body="Test"),
+        issue(2, labels=["hold"], body="Test"),
+    ]
+    comments_by_number = {1: [c1], 2: [c2]}
+    acts = ta.plan_revisit(REPO, issues, comments_by_number, {1, 2, 3}, NOW)
+    assert len(ops(acts, number=1, op="remove_label", arg="hold")) == 1
+    assert len(ops(acts, number=2, op="remove_label", arg="hold")) == 1
+    assert len(ops(acts, number=1, op="comment")) == 1
+    assert len(ops(acts, number=2, op="comment")) == 1
+    assert ops(acts, number=1, op="comment")[0]["arg"] != ops(acts, number=2, op="comment")[0]["arg"]
+
+
+def test_revisit_produces_agent_comment_with_reason():
+    comment_text = comment("Revisit by: 2026-10-01 — after design")
+    issues = [issue(1, labels=["hold"], body="Waiting")]
+    comments_by_number = {1: [comment_text]}
+    acts = ta.plan_revisit(REPO, issues, comments_by_number, {1, 2, 3}, NOW)
+    comment_act = ops(acts, number=1, op="comment")[0]
+    assert comment_act["arg"].startswith(ta.AGENT_COMMENT_PREFIX)
+    assert "2026-10-01" in comment_act["arg"]
+
+
+def test_revisit_applies_correctly_with_multiple_repos():
+    comment_text = comment("Revisit by: 2026-10-01")
+    repo2 = "G-Eskayo/portfolio-website-updater"
+    issues = [
+        (REPO, [issue(1, labels=["hold"], body="Test")]),
+        (repo2, [issue(2, labels=["hold"], body="Test")]),
+    ]
+    comments_map = {REPO: {1: [comment_text]}, repo2: {2: [comment_text]}}
+    all_acts = []
+    for repo, repo_issues in issues:
+        acts = ta.plan_revisit(repo, repo_issues, comments_map.get(repo, {}), {1, 2}, NOW)
+        all_acts.extend(acts)
+    assert len(all_acts) >= 2

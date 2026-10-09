@@ -204,3 +204,83 @@ def triage_verdict(issue: dict, recheck: bool = False) -> dict | None:
                     "why": "for you, but it does not say exactly what to do: needs " + ", ".join(gaps) + " (a 'Your task' section)"}
         return {"state": "ready-for-human", "category": category, "missing": [], "why": "a decision or action only a person can take"}
     return {"state": "ready-for-agent", "category": category, "missing": [], "why": "has a description and acceptance criteria"}
+
+
+# ── hold / revisit (#213) ───────────────────────────────────────────────────
+
+_REVISIT_PREFIX = re.compile(r"Revisit by:\s*(\d{4})-(\d{2})-(\d{2})(?:\s*[—-]\s*(.+))?", re.I)
+
+
+def parse_revisit_comment(comment: dict | None) -> dict | None:
+    """Parse a single comment for a 'Revisit by: YYYY-MM-DD [— condition]' line.
+    Returns {date: "YYYY-MM-DD", condition: str|None, ref: int|None} or None.
+    The condition can contain a #N ticket reference, which is extracted as ref."""
+    if not comment or not isinstance(comment, dict):
+        return None
+    body = comment.get("body")
+    if not body or not isinstance(body, str):
+        return None
+    m = _REVISIT_PREFIX.search(body)
+    if not m:
+        return None
+    year, month, day = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    try:
+        # Validate the date exists (raises ValueError if invalid like 2026-13-45)
+        datetime(year, month, day, tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    date_str = f"{year:04d}-{month:02d}-{day:02d}"
+    condition = m.group(4)
+    if condition:
+        condition = condition.strip()
+    else:
+        condition = None
+    ref = None
+    if condition:
+        # Extract the first #N reference from the condition
+        ref_match = re.search(r"#(\d+)", condition)
+        if ref_match:
+            ref = int(ref_match.group(1))
+    return {"date": date_str, "condition": condition, "ref": ref}
+
+
+def latest_revisit(comments: list[dict]) -> dict | None:
+    """Find the newest matching 'Revisit by:' comment in a list.
+    Returns the parsed revisit dict from the most recently created matching comment, or None."""
+    if not comments:
+        return None
+    results = []
+    for comment in comments:
+        parsed = parse_revisit_comment(comment)
+        if parsed:
+            # Try to parse the createdAt timestamp to sort by it
+            created = comment.get("createdAt")
+            if created:
+                ts = _parse(created)
+                results.append((ts, parsed))
+    if not results:
+        return None
+    # Sort by timestamp, descending (newest first); if timestamp is None, treat as oldest
+    results.sort(key=lambda x: x[0] or datetime(1970, 1, 1, tzinfo=timezone.utc), reverse=True)
+    return results[0][1]
+
+
+def is_revisit_due(revisit: dict | None, now: datetime, open_numbers: set[int] | None = None) -> bool:
+    """Check if a revisit is due: date has passed, or its ref ticket is closed.
+    open_numbers: set of ticket numbers that are still open; if ref is not in this set, it's closed."""
+    if not revisit:
+        return False
+    open_numbers = open_numbers or set()
+    # Check if the condition's ref ticket is closed (i.e., not in open_numbers)
+    if revisit.get("ref") is not None and revisit["ref"] not in open_numbers:
+        return True
+    # Check if the date has passed
+    date_str = revisit.get("date")
+    if date_str:
+        try:
+            revisit_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            if revisit_date <= now.date():
+                return True
+        except ValueError:
+            pass
+    return False

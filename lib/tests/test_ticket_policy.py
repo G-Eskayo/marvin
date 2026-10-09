@@ -313,3 +313,158 @@ def test_a_huge_body_is_handled():
 def test_the_next_section_ends_the_break_it_section():
     body = "## What to build\n\nA thing.\n\n## How we'll try to break it\n\n## Acceptance criteria\n\n- [ ] works\n"
     assert tp.triage_verdict(issue(body=body))["state"] == "needs-info"  # empty section, followed by another heading
+
+
+# ── hold / revisit (#213) ───────────────────────────────────────────────────
+
+def comment(body, created_at="2026-10-09T12:00:00Z"):
+    """Fake GH comment shape."""
+    return {"body": body, "createdAt": created_at}
+
+
+class TestParseRevisitComment:
+    """Single-comment parsing: `Revisit by: YYYY-MM-DD [— condition text]`"""
+
+    def test_date_only_parses(self):
+        result = tp.parse_revisit_comment(comment("Revisit by: 2026-11-01"))
+        assert result == {"date": "2026-11-01", "condition": None, "ref": None}
+
+    def test_date_plus_event_parses_both_parts(self):
+        result = tp.parse_revisit_comment(comment("Revisit by: 2026-11-01 — when clarity-captions ships"))
+        assert result == {"date": "2026-11-01", "condition": "when clarity-captions ships", "ref": None}
+
+    def test_date_with_hyphen_separator_instead_of_em_dash(self):
+        result = tp.parse_revisit_comment(comment("Revisit by: 2026-11-01 - after Terry's review"))
+        assert result == {"date": "2026-11-01", "condition": "after Terry's review", "ref": None}
+
+    def test_date_plus_condition_with_ticket_ref_parses_ref(self):
+        result = tp.parse_revisit_comment(comment("Revisit by: 2026-11-01 — when #42 ships"))
+        assert result == {"date": "2026-11-01", "condition": "when #42 ships", "ref": 42}
+
+    def test_ref_at_start_of_condition(self):
+        result = tp.parse_revisit_comment(comment("Revisit by: 2026-11-01 — #17 is done"))
+        assert result == {"date": "2026-11-01", "condition": "#17 is done", "ref": 17}
+
+    def test_missing_line_returns_none(self):
+        assert tp.parse_revisit_comment(comment("just a regular comment")) is None
+
+    def test_empty_body_returns_none(self):
+        assert tp.parse_revisit_comment(comment("")) is None
+
+    def test_none_body_returns_none(self):
+        assert tp.parse_revisit_comment({"createdAt": "2026-10-09T12:00:00Z"}) is None
+
+    def test_malformed_date_next_month_returns_none(self):
+        assert tp.parse_revisit_comment(comment("Revisit by: next month")) is None
+
+    def test_malformed_date_invalid_components_returns_none(self):
+        assert tp.parse_revisit_comment(comment("Revisit by: 2026-13-45")) is None
+
+    def test_incomplete_date_returns_none(self):
+        assert tp.parse_revisit_comment(comment("Revisit by: 2026-11")) is None
+
+    def test_partial_match_does_not_count_as_revisit(self):
+        # a mention of "revisit" without the exact prefix is not a revisit line
+        assert tp.parse_revisit_comment(comment("let me revisit this later")) is None
+
+    def test_case_insensitive_prefix_matches(self):
+        result = tp.parse_revisit_comment(comment("REVISIT BY: 2026-11-01"))
+        assert result == {"date": "2026-11-01", "condition": None, "ref": None}
+
+
+class TestLatestRevisit:
+    """Multiple-comment selection: newest matching comment wins."""
+
+    def test_single_comment_returns_it(self):
+        comments = [comment("Revisit by: 2026-11-01", "2026-10-09T12:00:00Z")]
+        result = tp.latest_revisit(comments)
+        assert result == {"date": "2026-11-01", "condition": None, "ref": None}
+
+    def test_two_matching_comments_newest_wins(self):
+        comments = [
+            comment("Revisit by: 2026-11-01", "2026-10-09T10:00:00Z"),
+            comment("Revisit by: 2026-12-01 — later plan", "2026-10-09T14:00:00Z"),
+        ]
+        result = tp.latest_revisit(comments)
+        assert result == {"date": "2026-12-01", "condition": "later plan", "ref": None}
+
+    def test_newest_by_createdAt_not_list_order(self):
+        comments = [
+            comment("Revisit by: 2026-12-01", "2026-10-09T14:00:00Z"),
+            comment("Revisit by: 2026-11-01", "2026-10-09T10:00:00Z"),  # older, but later in list
+        ]
+        result = tp.latest_revisit(comments)
+        assert result == {"date": "2026-12-01", "condition": None, "ref": None}
+
+    def test_mixed_matching_and_non_matching_comments_skips_non_matching(self):
+        comments = [
+            comment("just a note", "2026-10-09T10:00:00Z"),
+            comment("Revisit by: 2026-11-01", "2026-10-09T12:00:00Z"),
+            comment("another random comment", "2026-10-09T14:00:00Z"),
+        ]
+        result = tp.latest_revisit(comments)
+        assert result == {"date": "2026-11-01", "condition": None, "ref": None}
+
+    def test_no_matching_comments_returns_none(self):
+        comments = [
+            comment("just a note", "2026-10-09T10:00:00Z"),
+            comment("another comment", "2026-10-09T12:00:00Z"),
+        ]
+        assert tp.latest_revisit(comments) is None
+
+    def test_empty_list_returns_none(self):
+        assert tp.latest_revisit([]) is None
+
+    def test_huge_comment_list_still_works(self):
+        comments = [
+            comment(f"comment {i}", f"2026-10-{(i % 30):02d}T12:00:00Z")
+            for i in range(200)
+        ]
+        comments.append(comment("Revisit by: 2026-11-15", "2026-10-09T15:00:00Z"))
+        result = tp.latest_revisit(comments)
+        assert result == {"date": "2026-11-15", "condition": None, "ref": None}
+
+    def test_malformed_createdAt_in_a_comment_doesnt_crash(self):
+        comments = [
+            comment("Revisit by: 2026-11-01", "not a date"),
+            comment("Revisit by: 2026-12-01", "2026-10-09T14:00:00Z"),
+        ]
+        # The second one should still be found and used
+        result = tp.latest_revisit(comments)
+        assert result == {"date": "2026-12-01", "condition": None, "ref": None}
+
+
+class TestRevisitDueCheck:
+    """Determine if a revisit is due now."""
+
+    def test_revisit_date_in_past_is_due(self):
+        now = datetime(2026, 11, 15, tzinfo=timezone.utc)
+        assert tp.is_revisit_due({"date": "2026-11-01", "condition": None, "ref": None}, now)
+
+    def test_revisit_date_today_is_due(self):
+        now = datetime(2026, 11, 15, tzinfo=timezone.utc)
+        assert tp.is_revisit_due({"date": "2026-11-15", "condition": None, "ref": None}, now)
+
+    def test_revisit_date_in_future_is_not_due(self):
+        now = datetime(2026, 11, 15, tzinfo=timezone.utc)
+        assert not tp.is_revisit_due({"date": "2026-11-20", "condition": None, "ref": None}, now)
+
+    def test_revisit_with_ref_to_closed_ticket_is_due(self):
+        # ref = 42, and 42 is not in open_numbers
+        now = datetime(2026, 11, 15, tzinfo=timezone.utc)
+        revisit = {"date": "2026-12-01", "condition": "when #42 ships", "ref": 42}
+        assert tp.is_revisit_due(revisit, now, open_numbers={1, 2, 3})
+
+    def test_revisit_with_ref_to_open_ticket_is_not_due_on_that_basis(self):
+        now = datetime(2026, 11, 15, tzinfo=timezone.utc)
+        revisit = {"date": "2026-12-01", "condition": "when #42 ships", "ref": 42}
+        assert not tp.is_revisit_due(revisit, now, open_numbers={42, 1, 2})
+
+    def test_revisit_with_ref_to_closed_is_due_even_if_date_in_future(self):
+        now = datetime(2026, 11, 15, tzinfo=timezone.utc)
+        revisit = {"date": "2026-12-01", "condition": "when #42 ships", "ref": 42}
+        assert tp.is_revisit_due(revisit, now, open_numbers={1, 2})
+
+    def test_none_revisit_is_never_due(self):
+        now = datetime(2026, 11, 15, tzinfo=timezone.utc)
+        assert not tp.is_revisit_due(None, now)
