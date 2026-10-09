@@ -11,6 +11,7 @@ import { parseTicketRef } from '../electron/main/mr_review.js'
 import { repoFromPrUrl, MARVIN_REPO } from '../electron/main/mr_repos.js'
 import { recordStage } from './ticket_stages.js'
 import { assertChecksGreen } from './ci_status.js'
+import { assertCodeReviewClean } from './code_review_gate.js'
 import { checkOpenPrs } from './post_merge_rebase.js'
 
 const execFileAsync = promisify(execFile)
@@ -461,6 +462,19 @@ async function mergePrUnqueued(
                failingTests: summary.failingTests, reason: summary.comment }
     }
     stage('gate', 'passed', 'rebased and retested clean')
+  }
+
+  try {
+    await assertCodeReviewClean(prUrl, exec)
+  } catch (e) {
+    if (e instanceof MergeFailure && e.payload.code === 'CODE_REVIEW_FOUND' && ticketNumber !== null) {
+      stage('gate', 'failed', `CODE_REVIEW_FOUND: ${e.payload.message}`)
+      recordFailureFn({ ticket: ticketNumber, code: 'CODE_REVIEW_FOUND', message: 'code review found issues', project: repo, prUrl, stage: 'gate' })
+      const comment = `**Code review: issues found**\n\n${e.payload.message}\n\nFix what the review found, then the ticket will be rebuilt.`
+      await reengage({ prUrl, ticketNumber, reasons: ['Regression/quality'], comment }, exec)
+      return { merged: false, reengaged: true, code: 'CODE_REVIEW_FOUND', stage: 'gate', action: 'reengage', reason: comment }
+    }
+    throw e
   }
 
   stage('merging', 'started', '')

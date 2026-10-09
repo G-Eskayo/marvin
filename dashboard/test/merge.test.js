@@ -45,6 +45,19 @@ function noopRebuild() {
 }
 function noopRedispatch() {}
 
+// Wrapper for exec mocks that handles code review gate Python calls.
+// By default, all PRs pass code review (clean). Tests can override.
+function execWithCodeReviewDefaults(innerMockFn) {
+  return vi.fn(async (cmd, args, ...rest) => {
+    if (cmd === 'python' && Array.isArray(args) && args.some(a => a && a.includes('review'))) {
+      // Code review gate Python call: return clean by default
+      return Promise.resolve({ stdout: JSON.stringify({ clean: true, findings: [] }), stderr: '' })
+    }
+    // Forward to the inner mock
+    return innerMockFn(cmd, args, ...rest)
+  })
+}
+
 // A gh whose merge is refused as a conflict and which, asked, confirms the PR really is CONFLICTING.
 const ghConflicting = () => vi.fn(async (cmd, args) => {
   if (args[0] === 'pr' && args[1] === 'merge') throw new Error('merge conflict')
@@ -66,25 +79,25 @@ describe('mergePr', () => {
   })
 
   it('calls gh pr merge with the exact URL for a valid GitHub PR link', async () => {
-    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const exec = execWithCodeReviewDefaults(vi.fn().mockResolvedValue({ stdout: '', stderr: '' }))
     await mergePr('https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, noopRedispatch)
     expect(exec).toHaveBeenCalledWith('gh', ['pr', 'merge', 'https://github.com/G-Eskayo/marvin/pull/71', '--merge'])
   })
 
   it('propagates a failure from the underlying gh call', async () => {
-    const exec = ghConflicting()
+    const exec = execWithCodeReviewDefaults(ghConflicting())
     await expect(mergePr('https://github.com/G-Eskayo/marvin/pull/71', exec)).rejects.toThrow('merge conflict')
   })
 
   it('checks for a dashboard rebuild after a successful merge', async () => {
-    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const exec = execWithCodeReviewDefaults(vi.fn().mockResolvedValue({ stdout: '', stderr: '' }))
     const rebuild = vi.fn().mockResolvedValue(undefined)
     await mergePr('https://github.com/G-Eskayo/marvin/pull/71', exec, rebuild, noopRedispatch)
     expect(rebuild).toHaveBeenCalledWith('https://github.com/G-Eskayo/marvin/pull/71', exec)
   })
 
   it('triggers a ticket-pipeline redispatch after a successful merge, regardless of what was touched', async () => {
-    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const exec = execWithCodeReviewDefaults(vi.fn().mockResolvedValue({ stdout: '', stderr: '' }))
     const redispatch = vi.fn()
     await mergePr('https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, redispatch, undefined, undefined, undefined, undefined,
       { rebaseOpen: vi.fn().mockResolvedValue([]) })
@@ -94,7 +107,7 @@ describe('mergePr', () => {
   // #225 (overlap rule): the other open PRs are conflict-checked against the new main first (no tests, no pushes), and only then does the pipeline scan run, because
   // that scan sends every PR GitHub calls conflicting back for a full rebuild.
   it('after a merge, rebases the other open PRs, then redispatches; the merge itself does not wait for them', async () => {
-    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const exec = execWithCodeReviewDefaults(vi.fn().mockResolvedValue({ stdout: '', stderr: '' }))
     const order = []
     let finishRebases
     const rebaseOpen = vi.fn(() => new Promise((r) => { finishRebases = () => { order.push('rebased'); r([]) } }))
@@ -108,7 +121,7 @@ describe('mergePr', () => {
   })
 
   it('a failing post-merge rebase still redispatches', async () => {
-    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const exec = execWithCodeReviewDefaults(vi.fn().mockResolvedValue({ stdout: '', stderr: '' }))
     const redispatch = vi.fn()
     await mergePr('https://github.com/G-Eskayo/marvin/pull/73', exec, noopRebuild, redispatch, undefined, undefined, undefined, undefined,
       { rebaseOpen: vi.fn().mockRejectedValue(new Error('boom')) })
@@ -116,7 +129,7 @@ describe('mergePr', () => {
   })
 
   it('does not trigger a redispatch when the merge itself fails', async () => {
-    const exec = ghConflicting()
+    const exec = execWithCodeReviewDefaults(ghConflicting())
     const redispatch = vi.fn()
     await expect(mergePr('https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, redispatch)).rejects.toThrow()
     expect(redispatch).not.toHaveBeenCalled()
@@ -132,7 +145,7 @@ describe('mergePr', () => {
       if (!ACCEPTED.has(status)) throw new Error(`unknown status: ${status}`)
       calls.push([stage, status])
     }
-    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const exec = execWithCodeReviewDefaults(vi.fn().mockResolvedValue({ stdout: '', stderr: '' }))
     const shouldGateMerge = vi.fn().mockResolvedValue({ gate: false, behind: true, shared: [], headRefName: 'pipeline/x', body: 'Closes G-Eskayo/marvin#5' })
     const result = await mergePr('https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, noopRedispatch, shouldGateMerge, vi.fn(), vi.fn(), strictStage)
     expect(result.merged).toBe(true)
@@ -141,7 +154,7 @@ describe('mergePr', () => {
 
   // G-Eskayo/marvin#91 -- ADR 0026's merge-time gate.
   it('skips the gate and merges directly when the branch is already up to date', async () => {
-    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const exec = execWithCodeReviewDefaults(vi.fn().mockResolvedValue({ stdout: '', stderr: '' }))
     const shouldGateMerge = vi.fn().mockResolvedValue({ gate: false, headRefName: 'some-branch', body: '' })
     const rebaseAndRetestFn = vi.fn()
 
@@ -153,7 +166,7 @@ describe('mergePr', () => {
   })
 
   it('rebases and still merges when behind main but the retest passes', async () => {
-    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const exec = execWithCodeReviewDefaults(vi.fn().mockResolvedValue({ stdout: '', stderr: '' }))
     const shouldGateMerge = vi.fn().mockResolvedValue({ gate: true, headRefName: 'pipeline/g-eskayo/marvin#5', body: 'Closes G-Eskayo/marvin#5' })
     const rebaseAndRetestFn = vi.fn().mockResolvedValue({ ok: true })
     const reengage = vi.fn()
@@ -170,7 +183,7 @@ describe('mergePr', () => {
   })
 
   it('records a stage timeline for a clean gated merge: gate started/passed, merging, rebuilding, done', async () => {
-    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const exec = execWithCodeReviewDefaults(vi.fn().mockResolvedValue({ stdout: '', stderr: '' }))
     const shouldGateMerge = vi.fn().mockResolvedValue({ gate: true, headRefName: 'pipeline/g-eskayo/marvin#5', body: 'Closes G-Eskayo/marvin#5' })
     const rebaseAndRetestFn = vi.fn().mockResolvedValue({ ok: true })
     const recordStageFn = vi.fn()
@@ -186,7 +199,7 @@ describe('mergePr', () => {
   })
 
   it('records gate:failed and nothing after, when the rebase/retest fails (no false merging/done events)', async () => {
-    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const exec = execWithCodeReviewDefaults(vi.fn().mockResolvedValue({ stdout: '', stderr: '' }))
     const shouldGateMerge = vi.fn().mockResolvedValue({ gate: true, headRefName: 'pipeline/g-eskayo/marvin#5', body: 'Closes G-Eskayo/marvin#5' })
     const rebaseAndRetestFn = vi.fn().mockResolvedValue({ ok: false, reason: 'boom' })
     const recordStageFn = vi.fn()
@@ -201,7 +214,7 @@ describe('mergePr', () => {
   })
 
   it('records no stage events at all when the PR has no linked ticket', async () => {
-    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const exec = execWithCodeReviewDefaults(vi.fn().mockResolvedValue({ stdout: '', stderr: '' }))
     const shouldGateMerge = vi.fn().mockResolvedValue({ gate: false, headRefName: 'some-branch', body: '' })
     const recordStageFn = vi.fn()
 
@@ -214,7 +227,7 @@ describe('mergePr', () => {
   })
 
   it('routes to re-engagement and does not merge when the rebase or retest fails', async () => {
-    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const exec = execWithCodeReviewDefaults(vi.fn().mockResolvedValue({ stdout: '', stderr: '' }))
     const shouldGateMerge = vi.fn().mockResolvedValue({ gate: true, headRefName: 'pipeline/g-eskayo/marvin#5', body: 'Closes G-Eskayo/marvin#5' })
     const rebaseAndRetestFn = vi.fn().mockResolvedValue({ ok: false, reason: 'Tests failed after rebasing onto main:\n\nboom' })
     const reengage = vi.fn().mockResolvedValue(undefined)
@@ -241,6 +254,197 @@ describe('mergePr', () => {
     expect(redispatch).not.toHaveBeenCalled()
     expect(result).toMatchObject({ merged: false, reengaged: true, code: 'GATE_TESTS_FAILED', stage: 'gate', action: 'reengage' })
     expect(result.reason).toContain('boom')
+  })
+
+  // Test 16: Clean review → merge proceeds
+  it('code review gate: clean review allows merge to proceed', async () => {
+    const exec = vi.fn()
+    exec.mockImplementation((cmd, args) => {
+      if (cmd === 'python' && args.includes('review')) {
+        // Code review gate call
+        return Promise.resolve({ stdout: JSON.stringify({ clean: true, findings: [] }), stderr: '' })
+      }
+      // All other calls (gh pr view, etc.)
+      return Promise.resolve({ stdout: '', stderr: '' })
+    })
+    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: false, headRefName: 'some-branch', body: 'Closes G-Eskayo/marvin#5' })
+
+    const result = await mergePr(
+      'https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, noopRedispatch, shouldGateMerge
+    )
+
+    expect(result.merged).toBe(true)
+    expect(exec).toHaveBeenCalledWith('gh', ['pr', 'merge', 'https://github.com/G-Eskayo/marvin/pull/71', '--merge'])
+  })
+
+  // Test 17: Findings found; sendFeedback is called
+  it('code review gate: findings block merge and reengages, posting feedback to PR and ticket', async () => {
+    const exec = vi.fn()
+    exec.mockImplementation((cmd, args) => {
+      if (cmd === 'python' && args.includes('review')) {
+        return Promise.resolve({
+          stdout: JSON.stringify({
+            clean: false,
+            findings: ['lib/foo.py:42 — unused variable x', 'lib/bar.py:10 — missing type annotation']
+          }),
+          stderr: ''
+        })
+      }
+      return Promise.resolve({ stdout: '', stderr: '' })
+    })
+    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: false, headRefName: 'some-branch', body: 'Closes G-Eskayo/marvin#5' })
+    const reengage = vi.fn().mockResolvedValue(undefined)
+
+    const result = await mergePr(
+      'https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, noopRedispatch,
+      shouldGateMerge, vi.fn(), reengage
+    )
+
+    expect(reengage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prUrl: 'https://github.com/G-Eskayo/marvin/pull/71',
+        ticketNumber: '5',
+        reasons: ['Regression/quality'],
+        comment: expect.stringContaining('lib/foo.py:42')
+      }),
+      exec
+    )
+    expect(result).toMatchObject({ merged: false, reengaged: true, code: 'CODE_REVIEW_FOUND' })
+  })
+
+  // Test 18: PR that already fails CI never triggers code review script
+  it('code review gate: PR that failed CI does not trigger code review script call', async () => {
+    const exec = vi.fn()
+    let codeReviewCalled = false
+    exec.mockImplementation((cmd, args) => {
+      if (cmd === 'python' && args.includes('review')) {
+        codeReviewCalled = true
+      }
+      if (cmd === 'gh' && args[1] === 'view' && args.includes('statusCheckRollup')) {
+        // CI checks fail
+        return Promise.resolve({ stdout: JSON.stringify({ statusCheckRollup: [{ name: 'failing-check', status: 'COMPLETED', conclusion: 'FAILURE' }] }), stderr: '' })
+      }
+      return Promise.resolve({ stdout: '', stderr: '' })
+    })
+    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: false, headRefName: 'some-branch', body: 'Closes G-Eskayo/marvin#5' })
+    const reengage = vi.fn().mockResolvedValue(undefined)
+
+    await mergePr(
+      'https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, noopRedispatch,
+      shouldGateMerge, vi.fn(), reengage
+    )
+
+    expect(codeReviewCalled).toBe(false)
+    expect(reengage).toHaveBeenCalled()  // But reengage was called for CI failure, not code review
+  })
+
+  // Test 19: Code review script call ordering (after gate/CI, before merge)
+  it('code review gate: script is called after CI checks but before gh pr merge', async () => {
+    const callOrder = []
+    const exec = vi.fn()
+    exec.mockImplementation((cmd, args) => {
+      if (cmd === 'gh' && args[1] === 'view' && args.includes('statusCheckRollup')) {
+        callOrder.push('ci-check')
+        return Promise.resolve({ stdout: JSON.stringify({ statusCheckRollup: [] }), stderr: '' })
+      }
+      if (cmd === 'python' && args.includes('review')) {
+        callOrder.push('code-review')
+        return Promise.resolve({ stdout: JSON.stringify({ clean: true, findings: [] }), stderr: '' })
+      }
+      if (cmd === 'gh' && args[1] === 'merge') {
+        callOrder.push('merge')
+        return Promise.resolve({ stdout: '', stderr: '' })
+      }
+      return Promise.resolve({ stdout: '', stderr: '' })
+    })
+    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: false, headRefName: 'some-branch', body: 'Closes G-Eskayo/marvin#5' })
+
+    await mergePr('https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, noopRedispatch, shouldGateMerge)
+
+    expect(callOrder).toContain('ci-check')
+    expect(callOrder).toContain('code-review')
+    expect(callOrder).toContain('merge')
+    const ciIdx = callOrder.indexOf('ci-check')
+    const reviewIdx = callOrder.indexOf('code-review')
+    const mergeIdx = callOrder.indexOf('merge')
+    expect(reviewIdx).toBeGreaterThan(ciIdx)
+    expect(mergeIdx).toBeGreaterThan(reviewIdx)
+  })
+
+  // Test 20: PR with no linked ticket doesn't try to post ticket comment
+  it('code review gate: PR with no linked ticket results in a code review error', async () => {
+    const exec = vi.fn()
+    exec.mockImplementation((cmd, args) => {
+      if (cmd === 'python' && args.includes('review')) {
+        return Promise.resolve({
+          stdout: JSON.stringify({ clean: false, findings: ['lib/foo.py:1 — issue'] }),
+          stderr: ''
+        })
+      }
+      // For pr view (no ticket reference)
+      if (cmd === 'gh' && args[1] === 'view' && args[2] && args[2].includes('pull')) {
+        return Promise.resolve({ stdout: JSON.stringify({ body: '', baseRefName: 'main' }), stderr: '' })
+      }
+      return Promise.resolve({ stdout: '', stderr: '' })
+    })
+
+    const reengage = vi.fn().mockResolvedValue(undefined)
+
+    // A code review with no linked ticket will result in a code review error being thrown
+    // (since there's no ticketNumber, the error doesn't get converted to a reengage)
+    await expect(mergePr(
+      'https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, noopRedispatch,
+      undefined, vi.fn(), reengage
+    )).rejects.toMatchObject({
+      payload: { code: 'CODE_REVIEW_FOUND' }
+    })
+
+    expect(reengage).not.toHaveBeenCalled()
+  })
+
+  // Test 21: A PR sent back for rework is refused earlier by assertNotSentBack, without re-running review
+  it('code review gate: already-sent-back PR is refused by assertNotSentBack, not re-reviewed', async () => {
+    const exec = vi.fn()
+    let codeReviewCalled = false
+    exec.mockImplementation((cmd, args) => {
+      if (cmd === 'python' && args.includes('review')) {
+        codeReviewCalled = true
+        return Promise.resolve({ stdout: JSON.stringify({ clean: true, findings: [] }), stderr: '' })
+      }
+      if (cmd === 'gh' && args[1] === 'view' && args[2] && args[2].includes('pull')) {
+        // pr view call for body
+        return Promise.resolve({ stdout: JSON.stringify({ body: 'Closes G-Eskayo/marvin#5' }), stderr: '' })
+      }
+      if (cmd === 'gh' && args[1] === 'view' && args[2] && !args[2].includes('pull')) {
+        // issue view call (for checking labels on ticket)
+        return Promise.resolve({ stdout: JSON.stringify({ labels: [{ name: 'needs-reengagement' }] }), stderr: '' })
+      }
+      return Promise.resolve({ stdout: '', stderr: '' })
+    })
+
+    await expect(mergePr('https://github.com/G-Eskayo/marvin/pull/71', exec)).rejects.toThrow()
+
+    expect(codeReviewCalled).toBe(false)
+  })
+
+  // Test 22: exec failure for code review script is GATE_INFRA, not sent back
+  it('code review gate: script execution failure escalates as GATE_INFRA, PR not sent back', async () => {
+    const exec = vi.fn()
+    exec.mockImplementation((cmd, args) => {
+      if (cmd === 'python' && args.includes('review')) {
+        throw new Error('ENOENT: command not found')
+      }
+      return Promise.resolve({ stdout: '', stderr: '' })
+    })
+    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: false, headRefName: 'some-branch', body: 'Closes G-Eskayo/marvin#5' })
+    const reengage = vi.fn()
+
+    await expect(mergePr('https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, noopRedispatch, shouldGateMerge)).rejects.toMatchObject({
+      payload: { code: 'GATE_INFRA', action: 'escalate' }
+    })
+
+    // reengage should NOT have been called (it's an escalate, not a reengage)
+    expect(reengage).not.toHaveBeenCalled()
   })
 })
 
@@ -609,6 +813,7 @@ import { recordStage } from '../webhook-server/ticket_stages.js'
 const PR = 'https://github.com/G-Eskayo/marvin/pull/71'
 const ticketGate = () => vi.fn().mockResolvedValue({ gate: false, headRefName: 'b', body: 'Closes G-Eskayo/marvin#5' })
 const ghMergeFails = (err) => vi.fn(async (cmd, args) => {
+  if (cmd === 'python' && args.includes('review')) return Promise.resolve({ stdout: JSON.stringify({ clean: true, findings: [] }), stderr: '' })
   if (args[0] === 'pr' && args[1] === 'merge') throw err
   if (args.includes('mergeable')) return { stdout: JSON.stringify({ mergeable: 'CONFLICTING' }), stderr: '' } // a refusal is only a conflict if GitHub agrees
   return { stdout: '', stderr: '' }
@@ -636,6 +841,7 @@ describe('mergePr structured failures', () => {
   it('retries a transient failure with backoff and then merges', async () => {
     let calls = 0
     const exec = vi.fn(async (cmd, args) => {
+      if (cmd === 'python' && args.includes('review')) return Promise.resolve({ stdout: JSON.stringify({ clean: true, findings: [] }), stderr: '' })
       if (args[0] === 'pr' && args[1] === 'merge') {
         calls += 1
         if (calls < 3) throw Object.assign(new Error('x'), { stderr: 'connect ETIMEDOUT' })
@@ -700,7 +906,7 @@ describe('mergePr for a project with a profile', () => {
   })
 
   it('merges directly when the PR is not behind, and does not rebuild the dashboard', async () => {
-    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const exec = execWithCodeReviewDefaults(vi.fn().mockResolvedValue({ stdout: '', stderr: '' }))
     const rebuild = vi.fn()
     const shouldGateMerge = vi.fn().mockResolvedValue({ gate: false, headRefName: 'pipeline/x', body: 'Closes G-Eskayo/clarity-captions#7' })
     const result = await mergePr(CC_PR, exec, rebuild, noopRedispatch, shouldGateMerge, vi.fn(), vi.fn(), vi.fn(), { gateContext: async () => CTX })
@@ -711,7 +917,7 @@ describe('mergePr for a project with a profile', () => {
   })
 
   it('rebases and retests in the project\'s clone on its base branch with its own checks when behind', async () => {
-    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const exec = execWithCodeReviewDefaults(vi.fn().mockResolvedValue({ stdout: '', stderr: '' }))
     const shouldGateMerge = vi.fn().mockResolvedValue({ gate: true, headRefName: 'pipeline/g-eskayo/clarity-captions#7', body: 'Closes G-Eskayo/clarity-captions#7' })
     const rebaseAndRetestFn = vi.fn().mockResolvedValue({ ok: true })
     await mergePr(CC_PR, exec, noopRebuild, noopRedispatch, shouldGateMerge, rebaseAndRetestFn, vi.fn(), vi.fn(), { gateContext: async () => CTX })
@@ -719,7 +925,7 @@ describe('mergePr for a project with a profile', () => {
   })
 
   it('records the ticket timeline under the project, not under marvin\'s same-numbered ticket', async () => {
-    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const exec = execWithCodeReviewDefaults(vi.fn().mockResolvedValue({ stdout: '', stderr: '' }))
     const shouldGateMerge = vi.fn().mockResolvedValue({ gate: true, headRefName: 'b', body: 'Closes G-Eskayo/clarity-captions#7' })
     const recordStageFn = vi.fn()
     await mergePr(CC_PR, exec, noopRebuild, noopRedispatch, shouldGateMerge, vi.fn().mockResolvedValue({ ok: true }), vi.fn(), recordStageFn, { gateContext: async () => CTX })
@@ -729,7 +935,7 @@ describe('mergePr for a project with a profile', () => {
   })
 
   it('sends a failed retest back to the ticket in that project\'s repo with the failing test named', async () => {
-    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const exec = execWithCodeReviewDefaults(vi.fn().mockResolvedValue({ stdout: '', stderr: '' }))
     const shouldGateMerge = vi.fn().mockResolvedValue({ gate: true, headRefName: 'b', body: 'Closes G-Eskayo/clarity-captions#7' })
     const failing = { ok: false, reason: "Tests failed after rebasing onto main:\n\nTest Case '-[CoreTests.AlignTests testBad]' failed (0.1 seconds)." }
     const reengage = vi.fn()
