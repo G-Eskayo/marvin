@@ -12,6 +12,7 @@ import { repoFromPrUrl, MARVIN_REPO } from '../electron/main/mr_repos.js'
 import { recordStage } from './ticket_stages.js'
 import { assertChecksGreen } from './ci_status.js'
 import { checkOpenPrs } from './post_merge_rebase.js'
+import { upsertMutationSection, renderMutationSection } from './pr_body_section.js'
 
 const execFileAsync = promisify(execFile)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -21,7 +22,9 @@ const TICKET_PIPELINE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'ticke
 const VENV_PYTHON = path.resolve(__dirname, '..', '..', 'venv', 'bin', 'python')
 const PROFILE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'project_profile.py')
 const GENERATED_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'generated_paths.py')
+const MUTATION_CHECK_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'mutation_check.py')
 const DEFAULT_TEST_TIMEOUT_MS = 1200_000
+const MUTATION_TIMEOUT_MS = 10 * 60_000  // 10 minutes for mutation testing
 
 export async function execWithGroupTimeout(cmd, args, opts, timeoutMs = DEFAULT_TEST_TIMEOUT_MS) {
   const child = spawn(cmd, args, { ...opts, detached: true })
@@ -362,6 +365,53 @@ function withGateTimeout(promise, ms) {
   return Promise.race([promise, cut]).finally(() => clearTimeout(timer))
 }
 
+// Run mutation check on a PR in a scratch worktree. Returns {status, score, mutants_total, killed, survived, unmeasured, reason}.
+export async function runMutationCheck(headRefName, exec = execWithGroupTimeout, repoPath = REPO_PATH, scratchDir = null) {
+  if (!scratchDir) {
+    scratchDir = await mkdtemp(path.join(tmpdir(), 'mutation-check-'))
+  }
+
+  try {
+    await exec('git', ['fetch', 'origin', headRefName], { cwd: repoPath })
+    await exec('git', ['worktree', 'add', '--detach', scratchDir, `origin/${headRefName}`], { cwd: repoPath })
+
+    try {
+      const baseSha = (await exec('git', ['merge-base', 'origin/main', `origin/${headRefName}`], { cwd: repoPath })).stdout.trim()
+      const { stdout } = await exec(VENV_PYTHON, [MUTATION_CHECK_SCRIPT, 'run', MARVIN_REPO, scratchDir, baseSha, headRefName], { cwd: scratchDir })
+      const result = JSON.parse(stdout)
+      // Validate result shape: must have status and required fields for each status
+      if (typeof result !== 'object' || !result) {
+        return { status: 'unknown', mutants_total: 0, score: null, killed: 0, survived: [], unmeasured: [], reason: 'invalid result shape' }
+      }
+      if (!['ok', 'unknown'].includes(result.status)) {
+        return { status: 'unknown', mutants_total: 0, score: null, killed: 0, survived: [], unmeasured: [], reason: 'invalid status value' }
+      }
+      if (typeof result.mutants_total !== 'number' || typeof result.killed !== 'number') {
+        return { status: 'unknown', mutants_total: 0, score: null, killed: 0, survived: [], unmeasured: [], reason: 'invalid mutants_total or killed' }
+      }
+      if (!Array.isArray(result.survived)) result.survived = []
+      if (!Array.isArray(result.unmeasured)) result.unmeasured = []
+      if (result.status === 'ok' && typeof result.score !== 'number' && result.score !== null) {
+        return { status: 'unknown', mutants_total: 0, score: null, killed: 0, survived: [], unmeasured: [], reason: 'invalid score value' }
+      }
+      return result
+    } finally {
+      await exec('git', ['worktree', 'remove', '--force', scratchDir], { cwd: repoPath }).catch(() => {})
+      await rm(scratchDir, { recursive: true, force: true }).catch(() => {})
+    }
+  } catch (e) {
+    return {
+      status: 'unknown',
+      mutants_total: 0,
+      score: null,
+      killed: 0,
+      survived: [],
+      unmeasured: [],
+      reason: `mutation check failed: ${String(e?.message || e).slice(0, 100)}`
+    }
+  }
+}
+
 async function mergePrUnqueued(
   prUrl,
   exec = execWithGroupTimeout,
@@ -461,6 +511,37 @@ async function mergePrUnqueued(
                failingTests: summary.failingTests, reason: summary.comment }
     }
     stage('gate', 'passed', 'rebased and retested clean')
+  }
+
+  // Mutation check: measure test quality by killing mutants (marvin-only for now)
+  if (!ctx) {
+    stage('mutation', 'started', '')
+    const runMutationCheckFn = deps.runMutationCheck || runMutationCheck
+    const mutationResult = await withGateTimeout(
+      runMutationCheckFn(headRefName, exec, REPO_PATH),
+      MUTATION_TIMEOUT_MS
+    )
+
+    let detailText = 'measurement failed'
+    if (mutationResult.status === 'ok') {
+      if (mutationResult.mutants_total === 0) {
+        detailText = 'no mutable lines'
+      } else {
+        const survivedCount = Array.isArray(mutationResult.survived) ? mutationResult.survived.length : 0
+        const total = mutationResult.killed + survivedCount
+        if (total > 0) {
+          detailText = `${(mutationResult.killed / total * 100).toFixed(0)}% (${mutationResult.killed}/${total})`
+        }
+      }
+    } else {
+      detailText = mutationResult.reason || 'measurement failed'
+    }
+
+    stage('mutation', mutationResult.status === 'ok' ? 'passed' : 'failed', detailText)
+
+    // Update PR body with mutation results
+    const mutationSection = renderMutationSection(mutationResult)
+    await upsertMutationSection(prUrl, mutationSection, exec).catch(() => {})
   }
 
   stage('merging', 'started', '')

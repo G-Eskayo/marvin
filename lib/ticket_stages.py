@@ -29,7 +29,7 @@ import machine_profile  # noqa: E402
 
 STAGES_DIR = Path.home() / ".claude" / "logs" / "ticket-stages"
 
-VALID_STAGES = {"claimed", "planning", "executing", "verifying", "gate", "merging", "rebuilding", "done"}
+VALID_STAGES = {"claimed", "planning", "executing", "verifying", "gate", "mutation", "merging", "rebuilding", "done"}
 VALID_STATUSES = {"started", "passed", "failed"}
 
 
