@@ -162,3 +162,45 @@ def test_stage_key_round_trips_an_owner_with_a_hyphen(tmp_path):
     assert ts.parse_stage_key("g-eskayo__marvin-7") == ("G-Eskayo/marvin", 7)
     assert ts.parse_stage_key("7") == ("G-Eskayo/marvin", 7)
     assert ts.parse_stage_key("clarity-captions-7") is None
+
+
+def test_record_stage_stores_run_id_when_given(tmp_path, monkeypatch):
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path)
+    event = ts.record_stage(42, "claimed", "started", run_id="abc123")
+    assert event["run_id"] == "abc123"
+    events = ts.read_stages(42)
+    assert events[0]["run_id"] == "abc123"
+
+
+def test_record_stage_stores_none_for_run_id_by_default(tmp_path, monkeypatch):
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path)
+    event = ts.record_stage(42, "claimed", "started")
+    assert event["run_id"] is None
+
+
+def test_claim_owner_returns_the_most_recent_claimed_events_run_id(tmp_path, monkeypatch):
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path)
+    ts.record_stage(42, "claimed", "started", run_id="run1")
+    ts.record_stage(42, "planning", "started")
+    ts.record_stage(42, "claimed", "started", run_id="run2")
+    assert ts.claim_owner(42) == "run2"
+
+
+def test_claim_owner_returns_none_when_no_claimed_event_exists(tmp_path, monkeypatch):
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path)
+    ts.record_stage(42, "planning", "started")
+    assert ts.claim_owner(42) is None
+
+
+def test_claim_owner_returns_none_for_untracked_tickets(tmp_path, monkeypatch):
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path)
+    assert ts.claim_owner(999) is None
+
+
+def test_claim_owner_is_per_project(tmp_path, monkeypatch):
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path)
+    clarity = "G-Eskayo/clarity-captions"
+    ts.record_stage(7, "claimed", "started", run_id="marvin-run", repo=None)
+    ts.record_stage(7, "claimed", "started", run_id="clarity-run", repo=clarity)
+    assert ts.claim_owner(7, repo=None) == "marvin-run"
+    assert ts.claim_owner(7, repo=clarity) == "clarity-run"

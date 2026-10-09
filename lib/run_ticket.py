@@ -10,6 +10,7 @@ Run standalone: ~/.agents/venv/bin/python run_ticket.py <issue_number>
 """
 from __future__ import annotations
 import json
+import os
 import re
 import subprocess
 import sys
@@ -100,7 +101,7 @@ def _park_stuck_ticket(issue_number: int, streak: int, repo: str = REPO) -> None
     )
 
 
-def _release_claim(issue_number: int, repo: str = REPO) -> None:
+def _release_claim(issue_number: int, repo: str = REPO, run_id: str | None = None) -> None:
     """A ticket that didn't raise a PR -- rate-limited, a worktree-creation
     failure, or genuinely never reached a passing comparison -- leaves this
     machine free again, but ticket_pipeline.py's claim happens before
@@ -111,7 +112,7 @@ def _release_claim(issue_number: int, repo: str = REPO) -> None:
     Claude usage-limit window left 28 tickets claimed with zero real work
     done, none of them ever eligible for retry again."""
     label = _label_for_device(machine_profile.registry_id())
-    _release(issue_number, label) if repo == REPO else _release(issue_number, label, repo)
+    _release(issue_number, label, run_id=run_id) if repo == REPO else _release(issue_number, label, repo, run_id=run_id)
 
 
 def _trigger_redispatch() -> None:
@@ -165,6 +166,7 @@ def run(issue_number: int, repo: str = REPO) -> dict:
     # marvin's path is called exactly as it always was; another project's calls carry its repo so its
     # stage records, claim label, comments and breaker entries stay its own.
     kw = {"repo": repo} if other else {}
+    run_id = os.environ.get("MARVIN_RUN_ID")
     profile = pp.load_profile(repo) if other else None
     subsystem = f"ticket-{issue_number}" if not other else f"{repo.split('/')[-1].lower()}-ticket-{issue_number}"
     measurer = None
@@ -225,12 +227,12 @@ def run(issue_number: int, repo: str = REPO) -> dict:
 
     if not outcome["raised"]:
         if outcome.get("env_missing"):
-            _release_claim(issue_number, **kw)
+            _release_claim(issue_number, **kw, run_id=run_id)
             ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
             _trigger_redispatch()
             return outcome
         if outcome.get("timed_out"):
-            _release_claim(issue_number, **kw)
+            _release_claim(issue_number, **kw, run_id=run_id)
             subprocess.run(
                 ["gh", "issue", "comment", str(issue_number), "--repo", repo, "--body",
                  f"{TIMEOUT_MARKER}: {outcome['reason']}"],
@@ -249,7 +251,7 @@ def run(issue_number: int, repo: str = REPO) -> dict:
             _park_stuck_ticket(issue_number, prior_streak + 1, **kw)
             ts.record_stage(issue_number, "done", "failed", f"parked after {prior_streak + 1} consecutive failures", **kw)
         else:
-            _release_claim(issue_number, **kw)
+            _release_claim(issue_number, **kw, run_id=run_id)
             ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
     else:
         ts.record_stage(issue_number, "done", "passed", f"PR raised: {outcome['pr_url']}", **kw)
