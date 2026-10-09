@@ -68,10 +68,16 @@ SCAN_LOCK_TIMEOUT_S = 120
 
 
 @contextmanager
-def _scan_lock(path: Path = SCAN_LOCK_PATH, timeout_s: int = SCAN_LOCK_TIMEOUT_S):
+def _scan_lock(path: Path | None = None, timeout_s: float | None = None):
     """Exclusive lock around _scan to prevent concurrent scans from claiming
     the same ticket. Polls fcntl.flock until acquired or timeout elapses.
-    On timeout, logs a warning and yields anyway (never skips the scan)."""
+    On timeout, logs a warning and yields anyway (never skips the scan).
+
+    Path and timeout are read at call time, not bound as defaults: bound at import, a test's patched
+    SCAN_LOCK_PATH never applied, so tests took the real lock and waited out 120 s behind the live pipeline,
+    stalling merge-gate runs (2026-10-09)."""
+    path = SCAN_LOCK_PATH if path is None else path
+    timeout_s = SCAN_LOCK_TIMEOUT_S if timeout_s is None else timeout_s
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = open(path, "w")
     try:
