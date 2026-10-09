@@ -205,6 +205,83 @@ def run_once_ollama(task: dict, profile: str, ollama_model: str,
     }
 
 
+def run_once_mlx(task: dict, profile: str, mlx_model: str,
+                 context_mode: str = "full") -> dict | None:
+    """Run a QA task against an MLX model via mlx_lm.generate.
+
+    Comparable to run_once_ollama but uses MLX for on-device inference.
+    Returns None for fs tasks (tool use not supported).
+    """
+    if task.get("type") == "fs":
+        return None
+
+    try:
+        import mlx.core as mx
+        from mlx_lm import load, generate
+    except ImportError:
+        return {
+            "profile": profile, "model": mlx_model, "runner": "mlx",
+            "result_text": "", "spawn_error": "mlx_lm not installed",
+            "wall_s": 0.0, "cost_usd": 0.0, "total_tokens": 0,
+            "num_turns": 1, "tool_calls": 0,
+            "correctness": {"score": 0.0},
+        }
+
+    system_content = ""
+    if profile == "marvin":
+        if context_mode == "rag":
+            system_content = query_memory(task["prompt"], n_results=3)
+        else:
+            system_content = _load_marvin_context()
+
+    messages = []
+    if system_content:
+        messages.append({"role": "system", "content": system_content})
+    messages.append({"role": "user", "content": task["prompt"]})
+
+    # Combine messages into prompt (MLX doesn't have native message formatting)
+    prompt_parts = []
+    for msg in messages:
+        prompt_parts.append(f"{msg['role'].upper()}: {msg['content']}")
+    prompt = "\n".join(prompt_parts) + "\nASSISTANT: "
+
+    t0 = time.time()
+    try:
+        model, tokenizer = load(mlx_model)
+        result_text = generate(model, tokenizer, prompt=prompt, verbose=False,
+                               max_tokens=task.get("max_tokens", 1024)).strip()
+        if result_text.startswith(prompt):
+            result_text = result_text[len(prompt):].strip()
+    except Exception as exc:
+        return {
+            "profile": profile, "model": mlx_model, "runner": "mlx",
+            "result_text": "", "spawn_error": str(exc),
+            "wall_s": round(time.time() - t0, 1),
+            "cost_usd": 0.0, "total_tokens": 0, "num_turns": 1, "tool_calls": 0,
+            "correctness": {"score": 0.0},
+        }
+
+    wall = time.time() - t0
+    prompt_tokens = len(tokenizer.encode(prompt))
+    gen_tokens = len(tokenizer.encode(result_text))
+
+    return {
+        "profile":       profile,
+        "model":         mlx_model,
+        "runner":        "mlx",
+        "result_text":   result_text,
+        "wall_s":        round(wall, 1),
+        "cost_usd":      0.0,
+        "total_tokens":  prompt_tokens + gen_tokens,
+        "num_turns":     1,
+        "tool_calls":    0,
+        "correctness":   score_correctness(task, result_text, None),
+        "context_mode":  context_mode if profile == "marvin" else "none",
+        "_prompt_tokens": prompt_tokens,
+        "_gen_tokens":   gen_tokens,
+    }
+
+
 def load_task(task_dir: Path) -> dict:
     cfg = json.loads((task_dir / "task.json").read_text())
     cfg["dir"] = task_dir
@@ -527,10 +604,12 @@ def main() -> None:
     ap.add_argument("--model", default=None, metavar="MODEL",
                     help="model ID passed to claude (e.g. claude-haiku-4-5-20251001); "
                          "default = Claude Code's configured default")
-    ap.add_argument("--runner", default="claude", choices=["claude", "ollama"],
-                    help="execution backend: 'claude' (default) or 'ollama' (local model)")
+    ap.add_argument("--runner", default="claude", choices=["claude", "ollama", "mlx"],
+                    help="execution backend: 'claude' (default), 'ollama', or 'mlx' (local models)")
     ap.add_argument("--ollama-model", default="qwen2.5:7b", metavar="MODEL",
                     help="Ollama model to use with --runner ollama (default: qwen2.5:7b)")
+    ap.add_argument("--mlx-model", default="qwen2.5-7b-mlx-4bit", metavar="MODEL",
+                    help="MLX model to use with --runner mlx (default: qwen2.5-7b-mlx-4bit)")
     ap.add_argument("--context", default="full", choices=["full", "rag"],
                     help="context injection mode for marvin profile with --runner ollama: "
                          "'full' = dump all memory files (default), "
@@ -541,6 +620,8 @@ def main() -> None:
     _MODEL_SHORT = None
     if args.runner == "ollama":
         _MODEL_SHORT = args.ollama_model.replace(":", "-")
+    elif args.runner == "mlx":
+        _MODEL_SHORT = args.mlx_model.replace(":", "-")
     elif args.model:
         _MODEL_SHORT = next(
             (m for m in ("haiku", "sonnet", "opus", "fable") if m in args.model.lower()),
@@ -611,6 +692,18 @@ def main() -> None:
                     run["judge_correctness"] = judge_run(task, run)
                 rows.append(run)
                 all_raw.append(run)
+            elif args.runner == "mlx":
+                run = run_once_mlx(task, profile, args.mlx_model, args.context)
+                if run is None:
+                    print(f"  skip {task['id']} @ {profile} [mlx] — fs tasks require tool use")
+                    continue
+                ctx_label = f"/{args.context}" if profile == "marvin" else ""
+                print(f"running {task['id']} @ {profile}{ctx_label} [mlx/{args.mlx_model}] ...", flush=True)
+                if args.judge:
+                    print(f"  judging {task['id']} @ {profile} ...", flush=True)
+                    run["judge_correctness"] = judge_run(task, run)
+                rows.append(run)
+                all_raw.append(run)
             elif args.repeat == 1:
                 print(f"running {task['id']} @ {profile} ...", flush=True)
                 run = run_once(task, profile, capture_snapshot=args.judge, model=args.model)
@@ -650,8 +743,12 @@ def main() -> None:
             print(f"  (all profiles skipped for {task['id']} — nothing to display)")
             continue
 
-        runner_tag = (f"ollama/{args.ollama_model}/{args.context}"
-                      if args.runner == "ollama" else None)
+        runner_tag = None
+        if args.runner == "ollama":
+            runner_tag = f"ollama/{args.ollama_model}/{args.context}"
+        elif args.runner == "mlx":
+            runner_tag = f"mlx/{args.mlx_model}/{args.context}"
+
         display_id = task["id"]
         if runner_tag:
             display_id = f"{task['id']} [{runner_tag}]"
@@ -662,9 +759,16 @@ def main() -> None:
         stamp = time.strftime("%Y%m%d-%H%M%S")
         model_tag = f"-{_MODEL_SHORT}" if _MODEL_SHORT else ""
         out = ROOT / "results" / f"{task['id']}{model_tag}-{stamp}.json"
+
+        model_for_json = args.model or "default"
+        if args.runner == "ollama":
+            model_for_json = args.ollama_model
+        elif args.runner == "mlx":
+            model_for_json = args.mlx_model
+
         out.write_text(json.dumps(
             {"task": task["id"], "runner": args.runner,
-             "model": args.ollama_model if args.runner == "ollama" else (args.model or "default"),
+             "model": model_for_json,
              "repeat": args.repeat, "judge": args.judge, "runs": all_raw},
             indent=2, default=str,
         ))

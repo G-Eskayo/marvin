@@ -23,15 +23,14 @@ never need a real embedder or model.
 from __future__ import annotations
 import json
 import sys
-import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
 import model_registry  # noqa: E402
+import ollama_client  # noqa: E402
 
 CHROMA_PATH = Path.home() / ".claude" / "chroma"
 COLLECTION_NAME = "paper-knowledge"
-OLLAMA_URL = "http://localhost:11434/api/chat"
 _stance_model_list = model_registry.resolve_capability("local-judge-medium")
 STANCE_MODEL = _stance_model_list[0]
 assert STANCE_MODEL == "qwen2.5:7b", f"Regression: expected qwen2.5:7b, got {STANCE_MODEL}"
@@ -40,11 +39,8 @@ STANCES = {"supports", "refutes", "mixed", "unrelated"}
 
 
 def ollama_chat(model: str, messages: list[dict], timeout: int = 60) -> str:
-    payload = json.dumps({"model": model, "messages": messages, "stream": False}).encode()
-    req = urllib.request.Request(OLLAMA_URL, data=payload, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        data = json.loads(resp.read())
-    return data["message"]["content"]
+    response = ollama_client.chat(model, messages, caller="competing_ideas", timeout=timeout)
+    return response.get("message", {}).get("content", "")
 
 
 def semantic_search(collection, hypothesis: str, n_results: int = 10, search_fn=None) -> list[dict]:

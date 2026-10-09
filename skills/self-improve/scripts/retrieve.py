@@ -18,11 +18,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 import model_scope  # noqa: E402
+import ollama_client  # noqa: E402
 
 HOME = Path.home()
 MANIFEST_PATH = HOME / ".claude" / "manifest.json"
 CHROMA_PATH = HOME / ".claude" / "chroma"
-OLLAMA_URL = "http://localhost:11434/api/embed"
 EMBED_MODEL = "nomic-embed-text"
 ALL_COLLECTIONS = ["skills", "knowledge", "general"]
 TOP_K = 5
@@ -49,17 +49,7 @@ def get_threshold(intent):
 
 
 def embed_query(query):
-    try:
-        import requests
-        resp = requests.post(
-            OLLAMA_URL,
-            json={"model": EMBED_MODEL, "input": f"search_query: {query}"},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        return resp.json()["embeddings"][0]
-    except Exception:
-        return None
+    return ollama_client.embed(EMBED_MODEL, query, task="query", caller="retrieve")
 
 
 def _query_collection(client, cname, query_vector, threshold):

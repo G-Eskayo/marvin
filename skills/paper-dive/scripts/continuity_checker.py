@@ -20,23 +20,21 @@ ollama_chat/prompt plumbing.
 from __future__ import annotations
 import json
 import sys
-import urllib.request
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
+import ollama_client  # noqa: E402
 
 CHROMA_PATH = Path.home() / ".claude" / "chroma"
 COLLECTION_NAME = "paper-knowledge"
-OLLAMA_URL = "http://localhost:11434/api/chat"
 CONTINUITY_MODEL = "qwen2.5:14b"
 
 CONTINUITY_VERDICTS = {"CONSISTENT", "GAP", "CONTRADICTS"}
 
 
 def ollama_chat(model: str, messages: list[dict], timeout: int = 60) -> str:
-    payload = json.dumps({"model": model, "messages": messages, "stream": False}).encode()
-    req = urllib.request.Request(OLLAMA_URL, data=payload, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        data = json.loads(resp.read())
-    return data["message"]["content"]
+    response = ollama_client.chat(model, messages, caller="continuity_checker", timeout=timeout)
+    return response.get("message", {}).get("content", "")
 
 
 # Reuse from argument_mapper

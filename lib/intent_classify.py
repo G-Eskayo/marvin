@@ -22,11 +22,12 @@ import sys
 from pathlib import Path
 
 import chromadb
-import requests
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ollama_client  # noqa: E402
 
 HOME = Path.home()
 CHROMA_PATH = HOME / ".claude" / "chroma"
-OLLAMA_URL = "http://localhost:11434/api/embed"
 EMBED_MODEL = "nomic-embed-text"
 COLLECTION_NAME = "intent-routing"
 
@@ -236,20 +237,8 @@ REFERENCE_EXAMPLES: dict[str, list[str]] = {
 
 
 def embed_text(text: str, task: str = "query") -> list[float] | None:
-    """Embed via Ollama nomic-embed-text. task='query' for classify() input,
-    'document' for reference examples -- nomic-embed is trained on this
-    asymmetric prefix convention (matches rebuild-embeddings.py's usage)."""
-    prefix = "search_query: " if task == "query" else "search_document: "
-    try:
-        resp = requests.post(
-            OLLAMA_URL,
-            json={"model": EMBED_MODEL, "input": f"{prefix}{text}"},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        return resp.json()["embeddings"][0]
-    except Exception:
-        return None
+    """Embed via Ollama nomic-embed-text using shared ollama_client."""
+    return ollama_client.embed(EMBED_MODEL, text, task, caller="intent_classify")
 
 
 def _get_collection():

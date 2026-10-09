@@ -9,6 +9,7 @@ LIB = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(LIB))
 
 import intent_classify as ic  # noqa: E402
+import ollama_client  # noqa: E402
 
 
 # ── embed_text: task-prefix convention ──────────────────────────────────────
@@ -16,46 +17,36 @@ import intent_classify as ic  # noqa: E402
 def test_embed_text_uses_search_query_prefix_for_queries(monkeypatch):
     captured = {}
 
-    class _FakeResp:
-        def raise_for_status(self):
-            pass
+    def fake_embed(model, text, task, caller, timeout=10):
+        captured["task"] = task
+        captured["text"] = text
+        return [0.1, 0.2, 0.3]
 
-        def json(self):
-            return {"embeddings": [[0.1, 0.2, 0.3]]}
-
-    def fake_post(url, json, timeout):
-        captured["input"] = json["input"]
-        return _FakeResp()
-
-    monkeypatch.setattr(ic.requests, "post", fake_post)
+    monkeypatch.setattr(ollama_client, "embed", fake_embed)
     ic.embed_text("fix the bug", task="query")
-    assert captured["input"] == "search_query: fix the bug"
+    assert captured["task"] == "query"
+    assert captured["text"] == "fix the bug"
 
 
 def test_embed_text_uses_search_document_prefix_for_documents(monkeypatch):
     captured = {}
 
-    class _FakeResp:
-        def raise_for_status(self):
-            pass
+    def fake_embed(model, text, task, caller, timeout=10):
+        captured["task"] = task
+        captured["text"] = text
+        return [0.1, 0.2, 0.3]
 
-        def json(self):
-            return {"embeddings": [[0.1, 0.2, 0.3]]}
-
-    def fake_post(url, json, timeout):
-        captured["input"] = json["input"]
-        return _FakeResp()
-
-    monkeypatch.setattr(ic.requests, "post", fake_post)
+    monkeypatch.setattr(ollama_client, "embed", fake_embed)
     ic.embed_text("fix the date validator bug", task="document")
-    assert captured["input"] == "search_document: fix the date validator bug"
+    assert captured["task"] == "document"
+    assert captured["text"] == "fix the date validator bug"
 
 
 def test_embed_text_returns_none_on_request_failure(monkeypatch):
-    def fake_post(*a, **k):
-        raise ConnectionError("ollama not running")
+    def fake_embed(*a, **k):
+        return None
 
-    monkeypatch.setattr(ic.requests, "post", fake_post)
+    monkeypatch.setattr(ollama_client, "embed", fake_embed)
     assert ic.embed_text("anything", task="query") is None
 
 
