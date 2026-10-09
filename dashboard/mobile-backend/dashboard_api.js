@@ -2,13 +2,14 @@ import { homedir } from 'os'
 import path from 'path'
 import { promisify } from 'util'
 import { execFile } from 'child_process'
-import { listTicketActivity } from '../electron/main/activity.js'
+import { listTicketActivity, getTicketTimeline } from '../electron/main/activity.js'
 import { STAGES_DIR } from '../webhook-server/ticket_stages.js'
 import { readHealthStatus, HEALTH_STATUS_PATH } from '../electron/main/health.js'
 import { readRegistry, REGISTRY_PATH, withProjectStatus } from '../electron/main/boards.js'
 import { readCatalog, CATALOG_DIR, MASTER_DOC_PATH, readMasterDoc } from '../electron/main/catalog.js'
 import { resolveDeviceId } from '../electron/main/device_identity.js'
 import { createDocsService } from '../electron/main/docs_service.js'
+import { MARVIN_REPO } from '../electron/main/mr_repos.js'
 
 const execFileP = promisify(execFile)
 
@@ -41,9 +42,81 @@ export function createDashboardApiRouter(opts = {}) {
     try {
       // GET /activity
       if (req.method === 'GET' && pathname === '/activity') {
-        const activity = listTicketActivity(dispatchStatePath, stagesDir)
+        let activity = listTicketActivity(dispatchStatePath, stagesDir)
+
+        // Title backfill: fetch missing titles from GitHub for rows with title: null
+        const rowsNeedingTitle = activity.filter(row => row.title === null)
+        if (rowsNeedingTitle.length > 0) {
+          // Group by repo to batch requests
+          const rowsByRepo = new Map()
+          for (const row of rowsNeedingTitle) {
+            const repo = row.repo || MARVIN_REPO
+            if (!rowsByRepo.has(repo)) {
+              rowsByRepo.set(repo, [])
+            }
+            rowsByRepo.get(repo).push(row)
+          }
+
+          // Fetch titles in parallel, one per missing number per repo
+          const titlePromises = []
+          for (const [repo, rows] of rowsByRepo) {
+            for (const row of rows) {
+              titlePromises.push(
+                (async () => {
+                  try {
+                    const { stdout } = await exec('gh', [
+                      'issue', 'view', String(row.number), '--repo', repo,
+                      '--json', 'title'
+                    ])
+                    const { title } = JSON.parse(stdout)
+                    return { key: `${repo}#${row.number}`, title }
+                  } catch {
+                    // If lookup fails, leave title as null (best effort)
+                    return { key: `${repo}#${row.number}`, title: null }
+                  }
+                })()
+              )
+            }
+          }
+
+          // Wait for all title fetches and fill them in
+          if (titlePromises.length > 0) {
+            const titles = await Promise.all(titlePromises)
+            const titleMap = new Map(titles.map(t => [t.key, t.title]))
+            activity = activity.map(row => {
+              if (row.title === null) {
+                const key = `${row.repo}#${row.number}`
+                const title = titleMap.get(key)
+                if (title !== undefined) {
+                  return { ...row, title }
+                }
+              }
+              return row
+            })
+          }
+        }
+
         res.writeHead(200, { 'Content-Type': 'application/json' }).end(
           JSON.stringify({ ok: true, data: activity })
+        )
+        return true
+      }
+
+      // GET /activity/timeline?number=<number>&repo=<repo>
+      if (req.method === 'GET' && pathname === '/activity/timeline') {
+        const number = searchParams.get('number')
+        const repo = searchParams.get('repo') || null
+
+        if (!number) {
+          res.writeHead(400, { 'Content-Type': 'application/json' }).end(
+            JSON.stringify({ ok: false, error: 'Missing number parameter' })
+          )
+          return true
+        }
+
+        const timeline = getTicketTimeline(Number(number), stagesDir, repo)
+        res.writeHead(200, { 'Content-Type': 'application/json' }).end(
+          JSON.stringify({ ok: true, data: timeline })
         )
         return true
       }

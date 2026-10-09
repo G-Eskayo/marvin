@@ -34,6 +34,16 @@ Lists ticket activity across projects.
 
 **Response**: `200 { "ok": true, "data": [{ number, repo, key, currentStage, currentStatus, costUsd, failed, title, eventCount, lastEventAt, isLiveNow }, ...] }`
 
+**Limitation**: Titles are fetched on-demand from GitHub for rows with `title: null` (best-effort; a missing ticket or GitHub outage leaves `title` as `null` rather than erroring the whole list).
+
+### `GET /activity/timeline?number=<number>&repo=<repo>`
+
+Fetch the stage-event timeline for a single ticket.
+
+**Query parameters**: `number` (required), `repo` (optional, defaults to marvin)
+
+**Response**: `200 { "ok": true, "data": [{ stage, status, timestamp, ... }, ...] }`
+
 ### `GET /health`
 
 System health status.
@@ -75,6 +85,74 @@ Get file content from a documentation repo.
 **Query parameters**: `id` (required), `path` (required, URL-encoded file path)
 
 **Response**: `200 { "ok": true, "data": <file content as string> }`
+
+### `GET /boards/load?repo=<repo>`
+
+Load a full board (columns, cards, cross-project issues).
+
+**Query parameters**: `repo` (required, registered board repo)
+
+**Response**: `200 { "ok": true, "data": { repo, columns: [{ id, title, cards, archive }], otherProjects: [{ projectId, count, repo, name }], fetchedAt } }`
+
+**Limitation**: `reconciler.observe()` (Electron UI telemetry) is omitted; the data structure is otherwise identical to the desktop view.
+
+### `GET /mr/list`
+
+List open PRs across all registered repos with merge readiness, sent-back status, and rework tracking.
+
+**Response**: `200 { "ok": true, "data": [{ number, title, url, repo, key, canMerge, conflicts, rebase, autoMerge, checks, sentBack, ticketRef, ticketClosed, rework, evidence, ... }, ...] }`
+
+**Limitation**: One repo's GitHub outage does not hide other repos' PRs. `rebaseStatus` and `autoMergeShadow` degrade to `null` if the webhook endpoint is unavailable.
+
+### `GET /mr/review-status`
+
+Get the MR Review tab status (green/red/blue) and open PR count.
+
+**Response**: `200 { "ok": true, "data": { status: "green" | "red" | "blue", openCount: <n> } }`
+
+**Limitation**: Mobile clients see unseen PRs as red until a `/mark-seen` endpoint is added (out of scope for now). The mobile seen-state file is independent of the desktop's.
+
+### `GET /mr/ticket-context?ref=<ref>&repo=<repo>`
+
+Fetch a ticket and (if present) its parent PRD via the "## Parent" reference.
+
+**Query parameters**: `ref` (required, ticket number), `repo` (optional, defaults to marvin, must be MARVIN_REPO or a registered board repo)
+
+**Response**: `200 { "ok": true, "data": { ticket: { number, title, body, ... } | null, parent: { number, title, body, ... } | null } }`
+
+**Limitation**: A missing or inaccessible ticket/parent comes back as `null` rather than erroring; the rest of the response is still valid.
+
+### `GET /activity/overview`
+
+Activity overview per project (tickets in review, waiting on human, blocked).
+
+**Response**: `200 { "ok": true, "data": { "owner/repo": { review: <n>, needsYou: <n>, blocked: <n> }, ... } }`
+
+### `GET /relations/ticket?repo=<repo>&number=<number>`
+
+Fetch relations (related tickets, PRs, docs) for a ticket.
+
+**Query parameters**: `repo` (required), `number` (required, numeric)
+
+**Response**: `200 { "ok": true, "data": { state: "UNKNOWN" | "..." , title: "<>" or "(not loaded)", tickets: [...], prs: [...], docs: [...], column: "..." } }`
+
+**Limitation**: Unknown repos or non-numeric numbers degrade gracefully to `state: 'UNKNOWN'` rather than erroring.
+
+### `GET /relations/context?project=<project>`
+
+Fetch linkify context for a project (ADR reference paths, repo name).
+
+**Query parameters**: `project` (required, project ID)
+
+**Response**: `200 { "ok": true, "data": { project, repo: "owner/repo" | null, adrs: { number: "path/to/adr", ... } } }`
+
+### `GET /queue`
+
+Get dispatch queue status.
+
+**Response**: `200 { "ok": true, "data": { queue: [...], running: [...], error: <message> | null } }`
+
+**Limitation**: A queue service failure returns `{ queue: [], running: [], error: "<message>" }` (never an empty-queue-looking success).
 
 ### `GET /live`
 
