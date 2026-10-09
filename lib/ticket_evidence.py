@@ -34,6 +34,19 @@ def _claims(text: str, n: int) -> bool:
     return bool(re.search(rf"\b{_WORK}\b\s*:?\s*#{n}(?!\d)", text or "", re.I))
 
 
+def _commit_claims(subject: str, n: int) -> bool:
+    """A commit is done-evidence when its subject says it did the ticket: a work verb (closes/fixes/implements #n),
+    "Implement ... #n", or the repo's trailing "(#n)" / "(#n, #m; ADR ...)". A subject that only lists it ("tickets
+    #259-#263 for the rest", "revisit #213") is not: #213 and #259 sat undispatched behind such commits (2026-10-09)."""
+    s = subject or ""
+    if re.match(r"^(docs|plan|chore)\b", s, re.I) and not _claims(s, n):
+        return False  # a docs/plan commit naming an open ticket wrote about it; it didn't build it (#213)
+    if _claims(s, n) or re.match(rf"^Implement\b.*#{n}(?!\d)", s):
+        return True
+    tail = re.search(r"\(([^()]*)\)\s*$", s)
+    return bool(tail and re.search(rf"(?:^|[\s,;])#{n}(?![\d-])", tail.group(1)))
+
+
 def _named(ref: str, n: int) -> bool:
     return bool(re.search(rf"[/-]{n}(?![\d])", ref))
 
@@ -53,7 +66,7 @@ def evidence_for(n: int, facts: dict) -> list[dict]:
         if _claims(pr.get("body"), n) or _named(pr.get("headRefName", ""), n):
             ev.append({"kind": "merged-pr", "ref": f"PR #{pr['number']}", "detail": "merged pull request"})
     for sha, subject in facts.get("commits", []):
-        if _mentions(subject, n) and not re.search(r"\brevert", subject, re.I):
+        if _commit_claims(subject, n) and not re.search(r"\brevert", subject, re.I):
             ev.append({"kind": "commit", "ref": sha, "detail": subject})
     return ev
 
