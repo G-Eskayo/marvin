@@ -970,3 +970,25 @@ def test_failing_checks_are_not_a_conflict_and_skip_the_repair(monkeypatch):
     monkeypatch.setattr(tp.subprocess, "run", _requeue([pr], [{"number": 34, "labels": []}], calls))
     assert tp._requeue_conflicted_prs("o/r") == [34]
     assert seen == []
+
+
+def test_a_sent_back_ticket_whose_pr_still_conflicts_gets_the_repair_and_the_flag_cleared(monkeypatch):
+    """#257 sat 12 hours: sent back a minute after its PR was raised, still claimed, so never rebuilt -- and the scan
+    skipped it because it was already sent back. A repair needs no rebuild at all."""
+    calls = []
+    seen = _repair(monkeypatch, {"outcome": "repaired", "detail": "both sides only added lines in lib/tests/x.py"})
+    issues = [{"number": 255, "labels": [{"name": "needs-reengagement"}, {"name": "claimed:mac-mini"}]}]
+    monkeypatch.setattr(tp.subprocess, "run", _requeue([_pr(257, "o/r#255")], issues, calls))
+    assert tp._requeue_conflicted_prs("o/r") == []
+    assert seen == [257]
+    edit = [c for c in calls if "edit" in c and "issue" in c][0]
+    assert edit[edit.index("--remove-label") + 1] == "needs-reengagement"
+
+
+def test_a_sent_back_ticket_the_repair_cannot_fix_is_left_as_it_is(monkeypatch):
+    calls = []
+    _repair(monkeypatch, {"outcome": "rebuild", "files": ["a.py"]})
+    issues = [{"number": 255, "labels": [{"name": "needs-reengagement"}]}]
+    monkeypatch.setattr(tp.subprocess, "run", _requeue([_pr(257, "o/r#255")], issues, calls))
+    assert tp._requeue_conflicted_prs("o/r") == []
+    assert not any("comment" in c or "edit" in c for c in calls)
