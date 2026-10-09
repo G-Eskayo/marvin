@@ -87,6 +87,27 @@ def test_a_running_ticket_without_ready_for_agent_is_still_running():
     assert rs.status_for(ticket(labels=("needs-reengagement", "claimed:mac-mini")), ctx())["state"] == "running"
 
 
+def test_diagnosis_is_included_when_present(monkeypatch, tmp_path):
+    """status_for() includes a diagnosis field if one is logged for this ticket."""
+    import rework_status as rs_module
+    monkeypatch.setattr(rs_module, "_read_diagnosis",
+                       lambda ticket_number, repo: {"kind": "missing-tests", "route": "fix_forward"} if ticket_number == 143 else None)
+
+    s = rs.status_for(ticket(143), ctx(queue=[143], project="G-Eskayo/marvin"))
+    assert "diagnosis" in s
+    assert s["diagnosis"]["kind"] == "missing-tests"
+    assert s["diagnosis"]["route"] == "fix_forward"
+
+
+def test_diagnosis_is_omitted_when_not_logged(monkeypatch, tmp_path):
+    """status_for() doesn't include diagnosis if none is logged."""
+    import rework_status as rs_module
+    monkeypatch.setattr(rs_module, "_read_diagnosis", lambda ticket_number, repo: None)
+
+    s = rs.status_for(ticket(143), ctx(queue=[143]))
+    assert "diagnosis" not in s
+
+
 def test_collect_reads_each_projects_open_issues_once(monkeypatch):
     # #324: the queue and the sent-back tickets come from one issue list per project, not two.
     import json as _json
