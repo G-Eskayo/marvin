@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { createGithubState, repoOfSource } from '../electron/main/github_state.js'
+import { mkdtempSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import { createGithubState, repoOfSource, gateCooldownUntil } from '../electron/main/github_state.js'
+
+// The real gate's state on this Mac must never decide a test.
+process.env.MARVIN_GH_GATE_STATE = '/nonexistent/gh-gate.json'
 
 function counter(values = {}) {
   const calls = []
@@ -81,11 +87,13 @@ describe('createGithubState: the last-known GitHub state, re-read only when GitH
     expect(calls).toEqual(['a'])
   })
 
-  it('when GitHub refuses, the last known state is shown instead of an error, and retried next time', async () => {
-    const s = createGithubState({ now: () => 0 })
+  it('when GitHub refuses, the last known state is shown instead of an error, and retried after a short wait', async () => {
+    let t = 0
+    const s = createGithubState({ now: () => t })
     await s.get('prs', 'o/a', async () => 'known')
     s.changed('o/a')
     expect(await s.get('prs', 'o/a', async () => { throw new Error('API rate limit') })).toBe('known')
+    t += 61_000
     expect(await s.get('prs', 'o/a', async () => 'new')).toBe('new')
   })
 
@@ -111,5 +119,66 @@ describe('repoOfSource', () => {
     expect(repoOfSource('github:G-Eskayo/marvin')).toBe('G-Eskayo/marvin')
     expect(repoOfSource('ping')).toBe(null)
     expect(repoOfSource(undefined)).toBe(null)
+  })
+
+  // #323: while GitHub refuses, back off instead of asking again on every screen refresh.
+  it('after a failure it waits before asking again, and serves what it last knew meanwhile', async () => {
+    let t = 0, n = 0, fail = false
+    const s = createGithubState({ now: () => t, cooldownUntil: () => 0 })
+    const fetch = async () => { n++; if (fail) throw new Error('rate limit'); return `v${n}` }
+    expect(await s.get('prs', 'o/a', fetch)).toBe('v1')
+    s.changed('o/a'); fail = true
+    expect(await s.get('prs', 'o/a', fetch)).toBe('v1')        // refused: last value
+    for (let i = 0; i < 50; i++) await s.get('prs', 'o/a', fetch)  // 50 refreshes inside the back-off
+    expect(n).toBe(2)
+    t += 61_000
+    await s.get('prs', 'o/a', fetch)                             // back-off over: one more try, fails again
+    expect(n).toBe(3)
+    t += 61_000
+    await s.get('prs', 'o/a', fetch)                             // doubled: still waiting at 61 s
+    expect(n).toBe(3)
+    t += 60_000; fail = false
+    expect(await s.get('prs', 'o/a', fetch)).toBe('v4')          // 2 min later it recovers
+  })
+
+  it('with nothing known yet, a back-off answers with the last error at once, without calling', async () => {
+    let n = 0
+    const s = createGithubState({ now: () => 0, cooldownUntil: () => 0 })
+    const fetch = async () => { n++; throw new Error('rate limit') }
+    await expect(s.get('prs', 'o/a', fetch)).rejects.toThrow('rate limit')
+    await expect(s.get('prs', 'o/a', fetch)).rejects.toThrow('rate limit')
+    expect(n).toBe(1)
+  })
+
+  it("honours the GitHub gate's cooldown, and a fresh read still goes through", async () => {
+    let n = 0, cooling = 0
+    const s = createGithubState({ now: () => 0, cooldownUntil: () => cooling })
+    const fetch = async () => { n++; return `v${n}` }
+    await s.get('prs', 'o/a', fetch)
+    s.changed('o/a'); cooling = 10 * 60_000
+    await s.get('prs', 'o/a', fetch)
+    expect(n).toBe(1)                                            // gate cooling down: no call
+    await s.get('prs', 'o/a', fetch, { fresh: true })
+    expect(n).toBe(2)                                            // a merge or explicit refresh still reads
+  })
+
+  // #324: a view spanning every repo re-reads at most every few minutes, however many change pings arrive.
+  it('reads the cooldown the gate writes, and treats a missing file as none', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gate-'))
+    writeFileSync(join(dir, 'gh-gate.json'), JSON.stringify({ cooldown_until: 1791511143 }))
+    expect(gateCooldownUntil(join(dir, 'gh-gate.json'))).toBe(1791511143000)
+    expect(gateCooldownUntil(join(dir, 'missing.json'))).toBe(0)
+  })
+
+  it('minIntervalMs limits how often a changed value is re-read', async () => {
+    let t = 0
+    const s = createGithubState({ now: () => t, cooldownUntil: () => 0 })
+    const { calls, fetch } = counter()
+    await s.get('rework', null, fetch('r'), { minIntervalMs: 5 * 60_000 })
+    for (let i = 0; i < 10; i++) { s.changed(`o/${i}`); t += 20_000; await s.get('rework', null, fetch('r'), { minIntervalMs: 5 * 60_000 }) }
+    expect(calls).toEqual(['r'])                                 // 10 pings in 200 s: no re-read
+    t += 120_000
+    await s.get('rework', null, fetch('r'), { minIntervalMs: 5 * 60_000 })
+    expect(calls).toEqual(['r', 'r'])
   })
 })
