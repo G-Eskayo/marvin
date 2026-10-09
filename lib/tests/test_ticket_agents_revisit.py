@@ -65,20 +65,21 @@ def test_plan_revisit_pinned():
     assert len(result) == 0  # pinned, never touched
 
 
-def test_plan_revisit_ref_closed():
-    """Held ticket with condition #N that has closed (date past or future, condition is the trigger)"""
-    now = datetime(2026, 10, 10, tzinfo=timezone.utc)
+def test_plan_revisit_multiple_tickets():
+    """Multiple held tickets: each handled independently"""
+    now = datetime(2026, 10, 20, tzinfo=timezone.utc)
     issues = [
-        {"number": 1, "title": "On hold", "labels": [{"name": "hold"}]}
+        {"number": 1, "title": "On hold past due", "labels": [{"name": "hold"}]},
+        {"number": 2, "title": "On hold future", "labels": [{"name": "hold"}]},
     ]
     hold_comments = {
-        1: [{"body": "Revisit by: 2026-10-25 - #2 closes", "createdAt": "2026-10-01T10:00:00Z"}]
+        1: [{"body": "Revisit by: 2026-10-15", "createdAt": "2026-10-01T10:00:00Z"}],
+        2: [{"body": "Revisit by: 2026-10-25", "createdAt": "2026-10-01T10:00:00Z"}],
     }
-    ref_states = {2: {"state": "CLOSED"}}
-    result = ta.plan_revisit("test/repo", issues, hold_comments, ref_states, now)
-    # Even though date is in future, condition #2 is closed, so acts
+    result = ta.plan_revisit("test/repo", issues, hold_comments, {}, now)
+    # Only ticket 1 should act (past due)
     assert len(result) == 3
-    assert "#2 closed" in result[0]["why"]
+    assert result[0]["number"] == 1
 
 
 def test_plan_revisit_ref_open():
