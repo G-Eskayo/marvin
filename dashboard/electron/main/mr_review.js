@@ -196,7 +196,7 @@ export async function prsForOrderCheck(prs, sentBackTickets) {
   return markSentBack(prs, keys)
 }
 
-export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDashboard, sentBackTickets = null, reworkStatus = null, rebaseStatus = null } = {}) {
+export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDashboard, sentBackTickets = null, reworkStatus = null, rebaseStatus = null, closedTickets = null } = {}) {
   const prs = await listOpenPrs()
   // The webhook's post-merge rebase results, by PR url (#225). Best effort: without them a card just doesn't say.
   let rebased = {}
@@ -215,6 +215,15 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       sentBackKeys = await sentBackTickets([...new Set(prs.map((p) => p.repo || MARVIN_REPO))])
     } catch {
       sentBackKeys = new Set()
+    }
+  }
+  // Tickets already closed ("repo#number"): a PR still open for one is probably a duplicate (#326). Best effort.
+  let closedKeys = new Set()
+  if (closedTickets) {
+    try {
+      closedKeys = await closedTickets([...new Set(prs.map((p) => p.repo || MARVIN_REPO))])
+    } catch {
+      closedKeys = new Set()
     }
   }
   // Where each sent-back ticket's rework stands (running, queued at position N, paused and why, held, needs a person).
@@ -249,6 +258,8 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       hasSchema,
       // The ticket was sent back for rework (marvin #129): approving would merge work that was just rejected.
       sentBack: ticketRef !== null && sentBackKeys.has(`${pr.repo || MARVIN_REPO}#${ticketRef}`),
+      ticketRef,
+      ticketClosed: ticketRef !== null && closedKeys.has(`${pr.repo || MARVIN_REPO}#${ticketRef}`),
       rework: ticketRef !== null && sentBackKeys.has(`${pr.repo || MARVIN_REPO}#${ticketRef}`) ? rework[`${pr.repo || MARVIN_REPO}#${ticketRef}`] || null : null,
       ticketNumber: evidence?.ticketRef ? Number(evidence.ticketRef) : null,
       evidence,

@@ -545,6 +545,21 @@ function registerMrReviewHandlers() {
     }
     return keys
   }
+  // Tickets already closed, from the same board data in memory (no extra GitHub calls): a PR still open for one is
+  // probably a duplicate (#326).
+  const closedTickets = async (repos) => {
+    const keys = new Set()
+    const gh = async (args) => (await execFileAsync('gh', args)).stdout
+    for (const repo of repos) {
+      try {
+        const data = await getBoardData(repo, gh)
+        for (const i of data.issues) if (i.state === 'CLOSED') keys.add(`${repo}#${i.number}`)
+      } catch {
+        // one repo failing must not hide the others
+      }
+    }
+    return keys
+  }
   // Post-merge rebase results live with the webhook (#225), which may be on the other machine.
   const getRebaseStatus = async () => {
     const res = await fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/rebase-status'), { signal: AbortSignal.timeout(3000) })
@@ -564,7 +579,7 @@ function registerMrReviewHandlers() {
   })
   ipcMain.handle('mr:list', () => {
     listOpenPrs().then((prs) => stackRetarget.check(prs)).catch(() => {})
-    return listPipelinePrs(listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus })
+    return listPipelinePrs(listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets })
   })
 
   // Backs the MR Review tab's status dot -- red/blue/green computed from
