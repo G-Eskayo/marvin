@@ -191,3 +191,70 @@ describe('ActivityBanner', () => {
     expect(html.length === 0 || !html.includes('border-red-900')).toBe(true)
   })
 })
+
+import DashboardHome, { formatRelativeTime, buildProjectCards } from '../src/components/DashboardHome.jsx'
+
+describe('formatRelativeTime', () => {
+  const now = Date.parse('2026-10-08T12:00:00Z')
+
+  it('formats times relative to now', () => {
+    expect(formatRelativeTime(new Date(now).toISOString(), now)).toBe('just now')
+    expect(formatRelativeTime(new Date(now - 30 * 1000).toISOString(), now)).toBe('just now')
+    expect(formatRelativeTime(new Date(now - 5 * 60 * 1000).toISOString(), now)).toBe('5m ago')
+    expect(formatRelativeTime(new Date(now - 2 * 3600 * 1000).toISOString(), now)).toBe('2h ago')
+    expect(formatRelativeTime(new Date(now - 3 * 86400 * 1000).toISOString(), now)).toBe('3d ago')
+    expect(formatRelativeTime(new Date(now - 2 * 7 * 86400 * 1000).toISOString(), now)).toBe('2w ago')
+  })
+
+  it('falls back to short date for very old times', () => {
+    const old = new Date(now - 180 * 86400 * 1000).toISOString()
+    const result = formatRelativeTime(old, now)
+    expect(result).not.toMatch(/ago$/)
+  })
+
+  it('returns null for no input', () => {
+    expect(formatRelativeTime(null, now)).toBe(null)
+    expect(formatRelativeTime(undefined, now)).toBe(null)
+  })
+})
+
+describe('buildProjectCards', () => {
+  it('combines boards, overview, and summaries into card data', () => {
+    const boards = [{ repo: 'o/r', name: 'Repo', status: 'active', due: '2026-10-15', dueHard: true, lastActivity: '2026-10-08T12:00:00Z' }]
+    const overview = { 'o/r': { review: 2, needsYou: 1, blocked: 0 } }
+    const summaries = { 'o/r': { open: 5, running: true } }
+    const cards = buildProjectCards(boards, overview, summaries)
+    expect(cards[0]).toMatchObject({
+      repo: 'o/r',
+      name: 'Repo',
+      status: 'active',
+      isArchived: false,
+      open: 5,
+      running: true,
+      review: 2,
+      needsYou: 1,
+      due: '2026-10-15',
+      dueHard: true,
+      lastActivity: '2026-10-08T12:00:00Z'
+    })
+  })
+
+  it('marks archived projects', () => {
+    const boards = [{ repo: 'o/r', name: 'Old', status: 'archived' }]
+    const cards = buildProjectCards(boards, {}, {})
+    expect(cards[0].isArchived).toBe(true)
+  })
+
+  it('handles missing overview and summaries gracefully', () => {
+    const boards = [{ repo: 'o/r', name: 'Repo', status: 'recent' }]
+    const cards = buildProjectCards(boards)
+    expect(cards[0]).toMatchObject({ open: 0, running: false, review: 0, needsYou: 0 })
+  })
+})
+
+describe('DashboardHome', () => {
+  it('renders a loading state on mount', () => {
+    const html = renderToStaticMarkup(<DashboardHome onOpenProject={() => {}} />)
+    expect(html).toContain('Loading projects')
+  })
+})

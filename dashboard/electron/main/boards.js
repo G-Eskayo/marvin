@@ -39,7 +39,8 @@ export function readRegistry(file = REGISTRY_PATH, overrides = readOverrides()) 
 // projects nobody is working on can sit out of the way without being deleted. Unknown = recent: never hide.
 export function withProjectStatus(boards, catalog) {
   const status = Object.fromEntries((catalog?.projects || []).map((p) => [p.id, p.status]))
-  return boards.map((b) => ({ ...b, status: status[projectIdOf(b.repo)] || 'recent' }))
+  const lastActivity = Object.fromEntries((catalog?.projects || []).map((p) => [p.id, p.lastActivity || null]))
+  return boards.map((b) => ({ ...b, status: status[projectIdOf(b.repo)] || 'recent', lastActivity: lastActivity[projectIdOf(b.repo)] }))
 }
 
 // Stage events, keyed by project + ticket number (ticket_stages.js).
