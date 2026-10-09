@@ -177,7 +177,8 @@ export function buildBoard({ repo, issues, prs, eventsByNumber = {}, liveNumbers
       evidence,
       owner: d.owner,
       prs: d.prs,
-      hasTimeline: events.length > 0
+      hasTimeline: events.length > 0,
+      isLive: liveNumbers.has(issue.number)
     }
     // Closed long ago -> archive (never deleted, just out of the way). A closed ticket with no date stays visible.
     const closedMs = Date.parse(issue.closedAt)
@@ -196,7 +197,8 @@ export function summarizeBoard(board) {
   const counts = Object.fromEntries(board.columns.map((c) => [c.id, c.cards.length]))
   const archived = board.columns.reduce((n, c) => n + (c.archive?.length || 0), 0)
   const total = Object.values(counts).reduce((a, b) => a + b, 0) + archived
-  return { counts, archived, total, open: total - archived - (counts.done || 0) }
+  const running = board.columns.some((c) => c.cards.some((k) => k.isLive))
+  return { counts, archived, total, open: total - archived - (counts.done || 0), running }
 }
 
 // The record of what got done: every closed ticket (not just the last two weeks), newest first, grouped
