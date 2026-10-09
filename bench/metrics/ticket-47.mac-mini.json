@@ -1,0 +1,31 @@
+[
+  {
+    "timestamp": "2026-10-09T18:58:49.476074+00:00",
+    "metrics": {
+      "pytest_passed": {
+        "value": 2301,
+        "higher_is_better": true
+      },
+      "pytest_failed": {
+        "value": 1,
+        "higher_is_better": false
+      },
+      "vitest_passed": {
+        "value": 1110,
+        "higher_is_better": true
+      },
+      "vitest_failed": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "tests_passed": {
+        "value": 3411,
+        "higher_is_better": true
+      },
+      "tests_failed": {
+        "value": 1,
+        "higher_is_better": false
+      }
+    }
+  }
+]
