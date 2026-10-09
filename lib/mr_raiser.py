@@ -109,6 +109,18 @@ def _format_dev_evidence(dev_evidence: dict | None) -> str:
     return f"![Screenshot]({screenshot})\n\n{description}".strip()
 
 
+def _format_code_review(review: dict | None) -> str:
+    """The build loop's review result (sandbox_orchestration): must-fix findings never reach a PR, so this is
+    either passed (with any notes) or a plain warning that it didn't run."""
+    if not review or review.get("clean") is None:
+        why = (review or {}).get("error", "no review result was recorded")
+        return f"⚠ **Not reviewed: the code review did not run** ({why}). Read the diff before approving."
+    text = "Passed: no must-fix issues."
+    if review.get("notes"):
+        text += "\n\nNotes (not blocking):\n" + "\n".join(f"- {n}" for n in review["notes"])
+    return text
+
+
 def _repo_of(ticket_ref: str) -> str | None:
     """'G-Eskayo/clarity-captions#7' -> 'G-Eskayo/clarity-captions'. gh must be told which repo: the
     process's own directory is not a reliable stand-in once more than one project is in play."""
@@ -131,7 +143,9 @@ def _default_open_pr(
         f"## Test Results\n\n"
         f"{_format_test_results(test_results)}\n\n"
         f"## Dev Environment Evidence\n\n"
-        f"{_format_dev_evidence(dev_evidence)}"
+        f"{_format_dev_evidence(dev_evidence)}\n\n"
+        f"## Code Review\n\n"
+        f"{_format_code_review(comparison.get('code_review'))}"
     )
     repo = _repo_of(ticket_ref)
     repo_args = ["--repo", repo] if repo else []

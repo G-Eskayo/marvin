@@ -159,6 +159,14 @@ def _no_real_auto_merge_shadow(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_code_review(monkeypatch):
+    # The build loop's code review calls a judge model; tests opt in by passing reviewer= or patching this.
+    import sandbox_orchestration
+    monkeypatch.setattr(sandbox_orchestration, "_default_reviewer",
+                        lambda worktree, base: {"clean": True, "findings": [], "notes": []})
+
+
+@pytest.fixture(autouse=True)
 def _no_real_conflict_repair(monkeypatch):
     # The scan's conflict repair rebases, tests and force-pushes real branches; tests opt in by replacing it.
     import ticket_pipeline

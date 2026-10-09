@@ -944,6 +944,92 @@ def test_docs_only_work_passes_verify(git_repo, metrics_dir):
     assert result["passing"] is True
 
 
+# ── code review before the PR opens (2026-10-09) ────────────────────────────
+# Approve only checks the PR merges cleanly; the review runs here so must-fix findings go back to the builder in
+# the same run. Written to break it: must-fix on the last try, notes only, a review that can't run, a review
+# that's skipped because verify already failed, a reviewer that raises.
+
+_TESTED = {"lib/feature.py": "def f():\n    return 1\n", "lib/tests/test_feature.py": "def test_f():\n    assert True\n"}
+
+
+def test_must_fix_findings_go_back_to_the_builder_and_a_clean_retry_passes(git_repo, metrics_dir):
+    seen, reviews = [], iter([{"clean": False, "findings": ["lib/feature.py:2 — crashes on None"], "notes": []},
+                              {"clean": True, "findings": [], "notes": []}])
+
+    def executor(worktree_path, ticket_ref, feedback):
+        seen.append(feedback)
+        return _writes(_TESTED)(worktree_path, ticket_ref, feedback)
+
+    result = so.execute_ticket("TICKET-1", "test-subsystem", measure=_improving(), executor=executor,
+                               repo_path=git_repo, reviewer=lambda wt, base: next(reviews))
+    assert result["passing"] is True and result["iterations"] == 2
+    assert "crashes on None" in str(seen[1])
+
+
+def test_must_fix_findings_on_every_try_never_pass(git_repo, metrics_dir):
+    bad = {"clean": False, "findings": ["x.py:1 — wrong"], "notes": []}
+    result = so.execute_ticket("TICKET-1", "test-subsystem", measure=_improving(), executor=_writes(_TESTED),
+                               repo_path=git_repo, max_iterations=2, reviewer=lambda wt, base: bad)
+    assert result["passing"] is False and "code review" in result["final_comparison"]["verdict"]
+
+
+def test_notes_only_pass_and_are_kept_for_the_pr(git_repo, metrics_dir):
+    r = {"clean": True, "findings": [], "notes": ["x.py:1 — could cache this"]}
+    result = so.execute_ticket("TICKET-1", "test-subsystem", measure=_improving(), executor=_writes(_TESTED),
+                               repo_path=git_repo, reviewer=lambda wt, base: r)
+    assert result["passing"] is True and result["final_comparison"]["code_review"]["notes"] == ["x.py:1 — could cache this"]
+
+
+def test_a_review_that_cannot_run_does_not_block_the_build_but_is_recorded(git_repo, metrics_dir):
+    def broken(wt, base):
+        raise RuntimeError("judge timed out")
+    result = so.execute_ticket("TICKET-1", "test-subsystem", measure=_improving(), executor=_writes(_TESTED),
+                               repo_path=git_repo, reviewer=broken)
+    assert result["passing"] is True
+    assert result["final_comparison"]["code_review"]["clean"] is None
+    assert "judge timed out" in result["final_comparison"]["code_review"]["error"]
+
+
+def test_no_review_is_spent_on_work_that_already_failed_verify(git_repo, metrics_dir):
+    calls = []
+    result = so.execute_ticket("TICKET-1", "test-subsystem", measure=_improving(),
+                               executor=_writes({"lib/feature.py": "x = 1\n"}),       # code without a test
+                               repo_path=git_repo, max_iterations=1, reviewer=lambda wt, base: calls.append(wt))
+    assert result["passing"] is False and calls == []
+
+
+def test_the_reviewer_is_given_the_worktree_and_the_base(git_repo, metrics_dir):
+    got = []
+    so.execute_ticket("TICKET-1", "test-subsystem", measure=_improving(), executor=_writes(_TESTED),
+                      repo_path=git_repo, base_branch="main",
+                      reviewer=lambda wt, base: got.append((wt, base)) or {"clean": True, "findings": [], "notes": []})
+    assert got and got[0][1] == "main" and (got[0][0] / "lib" / "feature.py").exists()
+
+
+_REAL_DEFAULT_REVIEWER = so._default_reviewer      # captured before conftest's autouse stub replaces it
+
+
+def test_the_default_reviewer_is_the_real_worktree_review(monkeypatch, tmp_path):
+    got = []
+    monkeypatch.setattr(so.code_review_gate, "review_worktree",
+                        lambda wt, base: got.append((wt, base)) or {"clean": True, "findings": [], "notes": ["n"]})
+    assert _REAL_DEFAULT_REVIEWER(tmp_path, "dev") == {"clean": True, "findings": [], "notes": ["n"]}
+    assert got == [(tmp_path, "dev")]
+
+
+def test_a_reviewer_returning_garbage_is_treated_as_not_run(git_repo, metrics_dir):
+    result = so.execute_ticket("TICKET-1", "test-subsystem", measure=_improving(), executor=_writes(_TESTED),
+                               repo_path=git_repo, reviewer=lambda wt, base: None)
+    assert result["passing"] is True and result["final_comparison"]["code_review"]["clean"] is None
+
+
+def test_a_huge_reviewer_error_is_capped_so_it_cannot_flood_the_pr():
+    def boom(wt, base):
+        raise RuntimeError("x" * 5000)
+    err = so._review(boom, Path("/tmp"), "main")["error"]
+    assert err.count("x") == 200
+
+
 # ── design doc persistence (marvin#93) ──────────────────────────────────────
 
 def test_doc_slug_sanitizes_like_branch_naming():

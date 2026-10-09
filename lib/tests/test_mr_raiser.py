@@ -544,3 +544,35 @@ def test_a_failing_fit_check_never_blocks_the_pr(monkeypatch):
     import fit_check
     monkeypatch.setattr(fit_check, "post", lambda *a: (_ for _ in ()).throw(RuntimeError("gh down")))
     mrr._post_fit_check("G-Eskayo/marvin#1", "/nowhere", "http://fake")  # must not raise
+
+
+# ── code review result on the PR (2026-10-09): the review ran in the build loop, so the PR says what it found ──
+
+def _body_for(monkeypatch, comparison):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "https://github.com/G-Eskayo/marvin/pull/99\n"
+            returncode = 0
+        return R()
+    monkeypatch.setattr(mrr.subprocess, "run", fake_run)
+    mrr._default_open_pr("G-Eskayo/marvin#1", "pipeline/ticket-1", {"subsystem": "s", "verdict": "improved",
+                                                                      "metrics": {}, **comparison})
+    return calls[0][calls[0].index("--body") + 1]
+
+
+def test_a_clean_review_with_notes_is_shown_last_with_its_notes(monkeypatch):
+    body = _body_for(monkeypatch, {"code_review": {"clean": True, "findings": [], "notes": ["a.py:1 — could cache"]}})
+    assert body.index("## Dev Environment Evidence") < body.index("## Code Review")
+    assert "Passed" in body and "- a.py:1 — could cache" in body
+
+
+def test_a_review_that_did_not_run_says_so_plainly(monkeypatch):
+    body = _body_for(monkeypatch, {"code_review": {"clean": None, "error": "judge timed out"}})
+    assert "not reviewed" in body.lower() and "judge timed out" in body
+
+
+def test_no_review_recorded_says_not_reviewed(monkeypatch):
+    assert "not reviewed" in _body_for(monkeypatch, {}).lower()

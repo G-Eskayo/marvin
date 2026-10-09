@@ -37,6 +37,7 @@ from typing import Callable
 import marvin_launcher
 import metrics_registry as mr
 import test_change_rule  # noqa: E402
+import code_review_gate  # noqa: E402
 import project_profile as pp
 import ticket_stages as ts
 
@@ -160,6 +161,11 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
             f" A previous attempt's metrics comparison came back as: {feedback}. "
             f"Adjust the plan to address this before trying again."
         )
+        if isinstance(feedback, dict) and feedback.get("fix_these"):
+            plan_prompt += (
+                " Code review found these must-fix defects in the previous attempt; fix every one and add a test "
+                "that would have caught it:\n" + "\n".join(f"- {f}" for f in feedback["fix_these"])
+            )
         if prior_doc is not None:
             plan_prompt += (
                 f"\n\nHere is the prior attempt's design doc:\n\n{prior_doc}\n\n"
@@ -344,6 +350,7 @@ def execute_ticket(
     repo_path: Path | None = None,
     max_iterations: int = 3,
     base_branch: str = "main",
+    reviewer: Callable[[Path, str], dict] | None = None,
 ) -> dict:
     """Drive `ticket_ref` through an isolated worktree and a tune-and-compare
     loop. Returns {"passing", "worktree_path", "iterations", "final_comparison",
@@ -387,6 +394,15 @@ def execute_ticket(
             if not tests_ok:
                 comparison = {**comparison, "passing": False, "verdict": "no tests changed", "tests": why}
         if comparison["passing"]:
+            # Code review happens here, before a PR exists, so must-fix findings go back to the builder in this
+            # run; Approve only checks the PR merges cleanly. A review that can't run doesn't block the build:
+            # the PR says it wasn't reviewed.
+            review = _review(reviewer or _default_reviewer, worktree_path, base_branch)
+            comparison = {**comparison, "code_review": review}
+            if review.get("clean") is False:
+                comparison = {**comparison, "passing": False, "verdict": "code review found must-fix issues",
+                              "fix_these": review.get("findings", [])}
+        if comparison["passing"]:
             _stage(ticket_ref, "verifying", "passed", comparison.get("verdict", ""))
             return {
                 "passing": True,
@@ -408,6 +424,20 @@ def execute_ticket(
             f"(max_iterations). Final verdict: {comparison['verdict'] if comparison else 'none'}."
         ),
     }
+
+
+def _default_reviewer(worktree: Path, base: str) -> dict:
+    return code_review_gate.review_worktree(worktree, base)
+
+
+def _review(reviewer, worktree: Path, base: str) -> dict:
+    try:
+        review = reviewer(worktree, base)
+    except Exception as exc:
+        return {"clean": None, "error": f"code review failed to run: {str(exc)[:200]}"}
+    if not isinstance(review, dict):
+        return {"clean": None, "error": f"code review returned no result ({type(review).__name__})"}
+    return review
 
 
 def _test_rules(ticket_ref: str) -> dict:

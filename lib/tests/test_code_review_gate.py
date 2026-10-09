@@ -21,7 +21,7 @@ def test_empty_diff_no_model_call():
     result = crg.run_review("https://github.com/user/repo/pull/1",
                            fetch=fetch_spy, launch=launch_spy)
 
-    assert result == {"clean": True, "findings": []}
+    assert result == {"clean": True, "findings": [], "notes": []}
     assert launch_spy.call_count == 0, "judge should not be called for empty diff"
 
 
@@ -51,7 +51,7 @@ def test_normal_diff_verdict_clean():
     result = crg.run_review("https://github.com/user/repo/pull/1",
                            fetch=fetch_spy, launch=launch_spy)
 
-    assert result == {"clean": True, "findings": []}
+    assert result == {"clean": True, "findings": [], "notes": []}
     assert launch_spy.call_count == 1
 
 
@@ -250,5 +250,87 @@ def test_concurrent_reviews_independent():
     result2 = crg.run_review("https://github.com/user/repo/pull/2",
                             fetch=fetch_spy, launch=launch_spy)
 
-    assert result1 == result2 == {"clean": True, "findings": []}
+    assert result1 == result2 == {"clean": True, "findings": [], "notes": []}
     assert launch_spy.call_count == 2  # Called twice, independently
+
+
+# --- Review before the PR opens (2026-10-09): Approve only checks the PR merges cleanly; review moved into the
+# build loop, and findings are split so only real defects send work back. Written to break it: untagged and
+# mis-tagged bullets, a notes-only review, a forged tag in the diff, untracked new files, an empty change,
+# a missing base ref, a judge that crashes.
+import subprocess  # noqa: E402
+
+import pytest  # noqa: E402
+
+
+def _judge(text, exit_code=0):
+    return MagicMock(return_value=MagicMock(exit_code=exit_code, text=text, stderr=""))
+
+
+def test_only_must_fix_findings_block_and_notes_ride_along():
+    r = crg.review_diff("d", launch=_judge(
+        "VERDICT: findings\n- [must-fix] lib/a.py:3 — crashes on None\n- [note] lib/a.py:9 — re-reads the file each call\n"))
+    assert r["clean"] is False
+    assert r["findings"] == ["lib/a.py:3 — crashes on None"]
+    assert r["notes"] == ["lib/a.py:9 — re-reads the file each call"]
+
+
+def test_a_notes_only_review_is_clean():
+    r = crg.review_diff("d", launch=_judge("VERDICT: findings\n- [note] x.py:1 — could be clearer\n"))
+    assert r == {"clean": True, "findings": [], "notes": ["x.py:1 — could be clearer"]}
+
+
+def test_an_untagged_or_unknown_tag_counts_as_must_fix():
+    # ambiguity never resolves to safe
+    r = crg.review_diff("d", launch=_judge("VERDICT: findings\n- x.py:1 — bug\n- [minor?] y.py:2 — maybe\n"))
+    assert r["clean"] is False and len(r["findings"]) == 2 and r["notes"] == []
+
+
+def test_tags_are_read_case_insensitively():
+    r = crg.review_diff("d", launch=_judge("VERDICT: findings\n- [NOTE] x.py:1 — nit\n- [Must-Fix] y.py:2 — bug\n"))
+    assert r["findings"] == ["y.py:2 — bug"] and r["notes"] == ["x.py:1 — nit"]
+
+
+def test_the_prompt_asks_for_the_two_tags():
+    p = crg.build_prompt("diff")
+    assert "[must-fix]" in p and "[note]" in p
+
+
+def test_review_diff_reports_a_crashing_judge_as_not_run():
+    def boom(*a, **k):
+        raise RuntimeError("timeout")
+    assert crg.review_diff("d", launch=boom)["clean"] is None
+
+
+def _git(cwd, *a):
+    return subprocess.run(["git", *a], cwd=cwd, capture_output=True, text=True, check=True).stdout
+
+
+@pytest.fixture
+def repo(tmp_path):
+    r = tmp_path / "r"
+    r.mkdir()
+    _git(r, "init", "-q", "-b", "main"); _git(r, "config", "user.email", "t@t"); _git(r, "config", "user.name", "t")
+    (r / "a.py").write_text("x = 1\n")
+    _git(r, "add", "-A"); _git(r, "commit", "-qm", "base")
+    return r
+
+
+def test_the_worktree_diff_has_committed_uncommitted_and_new_files(repo):
+    _git(repo, "checkout", "-qb", "ticket")
+    (repo / "a.py").write_text("x = 2\n"); _git(repo, "commit", "-qam", "c1")
+    (repo / "a.py").write_text("x = 3\n")                       # uncommitted
+    (repo / "new.py").write_text("y = 'brand new'\n")            # untracked
+    d = crg.worktree_diff(repo, "main")
+    assert "+x = 3" in d and "brand new" in d and "new.py" in d
+
+
+def test_an_unchanged_worktree_is_clean_without_calling_the_judge(repo):
+    launch = MagicMock()
+    assert crg.review_worktree(repo, "main", launch=launch) == {"clean": True, "findings": [], "notes": []}
+    launch.assert_not_called()
+
+
+def test_a_missing_base_reports_not_run_instead_of_raising(repo):
+    r = crg.review_worktree(repo, "no-such-branch", launch=MagicMock())
+    assert r["clean"] is None and "diff" in r["error"]
