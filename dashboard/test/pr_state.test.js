@@ -202,3 +202,18 @@ describe('describePrState: post-merge rebase', () => {
     expect(s.detail).toMatch(/moved onto main automatically/)
   })
 })
+
+describe('describePrState: a PR whose ticket is already closed (#326)', () => {
+  it('says it is probably superseded and offers no Approve', () => {
+    const v = describePrState({ ...ready, ticketClosed: true, ticketRef: 318 })
+    expect(v.kind).toBe('ticket-closed')
+    expect(v.headline).toMatch(/ticket is already closed/i)
+    expect(v.detail).toMatch(/#318/)
+    expect(v.approve).toBe('hidden')
+  })
+
+  it('the conflict message says the repair comes first', () => {
+    const v = describePrState({ ...ready, conflicts: true })
+    expect(v.detail).toMatch(/tries to resolve it automatically/)
+  })
+})

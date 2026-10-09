@@ -18,7 +18,7 @@ export function describePrState(pr, { status = 'idle', errorMessage = null } = {
   const main = pr.baseProblem?.expected || 'main'
 
   if (status === 'approving') {
-    return base('merging', 'working', 'Merging…', 'Rebasing onto main, retesting and merging. You can leave this screen; it carries on.', 'hidden', 'hidden')
+    return base('merging', 'working', 'Merging…', 'Merging. It is rebased and retested first only if main changed files this PR also changes. You can leave this screen; it carries on.', 'hidden', 'hidden')
   }
 
   if (pr.sentBack) {
@@ -26,6 +26,14 @@ export function describePrState(pr, { status = 'idle', errorMessage = null } = {
       "This PR's ticket was rejected, and a reworked version will update this same PR, so there is nothing to approve.",
       'hidden', 'hidden',
       { rework: pr.rework || null, actions: [{ id: 'clearSentBack', label: 'The rework is already in? Clear the sent-back label' }] })
+  }
+
+  // Its ticket is closed: the work landed another way (built directly, or by another PR), so this one is probably a
+  // duplicate (#319, 2026-10-09). Close it on GitHub once main is confirmed to have the change.
+  if (pr.ticketClosed) {
+    return base('ticket-closed', 'blocked', 'Its ticket is already closed',
+      `Ticket ${pr.ticketRef ? `#${pr.ticketRef} ` : ''}was closed, so this PR is probably superseded: the work reached ${main} another way. Check that ${main} has it, then close this PR on GitHub.`,
+      'hidden', 'enabled')
   }
 
   if (status === 'reengaged') {
@@ -39,7 +47,7 @@ export function describePrState(pr, { status = 'idle', errorMessage = null } = {
   if (pr.conflicts) {
     const since = rb?.state === 'conflict' && rb.files?.length ? `Since #${rb.after} merged it conflicts in ${rb.files.join(', ')}. ` : ''
     return base('conflict', 'blocked', `Conflicts with ${main}`,
-      `${since}It can't merge as it is. Its ticket is sent back automatically and rebuilt on the current ${main}, updating this same PR. Nothing to do here.`, 'hidden', 'hidden')
+      `${since}It can't merge as it is. The hourly scan first tries to resolve it automatically (when both sides only added lines); a real conflict sends a pipeline PR's ticket back to be rebuilt on the current ${main}, and flags a hand-made PR for you.`, 'hidden', 'hidden')
   }
 
   if (ci.state === 'failing') {
