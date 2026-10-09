@@ -263,3 +263,10 @@ def test_recheck_looks_again_at_a_needs_info_ticket():
     body = "## Solution\n\ndo y\n\n## Acceptance\n\n- [ ] it works\n"
     assert tp.triage_verdict(issue(labels=["needs-info"], body=body)) is None          # normal pass: left alone
     assert tp.triage_verdict(issue(labels=["needs-info"], body=body), recheck=True)["state"] == "ready-for-agent"
+
+
+def test_problem_what_or_convention_with_acceptance_criteria_is_ready():
+    for head in ("Problem", "What", "Convention (agreed with Gil 2026-10-07)"):
+        body = f"## {head}\n\nx\n\n## Acceptance criteria\n\n- [ ] it works\n"
+        assert tp.triage_verdict(issue(body=body))["state"] == "ready-for-agent", head
+    assert tp.triage_verdict(issue(body="## Whatever\n\nx\n\n## Acceptance\n\n- [ ] y\n"))["state"] == "needs-info"
