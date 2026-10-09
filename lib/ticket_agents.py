@@ -201,7 +201,8 @@ def apply_action(a: dict, gh) -> None:
         try:
             gh(["issue", "edit", str(a["number"]), *base, "--add-label", a["arg"]])
         except Exception as e:  # noqa: BLE001
-            if "not found" not in str(e).lower():
+            # gh puts the reason on stderr; CalledProcessError's message doesn't include it
+            if "not found" not in f"{e} {getattr(e, 'stderr', '') or ''}".lower():
                 raise
             # a project that has never had this label (priority:p1, ready-for-human...): create it, retry once
             gh(["label", "create", a["arg"], *base])
@@ -273,7 +274,8 @@ def run(snapshot, gh, cfg, now, audit_path=AUDIT_PATH, proposals_path=PROPOSALS_
             rows.append({**a, "at": ts, "status": "applied", "before_labels": before})
         except Exception as e:  # noqa: BLE001
             failed += 1
-            rows.append({**a, "at": ts, "status": "failed", "error": str(e)[:200], "before_labels": before})
+            why = f"{e} {getattr(e, 'stderr', '') or ''}".strip()  # gh's own reason is on stderr
+            rows.append({**a, "at": ts, "status": "failed", "error": why[-300:], "before_labels": before})
     for agent, info in by_agent.items():
         report(agent, f"{info['mode']}: {info['planned']} change(s) planned")
     if tags_state_path is not None:

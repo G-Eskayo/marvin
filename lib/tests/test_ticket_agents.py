@@ -322,3 +322,20 @@ def test_project_tag_never_puts_back_a_label_a_person_removed(tmp_path):
     ta.run(snapshot=snap, gh=gh, cfg={"mode": "act", "agents": {}}, now=NOW, audit_path=audit,
            proposals_path=tmp_path / "p.json", in_flight=lambda r: set(), due_for=lambda r: None, project_rules=TAG_RULES)
     assert not any("project:marvin-mobile" in c for c in gh.calls)
+
+
+def test_a_missing_label_is_created_when_gh_reports_it_on_stderr_as_the_real_gh_does():
+    """2026-10-09: 133 priority labels failed: the real gh raises CalledProcessError whose message has no stderr, so
+    the 'label not found -> create it' fallback never ran (the old test raised an Exception with the text in it)."""
+    import subprocess
+    calls = []
+
+    def gh(args):
+        calls.append(args)
+        if args[:2] == ["issue", "edit"] and len([c for c in calls if c[:2] == ["issue", "edit"]]) == 1:
+            raise subprocess.CalledProcessError(1, ["gh", *args], output="", stderr="failed to update: 'priority:p3' not found")
+        return ""
+
+    ta.apply_action({"repo": REPO, "number": 5, "op": "add_label", "arg": "priority:p3"}, gh)
+    assert ["label", "create", "priority:p3", "--repo", REPO] in calls
+    assert sum(1 for c in calls if c[:2] == ["issue", "edit"]) == 2
