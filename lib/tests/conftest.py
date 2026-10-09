@@ -40,7 +40,50 @@ def pytest_ignore_collect(collection_path, config):
     return None
 
 
+_GH_BLOCK_DIR: Path | None = None
+
+
+def _gh_block_dir(tmp_path_factory) -> Path:
+    """A `gh` that never reaches GitHub, first on every test's PATH. The merge gate's main-health check re-runs
+    this suite each time main moves; tests that reached the real gh spent ~1,300 GitHub calls an hour on the
+    mini (2026-10-08, found via the gh gate's log). It fails like an offline gh and records which test asked."""
+    global _GH_BLOCK_DIR
+    if _GH_BLOCK_DIR is None:
+        d = tmp_path_factory.mktemp("no-github")
+        fake = d / "gh"
+        fake.write_text('#!/bin/sh\nprintf "%s|%s %s\\n" "$PYTEST_CURRENT_TEST" "$1" "$2" >> "$(dirname "$0")/calls.log"\n'
+                        'echo "gh is blocked in tests (lib/tests/conftest.py): inject a fake" >&2\nexit 1\n')
+        fake.chmod(0o755)
+        _GH_BLOCK_DIR = d
+    return _GH_BLOCK_DIR
+
+
+@pytest.fixture(autouse=True)
+def _no_real_github(tmp_path_factory, monkeypatch):
+    import os
+    d = _gh_block_dir(tmp_path_factory)
+    monkeypatch.setenv("PATH", f"{d}:{os.environ.get('PATH', '')}")
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_disk_housekeeping(request, monkeypatch):
+    # cleanup_sweep.run_daily_sweep runs the real disk ledger and trim (dry_run=False) on whatever machine runs
+    # the tests; a test must never trim the real machine's caches. (disk_ledger/disk_trim's own tests test them.)
+    if request.module.__name__.rsplit(".", 1)[-1] in ("test_disk_ledger", "test_disk_trim"):
+        return
+    import disk_ledger
+    import disk_trim
+    monkeypatch.setattr(disk_ledger, "run_daily_ledger", lambda *a, **k: None)
+    monkeypatch.setattr(disk_trim, "trim_with_logging", lambda *a, **k: {})
+
+
 def pytest_terminal_summary(terminalreporter):
+    if _GH_BLOCK_DIR is not None and (_GH_BLOCK_DIR / "calls.log").exists():
+        calls = [l.split("|")[0].split(" ")[0] for l in (_GH_BLOCK_DIR / "calls.log").read_text().splitlines()]
+        tests = sorted(set(calls))
+        terminalreporter.write_line(f"{len(calls)} blocked gh call(s) from {len(tests)} test(s); give them a fake gh: "
+                                    + ", ".join(t.split("::")[-1] for t in tests[:8]), yellow=True)
     if _not_collected:
         terminalreporter.write_line(
             f"portfolio repo is on this machine but not readable from this process: {len(_not_collected)} test "
