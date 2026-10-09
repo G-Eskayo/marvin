@@ -16,6 +16,11 @@ const RULES = [
   { code: 'NOT_MERGEABLE', action: 'reengage', retryable: false,
     test: /not mergeable|merge conflict|conflicts? must be resolved|cannot be merged/i,
     remediation: 'The PR conflicts with main. It was sent back to its ticket for rework.' },
+  // GitHub will not merge a draft. The gate marks an owner-approved draft ready first (readyIfDraft in merge.js);
+  // this catches one that slipped through, so it is named instead of UNKNOWN (clarity-captions #77/#78, 2026-10-09).
+  { code: 'PR_DRAFT', action: 'escalate', retryable: false,
+    test: /is still a draft|pull request is a draft|draft pull request/i,
+    remediation: 'The PR is a draft. Mark it "Ready for review" on GitHub, then approve again. The PR was not sent back.' },
   { code: 'BRANCH_PROTECTION', action: 'escalate', retryable: false,
     test: /protected branch|required status check|required review|branch protection|gh006|gh013/i,
     remediation: 'Branch protection blocked the merge. Satisfy the required checks/reviews, or adjust the rule.' },
