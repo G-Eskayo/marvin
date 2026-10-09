@@ -427,9 +427,12 @@ export default function MrReview({ nav, onOpenDocs, onOpenBoard, onOpenTicket })
   const [error, setError] = useState(null)
   const [selected, setSelected] = useState(null)
   const [parity, setParity] = useState(null)
+  // Auto-merge's shadow report (ADR 0064, #341): a banner once it's ready, until Gil switches it on.
+  const [amReport, setAmReport] = useState(null)
 
   function reload() {
     window.api.mr.parity().then(setParity).catch(() => setParity(null))
+    window.api.mr.autoMergeReport?.().then(setAmReport).catch(() => setAmReport(null))
     window.api.mr
       .list()
       .then((list) => {
@@ -507,6 +510,11 @@ export default function MrReview({ nav, onOpenDocs, onOpenBoard, onOpenTicket })
         {prs.length} pipeline-raised PR{prs.length === 1 ? '' : 's'} awaiting review. Click a title for the full
         detail view.
       </p>
+      {amReport?.ready && amReport.mode !== 'on' && (
+        <div className={`rounded-lg border px-4 py-3 text-sm ${amReport.disagreements?.length ? 'border-amber-700 bg-amber-950/40 text-amber-200' : 'border-emerald-700 bg-emerald-950/40 text-emerald-200'}`}>
+          {amReport.line}
+        </div>
+      )}
       <ParitySummary parity={parity} />
       {prs.map((pr) => (
         <PrCard

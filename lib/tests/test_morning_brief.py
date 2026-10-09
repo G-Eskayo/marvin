@@ -85,3 +85,12 @@ def test_the_session_report_shows_todays_brief_first_and_that_marks_it_read(tmp_
     out = capsys.readouterr().out
     assert out.index("MARVIN active") < out.index("## Morning brief") < out.index("Session-start checklist")
     assert mb.read_dates()
+
+
+def test_the_auto_merge_shadow_report_heads_needs_you_when_ready():
+    from datetime import datetime, timezone
+    now = datetime(2026, 10, 12, 8, tzinfo=timezone.utc)
+    text = mb.render({"auto_merge": "Auto-merge shadow report ready: would have merged 4 of 6 PRs, 0 you'd have denied. Say 'switch on auto-merge' to turn it on."}, now)
+    needs = text.split("## Needs you")[1].split("##")[0]
+    assert needs.strip().startswith("- Auto-merge shadow report ready")
+    assert "Auto-merge" not in mb.render({}, now)

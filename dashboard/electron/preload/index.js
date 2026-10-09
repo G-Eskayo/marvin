@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('api', {
     ticketContext: (ticketRef, repo) => ipcRenderer.invoke('mr:ticketContext', ticketRef, repo),
     parity: () => ipcRenderer.invoke('mr:parity'),
     reviewStatus: () => ipcRenderer.invoke('mr:reviewStatus'),
+    autoMergeReport: () => ipcRenderer.invoke('mr:autoMergeReport'),
     markSeen: (prNumbers) => ipcRenderer.invoke('mr:markSeen', prNumbers),
     // Fires whenever the webhook-server's /mr-ready ping reaches this
     // machine's own refresh_server.js. Returns an unsubscribe function.

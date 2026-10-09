@@ -1,3 +1,6 @@
+import { readFileSync } from 'fs'
+import os from 'os'
+import path from 'path'
 import { createServer } from 'http'
 import { mergePr, baselineFailsOnMain } from './merge.js'
 import { sendFeedback, dropEntirely } from './deny.js'
@@ -104,6 +107,19 @@ const server = createServer(async (req, res) => {
   }
 
   // The latest post-merge rebase result per open PR (#225), for MR Review on any machine.
+  // Auto-merge's shadow state (ADR 0064, #341): read-only, for MR Review on either Mac.
+  if (req.method === 'GET' && req.url === '/auto-merge-shadow') {
+    let body = '{}'
+    try {
+      body = readFileSync(path.join(os.homedir(), '.claude', 'logs', 'auto-merge-shadow.json'), 'utf-8')
+      JSON.parse(body)
+    } catch {
+      body = '{}'
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(body)
+    return
+  }
+
   if (req.method === 'GET' && req.url === '/rebase-status') {
     res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(readRebaseStatus()))
     return

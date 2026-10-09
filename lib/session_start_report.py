@@ -275,6 +275,12 @@ def check_morning_brief() -> str | None:
     return morning_brief.show_today()
 
 
+def check_auto_merge_report() -> str | None:
+    """Auto-merge's shadow report, once it is ready (ADR 0064, #341): the one place Gil is told to switch it on."""
+    import auto_merge_shadow
+    return auto_merge_shadow.report_line_anywhere()
+
+
 def check_daily_digest() -> str | None:
     return _check_digest("today's daily digest", CLAUDE_DIR / "daily-digest")
 
@@ -297,6 +303,7 @@ def main() -> None:
         _safe(check_auto_fix_log),
         _safe(check_sync_log),
         _safe(check_git_conflicts),
+        _safe(check_auto_merge_report),
         _safe(check_daily_digest),
         _safe(check_research_digest),
     ) if n]

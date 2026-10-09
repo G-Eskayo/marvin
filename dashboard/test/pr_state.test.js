@@ -217,3 +217,15 @@ describe('describePrState: a PR whose ticket is already closed (#326)', () => {
     expect(v.detail).toMatch(/tries to resolve it automatically/)
   })
 })
+
+describe('describePrState: auto-merge shadow verdict (#341)', () => {
+  it('says what auto-merge would do on a ready card', () => {
+    const would = describePrState({ ...ready, autoMerge: { verdict: 'auto', reasons: [], score: 91 } })
+    expect(would.note).toMatch(/Auto-merge \(shadow\): would merge \(tests caught 91% of planted bugs\)/)
+    const wait = describePrState({ ...ready, autoMerge: { verdict: 'ask', reasons: ['bin/gh is core (always waits for Gil)'], score: null } })
+    expect(wait.note).toMatch(/would wait for you: bin\/gh is core/)
+  })
+  it('no verdict yet says nothing', () => {
+    expect(describePrState({ ...ready }).note || '').not.toMatch(/Auto-merge/)
+  })
+})
