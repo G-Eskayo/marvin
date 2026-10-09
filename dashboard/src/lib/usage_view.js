@@ -16,14 +16,16 @@ export function mergeRows(machines, which = 'all', listKey = 'tools', nameKey = 
     for (const t of m.tools?.[listKey] || []) {
       const cur = byName.get(t[nameKey])
       if (!cur) {
-        byName.set(t[nameKey], { ...t, by_kind: { ...t.by_kind }, by_day: { ...t.by_day }, via: { ...(t.via || {}) } })
+        byName.set(t[nameKey], { ...t, by_kind: { ...t.by_kind }, by_day: { ...t.by_day }, via: { ...(t.via || {}) }, causes: { ...(t.causes || {}) } })
         continue
       }
-      for (const f of ['calls', 'ok', 'error', 'rejected', 'interrupted', 'invalid', 'unresolved']) cur[f] += t[f]
+      for (const f of ['calls', 'ok', 'error', 'rejected', 'interrupted', 'invalid', 'unresolved', 'expected']) cur[f] += t[f]
       cur.by_kind = addCounts(cur.by_kind, t.by_kind)
       cur.by_day = addCounts(cur.by_day, t.by_day)
       cur.via = addCounts(cur.via, t.via)
+      cur.causes = addCounts(cur.causes, t.causes)
       if (t.last_used && (!cur.last_used || t.last_used > cur.last_used)) cur.last_used = t.last_used
+      if (t.purpose && !cur.purpose) cur.purpose = t.purpose
     }
   }
   return [...byName.values()].sort((a, b) => b.calls - a.calls || String(a[nameKey]).localeCompare(String(b[nameKey])))

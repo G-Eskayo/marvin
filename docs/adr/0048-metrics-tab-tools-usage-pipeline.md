@@ -38,3 +38,6 @@ usage (53 lines were 19 messages), so a naive sum overstates usage about threefo
 - A project is attributed from the session's working directory; a pipeline worktree is named for its ticket. Sessions in other
   directories fall under the directory's name.
 - Not measured: whether the right skill fired for a request, and cost in money (the data has tokens, not prices).
+- **Updates (2026-10-09)**: cause classification added (permission denied, file missing, timeout, etc.; "other" < 5%) and purpose
+  descriptions shown for every tool and skill. Expected non-zero exits (grep no-match, test failures) are now displayed as "expected"
+  and tracked separately from actual failures. Recent failures include the cause and input for investigation.
