@@ -112,7 +112,7 @@ describe('createReconciler', () => {
   })
 })
 
-import { refetchesGithub } from '../electron/main/triggers.js'
+import { refetchesGithub, repoFromTrigger } from '../electron/main/triggers.js'
 describe('refetchesGithub: which triggers mean GitHub\'s data may have changed', () => {
   it('a local file changing (a pipeline stage file, a doc) does not', () => {
     expect(refetchesGithub({ topic: 'activity', source: 'file:clarity-captions-27.json' })).toBe(false)
@@ -123,5 +123,20 @@ describe('refetchesGithub: which triggers mean GitHub\'s data may have changed',
     expect(refetchesGithub({ topic: 'activity', source: 'ping' })).toBe(true)
     expect(refetchesGithub({ topic: 'activity', source: 'gh-watch:G-Eskayo/clarity-captions' })).toBe(true)
     expect(refetchesGithub({ topic: 'activity' })).toBe(true) // unknown source: be safe and refresh
+  })
+})
+
+describe('repoFromTrigger: extract the repo from a GitHub trigger', () => {
+  it('extracts the repo from a github: source', () => {
+    expect(repoFromTrigger({ source: 'github:G-Eskayo/marvin' })).toBe('G-Eskayo/marvin')
+    expect(repoFromTrigger({ source: 'github:G-Eskayo/clarity-captions' })).toBe('G-Eskayo/clarity-captions')
+  })
+  it('returns null for non-GitHub sources (file, poll, ping, unknown)', () => {
+    expect(repoFromTrigger({ source: 'file:state.json' })).toBeNull()
+    expect(repoFromTrigger({ source: 'poll' })).toBeNull()
+    expect(repoFromTrigger({ source: 'ping' })).toBeNull()
+    expect(repoFromTrigger({ source: 'unknown' })).toBeNull()
+    expect(repoFromTrigger({})).toBeNull()
+    expect(repoFromTrigger(null)).toBeNull()
   })
 })

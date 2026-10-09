@@ -29,7 +29,7 @@ const mergeOps = createMergeOps()
 import { readRegistry, loadBoard, fetchBoardData, fetchCompletedData, withProjectStatus, defaultStagesFor, defaultLiveNumbers, getEvidence, clearCrossProjectCache, REGISTRY_PATH } from './boards.js'
 import { createRelationsService } from './relations_service.js'
 import { summarizeBoard, buildCompleted } from './board.js'
-import { createTriggerHub, createReconciler, refetchesGithub } from './triggers.js'
+import { createTriggerHub, createReconciler, refetchesGithub, repoFromTrigger } from './triggers.js'
 import { listOpenPrsAcrossRepos, prListArgs, createListCache, normalizeSeen, canMergeFromDashboard, repoFromPrUrl, MARVIN_REPO } from './mr_repos.js'
 import { createIndexer, buildDocsIndex, loadIndex } from './docs_search.js'
 import { createDocsService, MASTER_ID } from './docs_service.js'
@@ -79,19 +79,33 @@ const ghListOpenPrs = (light) => async (repo) => {
   return JSON.parse(stdout)
 }
 
-// Every registered project's open PRs (MR Review spans projects; only marvin's can be merged from
-// here -- see mr_repos.js). A failing repo is logged and skipped, never fatal to the list.
-async function fetchOpenPrs(light) {
-  const { prs, errors } = await listOpenPrsAcrossRepos(readRegistry().map((b) => b.repo), ghListOpenPrs(light))
-  for (const e of errors) console.error(`[mr] could not list PRs for ${e.repo}: ${e.message}`)
-  return prs
+// Per-repo PR list fetcher for the cache. Fetches from gh but doesn't cross-repo aggregate.
+async function fetchOpenPrsForRepo(repo, light) {
+  try {
+    return await ghListOpenPrs(light)(repo)
+  } catch (err) {
+    console.error(`[mr] could not list PRs for ${repo}: ${err.message || err}`)
+    return []
+  }
 }
+
 // The status dot, the MR list and the merge-order check share one cache; a merge asks for fresh data.
 // Real PR changes are announced within ~20s by the change watcher (a 'mr' or 'activity' ping), which clears it, so the
-// TTL is only a safety net. At 45s this listing alone cost thousands of requests an hour across the registered repos.
-const OPEN_PRS_TTL_MS = 5 * 60_000
-const openPrsCache = createListCache({ full: () => fetchOpenPrs(false), light: () => fetchOpenPrs(true) }, OPEN_PRS_TTL_MS)
-const listOpenPrs = (opts = {}) => openPrsCache.get(opts)
+// TTL is only a safety net. Per-repo caching means invalidating one repo doesn't force re-fetches of all others.
+// At 45s this listing alone cost thousands of requests an hour across the registered repos (2026-09).
+// Increased to 30 min TTL since per-repo invalidation now handles the real-time updates.
+const OPEN_PRS_TTL_MS = 30 * 60_000
+const openPrsCache = createListCache({
+  full: (repo) => fetchOpenPrsForRepo(repo, false),
+  light: (repo) => fetchOpenPrsForRepo(repo, true)
+}, OPEN_PRS_TTL_MS)
+
+// Public API: get all repos' PRs, tagged with their repo.
+const listOpenPrs = async (opts = {}) => {
+  const repos = readRegistry().map((b) => b.repo)
+  const { prs } = await openPrsCache.getAllRepos(repos, opts)
+  return prs
+}
 
 async function ghIssueView(issueNumber, repo = MARVIN_REPO) {
   const { stdout } = await execFileAsync('gh', ['issue', 'view', String(issueNumber), '--repo', repo, '--json', 'number,title,body'])
@@ -371,7 +385,20 @@ function registerDocsHandlers() {
     if (t.topic === 'activity' || t.topic === 'docs') {
       // Local changes (stage files, saved docs) re-derive columns from the cached GitHub data; only a GitHub-side
       // change refetches it. Clearing it on every local write cost ~10,000 requests an hour (2026-10-06).
-      if (t.topic === 'activity' && refetchesGithub(t)) { boardDataCache.clear(); openPrsCache.invalidate(); clearCrossProjectCache() }
+      if (t.topic === 'activity' && refetchesGithub(t)) {
+        const repo = repoFromTrigger(t)
+        if (repo) {
+          boardDataCache.delete(repo)
+          openPrsCache.invalidate(repo)
+          completedCache.delete(repo)
+          clearCrossProjectCache(repo)
+        } else {
+          boardDataCache.clear()
+          openPrsCache.invalidate()
+          completedCache.clear()
+          clearCrossProjectCache()
+        }
+      }
       relations.invalidate()
     }
   })
@@ -595,7 +622,9 @@ function registerMrReviewHandlers() {
       }
       const result = await approveMr(url, MR_WEBHOOK_URL, postJson)
       mergeOps.finish(url, result)
-      openPrsCache.invalidate()  // the list must not keep showing a PR that just merged
+      const repo = repoFromPrUrl(url)
+      openPrsCache.invalidate(repo)  // the list must not keep showing a PR that just merged
+      if (repo) completedCache.delete(repo)
       clearReworkCache()
       return { ...result, cancelled: false }
     } catch (err) {
@@ -610,7 +639,11 @@ function registerMrReviewHandlers() {
   ipcMain.handle('mr:clearSentBack', async (_event, url) => {
     assertMergeable(url)
     const result = await clearSentBackLabel(url, execFileAsync)
-    if (result.cleared) openPrsCache.invalidate()
+    if (result.cleared) {
+      const repo = repoFromPrUrl(url)
+      openPrsCache.invalidate(repo)
+      if (repo) completedCache.delete(repo)
+    }
     return result
   })
 
@@ -634,7 +667,9 @@ function registerMrReviewHandlers() {
       return { done: false, cancelled: true }
     }
     await denyMr({ prUrl: url, ticketNumber, action, reasons, comment }, MR_DENY_WEBHOOK_URL, postJson)
-    openPrsCache.invalidate()
+    const repo = repoFromPrUrl(url)
+    openPrsCache.invalidate(repo)
+    if (repo) completedCache.delete(repo)
     return { done: true, cancelled: false }
   })
 }
@@ -664,8 +699,18 @@ app.whenReady().then(() => {
   // External pings (webhook-server): bare = the legacy "MR list changed"; with topics = what changed.
   createRefreshServer((payload = {}) => {
     const topics = Array.isArray(payload.topics) ? payload.topics : ['mr']
+    const repo = repoFromTrigger({ source: payload.source })
     for (const topic of topics) {
-      if (topic === 'mr') { openPrsCache.invalidate(); mainWindow?.webContents.send('mr:refresh') }
+      if (topic === 'mr') {
+        if (repo) {
+          openPrsCache.invalidate(repo)
+          completedCache.delete(repo)
+        } else {
+          openPrsCache.invalidate()
+          completedCache.clear()
+        }
+        mainWindow?.webContents.send('mr:refresh')
+      }
       else triggerHub.emit(topic, payload.source || 'ping')
     }
   }).listen(DASHBOARD_REFRESH_PORT, '127.0.0.1')
