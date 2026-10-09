@@ -666,6 +666,12 @@ def check_missed_purposes(list_missed=None) -> list[dict]:
     return pm.health_findings(missed)  # closed or not: red until the label comes off (accepted, fixed or reverted)
 
 
+def check_output_contracts() -> list[dict]:
+    """Every producer's output gets consumed in time, or it shows here (marvin#305, ADR 0059)."""
+    import output_contracts
+    return output_contracts.health_findings()
+
+
 def check_parallel_dispatch() -> dict:
 	"""Check if parallel dispatch is keeping up with the queue."""
 	cid, label = "dispatch:parallel", "Parallel dispatch keeping up"
@@ -1369,6 +1375,7 @@ def run_all() -> dict:
     results += check_deploy_steps()
     results.append(check_parallel_dispatch())
     results += check_missed_purposes()
+    results += check_output_contracts()
     results += check_missing_profiles()
     results.append(check_trigger_coverage())
     results.append(check_catalog_fresh())
