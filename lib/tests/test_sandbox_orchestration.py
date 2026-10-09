@@ -797,7 +797,7 @@ def test_both_prompts_steer_away_from_refused_shell_habits(monkeypatch, tmp_path
         assert "already" in prompt and "cd" in prompt
 
 
-# ── the agent's working directory is checked, not just claimed (Gil, 2026-10-08) ──
+# ── the agent's working directory is checked, not merely claimed (Gil, 2026-10-08) ──
 # The prompt tells the agent where its shell is. That claim must be TRUE by construction: a deterministic
 # preflight proves the path is this ticket's own worktree before any tokens are spent, and the prompt
 # names the exact path the process is launched in (same variable), so the two can never drift apart.

@@ -52,8 +52,8 @@ def test_safety_and_telemetry_hooks_run_everywhere_and_session_upkeep_only_inter
         assert by_script[upkeep].kinds == {"interactive"}, upkeep
 
 
-def _write(path, data):
-    path.write_text(json.dumps(data, indent=2))
+def _write(path, settings):
+    path.write_text(json.dumps(settings, indent=2))
 
 
 def test_install_moves_hooks_to_user_settings_and_sets_one_memory(tmp_path):

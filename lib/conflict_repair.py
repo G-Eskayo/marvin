@@ -127,10 +127,10 @@ def _load(path: Path) -> dict:
         return {}
 
 
-def _save(data: dict, path: Path) -> None:
+def _save(state: dict, path: Path) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, indent=1))
+        path.write_text(json.dumps(state, indent=1))
     except OSError:
         pass
 

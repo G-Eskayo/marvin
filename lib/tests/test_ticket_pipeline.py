@@ -1073,7 +1073,7 @@ def test_release_with_mismatched_run_id_skips_the_release(monkeypatch, tmp_path,
 
     tp._release(20, "mac-mini", run_id="other_run")
 
-    assert len(calls) == 0
+    assert not calls
     assert "skipping release" in capsys.readouterr().err
 
 

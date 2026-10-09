@@ -466,7 +466,7 @@ def pull(repo: Path) -> None:
 
     if before == after and not stashed:
         # Genuinely nothing happened — no merge, no WIP involved. Not worth
-        # a log entry: logging (and self-flushing) a pure no-op just to have
+        # a log entry: logging (and self-flushing) a pure no-op only to have
         # something to say produced a real, avoidable failure mode — two
         # machines pulling close together would each generate their own
         # "nothing happened" commit, hand it to the other, which pulls it,

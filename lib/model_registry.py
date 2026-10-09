@@ -134,9 +134,9 @@ class ModelRegistry:
         except (OSError, ValueError):
             return {}
 
-    def _write(self, data: dict) -> None:
+    def _write(self, registry: dict) -> None:
         tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, indent=2, sort_keys=True))
+        tmp.write_text(json.dumps(registry, indent=2, sort_keys=True))
         os.replace(tmp, self.path)
 
     def register(self, name: str, location: str, size_gb: float, used_by: str, reason: str,
