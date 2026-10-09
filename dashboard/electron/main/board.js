@@ -48,7 +48,7 @@ function closingPrs(issue, prs) {
 
 // Dependencies come from either inline "Blocked by #n" or the to-issues
 // template's "## Blocked by" section (bullets of #n refs, or "None ...").
-function dependencyRefs(issue) {
+export function dependencyRefs(issue) {
   const body = issue.body || ''
   const refs = []
   for (const m of body.matchAll(/\bBlocked by\s+(?:[\w.-]+\/[\w.-]+)?#(\d+)/gi)) refs.push(Number(m[1]))
@@ -59,7 +59,7 @@ function dependencyRefs(issue) {
 
 // A ticket that is on hold, or was closed as not planned, will not be finished soon (or ever), so waiting on
 // it would park the dependent forever. Those are not blockers; the dependent's card says it is ignoring them.
-function openDependencies(issue, openNumbers, ignored = new Set()) {
+export function openDependencies(issue, openNumbers, ignored = new Set()) {
   return dependencyRefs(issue).filter((n) => openNumbers.has(n) && !ignored.has(n))
 }
 

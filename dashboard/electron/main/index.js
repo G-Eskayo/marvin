@@ -398,6 +398,7 @@ function registerDocsHandlers() {
   // MR Review <-> boards, one-to-one: each open PR with its ticket and column; what is waiting on you per project.
   ipcMain.handle('mr:parity', () => relations.parity())
   ipcMain.handle('activity:overview', () => relations.overview())
+  ipcMain.handle('activity:needsYou', () => relations.needsYou())
   ipcMain.handle('relations:context', (_e, project) => relations.context(String(project)))
 
   let refreshing = null
