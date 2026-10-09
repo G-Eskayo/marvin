@@ -370,7 +370,7 @@ function registerDocsHandlers() {
     getProjects: () => (readCatalog({ deviceId: deviceId() })?.projects || []).filter((p) => p.repo).map((p) => ({ id: p.id, repo: p.repo })),
     getStages: defaultStagesFor,
     getLive: defaultLiveNumbers,
-    recheck: () => githubChanged(null)
+    recheck: (repos = []) => (repos.length ? repos.forEach((r) => githubChanged(`github:${r}`)) : githubChanged(null))
   })
   triggerHub.onTrigger((t) => {
     if (t.topic === 'activity' || t.topic === 'docs') {

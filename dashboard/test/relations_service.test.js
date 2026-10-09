@@ -135,3 +135,34 @@ describe('parity does not raise an alarm on a stale snapshot', () => {
     expect(recheck).not.toHaveBeenCalled()
   })
 })
+
+describe('parity recheck does not re-read GitHub on every call (#318 follow-up)', () => {
+  const standing = () => {
+    let t = 0
+    const rechecks = []
+    const s = make({
+      getBoardData: async () => ({ issues: [issue(2)], prs: [{ number: 7, title: 'p', url: 'p7', body: 'just a change' }] }),
+      recheck: (repos) => rechecks.push(repos),
+      now: () => t
+    })
+    return { s, rechecks, tick: (ms) => { t += ms } }
+  }
+
+  it('a lasting mismatch is rechecked once, then reported from memory until 5 minutes pass', async () => {
+    const { s, rechecks, tick } = standing()
+    const first = await s.parity()
+    expect(first.ok).toBe(false)
+    await s.parity()
+    await s.parity()
+    expect(rechecks.length).toBe(1)
+    tick(5 * 60_000 + 1)
+    await s.parity()
+    expect(rechecks.length).toBe(2)
+  })
+
+  it('rechecks only the repos involved in the mismatch', async () => {
+    const { s, rechecks } = standing()
+    await s.parity()
+    expect(rechecks[0]).toEqual(['G-Eskayo/marvin'])
+  })
+})
