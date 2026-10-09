@@ -85,3 +85,128 @@ describe('canMergeFromDashboard with opted-in projects', () => {
     expect(out.map((p) => p.canMerge)).toEqual([true, false])
   })
 })
+
+import { createListCache } from '../electron/main/mr_repos.js'
+
+describe('createListCache: per-repo cache with scoped invalidation', () => {
+  it('caches each repo\'s PRs independently', async () => {
+    const calls = { marvin: 0, clarity: 0 }
+    const cache = createListCache({
+      full: async (repo) => {
+        if (repo === MARVIN_REPO) calls.marvin++
+        if (repo === 'G-Eskayo/clarity-captions') calls.clarity++
+        return [{ number: 1, title: 'test', repo }]
+      },
+      light: async (repo) => []
+    }, 5 * 60_000)
+
+    // First fetch for marvin and clarity
+    await cache.getRepo(MARVIN_REPO)
+    await cache.getRepo('G-Eskayo/clarity-captions')
+    expect(calls).toEqual({ marvin: 1, clarity: 1 })
+
+    // Second fetch uses cache (no new calls)
+    await cache.getRepo(MARVIN_REPO)
+    await cache.getRepo('G-Eskayo/clarity-captions')
+    expect(calls).toEqual({ marvin: 1, clarity: 1 })
+  })
+
+  it('invalidating one repo does not invalidate others', async () => {
+    const calls = { marvin: 0, clarity: 0 }
+    const cache = createListCache({
+      full: async (repo) => {
+        if (repo === MARVIN_REPO) calls.marvin++
+        if (repo === 'G-Eskayo/clarity-captions') calls.clarity++
+        return []
+      },
+      light: async (repo) => []
+    }, 5 * 60_000)
+
+    // Cache both repos
+    await cache.getRepo(MARVIN_REPO)
+    await cache.getRepo('G-Eskayo/clarity-captions')
+    expect(calls).toEqual({ marvin: 1, clarity: 1 })
+
+    // Invalidate marvin only
+    cache.invalidate(MARVIN_REPO)
+
+    // Marvin needs a fresh fetch, clarity still cached
+    await cache.getRepo(MARVIN_REPO)
+    await cache.getRepo('G-Eskayo/clarity-captions')
+    expect(calls).toEqual({ marvin: 2, clarity: 1 })
+  })
+
+  it('invalidating with no repo clears everything (legacy behavior)', async () => {
+    const calls = { marvin: 0, clarity: 0 }
+    const cache = createListCache({
+      full: async (repo) => {
+        if (repo === MARVIN_REPO) calls.marvin++
+        if (repo === 'G-Eskayo/clarity-captions') calls.clarity++
+        return []
+      },
+      light: async (repo) => []
+    }, 5 * 60_000)
+
+    // Cache both repos
+    await cache.getRepo(MARVIN_REPO)
+    await cache.getRepo('G-Eskayo/clarity-captions')
+    expect(calls).toEqual({ marvin: 1, clarity: 1 })
+
+    // Invalidate everything (no repo arg)
+    cache.invalidate()
+
+    // Both need fresh fetches
+    await cache.getRepo(MARVIN_REPO)
+    await cache.getRepo('G-Eskayo/clarity-captions')
+    expect(calls).toEqual({ marvin: 2, clarity: 2 })
+  })
+
+  it('getAllRepos returns the union of all repos\' PRs', async () => {
+    const cache = createListCache({
+      full: async (repo) => [
+        { number: repo === MARVIN_REPO ? 1 : 7, title: `${repo} PR`, repo }
+      ],
+      light: async (repo) => []
+    }, 5 * 60_000)
+
+    const { prs } = await cache.getAllRepos([MARVIN_REPO, 'G-Eskayo/clarity-captions'])
+    expect(prs).toHaveLength(2)
+    expect(prs.map((p) => p.number)).toEqual([1, 7])
+  })
+
+  it('getAllRepos skips failing repos and records errors', async () => {
+    const cache = createListCache({
+      full: async (repo) => {
+        if (repo === 'G-Eskayo/bad') throw new Error('404')
+        return [{ number: 1, title: 'ok', repo }]
+      },
+      light: async (repo) => []
+    }, 5 * 60_000)
+
+    const { prs, errors } = await cache.getAllRepos([MARVIN_REPO, 'G-Eskayo/bad'])
+    expect(prs).toHaveLength(1)
+    expect(prs[0].repo).toBe(MARVIN_REPO)
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toMatchObject({ repo: 'G-Eskayo/bad' })
+  })
+
+  it('fresh: true bypasses the cache', async () => {
+    let callCount = 0
+    const cache = createListCache({
+      full: async (repo) => {
+        callCount++
+        return []
+      },
+      light: async (repo) => []
+    }, 5 * 60_000)
+
+    await cache.getRepo(MARVIN_REPO)
+    expect(callCount).toBe(1)
+
+    await cache.getRepo(MARVIN_REPO)
+    expect(callCount).toBe(1) // cached
+
+    await cache.getRepo(MARVIN_REPO, { fresh: true })
+    expect(callCount).toBe(2) // bypassed cache
+  })
+})

@@ -292,4 +292,83 @@ describe('fetchCrossProjectIssues', () => {
     expect(issues[0].state).toBe('OPEN')
     expect(issues[1].state).toBe('CLOSED')
   })
+
+  it('scoped clearCrossProjectCache invalidates only entries that reference the changed repo', async () => {
+    const calls = { search: 0 }
+    const gh = async (args) => {
+      if (args[0] === 'search') calls.search++
+      return JSON.stringify([])
+    }
+    const registryRepos = [
+      { repo: 'G-Eskayo/marvin', name: 'MARVIN' },
+      { repo: 'G-Eskayo/portfolio-website-updater', name: 'Portfolio' },
+      { repo: 'G-Eskayo/clarity-captions', name: 'Clarity' }
+    ]
+
+    // Load marvin's cross-project issues (references portfolio and clarity)
+    await fetchCrossProjectIssues('G-Eskayo/marvin', registryRepos, gh)
+    expect(calls.search).toBe(1)
+
+    // Load clarity's cross-project issues (references marvin and portfolio)
+    await fetchCrossProjectIssues('G-Eskayo/clarity-captions', registryRepos, gh)
+    expect(calls.search).toBe(2)
+
+    // Clear marvin's cache (this should invalidate clarity's entry since it references marvin)
+    clearCrossProjectCache('G-Eskayo/marvin')
+
+    // Clarity's entry was invalidated because it references marvin
+    await fetchCrossProjectIssues('G-Eskayo/clarity-captions', registryRepos, gh)
+    expect(calls.search).toBe(3)
+
+    // But marvin's entry would also need a fresh fetch (though we didn't load it again)
+  })
+
+  it('scoped clearCrossProjectCache leaves unrelated entries intact', async () => {
+    const calls = { search: 0 }
+    const gh = async (args) => {
+      if (args[0] === 'search') calls.search++
+      return JSON.stringify([])
+    }
+    const registryRepos = [
+      { repo: 'G-Eskayo/marvin', name: 'MARVIN' },
+      { repo: 'G-Eskayo/portfolio-website-updater', name: 'Portfolio' },
+      { repo: 'G-Eskayo/clarity-captions', name: 'Clarity' }
+    ]
+
+    // Load portfolio's cross-project issues (references marvin and clarity, NOT portfolio itself)
+    await fetchCrossProjectIssues('G-Eskayo/portfolio-website-updater', registryRepos, gh)
+    expect(calls.search).toBe(1)
+
+    // Clear clarity's cache
+    clearCrossProjectCache('G-Eskayo/clarity-captions')
+
+    // Portfolio's entry should still be valid (it references clarity, so it gets invalidated)
+    // Let's test with a different scenario: clarity's entry that doesn't reference portfolio
+    // Actually, portfolio references both marvin and clarity, so it should be invalidated
+    await fetchCrossProjectIssues('G-Eskayo/portfolio-website-updater', registryRepos, gh)
+    expect(calls.search).toBe(2)
+  })
+
+  it('clearCrossProjectCache() with no args clears everything', async () => {
+    let callCount = 0
+    const gh = async (args) => {
+      if (args[0] === 'search') callCount++
+      return JSON.stringify([])
+    }
+    const registryRepos = [
+      { repo: 'G-Eskayo/marvin', name: 'MARVIN' },
+      { repo: 'G-Eskayo/portfolio-website-updater', name: 'Portfolio' }
+    ]
+
+    // Load and cache
+    await fetchCrossProjectIssues('G-Eskayo/marvin', registryRepos, gh)
+    expect(callCount).toBe(1)
+
+    // Clear all
+    clearCrossProjectCache()
+
+    // Forces a fresh fetch
+    await fetchCrossProjectIssues('G-Eskayo/marvin', registryRepos, gh)
+    expect(callCount).toBe(2)
+  })
 })

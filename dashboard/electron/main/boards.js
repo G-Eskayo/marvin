@@ -18,8 +18,25 @@ const projectId = (repo) => repo.split('/')[1].toLowerCase().replace(/[^a-z0-9]+
 
 const CROSS_PROJECT_TTL_MS = 5 * 60 * 1000
 const crossProjectCache = new Map()
+// Reverse index: repo -> Set<cacheKey> for entries that reference this repo
+const crossProjectCacheIndex = new Map()
 
-export function clearCrossProjectCache() { crossProjectCache.clear() }
+export function clearCrossProjectCache(repo) {
+  if (repo) {
+    // Clear entries that reference this repo
+    const keys = crossProjectCacheIndex.get(repo)
+    if (keys) {
+      for (const key of keys) {
+        crossProjectCache.delete(key)
+      }
+      crossProjectCacheIndex.delete(repo)
+    }
+  } else {
+    // Legacy/unknown source: clear everything
+    crossProjectCache.clear()
+    crossProjectCacheIndex.clear()
+  }
+}
 
 export function readRegistry(file = REGISTRY_PATH, overrides = readOverrides()) {
   if (!existsSync(file)) return []
@@ -102,8 +119,15 @@ export async function fetchCrossProjectIssues(repo, registryRepos = [], gh) {
     repo: issue.repository.nameWithOwner
   }))
 
-  // Cache the result.
+  // Cache the result and update the reverse index.
   crossProjectCache.set(cacheKey, { at: Date.now(), issues })
+  // Index each repo referenced in this cache entry
+  for (const r of otherRepos) {
+    if (!crossProjectCacheIndex.has(r)) {
+      crossProjectCacheIndex.set(r, new Set())
+    }
+    crossProjectCacheIndex.get(r).add(cacheKey)
+  }
   return issues
 }
 

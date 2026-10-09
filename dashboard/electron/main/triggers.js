@@ -67,3 +67,11 @@ export function createReconciler({ lastEmitAt, record, now = Date.now }) {
 export function refetchesGithub(trigger) {
   return !String(trigger?.source ?? '').startsWith('file:')
 }
+
+// Extract the repo from a trigger's source. Returns null if the trigger is not GitHub-sourced
+// (e.g. file:, poll, ping, unknown) so the caller can fall back to a full clear (safe default).
+export function repoFromTrigger(trigger) {
+  const source = String(trigger?.source ?? '')
+  const match = source.match(/^github:(.+)$/)
+  return match ? match[1] : null
+}

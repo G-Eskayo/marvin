@@ -41,21 +41,59 @@ export function prListArgs(repo, { light = false } = {}) {
 
 // One short-lived cache in front of the GitHub listing, shared by the status dot (every minute), the MR list
 // and the board. A fresh FULL listing is a superset of a light one, so it answers both. A merge passes
-// fresh:true so it never acts on stale data. (`fetchers` = { full, light }, each returning the PR array.)
+// fresh:true so it never acts on stale data. Per-repo cache: each repo's PRs are cached separately,
+// so invalidating one repo doesn't force re-fetches of all others.
+// (`fetchers` = { full(repo), light(repo) }, each returning the PR array for that repo.)
 export function createListCache(fetchers, ttlMs) {
-  const slot = { full: null, light: null }
+  const slots = new Map()
+
+  function getSlot(repo) {
+    if (!slots.has(repo)) {
+      slots.set(repo, { full: null, light: null })
+    }
+    return slots.get(repo)
+  }
+
   return {
-    invalidate() { slot.full = null; slot.light = null },
-    async get({ light = false, now = Date.now(), fresh = false } = {}) {
+    // Invalidate a specific repo's cache, or all if repo is null/undefined
+    invalidate(repo) {
+      if (repo) {
+        const slot = slots.get(repo)
+        if (slot) {
+          slot.full = null
+          slot.light = null
+        }
+      } else {
+        // Legacy/unknown source path: clear everything
+        slots.clear()
+      }
+    },
+    // Get PRs for a specific repo
+    async getRepo(repo, { light = false, now = Date.now(), fresh = false } = {}) {
+      const slot = getSlot(repo)
       const valid = (e) => e && now - e.at < ttlMs
       if (!fresh) {
         if (valid(slot.full)) return slot.full.value
         if (light && valid(slot.light)) return slot.light.value
       }
       const kind = light ? 'light' : 'full'
-      const value = await fetchers[kind]()
+      const value = await fetchers[kind](repo)
       slot[kind] = { at: now, value }
       return value
+    },
+    // Public API: get PRs from all repos (union). Used by listOpenPrs.
+    async getAllRepos(repos, { light = false, now = Date.now(), fresh = false } = {}) {
+      const all = []
+      const errors = []
+      for (const repo of repos) {
+        try {
+          const prs = await this.getRepo(repo, { light, now, fresh })
+          all.push(...prs)
+        } catch (err) {
+          errors.push({ repo, message: String(err.message || err) })
+        }
+      }
+      return { prs: all, errors }
     }
   }
 }
