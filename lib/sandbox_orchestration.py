@@ -136,6 +136,7 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
         f"and every acceptance criterion. Also read its comments ({view} --comments): "
         f"any denial feedback or earlier failure notes there are requirements for this attempt. "
         f"Plan only -- do not edit any files yet. "
+        f"Before writing the design doc, read the current contents of every file your 'What to build' section and acceptance criteria say you will touch. "
         # marvin#276: the executor sees the north stars only through this section of the plan.
         f"Open the plan with a short '## North-star fit' section, against the north stars above: what it reuses "
         f"before adding anything, why it is the simplest sufficient approach, where it saves or spends tokens, and "
@@ -147,17 +148,33 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
         f"mistakes). Test against the real collaborator wherever a mock could hide its rules. Verify fails when code "
         f"changes without a test changing."
     )
+
+    # Check if a prior design doc exists (true only on iteration ≥2 within one execute_ticket call)
+    design_doc_path = _design_doc_path(worktree_path, ticket_ref)
+    prior_doc = None
+    if design_doc_path.exists():
+        prior_doc = design_doc_path.read_text()
+
     if feedback is not None:
         plan_prompt += (
             f" A previous attempt's metrics comparison came back as: {feedback}. "
             f"Adjust the plan to address this before trying again."
         )
+        if prior_doc is not None:
+            plan_prompt += (
+                f"\n\nHere is the prior attempt's design doc:\n\n{prior_doc}\n\n"
+                f"Write a genuinely revised design doc addressing the failure above — do not repeat the same plan unchanged."
+            )
     ticket_number = _parse_ticket_number(ticket_ref)
     plan, plan_cost = _launch(
         "ticket-planner", plan_prompt, ticket_ref=ticket_ref, model=FLAGSHIP_MODEL,
         allowed_tools=_PLAN_ALLOWED_TOOLS, cwd=worktree_path, timeout=PLAN_TIMEOUT_S, env=env,
     )
     _stage(ticket_ref, "executing", "started", "planning call", cost_usd=plan_cost)
+
+    # Write design doc to disk for persistence across iterations and inclusion in PR diff
+    design_doc_path.parent.mkdir(parents=True, exist_ok=True)
+    design_doc_path.write_text(plan)
 
     if profile is None:
         import_advice = (
@@ -220,6 +237,17 @@ def _preserve_prior_attempt(repo_path: Path, worktree_path: "Path | list[Path]",
 
 def _branch_for(ticket_ref: str) -> str:
     return f"pipeline/{ticket_ref.lower().replace(' ', '-')}"
+
+
+def _doc_slug(ticket_ref: str) -> str:
+    """Generate a filesystem-safe slug for the design doc, reusing _branch_for's sanitization."""
+    return _branch_for(ticket_ref).replace("/", "-").replace("#", "-")
+
+
+def _design_doc_path(worktree_path: Path, ticket_ref: str) -> Path:
+    """Return the path to the design doc for this ticket in the worktree."""
+    slug = _doc_slug(ticket_ref)
+    return worktree_path / "docs" / "design" / f"{slug}.md"
 
 
 def _preflight_worktree(worktree_path: Path, ticket_ref: str) -> None:
