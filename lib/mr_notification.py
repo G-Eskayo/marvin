@@ -47,11 +47,9 @@ DASHBOARD_REFRESH_TIMEOUT_S = 3
 
 def _default_push_notify(message: str) -> None:
     prompt = f"Call the PushNotification tool with the message '{message}' and status proactive."
-    subprocess.run(
-        ["claude", "-p", prompt, "--model", "claude-haiku-4-5-20251001",
-         "--allowedTools", "PushNotification"],
-        capture_output=True, text=True, timeout=PUSH_TIMEOUT_S,
-    )
+    import marvin_launcher
+    marvin_launcher.launch("utility-call", prompt, model="claude-haiku-4-5-20251001", permission_mode=None,
+                           allowed_tools="PushNotification", timeout=PUSH_TIMEOUT_S)
 
 
 def _default_dashboard_refresh_ping() -> None:

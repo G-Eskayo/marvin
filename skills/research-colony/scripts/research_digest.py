@@ -13,7 +13,7 @@ SAFETY_MONITOR_SCRIPTS = Path.home() / ".agents" / "skills" / "safety-monitor" /
 
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 from notify import notify  # noqa: E402
-from claude_bin import resolve_claude_bin as _resolve_claude_bin  # noqa: E402
+import marvin_launcher  # noqa: E402
 
 sys.path.insert(0, str(SAFETY_MONITOR_SCRIPTS))
 try:
@@ -116,8 +116,7 @@ def generate() -> Path | None:
     prompt = DIGEST_PROMPT.format(correlated=correlated_text, all_items=all_text)
 
     try:
-        claude_bin = _resolve_claude_bin()
-        proc = subprocess.run(
+        result = marvin_launcher.launch("background-analyst", prompt,
             # Write/Edit blocked: same bug as daily_digest.py (found
             # 2026-07-06) — without this, the model tries to persist the
             # digest itself via the Write tool, gets silently denied (no TTY
@@ -125,20 +124,16 @@ def generate() -> Path | None:
             # into the digest body instead of returning plain text. This
             # script's own file write below is the only thing that should
             # ever write the file.
-            [claude_bin, "-p", prompt, "--output-format", "text",
-             "--disallowedTools", "Write,Edit"],
-            capture_output=True,
-            text=True,
-            timeout=120,
+            permission_mode=None, disallowed_tools="Write,Edit", timeout=120,
         )
     except Exception as exc:
         print(f"[colony] claude call failed: {exc}", file=sys.stderr)
         return None
-    if proc.returncode != 0 or not proc.stdout.strip():
-        print(f"[colony] claude call failed: {proc.stderr[:200]}", file=sys.stderr)
+    if result.exit_code != 0 or not result.text.strip():
+        print(f"[colony] claude call failed: {(result.stderr or result.text)[:200]}", file=sys.stderr)
         return None
 
-    body = proc.stdout.strip()
+    body = result.text.strip()
 
     # Score the synthesised digest before it ships — the actual failure mode
     # this guards is a relevance claim that doesn't survive reading the

@@ -22,8 +22,7 @@ HANDOFFS_DIR = CLAUDE_DIR / "handoffs"
 
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 from notify import notify  # noqa: E402
-from claude_bin import resolve_claude_bin as _resolve_claude_bin  # noqa: E402
-import north_stars  # noqa: E402
+import marvin_launcher  # noqa: E402
 
 RESULTS_MD   = Path.home() / "marvin-bench" / "RESULTS.md"
 QA_SCRIPTS   = Path.home() / ".agents" / "skills" / "qa-agent" / "scripts"
@@ -180,9 +179,6 @@ def reviewer_health_summary() -> str:
 
 DIGEST_PROMPT_TEMPLATE = """You are MARVIN's daily improvement analyst. Your job is to review the state of the MARVIN agent system and generate a focused, actionable daily digest.
 
---- NORTH STARS (docs/north-stars.md) ---
-{north_stars}
-
 --- ROADMAP STATUS ---
 {roadmap}
 
@@ -233,8 +229,7 @@ def call_claude(prompt: str) -> str:
     # why this routinely takes 90-120s+. Found 2026-07-03: the old 120s cap was
     # tight enough that a normal run timed out; timeout raised to give headroom.
     try:
-        claude_bin = _resolve_claude_bin()
-        proc = subprocess.run(
+        result = marvin_launcher.launch("background-analyst", prompt,
             # Read/Grep/Bash stay available — that's the deliberate agentic
             # grounding this relies on (see comment above). Write/Edit are
             # blocked: found 2026-07-06, without this the model attempts to
@@ -243,15 +238,13 @@ def call_claude(prompt: str) -> str:
             # that failure into the digest body instead of returning plain
             # text — this script's own OUT_FILE.write_text() below is the
             # only thing that should ever write the file.
-            [claude_bin, "-p", prompt, "--output-format", "text",
-             "--disallowedTools", "Write,Edit"],
-            capture_output=True, text=True, timeout=240,
+            permission_mode=None, disallowed_tools="Write,Edit", timeout=240,
         )
     except Exception as exc:
         return f"(claude call failed: {exc})"
-    if proc.returncode != 0 or not proc.stdout.strip():
-        return f"(claude call failed: {proc.stderr[:200] or 'empty output, rc=' + str(proc.returncode)})"
-    return proc.stdout.strip()
+    if result.exit_code != 0 or not result.text.strip():
+        return f"(claude call failed: {result.stderr[:200] or 'empty output, rc=' + str(result.exit_code)})"
+    return result.text.strip()
 
 
 # ── main ───────────────────────────────────────────────────────────────────────
@@ -268,7 +261,6 @@ def main() -> None:
     reviewer_health = reviewer_health_summary()
 
     prompt = DIGEST_PROMPT_TEMPLATE.format(
-        north_stars=north_stars.load(),
         roadmap=roadmap_summary(),
         handoffs=recent_handoffs_summary(),
         qa_kb=qa_kb_summary(),

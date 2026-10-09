@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from calibrate import get_tau  # noqa: E402
 
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
-from claude_bin import resolve_claude_bin as _resolve_claude_bin  # noqa: E402
+import marvin_launcher  # noqa: E402
 
 CLAUDE_DIR = Path.home() / ".claude"
 QUARANTINE_FILE = CLAUDE_DIR / "quarantine.md"
@@ -50,7 +50,6 @@ def verify(artifact_text: str, loop_name: str, source_context: str = "") -> floa
     """
     try:
         rubric = _load_rubric(loop_name)
-        claude_bin = _resolve_claude_bin()
         context_block = (
             f"\n\n--- SOURCE DATA THE ARTIFACT WAS GENERATED FROM ---\n{source_context}\n"
             "Use this to check claims for real — a specific claim that matches this data is "
@@ -73,18 +72,16 @@ def verify(artifact_text: str, loop_name: str, source_context: str = "") -> floa
         # 60s timeout that had already been silently failing open a few
         # times. Timeout raised to 120s to give real margin even in the
         # clean case, which alone measured close to 60s with no slack.
-        proc = subprocess.run(
-            [claude_bin, "-p", prompt, "--model", "haiku", "--output-format", "text", "--tools", ""],
-            capture_output=True, text=True, timeout=120,
-        )
-        if proc.returncode != 0 or not proc.stdout.strip():
+        # A Judge: no MARVIN layers, its own empty folder (ADR 0059).
+        result = marvin_launcher.launch("judge", prompt, model="haiku", tools="", permission_mode=None, timeout=120)
+        if result.exit_code != 0 or not result.text.strip():
             print(f"[safety-monitor] verify() failed open for '{loop_name}': "
-                  f"rc={proc.returncode} stderr={proc.stderr[:200]!r}", file=sys.stderr)
+                  f"rc={result.exit_code} stderr={result.stderr[:200]!r}", file=sys.stderr)
             return 0.0
-        match = re.search(r"(\d*\.?\d+)", proc.stdout.strip())
+        match = re.search(r"(\d*\.?\d+)", result.text.strip())
         if not match:
             print(f"[safety-monitor] verify() couldn't parse a score for "
-                  f"'{loop_name}' from output {proc.stdout[:100]!r} — failing open",
+                  f"'{loop_name}' from output {result.text[:100]!r} — failing open",
                   file=sys.stderr)
             return 0.0
         return max(0.0, min(1.0, float(match.group(1))))

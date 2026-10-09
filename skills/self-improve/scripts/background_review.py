@@ -27,6 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 from hook_errors import log_hook_error  # noqa: E402
 from claude_bin import resolve_claude_bin as _resolve_claude_bin  # noqa: E402
+import marvin_launcher  # noqa: E402
 
 HANDOFF_DIR = Path.home() / ".claude" / "handoffs"
 AGENTS_DIR = Path.home() / ".agents"
@@ -121,7 +122,7 @@ def run_review(handoff_content: str) -> None:
     can parse actual success/failure counts instead of guessing from raw
     output."""
     try:
-        claude_bin = _resolve_claude_bin()
+        _resolve_claude_bin()  # fail early and log it when claude is missing
     except FileNotFoundError as exc:
         with LOG_FILE.open("a") as log:
             log.write(f"\n=== run {datetime.now(timezone.utc).isoformat()} ===\n")
@@ -134,22 +135,14 @@ def run_review(handoff_content: str) -> None:
     with LOG_FILE.open("a") as log:
         log.write(f"\n=== run {datetime.now(timezone.utc).isoformat()} ===\n")
         log.flush()
-        proc = subprocess.run(
-            [
-                claude_bin, "-p", prompt,
-                "--tools", "Read,Write,Edit",
-                # No TTY here to approve anything, and none of Read/Write/
-                # Edit needs approving anyway — Bash/WebFetch/Agent are
-                # simply not in the toolset above, which is the actual
-                # safety boundary. Without this the run just stalls
-                # waiting on a prompt no one can answer (confirmed live).
-                "--permission-mode", "bypassPermissions",
-                "--output-format", "text",
-            ],
-            stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-        )
-        log.write(f"=== end (exit {proc.returncode}) ===\n")
-        if proc.returncode == 0:
+        # No TTY here to approve anything, and none of Read/Write/Edit needs approving anyway —
+        # Bash/WebFetch/Agent are simply not in the toolset, which is the actual safety boundary.
+        # Without bypassPermissions the run just stalls on a prompt no one can answer (confirmed live).
+        result = marvin_launcher.launch("background-analyst", prompt, tools="Read,Write,Edit",
+                                        permission_mode="bypassPermissions")
+        log.write(result.text + (f"\n{result.stderr}" if result.stderr else "") + "\n")
+        log.write(f"=== end (exit {result.exit_code}) ===\n")
+        if result.exit_code == 0:
             _verify_and_reconcile(before, log)
 
 

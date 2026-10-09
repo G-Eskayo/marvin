@@ -28,9 +28,12 @@ def test_missing_file_fails_loudly(tmp_path):
         north_stars.load(tmp_path / "nope.md")
 
 
-def test_daily_digest_prompt_reads_the_file_rather_than_copying_it():
-    src = (AGENTS / "skills/improve/scripts/daily_digest.py").read_text()
-    assert "north_stars" in src
+def test_every_kind_with_the_north_stars_layer_gets_the_file():
+    # The daily digest is a Background analyst, so the launcher hands it the north stars (marvin#303).
+    import marvin_launcher as ml
+    for name, kind in ml.KINDS.items():
+        if "north-stars" in kind.layers and name != "interactive":
+            assert north_stars.load() in ml.assemble_context(name)
 
 
 # Phrases that only appear when someone pastes a north star into a prompt.

@@ -762,7 +762,8 @@ def test_claude_is_resolved_even_when_the_inherited_path_lacks_it(monkeypatch, t
         seen["cmd"] = cmd
         return subprocess.CompletedProcess(cmd, 0, stdout='{"result": "ok", "total_cost_usd": 0}', stderr="")
     monkeypatch.setattr(so.subprocess, "run", fake_run)
-    text, _cost = so._run_claude(["claude", "-p", "hi"], env={"PATH": "/usr/bin:/bin"})
+    text, _cost = so._launch("utility-call", "hi", ticket_ref="T-1", cwd=tmp_path, model="haiku", allowed_tools="",
+                             timeout=5, env={"PATH": "/usr/bin:/bin"})
     assert text == "ok"
     assert seen["cmd"][0] == str(fake)
 
@@ -863,7 +864,7 @@ def test_preflight_refuses_another_tickets_worktree(tmp_path, monkeypatch):
 def test_a_failed_preflight_spends_no_tokens(tmp_path, monkeypatch):
     monkeypatch.setattr(so, "WORKTREES_ROOT", tmp_path)
     launched = []
-    monkeypatch.setattr(so, "_run_claude", lambda *a, **k: launched.append(a) or ("", 0.0))
+    monkeypatch.setattr(so, "_launch", lambda *a, **k: launched.append(a) or ("", 0.0))
     with pytest.raises(RuntimeError):
         so._default_executor(tmp_path / "missing", "G-Eskayo/marvin#999", None)
     assert launched == []
@@ -873,10 +874,9 @@ def test_a_failed_preflight_spends_no_tokens(tmp_path, monkeypatch):
 def test_the_prompt_names_the_exact_directory_the_agent_is_launched_in(tmp_path, monkeypatch):
     _, wt = _real_worktree(tmp_path, monkeypatch)
     calls = []
-    monkeypatch.setattr(so, "_run_claude", lambda cmd, **k: calls.append((cmd, k.get("cwd"))) or ("a plan", 0.0))
+    monkeypatch.setattr(so, "_launch", lambda kind, prompt, **k: calls.append((prompt, k.get("cwd"))) or ("a plan", 0.0))
     so._default_executor(wt, "G-Eskayo/marvin#999", None)
     assert len(calls) == 2
-    for cmd, cwd in calls:
-        prompt = cmd[cmd.index("-p") + 1]
+    for prompt, cwd in calls:
         assert cwd == wt
         assert str(wt) in prompt
