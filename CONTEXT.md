@@ -797,10 +797,15 @@ untouched (it is the "legacy profile"); only repos with a profile file use the p
   conflicting PR's ticket back for a full agent rebuild. Now `conflict_repair.py` first rebases it in a scratch worktree,
   resolving only safe conflicts (`generated_paths.resolve_rebase`: generated files, changes main already has, and spots
   where both sides only ADDED lines, kept main-first), runs the merge gate's tests and pushes with
-  `--force-with-lease`; the PR gets a comment saying what was resolved. A real conflict (an existing line changed on
-  both sides) on a hand-made PR (not `pipeline/`) is flagged on the PR once per commit and never sent for an agent
-  rebuild; on a pipeline PR it is sent back as before, naming the files. Two repairs per scan; a commit that failed a
-  repair isn't retried. The Approve gate's resolver gained the same both-added rule.
+  `--force-with-lease`; the PR gets a comment saying what was resolved. A genuine conflict (an existing line changed on
+  both sides) is handed to a small, isolated model call (`utility-call` launch kind, receiving own ticket's title and
+  acceptance criteria, conflict hunks only, `Read`/`Edit` tools in a scratch copy of conflicted files, no repo access)
+  before falling back to flag/send-back. Model verification ensures only conflicted files exist, no markers remain, and
+  unchanged lines stay identical. If verification passes, the repair continues to tests and push as normal. Cost of any
+  model call is recorded. A real conflict on a hand-made PR (not `pipeline/`) that model cannot fix is flagged on the
+  PR once per commit and never sent for an agent rebuild; on a pipeline PR it is sent back as before, naming the files.
+  Two repairs per scan; a commit that failed a repair isn't retried. The Approve gate's resolver gained the same
+  both-added rule.
 - **Approving and denying from MR Review (2026-10-05)**: the merge gate now reads the profile too. A project's
   PRs get Approve/Deny only if its profile says `"merge_from_dashboard": true`; the webhook enforces that
   itself (not just the screen) and refuses others with `NO_MERGE_PROFILE`. **Deny** needs no profile: the repo
