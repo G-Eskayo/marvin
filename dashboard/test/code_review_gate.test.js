@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
+import path from 'path'
 import { assertCodeReviewClean } from '../webhook-server/code_review_gate.js'
 import { MergeFailure } from '../webhook-server/failure.js'
 
@@ -31,6 +32,24 @@ describe('assertCodeReviewClean', () => {
         action: 'reengage',
         message: expect.stringContaining('lib/foo.py:42')
       }
+    })
+  })
+
+  // The mini has no bare `python` on the merge server's PATH: the gate must run MARVIN's venv interpreter,
+  // like every other gate in merge.js (PR #354 hit GATE_INFRA on every Approve because of this).
+  it('runs the script with the venv interpreter, never a bare python', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: JSON.stringify({ clean: true, findings: [] }) })
+    await assertCodeReviewClean(PR, exec, scriptPath)
+    const [cmd, args] = exec.mock.calls[0]
+    expect(cmd).toMatch(/\/venv\/bin\/python$/)
+    expect(path.isAbsolute(cmd)).toBe(true)
+    expect(args).toEqual([scriptPath, 'review', PR])
+  })
+
+  it('says what failed when the script cannot run, so the next failure is diagnosable', async () => {
+    const exec = vi.fn().mockRejectedValue(new Error('spawn python ENOENT'))
+    await expect(assertCodeReviewClean(PR, exec, scriptPath)).rejects.toMatchObject({
+      payload: { code: 'GATE_INFRA', action: 'escalate', remediation: expect.stringContaining('spawn python ENOENT') }
     })
   })
 
