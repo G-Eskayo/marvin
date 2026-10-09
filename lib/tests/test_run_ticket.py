@@ -732,3 +732,57 @@ def test_release_claim_passes_run_id_from_generic_failure(monkeypatch, tmp_path)
     rt.run(20)
 
     assert release_calls == [(20, rt.REPO, "runABC")]
+
+
+# ── TaskListTooVague handling (marvin#94) ──────────────────────────────────
+
+def test_too_vague_ticket_posts_comment_but_does_not_release_claim(monkeypatch):
+    """AC4: ticket is too vague to plan -> comment posted, claim NOT released, redispatch triggered."""
+    from sandbox_orchestration import TaskListTooVague
+
+    def boom(*a, **k):
+        raise TaskListTooVague("Not enough detail to break into concrete steps")
+
+    monkeypatch.setattr(rt, "execute_ticket", boom)
+
+    calls = {"comment": [], "release": 0, "breaker": 0, "park": 0}
+    monkeypatch.setattr(rt.subprocess, "run", lambda cmd, **kw: calls["comment"].append(cmd) if "issue" in cmd else None)
+    monkeypatch.setattr(rt, "_release_claim", lambda n, repo=rt.REPO, run_id=None: calls.update(release=n))
+    monkeypatch.setattr(rt, "_park_stuck_ticket", lambda *a, **k: calls.update(park=a[0]))
+    import failure_breaker as fb
+    monkeypatch.setattr(fb, "record_failure", lambda *a, **k: calls.update(breaker=calls["breaker"] + 1))
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+
+    out = rt.run(20)
+
+    # NOT released (different from env_missing/timeout)
+    assert calls["release"] == 0
+    # Comment IS posted (different from env_missing)
+    assert len(calls["comment"]) == 1
+    assert "gh" in calls["comment"][0] and "issue" in calls["comment"][0] and "comment" in calls["comment"][0]
+    assert "Automated planning could not derive a concrete task list" in calls["comment"][0][-1]
+    # No park (not a repeated failure)
+    assert calls["park"] == 0
+    # No breaker strike (ticket issue, not system issue)
+    assert calls["breaker"] == 0
+    # Outcome reflects the too_vague case
+    assert out["raised"] is False
+    assert "Not enough detail" in out["reason"]
+
+
+def test_too_vague_ticket_still_triggers_redispatch(monkeypatch):
+    """Even a too-vague ticket should redispatch so other tickets can run."""
+    from sandbox_orchestration import TaskListTooVague
+
+    def boom(*a, **k):
+        raise TaskListTooVague("Ambiguous requirement")
+
+    monkeypatch.setattr(rt, "execute_ticket", boom)
+    monkeypatch.setattr(rt.subprocess, "run", lambda cmd, **kw: None)
+
+    redispatched = []
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: redispatched.append(True))
+
+    rt.run(20)
+
+    assert redispatched == [True]

@@ -43,6 +43,12 @@ import ticket_stages as ts
 
 WORKTREES_ROOT = Path.home() / ".agents-pipeline-worktrees"
 
+
+class TaskListTooVague(RuntimeError):
+    """Raised when the planning model cannot produce a concrete task list for a ticket."""
+    pass
+
+
 FLAGSHIP_MODEL = "claude-sonnet-5"
 HAIKU_MODEL = "claude-haiku-4-5-20251001"
 # Measured 2026-10-05 over 41 real planning calls: finished ones took 85-298s, many at 255-298s, and 8 hit the
@@ -153,6 +159,10 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
         f"not ask in prose: list it in the plan as a Decisions section in the format of docs/agents/decisions-format.md "
         f"(\"<!-- marvin:decisions -->\", \"### id: question\", \"- [ ]\" options), so the PR can carry it and he answers "
         f"with buttons; a PR that asks in prose can't be approved."
+        f"\n\nEnd your response with a '## Task List' section: a concrete, numbered/checkbox breakdown of the implementation "
+        f"steps (one per discrete unit of work, consistent with the tests-first list above). "
+        f"If the ticket is too vague to commit to a concrete task list, do not invent one — instead write '## Task List' "
+        f"followed by a single line starting with 'TOO_VAGUE:' and your reason."
     )
 
     # Check if a prior design doc exists (true only on iteration ≥2 within one execute_ticket call)
@@ -187,6 +197,19 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
     design_doc_path.parent.mkdir(parents=True, exist_ok=True)
     design_doc_path.write_text(plan)
 
+    # Split plan into design doc + task list, extracting the task list body
+    task_list_match = re.search(r"##\s*Task List\s*\n(.*)", plan, re.DOTALL)
+    task_list_body = task_list_match.group(1).strip() if task_list_match else ""
+
+    # Check for the "too vague" sentinel
+    if not task_list_body or task_list_body.startswith("TOO_VAGUE:"):
+        reason = task_list_body[len("TOO_VAGUE:"):].strip() if task_list_body.startswith("TOO_VAGUE:") else "(no task list section provided)"
+        raise TaskListTooVague(f"Planning model could not produce a concrete task list: {reason}")
+
+    # Write task list to disk
+    task_list_path = _task_list_path(worktree_path, ticket_ref)
+    task_list_path.write_text(task_list_body)
+
     if profile is None:
         import_advice = (
             f"If a new module must import a sibling lib "
@@ -198,6 +221,9 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
     else:
         import_advice = "Keep every change inside this working tree; the project's real checkout must not be touched."
         allowed_tools, disallowed_tools = pp.executor_tools(profile, clone)
+
+    # Read task list from disk to drive execution (not the in-memory plan string)
+    task_list_content = task_list_path.read_text()
     exec_prompt = (
         f"{autonomy_note}{project_notes} Your job here stops at implementing the plan and "
         f"verifying it locally (edit files, run the relevant tests) -- do NOT "
@@ -206,7 +232,7 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
         f"do it yourself will just leave you stuck with no one to grant it. "
         f"Write files only inside your current working directory, never to an "
         f"absolute path elsewhere. {import_advice}\n\n"
-        f"Implement this plan in the current working tree:\n\n{plan}"
+        f"Implement this plan in the current working tree:\n\n{task_list_content}"
     )
     _, exec_cost = _launch(
         "ticket-executor", exec_prompt, ticket_ref=ticket_ref, model=HAIKU_MODEL, allowed_tools=allowed_tools,
@@ -259,6 +285,12 @@ def _design_doc_path(worktree_path: Path, ticket_ref: str) -> Path:
     """Return the path to the design doc for this ticket in the worktree."""
     slug = _doc_slug(ticket_ref)
     return worktree_path / "docs" / "design" / f"{slug}.md"
+
+
+def _task_list_path(worktree_path: Path, ticket_ref: str) -> Path:
+    """Return the path to the task list file for this ticket in the worktree, mirroring _design_doc_path."""
+    slug = _doc_slug(ticket_ref)
+    return worktree_path / "docs" / "design" / f"{slug}-tasks.md"
 
 
 def _preflight_worktree(worktree_path: Path, ticket_ref: str) -> None:
