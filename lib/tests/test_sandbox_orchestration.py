@@ -942,3 +942,206 @@ def test_docs_only_work_passes_verify(git_repo, metrics_dir):
     result = so.execute_ticket("TICKET-1", "test-subsystem", measure=_improving(),
                                executor=ex, repo_path=git_repo)
     assert result["passing"] is True
+
+
+# ── design doc persistence (marvin#93) ──────────────────────────────────────
+
+def test_doc_slug_sanitizes_like_branch_naming():
+    """Helper function test: slug reuses branch naming sanitization."""
+    assert so._doc_slug("G-Eskayo/marvin#42") == "pipeline-g-eskayo-marvin-42"
+    assert so._doc_slug("TICKET-1") == "pipeline-ticket-1"
+
+
+def test_design_doc_path_in_worktree():
+    """Helper function test: path is under docs/design/ in the worktree."""
+    tmp = Path("/tmp/test-wt")
+    path = so._design_doc_path(tmp, "G-Eskayo/marvin#42")
+    assert path.parent.name == "design"
+    assert path.parent.parent.name == "docs"
+    assert path.name == "pipeline-g-eskayo-marvin-42.md"
+
+
+def test_default_executor_writes_design_doc_to_disk(monkeypatch, tmp_path):
+    """AC2: executor writes the plan to docs/design/<slug>.md in the worktree."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "## North-star fit\nRobust plan here\n## Tests\nTest all edge cases"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+    so._default_executor(tmp_path, "G-Eskayo/marvin#42", None)
+
+    design_doc = tmp_path / "docs" / "design" / "pipeline-g-eskayo-marvin-42.md"
+    assert design_doc.exists(), f"Expected file at {design_doc}, but it doesn't exist"
+    assert "Robust plan here" in design_doc.read_text()
+
+
+def test_design_doc_slug_sanitizes_ticket_ref_like_branch_naming(monkeypatch, tmp_path):
+    """Slug reuses _branch_for's sanitization: /→-, #→-, lowercase."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "plan"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+    so._default_executor(tmp_path, "G-Eskayo/clarity-captions#17", None)
+
+    design_doc = tmp_path / "docs" / "design" / "pipeline-g-eskayo-clarity-captions-17.md"
+    assert design_doc.exists()
+
+
+def test_planning_prompt_instructs_to_read_current_file_state_before_writing_doc(monkeypatch, tmp_path):
+    """AC1: prompt explicitly grounds in file state."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "plan"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+    so._default_executor(tmp_path, "TICKET-1", None)
+
+    plan_prompt = calls[0][calls[0].index("-p") + 1]
+    assert "current contents of every file" in plan_prompt.lower()
+    assert "before writing" in plan_prompt.lower() or "read" in plan_prompt.lower()
+
+
+def test_second_iteration_reads_prior_design_doc_and_includes_it_in_prompt(monkeypatch, tmp_path):
+    """AC4: when feedback exists and prior doc on disk, include prior doc + revision instruction."""
+    prompts_seen = []
+
+    def fake_run(cmd, **kwargs):
+        prompts_seen.append(cmd)
+        class R:
+            stdout = "revised plan from iteration 2"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+
+    # First call: no feedback, no prior doc
+    so._default_executor(tmp_path, "TICKET-1", feedback=None)
+    assert len(prompts_seen) == 2  # plan + exec
+    first_plan_prompt = prompts_seen[0][prompts_seen[0].index("-p") + 1]
+    assert "read the current contents" in first_plan_prompt.lower()
+
+    # Second call: with feedback and prior doc should exist now
+    so._default_executor(tmp_path, "TICKET-1", feedback={"verdict": "regressed", "metrics": {}})
+    assert len(prompts_seen) == 4  # plan1, exec1, plan2, exec2
+    second_plan_prompt = prompts_seen[2][prompts_seen[2].index("-p") + 1]
+    # Should include the prior doc's content
+    assert "revised plan from iteration 2" in second_plan_prompt or "prior attempt" in second_plan_prompt.lower()
+    # Should include revision instruction
+    assert "revised" in second_plan_prompt.lower() or "do not repeat" in second_plan_prompt.lower()
+
+
+def test_first_iteration_does_not_fail_when_no_prior_design_doc_exists(monkeypatch, tmp_path):
+    """Misuse case: feedback is None, no file on disk yet, should not crash."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "plan"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+    result = so._default_executor(tmp_path, "TICKET-1", None)
+    # Should not raise
+    assert result == "plan"
+
+
+def test_empty_plan_still_gets_written_to_disk(monkeypatch, tmp_path):
+    """Misuse case: model returns empty string, should still write (empty) rather than crash."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = ""
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+    so._default_executor(tmp_path, "TICKET-1", None)
+
+    design_doc = tmp_path / "docs" / "design" / "pipeline-ticket-1.md"
+    assert design_doc.exists()
+    assert design_doc.read_text() == ""
+
+
+def test_design_doc_written_by_default_executor_when_passed_through_execute_ticket(monkeypatch, tmp_path):
+    """AC3: design doc is written by _default_executor and would be picked up by mr_raiser's git add -A."""
+    prompts = []
+
+    def fake_run(cmd, **kwargs):
+        prompts.append(cmd)
+        class R:
+            stdout = "## North-star fit\nPlan here\n## Tests\nTests here"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+    # Manually call _default_executor to verify it writes the design doc
+    so._default_executor(tmp_path, "TICKET-1", feedback=None)
+
+    # Design doc was written
+    design_doc = tmp_path / "docs" / "design" / "pipeline-ticket-1.md"
+    assert design_doc.exists()
+    assert "Plan here" in design_doc.read_text()
+    # The file is on disk and would be picked up by `git add -A` from mr_raiser
+
+
+def test_profile_ticket_design_doc_written_in_its_own_worktree(monkeypatch, tmp_path):
+    """Profile-driven tickets: design doc in profile's own worktree, not affected by profile settings."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "profile ticket plan"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+    profile = {"repo": "G-Eskayo/proj", "env": {}, "executor": {"allowed_tools": [], "notes": ""}}
+    so._default_executor(tmp_path, "G-Eskayo/proj#99", None, profile=profile, clone=tmp_path)
+
+    design_doc = tmp_path / "docs" / "design" / "pipeline-g-eskayo-proj-99.md"
+    assert design_doc.exists()
+
+
+def test_unusual_ticket_ref_produces_valid_collision_free_slug(monkeypatch, tmp_path):
+    """Ticket ref without owner/repo still produces valid slug."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            stdout = "plan"
+            returncode = 0
+        return R()
+
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+    so._default_executor(tmp_path, "TICKET-1", None)
+
+    design_doc = tmp_path / "docs" / "design" / "pipeline-ticket-1.md"
+    assert design_doc.exists()
+    # Should be unique even if called again with similar ref
+    other_path = tmp_path / ".." / "other"
+    so._default_executor(other_path, "TICKET-2", None)
+    design_doc2 = other_path / "docs" / "design" / "pipeline-ticket-2.md"
+    assert design_doc2.exists()
+    assert design_doc != design_doc2
