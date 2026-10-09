@@ -95,3 +95,12 @@ def test_stray_memories_are_found(tmp_path):
 
 def test_the_gate_reads_the_same_marker_the_launcher_sets():
     assert mh.KIND_ENV == ml.KIND_ENV
+
+
+def test_session_awareness_records_everywhere_and_asks_only_people():
+    """#326: every session's request and edits go on the live list (a pipeline agent on this Mac too); only an
+    interactive session is asked before editing a file another live session edited."""
+    sw = {(h.event, h.command[-1]): h for h in mh.HOOKS if "session_work.py" in " ".join(h.command)}
+    assert sw[("UserPromptSubmit", "prompt")].kinds == {"all"}
+    assert sw[("PostToolUse", "post")].kinds == {"all"} and "Edit" in sw[("PostToolUse", "post")].matcher
+    assert sw[("PreToolUse", "pre")].kinds == {"interactive"} and "Write" in sw[("PreToolUse", "pre")].matcher
