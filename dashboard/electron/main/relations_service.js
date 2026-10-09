@@ -1,5 +1,6 @@
 import { buildRelationIndex } from './relations.js'
 import { buildBoard } from './board.js'
+import { rankNeedsYou } from './needs_you.js'
 
 const RECHECK_MS = 5 * 60_000
 
@@ -35,7 +36,7 @@ export function createRelationsService({ getRepos, getBoardData, getDocs, getPro
       })
     )
     const docs = await getDocs().catch(() => [])
-    return { at: now(), index: buildRelationIndex({ tickets, prs, docs, projects: getProjects() }), columns, cards, prs }
+    return { at: now(), index: buildRelationIndex({ tickets, prs, docs, projects: getProjects() }), columns, cards, prs, tickets }
   }
 
   async function ready() {
@@ -119,6 +120,11 @@ export function createRelationsService({ getRepos, getBoardData, getDocs, getPro
         if (m) adrs[Number(m[1])] = d.path
       }
       return { project, repo: p?.repo || null, adrs }
+    },
+    // What is waiting on you, ranked by impact: unblocks descending, priority ascending, age descending
+    needsYou: async () => {
+      const b = await ready()
+      return rankNeedsYou(b.tickets)
     }
   }
 }
