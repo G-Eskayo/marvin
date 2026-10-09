@@ -1,3 +1,4 @@
+import os from 'os'
 import { describe, it, expect, vi } from 'vitest'
 
 // mergePr()'s new stage-recording calls write real files under
@@ -119,6 +120,23 @@ describe('mergePr', () => {
     const redispatch = vi.fn()
     await expect(mergePr('https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, redispatch)).rejects.toThrow()
     expect(redispatch).not.toHaveBeenCalled()
+  })
+
+  // 2026-10-09: the overlap rule's "behind but no shared files" path recorded a status the stage log rejects
+  // ('skipped'), which threw and failed every such Approve (#257). Recorded through the REAL stage log here.
+  it('a behind PR with no shared files merges, and only records statuses the stage log accepts', async () => {
+    // This file mocks ticket_stages.js, so apply the real rule here: the live webhook threw on anything else.
+    const ACCEPTED = new Set(['started', 'passed', 'failed'])
+    const calls = []
+    const strictStage = (n, stage, status) => {
+      if (!ACCEPTED.has(status)) throw new Error(`unknown status: ${status}`)
+      calls.push([stage, status])
+    }
+    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: false, behind: true, shared: [], headRefName: 'pipeline/x', body: 'Closes G-Eskayo/marvin#5' })
+    const result = await mergePr('https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, noopRedispatch, shouldGateMerge, vi.fn(), vi.fn(), strictStage)
+    expect(result.merged).toBe(true)
+    expect(calls).toContainEqual(['gate', 'passed'])
   })
 
   // G-Eskayo/marvin#91 -- ADR 0026's merge-time gate.
