@@ -23,7 +23,7 @@ import project_profile as pp  # noqa: E402
 from build_type_measure import measure, test_command_for  # noqa: E402
 from evidence_capture import capture_dev_evidence, capture_test_results, ticket_touches_ui, TestTimedOut  # noqa: E402
 from mr_raiser import raise_mr  # noqa: E402
-from sandbox_orchestration import execute_ticket, _default_executor  # noqa: E402
+from sandbox_orchestration import execute_ticket, _default_executor, TaskListTooVague  # noqa: E402
 from cleanup_sweep import drop_build_output  # noqa: E402
 from ticket_pipeline import _label_for_device, _release  # noqa: E402
 import failure_breaker  # noqa: E402
@@ -213,6 +213,13 @@ def run(issue_number: int, repo: str = REPO) -> dict:
         # visibility), and redispatch so another machine can try.
         reason = str(exc)
         outcome = {"raised": False, "pr_url": None, "reason": reason, "timed_out": True}
+    except TaskListTooVague as exc:
+        # The planning call produced a design doc but could not derive a concrete task list. This is a
+        # ticket issue (too vague/ambiguous), not a machine or environment issue. Post an explanatory comment
+        # and deliberately do NOT release the claim -- it stays claimed so the ticket isn't re-dispatched to
+        # spin endlessly. The ticket needs human de-vague-ing before it's eligible again.
+        reason = str(exc)
+        outcome = {"raised": False, "pr_url": None, "reason": reason, "too_vague": True}
     except Exception as exc:
         # A crash anywhere in execute_ticket/raise_mr (a planner timeout, a
         # worktree-creation failure, anything) must never skip the cleanup
@@ -239,6 +246,18 @@ def run(issue_number: int, repo: str = REPO) -> dict:
                 check=False,
             )
             ts.record_stage(issue_number, "verifying", "failed", outcome["reason"][:300], **kw)
+            ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
+            _trigger_redispatch()
+            return outcome
+        if outcome.get("too_vague"):
+            # Ticket is too vague to plan -- post an explanatory comment, leave the claim in place
+            # (do NOT call _release_claim), and trigger a redispatch so other tickets can run.
+            subprocess.run(
+                ["gh", "issue", "comment", str(issue_number), "--repo", repo, "--body",
+                 f"Automated planning could not derive a concrete task list: {outcome['reason']}. "
+                 f"This ticket needs human clarification or re-scoping before automated implementation can proceed."],
+                check=False,
+            )
             ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
             _trigger_redispatch()
             return outcome
