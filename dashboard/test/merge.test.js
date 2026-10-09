@@ -14,6 +14,8 @@ vi.mock('../webhook-server/ticket_stages.js', () => ({ recordStage: vi.fn() }))
 vi.mock('../webhook-server/failure_log.js', () => ({ recordFailure: vi.fn() }))
 // #225: the post-merge rebase runs after every merged test PR; its results must never land in the real status file.
 vi.mock('../webhook-server/rebase_status.js', () => ({ writeRebaseStatus: vi.fn(), readRebaseStatus: vi.fn(() => ({})) }))
+// Version bump is tested separately in changelog.test.js; mock it here to avoid real git operations.
+vi.mock('../webhook-server/changelog.js', () => ({ applyVersionBump: vi.fn().mockResolvedValue(undefined) }))
 
 import { execFile, execFileSync } from 'child_process'
 import { promisify } from 'util'
@@ -169,7 +171,7 @@ describe('mergePr', () => {
     expect(result).toEqual({ merged: true, reengaged: false, reason: null })
   })
 
-  it('records a stage timeline for a clean gated merge: gate started/passed, merging, rebuilding, done', async () => {
+  it('records a stage timeline for a clean gated merge: gate started/passed, merging, versioning, rebuilding, done', async () => {
     const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
     const shouldGateMerge = vi.fn().mockResolvedValue({ gate: true, headRefName: 'pipeline/g-eskayo/marvin#5', body: 'Closes G-Eskayo/marvin#5' })
     const rebaseAndRetestFn = vi.fn().mockResolvedValue({ ok: true })
@@ -181,7 +183,7 @@ describe('mergePr', () => {
     )
 
     const stages = recordStageFn.mock.calls.map(([, stage, status]) => `${stage}:${status}`)
-    expect(stages).toEqual(['gate:started', 'gate:passed', 'merging:started', 'merging:passed', 'rebuilding:started', 'done:passed'])
+    expect(stages).toEqual(['gate:started', 'gate:passed', 'merging:started', 'merging:passed', 'versioning:started', 'versioning:passed', 'rebuilding:started', 'done:passed'])
     expect(recordStageFn.mock.calls.every(([ticketNumber]) => ticketNumber === '5')).toBe(true)
   })
 

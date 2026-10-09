@@ -11,7 +11,7 @@ import { resolveDeviceId } from '../electron/main/device_identity.js'
 // (webhook-server, where mergePr() already runs).
 export const STAGES_DIR = path.join(homedir(), '.claude', 'logs', 'ticket-stages')
 
-const VALID_STAGES = new Set(['claimed', 'planning', 'executing', 'verifying', 'gate', 'merging', 'rebuilding', 'done'])
+const VALID_STAGES = new Set(['claimed', 'planning', 'executing', 'verifying', 'gate', 'merging', 'versioning', 'rebuilding', 'done'])
 const VALID_STATUSES = new Set(['started', 'passed', 'failed'])
 
 const MARVIN_REPO = 'G-Eskayo/marvin'

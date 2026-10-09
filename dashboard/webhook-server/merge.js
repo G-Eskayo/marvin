@@ -12,6 +12,7 @@ import { repoFromPrUrl, MARVIN_REPO } from '../electron/main/mr_repos.js'
 import { recordStage } from './ticket_stages.js'
 import { assertChecksGreen } from './ci_status.js'
 import { checkOpenPrs } from './post_merge_rebase.js'
+import { applyVersionBump } from './changelog.js'
 
 const execFileAsync = promisify(execFile)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -509,6 +510,17 @@ async function mergePrUnqueued(
   }
   stage('merging', 'passed', '')
   if (!ctx) {
+    // marvin-only: bump VERSION and update CHANGELOG.md
+    stage('versioning', 'started', '')
+    try {
+      await applyVersionBump({ ticketNumber, repo: MARVIN_REPO, prUrl }, exec, REPO_PATH)
+      stage('versioning', 'passed', '')
+    } catch (e) {
+      stage('versioning', 'failed', String(e?.message || e).slice(0, 300))
+      recordFailureFn({ ticket: ticketNumber ?? prNumberOf(prUrl), code: 'VERSION_BUMP_FAILED', message: String(e?.message || e), project: repo, prUrl, stage: 'versioning' })
+      // Deliberately not reengage()'d: the PR already merged successfully; this is bookkeeping on
+      // top of a completed merge, not a reason to send already-accepted work back for rework.
+    }
     // marvin-only: the dashboard app is rebuilt when a merged PR touched dashboard/.
     stage('rebuilding', 'started', 'triggered if the PR touched dashboard/')
     await rebuild(prUrl, exec)
