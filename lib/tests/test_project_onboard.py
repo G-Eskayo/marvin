@@ -2043,3 +2043,438 @@ def test_refresh_all_skips_unchanged_repos_and_reports_skipped(tmp_path, monkeyp
     assert "G-Eskayo/repo1" in inspected
     assert "G-Eskayo/repo2" not in inspected
     assert res["skipped"] == ["G-Eskayo/repo2"]
+
+
+# ── Onboarding PR apply (ticket #147, ADR 0058) ──────────────────────────
+
+
+def test_load_offers_returns_empty_dict_when_file_missing():
+    """_load_offers returns {} when plan file doesn't exist."""
+    result = po._load_offers("test/repo", dir=Path("/nonexistent"))
+    assert result == {}
+
+
+def test_load_offers_returns_empty_dict_on_malformed_json(tmp_path):
+    """_load_offers returns {} when JSON is corrupted (hand-edited file)."""
+    path = po.onboarding_path("test/repo", dir=tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{invalid json")
+    result = po._load_offers("test/repo", dir=tmp_path)
+    assert result == {}
+
+
+def test_load_offers_reads_existing_offers(tmp_path):
+    """_load_offers reads and returns the offers dict from the plan file."""
+    data = {
+        "repo": "test/repo",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "pieces": {},
+        "offers": {"merge_from_dashboard": True, "dispatch": False},
+    }
+    path = po.onboarding_path("test/repo", dir=tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data) + "\n")
+
+    result = po._load_offers("test/repo", dir=tmp_path)
+    assert result == {"merge_from_dashboard": True, "dispatch": False}
+
+
+def test_load_offers_returns_empty_dict_when_offers_missing(tmp_path):
+    """_load_offers returns {} when offers key is not in the plan file."""
+    data = {
+        "repo": "test/repo",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "pieces": {},
+    }
+    path = po.onboarding_path("test/repo", dir=tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data) + "\n")
+
+    result = po._load_offers("test/repo", dir=tmp_path)
+    assert result == {}
+
+
+def test_refresh_onboarding_plan_with_apply_safe_calls_apply_pr_when_ci_missing(tmp_path):
+    """When apply_safe=True and ci is missing and no onboarding_pr offer exists, _apply_pr is called."""
+    gh_calls = []
+
+    def mock_gh(args):
+        gh_calls.append(args)
+        j = " ".join(args)
+        if "repo" in j and "view" in j:
+            return '{"visibility": "public", "defaultBranchRef": {"name": "main"}}'
+        if "trees" in j:
+            return '{"tree": []}'
+        if "label" in j:
+            return '[]'
+        if "pr create" in j:
+            return "https://github.com/test/repo/pull/123"
+        if "git/ref/heads/main" in j:
+            return '{"object": {"sha": "abc123"}}'
+        return ""
+
+    # Mock _apply_pr to record that it was called
+    apply_pr_calls = []
+    original_apply_pr = po._apply_pr
+
+    def mock_apply_pr(repo, facts, plan_out, gh=None, auth_status=None):
+        apply_pr_calls.append({
+            "repo": repo,
+            "has_facts": bool(facts),
+            "has_plan": bool(plan_out),
+            "auth_status": auth_status,
+        })
+        # Return a created action
+        return {
+            "action": "created",
+            "pr_url": "https://github.com/test/repo/pull/123",
+            "branch": "onboarding/agent-docs-ci",
+            "files": ["docs/agents/issue-tracker.md"],
+        }
+
+    # Monkeypatch _apply_pr
+    po._apply_pr = mock_apply_pr
+
+    try:
+        po.refresh_onboarding_plan("test/repo", gh=mock_gh, dir=tmp_path, apply_safe=True)
+
+        # Verify _apply_pr was called
+        assert len(apply_pr_calls) == 1
+        assert apply_pr_calls[0]["repo"] == "test/repo"
+
+        # Verify the plan file has the offer recorded
+        plan_path = po.onboarding_path("test/repo", dir=tmp_path)
+        plan_data = json.loads(plan_path.read_text())
+        assert "offers" in plan_data
+        assert "onboarding_pr" in plan_data["offers"]
+        assert plan_data["offers"]["onboarding_pr"]["pr_url"] == "https://github.com/test/repo/pull/123"
+        assert plan_data["offers"]["onboarding_pr"]["branch"] == "onboarding/agent-docs-ci"
+        assert "opened_at" in plan_data["offers"]["onboarding_pr"]
+    finally:
+        # Restore
+        po._apply_pr = original_apply_pr
+
+
+def test_refresh_onboarding_plan_with_apply_safe_calls_apply_pr_when_agent_docs_missing(tmp_path):
+    """When apply_safe=True and agent_docs is missing and no onboarding_pr offer exists, _apply_pr is called."""
+    gh_calls = []
+
+    def mock_gh(args):
+        gh_calls.append(args)
+        j = " ".join(args)
+        if "repo" in j and "view" in j:
+            return '{"visibility": "public", "defaultBranchRef": {"name": "main"}}'
+        if "trees" in j:
+            return '{"tree": []}'
+        if "label" in j:
+            return '[]'
+        if "pr create" in j:
+            return "https://github.com/test/repo/pull/124"
+        if "git/ref/heads/main" in j:
+            return '{"object": {"sha": "abc123"}}'
+        return ""
+
+    apply_pr_calls = []
+    original_apply_pr = po._apply_pr
+
+    def mock_apply_pr(repo, facts, plan_out, gh=None, auth_status=None):
+        apply_pr_calls.append(repo)
+        return {
+            "action": "created",
+            "pr_url": "https://github.com/test/repo/pull/124",
+            "branch": "onboarding/agent-docs-ci",
+            "files": ["docs/agents/issue-tracker.md"],
+        }
+
+    po._apply_pr = mock_apply_pr
+
+    try:
+        po.refresh_onboarding_plan("test/repo", gh=mock_gh, dir=tmp_path, apply_safe=True)
+        assert len(apply_pr_calls) == 1
+    finally:
+        po._apply_pr = original_apply_pr
+
+
+def test_refresh_onboarding_plan_does_not_call_apply_pr_when_ci_and_agent_docs_ok(tmp_path, monkeypatch):
+    """When apply_safe=True but ci and agent_docs are both ok, _apply_pr is not called."""
+    def mock_gh(args):
+        j = " ".join(args)
+        if "repo" in j and "view" in j:
+            return '{"visibility": "public", "defaultBranchRef": {"name": "main"}}'
+        if "trees" in j:
+            return '{"tree": []}'
+        if "label" in j:
+            return '[]'
+        return ""
+
+    # Mock the plan function to return ci and agent_docs as ok
+    original_plan = po.plan
+
+    def mock_plan(facts):
+        return {
+            "profile": {"state": "ok"},
+            "stack": {"state": "ok"},
+            "test_command": {"state": "ok"},
+            "ci": {"state": "ok"},
+            "triage_labels": {"state": "ok"},
+            "agent_docs": {"state": "ok"},
+            "board": {"state": "ok"},
+            "clone_and_toolchain": {"state": "ok"},
+            "generated_paths": {"state": "ok"},
+        }
+
+    monkeypatch.setattr(po, "plan", mock_plan)
+
+    apply_pr_calls = []
+    original_apply_pr = po._apply_pr
+
+    def mock_apply_pr(repo, facts, plan_out, gh=None, auth_status=None):
+        apply_pr_calls.append(repo)
+        return {"action": "unchanged"}
+
+    po._apply_pr = mock_apply_pr
+
+    try:
+        po.refresh_onboarding_plan("test/repo", gh=mock_gh, dir=tmp_path, apply_safe=True)
+        # _apply_pr should not be called because all pieces are ok
+        assert len(apply_pr_calls) == 0
+    finally:
+        po._apply_pr = original_apply_pr
+
+
+def test_refresh_onboarding_plan_does_not_call_apply_pr_when_offer_already_recorded(tmp_path):
+    """When onboarding_pr offer is already recorded, _apply_pr is never called again."""
+    # Create a plan file with the onboarding_pr offer already recorded
+    data = {
+        "repo": "test/repo",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "pieces": {"ci": {"state": "missing"}},  # ci still missing
+        "offers": {
+            "onboarding_pr": {
+                "pr_url": "https://github.com/test/repo/pull/999",
+                "branch": "onboarding/agent-docs-ci",
+                "opened_at": datetime.now(timezone.utc).isoformat(),
+            }
+        },
+    }
+    path = po.onboarding_path("test/repo", dir=tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data) + "\n")
+
+    def mock_gh(args):
+        j = " ".join(args)
+        if "repo" in j and "view" in j:
+            return '{"visibility": "public", "defaultBranchRef": {"name": "main"}}'
+        if "trees" in j:
+            return '{"tree": []}'
+        if "label" in j:
+            return '[]'
+        return ""
+
+    apply_pr_calls = []
+    original_apply_pr = po._apply_pr
+
+    def mock_apply_pr(repo, facts, plan_out, gh=None, auth_status=None):
+        apply_pr_calls.append(repo)
+        # This should raise an AssertionError if called
+        raise AssertionError("_apply_pr should not be called when offer already recorded")
+
+    po._apply_pr = mock_apply_pr
+
+    try:
+        # This should not raise because _apply_pr should not be called
+        po.refresh_onboarding_plan("test/repo", gh=mock_gh, dir=tmp_path, apply_safe=True)
+        # _apply_pr should never be called
+        assert len(apply_pr_calls) == 0
+    finally:
+        po._apply_pr = original_apply_pr
+
+
+def test_refresh_onboarding_plan_does_not_call_apply_pr_when_apply_safe_false(tmp_path):
+    """When apply_safe=False, _apply_pr is never called regardless of plan state."""
+    def mock_gh(args):
+        j = " ".join(args)
+        if "repo" in j and "view" in j:
+            return '{"visibility": "public", "defaultBranchRef": {"name": "main"}}'
+        if "trees" in j:
+            return '{"tree": []}'
+        if "label" in j:
+            return '[]'
+        return ""
+
+    apply_pr_calls = []
+    original_apply_pr = po._apply_pr
+
+    def mock_apply_pr(repo, facts, plan_out, gh=None, auth_status=None):
+        apply_pr_calls.append(repo)
+        return {"action": "created"}
+
+    po._apply_pr = mock_apply_pr
+
+    try:
+        po.refresh_onboarding_plan("test/repo", gh=mock_gh, dir=tmp_path, apply_safe=False)
+        assert len(apply_pr_calls) == 0
+    finally:
+        po._apply_pr = original_apply_pr
+
+
+def test_refresh_onboarding_plan_with_apply_pr_needs_human_does_not_record_offer(tmp_path):
+    """When _apply_pr returns needs-human (e.g., workflow scope missing), no offer is recorded."""
+    def mock_gh(args):
+        j = " ".join(args)
+        if "repo" in j and "view" in j:
+            return '{"visibility": "public", "defaultBranchRef": {"name": "main"}}'
+        if "trees" in j:
+            return '{"tree": []}'
+        if "label" in j:
+            return '[]'
+        return ""
+
+    original_apply_pr = po._apply_pr
+
+    def mock_apply_pr(repo, facts, plan_out, gh=None, auth_status=None):
+        return {
+            "action": "needs-human",
+            "reason": "gh token lacks the 'workflow' scope",
+            "how_to_fix": "gh auth refresh -s workflow",
+        }
+
+    po._apply_pr = mock_apply_pr
+
+    try:
+        po.refresh_onboarding_plan("test/repo", gh=mock_gh, dir=tmp_path, apply_safe=True)
+
+        # Verify the plan file does not have onboarding_pr offer recorded
+        plan_path = po.onboarding_path("test/repo", dir=tmp_path)
+        plan_data = json.loads(plan_path.read_text())
+        assert "onboarding_pr" not in plan_data.get("offers", {})
+    finally:
+        po._apply_pr = original_apply_pr
+
+
+def test_refresh_onboarding_plan_merges_offers_preserves_existing(tmp_path):
+    """When apply_safe=True and _apply_pr succeeds, new onboarding_pr offer is merged with existing offers."""
+    # Create a plan file with pre-existing offers
+    data = {
+        "repo": "test/repo",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "pieces": {"ci": {"state": "missing"}},
+        "offers": {
+            "merge_from_dashboard": True,
+            "dispatch": False,
+        },
+    }
+    path = po.onboarding_path("test/repo", dir=tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data) + "\n")
+
+    def mock_gh(args):
+        j = " ".join(args)
+        if "repo" in j and "view" in j:
+            return '{"visibility": "public", "defaultBranchRef": {"name": "main"}}'
+        if "trees" in j:
+            return '{"tree": []}'
+        if "label" in j:
+            return '[]'
+        if "pr create" in j:
+            return "https://github.com/test/repo/pull/125"
+        if "git/ref/heads/main" in j:
+            return '{"object": {"sha": "abc123"}}'
+        return ""
+
+    original_apply_pr = po._apply_pr
+
+    def mock_apply_pr(repo, facts, plan_out, gh=None, auth_status=None):
+        return {
+            "action": "created",
+            "pr_url": "https://github.com/test/repo/pull/125",
+            "branch": "onboarding/agent-docs-ci",
+            "files": ["docs/agents/issue-tracker.md"],
+        }
+
+    po._apply_pr = mock_apply_pr
+
+    try:
+        po.refresh_onboarding_plan("test/repo", gh=mock_gh, dir=tmp_path, apply_safe=True)
+
+        # Verify the plan file has both the pre-existing offers and the new onboarding_pr offer
+        plan_path = po.onboarding_path("test/repo", dir=tmp_path)
+        plan_data = json.loads(plan_path.read_text())
+        assert plan_data["offers"]["merge_from_dashboard"] is True
+        assert plan_data["offers"]["dispatch"] is False
+        assert "onboarding_pr" in plan_data["offers"]
+        assert plan_data["offers"]["onboarding_pr"]["pr_url"] == "https://github.com/test/repo/pull/125"
+    finally:
+        po._apply_pr = original_apply_pr
+
+
+def test_refresh_onboarding_plan_with_read_errors_raises(tmp_path):
+    """When inspect returns read_errors, refresh_onboarding_plan raises before any PR attempt."""
+    def mock_gh(args):
+        j = " ".join(args)
+        if "repo" in j and "view" in j:
+            # Simulate a network error for trees endpoint
+            return ""
+        return ""
+
+    original_apply_pr = po._apply_pr
+
+    def mock_apply_pr(repo, facts, plan_out, gh=None, auth_status=None):
+        # Should not be called if read_errors are present
+        raise AssertionError("_apply_pr should not be called when read_errors present")
+
+    po._apply_pr = mock_apply_pr
+
+    try:
+        # This should raise RuntimeError due to read_errors
+        try:
+            po.refresh_onboarding_plan("test/repo", gh=mock_gh, dir=tmp_path, apply_safe=True)
+            assert False, "Expected RuntimeError but none was raised"
+        except RuntimeError as e:
+            assert "read_errors" in str(e) or "couldn't" in str(e).lower()
+    finally:
+        po._apply_pr = original_apply_pr
+
+
+def test_refresh_onboarding_plan_auth_status_passed_to_apply_pr(tmp_path):
+    """When auth_status is passed to refresh_onboarding_plan, it is forwarded to _apply_pr."""
+    def mock_gh(args):
+        j = " ".join(args)
+        if "repo" in j and "view" in j:
+            return '{"visibility": "public", "defaultBranchRef": {"name": "main"}}'
+        if "trees" in j:
+            return '{"tree": []}'
+        if "label" in j:
+            return '[]'
+        if "pr create" in j:
+            return "https://github.com/test/repo/pull/126"
+        if "git/ref/heads/main" in j:
+            return '{"object": {"sha": "abc123"}}'
+        return ""
+
+    apply_pr_calls = []
+    original_apply_pr = po._apply_pr
+
+    def mock_apply_pr(repo, facts, plan_out, gh=None, auth_status=None):
+        apply_pr_calls.append({"repo": repo, "auth_status": auth_status})
+        return {
+            "action": "created",
+            "pr_url": "https://github.com/test/repo/pull/126",
+            "branch": "onboarding/agent-docs-ci",
+        }
+
+    po._apply_pr = mock_apply_pr
+
+    try:
+        po.refresh_onboarding_plan(
+            "test/repo",
+            gh=mock_gh,
+            dir=tmp_path,
+            apply_safe=True,
+            auth_status="gho_mock_token",
+        )
+
+        assert len(apply_pr_calls) == 1
+        assert apply_pr_calls[0]["auth_status"] == "gho_mock_token"
+    finally:
+        po._apply_pr = original_apply_pr
