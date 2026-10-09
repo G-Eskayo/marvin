@@ -2,22 +2,17 @@ import { parseTicketRef } from '../electron/main/mr_review.js'
 import { recordStage } from './ticket_stages.js'
 import { writeRebaseStatus } from './rebase_status.js'
 
-// After every merge, rebase the repo's other open PRs onto the new base branch, by code, no LLM (#225). Before this,
-// nothing re-integrated a PR until someone pressed Approve, so a conflict surfaced at the worst moment, and the
-// pipeline's scan then sent every conflicting ticket back for a full rebuild. Now a PR that rebases clean is pushed
-// (so its Approve skips the gate's rebase), and one that conflicts or goes red is left alone with the reason recorded
-// for MR Review. What happens to a real conflict next is #230's business.
+// After every merge (#225, reworked 2026-10-09 by the overlap rule): PRs stacked on the merged one are moved onto the
+// base branch, and every other open PR gets a conflict check (git merge-tree: no checkout, no tests, no push, seconds),
+// so MR Review shows "conflicts with main" before anyone presses Approve. It used to rebase and fully retest every open
+// PR after every merge, one at a time, and force-push each: ~8 test runs per merge, all stale at the next merge. The
+// one retest that matters happens at Approve, and only when main changed files the PR also changes (merge.js).
 //
-// `rebase(headRefName)` is the gate's own rebaseAndRetest, bound to the repo: scratch worktree, retest, push only
-// when green. One PR at a time: each one is tested against the same main.
-
-export function conflictFiles(text) {
-  return [...String(text).matchAll(/CONFLICT \([^)]*\): Merge conflict in (\S+)/g)].map((m) => m[1])
-}
+// `check(headRefName)` is merge.js conflictsWithBase bound to the repo: { conflict, files }.
 
 const prNumber = (url) => Number(String(url).match(/\/pull\/(\d+)/)?.[1] ?? 0)
 
-export async function rebaseOpenPrs({ repo, mergedPrUrl, base = 'main', exec, rebase, recordStageFn = recordStage, writeStatus = writeRebaseStatus, now = () => new Date(), log = (m) => console.error(m) }) {
+export async function checkOpenPrs({ repo, mergedPrUrl, base = 'main', exec, check, recordStageFn = recordStage, writeStatus = writeRebaseStatus, now = () => new Date(), log = (m) => console.error(m) }) {
   const after = prNumber(mergedPrUrl)
   let prs
   try {
@@ -28,16 +23,16 @@ export async function rebaseOpenPrs({ repo, mergedPrUrl, base = 'main', exec, re
   } catch (e) {
     // Said out loud: this failed silently on every merge until 2026-10-09 (the exec returned no output), so stacked
     // PRs were never moved onto main. The MR Review safety net (stack_retarget.js) catches what this misses.
-    const reason = `After PR #${after} merged, could not list the open PRs to rebase them: ${String(e?.message || e)}`.slice(0, 300)
+    const reason = `After PR #${after} merged, could not list the open PRs to check them: ${String(e?.message || e)}`.slice(0, 300)
     log(`[post-merge] ${repo}: ${reason}`)
-    const entries = [{ url: mergedPrUrl, pr: after, state: 'error', files: [], after, at: now().toISOString(), reason }]
-    try { writeStatus(entries) } catch { /* fail-soft */ }
-    return entries
+    const failed = [{ url: mergedPrUrl, pr: after, state: 'error', files: [], after, at: now().toISOString(), reason }]
+    try { writeStatus(failed) } catch { /* fail-soft */ }
+    return failed
   }
   const entries = []
   // A PR stacked on the one just merged still targets that PR's branch, and GitHub only retargets it when the branch
   // is deleted (merges here keep it). Left alone it can never reach main: merged there, its work silently misses main
-  // and its ticket never closes. So move it onto the base branch first, then it is rebased like any other.
+  // and its ticket never closes. So move it onto the base branch first, then it is checked like any other.
   let mergedHead = null
   try {
     const out = await exec('gh', ['pr', 'view', mergedPrUrl, '--json', 'headRefName'])
@@ -59,23 +54,20 @@ export async function rebaseOpenPrs({ repo, mergedPrUrl, base = 'main', exec, re
   for (const pr of prs.filter((p) => p.url !== mergedPrUrl && p.baseRefName === base && !p.isCrossRepository)) {
     let state, files = [], reason = ''
     try {
-      const res = await rebase(pr.headRefName)
-      reason = res.reason || ''
-      files = res.ok ? [] : conflictFiles(reason)
-      state = res.ok ? 'clean' : /^Rebase onto main failed/i.test(reason) ? 'conflict' : 'tests_failed'
+      const res = await check(pr.headRefName)
+      files = res.files || []
+      state = res.conflict ? 'conflict' : 'clean'
+      reason = res.conflict ? `conflicts with ${base} after PR #${after} merged: ${files.join(', ')}` : ''
     } catch (e) {
       state = 'error'
       reason = String(e?.message || e)
     }
     entries.push({ url: pr.url, pr: pr.number, state, files, after, at: now().toISOString(), reason: reason.slice(0, 300),
       ...(retargeted.has(pr.url) ? { retargetedFrom: retargeted.get(pr.url) } : {}) })
+    // Only a conflict goes on the ticket's timeline: "still merges" is not a test result, so it is not a gate pass.
     const ref = parseTicketRef(pr.body || '')
-    if (ref !== null) {
-      const detail = state === 'clean' ? `rebased onto ${base} after PR #${after} merged`
-        : state === 'conflict' ? `REBASE_CONFLICT after PR #${after} merged: ${files.join(', ')}`
-        : state === 'tests_failed' ? `tests fail after rebasing onto ${base} (PR #${after} merged)`
-        : `rebase after PR #${after} merged errored: ${reason.slice(0, 120)}`
-      try { recordStageFn(Number(ref), 'gate', state === 'clean' ? 'passed' : 'failed', detail, { repo }) } catch { /* fail-soft */ }
+    if (ref !== null && state === 'conflict') {
+      try { recordStageFn(Number(ref), 'gate', 'failed', `REBASE_CONFLICT after PR #${after} merged: ${files.join(', ')}`, { repo }) } catch { /* fail-soft */ }
     }
   }
   try { writeStatus(entries) } catch { /* fail-soft */ }

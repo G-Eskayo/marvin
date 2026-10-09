@@ -720,15 +720,14 @@ untouched (it is the "legacy profile"); only repos with a profile file use the p
   environment; recording them as failures would pause the pipeline. Merge failures now carry `project`, so the
   breaker no longer counts another project's failures as marvin's. Webhook error lines start with an ISO time and the
   PR URL.
-- **Re-integrate after every merge (#225, 2026-10-07)**: when a PR merges, the webhook rebases the repo's other open
-  PRs onto the new base by code (`post_merge_rebase.js`), one at a time, queued behind the merge so the Approve
-  response doesn't wait. A clean rebase is retested and pushed, so its own Approve later skips the gate's rebase. A
-  conflict or a red test leaves the PR untouched. Each result goes into the ticket's stage log (`gate`) and
-  `~/.claude/logs/pr-rebase-status.json`, served at `GET /rebase-status` so MR Review on either machine shows it.
-  The pipeline scan (which sends conflicting PRs back for a full rebuild) runs only after the rebases. marvin's
-  generated files (`bench/metrics`, `graphify-out`) get the generated-file resolver too (`generated_paths.rules_for`).
-  Chosen over holding related tickets back, which would only move the bottleneck (Gil); #230 adds cheap conflict
-  resolution and #231 a merge queue.
+- **After a merge, check; at Approve, retest only on overlap (ADR 0061, 2026-10-09; replaced #225's rebase-all)**:
+  when a PR merges, the webhook (`post_merge_rebase.js` `checkOpenPrs`) moves PRs stacked on it onto the base, then
+  conflict-checks every other open PR with `git merge-tree` (no checkout, tests or pushes); results go to
+  `~/.claude/logs/pr-rebase-status.json` (`GET /rebase-status`, MR Review on either machine) and a conflict onto the
+  ticket's stage log. At Approve, a PR behind main is rebased and retested only when main changed a file the PR also
+  changes (`sharedFiles`); otherwise it merges directly, and main-health (which re-runs the suite on every main move and
+  refuses merges while main is red) catches the rare cross-file break. Unknown overlap = retest. MR Review's refresh is
+  the safety net for a missed stack move (`stack_retarget.js`). The pipeline scan still runs after the checks.
 - **Approving and denying from MR Review (2026-10-05)**: the merge gate now reads the profile too. A project's
   PRs get Approve/Deny only if its profile says `"merge_from_dashboard": true`; the webhook enforces that
   itself (not just the screen) and refuses others with `NO_MERGE_PROFILE`. **Deny** needs no profile: the repo

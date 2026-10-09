@@ -180,7 +180,7 @@ describe('describePrState: post-merge rebase', () => {
   it('a PR rebased clean says so on the ready card', () => {
     const v = describePrState({ ...ready, rebase: { state: 'clean', after: 229, files: [] } })
     expect(v.kind).toBe('ready')
-    expect(v.note).toBe('GitHub checks passed · rebased onto main after #229 merged')
+    expect(v.note).toBe('GitHub checks passed · still merges cleanly onto main after #229 merged')
   })
 
   it('a conflict names the files and the merge that caused it', () => {
