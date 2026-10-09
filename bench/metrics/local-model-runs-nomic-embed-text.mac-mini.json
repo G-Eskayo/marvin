@@ -1,0 +1,80 @@
+[
+  {
+    "timestamp": "2026-10-09T14:24:26.527688+00:00",
+    "metrics": {
+      "gpu_fraction": {
+        "value": 1.0,
+        "higher_is_better": true
+      },
+      "cpu_fallback": {
+        "value": 0.0,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-09T14:25:43.988952+00:00",
+    "metrics": {
+      "gpu_fraction": {
+        "value": 1.0,
+        "higher_is_better": true
+      },
+      "cpu_fallback": {
+        "value": 0.0,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-09T14:26:50.138328+00:00",
+    "metrics": {
+      "gpu_fraction": {
+        "value": 1.0,
+        "higher_is_better": true
+      },
+      "cpu_fallback": {
+        "value": 0.0,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-09T14:29:06.180814+00:00",
+    "metrics": {
+      "gpu_fraction": {
+        "value": 1.0,
+        "higher_is_better": true
+      },
+      "cpu_fallback": {
+        "value": 0.0,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-09T14:33:26.365452+00:00",
+    "metrics": {
+      "gpu_fraction": {
+        "value": 1.0,
+        "higher_is_better": true
+      },
+      "cpu_fallback": {
+        "value": 0.0,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-09T14:37:46.840621+00:00",
+    "metrics": {
+      "gpu_fraction": {
+        "value": 1.0,
+        "higher_is_better": true
+      },
+      "cpu_fallback": {
+        "value": 0.0,
+        "higher_is_better": false
+      }
+    }
+  }
+]
