@@ -127,7 +127,7 @@ def _unclaimed_ready_tickets(repo: str = REPO, issues: list[dict] | None = None)
 
     def eligible(i):
         names = set(ticket_policy.label_names(i))
-        return ("ready-for-agent" in names and "pinned" not in names
+        return ("ready-for-agent" in names and "pinned" not in names and "held" not in names
                 and not any(n.startswith("claimed:") for n in names)
                 and not ticket_policy.open_blockers(i, open_numbers))
 

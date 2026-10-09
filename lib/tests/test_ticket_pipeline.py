@@ -287,6 +287,18 @@ def test_only_ready_unclaimed_unpinned_tickets_are_candidates(monkeypatch):
     assert [i["number"] for i in tp._unclaimed_ready_tickets()] == [3]
 
 
+def test_held_tickets_are_not_dispatched(monkeypatch):
+    # Ticket #31 was on `held` but the dispatcher still re-attempted it 280 times
+    # because _unclaimed_ready_tickets() didn't exclude the `held` label. Verify
+    # that held tickets are now properly filtered out (2026-10-09, ticket dispatcher bug fix).
+    issues = [
+        _issue(1, "2026-01-01T00:00:00Z", labels=["ready-for-agent", "held"]),
+        _issue(2, "2026-01-02T00:00:00Z", labels=["ready-for-agent"]),
+    ]
+    _fake_gh(monkeypatch, issues)
+    assert [i["number"] for i in tp._unclaimed_ready_tickets()] == [2]
+
+
 # ── dispatching other projects' tickets (execution profiles) ────────────────
 
 CC = "G-Eskayo/clarity-captions"
