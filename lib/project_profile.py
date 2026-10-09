@@ -259,6 +259,23 @@ def have(capability: str, env: dict, which=shutil.which) -> bool:
     if capability == "xcode":
         dev = env.get("DEVELOPER_DIR")
         return bool(dev) and (Path(dev) / "usr" / "bin" / "xcodebuild").exists()
+    if capability == "simulator":
+        # Check for iOS simulator runtime availability via xcrun simctl
+        xcrun = which("xcrun", path=env.get("PATH"))
+        if not xcrun:
+            return False
+        try:
+            result = subprocess.run(
+                ["xcrun", "simctl", "list", "runtimes", "--json"],
+                capture_output=True, text=True, timeout=10, env=env
+            )
+            if result.returncode != 0:
+                return False
+            data = json.loads(result.stdout)
+            runtimes = data.get("runtimes", [])
+            return any(r.get("name", "").startswith("iOS") for r in runtimes)
+        except (subprocess.SubprocessError, json.JSONDecodeError, OSError):
+            return False
     if capability in ("swift", "xcodegen"):
         return which(capability, path=env.get("PATH")) is not None
     return which(capability, path=env.get("PATH")) is not None
