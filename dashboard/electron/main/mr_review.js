@@ -196,7 +196,7 @@ export async function prsForOrderCheck(prs, sentBackTickets) {
   return markSentBack(prs, keys)
 }
 
-export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDashboard, sentBackTickets = null, reworkStatus = null, rebaseStatus = null, closedTickets = null } = {}) {
+export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDashboard, sentBackTickets = null, reworkStatus = null, rebaseStatus = null, closedTickets = null, autoMergeShadow = null } = {}) {
   const prs = await listOpenPrs()
   // The webhook's post-merge rebase results, by PR url (#225). Best effort: without them a card just doesn't say.
   let rebased = {}
@@ -215,6 +215,15 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       sentBackKeys = await sentBackTickets([...new Set(prs.map((p) => p.repo || MARVIN_REPO))])
     } catch {
       sentBackKeys = new Set()
+    }
+  }
+  // Auto-merge's shadow verdicts by PR url (#341), from the mini's merge server. Best effort.
+  let shadow = {}
+  if (autoMergeShadow) {
+    try {
+      shadow = ((await autoMergeShadow()) || {}).prs || {}
+    } catch {
+      shadow = {}
     }
   }
   // Tickets already closed ("repo#number"): a PR still open for one is probably a duplicate (#326). Best effort.
@@ -252,6 +261,7 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       canMerge: canMerge(pr.repo || MARVIN_REPO),
       conflicts: pr.mergeable === 'CONFLICTING',
       rebase: rebased[pr.url] || null,
+      autoMerge: shadow[pr.url]?.current || null,
       checks: ciState(pr.statusCheckRollup),
       baseProblem: baseProblem(prs.map((p) => ({ ...p, repo: p.repo || MARVIN_REPO })), { ...pr, repo: pr.repo || MARVIN_REPO }),
       waitingOn: waitingOn(withState, { ...pr, repo: pr.repo || MARVIN_REPO }),
