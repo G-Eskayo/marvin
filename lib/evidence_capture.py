@@ -170,7 +170,7 @@ def _default_capture_screenshot(worktree_path: Path) -> str:
 # "the pipeline captured screenshots" and "the gate lets it merge" agree on what counts as a UI change. A project adds
 # its own paths with evidence.ui_paths in its profile.
 DEFAULT_UI_PATTERNS = (
-    "dashboard/src/**", "**/*.xcassets/**", "**/*.xcstrings", "**/*.storyboard", "**/*.xib",
+    "dashboard/src/*", "dashboard/src/components/**", "dashboard/src/assets/**", "**/*.xcassets/**", "**/*.xcstrings", "**/*.storyboard", "**/*.xib",
     "**/*View.swift", "**/Views/**/*.swift", "**/*.jsx", "**/*.tsx", "**/*.css", "**/*.html",
 )
 

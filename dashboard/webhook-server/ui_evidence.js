@@ -7,9 +7,12 @@ import { MergeFailure, refusal } from './failure.js'
 
 // Paths that change what a person sees, in any project. A project adds its own with `evidence.ui_paths` in its
 // profile (config/projects/<name>.json), e.g. every Swift file under Apps/ for an app whose views are not named *View.
-// Logic, tests, docs and the Electron main process are deliberately not here: they don't change the look.
+// Logic, tests, docs and the Electron main process are deliberately not here: they don't change the look. That includes
+// the dashboard's src/lib helpers (a screenshot-capture helper flagged #389 as a UI change); a .jsx/.css there still counts.
 export const DEFAULT_UI_PATTERNS = [
-  'dashboard/src/**',
+  'dashboard/src/*',
+  'dashboard/src/components/**',
+  'dashboard/src/assets/**',
   '**/*.xcassets/**',
   '**/*.xcstrings',
   '**/*.storyboard',
