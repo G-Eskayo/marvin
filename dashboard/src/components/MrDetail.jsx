@@ -66,6 +66,13 @@ function DevEvidenceSection({ devEvidence }) {
   )
 }
 
+function DeviceSection({ device }) {
+  if (!device) {
+    return <p className="text-sm text-neutral-500">Not available.</p>
+  }
+  return <p className="font-mono text-sm text-neutral-200">{device}</p>
+}
+
 // Renders an issue's raw body as preformatted text rather than pulling in
 // a markdown-rendering dependency for one drill-down section -- structure
 // (headers, lists) stays legible even unrendered, and this ticket's own
@@ -152,6 +159,10 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
 
       {pr.hasSchema ? (
         <>
+          <Section title="Device">
+            <DeviceSection device={pr.evidence.device} />
+          </Section>
+
           <Section title="Metrics Comparison">
             <EvidenceTable metrics={pr.evidence.metrics} />
           </Section>
