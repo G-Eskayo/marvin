@@ -156,11 +156,13 @@ def human_task_gaps(body: str) -> list[str]:
     return gaps
 
 
-def triage_verdict(issue: dict) -> dict | None:
+def triage_verdict(issue: dict, recheck: bool = False) -> dict | None:
     """What to do with an untriaged ticket, deterministically (no model, no tokens): None if it is
-    already triaged or pinned. `state` is one of ready-for-agent / ready-for-human / needs-info."""
+    already triaged or pinned. `state` is one of ready-for-agent / ready-for-human / needs-info.
+    `recheck`: look again at a needs-info ticket (the triage agent re-checks the ones it parked)."""
     names = set(label_names(issue))
-    if names & STATE_LABELS or names & SKIP_LABELS or any(l.startswith("claimed:") for l in names):
+    states = (STATE_LABELS - {"needs-info"}) if recheck else STATE_LABELS
+    if names & states or names & SKIP_LABELS or any(l.startswith("claimed:") for l in names):
         return None
     body = issue.get("body") or ""
     title = issue.get("title") or ""
@@ -168,8 +170,10 @@ def triage_verdict(issue: dict) -> dict | None:
     if re.match(r"\s*PRD\b", title, re.I) or re.search(r"##\s*(Problem Statement|User Stories)", body, re.I):
         return None
     category = None if names & {"bug", "enhancement"} else ("bug" if _BUG.search(title) else "enhancement")
-    has_what = bool(re.search(r"##\s*(What to build|Summary|Description)", body, re.I))
-    has_ac = bool(re.search(r"##\s*Acceptance criteria[\s\S]*?- \[[ x]\]", body, re.I))
+    # A ticket that says what to build under another common heading counts (#240, #218, #230, #217 sat parked for
+    # writing "Solution"); "## Acceptance" with checkboxes counts as criteria.
+    has_what = bool(re.search(r"##\s*(What to build|Summary|Description|Solution|Approach|Proposal|Design|Build)\b", body, re.I))
+    has_ac = bool(re.search(r"##\s*Acceptance(?:\s+criteria)?\b[\s\S]*?- \[[ x]\]", body, re.I))
     missing = [m for m, ok in (("a 'What to build' section", has_what), ("acceptance criteria", has_ac)) if not ok]
     if missing:
         return {"state": "needs-info", "category": category, "missing": missing,

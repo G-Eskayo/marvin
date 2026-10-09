@@ -244,3 +244,22 @@ def test_foundation_work_is_weighted_with_its_reason_but_a_near_hard_deadline_st
     assert tp.priority_for(foundation[0]) == "priority:p2"
     hard_19_days = tp.score_ticket(issue(), 0, {"date": "2026-10-24", "hard": True}, NOW)[0]
     assert hard_19_days > tp.score_ticket(issue(labels=["foundation"]), 1, None, NOW)[0]
+
+
+# 2026-10-09: #240, #218, #230, #217 sat in needs-info with full Problem / Solution / Acceptance write-ups.
+def test_a_solution_or_approach_section_counts_as_what_to_build_and_acceptance_needs_no_criteria_word():
+    body = "## Problem\n\nx\n\n## Solution\n\ndo y\n\n## Acceptance\n\n- [ ] it works\n"
+    assert tp.triage_verdict(issue(body=body))["state"] == "ready-for-agent"
+    body2 = "## Approach\n\ndo y\n\n## Acceptance criteria\n\n- [ ] it works\n"
+    assert tp.triage_verdict(issue(body=body2))["state"] == "ready-for-agent"
+
+
+def test_a_placeholder_is_still_not_ready():
+    v = tp.triage_verdict(issue(body="## What this is\n\nA placeholder to stake out a thread, not a spec."))
+    assert v["state"] == "needs-info"
+
+
+def test_recheck_looks_again_at_a_needs_info_ticket():
+    body = "## Solution\n\ndo y\n\n## Acceptance\n\n- [ ] it works\n"
+    assert tp.triage_verdict(issue(labels=["needs-info"], body=body)) is None          # normal pass: left alone
+    assert tp.triage_verdict(issue(labels=["needs-info"], body=body), recheck=True)["state"] == "ready-for-agent"
