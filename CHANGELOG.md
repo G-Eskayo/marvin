@@ -1,5 +1,7 @@
 # Changelog
 
+- code-sync auto-commits a builder's half-finished edits in ~/.agents and pushes them to both Macs ([#398](https://github.com/G-Eskayo/marvin/pull/398))
+
 - Map shows no infrastructure, and onboarding PRs close no ticket ([#395](https://github.com/G-Eskayo/marvin/pull/395))
 
 - [Ops] Dashboard: machine resources panel (disk, memory pressure and swap, CPU, GPU) for each Mac ([#364](https://github.com/G-Eskayo/marvin/pull/364))
