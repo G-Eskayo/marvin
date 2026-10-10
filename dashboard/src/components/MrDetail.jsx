@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { EvidenceTable, ApproveDenyActions } from './MrReview.jsx'
 import { projectIdOf } from '../lib/projects.js'
+import StageStrip from './StageStrip.jsx'
 import Related, { useRelated } from './Related.jsx'
 import PrImages from './PrImages.jsx'
 import Decisions from './Decisions.jsx'
@@ -124,6 +125,7 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
   const rel = useRelated(() => window.api.relations.pr(pr.repo, pr.number), [pr.repo, pr.number])
   const [context, setContext] = useState(null)
   const [error, setError] = useState(null)
+  const [prEvents, setPrEvents] = useState([])
 
   useEffect(() => {
     let cancelled = false
@@ -143,6 +145,12 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
       cancelled = true
     }
   }, [pr.ticketNumber])
+
+  useEffect(() => {
+    if (pr.ticketNumber) {
+      window.api.activity.timeline(pr.ticketNumber, pr.repo).then(setPrEvents).catch(() => {})
+    }
+  }, [pr.ticketNumber, pr.repo])
 
   const contextLoading = context === null && !error
 
@@ -182,6 +190,12 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
         </div>
         <ApproveDenyActions pr={pr} onApproved={onApproved} onDenied={onDenied} />
       </div>
+
+      {prEvents.length > 0 && (
+        <Section title="Pipeline">
+          <StageStrip events={prEvents} />
+        </Section>
+      )}
 
       {/* What the PR asks the owner to choose: answered here, and Approve waits until the required ones are. */}
       {pr.decisions?.present && (

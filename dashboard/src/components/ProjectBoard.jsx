@@ -1,14 +1,16 @@
 import Decisions from './Decisions.jsx'
 import { summarizeDecisions } from '../../webhook-server/decisions.js'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import { cleanIpcError } from '../lib/ipcError.js'
 import { projectIdOf } from '../lib/projects.js'
 import { planInput } from '../lib/ticket_input.js'
 import { parseHumanTask } from '../lib/human_task.js'
+import { STAGE_LABEL, money, when } from '../lib/stage_strip.js'
 import Markdown from './Markdown.jsx'
 import IssueBody from './IssueBody.jsx'
 import Related, { useRelated } from './Related.jsx'
 import CompletedView from './CompletedView.jsx'
+import StageStrip from './StageStrip.jsx'
 
 // Backstop only: triggers (window.api.triggers) drive refreshes; a poll that
 // finds a change no trigger announced is logged as a gap.
@@ -86,6 +88,14 @@ function Freshness({ at }) {
 }
 
 function Card({ card, repo, onSelect, onOpenMr, activeTags, onTag }) {
+  const [cardEvents, setCardEvents] = useState([])
+
+  useEffect(() => {
+    if (card.hasTimeline) {
+      window.api.activity.timeline(card.number, repo).then(setCardEvents).catch(() => {})
+    }
+  }, [card.number, repo, card.hasTimeline])
+
   return (
     <button
       onClick={() => onSelect(card)}
@@ -100,6 +110,7 @@ function Card({ card, repo, onSelect, onOpenMr, activeTags, onTag }) {
         )}
       </p>
       <p className={`mt-1 text-xs ${card.reason && /fail|block|stale|no activity/i.test(card.reason) ? 'text-red-400' : 'text-neutral-500'}`}>{card.reason}</p>
+      {cardEvents.length > 0 && <StageStrip events={cardEvents} />}
       <div className="mt-2 flex flex-wrap items-center gap-1">
         {card.owner === 'human' && <span className="rounded bg-sky-950 px-1.5 py-0.5 text-[10px] text-sky-300">needs you</span>}
         {card.progress && (
@@ -213,33 +224,14 @@ function Column({ column, repo, onSelect, onOpenMr, activeTags, onTag, onAllComp
   )
 }
 
-const STAGE_LABEL = {
-  claimed: 'Claimed',
-  planning: 'Planning',
-  executing: 'Executing',
-  verifying: 'Verifying',
-  gate: 'Merge gate',
-  merging: 'Merging',
-  rebuilding: 'Rebuilding',
-  done: 'Done'
-}
-
-const money = (usd) => (usd ? `$${usd.toFixed(usd < 0.01 ? 4 : 2)}` : '$0.00')
-const when = (iso) => {
-  try {
-    return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
-  } catch {
-    return iso
-  }
-}
 
 // The ticket's pipeline history, stage by stage (what the old standalone "Pipeline log" listed for all
 // tickets at once): where it got to, where it failed, on which machine, and what it cost.
-function PipelineHistory({ events }) {
+function PipelineHistory({ events, historyRef }) {
   const total = events.reduce((sum, e) => sum + (e.cost_usd || 0), 0)
   const last = events[events.length - 1]
   return (
-    <div className="mt-4">
+    <div className="mt-4" ref={historyRef}>
       <div className="mb-1 flex items-baseline justify-between">
         <h3 className="text-xs uppercase tracking-wide text-neutral-500">Pipeline history</h3>
         <span className="font-mono text-xs text-neutral-400">
@@ -249,7 +241,7 @@ function PipelineHistory({ events }) {
       {events.map((e, i) => {
         const color = e.status === 'failed' ? 'text-red-400' : e.status === 'passed' ? 'text-emerald-400' : 'text-neutral-400'
         return (
-          <div key={i} className="border-l-2 border-neutral-800 py-1.5 pl-4">
+          <div key={i} className="border-l-2 border-neutral-800 py-1.5 pl-4" data-stage={e.stage}>
             <p className={`text-sm font-medium ${color}`}>
               {STAGE_LABEL[e.stage] || e.stage} — {e.status}
             </p>
@@ -270,6 +262,7 @@ function TicketDrilldown({ repo, card, boardCards, onBack, onOpenMr, onOpenDocs,
   const [events, setEvents] = useState([])
   const [error, setError] = useState(null)
   const [ctx, setCtx] = useState(null)
+  const historyRef = useRef(null)
   const rel = useRelated(() => window.api.relations.ticket(repo, card.number), [repo, card.number])
   const ticketDecisions = useMemo(() => (detail?.body ? summarizeDecisions(detail.body) : null), [detail?.body])
   // Titles of tickets on this board, so a "#123" in the body reads "#123 Title" with no extra lookup.
@@ -328,7 +321,15 @@ function TicketDrilldown({ repo, card, boardCards, onBack, onOpenMr, onOpenDocs,
           />
         </div>
       )}
-      {events.length > 0 && <PipelineHistory events={events} />}
+      {events.length > 0 && (
+        <>
+          <div className="mt-4">
+            <h3 className="mb-2 text-xs uppercase tracking-wide text-neutral-500">Pipeline</h3>
+            <StageStrip events={events} historyRef={historyRef} />
+          </div>
+          <PipelineHistory events={events} historyRef={historyRef} />
+        </>
+      )}
       <Related rel={rel} onTicket={onOpenTicket} onDoc={onOpenDocs} onPr={(r, n) => onOpenMr?.(`${r}#${n}`)} />
       {detail && labelsOf(detail, card).includes('ready-for-human') && <HumanTaskPanel body={detail.body} ctx={ctx} />}
       {detail && <TicketReply repo={repo} number={card.number} labels={labelsOf(detail, card)} sendBack={parseHumanTask(detail.body).fields['What to send back']} state={detail.state} onSent={() => window.api.boards.ticket(repo, card.number).then(setDetail).catch(() => {})} />}
