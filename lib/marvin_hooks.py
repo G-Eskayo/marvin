@@ -30,6 +30,7 @@ KIND_ENV = "MARVIN_LAUNCH_KIND"  # the same marker marvin_launcher sets
 HOME = Path.home()
 AGENTS = HOME / ".agents"
 PY = str(AGENTS / "venv" / "bin" / "python")
+GATE_SCRIPT = AGENTS / "lib" / "marvin_hooks.py"
 USER_SETTINGS = HOME / ".claude" / "settings.json"
 LOCAL_SETTINGS = HOME / ".claude" / "settings.local.json"
 PROJECTS = HOME / ".claude" / "projects"
@@ -93,7 +94,7 @@ def settings_hooks() -> dict:
     matcher stay in one group, in table order."""
     out: dict[str, list[dict]] = {}
     for hook in HOOKS:
-        cmd = f"{PY} {AGENTS}/lib/marvin_hooks.py gate {','.join(sorted(hook.kinds))} -- {shlex.join(hook.command)}"
+        cmd = f"{PY} {GATE_SCRIPT} gate {','.join(sorted(hook.kinds))} -- {shlex.join(hook.command)}"
         groups = out.setdefault(hook.event, [])
         group = next((g for g in groups if g.get("matcher") == hook.matcher), None)
         if group is None:
@@ -101,6 +102,46 @@ def settings_hooks() -> dict:
             groups.append(group)
         group["hooks"].append({"type": "command", "command": cmd})
     return out
+
+
+def _scripts_in(command: str) -> list[str]:
+    """The .py/.sh scripts a hook command runs, in order: the gate itself, the script after `--`, and each script
+    of a `sh -c '... && ...'` chain (a quoted chain is one shell word, so it is split again)."""
+    try:
+        words = shlex.split(command)
+    except ValueError:  # an unbalanced quote: plain words, quotes dropped, still better than losing the script
+        words = command.replace("'", " ").replace('"', " ").split()
+    out: list[str] = []
+    for w in words:
+        found = _scripts_in(w) if any(c.isspace() for c in w) else [w] if w.endswith((".py", ".sh")) else []
+        out += [s for s in found if s not in out]
+    return out
+
+
+def wired_scripts(paths=(USER_SETTINGS, LOCAL_SETTINGS)) -> list[dict]:
+    """Every script a Claude Code hook actually runs, read from the live settings files (user level, and the old
+    home-folder level), one entry per script with each trigger it runs on ("PostToolUse: Write|Edit"). The map's
+    Infrastructure section and auto_fix's never-touch list read this, so neither needs to know how hooks are
+    wired; both read settings.local.json alone until #291 moved the hooks out of it and they each saw none."""
+    found: dict[str, dict] = {}
+    for path in paths:
+        try:
+            hooks = json.loads(Path(path).read_text(encoding="utf-8")).get("hooks", {})
+        except (OSError, ValueError, AttributeError):
+            continue
+        for event, entries in hooks.items() if isinstance(hooks, dict) else ():
+            for entry in entries if isinstance(entries, list) else ():
+                if not isinstance(entry, dict):
+                    continue
+                trigger = f"{event}: {entry['matcher']}" if entry.get("matcher") else event
+                for h in entry.get("hooks") or ():
+                    if not isinstance(h, dict) or h.get("type") != "command":
+                        continue
+                    for script in _scripts_in(h.get("command") or ""):
+                        triggers = found.setdefault(script, {"path": script, "triggers": []})["triggers"]
+                        if trigger not in triggers:
+                            triggers.append(trigger)
+    return sorted(found.values(), key=lambda r: (Path(r["path"]).name, r["path"]))
 
 
 def _load(path: Path) -> dict:

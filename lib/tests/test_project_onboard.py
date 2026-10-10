@@ -1617,6 +1617,8 @@ def test_apply_pr_deterministic_branch_name():
             branches_used.append(call_str)
         if "git/ref/heads/main" in call_str:
             return json.dumps({"object": {"sha": "abc123"}})
+        if args[:2] == ["issue", "create"]:
+            return "https://github.com/test/repo/issues/1\n"  # no ticket, no branch (the PR must close one)
         return ""
 
     auth_status = "Token scopes: 'repo', 'workflow'"
@@ -2478,3 +2480,135 @@ def test_refresh_onboarding_plan_auth_status_passed_to_apply_pr(tmp_path):
         assert apply_pr_calls[0]["auth_status"] == "gho_mock_token"
     finally:
         po._apply_pr = original_apply_pr
+
+
+# ── The onboarding PR closes an onboarding ticket, so the project's board has a card for it in "In review" and the
+# MR Review/board parity check stops reporting "closes no ticket" (seven projects' onboarding PRs, 2026-10-09). ──
+
+import ticket_policy as _pol
+
+
+class FakeGitHub:
+    """Just enough of `gh` for _apply_pr: answers by command, remembers every call."""
+
+    def __init__(self, issues=(), prs=(), fail=()):
+        self.issues, self.prs, self.fail, self.calls = list(issues), list(prs), set(fail), []
+
+    def __call__(self, args):
+        self.calls.append(args)
+        s = " ".join(args)
+        if any(f in s for f in self.fail):
+            return ""
+        if "git/ref/heads/main" in s:
+            return json.dumps({"object": {"sha": "abc123"}})
+        if "POST" in args and s.endswith("git/refs") or "-X POST" in s and "git/refs" in s:
+            return json.dumps({"ref": "refs/heads/onboarding/agent-docs-ci"})
+        if args[:2] == ["issue", "list"]:
+            return json.dumps([i for i in self.issues if i.get("state", "OPEN") == "OPEN"])
+        if args[:2] == ["issue", "create"]:
+            n = 40 + len(self.issues)
+            self.issues.append({"number": n, "title": args[args.index("--title") + 1], "body": args[args.index("--body") + 1],
+                                "labels": [args[args.index("--label") + 1]] if "--label" in args else []})
+            return f"https://github.com/test/repo/issues/{n}\n"
+        if args[:2] == ["pr", "create"]:
+            if self.prs:
+                return ""  # one already open on this branch
+            self.prs.append({"number": 7, "url": "https://github.com/test/repo/pull/7", "body": args[args.index("--body") + 1]})
+            return "https://github.com/test/repo/pull/7\n"
+        if args[:2] == ["pr", "list"]:
+            return json.dumps(self.prs)
+        if args[:2] == ["pr", "edit"]:
+            self.prs[0]["body"] = args[args.index("--body") + 1]
+        return ""
+
+    def made(self, *head):
+        return [c for c in self.calls if c[:len(head)] == list(head)]
+
+
+_FRESH = {"repo": "test/repo", "default_branch": "main", "file_tree": {}, "detected_stack": "swift-package"}
+_MISSING = {"ci": {"state": "missing"}, "agent_docs": {"state": "missing"}}
+_SCOPED = "Token scopes: 'repo', 'workflow'"
+
+
+def test_onboarding_files_a_ticket_and_the_pr_closes_it():
+    gh = FakeGitHub()
+    result = po._apply_pr("test/repo", _FRESH, _MISSING, gh=gh, auth_status=_SCOPED)
+    assert result["action"] == "created" and result["ticket"] == 40
+    [ticket] = gh.issues
+    assert ticket["title"] == "Onboarding: agent docs and CI"
+    assert "Closes #40" in gh.prs[0]["body"]
+
+
+def test_the_onboarding_ticket_is_a_complete_person_task_so_no_agent_builds_it_again():
+    gh = FakeGitHub()
+    po._apply_pr("test/repo", _FRESH, _MISSING, gh=gh, auth_status=_SCOPED)
+    [ticket] = gh.issues
+    assert ticket["labels"] == ["ready-for-human"]  # a state label: triage leaves it, the pipeline only builds ready-for-agent
+    assert _pol.human_task_gaps(ticket["body"]) == []
+    assert _pol.triage_verdict({**ticket, "labels": [{"name": l} for l in ticket["labels"]]}) is None
+    assert gh.made("label", "create")  # the label exists before the ticket asks for it, even on a brand-new repo
+
+
+def test_an_open_onboarding_ticket_is_reused_not_duplicated():
+    gh = FakeGitHub(issues=[{"number": 3, "title": "Onboarding: agent docs and CI"}])
+    result = po._apply_pr("test/repo", _FRESH, _MISSING, gh=gh, auth_status=_SCOPED)
+    assert not gh.made("issue", "create") and result["ticket"] == 3
+    assert "Closes #3" in gh.prs[0]["body"]
+
+
+def test_a_similar_title_or_a_closed_ticket_is_not_reused():
+    gh = FakeGitHub(issues=[{"number": 3, "title": "Onboarding: agent docs and CI, take two"},
+                            {"number": 4, "title": "Onboarding: agent docs and CI", "state": "CLOSED"}])
+    result = po._apply_pr("test/repo", _FRESH, _MISSING, gh=gh, auth_status=_SCOPED)
+    assert len(gh.made("issue", "create")) == 1 and result["ticket"] not in (3, 4)
+
+
+def test_an_already_open_pr_gets_the_closes_line_added_and_keeps_its_text():
+    gh = FakeGitHub(prs=[{"number": 7, "url": "https://github.com/test/repo/pull/7", "body": "Automated agent docs and CI workflow setup"}])
+    result = po._apply_pr("test/repo", _FRESH, _MISSING, gh=gh, auth_status=_SCOPED)
+    assert result["action"] == "updated" and result["pr_url"].endswith("/pull/7")
+    assert gh.prs[0]["body"].startswith("Automated agent docs and CI workflow setup") and "Closes #40" in gh.prs[0]["body"]
+
+
+def test_a_pr_that_already_closes_the_ticket_is_left_alone():
+    gh = FakeGitHub(issues=[{"number": 3, "title": "Onboarding: agent docs and CI"}],
+                    prs=[{"number": 7, "url": "u", "body": "x\n\nCloses #3"}])
+    po._apply_pr("test/repo", _FRESH, _MISSING, gh=gh, auth_status=_SCOPED)
+    assert not gh.made("pr", "edit")
+
+
+def test_no_ticket_means_no_pr_and_a_retry_next_hour():
+    gh = FakeGitHub(fail=("issue create",))
+    result = po._apply_pr("test/repo", _FRESH, _MISSING, gh=gh, auth_status=_SCOPED)
+    assert result["action"] == "needs-human" and "ticket" in result["reason"]
+    assert not gh.made("pr", "create")  # needs-human records no offer, so the next run tries again
+
+
+def test_nothing_missing_files_no_ticket():
+    done = {**_FRESH, "file_tree": {f: "file" for f in ("docs/agents/issue-tracker.md", "docs/agents/triage-labels.md",
+                                                         "docs/agents/domain.md", "CLAUDE.md")}, "has_claude_md_skills": True}
+    gh = FakeGitHub()
+    assert po._apply_pr("test/repo", done, {"ci": {"state": "ok"}}, gh=gh)["action"] == "unchanged"
+    assert gh.calls == []
+
+
+def test_link_onboarding_pr_backfills_a_pr_opened_before_tickets():
+    gh = FakeGitHub(prs=[{"number": 5, "url": "u5", "body": "Automated agent docs and CI workflow setup"}])
+    assert po.link_onboarding_pr("test/repo", gh=gh) == {"action": "linked", "pr": 5, "ticket": 40}
+    assert "Closes #40" in gh.prs[0]["body"]
+    assert po.link_onboarding_pr("test/repo", gh=gh) == {"action": "unchanged", "pr": 5, "ticket": 40}  # idempotent
+    assert len(gh.made("issue", "create")) == 1
+
+
+def test_a_garbled_issue_list_files_a_fresh_ticket_rather_than_crashing():
+    gh = FakeGitHub()
+    real = gh.__call__
+    garbled = lambda args: '{"message": "rate limited"}' if args[:2] == ["issue", "list"] else real(args)
+    result = po._apply_pr("test/repo", _FRESH, _MISSING, gh=garbled, auth_status=_SCOPED)
+    assert result["action"] == "created" and result["ticket"] == 40
+
+
+def test_link_onboarding_pr_with_no_open_pr_files_nothing():
+    gh = FakeGitHub()
+    assert po.link_onboarding_pr("test/repo", gh=gh) == {"action": "no-pr"}
+    assert not gh.made("issue", "create")
