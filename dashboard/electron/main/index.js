@@ -21,6 +21,7 @@ import { createPortfolio } from './portfolio.js'
 import { createPortfolioProxy, portfolioHost } from './portfolio_remote.js'
 import { listTicketActivity, getTicketTimeline } from './activity.js'
 import { getDeviceStatuses } from './devices.js'
+import { listSuggestions } from './suggestions.js'
 import { getQueue, clearQueueCache } from './queue.js'
 import { getConcurrency, setConcurrency, scanNow } from './dispatch_concurrency.js'
 import { createMergeOps } from './merge_ops.js'
@@ -210,6 +211,11 @@ function registerDispatchHandlers() {
   ipcMain.handle('dispatch:scanNow', () => scanNow())
   // The header indicator: dispatched task + every background agent that is mid-run, on this machine.
   ipcMain.handle('working:now', () => buildWorkingNow({ dispatch: readDispatchStatus(), jobs: listJobs() }))
+}
+
+function registerSuggestionsHandlers() {
+  // Read-only suggestions list from ~/.claude/suggestions.md, parsed via lib/suggestions_list.py
+  ipcMain.handle('suggestions:list', () => listSuggestions())
 }
 
 function registerSessionHandlers() {
@@ -762,6 +768,7 @@ app.whenReady().then(() => {
   registerMetricsHandlers()
   registerMrReviewHandlers()
   registerDispatchHandlers()
+  registerSuggestionsHandlers()
   registerHealthHandlers()
   registerSessionHandlers()
   registerDocsHandlers()
