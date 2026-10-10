@@ -79,8 +79,23 @@ def _consecutive_failure_streak(issue_number: int, repo: str = REPO) -> int:
     return streak
 
 
-def _park_stuck_ticket(issue_number: int, streak: int, repo: str = REPO) -> None:
+PARKED_MARKER = "Parked after repeated failed builds"
+MAX_PARK_FINDINGS = 15
+
+
+def _park_stuck_ticket(issue_number: int, streak: int, repo: str = REPO, reason: str = "",
+                       findings: list[str] | tuple = ()) -> None:
+    """Stop re-dispatching a ticket that keeps failing, and hand it to a person WITH the cause.
+
+    needs-info is added before ready-for-agent comes off, so the ticket is never stateless: the triage agent treats
+    a ticket with no state label as new, and would put a well-written one straight back to ready-for-agent (another
+    round of builds; this comment resets the failure streak) or bury the cause under a template complaint (#133,
+    2026-10-09). Triage only re-checks needs-info it set itself, so this one stays until a person acts."""
     label = _label_for_device(machine_profile.registry_id())
+    subprocess.run(
+        ["gh", "issue", "edit", str(issue_number), "--repo", repo, "--add-label", "needs-info"],
+        capture_output=True, text=True, timeout=15, check=False,
+    )
     subprocess.run(
         ["gh", "issue", "edit", str(issue_number), "--repo", repo,
          "--remove-label", "ready-for-agent",
@@ -90,13 +105,18 @@ def _park_stuck_ticket(issue_number: int, streak: int, repo: str = REPO) -> None
     # The claim is dropped too, not only ready-for-agent: ticket_pipeline only
     # dispatches ready-for-agent tickets with no claimed:* label, so a parked
     # ticket that kept its claim could never be revived by re-adding the label.
+    shown = list(findings)[:MAX_PARK_FINDINGS]
+    more = len(findings) - len(shown)
+    lines = [f"**{PARKED_MARKER}** ({streak} in a row), so it stops being re-dispatched.", "",
+             f"**Why it's stuck:** {(reason or 'no reason was recorded')[:500]}"]
+    if shown:
+        lines += ["", "**Must-fix findings the builder could not clear:**", *[f"- {f}" for f in shown]]
+        if more:
+            lines.append(f"- ... and {more} more")
+    lines += ["", "**What it needs:** re-scope or split it, answer what's unclear, or build it by hand. "
+              "To send it back to the pipeline, remove `needs-info` and add `ready-for-agent`."]
     subprocess.run(
-        ["gh", "issue", "comment", str(issue_number), "--repo", repo, "--body",
-         f"Parking this ticket after {streak} consecutive failed automated "
-         f"attempts with no progress -- removed `ready-for-agent` and the "
-         f"claim so it stops being re-dispatched. Needs a human look "
-         f"(re-scope, do it by hand, or re-add `ready-for-agent` once it's "
-         f"less ambiguous) before it's eligible again."],
+        ["gh", "issue", "comment", str(issue_number), "--repo", repo, "--body", "\n".join(lines)],
         capture_output=True, text=True, timeout=15, check=False,
     )
 
@@ -171,6 +191,7 @@ def run(issue_number: int, repo: str = REPO) -> dict:
     subsystem = f"ticket-{issue_number}" if not other else f"{repo.split('/')[-1].lower()}-ticket-{issue_number}"
     measurer = None
     worktree_path = None
+    findings: list[str] = []  # the last must-fix review findings, for the park comment
 
     try:
         if other and profile is None:
@@ -190,6 +211,7 @@ def run(issue_number: int, repo: str = REPO) -> dict:
                 )
 
             worktree_path = result.get("worktree_path")
+            findings = list((result.get("final_comparison") or {}).get("fix_these") or [])
             test_results = None
             dev_evidence = None
             if result["passing"]:
@@ -267,7 +289,7 @@ def run(issue_number: int, repo: str = REPO) -> dict:
         # different tickets means the system is broken, not the tickets.
         failure_breaker.record_failure(issue_number, outcome["reason"], **({"project": repo} if other else {}))
         if prior_streak + 1 >= MAX_CONSECUTIVE_FAILURES:
-            _park_stuck_ticket(issue_number, prior_streak + 1, **kw)
+            _park_stuck_ticket(issue_number, prior_streak + 1, **kw, reason=outcome["reason"], findings=findings)
             ts.record_stage(issue_number, "done", "failed", f"parked after {prior_streak + 1} consecutive failures", **kw)
         else:
             _release_claim(issue_number, **kw, run_id=run_id)
