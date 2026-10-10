@@ -30,6 +30,11 @@ import machine_profile  # noqa: E402
 from task_dispatch import TAILSCALE_BIN, TAILSCALE_ENV  # noqa: E402  (absolute path -- launchd's PATH omits the shell's additions)
 import metrics_registry as mr  # noqa: E402
 
+try:
+    import quality_trends as qt  # noqa: E402
+except ImportError:
+    qt = None
+
 HOME = Path.home()
 STATUS_PATH = HOME / ".claude" / "logs" / "health-status.json"
 LAUNCHAGENTS_DIR = HOME / "Library" / "LaunchAgents"
@@ -999,7 +1004,7 @@ JOB_PLACEMENT = {
     "desktoplive": "both", "dashboard-webhook": "both",  # webhook on both until #112 (ADR 0032)
     "ticket-pipeline": "both",  # mini scans; the laptop's copy is a standby that scans only if the mini goes quiet (scanner_role.py)
     "architecture-review": "mini", "auto-fix": "mini", "cron-health": "mini", "health-check": "mini",
-    "process-quarantine-reviews": "mini", "verify-digest-fix": "mini",
+    "process-quarantine-reviews": "mini", "verify-digest-fix": "mini", "quality-trends": "mini",
     "usage-scan": "both",  # hourly: each machine scans its own transcripts for the Metrics tab (lib/usage_report.py)
     "cleanup-sweep": "both",  # daily: each machine sweeps its own pipeline worktrees (lib/cleanup_sweep.py)
     "dashboard-launch": "laptop",
@@ -1417,6 +1422,8 @@ def run_all() -> dict:
     results.append(check_github_budget())
     results.append(check_gh_gate())
     results.append(check_main_health())
+    if qt:
+        results += qt.check_quality_trends()
     cron_state = ch._load_state()
     cron_now = datetime.now().astimezone()
     for job in discover_launchd_jobs():

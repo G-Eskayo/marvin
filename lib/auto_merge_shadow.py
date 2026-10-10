@@ -238,6 +238,9 @@ def run(repo: str = "G-Eskayo/marvin", path: Path = STATE_PATH) -> list[dict]:
                                       capture_output=True, text=True).stdout.split()}
     facts = {"existing_top_level": tops, "new_top_level_this_week": 0, "ramp_open": trust_ramp.is_open(repo),
              "render_check_passed": False}
+    # TODO: new_top_level_this_week is stubbed to 0 (marvin#342 flagged this pre-existing gap: the weekly folder cap
+    # in auto_merge_policy.py is never enforced live). lib/quality_trends.py computes it for observability, but the
+    # live policy gate should call it to decide verdicts, not keep this stub.
     seen = observe([{"number": p["number"], "repo": repo, "url": p["url"], "title": p["title"], "body": p.get("body") or "",
                      "files": [{"path": f["path"], "additions": f.get("additions", 0), "deletions": f.get("deletions", 0),
                                 "status": "modified", "previous_path": None} for f in p.get("files", [])]} for p in prs],

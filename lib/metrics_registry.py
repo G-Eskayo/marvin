@@ -62,18 +62,45 @@ def _load_snapshots(subsystem: str, machine: str | None = None) -> list[dict]:
     return json.loads(path.read_text())
 
 
-def record(subsystem: str, metrics: dict[str, dict], machine: str | None = None) -> None:
+def record(subsystem: str, metrics: dict[str, dict], machine: str | None = None, replace_same_day: bool = False) -> None:
     """Append a timestamped metrics snapshot for `subsystem`.
 
     `metrics` maps metric name -> {"value": float, "higher_is_better": bool}.
     `machine` defaults to the current machine; specifying it explicitly writes
     to that machine's own file.
+    `replace_same_day` (default False): when True, replaces today's snapshot
+    instead of appending. Idempotent for same-day re-recordings.
     """
+    import fcntl
+
     METRICS_DIR.mkdir(parents=True, exist_ok=True)
-    snapshots = _load_snapshots(subsystem, machine)
-    timestamp = datetime.now(timezone.utc).isoformat()
-    snapshots.append({"timestamp": timestamp, "metrics": metrics})
-    _snapshot_path(subsystem, machine).write_text(json.dumps(snapshots, indent=2))
+    path = _snapshot_path(subsystem, machine)
+    lock_path = path.with_suffix(path.suffix + ".lock")
+
+    # Acquire exclusive lock for atomic read-modify-write
+    with open(lock_path, "a") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            snapshots = _load_snapshots(subsystem, machine)
+            timestamp = datetime.now(timezone.utc).isoformat()
+            today = timestamp[:10]  # YYYY-MM-DD
+
+            if replace_same_day and snapshots:
+                # Replace today's snapshot if it exists
+                last = snapshots[-1]
+                if last.get("timestamp", "")[:10] == today:
+                    snapshots[-1] = {"timestamp": timestamp, "metrics": metrics}
+                else:
+                    snapshots.append({"timestamp": timestamp, "metrics": metrics})
+            else:
+                snapshots.append({"timestamp": timestamp, "metrics": metrics})
+
+            # Atomic write
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            tmp.write_text(json.dumps(snapshots, indent=2))
+            tmp.replace(path)
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
     narrative_lines = [f"## {timestamp} — {subsystem}\n"]
     for name, m in metrics.items():
