@@ -439,4 +439,73 @@ describe('dashboard home: running tickets and summary', () => {
   })
 })
 
+describe('hold revisit comments on cards', () => {
+  it('adds revisit field to a held card with parseable comment', () => {
+    const board = buildBoard({
+      repo: 'o/r',
+      issues: [issue({ number: 5, labels: [{ name: 'hold' }] })],
+      prs: [],
+      holdComments: {
+        5: [{ body: 'Revisit by: 2026-10-20', createdAt: '2026-10-08T00:00:00Z' }]
+      }
+    })
+    const card = board.columns.flatMap((c) => c.cards).find((c) => c.number === 5)
+    expect(card.revisit).toEqual({ date: '2026-10-20', condition: null })
+  })
+
+  it('sets revisit to null for held card with no matching comment', () => {
+    const board = buildBoard({
+      repo: 'o/r',
+      issues: [issue({ number: 5, labels: [{ name: 'hold' }] })],
+      prs: [],
+      holdComments: {
+        5: [{ body: 'Some other comment', createdAt: '2026-10-08T00:00:00Z' }]
+      }
+    })
+    const card = board.columns.flatMap((c) => c.cards).find((c) => c.number === 5)
+    expect(card.revisit).toBe(null)
+  })
+
+  it('handles missing holdComments (backward compatibility)', () => {
+    const board = buildBoard({
+      repo: 'o/r',
+      issues: [issue({ number: 5, labels: [{ name: 'hold' }] })],
+      prs: []
+    })
+    const card = board.columns.flatMap((c) => c.cards).find((c) => c.number === 5)
+    expect(card.revisit).toBe(null)
+  })
+
+  it('does not add revisit field to non-held cards', () => {
+    const board = buildBoard({
+      repo: 'o/r',
+      issues: [issue({ number: 1, labels: [{ name: 'ready-for-agent' }] })],
+      prs: [],
+      holdComments: {}
+    })
+    const card = board.columns.flatMap((c) => c.cards).find((c) => c.number === 1)
+    expect('revisit' in card).toBe(false)
+  })
+
+  it('handles multiple held cards with distinct revisits', () => {
+    const board = buildBoard({
+      repo: 'o/r',
+      issues: [
+        issue({ number: 5, labels: [{ name: 'hold' }] }),
+        issue({ number: 7, labels: [{ name: 'hold' }] })
+      ],
+      prs: [],
+      holdComments: {
+        5: [{ body: 'Revisit by: 2026-10-20', createdAt: '2026-10-08T00:00:00Z' }],
+        7: [{ body: 'Revisit by: 2026-10-25 — #98 closes', createdAt: '2026-10-09T00:00:00Z' }]
+      }
+    })
+    const cards = board.columns.flatMap((c) => c.cards)
+    const card5 = cards.find((c) => c.number === 5)
+    const card7 = cards.find((c) => c.number === 7)
+    expect(card5.revisit).toEqual({ date: '2026-10-20', condition: null })
+    expect(card7.revisit).toEqual({ date: '2026-10-25', condition: '#98 closes' })
+  })
+})
+
 

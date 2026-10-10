@@ -1,4 +1,5 @@
 import { hasEvidenceSchema, parseTicketRef } from './mr_review.js'
+import { latestRevisit } from '../../src/lib/revisit.js'
 
 // Jira-style project board (CONTEXT.md "Project boards"). A board is never
 // stored: columns are derived live from the tracker's issues + PRs plus the
@@ -138,7 +139,7 @@ function deriveColumnCore(issue, { prs = [], events = [], isLive = false, openNu
   return { ...base, column: 'backlog', reason: 'Not yet triaged' }
 }
 
-export function buildBoard({ repo, issues, prs, eventsByNumber = {}, liveNumbers = new Set(), evidenceByNumber = {}, now = Date.now() }) {
+export function buildBoard({ repo, issues, prs, eventsByNumber = {}, liveNumbers = new Set(), evidenceByNumber = {}, holdComments = {}, now = Date.now() }) {
   const openNumbers = new Set(issues.filter((i) => i.state === 'OPEN').map((i) => i.number))
   const heldNumbers = new Set(issues.filter((i) => i.state === 'OPEN' && labelNames(i).includes('hold')).map((i) => i.number))
   const notPlannedNumbers = new Set(issues.filter((i) => i.state === 'CLOSED' && i.stateReason === 'NOT_PLANNED').map((i) => i.number))
@@ -158,6 +159,8 @@ export function buildBoard({ repo, issues, prs, eventsByNumber = {}, liveNumbers
     const evidence = ev ? { verdict: ev.verdict, items: ev.evidence } : null
     const idle = d.column === 'ready' || d.column === 'backlog'
     const reason = ev && idle ? `Work already exists (${ev.verdict === 'in-flight' ? 'in flight' : 'commit mentions it'}: ${ev.evidence[0].ref}) - ${d.reason}` : d.reason
+    const isHeld = names.includes('hold')
+    const revisit = isHeld ? latestRevisit(holdComments[issue.number] || []) : undefined
     const card = {
       number: issue.number,
       title: issue.title,
@@ -178,7 +181,8 @@ export function buildBoard({ repo, issues, prs, eventsByNumber = {}, liveNumbers
       owner: d.owner,
       prs: d.prs,
       hasTimeline: events.length > 0,
-      isLive: liveNumbers.has(issue.number)
+      isLive: liveNumbers.has(issue.number),
+      ...(isHeld && { revisit })
     }
     // Closed long ago -> archive (never deleted, just out of the way). A closed ticket with no date stays visible.
     const closedMs = Date.parse(issue.closedAt)

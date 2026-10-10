@@ -499,6 +499,32 @@ def check_project_tags(path: Path | None = None, now: datetime | None = None) ->
     return _result(cid, label, "red" if n >= PROJECT_TAGS_RED_AT else "yellow", detail, value=n)
 
 
+HOLD_REVISIT_PATH = Path.home() / ".claude" / "logs" / "hold-revisit.json"
+HOLD_REVISIT_STALE_HOURS = 3
+
+
+def check_hold_revisit(path: Path | None = None, now: datetime | None = None) -> dict:
+    """Held tickets without a 'Revisit by:' line are waiting indefinitely. Written hourly by the revisit agent."""
+    cid, label = "tickets:hold-revisit", "Hold tickets have revisit dates"
+    now = now or _now()
+    try:
+        d = json.loads(Path(path or HOLD_REVISIT_PATH).read_text())
+        at = datetime.fromisoformat(d["generated_at"])
+    except (OSError, ValueError, KeyError):
+        return _result(cid, label, "yellow", "the revisit agent has not run on this machine yet")
+    age_h = (now - at).total_seconds() / 3600
+    if age_h > HOLD_REVISIT_STALE_HOURS:
+        return _result(cid, label, "yellow", f"the revisit agent last ran {age_h:.0f} hours ago (it runs hourly with the ticket agents)")
+    without = d.get("without_revisit") or []
+    if not without:
+        return _result(cid, label, "green", "every held ticket has a 'Revisit by:' line", value=0)
+    parts = [f"{w['repo'].split('/')[-1]}#{w['number']} {w.get('title', '')}" for w in without[:5]]
+    detail = f"{len(without)} waiting indefinitely: " + "; ".join(parts)
+    if len(without) > 5:
+        detail += f" (+ {len(without) - 5} more)"
+    return _result(cid, label, "yellow", detail, value=len(without))
+
+
 MAIN_HEALTH_PATH = Path.home() / ".claude" / "logs" / "main-health.json"
 MAIN_HEALTH_STALE_HOURS = 24
 
@@ -1414,6 +1440,7 @@ def run_all() -> dict:
     results.append(check_trigger_coverage())
     results.append(check_catalog_fresh())
     results.append(check_project_tags())
+    results.append(check_hold_revisit())
     results.append(check_github_budget())
     results.append(check_gh_gate())
     results.append(check_main_health())
