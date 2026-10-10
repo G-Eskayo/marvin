@@ -13,7 +13,7 @@ fixes done manually and verified safe the same day:
 - Only files under ~/.agents (MARVIN's own codebase) — never Gil's actual
   project directories.
 - Never files this system depends on to run itself right now (see
-  _core_files() below) — derived from settings.local.json's live hooks and
+  _core_files() below) — derived from the live hooks (marvin_hooks.wired_scripts) and
   every com.marvin.*/com.gileskayo.* launchd plist's ProgramArguments, not
   hardcoded, so it grows automatically as more infra gets built.
 - Never deletes anything — the fixer subprocess gets Read+Edit only, no
@@ -40,14 +40,16 @@ AGENTS_DIR = Path.home() / ".agents"
 LOG_PATH = Path.home() / ".claude" / "auto-fix-log.md"
 QA_SCAN = AGENTS_DIR / "skills" / "qa-agent" / "scripts" / "qa_scan.py"
 VENV_PYTHON = AGENTS_DIR / "venv" / "bin" / "python"
-SETTINGS_LOCAL = Path.home() / ".claude" / "settings.local.json"
 LAUNCH_AGENTS_DIR = Path.home() / "Library" / "LaunchAgents"
 
 SAFE_CATEGORIES = {"NAMING", "VERBOSITY"}
 
 sys.path.insert(0, str(AGENTS_DIR / "lib"))
 from claude_bin import resolve_claude_bin as _resolve_claude_bin  # noqa: E402
+import marvin_hooks  # noqa: E402
 import marvin_launcher  # noqa: E402
+
+HOOK_SETTINGS_PATHS = (marvin_hooks.USER_SETTINGS, marvin_hooks.LOCAL_SETTINGS)
 
 
 def _core_files() -> set[Path]:
@@ -56,17 +58,10 @@ def _core_files() -> set[Path]:
     hooks/cron jobs are automatically excluded without editing this file."""
     core: set[Path] = set()
 
-    try:
-        hooks = json.loads(SETTINGS_LOCAL.read_text()).get("hooks", {})
-        for entries in hooks.values():
-            for entry in entries:
-                for h in entry.get("hooks", []):
-                    cmd = h.get("command", "")
-                    for token in cmd.split():
-                        if token.endswith(".py") and str(AGENTS_DIR) in token:
-                            core.add(Path(token).resolve())
-    except Exception:
-        pass
+    # Hooks: user-level settings.json since #291, so reading settings.local.json alone protected none of them.
+    for script in marvin_hooks.wired_scripts(HOOK_SETTINGS_PATHS):
+        if script["path"].endswith(".py") and str(AGENTS_DIR) in script["path"]:
+            core.add(Path(script["path"]).resolve())
 
     try:
         for plist in LAUNCH_AGENTS_DIR.glob("com.marvin.*.plist"):

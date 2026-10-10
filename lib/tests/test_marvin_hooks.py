@@ -104,3 +104,83 @@ def test_session_awareness_records_everywhere_and_asks_only_people():
     assert sw[("UserPromptSubmit", "prompt")].kinds == {"all"}
     assert sw[("PostToolUse", "post")].kinds == {"all"} and "Edit" in sw[("PostToolUse", "post")].matcher
     assert sw[("PreToolUse", "pre")].kinds == {"interactive"} and "Write" in sw[("PreToolUse", "pre")].matcher
+
+
+# ── wired_scripts: what the live hooks actually run (the map's Infrastructure section and auto_fix's never-touch
+# list both read it; both were still reading settings.local.json after #291 emptied it, so both saw no hooks) ──
+
+def _hook(command, matcher=None):
+    entry = {"hooks": [{"type": "command", "command": command}]}
+    return {**entry, "matcher": matcher} if matcher else entry
+
+
+def _wired(tmp_path, user=None, local=None):
+    paths = []
+    for name, settings in (("settings.json", user), ("settings.local.json", local)):
+        p = tmp_path / name
+        if settings is not None:
+            p.write_text(settings if isinstance(settings, str) else json.dumps(settings))
+        paths.append(p)
+    return {Path(r["path"]).name: r for r in mh.wired_scripts(paths)}
+
+
+def test_wired_scripts_reads_user_level_hooks_through_the_gate(tmp_path):
+    cmd = f"{mh.PY} {mh.GATE_SCRIPT} gate all -- {mh.PY} /a/lib/gh_merge_guard.py"
+    got = _wired(tmp_path, user={"hooks": {"PreToolUse": [_hook(cmd, "Bash")]}})
+    assert got["gh_merge_guard.py"] == {"path": "/a/lib/gh_merge_guard.py", "triggers": ["PreToolUse: Bash"]}
+    assert "marvin_hooks.py" in got  # the gate runs on every hook, so it's wired infrastructure too
+
+
+def test_wired_scripts_still_reads_home_folder_hooks(tmp_path):
+    got = _wired(tmp_path, local={"hooks": {"Stop": [_hook("/usr/bin/python3 /a/old_hook.py")]}})
+    assert got["old_hook.py"]["triggers"] == ["Stop"]
+
+
+def test_wired_scripts_finds_every_script_in_a_shell_chain_with_quotes(tmp_path):
+    chain = f"{mh.PY} {mh.GATE_SCRIPT} gate interactive -- /bin/sh -c '/p /a/code_sync.py pull /x && /p /a/code_sync.py pull /y && /p /a/report.py'"
+    got = _wired(tmp_path, user={"hooks": {"SessionStart": [_hook(chain)]}})
+    assert set(got) == {"marvin_hooks.py", "code_sync.py", "report.py"}  # no stray quote, code_sync once
+    assert got["report.py"]["path"] == "/a/report.py"
+
+
+def test_wired_scripts_merges_triggers_of_a_script_wired_several_times(tmp_path):
+    user = {"hooks": {"PreToolUse": [_hook("/p /a/work.py hook pre", "Edit")],
+                      "PostToolUse": [_hook("/p /a/work.py hook post", "Edit")]}}
+    got = _wired(tmp_path, user=user, local={"hooks": {"PostToolUse": [_hook("/p /a/work.py hook post", "Edit")]}})
+    assert got["work.py"]["triggers"] == ["PreToolUse: Edit", "PostToolUse: Edit"]
+
+
+def test_wired_scripts_includes_shell_scripts_but_not_interpreters_or_arguments(tmp_path):
+    got = _wired(tmp_path, user={"hooks": {"Stop": [_hook("/bin/bash /a/notify.sh pre /a/data.json")]}})
+    assert set(got) == {"notify.sh"}
+
+
+def test_wired_scripts_survives_missing_broken_and_odd_settings(tmp_path):
+    assert _wired(tmp_path) == {}  # neither file exists
+    assert _wired(tmp_path, user="{not json", local="[]") == {}
+    odd = {"hooks": {"A": "nope", "B": [None, "x", {"hooks": None}, {"hooks": [{"type": "prompt", "prompt": "/a/x.py"},
+                                                                             {"type": "command"}, {"type": "command", "command": "/p '/a/unclosed.py"}]}]}}
+    assert set(_wired(tmp_path, user=odd)) == {"unclosed.py"}  # an unbalanced quote still yields its script
+    assert _wired(tmp_path, user={"hooks": []}) == {}
+
+
+def test_wired_scripts_reads_the_real_installed_hooks():
+    names = {Path(r["path"]).name for r in mh.wired_scripts([mh.HOME / "nonexistent.json"] + [mh.USER_SETTINGS])}
+    if not mh.USER_SETTINGS.exists():
+        pytest.skip("no user settings on this machine")
+    for h in mh.HOOKS:  # everything install() writes is found again by wired_scripts
+        for token in " ".join(h.command).replace("'", " ").split():
+            if token.endswith(".py"):
+                assert Path(token).name in names, token
+
+
+def test_auto_fix_never_touches_a_script_a_user_level_hook_runs(tmp_path, monkeypatch):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "skills" / "improve" / "scripts"))
+    import auto_fix
+    script = auto_fix.AGENTS_DIR / "lib" / "gh_merge_guard.py"
+    user = tmp_path / "settings.json"
+    user.write_text(json.dumps({"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
+        {"type": "command", "command": f"{mh.PY} {mh.GATE_SCRIPT} gate all -- {mh.PY} {script}"}]}]}}))
+    monkeypatch.setattr(auto_fix, "HOOK_SETTINGS_PATHS", (user, tmp_path / "settings.local.json"))
+    monkeypatch.setattr(auto_fix, "LAUNCH_AGENTS_DIR", tmp_path / "none")
+    assert auto_fix._core_files() == {script.resolve(), mh.GATE_SCRIPT.resolve()}
