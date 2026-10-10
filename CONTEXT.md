@@ -542,6 +542,32 @@ unbounded: any chat, either machine, raw `gh`, the GitHub UI). Polling stays onl
 - **Not built, deliberately**: a rebuild-on-pull trigger (the sync cycle already rebuilds right after it
   pulls; only the cycle gap + 15-min settle remain) and a Docs-tab trigger (Docs still refreshes by hand).
 
+## Pipeline visibility — stage strip (built 2026-10-09, ADR 0065, ticket #217)
+
+Gil's problem 2026-10-09: debugging "where is this PR stuck?" required SSH + log archaeology into
+`~/.claude/logs/ticket-stages/`. Pipeline stage events exist, the dashboard reads them, but only in
+a vertical drill-down list. No high-level "where now?" at a glance on ticket/PR cards, and patterns
+like "most PRs stall at the gate" couldn't be spotted.
+
+- **Horizontal stage strip** renders above the existing vertical history on ticket and PR cards. One
+  pill per canonical stage in order (`claimed → planning → executing → verifying → gate → merging →
+  versioning → rebuilding → done`), with a symbol and color for the *latest* status of that stage:
+  ◌ pending / ✓ passed / ✕ failed / ◐ running / ⏱ stalled / ⟳ needs-rebase / ∅ skipped.
+- **Stall detection**: a `status: "started"` event older than its per-stage threshold (10 min default,
+  35 min for gate) renders stalled. Detection never uses `isLiveNow === false` as proof (could be
+  running elsewhere); only `isLiveNow === true` positively overrides a stale timestamp.
+- **Remediation lookup**: failed stages show the error code and human-readable remediation on hover,
+  extracted tolerantly from `"CODE: message"` format — missing codes degrade to raw detail, never throw.
+- **Draft → ready**: when `readyIfDraft` marks a draft PR ready, a new `merging: passed` stage event
+  records the milestone for visibility.
+- **Pure derivation + presentational component** — `dashboard/src/lib/stage_strip.js` (pure function,
+  no React) + `StageStrip.jsx` (React component); reused by both dashboard now and future MARVIN
+  Mobile renderer. Tests: 21 unit tests for status, stall, code extraction, remediation, state
+  combinatorics.
+- **Cross-project correctness**: every `repo` param is threaded through (`window.api.activity.timeline`,
+  `recordStage`, draft→ready write) so the strip works identically for clarity-captions, portfolio,
+  mobile, or any onboarded project.
+
 ## Project catalog and the master "Where things are" doc (decided 2026-10-05)
 
 Problem found 2026-10-05: the Docs tab listed 4 projects because it only counted GitHub repos with a
