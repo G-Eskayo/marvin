@@ -51,6 +51,12 @@ const RULES = [
     remediation: 'The request did not contain a valid GitHub PR URL.' }
 ]
 
+// Built from RULES above (for error-pattern failures) plus inline refusal() codes for non-pattern failures.
+// Exported for dashboard visibility (stage_strip.js) and stage history rendering.
+export const REMEDIATION_BY_CODE = Object.fromEntries(
+  RULES.map((r) => [r.code, r.remediation])
+)
+
 const EVIDENCE_MAX = 600
 
 function textOf(error) {

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { EvidenceTable, ApproveDenyActions, CorrectionNotice } from './MrReview.jsx'
 import { projectIdOf } from '../lib/projects.js'
+import StageStrip from './StageStrip.jsx'
 import Related, { useRelated } from './Related.jsx'
 import PrImages from './PrImages.jsx'
 import Decisions from './Decisions.jsx'
@@ -124,6 +125,7 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
   const rel = useRelated(() => window.api.relations.pr(pr.repo, pr.number), [pr.repo, pr.number])
   const [context, setContext] = useState(null)
   const [error, setError] = useState(null)
+  const [prEvents, setPrEvents] = useState([])
 
   useEffect(() => {
     let cancelled = false
@@ -143,6 +145,12 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
       cancelled = true
     }
   }, [pr.ticketNumber])
+
+  useEffect(() => {
+    if (pr.ticketNumber) {
+      window.api.activity.timeline(pr.ticketNumber, pr.repo).then(setPrEvents).catch(() => {})
+    }
+  }, [pr.ticketNumber, pr.repo])
 
   const contextLoading = context === null && !error
 
@@ -196,6 +204,12 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
           Approve refused {new Date(pr.refusal.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}: <strong>{pr.refusal.reason}</strong>
           {pr.refusal.message && <p className="mt-1 whitespace-pre-wrap font-mono text-xs text-red-300/80">{pr.refusal.message}</p>}
         </div>
+      )}
+
+      {prEvents.length > 0 && (
+        <Section title="Pipeline">
+          <StageStrip events={prEvents} />
+        </Section>
       )}
 
       {/* What the PR asks the owner to choose: answered here, and Approve waits until the required ones are. */}
