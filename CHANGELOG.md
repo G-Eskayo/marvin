@@ -1,5 +1,7 @@
 # Changelog
 
+- [Ops] Dashboard: machine resources panel (disk, memory pressure and swap, CPU, GPU) for each Mac ([#364](https://github.com/G-Eskayo/marvin/pull/364))
+
 - Holds come back: an 'On hold' group on the board, a 'Revisit by' line, and a revisit agent ([#362](https://github.com/G-Eskayo/marvin/pull/362))
 
 - Map snapshot test deletes the real ~/.claude/logs and health ([#397](https://github.com/G-Eskayo/marvin/pull/397))
