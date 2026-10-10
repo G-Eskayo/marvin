@@ -5,7 +5,7 @@ generate.py — regenerate the MARVIN brain-map HTML from live + hand-maintained
 Live (always current):
   - ~/.claude/manifest.json                — the skill list and calls: edges
   - ~/Library/LaunchAgents/com.marvin.*.plist — recurring cron agents (ADR 0018)
-  - ~/.claude/settings.local.json (hooks)   — infrastructure hook wiring (ADR 0019)
+  - ~/.claude/settings.json + settings.local.json (hooks) — infrastructure hook wiring (ADR 0019, #291)
   - ~/.claude/marvin-network.json (devices) — registered cross-machine devices (ADR 0020)
   - ~/.agents/dashboard/src/App.jsx (TABS)  — the dashboard's tabs (ADR 0049)
   - ~/.claude/catalog/projects.*.json       — active and recent projects (ADR 0049)
@@ -38,6 +38,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / "scripts"))
 import connections  # noqa: E402
 import data_flow  # noqa: E402
+sys.path.append(str(Path(__file__).resolve().parent.parent / "lib"))  # appended: brain-map's own modules win
+import marvin_hooks  # noqa: E402
 import readiness  # noqa: E402
 
 HERE = Path(__file__).parent
@@ -52,7 +54,7 @@ TREE_DATA_PATH = HERE / "tree-data.json"
 
 SKILLS_DIR = Path.home() / ".agents" / "skills"
 LAUNCHD_DIR = Path.home() / "Library" / "LaunchAgents"
-SETTINGS_LOCAL_PATH = Path.home() / ".claude" / "settings.local.json"
+HOOK_SETTINGS_PATHS = (marvin_hooks.USER_SETTINGS, marvin_hooks.LOCAL_SETTINGS)
 NETWORK_PATH = Path.home() / ".claude" / "marvin-network.json"
 DASHBOARD_APP_PATH = Path.home() / ".agents" / "dashboard" / "src" / "App.jsx"
 CATALOG_DIR = Path.home() / ".claude" / "catalog"
@@ -231,46 +233,28 @@ def build_agent_children(enrichment: dict) -> list[dict]:
     return children
 
 
-# ── ADR 0019: Infrastructure hooks live from settings.local.json ───────────
+# ── ADR 0019: Infrastructure hooks live from the Claude Code settings ─────
 
 def discover_hooks() -> list[dict]:
-    """Every hook command wired into settings.local.json's `hooks` key,
-    across all event types (PostToolUse today, but not hardcoded to it).
-    A script referenced by more than one hook entry is deduplicated by id."""
-    try:
-        data = json.loads(SETTINGS_LOCAL_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return []
-    hooks_cfg = data.get("hooks", {})
+    """Every script a hook runs, from marvin_hooks.wired_scripts (user-level settings.json since #291, plus the
+    old settings.local.json), so a hook moved or wrapped in the gate still shows up. Deduplicated by file name,
+    which is the node id."""
     seen: dict[str, dict] = {}
-    for event_type, entries in hooks_cfg.items():
-        if not isinstance(entries, list):
+    for script in marvin_hooks.wired_scripts(HOOK_SETTINGS_PATHS):
+        script_path = Path(script["path"])
+        hook_id = script_path.name
+        if hook_id in seen:
             continue
-        for entry in entries:
-            matcher = entry.get("matcher", "")
-            trigger = f"{event_type}: {matcher}" if matcher else event_type
-            for h in entry.get("hooks", []):
-                if h.get("type") != "command":
-                    continue
-                cmd = h.get("command", "")
-                parts = cmd.split()
-                if not parts:
-                    continue
-                script_path = Path(parts[-1])
-                hook_id = script_path.name
-                if hook_id in seen:
-                    continue
-                fallback_desc = read_docstring_first_sentence(script_path)
-                # Resolve script_path to repo-relative for ownership path
-                repo_path = None
-                try:
-                    repo_path = str(script_path.relative_to(Path.home() / ".agents"))
-                except (ValueError, OSError):
-                    pass
-                seen[hook_id] = {
-                    "id": hook_id, "trigger": trigger, "fallback_desc": fallback_desc,
-                    "script_path": repo_path
-                }
+        # Repo-relative for the ownership path; a script outside ~/.agents has none
+        repo_path = None
+        try:
+            repo_path = str(script_path.relative_to(Path.home() / ".agents"))
+        except (ValueError, OSError):
+            pass
+        seen[hook_id] = {
+            "id": hook_id, "trigger": "; ".join(script["triggers"]),
+            "fallback_desc": read_docstring_first_sentence(script_path), "script_path": repo_path,
+        }
     return sorted(seen.values(), key=lambda h: h["id"])
 
 
