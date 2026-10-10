@@ -1,0 +1,7 @@
+1. **Fix the two citation paths** in `docs/plans/docs-vs-files-review.md` (lines 27 and the App.jsx references near line 73-74) to read `dashboard/src/App.jsx:17-18` and `dashboard/electron/main/outbox.js` (`detectKind`, ~lines 134-150) instead of the bare paths — the only content edit this revision makes.
+2. **Stage only the review doc by explicit name**: `git add docs/plans/docs-vs-files-review.md` — never `-A`/`.`. Confirm with `git status --porcelain` immediately after that `docs/design/pipeline-g-eskayo-marvin-403.md` and `-tasks.md` remain untracked/unstaged.
+3. **Commit directly to the current branch** (`pipeline/g-eskayo/marvin#403` — already checked out, do not create a new one) with a message describing the review, not a feature.
+4. **Re-check for a race**: `gh pr list --repo G-Eskayo/marvin --head "pipeline/g-eskayo/marvin#403" --state all` must still be empty.
+5. **Push the branch and open the PR**, pasting the Decisions block verbatim into the PR body text (not just relying on the file) so the merge gate's `decisions_gate.js` reads it correctly.
+6. **Confirm via `gh pr view`** that the opened PR shows the Decisions section and that `git diff main --stat` for the branch shows exactly one file changed, two lines, in `docs/plans/`.
+7. *(Only after 1-6 succeed)* re-run the 12-point adversarial check above against the committed version as a final sanity pass — this is confirmation, not a gate that should block steps 1-6, since steps 1-6 are the fix for the actual repeated failure.
