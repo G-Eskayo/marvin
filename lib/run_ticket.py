@@ -45,55 +45,31 @@ def _comment_failure(issue_number: int, reason: str, repo: str = REPO) -> None:
 
 
 def _consecutive_failure_streak(issue_number: int, repo: str = REPO) -> int:
-    """Count trailing automated-failure comments on this issue, most-recent
-    first, stopping at the first non-matching comment (a human reply, a
-    passing run, anything else). This is the cross-dispatch retry counter --
-    deliberately not a local state file, so both machines agree on it for
-    free via the shared issue thread, and a human commenting on the ticket
-    (to redirect it, add context, anything) naturally resets the streak.
-
-    Found live 2026-09-04..06: with no cap across separate run_ticket.py
-    invocations, a release-claim-then-immediate-redispatch cycle on a
-    genuinely-too-ambiguous ticket (#28) spun ~6,900 back-to-back headless
-    sessions over 3 days with every attempt reaching an identical
-    'unchanged' verdict -- max_iterations=3 only bounds iterations *inside*
-    one execute_ticket call, nothing bounded the outer release/redispatch
-    loop across calls. Timeouts do not count as failures; only FAILURE_MARKER."""
-    proc = subprocess.run(
-        ["gh", "issue", "view", str(issue_number), "--repo", repo,
-         "--json", "comments"],
-        capture_output=True, text=True, timeout=30, check=False,
-    )
-    if proc.returncode != 0:
-        return 0
-    try:
-        comments = json.loads(proc.stdout)["comments"]
-    except (json.JSONDecodeError, KeyError):
-        return 0
-    streak = 0
-    for c in reversed(comments):
-        if FAILURE_MARKER in c.get("body", ""):
-            streak += 1
-        else:
-            break
-    return streak
+    """Count trailing failures for this ticket from the jsonl log. AC1: read failure_breaker's
+    persistent log instead of re-scanning GitHub comments."""
+    kw = {} if repo == REPO else {"project": repo}
+    result = failure_breaker.ticket_streak(issue_number, **kw)
+    return result["count"]
 
 
 PARKED_MARKER = "Parked after repeated failed builds"
 MAX_PARK_FINDINGS = 15
+DEFAULT_REVISIT_DAYS = 14
 
 
 def _park_stuck_ticket(issue_number: int, streak: int, repo: str = REPO, reason: str = "",
-                       findings: list[str] | tuple = ()) -> None:
+                       findings: list[str] | tuple = (), hold_data: dict | None = None) -> None:
     """Stop re-dispatching a ticket that keeps failing, and hand it to a person WITH the cause.
 
-    needs-info is added before ready-for-agent comes off, so the ticket is never stateless: the triage agent treats
-    a ticket with no state label as new, and would put a well-written one straight back to ready-for-agent (another
-    round of builds; this comment resets the failure streak) or bury the cause under a template complaint (#133,
-    2026-10-09). Triage only re-checks needs-info it set itself, so this one stays until a person acts."""
+    hold label is added before ready-for-agent comes off, so the ticket is never stateless.
+    "hold" is in STATE_LABELS so the triage agent will not re-triage it back to ready-for-agent,
+    ensuring it stays held until a person acts."""
+    import ticket_policy
+    from datetime import datetime, timedelta, timezone
+
     label = _label_for_device(machine_profile.registry_id())
     subprocess.run(
-        ["gh", "issue", "edit", str(issue_number), "--repo", repo, "--add-label", "needs-info"],
+        ["gh", "issue", "edit", str(issue_number), "--repo", repo, "--add-label", "hold"],
         capture_output=True, text=True, timeout=15, check=False,
     )
     subprocess.run(
@@ -105,16 +81,36 @@ def _park_stuck_ticket(issue_number: int, streak: int, repo: str = REPO, reason:
     # The claim is dropped too, not only ready-for-agent: ticket_pipeline only
     # dispatches ready-for-agent tickets with no claimed:* label, so a parked
     # ticket that kept its claim could never be revived by re-adding the label.
+
+    # Build the comment with failure signatures and revisit date
     shown = list(findings)[:MAX_PARK_FINDINGS]
     more = len(findings) - len(shown)
+
+    sigs = (hold_data or {}).get("signatures", [])
+    sig_lines = []
+    if sigs:
+        sig_lines = ["", "**Failure signatures that triggered this hold:**"] + [f"- `{s}`" for s in sigs[:5]]
+        if len(sigs) > 5:
+            sig_lines.append(f"- ... and {len(sigs) - 5} more")
+
+    # Generate revisit date (DEFAULT_REVISIT_DAYS from now)
+    hold_reason_text = "N consecutive pipeline failures"
+    if hold_data and hold_data.get("reason") == "repeat-signature":
+        hold_reason_text = "same failure signature twice in a row"
+
+    revisit_date = (datetime.now(timezone.utc) + timedelta(days=DEFAULT_REVISIT_DAYS)).strftime("%Y-%m-%d")
+    revisit_line = ticket_policy.format_revisit(revisit_date, hold_reason_text)
+
     lines = [f"**{PARKED_MARKER}** ({streak} in a row), so it stops being re-dispatched.", "",
              f"**Why it's stuck:** {(reason or 'no reason was recorded')[:500]}"]
+    lines.extend(sig_lines)
     if shown:
         lines += ["", "**Must-fix findings the builder could not clear:**", *[f"- {f}" for f in shown]]
         if more:
             lines.append(f"- ... and {more} more")
-    lines += ["", "**What it needs:** re-scope or split it, answer what's unclear, or build it by hand. "
-              "To send it back to the pipeline, remove `needs-info` and add `ready-for-agent`."]
+    lines += ["", revisit_line, "",
+              "**What it needs:** re-scope or split it, answer what's unclear, or build it by hand. "
+              "To send it back to the pipeline, remove `hold` and add `ready-for-agent`."]
     subprocess.run(
         ["gh", "issue", "comment", str(issue_number), "--repo", repo, "--body", "\n".join(lines)],
         capture_output=True, text=True, timeout=15, check=False,
@@ -283,14 +279,21 @@ def run(issue_number: int, repo: str = REPO) -> dict:
             ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
             _trigger_redispatch()
             return outcome
-        prior_streak = _consecutive_failure_streak(issue_number, **kw)
         _comment_failure(issue_number, outcome["reason"], **kw)
         # Feed the cross-ticket breaker (failure_breaker.py): the SAME failure across
         # different tickets means the system is broken, not the tickets.
         failure_breaker.record_failure(issue_number, outcome["reason"], **({"project": repo} if other else {}))
-        if prior_streak + 1 >= MAX_CONSECUTIVE_FAILURES:
-            _park_stuck_ticket(issue_number, prior_streak + 1, **kw, reason=outcome["reason"], findings=findings)
-            ts.record_stage(issue_number, "done", "failed", f"parked after {prior_streak + 1} consecutive failures", **kw)
+
+        # Check if this ticket should be held based on its streak
+        failure_threshold = (profile or {}).get("failure_threshold") or MAX_CONSECUTIVE_FAILURES
+        hold_data = failure_breaker.should_hold(issue_number,
+                                                 project=repo,
+                                                 threshold=failure_threshold)
+
+        if hold_data:
+            count = hold_data["count"]
+            _park_stuck_ticket(issue_number, count, **kw, reason=outcome["reason"], findings=findings, hold_data=hold_data)
+            ts.record_stage(issue_number, "done", "failed", f"parked after {count} consecutive failures ({hold_data['reason']})", **kw)
         else:
             _release_claim(issue_number, **kw, run_id=run_id)
             ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
