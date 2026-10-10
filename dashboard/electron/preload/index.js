@@ -87,6 +87,8 @@ contextBridge.exposeInMainWorld('api', {
     content: (relPath) => ipcRenderer.invoke('outbox:content', relPath)
   },
   portfolio: {
+    // Opens the dev site in Google Chrome, or takes you to the tab that already has it (marvin#377).
+    openDevSite: () => ipcRenderer.invoke('portfolio:openDevSite'),
     components: () => ipcRenderer.invoke('portfolio:components'),
     saveComponent: (name, html, notes) => ipcRenderer.invoke('portfolio:component:save', name, html, notes),
     createComponent: (name, html, notes) => ipcRenderer.invoke('portfolio:component:create', name, html, notes),

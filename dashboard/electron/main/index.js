@@ -46,6 +46,7 @@ import { DISPATCH_STATE_PATH } from './dispatch_status.js'
 import { createHash } from 'crypto'
 import { JOBS_DIR } from './jobs.js'
 import { openMarvinSession } from './marvin_session.js'
+import { openDevSite } from './dev_site_chrome.js'
 import { listAgents } from './agents.js'
 import { buildWorkingNow } from './working.js'
 import { listJobs } from './jobs.js'
@@ -209,6 +210,9 @@ function registerDispatchHandlers() {
 function registerSessionHandlers() {
   // The MARVIN button (marvin#228): a ready MARVIN session in WezTerm on this Mac.
   ipcMain.handle('marvin:openSession', (_event, request) => openMarvinSession(request))
+  // The Portfolio tab's "Open dev site" button (marvin#377): reuses the dev site's Chrome tab if one is open. The
+  // renderer sends no URL; only the dev site can be opened this way.
+  ipcMain.handle('portfolio:openDevSite', () => openDevSite())
 }
 
 function registerHealthHandlers() {
