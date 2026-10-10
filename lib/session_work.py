@@ -172,6 +172,39 @@ def overlaps(st: dict, sid: str, key, now: float, remote: dict | None = None) ->
     return out
 
 
+def live_edits_for(repo_id: str, paths: list[str], now: float) -> list[dict]:
+    """Sessions with a live (<= LIVE_S) edit to repo_id+path, for any path in `paths` — the
+    lease code_sync waits on before committing. Fails open per session: a malformed entry is
+    skipped, never raised, so one broken session can't hide a real lease held by a well-formed
+    sibling, and can't crash the caller either."""
+    try:
+        with _Locked() as st:
+            prune(st, now)
+            out = []
+            for sid, s in (st.get("sessions") or {}).items():
+                try:
+                    if not isinstance(s, dict):
+                        continue
+                    last = s.get("last", 0)
+                    if not isinstance(last, (int, float)) or now - last > LIVE_S:
+                        continue
+                    files = s.get("files")
+                    if not isinstance(files, dict):
+                        continue
+                    for p in paths:
+                        ts = files.get(_k((repo_id, p)))
+                        if not isinstance(ts, (int, float)) or now - ts > LIVE_S:
+                            continue
+                        req = s.get("request", "")
+                        out.append({"session": sid, "path": p, "edited_at": ts,
+                                    "request": req if isinstance(req, str) else ""})
+                except Exception:
+                    continue
+            return out
+    except Exception:
+        return []
+
+
 def pre_edit(st: dict, sid: str, key, now: float, remote: dict | None = None) -> str | None:
     """Why this edit should pause, or None. Each (this session, other session, file) is asked about once."""
     asked = st.setdefault("asked", {})
