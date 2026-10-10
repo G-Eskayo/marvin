@@ -151,6 +151,18 @@ export function createPortfolio({
     return latestEval()
   }
 
+  const claimsFile = path.join(dataDir, 'marvin-page-claims.json')
+  const latestClaims = () => readJson(claimsFile, null)
+
+  async function runClaims() {
+    try {
+      await exec(python, [path.join(agentsDir, 'lib', 'claims_ledger_nightly.py')], { maxBuffer: 1024 * 1024, timeout: 5 * 60 * 1000 })
+    } catch (err) {
+      throw new Error(`Claims check failed: ${String(err.stderr || err.message).slice(0, 400)}`)
+    }
+    return latestClaims()
+  }
+
   function stemOf(imagePath) {
     // Extract the filename stem (without extension and -600w/-hero suffixes).
     const filename = String(imagePath).split('/').pop() || ''
@@ -571,5 +583,5 @@ export function createPortfolio({
     }
   }
 
-  return { contentTemplates, contentReport, chrome, inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, templateSource, specimen, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage, imageMotifs, imageVariants, newImageVariant, chooseImageVariant, applyImages, addProject, listElements, verifyElement, pipelineStatus, runPipeline, deleteImageVariant, variantPreview, imageStyleCatalog, fluxVariants, generateFluxVariant, chooseFluxVariant, deleteFluxVariant, fluxVariantPreview }
+  return { contentTemplates, contentReport, chrome, inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, templateSource, specimen, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, latestClaims, runClaims, listImages, generateImage, imageMotifs, imageVariants, newImageVariant, chooseImageVariant, applyImages, addProject, listElements, verifyElement, pipelineStatus, runPipeline, deleteImageVariant, variantPreview, imageStyleCatalog, fluxVariants, generateFluxVariant, chooseFluxVariant, deleteFluxVariant, fluxVariantPreview }
 }

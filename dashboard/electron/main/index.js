@@ -504,6 +504,8 @@ function registerDocsHandlers() {
   ipcMain.handle('portfolio:guide:save', (_e, text) => portfolio.saveGuide(text))
   ipcMain.handle('portfolio:eval:latest', () => portfolio.latestEval())
   ipcMain.handle('portfolio:eval:run', () => portfolio.runEval())
+  ipcMain.handle('portfolio:claims:latest', () => portfolio.latestClaims())
+  ipcMain.handle('portfolio:claims:run', () => portfolio.runClaims())
   ipcMain.handle('portfolio:images', () => portfolio.listImages())
   ipcMain.handle('portfolio:image:generate', (_e, slug) => portfolio.generateImage(slug))
   ipcMain.handle('portfolio:image:motifs', () => portfolio.imageMotifs())

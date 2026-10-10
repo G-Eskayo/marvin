@@ -18,6 +18,7 @@ const SUBTABS = [
   ['add', 'Add project'],
   ['guide', 'Guide & rules'],
   ['content', 'Content'],
+  ['claims', 'Claims'],
   ['evaluation', 'Evaluation'],
   ['images', 'Images']
 ]
@@ -850,6 +851,92 @@ function Content() {
   )
 }
 
+function Claims() {
+  const [result, setResult] = useState(undefined)
+  const [running, setRunning] = useState(false)
+  const [status, setStatus] = useState(null)
+
+  useEffect(() => {
+    window.api.portfolio.latestClaims().then(setResult).catch((e) => setStatus({ error: errText(e) }))
+  }, [])
+
+  async function run() {
+    setRunning(true)
+    setStatus(null)
+    try {
+      setResult(await window.api.portfolio.runClaims())
+    } catch (e) {
+      setStatus({ error: errText(e) })
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  const results = result?.results || []
+  const byStatus = {}
+  for (const r of results) {
+    if (!byStatus[r.status]) byStatus[r.status] = []
+    byStatus[r.status].push(r)
+  }
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div className="flex items-center gap-3">
+        <h2 className="text-lg font-medium text-white">Claims</h2>
+        <button onClick={run} disabled={running} className={primary}>
+          {running ? 'Checking…' : 'Check now'}
+        </button>
+        <span className="text-xs text-neutral-500">last check: {formatRunTime(result?.checked_at)}</span>
+        <Status state={status} />
+      </div>
+      <p className="text-xs text-neutral-500">
+        Layer 4: verify factual claims on the MARVIN page are still true. Each claim checks system state nightly.
+      </p>
+      {result === undefined && <p className="text-sm text-neutral-500">Loading…</p>}
+      {result === null && <p className="text-sm text-neutral-400">No claims check has been run yet.</p>}
+      {results.length > 0 && (
+        <>
+          <div className="flex flex-wrap gap-2">
+            {byStatus.true && (
+              <span className="rounded-md border border-emerald-900 bg-emerald-950 px-3 py-1.5 text-xs text-emerald-300">
+                {byStatus.true.length} verified
+              </span>
+            )}
+            {byStatus.untrue && (
+              <span className="rounded-md border border-red-900 bg-red-950 px-3 py-1.5 text-xs text-red-300">
+                {byStatus.untrue.length} failed
+              </span>
+            )}
+            {byStatus.unknown && (
+              <span className="rounded-md border border-amber-900 bg-amber-950 px-3 py-1.5 text-xs text-amber-300">
+                {byStatus.unknown.length} unknown
+              </span>
+            )}
+          </div>
+          {['true', 'untrue', 'unknown'].map((status) =>
+            byStatus[status] && (
+              <section key={status} className="rounded-lg border border-neutral-800">
+                <h3 className="border-b border-neutral-800 px-4 py-2 text-sm font-medium text-white capitalize">
+                  {status === 'true' ? 'Verified' : status === 'untrue' ? 'Failed' : 'Unknown'} ({byStatus[status].length})
+                </h3>
+                <ul className="divide-y divide-neutral-900">
+                  {byStatus[status].map((r, i) => (
+                    <li key={i} className="px-4 py-2 text-xs text-neutral-300">
+                      <div className="mb-1 font-medium text-neutral-100">{r.claim_id}</div>
+                      <div className="text-neutral-400">{r.detail}</div>
+                      <div className="text-[10px] text-neutral-600 mt-1">checked: {formatRunTime(r.checked_at)}</div>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 function Evaluation() {
   const [result, setResult] = useState(undefined)
   const [running, setRunning] = useState(false)
@@ -1292,7 +1379,7 @@ export default function PortfolioHub() {
         <OpenDevSiteButton />
       </nav>
       <div className="flex-1 overflow-auto p-6">
-        {tab === 'templates' ? <Templates /> : tab === 'inventory' ? <Inventory /> : tab === 'add' ? <AddProject /> : tab === 'guide' ? <GuideAndRules /> : tab === 'content' ? <Content /> : tab === 'evaluation' ? <Evaluation /> : <Images />}
+        {tab === 'templates' ? <Templates /> : tab === 'inventory' ? <Inventory /> : tab === 'add' ? <AddProject /> : tab === 'guide' ? <GuideAndRules /> : tab === 'content' ? <Content /> : tab === 'claims' ? <Claims /> : tab === 'evaluation' ? <Evaluation /> : <Images />}
       </div>
     </div>
   )

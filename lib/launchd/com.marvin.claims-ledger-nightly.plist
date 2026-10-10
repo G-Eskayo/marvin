@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Layer 4: nightly claims ledger check — verify facts on the MARVIN page are still true.
+     Runs after snapshot-deploy-nightly (ADR 0061). Publishes status to ~/.claude/portfolio/marvin-page-claims.json
+     for the dashboard Portfolio tab to display. Mac Mini only (where the MARVIN page builds).
+     Install: cp this to ~/Library/LaunchAgents/ and `launchctl bootstrap gui/$(id -u) <that file>`. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.marvin.claims-ledger-nightly</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/gileskayo/.agents/venv/bin/python</string>
+        <string>/Users/gileskayo/.agents/lib/claims_ledger_nightly.py</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/gileskayo</string>
+    </dict>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>23</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/gileskayo/.claude/logs/claims-ledger-nightly.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/gileskayo/.claude/logs/claims-ledger-nightly-error.log</string>
+</dict>
+</plist>

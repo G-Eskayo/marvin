@@ -101,6 +101,8 @@ contextBridge.exposeInMainWorld('api', {
     saveGuide: (text) => ipcRenderer.invoke('portfolio:guide:save', text),
     latestEval: () => ipcRenderer.invoke('portfolio:eval:latest'),
     runEval: () => ipcRenderer.invoke('portfolio:eval:run'),
+    latestClaims: () => ipcRenderer.invoke('portfolio:claims:latest'),
+    runClaims: () => ipcRenderer.invoke('portfolio:claims:run'),
     images: () => ipcRenderer.invoke('portfolio:images'),
     generateImage: (slug) => ipcRenderer.invoke('portfolio:image:generate', slug),
     imageMotifs: () => ipcRenderer.invoke('portfolio:image:motifs'),

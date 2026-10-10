@@ -79,8 +79,8 @@ Current is not the same as true. Layers 1-3 keep the page up to date; this layer
 | Map | yes (nightly + on change) | yes (built from the system) |
 | Numbers strip | yes (facts.json) | yes (counted from the system) |
 | Hero + card images | regenerated on demand | yes (a picture of the real map) |
-| Lead, story sections | no (#269) | no (layer 4) |
-| What it can do (use cases) | not built yet (#268) | layer 4 |
+| Lead, story sections | no (#269, draft on trigger) | yes (layer 4: nightly checks on four registered claims) |
+| What it can do (use cases) | not built yet (#268) | tracked separately (not checked by this ticket) |
 
 ## Decisions (Gil, 2026-10-08)
 

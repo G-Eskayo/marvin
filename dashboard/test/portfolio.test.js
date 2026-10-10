@@ -97,6 +97,39 @@ describe('guide', () => {
   })
 })
 
+describe('claims', () => {
+  const result = { checked_at: 't', results: [{ claim_id: 'c1', status: 'true', detail: 'd', checked_at: 't', section: 's' }] }
+
+  it('latestClaims is null when nothing has run, or the file is corrupt', async () => {
+    expect(await p.latestClaims()).toBeNull()
+    mkdirSync(path.join(home, '.claude/portfolio'), { recursive: true })
+    writeFileSync(path.join(home, '.claude/portfolio/marvin-page-claims.json'), '{nope')
+    expect(await p.latestClaims()).toBeNull()
+  })
+
+  it('reads the latest claims result', async () => {
+    mkdirSync(path.join(home, '.claude/portfolio'), { recursive: true })
+    writeFileSync(path.join(home, '.claude/portfolio/marvin-page-claims.json'), JSON.stringify(result))
+    expect((await p.latestClaims()).results).toHaveLength(1)
+    expect((await p.latestClaims()).results[0].claim_id).toBe('c1')
+  })
+
+  it('runClaims executes the claims ledger and returns results', async () => {
+    mkdirSync(path.join(home, '.claude/portfolio'), { recursive: true })
+    exec.mockImplementation(async () => {
+      writeFileSync(path.join(home, '.claude/portfolio/marvin-page-claims.json'), JSON.stringify(result))
+      return { stdout: '', stderr: '' }
+    })
+    const r = await p.runClaims()
+    expect(r.results).toHaveLength(1)
+  })
+
+  it('runClaims surfaces a real failure (non-zero exit code)', async () => {
+    exec.mockRejectedValue(Object.assign(new Error('claims check failed'), { code: 1, stderr: 'boom' }))
+    await expect(p.runClaims()).rejects.toThrow(/claims check failed/i)
+  })
+})
+
 describe('evaluation', () => {
   const result = { generated_at: 't', findings: [{ page: '/a/', rule: 'x', detail: 'd' }], summary: { by_rule: { x: 1 } } }
 
