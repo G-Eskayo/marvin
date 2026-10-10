@@ -70,8 +70,11 @@ SCAN_LOCK_TIMEOUT_S = 120
 @contextmanager
 def _scan_lock(path: Path | None = None, timeout_s: float | None = None):
     """Exclusive lock around _scan to prevent concurrent scans from claiming
-    the same ticket. Polls fcntl.flock until acquired or timeout elapses.
-    On timeout, logs a warning and yields anyway (never skips the scan).
+    the same ticket. Polls fcntl.flock until acquired or timeout elapses, and
+    yields whether it got the lock. A scan that didn't get it must not run (#385):
+    proceeding anyway let scans of up to ~28 min pile up five deep and act on each
+    other's stale state (#358 was rebuilt 33 s after another scan repaired it).
+    flock is released when its holder exits, so a dead scan can never block forever.
 
     Path and timeout are read at call time, not bound as defaults: bound at import, a test's patched
     SCAN_LOCK_PATH never applied, so tests took the real lock and waited out 120 s behind the live pipeline,
@@ -80,18 +83,20 @@ def _scan_lock(path: Path | None = None, timeout_s: float | None = None):
     timeout_s = SCAN_LOCK_TIMEOUT_S if timeout_s is None else timeout_s
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = open(path, "w")
+    acquired = False
     try:
         start = time.time()
         while True:
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
                 break
             except IOError:
                 if time.time() - start >= timeout_s:
-                    print(f"{LOG_PREFIX} scan lock busy after {timeout_s}s, proceeding without it", file=sys.stderr)
+                    print(f"{LOG_PREFIX} scan lock busy after {timeout_s}s: another scan is running", file=sys.stderr)
                     break
                 time.sleep(0.1)
-        yield
+        yield acquired
     finally:
         try:
             fcntl.flock(fd, fcntl.LOCK_UN)
@@ -104,6 +109,7 @@ def _label_for_device(device_id: str) -> str:
     return "mac-mini" if device_id.startswith("mac-mini") else "macbook-pro"
 
 
+HOLD_LABELS = frozenset({"pinned", "hold", "held"})  # a person's hands off: never dispatched, never sent back (#387)
 UNSCORED_RANK = 2  # a ticket the prioritizer hasn't scored yet counts as middle priority
 
 
@@ -133,7 +139,7 @@ def _unclaimed_ready_tickets(repo: str = REPO, issues: list[dict] | None = None)
 
     def eligible(i):
         names = set(ticket_policy.label_names(i))
-        return ("ready-for-agent" in names and "pinned" not in names
+        return ("ready-for-agent" in names and not names & HOLD_LABELS
                 and not any(n.startswith("claimed:") for n in names)
                 and not ticket_policy.open_blockers(i, open_numbers))
 
@@ -260,6 +266,26 @@ def _mark_flagged(url: str, sha: str) -> None:
         pass
 
 
+def _still_needs_sending_back(gh, repo: str, pr: dict, red: list) -> bool:
+    """Re-read the PR from GitHub right before sending its ticket back (#386). The list this scan is working from can
+    be minutes old, and another scan or a person may have repaired the PR since. Only an unchanged head commit that
+    still conflicts (or still fails its checks) is sent back; any doubt means try again next scan."""
+    now = gh("pr", "view", str(pr["number"]), "--repo", repo, "--json", "mergeable,headRefOid,statusCheckRollup")
+    if now.returncode != 0:
+        return False
+    try:
+        cur = json.loads(now.stdout)
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(cur, dict):
+        return False
+    if pr.get("headRefOid") and cur.get("headRefOid") != pr.get("headRefOid"):
+        return False
+    if red:
+        return bool(_failing_checks(cur.get("statusCheckRollup")))
+    return cur.get("mergeable") == "CONFLICTING"
+
+
 def _requeue_conflicted_prs(repo: str) -> list[int]:
     """A PR that GitHub says CONFLICTS with its base can never be merged as it stands, and the first anyone
     learned was a human clicking Approve (finance-os #9, clarity #48). So the pipeline sends the ticket back
@@ -286,7 +312,7 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
             continue
         n = int(m.group(1))
         names = labels_of.get(n)
-        if names is None or names & {"pinned", "held"}:
+        if names is None or names & HOLD_LABELS:
             continue
         if "needs-reengagement" in names:
             # Already sent back, but its PR still conflicts: the rebuild hasn't happened (#257 sat 12 hours, still
@@ -328,6 +354,9 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
                        f"by hand, so it is not sent for an agent rebuild: rebase it onto main, or ask MARVIN to.")
                     _mark_flagged(url, sha)
                 continue
+        if not _still_needs_sending_back(gh, repo, pr, red):
+            print(f"{LOG_PREFIX} {repo}#{n}: PR #{pr['number']} changed since this scan listed it; not sent back", file=sys.stderr)
+            continue
         # The claim from the run that raised this PR must go too: the dispatcher only takes tickets with no claim, so a
         # sent-back ticket that kept it would never be rebuilt (clarity-captions #51).
         edit_args = ["issue", "edit", str(n), "--repo", repo, "--add-label", "needs-reengagement"]
@@ -714,7 +743,11 @@ def main() -> None:
         return
     print(f"{LOG_PREFIX} scanning ({why})", file=sys.stderr)
     with job_events.job_run("ticket-pipeline", "Ticket pipeline (hourly scan)") as run:
-        with _scan_lock():
+        with _scan_lock() as acquired:
+            if not acquired:
+                print(f"{LOG_PREFIX} skipped: another scan is running, it covers this one", file=sys.stderr)
+                run.step("Skipped", "another scan is still running; this one would act on the same tickets")
+                return
             _scan(run, dry_run=False)
     scanner_role.write_heartbeat(machine_profile.registry_id())
 
