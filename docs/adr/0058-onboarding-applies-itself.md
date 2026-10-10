@@ -17,6 +17,10 @@ Every hour, for every project with a board, MARVIN applies the pieces that are s
 - **local, always:** triage and claim labels; a drafted execution profile with `dispatch: off` and
   `merge_from_dashboard: false`; the proof run once a profile exists;
 - **in the project's repo, as a pull request, once:** the CI workflow and agent docs. The PR is the review (ADR 0036 R3).
+  The PR closes an "Onboarding: agent docs and CI" ticket in that repo, filed first (reused if one is open) as
+  `ready-for-human` with a complete "Your task", so the project's board has a card for it under In review and no agent
+  builds it. No ticket, no PR: the run is `needs-human` and retried next hour. (Added 2026-10-09: the first seven
+  onboarding PRs closed no ticket, so the MR Review/board parity check flagged every one.)
 
 Still a person's decision (ADR 0036 R2 unchanged): switching dispatch or dashboard merges on, and anything the plan marks
 `needs-human`.

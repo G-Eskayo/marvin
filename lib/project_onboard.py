@@ -952,6 +952,78 @@ Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/do
     return files
 
 
+ONBOARDING_BRANCH = "onboarding/agent-docs-ci"
+ONBOARDING_TITLE = "Onboarding: agent docs and CI"
+ONBOARDING_TICKET_BODY = f"""MARVIN added its agent docs (and a CI workflow, if this project had none) to this project in one pull request,
+on the branch `{ONBOARDING_BRANCH}` (ADR 0058). That pull request closes this ticket, so it shows on this project's board
+under In review, the same as any other piece of work.
+
+## Your task
+**What I need from you:** a review of the onboarding pull request, then merge it or close it.
+**Where:** the pull request titled "{ONBOARDING_TITLE}" in this repo: the dashboard's MR Review tab, or this ticket's linked pull request on GitHub.
+**How:**
+1. Open the pull request. It changes only docs/agents/, CLAUDE.md's "Agent skills" section, and .github/workflows/ci.yml if it adds CI.
+2. Check the CI run on it passes, if it adds CI. If CI fails, the template doesn't fit this project yet: say so here.
+3. Merge it if the files fit this project. Merging closes this ticket.
+**What to send back:** nothing if you merge it; otherwise a reply here saying what to change, or close both if this project shouldn't be onboarded.
+"""
+
+
+def _closes(ticket: int) -> str:
+    return f"Closes #{ticket}"
+
+
+def _onboarding_ticket(repo: str, gh=_gh) -> int | None:
+    """The open onboarding ticket in `repo`, filed now if there is none: labelled ready-for-human with a complete
+    'Your task', so triage leaves it alone and no agent builds it. None when GitHub won't give one."""
+    found = gh(["issue", "list", "--repo", repo, "--state", "open", "--search", f'in:title "{ONBOARDING_TITLE}"',
+                "--json", "number,title", "--limit", "50"])
+    try:
+        listed = json.loads(found or "[]")
+    except json.JSONDecodeError:
+        listed = []
+    for issue in listed if isinstance(listed, list) else ():
+        if isinstance(issue, dict) and issue.get("title") == ONBOARDING_TITLE and isinstance(issue.get("number"), int):
+            return issue["number"]
+    # The label may not exist yet on a repo onboarding is reaching for the first time; --force makes this a no-op if it does
+    gh(["label", "create", "ready-for-human", "--repo", repo, "--color", "ffb6c1", "--force",
+        "--description", "Needs human implementation, not agent-suitable"])
+    url = gh(["issue", "create", "--repo", repo, "--title", ONBOARDING_TITLE, "--body", ONBOARDING_TICKET_BODY,
+              "--label", "ready-for-human"])
+    m = re.search(r"/issues/(\d+)\s*$", url or "")
+    return int(m.group(1)) if m else None
+
+
+def _open_onboarding_pr(repo: str, gh=_gh) -> dict | None:
+    listed = gh(["pr", "list", "--repo", repo, "--head", ONBOARDING_BRANCH, "--state", "open",
+                 "--json", "number,url,body"])
+    try:
+        prs = json.loads(listed or "[]")
+    except json.JSONDecodeError:
+        return None
+    return prs[0] if isinstance(prs, list) and prs and isinstance(prs[0], dict) and "number" in prs[0] else None
+
+
+def _ensure_closes(repo: str, pr: dict, ticket: int, gh=_gh) -> bool:
+    """Add the 'Closes #N' line to an open onboarding PR that lacks it, keeping what it already says. True if edited."""
+    body = pr.get("body") or ""
+    if re.search(rf"\b(?:Closes|Fixes|Resolves)\s+#{ticket}\b", body, re.I):
+        return False
+    gh(["pr", "edit", str(pr["number"]), "--repo", repo, "--body", f"{body.rstrip()}\n\n{_closes(ticket)}".lstrip()])
+    return True
+
+
+def link_onboarding_pr(repo: str, gh=_gh) -> dict:
+    """Give an onboarding PR opened before onboarding filed tickets its ticket (the seven PRs of 2026-10-09). Safe to rerun."""
+    pr = _open_onboarding_pr(repo, gh)
+    if not pr:
+        return {"action": "no-pr"}
+    ticket = _onboarding_ticket(repo, gh)
+    if ticket is None:
+        return {"action": "needs-human", "pr": pr["number"], "reason": "could not find or file the onboarding ticket"}
+    return {"action": "linked" if _ensure_closes(repo, pr, ticket, gh) else "unchanged", "pr": pr["number"], "ticket": ticket}
+
+
 def _apply_pr(repo: str, facts: dict, plan_out: dict, gh=_gh, auth_status: str | None = None) -> dict:
     """Apply PR changes: create files and open PR. Idempotent and scoped.
 
@@ -994,7 +1066,13 @@ def _apply_pr(repo: str, facts: dict, plan_out: dict, gh=_gh, auth_status: str |
                 "how_to_fix": "gh auth refresh -h github.com -s workflow",
             }
 
-    branch_name = "onboarding/agent-docs-ci"
+    # The ticket first: a PR without one has no card on any board (ADR 0058's "waits in MR Review like any other").
+    # No ticket, no PR: needs-human records no offer, so the next hourly run tries again.
+    ticket = _onboarding_ticket(repo, gh)
+    if ticket is None:
+        return {"action": "needs-human", "reason": "could not find or file the onboarding ticket"}
+
+    branch_name = ONBOARDING_BRANCH
 
     try:
         default_branch_sha_result = gh(["api", f"repos/{repo}/git/ref/heads/{default_branch}"])
@@ -1089,40 +1167,23 @@ def _apply_pr(repo: str, facts: dict, plan_out: dict, gh=_gh, auth_status: str |
         except Exception:
             pass
 
+    files = list(files_to_write.keys()) + (["CLAUDE.md"] if claude_append else [])
     try:
         pr_create = gh(["pr", "create", "--repo", repo, "--head", branch_name,
                        "--base", default_branch,
-                       "--title", "Onboarding: agent docs and CI",
-                       "--body", "Automated agent docs and CI workflow setup"])
+                       "--title", ONBOARDING_TITLE,
+                       "--body", f"Automated agent docs and CI workflow setup\n\n{_closes(ticket)}"])
 
         if pr_create and "error" not in pr_create.lower():
-            pr_url = pr_create.strip()
-            return {
-                "action": "created",
-                "pr_url": pr_url,
-                "branch": branch_name,
-                "files": list(files_to_write.keys()) + (["CLAUDE.md"] if claude_append else []),
-            }
-        else:
-            pr_list = gh(["pr", "list", "--repo", repo, "--head", branch_name, "--state", "open"])
-            if pr_list:
-                try:
-                    prs = json.loads(pr_list)
-                    if prs:
-                        pr_url = prs[0].get("url", "")
-                        return {
-                            "action": "updated",
-                            "pr_url": pr_url,
-                            "branch": branch_name,
-                            "files": list(files_to_write.keys()) + (["CLAUDE.md"] if claude_append else []),
-                        }
-                except json.JSONDecodeError:
-                    pass
-
-            return {
-                "action": "needs-human",
-                "reason": "could not create or find PR",
-            }
+            return {"action": "created", "pr_url": pr_create.strip(), "branch": branch_name, "files": files, "ticket": ticket}
+        pr = _open_onboarding_pr(repo, gh)
+        if pr:
+            _ensure_closes(repo, pr, ticket, gh)
+            return {"action": "updated", "pr_url": pr.get("url", ""), "branch": branch_name, "files": files, "ticket": ticket}
+        return {
+            "action": "needs-human",
+            "reason": "could not create or find PR",
+        }
     except Exception as e:
         return {
             "action": "needs-human",
