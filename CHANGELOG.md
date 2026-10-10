@@ -1,5 +1,7 @@
 # Changelog
 
+- Map shows no infrastructure, and onboarding PRs close no ticket ([#395](https://github.com/G-Eskayo/marvin/pull/395))
+
 - [Ops] Dashboard: machine resources panel (disk, memory pressure and swap, CPU, GPU) for each Mac ([#364](https://github.com/G-Eskayo/marvin/pull/364))
 
 - Holds come back: an 'On hold' group on the board, a 'Revisit by' line, and a revisit agent ([#362](https://github.com/G-Eskayo/marvin/pull/362))
