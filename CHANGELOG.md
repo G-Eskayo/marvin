@@ -1,5 +1,7 @@
 # Changelog
 
+- A needs-you list ranked by how much each item unblocks ([#371](https://github.com/G-Eskayo/marvin/pull/371))
+
 - Resolve rebase conflicts cheaply before rebuilding a ticket ([#363](https://github.com/G-Eskayo/marvin/pull/363))
 
 - Sessions on both Macs see each other's work (share the working-on list) ([#372](https://github.com/G-Eskayo/marvin/pull/372))
