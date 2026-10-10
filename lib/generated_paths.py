@@ -144,11 +144,14 @@ def _both_inserted(worktree, path: str) -> bool:
     return _git(worktree, "add", "--", path, check=False).returncode == 0
 
 
-def resolve_rebase(worktree, rules: list[dict], max_steps: int = 100) -> dict:
+def resolve_rebase(worktree, rules: list[dict], max_steps: int = 100, abort_on_real_conflict: bool = True) -> dict:
     """Finish a rebase that stopped on conflicts, if every conflicted file is generated. During a rebase
     `--ours` is the branch being rebased ONTO (main), so a generated file takes main's copy, is rebuilt with
     its `regenerate` command if it has one, and the rebase continues. A non-generated file whose conflict is
     only that main ALREADY has this PR's change is resolved the same way (main's copy). Anything else aborts.
+
+    If abort_on_real_conflict=False and a genuine conflict (existing line changed on both sides) is found,
+    return without aborting the rebase, leaving conflict markers on disk for those files.
     """
     already: list[str] = []
     inserted: list[str] = []
@@ -172,7 +175,8 @@ def resolve_rebase(worktree, rules: list[dict], max_steps: int = 100) -> dict:
         inserted += both
         real = [p for p in candidates if p not in both]
         if real:
-            _git(worktree, "rebase", "--abort", check=False)
+            if abort_on_real_conflict:
+                _git(worktree, "rebase", "--abort", check=False)
             return {"ok": False, "reason": "real conflicts (an existing line changed on both sides) in: " + ", ".join(real), "files": real}
         already += redundant
         unmerged = [p for p in unmerged if p not in both]  # already merged and staged above

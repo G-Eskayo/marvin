@@ -215,6 +215,19 @@ _REPAIR_BUDGET = None
 FLAGGED_PATH = Path.home() / ".claude" / "logs" / "conflict-flagged.json"
 
 
+def _resolve_hunks_with_model(scratch_dir: str, prompt: str) -> dict:
+    """Call marvin launcher to resolve conflict hunks. Returns LaunchResult as dict."""
+    import marvin_launcher
+    result = marvin_launcher.launch(
+        kind="utility-call",
+        prompt=prompt,
+        cwd=Path(scratch_dir),
+        tools="Read,Edit",
+        permission_mode="dontAsk"
+    )
+    return {"cost_usd": result.cost_usd, "text": result.text, "exit_code": result.exit_code}
+
+
 def _try_conflict_repair(repo: str, pr: dict) -> dict:
     """The cheap fix before any rebuild (conflict_repair.py): rebase resolving only safe conflicts, test, push."""
     global _REPAIR_BUDGET
@@ -222,9 +235,13 @@ def _try_conflict_repair(repo: str, pr: dict) -> dict:
     if _REPAIR_BUDGET is None:
         _REPAIR_BUDGET = conflict_repair.Budget()
     try:
-        return conflict_repair.attempt(repo, pr, _REPAIR_BUDGET)
+        def resolve_hunks(scratch_dir, prompt):
+            return _resolve_hunks_with_model(scratch_dir, prompt)
+
+        return conflict_repair.attempt(repo, pr, _REPAIR_BUDGET,
+                                      do_repair=lambda r, h, c, b: conflict_repair.repair(r, h, c, b, pr=pr, resolve_hunks=resolve_hunks))
     except Exception as e:  # noqa: BLE001 -- a broken repair falls back to today's behaviour
-        return {"outcome": "rebuild", "files": [], "reason": f"repair crashed: {e}"}
+        return {"outcome": "rebuild", "files": [], "reason": f"repair crashed: {e}", "cost_usd": 0.0}
 
 
 def _flagged_before(url: str, sha: str) -> bool:
@@ -252,7 +269,7 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
     def gh(*args):
         return subprocess.run(["gh", *args], capture_output=True, text=True, timeout=30)
 
-    prs = gh("pr", "list", "--repo", repo, "--state", "open", "--limit", "100", "--json", "number,url,body,mergeable,headRefName,headRefOid,statusCheckRollup")
+    prs = gh("pr", "list", "--repo", repo, "--state", "open", "--limit", "100", "--json", "number,title,url,body,mergeable,headRefName,headRefOid,statusCheckRollup")
     issues = gh("issue", "list", "--repo", repo, "--state", "open", "--limit", "1000", "--json", "number,labels")
     if prs.returncode != 0 or issues.returncode != 0:
         return []
@@ -274,17 +291,25 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
         if "needs-reengagement" in names:
             # Already sent back, but its PR still conflicts: the rebuild hasn't happened (#257 sat 12 hours, still
             # claimed). A repair makes the rebuild unnecessary; anything else stays the sent-back loop's business.
-            if not red and pr.get("mergeable") == "CONFLICTING" and _try_conflict_repair(repo, pr)["outcome"] == "repaired":
-                gh("issue", "edit", str(n), "--repo", repo, "--remove-label", "needs-reengagement")
-                gh("issue", "comment", str(n), "--repo", repo, "--body",
-                   f"PR #{pr['number']}'s conflict with main was resolved automatically and pushed, so no rebuild is needed: "
-                   f"the sent-back flag is cleared and the PR is ready for review.")
-                print(f"{LOG_PREFIX} {repo}#{n}: sent-back PR #{pr['number']} repaired instead of rebuilt", file=sys.stderr)
+            if not red and pr.get("mergeable") == "CONFLICTING":
+                fix = _try_conflict_repair(repo, pr)
+                ts.record_stage(n, "gate", "passed" if fix["outcome"] == "repaired" else "failed",
+                               detail=fix.get("detail", fix.get("reason", "")),
+                               cost_usd=fix.get("cost_usd", 0.0), repo=repo)
+                if fix["outcome"] == "repaired":
+                    gh("issue", "edit", str(n), "--repo", repo, "--remove-label", "needs-reengagement")
+                    gh("issue", "comment", str(n), "--repo", repo, "--body",
+                       f"PR #{pr['number']}'s conflict with main was resolved automatically and pushed, so no rebuild is needed: "
+                       f"the sent-back flag is cleared and the PR is ready for review.")
+                    print(f"{LOG_PREFIX} {repo}#{n}: sent-back PR #{pr['number']} repaired instead of rebuilt", file=sys.stderr)
             continue
         files: list[str] = []
         if not red:
             # A conflict: try the cheap fix first (2026-10-09, #314). Most are two PRs appending to the same file.
             fix = _try_conflict_repair(repo, pr)
+            ts.record_stage(n, "gate", "passed" if fix["outcome"] == "repaired" else "failed",
+                           detail=fix.get("detail", fix.get("reason", "")),
+                           cost_usd=fix.get("cost_usd", 0.0), repo=repo)
             if fix["outcome"] == "repaired":
                 gh("pr", "comment", str(pr["number"]), "--repo", repo, "--body",
                    f"Conflict with main resolved automatically: {fix.get('detail', '')} Rebased onto main and pushed; nothing was rebuilt.")
