@@ -1,5 +1,7 @@
 # Changelog
 
+- Holds come back: an 'On hold' group on the board, a 'Revisit by' line, and a revisit agent ([#362](https://github.com/G-Eskayo/marvin/pull/362))
+
 - Map snapshot test deletes the real ~/.claude/logs and health ([#397](https://github.com/G-Eskayo/marvin/pull/397))
 
 - Pipeline screenshots pop a JavaScript error dialog: capture copy collides with the dashboard's refresh port ([#389](https://github.com/G-Eskayo/marvin/pull/389))
