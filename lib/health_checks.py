@@ -1424,6 +1424,39 @@ def record_anomaly_metrics(results: list[dict]) -> dict | None:
 
 # ── orchestration ────────────────────────────────────────────────────────
 
+# ── usage accounting: autonomous vs. interactive split ──────────────────
+
+def check_autonomous_share(usage_path: Path | None = None, now: datetime | None = None) -> dict:
+	"""Informational check: shows the split between autonomous (subagent/headless) and interactive usage
+	on the most recent day in the usage scan. Never red; yellow only when autonomous share exceeds 50%.
+	No pause or cap field anywhere, ever — this is visibility-only. Cross-machine: each machine is
+	checked against its own local token-usage.json (the same one the Metrics tab reads)."""
+	import session_usage
+	cid, label = "usage:autonomous-share", "Autonomous vs. interactive usage share"
+	usage_path = usage_path or session_usage.OUT_PATH
+	now = now or _now()
+	try:
+		data = json.loads(usage_path.read_text())
+	except (OSError, ValueError):
+		return _result(cid, label, "green", "usage scan not yet run on this machine (informational, starts yellow when available)")
+	rows = data.get("rows", [])
+	if not rows:
+		return _result(cid, label, "green", "no usage rows yet")
+	latest_day = max((r.get("day") for r in rows if r.get("day")), default=None)
+	if not latest_day:
+		return _result(cid, label, "green", "no usage rows with day field yet")
+	day_rows = [r for r in rows if r.get("day") == latest_day]
+	autonomous_output = sum(r.get("output", 0) for r in day_rows if r.get("autonomous"))
+	interactive_output = sum(r.get("output", 0) for r in day_rows if not r.get("autonomous"))
+	total_output = autonomous_output + interactive_output
+	if total_output == 0:
+		return _result(cid, label, "green", f"no output tokens on {latest_day} (all-cache-read or idle day)")
+	share = autonomous_output / total_output
+	detail = f"{latest_day}: {autonomous_output:,} autonomous, {interactive_output:,} interactive. Share: {share*100:.0f}%"
+	severity = "yellow" if share > 0.5 else "green"
+	return _result(cid, label, severity, detail, value=round(share * 100, 1))
+
+
 def run_all() -> dict:
     results: list[dict] = []
     results += check_token_files()
@@ -1444,6 +1477,7 @@ def run_all() -> dict:
     results.append(check_github_budget())
     results.append(check_gh_gate())
     results.append(check_main_health())
+    results.append(check_autonomous_share())
     cron_state = ch._load_state()
     cron_now = datetime.now().astimezone()
     for job in discover_launchd_jobs():

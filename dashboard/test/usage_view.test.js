@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mergeTools, mergeRows, mergeInventory, mergeFailures, mergeTokenRows, dailySeries, sumRows, projectTable, ticketTable, machineFreshness } from '../src/lib/usage_view.js'
+import { mergeTools, mergeRows, mergeInventory, mergeFailures, mergeTokenRows, dailySeries, sumRows, projectTable, ticketTable, machineFreshness, autonomousSeries, weeklySeries, jobTable } from '../src/lib/usage_view.js'
 
 const tool = (name, calls, extra = {}) => ({ name, calls, ok: calls, error: 0, rejected: 0, interrupted: 0, invalid: 0, unresolved: 0, expected: 0, last_used: null,
   by_kind: { interactive: calls, headless: 0, subagent: 0 }, by_day: {}, causes: {}, purpose: '(no description recorded)', ...extra })
@@ -100,5 +100,132 @@ describe('skills, inventory and failures across machines', () => {
     const f = (at, tool) => ({ at, tool, outcome: 'error', kind: 'headless', message: 'm' })
     const out = mergeFailures([withInv('a', [], 1, [f('2026-10-05T10:00:00Z', 'Bash')]), withInv('b', [], 1, [f('2026-10-06T10:00:00Z', 'Read')])], 'all')
     expect(out.map((x) => [x.tool, x.machine])).toEqual([['Read', 'b'], ['Bash', 'a']])
+  })
+})
+
+describe('autonomousSeries', () => {
+  it('splits a day correctly into autonomous/interactive/total/share', () => {
+    const rows = [
+      { day: '2026-10-05', autonomous: true, output: 100, input: 10, cache_write: 0, cache_read: 0 },
+      { day: '2026-10-05', autonomous: false, output: 200, input: 20, cache_write: 0, cache_read: 0 },
+    ]
+    const result = autonomousSeries(rows, { days: 1, end: '2026-10-05' })
+    expect(result).toHaveLength(1)
+    expect(result[0]).toEqual({
+      day: '2026-10-05',
+      autonomous: 100,
+      interactive: 200,
+      total: 300,
+      share: 100 / 300,
+    })
+  })
+
+  it('a day with zero rows yields zeros, no NaN', () => {
+    const rows = []
+    const result = autonomousSeries(rows, { days: 1, end: '2026-10-05' })
+    expect(result).toHaveLength(1)
+    expect(result[0].autonomous).toBe(0)
+    expect(result[0].interactive).toBe(0)
+    expect(result[0].share).toBe(0)
+    expect(Number.isNaN(result[0].share)).toBe(false)
+  })
+
+  it('a day that is 100% one side results in share exactly 1 or 0', () => {
+    const rows = [{ day: '2026-10-05', autonomous: true, output: 100, input: 10, cache_write: 0, cache_read: 0 }]
+    const result = autonomousSeries(rows, { days: 1, end: '2026-10-05' })
+    expect(result[0].share).toBe(1)
+
+    const rows2 = [{ day: '2026-10-05', autonomous: false, output: 100, input: 10, cache_write: 0, cache_read: 0 }]
+    const result2 = autonomousSeries(rows2, { days: 1, end: '2026-10-05' })
+    expect(result2[0].share).toBe(0)
+  })
+})
+
+describe('weeklySeries', () => {
+  it('buckets several days into the requested number of windows, summing correctly', () => {
+    const rows = [
+      { day: '2026-10-01', autonomous: true, output: 100, input: 10, cache_write: 0, cache_read: 0 },
+      { day: '2026-10-02', autonomous: false, output: 200, input: 20, cache_write: 0, cache_read: 0 },
+      { day: '2026-10-08', autonomous: true, output: 50, input: 5, cache_write: 0, cache_read: 0 },
+      { day: '2026-10-09', autonomous: false, output: 150, input: 15, cache_write: 0, cache_read: 0 },
+    ]
+    const result = weeklySeries(rows, { weeks: 2, end: '2026-10-09' })
+    expect(result).toHaveLength(2)
+    expect(result.every((w) => w.share >= 0 && w.share <= 1)).toBe(true)
+  })
+
+  it('a week window with some missing days still sums the days that exist', () => {
+    const rows = [
+      { day: '2026-10-01', autonomous: true, output: 100, input: 10, cache_write: 0, cache_read: 0 },
+      { day: '2026-10-07', autonomous: false, output: 200, input: 20, cache_write: 0, cache_read: 0 },
+    ]
+    const result = weeklySeries(rows, { weeks: 1, end: '2026-10-07' })
+    expect(result).toHaveLength(1)
+    expect(result[0].total).toBe(300)
+  })
+})
+
+describe('jobTable', () => {
+  it('merges the same (kind, job) across two machines, summing all three counters', () => {
+    const machines = [
+      {
+        machine: 'mac-mini',
+        tokens: {
+          by_job: [
+            { kind: 'background-analyst', job: 'daily-digest', output_tokens: 100, cost_usd: 0.01, runs: 5 },
+            { kind: 'background-analyst', job: 'research-colony', output_tokens: 50, cost_usd: 0.005, runs: 2 },
+          ],
+        },
+      },
+      {
+        machine: 'macbook-pro',
+        tokens: {
+          by_job: [
+            { kind: 'background-analyst', job: 'daily-digest', output_tokens: 150, cost_usd: 0.015, runs: 7 },
+          ],
+        },
+      },
+    ]
+    const result = jobTable(machines, 'all')
+    const dailyDigest = result.find((j) => j.job === 'daily-digest')
+    expect(dailyDigest).toBeDefined()
+    expect(dailyDigest.output_tokens).toBe(250)
+    expect(dailyDigest.cost_usd).toBeCloseTo(0.025, 3)
+    expect(dailyDigest.runs).toBe(12)
+  })
+
+  it('tolerates a machine object with by_job absent (older scan format)', () => {
+    const machines = [
+      {
+        machine: 'mac-mini',
+        tokens: {
+          by_job: [{ kind: 'background-analyst', job: 'daily-digest', output_tokens: 100, cost_usd: 0.01, runs: 5 }],
+        },
+      },
+      {
+        machine: 'macbook-pro',
+        tokens: {},
+      },
+    ]
+    const result = jobTable(machines, 'all')
+    expect(result).toHaveLength(1)
+    expect(result[0].job).toBe('daily-digest')
+  })
+
+  it('sorts descending by output_tokens', () => {
+    const machines = [
+      {
+        machine: 'mac-mini',
+        tokens: {
+          by_job: [
+            { kind: 'background-analyst', job: 'job-a', output_tokens: 100, cost_usd: 0.01, runs: 1 },
+            { kind: 'background-analyst', job: 'job-b', output_tokens: 250, cost_usd: 0.025, runs: 1 },
+            { kind: 'background-analyst', job: 'job-c', output_tokens: 50, cost_usd: 0.005, runs: 1 },
+          ],
+        },
+      },
+    ]
+    const result = jobTable(machines, 'all')
+    expect(result.map((j) => j.job)).toEqual(['job-b', 'job-a', 'job-c'])
   })
 })
