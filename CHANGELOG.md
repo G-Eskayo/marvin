@@ -1,5 +1,7 @@
 # Changelog
 
+- Pipeline scans overlap: a busy scan lock is ignored after 120 s ([#388](https://github.com/G-Eskayo/marvin/pull/388))
+
 - Portfolio tab: Open dev site button focuses the existing Chrome tab ([#378](https://github.com/G-Eskayo/marvin/pull/378))
 
 - A needs-you list ranked by how much each item unblocks ([#371](https://github.com/G-Eskayo/marvin/pull/371))
