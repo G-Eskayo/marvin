@@ -1,5 +1,7 @@
 # Changelog
 
+- Portfolio tab: Open dev site button focuses the existing Chrome tab ([#378](https://github.com/G-Eskayo/marvin/pull/378))
+
 - A needs-you list ranked by how much each item unblocks ([#371](https://github.com/G-Eskayo/marvin/pull/371))
 
 - Resolve rebase conflicts cheaply before rebuilding a ticket ([#363](https://github.com/G-Eskayo/marvin/pull/363))
