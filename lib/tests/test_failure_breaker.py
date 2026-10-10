@@ -193,3 +193,146 @@ def test_merge_refusals_never_trip_the_breaker(tmp_path, monkeypatch):
         for ticket in (208, 209, 210):
             f.write(json.dumps({"t": now.isoformat(), "kind": "refusal", "ticket": ticket, "sig": "merge:OUT_OF_ORDER"}) + "\n")
     assert fb.tripped(now=now) == []
+
+
+# ── ticket streak (per-ticket failure counter) ──────────────────────────────
+
+def test_ticket_streak_counts_trailing_failures_for_one_ticket():
+    """N mixed failures → streak N with distinct signatures."""
+    for i in range(3):
+        _fail(95, VITEST if i < 2 else "other failure", minutes_ago=30 - i * 5)
+
+    streak = fb.ticket_streak(95, now=NOW)
+    assert streak["count"] == 3
+    assert len(streak["signatures"]) == 3
+    assert streak["signatures"][0] == "measure:vitest-no-summary"  # oldest first
+
+
+def test_ticket_streak_resets_on_success():
+    """A success in between resets the count."""
+    _fail(96, VITEST, minutes_ago=30)
+    _fail(96, VITEST, minutes_ago=25)
+    fb.record_success(96, now=NOW - timedelta(minutes=20))
+    _fail(96, VITEST, minutes_ago=15)
+    _fail(96, VITEST, minutes_ago=10)
+
+    streak = fb.ticket_streak(96, now=NOW)
+    assert streak["count"] == 2  # only the failures after the success
+
+
+def test_ticket_streak_empty_for_new_ticket():
+    """No log entries → streak 0."""
+    streak = fb.ticket_streak(9999, now=NOW)
+    assert streak["count"] == 0
+    assert streak["signatures"] == []
+
+
+def test_ticket_streak_ignores_corrupt_lines():
+    """Bad/malformed lines in the log must never crash the streak count."""
+    fb.LOG_PATH.write_text("not json\n")
+    _fail(97, VITEST)
+    _fail(97, VITEST)
+
+    streak = fb.ticket_streak(97, now=NOW)
+    assert streak["count"] == 2
+
+
+def test_ticket_streak_two_different_tickets_are_separate():
+    """ticket_7 failing in marvin and ticket_7 failing in another project count as two."""
+    _fail(7, VITEST, minutes_ago=10)
+    fb.record_failure(7, VITEST, project="G-Eskayo/clarity-captions", now=NOW - timedelta(minutes=5))
+
+    streak_marvin = fb.ticket_streak(7, project="G-Eskayo/marvin", now=NOW)
+    streak_clarity = fb.ticket_streak(7, project="G-Eskayo/clarity-captions", now=NOW)
+    assert streak_marvin["count"] == 1
+    assert streak_clarity["count"] == 1
+
+
+def test_should_hold_n_consecutive_failures():
+    """N consecutive failures at threshold → hold with reason='n-failures'."""
+    # Use different signatures to avoid triggering repeat-signature case
+    _fail(98, VITEST, minutes_ago=30)
+    _fail(98, "Unhandled exception: Command '['claude']' timed out", minutes_ago=25)
+    _fail(98, "npm build failed", minutes_ago=20)
+
+    decision = fb.should_hold(98, threshold=3, now=NOW)
+    assert decision is not None
+    assert decision["reason"] == "n-failures"
+    assert decision["count"] == 3
+
+
+def test_should_hold_below_threshold_returns_none():
+    """Below threshold (with different signatures) → None."""
+    _fail(99, VITEST, minutes_ago=30)
+    _fail(99, "claude-timeout", minutes_ago=25)
+
+    decision = fb.should_hold(99, threshold=3, now=NOW)
+    assert decision is None
+
+
+def test_should_hold_repeat_signature_before_threshold():
+    """Last two failures have same signature → hold even if count < threshold."""
+    _fail(100, VITEST, minutes_ago=30)
+    _fail(100, VITEST, minutes_ago=25)
+
+    decision = fb.should_hold(100, threshold=5, now=NOW)  # threshold is 5, count is 2
+    assert decision is not None
+    assert decision["reason"] == "repeat-signature"
+    assert decision["count"] == 2
+
+
+def test_should_hold_different_signatures_do_not_trigger_repeat():
+    """Last two failures have different signatures → no hold via repeat."""
+    _fail(101, VITEST, minutes_ago=30)
+    _fail(101, "other failure", minutes_ago=25)
+
+    decision = fb.should_hold(101, threshold=5, now=NOW)
+    assert decision is None
+
+
+def test_should_hold_honors_profile_threshold():
+    """A profile's failure_threshold (e.g. 5) is honored instead of default 3."""
+    sigs = [VITEST, "claude-timeout", "npm-build-failed", "git-worktree-add-failed"]
+    for i in range(4):
+        _fail(102, sigs[i], minutes_ago=30 - i * 5)
+
+    # threshold=5, count=4 → should NOT hold
+    decision = fb.should_hold(102, threshold=5, now=NOW)
+    assert decision is None
+
+    # threshold=4, count=4 → should hold
+    decision = fb.should_hold(102, threshold=4, now=NOW)
+    assert decision is not None
+
+
+def test_should_hold_none_threshold_uses_default():
+    """threshold=None falls back to default (3) gracefully."""
+    sigs = [VITEST, "claude-timeout", "npm-build-failed"]
+    for i in range(3):
+        _fail(103, sigs[i], minutes_ago=30 - i * 5)
+
+    decision = fb.should_hold(103, threshold=None, now=NOW)
+    assert decision is not None  # 3 failures with default threshold 3
+
+
+def test_should_hold_zero_threshold_never_holds():
+    """Defensive: threshold=0 or negative should not produce nonsensical behavior."""
+    _fail(104, VITEST, minutes_ago=30)
+
+    decision = fb.should_hold(104, threshold=0, now=NOW)
+    assert decision is None
+
+
+def test_per_project_hold_decision():
+    """should_hold respects project parameter."""
+    fb.record_failure(105, VITEST, project="G-Eskayo/marvin", now=NOW - timedelta(minutes=30))
+    fb.record_failure(105, VITEST, project="G-Eskayo/marvin", now=NOW - timedelta(minutes=25))
+    fb.record_failure(105, VITEST, project="G-Eskayo/marvin", now=NOW - timedelta(minutes=20))
+
+    fb.record_failure(105, VITEST, project="G-Eskayo/clarity-captions", now=NOW - timedelta(minutes=15))
+
+    hold_marvin = fb.should_hold(105, project="G-Eskayo/marvin", threshold=3, now=NOW)
+    hold_clarity = fb.should_hold(105, project="G-Eskayo/clarity-captions", threshold=3, now=NOW)
+
+    assert hold_marvin is not None  # 3 failures in marvin
+    assert hold_clarity is None  # only 1 failure in clarity

@@ -140,10 +140,13 @@ def check_dispatch_lock(state_path: Path | None = None) -> dict:
 # ── ticket failure streaks (early warning before the park fires) ────────
 
 def check_ticket_failure_streaks(repo: str = "G-Eskayo/marvin", run=subprocess.run) -> list[dict]:
-    """Early-warning layer in front of run_ticket.py's own 3-strike guard
-    (G-Eskayo/marvin, fixed 2026-10-01): a ticket sitting at streak 2 is
-    one more automated failure from being parked -- worth surfacing before
-    that happens, not just after."""
+    """Early-warning layer in front of run_ticket.py's own hold guard:
+    a ticket sitting at streak 2 is one more automated failure from being
+    parked -- worth surfacing before that happens. Uses failure_breaker.ticket_streak()
+    instead of re-scanning GitHub comments per ticket (cheaper, consistent)."""
+    import failure_breaker
+    import project_profile as pp
+
     try:
         proc = run(["gh", "issue", "list", "--repo", repo, "--label", "claimed:mac-mini,claimed:macbook-pro",
                     "--state", "open", "--json", "number,title,labels"],
@@ -153,27 +156,77 @@ def check_ticket_failure_streaks(repo: str = "G-Eskayo/marvin", run=subprocess.r
         claimed = []
 
     results = []
+    threshold = 3  # marvin's default; profiled projects override via profile
     for issue in claimed:
         n = issue["number"]
-        try:
-            cproc = run(["gh", "issue", "view", str(n), "--repo", repo, "--json", "comments"],
-                        capture_output=True, text=True, timeout=20)
-            comments = json.loads(cproc.stdout)["comments"] if cproc.returncode == 0 else []
-        except (subprocess.TimeoutExpired, json.JSONDecodeError, KeyError):
-            continue
-        streak = 0
-        for c in reversed(comments):
-            if "did not pass verification" in c.get("body", ""):
-                streak += 1
-            else:
-                break
+        streak_data = failure_breaker.ticket_streak(n, project=repo)
+        streak = streak_data["count"]
         cid = f"ticket:streak:{n}"
         label = f"#{n} {issue['title'][:40]}"
         if streak >= 2:
             results.append(_result(cid, label, "yellow",
-                                    f"{streak} consecutive automated failures — one more parks it", value=streak))
-        else:
+                                    f"{streak} consecutive automated failures — {threshold - streak} more {'parks it' if threshold - streak == 1 else 'and parks it'}",
+                                    value=streak))
+        elif streak > 0:
             results.append(_result(cid, label, "green", f"{streak} consecutive failure(s)", value=streak))
+    return results
+
+
+def check_held_by_retry_storm(run=subprocess.run) -> list[dict]:
+    """Display tickets currently held by the retry-storm guard: informational/green.
+    Lists tickets that breached the failure threshold or hit repeat signatures.
+    AC3: check all projects, not just marvin."""
+    import failure_breaker
+    import project_profile as pp
+
+    results = []
+
+    # Check marvin + all profiled projects
+    repos = ["G-Eskayo/marvin"] + pp.dispatchable_repos()
+
+    for repo in repos:
+        threshold = 3  # marvin default
+        profile = pp.load_profile(repo)
+        if profile:
+            threshold = profile.get("failure_threshold") or 3
+
+        # Query held tickets
+        try:
+            proc = run(["gh", "issue", "list", "--repo", repo, "--label", "hold",
+                        "--state", "open", "--json", "number,title"],
+                       capture_output=True, text=True, timeout=20)
+            held = json.loads(proc.stdout) if proc.returncode == 0 else []
+        except (subprocess.TimeoutExpired, json.JSONDecodeError):
+            held = []
+
+        if not held:
+            continue
+
+        # Collect held tickets, most recent first (truncate at 5)
+        held_items = []
+        for issue in held:
+            n = issue["number"]
+            streak_data = failure_breaker.ticket_streak(n, project=repo)
+            sigs = streak_data.get("signatures", [])
+            held_items.append({
+                "number": n,
+                "title": issue.get("title", "")[:40],
+                "count": streak_data["count"],
+                "sig": sigs[-1] if sigs else "unknown"
+            })
+
+        held_items = held_items[:5]
+
+        if held_items:
+            cid = f"hold:retry-storm:{repo}"
+            label = f"On hold (retry threshold): {repo}"
+            detail_parts = [f"#{item['number']} {item['title']} ({item['count']} failures, sig: `{item['sig']}`)"
+                           for item in held_items]
+            if len(held) > 5:
+                detail_parts.append(f"... and {len(held) - 5} more")
+            detail = "; ".join(detail_parts)
+            results.append(_result(cid, label, "green", detail, value=len(held)))
+
     return results
 
 
@@ -1431,6 +1484,7 @@ def run_all() -> dict:
     results.append(check_intent_routing_collection())
     results.append(check_dispatch_lock())
     results += check_ticket_failure_streaks()
+    results += check_held_by_retry_storm()
     results.append(check_pipeline_breaker())
     results += check_sync_stuck()
     results += check_deploy_steps()

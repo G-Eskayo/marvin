@@ -95,6 +95,61 @@ def _read() -> list[dict]:
     return out
 
 
+def ticket_streak(ticket: int, project: str = MARVIN, now: datetime | None = None) -> dict:
+    """Trailing failures for ONE ticket in ONE project since its last recorded success.
+    Returns {"count": int, "signatures": [sig, ...]} (oldest-to-newest).
+    Empty/no entries -> count 0. A success resets the streak."""
+    now = now or _now()
+    records = _read()
+    for r in records:
+        r.setdefault("project", MARVIN)
+    my_records = [r for r in records if r["ticket"] == ticket and r["project"] == project]
+    my_records.sort(key=lambda r: r["_t"])
+
+    # Find the last success; everything after it is the streak
+    last_success_idx = -1
+    for i, r in enumerate(my_records):
+        if r["kind"] == "success":
+            last_success_idx = i
+
+    streak_records = my_records[last_success_idx + 1:]
+    failures = [r for r in streak_records if r["kind"] == "failure"]
+
+    return {
+        "count": len(failures),
+        "signatures": [f.get("sig", "") for f in failures]
+    }
+
+
+def should_hold(ticket: int, project: str = MARVIN, threshold: int = 3, now: datetime | None = None) -> dict | None:
+    """Decide whether to hold a ticket based on its failure streak.
+    Returns None if not yet due to hold.
+    Else returns {"reason": "n-failures"|"repeat-signature", "count": int, "signatures": [...]}.
+
+    A ticket is held if:
+    1. It has N consecutive failures (reason="n-failures"), OR
+    2. Its last two failures have the same signature (reason="repeat-signature").
+    """
+    if threshold is None:
+        threshold = 3
+    if threshold <= 0:
+        return None  # Defensive: don't hold if threshold is invalid
+
+    streak = ticket_streak(ticket, project, now)
+    count = streak["count"]
+    sigs = streak["signatures"]
+
+    # Case 2: last two failures have identical signature (even if count < threshold)
+    if len(sigs) >= 2 and sigs[-1] == sigs[-2]:
+        return {"reason": "repeat-signature", "count": count, "signatures": sigs}
+
+    # Case 1: N consecutive failures
+    if count >= threshold:
+        return {"reason": "n-failures", "count": count, "signatures": sigs}
+
+    return None
+
+
 def tripped(now: datetime | None = None, project: str | None = None) -> list[dict]:
     """Signatures currently tripped, per project: [{project, signature, tickets, first_seen, last_seen,
     example}]. One project's broken environment (say, a missing Xcode) must not pause the others, and a
