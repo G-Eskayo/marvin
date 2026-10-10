@@ -98,12 +98,14 @@ import re
 import os
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from machine_profile import machine_label  # noqa: E402
 from notify import notify  # noqa: E402
+import session_work  # noqa: E402
 
 DEFAULT_REPO = Path.home() / ".agents"
 LOG_PATH = Path.home() / ".claude" / "sync-log.md"
@@ -325,6 +327,29 @@ def _log(repo: Path, action: str, summary: str, files: list[str] | None = None) 
         f.write("\n".join(lines) + "\n")
 
 
+def _live_edit_lease(repo: Path, changed_files: list[str], now: float | None = None) -> str | None:
+    """A reason to defer this push, if a live session has an edit on any of `changed_files`
+    from the last LIVE_S — the file might still be mid-write. Goes away on its own once the
+    session goes quiet (crash, finished, or moved on) — session_work's own LIVE_S window is
+    the timeout, no separate one needed."""
+    if not changed_files:
+        return None
+    now = now if now is not None else time.time()
+    try:
+        repo_id, _ = session_work.file_key(str(repo / changed_files[0]))
+        if repo_id is None:
+            return None
+        edits = session_work.live_edits_for(repo_id, changed_files, now)
+    except Exception:
+        return None
+    if not edits:
+        return None
+    e = edits[0]
+    minutes_ago = max(0, int((now - e["edited_at"]) / 60))
+    request = f', working on: "{e["request"]}"' if e["request"] else ""
+    return f'{e["path"]} was edited {minutes_ago} min ago by a live session{request}'
+
+
 def _merge_remote(repo: Path) -> tuple[bool, str]:
     """Fetch + merge origin/main. On conflict, aborts the merge (tree left
     clean, nothing partially applied) rather than attempting resolution."""
@@ -336,7 +361,7 @@ def _merge_remote(repo: Path) -> tuple[bool, str]:
     return True, output
 
 
-def push(repo: Path) -> None:
+def push(repo: Path, now: float | None = None) -> None:
     label = machine_label()
 
     stuck = _stuck_from_previous_run(repo)
@@ -379,6 +404,11 @@ def push(repo: Path) -> None:
         else:
             _log(repo, "push", f"push failed even after merge retry:\n{retry_out}")
             notify("MARVIN code-sync FAILED", f"Push failed after retry [{repo.name}] — check sync-log.md", open_target=str(LOG_PATH))
+        return
+
+    lease = _live_edit_lease(repo, real_changes, now)
+    if lease:
+        _log(repo, "push", f"deferring — {lease}; will retry next cycle")
         return
 
     broken = _files_with_conflict_markers(repo, all_changed)

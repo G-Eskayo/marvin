@@ -137,6 +137,14 @@ def _isolate_outcome_check(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_session_work_state(tmp_path_factory, monkeypatch):
+    # code_sync now reads session_work's live-session list; a test must never touch the real
+    # ~/.claude/logs/sessions-active.json (a real live session on this machine could change outcomes).
+    import session_work
+    monkeypatch.setattr(session_work, "STATE_PATH", tmp_path_factory.mktemp("sessions") / "sessions-active.json")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_project_profiles(tmp_path_factory, monkeypatch):
     # A real config/projects/*.json with dispatch "on" must never change what a test dispatches.
     import project_profile
