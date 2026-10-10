@@ -1,0 +1,14 @@
+1. `lib/portfolio_content.py`: add module-level `CLAIMS_LEDGER_PATH = Path.home() / ".claude" / "logs" / "claims-ledger.json"` (matching the `HOME`-constant convention in `health_checks.py`/`job_events.py`); change `_read_claims_ledger`'s default to `ledger_path or CLAIMS_LEDGER_PATH`.
+2. `lib/tests/conftest.py`: add the `_isolate_claims_ledger` autouse fixture (write this and its test first, per tdd).
+3. `lib/tests/test_portfolio_content.py`: rewrite the 6 claims-ledger tests to use real ledger files + explicit `ledger_path`, not a mocked `_read_claims_ledger`; add the no-explicit-path safety test; rewrite the unknown-claim test's fixture to the real `checked` shape.
+4. `brain-map/scripts/conftest.py` (new file): fake-`gh`-on-`PATH` autouse fixture + `job_events.JOBS_DIR` isolation autouse fixture.
+5. `brain-map/scripts/claims.py`:
+   - `gather()`: fix `checked` to include unknown claims (iterate `results.keys()`, not `passed.keys() + failed.keys()`); drop the dead, unused `claims` key from its return dict; drop the dead `ledger_path` parameter (never read inside the function); thread `jobs_directory` into `collect()` so `--jobs-directory` actually affects `check_jobs_recent`.
+   - `collect()`: accept an optional `jobs_directory` param, pass it to `check_jobs_recent` when the claim being checked is `check_jobs_recent`.
+   - `check_repo_visibility()`: a catalog entry with missing/`None` visibility → `ok: None` (not `False`); any `gh` exit code other than 0 (success) or 75 (gate-defer) → `ok: None`; malformed JSON from a successful `gh` call → `ok: None`. Only an explicit non-`PUBLIC` value (from catalog or a clean `gh` response) stays `ok: False`.
+   - `main()`: accept `argv: list[str] | None = None`, pass to `parser.parse_args(argv)`; stop passing the now-removed `ledger_path` into `gather()` (still passed to `_atomic_write` directly, unchanged).
+6. `brain-map/scripts/test_claims.py`: write all tests from the "Tests first" section above (steps 4–5's regression tests included), before considering steps 4–5 done.
+7. `docs/plans/living-marvin-page-2026-10-08.md`: revert the "What it can do (use cases)" row's "True" column from "yes (layer 4, #281)" back to "layer 4" (not yet — #268 isn't built, nothing to truth-check there). Leave the "Lead, story sections" row as "yes (layer 4, #281)" — that one is accurate.
+8. Run the full pytest suite (`lib/tests/` and `brain-map/scripts/`) and vitest (confirming no dashboard files are touched, which they shouldn't be); run `graphify update .` to pick up the corrected modules.
+
+Deliberately out of scope, unchanged from the prior attempt's own (still-valid) call: `install-claims-ledger-job.sh`'s `hostname -s` fallback and its no-`bootout`-on-reload behavior are copied from the already-shipped `install-snapshot-jobs.sh`; fixing only this copy would create inconsistency, not close a gap.

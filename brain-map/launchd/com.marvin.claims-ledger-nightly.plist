@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Nightly claims ledger: verify that the MARVIN page's factual claims are still true.
+     Checks the machine registry, merge gate, repo visibility, and scheduled jobs' status.
+     A failing claim marks its section untrue on the Portfolio tab and triggers redraft (#269).
+     See #281, ADR 0065. Log: ~/.claude/logs/claims-ledger-nightly.log
+     Mini only (primary automation host) — see install-claims-ledger-job.sh. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.marvin.claims-ledger-nightly</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/gileskayo/.agents/venv/bin/python</string>
+        <string>/Users/gileskayo/.agents/brain-map/scripts/claims.py</string>
+        <string>--nightly</string>
+    </array>
+
+    <!-- Run every day at 02:30 local time (after snapshot deploy at 02:00) -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>2</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/gileskayo/.agents</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/gileskayo/.claude/logs/claims-ledger-nightly.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/gileskayo/.claude/logs/claims-ledger-nightly-error.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/gileskayo</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/Users/gileskayo/.local/bin:/usr/local/bin:/usr/bin:/bin:/Users/gileskayo/.agents/venv/bin</string>
+    </dict>
+
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>

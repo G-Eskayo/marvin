@@ -59,6 +59,12 @@ def _gh_block_dir(tmp_path_factory) -> Path:
 
 
 @pytest.fixture(autouse=True)
+def _isolate_claims_ledger(tmp_path_factory, monkeypatch):
+    import portfolio_content
+    monkeypatch.setattr(portfolio_content, "CLAIMS_LEDGER_PATH", tmp_path_factory.mktemp("claims") / "claims-ledger.json")
+
+
+@pytest.fixture(autouse=True)
 def _no_real_github(tmp_path_factory, monkeypatch):
     import os
     d = _gh_block_dir(tmp_path_factory)

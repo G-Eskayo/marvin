@@ -79,7 +79,7 @@ Current is not the same as true. Layers 1-3 keep the page up to date; this layer
 | Map | yes (nightly + on change) | yes (built from the system) |
 | Numbers strip | yes (facts.json) | yes (counted from the system) |
 | Hero + card images | regenerated on demand | yes (a picture of the real map) |
-| Lead, story sections | no (#269) | no (layer 4) |
+| Lead, story sections | no (#269) | yes (layer 4, #281) |
 | What it can do (use cases) | not built yet (#268) | layer 4 |
 
 ## Decisions (Gil, 2026-10-08)

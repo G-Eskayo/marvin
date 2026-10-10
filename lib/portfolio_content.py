@@ -17,12 +17,14 @@ from __future__ import annotations
 import json
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import project_catalog  # noqa: E402
 
 PROJECT = project_catalog.portfolio_repo_path()
+CLAIMS_LEDGER_PATH = Path.home() / ".claude" / "logs" / "claims-ledger.json"
 
 # Generic-LLM tells from the writing-style skill. Kept short and specific: each one has been seen on this site or is a
 # well-known tic. Matched as whole words, case-insensitively, in visible text only.
@@ -140,7 +142,88 @@ def _slug(url: str) -> str:
     return url.strip("/").split("/")[-1]
 
 
-def evaluate(project: Path = PROJECT) -> dict:
+def _read_claims_ledger(ledger_path: Path | None = None) -> dict | None:
+    """Read the claims ledger for the marvin page. Returns None if missing/stale."""
+    if ledger_path is None:
+        ledger_path = CLAIMS_LEDGER_PATH
+
+    try:
+        data = json.loads(ledger_path.read_text())
+        # Check if ledger is stale (older than 24 hours)
+        checked_at = data.get("checked_at")
+        if checked_at:
+            try:
+                # Parse ISO format with timezone safety
+                check_time = datetime.fromisoformat(checked_at.replace("Z", "+00:00"))
+                now = datetime.now(timezone.utc)
+                if (now - check_time).total_seconds() > 24 * 3600:
+                    return {"stale": True, "data": data}
+            except (ValueError, TypeError):
+                # Unparseable timestamp = stale
+                return {"stale": True, "data": data}
+        else:
+            # Missing checked_at = stale
+            return {"stale": True, "data": data}
+        return {"stale": False, "data": data}
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _claims_findings(ledger_info: dict | None) -> list[dict]:
+    """Convert claims ledger info to findings."""
+    findings = []
+    if ledger_info is None:
+        findings.append(_finding("claim-ledger-missing", "claims ledger not found or unreadable", "warning"))
+    elif ledger_info.get("stale"):
+        findings.append(_finding("claim-ledger-stale", "claims ledger is older than 24 hours", "warning"))
+
+    if ledger_info and ledger_info.get("data"):
+        data = ledger_info["data"]
+        # Add failed claim findings
+        for claim_id, result in data.get("failed", {}).items():
+            # Find the claim's section from the ledger data
+            section = None
+            for cid, claim in data.get("checked", {}).items():
+                if isinstance(claim, dict) and claim.get("id") == claim_id:
+                    section = claim.get("section")
+                    break
+
+            findings.append({
+                "rule": "claim-untrue",
+                "severity": "warning",
+                "detail": f"claim no longer true: '{result.get('detail', 'failed')}'",
+                "section": section
+            })
+
+        # Add unknown claim findings
+        for claim_id, result in data.get("unknown", {}).items():
+            # Find the claim's section from the ledger data
+            section = None
+            for cid, claim in data.get("checked", {}).items():
+                if isinstance(claim, dict) and claim.get("id") == claim_id:
+                    section = claim.get("section")
+                    break
+
+            findings.append({
+                "rule": "claim-unknown",
+                "severity": "info",
+                "detail": f"claim check inconclusive: '{result.get('detail', 'unknown')}'",
+                "section": section
+            })
+
+        # Add unchecked claim findings
+        for sentence in data.get("unchecked", []):
+            findings.append({
+                "rule": "claim-unregistered",
+                "severity": "info",
+                "detail": f"sentence states a fact without a claim check: '{sentence[:80]}...'" if len(sentence) > 80 else f"sentence states a fact without a claim check: '{sentence}'",
+                "section": None
+            })
+
+    return findings
+
+
+def evaluate(project: Path = PROJECT, ledger_path: Path | None = None) -> dict:
     project = Path(project)
     templates = {p.stem: json.loads(p.read_text()) for p in sorted((project / "templates" / "content").glob("*.json"))}
     contents = {p.stem: json.loads(p.read_text()) for p in sorted((project / "content" / "longform").glob("*.json"))}
@@ -161,13 +244,19 @@ def evaluate(project: Path = PROJECT) -> dict:
             pages[slug] = {"template": None, "url": urls[slug], "title": titles[slug], "coverage": None, "findings": []}
     for f in check_marvin_links(contents, urls):
         pages[f.pop("page")]["findings"].append(f)
+
+    # For marvin page only: add claims ledger findings
+    if "marvin" in pages:
+        ledger_info = _read_claims_ledger(ledger_path)
+        pages["marvin"]["findings"].extend(_claims_findings(ledger_info))
+
     return {"templates": sorted(templates), "pages": pages}
 
 
-def findings_for_evaluation(project: Path = PROJECT, include_copy: bool = True) -> list[dict]:
+def findings_for_evaluation(project: Path = PROJECT, include_copy: bool = True, ledger_path: Path | None = None) -> list[dict]:
     """The content findings in the Evaluation's shape: one row per finding, labelled by page. The Evaluation checks copy on
     every rendered page itself (legacy pages have no content file), so it passes include_copy=False."""
-    report = evaluate(project)
+    report = evaluate(project, ledger_path=ledger_path)
     rows = []
     for slug, p in report["pages"].items():
         label = f"{p['url'] or slug} (content)"

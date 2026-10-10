@@ -1,6 +1,7 @@
 """Content templates and content checks for portfolio pages (lib/portfolio_content.py, ADR 0051)."""
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -132,3 +133,195 @@ def test_manifest_pages_without_a_content_file_are_listed_as_not_on_a_template(t
     (tmp_path / "deploy" / "other-projects" / "manifest.json").write_text(json.dumps([{"title": "Old Page", "url": "/a/old-page/"}]))
     report = pc.evaluate(tmp_path)
     assert report["pages"]["old-page"] == {"template": None, "url": "/a/old-page/", "title": "Old Page", "coverage": None, "findings": []}
+
+
+# ── claims ledger integration ──
+
+def test_marvin_page_with_failing_claim_adds_finding(tmp_path):
+    """A failing claim in the ledger produces a claim-untrue finding on the marvin page."""
+    (tmp_path / "templates" / "content").mkdir(parents=True)
+    (tmp_path / "content" / "longform").mkdir(parents=True)
+    (tmp_path / "deploy" / "other-projects").mkdir(parents=True)
+    (tmp_path / "templates" / "content" / "skill-tool.json").write_text(json.dumps(TEMPLATE))
+    (tmp_path / "content" / "longform" / "marvin.json").write_text(json.dumps(page([{"role": "evidence", "body_html": "<p>It works.</p>"}])))
+    (tmp_path / "deploy" / "other-projects" / "manifest.json").write_text(json.dumps([{"title": "MARVIN", "url": "/ai-projects/marvin/"}]))
+
+    # Create a ledger with a failing claim
+    ledger_data = {
+        "checked": {"two-machines": {"id": "two-machines", "text": "it runs on two Macs", "section": "Lead, story sections"}},
+        "failed": {"two-machines": {"ok": False, "detail": "only 1 device registered"}},
+        "unknown": {},
+        "unchecked": [],
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    ledger_dir = tmp_path / "ledger"
+    ledger_dir.mkdir()
+    ledger_path = ledger_dir / "claims-ledger.json"
+    ledger_path.write_text(json.dumps(ledger_data))
+
+    report = pc.evaluate(tmp_path, ledger_path=ledger_path)
+    marvin_findings = report["pages"]["marvin"]["findings"]
+    claim_findings = [f for f in marvin_findings if f["rule"] == "claim-untrue"]
+    assert len(claim_findings) > 0
+    assert "only 1 device" in claim_findings[0]["detail"]
+    assert claim_findings[0].get("section") == "Lead, story sections"
+
+
+def test_marvin_page_with_unknown_claim_adds_finding(tmp_path):
+    """An unknown claim in the ledger produces a claim-unknown finding on the marvin page."""
+    (tmp_path / "templates" / "content").mkdir(parents=True)
+    (tmp_path / "content" / "longform").mkdir(parents=True)
+    (tmp_path / "deploy" / "other-projects").mkdir(parents=True)
+    (tmp_path / "templates" / "content" / "skill-tool.json").write_text(json.dumps(TEMPLATE))
+    (tmp_path / "content" / "longform" / "marvin.json").write_text(json.dumps(page([{"role": "evidence", "body_html": "<p>It works.</p>"}])))
+    (tmp_path / "deploy" / "other-projects" / "manifest.json").write_text(json.dumps([{"title": "MARVIN", "url": "/ai-projects/marvin/"}]))
+
+    # Create a ledger with an unknown claim
+    ledger_data = {
+        "checked": {"open-source": {"id": "open-source", "text": "it's open source", "section": "Lead, story sections"}},
+        "failed": {},
+        "unknown": {"open-source": {"ok": None, "detail": "gh rate limited; unknown"}},
+        "unchecked": [],
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    ledger_dir = tmp_path / "ledger"
+    ledger_dir.mkdir()
+    ledger_path = ledger_dir / "claims-ledger.json"
+    ledger_path.write_text(json.dumps(ledger_data))
+
+    report = pc.evaluate(tmp_path, ledger_path=ledger_path)
+    marvin_findings = report["pages"]["marvin"]["findings"]
+    unknown_findings = [f for f in marvin_findings if f["rule"] == "claim-unknown"]
+    assert len(unknown_findings) > 0
+    assert "rate limited" in unknown_findings[0]["detail"]
+    assert unknown_findings[0].get("section") == "Lead, story sections"
+
+
+def test_marvin_page_with_unchecked_claim_adds_finding(tmp_path):
+    """Unchecked sentences in the page produce claim-unregistered findings."""
+    (tmp_path / "templates" / "content").mkdir(parents=True)
+    (tmp_path / "content" / "longform").mkdir(parents=True)
+    (tmp_path / "deploy" / "other-projects").mkdir(parents=True)
+    (tmp_path / "templates" / "content" / "skill-tool.json").write_text(json.dumps(TEMPLATE))
+    (tmp_path / "content" / "longform" / "marvin.json").write_text(json.dumps(page([{"role": "evidence", "body_html": "<p>It works.</p>"}])))
+    (tmp_path / "deploy" / "other-projects" / "manifest.json").write_text(json.dumps([{"title": "MARVIN", "url": "/ai-projects/marvin/"}]))
+
+    ledger_data = {
+        "checked": {},
+        "failed": {},
+        "unknown": {},
+        "unchecked": ["It supports 47 different languages."],
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    ledger_dir = tmp_path / "ledger"
+    ledger_dir.mkdir()
+    ledger_path = ledger_dir / "claims-ledger.json"
+    ledger_path.write_text(json.dumps(ledger_data))
+
+    report = pc.evaluate(tmp_path, ledger_path=ledger_path)
+    marvin_findings = report["pages"]["marvin"]["findings"]
+    unchecked = [f for f in marvin_findings if f["rule"] == "claim-unregistered"]
+    assert len(unchecked) > 0
+    assert "47 different languages" in unchecked[0]["detail"]
+
+
+def test_marvin_page_with_missing_ledger_adds_finding(tmp_path):
+    """Missing claims ledger adds a warning."""
+    (tmp_path / "templates" / "content").mkdir(parents=True)
+    (tmp_path / "content" / "longform").mkdir(parents=True)
+    (tmp_path / "deploy" / "other-projects").mkdir(parents=True)
+    (tmp_path / "templates" / "content" / "skill-tool.json").write_text(json.dumps(TEMPLATE))
+    (tmp_path / "content" / "longform" / "marvin.json").write_text(json.dumps(page([{"role": "evidence", "body_html": "<p>It works.</p>"}])))
+    (tmp_path / "deploy" / "other-projects" / "manifest.json").write_text(json.dumps([{"title": "MARVIN", "url": "/ai-projects/marvin/"}]))
+
+    ledger_path = tmp_path / "nonexistent" / "claims-ledger.json"
+    report = pc.evaluate(tmp_path, ledger_path=ledger_path)
+    marvin_findings = report["pages"]["marvin"]["findings"]
+    missing = [f for f in marvin_findings if f["rule"] == "claim-ledger-missing"]
+    assert len(missing) > 0
+
+
+def test_marvin_page_with_stale_ledger_adds_finding(tmp_path):
+    """Stale claims ledger adds a warning."""
+    (tmp_path / "templates" / "content").mkdir(parents=True)
+    (tmp_path / "content" / "longform").mkdir(parents=True)
+    (tmp_path / "deploy" / "other-projects").mkdir(parents=True)
+    (tmp_path / "templates" / "content" / "skill-tool.json").write_text(json.dumps(TEMPLATE))
+    (tmp_path / "content" / "longform" / "marvin.json").write_text(json.dumps(page([{"role": "evidence", "body_html": "<p>It works.</p>"}])))
+    (tmp_path / "deploy" / "other-projects" / "manifest.json").write_text(json.dumps([{"title": "MARVIN", "url": "/ai-projects/marvin/"}]))
+
+    ledger_data = {
+        "checked": {},
+        "failed": {},
+        "unknown": {},
+        "unchecked": [],
+        "checked_at": "2026-01-01T00:00:00+00:00",
+    }
+
+    ledger_dir = tmp_path / "ledger"
+    ledger_dir.mkdir()
+    ledger_path = ledger_dir / "claims-ledger.json"
+    ledger_path.write_text(json.dumps(ledger_data))
+
+    report = pc.evaluate(tmp_path, ledger_path=ledger_path)
+    marvin_findings = report["pages"]["marvin"]["findings"]
+    stale = [f for f in marvin_findings if f["rule"] == "claim-ledger-stale"]
+    assert len(stale) > 0
+
+
+def test_non_marvin_pages_unaffected_by_claims_ledger(tmp_path):
+    """Pages other than marvin are not affected by the claims ledger."""
+    (tmp_path / "templates" / "content").mkdir(parents=True)
+    (tmp_path / "content" / "longform").mkdir(parents=True)
+    (tmp_path / "deploy" / "other-projects").mkdir(parents=True)
+    (tmp_path / "templates" / "content" / "skill-tool.json").write_text(json.dumps(TEMPLATE))
+    (tmp_path / "content" / "longform" / "tool.json").write_text(json.dumps(page([{"role": "evidence", "body_html": "<p>A tool.</p>"}])))
+    (tmp_path / "deploy" / "other-projects" / "manifest.json").write_text(json.dumps([{"title": "Tool", "url": "/ai-projects/tool/"}]))
+
+    ledger_data = {
+        "checked": {},
+        "failed": {"two-machines": {"ok": False, "detail": "only 1 device"}},
+        "unknown": {},
+        "unchecked": ["Some claim."],
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    ledger_dir = tmp_path / "ledger"
+    ledger_dir.mkdir()
+    ledger_path = ledger_dir / "claims-ledger.json"
+    ledger_path.write_text(json.dumps(ledger_data))
+
+    report = pc.evaluate(tmp_path, ledger_path=ledger_path)
+    tool_findings = report["pages"]["tool"]["findings"]
+    claim_findings = [f for f in tool_findings if "claim" in f["rule"]]
+    assert len(claim_findings) == 0
+
+
+def test_marvin_page_uses_default_ledger_path_when_not_specified(tmp_path):
+    """When no ledger_path is passed, evaluate uses CLAIMS_LEDGER_PATH."""
+    (tmp_path / "templates" / "content").mkdir(parents=True)
+    (tmp_path / "content" / "longform").mkdir(parents=True)
+    (tmp_path / "deploy" / "other-projects").mkdir(parents=True)
+    (tmp_path / "templates" / "content" / "skill-tool.json").write_text(json.dumps(TEMPLATE))
+    (tmp_path / "content" / "longform" / "marvin.json").write_text(json.dumps(page([{"role": "evidence", "body_html": "<p>It works.</p>"}])))
+    (tmp_path / "deploy" / "other-projects" / "manifest.json").write_text(json.dumps([{"title": "MARVIN", "url": "/ai-projects/marvin/"}]))
+
+    ledger_data = {
+        "checked": {"main-passes-tests": {"id": "main-passes-tests", "text": "it proves every change with tests before I see it", "section": "Lead, story sections"}},
+        "failed": {"main-passes-tests": {"ok": False, "detail": "main is failing"}},
+        "unknown": {},
+        "unchecked": [],
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    pc.CLAIMS_LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
+    pc.CLAIMS_LEDGER_PATH.write_text(json.dumps(ledger_data))
+
+    report = pc.evaluate(tmp_path)
+    marvin_findings = report["pages"]["marvin"]["findings"]
+    claim_findings = [f for f in marvin_findings if f["rule"] == "claim-untrue"]
+    assert len(claim_findings) > 0
+    assert "main is failing" in claim_findings[0]["detail"]

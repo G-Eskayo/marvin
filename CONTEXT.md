@@ -1246,3 +1246,19 @@ A GitHub 5xx (`remote: Internal Server Error`, HTTP 500, 503) is classified `GIT
   MARVIN: the research digest folds into it, and it's part of a wake-up routine that gets Gil into his day.
   Its consumer is Gil, delivered at the start of his day through MARVIN's single proactive-delivery path
   (ADR 0046: quiet hours end at sunrise).
+
+## MARVIN page claims ledger (2026-10-10, #281, ADR 0065)
+
+- **Claim**: a factual sentence on the MARVIN page that can be verified against system state — "it runs on two Macs",
+  "it proves every change with tests before I see it", "it's open source", "it keeps working while I'm away."
+- **Claims ledger**: a JSON file (`~/.claude/logs/claims-ledger.json`, written nightly by the `claims-ledger-nightly`
+  job on the mac-mini) that records which claims passed their checks and which ones didn't. Updated by `brain-map/scripts/claims.py`.
+- **Claim check**: one pure function per claim that reads the system once (machine registry, merge gate, repo visibility,
+  job status) and returns `{ok: True/False, detail: "..."}`. Checks mirror `facts.py`'s pattern: `compute_*()` functions
+  + a `gather()` that reads sources, reusing `health_checks.check_main_health()`, `project_catalog`, and `job_events.status_of()`.
+- **Unchecked sentence**: a sentence in the page copy that states a fact without a corresponding claim in the ledger.
+  Scanned nightly and listed in the ledger for Gil to either back with a check or cut from the page.
+- **Integration point**: `lib/portfolio_content.evaluate()` reads the ledger (for the `marvin` page only) and folds
+  claim failures and unchecked sentences into the page's `findings` list (existing Content tab mechanism, no new UI).
+  A failing claim appears as a finding with `rule: "claim-untrue"` and `section` set to the claim's section, so the
+  portfolio Content tab's per-page findings count and list show claims work with zero new dashboard code.
