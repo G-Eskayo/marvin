@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 STALE_CLAIM_HOURS = 48
 PRIORITY_LABELS = ("priority:p0", "priority:p1", "priority:p2", "priority:p3")
-STATE_LABELS = {"ready-for-agent", "ready-for-human", "needs-info", "needs-reengagement", "wontfix"}
+STATE_LABELS = {"ready-for-agent", "ready-for-human", "needs-info", "needs-reengagement", "wontfix", "hold"}
 SKIP_LABELS = {"pinned"}  # a person has taken the wheel: no agent touches it
 
 
@@ -223,6 +223,15 @@ def parse_revisit_comment(body: str) -> dict | None:
     except (ValueError, TypeError):
         return None
     return {"date": date, "condition": condition}
+
+
+def format_revisit(date: str, condition: str | None = None) -> str:
+    """Format a revisit directive: 'Revisit by: YYYY-MM-DD [— condition]'.
+    Inverse of parse_revisit_comment()."""
+    result = f"Revisit by: {date}"
+    if condition:
+        result += f" — {condition}"
+    return result
 
 
 def _is_valid_date(datestring: str) -> bool:

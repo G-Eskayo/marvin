@@ -145,6 +145,7 @@ def _validate(profile: dict, source: str) -> dict:
     profile.setdefault("env", {})
     profile.setdefault("executor", {})
     profile.setdefault("evidence", {})
+    profile.setdefault("failure_threshold", None)  # None means use the pipeline default (3)
     return profile
 
 

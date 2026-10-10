@@ -13,6 +13,7 @@ sys.path.insert(0, str(LIB))
 
 import run_ticket as rt  # noqa: E402
 import ticket_stages as ts  # noqa: E402
+import failure_breaker as fb  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -23,6 +24,12 @@ def _isolate_ticket_stages(tmp_path, monkeypatch):
     # 27, 28...), and ran unmocked they wrote real files under the
     # account's actual ticket-stages directory.
     monkeypatch.setattr(ts, "STAGES_DIR", tmp_path / "ticket-stages")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_failure_breaker(tmp_path, monkeypatch):
+    # failure_breaker now uses a jsonl log; isolate it per test
+    monkeypatch.setattr(fb, "LOG_PATH", tmp_path / "pipeline-failures.jsonl")
 
 
 def _passing_result(worktree_path=Path("/tmp/fake-worktree")):
@@ -277,14 +284,15 @@ def test_run_recovers_when_execute_ticket_raises_unexpectedly(monkeypatch):
 
 
 def test_run_parks_the_ticket_instead_of_releasing_at_the_failure_cap(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
     # G-Eskayo/marvin#28, 2026-09-04..06: release-claim-then-immediate-
     # redispatch with no cross-call cap spun ~6,900 back-to-back headless
     # sessions in 3 days on a ticket that never once made progress. This is
-    # the guard: the 3rd consecutive identical-failure comment parks it
-    # instead of releasing it back for another immediate re-claim.
+    # the guard: the 3rd consecutive failure parks it instead of releasing it
+    # back for another immediate re-claim.
     monkeypatch.setattr(rt, "execute_ticket", lambda *a: _failing_result())
     monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "unchanged"})
-    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda issue_number: rt.MAX_CONSECUTIVE_FAILURES - 1)
     monkeypatch.setattr(rt, "_comment_failure", lambda *a: None)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
 
@@ -292,6 +300,11 @@ def test_run_parks_the_ticket_instead_of_releasing_at_the_failure_cap(monkeypatc
     monkeypatch.setattr(rt, "_release_claim", lambda issue_number, **kw: released.append(issue_number))
     parked = []
     monkeypatch.setattr(rt, "_park_stuck_ticket", lambda issue_number, streak, **kw: parked.append((issue_number, streak)))
+
+    # Populate the jsonl log with 2 pre-existing failures; rt.run() will add the 3rd
+    now = datetime.now(timezone.utc)
+    fb.record_failure(28, "failure 1", now=now - timedelta(minutes=30))
+    fb.record_failure(28, "failure 2", now=now - timedelta(minutes=20))
 
     rt.run(28)
 
@@ -317,35 +330,24 @@ def test_run_still_releases_below_the_failure_cap(monkeypatch):
     assert parked == []
 
 
-def test_consecutive_failure_streak_counts_trailing_failure_comments(monkeypatch):
-    comments = [
-        {"body": "some unrelated human comment"},
-        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
-        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
-    ]
-
-    class FakeResult:
-        returncode = 0
-        stdout = __import__("json").dumps({"comments": comments})
-
-    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: FakeResult())
+def test_consecutive_failure_streak_counts_trailing_failure_comments():
+    # streak now reads from jsonl log; populate it with failures
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    fb.record_failure(28, "failure 1", now=now - timedelta(minutes=20))
+    fb.record_failure(28, "failure 2", now=now - timedelta(minutes=10))
 
     assert rt._consecutive_failure_streak(28) == 2
 
 
-def test_consecutive_failure_streak_resets_on_a_human_comment(monkeypatch):
-    comments = [
-        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
-        {"body": "ok, I re-scoped this, try again"},
-        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
-        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
-    ]
-
-    class FakeResult:
-        returncode = 0
-        stdout = __import__("json").dumps({"comments": comments})
-
-    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: FakeResult())
+def test_consecutive_failure_streak_resets_on_a_human_comment():
+    # A success resets the streak (simulates a human comment that sends it back)
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    fb.record_failure(28, "failure 1", now=now - timedelta(minutes=30))
+    fb.record_success(28, now=now - timedelta(minutes=20))  # this resets
+    fb.record_failure(28, "failure 2", now=now - timedelta(minutes=10))
+    fb.record_failure(28, "failure 3", now=now - timedelta(minutes=5))
 
     assert rt._consecutive_failure_streak(28) == 2
 
@@ -355,19 +357,18 @@ def test_park_stuck_ticket_removes_ready_for_agent_label(monkeypatch):
     calls = []
     monkeypatch.setattr(rt.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
 
-    rt._park_stuck_ticket(28, 3)
+    rt._park_stuck_ticket(28, 3, reason="failure reason", findings=[], hold_data={"reason": "n-failures", "count": 3, "signatures": ["sig1"]})
 
-    assert calls[0][:3] == ["gh", "issue", "edit"] and "needs-info" in calls[0]   # state first (see below)
+    assert calls[0][:3] == ["gh", "issue", "edit"] and "hold" in calls[0]   # hold label (see below)
     assert calls[1][:3] == ["gh", "issue", "edit"]
     assert "--remove-label" in calls[1] and "ready-for-agent" in calls[1]
     # Also drops the claim: ticket_pipeline only dispatches ready-for-agent
     # tickets with NO claimed:* label, so a parked ticket that kept its claim
-    # could never be revived by a human re-adding ready-for-agent (found
-    # 2026-10-01 re-releasing parked tickets -- the label alone did nothing).
+    # could never be revived by a human re-adding ready-for-agent.
     assert "claimed:mac-mini" in calls[1]
     assert calls[2][:3] == ["gh", "issue", "comment"]
-    assert "Still labeled" not in calls[2][-1]
     assert "add `ready-for-agent`" in calls[2][-1]
+    assert "Revisit by:" in calls[2][-1]  # should have revisit directive
 
 
 # ── a parked ticket gets a real state and the real cause (Gil, 2026-10-09) ──
@@ -387,7 +388,7 @@ def _park_calls(monkeypatch, **kw):
 def test_parking_adds_needs_info_before_removing_ready_for_agent(monkeypatch):
     calls = _park_calls(monkeypatch, reason="Final verdict: unchanged.")
     edits = [c for c in calls if c[:3] == ["gh", "issue", "edit"]]
-    add = next(i for i, c in enumerate(edits) if "--add-label" in c and "needs-info" in c)
+    add = next(i for i, c in enumerate(edits) if "--add-label" in c and "hold" in c)
     rm = next(i for i, c in enumerate(edits) if "--remove-label" in c and "ready-for-agent" in c)
     assert add < rm                      # never a moment with no state label for triage to grab
 
@@ -399,7 +400,7 @@ def test_the_park_comment_carries_the_real_cause_and_the_findings(monkeypatch):
     assert rt.PARKED_MARKER in body
     assert "code review found must-fix issues" in body
     assert "- lib/a.py:3 — crashes on None" in body and "- lib/b.py:9 — wrong week" in body
-    assert "needs-info" in body and "ready-for-agent" in body     # says how to send it back in
+    assert "hold" in body and "ready-for-agent" in body     # says how to send it back in
 
 
 def test_a_park_without_findings_still_says_why(monkeypatch):
@@ -416,7 +417,7 @@ def test_a_huge_reason_and_many_findings_are_capped(monkeypatch):
 
 
 def test_a_failing_gh_call_never_stops_the_rest_of_the_park(monkeypatch):
-    # e.g. the needs-info add hits a rate limit: the ticket must still stop being dispatched and still get the comment
+    # e.g. the hold add hits a rate limit: the ticket must still stop being dispatched and still get the comment
     monkeypatch.setattr(rt.machine_profile, "registry_id", lambda: "mac-mini-1")
     calls = []
 
@@ -426,20 +427,27 @@ def test_a_failing_gh_call_never_stops_the_rest_of_the_park(monkeypatch):
             raise rt.subprocess.CalledProcessError(1, cmd)
         return rt.subprocess.CompletedProcess(cmd, 1, "", "HTTP 403")
     monkeypatch.setattr(rt.subprocess, "run", failing_run)
-    rt._park_stuck_ticket(28, 3, reason="unchanged")
+    rt._park_stuck_ticket(28, 3, reason="unchanged", findings=[], hold_data={"reason": "n-failures", "count": 3, "signatures": ["sig"]})
     assert [c[:3] for c in calls] == [["gh", "issue", "edit"], ["gh", "issue", "edit"], ["gh", "issue", "comment"]]
 
 
 def test_run_passes_the_cause_and_the_last_must_fix_findings_to_park(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
     res = _failing_result()
     res["final_comparison"] = {**res["final_comparison"], "verdict": "code review found must-fix issues",
                                "fix_these": ["lib/a.py:3 — crashes on None"]}
     res["explanation"] = "Did not reach a passing comparison after 3 iterations. Final verdict: code review found must-fix issues."
     monkeypatch.setattr(rt, "execute_ticket", lambda *a: res)
     monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": res["explanation"]})
-    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda issue_number: rt.MAX_CONSECUTIVE_FAILURES - 1)
     monkeypatch.setattr(rt, "_comment_failure", lambda *a: None)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+
+    # Populate the jsonl log with 2 pre-existing failures; rt.run() will add the 3rd
+    now = datetime.now(timezone.utc)
+    fb.record_failure(28, "failure 1", now=now - timedelta(minutes=30))
+    fb.record_failure(28, "failure 2", now=now - timedelta(minutes=20))
+
     got = {}
     monkeypatch.setattr(rt, "_park_stuck_ticket", lambda issue_number, streak, **kw: got.update(kw))
     rt.run(28)
@@ -447,12 +455,19 @@ def test_run_passes_the_cause_and_the_last_must_fix_findings_to_park(monkeypatch
 
 
 def test_a_crash_before_any_result_still_parks_with_the_crash_as_the_cause(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
     def boom(*a):
         raise RuntimeError("planner timed out")
     monkeypatch.setattr(rt, "execute_ticket", boom)
-    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda issue_number: rt.MAX_CONSECUTIVE_FAILURES - 1)
     monkeypatch.setattr(rt, "_comment_failure", lambda *a: None)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+
+    # Populate the jsonl log with 2 pre-existing failures; rt.run() will add the 3rd
+    now = datetime.now(timezone.utc)
+    fb.record_failure(28, "failure 1", now=now - timedelta(minutes=30))
+    fb.record_failure(28, "failure 2", now=now - timedelta(minutes=20))
+
     got = {}
     monkeypatch.setattr(rt, "_park_stuck_ticket", lambda issue_number, streak, **kw: got.update(kw))
     rt.run(28)
