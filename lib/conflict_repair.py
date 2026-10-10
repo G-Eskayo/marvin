@@ -169,7 +169,7 @@ def _verify_resolution(wt: str, files: list[str], originals: dict[str, bytes]) -
         current = fpath.read_bytes()
         if b"<<<<<<<" in current or b"|||||||" in current or b"=======" in current or b">>>>>>>" in current:
             return False
-        # Verify unchanged outside markers - for now just check markers are gone
+        # Verify unchanged outside markers - for now, only check markers are gone
     return True
 
 

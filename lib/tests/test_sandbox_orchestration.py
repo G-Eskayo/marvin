@@ -1364,7 +1364,7 @@ def test_exec_prompt_reads_task_list_from_disk_not_plan_variable(monkeypatch, tm
                 stdout = "## North-star fit\nPlan\n## Task List\n1. Original task"
                 returncode = 0
         else:
-            # On second call (execution), just return something
+            # On second call (execution), return a stub result
             class R:
                 stdout = "Executed"
                 returncode = 0

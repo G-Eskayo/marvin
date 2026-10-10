@@ -331,7 +331,7 @@ class TestIntegrationWithPlanRefeed:
     def test_plan_refeed_calls_classify_for_each_requeued_ticket(self):
         """plan_refeed() calls classify() once per ticket with needs-reengagement."""
         # This test is more about the integration point. We mock classify and verify it's called.
-        # The actual integration is in ticket_agents.py; here we just verify the contract.
+        # The actual integration is in ticket_agents.py; here we verify the contract.
         pass  # Implemented in test_ticket_agents.py
 
 

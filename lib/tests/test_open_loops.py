@@ -236,7 +236,7 @@ def test_day_boundary_timezone_comparison(tmp_path):
     # Using UTC for simplicity; the logic should handle timezone awareness
     due_today = ol.due_for_resurfacing(NOW, store_path=store)
     # Should be due for resurfacing today or tomorrow depending on interval
-    # This test just ensures no crash on boundary
+    # This test only ensures no crash on boundary
     assert isinstance(due_today, list)
 
 
