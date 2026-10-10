@@ -4,9 +4,11 @@ const AGENT_INFO = {
   prioritize: ['Prioritize', 'Sets priority:p0 to p3 from what a ticket unblocks, deadlines, bugs and age. Leaves priorities a person set alone.'],
   triage: ['Triage', 'Sorts untriaged tickets into ready-for-agent, ready-for-human or needs-info (no model, no tokens). Never touches PRDs or claimed tickets.'],
   stale_claims: ['Release stale claims', 'Releases a claim nobody has touched for 2 days when no branch or PR is in flight for it. A held or pinned ticket is never released.'],
-  refeed: ['Re-queue denied tickets', 'A ticket you denied (needs-reengagement) goes back to the queue with its feedback; after two tries it goes to a person.']
+  refeed: ['Re-queue denied tickets', 'A ticket you denied (needs-reengagement) goes back to the queue with its feedback; after two tries it goes to a person.'],
+  project_tag: ['Tag unclear projects', 'A ticket that names another project gets labelled for it; unclear ones wait for you (ADR 0060).'],
+  revisit: ['Revisit', 'Returns a hold to needs-triage when its Revisit by: date has passed, or the ticket it names as its condition has closed.']
 }
-const ORDER = ['prioritize', 'triage', 'stale_claims', 'refeed']
+const ORDER = ['prioritize', 'triage', 'stale_claims', 'refeed', 'project_tag', 'revisit']
 
 function ago(iso) {
   const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000)
