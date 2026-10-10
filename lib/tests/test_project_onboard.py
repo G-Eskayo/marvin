@@ -2239,7 +2239,7 @@ def test_refresh_onboarding_plan_does_not_call_apply_pr_when_ci_and_agent_docs_o
     try:
         po.refresh_onboarding_plan("test/repo", gh=mock_gh, dir=tmp_path, apply_safe=True)
         # _apply_pr should not be called because all pieces are ok
-        assert len(apply_pr_calls) == 0
+        assert not apply_pr_calls
     finally:
         po._apply_pr = original_apply_pr
 
@@ -2287,7 +2287,7 @@ def test_refresh_onboarding_plan_does_not_call_apply_pr_when_offer_already_recor
         # This should not raise because _apply_pr should not be called
         po.refresh_onboarding_plan("test/repo", gh=mock_gh, dir=tmp_path, apply_safe=True)
         # _apply_pr should never be called
-        assert len(apply_pr_calls) == 0
+        assert not apply_pr_calls
     finally:
         po._apply_pr = original_apply_pr
 
@@ -2315,7 +2315,7 @@ def test_refresh_onboarding_plan_does_not_call_apply_pr_when_apply_safe_false(tm
 
     try:
         po.refresh_onboarding_plan("test/repo", gh=mock_gh, dir=tmp_path, apply_safe=False)
-        assert len(apply_pr_calls) == 0
+        assert not apply_pr_calls
     finally:
         po._apply_pr = original_apply_pr
 
