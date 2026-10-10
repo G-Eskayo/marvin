@@ -1,5 +1,7 @@
 # Changelog
 
+- Map snapshot test deletes the real ~/.claude/logs and health ([#397](https://github.com/G-Eskayo/marvin/pull/397))
+
 - Pipeline screenshots pop a JavaScript error dialog: capture copy collides with the dashboard's refresh port ([#389](https://github.com/G-Eskayo/marvin/pull/389))
 
 - Pipeline scans overlap: a busy scan lock is ignored after 120 s ([#388](https://github.com/G-Eskayo/marvin/pull/388))
