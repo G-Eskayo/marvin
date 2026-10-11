@@ -47,6 +47,14 @@ def test_evidence_kinds_are_recognised_from_the_markup():
     assert pc.evidence_in("<p>Words only, one number: 3.</p>") == set()
 
 
+def test_callout_evidence_is_detected():
+    html = '<div class="longform-callout"><p><strong>Source:</strong> Test</p></div>'
+    kinds = pc.evidence_in(html)
+    assert "callout" in kinds
+    html2 = '<div class="other-class"><p>Not a callout</p></div>'
+    assert "callout" not in pc.evidence_in(html2)
+
+
 # ── copy that reads as AI-written ──
 
 def test_ai_writing_phrases_and_em_dashes_are_flagged_with_the_phrase():

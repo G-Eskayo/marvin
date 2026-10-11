@@ -63,6 +63,8 @@ def evidence_in(html: str) -> set[str]:
         kinds.add("link")
     if re.search(r"<table\b", html or "", flags=re.I) or len(re.findall(r"\d[\d,.]*", _visible_text(html))) >= 2:
         kinds.add("numbers")
+    if re.search(r'<div\b[^>]*\bclass=["\']?longform-callout\b', html or "", flags=re.I):
+        kinds.add("callout")
     return kinds
 
 
