@@ -38,7 +38,7 @@ def test_plan_revisit_future_due():
         1: [{"body": "Revisit by: 2026-10-15", "createdAt": "2026-10-01T10:00:00Z"}]
     }
     result = ta.plan_revisit("test/repo", issues, hold_comments, {}, now)
-    assert len(result) == 0  # not due yet
+    assert not result  # not due yet
 
 
 def test_plan_revisit_no_revisit_line():
@@ -49,7 +49,7 @@ def test_plan_revisit_no_revisit_line():
     ]
     hold_comments = {1: []}  # no revisit line
     result = ta.plan_revisit("test/repo", issues, hold_comments, {}, now)
-    assert len(result) == 0  # Health will flag this
+    assert not result  # Health will flag this
 
 
 def test_plan_revisit_pinned():
@@ -62,7 +62,7 @@ def test_plan_revisit_pinned():
         1: [{"body": "Revisit by: 2026-10-15", "createdAt": "2026-10-01T10:00:00Z"}]
     }
     result = ta.plan_revisit("test/repo", issues, hold_comments, {}, now)
-    assert len(result) == 0  # pinned, never touched
+    assert not result  # pinned, never touched
 
 
 def test_plan_revisit_multiple_tickets():

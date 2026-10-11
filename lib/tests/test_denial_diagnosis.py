@@ -205,7 +205,7 @@ class TestTally:
 
         result = dd.tally()
 
-        assert len(result) == 0
+        assert not result
 
     def test_tally_exactly_three_repeats_crosses_threshold(self):
         """tally() DOES return groups with exactly 3 repeats."""
