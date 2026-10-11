@@ -29,6 +29,7 @@ import cron_health as ch  # noqa: E402
 import machine_profile  # noqa: E402
 from task_dispatch import TAILSCALE_BIN, TAILSCALE_ENV  # noqa: E402  (absolute path -- launchd's PATH omits the shell's additions)
 import metrics_registry as mr  # noqa: E402
+import quality_checks as qc  # noqa: E402
 
 HOME = Path.home()
 STATUS_PATH = HOME / ".claude" / "logs" / "health-status.json"
@@ -1438,6 +1439,7 @@ def run_all() -> dict:
     results += check_missed_purposes()
     results += check_output_contracts()
     results += check_missing_profiles()
+    results += qc.check_all()
     results.append(check_trigger_coverage())
     results.append(check_catalog_fresh())
     results.append(check_project_tags())

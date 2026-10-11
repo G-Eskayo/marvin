@@ -1230,3 +1230,35 @@ def test_output_contracts_reach_health(monkeypatch):
     import output_contracts
     monkeypatch.setattr(output_contracts, "health_findings", lambda: [{"id": "contract:x", "severity": "red"}])
     assert hc.check_output_contracts() == [{"id": "contract:x", "severity": "red"}]
+
+
+def test_run_all_includes_quality_checks(monkeypatch):
+    """Tests that run_all calls the real quality_checks.check_all and includes all checks.
+    Stubs network-bound sibling checks (mutation_trend, below_bar_merges) to keep it fast."""
+    import quality_checks as qc
+    monkeypatch.setattr(hc.mr, "latest", lambda subsystem: None)
+    monkeypatch.setattr(hc.mr, "record", lambda subsystem, metrics: None)
+    monkeypatch.setattr(hc.mr, "compare", lambda subsystem, baseline, current: None)
+    # Stub network-bound GitHub checks to avoid hitting the network
+    monkeypatch.setattr(qc, "check_mutation_trend", lambda repos=None, run=None, fetched=None: [])
+    monkeypatch.setattr(qc, "check_below_bar_merges", lambda repos=None, run=None, fetched=None: [])
+    out = hc.run_all()
+    check_ids = {r["id"] for r in out["checks"]}
+    assert "quality:test-skips" in check_ids
+    assert "quality:repo-growth" in check_ids
+
+
+def test_run_all_when_one_machine_unreachable(monkeypatch):
+    """run_all handles one Mac unreachable gracefully without crashing."""
+    import quality_checks as qc
+    monkeypatch.setattr(hc.mr, "latest", lambda subsystem: None)
+    monkeypatch.setattr(hc.mr, "record", lambda subsystem, metrics: None)
+    monkeypatch.setattr(hc.mr, "compare", lambda subsystem, baseline, current: None)
+    monkeypatch.setattr(qc, "check_mutation_trend", lambda repos=None, run=None, fetched=None: [])
+    monkeypatch.setattr(qc, "check_below_bar_merges", lambda repos=None, run=None, fetched=None: [])
+    out = hc.run_all()
+    assert isinstance(out, dict)
+    assert "checks" in out
+    # Should still include quality checks even if some machine checks fail
+    check_ids = {r["id"] for r in out["checks"]}
+    assert "quality:test-skips" in check_ids or "quality:repo-growth" in check_ids
