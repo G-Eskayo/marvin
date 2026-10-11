@@ -1,0 +1,12 @@
+1. `dashboard/mobile-backend/mr_media.js`:
+   - Fix Range-end clamping: compute `end = rangeMatch[2] ? parseInt(rangeMatch[2], 10) : fileSize - 1`; return `416` only when `start >= fileSize || start > end`; then clamp `end = Math.min(end, fileSize - 1)` before computing `length`/headers/stream. Leave the malformed-Range → `416` and no-Range → `200` behaviors exactly as they are now (already correct, already tested).
+   - Add an optional `createReadStream` param to `createMrMediaRouter` (default: real `fs.createReadStream`), and replace both `stream.pipe(res)` + manual `stream.on('error', ...)` blocks with `await pipeline(stream, res)` from `node:stream/promises`, wrapped in try/catch that only writes a `502` if `!res.headersSent`.
+2. `dashboard/test/mr_media.test.js`:
+   - Remove the `vi.mock('../electron/main/pr_images.js', ...)` block; import the real `mediaFileFor` (and `hashOf`'s equivalent via `crypto.createHash('sha256')`) to build real, correctly-named cache files in temp dirs.
+   - Add tests 1-3, 5-8 from above; keep all carried-over tests; delete the vacuous `'uses provided cacheDir and loader when options supplied'` test (replaced by test 5).
+3. `dashboard/mobile-backend/README.md` (`/mr/media` section, "Range semantics" paragraph): split the self-contradicting sentence into two correct ones — omitting `Range` → full `200`; an out-of-bounds-after-clamping or malformed `Range` → `416` with `Content-Range: bytes */<size>`.
+4. Run `npm test` (vitest) for `dashboard/test/mr_media.test.js` and `dashboard/test/dashboard_gh_api.test.js` to confirm no regression in the untouched `/mr/detail` tests, and run the full suite once to check the baseline `pytest`/`vitest` failure counts haven't moved beyond the pre-existing baseline (2 pytest failures, 0 vitest failures, unrelated to this ticket).
+5. Resolve the Decision above before opening/updating the PR:
+   - If **A**: file the sibling `marvin-mobile` SwiftUI ticket (grouped grid, GIF `UIViewRepresentable`, `VideoPlayer`, full-screen swipe viewer, Approve/Deny honoring `needsImages`) and stop here for this PR.
+   - If **B**: in a session with `marvin-mobile` checked out, read the existing MR Review tab/approve-deny screen (issue #3) in full before writing anything, then build the PR detail screen against `/mr/detail` and `/mr/media`, with its own tests.
+6. Capture the simulator screen recording of clarity-captions #99 with GIFs animating (acceptance criterion) — only reachable once a working SwiftUI screen exists, i.e. after step 5 resolves to B or the sibling ticket lands.

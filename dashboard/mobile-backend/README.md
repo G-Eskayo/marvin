@@ -122,6 +122,41 @@ Fetch a ticket and (if present) its parent PRD via the "## Parent" reference.
 
 **Limitation**: A missing or inaccessible ticket/parent comes back as `null` rather than erroring; the rest of the response is still valid.
 
+### `GET /mr/detail?repo=<repo>&number=<number>`
+
+Fetch a single PR with full detail (images, decisions, approval gating).
+
+**Query parameters**: `repo` (optional, defaults to marvin, must be MARVIN_REPO or a registered board repo), `number` (required, numeric PR number)
+
+**Response**: `200 { "ok": true, "data": { number, title, url, body, images: [{ url, kind, alt, group, caption }], headRef, baseRef, canMerge, needsImages, decisions: [{ title, outcome, reasons }], evidence, ... } }`
+
+**Limitation**: Non-numeric `number` or unregistered `repo` returns `400`. PR not found or GitHub outage returns `502`.
+
+### `GET /mr/media?url=<url>&kind=<kind>`
+
+Stream media bytes (images or video) for a PR detail view.
+
+**Query parameters**: `url` (required, full HTTPS URL to GitHub raw/attachment asset), `kind` (optional, `image`, `video`, or `auto` — usually `auto`)
+
+**Response**:
+- `200 <raw-bytes>` with appropriate `Content-Type`, `Content-Length`, `Accept-Ranges: bytes`, and `Cache-Control: public, max-age=31536000` — success (full file or no Range header)
+  - For images: `image/png`, `image/jpeg`, `image/gif`, etc.; raw decoded bytes
+  - For video: `video/mp4`, `video/quicktime`, etc.; full content
+- `206 <partial-bytes>` with `Content-Range: bytes <start>-<end>/<total>` — successful Range request
+  - For video: partial content matching the `Range: bytes=start-end` request header
+- `400 { "ok": false, "error": "<message>" }` — missing/invalid `url`
+- `404 { "ok": false, "error": "<message>" }` — asset not found or private-repo credential lacks access
+- `416 { "error": ... }` with `Content-Range: bytes */<size>` — Range request out of bounds or malformed
+- `502 { "ok": false, "error": "<message>" }` — asset too large or download/decode failure
+
+**Range semantics**: Videos support HTTP Range requests for seeking. Omitting the `Range` header triggers a `200 OK` response with the full file. A `Range: bytes=start-end` header triggers a `206 Partial Content` response with the requested byte range (end-byte clamped to EOF if over-specified). A malformed or out-of-bounds `Range` header (start ≥ file size) triggers a `416 Range Not Satisfiable` response with the total file size in `Content-Range: bytes */<size>`.
+
+**Semantics**: Private-repo assets (GitHub user-attachments, raw.githubusercontent.com) are fetched server-side using the shared GitHub credential; the token is never included in the response. Images are cached at `~/.claude/pr-media-cache` for reuse across requests. Videos are cached separately and streamed with HTTP Range support for seeking.
+
+**Testability**: `createMrMediaRouter({ cacheDir, loader })` accepts optional parameters: `cacheDir` (defaults to `~/.claude/pr-media-cache`) and `loader` (defaults to `createImageLoader({ cacheDir })`). For testing, provide a fake loader that returns test data without network calls.
+
+**Limitation**: `url` is validated against an allowlist (GitHub hosts); non-HTTPS or non-allowlisted hosts return `400`.
+
 ### `GET /activity/overview`
 
 Activity overview per project (tickets in review, waiting on human, blocked).

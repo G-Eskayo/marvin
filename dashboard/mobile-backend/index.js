@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url'
 import { whois, loadAllowlist, isAllowed } from './device_gate.js'
 import { createDashboardApiRouter } from './dashboard_api.js'
 import { createDashboardGhApiRouter } from './dashboard_gh_api.js'
+import { createMrMediaRouter } from './mr_media.js'
 import { createChatApiRouter } from './chat_api.js'
 import { createOfflineBatchApiRouter } from './offline_batch_api.js'
 import { createThreadStore } from './thread_store.js'
@@ -19,8 +20,13 @@ import { postJson } from './post_json.js'
 import { postTicketInput } from '../electron/main/ticket_input.js'
 import { approveMr, denyMr } from '../electron/main/mr_review.js'
 import { resolveServiceDefaults } from '../electron/main/device_identity.js'
+import { adoptSharedGhToken, useGhGate } from '../electron/main/path.js'
 
 const execFileP = promisify(execFile)
+
+// Adopt the shared GitHub token from ~/.claude/.gh-token so media routes can authenticate private-repo fetches.
+adoptSharedGhToken()
+useGhGate()
 
 const TAILSCALE_BIN = '/Applications/Tailscale.app/Contents/MacOS/Tailscale'
 const PORT = process.env.PORT || 7880
@@ -56,6 +62,7 @@ function getUptimeSeconds() {
 
 const dashboardApiRouter = createDashboardApiRouter()
 const dashboardGhApiRouter = createDashboardGhApiRouter({ mrWebhookUrl: MR_WEBHOOK_URL })
+const mrMediaRouter = createMrMediaRouter({})
 const threadStore = createThreadStore()
 const chatApiRouter = createChatApiRouter({ threadStore })
 const offlineBatchApiRouter = createOfflineBatchApiRouter({ threadStore })
@@ -86,8 +93,12 @@ const server = createServer(async (req, res) => {
     return
   }
 
+  // Route through media API (after device gate)
+  let handled = await mrMediaRouter(req, res)
+  if (handled) return
+
   // Route through permission API
-  let handled = await permissionApiRouter(req, res)
+  handled = await permissionApiRouter(req, res)
   if (handled) return
 
   // Route through actions API (ticket reply, MR approve/deny)

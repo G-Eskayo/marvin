@@ -208,6 +208,238 @@ describe('dashboard GitHub API', () => {
     })
   })
 
+  describe('GET /mr/detail', () => {
+    it('returns 400 if number parameter missing', async () => {
+      const router = createDashboardGhApiRouter({
+        exec: vi.fn()
+      })
+
+      return startTestServer(router).then(async ({ server, url }) => {
+        try {
+          const res = await makeRequest(url, '/mr/detail')
+          expect(res.statusCode).toBe(400)
+          expect(res.body.error).toContain('Missing number')
+        } finally {
+          server.close()
+        }
+      })
+    })
+
+    it('returns 400 if number is non-numeric', async () => {
+      const router = createDashboardGhApiRouter({
+        exec: vi.fn()
+      })
+
+      return startTestServer(router).then(async ({ server, url }) => {
+        try {
+          const res = await makeRequest(url, '/mr/detail?number=abc')
+          expect(res.statusCode).toBe(400)
+          expect(res.body.error).toContain('Invalid number')
+        } finally {
+          server.close()
+        }
+      })
+    })
+
+    it('returns 400 if repo not registered', async () => {
+      return withTempDirs(({ root }) => {
+        const registry = path.join(root, 'registry.json')
+        writeFileSync(registry, JSON.stringify({ boards: [] }))
+
+        const router = createDashboardGhApiRouter({
+          registryPath: registry,
+          exec: vi.fn()
+        })
+
+        return startTestServer(router).then(async ({ server, url }) => {
+          try {
+            const res = await makeRequest(url, '/mr/detail?repo=UnknownOrg/unknown&number=1')
+            expect(res.statusCode).toBe(400)
+            expect(res.body.error).toContain('not registered')
+          } finally {
+            server.close()
+          }
+        })
+      })
+    })
+
+    it('returns PR detail with images and gating info', async () => {
+      return withTempDirs(({ root }) => {
+        const registry = path.join(root, 'registry.json')
+        writeFileSync(registry, JSON.stringify({ boards: [{ repo: 'G-Eskayo/marvin', name: 'MARVIN' }] }))
+
+        const prData = {
+          number: 99,
+          title: 'Add screenshot support',
+          url: 'https://github.com/G-Eskayo/marvin/pull/99',
+          body: '## Screenshots\n![](https://github.com/user-attachments/assets/abc123.gif)',
+          files: [],
+          baseRefName: 'main',
+          headRefName: 'feature/images',
+          mergeable: 'MERGEABLE',
+          statusCheckRollup: []
+        }
+
+        const execMock = vi.fn((cmd, args) => {
+          if (args[0] === 'pr' && args[1] === 'view') {
+            return Promise.resolve({ stdout: JSON.stringify(prData) })
+          }
+          if (args[0] === 'issue' && args[1] === 'list') {
+            return Promise.resolve({ stdout: JSON.stringify([]) })
+          }
+          return Promise.reject(new Error('Unexpected call'))
+        })
+
+        const router = createDashboardGhApiRouter({
+          registryPath: registry,
+          exec: execMock
+        })
+
+        return startTestServer(router).then(async ({ server, url }) => {
+          try {
+            const res = await makeRequest(url, '/mr/detail?number=99')
+            expect(res.statusCode).toBe(200)
+            expect(res.body.ok).toBe(true)
+            expect(res.body.data.number).toBe(99)
+            expect(res.body.data.title).toBe('Add screenshot support')
+            expect(res.body.data.images).toBeDefined()
+            expect(res.body.data.headRef).toBe('feature/images')
+          } finally {
+            server.close()
+          }
+        })
+      })
+    })
+
+    it('returns 502 when gh pr view fails', async () => {
+      return withTempDirs(({ root }) => {
+        const registry = path.join(root, 'registry.json')
+        writeFileSync(registry, JSON.stringify({ boards: [{ repo: 'G-Eskayo/marvin', name: 'MARVIN' }] }))
+
+        const execMock = vi.fn((cmd, args) => {
+          if (args[0] === 'pr' && args[1] === 'view') {
+            return Promise.reject(new Error('GitHub is down'))
+          }
+          return Promise.reject(new Error('Unexpected call'))
+        })
+
+        const router = createDashboardGhApiRouter({
+          registryPath: registry,
+          exec: execMock
+        })
+
+        return startTestServer(router).then(async ({ server, url }) => {
+          try {
+            const res = await makeRequest(url, '/mr/detail?number=99')
+            expect(res.statusCode).toBe(502)
+            expect(res.body.ok).toBe(false)
+          } finally {
+            server.close()
+          }
+        })
+      })
+    })
+
+    it('handles PR with 30 image references', async () => {
+      return withTempDirs(({ root }) => {
+        const registry = path.join(root, 'registry.json')
+        writeFileSync(registry, JSON.stringify({ boards: [{ repo: 'G-Eskayo/marvin', name: 'MARVIN' }] }))
+
+        // Generate body with 30 image references
+        let bodyWithImages = '## Evidence\n'
+        for (let i = 0; i < 30; i++) {
+          bodyWithImages += `![](https://github.com/user-attachments/assets/${String(i).padStart(8, '0')}.png)\n`
+        }
+
+        const prData = {
+          number: 99,
+          title: 'Many images PR',
+          url: 'https://github.com/G-Eskayo/marvin/pull/99',
+          body: bodyWithImages,
+          files: [],
+          baseRefName: 'main',
+          headRefName: 'feature',
+          mergeable: 'MERGEABLE',
+          statusCheckRollup: []
+        }
+
+        const execMock = vi.fn((cmd, args) => {
+          if (args[0] === 'pr' && args[1] === 'view') {
+            return Promise.resolve({ stdout: JSON.stringify(prData) })
+          }
+          if (args[0] === 'issue' && args[1] === 'list') {
+            return Promise.resolve({ stdout: JSON.stringify([]) })
+          }
+          return Promise.reject(new Error('Unexpected call'))
+        })
+
+        const router = createDashboardGhApiRouter({
+          registryPath: registry,
+          exec: execMock
+        })
+
+        return startTestServer(router).then(async ({ server, url }) => {
+          try {
+            const res = await makeRequest(url, '/mr/detail?number=99')
+            expect(res.statusCode).toBe(200)
+            expect(res.body.data.images.length).toBe(30)
+          } finally {
+            server.close()
+          }
+        })
+      })
+    })
+
+    it('handles huge PR body gracefully', async () => {
+      return withTempDirs(({ root }) => {
+        const registry = path.join(root, 'registry.json')
+        writeFileSync(registry, JSON.stringify({ boards: [{ repo: 'G-Eskayo/marvin', name: 'MARVIN' }] }))
+
+        // Create a huge body near the MAX_BODY limit
+        let hugeBody = '# PR Description\n'
+        hugeBody += 'x'.repeat(150_000) // 150KB of text
+
+        const prData = {
+          number: 99,
+          title: 'Huge PR body',
+          url: 'https://github.com/G-Eskayo/marvin/pull/99',
+          body: hugeBody,
+          files: [],
+          baseRefName: 'main',
+          headRefName: 'feature',
+          mergeable: 'MERGEABLE',
+          statusCheckRollup: []
+        }
+
+        const execMock = vi.fn((cmd, args) => {
+          if (args[0] === 'pr' && args[1] === 'view') {
+            return Promise.resolve({ stdout: JSON.stringify(prData) })
+          }
+          if (args[0] === 'issue' && args[1] === 'list') {
+            return Promise.resolve({ stdout: JSON.stringify([]) })
+          }
+          return Promise.reject(new Error('Unexpected call'))
+        })
+
+        const router = createDashboardGhApiRouter({
+          registryPath: registry,
+          exec: execMock
+        })
+
+        return startTestServer(router).then(async ({ server, url }) => {
+          try {
+            const res = await makeRequest(url, '/mr/detail?number=99')
+            expect(res.statusCode).toBe(200)
+            expect(res.body.ok).toBe(true)
+            expect(res.body.data.number).toBe(99)
+          } finally {
+            server.close()
+          }
+        })
+      })
+    })
+  })
+
   describe('GET /mr/review-status', () => {
     it('returns green when no open PRs', async () => {
       return withTempDirs(({ root }) => {

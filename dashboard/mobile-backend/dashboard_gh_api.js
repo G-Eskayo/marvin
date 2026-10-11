@@ -221,6 +221,130 @@ export function createDashboardGhApiRouter(opts = {}) {
         return true
       }
 
+      // GET /mr/detail?repo=<repo>&number=<number> - Get a single PR with full detail
+      if (req.method === 'GET' && pathname === '/mr/detail') {
+        const repo = searchParams.get('repo') || MARVIN_REPO
+        const number = searchParams.get('number')
+
+        if (!number) {
+          res.writeHead(400, { 'Content-Type': 'application/json' }).end(
+            JSON.stringify({ ok: false, error: 'Missing number parameter' })
+          )
+          return true
+        }
+
+        if (!/^\d+$/.test(number)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' }).end(
+            JSON.stringify({ ok: false, error: 'Invalid number format' })
+          )
+          return true
+        }
+
+        const registry = readRegistryData()
+        if (repo !== MARVIN_REPO && !registry.some(b => b.repo === repo)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' }).end(
+            JSON.stringify({ ok: false, error: `Repo ${repo} not registered` })
+          )
+          return true
+        }
+
+        try {
+          // Fetch single PR via gh pr view with the same fields as /mr/list
+          const { stdout } = await exec('gh', [
+            'pr', 'view', number, '--repo', repo,
+            '--json', 'number,title,url,body,files,baseRefName,headRefName,mergeable,statusCheckRollup'
+          ])
+          const prData = JSON.parse(stdout)
+
+          // Create a function that returns a single-element array from this PR
+          const listOpenPrs = async () => [prData]
+
+          // Get helper data the same way /mr/list does
+          const sentBackTickets = async (repos) => {
+            const allKeys = new Set()
+            for (const r of repos) {
+              try {
+                const data = await getBoardData(r, gh)
+                const keys = sentBackKeys(r, data.issues)
+                for (const key of keys) allKeys.add(key)
+              } catch {
+                // one repo's failure doesn't hide others
+              }
+            }
+            return allKeys
+          }
+
+          const closedTickets = async (repos) => {
+            const allKeys = new Set()
+            for (const r of repos) {
+              try {
+                const data = await getBoardData(r, gh)
+                for (const issue of data.issues || []) {
+                  if (issue && issue.state === 'CLOSED') {
+                    allKeys.add(`${r}#${issue.number}`)
+                  }
+                }
+              } catch {
+                // one repo's failure doesn't hide others
+              }
+            }
+            return allKeys
+          }
+
+          const rebaseStatus = async () => {
+            if (!mrWebhookUrl) return {}
+            try {
+              const url = mrWebhookUrl.replace(/\/approve$/, '/rebase-status')
+              const response = await fetch(url, { timeout: 3000 })
+              if (!response.ok) return {}
+              return await response.json()
+            } catch {
+              return {}
+            }
+          }
+
+          const autoMergeShadow = async () => {
+            if (!mrWebhookUrl) return {}
+            try {
+              const url = mrWebhookUrl.replace(/\/approve$/, '/auto-merge-shadow')
+              const response = await fetch(url, { timeout: 3000 })
+              if (!response.ok) return {}
+              return await response.json()
+            } catch {
+              return {}
+            }
+          }
+
+          const reworkStatus = reworkRun ? async () => getReworkStatus({ run: reworkRun }) : null
+
+          const prs = await listPipelinePrs(listOpenPrs, {
+            canMerge: (r) => canMergeFromDashboard(r, readMergeableRepos(mergeableProfilesDir)),
+            sentBackTickets,
+            closedTickets,
+            reworkStatus,
+            rebaseStatus,
+            autoMergeShadow
+          })
+
+          if (prs.length === 0) {
+            res.writeHead(404, { 'Content-Type': 'application/json' }).end(
+              JSON.stringify({ ok: false, error: 'PR not found or failed to load' })
+            )
+            return true
+          }
+
+          res.writeHead(200, { 'Content-Type': 'application/json' }).end(
+            JSON.stringify({ ok: true, data: prs[0] })
+          )
+          return true
+        } catch (error) {
+          res.writeHead(502, { 'Content-Type': 'application/json' }).end(
+            JSON.stringify({ ok: false, error: error.message || 'Failed to fetch PR' })
+          )
+          return true
+        }
+      }
+
       // GET /mr/review-status - Get review status (green/red/blue)
       if (req.method === 'GET' && pathname === '/mr/review-status') {
         const registry = readRegistryData()
