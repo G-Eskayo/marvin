@@ -41,9 +41,9 @@ def test_a_conditional_section_is_required_only_when_its_condition_holds():
 
 def test_evidence_kinds_are_recognised_from_the_markup():
     html = (FIG.format(f="d.svg", a="d") + FIG.format(f="s.png", a="s") + '<a href="/ai-projects/marvin/">MARVIN</a>'
-            + "<p>2,102 tests and 30 pull requests.</p>")
+            + "<p>2,102 tests and 30 pull requests.</p>" + '<div class="longform-callout">Research</div>')
     kinds = pc.evidence_in(html)
-    assert {"diagram", "chart", "screenshot", "real-output", "link", "numbers"} <= kinds
+    assert {"diagram", "chart", "screenshot", "real-output", "link", "numbers", "callout"} <= kinds
     assert pc.evidence_in("<p>Words only, one number: 3.</p>") == set()
 
 
