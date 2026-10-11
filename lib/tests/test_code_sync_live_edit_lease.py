@@ -406,4 +406,4 @@ def test_live_edits_for_ignores_old_crashed_session_entries(tmp_path, monkeypatc
         sw.record_edit(st, "sess-old", (repo_id, "file.md"), old_time)
 
     edits = sw.live_edits_for(repo_id, ["file.md"], current_time)
-    assert len(edits) == 0, "old stale sessions should be pruned out"
+    assert not edits, "old stale sessions should be pruned out"

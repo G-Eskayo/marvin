@@ -211,18 +211,18 @@ def _ref(item: dict, pr: bool = False) -> str:
     return f"{repo}{'PR ' if pr else ''}#{item['number']} {item['title']}"
 
 
-def render(data: dict, now: datetime) -> str:
+def render(brief: dict, now: datetime) -> str:
     day = now.astimezone().strftime("%A %Y-%m-%d")
     lines = [f"# Morning brief, {day}", ""]
-    needs = [f"- {data['auto_merge']}"] if data.get("auto_merge") else []
-    needs += [f"- Review {_ref(p, pr=True)}" for p in data.get("open_prs") or []]
-    needs += [f"- {c['label']}: {c['detail']}" for c in data.get("red_checks") or []]
-    needs += [f"- Your task: {_ref(t)}" for t in data.get("human_tickets") or []]
+    needs = [f"- {brief['auto_merge']}"] if brief.get("auto_merge") else []
+    needs += [f"- Review {_ref(p, pr=True)}" for p in brief.get("open_prs") or []]
+    needs += [f"- {c['label']}: {c['detail']}" for c in brief.get("red_checks") or []]
+    needs += [f"- Your task: {_ref(t)}" for t in brief.get("human_tickets") or []]
     lines += ["## Needs you", "", *(needs or ["- Nothing is waiting on you."]), ""]
 
-    runs = data.get("launches") or []
-    merged = data.get("merged") or []
-    revisited = data.get("revisited") or []
+    runs = brief.get("launches") or []
+    merged = brief.get("merged") or []
+    revisited = brief.get("revisited") or []
     overnight = []
     if runs:
         by_kind: dict[str, int] = {}
@@ -236,23 +236,23 @@ def render(data: dict, now: datetime) -> str:
     lines += ["## Overnight", "", *(overnight or ["- Quiet: no model runs or merges in the last day."]), ""]
 
     today = []
-    for d in data.get("deadlines") or []:
+    for d in brief.get("deadlines") or []:
         days = _days_until(d["date"], now)
         today.append(f"- {d['project']}: {days} days ({d['date']}{', hard deadline' if d['hard'] else ''})")
-    today += [f"- {t['priority']}: {_ref(t)}" for t in data.get("top_tickets") or []]
+    today += [f"- {t['priority']}: {_ref(t)}" for t in brief.get("top_tickets") or []]
     lines += ["## Today", "", *(today or ["- No deadlines close and nothing marked p0/p1."]), ""]
 
-    ideas = [f"- **Compounding move:** {data['digest_idea']}"] if data.get("digest_idea") else []
-    ideas += [f"- **From research:** {data['research_idea']}"] if data.get("research_idea") else []
+    ideas = [f"- **Compounding move:** {brief['digest_idea']}"] if brief.get("digest_idea") else []
+    ideas += [f"- **From research:** {brief['research_idea']}"] if brief.get("research_idea") else []
     if ideas:
         lines += ["## One idea each", "", *ideas, ""]
 
-    if data.get("late_night"):
+    if brief.get("late_night"):
         lines += ["## Balance", "",
-                  f"- Last night's last session was still going at {data['late_night']}. Today's list above is what "
+                  f"- Last night's last session was still going at {brief['late_night']}. Today's list above is what "
                   "matters; the rest can wait for tomorrow.", ""]
-    if data.get("missing"):
-        lines += ["## Gaps", "", *[f"- {m}" for m in data["missing"]], ""]
+    if brief.get("missing"):
+        lines += ["## Gaps", "", *[f"- {m}" for m in brief["missing"]], ""]
     return "\n".join(lines).rstrip() + "\n"
 
 

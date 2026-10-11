@@ -68,9 +68,9 @@ async def _frame(snapshot: Path, out: Path) -> list[dict]:
         return nodes
 
 
-def render(snapshot: Path, portfolio: Path, tmp: Path) -> list[Path]:
+def render(snapshot: Path, portfolio: Path, scratch_dir: Path) -> list[Path]:
     from PIL import Image
-    frame = tmp / "map-frame.png"
+    frame = scratch_dir / "map-frame.png"
     nodes = asyncio.run(_frame(snapshot, frame))
     img = Image.open(frame).convert("RGB")
     cbox = card_box(nodes)

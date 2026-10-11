@@ -250,7 +250,7 @@ def test_dropped_loops_never_resurface_again(tmp_path):
     # Check far in the future
     future = NOW + timedelta(days=365)
     due = ol.due_for_resurfacing(future, store_path=store)
-    assert len(due) == 0
+    assert not due
 
 
 def test_done_loops_never_resurface_again(tmp_path):
@@ -263,7 +263,7 @@ def test_done_loops_never_resurface_again(tmp_path):
     # Check far in the future
     future = NOW + timedelta(days=365)
     due = ol.due_for_resurfacing(future, store_path=store)
-    assert len(due) == 0
+    assert not due
 
 
 def test_done_vs_dropped_distinguishable_in_list_loops(tmp_path):
