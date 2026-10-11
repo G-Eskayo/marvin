@@ -27,6 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import auto_merge_policy as amp  # noqa: E402
+import repo_growth as rg  # noqa: E402
 
 STATE_PATH = Path.home() / ".claude" / "logs" / "auto-merge-shadow.json"
 SHADOW_DAYS = 3
@@ -228,6 +229,7 @@ def _score_one(prs: list[dict], repo: str, path: Path) -> None:
 
 def run(repo: str = "G-Eskayo/marvin", path: Path = STATE_PATH) -> list[dict]:
     """Verdicts for every open PR in `repo`, and the outcome of PRs that closed since. Best effort."""
+    from datetime import datetime, timezone
     import subprocess
     import trust_ramp
     prs = json.loads(_gh(["pr", "list", "--repo", repo, "--state", "open", "--limit", "100",
@@ -236,7 +238,8 @@ def run(repo: str = "G-Eskayo/marvin", path: Path = STATE_PATH) -> list[dict]:
     clone = Path.home() / ".agents"
     tops = {l for l in subprocess.run(["git", "ls-tree", "--name-only", "-d", "origin/main"], cwd=clone,
                                       capture_output=True, text=True).stdout.split()}
-    facts = {"existing_top_level": tops, "new_top_level_this_week": 0, "ramp_open": trust_ramp.is_open(repo),
+    new_dirs = rg.new_top_level_this_week(clone, datetime.now(timezone.utc)) or set()
+    facts = {"existing_top_level": tops, "new_top_level_this_week": len(new_dirs), "ramp_open": trust_ramp.is_open(repo),
              "render_check_passed": False}
     seen = observe([{"number": p["number"], "repo": repo, "url": p["url"], "title": p["title"], "body": p.get("body") or "",
                      "files": [{"path": f["path"], "additions": f.get("additions", 0), "deletions": f.get("deletions", 0),

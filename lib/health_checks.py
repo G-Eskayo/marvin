@@ -1395,13 +1395,198 @@ def coverage(results: list[dict]) -> dict:
     }
 
 
+# ── merge trend health (ADR 0063, #339; ADR 0064, #341) ───────────────
+
+MERGE_TREND_LOG = Path.home() / ".claude" / "logs" / "merge-mutation-trend.jsonl"
+TEST_SKIPS_LOG = Path.home() / ".claude" / "logs" / "test-skips.jsonl"
+MUTATION_SCORE_YELLOW_BELOW = 82
+MUTATION_SCORE_RED_BELOW = 75
+
+
+def check_mutation_score_trend(log_path: Path | None = None, now: datetime | None = None) -> dict:
+    """Trend monitoring for mutation score (how well tests catch planted bugs). Red when any recent entry
+    has area=="core" and score==None (tests not yet checked by mutation check). Yellow when the count of
+    below-80%-scored merges in the last 7 days exceeds the prior 7 days (a regression trend)."""
+    cid, label = "mutations:score", "Mutation score trend"
+    log_path = log_path or MERGE_TREND_LOG
+    now = now or _now()
+
+    try:
+        lines = log_path.read_text().splitlines()
+    except OSError:
+        return _result(cid, label, "yellow", "trend log has never been written on this machine (builds and merges write to it)")
+
+    entries = []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            entries.append(json.loads(line))
+        except (ValueError, KeyError):
+            continue
+
+    if not entries:
+        return _result(cid, label, "yellow", "no baseline yet; more merges needed to establish a trend")
+
+    # Red: any recent core entry with None score
+    seven_days_ago = now - timedelta(days=7)
+    recent_entries = []
+    for e in entries:
+        try:
+            ts_str = e.get("recorded_at", "")
+            if ts_str:
+                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                if ts >= seven_days_ago:
+                    recent_entries.append(e)
+        except (ValueError, TypeError):
+            pass  # Skip malformed entries
+
+    if not recent_entries:
+        recent_entries = entries[-7:]
+
+    for e in recent_entries:
+        if e.get("area") == "core" and e.get("score") is None:
+            return _result(cid, label, "red", "pending mutation check on core change (tests haven't been checked by planting bugs yet)", value=None)
+
+    # Yellow: trend regression (more below-80% in last 7 days than in prior 7 days)
+    last_14 = entries[-14:] if len(entries) >= 14 else entries
+    if len(last_14) >= 2:
+        last_7 = last_14[-7:]
+        prior_7 = last_14[:7]
+        below_80_last = sum(1 for e in last_7 if isinstance(e.get("score"), int) and e.get("score") < 80)
+        below_80_prior = sum(1 for e in prior_7 if isinstance(e.get("score"), int) and e.get("score") < 80)
+        if below_80_last > below_80_prior:
+            avg_last = sum(e.get("score", 0) for e in last_7 if isinstance(e.get("score"), int)) / max(1, sum(1 for e in last_7 if isinstance(e.get("score"), int)))
+            return _result(cid, label, "yellow", f"regression trend: {below_80_last} below 80% in last 7d vs {below_80_prior} prior (avg {avg_last:.0f}%)", value=below_80_last)
+
+    scores = [e.get("score") for e in entries if isinstance(e.get("score"), int)]
+    avg = sum(scores) / len(scores) if scores else 0
+    latest = scores[-1] if scores else None
+
+    return _result(cid, label, "green", f"latest {latest}%, avg {avg:.0f}%, trend recorded {len(scores)} times", value=latest)
+
+
+def check_test_skips_trend(log_path: Path | None = None, now: datetime | None = None) -> dict:
+    """Monitors skipped test count: a trend up (more skips in last 7 days than prior) points at tests failing or bypassed.
+    Buckets per-event entries (with `at` unix timestamp and `reason` fields) into UTC calendar days."""
+    cid, label = "tests:skipped", "Skipped tests trend"
+    log_path = log_path or TEST_SKIPS_LOG
+    now = now or _now()
+
+    try:
+        lines = log_path.read_text().splitlines()
+    except OSError:
+        return _result(cid, label, "yellow", "test-skips log has never been written on this machine")
+
+    entries = []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            entries.append(json.loads(line))
+        except (ValueError, KeyError):
+            continue
+
+    if not entries:
+        return _result(cid, label, "yellow", "no baseline yet")
+
+    # Bucket per-event entries by UTC calendar day
+    day_counts = {}
+    recent_reasons = []
+
+    for e in entries:
+        try:
+            at = e.get("at")
+            if not isinstance(at, (int, float)):
+                continue
+            dt = datetime.fromtimestamp(at, tz=timezone.utc)
+            day_key = dt.date()
+            day_counts[day_key] = day_counts.get(day_key, 0) + 1
+            reason = e.get("reason")
+            if reason:
+                recent_reasons.append(reason)
+        except (ValueError, TypeError, OSError):
+            pass  # Skip malformed entries
+
+    if not day_counts:
+        return _result(cid, label, "yellow", "no skip events recorded yet")
+
+    # Sort by date and get last 14 days
+    sorted_days = sorted(day_counts.items())
+    last_14_days = sorted_days[-14:] if len(sorted_days) >= 14 else sorted_days
+
+    if len(last_14_days) >= 2:
+        last_7_days = last_14_days[-7:]
+        prior_7_days = last_14_days[:7]
+
+        last_7_counts = [count for _, count in last_7_days]
+        prior_7_counts = [count for _, count in prior_7_days]
+
+        avg_last = sum(last_7_counts) / len(last_7_counts) if last_7_counts else 0
+        avg_prior = sum(prior_7_counts) / len(prior_7_counts) if prior_7_counts else 0
+
+        # Build detail with sample reasons
+        reason_sample = recent_reasons[-5:] if recent_reasons else []
+        reason_text = ""
+        if reason_sample:
+            reason_text = f" with their No-test-reason: {', '.join(reason_sample)}"
+            if len(recent_reasons) > 5:
+                reason_text += f" (+{len(recent_reasons) - 5} more)"
+
+        if avg_last > avg_prior * 1.5:  # 50% increase
+            return _result(cid, label, "yellow", f"trend up: {avg_last:.1f} avg skips/day in last 7d vs {avg_prior:.1f} prior{reason_text}", value=int(avg_last))
+        if avg_last > avg_prior * 3:  # 3x increase
+            return _result(cid, label, "red", f"trend up significantly: {avg_last:.1f} avg skips/day in last 7d vs {avg_prior:.1f} prior{reason_text}", value=int(avg_last))
+
+    latest_day_count = last_14_days[-1][1] if last_14_days else 0
+    avg_count = sum(count for _, count in sorted_days) / len(sorted_days) if sorted_days else 0
+
+    return _result(cid, label, "green", f"latest day {latest_day_count} skips, avg {avg_count:.1f}/day, recorded across {len(day_counts)} days", value=latest_day_count)
+
+
+def check_repo_growth(repo: Path | None = None, now: datetime | None = None) -> dict:
+    """Monitors repository size (files, folders, bytes) to detect explosive growth."""
+    cid, label = "repo:growth", "Repository size trend"
+    repo = repo or Path.home() / ".agents"
+    now = now or _now()
+
+    try:
+        import repo_growth as rg
+        result = rg.count_files_folders_size(repo)
+        if result is None:
+            return _result(cid, label, "yellow", f"could not read repo size at {repo}")
+
+        files, folders, total_bytes = result
+        gb = total_bytes / (1024 ** 3)
+
+        sev = "green"
+        if gb > 50:
+            sev = "red"
+        elif gb > 30:
+            sev = "yellow"
+
+        new_dirs = rg.new_top_level_this_week(repo, now)
+        if new_dirs is None:
+            # Could not measure (git error, not just "no new dirs")
+            new_dirs_str = ", could not measure new directories"
+        elif len(new_dirs) == 0:
+            # Successfully measured, but no new directories this week
+            new_dirs_str = ", 0 new top-level dirs this week"
+        else:
+            new_dirs_str = f", {len(new_dirs)} new dir(s) this week"
+
+        return _result(cid, label, sev, f"{files} files, {folders} folders, {gb:.1f} GiB{new_dirs_str}", value=total_bytes)
+    except Exception as e:  # noqa: BLE001
+        return _result(cid, label, "yellow", f"could not measure repo growth: {str(e)[:100]}")
+
+
 # ── numeric anomaly tracking (tier 2, reuses metrics_registry.py) ───────
 
 # Metrics where a bigger number is the healthier direction -- everything
 # else recorded (lock age, failure streaks, cron failure-hit counts) is
 # "lower is better" by default, since every other numeric check here
 # counts something bad.
-HIGHER_IS_BETTER = {"route:intent-routing-collection"}
+HIGHER_IS_BETTER = {k for k in ["route:intent-routing-collection", "mutations:score"] if any(k.startswith(p) for p in ["route:", "mutations:"])}
 
 
 def record_anomaly_metrics(results: list[dict]) -> dict | None:
@@ -1445,6 +1630,9 @@ def run_all() -> dict:
     results.append(check_github_budget())
     results.append(check_gh_gate())
     results.append(check_main_health())
+    results.append(check_mutation_score_trend())
+    results.append(check_test_skips_trend())
+    results.append(check_repo_growth())
     cron_state = ch._load_state()
     cron_now = datetime.now().astimezone()
     for job in discover_launchd_jobs():

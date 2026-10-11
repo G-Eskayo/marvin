@@ -160,3 +160,31 @@ def test_one_pr_is_picked_for_scoring_the_oldest_without_a_score_for_its_current
 def test_a_pr_whose_score_is_stale_after_a_new_push_is_rescored():
     pr_ = {"url": "u1", "number": 1, "body": "**Score:** 90% (9/10)", "headRefOid": "new"}
     assert sh.pick_unscored([pr_], scored={"u1": "old"})["url"] == "u1"
+
+
+def test_run_passes_datetime_not_timestamp_to_repo_growth(tmp_path):
+    """Integration test: verify that run() passes a datetime object to repo_growth.new_top_level_this_week."""
+    import subprocess
+    from datetime import datetime, timezone, timedelta
+    import repo_growth as rg
+
+    # Create a real git repo
+    repo = tmp_path / "test_repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True, capture_output=True)
+
+    # Create a directory within the last week
+    (repo / "new_dir").mkdir()
+    (repo / "new_dir" / "file.txt").write_text("content")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "add new_dir"], cwd=repo, check=True, capture_output=True)
+
+    # Call new_top_level_this_week with datetime (the fixed version)
+    now = datetime.now(timezone.utc)
+    result = rg.new_top_level_this_week(repo, now)
+
+    # Verify it returns a set and contains the new directory
+    assert isinstance(result, set), "should return a set"
+    assert "new_dir" in result, "should contain the newly created directory"

@@ -289,6 +289,20 @@ describe('mergePr', () => {
     expect(result.merged).toBe(true)
     expect(exec).toHaveBeenCalledWith('gh', ['pr', 'merge', 'https://github.com/G-Eskayo/marvin/pull/71', '--merge'])
   })
+
+  // Regression test (ADR 0063, #339): a successful merge records the mutation score trend,
+  // but the recording must never crash the merge itself (fire-and-forget safety).
+  // This test proves recordMergeTrendFn never crashes when called with a default implementation
+  // or when the spawned process itself fails.
+  it('merges successfully even if recordMergeTrendFn is unmocked (real spawn)', async () => {
+    const exec = execWithCodeReviewDefaults(vi.fn().mockResolvedValue({ stdout: '', stderr: '' }))
+    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: false, headRefName: 'some-branch', body: 'Closes G-Eskayo/marvin#5' })
+    // Do NOT mock recordMergeTrendFn: let it use the real spawn from merge_trend.js
+    // This verifies that even if the Python script path doesn't exist, the merge succeeds
+    const result = await mergePr('https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, noopRedispatch, shouldGateMerge, vi.fn(), vi.fn())
+    expect(result.merged).toBe(true)
+    expect(result.reengaged).toBe(false)
+  })
 })
 
 describe('triggerRebuildIfDashboardChanged', () => {

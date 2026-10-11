@@ -15,6 +15,7 @@ import { recordStage } from './ticket_stages.js'
 import { assertChecksGreen } from './ci_status.js'
 import { checkOpenPrs } from './post_merge_rebase.js'
 import { applyVersionBump } from './changelog.js'
+import { recordMergeTrend } from './merge_trend.js'
 
 const execFileAsync = promisify(execFile)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -405,7 +406,7 @@ async function mergePrUnqueued(
   recordStageFn = recordStage,
   deps = {}
 ) {
-  const { sleep, recordFailureFn = recordFailure, gateContext = defaultGateContext, baselineFails = null, gateTimeoutMs = GATE_TIMEOUT_MS, rebaseOpen = checkOpenPrs, uiEvidence = assertUiEvidence, decisions = assertDecisions } = deps
+  const { sleep, recordFailureFn = recordFailure, gateContext = defaultGateContext, baselineFails = null, gateTimeoutMs = GATE_TIMEOUT_MS, rebaseOpen = checkOpenPrs, uiEvidence = assertUiEvidence, decisions = assertDecisions, recordMergeTrendFn = recordMergeTrend } = deps
   if (typeof prUrl !== 'string' || !prUrl.startsWith('https://github.com/')) {
     throw new MergeFailure(classifyFailure({ stage: 'request', error: new Error(`Not a GitHub PR URL: ${prUrl}`) }))
   }
@@ -548,6 +549,8 @@ async function mergePrUnqueued(
     throw new MergeFailure(failure)
   }
   stage('merging', 'passed', '')
+  // Record mutation score trend for health monitoring (ADR 0063, #339) — fire-and-forget
+  recordMergeTrendFn(prUrl, repo)
   if (!ctx && ticketNumber !== null) {
     stage('versioning', 'started', '')
     try {
