@@ -122,6 +122,42 @@ Fetch a ticket and (if present) its parent PRD via the "## Parent" reference.
 
 **Limitation**: A missing or inaccessible ticket/parent comes back as `null` rather than erroring; the rest of the response is still valid.
 
+### `GET /mr/detail?repo=<repo>&number=<number>`
+
+Fetch a single PR with parsed images and the UI-change-without-image flag.
+
+**Query parameters**: `repo` (required), `number` (required, PR number)
+
+**Response**: `200 { "ok": true, "data": { number, title, url, repo, headRef, needsImages: { files } | null, images: [{ url, kind, alt, group, caption }, ...] } }`
+
+**Errors**:
+- `400` — missing or invalid `repo`/`number`
+- `502` — GitHub API error
+
+**Limitation**: `needsImages` requires the mobile backend's read access to profile data (`~/.agents/config/profiles/`); unknown repos report `needsImages: null`.
+
+### `GET /mr/media?url=<url>&kind=<kind>`
+
+Stream media (images as raw bytes, videos with HTTP Range support). The mobile backend and Electron app share one cache directory (`~/Library/Application Support/MARVIN Metrics/pr-image-cache`), so both platforms load media once.
+
+**Query parameters**:
+- `url` (required, HTTPS URL to image or video)
+- `kind` (required, `image` or `video`)
+
+**Response**:
+- Images: `200` with raw bytes and `Content-Type` header (decoded from data URLs server-side)
+- Videos: `200` or `206` (partial content on Range request) with `Content-Type` and `Accept-Ranges: bytes`
+- Errors: `4xx`/`5xx` JSON `{ "ok": false, "error": <reason> }`
+
+**Range support**: Videos support HTTP Range requests (`bytes=0-999`, `bytes=-100`, etc.) for seeking without re-downloading the entire file. Responses with a Range header return `206 Partial Content` with `Content-Range`.
+
+**Errors**:
+- `400` — missing/invalid `url`/`kind`, or non-HTTPS URL
+- `404` — media not found or inaccessible
+- `413` — media too large (images: 15 MB, videos: 100 MB)
+- `416` — Range request out of bounds (videos only)
+- `502`/`504` — GitHub API error or timeout
+
 ### `GET /activity/overview`
 
 Activity overview per project (tickets in review, waiting on human, blocked).

@@ -274,3 +274,46 @@ export function createImageLoader({
     }
   }
 }
+
+// Parse HTTP Range header (RFC 7233) for video streaming.
+// Returns {start, end, size} for valid range, null for malformed syntax (null = full file),
+// or -1 for valid syntax but unsatisfiable range (e.g., beyond EOF; caller responds 416).
+// Supports: bytes=0-99 (range), bytes=-100 (suffix), bytes=100- (open-ended)
+export function parseRange(rangeHeader, totalSize) {
+  if (!rangeHeader || !rangeHeader.startsWith('bytes=') || totalSize <= 0) return null
+  const rangeStr = rangeHeader.slice(6).trim()
+  if (!rangeStr) return null
+
+  // Suffix range: bytes=-N (last N bytes). Strict digit-only parsing.
+  if (rangeStr.startsWith('-')) {
+    const suffixStr = rangeStr.slice(1)
+    if (!/^\d+$/.test(suffixStr)) return null // must be only digits
+    const suffix = parseInt(suffixStr, 10)
+    if (suffix <= 0) return null
+    const start = Math.max(0, totalSize - suffix)
+    return { start, end: totalSize - 1, size: totalSize - start }
+  }
+
+  // Normal or open-ended range: bytes=M- or bytes=M-N
+  const [startStr, endStr] = rangeStr.split('-')
+  if (!startStr || !/^\d+$/.test(startStr)) return null // start must be digits only
+  const start = parseInt(startStr, 10)
+  if (start >= totalSize) return -1 // valid syntax, but out of range -> 416
+
+  // Open-ended range: bytes=N-
+  if (!endStr) {
+    return { start, end: totalSize - 1, size: totalSize - start }
+  }
+
+  // Normal range: bytes=M-N. Strict digit-only parsing.
+  if (!/^\d+$/.test(endStr)) return null // end must be digits only
+  let end = parseInt(endStr, 10)
+  if (end < start) return null
+
+  // Cap end at totalSize - 1
+  if (end >= totalSize) {
+    end = totalSize - 1
+  }
+
+  return { start, end, size: end - start + 1 }
+}

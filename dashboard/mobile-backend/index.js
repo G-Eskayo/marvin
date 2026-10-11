@@ -1,5 +1,5 @@
 import { createServer } from 'http'
-import { execFile } from 'child_process'
+import { execFile, execFileSync } from 'child_process'
 import { promisify } from 'util'
 import { homedir } from 'os'
 import path from 'path'
@@ -19,6 +19,7 @@ import { postJson } from './post_json.js'
 import { postTicketInput } from '../electron/main/ticket_input.js'
 import { approveMr, denyMr } from '../electron/main/mr_review.js'
 import { resolveServiceDefaults } from '../electron/main/device_identity.js'
+import { adoptLoginShellPath, adoptSharedGhToken, useGhGate } from '../electron/main/path.js'
 
 const execFileP = promisify(execFile)
 
@@ -53,6 +54,11 @@ const startTime = Date.now()
 function getUptimeSeconds() {
   return Math.floor((Date.now() - startTime) / 1000)
 }
+
+// Wire path adoption functions at startup, before constructing routers (#23 test)
+adoptLoginShellPath(process.env, execFileSync)
+adoptSharedGhToken(process.env)
+useGhGate(process.env)
 
 const dashboardApiRouter = createDashboardApiRouter()
 const dashboardGhApiRouter = createDashboardGhApiRouter({ mrWebhookUrl: MR_WEBHOOK_URL })

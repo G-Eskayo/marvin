@@ -2,8 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { mkdtempSync, rmSync, readdirSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
-import { parsePrImages, resolvePrImageUrl, createImageLoader } from '../electron/main/pr_images.js'
-import { mediaFileFor, sniffMime } from '../electron/main/pr_images.js'
+import { parsePrImages, resolvePrImageUrl, createImageLoader, mediaFileFor, sniffMime, parseRange } from '../electron/main/pr_images.js'
 
 const CTX = { repo: 'G-Eskayo/clarity-captions', headRef: 'design/v1-polish-mocks' }
 const RAW = 'https://raw.githubusercontent.com/G-Eskayo/clarity-captions/design/v1-polish-mocks'
@@ -295,5 +294,74 @@ describe('createImageLoader: recordings are cached to disk and streamed, not inl
     expect(mediaFileFor('/tmp', '../../etc/passwd')).toBeNull()
     expect(mediaFileFor('/tmp', 'abc')).toBeNull()
     expect(mediaFileFor(null, 'a'.repeat(64))).toBeNull()
+  })
+})
+
+// #22: parseRange handles HTTP Range requests for streaming videos
+describe('parseRange: HTTP Range header parsing', () => {
+  // Test #1: Basic range parsing
+  it('parses a single byte range (start-end) (#1)', () => {
+    expect(parseRange('bytes=0-99', 1000)).toEqual({ start: 0, end: 99, size: 100 })
+    expect(parseRange('bytes=100-199', 1000)).toEqual({ start: 100, end: 199, size: 100 })
+    expect(parseRange('bytes=900-999', 1000)).toEqual({ start: 900, end: 999, size: 100 })
+  })
+
+  // Test #2: Suffix range parsing with correct size calculation
+  it('parses suffix range (last N bytes) with correct size = totalSize - start (#2)', () => {
+    expect(parseRange('bytes=-100', 1000)).toEqual({ start: 900, end: 999, size: 100 })
+    expect(parseRange('bytes=-1', 10000)).toEqual({ start: 9999, end: 9999, size: 1 })
+    expect(parseRange('bytes=-500', 1000)).toEqual({ start: 500, end: 999, size: 500 })
+  })
+
+  // Test #3: Open-ended range parsing
+  it('parses open-ended range (from byte N to end) (#3)', () => {
+    expect(parseRange('bytes=900-', 1000)).toEqual({ start: 900, end: 999, size: 100 })
+    expect(parseRange('bytes=0-', 1000)).toEqual({ start: 0, end: 999, size: 1000 })
+  })
+
+  // Test #4: Strict digit-only parsing (rejects hex, exponential, whitespace)
+  it('rejects non-decimal numbers (hex, exponential, whitespace) (#4)', () => {
+    expect(parseRange('bytes=0xFF-100', 1000)).toBeNull() // hex not allowed
+    expect(parseRange('bytes=0-1e2', 1000)).toBeNull() // exponential not allowed
+    expect(parseRange('bytes= 50 - 100 ', 1000)).toBeNull() // whitespace in numbers not allowed
+    expect(parseRange('bytes=50.5-100', 1000)).toBeNull() // floats not allowed
+    expect(parseRange('bytes=+50-100', 1000)).toBeNull() // sign prefix not allowed
+  })
+
+  // Test #5: Range that starts at end returns -1 (416 response)
+  it('returns -1 for range starting at or beyond file size (malformed but valid syntax) (#5)', () => {
+    expect(parseRange('bytes=1000-1100', 1000)).toBe(-1) // start >= totalSize
+    expect(parseRange('bytes=1000-', 1000)).toBe(-1)
+    expect(parseRange('bytes=2000-3000', 1000)).toBe(-1)
+  })
+
+  // Test #6: Returns null for truly malformed syntax
+  it('returns null for malformed/incomplete syntax (#6)', () => {
+    expect(parseRange('', 1000)).toBeNull()
+    expect(parseRange('bytes', 1000)).toBeNull()
+    expect(parseRange('bytes=', 1000)).toBeNull()
+    expect(parseRange('bytes=abc-def', 1000)).toBeNull()
+    expect(parseRange('bytes=100-50', 1000)).toBeNull() // start > end
+    expect(parseRange('bytes=-0', 1000)).toBeNull() // suffix must be > 0
+  })
+
+  // Test #7: Returns null for invalid file size
+  it('returns null when totalSize is zero or negative (#7)', () => {
+    expect(parseRange('bytes=0-10', 0)).toBeNull()
+    expect(parseRange('bytes=-1', 0)).toBeNull()
+    expect(parseRange('bytes=0-10', -1)).toBeNull()
+  })
+
+  // Test #8: Caps end at totalSize - 1
+  it('caps end at totalSize - 1 and recalculates size (#8)', () => {
+    expect(parseRange('bytes=0-9999', 1000)).toEqual({ start: 0, end: 999, size: 1000 })
+    expect(parseRange('bytes=500-9999', 1000)).toEqual({ start: 500, end: 999, size: 500 })
+  })
+
+  // Test #9: Edge cases
+  it('handles edge cases: file size 1, single byte requests (#9)', () => {
+    expect(parseRange('bytes=0-0', 1)).toEqual({ start: 0, end: 0, size: 1 })
+    expect(parseRange('bytes=-1', 1)).toEqual({ start: 0, end: 0, size: 1 })
+    expect(parseRange('bytes=0-', 1)).toEqual({ start: 0, end: 0, size: 1 })
   })
 })
