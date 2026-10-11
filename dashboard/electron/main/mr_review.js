@@ -242,7 +242,7 @@ export async function prsForOrderCheck(prs, sentBackTickets) {
 
 // A UI change whose description shows no image (marvin #374): {files} for the card, or null. Only judged when the list
 // carried the PR's files (the light list for the status dot doesn't), so a missing field never flags a PR.
-function needsImages(pr, uiPathsFor) {
+export function needsImages(pr, uiPathsFor) {
   if (!Array.isArray(pr.files)) return null
   let own = []
   try { own = uiPathsFor(pr.repo || MARVIN_REPO) || [] } catch { own = [] }

@@ -54,6 +54,37 @@ Fetch a single ticket.
 
 **Response**: `200 { "ok": true, "data": { number, title, body, labels, url, state, comments } }`
 
+### `GET /mr/<owner>/<name>/<number>`
+
+Fetch PR detail with embedded media metadata for mobile review.
+
+**Path parameters**: `owner` (repository owner), `name` (repository name), `number` (PR number)
+
+**Response**:
+- `200 { "ok": true, "data": { number, title, url, repo, images: [{ url, kind, alt, group, caption }, ...], ticketRef: <number|null>, needsImages: { files } | null } }`
+  - `images`: Parsed media from PR description (stills, GIFs, recordings)
+  - `ticketRef`: Linked ticket number (from Closes/Fixes/Resolves in body)
+  - `needsImages`: Object with `{ files }` if PR touches UI but lacks images in description, `null` otherwise
+- `403 { "ok": false, "error": "Repository not authorized" }` — repo not in registry
+- `500 { "ok": false, "error": "<message>" }` — gh execution failure
+
+### `GET /mr/image?url=<encoded>&kind=<image|video|auto>`
+
+Stream media bytes (images or videos) with HTTP Range support for seeking.
+
+**Query parameters**:
+- `url` (required): Media URL to fetch (validated against SSRF allowlist before any network fetch)
+- `kind` (optional): `image`, `video`, or `auto` (default: `auto`)
+
+**Response**:
+- Image kind: `200 <binary> Content-Type: image/*; Content-Length: <n>; Accept-Ranges: bytes`
+- Video kind: `200 <binary>` (full file) or `206 <partial>` (if valid Range header) with `Accept-Ranges: bytes` and `Content-Range: bytes <start>-<end>/<total>`
+- `400 { "ok": false, "error": "Missing url parameter" }` — required parameter missing
+- `416 { "ok": false, ... }` — Range out of bounds (invalid Range header on video file)
+- `502 { "ok": false, "error": "<reason>" }` — media fetch failure (too large, not found, network error, host not allowed, etc.)
+
+**Media validation**: URLs are validated against a GitHub-scoped allowlist before any network fetch (raw.githubusercontent.com, github.com, api.github.com, *.githubusercontent.com, github-production-user-asset-*.s3.amazonaws.com). Non-HTTPS, private-IP, and arbitrarily external URLs are rejected at the loader level.
+
 ### `GET /docs/repos`
 
 List available documentation repos.
