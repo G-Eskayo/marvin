@@ -1230,3 +1230,70 @@ def test_output_contracts_reach_health(monkeypatch):
     import output_contracts
     monkeypatch.setattr(output_contracts, "health_findings", lambda: [{"id": "contract:x", "severity": "red"}])
     assert hc.check_output_contracts() == [{"id": "contract:x", "severity": "red"}]
+
+
+# ── Seal Speak beta ingest (marvin#407) ──────────────────────────────────
+
+SEAL_NOW = datetime(2026, 10, 13, 18, 0, tzinfo=timezone.utc)
+
+
+def _seal_status(tmp_path, **over):
+    d = {"generated_at": (SEAL_NOW - timedelta(minutes=5)).isoformat(), "ok": True, "error": None, "files_found": 2,
+         "new_conversations": 0, "total_conversations": 7, "invalid": [], "last_report_at": "2026-10-13T11:41:27-06:00",
+         "store_bad_lines": 0, **over}
+    p = tmp_path / "status.json"
+    p.write_text(json.dumps(d))
+    return p
+
+
+def _seal(path, installed=True):
+    return hc.check_seal_beta_ingest(status_path=path, installed=installed, now=SEAL_NOW)
+
+
+def test_seal_ingest_not_monitored_where_the_job_is_not_installed(tmp_path):
+    assert _seal(tmp_path / "missing.json", installed=False) is None
+
+
+def test_seal_ingest_installed_but_never_ran_is_yellow(tmp_path):
+    r = _seal(tmp_path / "missing.json")
+    assert r["severity"] == "yellow" and "not run" in r["detail"]
+
+
+def test_seal_ingest_green_names_conversations_and_last_report(tmp_path):
+    r = _seal(_seal_status(tmp_path))
+    assert r["severity"] == "green" and "7 conversations" in r["detail"] and "last report" in r["detail"]
+
+
+def test_seal_ingest_permission_denied_is_red_and_says_how_to_fix(tmp_path):
+    r = _seal(_seal_status(tmp_path, ok=False, error={"kind": "permission", "detail": "macOS refused ... Full Disk Access is off"}))
+    assert r["severity"] == "red" and "Full Disk Access" in r["detail"]
+
+
+def test_seal_ingest_messages_missing_is_red(tmp_path):
+    r = _seal(_seal_status(tmp_path, ok=False, error={"kind": "missing", "detail": "Attachments does not exist"}))
+    assert r["severity"] == "red"
+
+
+def test_seal_ingest_stale_run_is_yellow(tmp_path):
+    r = _seal(_seal_status(tmp_path, generated_at=(SEAL_NOW - timedelta(hours=2)).isoformat()))
+    assert r["severity"] == "yellow" and "last ran" in r["detail"]
+
+
+def test_seal_ingest_recent_invalid_file_is_yellow_old_one_is_not(tmp_path):
+    recent = {"file": "seal-feedback-9-x.json", "reason": "not valid JSON", "mtime": (SEAL_NOW - timedelta(days=1)).isoformat()}
+    old = {**recent, "mtime": (SEAL_NOW - timedelta(days=30)).isoformat()}
+    r = _seal(_seal_status(tmp_path, invalid=[recent]))
+    assert r["severity"] == "yellow" and "seal-feedback-9-x.json" in r["detail"]
+    assert _seal(_seal_status(tmp_path, invalid=[old]))["severity"] == "green"
+
+
+def test_seal_ingest_garbage_status_file_is_yellow_not_a_crash(tmp_path):
+    p = tmp_path / "status.json"
+    for junk in ("{nope", "[]", json.dumps({"ok": True})):
+        p.write_text(junk)
+        assert _seal(p)["severity"] == "yellow"
+
+
+def test_seal_ingest_no_reports_yet_is_still_green(tmp_path):
+    r = _seal(_seal_status(tmp_path, total_conversations=0, files_found=0, last_report_at=None))
+    assert r["severity"] == "green" and "no reports yet" in r["detail"]
