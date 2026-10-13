@@ -92,6 +92,56 @@ describe('review parity (MR Review <-> board)', () => {
     ).overview()
     expect(o['G-Eskayo/marvin']).toMatchObject({ review: 1, needsYou: 1, blocked: 1 })
   })
+
+  // Test 17: needs-info counted
+  it('counts needs-info tickets as needsYou via rankNeedsYou', async () => {
+    const o = await svc(
+      [issue(1, { labels: [{ name: 'needs-info' }], body: '## What to build\nX\n## Acceptance criteria\n- [ ] Y' })],
+      []
+    ).overview()
+    expect(o['G-Eskayo/marvin'].needsYou).toBe(1)
+  })
+
+  // Test 18: cross-check sum-equals-list-length
+  it('needsYou count matches the length of rankNeedsYou list', async () => {
+    const svc2 = svc(
+      [
+        issue(1, { labels: [{ name: 'ready-for-human' }], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' }),
+        issue(2, { labels: [{ name: 'needs-info' }], body: '## What to build\nX\n## Acceptance criteria\n- [ ] Y' })
+      ],
+      []
+    )
+    const o = await svc2.overview()
+    const ranked = await svc2.needsYou()
+    expect(o['G-Eskayo/marvin'].needsYou).toBe(ranked.length)
+  })
+
+  // Test 19: hold/pinned excluded from the count
+  it('excludes hold and pinned tickets from needsYou count', async () => {
+    const o = await svc(
+      [
+        issue(1, { labels: [{ name: 'ready-for-human' }, { name: 'hold' }], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' }),
+        issue(2, { labels: [{ name: 'ready-for-human' }, { name: 'pinned' }], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' }),
+        issue(3, { labels: [{ name: 'ready-for-human' }], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' })
+      ],
+      []
+    ).overview()
+    expect(o['G-Eskayo/marvin'].needsYou).toBe(1)
+  })
+
+  // Test 20: one-repo-failure isolation
+  it('one repo failing to load does not affect needsYou count for other repos', async () => {
+    const getBoardData = async (repo) => {
+      if (repo === 'o/bad') throw new Error('404')
+      return {
+        issues: [issue(1, { labels: [{ name: 'ready-for-human' }], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' })],
+        prs: []
+      }
+    }
+    const o = await make({ getRepos: () => ['o/bad', 'G-Eskayo/marvin'], getBoardData }).overview()
+    expect(o['G-Eskayo/marvin'].needsYou).toBe(1)
+    expect(o['o/bad']).toBeUndefined()
+  })
 })
 
 describe('parity does not raise an alarm on a stale snapshot', () => {

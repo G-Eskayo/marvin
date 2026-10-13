@@ -383,4 +383,22 @@ describe('rankNeedsYou', () => {
       expect(result.indexOf(row1)).toBeLessThan(result.indexOf(row7))
     }
   })
+
+  // Test 1: project field from label
+  it('extracts project from project:<x> label', () => {
+    const tickets = [
+      { repo: 'o/r', ...issue(1, { labels: [label('ready-for-human'), label('project:custom')], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' }) }
+    ]
+    const result = rankNeedsYou(tickets)
+    expect(result[0].project).toBe('custom')
+  })
+
+  // Test 2: project field from repo
+  it('derives project from repo when no project: label', () => {
+    const tickets = [
+      { repo: 'G-Eskayo/my-app', ...issue(1, { labels: [label('ready-for-human')], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' }) }
+    ]
+    const result = rankNeedsYou(tickets)
+    expect(result[0].project).toBe('my-app')
+  })
 })

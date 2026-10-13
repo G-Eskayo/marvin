@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import Markdown, { parseDashLink } from '../src/components/Markdown.jsx'
 import Related from '../src/components/Related.jsx'
 import AgentsPanel from '../src/components/AgentsPanel.jsx'
+import { priorityPill, kindLabel, paginate } from '../src/lib/needs_you_view.js'
 
 describe('Markdown with project context', () => {
   const ctx = { project: 'marvin', repo: 'G-Eskayo/marvin', adrs: { 33: 'docs/adr/0033-health.md' } }
@@ -256,5 +257,188 @@ describe('DashboardHome', () => {
   it('renders a loading state on mount', () => {
     const html = renderToStaticMarkup(<DashboardHome onOpenProject={() => {}} />)
     expect(html).toContain('Loading projects')
+  })
+
+  it('accepts onOpenTicket prop without crashing', () => {
+    const html = renderToStaticMarkup(<DashboardHome onOpenProject={() => {}} onOpenTicket={() => {}} />)
+    expect(html).toBeDefined()
+  })
+})
+
+// Tests 16-22: NeedsYouList component (props-driven tests)
+import { NeedsYouList } from '../src/components/DashboardHome.jsx'
+
+describe('NeedsYouList component', () => {
+  const mockRows = [
+    {
+      repo: 'G-Eskayo/marvin',
+      number: 1,
+      title: 'Test Ticket',
+      url: 'https://example.com/1',
+      kind: 'ready-for-human',
+      unblocks: { count: 2, items: [] },
+      ask: 'Please review',
+      priority: 'p0',
+      ageDays: 5,
+      project: 'marvin'
+    },
+    {
+      repo: 'G-Eskayo/marvin',
+      number: 2,
+      title: 'Another Ticket',
+      url: 'https://example.com/2',
+      kind: 'needs-info',
+      unblocks: { count: 0, items: [] },
+      ask: 'Need more info',
+      priority: null,
+      ageDays: 1,
+      project: 'marvin'
+    }
+  ]
+
+  // Test 16: NeedsYouList renders rows with all attributes
+  it('renders rows with priority pill, project label, and kind', () => {
+    const html = renderToStaticMarkup(
+      <NeedsYouList
+        rows={mockRows}
+        sortKey="default"
+        currentPage={1}
+        pageSize={10}
+        onOpenTicket={() => {}}
+      />
+    )
+    expect(html).toContain('Test Ticket')
+    expect(html).toContain('marvin')
+    expect(html).toContain('Critical')
+    expect(html).toContain('Ready for you')
+  })
+
+  // Test 17: NeedsYouList shows empty state
+  it('shows empty state when no rows', () => {
+    const html = renderToStaticMarkup(
+      <NeedsYouList
+        rows={[]}
+        sortKey="default"
+        currentPage={1}
+        pageSize={10}
+        onOpenTicket={() => {}}
+      />
+    )
+    expect(html).toContain('Nothing needs you')
+  })
+
+  // Test 18: NeedsYouList includes sort dropdown
+  it('includes sort dropdown', () => {
+    const html = renderToStaticMarkup(
+      <NeedsYouList
+        rows={mockRows}
+        sortKey="default"
+        currentPage={1}
+        pageSize={10}
+        onOpenTicket={() => {}}
+        onSort={() => {}}
+      />
+    )
+    expect(html).toContain('Sort')
+  })
+
+  // Test 19: NeedsYouList includes pagination
+  it('shows pagination controls when multiple pages', () => {
+    const manyRows = Array.from({ length: 15 }, (_, i) => ({
+      repo: 'G-Eskayo/marvin',
+      number: i + 1,
+      title: `Ticket ${i + 1}`,
+      url: `https://example.com/${i + 1}`,
+      kind: 'ready-for-human',
+      unblocks: { count: 0, items: [] },
+      ask: 'test',
+      priority: null,
+      ageDays: 1,
+      project: 'marvin'
+    }))
+    const html = renderToStaticMarkup(
+      <NeedsYouList
+        rows={manyRows}
+        sortKey="default"
+        currentPage={1}
+        pageSize={5}
+        onOpenTicket={() => {}}
+        onPageChange={() => {}}
+      />
+    )
+    expect(html).toContain('Page 1 of 3')
+  })
+
+  // Test 20: DashboardHome renders with NeedsYouSection
+  it('DashboardHome renders with loading state', () => {
+    const html = renderToStaticMarkup(
+      <DashboardHome onOpenProject={() => {}} onOpenTicket={() => {}} />
+    )
+    expect(html).toContain('Loading projects')
+  })
+
+  // Test 21: Priority pills display correctly (utility)
+  it('priority pills return correct structure', () => {
+    const p0 = priorityPill('p0')
+    expect(p0.text).toBe('Critical')
+    expect(p0.className).toContain('red')
+  })
+
+  // Test 22: Kind labels are readable (utility)
+  it('kind labels are readable', () => {
+    expect(kindLabel('needs-info')).toBe('Needs info')
+    expect(kindLabel('ready-for-human')).toBe('Ready for you')
+  })
+})
+
+// Regression tests 23-25
+describe('NeedsYouList regression tests', () => {
+  // Test 23: Pagination handles empty rows
+  it('paginate returns totalPages=1 for empty rows', () => {
+    const result = paginate([], 1, 10)
+    expect(result.totalPages).toBe(1)
+    expect(result.currentPage).toBe(1)
+  })
+
+  // Test 24: Pagination clamps out-of-range pages
+  it('paginate clamps page to valid range', () => {
+    const rows = Array.from({ length: 10 }, (_, i) => ({
+      repo: 'G-Eskayo/marvin',
+      number: i + 1,
+      title: `Ticket ${i + 1}`,
+      url: `https://example.com/${i + 1}`,
+      kind: 'ready-for-human',
+      unblocks: { count: 0, items: [] },
+      ask: 'test',
+      priority: null,
+      ageDays: 1,
+      project: 'marvin'
+    }))
+    const result = paginate(rows, 999, 5)
+    expect(result.currentPage).toBe(2)
+    expect(result.items[0].number).toBe(6)
+  })
+
+  // Test 25: Pagination maintains total count
+  it('paginate maintains total count across pages', () => {
+    const rows = Array.from({ length: 23 }, (_, i) => ({
+      repo: 'G-Eskayo/marvin',
+      number: i + 1,
+      title: `Ticket ${i + 1}`,
+      url: `https://example.com/${i + 1}`,
+      kind: 'ready-for-human',
+      unblocks: { count: 0, items: [] },
+      ask: 'test',
+      priority: null,
+      ageDays: 1,
+      project: 'marvin'
+    }))
+    const page1 = paginate(rows, 1, 10)
+    const page2 = paginate(rows, 2, 10)
+    const page3 = paginate(rows, 3, 10)
+    expect(page1.totalCount).toBe(23)
+    expect(page2.totalCount).toBe(23)
+    expect(page3.totalCount).toBe(23)
+    expect(page1.items.length + page2.items.length + page3.items.length).toBe(23)
   })
 })

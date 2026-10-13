@@ -1,0 +1,10 @@
+1. `dashboard/electron/main/needs_you.js`: import `projectIdOf` from `../../src/lib/projects.js`; add `project` to each row (label `project:<x>` → `x`, else `projectIdOf(t.repo)`).
+2. `dashboard/test/needs_you.test.js`: add tests 1–2 above.
+3. `dashboard/src/lib/needs_you_view.js`: clamp `paginate`'s page; replace `'kind'` sort with `'project'`; rewrite `priorityPill` to return a CSS class; fix `kindLabel` text; validate array shape in `readCache`; add `requestId` tracking to `applyFetch`; reset `page` on `SET_SORT`.
+4. `dashboard/test/needs_you_view.test.js`: rewrite tests 8–9 for the new pill/label contract, add tests 4, 5, 11, 13, 15; keep the rest.
+5. `dashboard/src/components/DashboardHome.jsx`: split out an exported, pure presentational list component (pills, project label, pagination controls, sort `<select>`, updated/updating/error-with-cache status line); fix `NeedsYouSection`'s `fetch`→`refresh` rename, `requestId`-tagged dispatches, `window.api.triggers.on((t) => ...)` shape, `live` unmount guard, and `onOpenTicket?.(row.repo, row.number)` two-arg call.
+6. `dashboard/test/render_smoke.test.jsx`: replace tests 21–25 with props-driven tests 16–22 above; add regression tests 23–25.
+7. Confirm `dashboard/electron/main/relations_service.js` needs no change (already correct) — rerun test 18 to pin it.
+8. `dashboard/src/components/ActivityBoard.jsx`: confirm no change needed (already correct one-liner).
+9. Run the full `vitest` suite; fix any fallout.
+10. Manually run the dashboard (`run` skill / dev server), capture simulator/app screenshots for the PR: list populated (several projects, all three pill colours, pagination and sort control visible), list empty ("Nothing needs you"), and a row tapped opening that ticket with `HumanTaskPanel`/`TicketReply` visible — required by the ticket's own "Done when."
