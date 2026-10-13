@@ -326,7 +326,7 @@ def ingest(attachments_dir: Path | None = None, store_dir: Path | None = None, n
     store = Path(store_dir or STORE_DIR)
     now = now or datetime.now(timezone.utc)
     _private_dir(store)
-    with open(store / ".lock", "a") as lock:
+    with os.fdopen(os.open(store / ".lock", os.O_WRONLY | os.O_CREAT, 0o600), "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)  # one run at a time: read-dedupe-append must not interleave
         status = {"generated_at": now.isoformat(), "ok": True, "error": None, "files_found": 0,
                   "new_conversations": 0, "total_conversations": 0, "invalid": [], "last_report_at": None,

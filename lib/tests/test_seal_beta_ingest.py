@@ -281,7 +281,7 @@ def test_concurrent_runs_never_double_append(paths):
 def test_store_is_private_to_the_owner(paths):
     drop(paths[0], REAL)
     run(paths)
-    for name in ("reports.jsonl", "summary.json", "status.json"):
+    for name in ("reports.jsonl", "summary.json", "status.json", ".lock"):
         assert (paths[1] / name).stat().st_mode & 0o077 == 0, name
     assert paths[1].stat().st_mode & 0o077 == 0
 
