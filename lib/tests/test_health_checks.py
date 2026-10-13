@@ -1297,3 +1297,10 @@ def test_seal_ingest_garbage_status_file_is_yellow_not_a_crash(tmp_path):
 def test_seal_ingest_no_reports_yet_is_still_green(tmp_path):
     r = _seal(_seal_status(tmp_path, total_conversations=0, files_found=0, last_report_at=None))
     assert r["severity"] == "green" and "no reports yet" in r["detail"]
+
+
+def test_seal_ingest_says_today_or_how_many_days_ago(tmp_path):
+    today = _seal(_seal_status(tmp_path, last_report_at=(SEAL_NOW - timedelta(hours=3)).isoformat()))
+    assert "last report today" in today["detail"]
+    old = _seal(_seal_status(tmp_path, last_report_at=(SEAL_NOW - timedelta(days=3, hours=1)).isoformat()))
+    assert "last report 3 day(s) ago" in old["detail"]
