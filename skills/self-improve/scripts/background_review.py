@@ -139,7 +139,7 @@ def run_review(handoff_content: str) -> None:
         # Bash/WebFetch/Agent are not in the toolset, which is the actual safety boundary.
         # Without bypassPermissions the run stalls on a prompt no one can answer (confirmed live).
         result = marvin_launcher.launch("background-analyst", prompt, tools="Read,Write,Edit",
-                                        permission_mode="bypassPermissions")
+                                        permission_mode="bypassPermissions", ticket="self-improve")
         log.write(result.text + (f"\n{result.stderr}" if result.stderr else "") + "\n")
         log.write(f"=== end (exit {result.exit_code}) ===\n")
         if result.exit_code == 0:

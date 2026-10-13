@@ -127,4 +127,78 @@ export function machineFreshness(m, now = Date.now()) {
   return { state: 'ok', text: `updated ${agoText(now - Math.max(...stamps))}` }
 }
 
+export function autonomousSeries(rows, { days = 30, end, metric = 'output' } = {}) {
+  const list = dayList(days, end || new Date().toISOString().slice(0, 10))
+  const idx = new Map(list.map((d, i) => [d, { day: d, autonomous: 0, interactive: 0, total: 0 }]))
+  for (const r of rows) {
+    const cell = idx.get(r.day)
+    if (!cell) continue
+    const v = valueOf(r, metric)
+    if (r.autonomous) {
+      cell.autonomous += v
+    } else {
+      cell.interactive += v
+    }
+    cell.total += v
+  }
+  return list.map((d) => {
+    const cell = idx.get(d)
+    return { ...cell, share: cell.total > 0 ? cell.autonomous / cell.total : 0 }
+  })
+}
+
+export function weeklySeries(rows, { weeks = 4, end, metric = 'output' } = {}) {
+  const endDate = new Date(`${end || new Date().toISOString().slice(0, 10)}T00:00:00Z`)
+  const windows = []
+  for (let i = weeks - 1; i >= 0; i--) {
+    const windowEnd = new Date(endDate)
+    windowEnd.setUTCDate(windowEnd.getUTCDate() - i * 7)
+    const windowStart = new Date(windowEnd)
+    windowStart.setUTCDate(windowStart.getUTCDate() - 6)
+    windows.push({
+      week: `${windowStart.toISOString().slice(0, 10)} to ${windowEnd.toISOString().slice(0, 10)}`,
+      autonomous: 0,
+      interactive: 0,
+      total: 0,
+    })
+  }
+
+  for (const r of rows) {
+    const rDate = new Date(`${r.day}T00:00:00Z`)
+    for (const w of windows) {
+      const windowStart = new Date(endDate)
+      windowStart.setUTCDate(windowStart.getUTCDate() - (windows.indexOf(w) + 1) * 7 + 1)
+      const windowEnd = new Date(endDate)
+      windowEnd.setUTCDate(windowEnd.getUTCDate() - windows.indexOf(w) * 7)
+      if (rDate >= windowStart && rDate <= windowEnd) {
+        const v = valueOf(r, metric)
+        if (r.autonomous) {
+          w.autonomous += v
+        } else {
+          w.interactive += v
+        }
+        w.total += v
+        break
+      }
+    }
+  }
+
+  return windows.map((w) => ({ ...w, share: w.total > 0 ? w.autonomous / w.total : 0 }))
+}
+
+export function jobTable(machines, which = 'all') {
+  const byKey = new Map()
+  for (const m of pick(machines, which)) {
+    for (const j of m.tokens?.by_job || []) {
+      const key = `${j.kind}:${j.job}`
+      const cur = byKey.get(key) || { kind: j.kind, job: j.job, output_tokens: 0, cost_usd: 0, runs: 0 }
+      cur.output_tokens += j.output_tokens || 0
+      cur.cost_usd += j.cost_usd || 0
+      cur.runs += j.runs || 0
+      byKey.set(key, cur)
+    }
+  }
+  return [...byKey.values()].sort((a, b) => b.output_tokens - a.output_tokens)
+}
+
 export const USAGE_KINDS = KINDS

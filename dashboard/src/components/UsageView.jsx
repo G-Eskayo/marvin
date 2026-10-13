@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { mergeTokenRows, dailySeries, sumRows, projectTable, ticketTable } from '../lib/usage_view.js'
+import { mergeTokenRows, dailySeries, sumRows, projectTable, ticketTable, autonomousSeries, weeklySeries, jobTable } from '../lib/usage_view.js'
 
 const KIND_STYLE = { headless: ['#3b82f6', 'Pipeline (headless)'], interactive: ['#10b981', 'Interactive'], subagent: ['#a78bfa', 'Subagents'] }
 const fmt = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(0)}k` : String(n))
@@ -39,6 +39,40 @@ function DailyBars({ series, metric }) {
   )
 }
 
+function AutonomousBars({ series }) {
+  const max = Math.max(1, ...series.map((d) => d.total))
+  const W = 760, H = 150, bw = W / series.length
+  return (
+    <svg viewBox={`0 0 ${W} ${H + 68}`} className="w-full" role="img" aria-label="Autonomous vs. interactive usage share per day">
+      {[30, 40, 50].map((pct) => (
+        <g key={pct}>
+          <line x1={0} y1={H - (pct / 100) * H} x2={W} y2={H - (pct / 100) * H} stroke="#444" strokeDasharray="2,2" strokeWidth="1" />
+          <text x={W - 4} y={H - (pct / 100) * H - 2} fontSize="9" fill="#666" textAnchor="end">{pct}%</text>
+        </g>
+      ))}
+      {series.map((d, i) => {
+        let y = H
+        return (
+          <g key={d.day}>
+            <title>{`${d.day}: ${d.autonomous.toLocaleString()} autonomous (${(d.share * 100).toFixed(0)}%), ${d.interactive.toLocaleString()} interactive`}</title>
+            {[
+              { v: d.autonomous, c: '#3b82f6', k: 'autonomous' },
+              { v: d.interactive, c: '#10b981', k: 'interactive' }
+            ].map(({ v, c, k }) => {
+              const h = (v / max) * H
+              const ty = y
+              y -= h
+              return h > 0 ? <rect key={k} x={i * bw + 1} y={ty - h} width={bw - 2} height={h} fill={c} /> : null
+            })}
+            {i % 5 === 0 && <text x={i * bw} y={H + 13} fontSize="9" fill="#737373">{d.day.slice(5)}</text>}
+          </g>
+        )
+      })}
+      <text x={W} y={10} fontSize="9" fill="#737373" textAnchor="end">peak {fmt(max)}</text>
+    </svg>
+  )
+}
+
 function Table({ title, hint, children }) {
   return (
     <section className="mt-6">
@@ -55,9 +89,13 @@ export default function UsageView({ machines, which }) {
   const rows = useMemo(() => mergeTokenRows(machines, which), [machines, which])
   const projects = useMemo(() => projectTable(machines, which), [machines, which])
   const tickets = useMemo(() => ticketTable(machines, which), [machines, which])
+  const end = new Date().toISOString().slice(0, 10)
+  const autonomousSeries_ = useMemo(() => autonomousSeries(rows, { days: 30, end, metric: 'output' }), [rows, end])
+  const weeklySeries_ = useMemo(() => weeklySeries(rows, { weeks: 4, end, metric: 'output' }), [rows, end])
+  const jobs = useMemo(() => jobTable(machines, which), [machines, which])
+
   if (rows.length === 0) return <p className="p-2 text-neutral-500">No token usage scan for {which === 'all' ? 'any machine' : which} yet. It is created within the hour.</p>
 
-  const end = new Date().toISOString().slice(0, 10)
   const series = dailySeries(rows, { days: 30, end, metric })
   const d7 = sumRows(rows, { days: 7, end })
   const d30 = sumRows(rows, { days: 30, end })
@@ -93,6 +131,46 @@ export default function UsageView({ machines, which }) {
           ))}
         </div>
       </div>
+
+      <div className="mt-5">
+        <h3 className="text-sm font-medium text-neutral-200">Autonomous vs. interactive share per day</h3>
+      </div>
+      <div className="mt-2 rounded border border-neutral-800 bg-neutral-900 p-3">
+        <AutonomousBars series={autonomousSeries_} />
+        <div className="mt-1 flex gap-4 text-[11px] text-neutral-500">
+          <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-sm" style={{ background: '#3b82f6' }} />Autonomous</span>
+          <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-sm" style={{ background: '#10b981' }} />Interactive</span>
+        </div>
+      </div>
+
+      <div className="mt-5">
+        <h3 className="text-sm font-medium text-neutral-200">Autonomous vs. interactive share per week</h3>
+      </div>
+      <div className="mt-2 rounded border border-neutral-800 bg-neutral-900 p-3">
+        <AutonomousBars series={weeklySeries_} />
+        <div className="mt-1 flex gap-4 text-[11px] text-neutral-500">
+          <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-sm" style={{ background: '#3b82f6' }} />Autonomous</span>
+          <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-sm" style={{ background: '#10b981' }} />Interactive</span>
+        </div>
+      </div>
+
+      <Table title="Top autonomous spenders" hint="Autonomous background jobs by tokens spent (daily-digest, research-colony, self-improve, architecture-review, ticket-promotion).">
+        {jobs.length === 0 ? <p className="text-xs text-neutral-600">No autonomous jobs yet.</p> : (
+          <table className="w-full text-sm">
+            <thead><tr className="text-left text-xs text-neutral-500"><th className="pb-1 font-normal">Job</th><th className="pb-1 text-right font-normal">Output tokens</th><th className="pb-1 text-right font-normal">Cost (USD)</th><th className="pb-1 text-right font-normal">Runs</th></tr></thead>
+            <tbody className="font-mono text-neutral-300">
+              {jobs.slice(0, 20).map((j) => (
+                <tr key={`${j.kind}:${j.job}`} className="border-t border-neutral-900">
+                  <td className="py-1 pr-2">{j.kind} <span className="text-neutral-500">{j.job}</span></td>
+                  <td className="py-1 text-right">{j.output_tokens.toLocaleString()}</td>
+                  <td className="py-1 text-right text-neutral-500">${j.cost_usd.toFixed(4)}</td>
+                  <td className="py-1 text-right text-neutral-500">{j.runs}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Table>
 
       <Table title="Where it went: projects" hint="Output tokens by the project the session worked in (a directory inside a project counts for the project).">
         <table className="w-full text-sm">
