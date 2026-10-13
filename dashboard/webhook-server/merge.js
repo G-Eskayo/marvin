@@ -417,7 +417,7 @@ async function mergePrUnqueued(
 
   await assertTargetsBase(prUrl, exec, ctx ? ctx.base : 'main')
   await assertNotSentBack(prUrl, exec)
-  await readyIfDraft(prUrl, exec)
+  const draftWasMarkedReady = await readyIfDraft(prUrl, exec)
   // A UI change merges only with images the owner has seen (marvin #374). Before any gate work: refusing is cheap.
   await uiEvidence(prUrl, exec, ctx ? ctx.uiPaths : [])
   // A PR that asks the owner to choose merges only once he has answered, in its Decisions section (2026-10-09).
@@ -433,6 +433,11 @@ async function mergePrUnqueued(
     if (ticketNumber === null) return
     if (ctx) recordStageFn(ticketNumber, name, status, detail, { repo })
     else recordStageFn(ticketNumber, name, status, detail)
+  }
+
+  // Record the draft → ready step for pipeline visibility (#217).
+  if (draftWasMarkedReady) {
+    stage('merging', 'passed', 'marked ready for review (owner pressed Approve on this draft)')
   }
 
   // The repo's own CI (GitHub checks), when it has any: failing means the code is wrong and the PR goes back
@@ -554,7 +559,7 @@ async function mergePrUnqueued(
       await applyVersionBump({ ticketNumber, prUrl }, exec, REPO_PATH)
       stage('versioning', 'passed', '')
     } catch (e) {
-      stage('versioning', 'failed', String(e?.message || e).slice(0, 300))
+      stage('versioning', 'failed', `VERSION_BUMP_FAILED: ${String(e?.message || e).slice(0, 300)}`)
       recordFailureFn({ ticket: ticketNumber, code: 'VERSION_BUMP_FAILED', message: String(e?.message || e), project: repo, prUrl, stage: 'versioning' })
     }
   }
