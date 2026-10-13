@@ -207,3 +207,11 @@ def _no_real_github(tmp_path_factory, monkeypatch):
     fake.write_text("#!/bin/sh\necho 'gh is disabled in tests' >&2\nexit 1\n")
     fake.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_seal_beta(tmp_path_factory, monkeypatch):
+    # The Seal Speak beta ingest reads ~/Library/Messages and writes testers' private reports; no test may touch either.
+    import seal_beta_ingest
+    monkeypatch.setattr(seal_beta_ingest, "ATTACHMENTS_DIR", tmp_path_factory.mktemp("seal-attachments"))
+    monkeypatch.setattr(seal_beta_ingest, "STORE_DIR", tmp_path_factory.mktemp("seal-beta"))

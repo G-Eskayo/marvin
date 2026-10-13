@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Seal Speak beta report ingest (lib/seal_beta_ingest.py, marvin#407; clarity-captions ADR 0024).
+     Picks up seal-feedback-*.json texted by TestFlight testers from Messages every 10 minutes and summarises them
+     by device into ~/.claude/seal-beta/ (private, never synced or pushed). Mac Mini only.
+     Needs Full Disk Access for the venv's real python3.11 (a Homebrew upgrade resets it; Health turns red).
+     Install: cp this to ~/Library/LaunchAgents/ and `launchctl bootstrap gui/$(id -u) <that file>`. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.marvin.seal-beta-ingest</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/gileskayo/.agents/venv/bin/python</string>
+        <string>/Users/gileskayo/.agents/lib/seal_beta_ingest.py</string>
+        <string>run</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/gileskayo</string>
+        <key>PATH</key>
+        <string>/Users/gileskayo/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/gileskayo/.agents/venv/bin</string>
+    </dict>
+    <key>StartInterval</key>
+    <integer>600</integer>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/gileskayo/.claude/logs/seal-beta-ingest.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/gileskayo/.claude/logs/seal-beta-ingest-error.log</string>
+</dict>
+</plist>
