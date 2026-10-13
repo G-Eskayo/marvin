@@ -94,6 +94,33 @@ def test_a_malformed_profile_is_reported_not_silently_used(tmp_path):
         raise AssertionError("should refuse a tier with no command")
 
 
+def test_failure_threshold_validation_test_12():
+    """Test 12: failure_threshold must be None or a positive int, not invalid types."""
+    # Test that _validate() rejects a zero failure_threshold
+    try:
+        pp._validate({"repo": "G-Eskayo/test", "verify": [], "failure_threshold": 0}, "test-profile")
+    except ValueError as e:
+        assert "failure_threshold" in str(e)
+    else:
+        raise AssertionError("should reject failure_threshold of 0")
+
+    # Test that _validate() rejects a negative failure_threshold
+    try:
+        pp._validate({"repo": "G-Eskayo/test", "verify": [], "failure_threshold": -1}, "test-profile")
+    except ValueError as e:
+        assert "failure_threshold" in str(e)
+    else:
+        raise AssertionError("should reject negative failure_threshold")
+
+    # Test that _validate() accepts a positive failure_threshold
+    profile = pp._validate({"repo": "G-Eskayo/test", "verify": [], "failure_threshold": 5}, "test-profile")
+    assert profile["failure_threshold"] == 5
+
+    # Test that _validate() accepts None (the default)
+    profile = pp._validate({"repo": "G-Eskayo/test", "verify": []}, "test-profile")
+    assert profile["failure_threshold"] is None
+
+
 # ── capabilities / environment ──────────────────────────────────────────────
 
 def test_env_uses_the_first_xcode_that_exists_without_touching_the_system_selection(tmp_path):

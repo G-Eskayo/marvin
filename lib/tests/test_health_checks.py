@@ -1230,3 +1230,53 @@ def test_output_contracts_reach_health(monkeypatch):
     import output_contracts
     monkeypatch.setattr(output_contracts, "health_findings", lambda: [{"id": "contract:x", "severity": "red"}])
     assert hc.check_output_contracts() == [{"id": "contract:x", "severity": "red"}]
+
+
+# ── ticket failure streaks (test 6: injectable run parameter) ──────────────────
+
+def test_ticket_failure_streaks_test_6_injectably_runs_gh():
+    """Test 6: check_ticket_failure_streaks accepts injectable run=subprocess.run parameter."""
+    import failure_breaker as fb
+
+    calls = []
+
+    class FakeProc:
+        returncode = 0
+        stdout = json.dumps([{"number": 100, "title": "test ticket"}])
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        return FakeProc()
+
+    results = hc.check_ticket_failure_streaks(run=fake_run)
+    assert calls, "should have called the injected run function"
+    assert any("gh" in str(c) for c in calls), "should have called gh"
+
+
+def test_ticket_failure_streaks_filters_tickets_with_no_failures():
+    """Test 7: check_ticket_failure_streaks filters results to only show tickets with streak > 0."""
+    import failure_breaker as fb
+
+    class FakeProc:
+        returncode = 0
+        stdout = json.dumps([
+            {"number": 200, "title": "ticket with streak"},
+            {"number": 201, "title": "ticket with no streak"}
+        ])
+
+    def fake_run(cmd, **kw):
+        return FakeProc()
+
+    def fake_ticket_streak(number, project=None, now=None):
+        if number == 200:
+            return {"count": 2, "signatures": ["vitest-no-summary"]}
+        return {"count": 0, "signatures": []}
+
+    import unittest.mock
+    with unittest.mock.patch.object(fb, "ticket_streak", side_effect=fake_ticket_streak):
+        results = hc.check_ticket_failure_streaks(run=fake_run)
+
+    # Should only report tickets with count > 0
+    assert len(results) == 1
+    assert results[0]["value"] == 2
+    assert "200" in results[0]["label"]

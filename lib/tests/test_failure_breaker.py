@@ -26,8 +26,8 @@ def isolated_log(tmp_path, monkeypatch):
     monkeypatch.setattr(fb, "LOG_PATH", tmp_path / "pipeline-failures.jsonl")
 
 
-def _fail(ticket, reason, minutes_ago=5):
-    fb.record_failure(ticket, reason, now=NOW - timedelta(minutes=minutes_ago))
+def _fail(ticket, reason, minutes_ago=5, project=fb.MARVIN):
+    fb.record_failure(ticket, reason, now=NOW - timedelta(minutes=minutes_ago), project=project)
 
 
 VITEST = "Unhandled exception: vitest produced no test summary (crashed or never ran): ...vite-node/dist/server.mjs:504:17"
@@ -193,3 +193,164 @@ def test_merge_refusals_never_trip_the_breaker(tmp_path, monkeypatch):
         for ticket in (208, 209, 210):
             f.write(json.dumps({"t": now.isoformat(), "kind": "refusal", "ticket": ticket, "sig": "merge:OUT_OF_ORDER"}) + "\n")
     assert fb.tripped(now=now) == []
+
+
+# ── ticket_streak: count failures since last success ────────────────────────
+
+def test_ticket_streak_zero_failures_with_no_history():
+    """A ticket with no records has zero failures."""
+    result = fb.ticket_streak(999, now=NOW)
+    assert result == {"count": 0, "signatures": [], "ordered_sigs": []}
+
+
+def test_ticket_streak_counts_failures_since_last_success():
+    """Failures after the most recent success are counted."""
+    _fail(42, "error A", minutes_ago=30)
+    _fail(42, "error B", minutes_ago=20)
+    fb.record_success(42, now=NOW - timedelta(minutes=10))
+    _fail(42, "error C", minutes_ago=5)
+    _fail(42, "error A", minutes_ago=2)  # repeat of A
+    result = fb.ticket_streak(42, now=NOW)
+    assert result["count"] == 2  # only the two failures after the success
+
+
+def test_ticket_streak_returns_unique_signatures_in_order():
+    """Signatures are unique and in order of first appearance."""
+    _fail(43, "error X", minutes_ago=30)
+    _fail(43, "error Y", minutes_ago=20)
+    _fail(43, "error X", minutes_ago=10)  # repeat
+    _fail(43, "error Z", minutes_ago=5)
+    result = fb.ticket_streak(43, now=NOW)
+    assert result["count"] == 4
+    # Signatures are computed by the signature() function; these all collapse to "other:..."
+    assert len(result["signatures"]) == 3  # X, Y, Z (X repeats but we only list unique)
+    # First sig appears, then second, third
+    assert result["signatures"][0] != result["signatures"][1]  # X != Y
+    assert result["signatures"][1] != result["signatures"][2]  # Y != Z
+
+
+def test_ticket_streak_if_no_success_counts_all_failures():
+    """Without a success marker, all failures since the start are counted."""
+    _fail(44, VITEST, minutes_ago=40)
+    _fail(44, VITEST, minutes_ago=20)
+    result = fb.ticket_streak(44, now=NOW)
+    assert result["count"] == 2
+    assert "vitest-no-summary" in result["signatures"][0]
+
+
+# ── should_hold: decide if a ticket should be parked ──────────────────────
+
+def test_should_hold_returns_none_with_no_failures():
+    """No streak, no hold."""
+    result = fb.should_hold(100, "G-Eskayo/marvin", threshold=3, now=NOW)
+    assert result is None
+
+
+def test_should_hold_returns_n_failures_when_threshold_exceeded():
+    """Reaching the failure threshold triggers an n-failures hold."""
+    for i in range(3):
+        _fail(101, VITEST, minutes_ago=30 - i * 5)
+    result = fb.should_hold(101, "G-Eskayo/marvin", threshold=3, now=NOW)
+    assert result is not None
+    assert result["reason"] == "n-failures"
+    assert result["count"] == 3
+
+
+def test_should_hold_returns_repeat_signature_when_same_error_repeats():
+    """A signature appearing twice CONSECUTIVELY (the last two) triggers a hold."""
+    _fail(102, VITEST, minutes_ago=20)
+    _fail(102, VITEST, minutes_ago=10)  # same signature back-to-back (last two entries)
+    result = fb.should_hold(102, "G-Eskayo/marvin", threshold=5, now=NOW)
+    assert result is not None
+    assert result["reason"] == "repeat-signature"
+
+
+def test_should_hold_repeat_signature_test_8_non_consecutive_does_not_hold():
+    """A duplicate signature that is NOT the last two entries does not trigger repeat-signature."""
+    _fail(108, "error X", minutes_ago=30)
+    _fail(108, "error Y", minutes_ago=20)
+    _fail(108, "error X", minutes_ago=10)  # X appears again, but not back-to-back with itself
+    result = fb.should_hold(108, "G-Eskayo/marvin", threshold=5, now=NOW)
+    assert result is None
+
+
+def test_should_hold_repeat_signature_test_9_three_same_only_last_two_matter():
+    """When the same signature appears three times, only the last two consecutive ones count."""
+    _fail(109, "error Z", minutes_ago=30)
+    _fail(109, "error Z", minutes_ago=20)
+    _fail(109, "error Z", minutes_ago=10)  # last two are definitely the same
+    result = fb.should_hold(109, "G-Eskayo/marvin", threshold=10, now=NOW)
+    assert result is not None
+    assert result["reason"] == "repeat-signature"
+
+
+def test_should_hold_repeat_signature_test_10_last_entry_alone_no_hold():
+    """A single failure at the end (even if earlier failures matched) does not trigger repeat-signature."""
+    _fail(110, "error A", minutes_ago=20)
+    _fail(110, "error A", minutes_ago=15)
+    _fail(110, "error B", minutes_ago=5)  # last entry is different
+    result = fb.should_hold(110, "G-Eskayo/marvin", threshold=10, now=NOW)
+    assert result is None
+
+
+def test_should_hold_repeat_signature_test_11_only_two_different_errors_no_repeat():
+    """Two different errors in sequence are never a repeat-signature."""
+    _fail(111, "error P", minutes_ago=20)
+    _fail(111, "error Q", minutes_ago=10)
+    result = fb.should_hold(111, "G-Eskayo/marvin", threshold=5, now=NOW)
+    assert result is None
+
+
+def test_should_hold_empty_ticket_holds_at_threshold_2_not_3():
+    """Threshold comparison uses >= not >."""
+    _fail(103, VITEST, minutes_ago=20)
+    _fail(103, VITEST, minutes_ago=10)
+    result = fb.should_hold(103, "G-Eskayo/marvin", threshold=2, now=NOW)
+    assert result["reason"] == "n-failures"
+
+
+def test_should_hold_per_project_separation():
+    """Streaks are per-project; marvin and another project don't share count."""
+    _fail(105, "error A", project="G-Eskayo/marvin", minutes_ago=20)
+    _fail(105, "error B", project="G-Eskayo/clarity-captions", minutes_ago=15)
+    _fail(105, "error C", project="G-Eskayo/marvin", minutes_ago=10)
+    result_marvin = fb.should_hold(105, "G-Eskayo/marvin", threshold=3, now=NOW)
+    result_clarity = fb.should_hold(105, "G-Eskayo/clarity-captions", threshold=3, now=NOW)
+    # Marvin has 2 failures, clarity has 1. With threshold 3, neither should hold.
+    assert result_marvin is None
+    assert result_clarity is None
+
+
+# ── Bug 1 fix: ticket_streak must be defensively filtered ─────────────────────
+
+def test_ticket_streak_survives_a_clear_record_in_the_log(monkeypatch, tmp_path):
+    """Bug 1: ticket_streak crashed on clear() records missing the 'ticket' field.
+    The filter must use .get() defensively."""
+    monkeypatch.setattr(fb, "LOG_PATH", tmp_path / "pipeline-failures.jsonl")
+    _fail(50, "error 1", minutes_ago=20)
+    fb.clear(now=NOW - timedelta(minutes=15))  # clear record has no 'ticket' field
+    _fail(50, "error 2", minutes_ago=5)
+    # This should not crash even though the clear record breaks a naive filter
+    result = fb.ticket_streak(50, now=NOW)
+    assert result["count"] == 1  # only the failure after the clear
+    assert len(result["signatures"]) == 1
+
+
+def test_should_hold_detects_repeat_signature_only_on_consecutive_pair():
+    """Bug 4 fix: repeat-signature means the LAST TWO entries match, not any duplicate anywhere.
+    With failures A, B, A: the last is A, second-last is B, so not a repeat of the last.
+    With failures A, B, B: the last is B, second-last is B, so repeat-signature holds."""
+    # Case 1: A, B, A (distinct last two) - should NOT hold
+    _fail(201, "error A", minutes_ago=30)
+    _fail(201, "error B", minutes_ago=20)
+    _fail(201, "error A", minutes_ago=10)  # same as first, but not consecutive with itself
+    result = fb.should_hold(201, "G-Eskayo/marvin", threshold=10, now=NOW)
+    assert result is None, "A-B-A should not trigger repeat-signature (last two are distinct)"
+
+    # Case 2: A, B, B (last two match) - should hold
+    _fail(202, "error X", minutes_ago=30)
+    _fail(202, "error Y", minutes_ago=20)
+    _fail(202, "error Y", minutes_ago=10)  # same as previous
+    result = fb.should_hold(202, "G-Eskayo/marvin", threshold=10, now=NOW)
+    assert result is not None
+    assert result["reason"] == "repeat-signature", "Y-Y (last two) should trigger repeat-signature"

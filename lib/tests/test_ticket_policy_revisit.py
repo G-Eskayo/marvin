@@ -217,6 +217,27 @@ def test_is_revisit_due_ref_without_state():
     assert pol.is_revisit_due(revisit, now, ref_state) is False
 
 
+def test_format_revisit_date_only():
+    """format_revisit: date only"""
+    result = pol.format_revisit("2026-10-15")
+    assert result == "Revisit by: 2026-10-15"
+
+
+def test_format_revisit_with_condition():
+    """format_revisit: date with condition"""
+    result = pol.format_revisit("2026-10-15", "pending review")
+    assert result == "Revisit by: 2026-10-15 — pending review"
+
+
+def test_format_revisit_round_trip():
+    """parse and format are inverses (round-trip): condition text"""
+    original = "Revisit by: 2026-10-20 — awaiting response"
+    parsed = pol.parse_revisit_comment(original)
+    reformatted = pol.format_revisit(parsed["date"], parsed["condition"])
+    reparsed = pol.parse_revisit_comment(reformatted)
+    assert reparsed == parsed
+
+
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))

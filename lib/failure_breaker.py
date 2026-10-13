@@ -81,6 +81,67 @@ def clear(now: datetime | None = None) -> None:
     _append({"t": (now or _now()).isoformat(), "kind": "clear"})
 
 
+def ticket_streak(ticket: int, project: str = MARVIN, now: datetime | None = None) -> dict:
+    """Count and collect failure signatures for one ticket since its last success or clear.
+    Returns {"count": int, "signatures": [str], "ordered_sigs": [str]} where count is the number of failures,
+    signatures is the list of unique failure signatures in order, and ordered_sigs is the full non-deduplicated sequence."""
+    now = now or _now()
+    all_records = _read()
+    # Filter to this ticket+project, defensively using .get() in case kind or other fields are missing
+    records = [r for r in all_records if r.get("ticket") == ticket and r.get("project", MARVIN) == project]
+
+    # Find the last success or clear (both reset the failure count)
+    last_reset_time = None
+    for r in reversed(all_records):
+        if r.get("kind") in ("success", "clear"):
+            # A clear record has no ticket field, so it applies to ALL tickets
+            if r.get("kind") == "clear" or (r.get("kind") == "success" and r.get("ticket") == ticket and r.get("project", MARVIN) == project):
+                last_reset_time = r["_t"]
+                break
+
+    # Collect failures since the last reset (or from the beginning if no reset)
+    failures = []
+    for r in records:
+        if r.get("kind") == "failure":
+            if last_reset_time is None or r["_t"] > last_reset_time:
+                failures.append(r)
+
+    # Get unique signatures in order (preserve order, avoid duplicates)
+    seen = set()
+    sigs = []
+    for f in failures:
+        sig = f.get("sig", "")
+        if sig and sig not in seen:
+            sigs.append(sig)
+            seen.add(sig)
+
+    # Get the full ordered sequence (non-deduplicated, excluding empty sigs)
+    ordered_sigs = [f.get("sig", "") for f in failures if f.get("sig", "")]
+
+    return {"count": len(failures), "signatures": sigs, "ordered_sigs": ordered_sigs}
+
+
+def should_hold(ticket: int, project: str, threshold: int, now: datetime | None = None) -> dict | None:
+    """Determine if a ticket should be held. Returns None if not, or {"reason": str} if it should.
+    Reasons: "repeat-signature" (last two failures have the same signature) or "n-failures" (N failures since last success)."""
+    streak = ticket_streak(ticket, project, now)
+    count = streak["count"]
+    ordered_sigs = streak.get("ordered_sigs", [])
+
+    if count == 0:
+        return None
+
+    # If we've had N or more failures since the last success, hold it
+    if count >= threshold:
+        return {"reason": "n-failures", "count": count}
+
+    # If the last two entries both exist and have the same signature, hold
+    if len(ordered_sigs) >= 2 and ordered_sigs[-1] and ordered_sigs[-1] == ordered_sigs[-2]:
+        return {"reason": "repeat-signature", "signature": ordered_sigs[-1]}
+
+    return None
+
+
 def _read() -> list[dict]:
     if not LOG_PATH.exists():
         return []

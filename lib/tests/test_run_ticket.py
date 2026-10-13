@@ -13,6 +13,7 @@ sys.path.insert(0, str(LIB))
 
 import run_ticket as rt  # noqa: E402
 import ticket_stages as ts  # noqa: E402
+import failure_breaker as fb  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -280,13 +281,18 @@ def test_run_parks_the_ticket_instead_of_releasing_at_the_failure_cap(monkeypatc
     # G-Eskayo/marvin#28, 2026-09-04..06: release-claim-then-immediate-
     # redispatch with no cross-call cap spun ~6,900 back-to-back headless
     # sessions in 3 days on a ticket that never once made progress. This is
-    # the guard: the 3rd consecutive identical-failure comment parks it
-    # instead of releasing it back for another immediate re-claim.
+    # the guard: when failures reach the threshold, the ticket is parked
+    # instead of being released for another immediate re-claim.
     monkeypatch.setattr(rt, "execute_ticket", lambda *a: _failing_result())
     monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "unchanged"})
-    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda issue_number: rt.MAX_CONSECUTIVE_FAILURES - 1)
     monkeypatch.setattr(rt, "_comment_failure", lambda *a: None)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+
+    # Mock failure_breaker to report hitting the threshold
+    monkeypatch.setattr(fb, "ticket_streak",
+                       lambda ticket, project="G-Eskayo/marvin", now=None: {"count": rt.MAX_CONSECUTIVE_FAILURES, "signatures": ["test-sig"]})
+    monkeypatch.setattr(fb, "should_hold",
+                       lambda ticket, project, threshold, now=None: {"reason": "n-failures", "count": rt.MAX_CONSECUTIVE_FAILURES})
 
     released = []
     monkeypatch.setattr(rt, "_release_claim", lambda issue_number, **kw: released.append(issue_number))
@@ -302,9 +308,14 @@ def test_run_parks_the_ticket_instead_of_releasing_at_the_failure_cap(monkeypatc
 def test_run_still_releases_below_the_failure_cap(monkeypatch):
     monkeypatch.setattr(rt, "execute_ticket", lambda *a: _failing_result())
     monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "unchanged"})
-    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda issue_number: 0)
     monkeypatch.setattr(rt, "_comment_failure", lambda *a: None)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+
+    # Mock failure_breaker to report below the threshold
+    monkeypatch.setattr(fb, "ticket_streak",
+                       lambda ticket, project="G-Eskayo/marvin", now=None: {"count": 1, "signatures": []})
+    monkeypatch.setattr(fb, "should_hold",
+                       lambda ticket, project, threshold, now=None: None)
 
     released = []
     monkeypatch.setattr(rt, "_release_claim", lambda issue_number, **kw: released.append(issue_number))
@@ -317,37 +328,20 @@ def test_run_still_releases_below_the_failure_cap(monkeypatch):
     assert parked == []
 
 
-def test_consecutive_failure_streak_counts_trailing_failure_comments(monkeypatch):
-    comments = [
-        {"body": "some unrelated human comment"},
-        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
-        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
-    ]
-
-    class FakeResult:
-        returncode = 0
-        stdout = __import__("json").dumps({"comments": comments})
-
-    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: FakeResult())
+def test_consecutive_failure_streak_counts_failures_since_last_success(monkeypatch):
+    """_consecutive_failure_streak now delegates to failure_breaker.ticket_streak."""
+    monkeypatch.setattr(fb, "ticket_streak",
+                       lambda ticket, project="G-Eskayo/marvin": {"count": 2, "signatures": []})
 
     assert rt._consecutive_failure_streak(28) == 2
 
 
-def test_consecutive_failure_streak_resets_on_a_human_comment(monkeypatch):
-    comments = [
-        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
-        {"body": "ok, I re-scoped this, try again"},
-        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
-        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
-    ]
+def test_consecutive_failure_streak_returns_zero_with_no_failures(monkeypatch):
+    """_consecutive_failure_streak returns the count from ticket_streak."""
+    monkeypatch.setattr(fb, "ticket_streak",
+                       lambda ticket, project="G-Eskayo/marvin": {"count": 0, "signatures": []})
 
-    class FakeResult:
-        returncode = 0
-        stdout = __import__("json").dumps({"comments": comments})
-
-    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: FakeResult())
-
-    assert rt._consecutive_failure_streak(28) == 2
+    assert rt._consecutive_failure_streak(28) == 0
 
 
 def test_park_stuck_ticket_removes_ready_for_agent_label(monkeypatch):
@@ -357,17 +351,16 @@ def test_park_stuck_ticket_removes_ready_for_agent_label(monkeypatch):
 
     rt._park_stuck_ticket(28, 3)
 
-    assert calls[0][:3] == ["gh", "issue", "edit"] and "needs-info" in calls[0]   # state first (see below)
+    assert calls[0][:3] == ["gh", "issue", "edit"] and "hold" in calls[0]   # state first (see below)
     assert calls[1][:3] == ["gh", "issue", "edit"]
     assert "--remove-label" in calls[1] and "ready-for-agent" in calls[1]
     # Also drops the claim: ticket_pipeline only dispatches ready-for-agent
-    # tickets with NO claimed:* label, so a parked ticket that kept its claim
-    # could never be revived by a human re-adding ready-for-agent (found
-    # 2026-10-01 re-releasing parked tickets -- the label alone did nothing).
+    # tickets with NO claimed:* label, so a held ticket that kept its claim
+    # could never be revived by a human re-adding ready-for-agent.
     assert "claimed:mac-mini" in calls[1]
     assert calls[2][:3] == ["gh", "issue", "comment"]
     assert "Still labeled" not in calls[2][-1]
-    assert "add `ready-for-agent`" in calls[2][-1]
+    assert "remove the `hold` label and add `ready-for-agent`" in calls[2][-1]
 
 
 # ── a parked ticket gets a real state and the real cause (Gil, 2026-10-09) ──
@@ -384,10 +377,10 @@ def _park_calls(monkeypatch, **kw):
     return calls
 
 
-def test_parking_adds_needs_info_before_removing_ready_for_agent(monkeypatch):
+def test_parking_adds_hold_before_removing_ready_for_agent(monkeypatch):
     calls = _park_calls(monkeypatch, reason="Final verdict: unchanged.")
     edits = [c for c in calls if c[:3] == ["gh", "issue", "edit"]]
-    add = next(i for i, c in enumerate(edits) if "--add-label" in c and "needs-info" in c)
+    add = next(i for i, c in enumerate(edits) if "--add-label" in c and "hold" in c)
     rm = next(i for i, c in enumerate(edits) if "--remove-label" in c and "ready-for-agent" in c)
     assert add < rm                      # never a moment with no state label for triage to grab
 
@@ -399,7 +392,47 @@ def test_the_park_comment_carries_the_real_cause_and_the_findings(monkeypatch):
     assert rt.PARKED_MARKER in body
     assert "code review found must-fix issues" in body
     assert "- lib/a.py:3 — crashes on None" in body and "- lib/b.py:9 — wrong week" in body
-    assert "needs-info" in body and "ready-for-agent" in body     # says how to send it back in
+    assert "hold" in body and "ready-for-agent" in body     # says how to send it back in
+
+
+def test_park_comment_revisit_line_is_bare_on_its_own_line():
+    """Test 5: the revisit_line must appear bare on its own line, not bold-wrapped or sharing a line."""
+    import tempfile
+    from datetime import datetime, timedelta, timezone
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        calls = []
+
+        def fake_run(cmd, **kw):
+            calls.append(cmd)
+            class R:
+                returncode = 0
+            return R()
+
+        import unittest.mock as mock
+        with mock.patch.object(rt.machine_profile, "registry_id", return_value="mac-mini-1"):
+            with mock.patch.object(rt.subprocess, "run", side_effect=fake_run):
+                rt._park_stuck_ticket(28, 3, reason="test")
+
+        comment_body = next(c[-1] for c in calls if c[:3] == ["gh", "issue", "comment"])
+
+        # The revisit_line should appear as a bare line like:
+        # Revisit by: YYYY-MM-DD
+        # NOT bold-wrapped (**Revisit by: YYYY-MM-DD**)
+        # NOT sharing a line with other text
+        lines = comment_body.split("\n")
+        revisit_lines = [l.strip() for l in lines if "Revisit by:" in l]
+        assert revisit_lines, "should have a Revisit by line"
+
+        # Check that the revisit line is on its own (not concatenated)
+        assert any(l.startswith("Revisit by:") and not l.startswith("**") for l in revisit_lines), \
+            f"revisit line should be bare (not bold): {revisit_lines}"
+
+        # Check it's not on the same line as "remove the `hold` label..."
+        for i, line in enumerate(lines):
+            if "Revisit by:" in line:
+                assert "remove the `hold` label" not in line, \
+                    "Revisit line should not share a line with the 'remove the hold label' instruction"
 
 
 def test_a_park_without_findings_still_says_why(monkeypatch):
@@ -416,7 +449,7 @@ def test_a_huge_reason_and_many_findings_are_capped(monkeypatch):
 
 
 def test_a_failing_gh_call_never_stops_the_rest_of_the_park(monkeypatch):
-    # e.g. the needs-info add hits a rate limit: the ticket must still stop being dispatched and still get the comment
+    # e.g. the hold add hits a rate limit: the ticket must still stop being dispatched and still get the comment
     monkeypatch.setattr(rt.machine_profile, "registry_id", lambda: "mac-mini-1")
     calls = []
 
@@ -437,9 +470,15 @@ def test_run_passes_the_cause_and_the_last_must_fix_findings_to_park(monkeypatch
     res["explanation"] = "Did not reach a passing comparison after 3 iterations. Final verdict: code review found must-fix issues."
     monkeypatch.setattr(rt, "execute_ticket", lambda *a: res)
     monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": res["explanation"]})
-    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda issue_number: rt.MAX_CONSECUTIVE_FAILURES - 1)
     monkeypatch.setattr(rt, "_comment_failure", lambda *a: None)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+
+    # Mock failure_breaker to trigger a hold
+    monkeypatch.setattr(fb, "ticket_streak",
+                       lambda ticket, project="G-Eskayo/marvin": {"count": rt.MAX_CONSECUTIVE_FAILURES, "signatures": []})
+    monkeypatch.setattr(fb, "should_hold",
+                       lambda ticket, project, threshold, now=None: {"reason": "n-failures", "count": rt.MAX_CONSECUTIVE_FAILURES})
+
     got = {}
     monkeypatch.setattr(rt, "_park_stuck_ticket", lambda issue_number, streak, **kw: got.update(kw))
     rt.run(28)
@@ -450,9 +489,15 @@ def test_a_crash_before_any_result_still_parks_with_the_crash_as_the_cause(monke
     def boom(*a):
         raise RuntimeError("planner timed out")
     monkeypatch.setattr(rt, "execute_ticket", boom)
-    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda issue_number: rt.MAX_CONSECUTIVE_FAILURES - 1)
     monkeypatch.setattr(rt, "_comment_failure", lambda *a: None)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+
+    # Mock failure_breaker to trigger a hold
+    monkeypatch.setattr(fb, "ticket_streak",
+                       lambda ticket, project="G-Eskayo/marvin": {"count": rt.MAX_CONSECUTIVE_FAILURES, "signatures": []})
+    monkeypatch.setattr(fb, "should_hold",
+                       lambda ticket, project, threshold, now=None: {"reason": "n-failures", "count": rt.MAX_CONSECUTIVE_FAILURES})
+
     got = {}
     monkeypatch.setattr(rt, "_park_stuck_ticket", lambda issue_number, streak, **kw: got.update(kw))
     rt.run(28)

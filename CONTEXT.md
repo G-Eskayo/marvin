@@ -681,9 +681,12 @@ nothing connected them. "Where things are" was only the tidy agent's file-filing
      are listed for Gil in Health. Acts from the start, never removes a label a person set.
   6. **revisit** - examines tickets with the `hold` label for a `Revisit by: YYYY-MM-DD [— condition]`
      comment (trailing content on the line after the date is the optional condition) and moves them back to
-     `needs-triage` when the date has passed or the condition (if a `#N` ticket reference) has closed.
-     Held tickets are grouped in the Backlog's "On hold" collapsible block with their revisit dates shown
-     inline, or flagged as missing their revisit line.
+     `needs-triage` when the date has passed or the condition (if a `#N` ticket reference) has closed. Held tickets
+     are either manually held (a person adds the label) or automatically held by `run_ticket.py` after a ticket fails
+     `failure_threshold` times (defaults to 3; per-project override in the profile). Automatic holds include a comment
+     with the failure signatures (e.g., `vitest-no-summary`) and the revisit date (machine-generated, 14 days by default).
+     Held tickets are grouped in the Backlog's "On hold" collapsible block with their revisit dates shown inline, or
+     flagged as missing their revisit line.
 - **Modes** (`config/ticket_agents.json`): `auto` = propose until `act_after` (2026-10-12), then act. In
   propose mode an agent lists what it would change and changes nothing; the review screen is Health ->
   Autonomous agents -> Ticket agents. **stale_claims and refeed are pinned to propose** until a person edits
@@ -708,7 +711,10 @@ untouched (it is the "legacy profile"); only repos with a profile file use the p
   catalog's newest local path first), `machines` (eligible device ids), `dispatch` (`"off"` | `"on"`; **starts
   off**: a profile does nothing until a person turns it on), `env` (e.g. `DEVELOPER_DIR` = the first existing
   Xcode, so `swift test` works without `sudo xcode-select`), `executor` (extra allowed tools and context notes
-  for the headless model), `verify` (tiers), `evidence`.
+  for the headless model), `verify` (tiers), `evidence`, `failure_threshold` (int, e.g. `2`; if a ticket reaches
+  this many failures since its last success it is **held** on the `hold` label instead of re-dispatched; defaults
+  to MARVIN's 3 if not specified; holds are recorded in the failure log with their signatures and include a
+  machine-generated `Revisit by: YYYY-MM-DD` comment set to 14 days out).
 - **Verify tiers**: each has `command`, `cwd`, `requires` (capabilities such as `swift`, `xcode`, `xcodegen`),
   a `parser` (`swift-test`, `xcodebuild`, `exit-code`), and `required`. A required tier whose tools are missing
   on the executing machine is an **environment problem, not a ticket failure**: the claim is released, no

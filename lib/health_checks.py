@@ -143,7 +143,9 @@ def check_ticket_failure_streaks(repo: str = "G-Eskayo/marvin", run=subprocess.r
     """Early-warning layer in front of run_ticket.py's own 3-strike guard
     (G-Eskayo/marvin, fixed 2026-10-01): a ticket sitting at streak 2 is
     one more automated failure from being parked -- worth surfacing before
-    that happens, not just after."""
+    that happens, not just after. Uses failure_breaker.ticket_streak to check
+    the persistent failure log instead of scanning comments."""
+    import failure_breaker  # noqa: F401, E402 (lazy import to avoid circular deps at module load)
     try:
         proc = run(["gh", "issue", "list", "--repo", repo, "--label", "claimed:mac-mini,claimed:macbook-pro",
                     "--state", "open", "--json", "number,title,labels"],
@@ -155,25 +157,48 @@ def check_ticket_failure_streaks(repo: str = "G-Eskayo/marvin", run=subprocess.r
     results = []
     for issue in claimed:
         n = issue["number"]
-        try:
-            cproc = run(["gh", "issue", "view", str(n), "--repo", repo, "--json", "comments"],
-                        capture_output=True, text=True, timeout=20)
-            comments = json.loads(cproc.stdout)["comments"] if cproc.returncode == 0 else []
-        except (subprocess.TimeoutExpired, json.JSONDecodeError, KeyError):
-            continue
-        streak = 0
-        for c in reversed(comments):
-            if "did not pass verification" in c.get("body", ""):
-                streak += 1
+        streak_info = failure_breaker.ticket_streak(n, project=repo)
+        streak = streak_info["count"]
+        if streak > 0:  # Only report tickets with actual failures
+            cid = f"ticket:streak:{n}"
+            label = f"#{n} {issue['title'][:40]}"
+            if streak >= 2:
+                results.append(_result(cid, label, "yellow",
+                                        f"{streak} consecutive automated failures — one more parks it", value=streak))
             else:
-                break
-        cid = f"ticket:streak:{n}"
-        label = f"#{n} {issue['title'][:40]}"
-        if streak >= 2:
-            results.append(_result(cid, label, "yellow",
-                                    f"{streak} consecutive automated failures — one more parks it", value=streak))
-        else:
-            results.append(_result(cid, label, "green", f"{streak} consecutive failure(s)", value=streak))
+                results.append(_result(cid, label, "green", f"{streak} consecutive failure(s)", value=streak))
+    return results
+
+
+def check_held_by_retry_storm(run=subprocess.run) -> list[dict]:
+    """Find tickets held (on the `hold` label) due to a retry storm (recorded in the
+    failure log), across all dispatchable projects. A held ticket is one that failed
+    repeatedly and was parked by run_ticket.py to stop re-dispatch spam."""
+    import failure_breaker  # noqa: F401, E402
+    import project_profile as pp  # noqa: F401, E402
+
+    results = []
+    for repo in pp.dispatchable_repos():
+        try:
+            proc = run(
+                ["gh", "issue", "list", "--repo", repo, "--label", "hold",
+                 "--state", "open", "--json", "number,title"],
+                capture_output=True, text=True, timeout=20, check=False
+            )
+            held = json.loads(proc.stdout) if proc.returncode == 0 else []
+        except (subprocess.TimeoutExpired, json.JSONDecodeError):
+            held = []
+
+        for issue in held:
+            n = issue["number"]
+            streak_info = failure_breaker.ticket_streak(n, project=repo)
+            if streak_info["count"] > 0:  # Only report if there's an actual failure streak
+                cid = f"ticket:held:{repo}:{n}"
+                label = f"{repo.split('/')[-1]} #{n} {issue['title'][:30]}"
+                sigs = streak_info.get("signatures", [])
+                sig_text = f" ({', '.join(sigs[:2])})" if sigs else ""
+                results.append(_result(cid, label, "red",
+                                        f"held: {streak_info['count']} failures{sig_text}", value=streak_info["count"]))
     return results
 
 
@@ -1431,6 +1456,7 @@ def run_all() -> dict:
     results.append(check_intent_routing_collection())
     results.append(check_dispatch_lock())
     results += check_ticket_failure_streaks()
+    results += check_held_by_retry_storm()
     results.append(check_pipeline_breaker())
     results += check_sync_stuck()
     results += check_deploy_steps()
