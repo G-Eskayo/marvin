@@ -507,7 +507,8 @@ def test_queued_generate_target_default_mac_mini_1(tmp_path):
             mock_generate.return_value = (mock_img, 42, {"size": [1920, 960]})
 
             with patch("portfolio_flux.portfolio_imagegen._load", return_value={}):
-                with patch("portfolio_flux.job_events.job_run"):
+                with patch("portfolio_flux.job_events.job_run"), \
+                        patch("portfolio_flux.check_disk_headroom", return_value=pf.DiskCheckResult(ok=True)):  # never the real disk
                     result = pf.queued_generate(slug, prompt, images_dir=images_dir, registry_path=registry_path)
 
                     assert result.ok
