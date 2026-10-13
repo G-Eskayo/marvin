@@ -391,3 +391,9 @@ def test_summary_command_prints_a_device_table(paths, capsys):
 def test_summary_command_without_data_says_so(tmp_path, capsys):
     assert sbi.main(["summary", "--store", str(tmp_path / "empty")]) == 0
     assert "No beta reports" in capsys.readouterr().out
+
+
+def test_minutes_total_adds_every_conversation_including_short_ones(paths):
+    drop(paths[0], report([conv("A", minutes=20.25), conv("B", minutes=0.2, samples=5), conv("C", minutes=None)]))
+    run(paths)
+    assert summary(paths)["by_device"][0]["minutes_total"] == 20.4
