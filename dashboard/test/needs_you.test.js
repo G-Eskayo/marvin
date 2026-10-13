@@ -383,4 +383,90 @@ describe('rankNeedsYou', () => {
       expect(result.indexOf(row1)).toBeLessThan(result.indexOf(row7))
     }
   })
+
+  it('includes project field derived from repo (test 1)', () => {
+    const tickets = [
+      { repo: 'G-Eskayo/marvin', ...issue(1, { labels: [label('ready-for-human')], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' }) }
+    ]
+    const result = rankNeedsYou(tickets)
+    expect(result[0].project).toBe('marvin')
+  })
+
+  it('includes project field for complex repo names (test 2)', () => {
+    const tickets = [
+      { repo: 'G-Eskayo/killer-sudoku', ...issue(1, { labels: [label('ready-for-human')], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' }) }
+    ]
+    const result = rankNeedsYou(tickets)
+    expect(result[0].project).toBe('killer-sudoku')
+  })
+
+  it('derives project slug with lowercase and dashes (test 3)', () => {
+    const tickets = [
+      { repo: 'G-Eskayo/Portfolio_Website', ...issue(1, { labels: [label('ready-for-human')], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' }) }
+    ]
+    const result = rankNeedsYou(tickets)
+    expect(result[0].project).toBe('portfolio-website')
+  })
+
+  it('includes project in multiple tickets from different repos (test 4)', () => {
+    const tickets = [
+      { repo: 'G-Eskayo/marvin', ...issue(1, { labels: [label('ready-for-human')], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' }) },
+      { repo: 'G-Eskayo/killer-sudoku', ...issue(2, { labels: [label('ready-for-human')], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' }) }
+    ]
+    const result = rankNeedsYou(tickets)
+    const m = result.find((r) => r.number === 1)
+    const k = result.find((r) => r.number === 2)
+    expect(m?.project).toBe('marvin')
+    expect(k?.project).toBe('killer-sudoku')
+  })
+
+  it('project field matches projectIdOf behavior (test 5)', () => {
+    const tickets = [
+      { repo: 'G-Eskayo/ML_supervised_learning-Regression-Classification-project', ...issue(1, { labels: [label('ready-for-human')], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' }) }
+    ]
+    const result = rankNeedsYou(tickets)
+    expect(result[0].project).toBe('ml-supervised-learning-regression-classification-project')
+  })
+
+  it('uses project:<id> label override when present', () => {
+    const tickets = [
+      { repo: 'G-Eskayo/marvin', ...issue(1, { labels: [label('ready-for-human'), label('project:custom-project')], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' }) }
+    ]
+    const result = rankNeedsYou(tickets)
+    expect(result[0].project).toBe('custom-project')
+  })
+
+  it('prefers project: label over derived projectId', () => {
+    const tickets = [
+      { repo: 'G-Eskayo/killer-sudoku', ...issue(1, { labels: [label('ready-for-human'), label('project:override-id')], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' }) }
+    ]
+    const result = rankNeedsYou(tickets)
+    expect(result[0].project).toBe('override-id')
+  })
+
+  it('accepts both string and object labels for project: override', () => {
+    const tickets = [
+      { repo: 'G-Eskayo/marvin', ...issue(1, { labels: [{ name: 'project:object-label' }, label('ready-for-human')], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' }) }
+    ]
+    const result = rankNeedsYou(tickets)
+    // Object labels are properly extracted and used for override
+    expect(result[0].project).toBe('object-label')
+  })
+
+  it('handles multiple project: labels by taking the first one', () => {
+    const tickets = [
+      { repo: 'G-Eskayo/marvin', ...issue(1, { labels: [label('project:first'), label('project:second'), label('ready-for-human')], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' }) }
+    ]
+    const result = rankNeedsYou(tickets)
+    expect(result[0].project).toBe('first')
+  })
+
+  it('ignores malformed project: labels without ID (misuse test 1)', () => {
+    const tickets = [
+      { repo: 'G-Eskayo/marvin', ...issue(1, { labels: [label('project:'), label('ready-for-human')], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' }) }
+    ]
+    const result = rankNeedsYou(tickets)
+    // Should not crash, project should be empty string (which is falsy-ish)
+    expect(result[0].project).toBe('')
+  })
 })

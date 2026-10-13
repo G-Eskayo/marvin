@@ -102,12 +102,16 @@ export function createRelationsService({ getRepos, getBoardData, getDocs, getPro
     // What is waiting on you, per project, from the same data the boards show.
     overview: async () => {
       const b = await ready()
+      const needsYouRows = rankNeedsYou(b.tickets)
       const out = {}
       for (const c of b.cards.values()) {
         const o = (out[c.repo] ||= { review: 0, needsYou: 0, blocked: 0 })
         if (c.column === 'review') o.review += 1
-        if (c.column === 'ready' && c.owner === 'human') o.needsYou += 1
         if (c.column === 'blocked') o.blocked += 1
+      }
+      for (const row of needsYouRows) {
+        const o = (out[row.repo] ||= { review: 0, needsYou: 0, blocked: 0 })
+        o.needsYou += 1
       }
       return out
     },

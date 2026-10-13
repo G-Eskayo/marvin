@@ -1,5 +1,6 @@
 import { dependencyRefs, openDependencies } from './board.js'
 import { parseHumanTask } from '../../src/lib/human_task.js'
+import { projectIdOf } from '../../src/lib/projects.js'
 
 const DAY_MS = 86400_000
 
@@ -194,11 +195,22 @@ export function rankNeedsYou(tickets, { now = Date.now() } = {}) {
     const graph = graphs[t.repo] || {}
     const unblocks = transitiveUnblocks(t.number, t.repo, graph, tickets.filter((x) => x.repo === t.repo))
 
+    // Derive project ID: check labels for 'project:<id>' override, else use projectIdOf(repo)
+    let projectId = projectIdOf(t.repo)
+    for (const label of t.labels || []) {
+      const labelStr = typeof label === 'string' ? label : (label?.name || '')
+      if (labelStr.startsWith('project:')) {
+        projectId = labelStr.slice(8) // Remove 'project:' prefix
+        break
+      }
+    }
+
     rows.push({
       repo: t.repo,
       number: t.number,
       title: t.title,
       url: t.url,
+      project: projectId,
       kind: labels.has('needs-info') ? 'needs-info' : 'ready-for-human',
       unblocks,
       ask,

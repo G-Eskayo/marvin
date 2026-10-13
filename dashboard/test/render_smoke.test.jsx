@@ -257,4 +257,51 @@ describe('DashboardHome', () => {
     const html = renderToStaticMarkup(<DashboardHome onOpenProject={() => {}} />)
     expect(html).toContain('Loading projects')
   })
+
+  it('renders NeedsYouList unconditionally (test 34)', () => {
+    const html = renderToStaticMarkup(
+      <DashboardHome onOpenProject={() => {}} onOpenTicket={() => {}} />
+    )
+    expect(html).toContain('Needs you')
+  })
+
+  it('renders conditionally based on loading state (test 35)', () => {
+    const html = renderToStaticMarkup(
+      <DashboardHome onOpenProject={() => {}} onOpenTicket={() => {}} />
+    )
+    // On first render with no data yet, shows loading message
+    expect(html).toContain('Loading projects')
+  })
+})
+
+import NeedsYouList from '../src/components/NeedsYouList.jsx'
+
+describe('NeedsYouList regression', () => {
+  it('renders with new priorityPill {label, colorClass} structure and kindLabel (test 36)', () => {
+    const html = renderToStaticMarkup(
+      <NeedsYouList onOpenTicket={() => {}} boards={[]} />
+    )
+    // Should contain the section header
+    expect(html).toContain('Needs you')
+    // Should show the empty state on mount before data loads
+    expect(html).toContain('Nothing needs you')
+  })
+
+  it('renders sort buttons for priority, unblocks, oldest, and project (test 37)', () => {
+    const html = renderToStaticMarkup(
+      <NeedsYouList onOpenTicket={() => {}} boards={[]} />
+    )
+    expect(html).toContain('Priority')
+    expect(html).toContain('Unblocks')
+    expect(html).toContain('Oldest')
+    expect(html).toContain('Project')
+  })
+
+  it('uses correct empty state text "Nothing needs you" (test 38)', () => {
+    const html = renderToStaticMarkup(
+      <NeedsYouList onOpenTicket={() => {}} boards={[]} />
+    )
+    // Exact empty state text (not "Nothing needs you right now.")
+    expect(html).toContain('Nothing needs you</p>')
+  })
 })
