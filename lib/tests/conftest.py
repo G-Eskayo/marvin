@@ -222,3 +222,13 @@ def _isolate_error_log(tmp_path_factory, monkeypatch):
     # marvin#422: every failure path now records to errors.jsonl; no test may write the real ~/.claude/logs one.
     import error_log
     monkeypatch.setattr(error_log, "PATH", tmp_path_factory.mktemp("errors") / "errors.jsonl")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_github_usage(tmp_path_factory, monkeypatch):
+    # github_usage keeps an hourly cache beside the gate's logs; no test may write the real ~/.claude/logs.
+    import github_usage
+    d = tmp_path_factory.mktemp("gh-usage")
+    monkeypatch.setattr(github_usage, "CALLS_PATH", d / "gh-calls.jsonl")
+    monkeypatch.setattr(github_usage, "BUDGET_PATH", d / "gh-budget.jsonl")
+    monkeypatch.setattr(github_usage, "HOURLY_PATH", d / "gh-usage-hourly.json")

@@ -85,11 +85,10 @@ def _peer_docs(host: str, ssh) -> tuple[dict | None, dict | None, bool]:
 
 
 def local_github() -> dict | None:
-    """This Mac's GitHub use, from the gh gate's logs (lib/github_usage.py): cheap, so read live."""
+    """This Mac's GitHub use, from the gh gate's logs (lib/github_usage.py): hourly aggregates that only read new log bytes."""
     try:
         import github_usage
-        return github_usage.summarize(github_usage.read_jsonl(github_usage.CALLS_PATH),
-                                      github_usage.read_jsonl(github_usage.BUDGET_PATH), datetime.now(timezone.utc))
+        return github_usage.report(datetime.now(timezone.utc))
     except Exception:  # noqa: BLE001
         return None
 

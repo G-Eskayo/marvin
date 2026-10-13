@@ -4,6 +4,7 @@ import ToolsView from './ToolsView.jsx'
 import UsageView from './UsageView.jsx'
 import GithubView from './GithubView.jsx'
 import { machineFreshness } from '../lib/usage_view.js'
+import { readSaved, writeSaved, ageText } from '../lib/saved_state.js'
 
 const SECTIONS = [
   { id: 'tools', label: 'Tools & skills' },
@@ -11,6 +12,16 @@ const SECTIONS = [
   { id: 'github', label: 'GitHub' },
   { id: 'pipeline', label: 'Pipeline results' }
 ]
+
+const SAVED_KEY = 'metrics.usage.last'
+
+function storage() {
+  try {
+    return window.localStorage
+  } catch {
+    return undefined
+  }
+}
 
 const FRESH_STYLE = { ok: 'text-neutral-500', unreachable: 'text-red-400', 'no-data': 'text-amber-400' }
 
@@ -20,14 +31,32 @@ const FRESH_STYLE = { ok: 'text-neutral-500', unreachable: 'text-red-400', 'no-d
 export default function MetricsPage() {
   const [section, setSection] = useState('tools')
   const [which, setWhich] = useState('all')
-  const [data, setData] = useState(undefined) // { report, error } | undefined while loading
+  // Saved state (marvin#236/#417): the last report draws instantly, and a fresh one replaces it when it arrives.
+  const [saved] = useState(() => readSaved(storage(), SAVED_KEY))
+  const [data, setData] = useState(() => (saved ? { report: saved.value, error: null } : undefined)) // undefined while the first ever read runs
+  const [updatedAt, setUpdatedAt] = useState(saved?.at ?? null)
   const [loading, setLoading] = useState(false)
+  const [, tick] = useState(0)
 
   const load = () => {
     setLoading(true)
-    window.api.metrics.usage().then(setData).catch((e) => setData({ report: null, error: String(e) })).finally(() => setLoading(false))
+    window.api.metrics.usage()
+      .then((d) => {
+        setData((prev) => (d?.report ? d : { report: prev?.report ?? null, error: d?.error || 'No report' }))
+        if (d?.report) {
+          const at = Date.now()
+          writeSaved(storage(), SAVED_KEY, d.report, at)
+          setUpdatedAt(at)
+        }
+      })
+      .catch((e) => setData((prev) => ({ report: prev?.report ?? null, error: String(e) })))
+      .finally(() => setLoading(false))
   }
   useEffect(load, [])
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 30_000) // keeps "updated X ago" honest
+    return () => clearInterval(t)
+  }, [])
 
   const machines = data?.report?.machines || []
   return (
@@ -47,6 +76,7 @@ export default function MetricsPage() {
                 {m.machine === 'all' ? 'Both machines' : m.machine}{m.this ? ' (this one)' : ''}
               </button>
             ))}
+            {updatedAt != null && <span className="text-[11px] text-neutral-600">{loading ? 'updating…' : ageText(updatedAt)}</span>}
             <button onClick={load} disabled={loading} className="rounded bg-neutral-900 px-2 py-1 text-xs text-neutral-400 hover:text-neutral-200 disabled:opacity-50">{loading ? 'Reading…' : 'Refresh'}</button>
           </div>
         )}
