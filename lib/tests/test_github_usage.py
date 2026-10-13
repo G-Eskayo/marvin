@@ -213,3 +213,11 @@ def test_the_dashboard_app_is_one_caller_across_launches():
     top = {t["caller"]: t for t in gu.summarize(rows, [], NOW)["top"]}
     assert top["MARVIN dashboard app"]["calls"] == 2 and top["MARVIN dashboard app"]["group"] == "dashboard"
     assert top["ticket-pipeline"]["group"] == "pipeline"
+
+
+def test_top_callers_count_their_own_refusals_and_holds():
+    rows = [row(5, "ticket_pipeline.py", refused="burst", rc=1), row(6, "ticket_pipeline.py"), row(7, "ticket_pipeline.py", deferred="d", rc=75),
+            row(8, "zsh", refused="burst", rc=1)]
+    top = {t["caller"]: t for t in gu.summarize(rows, [], NOW)["top"]}
+    assert (top["ticket_pipeline.py"]["refused"], top["ticket_pipeline.py"]["deferred"]) == (1, 1)
+    assert (top["zsh"]["refused"], top["zsh"]["deferred"]) == (1, 0)
