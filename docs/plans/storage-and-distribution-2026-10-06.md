@@ -175,6 +175,35 @@ Each "reclaim" task is a proposal. It runs only after Gil approves that specific
 - [ ] E1. Move the ingested repos out of iCloud to one machine.
 - [ ] E2. Decide on an external SSD for the mini as the cache/archive tier.
 
+## 9. 2026-10-14 follow-up: Mini back at 90% full, then data by kind
+
+**Reclaimed (Gil approved each item):** the leaked `Seal-118` simulator (3.5 GB; clarity-captions #118 merged 2026-10-10, but the simulator was still running), aerial wallpapers (7.6 GB, macOS downloads them again on demand), the Claude desktop VM bundle (6.7 GB, downloads again on use) and the Trash (1 GB). Mini went from 22 GB to 39 GB free. Kept: all three qwen2.5 models (each has a role in `lib/model_registry.py`) and `nomic-embed-text`.
+
+**Why the automation missed it:**
+- `disk_trim` runs nightly but its allowlist only covers small caches (a few hundred MB a night). Simulators, app data and wallpapers aren't in it.
+- Its log was off by 1024×: trimmers returned bytes into `reclaimed_kb` ("Total freed: 274284 MiB" on a 228 GB disk). The worktree build-output trimmer measured after deleting, so it always said 0. **Fixed 2026-10-14** (`lib/disk_trim.py`, 3 tests).
+- The disk ledger has no category for simulators or `~/Library/Application Support`, so 18 GB grew without showing up anywhere.
+- Builder simulators: no code creates `Seal-NNN`. A builder agent made it up, and the only cleanup is a line in the builder prompt. A prompt rule isn't a guarantee.
+
+**Data by kind (answers "all methods, or pick one?": one method per kind):**
+
+| Kind | Examples | Method |
+|---|---|---|
+| Records to query or chart | bench metrics, logs, telemetry, usage, health history, disk ledger | Database (SQLite / DuckDB). This is about fast access, not space. All of MARVIN's text is about 1.7 GB per Mac. |
+| Large text, written once, read rarely | session transcripts (1.0–1.5 GB per Mac), outbox | APFS transparent compression: same paths, so nothing that reads them changes. zstd measured 3.1× on a 29 MB transcript. |
+| Large binaries that can be downloaded again | models, simulators, build caches, VM bundles | Neither. Delete or move to another tier (sections 5, 8 E2). |
+
+**Order (Gil, 2026-10-14):** space first, then databases for fast access, in this document.
+
+### F. Tasks from 2026-10-14
+- [x] F1. Reclaim on the Mini (above).
+- [x] F2. Fix `disk_trim` units and build-output measurement.
+- [x] F3. (done 2026-10-14: `cleanup_sweep.sweep_simulators`, 10 tests; dry run on both Macs clean, real GitHub lookup on #118 → remove. The run-end delete stays a builder prompt rule for now, since builders name their own simulators; the nightly sweep is the guarantee) Builder simulators are disposable (ADR 0065): the run that creates one deletes it when it ends, pass or fail; the nightly sweep deletes any left over whose ticket is closed or merged, and reports the ones it can't link to a ticket. Test first.
+- [x] F2b. (found while doing F3) A duplicate `_default_outcome_check` in cleanup_sweep overrode #305's, so nightly ticket promotion never ran from 2026-10-08. Duplicate removed, test added (conftest stubs that function for every test, which is how it hid).
+- [ ] F4. Add `simulators` and `app_support` categories to the disk ledger so growth there shows on the Health tab.
+- [ ] F5. APFS-compress cold transcripts (unchanged for 30+ days) during the nightly sweep. Reversible, deletes nothing. Measure on the Mini first.
+- [ ] F6. Database design: which records go in, SQLite vs DuckDB, one per Mac vs synced, migration from today's files. Grill before building (ADR).
+
 ## Open questions for Gil
 
 1. Approve A1–A2 now (~34 GiB on the mini, merged and clean only)?

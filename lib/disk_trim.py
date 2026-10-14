@@ -76,7 +76,7 @@ def _build_never_trim_worktrees() -> set[Path]:
 
 # Allowlist of paths we will trim when disk is low. Each maps to a cleanup function.
 def _get_size_kb(path: Path) -> int:
-    """Get size of path in KB."""
+    """Get size of path in KB. Every trimmer returns KB, which trim() records as reclaimed_kb."""
     try:
         result = subprocess.run(
             ["du", "-sk", str(path)],
@@ -97,7 +97,7 @@ def _trim_npm():
     if p.exists():
         kb = _get_size_kb(p)
         shutil.rmtree(p)
-        return kb * 1024
+        return kb
 
 
 def _trim_pnpm():
@@ -106,7 +106,7 @@ def _trim_pnpm():
     if p.exists():
         kb = _get_size_kb(p)
         shutil.rmtree(p)
-        return kb * 1024
+        return kb
 
 
 def _trim_pip():
@@ -115,7 +115,7 @@ def _trim_pip():
     if p.exists():
         kb = _get_size_kb(p)
         shutil.rmtree(p)
-        return kb * 1024
+        return kb
 
 
 def _trim_brew():
@@ -130,7 +130,7 @@ def _trim_brew():
             if cache_dir.exists():
                 kb = _get_size_kb(cache_dir)
                 shutil.rmtree(cache_dir)
-                return kb * 1024
+                return kb
     except Exception:
         pass
 
@@ -141,7 +141,7 @@ def _trim_electron():
     if p.exists():
         kb = _get_size_kb(p)
         shutil.rmtree(p)
-        return kb * 1024
+        return kb
 
 
 def _trim_swiftpm():
@@ -150,7 +150,7 @@ def _trim_swiftpm():
     if p.exists():
         kb = _get_size_kb(p)
         shutil.rmtree(p)
-        return kb * 1024
+        return kb
 
 
 def _trim_xcode_derived_data():
@@ -171,7 +171,7 @@ def _trim_xcode_derived_data():
         if now - mtime > threshold_s:
             kb = _get_size_kb(entry)
             shutil.rmtree(entry)
-            total_freed += kb * 1024
+            total_freed += kb
 
     return total_freed
 
@@ -190,10 +190,11 @@ def _trim_worktree_build_output(keep_worktrees: set[Path]):
             build_dir = wt_path / rel_path
             if build_dir.exists() and (now - build_dir.stat().st_mtime) > threshold_s:
                 try:
+                    kb = _get_size_kb(build_dir)  # before the delete: measured after, it was always 0
                     # Use drop_build_output for safety (git-ignore-respecting)
                     removed = cs.drop_build_output(wt_path, [rel_path])
                     if removed:
-                        total_freed += build_dir.stat().st_size if build_dir.exists() else 0
+                        total_freed += kb
                 except Exception:
                     pass
 
