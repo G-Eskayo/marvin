@@ -13,7 +13,7 @@ import { createGithubState, repoOfSource } from './github_state.js'
 import { createStackRetarget } from './stack_retarget.js'
 import { prsForOrderCheck, listPipelinePrs, approveMr, denyMr, fetchTicketContext, sentBackKeys, clearSentBackLabel } from './mr_review.js'
 import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
-import { readDispatchStatus } from './dispatch_status.js'
+import { readDispatchStatus, DISPATCH_STATE_PATH } from './dispatch_status.js'
 import { readHealthStatus, runHealthCheckNow } from './health.js'
 import { readOnboardingPlans } from './onboarding.js'
 import { readCachedRepos } from './docs.js'
@@ -41,8 +41,7 @@ import { readMergeableRepos, readUiPaths, listProfiles, setDispatch, setMergeFro
 import { searchFiles, isRevealable, isLinkable, linkAction } from './files_search.js'
 import { listOutboxTree, readOutboxFile } from './outbox.js'
 import { readCatalog, readMasterDoc, CATALOG_DIR, MASTER_DOC_PATH } from './catalog.js'
-import { STAGES_DIR } from '../../webhook-server/ticket_stages.js'
-import { DISPATCH_STATE_PATH } from './dispatch_status.js'
+import { STAGES_DIR, readStages } from '../../webhook-server/ticket_stages.js'
 import { createHash } from 'crypto'
 import { JOBS_DIR } from './jobs.js'
 import { openMarvinSession } from './marvin_session.js'
@@ -614,7 +613,7 @@ function registerMrReviewHandlers() {
   const fixturePrs = process.env.MARVIN_MR_FIXTURE ? async () => JSON.parse(readFileSync(process.env.MARVIN_MR_FIXTURE, 'utf8')) : null
   ipcMain.handle('mr:list', () => {
     if (!fixturePrs) listOpenPrs().then((prs) => stackRetarget.check(prs)).catch(() => {})
-    return listPipelinePrs(fixturePrs || listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets, autoMergeShadow: getAutoMergeShadow, uiPathsFor: (repo) => readUiPaths(repo) })
+    return listPipelinePrs(fixturePrs || listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets, autoMergeShadow: getAutoMergeShadow, uiPathsFor: (repo) => readUiPaths(repo), liveDispatch: readDispatchStatus(DISPATCH_STATE_PATH), stagesDir: STAGES_DIR, readStagesFn: readStages })
   })
 
   // Backs the MR Review tab's status dot -- red/blue/green computed from

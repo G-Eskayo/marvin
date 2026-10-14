@@ -1,6 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
 
-vi.mock('../webhook-server/ticket_stages.js', () => ({ recordStage: vi.fn() }))
+vi.mock('../webhook-server/ticket_stages.js', async () => ({
+  ...(await vi.importActual('../webhook-server/ticket_stages.js')),
+  recordStage: vi.fn()
+}))
 vi.mock('../webhook-server/failure_log.js', () => ({ recordFailure: vi.fn() }))
 vi.mock('../webhook-server/rebase_status.js', () => ({ writeRebaseStatus: vi.fn(), readRebaseStatus: vi.fn(() => ({})) }))
 
@@ -266,10 +269,10 @@ describe('assertDecisions (merge server)', () => {
 describe('mergePr and the review card', () => {
   it('mergePr refuses open decisions before any gate work or merge', async () => {
     const exec = vi.fn(async () => ({ stdout: JSON.stringify({ body: SEAL, baseRefName: 'main', isDraft: false, files: [] }), stderr: '' }))
-    const shouldGate = vi.fn()
+    const shouldGate = vi.fn().mockResolvedValue({ gate: false, headRefName: 'feature', body: SEAL })
     await expect(mergePr('https://github.com/G-Eskayo/marvin/pull/99', exec, () => Promise.resolve(), () => {}, shouldGate))
       .rejects.toMatchObject({ payload: { code: 'DECISIONS_PENDING' } })
-    expect(shouldGate).not.toHaveBeenCalled()
+    expect(shouldGate).toHaveBeenCalled()
     expect(exec.mock.calls.some((c) => c[1]?.[1] === 'merge')).toBe(false)
   })
 

@@ -8,7 +8,10 @@ import { describe, it, expect, vi } from 'vitest'
 // Mocked at the module level (not per-call-site) since mergePr is called
 // with positional args throughout this file and recordStageFn is the
 // last of eight.
-vi.mock('../webhook-server/ticket_stages.js', () => ({ recordStage: vi.fn() }))
+vi.mock('../webhook-server/ticket_stages.js', async () => ({
+  ...(await vi.importActual('../webhook-server/ticket_stages.js')),
+  recordStage: vi.fn()
+}))
 // Likewise the approve-failure log (shared with lib/failure_breaker.py): never write the
 // real ~/.claude/logs/pipeline-failures.jsonl from a test.
 vi.mock('../webhook-server/failure_log.js', () => ({ recordFailure: vi.fn() }))
@@ -1178,5 +1181,103 @@ describe('a gate that never finishes is cut off and says so', () => {
     const ok = vi.fn().mockResolvedValue({ ok: true })
     const result = await mergePr(PR, exec(), noopRebuild, noopRedispatch, gate(), ok, vi.fn(), vi.fn(), { gateTimeoutMs: 5000 })
     expect(result.merged).toBe(true)
+  })
+})
+
+describe('DRAFT_READY stage recording', () => {
+  const PR = 'https://github.com/G-Eskayo/marvin/pull/80'
+
+  // Test 26: no-trace regression - DRAFT_READY recorded even if later step fails
+  it('records DRAFT_READY stage before uiEvidence/decisions, so trace is left even if they fail', async () => {
+    const recordStageFn = vi.fn()
+    const uiEvidenceFails = vi.fn().mockRejectedValue(new Error('missing image'))
+    const exec = execWithCodeReviewDefaults(vi.fn().mockResolvedValue({ stdout: '', stderr: '' }))
+    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: false, headRefName: 'feature', body: 'Closes G-Eskayo/marvin#5' })
+    const draftExec = vi.fn(async (cmd, args) => {
+      if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view' && args.includes('isDraft')) return { stdout: JSON.stringify({ isDraft: true }), stderr: '' }
+      if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'ready') return { stdout: '', stderr: '' }
+      if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'comment') return { stdout: '', stderr: '' }
+      return exec(cmd, args)
+    })
+
+    await expect(
+      mergePr(PR, draftExec, noopRebuild, noopRedispatch, shouldGateMerge, undefined, undefined, recordStageFn, { uiEvidence: uiEvidenceFails, decisions: vi.fn() })
+    ).rejects.toThrow('missing image')
+
+    // DRAFT_READY should have been recorded despite the later failure
+    expect(recordStageFn).toHaveBeenCalledWith('5', 'merging', 'passed', expect.stringContaining('DRAFT_READY'))
+  })
+
+  // Test 27: status is 'passed' not 'started'
+  it('records DRAFT_READY with status=passed, not started', async () => {
+    const recordStageFn = vi.fn()
+    const exec = execWithCodeReviewDefaults(vi.fn().mockResolvedValue({ stdout: '', stderr: '' }))
+    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: false, headRefName: 'feature', body: 'Closes G-Eskayo/marvin#6' })
+    const draftExec = vi.fn(async (cmd, args) => {
+      if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view' && args.includes('isDraft')) return { stdout: JSON.stringify({ isDraft: true }), stderr: '' }
+      if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'ready') return { stdout: '', stderr: '' }
+      if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'comment') return { stdout: '', stderr: '' }
+      if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'merge') return { stdout: '', stderr: '' }
+      return exec(cmd, args)
+    })
+
+    await mergePr(PR, draftExec, noopRebuild, noopRedispatch, shouldGateMerge, undefined, undefined, recordStageFn, { rebaseOpen: vi.fn().mockResolvedValue([]) })
+    // Verify the DRAFT_READY call has status 'passed'
+    const draftReadyCalls = recordStageFn.mock.calls.filter(c => c[3]?.includes('DRAFT_READY'))
+    expect(draftReadyCalls.length).toBeGreaterThan(0)
+    expect(draftReadyCalls[0][2]).toBe('passed')
+  })
+
+  // Test 28: ordering - DRAFT_READY recorded before gate stage
+  it('records DRAFT_READY before the gate stage', async () => {
+    const recordStageFn = vi.fn()
+    const exec = execWithCodeReviewDefaults(vi.fn().mockResolvedValue({ stdout: '', stderr: '' }))
+    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: false, headRefName: 'feature', body: 'Closes G-Eskayo/marvin#7' })
+    const draftExec = vi.fn(async (cmd, args) => {
+      if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view' && args.includes('isDraft')) return { stdout: JSON.stringify({ isDraft: true }), stderr: '' }
+      if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'ready') return { stdout: '', stderr: '' }
+      if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'comment') return { stdout: '', stderr: '' }
+      if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'merge') return { stdout: '', stderr: '' }
+      return exec(cmd, args)
+    })
+
+    await mergePr(PR, draftExec, noopRebuild, noopRedispatch, shouldGateMerge, undefined, undefined, recordStageFn, { rebaseOpen: vi.fn().mockResolvedValue([]) })
+    const calls = recordStageFn.mock.calls
+    const draftReadyIdx = calls.findIndex(c => c[3]?.includes('DRAFT_READY'))
+    const gateIdx = calls.findIndex(c => c[1] === 'gate')
+    expect(draftReadyIdx).toBeGreaterThanOrEqual(0)
+    if (gateIdx >= 0) {
+      expect(draftReadyIdx).toBeLessThan(gateIdx)
+    }
+  })
+
+  // Test 29: readyIfDraft returns boolean not undefined
+  it('readyIfDraft returns strict false when gh call throws, true on success', async () => {
+    const { readyIfDraft } = await import('../webhook-server/merge.js')
+    const exec = vi.fn().mockRejectedValue(new Error('network'))
+    const result = await readyIfDraft(PR, exec)
+    expect(result).toBe(false)
+    expect(typeof result).toBe('boolean')
+  })
+
+  // Test 30: regression - existing PR_DRAFT path still works
+  it('PR in draft mode that GitHub refuses to mark ready still fails cleanly', async () => {
+    const recordStageFn = vi.fn()
+    const exec = vi.fn(async (cmd, args) => {
+      if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view') {
+        if (args.includes('isDraft')) return { stdout: JSON.stringify({ isDraft: true }), stderr: '' }
+        if (args.includes('baseRefName')) return { stdout: JSON.stringify({ baseRefName: 'main' }), stderr: '' }
+      }
+      if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'ready') {
+        const err = new Error('GitHub refuses')
+        err.stderr = 'already ready or invalid state'
+        throw err
+      }
+      return { stdout: '', stderr: '' }
+    })
+
+    await expect(
+      mergePr(PR, exec, noopRebuild, noopRedispatch)
+    ).rejects.toMatchObject({ payload: { code: 'PR_DRAFT' } })
   })
 })

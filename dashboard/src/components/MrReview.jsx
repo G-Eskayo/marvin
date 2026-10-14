@@ -2,6 +2,8 @@ import { cleanIpcError } from '../lib/ipcError.js'
 import { useEffect, useRef, useState } from 'react'
 import { describePrState } from '../lib/prState.js'
 import MrDetail from './MrDetail.jsx'
+import StageStrip from './StageStrip'
+import { deriveSegments } from '../lib/stage_strip'
 
 const MR_LIST_REFRESH_MS = 120000
 
@@ -430,6 +432,14 @@ function PrCard({ pr, parity, onOpenTicket, onApproved, onDenied, onSelect }) {
             <p className="text-xs text-amber-400">No structured evidence — needs a manual look</p>
           )}
           <TicketLine row={parity} onOpenTicket={onOpenTicket} />
+          <StageStrip
+            segments={deriveSegments(pr.events || [], {
+              isLiveNow: pr.isLiveNow,
+              checks: pr.checks,
+              conflicts: pr.conflicts,
+              sentBack: pr.sentBack
+            })}
+          />
         </div>
         {/* Approve/Deny live inside the same clickable card -- stop the
             click from also bubbling up to onSelect and opening the detail

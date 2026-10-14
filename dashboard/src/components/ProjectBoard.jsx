@@ -9,6 +9,8 @@ import Markdown from './Markdown.jsx'
 import IssueBody from './IssueBody.jsx'
 import Related, { useRelated } from './Related.jsx'
 import CompletedView from './CompletedView.jsx'
+import StageStrip from './StageStrip'
+import { deriveSegments, STAGE_LABEL } from '../lib/stage_strip'
 
 // Backstop only: triggers (window.api.triggers) drive refreshes; a poll that
 // finds a change no trigger announced is logged as a gap.
@@ -100,6 +102,11 @@ function Card({ card, repo, onSelect, onOpenMr, activeTags, onTag }) {
         )}
       </p>
       <p className={`mt-1 text-xs ${card.reason && /fail|block|stale|no activity/i.test(card.reason) ? 'text-red-400' : 'text-neutral-500'}`}>{card.reason}</p>
+      <StageStrip
+        segments={deriveSegments(card.events || [], {
+          isLiveNow: card.isLive
+        })}
+      />
       <div className="mt-2 flex flex-wrap items-center gap-1">
         {card.owner === 'human' && <span className="rounded bg-sky-950 px-1.5 py-0.5 text-[10px] text-sky-300">needs you</span>}
         {card.progress && (
@@ -211,17 +218,6 @@ function Column({ column, repo, onSelect, onOpenMr, activeTags, onTag, onAllComp
       </div>
     </div>
   )
-}
-
-const STAGE_LABEL = {
-  claimed: 'Claimed',
-  planning: 'Planning',
-  executing: 'Executing',
-  verifying: 'Verifying',
-  gate: 'Merge gate',
-  merging: 'Merging',
-  rebuilding: 'Rebuilding',
-  done: 'Done'
 }
 
 const money = (usd) => (usd ? `$${usd.toFixed(usd < 0.01 ? 4 : 2)}` : '$0.00')

@@ -4,6 +4,8 @@ import { ciState } from '../../webhook-server/ci_status.js'
 import { uiFiles, hasImage } from '../../webhook-server/ui_evidence.js'
 import { parsePrImages } from './pr_images.js'
 import { summarizeDecisions, vagueness } from '../../webhook-server/decisions.js'
+import { readStages } from '../../webhook-server/ticket_stages.js'
+import { taskIsTicket } from './ticket_liveness.js'
 
 // Reads open PRs and identifies which follow the MR pipeline's evidence
 // schema (G-Eskayo/marvin#72, ADR 0024) -- one fixed, structured PR body
@@ -266,7 +268,7 @@ function needsImages(pr, uiPathsFor) {
   return files.length && !hasImage(pr.body || '') ? { files } : null
 }
 
-export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDashboard, sentBackTickets = null, reworkStatus = null, rebaseStatus = null, closedTickets = null, autoMergeShadow = null, uiPathsFor = () => [] } = {}) {
+export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDashboard, sentBackTickets = null, reworkStatus = null, rebaseStatus = null, closedTickets = null, autoMergeShadow = null, uiPathsFor = () => [], liveDispatch = null, stagesDir = null, readStagesFn = readStages } = {}) {
   const prs = await listOpenPrs()
   // The webhook's post-merge rebase results, by PR url (#225). Best effort: without them a card just doesn't say.
   let rebased = {}
@@ -322,13 +324,29 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
     const ticketRef = parseTicketRef(pr.body || '')
     const hasSchema = hasEvidenceSchema(pr.body)
     const evidence = hasSchema ? parseEvidence(pr.body) : null
+    const repo = pr.repo || MARVIN_REPO
+
+    // Read stage events for this ticket, if ticket is linked and stagesDir is provided
+    let events = []
+    let isLiveNow = false
+    if (ticketRef !== null && stagesDir) {
+      try {
+        events = readStagesFn(ticketRef, stagesDir, repo)
+      } catch {
+        events = []
+      }
+    }
+    if (liveDispatch && ticketRef !== null) {
+      isLiveNow = liveDispatch.busy && taskIsTicket(liveDispatch.task, repo, ticketRef)
+    }
+
     return {
       number: pr.number,
       title: pr.title,
       url: pr.url,
-      repo: pr.repo || MARVIN_REPO,
-      key: prKey(pr.repo || MARVIN_REPO, pr.number),
-      canMerge: canMerge(pr.repo || MARVIN_REPO),
+      repo,
+      key: prKey(repo, pr.number),
+      canMerge: canMerge(repo),
       conflicts: pr.mergeable === 'CONFLICTING',
       rebase: rebased[pr.url] || null,
       autoMerge: shadow[pr.url]?.current || null,
@@ -339,23 +357,25 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       decisions: summarizeDecisions(pr.body || ''),
       vague: vagueness(pr.body || ''),
       // Every image in the description (mock-ups, screenshots, frame strips), for the detail view's gallery.
-      images: parsePrImages(pr.body || '', { repo: pr.repo || MARVIN_REPO, headRef: pr.headRefName }),
+      images: parsePrImages(pr.body || '', { repo, headRef: pr.headRefName }),
       // The PR's own branch: repo-relative images in its description resolve there.
       headRef: pr.headRefName || null,
-      baseProblem: baseProblem(prs.map((p) => ({ ...p, repo: p.repo || MARVIN_REPO })), { ...pr, repo: pr.repo || MARVIN_REPO }),
-      waitingOn: waitingOn(withState, { ...pr, repo: pr.repo || MARVIN_REPO }),
+      baseProblem: baseProblem(prs.map((p) => ({ ...p, repo: p.repo || MARVIN_REPO })), { ...pr, repo }),
+      waitingOn: waitingOn(withState, { ...pr, repo }),
       hasSchema,
       // The ticket was sent back for rework (marvin #129): approving would merge work that was just rejected.
-      sentBack: ticketRef !== null && sentBackKeys.has(`${pr.repo || MARVIN_REPO}#${ticketRef}`),
+      sentBack: ticketRef !== null && sentBackKeys.has(`${repo}#${ticketRef}`),
       ticketRef,
-      ticketClosed: ticketRef !== null && closedKeys.has(`${pr.repo || MARVIN_REPO}#${ticketRef}`),
-      rework: ticketRef !== null && sentBackKeys.has(`${pr.repo || MARVIN_REPO}#${ticketRef}`) ? rework[`${pr.repo || MARVIN_REPO}#${ticketRef}`] || null : null,
+      ticketClosed: ticketRef !== null && closedKeys.has(`${repo}#${ticketRef}`),
+      rework: ticketRef !== null && sentBackKeys.has(`${repo}#${ticketRef}`) ? rework[`${repo}#${ticketRef}`] || null : null,
       ticketNumber: evidence?.ticketRef ? Number(evidence.ticketRef) : null,
       evidence,
       // Full body, untruncated -- MrDetail.jsx needs the whole thing since
       // it's exactly the "drill in and actually read it" view; PrCard.jsx
       // truncates its own display slice for the compact list card.
-      rawBody: hasSchema ? null : pr.body || ''
+      rawBody: hasSchema ? null : pr.body || '',
+      events,
+      isLiveNow
     }
   })
 }

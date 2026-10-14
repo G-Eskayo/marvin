@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, rename
 import { homedir } from 'os'
 import path from 'path'
 import { resolveDeviceId } from '../electron/main/device_identity.js'
+import { STAGE_ORDER } from './stage_vocabulary.js'
 
 // Node-side mirror of ~/.agents/lib/ticket_stages.py -- same file format,
 // same path convention (~/.claude/logs/ticket-stages/<owner>__<repo>-<n>.json), so one
@@ -11,7 +12,7 @@ import { resolveDeviceId } from '../electron/main/device_identity.js'
 // (webhook-server, where mergePr() already runs).
 export const STAGES_DIR = path.join(homedir(), '.claude', 'logs', 'ticket-stages')
 
-const VALID_STAGES = new Set(['claimed', 'planning', 'executing', 'verifying', 'gate', 'mutation', 'merging', 'versioning', 'rebuilding', 'done'])
+const VALID_STAGES = new Set(STAGE_ORDER)
 const VALID_STATUSES = new Set(['started', 'passed', 'failed'])
 
 const MARVIN_REPO = 'G-Eskayo/marvin'

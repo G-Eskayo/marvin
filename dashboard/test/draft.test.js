@@ -1,6 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
 
-vi.mock('../webhook-server/ticket_stages.js', () => ({ recordStage: vi.fn() }))
+vi.mock('../webhook-server/ticket_stages.js', async () => ({
+  ...(await vi.importActual('../webhook-server/ticket_stages.js')),
+  recordStage: vi.fn()
+}))
 vi.mock('../webhook-server/failure_log.js', () => ({ recordFailure: vi.fn() }))
 vi.mock('../webhook-server/rebase_status.js', () => ({ writeRebaseStatus: vi.fn(), readRebaseStatus: vi.fn(() => ({})) }))
 

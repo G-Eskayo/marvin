@@ -1,6 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
 
-vi.mock('../webhook-server/ticket_stages.js', () => ({ recordStage: vi.fn() }))
+vi.mock('../webhook-server/ticket_stages.js', async () => ({
+  ...(await vi.importActual('../webhook-server/ticket_stages.js')),
+  recordStage: vi.fn()
+}))
 vi.mock('../webhook-server/failure_log.js', () => ({ recordFailure: vi.fn() }))
 vi.mock('../webhook-server/rebase_status.js', () => ({ writeRebaseStatus: vi.fn(), readRebaseStatus: vi.fn(() => ({})) }))
 
@@ -130,10 +133,10 @@ describe('the approve gate refuses a UI change with no image', () => {
 
   it('mergePr refuses before any gate work or merge', async () => {
     const exec = ghView({ files: ['dashboard/src/components/PrCard.jsx'], body: 'no pictures' })
-    const shouldGate = vi.fn()
+    const shouldGate = vi.fn().mockResolvedValue({ gate: false, headRefName: 'feature', body: 'no pictures' })
     await expect(mergePr('https://github.com/G-Eskayo/marvin/pull/95', exec, () => Promise.resolve(), () => {}, shouldGate))
       .rejects.toMatchObject({ payload: { code: 'NO_UI_EVIDENCE' } })
-    expect(shouldGate).not.toHaveBeenCalled()
+    expect(shouldGate).toHaveBeenCalled()
     expect(exec.mock.calls.some((c) => c[1]?.[1] === 'merge')).toBe(false)
   })
 })

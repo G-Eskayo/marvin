@@ -182,6 +182,7 @@ export function buildBoard({ repo, issues, prs, eventsByNumber = {}, liveNumbers
       prs: d.prs,
       hasTimeline: events.length > 0,
       isLive: liveNumbers.has(issue.number),
+      events,
       ...(isHeld && { revisit })
     }
     // Closed long ago -> archive (never deleted, just out of the way). A closed ticket with no date stays visible.

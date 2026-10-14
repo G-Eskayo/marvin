@@ -417,12 +417,7 @@ async function mergePrUnqueued(
 
   await assertTargetsBase(prUrl, exec, ctx ? ctx.base : 'main')
   await assertNotSentBack(prUrl, exec)
-  await readyIfDraft(prUrl, exec)
-  // A UI change merges only with images the owner has seen (marvin #374). Before any gate work: refusing is cheap.
-  await uiEvidence(prUrl, exec, ctx ? ctx.uiPaths : [])
-  // A PR that asks the owner to choose merges only once he has answered, in its Decisions section (2026-10-09).
-  await decisions(prUrl, exec)
-
+  const draftWasMarkedReady = await readyIfDraft(prUrl, exec)
   const { gate, behind = false, headRefName, body } = ctx ? await shouldGateMerge(prUrl, exec, ctx) : await shouldGateMerge(prUrl, exec)
   const ticketNumber = parseTicketRef(body)
   // Every call below is a no-op (not an error) when ticketNumber is null
@@ -434,6 +429,17 @@ async function mergePrUnqueued(
     if (ctx) recordStageFn(ticketNumber, name, status, detail, { repo })
     else recordStageFn(ticketNumber, name, status, detail)
   }
+
+  // Record draft→ready transition as a stage event (G-Eskayo/marvin#217)
+  // This must happen BEFORE uiEvidence/decisions, so a trace is left even if they fail
+  if (draftWasMarkedReady) {
+    stage('merging', 'passed', 'DRAFT_READY: marked ready for review because the owner approved a draft')
+  }
+
+  // A UI change merges only with images the owner has seen (marvin #374). Before any gate work: refusing is cheap.
+  await uiEvidence(prUrl, exec, ctx ? ctx.uiPaths : [])
+  // A PR that asks the owner to choose merges only once he has answered, in its Decisions section (2026-10-09).
+  await decisions(prUrl, exec)
 
   // The repo's own CI (GitHub checks), when it has any: failing means the code is wrong and the PR goes back
   // with the check names; still running means wait. Before the gate, so no machine time is spent on a red PR.

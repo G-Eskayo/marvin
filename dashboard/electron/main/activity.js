@@ -1,5 +1,6 @@
 import { listAllTrackedTickets, readStages } from '../../webhook-server/ticket_stages.js'
 import { readDispatchStatus } from './dispatch_status.js'
+import { taskIsTicket } from './ticket_liveness.js'
 
 // Activity tab (G-Eskayo/marvin#113-117's scope) -- a per-ticket pipeline
 // timeline, not just live status, per Gil's 2026-10-01 ask: this is meant
@@ -18,19 +19,6 @@ function summarize(events) {
   // "claimed", the first) -- take the first one found, not the last.
   const title = events.find((e) => e.title)?.title || null
   return { currentStage: last.stage, currentStatus: last.status, costUsd, failed, title }
-}
-
-const MARVIN_REPO = 'G-Eskayo/marvin'
-
-// The dispatch label is `ticket #N: ...` for marvin and `ticket <owner/repo>#N: ...` for any other project, so a
-// bare "#13" appears in both. Match the right form, and not "#130" when asked about #13.
-function taskIsTicket(task, repo, number) {
-  if (!task) return false
-  const n = String(number)
-  const form = repo === MARVIN_REPO ? `ticket #${n}` : `${repo}#${n}`
-  const at = task.indexOf(form)
-  if (at < 0) return false
-  return !/\d/.test(task.charAt(at + form.length))
 }
 
 export function listTicketActivity(statePath, stagesDir) {
