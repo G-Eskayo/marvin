@@ -215,3 +215,10 @@ def _isolate_seal_beta(tmp_path_factory, monkeypatch):
     import seal_beta_ingest
     monkeypatch.setattr(seal_beta_ingest, "ATTACHMENTS_DIR", tmp_path_factory.mktemp("seal-attachments"))
     monkeypatch.setattr(seal_beta_ingest, "STORE_DIR", tmp_path_factory.mktemp("seal-beta"))
+
+
+@pytest.fixture(autouse=True)
+def _isolate_error_log(tmp_path_factory, monkeypatch):
+    # marvin#422: every failure path now records to errors.jsonl; no test may write the real ~/.claude/logs one.
+    import error_log
+    monkeypatch.setattr(error_log, "PATH", tmp_path_factory.mktemp("errors") / "errors.jsonl")

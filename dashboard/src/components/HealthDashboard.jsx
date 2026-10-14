@@ -67,6 +67,40 @@ function CheckCard({ check, onClick }) {
   )
 }
 
+// marvin#422: errors are never silent. Every kind of error on either Mac in the last 24 hours, folded, newest first:
+// machine · where · plain cause · how many times · when. Red while it keeps repeating within the hour.
+function ago(t, now) {
+  const m = Math.round((now - Date.parse(t)) / 60_000)
+  if (!Number.isFinite(m)) return ''
+  return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`
+}
+
+export function RecentErrors({ errors, now = Date.now() }) {
+  if (!Array.isArray(errors)) return null
+  return (
+    <section className="mt-6">
+      <h3 className="mb-2 text-sm font-medium text-neutral-200">Recent errors</h3>
+      {errors.length === 0 ? (
+        <p className="text-sm text-neutral-500">No errors in the last 24 hours on either Mac.</p>
+      ) : (
+        <ul className="divide-y divide-neutral-800 rounded-lg border border-neutral-800">
+          {errors.map((e) => (
+            <li key={`${e.machine}|${e.source}|${e.cause}`} data-severity={e.severity} className="flex flex-col gap-0.5 px-3 py-2 text-sm">
+              <div className="flex items-baseline gap-2">
+                <span className={`h-2 w-2 shrink-0 rounded-full ${e.severity === 'red' ? 'bg-red-500' : 'bg-amber-400'}`} />
+                <span className="font-medium text-neutral-100">{e.cause}</span>
+                <span className="ml-auto shrink-0 text-xs text-neutral-500">×{e.count} · {ago(e.last_t, now)}</span>
+              </div>
+              <div className="pl-4 text-xs text-neutral-400">{e.machine} · <span className="font-mono">{e.source}</span>{e.message ? ` · ${e.message}` : ''}</div>
+              {e.raw && <pre className="ml-4 mt-1 max-h-24 overflow-auto whitespace-pre-wrap rounded bg-neutral-900 p-2 font-mono text-[11px] text-neutral-500">{e.raw}</pre>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
 function UnmonitoredCard({ jobName, onClick }) {
   const colors = SEVERITY_COLOR.unmonitored
   return (
@@ -243,6 +277,7 @@ export default function HealthDashboard({ nav }) {
           ))}
         </div>
       )}
+      <RecentErrors errors={status.recent_errors} />
       </>
       )}
     </div>
