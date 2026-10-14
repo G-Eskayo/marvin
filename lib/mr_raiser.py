@@ -27,6 +27,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mr_notification import notify_mr_ready as _default_notify_mr_ready  # noqa: E402
 import machine_profile  # noqa: E402
 
+# Gil authors every pipeline commit and MARVIN co-authors it: the ideas and direction are his, so the history
+# should read as Gil guiding MARVIN, even where MARVIN wrote the code (2026-10-14). Pinned here rather than read
+# from git config, which differs per machine and per repo and left the pipeline's history half one, half the other.
+AUTHOR = "Gil Eskayo <145878126+G-Eskayo@users.noreply.github.com>"
+CO_AUTHOR = "Co-Authored-By: MARVIN <marvin@marvin.dev>"
+
 
 def _current_branch(worktree_path: Path) -> str:
     result = subprocess.run(
@@ -52,6 +58,24 @@ def _leave_out_generated(worktree_path: Path, ticket_ref: str) -> None:
         print(f"[mr_raiser] generated-file filter skipped: {exc}", file=sys.stderr)
 
 
+def _ticket_title(ticket_ref: str) -> str | None:
+    repo, _, number = ticket_ref.rpartition("#")
+    try:
+        out = subprocess.run(["gh", "issue", "view", number, "--repo", repo, "--json", "title", "-q", ".title"],
+                             capture_output=True, text=True, timeout=30)
+    except Exception:  # noqa: BLE001
+        return None
+    return (out.stdout.strip() or None) if out.returncode == 0 else None
+
+
+def _subject(ticket_ref: str) -> str:
+    """Says what the change does, in the repo's "<what> (#n)" form. A bare "Implement G-Eskayo/marvin#422" told
+    nobody anything: an outside index quoted it back verbatim (2026-10-14). Falls back to that form, which
+    ticket_evidence also recognises, when the title can't be read: an unreadable title never blocks the PR."""
+    title = " ".join((_ticket_title(ticket_ref) or "").split())
+    return f"{title} (#{ticket_ref.rpartition('#')[2]})" if title else f"Implement {ticket_ref}"
+
+
 def _commit_and_push(worktree_path: Path, ticket_ref: str) -> str:
     branch = _current_branch(worktree_path)
     subprocess.run(["git", "add", "-A"], cwd=worktree_path, check=True)
@@ -61,7 +85,7 @@ def _commit_and_push(worktree_path: Path, ticket_ref: str) -> str:
     ).stdout
     if status.strip():
         subprocess.run(
-            ["git", "commit", "-m", f"Implement {ticket_ref}"],
+            ["git", "commit", f"--author={AUTHOR}", "-m", _subject(ticket_ref), "-m", CO_AUTHOR],
             cwd=worktree_path, check=True, capture_output=True,
         )
     # A ticket sent back and re-dispatched is rebuilt from the current main under the SAME branch name, while
@@ -176,7 +200,7 @@ def _default_open_pr(
     repo_args = ["--repo", repo] if repo else []
     try:
         result = subprocess.run(
-            ["gh", "pr", "create", *repo_args, "--title", f"Implement {ticket_ref}", "--body", body,
+            ["gh", "pr", "create", *repo_args, "--title", _subject(ticket_ref), "--body", body,
              "--base", base_branch, "--head", branch],
             check=True, capture_output=True, text=True,
         )
