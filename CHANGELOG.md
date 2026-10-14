@@ -1,5 +1,7 @@
 # Changelog
 
+- Memory-sync block is a hard stop at the top of the session-start report, with stuck duration and refusal count ([#429](https://github.com/G-Eskayo/marvin/pull/429))
+
 - Errors are never silent: one bounded error log per Mac, Health 'Recent errors', shown where they happen ([#425](https://github.com/G-Eskayo/marvin/pull/425))
 
 - Pipeline screenshots: capture by attaching over CDP (Playwright launch is broken), then unstick #358/#359/#368 ([#424](https://github.com/G-Eskayo/marvin/pull/424))
