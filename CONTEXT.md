@@ -1266,4 +1266,11 @@ Design lives in clarity-captions (ADR 0023 sending, ADR 0024 receiving, `docs/be
 - **Health** `seal:beta-ingest` (only where the plist is installed): red when Messages can't be read. Full Disk Access
   for the venv's real `python3.11` is reset by every Homebrew Python upgrade, so this fails loudly, never as "0
   reports".
-- Next: #408 dashboard view (needs-info), #409 numbers-only public tickets, #410 TestFlight feed.
+- **`lib/seal_beta_tickets.py`**, launchd `com.marvin.seal-beta-tickets` (every 10 min, **Mac Mini only**, #409). Reads
+  `summary.json` and files or updates GitHub tickets on G-Eskayo/clarity-captions when device-level thresholds are
+  crossed: lag_p95 > 2 seconds, any "stuck" ending, or median_rating ≤ 4 (from ≥ 2 reports). One ticket per
+  (device model, problem). Privacy rule (hard rule; the repo is public): ticket text holds only device model, build,
+  report count and measurements — never notes, tester names, phone numbers, or timestamps. Idempotent via hidden-marker
+  comments in ticket bodies (GitHub is the source of truth for whether a ticket exists). Local `ticket-status.json`
+  cursor tracks round-robin window position when breaches exceed the per-run cap, never for deciding existence.
+- Next: #408 dashboard view (needs-info), #410 TestFlight feed.

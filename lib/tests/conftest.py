@@ -215,3 +215,10 @@ def _isolate_seal_beta(tmp_path_factory, monkeypatch):
     import seal_beta_ingest
     monkeypatch.setattr(seal_beta_ingest, "ATTACHMENTS_DIR", tmp_path_factory.mktemp("seal-attachments"))
     monkeypatch.setattr(seal_beta_ingest, "STORE_DIR", tmp_path_factory.mktemp("seal-beta"))
+
+
+@pytest.fixture(autouse=True)
+def _isolate_seal_beta_tickets(tmp_path_factory, monkeypatch):
+    # The Seal Speak beta ticket filer writes summaries and ticket status; no test may touch the real store.
+    import seal_beta_tickets
+    monkeypatch.setattr(seal_beta_tickets, "STORE_DIR", tmp_path_factory.mktemp("seal-beta-tickets"))
