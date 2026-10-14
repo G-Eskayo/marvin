@@ -36,7 +36,7 @@
   },
   "build": {
     "appId": "com.gileskayo.marvin-metrics-dashboard",
-    "productName": "MARVIN Metrics",
+    "productName": "MARVIN",
     "directories": {
       "output": "dist"
     },
@@ -48,7 +48,7 @@
       "category": "public.app-category.developer-tools",
       "icon": "resources/icon.png",
       "extendInfo": {
-        "NSAppleEventsUsageDescription": "MARVIN Metrics controls Google Chrome so the Portfolio tab's Open dev site button can take you to the dev site tab you already have open."
+        "NSAppleEventsUsageDescription": "MARVIN controls Google Chrome so the Portfolio tab's Open dev site button can take you to the dev site tab you already have open."
       }
     },
     "files": [

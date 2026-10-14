@@ -21,6 +21,7 @@ import { promisify } from 'util'
 import { createPortfolio } from '../electron/main/portfolio.js'
 import { handlePortfolioRequest } from '../electron/main/portfolio_remote.js'
 import { resolveServiceDefaults } from '../electron/main/device_identity.js'
+import { createRebuildCheckTrigger } from './rebuild_check.js'
 
 // Authenticate gh/git children from the pipeline's shared credential file (see gh_auth.js).
 const ghTokenSource = loadGhToken()
@@ -204,6 +205,8 @@ const server = createServer(async (req, res) => {
   }
 })
 
+const rebuildCheck = createRebuildCheckTrigger()
+
 server.listen(PORT, () => {
   console.log(`MR-approval webhook listening on http://localhost:${PORT}/approve`)
   console.log(`GitHub credential source: ${ghTokenSource}`)
@@ -215,6 +218,7 @@ server.listen(PORT, () => {
     probe: createGithubProbe(),
     ping: (repo) => {
       console.log(`[gh-watch] change detected on ${repo} at ${new Date().toISOString()}`)
+      if (rebuildCheck(repo)) console.log(`[rebuild-check] started for ${repo}`) // #443: any merge path updates the app
       forwardRefreshPing(DASHBOARD_REFRESH_URL, (url) => postJson(url, { topics: ['activity', 'mr'], source: `github:${repo}` }))
       forwardRefreshPing(MOBILE_REFRESH_URL, postJson)
     }
