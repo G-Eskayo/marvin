@@ -149,7 +149,7 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
   return (
     <div className="flex flex-col gap-4 p-6">
       <button onClick={onBack} className="text-sm text-neutral-400 hover:text-neutral-200">
-        ← Back to MR Review
+        ← Back to {pr.readOnly ? 'merged history' : 'MR Review'}
       </button>
 
       <div className="flex items-start justify-between gap-3">
@@ -180,11 +180,24 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
             )}
           </p>
         </div>
-        <ApproveDenyActions pr={pr} onApproved={onApproved} onDenied={onDenied} />
+        {pr.readOnly ? (
+          <span data-readonly="1" className={`rounded px-2 py-1 text-xs ${pr.state === 'MERGED' ? 'bg-emerald-900/50 text-emerald-300' : 'bg-neutral-800 text-neutral-300'}`}>
+            {pr.state === 'MERGED' ? `Merged${pr.mergedAt ? ` ${new Date(pr.mergedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : ''}` : (pr.state || 'Read-only').toLowerCase()} · read-only
+          </span>
+        ) : (
+          <ApproveDenyActions pr={pr} onApproved={onApproved} onDenied={onDenied} />
+        )}
       </div>
 
+      {pr.refusal && (
+        <div data-refusal="1" className="rounded-lg border border-red-800 bg-red-950/40 px-4 py-3 text-sm text-red-200">
+          Approve refused {new Date(pr.refusal.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}: <strong>{pr.refusal.reason}</strong>
+          {pr.refusal.message && <p className="mt-1 whitespace-pre-wrap font-mono text-xs text-red-300/80">{pr.refusal.message}</p>}
+        </div>
+      )}
+
       {/* What the PR asks the owner to choose: answered here, and Approve waits until the required ones are. */}
-      {pr.decisions?.present && (
+      {pr.decisions?.present && !pr.readOnly && (
         <Decisions
           key={JSON.stringify(pr.decisions.questions)}
           repo={pr.repo}

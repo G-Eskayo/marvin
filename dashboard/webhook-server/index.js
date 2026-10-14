@@ -10,6 +10,7 @@ import { useGhGate } from '../electron/main/path.js'
 import { failureResponse } from './failure.js'
 import { timeRequest } from '../electron/main/timing.js'
 import { recordApproveError, approveErrorLine } from './refusal_log.js'
+import { appendMerge, readMergeHistory } from './merge_history.js'
 import { readRebaseStatus } from './rebase_status.js'
 import { readLiveSessions } from './sessions.js'
 import { startChangeWatch, createGithubProbe } from './gh_watch.js'
@@ -121,6 +122,12 @@ const server = createServer(async (req, res) => {
     return
   }
 
+  // MR Review's Merged view (#419): what this server merged and every Approve it refused, for either Mac.
+  if (req.method === 'GET' && req.url === '/merge-history') {
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(readMergeHistory()))
+    return
+  }
+
   if (req.method === 'GET' && req.url === '/rebase-status') {
     res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(readRebaseStatus()))
     return
@@ -157,6 +164,8 @@ const server = createServer(async (req, res) => {
       // latter is an expected outcome, not a server error, so it gets a
       // 200 with the real reason attached rather than a bare 500.
       const result = await mergePr(payload.pr_url, undefined, undefined, undefined, undefined, undefined, undefined, undefined, { baselineFails: (names) => baselineFailsOnMain(names) })
+      if (result?.merged) appendMerge(payload.pr_url, payload.by === 'auto' ? 'auto' : 'you')
+      else if (result?.reengaged) console.error(approveErrorLine(payload.pr_url, { error: `${result.code || 'SENT_BACK'} at ${result.stage || 'gate'}: ${String(result.reason || 'sent back for rework').split('\n')[0].slice(0, 200)}` }))
       res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(result))
     } catch (err) {
       // Structured: code, stage, retryable, action, remediation -- so the dashboard can say
