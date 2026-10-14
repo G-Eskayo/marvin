@@ -46,6 +46,7 @@
         "zip"
       ],
       "category": "public.app-category.developer-tools",
+      "icon": "resources/icon.png",
       "extendInfo": {
         "NSAppleEventsUsageDescription": "MARVIN Metrics controls Google Chrome so the Portfolio tab's Open dev site button can take you to the dev site tab you already have open."
       }
