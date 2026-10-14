@@ -1,77 +1,38 @@
-// Single-shot dev-environment evidence capture for the MR pipeline
-// (G-Eskayo/marvin#77, ADR 0024). Launches this app's built Electron
-// by passing it to Playwright's chromium.launch (treating Electron's
-// binary as a standard Chromium executable), finds the real UI window
-// (not devtools, not a splash screen), screenshots it, and quits.
+// Single-shot dev-environment evidence capture for the MR pipeline (G-Eskayo/marvin#77, ADR 0024): launches this
+// app's built Electron, screenshots the real UI window, and quits. Since marvin#421 it starts Electron itself and
+// attaches over CDP (src/lib/cdp_capture.js): Playwright's chromium.launch rejected Electron's app-dir argument
+// ("Arguments can not specify page to be opened"), so UI PRs had no screenshots and were refused.
 //
 // Usage: node capture_screenshot.mjs <output-path>
-// Assumes `npm run build` has already produced ./out/ in this directory
-// (the caller is responsible for that -- this script only launches and
-// shoots, it doesn't build).
+// Assumes `npm run build` has already produced ./out/ in this directory.
 import { chromium } from 'playwright-core'
+import { spawn } from 'node:child_process'
 import path from 'node:path'
 import fs from 'node:fs'
-import { selectContentPage, captureLaunchEnv } from '../src/lib/screenshot_capture.js'
+import { captureLaunchEnv } from '../src/lib/screenshot_capture.js'
+import { captureViaCdp } from '../src/lib/cdp_capture.js'
 
 const APP_DIR = path.resolve(import.meta.dirname, '..')
 const outputPath = process.argv[2]
-
 if (!outputPath) {
   console.error('usage: node capture_screenshot.mjs <output-path>')
   process.exit(1)
 }
-
 const electronBin =
   process.platform === 'darwin'
     ? path.join(APP_DIR, 'node_modules/electron/dist/Electron.app/Contents/MacOS/Electron')
     : path.join(APP_DIR, 'node_modules/electron/dist/electron')
-
 if (!fs.existsSync(path.join(APP_DIR, 'out', 'main', 'index.js'))) {
   console.error(`no build output at ${APP_DIR}/out -- run "npm run build" first`)
   process.exit(1)
 }
-
-let browser = null
-
-try {
-  // Use Playwright's chromium.launch to start Electron as a generic Chromium executable.
-  // This avoids the experimental _electron.launch API which has version-compat issues
-  // with Electron 30.5.1. Playwright owns spawn, stderr-parsing, and the DevTools WS handshake.
-  browser = await chromium.launch({
-    executablePath: electronBin,
-    args: [APP_DIR, '--no-sandbox'],
-    // Ephemeral refresh port + capture flag: this copy must never collide with
-    // the installed dashboard's port 7879 or pop a main-process error dialog (#384).
-    env: captureLaunchEnv(process.env),
-  })
-
-  // Poll for a real content page (not devtools://) up to ~10s
-  let page = null
-  const deadline = Date.now() + 10_000
-  while (Date.now() < deadline) {
-    const contexts = browser.contexts()
-    if (contexts.length > 0) {
-      const pages = contexts[0].pages()
-      page = selectContentPage(pages)
-      if (page) break
-    }
-    await new Promise((r) => setTimeout(r, 200))
-  }
-
-  if (!page) {
-    throw new Error('no real content window appeared within 10s')
-  }
-
-  await page.waitForLoadState('domcontentloaded')
-  fs.mkdirSync(path.dirname(outputPath), { recursive: true })
-  await page.screenshot({ path: outputPath })
-  console.log(outputPath)
-} catch (err) {
-  console.error(err.message || String(err))
+fs.mkdirSync(path.dirname(outputPath), { recursive: true })
+const result = await captureViaCdp({
+  electronBin, appDir: APP_DIR, env: captureLaunchEnv(process.env), outputPath, chromium, spawn,
+  viewport: { width: 1280, height: 900 }
+})
+if (!result.ok) {
+  console.error(`screenshot capture failed: ${result.error}`)
   process.exit(1)
-} finally {
-  // Close the browser, which also closes the Electron process entirely
-  if (browser) {
-    await browser.close().catch(() => {})
-  }
 }
+console.log(result.path)
