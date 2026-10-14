@@ -319,7 +319,8 @@ def check_sync_stuck_from_text(text: str, now: datetime | None = None, dev: str 
     the push job's optimistic "committed + pushed" line in between reset a per-repo streak, so Health stayed quiet."""
     now = now or _now()
     names = {only_machine} if isinstance(only_machine, str) else set(only_machine or ())
-    entries = [e for e in _sync_entries_with_action(text) if not names or e[0] in names]
+    # "skipping" (off main, marvin#440) is neither a failure nor a recovery: it must not end a failure streak.
+    entries = [e for e in _sync_entries_with_action(text) if (not names or e[0] in names) and not e[3].startswith("skipping")]
     latest = {}
     for e in entries:
         key = e[:3]
