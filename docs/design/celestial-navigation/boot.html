@@ -1,159 +1,103 @@
 <!doctype html>
 <html><head><meta charset="utf-8"><title>MARVIN Boot</title>
-<link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;800&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@600;800&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <style>
-:root{--bg:#05040A;--amber:#f0b32a;--line:#7a5a14;--orange:#ff6a1f;--red:#ff3b2f;--green:#54ff8a;--dim:#6b551f;--moon:#cfd6e6}
-html,body{margin:0;height:100%;background:#000;overflow:hidden}
-#app{position:fixed;inset:0;display:grid;place-items:center;color:#5a5a66;font:14px system-ui;background:var(--bg)}
-#boot{position:fixed;inset:0;background:radial-gradient(ellipse at 50% 50%,#120e20 0%,#08070f 55%,#05040A 100%);transform-origin:50% 50%}
-#boot::after{content:"";position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(#0000 0 2px,#0006 2px 4px);z-index:9}
+/* --dash is the dashboard's own background (electron/main/index.js backgroundColor, index.html body) */
+:root{--dash:#0f1117;--amber:#f0b32a;--orange:#ff6a1f;--red:#ff3b2f;--green:#54ff8a;--dim:#6b551f}
+html,body{margin:0;height:100%;background:var(--dash);overflow:hidden}
+#app{position:fixed;inset:0;background:var(--dash);color:#e5e5e5;font:14px system-ui}
+#boot{position:fixed;inset:0;background:var(--dash);transform-origin:50% 50%}
 #sky{position:absolute;inset:0;width:100%;height:100%}
-.mono{font-family:'Share Tech Mono',monospace}
-.tag{display:inline-block;border:1px solid var(--red);color:var(--red);border-radius:3px;padding:1px 8px;font:600 13px 'Saira Condensed';letter-spacing:2px}
 .hud{position:absolute;opacity:0}
-#tl{left:36px;top:32px}
-#tl .sub{margin-top:6px;color:var(--dim);font:12px 'Share Tech Mono';letter-spacing:1px}
-#log{left:36px;bottom:92px;font:13px/1.85 'Share Tech Mono';color:var(--amber);opacity:1}
+#log{left:40px;bottom:40px;font:13px/1.9 'Share Tech Mono',monospace;color:var(--amber);opacity:1}
 #log div{opacity:0;white-space:nowrap}
-#log b{font-weight:400;display:inline-block;min-width:52px;text-align:center;margin-right:10px;border:1px solid currentColor;border-radius:2px;line-height:1.3;font-size:11px}
-.ok{color:var(--green)}.k{color:var(--orange)}.r{color:var(--red)}
-#sync{right:36px;top:32px;width:260px;border:1px solid var(--line);padding:12px 14px 10px;background:#05040acc}
-#sync .lbl{display:flex;justify-content:space-between;font:12px 'Share Tech Mono';color:var(--dim);letter-spacing:1px}
-#sync .num{font:800 54px/1 'Saira Condensed';color:var(--green);text-shadow:0 0 14px #54ff8a88;margin:6px 0 4px;letter-spacing:1px}
-#sync svg{display:block;width:100%;height:46px}
-#sync .foot{font:11px 'Share Tech Mono';color:var(--dim)}
-#title{right:36px;bottom:96px;text-align:right}
-#title h1{margin:0;font:800 112px/.86 'Saira Condensed';color:var(--green);letter-spacing:3px;text-shadow:0 0 22px #54ff8aaa,0 0 4px #54ff8a}
-#title .tag{margin-top:12px}
-#hazard{left:0;right:0;bottom:28px;height:34px;display:flex;align-items:center;overflow:hidden;border-top:1px solid var(--orange);border-bottom:1px solid var(--orange);
- background:repeating-linear-gradient(-45deg,#ff6a1f 0 14px,#05040A 14px 28px);opacity:0}
-#hazard span{margin:0 auto;background:#05040A;padding:2px 22px;font:600 17px 'Saira Condensed';letter-spacing:6px;color:var(--orange)}
-#lockLbl{font:12px 'Share Tech Mono';fill:var(--orange);letter-spacing:1px}
-#hint{right:36px;bottom:8px;font:10px 'Share Tech Mono';letter-spacing:2px;color:var(--dim)}
-#flash{position:absolute;inset:0;background:#e9fff0;opacity:0;pointer-events:none;z-index:8}
+#log b{font-weight:400;display:inline-block;min-width:46px;text-align:center;margin-right:10px;border:1px solid currentColor;border-radius:2px;line-height:1.3;font-size:11px}
+.ok{color:var(--green)}.k{color:var(--orange)}
+#title{left:50%;top:calc(50% + 120px);transform:translateX(-50%);text-align:center;white-space:nowrap}
+#title h1{margin:0;font:800 64px/1 'Saira Condensed';color:var(--green);letter-spacing:10px;padding-left:10px;text-shadow:0 0 18px #54ff8a99}
+#title .sub{margin-top:8px;font:600 13px 'Saira Condensed';letter-spacing:6px;color:var(--orange)}
+#lockLbl{font:11px 'Share Tech Mono';fill:var(--orange);letter-spacing:1px}
 </style></head><body>
-<div id="app">[ dashboard renders here underneath ]</div>
+<div id="app"></div>
 <div id="boot">
  <svg id="sky" viewBox="-640 -400 1280 800" preserveAspectRatio="xMidYMid slice">
   <defs>
-   <pattern id="hex" width="42" height="72.75" patternUnits="userSpaceOnUse"><path d="M21 0 L42 12.1 L42 36.4 L21 48.5 L0 36.4 L0 12.1 Z M21 48.5 L21 72.75" fill="none" stroke="#ff6a1f" stroke-width=".7"/></pattern>
-   <radialGradient id="hexMask" cx="50%" cy="50%" r="55%"><stop offset="0" stop-color="#fff" stop-opacity=".0"/><stop offset=".6" stop-color="#fff" stop-opacity=".5"/><stop offset="1" stop-color="#fff" stop-opacity="1"/></radialGradient>
-   <mask id="hm"><rect x="-640" y="-400" width="1280" height="800" fill="url(#hexMask)"/></mask>
    <filter id="gl" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
    <filter id="gn" x="-300%" y="-300%" width="700%" height="700%"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
    <filter id="gc" x="-400%" y="-400%" width="900%" height="900%"><feGaussianBlur stdDeviation="13" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
    <radialGradient id="core" cx="45%" cy="42%" r="60%"><stop offset="0" stop-color="#eafff1"/><stop offset=".5" stop-color="#7dffa6"/><stop offset="1" stop-color="#54ff8a"/></radialGradient>
   </defs>
-  <rect id="hexbg" x="-640" y="-400" width="1280" height="800" fill="url(#hex)" mask="url(#hm)" opacity="0"/>
-  <g id="field"></g>
-  <g id="mark"></g>
-  <g id="lock"></g>
+  <g id="field"></g><g id="mark"></g><g id="lock"></g>
  </svg>
- <div class="hud" id="tl"><span class="tag">MARVIN // NAV-SYS</span><div class="sub">CELESTIAL NAVIGATION · MACBOOK-PRO</div></div>
- <div class="hud" id="sync">
-  <div class="lbl"><span>SYNC RATIO</span><span>MBP ⇄ MINI</span></div>
-  <div class="num" id="syncNum">000.0%</div>
-  <svg viewBox="0 0 232 46" preserveAspectRatio="none"><line x1="0" y1="23" x2="232" y2="23" stroke="#7a5a14" stroke-width="1" stroke-dasharray="2 4"/><path id="wave" fill="none" stroke="#ff6a1f" stroke-width="1.6"/></svg>
-  <div class="foot" id="syncFoot">MEMORY · HANDOFFS · LEXICON</div>
- </div>
  <div class="hud" id="log"></div>
- <div class="hud" id="title"><h1>MARVIN</h1><span class="tag">SYSTEMS ONLINE</span></div>
- <div class="hud" id="hazard"><span>ALL SYSTEMS NOMINAL</span></div>
- <div class="hud" id="hint">CLICK OR ANY KEY TO SKIP</div>
- <div id="flash"></div>
+ <div class="hud" id="title"><h1>MARVIN</h1><div class="sub">SYSTEMS ONLINE</div></div>
 </div>
 <script>
-// ---- The mark. Same geometry as the app icon (render3.html, 1024 grid). ----
+// The mark: same geometry as the app icon (icon.html, 1024 grid).
 const ICON = { pts: [[262,772],[262,262],[512,560],[762,262],[762,772]], core: 2, star: 44, coreR: 68, orbit: 118, line: 26 };
-const S = 0.40, C = [512,516];
-const P = ICON.pts.map(([x,y]) => [(x-C[0])*S - 60, (y-C[1])*S]);   // nudged left of the title card
+const S = 0.36, C = [512,560];
+const P = ICON.pts.map(([x,y]) => [(x-C[0])*S, (y-C[1])*S - 50]);
 const [cx,cy] = P[ICON.core];
+// Live values in the real build; a real problem shows here instead of "OK".
+const LOG = [['k','LOCK','ORIGIN · MARVIN'],['ok','OK','116 MEMORIES CHARTED'],['ok','SYNC','MAC-MINI · 100%'],['k','PLOT','COURSE PLOTTED']];
 
-// ---- Boot log (prototype values; the real build reads live state) ----
-const LOG = [
-  ['ok','OK','POWER · PHOSPHOR WARM'],
-  ['k','LOCK','ORIGIN STAR · MARVIN'],
-  ['ok','OK','116 MEMORIES CHARTED'],
-  ['ok','OK','36 SKILLS WIRED'],
-  ['ok','OK','LEXICON ALIGNED'],
-  ['ok','SYNC','MAC-MINI LINK ESTABLISHED'],
-  ['k','PLOT','HANDOFF · COURSE PLOTTED'],
-];
-
+const K = 1.3;            // pacing: every delay and duration is scaled by this
+const HOLD = 1200;        // ms the finished frame holds before handing over
 const NS='http://www.w3.org/2000/svg', el=(t,a,p)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);p&&p.appendChild(e);return e};
 const $=id=>document.getElementById(id);
-const anims=[]; const A=(node,kf,o)=>{const a=node.animate(kf,{fill:'both',easing:'cubic-bezier(.2,.7,.2,1)',...o});anims.push(a);return a};
-const svgOrigin=(n,x,y)=>{n.style.transformOrigin=`${x}px ${y}px`;n.style.transformBox='view-box'};
+const anims=[]; const A=(node,kf,o)=>{const a=node.animate(kf,{fill:'both',easing:'cubic-bezier(.2,.7,.2,1)',...o,delay:(o.delay||0)*K,duration:o.duration*K});anims.push(a);return a};
+const at=(n,x,y)=>{n.style.transformOrigin=`${x}px ${y}px`;n.style.transformBox='view-box'};
 const field=$('field'), mark=$('mark'), lock=$('lock');
 
-// 1 · CRT power-on: a bright line opens into the screen
-A($('boot'),[{transform:'scaleY(.004) scaleX(.6)',filter:'brightness(4)'},{transform:'scaleY(.004) scaleX(1)',filter:'brightness(4)',offset:.45},{transform:'scaleY(1) scaleX(1)',filter:'brightness(1)'}],{duration:420,easing:'cubic-bezier(.7,0,.3,1)'});
-A($('hexbg'),[{opacity:0},{opacity:.22}],{delay:350,duration:600});
+// CRT power-on
+A($('sky'),[{transform:'scaleY(.004) scaleX(.5)',filter:'brightness(3)'},{transform:'scaleY(.004) scaleX(1)',filter:'brightness(3)',offset:.45},{transform:'none',filter:'none'}],{duration:420,easing:'cubic-bezier(.7,0,.3,1)'});
 
-// 2 · Sky: field stars, with the five constellation stars hidden among them as ordinary stars
+// Sky, with the five stars hidden among ordinary stars
 let s=23;const r=()=>(s=(s*16807)%2147483647)/2147483647;
-for(let i=0;i<170;i++){const x=(r()-.5)*1280,y=(r()-.5)*800;
-  if(P.some(([px,py])=>Math.hypot(px-x,py-y)<40)) continue;
-  el('circle',{cx:x,cy:y,r:.6+r()*1.5,fill:'#cfd6e6',opacity:.12+r()*.5},field);}
-const stars=P.map(([x,y],i)=>{const g=el('g',{},mark);svgOrigin(g,x,y);
-  const dot=el('circle',{cx:x,cy:y,r:2.6,fill:'#cfd6e6',opacity:.85},g); return {g,dot,x,y};});
+for(let i=0;i<120;i++){const x=(r()-.5)*1280,y=(r()-.5)*800; if(P.some(([px,py])=>Math.hypot(px-x,py-y)<36)) continue;
+  el('circle',{cx:x,cy:y,r:.6+r()*1.3,fill:'#cfd6e6',opacity:.1+r()*.4},field);}
+const stars=P.map(([x,y])=>({x,y,dot:el('circle',{cx:x,cy:y,r:2.4,fill:'#cfd6e6',opacity:.8},mark)}));
 
-// 3 · Target lock on the origin star
-const LKW=el('g',{},lock); const LK=el('g',{},LKW); svgOrigin(LK,cx,cy);
-const b=34,L=12; [[-1,-1],[1,-1],[1,1],[-1,1]].forEach(([sx,sy])=>el('path',{d:`M${cx+sx*b} ${cy+sy*(b-L)} V${cy+sy*b} H${cx+sx*(b-L)}`,stroke:'#ff6a1f','stroke-width':2.2,fill:'none'},LK));
-const lbl=el('text',{x:cx+b+10,y:cy-b+4,id:'lockLbl'},LK); lbl.textContent='ORIGIN';
-A(LK,[{opacity:0,transform:'scale(3.2) rotate(45deg)'},{opacity:1,transform:'scale(1) rotate(0deg)',offset:.7},{opacity:1,transform:'scale(1.12)',offset:.82},{opacity:1,transform:'scale(1)'}],{delay:480,duration:520});
+// Lock on the origin star
+const LKW=el('g',{},lock), LK=el('g',{},LKW); at(LK,cx,cy);
+const b=30,L=10; [[-1,-1],[1,-1],[1,1],[-1,1]].forEach(([sx,sy])=>el('path',{d:`M${cx+sx*b} ${cy+sy*(b-L)} V${cy+sy*b} H${cx+sx*(b-L)}`,stroke:'#ff6a1f','stroke-width':2,fill:'none'},LK));
+el('text',{x:cx+b+8,y:cy-b+4,id:'lockLbl'},LK).textContent='ORIGIN';
+A(LK,[{opacity:0,transform:'scale(3) rotate(45deg)'},{opacity:1,transform:'scale(1) rotate(0deg)',offset:.75},{opacity:1,transform:'scale(1.1)',offset:.85},{opacity:1,transform:'scale(1)'}],{delay:500,duration:520});
 A(LKW,[{opacity:1},{opacity:0}],{delay:1500,duration:300});
 
-// 4 · The origin star ignites
-const core=el('circle',{cx,cy,r:ICON.coreR*S,fill:'url(#core)',filter:'url(#gc)'},mark); svgOrigin(core,cx,cy);
-A(core,[{opacity:0,transform:'scale(.1)'},{opacity:1,transform:'scale(2.3)',offset:.4},{opacity:1,transform:'scale(1)'}],{delay:950,duration:650});
-A($('flash'),[{opacity:0},{opacity:.16,offset:.15},{opacity:0}],{delay:950,duration:450});
-const orbit=el('circle',{cx,cy,r:ICON.orbit*S,fill:'none',stroke:'#ff6a1f','stroke-width':5.5,'stroke-dasharray':'1.5 11','stroke-linecap':'round'},mark); svgOrigin(orbit,cx,cy);
-A(orbit,[{opacity:0,transform:'rotate(-120deg) scale(.5)'},{opacity:.9,transform:'rotate(0deg) scale(1)'}],{delay:1150,duration:800});
+// Ignite
+const core=el('circle',{cx,cy,r:ICON.coreR*S,fill:'url(#core)',filter:'url(#gc)'},mark); at(core,cx,cy);
+A(core,[{opacity:0,transform:'scale(.1)'},{opacity:1,transform:'scale(2.1)',offset:.4},{opacity:1,transform:'none'}],{delay:950,duration:650});
+const orbit=el('circle',{cx,cy,r:ICON.orbit*S,fill:'none',stroke:'#ff6a1f','stroke-width':5,'stroke-dasharray':'1.5 10','stroke-linecap':'round'},mark); at(orbit,cx,cy);
+A(orbit,[{opacity:0,transform:'rotate(-120deg) scale(.5)'},{opacity:.9,transform:'none'}],{delay:1150,duration:800});
 
-// 5 · Lines grow OUT of the origin: core→TL→BL and core→TR→BR, together
-const branch=(a,b2,c,delay)=>{const d=`M${P[a]} L${P[b2]} L${P[c]}`;
-  const p=el('path',{d,fill:'none',stroke:'#f0b32a','stroke-width':ICON.line*S,'stroke-linejoin':'round','stroke-linecap':'round',filter:'url(#gl)'},mark);
-  mark.insertBefore(p,mark.firstChild); const len=p.getTotalLength(); p.style.strokeDasharray=len;
-  A(p,[{strokeDashoffset:len},{strokeDashoffset:0}],{delay,duration:900,easing:'cubic-bezier(.5,0,.3,1)'});
-  const seg1=Math.hypot(P[b2][0]-P[a][0],P[b2][1]-P[a][1]); return [delay+900*0.5*(seg1/len)*1.6, delay+880];};
-const [tTL,tBL]=branch(2,1,0,1250), [tTR,tBR]=branch(2,3,4,1250);
-// 6 · Each star is reached: ping ring, brightens to green
-const reach=(i,t)=>{const st=stars[i];
-  A(st.dot,[{r:2.6,fill:'#cfd6e6'},{r:ICON.star*S*1.5,fill:'#54ff8a',offset:.5},{r:ICON.star*S,fill:'#54ff8a'}],{delay:t,duration:420});
-  st.dot.setAttribute('filter','url(#gn)');
-  const ring=el('circle',{cx:st.x,cy:st.y,r:6,fill:'none',stroke:'#54ff8a','stroke-width':1.5},mark);
-  A(ring,[{r:6,opacity:0},{r:6,opacity:.9,offset:.02},{r:46,opacity:0}],{delay:t,duration:700,easing:'ease-out'});};
-reach(1,tTL); reach(3,tTR); reach(0,tBL); reach(4,tBR);
+// Lines grow out of the origin; stars ping as they're reached
+const branch=(a,m,c,delay)=>{const p=el('path',{d:`M${P[a]} L${P[m]} L${P[c]}`,fill:'none',stroke:'#f0b32a','stroke-width':ICON.line*S,'stroke-linejoin':'round','stroke-linecap':'round',filter:'url(#gl)'},mark);
+  mark.insertBefore(p,mark.firstChild); const len=p.getTotalLength(), l1=Math.hypot(P[m][0]-P[a][0],P[m][1]-P[a][1]); p.style.strokeDasharray=len;
+  A(p,[{strokeDashoffset:len},{strokeDashoffset:0}],{delay,duration:900,easing:'linear'}); return [delay+900*l1/len, delay+900];};
+const reach=(i,t)=>{const st=stars[i]; st.dot.setAttribute('filter','url(#gn)');
+  A(st.dot,[{r:2.4,fill:'#cfd6e6'},{r:ICON.star*S*1.5,fill:'#54ff8a',offset:.5},{r:ICON.star*S,fill:'#54ff8a'}],{delay:t,duration:420});
+  const ring=el('circle',{cx:st.x,cy:st.y,r:6,fill:'none',stroke:'#54ff8a','stroke-width':1.3},mark);
+  A(ring,[{r:6,opacity:0},{r:6,opacity:.8,offset:.02},{r:40,opacity:0}],{delay:t,duration:700,easing:'ease-out'});};
+const [a1,a2]=branch(2,1,0,1250), [b1,b2]=branch(2,3,4,1250);
+reach(1,a1); reach(3,b1); reach(0,a2); reach(4,b2);
 
-// 7 · HUD
-A($('tl'),[{opacity:0,transform:'translateX(-16px)'},{opacity:1,transform:'none'}],{delay:420,duration:350});
-A($('hint'),[{opacity:0},{opacity:1}],{delay:600,duration:300});
+// Log + title
 LOG.forEach(([c,chip,txt],i)=>{const d=document.createElement('div');d.innerHTML=`<b class="${c}">${chip}</b>${txt}`;$('log').appendChild(d);
-  A(d,[{opacity:0,transform:'translateX(-10px)'},{opacity:1,transform:'none'}],{delay:520+i*260,duration:160,easing:'steps(3)'});});
-A($('sync'),[{opacity:0,transform:'translateY(-10px)'},{opacity:1,transform:'none'}],{delay:700,duration:300});
-// sync ratio: counter + waveform that calms to flat as the link settles (driven by a 0..1 timeline)
-const syncT=A($('syncFoot'),[{opacity:.6},{opacity:1}],{delay:800,duration:1900,easing:'linear'});
-const wave=$('wave'), num=$('syncNum');
-function drawSync(){const p=Math.min(1,Math.max(0,((syncT.currentTime??0)-800)/1900)), e=1-Math.pow(1-p,3);
-  num.textContent=(e*100).toFixed(1).padStart(5,'0')+'%';
-  let d='';for(let x=0;x<=232;x+=4){const amp=19*(1-e)+0.6, y=23+amp*Math.sin(x*0.19+p*22)*Math.sin(x*0.043+1.3);d+=(x?'L':'M')+x+' '+y.toFixed(1);}
-  wave.setAttribute('d',d); wave.setAttribute('stroke',p>=1?'#54ff8a':'#ff6a1f');}
+  A(d,[{opacity:0,transform:'translateX(-8px)'},{opacity:1,transform:'none'}],{delay:600+i*380,duration:160,easing:'steps(3)'});});
+A($('title'),[{opacity:0,letterSpacing:'0px',filter:'blur(6px)'},{opacity:1,filter:'blur(0)'}],{delay:2350,duration:420,easing:'steps(6)'});
 
-// 8 · Title card + hazard bar
-A($('title'),[{opacity:0,transform:'translateX(24px)',filter:'blur(6px)'},{opacity:1,transform:'none',filter:'blur(0)'}],{delay:2500,duration:380,easing:'steps(6)'});
-A($('hazard'),[{opacity:0,clipPath:'inset(0 50% 0 50%)'},{opacity:1,clipPath:'inset(0 0 0 0)'}],{delay:2750,duration:380});
+// Hold, then dissolve straight into the dashboard (same background, so nothing flashes)
+const DONE=2800, END=DONE+HOLD/K;
+A($('boot'),[{opacity:1},{opacity:0}],{delay:END,duration:500,easing:'ease-in-out'});
+A($('app'),[{opacity:0},{opacity:1}],{delay:END+150,duration:450});
 
-// 9 · Exit: CRT collapse into a line, then the dashboard
-const END=3900;
-A($('boot'),[{transform:'scaleY(1)',filter:'brightness(1)'},{transform:'scaleY(.004)',filter:'brightness(3)',offset:.7},{transform:'scaleY(.004) scaleX(0)',filter:'brightness(3)'}],{delay:END,duration:420,easing:'cubic-bezier(.7,0,.3,1)',composite:'replace'});
-
-window.BOOT_TOTAL=END+480;
-const tick=()=>{drawSync();requestAnimationFrame(tick)}; tick();
-window.seek=(ms)=>{anims.forEach(a=>{a.pause();a.currentTime=ms});drawSync()};
-const skip=()=>anims.forEach(a=>a.currentTime=Math.max(a.currentTime||0,END));
+window.BOOT_TOTAL=(END+520)*K;
+window.seek=(ms)=>anims.forEach(a=>{a.pause();a.currentTime=ms});
+const skip=()=>anims.forEach(a=>a.currentTime=Math.max(a.currentTime||0,END*K));
 addEventListener('keydown',skip); $('boot').addEventListener('click',skip);
 if(location.search.includes('rec')) anims.forEach(a=>a.pause());
+// Prototype only: a stand-in dashboard so the hand-off can be seen.
+if(location.search.includes('dash')) $('app').innerHTML='<div style="display:flex;height:100%"><div style="width:200px;border-right:1px solid #262626;padding:20px;color:#a3a3a3;line-height:2.4">Activity<br>Tickets<br>Health<br>Docs<br>Files</div><div style="flex:1;padding:24px"><div style="font-size:20px;margin-bottom:16px">Activity</div>'+'<div style="height:64px;border:1px solid #262626;border-radius:8px;margin-bottom:12px;background:#171717"></div>'.repeat(5)+'</div></div>';
 </script>
 </body></html>

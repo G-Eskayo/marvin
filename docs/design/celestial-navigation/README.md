@@ -47,16 +47,19 @@ icon changes the boot as well.
 
 ![Icon on iPhone and Mac](icon-on-devices.png)
 
-## The boot sequence (about 4.4 s, any key or click skips it)
+## The boot sequence (v4, about 5.5 s, any key or click skips it)
 
-1. **CRT power-on:** a bright line opens into the screen, and the hex grid fades in.
+Minimal by request (2026-10-14). It uses the **dashboard's own background, `#0f1117`**, so the hand-off is seamless.
+
+1. **CRT power-on:** a bright line opens into the sky.
 2. **The sky.** The five M stars are already there, hidden among ordinary stars.
-3. **Target lock.** An orange reticle snaps onto the origin star (MARVIN), and the origin star ignites.
+3. **Target lock.** An orange reticle snaps onto the origin star (MARVIN), and the origin star ignites with a dashed orbit.
 4. **Lines grow out of the origin** in two branches. Each star they reach pings and turns green.
-5. **HUD.** The log fills in (`OK`, `LOCK`, `SYNC`, `PLOT` chips), and the sync ratio counts up to 100% while its
-   waveform settles flat. Sync ratio is the real MacBook ⇄ Mini memory sync, not decoration.
-6. **Title card:** "MARVIN · SYSTEMS ONLINE", plus a hazard bar reading "ALL SYSTEMS NOMINAL".
-7. **CRT collapse** into a line, then the dashboard. The dashboard renders underneath from saved state, so it never waits on the boot.
+5. **Four-line log:** `LOCK origin`, `OK memories`, `SYNC mac-mini %`, `PLOT course`. Then "MARVIN · SYSTEMS ONLINE".
+6. **Hold** the finished frame for 1.2 s, then **dissolve** straight into the dashboard. Same background, so nothing flashes.
+
+Pacing is a single `K` factor (1.3) and the hold is `HOLD` (1200 ms), so both are easy to tune.
+Removed in v4: the hex grid, hazard bar, boxed sync panel, top-left tag and CRT collapse. Those belong to the later dashboard redo if anywhere.
 
 The real build reads live values. If something is actually wrong, the boot shows it (for example, a sync stall
 appears as a red `SYNC` chip below 100%) and does not report "nominal".
