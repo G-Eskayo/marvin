@@ -27,32 +27,34 @@ LEDGER_PATH = HOME / ".claude" / "logs" / "disk-ledger.jsonl"
 
 
 def _default_du_kb(path: Path) -> int:
-    """Get KB used by a path via du -sk, returns 0 if path doesn't exist."""
+    """Get KB used by a path via du -sk, returns 0 if path doesn't exist.
+    du exits 1 when any subfolder is unreadable but still prints the total, so the total is kept whatever the exit
+    code; and a 5 s timeout read big folders as 0. Both hid ~/Library/Developer (33 GB) as 0 (2026-10-14)."""
+    if not path.exists():
+        return 0
     try:
-        result = subprocess.run(
-            ["du", "-sk", str(path)],
-            capture_output=True, text=True, timeout=5,
-        )
-        if result.returncode == 0:
-            parts = result.stdout.strip().split()
-            if parts and parts[0].isdigit():
-                return int(parts[0])
-    except Exception:
-        pass
-    return 0
+        result = subprocess.run(["du", "-sk", str(path)], capture_output=True, text=True, timeout=900)
+    except subprocess.TimeoutExpired:
+        print(f"[disk_ledger] du timed out on {path}; counted as 0", file=sys.stderr)
+        return 0
+    lines = result.stdout.strip().splitlines()
+    parts = lines[-1].split() if lines else []
+    return int(parts[0]) if parts and parts[0].isdigit() else 0
 
 
 def measure_categories(du: callable = None) -> dict[str, int]:
     r"""Measure disk usage by category (all in KB).
 
-    - rebuildable_caches: npm, pnpm, pip, brew, Electron, SwiftPM caches
+    - rebuildable_caches: npm, pnpm, pip caches and all of ~/Library/Caches
     - build_output: .build, .swiftpm, node_modules (not from worktrees)
     - worktrees: all pipeline worktrees under WORKTREES_ROOT
     - models: .ollama, .cache/huggingface, other ML model stores
     - icloud_cache: ~/Library/Mobile\ Documents (synced iCloud data)
     - docker: from `docker system df --format '{{json .}}'`
-    - user_files: Documents, Desktop, Pictures, Downloads, Messages
-    - other: everything else
+    - user_files: Documents, Desktop, Pictures, Downloads, ~/Library/Messages, ~/Library/Photos
+    - xcode: ~/Library/Developer (simulators, DerivedData, device support; builder simulators leak here)
+    - app_support: ~/Library/Application Support, Containers, Group Containers (app data, VM bundles, wallpapers)
+    - other: everything else, filled in by with_other() once the disk's used space is known
 
     If du callable is provided, use it instead of subprocess (for testing).
     """
@@ -66,6 +68,8 @@ def measure_categories(du: callable = None) -> dict[str, int]:
         "icloud_cache": 0,
         "docker": 0,
         "user_files": 0,
+        "xcode": 0,
+        "app_support": 0,
         "other": 0,
     }
 
@@ -73,9 +77,7 @@ def measure_categories(du: callable = None) -> dict[str, int]:
     result["rebuildable_caches"] += du(HOME / ".npm" / "_cacache")
     result["rebuildable_caches"] += du(HOME / ".pnpm-store")
     result["rebuildable_caches"] += du(HOME / ".cache" / "pip")
-    result["rebuildable_caches"] += du(HOME / "Library" / "Caches" / "Homebrew")
-    result["rebuildable_caches"] += du(HOME / "Library" / "Caches" / "Electron")
-    result["rebuildable_caches"] += du(HOME / "Library" / "Caches" / "SwiftPM")
+    result["rebuildable_caches"] += du(HOME / "Library" / "Caches")  # Homebrew, Electron, SwiftPM and every app's cache
 
     # Worktrees
     if WORKTREES_ROOT.exists():
@@ -111,10 +113,23 @@ def measure_categories(du: callable = None) -> dict[str, int]:
         pass
 
     # User files
-    for user_dir in ["Documents", "Desktop", "Pictures", "Downloads", "Messages"]:
+    # Messages and Photos live under ~/Library: a "~/Messages" entry here missed 53 GB on the laptop (2026-10-14)
+    for user_dir in ["Documents", "Desktop", "Pictures", "Downloads", "Library/Messages", "Library/Photos"]:
         result["user_files"] += du(HOME / user_dir)
 
+    # Found 2026-10-14: 18 GB of simulators, wallpapers and app data grew on the mini with no category to show it
+    result["xcode"] = du(HOME / "Library" / "Developer")
+    for app_dir in ["Application Support", "Containers", "Group Containers"]:
+        result["app_support"] += du(HOME / "Library" / app_dir)
+
     return result
+
+
+def with_other(categories: dict[str, int], used_kb: int) -> dict[str, int]:
+    """"other" = used space no named category explains (macOS, apps, unlisted folders). It was declared but never
+    computed, so it always read 0 and anything outside the named folders was invisible."""
+    named = sum(v for k, v in categories.items() if k != "other")
+    return {**categories, "other": max(0, used_kb - named)}
 
 
 def append_entry(
@@ -178,6 +193,7 @@ def run_daily_ledger() -> dict:
     stat = os.statvfs(HOME)
     total_kb = (stat.f_blocks * stat.f_frsize) // 1024
     free_kb = (stat.f_bavail * stat.f_frsize) // 1024
+    categories = with_other(categories, total_kb - free_kb)
 
     now = datetime.now(timezone.utc)
     append_entry(categories, free_kb, total_kb, device=None, now=now, path=LEDGER_PATH)

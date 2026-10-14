@@ -24,7 +24,7 @@ CATEGORY_INFO = {
     "rebuildable_caches": {
         "label": "Rebuild-able caches",
         "regenerable": True,
-        "description": "npm, pip, brew, Electron, SwiftPM caches",
+        "description": "npm, pnpm, pip caches and all of ~/Library/Caches",
     },
     "build_output": {
         "label": "Build output",
@@ -54,12 +54,22 @@ CATEGORY_INFO = {
     "user_files": {
         "label": "User files",
         "regenerable": False,
-        "description": "Documents, Desktop, Pictures, Downloads, Messages",
+        "description": "Documents, Desktop, Pictures, Downloads, Messages, Photos",
+    },
+    "xcode": {
+        "label": "Xcode & simulators",
+        "regenerable": True,
+        "description": "~/Library/Developer: simulators, DerivedData, device support",
+    },
+    "app_support": {
+        "label": "App data",
+        "regenerable": False,
+        "description": "~/Library/Application Support and Containers: app data, VM bundles, wallpapers",
     },
     "other": {
         "label": "Other",
         "regenerable": False,
-        "description": "Everything else",
+        "description": "Used space no category above explains: macOS, apps, unlisted folders",
     },
 }
 

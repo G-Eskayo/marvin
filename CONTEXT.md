@@ -17,6 +17,24 @@ Domain terms only. No implementation details — see `docs/adr/` for decisions a
   Distinct from a **handoff doc** (`~/.claude/handoffs/*.md`), a hand-authored summary + resume
   prompt, which *is* synced.
 
+## Databases (in design, 2026-10-14)
+
+Storage plan §9 F6 (`docs/plans/storage-and-distribution-2026-10-06.md`). Databases here are for **fast access**,
+not for saving space: all of MARVIN's own text is about 1.7 GB per Mac. Gil wants several databases, each with
+one job, starting with the history store.
+
+- **History store**: one queryable record of what MARVIN did on both Macs: pipeline runs and failures, launches,
+  GitHub calls, errors, health checks, the disk ledger, usage. It makes the dashboard faster and gives MARVIN's
+  tools real history to query, instead of each feature parsing ~20 JSON/JSONL files per Mac (over ssh for the
+  other Mac). Built first.
+- **Pattern store**: what worked and why, so builds and designs draw on proven solutions instead of improvising.
+  Overlaps the qa-agent knowledge base (Chroma, `~/.claude/chroma`), memory files and the XERJ research ticket
+  (#441). Designed after the history store; not to be confused with it (history = what happened, pattern = what
+  to repeat).
+- **Outbox** (history store): a job's JSONL log file once the history store exists. Jobs keep appending to it;
+  the loader moves its lines into the database, and trims them only once they're stored, backed up and no longer
+  read from the file (ADR 0066).
+
 ## Code sync (built 2026-07-09/12 — distinct from cross_machine_merge.py's data sync)
 
 - **Code sync**: keeping a git repo identical across MARVIN's known machines via git

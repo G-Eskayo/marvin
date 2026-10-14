@@ -342,7 +342,17 @@ def sweep_simulators(
     return {"removed": removed, "review": review}
 
 
-def _write_log(stale: list[dict], worktrees: dict, simulators: dict | None = None) -> None:
+def _default_compress_transcripts() -> dict | None:
+    """Transcripts are kept forever (ADR 0065: irreplaceable), so the cold ones are compressed losslessly."""
+    try:
+        import cold_compress
+        return cold_compress.compress_transcripts()
+    except Exception as exc:  # noqa: BLE001 -- never stops the sweep
+        return {"compressed": [], "failed": [], "saved_kb": 0, "skipped": f"failed: {str(exc)[:120]}"}
+
+
+def _write_log(stale: list[dict], worktrees: dict, simulators: dict | None = None,
+               compressed: dict | None = None) -> None:
     timestamp = datetime.now(timezone.utc).isoformat()
     lines = [
         f"- Released stale claim: issue #{e['issue_number']} held by `{e['machine_id']}`, "
@@ -354,6 +364,12 @@ def _write_log(stale: list[dict], worktrees: dict, simulators: dict | None = Non
     sims = simulators or {"removed": [], "review": []}
     lines += [f"- Removed simulator ({s['reason']}): `{s['name']}`" for s in sims["removed"]]
     lines += [f"- Simulator needs a look, kept ({s['reason']}): `{s['name']}`" for s in sims["review"]]
+    if compressed and compressed.get("skipped"):
+        lines.append(f"- Transcript compression skipped: {compressed['skipped']}")
+    elif compressed and compressed["compressed"]:
+        lines.append(f"- Compressed {len(compressed['compressed'])} cold transcript(s), "
+                     f"{compressed['saved_kb'] // 1024} MiB saved (same files, same paths)")
+    lines += [f"- Transcript not compressed ({f['reason']}): `{f['path']}`" for f in (compressed or {}).get("failed", [])]
     body = "\n".join(lines) + "\n" if lines else "Nothing to clean up: no stale claims, no resolved worktrees.\n"
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     existing = OUTPUT_PATH.read_text() if OUTPUT_PATH.exists() else "# MR pipeline cleanup sweep\n\n"
@@ -417,7 +433,9 @@ def run_daily_sweep(
 
     _default_outcome_check()
 
-    _write_log(stale, worktrees, simulators)
+    compressed = _default_compress_transcripts()
+
+    _write_log(stale, worktrees, simulators, compressed)
     return {"stale_claims_released": len(stale), "worktrees_removed": len(worktrees["removed"]),
             "worktrees_for_review": len(worktrees["review"]), "simulators_removed": len(simulators["removed"])}
 

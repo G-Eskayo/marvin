@@ -27,3 +27,5 @@ If it's unclear which tier something is in, it's treated as the more protected t
 - Anything that creates a disposable resource also removes it when the run ends, pass or fail: simulators the same way as `drop_build_output` (C3).
 - `disk_trim`'s allowlist can grow into the costly tier, still behind the low-space threshold.
 - The "per-item approval" rule now applies only to irreplaceable items.
+
+- Claude Code transcripts are irreplaceable, so its 30-day auto-delete is off (`cleanupPeriodDays: 36500`) and the cold ones are compressed losslessly instead (`lib/cold_compress.py`, 2026-10-14).

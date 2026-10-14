@@ -200,9 +200,17 @@ Each "reclaim" task is a proposal. It runs only after Gil approves that specific
 - [x] F2. Fix `disk_trim` units and build-output measurement.
 - [x] F3. (done 2026-10-14: `cleanup_sweep.sweep_simulators`, 10 tests; dry run on both Macs clean, real GitHub lookup on #118 → remove. The run-end delete stays a builder prompt rule for now, since builders name their own simulators; the nightly sweep is the guarantee) Builder simulators are disposable (ADR 0065): the run that creates one deletes it when it ends, pass or fail; the nightly sweep deletes any left over whose ticket is closed or merged, and reports the ones it can't link to a ticket. Test first.
 - [x] F2b. (found while doing F3) A duplicate `_default_outcome_check` in cleanup_sweep overrode #305's, so nightly ticket promotion never ran from 2026-10-08. Duplicate removed, test added (conftest stubs that function for every test, which is how it hid).
-- [ ] F4. Add `simulators` and `app_support` categories to the disk ledger so growth there shows on the Health tab.
-- [ ] F5. APFS-compress cold transcripts (unchanged for 30+ days) during the nightly sweep. Reversible, deletes nothing. Measure on the Mini first.
-- [ ] F6. Database design: which records go in, SQLite vs DuckDB, one per Mac vs synced, migration from today's files. Grill before building (ADR).
+- [x] F4. (done 2026-10-14) Ledger now measures `xcode` (~/Library/Developer) and `app_support` (Application Support + Containers), counts Messages/Photos where macOS keeps them (`~/Messages` didn't exist: 53 GB missed), counts all of `~/Library/Caches` as rebuildable, and fills `other` with the unexplained remainder (it was always 0). `du` no longer reads a big or partly unreadable folder as 0 (5 s timeout, exit code 1). Laptop: `other` went from 298 GB to 119 GB (macOS, /Applications, system volumes). Note: week-over-week growth shows a one-time jump for `rebuildable_caches`.
+- [x] F5. (done 2026-10-14) Claude Code deleted transcripts after 30 days (`cleanupPeriodDays` default). They're history, irreplaceable under ADR 0065, so Gil chose to keep them all: `cleanupPeriodDays: 36500` on both Macs. `lib/cold_compress.py` APFS-compresses (afsctool, LZFSE) transcripts unchanged for 7+ days during the nightly sweep: same paths, same bytes (hash-checked), same mtime, so `--resume`, session_usage and tool_usage keep working. zstd archives were ruled out because they'd hide files from those readers. First run on the laptop: 10,704 files, 0 failures, 1.55 GB → 666 MB. afsctool installed on both Macs.
+- [~] F6. Database design: grilled 2026-10-14, history store proposed as ADR 0066 (files are the outbox, SQLite on the Mini is the record, laptop holds the backup as its read copy). Pattern store designed later.
+
+### G. History store (ADR 0066), tracer bullet first
+- [ ] G1. `lib/history_store.py`: open/create `~/.claude/history.db` (WAL), `events` table, `load(stream, device, lines)` idempotent by content hash. Tests try to break it: malformed lines, duplicates, huge lines, concurrent loaders, a locked database.
+- [ ] G2. Loader for `gh-calls.jsonl` on the Mini: its own outbox plus the laptop's over ssh (unreachable laptop = skip, catch up later). launchd every 5 min. Last success is a Health check.
+- [ ] G3. Backup to the laptop after each load (SQLite online backup + rsync --checksum), verified by row count and hash.
+- [ ] G4. Move `github_usage.py` and the gh health check to read the database; dashboard chart compared before and after (same numbers, timed).
+- [ ] G5. Turn on trimming for `gh-calls.jsonl` only after G1–G4 and a week of clean loads.
+- [ ] G6. Repeat G2/G4/G5 for the other streams, one at a time.
 
 ## Open questions for Gil
 
