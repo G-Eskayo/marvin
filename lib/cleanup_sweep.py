@@ -4,7 +4,7 @@ as cron_health.py -- silent failure is the recurring real problem in this
 codebase, so every run writes what it did to OUTPUT_PATH. Scheduled daily on
 both machines by config/launchd/com.marvin.cleanup-sweep.plist.
 
-Two independent sweeps:
+Three independent sweeps:
 
 - **Stale claims**: a `claimed:*` issue whose `updatedAt` hasn't moved in
   over STALE_THRESHOLD_HOURS (a machine crashed, slept, or stalled) gets
@@ -20,18 +20,30 @@ Two independent sweeps:
   2026-10-06: nothing removed a resolved ticket's worktree (run_ticket never
   did, and this sweep was never scheduled and only knew G-Eskayo/marvin), so
   39 GiB of them filled the mac-mini to 94%.
+- **Orphaned code_sign_clone dirs**: browser instances (Chromium/Playwright)
+  create temporary clone directories for sandboxing in a parent `*.code_sign_clone`
+  directory, creating child `code_sign_clone.*` subdirectories inside each parent.
+  When the process crashes, these become orphaned. The sweep globs parent dirs
+  matching `*.code_sign_clone`, then lists each parent's `code_sign_clone.*`
+  children, checks if the owning process is still alive (lsof), and removes
+  children older than min_age_hours if not in use. Per-item recheck immediately
+  before removal protects against TOCTOU races (a process starting to use a
+  clone between the initial list and the removal attempt).
 
 Removal is lossless by construction: plain `git worktree remove` (never
 --force, so git refuses if anything uncommitted or untracked is there) and the
 branch is kept, so every commit stays reachable. Ignored build output
-(.build, node_modules) is what the removal actually frees.
+(.build, node_modules) is what the removal actually frees. Clone dirs are
+regenerable by the next browser launch.
 """
 from __future__ import annotations
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,6 +58,24 @@ STALE_THRESHOLD_HOURS = 24
 EMPTY_MIN_AGE_HOURS = 24
 ISSUE_NUMBER_RE = re.compile(r"#(\d+)$|^ticket/(\d+)(?:-|$)")  # pipeline/…#N, or ticket/<n>-<slug> (#226)
 GITHUB_REPO_RE = re.compile(r"github\.com[:/]([^/]+/[^/]+?)(?:\.git)?/?$")
+
+# Clone search roots: both standard temp and Darwin user cache (if on macOS)
+def _get_clone_search_roots() -> list[Path]:
+    roots = [Path(tempfile.gettempdir())]
+    # Try getconf for Darwin cache directories
+    for var_name in ['DARWIN_USER_CACHE_DIR', 'DARWIN_USER_TEMP_DIR']:
+        try:
+            result = subprocess.run(
+                ['getconf', var_name],
+                capture_output=True, text=True, timeout=2
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                roots.append(Path(result.stdout.strip()))
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+    return roots
+
+CLONE_SEARCH_ROOTS = _get_clone_search_roots()
 
 
 def _default_list_claimed_open_issues() -> list[dict]:
@@ -239,8 +269,134 @@ def sweep_worktrees(
     return {"removed": removed, "review": review}
 
 
-def _write_log(stale: list[dict], worktrees: dict) -> None:
+def _default_list_clone_dirs() -> list[dict]:
+    """List orphaned code_sign_clone directories under CLONE_SEARCH_ROOTS.
+    Globs *.code_sign_clone parents, then code_sign_clone.* children within each.
+    Returns one dict per child directory: path, size_bytes, and age in hours."""
+    clones = []
+    for root in CLONE_SEARCH_ROOTS:
+        if not root.exists():
+            continue
+        try:
+            # Find parent directories matching *.code_sign_clone
+            for parent in root.glob('*.code_sign_clone'):
+                if not parent.is_dir():
+                    continue
+                # Find child directories matching code_sign_clone.* within the parent
+                for child in parent.glob('code_sign_clone.*'):
+                    if not child.is_dir():
+                        continue
+                    # Calculate directory size recursively
+                    size_bytes = sum(
+                        f.stat().st_size for f in child.rglob('*') if f.is_file()
+                    )
+                    age_hours = (time.time() - child.stat().st_mtime) / 3600
+                    clones.append({
+                        "path": child,
+                        "size_bytes": size_bytes,
+                        "age_hours": age_hours,
+                    })
+        except (OSError, PermissionError):
+            continue
+    return clones
+
+
+def _default_is_in_use(clone_dir: Path) -> bool:
+    """Check if a clone directory is currently in use via lsof.
+    Returns True if any process has it open, False if not, fail-safe on error.
+    lsof return codes: 0 = in use (processes found), 1 = not in use (nothing found),
+    anything else = fail-safe True (permission error, timeout, lsof unavailable)."""
+    try:
+        result = subprocess.run(
+            ["lsof", "+D", str(clone_dir)],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            return True  # in use
+        elif result.returncode == 1:
+            return False  # not in use
+        else:
+            return True  # fail-safe: assume in use on any other error
+    except Exception:
+        # On error (lsof not available, timeout, permission), assume in use
+        return True
+
+
+def _default_remove_clone_dir(clone_dir: Path) -> bool:
+    """Remove a clone directory. Returns True if successful or already gone, False if removal fails.
+    Treats FileNotFoundError as success (directory already gone); other exceptions are failures."""
+    try:
+        shutil.rmtree(clone_dir, ignore_errors=False)
+        return True
+    except FileNotFoundError:
+        # Already gone is success
+        return True
+    except Exception:
+        return False
+
+
+def find_orphaned_clone_dirs(
+    min_age_hours: float = 1.0,
+    list_clone_dirs: Callable[[], list[dict]] | None = None,
+    is_in_use: Callable[[Path], bool] | None = None,
+) -> list[dict]:
+    """Find clone directories that are not in use and older than min_age_hours.
+    Returns a list of dicts with path, size_bytes, age_hours, and in_use status."""
+    list_clone_dirs = list_clone_dirs or _default_list_clone_dirs
+    is_in_use = is_in_use or _default_is_in_use
+
+    orphaned = []
+    for clone in list_clone_dirs():
+        if clone["age_hours"] < min_age_hours:
+            continue
+        if not is_in_use(clone["path"]):
+            orphaned.append({**clone, "in_use": False})
+    return orphaned
+
+
+def sweep_orphaned_clones(
+    min_age_hours: float = 1.0,
+    list_clone_dirs: Callable[[], list[dict]] | None = None,
+    is_in_use: Callable[[Path], bool] | None = None,
+    remove_clone_dir: Callable[[Path], bool] | None = None,
+) -> dict:
+    """Sweep orphaned clone directories: filter by age, check each one again before removing (per-item recheck).
+    Returns dict with 'removed' list and 'skipped' list (still in use when recheck happened)."""
+    list_clone_dirs = list_clone_dirs or _default_list_clone_dirs
+    is_in_use = is_in_use or _default_is_in_use
+    remove_clone_dir = remove_clone_dir or _default_remove_clone_dir
+
+    removed, skipped = [], []
+    for clone in list_clone_dirs():
+        path = clone["path"]
+        # Filter by age
+        if clone["age_hours"] < min_age_hours:
+            continue
+        # Per-item recheck immediately before removal: is it still in use right now?
+        if is_in_use(path):
+            skipped.append({**clone, "reason": "still in use at removal time"})
+            continue
+        # Try to remove
+        if remove_clone_dir(path):
+            removed.append(clone)
+        else:
+            skipped.append({**clone, "reason": "removal failed"})
+    return {"removed": removed, "skipped": skipped}
+
+
+def _format_bytes(n: int) -> str:
+    """Format bytes as human-readable size (B, MB, GB, TB)."""
+    for unit in ['B', 'MB', 'GB', 'TB']:
+        if abs(n) < 1024:
+            return f"{n:.1f}{unit}"
+        n /= 1024
+    return f"{n:.1f}TB"
+
+
+def _write_log(stale: list[dict], worktrees: dict, clones: dict | None = None) -> None:
     timestamp = datetime.now(timezone.utc).isoformat()
+    clones = clones or {"removed": [], "skipped": []}
+
     lines = [
         f"- Released stale claim: issue #{e['issue_number']} held by `{e['machine_id']}`, "
         f"{e['age_hours']:.1f}h since last update"
@@ -248,32 +404,15 @@ def _write_log(stale: list[dict], worktrees: dict) -> None:
     ]
     lines += [f"- Removed worktree ({w['reason']}): `{w['path']}`" for w in worktrees["removed"]]
     lines += [f"- Needs a look, kept ({w['reason']}): `{w['path']}`" for w in worktrees["review"]]
-    body = "\n".join(lines) + "\n" if lines else "Nothing to clean up: no stale claims, no resolved worktrees.\n"
+    lines += [
+        f"- Removed clone dir ({_format_bytes(c['size_bytes'])}, logical size on APFS clone): `{c['path']}`"
+        for c in clones["removed"]
+    ]
+
+    body = "\n".join(lines) + "\n" if lines else "Nothing to clean up: no stale claims, no resolved worktrees, no orphaned clones.\n"
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     existing = OUTPUT_PATH.read_text() if OUTPUT_PATH.exists() else "# MR pipeline cleanup sweep\n\n"
     OUTPUT_PATH.write_text(existing + f"\n## {timestamp}\n\n{body}")
-
-
-OUTCOME_CHECK_MACHINE = "mac-mini-1"  # one Mac measures and comments, so the two never race (the primary host)
-
-
-def _default_outcome_check() -> None:
-    """Purpose metrics whose check date has passed get measured and recorded on their ticket (marvin#304), and the
-    top pending suggestions go through ticket promotion (marvin#305)."""
-    try:
-        import machine_profile
-        if machine_profile.registry_id() != OUTCOME_CHECK_MACHINE:
-            return
-        import purpose_metrics
-        purpose_metrics.run()
-    except Exception as exc:  # noqa: BLE001 -- never let it stop the sweep; retried tomorrow
-        print(f"[cleanup-sweep] outcome check failed: {exc}", file=sys.stderr)
-    try:
-        # Ticket promotion: the consumer the analysts' suggestions never had (marvin#305), top few per day.
-        import output_contracts
-        output_contracts.run_promotion()
-    except Exception as exc:  # noqa: BLE001
-        print(f"[cleanup-sweep] ticket promotion failed: {exc}", file=sys.stderr)
 
 
 OUTCOME_CHECK_MACHINE = "mac-mini-1"  # one Mac measures and comments, so the two never race (the primary host)
@@ -298,14 +437,19 @@ def run_daily_sweep(
     is_claimed: Callable[[str, int], bool] | None = None,
     release: Callable[[int, str], None] | None = None,
     remove_worktree: Callable[[dict], bool] | None = None,
+    list_clone_dirs: Callable[[], list[dict]] | None = None,
+    is_clone_in_use: Callable[[Path], bool] | None = None,
+    remove_clone_dir: Callable[[Path], bool] | None = None,
     threshold_hours: float = STALE_THRESHOLD_HOURS,
+    min_age_hours: float = 1.0,
     now: datetime | None = None,
 ) -> dict:
-    """Cron entry point. Runs sweeps (claims, worktrees, disk ledger, disk trim),
+    """Cron entry point. Runs sweeps (claims, worktrees, orphaned clones, disk ledger, disk trim),
     logs what was removed/released/kept for review (same visibility standard as
     cron_health.py), returns a summary."""
     stale = sweep_stale_claims(threshold_hours, list_claimed_open_issues, release, now)
     worktrees = sweep_worktrees(list_worktrees, pr_state, is_claimed, remove_worktree)
+    clones = sweep_orphaned_clones(min_age_hours, list_clone_dirs, is_clone_in_use, remove_clone_dir)
 
     # Disk ledger and trim (log separately via their own functions)
     try:
@@ -322,9 +466,14 @@ def run_daily_sweep(
 
     _default_outcome_check()
 
-    _write_log(stale, worktrees)
-    return {"stale_claims_released": len(stale), "worktrees_removed": len(worktrees["removed"]),
-            "worktrees_for_review": len(worktrees["review"])}
+    _write_log(stale, worktrees, clones)
+    return {
+        "stale_claims_released": len(stale),
+        "worktrees_removed": len(worktrees["removed"]),
+        "worktrees_for_review": len(worktrees["review"]),
+        "clones_removed": len(clones["removed"]),
+        "clones_skipped": len(clones["skipped"]),
+    }
 
 
 if __name__ == "__main__":

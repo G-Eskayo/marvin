@@ -367,3 +367,343 @@ def test_drop_build_output_refuses_paths_outside_the_worktree(tmp_path):
     outside.mkdir()
     assert cs.drop_build_output(wt, ["../node_modules", str(outside)]) == []
     assert outside.is_dir()
+
+
+# ── orphaned code_sign_clone cleanup ──────────────────────────────────────────
+# Found 2026-10-13: browser instances create clone directories that persist if
+# the process crashes. These should be cleaned up if not in use, but never
+# removed while a process still holds them open (TOCTOU safety via per-item recheck).
+
+class TestListCloneDirs:
+    """Tests for _default_list_clone_dirs()."""
+
+    def test_8_lists_clone_dirs_in_temp_root(self, tmp_path, monkeypatch):
+        """Test case 8: Lists clone directories found in temp root (child dirs within parent)."""
+        parent = tmp_path / "test.code_sign_clone"
+        parent.mkdir()
+        child = parent / "code_sign_clone.abc123"
+        child.mkdir()
+        (child / "file.txt").write_text("data")
+
+        monkeypatch.setattr(cs, "CLONE_SEARCH_ROOTS", [tmp_path])
+        clones = cs._default_list_clone_dirs()
+        assert len(clones) == 1
+        assert clones[0]["path"] == child
+        assert clones[0]["size_bytes"] > 0
+        assert clones[0]["age_hours"] >= 0
+
+    def test_9_ignores_non_clone_dirs(self, tmp_path, monkeypatch):
+        """Test case 9: Ignores directories that don't match the clone pattern."""
+        regular_dir = tmp_path / "regular_dir"
+        regular_dir.mkdir()
+
+        monkeypatch.setattr(cs, "CLONE_SEARCH_ROOTS", [tmp_path])
+        clones = cs._default_list_clone_dirs()
+        assert len(clones) == 0
+
+    def test_10_handles_missing_search_roots(self, monkeypatch):
+        """Test case 10: Gracefully handles missing search root directories."""
+        missing_root = Path("/nonexistent/path/xyz")
+        monkeypatch.setattr(cs, "CLONE_SEARCH_ROOTS", [missing_root])
+        clones = cs._default_list_clone_dirs()
+        assert clones == []
+
+    def test_11_calculates_size_correctly(self, tmp_path, monkeypatch):
+        """Test case 11: Correctly calculates directory size (child dirs within parent)."""
+        parent = tmp_path / "test.code_sign_clone"
+        parent.mkdir()
+        child = parent / "code_sign_clone.xyz789"
+        child.mkdir()
+        file1 = child / "file1.txt"
+        file2 = child / "file2.txt"
+        file1.write_text("a" * 100)
+        file2.write_text("b" * 200)
+
+        monkeypatch.setattr(cs, "CLONE_SEARCH_ROOTS", [tmp_path])
+        clones = cs._default_list_clone_dirs()
+        assert clones[0]["size_bytes"] == 300
+
+
+class TestIsInUse:
+    """Tests for _default_is_in_use()."""
+
+    def test_12_returns_true_on_lsof_error(self, tmp_path, monkeypatch):
+        """Test case 12: Fail-safe: returns True if lsof is unavailable."""
+        clone_dir = tmp_path / "test.code_sign_clone"
+        clone_dir.mkdir()
+
+        def raise_file_not_found(*a, **k):
+            raise FileNotFoundError("lsof not found")
+        monkeypatch.setattr(subprocess, "run", raise_file_not_found)
+        result = cs._default_is_in_use(clone_dir)
+        assert result is True
+
+    def test_13_returns_true_on_timeout(self, tmp_path, monkeypatch):
+        """Test case 13: Fail-safe: returns True if lsof times out."""
+        clone_dir = tmp_path / "test.code_sign_clone"
+        clone_dir.mkdir()
+
+        def raise_timeout(*a, **k):
+            raise TimeoutError("lsof timed out")
+        monkeypatch.setattr(subprocess, "run", raise_timeout)
+        result = cs._default_is_in_use(clone_dir)
+        assert result is True
+
+    def test_14_checks_directory_with_lsof(self, tmp_path, monkeypatch):
+        """Test case 14: Uses lsof to check if directory is in use."""
+        clone_dir = tmp_path / "test.code_sign_clone"
+        clone_dir.mkdir()
+
+        from types import SimpleNamespace
+        mock_result = SimpleNamespace(returncode=0)
+        called = []
+
+        def mock_run(cmd, **kw):
+            called.append(cmd)
+            return mock_result
+
+        monkeypatch.setattr(subprocess, "run", mock_run)
+        result = cs._default_is_in_use(clone_dir)
+        assert result is True
+        assert len(called) == 1
+        assert "lsof" in called[0]
+        assert "+D" in called[0]
+        assert str(clone_dir) in called[0]
+
+
+class TestRemoveCloneDir:
+    """Tests for _default_remove_clone_dir()."""
+
+    def test_15_removes_directory_successfully(self, tmp_path):
+        """Test case 15: Successfully removes a clone directory."""
+        clone_dir = tmp_path / "test.code_sign_clone"
+        clone_dir.mkdir()
+        (clone_dir / "file.txt").write_text("data")
+
+        result = cs._default_remove_clone_dir(clone_dir)
+        assert result is True
+        assert not clone_dir.exists()
+
+    def test_16_returns_false_on_removal_failure(self, tmp_path, monkeypatch):
+        """Test case 16: Returns False if removal fails."""
+        clone_dir = tmp_path / "test.code_sign_clone"
+        clone_dir.mkdir()
+
+        import shutil
+        def raise_oserror(*a, **k):
+            raise OSError("Permission denied")
+        monkeypatch.setattr(shutil, "rmtree", raise_oserror)
+        result = cs._default_remove_clone_dir(clone_dir)
+        assert result is False
+
+    def test_17_handles_nonexistent_directory(self, tmp_path):
+        """Test case 17: Treats already-gone directory as success (idempotent)."""
+        clone_dir = tmp_path / "nonexistent.code_sign_clone"
+        result = cs._default_remove_clone_dir(clone_dir)
+        assert result is True
+
+
+class TestFindOrphanedCloneDirs:
+    """Tests for find_orphaned_clone_dirs()."""
+
+    def test_18_finds_unused_clones(self):
+        """Test case 18: Finds clone directories not in use."""
+        clone_dicts = [
+            {"path": Path("/tmp/clone1.code_sign_clone"), "size_bytes": 100, "age_hours": 5},
+            {"path": Path("/tmp/clone2.code_sign_clone"), "size_bytes": 200, "age_hours": 10},
+        ]
+
+        def mock_list_clones():
+            return clone_dicts
+
+        def mock_is_in_use(path):
+            return False
+
+        orphaned = cs.find_orphaned_clone_dirs(list_clone_dirs=mock_list_clones, is_in_use=mock_is_in_use)
+        assert len(orphaned) == 2
+        assert all(o["in_use"] is False for o in orphaned)
+
+    def test_19_skips_in_use_clones(self):
+        """Test case 19: Skips clone directories currently in use."""
+        clone_dicts = [
+            {"path": Path("/tmp/clone1.code_sign_clone"), "size_bytes": 100, "age_hours": 5},
+        ]
+
+        def mock_list_clones():
+            return clone_dicts
+
+        def mock_is_in_use(path):
+            return True
+
+        orphaned = cs.find_orphaned_clone_dirs(list_clone_dirs=mock_list_clones, is_in_use=mock_is_in_use)
+        assert len(orphaned) == 0
+
+
+class TestSweepOrphanedClones:
+    """Tests for sweep_orphaned_clones()."""
+
+    def test_20_removes_orphaned_clones_on_recheck(self):
+        """Test case 20: Removes clones that are still not in use after recheck."""
+        clone_dicts = [
+            {"path": Path("/tmp/clone1.code_sign_clone"), "size_bytes": 100, "age_hours": 5},
+        ]
+
+        def mock_list_clones():
+            return clone_dicts
+
+        def mock_is_in_use(path):
+            return False
+
+        def mock_remove(path):
+            return True
+
+        result = cs.sweep_orphaned_clones(list_clone_dirs=mock_list_clones, is_in_use=mock_is_in_use, remove_clone_dir=mock_remove)
+        assert len(result["removed"]) == 1
+        assert len(result["skipped"]) == 0
+
+    def test_21_skips_clones_that_become_in_use_after_recheck(self):
+        """Test case 21: Skips clones that become in-use during the recheck (CRITICAL: per-item recheck).
+        This test demonstrates why per-item recheck is needed: a process could start using
+        a clone between the initial list and the removal attempt. The recheck catches it."""
+        clone_dicts = [
+            {"path": Path("/tmp/clone1.code_sign_clone"), "size_bytes": 100, "age_hours": 5},
+        ]
+
+        def mock_list_clones():
+            return clone_dicts
+
+        checks = []
+
+        def mock_is_in_use(path):
+            checks.append(path)
+            return True  # Clone becomes in use by the time of recheck
+
+        def mock_remove(path):
+            return True
+
+        result = cs.sweep_orphaned_clones(list_clone_dirs=mock_list_clones, is_in_use=mock_is_in_use, remove_clone_dir=mock_remove)
+        assert len(result["removed"]) == 0
+        assert len(result["skipped"]) == 1
+        assert "still in use" in result["skipped"][0]["reason"]
+
+    def test_22_handles_removal_failure(self):
+        """Test case 22: Marks as skipped if removal fails."""
+        clone_dicts = [
+            {"path": Path("/tmp/clone1.code_sign_clone"), "size_bytes": 100, "age_hours": 5},
+        ]
+
+        def mock_list_clones():
+            return clone_dicts
+
+        def mock_is_in_use(path):
+            return False
+
+        def mock_remove(path):
+            return False
+
+        result = cs.sweep_orphaned_clones(list_clone_dirs=mock_list_clones, is_in_use=mock_is_in_use, remove_clone_dir=mock_remove)
+        assert len(result["removed"]) == 0
+        assert len(result["skipped"]) == 1
+        assert "removal failed" in result["skipped"][0]["reason"]
+
+    def test_23_naive_approach_fails_race_condition(self):
+        """Test case 23: Demonstrates why naive single-upfront-check fails.
+        A naive implementation that checks all clones first, then removes all,
+        would fail if a clone becomes in-use between check and remove."""
+        clone_dicts = [
+            {"path": Path("/tmp/clone1.code_sign_clone"), "size_bytes": 100, "age_hours": 5},
+            {"path": Path("/tmp/clone2.code_sign_clone"), "size_bytes": 200, "age_hours": 10},
+        ]
+
+        in_use_times = {"clone1": 1, "clone2": 0}
+
+        def mock_list_clones():
+            return clone_dicts
+
+        call_count = {"count": 0}
+
+        def mock_is_in_use(path):
+            call_count["count"] += 1
+            path_stem = path.stem
+            threshold = in_use_times.get(path_stem, 0)
+            return call_count["count"] > threshold
+
+        def mock_remove(path):
+            return True
+
+        result = cs.sweep_orphaned_clones(list_clone_dirs=mock_list_clones, is_in_use=mock_is_in_use, remove_clone_dir=mock_remove)
+        assert len(result["removed"]) == 1
+        assert len(result["skipped"]) == 1
+
+    def test_24_per_item_recheck_wins(self):
+        """Test case 24: Per-item recheck prevents accidental removal of in-use clones.
+        Verifies that the sweep correctly protects against TOCTOU race conditions."""
+        clone_dicts = [
+            {"path": Path("/tmp/clone1.code_sign_clone"), "size_bytes": 100, "age_hours": 5},
+            {"path": Path("/tmp/clone2.code_sign_clone"), "size_bytes": 200, "age_hours": 10},
+            {"path": Path("/tmp/clone3.code_sign_clone"), "size_bytes": 300, "age_hours": 15},
+        ]
+
+        in_use_state = {
+            Path("/tmp/clone1.code_sign_clone"): False,
+            Path("/tmp/clone2.code_sign_clone"): True,
+            Path("/tmp/clone3.code_sign_clone"): False,
+        }
+
+        def mock_list_clones():
+            return clone_dicts
+
+        def mock_is_in_use(path):
+            if path == Path("/tmp/clone1.code_sign_clone"):
+                current_state = in_use_state[path]
+                in_use_state[path] = not current_state
+                return in_use_state[path]
+            return in_use_state[path]
+
+        def mock_remove(path):
+            return True
+
+        result = cs.sweep_orphaned_clones(list_clone_dirs=mock_list_clones, is_in_use=mock_is_in_use, remove_clone_dir=mock_remove)
+        assert len(result["removed"]) == 1
+        assert result["removed"][0]["path"] == Path("/tmp/clone3.code_sign_clone")
+        assert len(result["skipped"]) == 2
+
+    def test_25_respects_min_age_hours_filter(self):
+        """Test case 25: Clones younger than min_age_hours are skipped."""
+        clone_dicts = [
+            {"path": Path("/tmp/clone1.code_sign_clone"), "size_bytes": 100, "age_hours": 0.5},  # too young
+            {"path": Path("/tmp/clone2.code_sign_clone"), "size_bytes": 200, "age_hours": 2.0},  # old enough
+        ]
+
+        def mock_list_clones():
+            return clone_dicts
+
+        def mock_is_in_use(path):
+            return False
+
+        def mock_remove(path):
+            return True
+
+        result = cs.sweep_orphaned_clones(min_age_hours=1.0, list_clone_dirs=mock_list_clones,
+                                          is_in_use=mock_is_in_use, remove_clone_dir=mock_remove)
+        assert len(result["removed"]) == 1
+        assert result["removed"][0]["path"] == Path("/tmp/clone2.code_sign_clone")
+        assert len(result["skipped"]) == 0
+
+    def test_26_find_orphaned_respects_min_age_hours(self):
+        """Test case 26: find_orphaned_clone_dirs also respects min_age_hours."""
+        clone_dicts = [
+            {"path": Path("/tmp/clone1.code_sign_clone"), "size_bytes": 100, "age_hours": 0.25},
+            {"path": Path("/tmp/clone2.code_sign_clone"), "size_bytes": 200, "age_hours": 5.0},
+        ]
+
+        def mock_list_clones():
+            return clone_dicts
+
+        def mock_is_in_use(path):
+            return False
+
+        orphaned = cs.find_orphaned_clone_dirs(min_age_hours=1.0, list_clone_dirs=mock_list_clones,
+                                               is_in_use=mock_is_in_use)
+        assert len(orphaned) == 1
+        assert orphaned[0]["path"] == Path("/tmp/clone2.code_sign_clone")
