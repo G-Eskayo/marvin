@@ -14,6 +14,9 @@ const RANK = { green: 0, yellow: 1, red: 2 }
 const level = (s) => (LEVELS.has(s) ? s : 'yellow') // unknown severity is a warning, never green
 const worst = (levels) => (levels.length ? levels.reduce((a, b) => (RANK[b] > RANK[a] ? b : a)) : 'yellow')
 const up = (s) => String(s ?? '').toUpperCase()
+// Where a summary line leads when clicked in the boot (#433): the exact Health check behind it, or Health itself.
+const HEALTH = { tab: 'health' }
+const onCheck = (c) => (c?.id ? { tab: 'health', check: c.id } : HEALTH)
 
 export const DEFAULT_BOOT_PATHS = {
   healthPath: HEALTH_STATUS_PATH,
@@ -39,10 +42,10 @@ function readHealth(healthPath) {
 
 function syncLine(checks) {
   const sync = checks.filter((c) => c.id.startsWith('repo:sync:~/.claude') || c.id.startsWith('sync:stuck') || c.id === 'repo:integrity:~/.claude')
-  if (!sync.length) return { chip: 'SYNC', level: 'yellow', text: 'MEMORY SYNC · UNKNOWN' }
+  if (!sync.length) return { chip: 'SYNC', level: 'yellow', text: 'MEMORY SYNC · UNKNOWN', target: HEALTH }
   const lvl = worst(sync.map((c) => c.severity))
   const bad = sync.find((c) => c.severity === lvl && lvl !== 'green')
-  return { chip: 'SYNC', level: lvl, text: 'MEMORY SYNC · MBP ⇄ MINI' + (bad ? ' · ' + up(bad.label) : '') }
+  return { chip: 'SYNC', level: lvl, text: 'MEMORY SYNC · MBP ⇄ MINI' + (bad ? ' · ' + up(bad.label) : ''), target: onCheck(bad ?? sync[0]) }
 }
 
 function memoryLine({ memoryDir, commandsDir }) {
@@ -67,10 +70,10 @@ function miniReason(c) {
 
 function miniLine(checks) {
   const keys = checks.filter((c) => ['machine:mac-mini-1', 'disk:space@mac-mini-1', 'jobs:exit@mac-mini-1'].includes(c.id))
-  if (!keys.length) return { chip: 'LINK', level: 'yellow', text: 'MAC-MINI · UNKNOWN' }
+  if (!keys.length) return { chip: 'LINK', level: 'yellow', text: 'MAC-MINI · UNKNOWN', target: HEALTH }
   const lvl = worst(keys.map((c) => c.severity))
   const reason = keys.find((c) => c.severity === lvl && lvl !== 'green')
-  return { chip: 'LINK', level: lvl, text: 'MAC-MINI · ' + (reason ? miniReason(reason) : 'NOMINAL') }
+  return { chip: 'LINK', level: lvl, text: 'MAC-MINI · ' + (reason ? miniReason(reason) : 'NOMINAL'), target: onCheck(reason ?? keys[0]) }
 }
 
 function handoffLine(handoffsDir) {
@@ -90,9 +93,9 @@ function handoffLine(handoffsDir) {
 
 function testLine(checks) {
   const t = checks.find((c) => c.id === 'main:green')
-  if (!t) return { chip: 'TEST', level: 'yellow', text: 'TESTS · UNKNOWN' }
+  if (!t) return { chip: 'TEST', level: 'yellow', text: 'TESTS · UNKNOWN', target: HEALTH }
   const counts = t.detail.match(/\d+ (?:passed|failed|skipped|errors?)/g) || []
-  return { chip: 'TEST', level: t.severity, text: 'TESTS · ' + (counts.length ? up(counts.join(' · ')) : up(t.detail).slice(0, 40)) }
+  return { chip: 'TEST', level: t.severity, text: 'TESTS · ' + (counts.length ? up(counts.join(' · ')) : up(t.detail).slice(0, 40)), target: onCheck(t) }
 }
 
 function verdictOf(health, counts, ageMin) {
@@ -123,7 +126,7 @@ export function buildBootData(opts = {}) {
     testLine(checks)
   ]
   if (health && (ageMin === null || ageMin > STALE_MINUTES)) {
-    lines.push({ chip: 'STALE', level: 'yellow', text: ageMin === null ? 'HEALTH SNAPSHOT UNDATED' : `HEALTH SNAPSHOT ${ageMin} MIN OLD` })
+    lines.push({ chip: 'STALE', level: 'yellow', text: ageMin === null ? 'HEALTH SNAPSHOT UNDATED' : `HEALTH SNAPSHOT ${ageMin} MIN OLD`, target: HEALTH })
   }
   return {
     generatedAt: now.toISOString(),

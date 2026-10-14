@@ -140,7 +140,7 @@ describe('the summary lines read real sources', () => {
     // replace the disk check with a red one
     const h = GREEN(); h.checks = h.checks.map((c) => c.id === 'disk:space@mac-mini-1' ? { ...c, severity: 'red', detail: '22 GiB free of 228 (10%); 30 pipeline worktrees use 8.2 GiB' } : c)
     writeFileSync(disk.healthPath, JSON.stringify(h))
-    expect(line(buildBootData(disk), 'LINK')).toEqual({ chip: 'LINK', level: 'red', text: 'MAC-MINI · DISK 10% FREE' })
+    expect(line(buildBootData(disk), 'LINK')).toEqual({ chip: 'LINK', level: 'red', text: 'MAC-MINI · DISK 10% FREE', target: { tab: 'health', check: 'disk:space@mac-mini-1' } })
     disk.done()
     const jobs = tree({})
     const j = GREEN(); j.checks = j.checks.map((c) => c.id === 'jobs:exit@mac-mini-1' ? { ...c, severity: 'red', detail: 'last run failed: a (exit 1), b (exit 1), c (exit 78)' } : c)
@@ -166,7 +166,7 @@ describe('the summary lines read real sources', () => {
 
   it('TEST reads the real counts from main:green, and is a warning when that check is missing', () => {
     const t = tree({ health: GREEN() })
-    expect(line(buildBootData(t), 'TEST')).toEqual({ chip: 'TEST', level: 'green', text: 'TESTS · 2143 PASSED · 9 SKIPPED' })
+    expect(line(buildBootData(t), 'TEST')).toEqual({ chip: 'TEST', level: 'green', text: 'TESTS · 2143 PASSED · 9 SKIPPED', target: { tab: 'health', check: 'main:green' } })
     t.done()
     const u = tree({ health: { generated_at: minutesAgo(1), overall: 'green', checks: [] } })
     expect(line(buildBootData(u), 'TEST')).toMatchObject({ level: 'yellow', text: 'TESTS · UNKNOWN' })
@@ -179,6 +179,38 @@ describe('the summary lines read real sources', () => {
     expect(d.feed).toHaveLength(6)
     expect(Object.keys(d.feed[0]).sort()).toEqual(['label', 'level'])
     expect(d.counts).toEqual({ green: 6, yellow: 0, red: 0, total: 6 })
+    t.done()
+  })
+})
+
+describe('each summary line knows where its real thing lives (#433)', () => {
+  it('SYNC, LINK and TEST point at the exact check behind them; STALE at Health; LOCK, OK and PLOT at nothing', () => {
+    const h = GREEN([check('repo:integrity:~/.claude', 'red', 'stash integrity')])
+    h.checks = h.checks.map((c) => c.id === 'disk:space@mac-mini-1' ? { ...c, severity: 'red', detail: '22 GiB free of 228 (10%)' } : c)
+    const t = tree({ health: { ...h, generated_at: minutesAgo(STALE_MINUTES + 5) } })
+    const d = buildBootData(t)
+    expect(line(d, 'SYNC').target).toEqual({ tab: 'health', check: 'repo:integrity:~/.claude' })
+    expect(line(d, 'LINK').target).toEqual({ tab: 'health', check: 'disk:space@mac-mini-1' })
+    expect(line(d, 'TEST').target).toEqual({ tab: 'health', check: 'main:green' })
+    expect(line(d, 'STALE').target).toEqual({ tab: 'health' })
+    for (const chip of ['LOCK', 'OK', 'PLOT']) expect(line(d, chip).target ?? null).toBeNull()
+    t.done()
+  })
+
+  it('a healthy line still points at its check (the first one), so you can look at it', () => {
+    const t = tree({ health: GREEN() })
+    const d = buildBootData(t)
+    expect(line(d, 'SYNC').target).toEqual({ tab: 'health', check: 'repo:sync:~/.claude@macbook-pro-1' })
+    expect(line(d, 'LINK').target).toEqual({ tab: 'health', check: 'machine:mac-mini-1' })
+    t.done()
+  })
+
+  it('when the checks behind a line are missing, it points at Health, not at a check that does not exist', () => {
+    const t = tree({})
+    const d = buildBootData(t)
+    expect(line(d, 'SYNC').target).toEqual({ tab: 'health' })
+    expect(line(d, 'LINK').target).toEqual({ tab: 'health' })
+    expect(line(d, 'TEST').target).toEqual({ tab: 'health' })
     t.done()
   })
 })
