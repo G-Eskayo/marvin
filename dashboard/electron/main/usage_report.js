@@ -7,7 +7,8 @@ import path from 'path'
 // and simultaneous callers share one build. A failed build keeps the last good report and says what went wrong.
 const TTL_MS = 60_000
 const PY = path.join(homedir(), '.agents', 'venv', 'bin', 'python')
-const CLI = path.join(homedir(), '.agents', 'lib', 'usage_report.py')
+// MARVIN_AGENTS_LIB lets a screenshot run of a branch build read that branch's lib instead of the installed one (#417).
+const CLI = path.join(process.env.MARVIN_AGENTS_LIB || path.join(homedir(), '.agents', 'lib'), 'usage_report.py')
 let cache = null
 let inflight = null
 
