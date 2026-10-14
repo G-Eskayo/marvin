@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Daily pipeline cleanup sweep (lib/cleanup_sweep.py): releases stale ticket claims and removes resolved worktrees
-     for every project, losslessly; anything holding work is only reported. Log: ~/.claude/logs/mr-pipeline-sweep.md.
+<!-- Daily pipeline cleanup sweep (lib/cleanup_sweep.py): releases stale ticket claims, removes resolved worktrees
+     and orphaned clones, trims caches, and updates disk ledger. Lossless and safe: anything holding work is only
+     reported. Log: ~/.claude/logs/mr-pipeline-sweep.md.
      Install on each machine: cp this to ~/Library/LaunchAgents/ and `launchctl bootstrap gui/$(id -u) <that file>`. -->
 <plist version="1.0">
 <dict>

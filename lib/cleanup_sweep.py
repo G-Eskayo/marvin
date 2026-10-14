@@ -239,7 +239,7 @@ def sweep_worktrees(
     return {"removed": removed, "review": review}
 
 
-def _write_log(stale: list[dict], worktrees: dict) -> None:
+def _write_log(stale: list[dict], worktrees: dict, clone_removed: list[dict] | None = None) -> None:
     timestamp = datetime.now(timezone.utc).isoformat()
     lines = [
         f"- Released stale claim: issue #{e['issue_number']} held by `{e['machine_id']}`, "
@@ -248,32 +248,27 @@ def _write_log(stale: list[dict], worktrees: dict) -> None:
     ]
     lines += [f"- Removed worktree ({w['reason']}): `{w['path']}`" for w in worktrees["removed"]]
     lines += [f"- Needs a look, kept ({w['reason']}): `{w['path']}`" for w in worktrees["review"]]
-    body = "\n".join(lines) + "\n" if lines else "Nothing to clean up: no stale claims, no resolved worktrees.\n"
+
+    # Append clone sweep results if provided
+    if clone_removed:
+        total_kb = 0
+        for entry in clone_removed:
+            path = entry.get("path")
+            size_kb = entry.get("size_kb", 0)
+            error = entry.get("error")
+            age_hours = entry.get("age_hours", 0)
+            if error:
+                lines.append(f"- Failed to remove clone ({error}): `{path}` ({age_hours:.1f}h old)")
+            else:
+                total_kb += size_kb
+                lines.append(f"- Removed clone: `{path}` ({size_kb // 1024} MiB, {age_hours:.1f}h old)")
+        if total_kb > 0:
+            lines.append(f"- Total freed: {total_kb // 1024} MiB")
+
+    body = "\n".join(lines) + "\n" if lines else "Nothing to clean up: no stale claims, no resolved worktrees, no orphan clones.\n"
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     existing = OUTPUT_PATH.read_text() if OUTPUT_PATH.exists() else "# MR pipeline cleanup sweep\n\n"
     OUTPUT_PATH.write_text(existing + f"\n## {timestamp}\n\n{body}")
-
-
-OUTCOME_CHECK_MACHINE = "mac-mini-1"  # one Mac measures and comments, so the two never race (the primary host)
-
-
-def _default_outcome_check() -> None:
-    """Purpose metrics whose check date has passed get measured and recorded on their ticket (marvin#304), and the
-    top pending suggestions go through ticket promotion (marvin#305)."""
-    try:
-        import machine_profile
-        if machine_profile.registry_id() != OUTCOME_CHECK_MACHINE:
-            return
-        import purpose_metrics
-        purpose_metrics.run()
-    except Exception as exc:  # noqa: BLE001 -- never let it stop the sweep; retried tomorrow
-        print(f"[cleanup-sweep] outcome check failed: {exc}", file=sys.stderr)
-    try:
-        # Ticket promotion: the consumer the analysts' suggestions never had (marvin#305), top few per day.
-        import output_contracts
-        output_contracts.run_promotion()
-    except Exception as exc:  # noqa: BLE001
-        print(f"[cleanup-sweep] ticket promotion failed: {exc}", file=sys.stderr)
 
 
 OUTCOME_CHECK_MACHINE = "mac-mini-1"  # one Mac measures and comments, so the two never race (the primary host)
@@ -301,11 +296,12 @@ def run_daily_sweep(
     threshold_hours: float = STALE_THRESHOLD_HOURS,
     now: datetime | None = None,
 ) -> dict:
-    """Cron entry point. Runs sweeps (claims, worktrees, disk ledger, disk trim),
+    """Cron entry point. Runs sweeps (claims, worktrees, disk ledger, disk trim, clone sweep),
     logs what was removed/released/kept for review (same visibility standard as
     cron_health.py), returns a summary."""
     stale = sweep_stale_claims(threshold_hours, list_claimed_open_issues, release, now)
     worktrees = sweep_worktrees(list_worktrees, pr_state, is_claimed, remove_worktree)
+    clone_removed = []
 
     # Disk ledger and trim (log separately via their own functions)
     try:
@@ -320,11 +316,17 @@ def run_daily_sweep(
     except Exception:
         pass
 
+    try:
+        import clone_sweep as cs_sweep  # noqa: E402
+        clone_removed = cs_sweep.sweep_clones()
+    except Exception:
+        pass
+
     _default_outcome_check()
 
-    _write_log(stale, worktrees)
+    _write_log(stale, worktrees, clone_removed)
     return {"stale_claims_released": len(stale), "worktrees_removed": len(worktrees["removed"]),
-            "worktrees_for_review": len(worktrees["review"])}
+            "worktrees_for_review": len(worktrees["review"]), "clones_removed": len([c for c in clone_removed if "size_kb" in c])}
 
 
 if __name__ == "__main__":

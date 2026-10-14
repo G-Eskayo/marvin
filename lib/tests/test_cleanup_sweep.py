@@ -293,6 +293,35 @@ def test_run_daily_sweep_returns_summary_dict(log_path, tmp_path):
     assert result["stale_claims_released"] == 1
     assert result["worktrees_removed"] == 1
     assert result["worktrees_for_review"] == 0
+    assert "clones_removed" in result  # clone sweep is now wired in
+
+
+def test_run_daily_sweep_includes_clone_sweep_results(log_path, tmp_path, monkeypatch):
+    """Verify clone sweep is wired into run_daily_sweep and results appear in log and summary."""
+    import clone_sweep as cs_module
+
+    # Mock sweep_clones to return a successful removal
+    def mock_sweep_clones(*args, **kwargs):
+        return [
+            {"path": tmp_path / "clone-1", "size_kb": 1024, "age_hours": 5.0},
+            {"path": tmp_path / "clone-2", "size_kb": 2048, "age_hours": 6.0},
+        ]
+
+    monkeypatch.setattr(cs_module, "sweep_clones", mock_sweep_clones)
+
+    result = cs.run_daily_sweep(
+        list_claimed_open_issues=lambda: [],
+        list_worktrees=lambda: [],
+        now=NOW,
+    )
+
+    # Check summary includes clone stats
+    assert result["clones_removed"] == 2
+
+    # Check log includes clone removal lines
+    log_content = log_path.read_text()
+    assert "Removed clone:" in log_content
+    assert "Total freed:" in log_content
 
 
 def test_a_failing_worktree_add_says_why(monkeypatch, tmp_path):

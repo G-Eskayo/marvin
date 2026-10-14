@@ -30,12 +30,12 @@ before(async () => {
     return
   }
   try {
-    browser = await chromium.launch({ channel: 'chrome' })
+    browser = await chromium.launch()
   } catch (e) {
-    skipReason = 'Google Chrome is not installed: ' + e.message.split('\n')[0]
+    skipReason = 'Chromium failed to launch: ' + e.message.split('\n')[0]
   }
 })
-after(() => browser?.close())
+after(async () => { await browser?.close() })
 
 async function openSnapshot(width = 1280, height = 800) {
   const page = await browser.newPage({ viewport: { width, height } })
