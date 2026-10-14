@@ -94,6 +94,14 @@ class _Run:
 
     def _finish(self, status: str, error: str = "") -> None:
         self._mutate(lambda r: r.update(status=status, finished_at=_now().isoformat(), error=error))
+        if status in ("failed", "crashed"):
+            # marvin#422: a failed run also goes to the one error log Health shows, not only this job's history.
+            try:
+                sys.path.insert(0, str(Path(__file__).resolve().parent))
+                import error_log
+                error_log.record(f"job:{self._job}", f"{self._label or self._job} {status}", raw=error)
+            except Exception:  # noqa: BLE001 -- recording must never break the job
+                pass
 
 
 @contextmanager

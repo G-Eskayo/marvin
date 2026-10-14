@@ -35,6 +35,7 @@ import { createRelationsService } from './relations_service.js'
 import { summarizeBoard, buildCompleted } from './board.js'
 import { createTriggerHub, createReconciler, refetchesGithub } from './triggers.js'
 import { createMrHistory, mergedPrArgs } from './mr_history.js'
+import { appendError } from './error_log.js'
 import { listOpenPrsAcrossRepos, prListArgs, normalizeSeen, canMergeFromDashboard, repoFromPrUrl, MARVIN_REPO } from './mr_repos.js'
 import { createIndexer, buildDocsIndex, loadIndex } from './docs_search.js'
 import { createDocsService, MASTER_ID } from './docs_service.js'
@@ -115,10 +116,19 @@ async function fetchOpenPrs(light, fresh = false) {
     if (!light) return full()
     return githubState.get('prs-light', repo, () => ghListOpenPrs(true)(repo), { fresh })
   }
-  const { prs, errors } = await listOpenPrsAcrossRepos(readRegistry().map((b) => b.repo), perRepo)
-  for (const e of errors) console.error(`[mr] could not list PRs for ${e.repo}: ${e.message}`)
+  const repos = readRegistry().map((b) => b.repo)
+  const { prs, errors } = await listOpenPrsAcrossRepos(repos, perRepo)
+  for (const e of errors) {
+    console.error(`[mr] could not list PRs for ${e.repo}: ${e.message}`)
+    appendError({ source: 'dashboard:mr:list', message: `could not list PRs for ${e.repo}`, raw: e.message })
+  }
+  // #422: what the Open list is built from, so it can say "couldn't reach GitHub" instead of looking empty.
+  const stale = githubState.failing(light ? 'prs-light' : 'prs').filter((f) => !errors.some((e) => e.repo === f.repo))
+  const all = [...errors.map((e) => ({ repo: e.repo, message: e.message })), ...stale]
+  prFetch = { errors: all, projects: repos.length, lastGoodAt: all.length ? prFetch.lastGoodAt : Date.now() }
   return prs
 }
+let prFetch = { errors: [], projects: 0, lastGoodAt: null }
 const listOpenPrs = ({ light = false, fresh = false } = {}) => fetchOpenPrs(light, fresh)
 // Sent-back tickets' rework status spans every project (lib/rework_status.py reads GitHub): same rule as the queue.
 // #324: at most one run every 5 minutes, however many change pings arrive (each run reads every project).
@@ -601,6 +611,8 @@ function registerMrReviewHandlers() {
     cachePath: join(homedir(), '.claude', 'logs', 'mr-history.json')
   })
   ipcMain.handle('mr:history', (_event, opts) => mrHistory.get({ fresh: !!opts?.fresh }))
+  // #422: whether the last Open list read every project, and if not which failed and why.
+  ipcMain.handle('mr:listStatus', () => prFetch)
   // One merged (or refused) PR as the usual detail view, read-only: never mergeable from here.
   ipcMain.handle('mr:historyDetail', async (_event, url) => {
     const repo = repoFromPrUrl(url)

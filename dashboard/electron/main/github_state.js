@@ -27,6 +27,7 @@ export function gateCooldownUntil(file = process.env.MARVIN_GH_GATE_STATE || GAT
 
 export function createGithubState({ now = Date.now, safetyMs = SAFETY_MS, cooldownUntil = gateCooldownUntil } = {}) {
   const entries = new Map()   // `${kind}|${repo ?? '*'}` -> { value, at, gen, has, pending }
+  const failures = new Map()  // same key -> { kind, repo, since, message } while its last read failed (#422)
   const gens = new Map()      // repo -> generation (bumped when GitHub says it changed)
   let allGen = 0              // bumped on any change: what values spanning every repo depend on
   let hits = 0
@@ -63,12 +64,16 @@ export function createGithubState({ now = Date.now, safetyMs = SAFETY_MS, cooldo
       try {
         const value = await fetch()
         entries.set(key, { value, at: now(), gen, has: true })
+        failures.delete(key)
         return value
       } catch (err) {
         // GitHub refused or is unreachable: show what we last knew, and wait before asking again.
-        const failures = (e.failures || 0) + 1
-        const retryAt = now() + Math.min(BACKOFF_MS * 2 ** (failures - 1), MAX_BACKOFF_MS)
-        entries.set(key, { ...e, pending: null, failures, retryAt, error: err })
+        const failCount = (e.failures || 0) + 1
+        const retryAt = now() + Math.min(BACKOFF_MS * 2 ** (failCount - 1), MAX_BACKOFF_MS)
+        entries.set(key, { ...e, pending: null, failures: failCount, retryAt, error: err })
+        // marvin#422: remember which repos are being answered from an old copy (or not at all), so the screen can say so.
+        if (!failures.has(key)) failures.set(key, { kind, repo, since: now() })
+        failures.get(key).message = String(err?.message || err).split('\n')[0]
         if (e.has) return e.value
         throw err
       }
@@ -89,7 +94,12 @@ export function createGithubState({ now = Date.now, safetyMs = SAFETY_MS, cooldo
     allGen += 1
   }
 
-  return { get, changed, changedAll, stats: () => ({ hits, reads, entries: entries.size }), _genOf: genOf }
+  // Repos of one kind whose last read failed: [{repo, message, since}] (#422).
+  function failing(kind) {
+    return [...failures.values()].filter((f) => f.kind === kind).map(({ repo, message, since }) => ({ repo, message, since }))
+  }
+
+  return { get, changed, changedAll, failing, stats: () => ({ hits, reads, entries: entries.size }), _genOf: genOf }
 }
 
 // "github:owner/repo" (the change watch's ping source) -> "owner/repo"

@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('api', {
     autoMergeReport: () => ipcRenderer.invoke('mr:autoMergeReport'),
     // The Merged view (#419): saved history now, or a fresh read; and one PR's read-only detail.
     history: (opts) => ipcRenderer.invoke('mr:history', opts),
+    listStatus: () => ipcRenderer.invoke('mr:listStatus'),
     historyDetail: (url) => ipcRenderer.invoke('mr:historyDetail', url),
     markSeen: (prNumbers) => ipcRenderer.invoke('mr:markSeen', prNumbers),
     // Fires whenever the webhook-server's /mr-ready ping reaches this
