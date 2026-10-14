@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import MetricsPage from '@components/MetricsPage.jsx'
 import MrReview from '@components/MrReview.jsx'
 import HealthDashboard from '@components/HealthDashboard.jsx'
+import BootSequence from '@components/BootSequence.jsx'
 import DocsExplorer from '@components/DocsExplorer.jsx'
 import FilesExplorer from '@components/FilesExplorer.jsx'
 import ActivityBoard from '@components/ActivityBoard.jsx'
@@ -106,6 +107,7 @@ export default function App() {
 
   return (
     <div className="flex h-screen flex-col">
+      <BootSequence onOpenHealth={() => navigate('health')} />
       <header className="titlebar flex shrink-0 items-center gap-1 border-b border-neutral-800 px-6 pb-3 pt-12">
         <h1 className="mr-6 text-sm font-semibold tracking-wide text-neutral-400">MARVIN METRICS</h1>
         <nav className="flex gap-1">

@@ -15,6 +15,7 @@ import { prsForOrderCheck, listPipelinePrs, approveMr, denyMr, fetchTicketContex
 import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
 import { readDispatchStatus } from './dispatch_status.js'
 import { readHealthStatus, runHealthCheckNow } from './health.js'
+import { buildBootData, createBootGate } from './boot_data.js'
 import { readOnboardingPlans } from './onboarding.js'
 import { readCachedRepos } from './docs.js'
 import { createPortfolio } from './portfolio.js'
@@ -231,7 +232,11 @@ function registerSessionHandlers() {
   ipcMain.handle('portfolio:openDevSite', () => openDevSite())
 }
 
+// Boot sequence (#431): plays on the first window load of each app launch; reloads skip it.
+const bootGate = createBootGate()
+
 function registerHealthHandlers() {
+  ipcMain.handle('boot:data', () => (bootGate() ? { show: true, data: buildBootData() } : { show: false }))
   ipcMain.handle('health:status', () => readHealthStatus())
   ipcMain.handle('health:agents', () => listAgents())
   // Execution profiles (lib/project_profile.py): which projects the pipeline may work on by itself.

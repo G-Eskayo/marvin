@@ -1,0 +1,45 @@
+/* Boot sequence (#431). Ported from docs/design/celestial-navigation/boot.html (v7, #428). Scoped to .boot-root. */
+.boot-root {
+  --dash: #0f1117; --amber: #f0b32a; --orange: #ff6a1f; --red: #ff3b2f; --green: #54ff8a; --dim: #6b551f;
+  position: fixed; inset: 0; z-index: 9999; background: var(--dash); overflow: hidden; cursor: default; user-select: none;
+}
+.boot-root svg.boot-sky { position: absolute; inset: 0; width: 100%; height: 100%; }
+.boot-hud { position: absolute; opacity: 0; }
+
+/* Modern raster: fine, quiet texture; beam passes when fresh data lands */
+.boot-raster { position: absolute; inset: 0; pointer-events: none; z-index: 6;
+  background: repeating-linear-gradient(to bottom, #ffffff07 0 1px, #0000 1px 3px); }
+.boot-sweep { position: absolute; left: 0; right: 0; height: 180px; top: -200px; pointer-events: none; z-index: 7;
+  background: linear-gradient(to bottom, #0000, #9fffc00a 45%, #d8ffe61c 50%, #9fffc00a 55%, #0000); mix-blend-mode: screen; }
+
+.boot-check { position: absolute; left: 40px; bottom: 70px; width: 440px; }
+.boot-check .boot-hdr { display: flex; justify-content: space-between; width: 100%; font: 11px 'Share Tech Mono', ui-monospace, monospace;
+  color: var(--dim); letter-spacing: 1px; margin-bottom: 6px; opacity: 0; }
+.boot-win { position: relative; height: 133px; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, #0000, #000 30%); }
+.boot-feed { position: absolute; left: 0; right: 0; top: 0; }
+.boot-fl { height: 19px; font: 12px/19px 'Share Tech Mono', ui-monospace, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.boot-fl i { display: inline-block; width: 6px; height: 6px; margin-right: 10px; vertical-align: 1px; }
+.boot-sum { position: absolute; left: 0; bottom: 0; font: 13px/1.9 'Share Tech Mono', ui-monospace, monospace; color: var(--amber); }
+.boot-sum div { opacity: 0; white-space: nowrap; }
+.boot-sum b { font-weight: 400; display: inline-block; min-width: 46px; text-align: center; margin-right: 10px;
+  border: 1px solid currentColor; border-radius: 2px; line-height: 1.3; font-size: 11px; }
+.boot-root .green { color: var(--green); } .boot-root .yellow { color: var(--amber); }
+.boot-root .red { color: var(--red); } .boot-root .lock { color: var(--orange); }
+.boot-root i.green { background: var(--green); } .boot-root i.yellow { background: var(--amber); } .boot-root i.red { background: var(--red); }
+
+.boot-bar { left: 0; right: 0; bottom: 24px; height: 30px; }
+.boot-bar .boot-track { position: absolute; left: 40px; right: 40px; top: 14px; height: 2px; background: #ffffff12; }
+.boot-bar .boot-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--orange); box-shadow: 0 0 10px var(--orange); }
+.boot-bar .boot-lbl { position: absolute; left: 40px; right: 40px; top: -2px; display: flex; justify-content: space-between;
+  font: 11px 'Share Tech Mono', ui-monospace, monospace; letter-spacing: 1px; color: var(--dim); }
+
+.boot-banner { left: 0; right: 0; bottom: 24px; height: 32px; display: flex; align-items: center; border-top: 1px solid; border-bottom: 1px solid; }
+.boot-banner span { margin: 0 auto; background: var(--dash); padding: 2px 22px; font: 600 16px 'Saira Condensed', 'Arial Narrow', sans-serif; letter-spacing: 6px; }
+.boot-banner.nominal { border-color: var(--orange); color: var(--orange); background: repeating-linear-gradient(-45deg, #ff6a1fcc 0 12px, var(--dash) 12px 24px); }
+.boot-banner.issues { border-color: var(--red); color: var(--red); cursor: pointer; background: repeating-linear-gradient(-45deg, #ff3b2fcc 0 12px, var(--dash) 12px 24px); }
+.boot-banner.unknown { border-color: var(--amber); color: var(--amber); cursor: pointer; background: repeating-linear-gradient(-45deg, #f0b32acc 0 12px, var(--dash) 12px 24px); }
+
+.boot-title { left: 50%; top: calc(50% + 90px); transform: translateX(-50%); text-align: center; white-space: nowrap; }
+.boot-title h1 { margin: 0; font: 800 60px/1 'Saira Condensed', 'Arial Narrow', sans-serif; color: var(--green); letter-spacing: 10px; padding-left: 10px; text-shadow: 0 0 18px #54ff8a99; }
+.boot-title .boot-sub { margin-top: 8px; font: 600 13px 'Saira Condensed', 'Arial Narrow', sans-serif; letter-spacing: 6px; color: var(--orange); }
+.boot-lock-lbl { font: 11px 'Share Tech Mono', ui-monospace, monospace; fill: var(--orange); letter-spacing: 1px; }
