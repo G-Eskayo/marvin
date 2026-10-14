@@ -388,21 +388,49 @@ def _live_edit_lease(repo: Path, changed_files: list[str], now: float | None = N
     return f'{e["path"]} was edited {minutes_ago} min ago by a live session{request}'
 
 
-def _last_own_push_failed(repo: Path) -> bool:
-    """Was this Mac's most recent push entry for `repo` a failure? Reads only the log's tail; any doubt is False."""
+def _last_own_entry(repo: Path, action: str | None = None) -> str | None:
+    """First line of this Mac's most recent entry for `repo` (of `action`, if given). Reads only the log's tail; any
+    doubt is None."""
     try:
         with LOG_PATH.open("rb") as f:
             f.seek(0, os.SEEK_END)
             f.seek(max(0, f.tell() - 512 * 1024))
             text = f.read().decode("utf-8", errors="replace")
     except OSError:
-        return False
-    header = re.compile(r"^## \S+ — push \(" + re.escape(machine_label()) + r"\) \[" + re.escape(str(repo)) + r"\]\n(.*)$",
-                        re.MULTILINE)
+        return None
+    header = re.compile(r"^## \S+ — " + (re.escape(action) if action else r"\S+") + r" \(" + re.escape(machine_label())
+                        + r"\) \[" + re.escape(str(repo)) + r"\]\n(.*)$", re.MULTILINE)
     last = None
     for last in header.finditer(text):
         pass
-    return bool(last and SYNC_FAILURE_RE.match(last.group(1)))
+    return last.group(1) if last else None
+
+
+def _last_own_push_failed(repo: Path) -> bool:
+    return bool(SYNC_FAILURE_RE.match(_last_own_entry(repo, "push") or ""))
+
+
+def _not_on_main(repo: Path) -> str | None:
+    """Why this run must leave the tree alone, if anything other than `main` is checked out (marvin#440): a commit
+    there sweeps other sessions' WIP into that branch (PR #439, 2026-10-14) and `git push origin main` never ships it.
+    Whoever checked the branch out owns its commits. None for main, and for a path that isn't a git repo at all."""
+    ok, out = _git_ok(repo, ["symbolic-ref", "--short", "-q", "HEAD"])
+    if ok:
+        branch = out.strip()
+        return None if branch == "main" else f"skipping — {branch} checked out, not main; whoever checked it out owns its commits"
+    if not _git_ok(repo, ["rev-parse", "--git-dir"])[0]:
+        return None
+    return "skipping — detached HEAD (rebase or bisect in progress?), not main; nothing committed, stashed or merged"
+
+
+def _skip_off_main(repo: Path, action: str) -> bool:
+    """True if the run must stop here. Logged once per branch, not every cycle."""
+    reason = _not_on_main(repo)
+    if not reason:
+        return False
+    if _last_own_entry(repo) != reason:
+        _log(repo, action, reason)
+    return True
 
 
 def _merge_remote(repo: Path) -> tuple[bool, str]:
@@ -424,6 +452,8 @@ def push(repo: Path, now: float | None = None) -> None:
     if stuck:
         _log(repo, "push", f"REFUSING to run — {stuck}, needs manual resolution before push can proceed")
         notify("MARVIN code-sync CONFLICT", f"Stuck from a previous run [{repo.name}] — check sync-log.md", open_target=str(LOG_PATH))
+        return
+    if _skip_off_main(repo, "push"):
         return
 
     # Dirty content inside an embedded repo (e.g. a Claude Code worktree swept in as a gitlink) is not ours to
@@ -521,6 +551,8 @@ def pull(repo: Path) -> None:
     if stuck:
         _log(repo, "pull", f"REFUSING to run — {stuck}, needs manual resolution before pull can proceed")
         notify("MARVIN code-sync CONFLICT", f"Stuck from a previous run [{repo.name}] — check sync-log.md", open_target=str(LOG_PATH))
+        return
+    if _skip_off_main(repo, "pull"):
         return
 
     status = _git(repo, ["status", "--porcelain"])
