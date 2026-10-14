@@ -1,20 +1,49 @@
 <!doctype html>
 <html><head><meta charset="utf-8"><title>MARVIN Boot</title>
 <link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@600;800&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<script src="boot-data.js"></script>
 <style>
 /* --dash is the dashboard's own background (electron/main/index.js backgroundColor, index.html body) */
-:root{--dash:#0f1117;--amber:#f0b32a;--orange:#ff6a1f;--red:#ff3b2f;--green:#54ff8a;--dim:#6b551f}
+:root{--dash:#0f1117;--amber:#f0b32a;--orange:#ff6a1f;--red:#ff3b2f;--green:#54ff8a;--dim:#6b551f;--line:#7a5a14}
 html,body{margin:0;height:100%;background:var(--dash);overflow:hidden}
 #app{position:fixed;inset:0;background:var(--dash);color:#e5e5e5;font:14px system-ui}
-#boot{position:fixed;inset:0;background:var(--dash);transform-origin:50% 50%}
+#boot{position:fixed;inset:0;background:var(--dash)}
 #sky{position:absolute;inset:0;width:100%;height:100%}
+
+/* ---- Modern raster: what the CRT line became. Fine, quiet, felt more than seen. ---- */
+#raster{position:absolute;inset:0;pointer-events:none;z-index:6;
+  background:repeating-linear-gradient(to bottom,#ffffff07 0 1px,#0000 1px 3px)}
+/* Beam pass: one soft band sweeps when fresh data lands (power-on, checks verified) */
+.sweep{position:absolute;left:0;right:0;height:180px;top:-200px;pointer-events:none;z-index:7;
+  background:linear-gradient(to bottom,#0000,#9fffc00a 45%,#d8ffe61c 50%,#9fffc00a 55%,#0000);mix-blend-mode:screen}
+/* Phosphor afterglow: new text lands bright and decays to its colour */
+@keyframes glow{from{filter:brightness(2.2);text-shadow:0 0 10px currentColor}to{filter:none;text-shadow:0 0 0 transparent}}
+
 .hud{position:absolute;opacity:0}
-#log{left:40px;bottom:40px;font:13px/1.9 'Share Tech Mono',monospace;color:var(--amber);opacity:1}
-#log div{opacity:0;white-space:nowrap}
-#log b{font-weight:400;display:inline-block;min-width:46px;text-align:center;margin-right:10px;border:1px solid currentColor;border-radius:2px;line-height:1.3;font-size:11px}
-.ok{color:var(--green)}.k{color:var(--orange)}
-#title{left:50%;top:calc(50% + 120px);transform:translateX(-50%);text-align:center;white-space:nowrap}
-#title h1{margin:0;font:800 64px/1 'Saira Condensed';color:var(--green);letter-spacing:10px;padding-left:10px;text-shadow:0 0 18px #54ff8a99}
+#check{left:40px;bottom:70px;width:440px;opacity:1}
+#check{position:absolute}
+#check .hdr{display:flex;justify-content:space-between;font:11px 'Share Tech Mono';color:var(--dim);letter-spacing:1px;margin-bottom:6px;opacity:0}
+#win{position:relative;height:133px;overflow:hidden;-webkit-mask-image:linear-gradient(to bottom,#0000,#000 30%)}
+#feed{position:absolute;left:0;right:0;top:0}
+.fl{height:19px;font:12px/19px 'Share Tech Mono';white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fl i{display:inline-block;width:6px;height:6px;margin-right:10px;vertical-align:1px}
+#sum{position:absolute;left:0;bottom:0;font:13px/1.9 'Share Tech Mono';color:var(--amber)}
+#sum div{opacity:0;white-space:nowrap}
+#sum b{font-weight:400;display:inline-block;min-width:46px;text-align:center;margin-right:10px;border:1px solid currentColor;border-radius:2px;line-height:1.3;font-size:11px}
+.green{color:var(--green)}.yellow{color:var(--amber)}.red{color:var(--red)}.lock{color:var(--orange)}
+i.green{background:var(--green)}i.yellow{background:var(--amber)}i.red{background:var(--red)}
+
+#bar{left:0;right:0;bottom:24px;height:30px}
+#bar .track{position:absolute;left:40px;right:40px;top:14px;height:2px;background:#ffffff12}
+#bar .fill{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--orange);box-shadow:0 0 10px var(--orange)}
+#bar .lbl{position:absolute;left:40px;right:40px;top:-2px;display:flex;justify-content:space-between;font:11px 'Share Tech Mono';letter-spacing:1px;color:var(--dim)}
+#banner{left:0;right:0;bottom:24px;height:32px;display:flex;align-items:center;border-top:1px solid;border-bottom:1px solid}
+#banner span{margin:0 auto;background:var(--dash);padding:2px 22px;font:600 16px 'Saira Condensed';letter-spacing:6px}
+#banner.nominal{border-color:var(--orange);background:repeating-linear-gradient(-45deg,#ff6a1fcc 0 12px,var(--dash) 12px 24px);color:var(--orange)}
+#banner.issues{border-color:var(--red);background:repeating-linear-gradient(-45deg,#ff3b2fcc 0 12px,var(--dash) 12px 24px);color:var(--red)}
+
+#title{left:50%;top:calc(50% + 90px);transform:translateX(-50%);text-align:center;white-space:nowrap}
+#title h1{margin:0;font:800 60px/1 'Saira Condensed';color:var(--green);letter-spacing:10px;padding-left:10px;text-shadow:0 0 18px #54ff8a99}
 #title .sub{margin-top:8px;font:600 13px 'Saira Condensed';letter-spacing:6px;color:var(--orange)}
 #lockLbl{font:11px 'Share Tech Mono';fill:var(--orange);letter-spacing:1px}
 </style></head><body>
@@ -29,75 +58,105 @@ html,body{margin:0;height:100%;background:var(--dash);overflow:hidden}
   </defs>
   <g id="field"></g><g id="mark"></g><g id="lock"></g>
  </svg>
- <div class="hud" id="log"></div>
  <div class="hud" id="title"><h1>MARVIN</h1><div class="sub">SYSTEMS ONLINE</div></div>
+ <div class="hud" id="check"><div class="hdr" id="chkHdr" style="opacity:1"><div id="hw" style="display:flex;justify-content:space-between;width:100%;opacity:0"><span>SYSTEM CHECK</span><span id="chkN">000/000</span></div></div>
+   <div id="win"><div id="fw"><div id="feed"></div></div></div><div id="sum"></div></div>
+ <div class="hud" id="bar"><div class="lbl"><span id="barL">VERIFYING</span><span id="barP">000%</span></div><div class="track"><div class="fill" id="fill"></div></div></div>
+ <div class="hud" id="banner"><span id="bannerT"></span></div>
+ <div id="raster"></div><div class="sweep" id="sw1"></div><div class="sweep" id="sw2"></div>
 </div>
 <script>
 // The mark: same geometry as the app icon (icon.html, 1024 grid).
 const ICON = { pts: [[262,772],[262,262],[512,560],[762,262],[762,772]], core: 2, star: 44, coreR: 68, orbit: 118, line: 26 };
-const S = 0.36, C = [512,560];
-const P = ICON.pts.map(([x,y]) => [(x-C[0])*S, (y-C[1])*S - 50]);
+const S = 0.34, C = [512,560];
+const P = ICON.pts.map(([x,y]) => [(x-C[0])*S, (y-C[1])*S - 70]);
 const [cx,cy] = P[ICON.core];
-// Live values in the real build; a real problem shows here instead of "OK".
-const LOG = [['k','LOCK','ORIGIN · MARVIN'],['ok','OK','116 MEMORIES CHARTED'],['ok','SYNC','MAC-MINI · 100%'],['k','PLOT','COURSE PLOTTED']];
+const D = window.BOOT_DATA;                       // real data: boot_data.py (the dashboard will provide the same shape)
 
-const K = 1.3;            // pacing: every delay and duration is scaled by this
-const HOLD = 1200;        // ms the finished frame holds before handing over
+const K = 1.3, HOLD = 1500;
 const NS='http://www.w3.org/2000/svg', el=(t,a,p)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);p&&p.appendChild(e);return e};
 const $=id=>document.getElementById(id);
 const anims=[]; const A=(node,kf,o)=>{const a=node.animate(kf,{fill:'both',easing:'cubic-bezier(.2,.7,.2,1)',...o,delay:(o.delay||0)*K,duration:o.duration*K});anims.push(a);return a};
 const at=(n,x,y)=>{n.style.transformOrigin=`${x}px ${y}px`;n.style.transformBox='view-box'};
+const inout=(n,tIn,dIn,tOut,dOut,extra={})=>{const tot=tOut+dOut-tIn;A(n,[{opacity:0,...(extra.from||{})},{opacity:1,offset:dIn/tot,...(extra.to||{})},{opacity:1,offset:(tOut-tIn)/tot},{opacity:0}],{delay:tIn,duration:tot,easing:'linear'})};
+const glow=(n,delay)=>A(n,[{filter:'brightness(2.4)',textShadow:'0 0 10px currentColor'},{filter:'brightness(1)',textShadow:'0 0 0 transparent'}],{delay,duration:650,easing:'ease-out'});
+const sweep=(n,delay)=>A(n,[{transform:'translateY(0)'},{transform:`translateY(${innerHeight+400}px)`}],{delay,duration:900,easing:'cubic-bezier(.4,0,.6,1)'});
 const field=$('field'), mark=$('mark'), lock=$('lock');
 
-// CRT power-on
+// 1 · Power on: a line opens, the beam makes its first pass
 A($('sky'),[{transform:'scaleY(.004) scaleX(.5)',filter:'brightness(3)'},{transform:'scaleY(.004) scaleX(1)',filter:'brightness(3)',offset:.45},{transform:'none',filter:'none'}],{duration:420,easing:'cubic-bezier(.7,0,.3,1)'});
+sweep($('sw1'),250);
 
-// Sky, with the five stars hidden among ordinary stars
-let s=23;const r=()=>(s=(s*16807)%2147483647)/2147483647;
-for(let i=0;i<120;i++){const x=(r()-.5)*1280,y=(r()-.5)*800; if(P.some(([px,py])=>Math.hypot(px-x,py-y)<36)) continue;
-  el('circle',{cx:x,cy:y,r:.6+r()*1.3,fill:'#cfd6e6',opacity:.1+r()*.4},field);}
-const stars=P.map(([x,y])=>({x,y,dot:el('circle',{cx:x,cy:y,r:2.4,fill:'#cfd6e6',opacity:.8},mark)}));
+// 2 · Stars arrive one by one (the five M stars are among them, unmarked)
+let s=29;const r=()=>(s=(s*16807)%2147483647)/2147483647;
+const sky=[];
+for(let i=0;i<110;i++){const x=(r()-.5)*1280,y=(r()-.5)*800; if(P.some(([px,py])=>Math.hypot(px-x,py-y)<36)) continue; sky.push({x,y,rad:.8+r()*1.5,op:.25+r()*.55});}
+const stars=P.map(([x,y])=>({x,y,rad:2.4,op:.85,m:true}));
+const all=[...sky,...stars].map(v=>[r(),v]).sort((a,b)=>a[0]-b[0]).map(v=>v[1]);
+all.forEach((st,i)=>{const c=el('circle',{cx:st.x,cy:st.y,r:st.rad,fill:'#cfd6e6'},st.m?mark:field); st.dot=c; at(c,st.x,st.y);
+  A(c,[{opacity:0,transform:'scale(2.6)'},{opacity:st.op,transform:'scale(1)'}],{delay:350+i*11,duration:260});});
+const T0 = 350+all.length*11+150;               // sky complete
 
-// Lock on the origin star
+// 3 · Lock on the origin, ignite
 const LKW=el('g',{},lock), LK=el('g',{},LKW); at(LK,cx,cy);
-const b=30,L=10; [[-1,-1],[1,-1],[1,1],[-1,1]].forEach(([sx,sy])=>el('path',{d:`M${cx+sx*b} ${cy+sy*(b-L)} V${cy+sy*b} H${cx+sx*(b-L)}`,stroke:'#ff6a1f','stroke-width':2,fill:'none'},LK));
+const b=28,L=9; [[-1,-1],[1,-1],[1,1],[-1,1]].forEach(([sx,sy])=>el('path',{d:`M${cx+sx*b} ${cy+sy*(b-L)} V${cy+sy*b} H${cx+sx*(b-L)}`,stroke:'#ff6a1f','stroke-width':2,fill:'none'},LK));
 el('text',{x:cx+b+8,y:cy-b+4,id:'lockLbl'},LK).textContent='ORIGIN';
-A(LK,[{opacity:0,transform:'scale(3) rotate(45deg)'},{opacity:1,transform:'scale(1) rotate(0deg)',offset:.75},{opacity:1,transform:'scale(1.1)',offset:.85},{opacity:1,transform:'scale(1)'}],{delay:500,duration:520});
-A(LKW,[{opacity:1},{opacity:0}],{delay:1500,duration:300});
-
-// Ignite
+A(LK,[{opacity:0,transform:'scale(3) rotate(45deg)'},{opacity:1,transform:'none',offset:.75},{opacity:1,transform:'scale(1.1)',offset:.85},{opacity:1,transform:'none'}],{delay:T0,duration:520});
+A(LKW,[{opacity:1},{opacity:0}],{delay:T0+1000,duration:300});
 const core=el('circle',{cx,cy,r:ICON.coreR*S,fill:'url(#core)',filter:'url(#gc)'},mark); at(core,cx,cy);
-A(core,[{opacity:0,transform:'scale(.1)'},{opacity:1,transform:'scale(2.1)',offset:.4},{opacity:1,transform:'none'}],{delay:950,duration:650});
+A(core,[{opacity:0,transform:'scale(.1)'},{opacity:1,transform:'scale(2.1)',offset:.4},{opacity:1,transform:'none'}],{delay:T0+450,duration:650});
 const orbit=el('circle',{cx,cy,r:ICON.orbit*S,fill:'none',stroke:'#ff6a1f','stroke-width':5,'stroke-dasharray':'1.5 10','stroke-linecap':'round'},mark); at(orbit,cx,cy);
-A(orbit,[{opacity:0,transform:'rotate(-120deg) scale(.5)'},{opacity:.9,transform:'none'}],{delay:1150,duration:800});
+A(orbit,[{opacity:0,transform:'rotate(-120deg) scale(.5)'},{opacity:.9,transform:'none'}],{delay:T0+650,duration:800});
 
-// Lines grow out of the origin; stars ping as they're reached
+// 4 · Lines grow out of the origin; stars ping as they're reached
 const branch=(a,m,c,delay)=>{const p=el('path',{d:`M${P[a]} L${P[m]} L${P[c]}`,fill:'none',stroke:'#f0b32a','stroke-width':ICON.line*S,'stroke-linejoin':'round','stroke-linecap':'round',filter:'url(#gl)'},mark);
   mark.insertBefore(p,mark.firstChild); const len=p.getTotalLength(), l1=Math.hypot(P[m][0]-P[a][0],P[m][1]-P[a][1]); p.style.strokeDasharray=len;
   A(p,[{strokeDashoffset:len},{strokeDashoffset:0}],{delay,duration:900,easing:'linear'}); return [delay+900*l1/len, delay+900];};
 const reach=(i,t)=>{const st=stars[i]; st.dot.setAttribute('filter','url(#gn)');
-  A(st.dot,[{r:2.4,fill:'#cfd6e6'},{r:ICON.star*S*1.5,fill:'#54ff8a',offset:.5},{r:ICON.star*S,fill:'#54ff8a'}],{delay:t,duration:420});
+  A(st.dot,[{r:2.4,fill:'#cfd6e6'},{r:ICON.star*S*1.5,fill:'#54ff8a',offset:.5},{r:ICON.star*S,fill:'#54ff8a'}],{delay:t,duration:420,composite:'replace'});
   const ring=el('circle',{cx:st.x,cy:st.y,r:6,fill:'none',stroke:'#54ff8a','stroke-width':1.3},mark);
   A(ring,[{r:6,opacity:0},{r:6,opacity:.8,offset:.02},{r:40,opacity:0}],{delay:t,duration:700,easing:'ease-out'});};
-const [a1,a2]=branch(2,1,0,1250), [b1,b2]=branch(2,3,4,1250);
+const [a1,a2]=branch(2,1,0,T0+750), [b1,b2]=branch(2,3,4,T0+750);
 reach(1,a1); reach(3,b1); reach(0,a2); reach(4,b2);
 
-// Log + title
-LOG.forEach(([c,chip,txt],i)=>{const d=document.createElement('div');d.innerHTML=`<b class="${c}">${chip}</b>${txt}`;$('log').appendChild(d);
-  A(d,[{opacity:0,transform:'translateX(-8px)'},{opacity:1,transform:'none'}],{delay:600+i*380,duration:160,easing:'steps(3)'});});
-A($('title'),[{opacity:0,letterSpacing:'0px',filter:'blur(6px)'},{opacity:1,filter:'blur(0)'}],{delay:2350,duration:420,easing:'steps(6)'});
+// 5 · System check: every real health check scrolls past; the bar is real progress through them
+const feed=$('feed'), F=D.feed, LH=19, VIS=7, C0=600, DT=Math.max(28,Math.min(60,2600/F.length));
+F.forEach((c,i)=>{const d=document.createElement('div');d.className='fl '+c.level;d.innerHTML=`<i class="${c.level}"></i>${c.label.toUpperCase()}`;feed.appendChild(d);
+  A(d,[{opacity:0},{opacity:1}],{delay:C0+i*DT,duration:1,easing:'linear'}); glow(d,C0+i*DT);});
+A(feed,[{transform:`translateY(${VIS*LH}px)`},{transform:`translateY(${-(F.length-VIS)*LH}px)`}],{delay:C0,duration:F.length*DT,easing:`steps(${F.length})`});
+const CHK_END=C0+F.length*DT;
 
-// Hold, then dissolve straight into the dashboard (same background, so nothing flashes)
-const DONE=2800, END=DONE+HOLD/K;
+A($('fill'),[{width:'0%'},{width:'100%'}],{delay:C0,duration:F.length*DT,easing:`steps(${F.length})`});
+const nTick=A($('chkN'),[{opacity:1},{opacity:1}],{delay:C0,duration:F.length*DT,easing:'linear'});
+function drawCount(){const t=(nTick.currentTime??0)-C0*K, n=Math.max(0,Math.min(F.length,Math.floor(t/(DT*K))+ (t>=0?1:0)));
+  $('chkN').textContent=String(n).padStart(3,'0')+'/'+String(F.length).padStart(3,'0'); $('barP').textContent=String(Math.round(n/F.length*100)).padStart(3,'0')+'%';}
+
+
+// 6 · Verified: beam pass, the feed settles into the summary, the bar becomes the verdict
+sweep($('sw2'),CHK_END);
+inout($('fw'),0,1,CHK_END+80,250); inout($('hw'),C0-150,200,CHK_END+80,250);
+D.lines.forEach((l,i)=>{const d=document.createElement('div');d.className=l.level;d.innerHTML=`<b>${l.chip}</b>${l.text}`;$('sum').appendChild(d);
+  A(d,[{opacity:0,transform:'translateX(-8px)'},{opacity:1,transform:'none'}],{delay:CHK_END+250+i*120,duration:150,easing:'steps(3)'}); glow(d,CHK_END+250+i*120);});
+const ban=$('banner'), c=D.counts;
+ban.className='hud '+(D.nominal?'nominal':'issues');
+$('bannerT').textContent = D.nominal ? 'ALL SYSTEMS NOMINAL'
+  : [c.red&&`${c.red} CRITICAL`, c.yellow&&`${c.yellow} WARNING${c.yellow>1?'S':''}`].filter(Boolean).join(' · ') + ' · OPEN HEALTH';
+inout($('bar'),C0-150,200,CHK_END+100,200);
+A(ban,[{opacity:0,clipPath:'inset(0 50% 0 50%)'},{opacity:1,clipPath:'inset(0 0 0 0)'}],{delay:CHK_END+150,duration:380});
+glow($('bannerT'),CHK_END+250);
+A($('title'),[{opacity:0,filter:'blur(6px)'},{opacity:1,filter:'blur(0)'}],{delay:Math.max(a2,b2)+200,duration:420,easing:'steps(6)'});
+
+// 7 · Hold, then dissolve into the dashboard (same background, nothing flashes)
+const DONE=Math.max(CHK_END+250+D.lines.length*120+300, Math.max(a2,b2)+700), END=DONE+HOLD/K;
 A($('boot'),[{opacity:1},{opacity:0}],{delay:END,duration:500,easing:'ease-in-out'});
 A($('app'),[{opacity:0},{opacity:1}],{delay:END+150,duration:450});
 
 window.BOOT_TOTAL=(END+520)*K;
-window.seek=(ms)=>anims.forEach(a=>{a.pause();a.currentTime=ms});
+const tick=()=>{drawCount();requestAnimationFrame(tick)}; tick();
+window.seek=(ms)=>{anims.forEach(a=>{a.pause();a.currentTime=ms});drawCount()};
 const skip=()=>anims.forEach(a=>a.currentTime=Math.max(a.currentTime||0,END*K));
 addEventListener('keydown',skip); $('boot').addEventListener('click',skip);
 if(location.search.includes('rec')) anims.forEach(a=>a.pause());
-// Prototype only: a stand-in dashboard so the hand-off can be seen.
 if(location.search.includes('dash')) $('app').innerHTML='<div style="display:flex;height:100%"><div style="width:200px;border-right:1px solid #262626;padding:20px;color:#a3a3a3;line-height:2.4">Activity<br>Tickets<br>Health<br>Docs<br>Files</div><div style="flex:1;padding:24px"><div style="font-size:20px;margin-bottom:16px">Activity</div>'+'<div style="height:64px;border:1px solid #262626;border-radius:8px;margin-bottom:12px;background:#171717"></div>'.repeat(5)+'</div></div>';
 </script>
 </body></html>

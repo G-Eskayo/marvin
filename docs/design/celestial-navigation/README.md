@@ -47,25 +47,58 @@ icon changes the boot as well.
 
 ![Icon on iPhone and Mac](icon-on-devices.png)
 
-## The boot sequence (v4, about 5.5 s, any key or click skips it)
+## The boot sequence (v5, about 8 s, any key or click skips it)
 
-Minimal by request (2026-10-14). It uses the **dashboard's own background, `#0f1117`**, so the hand-off is seamless.
+It uses the **dashboard's own background `#0f1117`**, so the hand-off is seamless. It's minimal, and **every status it
+shows is real**.
 
-1. **CRT power-on:** a bright line opens into the sky.
-2. **The sky.** The five M stars are already there, hidden among ordinary stars.
-3. **Target lock.** An orange reticle snaps onto the origin star (MARVIN), and the origin star ignites with a dashed orbit.
+1. **Power on:** a line opens into the sky, and the beam makes its first pass.
+2. **Stars arrive one by one.** The five M stars are among them, unmarked.
+3. **Target lock on the origin star (MARVIN).** It ignites with a dashed orbit.
 4. **Lines grow out of the origin** in two branches. Each star they reach pings and turns green.
-5. **Four-line log:** `LOCK origin`, `OK memories`, `SYNC mac-mini %`, `PLOT course`. Then "MARVIN · SYSTEMS ONLINE".
-6. **Hold** the finished frame for 1.2 s, then **dissolve** straight into the dashboard. Same background, so nothing flashes.
+5. **System check (bottom left):** every real health check scrolls past in a 7-line window, coloured by its real
+   severity. The progress bar along the bottom moves through the checks, from 0 to 100%.
+6. **Verified:** a second beam pass. The feed settles into **six summary lines** (LOCK origin, SYNC memory MBP ⇄ Mini,
+   OK memories + skills, LINK Mac Mini, PLOT handoff, TEST main), each showing its real level. The bar turns into the
+   **verdict banner**:
+   - `ALL SYSTEMS NOMINAL` (orange hazard stripes) **only** when health is `overall: green` **and** the health snapshot
+     is under 20 minutes old.
+   - Otherwise it shows the real counts, with red stripes: `7 CRITICAL · 12 WARNINGS · OPEN HEALTH`. In the real
+     build, clicking it opens the Health tab.
+7. **Hold** for 1.5 s, then **dissolve** into the dashboard.
 
-Pacing is a single `K` factor (1.3) and the hold is `HOLD` (1200 ms), so both are easy to tune.
-Removed in v4: the hex grid, hazard bar, boxed sync panel, top-left tag and CRT collapse. Those belong to the later dashboard redo if anywhere.
+### Data contract: `boot-data.json` (`boot_data.py` is the reference implementation)
+The dashboard's main process produces this shape from sources that already exist. Nothing in the boot is made up.
 
-The real build reads live values. If something is actually wrong, the boot shows it (for example, a sync stall
-appears as a red `SYNC` chip below 100%) and does not report "nominal".
+| Field | Source |
+|---|---|
+| `overall`, `counts`, `feed[]` | `~/.claude/logs/health-status.json` (health_checks.py, every 15 min, ADR 0033) |
+| `nominal` | `overall == green` AND snapshot is 20 minutes old or less; a stale snapshot adds a `STALE` line |
+| SYNC line | `repo:sync:~/.claude@*`, `sync:stuck:*`, `repo:integrity:~/.claude` (worst wins, with the reason) |
+| memories / skills | links in `MEMORY.md` (broken links count as a warning) + wrappers in `~/.claude/commands` |
+| LINK line | `machine:mac-mini-1`, `disk:space@mac-mini-1`, `jobs:exit@mac-mini-1` |
+| PLOT / TEST | newest `~/.claude/handoffs/handoff-*.md`; `main:green` |
 
-![Boot](boot.gif)
-![Boot keyframes](boot-keyframes.png)
+On 2026-10-14 the honest result was **red** (Mini disk at 10%, failed jobs, review queues past their cut rule), so the
+boot said so. That is the point.
+
+## Modern raster: what the CRT line became
+
+The question was what the CRT line would look like if the technology had kept advancing. It isn't a filter over
+everything. It's three quiet behaviours, each with a job. They're used in the boot now and are **the rule for the
+dashboard redo** (see `modern-raster.html`).
+
+1. **Raster:** 1px lines at a 3px pitch, about 3% brightness, on surfaces only. A texture you feel more than see; it
+   never softens text.
+2. **Beam pass:** one soft band sweeps a card **only when its data refreshes**, so the scan line becomes a signal
+   meaning "this just updated".
+3. **Afterglow:** a value that changes lands bright and decays, like phosphor persistence, so you can see what changed
+   at a glance.
+
+![Modern raster](modern-raster.gif)
+
+![Boot v5](boot.gif)
+![Boot v5 keyframes](boot-keyframes.png)
 
 `record.cjs` captures deterministic frames: every animation uses the Web Animations API, so it can be seeked.
 Run it with `node record.cjs boot.html frames 25`.

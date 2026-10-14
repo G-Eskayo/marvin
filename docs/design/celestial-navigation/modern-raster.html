@@ -1,0 +1,52 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Modern Raster Demo</title>
+<link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@600;800&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+/* What the CRT line became, if the tech had kept going: not a filter over everything, but three quiet, purposeful behaviours. */
+:root{--dash:#0f1117;--amber:#f0b32a;--orange:#ff6a1f;--red:#ff3b2f;--green:#54ff8a;--dim:#6b551f;--line:#7a5a14}
+html,body{margin:0;height:100%;background:var(--dash);color:#d4d4d4;font:14px system-ui}
+.wrap{display:grid;grid-template-columns:1fr 1fr;gap:28px;padding:40px;max-width:1200px}
+h2{grid-column:1/-1;margin:0;font:800 30px 'Saira Condensed';letter-spacing:2px;color:var(--green)}
+.note{grid-column:1/-1;margin:-14px 0 0;color:#8a8a8a;font-size:13px}
+.card{position:relative;overflow:hidden;border:1px solid #262626;border-radius:10px;background:#14161d;padding:20px 22px}
+.card h3{margin:0 0 4px;font:600 13px 'Saira Condensed';letter-spacing:3px;color:var(--orange)}
+.card .k{font:12px 'Share Tech Mono';color:#8a8a8a}
+.big{font:800 54px/1.1 'Saira Condensed';color:var(--green);letter-spacing:1px}
+.row{display:flex;justify-content:space-between;font:13px/2 'Share Tech Mono';border-top:1px solid #1f2229}
+/* 1 · Raster: 1px at 3px pitch, ~3% — texture you feel more than see. Only on surfaces, never on text crispness. */
+.raster::after{content:"";position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(to bottom,#ffffff08 0 1px,#0000 1px 3px)}
+/* 2 · Beam pass: a single soft band sweeps a card ONLY when its data refreshes — the scan line becomes a signal. */
+.beam{position:absolute;left:0;right:0;height:120px;top:-140px;pointer-events:none;background:linear-gradient(to bottom,#0000,#9fffc010 45%,#d8ffe626 50%,#9fffc010 55%,#0000)}
+.card.pass .beam{animation:pass .9s cubic-bezier(.4,0,.6,1)}
+@keyframes pass{from{transform:translateY(0)}to{transform:translateY(520px)}}
+/* 3 · Phosphor persistence: a value that changes lands bright and decays — you can see WHAT just changed. */
+.chg{animation:after 1.1s ease-out}
+@keyframes after{from{filter:brightness(2.4);text-shadow:0 0 12px currentColor}to{filter:none;text-shadow:none}}
+.legend{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,1fr);gap:18px;font-size:13px;color:#a3a3a3}
+.legend b{display:block;color:var(--amber);font:600 13px 'Saira Condensed';letter-spacing:2px;margin-bottom:4px}
+</style></head><body>
+<div class="wrap">
+ <h2>MODERN RASTER</h2>
+ <p class="note">The CRT line, if the technology had kept going: three quiet behaviours with a job, not a filter over everything. Cards refresh every few seconds here.</p>
+ <div class="card raster" id="c1"><div class="beam"></div><h3>MEMORY SYNC</h3><div class="k">MBP ⇄ MINI</div><div class="big" id="v1">100.0%</div>
+   <div class="row"><span>last push</span><span id="v2">2 min ago</span></div><div class="row"><span>memories</span><span id="v3">116</span></div></div>
+ <div class="card raster" id="c2"><div class="beam"></div><h3>HEALTH</h3><div class="k">59 CHECKS</div><div class="big" id="v4" style="color:var(--red)">7 CRIT</div>
+   <div class="row"><span>warnings</span><span id="v5">12</span></div><div class="row"><span>green</span><span id="v6">40</span></div></div>
+ <div class="legend">
+  <div><b>1 · RASTER</b>1px lines at 3px pitch, about 3% bright. A texture on surfaces you feel more than see. It never softens text.</div>
+  <div><b>2 · BEAM PASS</b>One soft band sweeps a card only when its data refreshes. The scan line becomes a signal: "this just updated."</div>
+  <div><b>3 · AFTERGLOW</b>A value that changes lands bright and fades, like phosphor persistence. You can see what changed at a glance.</div>
+ </div>
+</div>
+<script>
+const pass=(id)=>{const c=document.getElementById(id);c.classList.remove('pass');void c.offsetWidth;c.classList.add('pass')};
+const set=(id,v)=>{const e=document.getElementById(id);if(e.textContent===String(v))return;e.textContent=v;e.classList.remove('chg');void e.offsetWidth;e.classList.add('chg')};
+let t=0;
+function step(){t++;
+ if(t%2){pass('c1');set('v2',t%4===1?'just now':'2 min ago');set('v3',116+Math.floor(t/4))}
+ else{pass('c2');const crit=Math.max(0,7-Math.floor(t/2));set('v4',crit?crit+' CRIT':'NOMINAL');document.getElementById('v4').style.color=crit?'var(--red)':'var(--green)';set('v6',59-crit-12)}
+}
+window.seekStep=step;
+if(!location.search.includes('rec')) setInterval(step,2200);
+</script>
+</body></html>
