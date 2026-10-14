@@ -50,12 +50,145 @@ def test_top_callers_of_the_last_day_with_what_they_ran():
     assert all(t["caller"] != "old.py" for t in top)
 
 
-def test_budget_series_and_latest_reading():
+def test_budget_is_the_lowest_reading_each_hour_with_gaps_where_there_were_none():
+    # GitHub refills the allowance every hour, so raw readings make a sawtooth (marvin#417): keep each hour's low point.
     budget = [{"at": T - 7200, "graphql": 0.9, "core": 1.0}, {"at": T - 60, "graphql": 0.4, "core": 0.99, "reset": None},
-              {"at": T - 3 * 86400, "graphql": 0.1, "core": 1.0}]
-    s = gu.summarize([], budget, NOW)
-    assert [b["graphql"] for b in s["budget"]] == [0.9, 0.4]
+              {"at": T - 120, "graphql": 0.7, "core": 1.0}, {"at": T - 3 * 86400, "graphql": 0.1, "core": 1.0}]
+    s = gu.summarize([], budget, NOW, hours=3)
+    assert [h["budget_min"] for h in s["hours"]] == [0.9, None, 0.4]
+    assert [h["budget_readings"] for h in s["hours"]] == [1, 0, 2]
     assert s["latest_budget"]["graphql"] == 0.4
+    assert "budget" not in s  # raw readings are no longer shipped: the payload must not grow with run time
+
+
+def test_an_hour_that_ran_out_keeps_zero_not_none():
+    s = gu.summarize([], [{"at": T - 60, "graphql": 0.0}, {"at": T - 30, "graphql": 0.6}], NOW, hours=1)
+    assert s["hours"][0]["budget_min"] == 0.0
+
+
+def test_unusable_budget_readings_are_ignored():
+    budget = [{"at": T - 60, "graphql": None}, {"at": "soon", "graphql": 0.2}, {"graphql": 0.1}, {"at": T - 30, "graphql": "low"},
+              {"at": T - 20, "graphql": 0.5}]
+    s = gu.summarize([], budget, NOW, hours=1)
+    assert s["hours"][0]["budget_min"] == 0.5 and s["hours"][0]["budget_readings"] == 1
+
+
+def test_each_hour_names_its_top_callers():
+    rows = [row(5, "ticket_pipeline.py")] * 4 + [row(6, "zsh")] * 2 + [row(7, f"job{i}.py") for i in range(6)]
+    h = gu.summarize(rows, [], NOW, hours=1)["hours"][0]
+    assert h["callers"][0] == {"caller": "ticket_pipeline.py", "group": "pipeline", "calls": 4}
+    assert h["callers"][1]["caller"] == "zsh" and len(h["callers"]) == 5
+
+
+def test_payload_is_bounded_to_the_requested_hours_however_long_it_has_run():
+    rows = [row(m, "zsh") for m in range(0, 60 * 24 * 40, 90)]  # 40 days of calls
+    s = gu.summarize(rows, [], NOW)
+    assert len(s["hours"]) == gu.KEEP_HOURS == 720
+    assert s["hours"][0]["hour"] == "2026-09-09T13:00Z" and s["hours"][-1]["hour"] == "2026-10-09T12:00Z"
+
+
+def test_calls_from_a_clock_skewed_peer_a_little_in_the_future_land_in_this_hour():
+    s = gu.summarize([row(-4, "zsh")], [], NOW, hours=2)
+    assert s["hours"][-1]["total"] == 1
+
+
+# ── the hourly cache: read only what's new ──────────────────────────────────
+
+def _write(p, rows):
+    with open(p, "a") as f:
+        for r in rows:
+            f.write(json.dumps(r) + "\n")
+
+
+def _paths(tmp_path):
+    return tmp_path / "gh-calls.jsonl", tmp_path / "gh-budget.jsonl", tmp_path / "gh-usage-hourly.json"
+
+
+def test_incremental_update_matches_a_full_rebuild(tmp_path):
+    calls, budget, cache = _paths(tmp_path)
+    first = [row(200, "zsh"), row(100, "ticket_pipeline.py", refused="x")]
+    second = [row(50, "zsh"), row(5, "MARVIN dashboard", deferred="d")]
+    _write(calls, first)
+    _write(budget, [{"at": T - 6000, "graphql": 0.8}])
+    gu.report(NOW, calls_path=calls, budget_path=budget, cache_path=cache)
+    _write(calls, second)
+    _write(budget, [{"at": T - 100, "graphql": 0.3}])
+    inc = gu.report(NOW, calls_path=calls, budget_path=budget, cache_path=cache)
+    full = gu.summarize(first + second, [{"at": T - 6000, "graphql": 0.8}, {"at": T - 100, "graphql": 0.3}], NOW)
+    assert inc["hours"] == full["hours"] and inc["top"] == full["top"] and inc["latest_budget"] == full["latest_budget"]
+
+
+def test_second_read_only_parses_new_bytes(tmp_path, monkeypatch):
+    calls, budget, cache = _paths(tmp_path)
+    _write(calls, [row(m, "zsh") for m in range(0, 600, 3)])
+    gu.report(NOW, calls_path=calls, budget_path=budget, cache_path=cache)
+    parsed = []
+    real = gu._parse_lines
+    monkeypatch.setattr(gu, "_parse_lines", lambda data: (parsed.append(len(data)), real(data))[1])
+    _write(calls, [row(1, "zsh")])
+    s = gu.report(NOW, calls_path=calls, budget_path=budget, cache_path=cache)
+    assert sum(h["total"] for h in s["hours"]) == 201
+    assert max(parsed) < 200  # only the one new line, not the whole log
+
+
+def test_a_half_written_last_line_waits_for_the_rest(tmp_path):
+    calls, budget, cache = _paths(tmp_path)
+    line = json.dumps(row(5, "zsh"))
+    calls.write_text(json.dumps(row(6, "zsh")) + "\n" + line[:10])
+    assert sum(h["total"] for h in gu.report(NOW, calls_path=calls, budget_path=budget, cache_path=cache)["hours"]) == 1
+    with open(calls, "a") as f:
+        f.write(line[10:] + "\n")
+    assert sum(h["total"] for h in gu.report(NOW, calls_path=calls, budget_path=budget, cache_path=cache)["hours"]) == 2
+
+
+def test_a_replaced_or_shrunk_log_is_rebuilt_not_double_counted(tmp_path):
+    calls, budget, cache = _paths(tmp_path)
+    _write(calls, [row(5, "zsh")] * 10)
+    gu.report(NOW, calls_path=calls, budget_path=budget, cache_path=cache)
+    calls.unlink()
+    _write(calls, [row(4, "zsh")] * 3)  # wiped and restarted (it happened 2026-10-09)
+    assert sum(h["total"] for h in gu.report(NOW, calls_path=calls, budget_path=budget, cache_path=cache)["hours"]) == 3
+
+
+def test_a_corrupt_cache_is_rebuilt(tmp_path):
+    calls, budget, cache = _paths(tmp_path)
+    _write(calls, [row(5, "zsh")] * 4)
+    for junk in ("{nope", "[]", json.dumps({"version": 99})):
+        cache.write_text(junk)
+        assert sum(h["total"] for h in gu.report(NOW, calls_path=calls, budget_path=budget, cache_path=cache)["hours"]) == 4
+
+
+def test_missing_logs_give_empty_hours_not_a_crash(tmp_path):
+    calls, budget, cache = _paths(tmp_path)
+    s = gu.report(NOW, calls_path=calls, budget_path=budget, cache_path=cache)
+    assert len(s["hours"]) == 720 and all(h["total"] == 0 and h["budget_min"] is None for h in s["hours"])
+    assert s["latest_budget"] is None and s["top"] == []
+
+
+def test_old_hours_are_pruned_from_the_cache(tmp_path):
+    calls, budget, cache = _paths(tmp_path)
+    _write(calls, [row(60 * 24 * 35, "zsh"), row(5, "zsh")])
+    gu.report(NOW, calls_path=calls, budget_path=budget, cache_path=cache)
+    kept = json.loads(cache.read_text())["hours"]
+    assert len(kept) == 1
+
+
+def test_concurrent_reports_never_double_count(tmp_path):
+    import threading
+    calls, budget, cache = _paths(tmp_path)
+    _write(calls, [row(m % 600, "zsh") for m in range(3000)])
+    errs = []
+
+    def go():
+        try:
+            gu.report(NOW, calls_path=calls, budget_path=budget, cache_path=cache)
+        except Exception as e:  # pragma: no cover
+            errs.append(e)
+    ts = [threading.Thread(target=go) for _ in range(6)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert not errs
+    assert sum(h["total"] for h in gu.report(NOW, calls_path=calls, budget_path=budget, cache_path=cache)["hours"]) == 3000
 
 
 def test_read_jsonl_skips_bad_lines(tmp_path):
@@ -68,6 +201,7 @@ def test_read_jsonl_skips_bad_lines(tmp_path):
 def test_cli_prints_json(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(gu, "CALLS_PATH", tmp_path / "c.jsonl")
     monkeypatch.setattr(gu, "BUDGET_PATH", tmp_path / "b.jsonl")
+    monkeypatch.setattr(gu, "HOURLY_PATH", tmp_path / "h.json")
     gu.main([])
     out = json.loads(capsys.readouterr().out)
     assert "hours" in out and "top" in out and out["machine"]
@@ -79,3 +213,11 @@ def test_the_dashboard_app_is_one_caller_across_launches():
     top = {t["caller"]: t for t in gu.summarize(rows, [], NOW)["top"]}
     assert top["MARVIN dashboard app"]["calls"] == 2 and top["MARVIN dashboard app"]["group"] == "dashboard"
     assert top["ticket-pipeline"]["group"] == "pipeline"
+
+
+def test_top_callers_count_their_own_refusals_and_holds():
+    rows = [row(5, "ticket_pipeline.py", refused="burst", rc=1), row(6, "ticket_pipeline.py"), row(7, "ticket_pipeline.py", deferred="d", rc=75),
+            row(8, "zsh", refused="burst", rc=1)]
+    top = {t["caller"]: t for t in gu.summarize(rows, [], NOW)["top"]}
+    assert (top["ticket_pipeline.py"]["refused"], top["ticket_pipeline.py"]["deferred"]) == (1, 1)
+    assert (top["zsh"]["refused"], top["zsh"]["deferred"]) == (1, 0)
