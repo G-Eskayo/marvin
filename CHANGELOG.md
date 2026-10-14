@@ -1,5 +1,7 @@
 # Changelog
 
+- Errors are never silent: one bounded error log per Mac, Health 'Recent errors', shown where they happen ([#425](https://github.com/G-Eskayo/marvin/pull/425))
+
 - Pipeline screenshots: capture by attaching over CDP (Playwright launch is broken), then unstick #358/#359/#368 ([#424](https://github.com/G-Eskayo/marvin/pull/424))
 
 - Seal Speak beta report ingest job on the Mini, summarised by device and build ([#413](https://github.com/G-Eskayo/marvin/pull/413))
