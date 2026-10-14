@@ -14,12 +14,12 @@ import { runBoot } from '../lib/boot_animation.js'
 let request = null
 const fetchBoot = () => (request ??= window.api?.boot?.data?.() ?? Promise.resolve({ show: false }))
 
-export default function BootSequence({ onOpenHealth }) {
+export default function BootSequence({ onNavigate }) {
   const [phase, setPhase] = useState('pending') // pending → playing → done
   const [data, setData] = useState(null)
   const root = useRef(null)
-  const openHealth = useRef(onOpenHealth) // a ref, so App re-rendering (health polls) never restarts the boot
-  openHealth.current = onOpenHealth
+  const navigateTo = useRef(onNavigate) // a ref, so App re-rendering (health polls) never restarts the boot
+  navigateTo.current = onNavigate
 
   useEffect(() => {
     let live = true
@@ -39,7 +39,7 @@ export default function BootSequence({ onOpenHealth }) {
 
   useEffect(() => {
     if (phase !== 'playing' || !root.current) return
-    const boot = runBoot(root.current, data, { onDone: () => setPhase('done'), onOpenHealth: () => openHealth.current?.() })
+    const boot = runBoot(root.current, data, { onDone: () => setPhase('done'), onNavigate: (target) => navigateTo.current?.(target) })
     window.__marvinBoot = { total: boot.total, seek: boot.seek } // lets recordings seek the real boot frame by frame
     return () => { boot.cancel(); delete window.__marvinBoot }
   }, [phase, data])

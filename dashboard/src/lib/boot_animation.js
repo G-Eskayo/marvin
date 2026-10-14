@@ -1,7 +1,7 @@
 // The boot sequence's animation (#431): a direct port of the approved v7 prototype
 // (docs/design/celestial-navigation/boot.html on #428). Everything uses the Web Animations API, so the whole
 // sequence can be seeked frame by frame (that's how its recordings are made).
-import { bannerTone, lineTone } from './boot_view.js'
+import { bannerTone, lineTone, lineTarget, bannerTarget } from './boot_view.js'
 
 // The mark: same geometry as the app icon (icon.html, 1024 grid). Moving a star here moves it in the boot.
 const ICON = { pts: [[262, 772], [262, 262], [512, 560], [762, 262], [762, 772]], core: 2, star: 44, coreR: 68, orbit: 118, line: 26 }
@@ -15,7 +15,7 @@ const COL = { green: '#54ff8a', amber: '#f0b32a', orange: '#ff6a1f', star: '#cfd
 const MC = { green: '#5ae88a', amber: '#e5ab36', orange: '#f4702e' } // the M: halfway between glow and flat
 const NS = 'http://www.w3.org/2000/svg'
 
-export function runBoot(root, data, { onDone = () => {}, onOpenHealth = () => {} } = {}) {
+export function runBoot(root, data, { onDone = () => {}, onNavigate = () => {} } = {}) {
   const q = (id) => root.querySelector(`[data-b="${id}"]`)
   const el = (t, a, p) => { const e = document.createElementNS(NS, t); for (const k in a) e.setAttribute(k, a[k]); p && p.appendChild(e); return e }
   const anims = []
@@ -112,16 +112,22 @@ export function runBoot(root, data, { onDone = () => {}, onOpenHealth = () => {}
   sweep(q('sw2'), CHK_END)
   inout(q('fw'), 0, 1, CHK_END + 80, 250)
   inout(q('hw'), C0 - 150, 200, CHK_END + 80, 250)
+  const targets = new Map() // clickable element → where it leads (#433)
   data.lines.forEach((l, i) => {
     const d = document.createElement('div'); d.className = lineTone(l.level)
     const chip = document.createElement('b'); chip.textContent = l.chip
-    d.append(chip, l.text); q('sum').appendChild(d)
+    const inner = document.createElement('span'); inner.className = 'boot-lt' // hover styles live here (#433)
+    inner.append(chip, l.text); d.append(inner); q('sum').appendChild(d)
+    const target = lineTarget(l)
+    if (target) { d.classList.add('boot-link'); targets.set(d, target) }
     A(d, [{ opacity: 0, transform: 'translateX(-8px)' }, { opacity: 1, transform: 'none' }], { delay: CHK_END + 250 + i * 120 * SLOW, duration: 150, easing: 'steps(3)' })
     glow(d, CHK_END + 250 + i * 120 * SLOW)
   })
   const ban = q('banner')
   ban.classList.add(bannerTone(data.verdict))
   q('bannerT').textContent = data.verdict.text
+  const bTarget = bannerTarget(data.verdict)
+  if (bTarget) { ban.classList.add('boot-link'); targets.set(ban, bTarget) }
   inout(q('bar'), C0 - 150, 200, CHK_END + 100, 200)
   A(ban, [{ opacity: 0, clipPath: 'inset(0 50% 0 50%)' }, { opacity: 1, clipPath: 'inset(0 0 0 0)' }], { delay: CHK_END + 150, duration: 380 })
   glow(q('bannerT'), CHK_END + 250)
@@ -133,26 +139,79 @@ export function runBoot(root, data, { onDone = () => {}, onOpenHealth = () => {}
   const out = A(root, [{ opacity: 1 }, { opacity: 0 }], { delay: END, duration: 420, easing: 'ease-in-out', m: 1 })
 
   let raf = 0, finished = false
-  const tick = () => { drawCount(); raf = requestAnimationFrame(tick) }
-  tick()
+  // Hover state, from the real pointer position: on every pointer move, and every frame for things moving under a
+  // still cursor (frames can be throttled when the window isn't frontmost, so moves alone must be enough).
+  const updateHover = () => {
+    const link = hovered()
+    hold(Boolean(link))
+    for (const el of targets.keys()) el.classList.toggle('boot-hover', el === link)
+  }
+  const tick = () => {
+    drawCount()
+    updateHover()
+    raf = requestAnimationFrame(tick)
+  }
   const finish = () => { if (finished) return; finished = true; cancelAnimationFrame(raf); onDone() }
   out.finished.then(finish).catch(() => {})
   const skip = () => anims.forEach((a) => { a.currentTime = Math.max(a.currentTime || 0, END * K) })
-  const onKey = () => skip()
+  // A click or key means "go now": the hover hold is released for good, even if the cursor stays on a link.
+  let released = false
+  const leave = () => { released = true; hold(false); skip() }
+  const onKey = () => leave()
+  // A clickable item counts only once it's actually on screen (lines fade in late; an invisible one is not a target).
+  const linkAt = (node) => {
+    const link = node?.closest?.('.boot-link')
+    return link && root.contains(link) && Number(getComputedStyle(link).opacity) > 0.5 ? link : null
+  }
+  // Hovering a clickable item holds the boot (#433). Leaving starts a short grace period, so moving from one item to
+  // the next never starts the fade; once the fade has started it always runs to the end (no half-fade-then-stop).
+  const GRACE_MS = 2000
+  const fadeStart = out.effect.getTiming().delay
+  let held = false, grace = null
+  // Releasing a hold starts the dissolve right away: you've already had your look (plus the grace period), so it
+  // doesn't make you sit through whatever was left of the normal hold.
+  const release = () => {
+    clearTimeout(grace); grace = null
+    if (!held) return
+    held = false
+    if ((out.currentTime ?? 0) < fadeStart) out.currentTime = fadeStart
+    out.play()
+  }
+  const hold = (on) => {
+    if (finished) return
+    if (released) return release()
+    if (on) {
+      clearTimeout(grace); grace = null
+      if (!held && (out.currentTime ?? 0) < fadeStart) { held = true; out.pause() }
+      return
+    }
+    if (held && !grace) grace = setTimeout(() => { grace = null; if (!hovered()) release() }, GRACE_MS)
+  }
+  // Chromium sends synthetic pointerover events while things animate under a still cursor, so the hold follows the
+  // pointer's actual position, checked every frame, rather than enter/leave events.
+  let ptr = null
+  const onMove = (e) => { ptr = { x: e.clientX, y: e.clientY }; updateHover() }
+  const onLeave = () => { ptr = null; updateHover() }
+  const hovered = () => (ptr ? linkAt(document.elementFromPoint(ptr.x, ptr.y)) : null)
   const onClick = (e) => {
-    if (ban.contains(e.target) && bannerTone(data.verdict) !== 'nominal') onOpenHealth()
-    skip()
+    const link = linkAt(e.target)
+    if (link) onNavigate(targets.get(link))
+    leave()
   }
   window.addEventListener('keydown', onKey)
   root.addEventListener('click', onClick)
+  root.addEventListener('pointermove', onMove)
+  root.addEventListener('pointerleave', onLeave)
+  tick()
 
   const total = (END + 440) * K
   const seek = (ms) => { anims.forEach((a) => { a.pause(); a.currentTime = ms }); drawCount() }
   return {
-    total, seek, skip,
+    total, seek, skip: leave,
     cancel() {
       window.removeEventListener('keydown', onKey); root.removeEventListener('click', onClick)
-      cancelAnimationFrame(raf); anims.forEach((a) => a.cancel())
+      root.removeEventListener('pointermove', onMove); root.removeEventListener('pointerleave', onLeave)
+      clearTimeout(grace); cancelAnimationFrame(raf); anims.forEach((a) => a.cancel())
     }
   }
 }
