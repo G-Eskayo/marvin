@@ -1,5 +1,7 @@
 # Changelog
 
+- Pipeline screenshots: capture by attaching over CDP (Playwright launch is broken), then unstick #358/#359/#368 ([#424](https://github.com/G-Eskayo/marvin/pull/424))
+
 - Seal Speak beta report ingest job on the Mini, summarised by device and build ([#413](https://github.com/G-Eskayo/marvin/pull/413))
 
 - MR Review: Open | Merged toggle with full merged history and refused approvals (read-only detail) ([#420](https://github.com/G-Eskayo/marvin/pull/420))
