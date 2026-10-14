@@ -198,11 +198,9 @@ def check_auto_fix_log() -> str | None:
 
 
 def check_sync_log() -> str | None:
-    """Latest sync-log entry in the last 24h, for visibility only. Whether a
-    conflict is CURRENTLY open is decided by check_git_conflicts() against
-    live git state, not by scanning log prose — a log line saying CONFLICT
-    can be hours-stale once resolved, and stays in the 24h window looking
-    like an open problem long after `git stash pop` actually cleared it."""
+    """Latest sync-log entry in the last 24h, for visibility only. Whether sync
+    is CURRENTLY blocked is decided by check_sync_block() against live git
+    state plus this Mac's own failure streak, not by this one line."""
     f = CLAUDE_DIR / "sync-log.md"
     if not f.exists():
         return None
@@ -219,44 +217,113 @@ def check_sync_log() -> str | None:
     return f"code-sync ({ts}) {header}: {first_line}"
 
 
-def check_git_conflicts() -> str | None:
-    """Live git state for the synced repos — authoritative, unlike scanning
-    sync-log.md prose (see check_sync_log). Flags an unresolved merge
-    (conflict markers in `git status` or a live MERGE_HEAD) and any stash
-    left behind by a failed WIP-restore, since that's exactly how code_sync's
-    stash-then-pull-then-pop dance leaves local work stranded."""
-    findings = []
-    for repo in (CLAUDE_DIR, HOME / ".agents"):
-        if not (repo / ".git").exists():
-            continue
-        try:
-            status = subprocess.run(
-                ["git", "-C", str(repo), "status", "--porcelain=v1"],
-                capture_output=True, text=True, timeout=10,
-            ).stdout
-        except Exception as exc:
-            log_hook_error(HOOK_NAME, f"git status {repo}", exc)
-            continue
-        conflict_codes = {"UU", "AA", "DD", "AU", "UA", "UD", "DU"}
-        has_conflict = (repo / ".git" / "MERGE_HEAD").exists() or any(
-            line[:2] in conflict_codes for line in status.splitlines()
-        )
-        if has_conflict:
-            findings.append(f"**{repo} has an unresolved merge conflict right now** — needs a live session to fix")
+# A blocked sync is a hard stop at the top of the report (marvin#426). As one bullet among the backlog counts it was
+# ignored for 4 days in Oct 2026 while ~/.claude refused to sync 766 times and memories never reached the other Mac.
+SYNC_BLOCK_AFTER_HOURS = 2
+SYNC_FAILURE_PREFIXES = ("REFUSING", "CONFLICT", "commit failed", "push failed", "pulled cleanly, but restoring")
+SYNC_NEUTRAL_PREFIXES = ("deferring",)
+CONFLICT_CODES = {"UU", "AA", "DD", "AU", "UA", "UD", "DU"}
 
-        try:
-            stash = subprocess.run(
-                ["git", "-C", str(repo), "stash", "list"],
-                capture_output=True, text=True, timeout=10,
-            ).stdout
-        except Exception as exc:
-            log_hook_error(HOOK_NAME, f"git stash list {repo}", exc)
-            continue
-        n_stash = len([l for l in stash.splitlines() if l.strip()])
-        if n_stash:
-            findings.append(f"{repo} has {n_stash} stash(es) left over from a code-sync WIP restore — check `git -C {repo} stash list`")
 
-    return "\n".join(findings) if findings else None
+def _git_out(repo: Path, *args: str) -> str | None:
+    try:
+        r = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, timeout=10)
+    except Exception as exc:
+        log_hook_error(HOOK_NAME, f"git {args[0]} {repo}", exc)
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def _fmt_age(delta: timedelta) -> str:
+    mins = max(0, int(delta.total_seconds() // 60))
+    days, hours, mins = mins // 1440, mins // 60 % 24, mins % 60
+    if days:
+        return f"{days}d {hours}h"
+    return f"{hours}h {mins}m" if hours else f"{mins}m"
+
+
+def _sync_failure_streak(text: str, machine: str, repo: Path) -> tuple[int, int, datetime, str] | None:
+    """This Mac's trailing run of failed sync entries for `repo`: (failed, refused, since, latest summary).
+    Only this Mac's own entries count: sync-log.md is itself synced, so it also holds the other Mac's, possibly stale."""
+    entries = []
+    for m in re.finditer(r"^## (\S+) — \S+ \(([^)]+)\) \[([^\]]+)\]\n(.*?)(?=\n## |\Z)", text, re.DOTALL | re.MULTILINE):
+        ts = _parse_iso(m.group(1))
+        if ts and m.group(2) == machine and m.group(3) == str(repo):
+            entries.append((ts, m.group(4).strip().split("\n", 1)[0]))
+    failed = refused = 0
+    since, latest = None, ""
+    for ts, summary in sorted(entries, key=lambda e: e[0], reverse=True):
+        if summary.startswith(SYNC_NEUTRAL_PREFIXES):
+            continue
+        if not summary.startswith(SYNC_FAILURE_PREFIXES):
+            break
+        failed += 1
+        refused += summary.startswith("REFUSING")
+        since, latest = ts, latest or summary
+    return (failed, refused, since, latest) if failed else None
+
+
+def _live_sync_problems(repo: Path, now: datetime) -> list[str]:
+    status = _git_out(repo, "status", "--porcelain=v1")
+    if status is None:
+        return []
+    problems = []
+    if (repo / ".git" / "MERGE_HEAD").exists() or any(line[:2] in CONFLICT_CODES for line in status.splitlines()):
+        problems.append("unresolved merge conflict")
+    n_stash = len([line for line in (_git_out(repo, "stash", "list") or "").splitlines() if line.strip()])
+    if n_stash:
+        problems.append(f"{n_stash} leftover stash(es) from a failed WIP restore")
+    # Only on main: ~/.agents is often on a ticket branch, where pull merges origin/main into the branch instead.
+    if (_git_out(repo, "symbolic-ref", "--short", "HEAD") or "").strip() != "main":
+        return problems
+    if _git_out(repo, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/main") is None:
+        return problems
+    cutoff = now - timedelta(hours=SYNC_BLOCK_AFTER_HOURS)
+    for rng, what in (("origin/main..main", "committed here but not pushed"),
+                      ("main..origin/main", "on origin but not merged here")):
+        stamps = [int(t) for t in (_git_out(repo, "log", "--format=%ct", rng) or "").split() if t.isdigit()]
+        if not stamps:
+            continue
+        oldest = datetime.fromtimestamp(min(stamps), tz=timezone.utc)
+        if oldest <= cutoff:
+            problems.append(f"{len(stamps)} commit(s) {what}, oldest {_fmt_age(now - oldest)} old")
+    return problems
+
+
+def check_sync_block(repos: list[Path] | None = None, log_path: Path | None = None,
+                     machine: str | None = None, now: datetime | None = None) -> str | None:
+    """The hard-stop block for a synced repo that is not syncing: live git state (conflict, stash, ahead/behind
+    origin for over SYNC_BLOCK_AFTER_HOURS) plus this Mac's failure streak from sync-log.md (how long, how many)."""
+    repos = repos if repos is not None else [CLAUDE_DIR, HOME / ".agents"]
+    log_path = log_path or CLAUDE_DIR / "sync-log.md"
+    machine = machine or machine_profile.machine_label()
+    now = now or _now()
+    try:
+        text = log_path.read_text(errors="replace") if log_path.exists() else ""
+    except OSError:
+        text = ""
+    blocks = []
+    for repo in repos:
+        if not (Path(repo) / ".git").exists():
+            continue
+        problems = _live_sync_problems(repo, now)
+        streak = _sync_failure_streak(text, machine, repo)
+        if not problems and not streak:
+            continue
+        name = str(repo).replace(str(HOME), "~", 1)
+        lines = [f"**{name}** on {machine}: " + (" · ".join(problems) if problems else "sync is failing")]
+        if streak:
+            failed, refused, since, latest = streak
+            lines.append(f"- Stuck since {since.strftime('%Y-%m-%d %H:%M')} UTC ({_fmt_age(now - since)}): "
+                         f"{failed} failed sync run(s) in a row, {refused} refused")
+            lines.append(f"- Latest: {latest[:240]}")
+        lines.append(f"- Look: `git -C {name} status && git -C {name} stash list && git -C {name} log --oneline -3 origin/main...main`")
+        blocks.append("\n".join(lines))
+    if not blocks:
+        return None
+    return ("## ⛔ SYNC BLOCKED — fix this before anything else\n\n"
+            "Nothing written on this Mac (memory, handoffs, code) reaches the other one, and the other way round, "
+            "until this is fixed.\n\n" + "\n\n".join(blocks))
 
 
 def _check_digest(label: str, dirpath: Path) -> str | None:
@@ -302,13 +369,15 @@ def main() -> None:
         _safe(check_cron_health),
         _safe(check_auto_fix_log),
         _safe(check_sync_log),
-        _safe(check_git_conflicts),
         _safe(check_auto_merge_report),
         _safe(check_daily_digest),
         _safe(check_research_digest),
     ) if n]
 
     sections = [identity]
+    sync_block = _safe(check_sync_block)
+    if sync_block:
+        sections.append(sync_block)
     brief = _safe(check_morning_brief)
     if brief:
         sections.append(brief.replace("# Morning brief", "## Morning brief", 1))
