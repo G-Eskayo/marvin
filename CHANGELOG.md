@@ -1,5 +1,7 @@
 # Changelog
 
+- Dashboard: celestial-navigation boot sequence with a real health verdict (port of #428 v7) ([#432](https://github.com/G-Eskayo/marvin/pull/432))
+
 - Memory-sync block is a hard stop at the top of the session-start report, with stuck duration and refusal count ([#429](https://github.com/G-Eskayo/marvin/pull/429))
 
 - Errors are never silent: one bounded error log per Mac, Health 'Recent errors', shown where they happen ([#425](https://github.com/G-Eskayo/marvin/pull/425))
