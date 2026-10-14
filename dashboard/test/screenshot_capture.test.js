@@ -32,7 +32,9 @@ describe('captureLaunchEnv', () => {
   it('is what capture_screenshot.mjs actually passes to the launched app', () => {
     const src = readFileSync(path.resolve(import.meta.dirname, '../scripts/capture_screenshot.mjs'), 'utf8')
     expect(src).toMatch(/import \{[^}]*captureLaunchEnv[^}]*\} from '\.\.\/src\/lib\/screenshot_capture\.js'/)
-    expect(src).toMatch(/chromium\.launch\(\{[\s\S]*env:\s*captureLaunchEnv\(process\.env\)[\s\S]*\}\)/)
+    // Since #421 the app is launched by captureViaCdp (Playwright's chromium.launch rejected Electron's app dir).
+    expect(src).toMatch(/captureViaCdp\(\{[\s\S]*env:\s*captureLaunchEnv\(process\.env\)[\s\S]*\}\)/)
+    expect(src).not.toMatch(/chromium\.launch\(/)
   })
 })
 
