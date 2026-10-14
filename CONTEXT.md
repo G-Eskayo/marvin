@@ -1266,4 +1266,19 @@ Design lives in clarity-captions (ADR 0023 sending, ADR 0024 receiving, `docs/be
 - **Health** `seal:beta-ingest` (only where the plist is installed): red when Messages can't be read. Full Disk Access
   for the venv's real `python3.11` is reset by every Homebrew Python upgrade, so this fails loudly, never as "0
   reports".
-- Next: #408 dashboard view (needs-info), #409 numbers-only public tickets, #410 TestFlight feed.
+
+## Seal Speak breach tickets (built 2026-10-13, #409)
+
+When beta metrics breach thresholds, #409 files/updates one ticket per (device model, problem) on
+`G-Eskayo/clarity-captions`. Privacy hard rule: ticket text holds only device model, iOS versions, build breakdown,
+report/rated_reports count, and the breaching measurement—never notes, tester names, phone numbers, file paths
+containing handles, or timestamps precise enough to identify a person. (The privacy rule supersedes
+`metrics-schema.md`'s step 4 about "quoting the tester's note" — that doc is stale.)
+
+- **Thresholds** (tune once real data arrives): lag p95 > 2.0 s, any `stuck` ending, median rating ≤ 4 from ≥ 2 reports
+- **Scope decision** (Decision in #409): analyze by-device (all ratings/lag for the device) or by-build (latest build only)
+- **State tracking**: `~/.claude/seal-beta/tickets.json` maps keys to GitHub issue numbers for updates on later runs
+- **Wired into** `lib/seal_beta_ingest.py`'s `main()`: after successful ingest with new conversations, calls
+  `seal_beta_tickets.check_and_file()`
+- **Design**: clarity-captions ADR 0024 + `docs/beta/metrics-schema.md`
+- Next: #408 dashboard view, #410 TestFlight feed.

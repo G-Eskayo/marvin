@@ -252,6 +252,9 @@ def _stats(recs: list[dict]) -> dict:
     for r in recs:
         endings[r.get("ending") or "unknown"] = endings.get(r.get("ending") or "unknown", 0) + 1
     thermals = [r["max_thermal"] for r in recs if r.get("max_thermal") in THERMAL_ORDER]
+    rated_tuples = {(r.get("device_model"), r.get("build"), r.get("sent_at"))
+                    for r in recs if r.get("rating_state") == "rated"}
+    os_versions = sorted({r.get("os") for r in recs if r.get("os")}, key=str)
     return {
         "conversations": len(recs),
         "reports": len({(r.get("device_model"), r.get("build"), r.get("sent_at")) for r in recs}),
@@ -268,6 +271,8 @@ def _stats(recs: list[dict]) -> dict:
         "max_thermal": max(thermals, key=THERMAL_ORDER.index) if thermals else None,
         "endings": endings,
         "minutes_total": round(sum(r.get("minutes") or 0 for r in recs), 1),
+        "rated_reports": sorted(rated_tuples, key=str),
+        "os_versions": os_versions,
     }
 
 
@@ -416,7 +421,7 @@ def print_summary(store: Path) -> None:
         print()
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, check_and_file=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run", help="ingest new reports (what launchd runs)")
@@ -434,6 +439,19 @@ def main(argv: list[str] | None = None) -> int:
         return 2 if st["error"]["kind"] == "permission" else 1
     print(f"seal-beta-ingest: {st['files_found']} report file(s), {st['new_conversations']} new conversation(s), "
           f"{st['total_conversations']} total, {len(st['invalid'])} invalid")
+
+    # After successful ingest with new conversations, file any breach tickets (marvin#409)
+    if st["new_conversations"] > 0:
+        try:
+            if check_and_file is None:
+                import seal_beta_tickets
+                check_and_file = seal_beta_tickets.check_and_file
+            result = check_and_file(store_dir=a.store or STORE_DIR)
+            if result.get("status") != "ok":
+                print(f"seal-beta-tickets: {result.get('status')}", file=sys.stderr)
+        except Exception as e:  # pragma: no cover
+            print(f"seal-beta-tickets: {e}", file=sys.stderr)
+
     return 0
 
 

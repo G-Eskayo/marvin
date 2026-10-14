@@ -397,3 +397,100 @@ def test_minutes_total_adds_every_conversation_including_short_ones(paths):
     drop(paths[0], report([conv("A", minutes=20.25), conv("B", minutes=0.2, samples=5), conv("C", minutes=None)]))
     run(paths)
     assert summary(paths)["by_device"][0]["minutes_total"] == 20.4
+
+
+def test_rated_reports_and_os_versions_in_stats(paths):
+    drop(paths[0], report([conv("A", rating=8), conv("B", rating=7)], model="iPhone15,4", build="3"))
+    run(paths)
+    dev = summary(paths)["by_device"][0]
+    assert "rated_reports" in dev
+    assert "os_versions" in dev
+    assert isinstance(dev["rated_reports"], list)
+    assert isinstance(dev["os_versions"], list)
+    # The fixture has "iOS 27.0" in the device
+    assert "iOS 27.0" in dev["os_versions"]
+    # rated_reports are distinct (device_model, build, sent_at) tuples among rated records
+    # Both conversations are from the same report, so 1 unique tuple
+    assert len(dev["rated_reports"]) == 1
+    assert dev["rated_reports"][0][0] == "iPhone15,4"
+    assert dev["rated_reports"][0][1] == "3"
+
+
+def test_stats_tolerates_mixed_os_type_values(paths):
+    """Mixed string/non-string os values do not crash sorted()."""
+    c1 = conv("A")
+    c2 = conv("B")
+    c2["device_model"] = "iPhone15,4"
+    # Manually inject a non-string os value
+    r = copy.deepcopy(REAL)
+    r["conversations"] = [c1, c2]
+    r["device"]["os"] = 27.0  # numeric instead of string
+    drop(paths[0], r)
+    st = run(paths)
+    assert st["ok"] and st["new_conversations"] == 2
+    dev = summary(paths)["by_device"][0]
+    # os_versions should be sorted without crashing
+    assert isinstance(dev["os_versions"], list)
+
+
+def test_stats_tolerates_mixed_rated_reports_type_values(paths):
+    """Mixed types in rated_tuples do not crash sorted()."""
+    c1 = conv("A", rating=8)
+    c2 = conv("B", rating=7)
+    r = copy.deepcopy(REAL)
+    r["conversations"] = [c1, c2]
+    # Inject a numeric build instead of string
+    r["app"]["build"] = 123
+    drop(paths[0], r)
+    st = run(paths)
+    assert st["ok"] and st["new_conversations"] == 2
+    dev = summary(paths)["by_device"][0]
+    # rated_reports should be sorted without crashing (tuples with mixed types)
+    assert isinstance(dev["rated_reports"], list)
+
+
+# ── seam: main(check_and_file=...) injection ───────────────────────────────
+
+def test_main_accepts_check_and_file_parameter(paths):
+    """main() can be injected with a custom check_and_file for testing."""
+    drop(paths[0], report([conv("A")]))
+    calls = []
+
+    def mock_check_and_file(store_dir=None):
+        calls.append(store_dir)
+        return {"status": "ok", "breaches": []}
+
+    result = sbi.main(["run", "--attachments", str(paths[0]), "--store", str(paths[1])],
+                      check_and_file=mock_check_and_file)
+    assert result == 0
+    assert len(calls) == 1  # check_and_file was called once
+
+def test_main_lazy_imports_check_and_file_when_not_injected(paths, monkeypatch):
+    """When check_and_file is not injected, main() imports and calls it lazily."""
+    drop(paths[0], report([conv("A")]))
+
+    # Track calls to the imported check_and_file
+    calls = []
+
+    def mock_check_and_file(store_dir=None):
+        calls.append(store_dir)
+        return {"status": "ok", "breaches": []}
+
+    # Monkeypatch seal_beta_tickets.check_and_file before main() lazy-imports it
+    import seal_beta_tickets as sbt_module
+    monkeypatch.setattr(sbt_module, "check_and_file", mock_check_and_file)
+
+    result = sbi.main(["run", "--attachments", str(paths[0]), "--store", str(paths[1])])
+    assert result == 0
+    assert len(calls) == 1  # check_and_file was called once
+
+def test_main_catch_all_seam_insulates_from_check_and_file_failure(paths):
+    """A failure in check_and_file does not change main()'s exit code."""
+    drop(paths[0], report([conv("A")]))
+
+    def failing_check_and_file(store_dir=None):
+        raise RuntimeError("Deliberate test failure")
+
+    result = sbi.main(["run", "--attachments", str(paths[0]), "--store", str(paths[1])],
+                      check_and_file=failing_check_and_file)
+    assert result == 0  # ingest succeeded even though check_and_file failed
