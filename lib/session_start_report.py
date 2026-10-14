@@ -221,7 +221,7 @@ def check_sync_log() -> str | None:
 # ignored for 4 days in Oct 2026 while ~/.claude refused to sync 766 times and memories never reached the other Mac.
 SYNC_BLOCK_AFTER_HOURS = 2
 SYNC_FAILURE_PREFIXES = ("REFUSING", "CONFLICT", "commit failed", "push failed", "pulled cleanly, but restoring")
-SYNC_NEUTRAL_PREFIXES = ("deferring",)
+SYNC_NEUTRAL_PREFIXES = ("deferring", "skipping")  # skipping: off main, code_sync leaves the tree alone (#440)
 CONFLICT_CODES = {"UU", "AA", "DD", "AU", "UA", "UD", "DU"}
 
 
