@@ -134,6 +134,8 @@ def _isolate_outcome_check(monkeypatch):
     # The daily sweep measures purpose metrics and comments on tickets; never from a test.
     import cleanup_sweep
     monkeypatch.setattr(cleanup_sweep, "_default_outcome_check", lambda: None)
+    # ...and compresses the real ~/.claude/projects transcripts; never from a test.
+    monkeypatch.setattr(cleanup_sweep, "_default_compress_transcripts", lambda: None)
 
 
 @pytest.fixture(autouse=True)

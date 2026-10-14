@@ -463,3 +463,18 @@ def test_the_nightly_outcome_check_also_runs_ticket_promotion_on_the_mini(monkey
     monkeypatch.setitem(sys.modules, "output_contracts", types.SimpleNamespace(run_promotion=lambda: calls.append("promotion")))
     cs._default_outcome_check()
     assert calls == ["metrics", "promotion"]
+
+
+def test_the_sweep_log_says_what_compression_did(tmp_path, monkeypatch):
+    monkeypatch.setattr(cs, "OUTPUT_PATH", tmp_path / "sweep.md")
+    cs._write_log([], {"removed": [], "review": []}, None,
+                  {"compressed": [{"path": Path("a"), "saved_kb": 2048}], "failed": [{"path": Path("b"), "reason": "afsctool refused"}],
+                   "saved_kb": 2048, "skipped": None})
+    log = (tmp_path / "sweep.md").read_text()
+    assert "Compressed 1 cold transcript(s), 2 MiB saved" in log and "afsctool refused" in log
+
+
+def test_the_sweep_log_says_when_compression_was_skipped(tmp_path, monkeypatch):
+    monkeypatch.setattr(cs, "OUTPUT_PATH", tmp_path / "sweep.md")
+    cs._write_log([], {"removed": [], "review": []}, None, {"compressed": [], "failed": [], "saved_kb": 0, "skipped": "afsctool not installed"})
+    assert "Transcript compression skipped: afsctool not installed" in (tmp_path / "sweep.md").read_text()

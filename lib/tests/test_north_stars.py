@@ -11,7 +11,7 @@ AGENTS = Path(__file__).resolve().parents[2]
 
 def test_load_returns_all_three_north_stars_and_the_principles():
     text = north_stars.load()
-    assert "Minimise tokens, maximise capability and quality" in text
+    assert "Minimise resources, maximise capability and quality" in text
     assert "MARVIN becomes the OS" in text
     assert "MARVIN raises the human experience" in text
     assert "Compounding leverage" in text
