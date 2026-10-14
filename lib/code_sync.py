@@ -33,7 +33,10 @@ entry written *after* a commit is, by construction, uncommitted content by
 the time the next pull stashes it — meaning nearly every cycle produced an
 avoidable stash-pop conflict on sync-log.md alone. push() now writes its log
 entry *before* committing (optimistically, describing the commit about to
-happen) so it's swept into the same commit instead of trailing.
+happen) so it's swept into the same commit instead of trailing. That made the
+log lie when the push then failed (marvin#427, 2026-10-14), and sync-log.md
+has since been made merge=union, so push() now logs only once it knows the
+outcome and lets the entry trail.
 
 Non-overlapping changes auto-merge (git's own merge machinery). Genuine
 conflicts fail loud — merge aborted, tree left clean, logged clearly — and get
@@ -156,7 +159,7 @@ def _stuck_from_previous_run(repo: Path) -> str | None:
     merge conflict, or a stash left behind by a failed WIP-restore? If so,
     every git operation below (stash, commit, merge) either compounds the
     mess or silently no-ops, so callers must bail before touching anything.
-    Same detection logic as session_start_report.py's check_git_conflicts(),
+    Same detection logic as session_start_report.py's check_sync_block(),
     duplicated rather than imported so code_sync.py has no dependency on the
     hook script — this needs to run standalone from cron/hooks too."""
     status = _git(repo, ["status", "--porcelain=v1"])
@@ -453,15 +456,10 @@ def push(repo: Path, now: float | None = None) -> None:
         notify("MARVIN code-sync CONFLICT", f"Refusing to commit broken content [{repo.name}] — check sync-log.md", open_target=str(LOG_PATH))
         return
 
-    # Write the log entry BEFORE committing, not after — so it's swept into
-    # the same commit by the git add -A below instead of trailing as fresh
-    # dirty content that the next pull has to stash-and-repop (this was
-    # generating a real, avoidable stash-pop conflict on almost every cycle
-    # once both machines were pushing regularly — see ADR 0021's addendum).
-    # Optimistic: written before we know push will actually succeed, so a
-    # genuine failure still trails (rare; acceptable).
-    _log(repo, "push", f"committed + pushed {len(real_changes)} file(s)", real_changes)
-
+    # Logged only once the outcome is known (marvin#427). This used to be written optimistically before the commit,
+    # so it would be swept into it instead of trailing in ~/.claude; on 2026-10-14 that line said "committed +
+    # pushed" for a push that was rejected and never reached origin. sync-log.md is merge=union now
+    # (~/.claude/.gitattributes), so a trailing entry no longer conflicts.
     changed_files = [line[3:].strip() for line in _git(repo, ["status", "--porcelain"]).splitlines() if line.strip()]
     _git(repo, ["add", "-A"])
     msg = f"auto-sync ({label}): {len(changed_files)} file(s) changed\n\n" + "\n".join(f"- {f}" for f in changed_files[:20])
@@ -473,6 +471,7 @@ def push(repo: Path, now: float | None = None) -> None:
 
     push_ok, push_out = _git_ok(repo, ["push", "origin", "main"])
     if push_ok:
+        _log(repo, "push", f"committed + pushed {len(real_changes)} file(s)", real_changes)
         notify("MARVIN code-sync", f"Pushed {len(real_changes)} file(s) from {label} [{repo.name}]")
         return
 
@@ -480,7 +479,7 @@ def push(repo: Path, now: float | None = None) -> None:
     # into our newly-made local commit, then retry once.
     clean, merge_output = _merge_remote(repo)
     if not clean:
-        _log(repo, "push", f"CONFLICT merging remote after push rejection — local commit preserved, needs manual resolution:\n{merge_output}", changed_files)
+        _log(repo, "push", f"CONFLICT merging remote after push rejection — committed locally, NOT pushed (origin/main does not have it); local commit preserved, needs manual resolution:\n{push_out}\n{merge_output}", changed_files)
         notify("MARVIN code-sync CONFLICT", f"Push rejected and merge conflicted [{repo.name}] — check sync-log.md", open_target=str(LOG_PATH))
         return
 
@@ -489,7 +488,7 @@ def push(repo: Path, now: float | None = None) -> None:
         _log(repo, "push", f"committed + pushed {len(changed_files)} file(s) (merged remote changes first)", changed_files)
         notify("MARVIN code-sync", f"Pushed {len(changed_files)} file(s) from {label} [{repo.name}] (merged first)")
     else:
-        _log(repo, "push", f"push failed even after merge retry:\n{retry_out}", changed_files)
+        _log(repo, "push", f"push failed even after merge retry — committed locally, NOT pushed:\n{retry_out}", changed_files)
         notify("MARVIN code-sync FAILED", f"Push failed after retry [{repo.name}] — check sync-log.md", open_target=str(LOG_PATH))
 
 
