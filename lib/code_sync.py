@@ -388,6 +388,23 @@ def _live_edit_lease(repo: Path, changed_files: list[str], now: float | None = N
     return f'{e["path"]} was edited {minutes_ago} min ago by a live session{request}'
 
 
+def _last_own_push_failed(repo: Path) -> bool:
+    """Was this Mac's most recent push entry for `repo` a failure? Reads only the log's tail; any doubt is False."""
+    try:
+        with LOG_PATH.open("rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - 512 * 1024))
+            text = f.read().decode("utf-8", errors="replace")
+    except OSError:
+        return False
+    header = re.compile(r"^## \S+ — push \(" + re.escape(machine_label()) + r"\) \[" + re.escape(str(repo)) + r"\]\n(.*)$",
+                        re.MULTILINE)
+    last = None
+    for last in header.finditer(text):
+        pass
+    return bool(last and SYNC_FAILURE_RE.match(last.group(1)))
+
+
 def _merge_remote(repo: Path) -> tuple[bool, str]:
     """Fetch + merge origin/main. On conflict, aborts the merge (tree left
     clean, nothing partially applied) rather than attempting resolution."""
@@ -427,6 +444,10 @@ def push(repo: Path, now: float | None = None) -> None:
         subprocess.run(["git", "fetch", "origin"], cwd=repo, capture_output=True)
         ahead = _git(repo, ["rev-list", "--count", "origin/main..HEAD"]).strip()
         if ahead in ("", "0"):
+            # Silent when healthy, but a failure must be ended by something: Health keeps a streak per action
+            # (marvin#422) and a no-op push logs nothing, so a fixed push stayed "stuck" forever (marvin#438).
+            if _last_own_push_failed(repo):
+                _log(repo, "push", "nothing to push — earlier failure cleared")
             return
         push_ok, push_out = _git_ok(repo, ["push", "origin", "main"])
         if push_ok:

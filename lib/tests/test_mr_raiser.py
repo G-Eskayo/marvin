@@ -21,6 +21,12 @@ def stub_machine_profile(monkeypatch):
     monkeypatch.setattr(mrr.machine_profile, "registry_id", lambda: "test-machine")
 
 
+@pytest.fixture(autouse=True)
+def stub_ticket_title(monkeypatch):
+    """No test reaches the real GitHub for a ticket title; tests that care set their own."""
+    monkeypatch.setattr(mrr, "_ticket_title", lambda ref: None)
+
+
 def _run(cmd, cwd):
     subprocess.run(cmd, cwd=cwd, check=True, capture_output=True)
 
@@ -665,3 +671,47 @@ def test_a_review_that_did_not_run_says_so_plainly(monkeypatch):
 
 def test_no_review_recorded_says_not_reviewed(monkeypatch):
     assert "not reviewed" in _body_for(monkeypatch, {}).lower()
+
+
+def _head(worktree, fmt):
+    return subprocess.run(["git", "log", "-1", f"--format={fmt}"], cwd=worktree, capture_output=True, text=True).stdout.strip()
+
+
+def test_the_commit_says_what_it_did_not_just_which_ticket(repo_with_worktree, monkeypatch):
+    monkeypatch.setattr(mrr, "_ticket_title", lambda ref: "Errors are never silent")
+    mrr._commit_and_push(repo_with_worktree, "G-Eskayo/marvin#422")
+    assert _head(repo_with_worktree, "%s") == "Errors are never silent (#422)"
+
+
+def test_gil_is_the_author_and_marvin_the_co_author_whatever_the_repo_config_says(repo_with_worktree):
+    mrr._commit_and_push(repo_with_worktree, "G-Eskayo/marvin#1")
+    assert _head(repo_with_worktree, "%an <%ae>") == mrr.AUTHOR
+    assert _head(repo_with_worktree, "%(trailers:key=Co-Authored-By,valueonly)") == mrr.CO_AUTHOR.split(": ", 1)[1]
+
+
+def test_an_unreadable_ticket_title_still_commits_under_the_old_subject(repo_with_worktree):
+    mrr._commit_and_push(repo_with_worktree, "G-Eskayo/marvin#1")
+    assert _head(repo_with_worktree, "%s") == "Implement G-Eskayo/marvin#1"
+
+
+def test_a_title_that_looks_like_a_flag_or_spans_lines_cannot_break_the_commit(repo_with_worktree, monkeypatch):
+    monkeypatch.setattr(mrr, "_ticket_title", lambda ref: "--amend\nCo-Authored-By: Someone Else <x@y>")
+    mrr._commit_and_push(repo_with_worktree, "G-Eskayo/marvin#7")
+    assert _head(repo_with_worktree, "%s") == "--amend Co-Authored-By: Someone Else <x@y> (#7)"
+    assert "Someone Else" not in _head(repo_with_worktree, "%(trailers:key=Co-Authored-By,valueonly)")
+
+
+def test_the_pr_title_matches_the_commit_subject(monkeypatch):
+    calls = _spy_run(monkeypatch)
+    monkeypatch.setattr(mrr, "_ticket_title", lambda ref: "Seal Speak website")
+    mrr._default_open_pr("G-Eskayo/clarity-captions#44", "pipeline/x", {"subsystem": "s", "verdict": "v", "metrics": {}})
+    cmd = calls[0]
+    assert cmd[cmd.index("--title") + 1] == "Seal Speak website (#44)"
+
+
+def test_ticket_title_is_none_when_gh_fails(monkeypatch):
+    monkeypatch.undo()
+    class R:
+        returncode, stdout, stderr = 1, "", "boom"
+    monkeypatch.setattr(mrr.subprocess, "run", lambda *a, **k: R())
+    assert mrr._ticket_title("G-Eskayo/marvin#1") is None
