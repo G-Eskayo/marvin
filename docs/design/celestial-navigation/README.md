@@ -47,7 +47,12 @@ icon changes the boot as well.
 
 ![Icon on iPhone and Mac](icon-on-devices.png)
 
-## The boot sequence (v5, about 8 s, any key or click skips it)
+## The boot sequence (v6, about 9 s, any key or click skips it)
+
+v6 changes (2026-10-14): everything **except the M build** (lock, ignite, lines, pings) runs about 20% slower
+(`SLOW = 1.2`), and the hold is 1.8 s. There is also a **flat-colour variant** (`boot.html?flat`): no glows or blur,
+and a softer palette (green `#5fd08a`, amber `#d9a441`, orange `#e8773d`, red `#e0574f`).
+Alerts stay honest. The boot shows the real red state until the issues behind it are fixed.
 
 It uses the **dashboard's own background `#0f1117`**, so the hand-off is seamless. It's minimal, and **every status it
 shows is real**.
@@ -97,7 +102,8 @@ dashboard redo** (see `modern-raster.html`).
 
 ![Modern raster](modern-raster.gif)
 
-![Boot v5](boot.gif)
+![Boot v6 (glow)](boot.gif)
+![Boot v6 (flat)](boot-flat.gif)
 ![Boot v5 keyframes](boot-keyframes.png)
 
 `record.cjs` captures deterministic frames: every animation uses the Web Animations API, so it can be seeked.
