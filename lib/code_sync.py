@@ -409,7 +409,9 @@ def push(repo: Path, now: float | None = None) -> None:
         notify("MARVIN code-sync CONFLICT", f"Stuck from a previous run [{repo.name}] — check sync-log.md", open_target=str(LOG_PATH))
         return
 
-    status = _git(repo, ["status", "--porcelain"])
+    # Dirty content inside an embedded repo (e.g. a Claude Code worktree swept in as a gitlink) is not ours to
+    # commit: `git add -A` can't stage it, so it failed every commit on the Mini for two days (marvin#430).
+    status = _git(repo, ["status", "--porcelain", "--ignore-submodules=dirty"])
     all_changed = [line[3:].strip() for line in status.splitlines() if line.strip()]
     # sync-log.md itself doesn't count — otherwise its own last entry (written
     # after a prior push, per the pre-log write below, still lands one line
@@ -460,7 +462,7 @@ def push(repo: Path, now: float | None = None) -> None:
     # so it would be swept into it instead of trailing in ~/.claude; on 2026-10-14 that line said "committed +
     # pushed" for a push that was rejected and never reached origin. sync-log.md is merge=union now
     # (~/.claude/.gitattributes), so a trailing entry no longer conflicts.
-    changed_files = [line[3:].strip() for line in _git(repo, ["status", "--porcelain"]).splitlines() if line.strip()]
+    changed_files = [line[3:].strip() for line in _git(repo, ["status", "--porcelain", "--ignore-submodules=dirty"]).splitlines() if line.strip()]
     _git(repo, ["add", "-A"])
     msg = f"auto-sync ({label}): {len(changed_files)} file(s) changed\n\n" + "\n".join(f"- {f}" for f in changed_files[:20])
     # marks its commit for the direct-commit check (#337): never blocked, but code swept up without tests is logged
