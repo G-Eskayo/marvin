@@ -162,5 +162,42 @@
         "higher_is_better": false
       }
     }
+  },
+  {
+    "timestamp": "2026-10-14T15:05:05.007309+00:00",
+    "metrics": {
+      "route:intent-routing-collection": {
+        "value": 92,
+        "higher_is_better": true
+      },
+      "catalog:fresh": {
+        "value": 6.0,
+        "higher_is_better": false
+      },
+      "github:budget": {
+        "value": 4792,
+        "higher_is_better": false
+      },
+      "github:gate": {
+        "value": 115,
+        "higher_is_better": false
+      },
+      "repo:integrity:~/.claude": {
+        "value": 1,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.agents@macbook-pro-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.claude@macbook-pro-1": {
+        "value": 1,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.claude@mac-mini-1": {
+        "value": 0,
+        "higher_is_better": false
+      }
+    }
   }
 ]
