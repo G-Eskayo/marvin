@@ -15,6 +15,13 @@ import subprocess  # noqa: E402
 import cleanup_sweep as cs  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def no_real_simulators(monkeypatch):
+    """No test may list or delete this Mac's real simulators; simulator tests inject their own."""
+    monkeypatch.setattr(cs, "_default_list_simulators", lambda: [])
+    monkeypatch.setattr(cs, "_default_delete_simulator", lambda sim: pytest.fail(f"tried to delete a real simulator: {sim}"))
+
+
 NOW = datetime(2026, 8, 19, 12, 0, 0, tzinfo=timezone.utc)
 
 
@@ -367,3 +374,92 @@ def test_drop_build_output_refuses_paths_outside_the_worktree(tmp_path):
     outside.mkdir()
     assert cs.drop_build_output(wt, ["../node_modules", str(outside)]) == []
     assert outside.is_dir()
+
+
+# ── simulators (ADR 0065: a builder's simulator is disposable once its ticket is done) ──
+
+STOCK = {"iPhone 17 Pro", "iPhone 17", "iPad Pro 13-inch (M5)", "iPad (A16)"}
+
+
+def _sim(name, state="Shutdown", udid=None):
+    return {"name": name, "udid": udid or f"U-{name}", "state": state}
+
+
+def test_a_simulator_named_for_a_merged_ticket_is_removed_even_while_booted():
+    """Seal-118 ran for four days after clarity-captions #118 merged (2026-10-14)."""
+    action, _ = cs.decide_simulator(_sim("Seal-118", "Booted"), STOCK, ticket_open=lambda n: False)
+    assert action == "remove"
+
+
+def test_a_simulator_whose_ticket_is_still_open_somewhere_is_kept():
+    action, _ = cs.decide_simulator(_sim("Seal-118"), STOCK, ticket_open=lambda n: True)
+    assert action == "keep"
+
+
+def test_xcodes_own_devices_are_never_touched_even_though_their_names_end_in_numbers():
+    for name in STOCK:
+        action, _ = cs.decide_simulator(_sim(name), STOCK, ticket_open=lambda n: False)
+        assert action == "keep", name
+
+
+def test_a_simulator_the_sweep_cannot_tie_to_a_ticket_is_reported_not_deleted():
+    action, _ = cs.decide_simulator(_sim("My test phone"), STOCK, ticket_open=lambda n: False)
+    assert action == "review"
+
+
+def test_a_leftover_capture_simulator_is_removed_once_it_is_shut_down():
+    assert cs.decide_simulator(_sim("marvin-1a2b3c4d"), STOCK, ticket_open=lambda n: True)[0] == "remove"
+    assert cs.decide_simulator(_sim("marvin-1a2b3c4d", "Booted"), STOCK, ticket_open=lambda n: True)[0] == "keep"
+
+
+def test_a_github_failure_never_reads_as_ticket_closed():
+    def boom(n):
+        raise RuntimeError("gh: rate limited")
+    removed = []
+    out = cs.sweep_simulators(list_simulators=lambda: [_sim("Seal-118", "Booted")], stock_names=lambda: STOCK,
+                              ticket_open=boom, delete_simulator=lambda s: removed.append(s) or True)
+    assert removed == [] and out["review"][0]["name"] == "Seal-118"
+
+
+def test_the_sweep_deletes_only_what_it_decided_to_remove():
+    sims = [_sim("Seal-118", "Booted"), _sim("Seal-140"), _sim("iPhone 17 Pro", "Booted"), _sim("Scratch")]
+    deleted = []
+    out = cs.sweep_simulators(list_simulators=lambda: sims, stock_names=lambda: STOCK,
+                              ticket_open=lambda n: n == 140, delete_simulator=lambda s: deleted.append(s["name"]) or True)
+    assert deleted == ["Seal-118"]
+    assert [s["name"] for s in out["removed"]] == ["Seal-118"]
+    assert [s["name"] for s in out["review"]] == ["Scratch"]
+
+
+def test_no_stock_list_means_nothing_is_deleted():
+    """If simctl can't say which devices are Xcode's own, every name ending in a number looks like a ticket."""
+    deleted = []
+    out = cs.sweep_simulators(list_simulators=lambda: [_sim("iPhone 17")], stock_names=lambda: set(),
+                              ticket_open=lambda n: False, delete_simulator=lambda s: deleted.append(s) or True)
+    assert deleted == [] and out["removed"] == []
+
+
+def test_ticket_open_checks_every_project_and_counts_open_anywhere_as_open(monkeypatch):
+    seen = []
+    def state(repo, n):
+        seen.append(repo)
+        return {"G-Eskayo/a": "CLOSED", "G-Eskayo/b": "OPEN"}[repo]
+    assert cs._ticket_open_anywhere(118, repos=["G-Eskayo/a", "G-Eskayo/b"], issue_state=state) is True
+    assert cs._ticket_open_anywhere(118, repos=["G-Eskayo/a"], issue_state=state) is False
+
+
+def test_a_number_that_is_not_an_issue_in_any_project_counts_as_open():
+    """No such ticket anywhere: the name only looks like a ticket, so leave it for a person."""
+    assert cs._ticket_open_anywhere(9999, repos=["G-Eskayo/a"], issue_state=lambda r, n: None) is True
+
+
+def test_the_nightly_outcome_check_also_runs_ticket_promotion_on_the_mini(monkeypatch):
+    """A second, older copy of _default_outcome_check overrode #305's, so promotion never ran (found 2026-10-14)."""
+    import types
+    monkeypatch.undo()  # conftest stubs _default_outcome_check for every test, which is how the duplicate hid
+    calls = []
+    monkeypatch.setitem(sys.modules, "machine_profile", types.SimpleNamespace(registry_id=lambda: cs.OUTCOME_CHECK_MACHINE))
+    monkeypatch.setitem(sys.modules, "purpose_metrics", types.SimpleNamespace(run=lambda: calls.append("metrics")))
+    monkeypatch.setitem(sys.modules, "output_contracts", types.SimpleNamespace(run_promotion=lambda: calls.append("promotion")))
+    cs._default_outcome_check()
+    assert calls == ["metrics", "promotion"]

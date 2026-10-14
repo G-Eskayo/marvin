@@ -21,6 +21,13 @@ Two independent sweeps:
   did, and this sweep was never scheduled and only knew G-Eskayo/marvin), so
   39 GiB of them filled the mac-mini to 94%.
 
+- **Builder simulators** (ADR 0065: disposable once their ticket is done): a
+  simulator named for a ticket ("Seal-118") is deleted once that number is
+  closed in every project, and a leftover screenshot-capture simulator
+  ("marvin-<hash>") once it is shut down. Xcode's own devices are never
+  touched; anything the sweep can't tie to a ticket is listed for a person.
+  Found 2026-10-14: Seal-118 ran for four days after its PR merged.
+
 Removal is lossless by construction: plain `git worktree remove` (never
 --force, so git refuses if anything uncommitted or untracked is there) and the
 branch is kept, so every commit stays reachable. Ignored build output
@@ -239,7 +246,103 @@ def sweep_worktrees(
     return {"removed": removed, "review": review}
 
 
-def _write_log(stale: list[dict], worktrees: dict) -> None:
+SIM_TICKET_RE = re.compile(r"[-_ #](\d+)$")  # "Seal-118", "clarity_140", "build #7"
+CAPTURE_SIM_RE = re.compile(r"^marvin-[0-9a-f]{8}$")  # simulator_capture._device_name
+
+
+def _simctl_json(*args: str) -> dict:
+    out = subprocess.run(["xcrun", "simctl", "list", *args, "--json"], capture_output=True, text=True, timeout=60)
+    return json.loads(out.stdout) if out.returncode == 0 and out.stdout.strip() else {}
+
+
+def _default_list_simulators() -> list[dict]:
+    devices = _simctl_json("devices").get("devices", {})
+    return [{"name": d["name"], "udid": d["udid"], "state": d.get("state", "")} for ds in devices.values() for d in ds]
+
+
+def _default_stock_names() -> set[str]:
+    return {t["name"] for t in _simctl_json("devicetypes").get("devicetypes", [])}
+
+
+def _default_delete_simulator(sim: dict) -> bool:
+    subprocess.run(["xcrun", "simctl", "shutdown", sim["udid"]], capture_output=True, timeout=60)
+    return subprocess.run(["xcrun", "simctl", "delete", sim["udid"]], capture_output=True, timeout=120).returncode == 0
+
+
+def _default_issue_state(repo: str, number: int) -> str | None:
+    """OPEN / CLOSED, None when the repo has no such issue. Raises on any other gh failure."""
+    result = subprocess.run(["gh", "issue", "view", str(number), "--repo", repo, "--json", "state", "-q", ".state"],
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        if "Could not resolve" in result.stderr or "not found" in result.stderr.lower():
+            return None
+        raise RuntimeError(result.stderr.strip()[:200])
+    return result.stdout.strip() or None
+
+
+def _ticket_open_anywhere(number: int, repos: list[str] | None = None,
+                          issue_state: Callable[[str, int], str | None] | None = None) -> bool:
+    """A simulator name carries a number, not a repo, so the ticket counts as done only when no project has it
+    open, and at least one project has it closed. A number no project knows is treated as open (leave it)."""
+    if repos is None:
+        import project_profile as pp
+        repos = [p["repo"] for p in pp.all_profiles()]
+    issue_state = issue_state or _default_issue_state
+    states = [issue_state(repo, number) for repo in repos]
+    return "OPEN" in states or not any(states)
+
+
+def decide_simulator(sim: dict, stock: set[str], ticket_open: Callable[[int], bool]) -> tuple[str, str]:
+    """("remove" | "keep" | "review", reason)."""
+    name = sim["name"]
+    if name in stock:
+        return "keep", "one of Xcode's own devices"
+    if CAPTURE_SIM_RE.match(name):
+        if sim.get("state") == "Booted":
+            return "keep", "a screenshot capture may be using it"
+        return "remove", "leftover screenshot-capture simulator"
+    match = SIM_TICKET_RE.search(name)
+    if not match:
+        return "review", "can't tie it to a ticket"
+    number = int(match.group(1))
+    if ticket_open(number):
+        return "keep", f"ticket #{number} is still open"
+    return "remove", f"ticket #{number} is closed in every project"
+
+
+def sweep_simulators(
+    list_simulators: Callable[[], list[dict]] | None = None,
+    stock_names: Callable[[], set[str]] | None = None,
+    ticket_open: Callable[[int], bool] | None = None,
+    delete_simulator: Callable[[dict], bool] | None = None,
+) -> dict:
+    sims = (list_simulators or _default_list_simulators)()
+    stock = (stock_names or _default_stock_names)()
+    if not stock:  # without it, "iPhone 17" looks like ticket #17: delete nothing
+        return {"removed": [], "review": [{"name": "(all simulators)", "udid": "", "reason": "couldn't read Xcode's device list, so none were checked"}]}
+    lookup = ticket_open or _ticket_open_anywhere
+    known: dict[int, bool] = {}
+    ticket_open = lambda n: known[n] if n in known else known.setdefault(n, lookup(n))  # noqa: E731
+    delete_simulator = delete_simulator or _default_delete_simulator
+
+    removed, review = [], []
+    for sim in sims:
+        try:
+            action, reason = decide_simulator(sim, stock, ticket_open)
+        except Exception as exc:  # a GitHub failure must never read as "ticket closed"
+            review.append({**sim, "reason": f"could not check GitHub: {str(exc)[:120]}"})
+            continue
+        if action == "remove":
+            if delete_simulator(sim):
+                removed.append({**sim, "reason": reason})
+            else:
+                review.append({**sim, "reason": f"{reason}, but simctl refused to delete it"})
+        elif action == "review":
+            review.append({**sim, "reason": reason})
+    return {"removed": removed, "review": review}
+
+
+def _write_log(stale: list[dict], worktrees: dict, simulators: dict | None = None) -> None:
     timestamp = datetime.now(timezone.utc).isoformat()
     lines = [
         f"- Released stale claim: issue #{e['issue_number']} held by `{e['machine_id']}`, "
@@ -248,6 +351,9 @@ def _write_log(stale: list[dict], worktrees: dict) -> None:
     ]
     lines += [f"- Removed worktree ({w['reason']}): `{w['path']}`" for w in worktrees["removed"]]
     lines += [f"- Needs a look, kept ({w['reason']}): `{w['path']}`" for w in worktrees["review"]]
+    sims = simulators or {"removed": [], "review": []}
+    lines += [f"- Removed simulator ({s['reason']}): `{s['name']}`" for s in sims["removed"]]
+    lines += [f"- Simulator needs a look, kept ({s['reason']}): `{s['name']}`" for s in sims["review"]]
     body = "\n".join(lines) + "\n" if lines else "Nothing to clean up: no stale claims, no resolved worktrees.\n"
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     existing = OUTPUT_PATH.read_text() if OUTPUT_PATH.exists() else "# MR pipeline cleanup sweep\n\n"
@@ -276,21 +382,6 @@ def _default_outcome_check() -> None:
         print(f"[cleanup-sweep] ticket promotion failed: {exc}", file=sys.stderr)
 
 
-OUTCOME_CHECK_MACHINE = "mac-mini-1"  # one Mac measures and comments, so the two never race (the primary host)
-
-
-def _default_outcome_check() -> None:
-    """Purpose metrics whose check date has passed get measured and recorded on their ticket (marvin#304)."""
-    try:
-        import machine_profile
-        if machine_profile.registry_id() != OUTCOME_CHECK_MACHINE:
-            return
-        import purpose_metrics
-        purpose_metrics.run()
-    except Exception as exc:  # noqa: BLE001 -- never let it stop the sweep; retried tomorrow
-        print(f"[cleanup-sweep] outcome check failed: {exc}", file=sys.stderr)
-
-
 def run_daily_sweep(
     list_claimed_open_issues: Callable[[], list[dict]] | None = None,
     list_worktrees: Callable[[], list[dict]] | None = None,
@@ -306,6 +397,10 @@ def run_daily_sweep(
     cron_health.py), returns a summary."""
     stale = sweep_stale_claims(threshold_hours, list_claimed_open_issues, release, now)
     worktrees = sweep_worktrees(list_worktrees, pr_state, is_claimed, remove_worktree)
+    try:
+        simulators = sweep_simulators()
+    except Exception as exc:  # noqa: BLE001 -- e.g. no Xcode on this machine; never stops the sweep
+        simulators = {"removed": [], "review": [{"name": "(all simulators)", "reason": f"sweep failed: {str(exc)[:120]}"}]}
 
     # Disk ledger and trim (log separately via their own functions)
     try:
@@ -322,9 +417,9 @@ def run_daily_sweep(
 
     _default_outcome_check()
 
-    _write_log(stale, worktrees)
+    _write_log(stale, worktrees, simulators)
     return {"stale_claims_released": len(stale), "worktrees_removed": len(worktrees["removed"]),
-            "worktrees_for_review": len(worktrees["review"])}
+            "worktrees_for_review": len(worktrees["review"]), "simulators_removed": len(simulators["removed"])}
 
 
 if __name__ == "__main__":

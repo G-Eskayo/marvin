@@ -144,3 +144,34 @@ def test_trim_dry_run_changes_nothing(fixture_tree, monkeypatch):
 
     npm_after = (fixture_tree / ".npm" / "_cacache").exists()
     assert npm_before == npm_after, "Dry run must not change anything"
+
+
+def test_reclaimed_kb_is_kilobytes_not_bytes(fixture_tree, monkeypatch):
+    """The log once said "Total freed: 274284 MiB" on a 228 GiB disk: trimmers returned bytes into reclaimed_kb."""
+    monkeypatch.setattr(dt, "get_disk_free_pct", lambda: 8)
+    monkeypatch.setattr(dt, "HOME", fixture_tree)
+    monkeypatch.setattr(cs, "_default_list_worktrees", lambda: [])
+    (fixture_tree / ".npm" / "_cacache" / "big").write_bytes(b"x" * 2 * 1024 * 1024)
+    npm = next(e for e in dt.trim() if e["path"] == "npm cache")
+    assert 2048 <= npm["reclaimed_kb"] < 4096
+
+
+def test_the_log_reports_freed_space_in_real_mib(fixture_tree, monkeypatch):
+    monkeypatch.setattr(dt, "get_disk_free_pct", lambda: 8)
+    monkeypatch.setattr(dt, "HOME", fixture_tree)
+    monkeypatch.setattr(dt, "trim", lambda dry_run=False: [{"path": "npm cache", "reclaimed_kb": 3 * 1024}])
+    dt.trim_with_logging()
+    log = (fixture_tree / ".claude" / "logs" / "mr-pipeline-sweep.md").read_text()
+    assert "npm cache (3 MiB)" in log and "Total freed: 3 MiB" in log
+
+
+def test_worktree_build_output_is_measured_before_it_is_removed(tmp_path, monkeypatch):
+    """Measuring after the delete always reported 0, so this trimmer looked useless even when it freed gigabytes."""
+    wt = tmp_path / "wt"
+    build = wt / ".build"
+    build.mkdir(parents=True)
+    (build / "obj").write_bytes(b"x" * 1024 * 1024)
+    import os
+    os.utime(build, (0, 0))
+    monkeypatch.setattr(cs, "drop_build_output", lambda path, rels: [__import__("shutil").rmtree(path / r) or r for r in rels if (path / r).exists()])
+    assert dt._trim_worktree_build_output({wt}) >= 1024
