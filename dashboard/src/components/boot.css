@@ -23,8 +23,8 @@
 .boot-sum div { opacity: 0; white-space: nowrap; }
 .boot-sum b { font-weight: 400; display: inline-block; min-width: 46px; text-align: center; margin-right: 10px;
   border: 1px solid currentColor; border-radius: 2px; line-height: 1.3; font-size: 11px; }
-.boot-root .green { color: var(--green); } .boot-root .yellow { color: var(--amber); }
-.boot-root .red { color: var(--red); } .boot-root .lock { color: var(--orange); }
+.boot-root .green { color: var(--green); --c: var(--green); } .boot-root .yellow { color: var(--amber); --c: var(--amber); }
+.boot-root .red { color: var(--red); --c: var(--red); } .boot-root .lock { color: var(--orange); --c: var(--orange); }
 .boot-root i.green { background: var(--green); } .boot-root i.yellow { background: var(--amber); } .boot-root i.red { background: var(--red); }
 
 .boot-bar { left: 0; right: 0; bottom: 24px; height: 30px; }
@@ -36,10 +36,24 @@
 .boot-banner { left: 0; right: 0; bottom: 24px; height: 32px; display: flex; align-items: center; border-top: 1px solid; border-bottom: 1px solid; }
 .boot-banner span { margin: 0 auto; background: var(--dash); padding: 2px 22px; font: 600 16px 'Saira Condensed', 'Arial Narrow', sans-serif; letter-spacing: 6px; }
 .boot-banner.nominal { border-color: var(--orange); color: var(--orange); background: repeating-linear-gradient(-45deg, #ff6a1fcc 0 12px, var(--dash) 12px 24px); }
-.boot-banner.issues { border-color: var(--red); color: var(--red); cursor: pointer; background: repeating-linear-gradient(-45deg, #ff3b2fcc 0 12px, var(--dash) 12px 24px); }
-.boot-banner.unknown { border-color: var(--amber); color: var(--amber); cursor: pointer; background: repeating-linear-gradient(-45deg, #f0b32acc 0 12px, var(--dash) 12px 24px); }
+.boot-banner.issues { border-color: var(--red); color: var(--red); background: repeating-linear-gradient(-45deg, #ff3b2fcc 0 12px, var(--dash) 12px 24px); }
+.boot-banner.unknown { border-color: var(--amber); color: var(--amber); background: repeating-linear-gradient(-45deg, #f0b32acc 0 12px, var(--dash) 12px 24px); }
 
 .boot-title { left: 50%; top: calc(50% + 90px); transform: translateX(-50%); text-align: center; white-space: nowrap; }
 .boot-title h1 { margin: 0; font: 800 60px/1 'Saira Condensed', 'Arial Narrow', sans-serif; color: var(--green); letter-spacing: 10px; padding-left: 10px; text-shadow: 0 0 18px #54ff8a99; }
 .boot-title .boot-sub { margin-top: 8px; font: 600 13px 'Saira Condensed', 'Arial Narrow', sans-serif; letter-spacing: 6px; color: var(--orange); }
 .boot-lock-lbl { font: 11px 'Share Tech Mono', ui-monospace, monospace; fill: var(--orange); letter-spacing: 1px; }
+
+/* #433: clickable items glow and grow slightly on hover. The styles sit on inner elements, because the boot's
+   finished entrance animations keep control of the outer elements' filter and transform. .boot-hover is set every
+   frame from the real pointer position (boot_animation.js), alongside :hover. */
+.boot-root .boot-link { cursor: pointer; }
+.boot-sum .boot-lt { display: inline-block; transform-origin: left center; transition: transform .15s ease-out, filter .15s, text-shadow .15s; }
+.boot-sum .boot-link.boot-hover .boot-lt { filter: brightness(1.45); text-shadow: 0 0 10px currentColor; transform: scale(1.05); }
+/* the chip fills with the line's own colour (--c), its label turns dark */
+.boot-sum .boot-link.boot-hover b { background: var(--c); border-color: var(--c); color: var(--dash); text-shadow: none; }
+.boot-banner.boot-link { transition: height .15s ease-out, filter .15s, box-shadow .15s; }
+.boot-banner span { transition: font-size .15s ease-out, padding .15s ease-out; }
+/* The whole banner grows (taller, rising from its bottom edge) and its words fill more of their box. */
+.boot-banner.boot-link.boot-hover { height: 40px; filter: brightness(1.3); box-shadow: 0 0 22px currentColor; }
+.boot-banner.boot-link.boot-hover span { font-size: 19px; padding: 3px 30px; }
