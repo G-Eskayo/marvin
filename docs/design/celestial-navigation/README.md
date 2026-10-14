@@ -47,7 +47,16 @@ icon changes the boot as well.
 
 ![Icon on iPhone and Mac](icon-on-devices.png)
 
-## The boot sequence (v6, about 9 s, any key or click skips it)
+## The boot sequence (v7, about 9 s, any key or click skips it)
+
+v7 (2026-10-14), Gil's picks:
+- **The HUD stays full glow.** The critical banner and the bottom-left loaders read best with it.
+- **The M uses a middle glow level** (`MARK = 'mid'`): a smaller blur, one glow layer, a softer core, and colours
+  halfway between neon and flat. `?mark=glow` and `?mark=flat` switch it for comparison.
+- **The stars fade in at the v5 rate.** The extra 20% slowdown applies to the other effects only.
+
+![M glow levels](mark-glow-levels.png)
+
 
 v6 changes (2026-10-14): everything **except the M build** (lock, ignite, lines, pings) runs about 20% slower
 (`SLOW = 1.2`), and the hold is 1.8 s. There is also a **flat-colour variant** (`boot.html?flat`): no glows or blur,
@@ -102,7 +111,7 @@ dashboard redo** (see `modern-raster.html`).
 
 ![Modern raster](modern-raster.gif)
 
-![Boot v6 (glow)](boot.gif)
+![Boot v7](boot.gif)
 ![Boot v6 (flat)](boot-flat.gif)
 ![Boot v5 keyframes](boot-keyframes.png)
 
