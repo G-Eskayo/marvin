@@ -1,5 +1,7 @@
 # Changelog
 
+- GitHub usage: replace the sawtooth allowance line with hourly low-point bars linked to calls-per-hour (24h/7d/30d) ([#418](https://github.com/G-Eskayo/marvin/pull/418))
+
 - A healthy no-op push never clears an earlier push failure, so Health stays stuck (yellow, then red) after the problem is fixed ([#439](https://github.com/G-Eskayo/marvin/pull/439))
 
 - Boot sequence: hover glow + click-through to the real check (summary lines and banner) ([#434](https://github.com/G-Eskayo/marvin/pull/434))
