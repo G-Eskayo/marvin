@@ -1246,3 +1246,24 @@ A GitHub 5xx (`remote: Internal Server Error`, HTTP 500, 503) is classified `GIT
   MARVIN: the research digest folds into it, and it's part of a wake-up routine that gets Gil into his day.
   Its consumer is Gil, delivered at the start of his day through MARVIN's single proactive-delivery path
   (ADR 0046: quiet hours end at sunrise).
+
+## Seal Speak beta report ingest (built 2026-10-13, #407)
+
+Design lives in clarity-captions (ADR 0023 sending, ADR 0024 receiving, `docs/beta/metrics-schema.md`).
+
+- **Beta report**: a `seal-feedback-<build>-<date>.json` a TestFlight tester texts to Gil from Seal Speak. It holds
+  measurements, a 1–10 rating and an optional note, never what anyone said.
+- **`lib/seal_beta_ingest.py`**, launchd `com.marvin.seal-beta-ingest` (every 10 min, **Mac Mini only**). It reads only
+  `seal-feedback-*.json` under `~/Library/Messages/Attachments`, dedupes by conversation `id`, and appends to the
+  **private store** `~/.claude/seal-beta/` (`reports.jsonl`, `summary.json`, `status.json`). The store is mode 0700,
+  ignored by the `~/.claude` sync, and never goes to a repo.
+- **Grouped by device**: the summary is by device model (plain name, e.g. iPhone18,1 → "iPhone 17 Pro"; unknown ids
+  shown raw), then by build, plus a by-build view.
+- **Rating states**: *rated*, *skipped* (tester tapped Skip) and *unrated* (sent before the card showed); only rated
+  ones move the median.
+- **Low-sample**: under 30 lag samples or under 1 minute. These conversations are counted, but kept out of the
+  lag/battery/rewrite/relabel medians.
+- **Health** `seal:beta-ingest` (only where the plist is installed): red when Messages can't be read. Full Disk Access
+  for the venv's real `python3.11` is reset by every Homebrew Python upgrade, so this fails loudly, never as "0
+  reports".
+- Next: #408 dashboard view (needs-info), #409 numbers-only public tickets, #410 TestFlight feed.

@@ -548,6 +548,59 @@ def check_main_health(path: Path | None = None, now: datetime | None = None) -> 
     return _result(cid, label, "green", f"main @ {d.get('sha', '?')}: {d.get('summary', 'passing')}")
 
 
+SEAL_BETA_STATUS_PATH = Path.home() / ".claude" / "seal-beta" / "status.json"
+SEAL_BETA_PLIST = "com.marvin.seal-beta-ingest.plist"
+SEAL_BETA_STALE_MINUTES = 60      # the job runs every 10 minutes
+SEAL_BETA_INVALID_RECENT_DAYS = 7  # Messages keeps attachments forever; an old bad file shouldn't stay yellow
+
+
+def check_seal_beta_ingest(status_path: Path | None = None, installed: bool | None = None,
+                           now: datetime | None = None) -> dict | None:
+    """Seal Speak beta reports are picked up from Messages (lib/seal_beta_ingest.py, marvin#407). Only monitored on
+    the machine where its launchd job is installed. A Homebrew Python upgrade silently resets Full Disk Access, so a
+    denied read is red with the fix, never quiet."""
+    if installed is None:
+        installed = (LAUNCHAGENTS_DIR / SEAL_BETA_PLIST).exists()
+    if not installed:
+        return None
+    cid, label = "seal:beta-ingest", "Seal Speak beta reports are picked up"
+    now = now or _now()
+    try:
+        d = json.loads(Path(status_path or SEAL_BETA_STATUS_PATH).read_text())
+        at = datetime.fromisoformat(d["generated_at"])
+        ok = d["ok"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return _result(cid, label, "yellow", "the beta report job has not run on this machine yet")
+    if not ok:
+        err = d.get("error") or {}
+        return _result(cid, label, "red", f"can't pick up beta reports: {err.get('detail') or err.get('kind') or 'unknown error'}")
+    age_min = (now - at).total_seconds() / 60
+    if age_min > SEAL_BETA_STALE_MINUTES:
+        return _result(cid, label, "yellow", f"the beta report job last ran {age_min / 60:.1f} hours ago (it runs every 10 minutes)")
+    recent_bad = []
+    for inv in d.get("invalid") or []:
+        try:
+            if (now - datetime.fromisoformat(inv["mtime"])).days < SEAL_BETA_INVALID_RECENT_DAYS:
+                recent_bad.append(inv)
+        except (KeyError, TypeError, ValueError):
+            recent_bad.append(inv)
+    total = d.get("total_conversations") or 0
+    last = d.get("last_report_at")
+    if total and last:
+        try:
+            ago = (now - datetime.fromisoformat(last)).total_seconds() / 86400
+            when = "today" if ago < 1 else f"{ago:.0f} day(s) ago"
+        except ValueError:
+            when = last
+        base = f"{total} conversations stored; last report {when}"
+    else:
+        base = "no reports yet"
+    if recent_bad:
+        names = "; ".join(f"{i.get('file')} ({i.get('reason')})" for i in recent_bad[:3])
+        return _result(cid, label, "yellow", f"{base}. {len(recent_bad)} report file(s) couldn't be read: {names}")
+    return _result(cid, label, "green", base)
+
+
 GITHUB_BUDGET_YELLOW_BELOW = 0.20   # fraction of the hourly allowance
 GITHUB_BUDGET_RED_BELOW = 0.05
 
@@ -1445,6 +1498,9 @@ def run_all() -> dict:
     results.append(check_github_budget())
     results.append(check_gh_gate())
     results.append(check_main_health())
+    seal = check_seal_beta_ingest()
+    if seal:
+        results.append(seal)
     cron_state = ch._load_state()
     cron_now = datetime.now().astimezone()
     for job in discover_launchd_jobs():
