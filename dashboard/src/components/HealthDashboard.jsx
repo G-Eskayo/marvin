@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import HealthDrilldown from './HealthDrilldown.jsx'
 import AgentsPanel from './AgentsPanel.jsx'
 import ProjectReadinessPanel from './ProjectReadinessPanel.jsx'
+import { healthFocus } from '../lib/boot_view.js'
 
 // How long a check is trusted at full color before it starts visually
 // greying out (ADR 0033's Staleness gradient term). All v1 checks run in
@@ -51,6 +52,7 @@ function CheckCard({ check, onClick }) {
   return (
     <button
       onClick={onClick}
+      data-check-id={check.id}
       style={{ opacity }}
       className={`flex flex-col gap-2 rounded-lg border ${colors.border} ${colors.bg} p-4 text-left transition-opacity hover:opacity-100`}
     >
@@ -145,10 +147,23 @@ export default function HealthDashboard({ nav }) {
   const [selected, setSelected] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
   const [view, setView] = useState('checks')
+  const [focus, setFocus] = useState(null) // { id, at }: the check to scroll to and flash once (#433)
   // A click on the header's working indicator lands on the agents list.
   useEffect(() => {
     if (nav?.tab === 'health' && nav.view) setView(nav.view)
+    // The boot's summary lines land on the exact check behind them (#433): Checks view, scrolled to it, one flash.
+    const id = healthFocus(nav)
+    if (id) { setView('checks'); setFocus({ id, at: nav.at }) }
   }, [nav?.at])
+  useEffect(() => {
+    if (!focus || !status || view !== 'checks') return
+    const card = document.querySelector(`[data-check-id="${CSS.escape(focus.id)}"]`)
+    if (card) {
+      card.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      card.animate([{ boxShadow: '0 0 0 2px #ff6a1f, 0 0 22px #ff6a1f99' }, { boxShadow: '0 0 0 2px #ff6a1f, 0 0 22px #ff6a1f99', offset: 0.35 }, { boxShadow: '0 0 0 0 transparent' }], { duration: 1600, easing: 'ease-out' })
+    }
+    setFocus(null)
+  }, [focus, status, view])
   const [agents, setAgents] = useState(null)
   const [readiness, setReadiness] = useState(null)
   const [profiles, setProfiles] = useState(null)

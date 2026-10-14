@@ -17,3 +17,22 @@ export function bannerTone(verdict) {
 export function lineTone(level) {
   return { green: 'green', yellow: 'yellow', red: 'red', lock: 'lock' }[level] ?? 'yellow'
 }
+
+// Clickable items (#433). A line is clickable only when boot_data gave it a target on a tab the boot can open;
+// anything else (LOCK, OK, PLOT, malformed targets) stays inert, so nothing glows that does nothing.
+const BOOT_TABS = new Set(['health'])
+export function lineTarget(line) {
+  const t = line?.target
+  if (!t || !BOOT_TABS.has(t.tab)) return null
+  return typeof t.check === 'string' && t.check ? { tab: t.tab, check: t.check } : { tab: t.tab }
+}
+
+// The verdict banner leads to Health only when there's something to look at.
+export function bannerTarget(verdict) {
+  return bannerTone(verdict) === 'nominal' ? null : { tab: 'health' }
+}
+
+// Which check the Health tab should land on and flash, from a navigation request.
+export function healthFocus(nav) {
+  return nav?.tab === 'health' && typeof nav.check === 'string' && nav.check ? nav.check : null
+}
