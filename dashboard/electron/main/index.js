@@ -34,6 +34,7 @@ import { readRegistry, loadBoard, fetchBoardData, fetchCompletedData, withProjec
 import { createRelationsService } from './relations_service.js'
 import { summarizeBoard, buildCompleted } from './board.js'
 import { createTriggerHub, createReconciler, refetchesGithub } from './triggers.js'
+import { createMrHistory, mergedPrArgs } from './mr_history.js'
 import { listOpenPrsAcrossRepos, prListArgs, normalizeSeen, canMergeFromDashboard, repoFromPrUrl, MARVIN_REPO } from './mr_repos.js'
 import { createIndexer, buildDocsIndex, loadIndex } from './docs_search.js'
 import { createDocsService, MASTER_ID } from './docs_service.js'
@@ -586,6 +587,30 @@ function registerMrReviewHandlers() {
     const res = await fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/auto-merge-shadow'), { signal: AbortSignal.timeout(3000) })
     return res.ok ? res.json() : {}
   }
+  // MR Review's Merged view (#419): saved history at once ({fresh:false}), or an incremental read of GitHub plus the
+  // merge server's own record of merges and refused Approves ({fresh:true}).
+  const mrHistory = createMrHistory({
+    repos: () => readRegistry().map((b) => b.repo),
+    ghList: async (repo, since) => JSON.parse((await execFileAsync('gh', mergedPrArgs(repo, since))).stdout || '[]'),
+    webhookHistory: async () => {
+      const res = await fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/merge-history'), { signal: AbortSignal.timeout(5000) })
+      if (!res.ok) throw new Error(`merge server answered ${res.status}`)
+      return res.json()
+    },
+    openPrs: () => listOpenPrs({ light: true }),
+    cachePath: join(homedir(), '.claude', 'logs', 'mr-history.json')
+  })
+  ipcMain.handle('mr:history', (_event, opts) => mrHistory.get({ fresh: !!opts?.fresh }))
+  // One merged (or refused) PR as the usual detail view, read-only: never mergeable from here.
+  ipcMain.handle('mr:historyDetail', async (_event, url) => {
+    const repo = repoFromPrUrl(url)
+    if (!repo) throw new Error('not a PR url')
+    const { stdout } = await execFileAsync('gh', ['pr', 'view', url, '--json', 'number,title,url,body,files,baseRefName,headRefName,mergeable,statusCheckRollup,state,mergedAt'])
+    const raw = { ...JSON.parse(stdout), repo }
+    const [pr] = await listPipelinePrs(async () => [raw], { canMerge: () => false, uiPathsFor: (r) => readUiPaths(r) })
+    return { ...pr, readOnly: true, state: raw.state, mergedAt: raw.mergedAt || null }
+  })
+
   ipcMain.handle('mr:autoMergeReport', async () => {
     try {
       return (await getAutoMergeShadow()).last_report || null

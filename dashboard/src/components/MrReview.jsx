@@ -1,3 +1,4 @@
+import MrHistory from './MrHistory.jsx'
 import { cleanIpcError } from '../lib/ipcError.js'
 import { useEffect, useRef, useState } from 'react'
 import { describePrState } from '../lib/prState.js'
@@ -452,7 +453,46 @@ function PrCard({ pr, parity, onOpenTicket, onApproved, onDenied, onSelect }) {
   )
 }
 
-export default function MrReview({ nav, onOpenDocs, onOpenBoard, onOpenTicket }) {
+// Open | Merged (marvin#419): the Merged view shows history, so a merged PR never just vanishes.
+export function ViewToggle({ view, setView, openCount }) {
+  return (
+    <div className="flex gap-1 px-6 pt-6" role="group" aria-label="Which PRs">
+      {[['open', `Open${openCount != null ? ` (${openCount})` : ''}`], ['merged', 'Merged']].map(([id, label]) => (
+        <button key={id} aria-pressed={view === id} onClick={() => setView(id)}
+          className={`rounded-md px-3 py-1.5 text-sm ${view === id ? 'bg-neutral-800 text-white' : 'text-neutral-400 hover:text-neutral-200'}`}>{label}</button>
+      ))}
+    </div>
+  )
+}
+
+export default function MrReview(props) {
+  const [view, setView] = useState('open')
+  const [historyPr, setHistoryPr] = useState(null)
+  const [historyError, setHistoryError] = useState(null)
+  const [openCount, setOpenCount] = useState(null)
+  if (historyPr) {
+    return <MrDetail pr={historyPr} onBack={() => setHistoryPr(null)} onOpenDocs={props.onOpenDocs} onOpenBoard={props.onOpenBoard} onOpenTicket={props.onOpenTicket} />
+  }
+  const openRow = (row) => {
+    setHistoryError(null)
+    window.api.mr.historyDetail(row.url).then((pr) => setHistoryPr(row.kind === 'refused' ? { ...pr, refusal: row } : pr)).catch((e) => setHistoryError(`Couldn’t open #${row.number} ${row.title}: ${String(e)}`))
+  }
+  return (
+    <div className="flex h-full flex-col">
+      <ViewToggle view={view} setView={setView} openCount={openCount} />
+      {view === 'open' ? (
+        <div className="min-h-0 flex-1"><OpenPrs {...props} onCount={setOpenCount} /></div>
+      ) : (
+        <div className="p-6">
+          {historyError && <p className="mb-2 text-sm text-red-400">{historyError}</p>}
+          <MrHistory onOpen={openRow} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
   const [prs, setPrs] = useState(null)
   const [error, setError] = useState(null)
   const [selected, setSelected] = useState(null)
@@ -467,6 +507,7 @@ export default function MrReview({ nav, onOpenDocs, onOpenBoard, onOpenTicket })
       .list()
       .then((list) => {
         setPrs(list)
+        onCount?.(list.length)
         // Opening this list is what "seen" means for the tab's status dot
         // (App.jsx) -- mark every currently-listed PR, not just ones you
         // click into, since the dot is about "have you looked at the

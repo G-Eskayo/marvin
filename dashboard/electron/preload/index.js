@@ -28,6 +28,9 @@ contextBridge.exposeInMainWorld('api', {
     parity: () => ipcRenderer.invoke('mr:parity'),
     reviewStatus: () => ipcRenderer.invoke('mr:reviewStatus'),
     autoMergeReport: () => ipcRenderer.invoke('mr:autoMergeReport'),
+    // The Merged view (#419): saved history now, or a fresh read; and one PR's read-only detail.
+    history: (opts) => ipcRenderer.invoke('mr:history', opts),
+    historyDetail: (url) => ipcRenderer.invoke('mr:historyDetail', url),
     markSeen: (prNumbers) => ipcRenderer.invoke('mr:markSeen', prNumbers),
     // Fires whenever the webhook-server's /mr-ready ping reaches this
     // machine's own refresh_server.js. Returns an unsubscribe function.
