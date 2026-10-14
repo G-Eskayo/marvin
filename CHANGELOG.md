@@ -1,5 +1,7 @@
 # Changelog
 
+- MARVIN Metrics app icon: celestial-navigation M on pure black (R6) ([#437](https://github.com/G-Eskayo/marvin/pull/437))
+
 - Dashboard: celestial-navigation boot sequence with a real health verdict (port of #428 v7) ([#432](https://github.com/G-Eskayo/marvin/pull/432))
 
 - Memory-sync block is a hard stop at the top of the session-start report, with stuck duration and refusal count ([#429](https://github.com/G-Eskayo/marvin/pull/429))
