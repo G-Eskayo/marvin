@@ -226,3 +226,88 @@ def test_dirty_content_inside_an_embedded_repo_is_not_work_to_commit(tmp_path, m
 
     assert not log.exists() or "commit failed" not in log.read_text(), log.read_text()
     assert _origin_head(tmp_path) == head
+
+
+# ── marvin#438: a healthy no-op push ends an earlier push-failure streak ─────
+
+def _seed_log(log: Path, repo: Path, summary: str, machine: str | None = None, action: str = "push") -> None:
+    machine = machine or cs.machine_label()
+    with log.open("a") as f:
+        f.write(f"\n## 2026-10-14T16:37:26.877428+00:00 — {action} ({machine}) [{repo}]\n{summary}\n- x\n")
+
+
+def _health_push_streak(log: Path, repo: Path) -> list:
+    import health_checks
+    from datetime import datetime, timedelta, timezone
+    later = datetime.now(timezone.utc) + timedelta(hours=10)
+    return [r for r in health_checks.check_sync_stuck_from_text(log.read_text(), now=later, only_machine=cs.machine_label())
+            if r["id"].endswith(f"{repo}:push")]
+
+
+def test_noop_push_after_a_failure_clears_it_once(tmp_path, monkeypatch):
+    log = tmp_path / "sync-log.md"
+    _quiet(monkeypatch, log)
+    clone = _make_origin_and_clone(tmp_path)
+    _seed_log(log, clone, "commit failed:\nOn branch main")
+    assert _health_push_streak(log, clone), "test setup: Health must see the streak first"
+
+    cs.push(clone)
+    cs.push(clone)
+    cs.push(clone)
+
+    text = log.read_text()
+    assert text.count("earlier failure cleared") == 1, text
+    assert not _health_push_streak(log, clone)
+
+
+def test_noop_push_after_a_success_stays_silent(tmp_path, monkeypatch):
+    log = tmp_path / "sync-log.md"
+    _quiet(monkeypatch, log)
+    clone = _make_origin_and_clone(tmp_path)
+    _seed_log(log, clone, "committed + pushed 1 file(s)")
+    before = log.read_text()
+
+    cs.push(clone)
+
+    assert log.read_text() == before
+
+
+def test_noop_push_with_no_log_or_a_corrupt_log_stays_silent(tmp_path, monkeypatch):
+    log = tmp_path / "sync-log.md"
+    _quiet(monkeypatch, log)
+    clone = _make_origin_and_clone(tmp_path)
+    cs.push(clone)
+    assert not log.exists()
+    log.write_bytes(b"\xff\xfe## garbage\nREFUSING\n\x00" * 100)
+    before = log.read_bytes()
+    cs.push(clone)
+    assert log.read_bytes() == before
+
+
+def test_other_macs_and_other_repos_failures_do_not_trigger_the_line(tmp_path, monkeypatch):
+    log = tmp_path / "sync-log.md"
+    _quiet(monkeypatch, log)
+    clone = _make_origin_and_clone(tmp_path)
+    _seed_log(log, clone, "commit failed:", machine="some-other-mac")
+    _seed_log(log, tmp_path / "another-repo", "commit failed:")
+    _seed_log(log, clone, "CONFLICT merging origin/main", action="pull")
+    before = log.read_text()
+
+    cs.push(clone)
+
+    assert log.read_text() == before, "only this Mac's own last *push* entry for this repo counts"
+
+
+def test_still_failing_push_does_not_claim_the_failure_cleared(tmp_path, monkeypatch):
+    """Clean tree, but a committed change can't reach origin: not a no-op, must not log 'cleared'."""
+    log = tmp_path / "sync-log.md"
+    _quiet(monkeypatch, log)
+    clone = _make_origin_and_clone(tmp_path)
+    _seed_log(log, clone, "push failed even after merge retry — committed locally, NOT pushed:")
+    (clone / "file.md").write_text("v2\n")
+    _git(clone, "commit", "-am", "local")
+    _git(clone, "remote", "set-url", "origin", str(tmp_path / "gone.git"))
+
+    cs.push(clone)
+
+    assert "cleared" not in log.read_text()
