@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import code_sync  # noqa: E402
 import cron_health as ch  # noqa: E402
 import machine_profile  # noqa: E402
+from machine_profile import machine_label  # noqa: E402
 from task_dispatch import TAILSCALE_BIN, TAILSCALE_ENV  # noqa: E402  (absolute path -- launchd's PATH omits the shell's additions)
 import metrics_registry as mr  # noqa: E402
 
@@ -293,62 +294,77 @@ def _parse_sync_log_entries(text: str) -> list[tuple[str, str, str, datetime]]:
     return entries
 
 
-def check_sync_stuck() -> list[dict]:
-    """Cross-machine: for each (machine, repo), find the latest sync-log entry.
-    If it starts with REFUSING or CONFLICT, walk backward to find when this
-    streak started, and report red/yellow based on duration."""
-    results = []
-    me = machine_profile.registry_id()
+STUCK_PREFIXES = ("REFUSING", "CONFLICT", "commit failed", "push failed")
 
-    # Collect sync-log from this machine + each remote device.
-    devices = [(me, None)] + [
-        (dev, info.get("tailscale_hostname"))
-        for dev, info in machine_profile.remote_devices().items()
-    ]
 
-    all_entries = []
-    for dev, host in devices:
-        if host is None:
-            text = (HOME / ".claude" / "sync-log.md").read_text() if (HOME / ".claude" / "sync-log.md").exists() else ""
-        else:
-            text = _run_sync_log_remote(host)
-        for machine, repo, status, ts in _parse_sync_log_entries(text):
-            all_entries.append((dev, machine, repo, status, ts))
-
-    # Group by (device, machine, repo), keep latest entry per group.
-    by_key = {}
-    for dev, machine, repo, status, ts in all_entries:
-        key = (dev, machine, repo)
-        if key not in by_key or ts > by_key[key][4]:
-            by_key[key] = (dev, machine, repo, status, ts)
-
-    # Check for stuck entries (REFUSING or CONFLICT prefix).
-    for dev, machine, repo, status, ts in by_key.values():
-        if not status or (not status.startswith("REFUSING") and not status.startswith("CONFLICT")):
+def _sync_entries_with_action(text: str) -> list[tuple[str, str, str, str, datetime]]:
+    """Like _parse_sync_log_entries, plus the action (pull/push): [(machine, repo, action, status, ts)]."""
+    out = []
+    for m in re.finditer(r"^## (\S+) — ([^\n]+)\n(.*?)(?=\n## |\Z)", text, re.DOTALL | re.MULTILINE):
+        try:
+            ts = datetime.fromisoformat(m.group(1).replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
             continue
+        header, body = m.group(2), m.group(3)
+        action = header.split(" ", 1)[0]
+        machine = (re.search(r"\(([^)]+)\)", header) or [None, "unknown"])[1]
+        repo = (re.search(r"\[([^\]]+)\]", header) or [None, "unknown"])[1]
+        out.append((machine, repo, action, body.strip().split("\n")[0] if body.strip() else "", ts))
+    return out
 
-        # Find when this streak started by walking backward through all_entries.
+
+def check_sync_stuck_from_text(text: str, now: datetime | None = None, dev: str = "local", only_machine=None) -> list[dict]:
+    """A (machine, repo, action) whose latest entries are failures, red after SYNC_LOG_STUCK_RED_AFTER_HOURS.
+    Streaks are kept per action (marvin#422): on 2026-10-13/14 a stale git lock failed every pull for 26 hours, but
+    the push job's optimistic "committed + pushed" line in between reset a per-repo streak, so Health stayed quiet."""
+    now = now or _now()
+    names = {only_machine} if isinstance(only_machine, str) else set(only_machine or ())
+    entries = [e for e in _sync_entries_with_action(text) if not names or e[0] in names]
+    latest = {}
+    for e in entries:
+        key = e[:3]
+        if key not in latest or e[4] > latest[key][4]:
+            latest[key] = e
+    results = []
+    for (machine, repo, action), (_, _, _, status, ts) in latest.items():
+        if not status.startswith(STUCK_PREFIXES):
+            continue
         streak_start = ts
-        relevant_entries = sorted([e for e in all_entries if e[1] == machine and e[2] == repo],
-                                  key=lambda e: e[4], reverse=True)
-        for _, m, r, s, t in relevant_entries:
-            if s and (s.startswith("REFUSING") or s.startswith("CONFLICT")):
+        for _, _, _, s, t in sorted((e for e in entries if e[:3] == (machine, repo, action)), key=lambda e: e[4], reverse=True):
+            if s.startswith(STUCK_PREFIXES):
                 streak_start = t
             else:
                 break
-
-        age_h = (_now() - streak_start).total_seconds() / 3600
+        age_h = (now - streak_start).total_seconds() / 3600
         sev = "red" if age_h >= SYNC_LOG_STUCK_RED_AFTER_HOURS else "yellow" if age_h >= SYNC_LOG_STUCK_YELLOW_AFTER_HOURS else "green"
         if sev == "green":
             continue
-
-        cid = f"sync:stuck:{dev}:{repo}"
-        label = f"Code sync — {dev} {repo}"
-        reason = status.split("\n")[0] if status else "unknown"
-        detail = f"{machine} {repo} not syncing since {streak_start.isoformat()}: {reason}"
-        results.append(_result(cid, label, sev, detail))
-
+        results.append(_result(f"sync:stuck:{machine}:{repo}:{action}", f"Code sync ({action}) — {machine} {repo}", sev,
+                               f"{machine} {repo} {action} failing since {streak_start.isoformat()}: {status}"))
     return results
+
+
+def check_sync_stuck() -> list[dict]:
+    """Cross-machine: this machine's sync-log plus each remote device's, read over SSH."""
+    results = []
+    me = machine_profile.registry_id()
+    devices = [(me, None)] + [(dev, info.get("tailscale_hostname")) for dev, info in machine_profile.remote_devices().items()]
+    for dev, host in devices:
+        if host is None:
+            p = HOME / ".claude" / "sync-log.md"
+            text = p.read_text() if p.exists() else ""
+        else:
+            text = _run_sync_log_remote(host)
+        # sync-log.md is itself synced, so each copy holds the other Mac's entries too, as of its last sync. Trust each
+        # Mac's entries only from that Mac's own copy: a stale copy turned a working sync red (2026-10-14).
+        own = {dev, _remote_machine_label(dev)} | ({machine_label()} if host is None else set())
+        results += check_sync_stuck_from_text(text, dev=dev, only_machine=own)
+    return results
+
+
+def _remote_machine_label(dev: str) -> str:
+    """The name a remote device writes into sync-log headers (code_sync uses machine_profile.machine_label)."""
+    return re.sub(r"-\d+$", "", dev)   # registry ids are the label plus a number: mac-mini-1 -> mac-mini
 
 
 # ── pipeline circuit breaker ─────────────────────────────────────────────
@@ -1312,6 +1328,59 @@ def _run_machine_state(target: str | None, script: str = _MACHINE_STATE_SCRIPT) 
     return subprocess.run(cmd, input=script, capture_output=True, text=True, timeout=60).stdout
 
 
+def _run_errors_remote(host: str) -> list[dict]:
+    """The other Mac's recent errors (lib/error_log.py recent --json), over SSH. Raises on any failure so the caller
+    can say "can't read", never "no errors"."""
+    cmd = ["ssh", *SSH_OPTS, host, "$HOME/.agents/venv/bin/python $HOME/.agents/lib/error_log.py recent --json --hours 24"]
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+    if proc.returncode != 0:
+        raise OSError((proc.stderr or proc.stdout).strip()[:200] or f"ssh exit {proc.returncode}")
+    data = json.loads(proc.stdout or "[]")
+    if not isinstance(data, list):
+        raise ValueError("not an error list")
+    return data
+
+
+def _local_errors() -> list[dict]:
+    import error_log
+    return error_log.recent(hours=24)
+
+
+def check_recent_errors(reachability: dict[str, str], local=_local_errors, remote=_run_errors_remote,
+                        now: datetime | None = None) -> tuple[list[dict], list[dict]]:
+    """marvin#422: one "Recent errors" check per Mac (red while an error keeps repeating within the hour, yellow for
+    anything in the last day), plus every folded error from both Macs, newest first, for the Health list."""
+    import error_log
+    now = now or _now()
+    me = machine_profile.registry_id()
+    devices = [(me, None, "local")] + [(dev, info.get("tailscale_hostname"), reachability.get(f"machine:{dev}", "yellow"))
+                                       for dev, info in machine_profile.remote_devices().items()]
+    results, groups = [], []
+    for dev, host, reach in devices:
+        cid, label = f"errors@{dev}", f"Recent errors -- {dev}"
+        if reach == "asleep":
+            results.append(_result(cid, label, "asleep", "cannot check while the machine is asleep"))
+            continue
+        if reach not in ("local", "green"):
+            results.append(_result(cid, label, "yellow", f"can't read this Mac's errors (unreachable: {reach})"))
+            continue
+        try:
+            mine = local() if host is None else remote(host)
+        except Exception as exc:  # noqa: BLE001
+            results.append(_result(cid, label, "yellow", f"can't read this Mac's errors: {exc}"))
+            continue
+        mine = [{**g, "machine": g.get("machine") or dev, "severity": error_log.severity(g, now)} for g in mine if isinstance(g, dict)]
+        groups += mine
+        if not mine:
+            results.append(_result(cid, label, "green", "no errors in the last 24 hours", value=0))
+            continue
+        sev = "red" if any(g["severity"] == "red" for g in mine) else "yellow"
+        top = "; ".join(f"{g['cause']} ({g['source']}, ×{g['count']})" for g in mine[:3])
+        results.append(_result(cid, label, sev, f"{len(mine)} kind(s) of error in the last 24 hours: {top}", value=len(mine)))
+    groups.sort(key=lambda g: g.get("last_t", ""), reverse=True)
+    return results, groups
+
+
 def check_machine_state_everywhere(reachability: dict[str, str], runner=_run_machine_state) -> list[dict]:
     results = []
     me = machine_profile.registry_id()
@@ -1514,6 +1583,8 @@ def run_all() -> dict:
     results += reach_results
     results += check_repo_sync_everywhere({r["id"]: r["severity"] for r in reach_results})
     results += check_machine_state_everywhere({r["id"]: r["severity"] for r in reach_results})
+    error_results, recent_errors = check_recent_errors({r["id"]: r["severity"] for r in reach_results})
+    results += error_results
 
     cov = coverage(results)
     anomaly = record_anomaly_metrics(results)
@@ -1527,6 +1598,7 @@ def run_all() -> dict:
         "coverage": cov,
         "anomaly": anomaly,
         "checks": results,
+        "recent_errors": recent_errors[:100],
     }
 
 

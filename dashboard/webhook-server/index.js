@@ -11,6 +11,7 @@ import { failureResponse } from './failure.js'
 import { timeRequest } from '../electron/main/timing.js'
 import { recordApproveError, approveErrorLine } from './refusal_log.js'
 import { appendMerge, readMergeHistory } from './merge_history.js'
+import { appendError } from '../electron/main/error_log.js'
 import { readRebaseStatus } from './rebase_status.js'
 import { readLiveSessions } from './sessions.js'
 import { startChangeWatch, createGithubProbe } from './gh_watch.js'
@@ -173,6 +174,7 @@ const server = createServer(async (req, res) => {
       const { status, body } = failureResponse(err)
       console.error(approveErrorLine(payload.pr_url, body))
       await recordApproveError(payload.pr_url, body)
+      appendError({ source: 'webhook:approve', message: `Approve refused for ${payload.pr_url}`, raw: body.error })
       res.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(body))
     }
     return
@@ -195,6 +197,7 @@ const server = createServer(async (req, res) => {
     }
     res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ done: true }))
   } catch (err) {
+    appendError({ source: 'webhook:deny', message: `Deny failed for ${prUrl}`, raw: err?.stack || err })
     res.writeHead(500, { 'Content-Type': 'application/json' }).end(
       JSON.stringify({ done: false, error: String(err.message || err) })
     )

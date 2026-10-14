@@ -22,3 +22,10 @@ def log_hook_error(hook_name: str, context: str, exc: BaseException) -> None:
             f.write(f"{ts} [{hook_name}] {context}: {type(exc).__name__}: {exc}\n")
     except Exception:
         pass
+    try:  # marvin#422: also into the one error log Health shows
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import error_log
+        error_log.record(f"hook:{hook_name}", context, raw=f"{type(exc).__name__}: {exc}")
+    except Exception:
+        pass

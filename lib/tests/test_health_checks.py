@@ -1304,3 +1304,90 @@ def test_seal_ingest_says_today_or_how_many_days_ago(tmp_path):
     assert "last report today" in today["detail"]
     old = _seal(_seal_status(tmp_path, last_report_at=(SEAL_NOW - timedelta(days=3, hours=1)).isoformat()))
     assert "last report 3 day(s) ago" in old["detail"]
+
+
+# ── Recent errors (marvin#422) ───────────────────────────────────────────
+
+ERR_NOW = datetime(2026, 10, 14, 15, 0, tzinfo=timezone.utc)
+
+
+def _group(machine, source, cause, count, mins_ago):
+    t = (ERR_NOW - timedelta(minutes=mins_ago)).isoformat()
+    return {"machine": machine, "source": source, "cause": cause, "known": True, "message": "m", "raw": "r", "count": count, "first_t": t, "last_t": t}
+
+
+def _errs(monkeypatch, local, remote, reach):
+    monkeypatch.setattr(hc.machine_profile, "registry_id", lambda: "macbook-pro")
+    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {"mac-mini": {"tailscale_hostname": "gils-mac-mini"}})
+    return hc.check_recent_errors(reach, local=lambda: local, remote=remote, now=ERR_NOW)
+
+
+def test_recent_errors_red_when_one_keeps_repeating_on_either_mac(monkeypatch):
+    lock = _group("mac-mini", "sync:pull", "git is locked by a crashed command", 52, 5)
+    results, groups = _errs(monkeypatch, [], lambda host: [lock], {"machine:mac-mini": "green"})
+    by = {r["id"]: r for r in results}
+    assert by["errors@mac-mini"]["severity"] == "red"
+    assert "git is locked by a crashed command" in by["errors@mac-mini"]["detail"] and "×52" in by["errors@mac-mini"]["detail"]
+    assert by["errors@macbook-pro"]["severity"] == "green"
+    assert groups[0]["machine"] == "mac-mini" and groups[0]["severity"] == "red"
+
+
+def test_recent_errors_amber_for_a_one_off_today(monkeypatch):
+    g = _group("macbook-pro", "dashboard:mr:list", "no network, or GitHub unreachable", 1, 300)
+    results, _ = _errs(monkeypatch, [g], lambda host: [], {"machine:mac-mini": "green"})
+    assert {r["id"]: r["severity"] for r in results}["errors@macbook-pro"] == "yellow"
+
+
+def test_an_unreachable_mac_is_unknown_not_clean(monkeypatch):
+    results, _ = _errs(monkeypatch, [], lambda host: [], {"machine:mac-mini": "yellow"})
+    r = {x["id"]: x for x in results}["errors@mac-mini"]
+    assert r["severity"] == "yellow" and "can't read" in r["detail"]
+
+
+def test_an_asleep_mac_is_asleep(monkeypatch):
+    results, _ = _errs(monkeypatch, [], lambda host: [], {"machine:mac-mini": "asleep"})
+    assert {x["id"]: x for x in results}["errors@mac-mini"]["severity"] == "asleep"
+
+
+def test_a_remote_read_that_fails_is_unknown_not_clean(monkeypatch):
+    def boom(host):
+        raise OSError("ssh died")
+    results, _ = _errs(monkeypatch, [], boom, {"machine:mac-mini": "green"})
+    r = {x["id"]: x for x in results}["errors@mac-mini"]
+    assert r["severity"] == "yellow" and "can't read" in r["detail"]
+
+
+def test_groups_from_both_macs_are_newest_first(monkeypatch):
+    a = _group("macbook-pro", "x", "a", 1, 50)
+    b = _group("mac-mini", "y", "b", 1, 5)
+    _, groups = _errs(monkeypatch, [a], lambda host: [b], {"machine:mac-mini": "green"})
+    assert [g["cause"] for g in groups] == ["b", "a"]
+
+
+def test_sync_stuck_streak_is_per_action_so_pushes_do_not_reset_a_failing_pull():
+    # 26h of pull failures interleaved with optimistic "committed + pushed" push entries (2026-10-13/14).
+    t0 = datetime(2026, 10, 13, 13, 0, tzinfo=timezone.utc)
+    text = ""
+    for i in range(0, 26 * 2):
+        ts = (t0 + timedelta(minutes=30 * i)).isoformat()
+        text += f"\n## {ts} — pull (mac-mini) [/Users/g/.agents]\nCONFLICT merging origin/main — merge aborted, tree left clean:\nfatal: Unable to create '/Users/g/.agents/.git/index.lock': File exists.\n"
+        text += f"\n## {ts} — push (mac-mini) [/Users/g/.agents]\ncommitted + pushed 1 file(s)\n"
+    now = t0 + timedelta(hours=26)
+    results = hc.check_sync_stuck_from_text(text, now=now)
+    assert any(r["severity"] == "red" for r in results), results
+
+
+def test_sync_stuck_trusts_each_macs_entries_only_from_its_own_copy():
+    # A stale copy of the other Mac's entries (its ~/.claude sync was broken) must not turn red here.
+    t = datetime(2026, 10, 14, 15, 0, tzinfo=timezone.utc)
+    stale_other = "".join(f"\n## {(t - timedelta(days=5, minutes=30 * i)).isoformat()} — pull (macbook-pro) [/r]\nREFUSING to run — 2 stash(es)\n" for i in range(20))
+    mine_ok = f"\n## {(t - timedelta(minutes=5)).isoformat()} — pull (mac-mini) [/r]\nmerged a..b\n"
+    assert hc.check_sync_stuck_from_text(stale_other + mine_ok, now=t, dev="mac-mini-1", only_machine="mac-mini") == []
+    both = hc.check_sync_stuck_from_text(stale_other + mine_ok, now=t)
+    assert [r["id"] for r in both] == ["sync:stuck:macbook-pro:/r:pull"]
+
+
+def test_remote_machine_label_strips_the_registry_number():
+    assert hc._remote_machine_label("mac-mini-1") == "mac-mini"
+    assert hc._remote_machine_label("macbook-pro-12") == "macbook-pro"
+    assert hc._remote_machine_label("kali") == "kali"
