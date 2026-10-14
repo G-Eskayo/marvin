@@ -75,3 +75,6 @@ tmp/
 # a symlink named node_modules is a file to git, so the "node_modules/" pattern misses it; one was committed by accident and
 # replaced the real directory on pull
 dashboard/node_modules
+
+# Claude Code worktrees are per-machine; auto-sync swept three in as gitlinks and broke every Mini push (marvin#430)
+.claude/worktrees/

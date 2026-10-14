@@ -203,3 +203,26 @@ def test_log_inside_the_repo_does_not_leave_it_ahead_or_conflicted(tmp_path, mon
     assert _origin_head(tmp_path) == head
     assert subprocess.run(["git", "rev-list", "--count", "origin/main..HEAD"], cwd=clone, capture_output=True, text=True).stdout.strip() == "0"
     assert log.stat().st_size == size, "a no-op push must not log anything"
+
+
+def test_dirty_content_inside_an_embedded_repo_is_not_work_to_commit(tmp_path, monkeypatch):
+    """The Mini, 2026-10-12 onward: Claude Code worktrees got swept in as gitlinks; each time one had uncommitted
+    content, push() saw ' M', `git add -A` couldn't stage it, and the commit failed every 30 minutes (93 times)."""
+    log = tmp_path / "sync-log.md"
+    _quiet(monkeypatch, log)
+    clone = _make_origin_and_clone(tmp_path)
+    nested = clone / ".claude" / "worktrees" / "wt"
+    nested.mkdir(parents=True)
+    _git(nested, "init", "-b", "main")
+    _git(nested, "-c", "user.email=a@b", "-c", "user.name=a", "commit", "--allow-empty", "-m", "x")
+    _git(clone, "add", "-A")
+    _git(clone, "commit", "-m", "swept in as a gitlink")
+    _git(clone, "push", "origin", "main")
+    (nested / "scratch.txt").write_text("uncommitted work in the worktree\n")
+    head = _origin_head(tmp_path)
+
+    cs.push(clone)
+    cs.push(clone)
+
+    assert not log.exists() or "commit failed" not in log.read_text(), log.read_text()
+    assert _origin_head(tmp_path) == head
