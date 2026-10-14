@@ -1,5 +1,7 @@
 # Changelog
 
+- Boot sequence: hover glow + click-through to the real check (summary lines and banner) ([#434](https://github.com/G-Eskayo/marvin/pull/434))
+
 - MARVIN Metrics app icon: celestial-navigation M on pure black (R6) ([#437](https://github.com/G-Eskayo/marvin/pull/437))
 
 - Dashboard: celestial-navigation boot sequence with a real health verdict (port of #428 v7) ([#432](https://github.com/G-Eskayo/marvin/pull/432))
