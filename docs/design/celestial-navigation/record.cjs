@@ -6,7 +6,7 @@ const path = require('path'), fs = require('fs');
   fs.mkdirSync(outDir, { recursive: true });
   const browser = await chromium.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
   const page = await browser.newPage({ viewport: { width: +w, height: +h }, deviceScaleFactor: 1 });
-  await page.goto('file://' + path.resolve(page_) + '?rec&dash');
+  await page.goto('file://' + path.resolve(page_) + '?rec&dash' + (process.env.Q || ''));
   await page.evaluate(() => document.fonts.ready);
   await page.waitForTimeout(300);
   const total = await page.evaluate(() => window.BOOT_TOTAL);
