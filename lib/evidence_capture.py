@@ -145,9 +145,9 @@ def ticket_touches_ui(worktree_path: Path, base_branch: str = "main") -> bool:
 
 def _default_capture_screenshot(worktree_path: Path) -> str:
     """Real default: builds the dashboard and drives it headlessly via
-    dashboard/scripts/capture_screenshot.mjs (playwright-core +
-    Playwright's _electron launcher -- same pattern as the `run` skill's
-    Electron driver examples), saving the screenshot into the worktree
+    dashboard/scripts/capture_screenshot.mjs (launches Electron itself and
+    attaches over CDP with playwright-core; marvin#421 -- Playwright's own
+    launcher rejected Electron's app-dir argument), saving the screenshot into the worktree
     itself so it rides along in mr_raiser._commit_and_push's existing
     `git add -A` rather than needing a separate upload mechanism. Returns
     the screenshot's path relative to worktree_path, suitable for a
