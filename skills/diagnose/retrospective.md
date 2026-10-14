@@ -1,5 +1,10 @@
 # Diagnose — Retrospective
 
+## 2026-10-14 — ~/.claude memory-sync 4-day stall
+**I:** Added two gotchas. (1) A check that fires every session but looks like a routine backlog count is silent in practice: the sync-conflict line was ignored for 4 days and 766 refusals. (2) A log entry written before the outcome is known can say "pushed" when the push was rejected.
+**F:** Detection already existed (the 2026-07-14 SessionStart hook was built for this exact failure), but it didn't get attention. The stuck state came from a hand-resolved conflict that was never `git add`ed, so it stayed `UU`, plus a leftover stash. Repair verified on both Macs (commit 3e978ef). The two fixes are scoped but not built yet.
+**S:** Merging append-only files (quarantine.md) as a union sorted by date lost nothing again (66 blocks).
+
 ## 2026-10-06 — Storage cleanup + laptop tidy-agent FDA block
 **I:** Added a gotcha: "health is green" only covers the logs the health-check machine actually reads. The laptop tidy-agent failed nightly for about 12 weeks, invisible because health-check runs only on the mini and the mini's identical job was fine.
 **F:** The TCC/FDA root cause is still open. The `/usr/bin/python3` shim's responsible-process identity is a lead, not a verified cause, and Kandji is a possible factor. Not codified (evidence gate; single-machine).
