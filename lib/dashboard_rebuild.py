@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rebuild the installed MARVIN Metrics dashboard app when it falls behind the code.
+"""Rebuild the installed MARVIN dashboard app when it falls behind the code.
 
 The app is a native build in /Applications that was only ever rebuilt by the merge
 webhook on the machine where a merge happened (webhook-server/merge.js), so every
@@ -8,9 +8,12 @@ lacked the device-aware webhook host, and routed Approve to the wrong place.
 Health (health_checks.py) reports the staleness; this runs from the 30-minute
 code-sync cycle and fixes it so nobody has to notice.
 
-Conservative on purpose: waits for a fresh change to settle, doesn't interrupt a
-running app for a small gap (but does once it is a day behind), and backs off after
-an attempt so a broken build can't loop. `decide` is pure; `main` gathers the facts.
+#443 (2026-10-14): merges made on GitHub never reached the app -- this ran every 30 minutes with a 15-minute
+settle, wouldn't interrupt an open app, and backed off 6 hours after ANY attempt. Now it also runs the moment the
+webhook server's change watch sees G-Eskayo/marvin change (any merge path), compares against origin/main, settles for
+2 minutes, rebuilds even an open app (the install relaunches it), never runs two builds at once, and backs off only
+after a FAILED build -- until newer code lands, so the next merge (usually the fix) retries at once.
+`decide` is pure; `main` gathers the facts.
 """
 from __future__ import annotations
 import subprocess
@@ -19,38 +22,36 @@ import time
 from pathlib import Path
 
 HOME = Path.home()
-APP_ASAR = Path("/Applications/MARVIN Metrics.app/Contents/Resources/app.asar")
+APP_ASAR = Path("/Applications/MARVIN.app/Contents/Resources/app.asar")  # renamed from "MARVIN Metrics.app" (#442)
 SCRIPT = HOME / ".agents" / "dashboard" / "scripts" / "rebuild_and_install.sh"
-ATTEMPT_FILE = HOME / ".claude" / "logs" / "dashboard-rebuild-attempt"
+FAILED_FILE = HOME / ".claude" / "logs" / "dashboard-rebuild-failed"  # written by the script on failure, cleared on success
 LOG_FILE = HOME / ".claude" / "logs" / "dashboard-rebuild.log"
 
 # Only these go into the installed app. webhook-server/ is a separate launchd node
 # process and test/ never ships, so changes there must not trigger a rebuild.
 APP_SOURCE_PATHS = ("dashboard/src", "dashboard/electron", "dashboard/index.html", "dashboard/package.json",
                     "dashboard/package-lock.json", "dashboard/electron.vite.config.js",
-                    "dashboard/tailwind.config.js", "dashboard/postcss.config.js")
+                    "dashboard/tailwind.config.js", "dashboard/postcss.config.js", "dashboard/resources")
 
-SETTLE_SECONDS = 15 * 60         # let a fresh change finish landing before building
-FORCE_AFTER_SECONDS = 3600       # rebuild even a running app once this far behind
-BACKOFF_SECONDS = 6 * 3600       # minimum gap between attempts
+SETTLE_SECONDS = 2 * 60          # let a merge (and any follow-up push) finish landing before building
+RETRY_FAILED_AFTER = 6 * 3600    # a failure on the same code is retried after this, in case it was transient
 
 
-def decide(*, app_built_ts, dashboard_commit_ts, app_running, last_attempt_ts, now) -> tuple[str, str]:
+def decide(*, app_built_ts, dashboard_commit_ts, rebuild_running, last_failure_ts, now) -> tuple[str, str]:
     """('rebuild' | 'skip', reason)."""
     if dashboard_commit_ts is None:
         return "skip", "no dashboard commit to compare against"
-    if last_attempt_ts is not None and now - last_attempt_ts < BACKOFF_SECONDS:
-        return "skip", "backing off after a recent rebuild attempt"
-    if app_built_ts is None:
-        return "rebuild", "no dashboard app installed"
-    if app_built_ts >= dashboard_commit_ts:
+    if rebuild_running:
+        return "skip", "a rebuild is already running"
+    if app_built_ts is not None and app_built_ts >= dashboard_commit_ts:
         return "skip", "installed app is current"
     if now - dashboard_commit_ts < SETTLE_SECONDS:
         return "skip", "latest dashboard change is too fresh -- letting it settle"
-    behind = now - app_built_ts
-    if app_running and behind < FORCE_AFTER_SECONDS:
-        return "skip", "app is running and only slightly behind -- not interrupting"
-    return "rebuild", f"installed app is {behind / 3600:.0f}h behind the latest dashboard change"
+    if last_failure_ts is not None and last_failure_ts >= dashboard_commit_ts and now - last_failure_ts < RETRY_FAILED_AFTER:
+        return "skip", "the last build of this code failed -- waiting for newer code (or a retry later)"
+    if app_built_ts is None:
+        return "rebuild", "no dashboard app installed"
+    return "rebuild", f"installed app is {(now - app_built_ts) / 3600:.1f}h behind the latest dashboard change"
 
 
 def _mtime(path: Path):
@@ -61,11 +62,14 @@ def _mtime(path: Path):
 
 
 def _facts(now: int) -> dict:
-    newest = subprocess.run(["git", "-C", str(HOME / ".agents"), "log", "-1", "--format=%ct", "--", *APP_SOURCE_PATHS],
+    agents = str(HOME / ".agents")
+    # A GitHub-side merge isn't in the local checkout until code-sync pulls, so judge against origin/main.
+    subprocess.run(["git", "-C", agents, "fetch", "-q", "origin", "main"], capture_output=True)
+    newest = subprocess.run(["git", "-C", agents, "log", "-1", "--format=%ct", "origin/main", "--", *APP_SOURCE_PATHS],
                             capture_output=True, text=True).stdout.strip()
-    running = subprocess.run(["pgrep", "-f", "MARVIN Metrics.app/Contents/MacOS"], capture_output=True).returncode == 0
+    running = subprocess.run(["pgrep", "-f", "rebuild_and_install.sh"], capture_output=True).returncode == 0
     return dict(app_built_ts=_mtime(APP_ASAR), dashboard_commit_ts=int(newest) if newest.isdigit() else None,
-                app_running=running, last_attempt_ts=_mtime(ATTEMPT_FILE), now=now)
+                rebuild_running=running, last_failure_ts=_mtime(FAILED_FILE), now=now)
 
 
 def main() -> None:
@@ -79,8 +83,6 @@ def main() -> None:
         run.summary(f"{action}: {reason}")
         if action != "rebuild":
             return
-        ATTEMPT_FILE.parent.mkdir(parents=True, exist_ok=True)
-        ATTEMPT_FILE.write_text(str(now))  # recorded BEFORE building so a failure still backs off
         env_path = f"/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:{HOME}/.local/bin"
         run.step("Rebuilding", "build + install running in the background (log: ~/.claude/logs/dashboard-rebuild.log)")
         with LOG_FILE.open("a") as log:
