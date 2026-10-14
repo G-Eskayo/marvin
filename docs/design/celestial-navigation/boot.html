@@ -61,6 +61,11 @@ body.flat .sweep{background:linear-gradient(to bottom,#0000,#ffffff06 45%,#fffff
    <filter id="gn" x="-300%" y="-300%" width="700%" height="700%"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
    <filter id="gc" x="-400%" y="-400%" width="900%" height="900%"><feGaussianBlur stdDeviation="13" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
    <radialGradient id="core" cx="45%" cy="42%" r="60%"><stop offset="0" stop-color="#eafff1"/><stop offset=".5" stop-color="#7dffa6"/><stop offset="1" stop-color="#54ff8a"/></radialGradient>
+   <filter id="ml" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="1.6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+   <filter id="mn" x="-300%" y="-300%" width="700%" height="700%"><feGaussianBlur stdDeviation="2.6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+   <filter id="mc" x="-400%" y="-400%" width="900%" height="900%"><feGaussianBlur stdDeviation="6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+   <radialGradient id="mcore" cx="45%" cy="42%" r="60%"><stop offset="0" stop-color="#c8f5d6"/><stop offset=".55" stop-color="#6ff0a0"/><stop offset="1" stop-color="#5ae88a"/></radialGradient>
+  
   </defs>
   <g id="field"></g><g id="mark"></g><g id="lock"></g>
  </svg>
@@ -82,6 +87,7 @@ const D = window.BOOT_DATA;                       // real data: boot_data.py (th
 const K = 1.3, HOLD = 1800;
 const SLOW = 1.2;   // everything except the M build runs a touch slower
 const FLAT = location.search.includes('flat');
+const MARK = (location.search.match(/mark=(\w+)/)||[])[1] || (FLAT ? 'flat' : 'mid');
 const NS='http://www.w3.org/2000/svg', el=(t,a,p)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);p&&p.appendChild(e);return e};
 const $=id=>document.getElementById(id);
 const anims=[]; const A=(node,kf,o)=>{const {m,...rest}=o; const a=node.animate(kf,{fill:'both',easing:'cubic-bezier(.2,.7,.2,1)',...rest,delay:(o.delay||0)*K,duration:o.duration*K*(m?1:SLOW)});anims.push(a);return a};
@@ -91,6 +97,12 @@ const glow=(n,delay)=>FLAT?A(n,[{filter:'brightness(1.7)'},{filter:'brightness(1
 const sweep=(n,delay)=>A(n,[{transform:'translateY(0)'},{transform:`translateY(${innerHeight+400}px)`}],{delay,duration:900,easing:'cubic-bezier(.4,0,.6,1)'});
 const field=$('field'), mark=$('mark'), lock=$('lock');
 const COL = FLAT ? {green:'#5fd08a',amber:'#d9a441',orange:'#e8773d',star:'#c3c8d4'} : {green:'#54ff8a',amber:'#f0b32a',orange:'#ff6a1f',star:'#cfd6e6'};
+const MSET = {
+  glow: {col:{green:'#54ff8a',amber:'#f0b32a',orange:'#ff6a1f'}, line:'url(#gl)', star:'url(#gn)', core:'url(#gc)', fill:'url(#core)'},
+  mid:  {col:{green:'#5ae88a',amber:'#e5ab36',orange:'#f4702e'}, line:'url(#ml)', star:'url(#mn)', core:'url(#mc)', fill:'url(#mcore)'},
+  flat: {col:{green:'#5fd08a',amber:'#d9a441',orange:'#e8773d'}, line:null, star:null, core:null, fill:'#5fd08a'},
+}[MARK];
+const MC = MSET.col;
 if(FLAT){document.body.classList.add('flat'); document.querySelectorAll('#sky filter').forEach(f=>f.innerHTML='<feOffset dx="0" dy="0"/>');}
 
 // 1 · Power on: a line opens, the beam makes its first pass
@@ -104,8 +116,8 @@ for(let i=0;i<110;i++){const x=(r()-.5)*1280,y=(r()-.5)*800; if(P.some(([px,py])
 const stars=P.map(([x,y])=>({x,y,rad:2.4,op:.85,m:true}));
 const all=[...sky,...stars].map(v=>[r(),v]).sort((a,b)=>a[0]-b[0]).map(v=>v[1]);
 all.forEach((st,i)=>{const c=el('circle',{cx:st.x,cy:st.y,r:st.rad,fill:COL.star},st.m?mark:field); st.dot=c; at(c,st.x,st.y);
-  A(c,[{opacity:0,transform:'scale(2.6)'},{opacity:st.op,transform:'scale(1)'}],{delay:350+i*11*SLOW,duration:260});});
-const T0 = 350+all.length*11*SLOW+150*SLOW;               // sky complete
+  A(c,[{opacity:0,transform:'scale(2.6)'},{opacity:st.op,transform:'scale(1)'}],{delay:350+i*11,duration:260,m:1});});
+const T0 = 350+all.length*11+150;               // sky complete
 
 // 3 · Lock on the origin, ignite
 const LKW=el('g',{},lock), LK=el('g',{},LKW); at(LK,cx,cy);
@@ -113,18 +125,18 @@ const b=28,L=9; [[-1,-1],[1,-1],[1,1],[-1,1]].forEach(([sx,sy])=>el('path',{d:`M
 el('text',{x:cx+b+8,y:cy-b+4,id:'lockLbl'},LK).textContent='ORIGIN';
 A(LK,[{opacity:0,transform:'scale(3) rotate(45deg)'},{opacity:1,transform:'none',offset:.75},{opacity:1,transform:'scale(1.1)',offset:.85},{opacity:1,transform:'none'}],{delay:T0,duration:520,m:1});
 A(LKW,[{opacity:1},{opacity:0}],{delay:T0+1000,duration:300,m:1});
-const core=el('circle',{cx,cy,r:ICON.coreR*S,fill:FLAT?COL.green:'url(#core)',filter:'url(#gc)'},mark); at(core,cx,cy);
+const core=el('circle',{cx,cy,r:ICON.coreR*S,fill:MSET.fill,...(MSET.core?{filter:MSET.core}:{})},mark); at(core,cx,cy);
 A(core,[{opacity:0,transform:'scale(.1)'},{opacity:1,transform:'scale(2.1)',offset:.4},{opacity:1,transform:'none'}],{delay:T0+450,duration:650,m:1});
-const orbit=el('circle',{cx,cy,r:ICON.orbit*S,fill:'none',stroke:COL.orange,'stroke-width':5,'stroke-dasharray':'1.5 10','stroke-linecap':'round'},mark); at(orbit,cx,cy);
+const orbit=el('circle',{cx,cy,r:ICON.orbit*S,fill:'none',stroke:MC.orange,'stroke-width':5,'stroke-dasharray':'1.5 10','stroke-linecap':'round'},mark); at(orbit,cx,cy);
 A(orbit,[{opacity:0,transform:'rotate(-120deg) scale(.5)'},{opacity:.9,transform:'none'}],{delay:T0+650,duration:800,m:1});
 
 // 4 · Lines grow out of the origin; stars ping as they're reached
-const branch=(a,m,c,delay)=>{const p=el('path',{d:`M${P[a]} L${P[m]} L${P[c]}`,fill:'none',stroke:COL.amber,'stroke-width':ICON.line*S,'stroke-linejoin':'round','stroke-linecap':'round',filter:'url(#gl)'},mark);
+const branch=(a,m,c,delay)=>{const p=el('path',{d:`M${P[a]} L${P[m]} L${P[c]}`,fill:'none',stroke:MC.amber,'stroke-width':ICON.line*S,'stroke-linejoin':'round','stroke-linecap':'round',...(MSET.line?{filter:MSET.line}:{})},mark);
   mark.insertBefore(p,mark.firstChild); const len=p.getTotalLength(), l1=Math.hypot(P[m][0]-P[a][0],P[m][1]-P[a][1]); p.style.strokeDasharray=len;
   A(p,[{strokeDashoffset:len},{strokeDashoffset:0}],{delay,duration:900,easing:'linear',m:1}); return [delay+900*l1/len, delay+900];};
-const reach=(i,t)=>{const st=stars[i]; st.dot.setAttribute('filter','url(#gn)');
-  A(st.dot,[{r:2.4,fill:COL.star},{r:ICON.star*S*1.5,fill:COL.green,offset:.5},{r:ICON.star*S,fill:COL.green}],{delay:t,duration:420,composite:'replace',m:1});
-  const ring=el('circle',{cx:st.x,cy:st.y,r:6,fill:'none',stroke:COL.green,'stroke-width':1.3},mark);
+const reach=(i,t)=>{const st=stars[i]; if(MSET.star) st.dot.setAttribute('filter',MSET.star);
+  A(st.dot,[{r:2.4,fill:COL.star},{r:ICON.star*S*1.5,fill:MC.green,offset:.5},{r:ICON.star*S,fill:MC.green}],{delay:t,duration:420,composite:'replace',m:1});
+  const ring=el('circle',{cx:st.x,cy:st.y,r:6,fill:'none',stroke:MC.green,'stroke-width':1.3},mark);
   A(ring,[{r:6,opacity:0},{r:6,opacity:.8,offset:.02},{r:40,opacity:0}],{delay:t,duration:700,easing:'ease-out',m:1});};
 const [a1,a2]=branch(2,1,0,T0+750), [b1,b2]=branch(2,3,4,T0+750);
 reach(1,a1); reach(3,b1); reach(0,a2); reach(4,b2);
