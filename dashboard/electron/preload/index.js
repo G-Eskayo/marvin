@@ -67,6 +67,10 @@ contextBridge.exposeInMainWorld('api', {
     // Opens a MARVIN session in WezTerm on this Mac: { ticket } for its worktree, or no ticket for home.
     openSession: (request) => ipcRenderer.invoke('marvin:openSession', request)
   },
+  // Boot sequence (#431): { show, data } -- show is true once per app launch.
+  boot: {
+    data: () => ipcRenderer.invoke('boot:data')
+  },
   health: {
     status: () => ipcRenderer.invoke('health:status'),
     agents: () => ipcRenderer.invoke('health:agents'),
