@@ -1,5 +1,7 @@
 # Changelog
 
+- A healthy no-op push never clears an earlier push failure, so Health stays stuck (yellow, then red) after the problem is fixed ([#439](https://github.com/G-Eskayo/marvin/pull/439))
+
 - Boot sequence: hover glow + click-through to the real check (summary lines and banner) ([#434](https://github.com/G-Eskayo/marvin/pull/434))
 
 - MARVIN Metrics app icon: celestial-navigation M on pure black (R6) ([#437](https://github.com/G-Eskayo/marvin/pull/437))
