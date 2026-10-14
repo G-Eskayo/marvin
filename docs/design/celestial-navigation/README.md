@@ -35,6 +35,14 @@ Recurring details: scanlines, diamond nodes on panel edges, a faint hex grid tow
 
 ## The mark
 
+**Final app icon (chosen by Gil on 2026-10-14, "R6"):** the M constellation with the orange target-lock brackets
+around the origin star, at full size and centred, on **pure black `#000000`** (83% of pixels are exactly 0,0,0; no
+raster lines, because they lift the black). It's shipped in MARVIN Metrics (#435) and MARVIN Mobile (#436). Source:
+`icon.html` / `icon-1024.png`. To preview on the real OS (iPhone simulator plus the macOS render, including tint):
+`make_stubs.sh <variant>`. Wait about 6 s after installing before taking a screenshot: iOS's icon-swap animation
+looks like a dark circular glitch.
+
+
 There are five stars in an M. The centre star (`core`) is MARVIN. It glows brightest and has a dashed orange orbit.
 The geometry lives in one `ICON` object (1024 grid), which both `icon.html` and `boot.html` read, so changing the
 icon changes the boot as well.
