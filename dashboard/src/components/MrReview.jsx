@@ -1,4 +1,5 @@
 import MrHistory from './MrHistory.jsx'
+import { prFetchBanner } from '../lib/pr_fetch_status.js'
 import { cleanIpcError } from '../lib/ipcError.js'
 import { useEffect, useRef, useState } from 'react'
 import { describePrState } from '../lib/prState.js'
@@ -484,7 +485,7 @@ export default function MrReview(props) {
         <div className="min-h-0 flex-1"><OpenPrs {...props} onCount={setOpenCount} /></div>
       ) : (
         <div className="p-6">
-          {historyError && <p className="mb-2 text-sm text-red-400">{historyError}</p>}
+          {historyError && <div role="alert" className="mb-3 rounded-lg border border-red-700 bg-red-950/50 px-4 py-3 text-sm text-red-200">{historyError}</div>}
           <MrHistory onOpen={openRow} />
         </div>
       )}
@@ -492,7 +493,18 @@ export default function MrReview(props) {
   )
 }
 
+export function FetchBanner({ status, now = Date.now() }) {
+  const b = status ? prFetchBanner(status, now) : null
+  if (!b) return null
+  return (
+    <div role="alert" data-tone={b.tone} className={`rounded-lg border px-4 py-3 text-sm ${b.tone === 'red' ? 'border-red-700 bg-red-950/50 text-red-200' : 'border-amber-700 bg-amber-950/40 text-amber-200'}`}>
+      {b.text}
+    </div>
+  )
+}
+
 function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
+  const [fetchStatus, setFetchStatus] = useState(null)
   const [prs, setPrs] = useState(null)
   const [error, setError] = useState(null)
   const [selected, setSelected] = useState(null)
@@ -508,6 +520,11 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
       .then((list) => {
         setPrs(list)
         onCount?.(list.length)
+        window.api.mr.listStatus?.().then((st) => {
+          setFetchStatus(st)
+          // #422: an unread list is "?", never a reassuring 0.
+          if (st?.errors?.length && list.length === 0) onCount?.('?')
+        }).catch(() => setFetchStatus(null))
         // Opening this list is what "seen" means for the tab's status dot
         // (App.jsx) -- mark every currently-listed PR, not just ones you
         // click into, since the dot is about "have you looked at the
@@ -584,7 +601,8 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
     return <div className="flex h-full items-center justify-center text-neutral-500">Loading…</div>
   }
   if (prs.length === 0) {
-    return <EmptyState />
+    // #422: an empty list because GitHub couldn't be reached is not "nothing to review".
+    return fetchStatus?.errors?.length ? <div className="p-6"><FetchBanner status={fetchStatus} /></div> : <EmptyState />
   }
 
   return (
@@ -598,6 +616,7 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
           {amReport.line}
         </div>
       )}
+      <FetchBanner status={fetchStatus} />
       <ParitySummary parity={parity} />
       {prs.map((pr) => (
         <PrCard

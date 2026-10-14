@@ -1,6 +1,7 @@
 import { appendFileSync, mkdirSync, statSync, renameSync } from 'fs'
 import os from 'os'
 import path from 'path'
+import { appendError } from './error_log.js'
 
 // How long every dashboard call takes (#236). Gil: "the dashboard is pretty slow across the board". Rather than guess,
 // every IPC handler (Electron main) and every webhook route is timed into one JSON-lines log, and rankTimings turns it
@@ -20,13 +21,13 @@ export function appendTiming(entry, file = TIMING_LOG) {
   } catch { /* fail-soft */ }
 }
 
-const defaults = { record: appendTiming, now: () => performance.now() }
+const defaults = { record: appendTiming, now: () => performance.now(), recordError: appendError }
 
 function safeRecord(record, entry) {
   try { record(entry) } catch { /* fail-soft */ }
 }
 
-export function timed(side, name, fn, { record = defaults.record, now = defaults.now } = {}) {
+export function timed(side, name, fn, { record = defaults.record, now = defaults.now, recordError = defaults.recordError } = {}) {
   return async (...args) => {
     const start = now()
     try {
@@ -35,6 +36,8 @@ export function timed(side, name, fn, { record = defaults.record, now = defaults
       return result
     } catch (err) {
       safeRecord(record, { side, name, ms: Math.round(now() - start), ok: false })
+      // marvin#422: the message used to be thrown away here (only ok:false was kept).
+      try { recordError({ source: `${side === 'ipc' ? 'dashboard' : side}:${name}`, message: `${name} failed`, raw: err?.stack || err }) } catch { /* fail-soft */ }
       throw err
     }
   }

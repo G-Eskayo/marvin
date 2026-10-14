@@ -5,6 +5,14 @@
 # webhook-server/merge.js after a merge that touched dashboard/ files;
 # safe to run by hand too.
 set -euo pipefail
+# marvin#422: a failed rebuild is recorded in the one error log Health shows (it used to look "passed" once launched).
+on_error() {
+  local code=$? line=$1
+  "$HOME/.agents/venv/bin/python" "$HOME/.agents/lib/error_log.py" record --source rebuild \
+    --message "dashboard rebuild failed (exit $code at line $line)" \
+    --raw "$(tail -n 20 "$HOME/.claude/logs/dashboard-rebuild.log" 2>/dev/null)" >/dev/null 2>&1 || true
+}
+trap 'on_error $LINENO' ERR
 cd "$(dirname "$0")/.."
 
 APP_NAME="MARVIN Metrics.app"

@@ -105,6 +105,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from machine_profile import machine_label  # noqa: E402
 from notify import notify  # noqa: E402
+import error_log  # noqa: E402  (marvin#422: sync failures are never silent)
 import session_work  # noqa: E402
 
 DEFAULT_REPO = Path.home() / ".agents"
@@ -325,6 +326,40 @@ def _log(repo: Path, action: str, summary: str, files: list[str] | None = None) 
             lines.append(f"- ...and {len(files) - 20} more")
     with LOG_PATH.open("a") as f:
         f.write("\n".join(lines) + "\n")
+    if SYNC_FAILURE_RE.match(summary or ""):
+        error_log.record(f"sync:{action}", (summary or "").splitlines()[0][:200], raw=summary)
+
+
+# Summaries that mean a sync run failed (marvin#422): before, these lived only in sync-log.md, and a stale git lock
+# failed every pull for 26 hours without Health turning red.
+SYNC_FAILURE_RE = re.compile(r"^(REFUSING|CONFLICT|commit failed|push failed|pulled cleanly, but restoring)")
+STALE_LOCK_SECONDS = 10 * 60
+
+
+def _lock_held(lock: Path) -> bool:
+    """True if any process has the file open (lsof exits 0 when it lists one)."""
+    return subprocess.run(["/usr/sbin/lsof", "-t", "--", str(lock)], capture_output=True).returncode == 0
+
+
+def heal_stale_index_lock(repo: Path, now: float | None = None) -> bool:
+    """Remove .git/index.lock only when it is older than STALE_LOCK_SECONDS and no process holds it (a git command
+    that crashed or was killed). Logged as a fix. Any doubt (holder check fails) leaves the lock alone."""
+    lock = Path(repo) / ".git" / "index.lock"
+    try:
+        age = (now or time.time()) - lock.stat().st_mtime
+    except OSError:
+        return False
+    if age < STALE_LOCK_SECONDS:
+        return False
+    try:
+        if _lock_held(lock):
+            return False
+        lock.unlink()
+    except Exception:  # noqa: BLE001 -- when in doubt, leave it: a wrong removal could corrupt the index
+        return False
+    error_log.record_fix("sync:pull", f"removed a stale git lock in {Path(repo).name} (left {int(age // 60)} min ago by a crashed git command)",
+                         raw=str(lock))
+    return True
 
 
 def _live_edit_lease(repo: Path, changed_files: list[str], now: float | None = None) -> str | None:
@@ -363,6 +398,7 @@ def _merge_remote(repo: Path) -> tuple[bool, str]:
 
 def push(repo: Path, now: float | None = None) -> None:
     label = machine_label()
+    heal_stale_index_lock(repo)
 
     stuck = _stuck_from_previous_run(repo)
     if stuck:
@@ -458,6 +494,7 @@ def push(repo: Path, now: float | None = None) -> None:
 
 
 def pull(repo: Path) -> None:
+    heal_stale_index_lock(repo)
     stuck = _stuck_from_previous_run(repo)
     if stuck:
         _log(repo, "pull", f"REFUSING to run — {stuck}, needs manual resolution before pull can proceed")

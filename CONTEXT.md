@@ -1267,3 +1267,20 @@ Design lives in clarity-captions (ADR 0023 sending, ADR 0024 receiving, `docs/be
   for the venv's real `python3.11` is reset by every Homebrew Python upgrade, so this fails loudly, never as "0
   reports".
 - Next: #408 dashboard view (needs-info), #409 numbers-only public tickets, #410 TestFlight feed.
+
+## Errors are never silent (built 2026-10-14, #422)
+
+- **Error log**: one per Mac, `~/.claude/logs/errors.jsonl` (`lib/error_log.py` owns the format and reads it; the
+  dashboard writes the same lines via `electron/main/error_log.js`). Bounded: 2,000 lines / 30 days. Plain causes are
+  worked out when reading (`classify`), so writers only pass the raw text.
+- **Writers**:
+  - every dashboard IPC handler (`timing.js`) and the webhook's Approve/Deny failures
+  - code-sync's failed pulls and pushes (anything `_log` writes as REFUSING / CONFLICT / commit failed / push failed)
+  - failed `job_events` runs and hook errors
+  - `rebuild_and_install.sh` (an ERR trap)
+- **Health**: one "Recent errors" check per Mac (red while an error repeats within the hour) and a Recent errors list
+  from both Macs. An unreachable Mac reads "can't read", never "no errors".
+- **Sync stuck** is tracked per action (pull/push), and each Mac's entries are trusted only from its own sync-log copy.
+- **Self-heal**: a `.git/index.lock` older than 10 minutes that no process holds is removed before pull/push, and
+  logged as a fix (2026-10-13: a stale lock failed every Mini pull for 26 hours, silently).
+- **MR Review** never shows an unread list as "0": "Couldn't reach GitHub for N projects (cause)" and "Open (?)".
