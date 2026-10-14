@@ -1,0 +1,32 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>html,body{margin:0;background:#05040A}svg{display:block}</style></head><body>
+<svg id="K" width="1024" height="1024" viewBox="0 0 1024 1024">
+ <defs>
+  <radialGradient id="sky" cx="50%" cy="55%" r="75%"><stop offset="0" stop-color="#16112a"/><stop offset=".6" stop-color="#0a0814"/><stop offset="1" stop-color="#05040A"/></radialGradient>
+  <filter id="glowL" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="7" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  <filter id="glowN" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="14" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  <filter id="glowC" x="-200%" y="-200%" width="500%" height="500%"><feGaussianBlur stdDeviation="34" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  <radialGradient id="core" cx="45%" cy="42%" r="60%"><stop offset="0" stop-color="#eafff1"/><stop offset=".5" stop-color="#7dffa6"/><stop offset="1" stop-color="#54ff8a"/></radialGradient>
+ </defs>
+ <rect width="1024" height="1024" fill="url(#sky)"/>
+ <!-- faint background stars -->
+ <g fill="#cfd6e6" id="stars"></g>
+ <!-- the M: lines -->
+ <polyline points="262,772 262,262 512,560 762,262 762,772" fill="none" stroke="#f0b32a" stroke-width="26" stroke-linejoin="round" stroke-linecap="round" filter="url(#glowL)"/>
+ <!-- quiet orbit around the waking node -->
+ <circle cx="512" cy="560" r="118" fill="none" stroke="#ff6a1f" stroke-width="10" stroke-dasharray="3 26" stroke-linecap="round" opacity=".9"/>
+ <!-- outer stars -->
+ <g fill="#54ff8a" filter="url(#glowN)">
+  <circle cx="262" cy="772" r="44"/><circle cx="262" cy="262" r="44"/>
+  <circle cx="762" cy="262" r="44"/><circle cx="762" cy="772" r="44"/>
+ </g>
+ <!-- the one that's awake -->
+ <circle cx="512" cy="560" r="68" fill="url(#core)" filter="url(#glowC)"/>
+</svg>
+<script>
+// deterministic faint starfield
+let s=7;const r=()=>(s=(s*16807)%2147483647)/2147483647;
+const g=document.getElementById('stars');
+for(let i=0;i<46;i++){const x=40+r()*944,y=40+r()*944,a=.15+r()*.45,rad=2+r()*4;
+ g.insertAdjacentHTML('beforeend',`<circle cx="${x}" cy="${y}" r="${rad}" opacity="${a}"/>`);}
+</script></body></html>
