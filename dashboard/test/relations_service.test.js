@@ -85,12 +85,56 @@ describe('review parity (MR Review <-> board)', () => {
     expect(p.ok).toBe(false)
   })
 
-  it('counts what is waiting on you per project, from the same data', async () => {
+  it('counts what is waiting on you per project, using rankNeedsYou for needsYou count', async () => {
     const o = await svc(
       [issue(2), issue(3, { labels: [{ name: 'ready-for-human' }] }), issue(4, { body: 'Blocked by #2' })],
       [pr(7, 'Closes #2')]
     ).overview()
     expect(o['G-Eskayo/marvin']).toMatchObject({ review: 1, needsYou: 1, blocked: 1 })
+  })
+
+  // Test 10: overview needsYou counts from rankNeedsYou (needs-info label)
+  it('needsYou counts tickets with needs-info label via rankNeedsYou', async () => {
+    const o = await svc(
+      [issue(5, { labels: [{ name: 'needs-info' }] }), issue(6, { labels: [{ name: 'needs-info' }] })],
+      []
+    ).overview()
+    expect(o['G-Eskayo/marvin'].needsYou).toBe(2)
+  })
+
+  // Test 11: overview needsYou excludes hold and pinned labels
+  it('needsYou excludes tickets with hold or pinned labels', async () => {
+    const o = await svc(
+      [issue(7, { labels: [{ name: 'ready-for-human' }, { name: 'hold' }] })],
+      []
+    ).overview()
+    expect(o['G-Eskayo/marvin'].needsYou).toBe(0)
+  })
+
+  // Test 12: overview needsYou excludes closed tickets
+  it('needsYou excludes closed tickets', async () => {
+    const o = await svc(
+      [issue(8, { state: 'CLOSED', labels: [{ name: 'ready-for-human' }] })],
+      []
+    ).overview()
+    expect(o['G-Eskayo/marvin'].needsYou).toBe(0)
+  })
+
+  // Test 13: overview needsYou counts multiple repos separately
+  it('needsYou counts are grouped separately per repo', async () => {
+    const svc2 = createRelationsService({
+      getRepos: () => ['G-Eskayo/marvin', 'G-Eskayo/portfolio'],
+      getBoardData: async (repo) => {
+        if (repo === 'G-Eskayo/marvin') {
+          return { issues: [issue(1, { labels: [{ name: 'ready-for-human' }] })], prs: [] }
+        }
+        return { issues: [issue(2, { labels: [{ name: 'ready-for-human' }] }), issue(3, { labels: [{ name: 'ready-for-human' }] })], prs: [] }
+      },
+      getDocs: async () => [], getProjects: () => projects
+    })
+    const o = await svc2.overview()
+    expect(o['G-Eskayo/marvin'].needsYou).toBe(1)
+    expect(o['G-Eskayo/portfolio'].needsYou).toBe(2)
   })
 })
 
@@ -133,6 +177,43 @@ describe('parity does not raise an alarm on a stale snapshot', () => {
     const svc = createRelationsService({ getRepos: () => ['G-Eskayo/marvin'], getBoardData: async () => ({ issues: [], prs: [] }), getDocs: async () => [], getProjects: () => projects, recheck })
     await svc.parity()
     expect(recheck).not.toHaveBeenCalled()
+  })
+})
+
+describe('needsYou output', () => {
+  // Test 28: needsYou returns rows with the right shape
+  it('returns rows with repo, number, title, url, kind, unblocks, ask, priority, ageDays', async () => {
+    const svc = make({ getBoardData: async () => ({ issues: [issue(5, { labels: [{ name: 'ready-for-human' }], title: 'Human task' })], prs: [] }) })
+    const rows = await svc.needsYou()
+    expect(rows).toHaveLength(1)
+    const row = rows[0]
+    expect(row).toHaveProperty('repo')
+    expect(row).toHaveProperty('number')
+    expect(row).toHaveProperty('title')
+    expect(row).toHaveProperty('url')
+    expect(row).toHaveProperty('kind')
+    expect(row).toHaveProperty('unblocks')
+    expect(row).toHaveProperty('ask')
+    expect(row).toHaveProperty('priority')
+    expect(row).toHaveProperty('ageDays')
+  })
+
+  // Test 29: needsYou returns rows sorted by default (unblocks desc, priority asc, age desc)
+  it('returns rows sorted by default ranking (unblocks desc, priority asc, age desc)', async () => {
+    const svc = make({
+      getBoardData: async () => ({
+        issues: [
+          issue(1, { labels: [{ name: 'ready-for-human' }] }),
+          issue(2, { labels: [{ name: 'ready-for-human' }, { name: 'p0' }], createdAt: '2026-09-01T00:00:00Z' }),
+          issue(3, { labels: [{ name: 'ready-for-human' }, { name: 'p0' }], createdAt: '2026-10-01T00:00:00Z' })
+        ],
+        prs: []
+      })
+    })
+    const rows = await svc.needsYou()
+    // Issue 2 and 3 both have p0, but 2 is older (created earlier), so comes first
+    expect(rows[0].number).toBe(2)
+    expect(rows[1].number).toBe(3)
   })
 })
 

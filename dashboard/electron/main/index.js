@@ -20,6 +20,7 @@ import { readCachedRepos } from './docs.js'
 import { createPortfolio } from './portfolio.js'
 import { createPortfolioProxy, portfolioHost } from './portfolio_remote.js'
 import { listTicketActivity, getTicketTimeline } from './activity.js'
+import { readNeedsYouState, writeNeedsYouState } from './needs_you_state.js'
 import { getDeviceStatuses } from './devices.js'
 import { getQueue, clearQueueCache } from './queue.js'
 import { getConcurrency, setConcurrency, scanNow } from './dispatch_concurrency.js'
@@ -408,7 +409,20 @@ function registerDocsHandlers() {
   // MR Review <-> boards, one-to-one: each open PR with its ticket and column; what is waiting on you per project.
   ipcMain.handle('mr:parity', () => relations.parity())
   ipcMain.handle('activity:overview', () => relations.overview())
-  ipcMain.handle('activity:needsYou', () => relations.needsYou())
+
+  // "Needs you" state: cached from last successful needsYou() call, with sort preference persisted.
+  const needsYouStatePath = join(app.getPath('userData'), 'needs-you-state.json')
+  ipcMain.handle('activity:needsYouState', () => readNeedsYouState(needsYouStatePath))
+  ipcMain.handle('activity:needsYouSort', (_e, sort) => {
+    writeNeedsYouState(needsYouStatePath, { sort })
+  })
+  ipcMain.handle('activity:needsYou', async () => {
+    const rows = await relations.needsYou()
+    // Persist the state on success so it's available for instant render
+    writeNeedsYouState(needsYouStatePath, { rows, at: Date.now() })
+    return rows
+  })
+
   ipcMain.handle('relations:context', (_e, project) => relations.context(String(project)))
 
   let refreshing = null

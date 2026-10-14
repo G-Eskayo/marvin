@@ -106,8 +106,18 @@ export function createRelationsService({ getRepos, getBoardData, getDocs, getPro
       for (const c of b.cards.values()) {
         const o = (out[c.repo] ||= { review: 0, needsYou: 0, blocked: 0 })
         if (c.column === 'review') o.review += 1
-        if (c.column === 'ready' && c.owner === 'human') o.needsYou += 1
         if (c.column === 'blocked') o.blocked += 1
+      }
+      // needsYou count derives from rankNeedsYou, grouped by repo
+      const ranked = rankNeedsYou(b.tickets)
+      const byRepo = {}
+      for (const row of ranked) {
+        if (!byRepo[row.repo]) byRepo[row.repo] = 0
+        byRepo[row.repo] += 1
+      }
+      for (const [repo, count] of Object.entries(byRepo)) {
+        if (!out[repo]) out[repo] = { review: 0, needsYou: 0, blocked: 0 }
+        out[repo].needsYou = count
       }
       return out
     },
