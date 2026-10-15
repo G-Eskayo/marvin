@@ -130,3 +130,46 @@ def test_collect_reads_each_projects_open_issues_once(monkeypatch):
     assert len(calls) == 2
     assert set(out) == {"G-Eskayo/marvin#5", "G-Eskayo/clarity-captions#5"}
     assert out["G-Eskayo/marvin#5"]["state"] in {"queued", "not-queued", "blocked", "paused", "running", "held", "needs-person", "parked"}
+
+
+# ── claimed but not running ───────────────────────────────────────────────────
+
+def test_a_claimed_ticket_with_no_live_run_says_so():
+    s = rs.status_for(ticket(labels=("needs-reengagement", "claimed:mac-mini")),
+                     ctx(claim_started=NOW - timedelta(minutes=12), claim_running=False))
+    assert s["state"] == "running"
+    assert "Claimed but not running" in s["headline"]
+    assert "idle" in s["detail"].lower()
+    assert "12 min" in s["detail"]
+
+
+def test_a_claimed_ticket_with_a_live_run_says_being_rebuilt():
+    s = rs.status_for(ticket(labels=("needs-reengagement", "claimed:mac-mini")),
+                     ctx(claim_started=NOW - timedelta(minutes=5), claim_running=True, attempts=0))
+    assert s["state"] == "running"
+    assert "Being rebuilt right now" in s["headline"]
+    assert "5 min" in s["detail"]
+
+
+# Test 17: claimed ticket state transitions when claim_running changes
+def test_claim_running_flag_determines_if_a_claimed_ticket_is_actively_rebuilding():
+    """A claimed ticket's headline changes based on whether the claim has a live run."""
+    ticket_data = ticket(labels=("needs-reengagement", "claimed:mac-mini"))
+    claim_context = ctx(claim_started=NOW - timedelta(minutes=30), attempts=1)
+
+    # With claim_running=True (default), it says it's being rebuilt
+    s_running = rs.status_for(ticket_data, {**claim_context, "claim_running": True})
+    assert s_running["state"] == "running"
+    assert "Being rebuilt right now" in s_running["headline"]
+
+    # With claim_running=False, it says it's idle
+    s_idle = rs.status_for(ticket_data, {**claim_context, "claim_running": False})
+    assert s_idle["state"] == "running"
+    assert "Claimed but not running" in s_idle["headline"]
+    assert "idle" in s_idle["detail"].lower()
+
+    # Both show the same time elapsed
+    assert "30 min" in s_running["detail"]
+    assert "30 min" in s_idle["detail"]
+    # Only the running case shows attempt number
+    assert "attempt 2 of 3" in s_running["detail"]

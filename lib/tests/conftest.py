@@ -186,12 +186,20 @@ def _no_real_conflict_repair(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_machine_profile(monkeypatch):
+    # Tests must not depend on the real machine's profile (registry_id, available slots, etc.).
+    import machine_profile
+    monkeypatch.setattr(machine_profile, "registry_id", lambda: "mac-mini-1")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_ticket_evidence(monkeypatch):
     # The pre-dispatch "does work already exist" guard shells out to gh/git; tests opt in explicitly.
     import ticket_pipeline
     monkeypatch.setattr(ticket_pipeline, "_evidence_facts", lambda repo: None)
     monkeypatch.setattr(ticket_pipeline, "_requeue_all", lambda repos: [])
     monkeypatch.setattr(ticket_pipeline, "_background_checks", lambda: None)  # no background test runs from tests  # no real gh calls from the scan
+    monkeypatch.setattr(ticket_pipeline, "_release_dead_claims_all", lambda repos: [])
 
 
 def pytest_configure(config):
@@ -234,3 +242,13 @@ def _isolate_github_usage(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(github_usage, "CALLS_PATH", d / "gh-calls.jsonl")
     monkeypatch.setattr(github_usage, "BUDGET_PATH", d / "gh-budget.jsonl")
     monkeypatch.setattr(github_usage, "HOURLY_PATH", d / "gh-usage-hourly.json")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_running_tickets(monkeypatch):
+    # Tests that call _release_dead_claims directly must not reach the real running_tickets module.
+    try:
+        import running_tickets
+        monkeypatch.setattr(running_tickets, "current", lambda: [])
+    except ImportError:
+        pass  # running_tickets may not be available in all setups

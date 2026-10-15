@@ -17,6 +17,9 @@ sys.path.insert(0, str(LIB))
 import ticket_pipeline as tp  # noqa: E402
 import ticket_stages as ts  # noqa: E402
 
+_REAL_RELEASE_DEAD_CLAIMS = tp._release_dead_claims
+_REAL_RELEASE_DEAD_CLAIMS_ALL = tp._release_dead_claims_all
+
 
 @pytest.fixture(autouse=True)
 def _isolate_ticket_stages(tmp_path, monkeypatch):
@@ -216,7 +219,7 @@ def test_a_scan_with_nothing_ready_leaves_a_run_log_saying_so(monkeypatch):
     run = json.loads((job_events.JOBS_DIR / "ticket-pipeline.json").read_text())["runs"][-1]
     assert run["status"] == "passed" and run["summary"] == "no ready tickets"
     steps = [s["step"] for s in run["steps"]]
-    assert steps == ["Board discovery", "Onboarding plans", "Project catalog", "Conflicted PRs", "Circuit breaker", "Scanning tickets"]
+    assert steps == ["Dead claims", "Board discovery", "Onboarding plans", "Project catalog", "Conflicted PRs", "Circuit breaker", "Scanning tickets"]
 
 
 def test_a_tripped_breaker_is_visible_in_the_run_log(monkeypatch):
@@ -1161,12 +1164,13 @@ def test_release_with_matching_run_id_releases_the_claim(monkeypatch, tmp_path, 
     ts.record_stage(20, "claimed", "started", run_id="run123")
 
     calls = []
-    monkeypatch.setattr(tp.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
+    monkeypatch.setattr(tp.subprocess, "run", lambda cmd, **kw: calls.append(cmd) or SimpleNamespace(returncode=0))
 
-    tp._release(20, "mac-mini", run_id="run123")
+    result = tp._release(20, "mac-mini", run_id="run123")
 
     assert len(calls) == 1
     assert "--remove-label" in calls[0]
+    assert result is True
 
 
 def test_release_with_mismatched_run_id_skips_the_release(monkeypatch, tmp_path, capsys):
@@ -1176,10 +1180,11 @@ def test_release_with_mismatched_run_id_skips_the_release(monkeypatch, tmp_path,
     calls = []
     monkeypatch.setattr(tp.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
 
-    tp._release(20, "mac-mini", run_id="other_run")
+    result = tp._release(20, "mac-mini", run_id="other_run")
 
     assert not calls
     assert "skipping release" in capsys.readouterr().err
+    assert result is False
 
 
 def test_release_without_run_id_always_releases(monkeypatch, tmp_path):
@@ -1187,12 +1192,13 @@ def test_release_without_run_id_always_releases(monkeypatch, tmp_path):
     ts.record_stage(20, "claimed", "started", run_id="run123")
 
     calls = []
-    monkeypatch.setattr(tp.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
+    monkeypatch.setattr(tp.subprocess, "run", lambda cmd, **kw: calls.append(cmd) or SimpleNamespace(returncode=0))
 
-    tp._release(20, "mac-mini")
+    result = tp._release(20, "mac-mini")
 
     assert len(calls) == 1
     assert "--remove-label" in calls[0]
+    assert result is True
 
 
 def test_two_concurrent_scans_dispatch_a_ticket_only_once(monkeypatch, tmp_path):
@@ -1354,3 +1360,437 @@ def test_concurrent_mains_run_one_scan_at_a_time(tmp_path, monkeypatch):
     threads = [threading.Thread(target=tp.main) for _ in range(4)]
     [t.start() for t in threads]; [t.join() for t in threads]
     assert peak[0] == 1
+
+
+# ── dead claims: release idle claims with no live run ─────────────────────────
+
+def test_claim_labeled_at_finds_when_a_claim_was_added(monkeypatch):
+    from datetime import datetime, timezone
+    claimed_time = "2026-10-07T10:00:00Z"
+    events = [
+        {"event": "labeled", "label": {"name": "claimed:mac-mini"}, "created_at": claimed_time},
+        {"event": "unlabeled", "label": {"name": "some-other"}, "created_at": "2026-10-07T11:00:00Z"}
+    ]
+    monkeypatch.setattr(tp.subprocess, "run", lambda *a, **kw: SimpleNamespace(
+        returncode=0, stdout=json.dumps(events), stderr=""))
+    result = tp._claim_labeled_at(20, "mac-mini")
+    assert result == datetime.fromisoformat(claimed_time.replace("Z", "+00:00"))
+
+
+def test_claim_labeled_at_returns_none_on_gh_failure(monkeypatch):
+    monkeypatch.setattr(tp.subprocess, "run", lambda *a, **kw: SimpleNamespace(
+        returncode=1, stdout="", stderr="error"))
+    assert tp._claim_labeled_at(20, "mac-mini") is None
+
+
+def test_claim_labeled_at_returns_none_when_label_not_found(monkeypatch):
+    events = [
+        {"event": "labeled", "label": {"name": "some-other"}, "created_at": "2026-10-07T10:00:00Z"}
+    ]
+    monkeypatch.setattr(tp.subprocess, "run", lambda *a, **kw: SimpleNamespace(
+        returncode=0, stdout=json.dumps(events), stderr=""))
+    assert tp._claim_labeled_at(20, "mac-mini") is None
+
+
+def test_release_returns_bool_on_success(monkeypatch):
+    monkeypatch.setattr(tp.subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=0, stdout="", stderr=""))
+    assert tp._release(20, "mac-mini") is True
+
+
+def test_release_returns_false_on_failure(monkeypatch):
+    monkeypatch.setattr(tp.subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=1, stdout="", stderr=""))
+    assert tp._release(20, "mac-mini") is False
+
+
+def test_release_returns_false_when_skipped_by_run_id(monkeypatch, tmp_path):
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path / "stages")
+    ts.record_stage(20, "claimed", "started", run_id="run123")
+    assert tp._release(20, "mac-mini", run_id="other_run") is False
+
+
+# Tests 4-16: _release_dead_claims uses dispatch_concurrency.slots_in_use, checking live tasks before grace period
+
+
+def test_release_dead_claims_skips_live_tasks_from_dispatch_concurrency(monkeypatch):
+    """A task in dispatch_concurrency.slots_in_use is considered live and the claim is not released."""
+    from datetime import datetime, timezone
+    claim_time = datetime(2026, 10, 14, 0, 0, 0, tzinfo=timezone.utc)  # old
+    issues = [_issue(20, "2026-01-01T00:00:00Z", labels=["ready-for-agent", "claimed:mac-mini"])]
+
+    def fake_run(cmd, **kw):
+        if len(cmd) > 1 and cmd[1] == "api":
+            return SimpleNamespace(returncode=0, stdout=json.dumps([
+                {"event": "labeled", "label": {"name": "claimed:mac-mini"}, "created_at": claim_time.isoformat()}
+            ]), stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(tp.subprocess, "run", fake_run)
+    monkeypatch.setattr(tp.dispatch_concurrency, "slots_in_use", lambda machine: [{"ticket": 20, "repo": "G-Eskayo/marvin"}])
+
+    result = _REAL_RELEASE_DEAD_CLAIMS(issues=issues)
+
+    assert result == []  # not released because task is live
+
+
+def test_release_dead_claims_releases_when_no_live_task_and_old(monkeypatch):
+    """A claim is released if it's old and there's no corresponding live task."""
+    from datetime import datetime, timezone
+    claim_time = datetime(2026, 10, 14, 0, 0, 0, tzinfo=timezone.utc)
+    issues = [_issue(20, "2026-01-01T00:00:00Z", labels=["ready-for-agent", "claimed:mac-mini"])]
+
+    def fake_run(cmd, **kw):
+        if len(cmd) > 1 and cmd[1] == "api":
+            return SimpleNamespace(returncode=0, stdout=json.dumps([
+                {"event": "labeled", "label": {"name": "claimed:mac-mini"}, "created_at": claim_time.isoformat()}
+            ]), stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(tp.subprocess, "run", fake_run)
+    monkeypatch.setattr(tp.dispatch_concurrency, "slots_in_use", lambda machine: [])  # no live tasks
+
+    result = _REAL_RELEASE_DEAD_CLAIMS(issues=issues)
+
+    assert result == [20]  # released because old and no live task
+
+
+def test_release_dead_claims_does_not_release_young_claims(monkeypatch):
+    """A claim younger than GRACE_PERIOD_S is not released, even with no live tasks."""
+    from datetime import datetime, timezone
+    import time as time_module
+
+    now_time = datetime.now(timezone.utc)
+    claim_time = now_time - __import__('datetime').timedelta(minutes=5)  # recent
+    issues = [_issue(20, "2026-01-01T00:00:00Z", labels=["ready-for-agent", "claimed:mac-mini"])]
+
+    def fake_run(cmd, **kw):
+        if len(cmd) > 1 and cmd[1] == "api":
+            return SimpleNamespace(returncode=0, stdout=json.dumps([
+                {"event": "labeled", "label": {"name": "claimed:mac-mini"}, "created_at": claim_time.isoformat()}
+            ]), stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(tp.subprocess, "run", fake_run)
+    monkeypatch.setattr(tp.dispatch_concurrency, "slots_in_use", lambda machine: [])
+
+    result = _REAL_RELEASE_DEAD_CLAIMS(issues=issues)
+
+    assert result == []  # not released because claim is too young
+
+
+def test_release_dead_claims_handles_slots_in_use_failure(monkeypatch):
+    """If slots_in_use raises, the claim can still be released if it's old."""
+    from datetime import datetime, timezone
+    claim_time = datetime(2026, 10, 14, 0, 0, 0, tzinfo=timezone.utc)
+    issues = [_issue(20, "2026-01-01T00:00:00Z", labels=["ready-for-agent", "claimed:mac-mini"])]
+
+    def fake_run(cmd, **kw):
+        if len(cmd) > 1 and cmd[1] == "api":
+            return SimpleNamespace(returncode=0, stdout=json.dumps([
+                {"event": "labeled", "label": {"name": "claimed:mac-mini"}, "created_at": claim_time.isoformat()}
+            ]), stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(tp.subprocess, "run", fake_run)
+    monkeypatch.setattr(tp.dispatch_concurrency, "slots_in_use", lambda machine: (_ for _ in ()).throw(Exception("fail")))
+
+    result = _REAL_RELEASE_DEAD_CLAIMS(issues=issues)
+
+    assert result == [20]  # released even though slots_in_use failed
+
+
+def test_release_dead_claims_ignores_other_machine_claims(monkeypatch):
+    """Claims labeled for other machines are not released."""
+    from datetime import datetime, timezone
+    claim_time = datetime(2026, 10, 14, 0, 0, 0, tzinfo=timezone.utc)
+    issues = [_issue(20, "2026-01-01T00:00:00Z", labels=["ready-for-agent", "claimed:macbook-pro"])]
+
+    def fake_run(cmd, **kw):
+        if len(cmd) > 1 and cmd[1] == "api":
+            return SimpleNamespace(returncode=0, stdout=json.dumps([
+                {"event": "labeled", "label": {"name": "claimed:macbook-pro"}, "created_at": claim_time.isoformat()}
+            ]), stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(tp.subprocess, "run", fake_run)
+    monkeypatch.setattr(tp.dispatch_concurrency, "slots_in_use", lambda machine: [])
+
+    # This should not try to release a claim labeled for a different machine
+    result = _REAL_RELEASE_DEAD_CLAIMS(issues=issues)
+
+    assert result == []  # not released because it's for a different machine
+
+
+def test_release_dead_claims_checks_live_tasks_before_grace_period(monkeypatch):
+    """The dispatch_concurrency check comes before the grace-period check, avoiding unnecessary gh calls."""
+    from datetime import datetime, timezone
+    now = datetime(2026, 10, 15, 12, 0, 0, tzinfo=timezone.utc)
+    claim_time = datetime(2026, 10, 15, 11, 0, 0, tzinfo=timezone.utc)  # 1 hour ago, < GRACE_PERIOD_S
+
+    issues = [_issue(20, "2026-01-01T00:00:00Z", labels=["ready-for-agent", "claimed:mac-mini"])]
+    call_log = []
+
+    def fake_run(cmd, **kw):
+        call_log.append(cmd)
+        if "api" in cmd and "events" in cmd:
+            return SimpleNamespace(returncode=0, stdout=json.dumps([
+                {"event": "labeled", "label": {"name": "claimed:mac-mini"}, "created_at": claim_time.isoformat()}
+            ]), stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(tp.subprocess, "run", fake_run)
+    monkeypatch.setattr(tp.dispatch_concurrency, "slots_in_use", lambda machine: [{"ticket": 20, "repo": "G-Eskayo/marvin"}])
+    monkeypatch.setattr(tp, "_release", lambda n, l, repo=tp.REPO, run_id=None: True)
+
+    result = _REAL_RELEASE_DEAD_CLAIMS(issues=issues)
+
+    assert result == []
+    # slots_in_use was called (live task found), so no release attempt, no comment
+    assert not any("comment" in c for c in call_log)
+
+
+def test_release_dead_claims_skips_live_tasks_even_if_old(monkeypatch):
+    """If a task is in slots_in_use, it's live; skip it even if the claim is old."""
+    from datetime import datetime, timezone
+    now = datetime(2026, 10, 15, 12, 0, 0, tzinfo=timezone.utc)
+    claim_time = datetime(2026, 10, 14, 0, 0, 0, tzinfo=timezone.utc)  # 36 hours ago, > GRACE_PERIOD_S
+
+    issues = [_issue(20, "2026-01-01T00:00:00Z", labels=["ready-for-agent", "claimed:mac-mini"])]
+
+    def fake_run(cmd, **kw):
+        if "api" in cmd and "events" in cmd:
+            return SimpleNamespace(returncode=0, stdout=json.dumps([
+                {"event": "labeled", "label": {"name": "claimed:mac-mini"}, "created_at": claim_time.isoformat()}
+            ]), stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(tp.subprocess, "run", fake_run)
+    monkeypatch.setattr(tp.dispatch_concurrency, "slots_in_use", lambda machine: [{"ticket": 20, "repo": "G-Eskayo/marvin"}])
+
+    result = _REAL_RELEASE_DEAD_CLAIMS(issues=issues)
+
+    assert result == []
+
+
+def test_release_dead_claims_releases_old_claim_with_no_live_task(monkeypatch):
+    """A claim older than GRACE_PERIOD_S with no live task is released."""
+    from datetime import datetime, timezone
+    claim_time = datetime(2026, 10, 14, 0, 0, 0, tzinfo=timezone.utc)
+
+    issues = [_issue(20, "2026-01-01T00:00:00Z", labels=["ready-for-agent", "claimed:mac-mini"])]
+
+    def fake_run(cmd, **kw):
+        if "api" in cmd and "events" in cmd:
+            return SimpleNamespace(returncode=0, stdout=json.dumps([
+                {"event": "labeled", "label": {"name": "claimed:mac-mini"}, "created_at": claim_time.isoformat()}
+            ]), stderr="")
+        if "issue" in cmd and "edit" in cmd:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if "issue" in cmd and "comment" in cmd:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(tp.subprocess, "run", fake_run)
+    monkeypatch.setattr(tp.dispatch_concurrency, "slots_in_use", lambda machine: [])  # no live tasks
+
+    result = _REAL_RELEASE_DEAD_CLAIMS(issues=issues)
+
+    assert result == [20]
+
+
+def test_release_dead_claims_skips_young_claims(monkeypatch):
+    """A claim younger than GRACE_PERIOD_S is not released."""
+    from datetime import datetime, timezone
+    now = datetime(2026, 10, 15, 12, 0, 0, tzinfo=timezone.utc)
+    claim_time = datetime(2026, 10, 15, 11, 50, 0, tzinfo=timezone.utc)  # 10 minutes ago
+
+    issues = [_issue(20, "2026-01-01T00:00:00Z", labels=["ready-for-agent", "claimed:mac-mini"])]
+
+    def fake_run(cmd, **kw):
+        if "api" in cmd and "events" in cmd:
+            return SimpleNamespace(returncode=0, stdout=json.dumps([
+                {"event": "labeled", "label": {"name": "claimed:mac-mini"}, "created_at": claim_time.isoformat()}
+            ]), stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(tp.subprocess, "run", fake_run)
+    monkeypatch.setattr(tp.dispatch_concurrency, "slots_in_use", lambda machine: [])
+
+    result = _REAL_RELEASE_DEAD_CLAIMS(issues=issues)
+
+    assert result == []
+
+
+def test_release_dead_claims_only_releases_this_device(monkeypatch):
+    """Only claims labeled with this device's label are released."""
+    from datetime import datetime, timezone
+    claim_time = datetime(2026, 10, 14, 0, 0, 0, tzinfo=timezone.utc)
+
+    issues = [
+        _issue(20, "2026-01-01T00:00:00Z", labels=["ready-for-agent", "claimed:mac-mini"]),
+        _issue(21, "2026-01-01T00:00:00Z", labels=["ready-for-agent", "claimed:macbook-pro"]),
+    ]
+
+    def fake_run(cmd, **kw):
+        if "api" in cmd and "events" in cmd:
+            return SimpleNamespace(returncode=0, stdout=json.dumps([
+                {"event": "labeled", "label": {"name": "claimed:mac-mini"}, "created_at": claim_time.isoformat()}
+            ]), stderr="")
+        if "issue" in cmd and "edit" in cmd:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if "issue" in cmd and "comment" in cmd:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(tp.subprocess, "run", fake_run)
+    monkeypatch.setattr(tp.dispatch_concurrency, "slots_in_use", lambda machine: [])
+
+    result = _REAL_RELEASE_DEAD_CLAIMS(issues=issues)
+
+    assert result == [20]  # only #20 has the mac-mini label
+
+
+def test_release_dead_claims_handles_slots_in_use_exception(monkeypatch):
+    """If slots_in_use raises, fall back to releasing as if there are no live tasks."""
+    from datetime import datetime, timezone
+    claim_time = datetime(2026, 10, 14, 0, 0, 0, tzinfo=timezone.utc)
+
+    issues = [_issue(20, "2026-01-01T00:00:00Z", labels=["ready-for-agent", "claimed:mac-mini"])]
+
+    def fake_run(cmd, **kw):
+        if "api" in cmd and "events" in cmd:
+            return SimpleNamespace(returncode=0, stdout=json.dumps([
+                {"event": "labeled", "label": {"name": "claimed:mac-mini"}, "created_at": claim_time.isoformat()}
+            ]), stderr="")
+        if "issue" in cmd and "edit" in cmd:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if "issue" in cmd and "comment" in cmd:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(tp.subprocess, "run", fake_run)
+    monkeypatch.setattr(tp.dispatch_concurrency, "slots_in_use", lambda machine: (_ for _ in ()).throw(Exception("slots_in_use error")))
+
+    result = _REAL_RELEASE_DEAD_CLAIMS(issues=issues)
+
+    assert result == [20]
+
+
+def test_release_dead_claims_matches_task_by_repo_and_ticket(monkeypatch):
+    """A task is only considered live if both repo and ticket number match."""
+    from datetime import datetime, timezone
+    claim_time = datetime(2026, 10, 14, 0, 0, 0, tzinfo=timezone.utc)
+
+    issues = [_issue(20, "2026-01-01T00:00:00Z", labels=["ready-for-agent", "claimed:mac-mini"])]
+
+    def fake_run(cmd, **kw):
+        if "api" in cmd and "events" in cmd:
+            return SimpleNamespace(returncode=0, stdout=json.dumps([
+                {"event": "labeled", "label": {"name": "claimed:mac-mini"}, "created_at": claim_time.isoformat()}
+            ]), stderr="")
+        if "issue" in cmd and "edit" in cmd:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if "issue" in cmd and "comment" in cmd:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(tp.subprocess, "run", fake_run)
+
+    # Task with different ticket number: should not block release
+    monkeypatch.setattr(tp.dispatch_concurrency, "slots_in_use",
+                       lambda machine: [{"ticket": 21, "repo": "G-Eskayo/marvin"}])
+    result = _REAL_RELEASE_DEAD_CLAIMS(issues=issues)
+    assert result == [20]
+
+    # Task with same ticket but different repo: should not block release
+    monkeypatch.setattr(tp.dispatch_concurrency, "slots_in_use",
+                       lambda machine: [{"ticket": 20, "repo": "G-Eskayo/other-repo"}])
+    result = _REAL_RELEASE_DEAD_CLAIMS(issues=issues)
+    assert result == [20]
+
+
+def test_release_dead_claims_all_across_repos(monkeypatch):
+    """_release_dead_claims_all calls _release_dead_claims for each repo and formats the result."""
+    from datetime import datetime, timezone
+    claim_time = datetime(2026, 10, 14, 0, 0, 0, tzinfo=timezone.utc)
+
+    called_repos = []
+
+    def fake_release_dead(repo=tp.REPO, issues=None):
+        called_repos.append(repo)
+        if issues is None:
+            # This is the stub path; our test provides issues
+            return []
+        # Return the ticket numbers we "released"
+        return [i["number"] for i in (issues or []) if "claimed:mac-mini" in [l for l in tp.ticket_policy.label_names(i)]]
+
+    monkeypatch.setattr(tp, "_release_dead_claims", fake_release_dead)
+
+    repos = ["G-Eskayo/marvin", "G-Eskayo/clarity-captions"]
+    result = tp._release_dead_claims_all(repos)
+
+    assert "marvin" in called_repos or "G-Eskayo/marvin" in called_repos
+    assert isinstance(result, list)
+
+
+def test_release_dead_claims_missing_event_time_aborts_early(monkeypatch):
+    """If _claim_labeled_at returns None, that claim is not released."""
+    from datetime import datetime, timezone
+
+    issues = [_issue(20, "2026-01-01T00:00:00Z", labels=["ready-for-agent", "claimed:mac-mini"])]
+
+    def fake_run(cmd, **kw):
+        if "api" in cmd and "events" in cmd:
+            return SimpleNamespace(returncode=0, stdout=json.dumps([
+                {"event": "labeled", "label": {"name": "some-other"}, "created_at": "2026-10-15T00:00:00Z"}
+            ]), stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(tp.subprocess, "run", fake_run)
+    monkeypatch.setattr(tp.dispatch_concurrency, "slots_in_use", lambda machine: [])
+
+    result = _REAL_RELEASE_DEAD_CLAIMS(issues=issues)
+
+    assert result == []
+
+
+def test_release_dead_claims_posts_comment_when_releasing(monkeypatch):
+    """When releasing a claim, a comment is posted explaining why."""
+    from datetime import datetime, timezone
+    claim_time = datetime(2026, 10, 14, 0, 0, 0, tzinfo=timezone.utc)
+
+    issues = [_issue(20, "2026-01-01T00:00:00Z", labels=["ready-for-agent", "claimed:mac-mini"])]
+    comments_posted = []
+
+    def fake_run(cmd, **kw):
+        if "api" in cmd and "events" in cmd:
+            return SimpleNamespace(returncode=0, stdout=json.dumps([
+                {"event": "labeled", "label": {"name": "claimed:mac-mini"}, "created_at": claim_time.isoformat()}
+            ]), stderr="")
+        if "issue" in cmd and "edit" in cmd:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if "issue" in cmd and "comment" in cmd:
+            comments_posted.append(cmd)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(tp.subprocess, "run", fake_run)
+    monkeypatch.setattr(tp.dispatch_concurrency, "slots_in_use", lambda machine: [])
+
+    result = _REAL_RELEASE_DEAD_CLAIMS(issues=issues)
+
+    assert result == [20]
+    assert len(comments_posted) > 0
+    comment_cmd = comments_posted[0]
+    assert "comment" in comment_cmd
+    # Find the body text in the command
+    body_idx = comment_cmd.index("--body") if "--body" in comment_cmd else -1
+    if body_idx >= 0:
+        body = comment_cmd[body_idx + 1]
+        assert "idle" in body.lower() and "hours" in body.lower()
+
+
+def test_release_dead_claims_handles_no_issues(monkeypatch):
+    """_release_dead_claims returns [] when no issues are provided."""
+    monkeypatch.setattr(tp, "_open_issues", lambda repo: None)
+    result = _REAL_RELEASE_DEAD_CLAIMS(issues=None)
+    assert result == []

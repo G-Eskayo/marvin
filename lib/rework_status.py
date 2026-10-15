@@ -52,7 +52,8 @@ def _read_diagnosis(ticket_number: int, repo: str) -> dict | None:
 def status_for(ticket: dict, ctx: dict) -> dict:
     """One of: running, held, needs-person, paused, blocked, queued, not-queued. `ctx`: queue (identifiers, in dispatch
     order), key (this ticket's identifier, default its number), attempts (PRs already raised), max_attempts,
-    claim_started, paused (breaker text or None), blockers, running (what is running now), project, machines, now."""
+    claim_started, paused (breaker text or None), blockers, running (what is running now), project, machines, now,
+    claim_running (bool, default True: whether this claim has a live run)."""
     names = _names(ticket)
     me = ctx.get("key", ticket["number"])
     attempts, cap = ctx.get("attempts", 0), ctx.get("max_attempts", 3)
@@ -63,8 +64,12 @@ def status_for(ticket: dict, ctx: dict) -> dict:
 
     claim = next((n[len("claimed:"):] for n in names if n.startswith("claimed:")), None)
     if claim:
-        result = {"state": "running", "headline": "Being rebuilt right now",
-                "detail": f"Running on {claim} for {_minutes(ctx.get('claim_started'), now)} (attempt {attempts + 1} of {cap}). It updates this same PR when it finishes."}
+        if ctx.get("claim_running", True):
+            result = {"state": "running", "headline": "Being rebuilt right now",
+                    "detail": f"Running on {claim} for {_minutes(ctx.get('claim_started'), now)} (attempt {attempts + 1} of {cap}). It updates this same PR when it finishes."}
+        else:
+            result = {"state": "running", "headline": "Claimed but not running",
+                    "detail": f"Its claim has been idle on {claim} for {_minutes(ctx.get('claim_started'), now)}. No live run; waiting for the next scan or dispatch."}
     elif names & {"held", "pinned"}:
         result = {"state": "held", "headline": "On hold",
                 "detail": "A person asked the pipeline not to touch this ticket (held or pinned), so it will not be rebuilt until that label is removed."}
@@ -108,6 +113,7 @@ def collect(repos: list[str] | None = None) -> dict:
     import ticket_pipeline as tp
     import ticket_policy
     import ticket_stages as ts
+    import running_tickets
 
     now = datetime.now(timezone.utc)
     repos = repos or [tp.REPO, *pp.dispatchable_repos()]
@@ -128,6 +134,13 @@ def collect(repos: list[str] | None = None) -> dict:
     for m in re.finditer(r"run_ticket\.py\s+(?:(\S+)#)?(\d+)", ps):
         running.append(f"{(m.group(1) or tp.REPO).split('/')[-1]} #{m.group(2)}")
 
+    live_pairs = set()
+    try:
+        for t in running_tickets.current():
+            live_pairs.add((t["repo"], t["number"]))
+    except Exception:  # noqa: BLE001
+        pass
+
     tripped = {t.get("project", tp.REPO): f"{t['signature']} failed across tickets {', '.join(map(str, t['tickets']))}" for t in failure_breaker.tripped()}
     out = {}
     for r in repos:
@@ -142,7 +155,7 @@ def collect(repos: list[str] | None = None) -> dict:
             out[f"{r}#{n}"] = status_for(t, dict(
                 queue=queue, key=f"{r}#{n}", attempts=tp._attempts(r, n), max_attempts=tp.MAX_REENGAGE_ATTEMPTS,
                 claim_started=started, paused=tripped.get(r), blockers=ticket_policy.open_blockers(t, open_numbers),
-                running=running, project=r.split("/")[-1], now=now))
+                running=running, project=r.split("/")[-1], now=now, claim_running=(r, n) in live_pairs))
     return out
 
 

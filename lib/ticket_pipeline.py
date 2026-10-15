@@ -56,6 +56,7 @@ import project_catalog  # noqa: E402
 import ticket_evidence  # noqa: E402
 import project_onboard  # noqa: E402
 import dispatch_concurrency  # noqa: E402
+import machine_profile  # noqa: E402
 
 VENV_PYTHON = str(Path.home() / ".agents" / "venv" / "bin" / "python")
 RUN_TICKET_SCRIPT = str(Path.home() / ".agents" / "lib" / "run_ticket.py")
@@ -65,6 +66,8 @@ LOG_PREFIX = "[ticket-pipeline]"
 
 SCAN_LOCK_PATH = Path.home() / ".claude" / "dispatch" / "scan.lock"
 SCAN_LOCK_TIMEOUT_S = 120
+
+GRACE_PERIOD_S = 30 * 60
 
 
 @contextmanager
@@ -557,16 +560,96 @@ def _claim(issue_number: int, label: str, title: str = "", repo: str = REPO, run
     return True
 
 
-def _release(issue_number: int, label: str, repo: str = REPO, run_id: str | None = None) -> None:
+def _release(issue_number: int, label: str, repo: str = REPO, run_id: str | None = None) -> bool:
     if run_id is not None:
         owner = ts.claim_owner(issue_number, None if repo == REPO else repo)
         if owner is not None and owner != run_id:
             print(f"{LOG_PREFIX} skipping release of #{issue_number}: claim owned by {owner[:8]}, this run is {run_id[:8]}", file=sys.stderr)
-            return
-    subprocess.run(
+            return False
+    proc = subprocess.run(
         ["gh", "issue", "edit", str(issue_number), "--repo", repo, "--remove-label", f"claimed:{label}"],
         capture_output=True, text=True, timeout=15,
     )
+    return proc.returncode == 0
+
+
+def _claim_labeled_at(issue_number: int, label: str, repo: str = REPO) -> datetime | None:
+    """When a 'claimed:<label>' label was last added to an issue. Returns None on any failure or absence."""
+    try:
+        proc = subprocess.run(
+            ["gh", "api", f"repos/{repo}/issues/{issue_number}/events", "--paginate"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if proc.returncode != 0:
+            return None
+        events = json.loads(proc.stdout)
+        if not isinstance(events, list):
+            return None
+        for event in reversed(events):
+            if event.get("event") == "labeled" and event.get("label", {}).get("name") == f"claimed:{label}":
+                ts_str = event.get("created_at")
+                if ts_str:
+                    return datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        return None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _release_dead_claims(repo: str = REPO, issues: list[dict] | None = None) -> list[int]:
+    """Release claim labels on this machine that have no live run. Returns released ticket numbers.
+    Skips tickets younger than GRACE_PERIOD_S, and stops without releasing if age cannot be determined."""
+    if issues is None:
+        issues = _open_issues(repo)
+        if issues is None:
+            return []
+
+    this_device = machine_profile.registry_id()
+    this_label = _label_for_device(this_device)
+    now = datetime.now(timezone.utc)
+
+    released = []
+    for issue in issues:
+        names = set(ticket_policy.label_names(issue))
+        claim_label = f"claimed:{this_label}"
+        if claim_label not in names:
+            continue
+
+        try:
+            live_tasks = dispatch_concurrency.slots_in_use(this_device)
+            live_pairs = {(repo, t.get("ticket")) for t in live_tasks}
+        except Exception:  # noqa: BLE001
+            live_pairs = set()
+
+        if (repo, issue["number"]) in live_pairs:
+            continue
+
+        labeled_at = _claim_labeled_at(issue["number"], this_label, repo)
+        if labeled_at is None:
+            continue
+
+        age_s = (now - labeled_at).total_seconds()
+        if age_s < GRACE_PERIOD_S:
+            continue
+
+        if _release(issue["number"], this_label, repo):
+            released.append(issue["number"])
+            hours = int(age_s // 3600)
+            subprocess.run(
+                ["gh", "issue", "comment", str(issue["number"]), "--repo", repo,
+                 "--body", f"Claim released: idle on this machine for {hours} hours, no live run on {this_label}."],
+                capture_output=True, text=True, timeout=15,
+            )
+
+    return released
+
+
+def _release_dead_claims_all(repos: list[str]) -> list[str]:
+    """Release dead claims across multiple repos. Returns formatted released ticket names like "marvin#123"."""
+    all_released = []
+    for r in repos:
+        released = _release_dead_claims(r)
+        all_released.extend(f"{r.split('/')[-1]}#{n}" for n in released)
+    return all_released
 
 
 def _build_wrapper_command(issue_number: int, repo: str = REPO, run_id: str = "") -> str:
@@ -762,6 +845,10 @@ def _scan(run, dry_run: bool) -> None:
     # Hourly run doubles as board discovery, before any early return below, so a
     # project set up anywhere gets its dashboard board without being asked for.
     if not dry_run:
+        step("Dead claims", "releasing idle claims with no live run")
+        released = _release_dead_claims_all([REPO, *pp.dispatchable_repos()])
+        step("Dead claims", ", ".join(released) if released else "none idle")
+
         step("Board discovery")
         added = _discover_boards()
         for repo in added:

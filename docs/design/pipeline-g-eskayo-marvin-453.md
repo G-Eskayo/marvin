@@ -1,0 +1,56 @@
+## North-star fit
+
+**Reuses before adding anything:** the worktree already carries an implementation of this ticket (uncommitted: `GRACE_PERIOD_S`, `_claim_labeled_at`, `_release_dead_claims`, `_release_dead_claims_all`, wired into `_scan()`; `rework_status.status_for`/`collect()` updated for `claim_running`). I read it against the ticket and the prior metrics failure instead of re-deriving a plan from scratch.
+
+**Why the prior attempt regressed 3 pytest tests, found by running the real code, not guessing:** `_release_dead_claims` calls `machine_profile.registry_id()` unguarded — that reads/writes the **real** `~/.claude/machine-profile.json` and, if stale, shells out to `ioreg`/`sysctl`/`scutil`/`which claude`/a chromadb import (15 s timeout) to rebuild it. It also imports `running_tickets` and calls `.current()`, which SSHes to every *other* registered machine (real `marvin-network.json`, real host, 15 s timeout each) to build `live_pairs`. Because `_release_dead_claims_all` was wired straight into `_scan()` with no seam, **every** test that calls `tp._scan()`/`tp.main()` — roughly 30 pre-existing tests, none of which were touched — now pays this tax unconditionally. `lib/tests/conftest.py` already has a blocked-`gh` fixture (so the GitHub leg fails fast and silently), but nothing isolates `machine_profile` or `running_tickets`, which is exactly the class of risk this repo's conftest.py was built to catch (see its own history: `_isolate_board_registry`, `_no_real_auto_merge_shadow`, `_isolate_seal_beta`, etc., each added the moment a new production side effect became test-reachable). Running the full `lib/tests` suite here took **527 s** (vs. 4 s for `test_ticket_pipeline.py` alone with the old code) — concrete, measured evidence of exactly this tax, even though in this sandbox the SSH/subprocess calls happen to fail fast rather than hang, so I saw slowness, not failures; a box where the other machine is actually reachable gets real 15 s SSH timeouts and is a plausible source of the reported pytest failures. This is also a direct violation of the ticket's own text: *"Use a temp HOME, never the real `~/.claude`."* The design doc's own "Tests first" list (8 tests for `_release_dead_claims`/`_release_dead_claims_all`) was never actually written — grep confirms only `_claim_labeled_at` and `_release`-returns-bool tests exist. No test exists today that would have caught any of this.
+
+**Simplest sufficient fix, not a rewrite:** the ticket's own "What to build" text names the mechanism explicitly — `dispatch_concurrency.slots_in_use(machine)`, "which already reaps records whose PID is gone." That's a **local**, file-based, already-test-friendly (`tasks_dir`/`reader`/`is_alive` injection) primitive — the prior attempt used `running_tickets.current()` (a cross-machine PS+SSH aggregator meant for a different question: "is anything running anywhere") instead. Switching to the ticket's own named primitive isn't a stylistic choice, it removes the network dependency at the source for `ticket_pipeline.py`'s own self-check, and only needs filtering the returned records by `ticket`/`repo` (not just `machine`) since `slots_in_use` doesn't do that itself. `rework_status.collect()`'s need is genuinely cross-machine (the dashboard can run on the machine that *isn't* holding the claim), so `running_tickets.current()` stays there — but, like `_inflight_by_repo` already does today, it needs a safe default in tests.
+
+**Token/resource cost:** no new daemon, no new storage; the fix is a handful of lines in `ticket_pipeline.py`, two or three lines in `conftest.py` (matching an established pattern), and real tests that didn't exist. Running the suite returns to its prior speed once the network/subprocess taxes are gone.
+
+**Leaves the user more capable:** Gil stops hand-releasing frozen claims, and the pipeline's own test suite stops silently depending on SSH access to his other Mac to run fast and clean — a hidden coupling that would have bitten him again the next time that Mac was off or unreachable.
+
+## Decisions
+
+None needed. The ticket is explicit on the release mechanism's shape, grace period, comment content, and dashboard text. The one place I deviate from the prior attempt — `dispatch_concurrency.slots_in_use(machine)` instead of `running_tickets.current()` inside `_release_dead_claims` — is not a product choice, it's correcting an implementation to match the ticket's own named mechanism, and it's also what removes the regression's root cause. Keeping `running_tickets.current()` inside `rework_status.collect()` (cross-machine, unlike ticket_pipeline's own self-check) is an internal engineering call with one clearly correct answer (reuse the already-existing, already-tested cross-machine primitive `_inflight_by_repo` already relies on), not something requiring Gil's input.
+
+## Tests first
+
+All of these are either missing today (the prior attempt's own planned tests 1–8 were never written) or are new regression guards for the actual defect found above. Written/updated before touching production code.
+
+**`lib/tests/conftest.py`** (the fix that stops the regression):
+1. Add `_isolate_machine_profile`: stub `machine_profile.registry_id` to a fixed value by default — no real `~/.claude/machine-profile.json` I/O, no `ioreg`/`sysctl`/chromadb subprocess cascade, in any test.
+2. Extend the existing `_isolate_ticket_evidence` fixture (which already no-ops `_requeue_all`/`_background_checks` for exactly this reason) to also stub `ticket_pipeline._release_dead_claims_all` to `lambda repos: []` by default.
+3. Add a default stub for `running_tickets.current` → `[]`, mirroring the pattern `_inflight_by_repo`'s own tests already rely on, so `rework_status.collect()`'s new call site doesn't newly require every caller to know about SSH.
+
+**`lib/tests/test_ticket_pipeline.py`** — capture the real functions at module import time (same trick already used for `_refresh_catalog` at line 885, `_REAL_REFRESH_CATALOG`), before the new conftest stub shadows them, then test the real `_release_dead_claims`/`_release_dead_claims_all` against the real local collaborator (`dispatch_concurrency.slots_in_use` pointed at a real tmp `tasks_dir`, not mocked away) and realistic `gh` JSON shapes:
+
+4. No live task record, past grace → released, with the explanatory comment (AC1).
+5. A live task record **matching this exact ticket+repo** in a real tmp `tasks_dir` (real JSON file, real alive PID via `os.getpid()`) → untouched, regardless of age (AC2) — exercises the real `dispatch_concurrency.slots_in_use`/`_pid_alive`, not a stub.
+6. A live task record for a **different** ticket number on the same machine does **not** shield this one — the match must be ticket+repo-specific, not "machine has any busy slot" (closes a real gap; this is the "PID reused by an unrelated process" attack reframed: a stale record whose `ticket` field doesn't match must never block release).
+7. A claim younger than `GRACE_PERIOD_S` is untouched even with no live record (the just-started TOCTOU window) (AC2).
+8. Another machine's `claimed:` label is never inspected or touched, even ancient with an empty `tasks_dir` (AC3).
+9. A nonexistent `tasks_dir` (the real "missing task-records file" case, not mocked) never crashes `_release_dead_claims`, and release still proceeds when otherwise past grace.
+10. `_claim_labeled_at` returning `None` (gh failure, or a malformed/empty `gh api events` response) → `_release_dead_claims` never releases (fail safe, not fail open) — wires the already-tested `_claim_labeled_at` failure modes through the caller, which today is untested.
+11. `_release` returning `False` (gh failing mid-release) → not counted as released, no comment posted, loop continues to the next ticket uninterrupted ("gh failing mid-release").
+12. Calling `_release_dead_claims` twice back-to-back is idempotent: the second call's `issues` reflects the label already gone (as real GitHub state would after the first release) → no second comment, no crash ("two scans racing").
+13. `_release_dead_claims_all` across two repos: one repo's `_open_issues` returning `None` (gh down for that repo only) does not stop the other repo's release from proceeding (each dependency failing independently).
+14. A malformed issue dict (missing `"labels"`) in the input list is skipped, not a crash (malformed input).
+15. A `claimed:<mine>` ticket that also carries `held`/`pinned` is still released when dead and past grace — `HOLD_LABELS` gates dispatch eligibility, not claim release; asserted explicitly so a held-but-dead claim can't get stuck forever (a person's mistake: holding a ticket mid-run).
+16. Regression guard, tied directly to this bug: a generic scan (`tp.main()` with nothing ready) must never reach the real `machine_profile.registry_id` — monkeypatch it to raise, run `tp.main()`, assert it does not raise. Proves the conftest default stub is actually short-circuiting the new step, so a future change can't silently re-wire an unmocked side effect into every scan test again.
+
+**`lib/tests/test_rework_status.py`**:
+17. `collect()`'s `claim_running` wiring end-to-end: monkeypatch `running_tickets.current` (overriding the new conftest default) to include/exclude the ticket's `(repo, number)`, assert the resulting status headline matches AC4 for both the alive and dead case — the only one of the original plan's three rework_status tests not yet written (the other two, direct `status_for` tests, already exist and pass).
+
+## Task List
+
+1. `lib/tests/conftest.py`: add `_isolate_machine_profile` (stub `machine_profile.registry_id`).
+2. `lib/tests/conftest.py`: extend `_isolate_ticket_evidence` to stub `ticket_pipeline._release_dead_claims_all` → `[]` by default.
+3. `lib/tests/conftest.py`: add a default stub for `running_tickets.current` → `[]`.
+4. `lib/tests/test_ticket_pipeline.py`: capture `_REAL_RELEASE_DEAD_CLAIMS`/`_REAL_RELEASE_DEAD_CLAIMS_ALL` at module import time, before fixtures run.
+5. `lib/ticket_pipeline.py`: in `_release_dead_claims`, replace the `running_tickets.current()`/`live_pairs` block with `dispatch_concurrency.slots_in_use(this_device)`, filtered to records whose `ticket`/`repo` match the current issue; move this (free, local) check before the grace-period/`_claim_labeled_at` check (networked) to avoid paying for a `gh api events` call when a local record already proves the claim is alive.
+6. `lib/ticket_pipeline.py`: drop the now-unused `import running_tickets` block from `_release_dead_claims`.
+7. `lib/tests/test_ticket_pipeline.py`: write tests 4–16 above.
+8. `lib/tests/test_rework_status.py`: write test 17 above.
+9. Run `~/.agents/venv/bin/python -m pytest lib/tests -q` in full (not just the two touched files) and confirm both: zero failures, and wall-clock time back down near its pre-ticket baseline — a slow-but-passing run would still mean the isolation fix is incomplete somewhere.
+10. Re-read the diff against the ticket's acceptance criteria and "How we'll try to break it" list one more time before calling it done.
