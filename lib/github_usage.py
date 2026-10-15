@@ -123,9 +123,9 @@ def _add_reading(cache: dict, b: dict) -> None:
         cache["latest_budget"] = {"at": at, "graphql": g, "core": _num(b.get("core"))}
 
 
-def _parse_lines(data: bytes) -> list[dict]:
+def _parse_lines(jsonl_bytes: bytes) -> list[dict]:
     out = []
-    for line in data.split(b"\n"):
+    for line in jsonl_bytes.split(b"\n"):
         if not line.strip():
             continue
         try:
