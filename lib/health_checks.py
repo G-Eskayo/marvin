@@ -974,10 +974,10 @@ def check_repo_sync_everywhere(reachability: dict[str, str], runner=_run_repo_st
 # One script, run locally or piped over ssh, so every machine is judged by the same
 # logic. Absolute paths throughout (launchd/ssh PATHs omit /opt/homebrew/bin).
 _MACHINE_STATE_SCRIPT = r'''
-APP="/Applications/MARVIN Metrics.app/Contents/Resources/app.asar"
+APP="/Applications/MARVIN.app/Contents/Resources/app.asar"
 if [ -f "$APP" ]; then echo "app_built_ts=$(stat -f %m "$APP")"; else echo "app_built_ts="; fi
 git -C "$HOME/.agents" fetch -q origin >/dev/null 2>&1
-echo "dashboard_commit_ts=$(git -C "$HOME/.agents" log -1 --format=%ct origin/main -- dashboard/src dashboard/electron dashboard/index.html dashboard/package.json dashboard/package-lock.json dashboard/electron.vite.config.js dashboard/tailwind.config.js dashboard/postcss.config.js 2>/dev/null)"
+echo "dashboard_commit_ts=$(git -C "$HOME/.agents" log -1 --format=%ct origin/main -- dashboard/src dashboard/electron dashboard/index.html dashboard/package.json dashboard/package-lock.json dashboard/electron.vite.config.js dashboard/tailwind.config.js dashboard/postcss.config.js dashboard/resources 2>/dev/null)"
 echo "webhook_commit_ts=$(git -C "$HOME/.agents" log -1 --format=%ct origin/main -- dashboard/webhook-server dashboard/electron/main 2>/dev/null)"
 WEBHOOK_PID=$(/bin/launchctl list 2>/dev/null | /usr/bin/awk '$3 ~ /com\.marvin\.dashboard-webhook/ {print $1}')
 if [ -n "$WEBHOOK_PID" ] && [ "$WEBHOOK_PID" != "-" ] && [ "$WEBHOOK_PID" -gt 0 ] 2>/dev/null; then

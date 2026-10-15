@@ -57,7 +57,7 @@ export function devSitePrefixes(url) {
 const NOT_INSTALLED = `Google Chrome isn't installed (looked in ${CHROME_PATHS.join(' and ')}). Install it, or open ${DEV_SITE_URL} yourself.`
 const DENIED =
   'macOS stopped the dashboard from controlling Google Chrome. Allow it in System Settings → Privacy & Security → ' +
-  'Automation (turn on Google Chrome under MARVIN Metrics), then press the button again.'
+  'Automation (turn on Google Chrome under MARVIN), then press the button again.'
 
 function failure(err, stderr) {
   const text = `${stderr || ''} ${err?.message || ''}`
