@@ -1,5 +1,7 @@
 # Changelog
 
+- code_sync push fails to merge when sync-log.md (or any file) has uncommitted edits, e.g. after the Mac sleeps mid-run ([#452](https://github.com/G-Eskayo/marvin/pull/452))
+
 - code_sync auto-commits onto whatever branch is checked out, sweeping other sessions' WIP into PR branches ([#445](https://github.com/G-Eskayo/marvin/pull/445))
 
 - GitHub usage: replace the sawtooth allowance line with hourly low-point bars linked to calls-per-hour (24h/7d/30d) ([#418](https://github.com/G-Eskayo/marvin/pull/418))
