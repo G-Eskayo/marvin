@@ -1,5 +1,6 @@
 import { dependencyRefs, openDependencies } from './board.js'
 import { parseHumanTask } from '../../src/lib/human_task.js'
+import { projectIdOf } from '../../src/lib/projects.js'
 
 const DAY_MS = 86400_000
 
@@ -142,8 +143,22 @@ function getPriority(labelNames) {
   return priorityLabel || null
 }
 
+// Resolve a ticket's project label (if any) against the projects catalog, or fall back to its own repo
+export function projectFor(ticket, projects = []) {
+  const labelNames = (ticket.labels || []).map((l) => typeof l === 'string' ? l : l.name)
+  for (const label of labelNames) {
+    if (label.startsWith('project:')) {
+      const projectId = label.slice('project:'.length)
+      const found = projects.find((p) => p.id === projectId)
+      if (found) return { id: found.id, repo: found.repo }
+      return { id: projectId, repo: null }
+    }
+  }
+  return { id: projectIdOf(ticket.repo), repo: ticket.repo }
+}
+
 // Main ranking function
-export function rankNeedsYou(tickets, { now = Date.now() } = {}) {
+export function rankNeedsYou(tickets, { now = Date.now(), projects = [] } = {}) {
   const rows = []
 
   // Group by repo for block graph
@@ -203,7 +218,8 @@ export function rankNeedsYou(tickets, { now = Date.now() } = {}) {
       unblocks,
       ask,
       priority,
-      ageDays
+      ageDays,
+      project: projectFor(t, projects)
     })
   }
 

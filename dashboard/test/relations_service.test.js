@@ -57,7 +57,7 @@ describe('relations service', () => {
 
 describe('review parity (MR Review <-> board)', () => {
   const pr = (n, body, over = {}) => ({ number: n, title: `PR ${n}`, url: `p${n}`, state: 'OPEN', isDraft: false, body, files: [], ...over })
-  const svc = (issues, prs) => make({ getBoardData: async () => ({ issues, prs }) })
+  const svc = (issues, prs, over = {}) => make({ getBoardData: async () => ({ issues, prs }), ...over })
 
   it('pairs each open PR with its ticket and the board column that ticket is in', async () => {
     const p = await svc([issue(2, { labels: [{ name: 'ready-for-agent' }] })], [pr(7, 'Closes #2')]).parity()
@@ -91,6 +91,30 @@ describe('review parity (MR Review <-> board)', () => {
       [pr(7, 'Closes #2')]
     ).overview()
     expect(o['G-Eskayo/marvin']).toMatchObject({ review: 1, needsYou: 1, blocked: 1 })
+  })
+
+  it('counts needs-info-labelled tickets in needsYou', async () => {
+    const o = await svc(
+      [
+        issue(2),
+        issue(3, { labels: [{ name: 'ready-for-human' }] }),
+        issue(5, { labels: [{ name: 'needs-info' }] }),
+        issue(4, { body: 'Blocked by #2' })
+      ],
+      [pr(7, 'Closes #2')]
+    ).overview()
+    expect(o['G-Eskayo/marvin']).toMatchObject({ review: 1, needsYou: 2, blocked: 1 })
+  })
+
+  it('counts a project:-labelled ticket in its declared project', async () => {
+    const customProjects = [{ id: 'marvin', repo: 'G-Eskayo/marvin' }, { id: 'other', repo: 'G-Eskayo/other' }]
+    const o = await svc(
+      [issue(2), issue(3, { labels: [{ name: 'ready-for-human' }, { name: 'project:other' }] })],
+      [pr(7, 'Closes #2')],
+      { getProjects: () => customProjects }
+    ).overview()
+    expect(o['G-Eskayo/marvin']).toMatchObject({ review: 1, needsYou: 0, blocked: 0 })
+    expect(o['G-Eskayo/other']).toMatchObject({ review: 0, needsYou: 1, blocked: 0 })
   })
 })
 

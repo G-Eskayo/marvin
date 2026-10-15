@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { missingFor, blocksGraph, transitiveUnblocks, rankNeedsYou } from '../electron/main/needs_you.js'
+import { missingFor, blocksGraph, transitiveUnblocks, rankNeedsYou, projectFor } from '../electron/main/needs_you.js'
 import { parseHumanTask } from '../src/lib/human_task.js'
 
 // Test fixture builders
@@ -209,6 +209,63 @@ describe('transitiveUnblocks', () => {
   })
 })
 
+describe('projectFor', () => {
+  it('returns the ticket\'s own repo when no project: label', () => {
+    const ticket = issue(1, { labels: [] })
+    ticket.repo = 'G-Eskayo/marvin'
+    const result = projectFor(ticket, [])
+    expect(result.id).toBe('marvin')
+    expect(result.repo).toBe('G-Eskayo/marvin')
+  })
+
+  it('resolves a project: label against a registered project', () => {
+    const ticket = issue(1, { labels: [label('project:clarity')] })
+    ticket.repo = 'G-Eskayo/marvin'
+    const projects = [{ id: 'clarity', repo: 'G-Eskayo/clarity-captions' }]
+    const result = projectFor(ticket, projects)
+    expect(result.id).toBe('clarity')
+    expect(result.repo).toBe('G-Eskayo/clarity-captions')
+  })
+
+  it('handles an unregistered project: label (falls back gracefully)', () => {
+    const ticket = issue(1, { labels: [label('project:unknown')] })
+    ticket.repo = 'G-Eskayo/marvin'
+    const projects = [{ id: 'clarity', repo: 'G-Eskayo/clarity-captions' }]
+    const result = projectFor(ticket, projects)
+    expect(result.id).toBe('unknown')
+    expect(result.repo).toBeNull()
+  })
+
+  it('ignores project: label if it matches the ticket\'s own repo', () => {
+    const ticket = issue(1, { labels: [label('project:marvin')] })
+    ticket.repo = 'G-Eskayo/marvin'
+    const projects = [{ id: 'marvin', repo: 'G-Eskayo/marvin' }]
+    const result = projectFor(ticket, projects)
+    expect(result.id).toBe('marvin')
+    expect(result.repo).toBe('G-Eskayo/marvin')
+  })
+
+  it('uses first project: label if multiple exist', () => {
+    const ticket = issue(1, { labels: [label('project:clarity'), label('project:finance')] })
+    ticket.repo = 'G-Eskayo/marvin'
+    const projects = [
+      { id: 'clarity', repo: 'G-Eskayo/clarity-captions' },
+      { id: 'finance', repo: 'G-Eskayo/finance-os' }
+    ]
+    const result = projectFor(ticket, projects)
+    expect(result.id).toBe('clarity')
+  })
+
+  it('handles label objects with name property', () => {
+    const ticket = issue(1, { labels: [{ name: 'project:clarity' }] })
+    ticket.repo = 'G-Eskayo/marvin'
+    const projects = [{ id: 'clarity', repo: 'G-Eskayo/clarity-captions' }]
+    const result = projectFor(ticket, projects)
+    expect(result.id).toBe('clarity')
+    expect(result.repo).toBe('G-Eskayo/clarity-captions')
+  })
+})
+
 describe('rankNeedsYou', () => {
   it('prioritizes ready-for-human and needs-info tickets with labels', () => {
     const tickets = [
@@ -381,6 +438,27 @@ describe('rankNeedsYou', () => {
       expect(row1.unblocks.count).toBe(5)
       expect(row1.unblocks.count).toBeGreaterThan(row7.unblocks.count)
       expect(result.indexOf(row1)).toBeLessThan(result.indexOf(row7))
+    }
+  })
+
+  it('attaches project info to each row', () => {
+    const tickets = [
+      { repo: 'G-Eskayo/marvin', ...issue(1, { labels: [label('ready-for-human')], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' }) },
+      { repo: 'G-Eskayo/marvin', ...issue(2, { labels: [label('project:clarity'), label('needs-info')] }) }
+    ]
+    const projects = [{ id: 'clarity', repo: 'G-Eskayo/clarity-captions' }]
+    const result = rankNeedsYou(tickets, { projects })
+    const row1 = result.find((r) => r.number === 1)
+    const row2 = result.find((r) => r.number === 2)
+    if (row1) {
+      expect(row1.project).toBeDefined()
+      expect(row1.project.id).toBe('marvin')
+      expect(row1.project.repo).toBe('G-Eskayo/marvin')
+    }
+    if (row2) {
+      expect(row2.project).toBeDefined()
+      expect(row2.project.id).toBe('clarity')
+      expect(row2.project.repo).toBe('G-Eskayo/clarity-captions')
     }
   })
 })

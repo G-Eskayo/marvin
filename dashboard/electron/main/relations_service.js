@@ -103,11 +103,18 @@ export function createRelationsService({ getRepos, getBoardData, getDocs, getPro
     overview: async () => {
       const b = await ready()
       const out = {}
+      // Count by repo for review and blocked (existing data sources)
       for (const c of b.cards.values()) {
         const o = (out[c.repo] ||= { review: 0, needsYou: 0, blocked: 0 })
         if (c.column === 'review') o.review += 1
-        if (c.column === 'ready' && c.owner === 'human') o.needsYou += 1
         if (c.column === 'blocked') o.blocked += 1
+      }
+      // Count needs-you from rankNeedsYou to include both ready-for-human and needs-info
+      const needsYouRows = rankNeedsYou(b.tickets, { projects: getProjects() })
+      for (const row of needsYouRows) {
+        const repo = row.project.repo || row.repo
+        if (!out[repo]) out[repo] = { review: 0, needsYou: 0, blocked: 0 }
+        out[repo].needsYou += 1
       }
       return out
     },
@@ -124,7 +131,7 @@ export function createRelationsService({ getRepos, getBoardData, getDocs, getPro
     // What is waiting on you, ranked by impact: unblocks descending, priority ascending, age descending
     needsYou: async () => {
       const b = await ready()
-      return rankNeedsYou(b.tickets)
+      return rankNeedsYou(b.tickets, { projects: getProjects() })
     }
   }
 }
