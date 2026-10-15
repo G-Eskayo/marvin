@@ -16,7 +16,7 @@ Complexity (north star #1):
 A line's identity is a hash of (device, stream, line): the same line twice from one Mac is one record, from two Macs
 two. A line that isn't valid JSON is still stored (ts NULL): once outboxes are trimmed the database is the only copy.
 
-Usage: history_store.py [stream ...]   (default: gh-calls; run every 5 min on the Mini by launchd)
+Usage: history_store.py [stream ...]   (default: gh-calls gh-budget; run every 5 min on the Mini by launchd)
        history_store.py --replica-max | --apply < rows | --digest ID   (run over ssh against another Mac's copy)
 
 The laptop's copy (G3): after each load the Mini ships the rows the copy doesn't have yet (id > the copy's max, at
@@ -45,6 +45,7 @@ FINGERPRINT_BYTES = 64
 HOME_DEVICE = "mac-mini-1"  # the database's home: the only Mac that loads outboxes (ADR 0066)
 SHIP_LIMIT = 50_000  # rows per run to the laptop's copy, so a long absence catches up in bounded steps
 VERIFY_EVERY_S = 7 * 86400
+DEFAULT_STREAMS = ["gh-calls", "gh-budget"]  # gh-budget: the allowance readings the GitHub usage chart draws (G4)
 SSH_OPTS = ["-o", "ConnectTimeout=5", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"]
 
 SCHEMA = """
@@ -210,6 +211,47 @@ def load_sources(conn: sqlite3.Connection, stream: str,
     return results
 
 
+def tail_since(path: Path | str, since_ts: float, chunk: int = 65536) -> list[dict]:
+    """The records in a JSONL log newer than since_ts, oldest first, reading backwards from the end only as far as
+    it needs: O(k + chunk), not O(file). A half-written last line is skipped; lines with no readable time are kept
+    only if they sit among newer lines."""
+    try:
+        f = open(path, "rb")
+    except (FileNotFoundError, IsADirectoryError):
+        return []
+    with f:
+        f.seek(0, 2)
+        pos = f.tell()
+        data = b""
+        while pos > 0:
+            n = min(chunk, pos)
+            pos -= n
+            f.seek(pos)
+            data = f.read(n) + data
+            nl = data.find(b"\n")
+            if pos > 0 and nl == -1:
+                continue
+            first = (data[nl + 1:] if pos > 0 else data).split(b"\n", 1)[0]
+            try:
+                ts = _ts(json.loads(first))
+            except (ValueError, AttributeError):
+                ts = None
+            if ts is not None and ts <= since_ts:
+                break
+    if pos > 0:
+        data = data[data.find(b"\n") + 1:]
+    data = data[:data.rfind(b"\n") + 1]
+    out = []
+    for line in data.splitlines():
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(record, dict) and (_ts(record) or 0) > since_ts:
+            out.append(record)
+    return out
+
+
 # ── the laptop's copy (G3, marvin#456): same ids, shipped incrementally ─────
 
 def max_id(conn: sqlite3.Connection) -> int:
@@ -349,7 +391,7 @@ def default_sources(stream: str) -> list[tuple[str, str, Callable]]:
 def run(streams: list[str] | None = None, db_path: Path | None = None) -> dict:
     conn = connect(db_path)
     try:
-        return {stream: load_sources(conn, stream, default_sources(stream)) for stream in (streams or ["gh-calls"])}
+        return {stream: load_sources(conn, stream, default_sources(stream)) for stream in (streams or DEFAULT_STREAMS)}
     finally:
         conn.close()
 
