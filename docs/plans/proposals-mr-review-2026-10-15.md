@@ -13,9 +13,9 @@ Ticket: G-Eskayo/marvin#102 "Proposals section in MR Review". Decision record: A
 
 ## Before: PR #358 (sent back twice)
 
-![PR #358 list](../screenshots/102-before-suggestions-list.png)
+![PR #358 list](docs/screenshots/102-before-suggestions-list.png)
 
-![PR #358 detail: raw engineering text](../screenshots/102-before-suggestion-detail.png)
+![PR #358 detail: raw engineering text](docs/screenshots/102-before-suggestion-detail.png)
 
 ## Mock-up, captured from the real dashboard
 
@@ -23,15 +23,15 @@ The three ideas below are **made-up samples** to show the format; they aren't re
 
 **1. MR Review → Proposals.** A third button next to Open | Merged.
 
-![Proposals list](../screenshots/102-proposals-mock-list.png)
+![Proposals list](docs/screenshots/102-proposals-mock-list.png)
 
 **2. Dismiss menu**, with Technical details opened on the first card.
 
-![Dismiss menu](../screenshots/102-proposals-mock-menu.png)
+![Dismiss menu](docs/screenshots/102-proposals-mock-menu.png)
 
 **3. Dismiss until…** Pick a ticket that has to be done (or create one), or describe something MARVIN checks for each week. A backup date always applies.
 
-![Dismiss until dialog](../screenshots/102-proposals-mock-until.png)
+![Dismiss until dialog](docs/screenshots/102-proposals-mock-until.png)
 
 ## Open questions for you
 
