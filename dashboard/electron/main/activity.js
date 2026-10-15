@@ -1,5 +1,6 @@
 import { listAllTrackedTickets, readStages } from '../../webhook-server/ticket_stages.js'
 import { readDispatchStatus } from './dispatch_status.js'
+import { TERMINAL_STAGE_ORDER } from '../../src/lib/stage_names.js'
 
 // Activity tab (G-Eskayo/marvin#113-117's scope) -- a per-ticket pipeline
 // timeline, not just live status, per Gil's 2026-10-01 ask: this is meant
@@ -7,7 +8,6 @@ import { readDispatchStatus } from './dispatch_status.js'
 // fact instead of something that has to be forensically re-traced by hand
 // (exactly what finding PR #119's real failure point required before
 // ticket_stages.py/.js existed).
-const TERMINAL_STAGE_ORDER = ['claimed', 'planning', 'executing', 'verifying', 'gate', 'merging', 'versioning', 'rebuilding', 'done']
 
 function summarize(events) {
   if (events.length === 0) return { currentStage: null, currentStatus: null, costUsd: 0, failed: false, title: null }

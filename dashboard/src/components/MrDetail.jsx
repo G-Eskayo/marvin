@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { EvidenceTable, ApproveDenyActions } from './MrReview.jsx'
 import { projectIdOf } from '../lib/projects.js'
 import Related, { useRelated } from './Related.jsx'
 import PrImages from './PrImages.jsx'
 import Decisions from './Decisions.jsx'
 import IssueBodyView from './IssueBody.jsx'
+import StageStrip from './StageStrip.jsx'
+import { deriveStageStrip } from '../lib/stage_strip.js'
 
 // Full evidence-schema drill-down for one MR (G-Eskayo/marvin#72, ADR
 // 0024) plus its linked ticket/parent-PRD requirements, design, and
@@ -124,15 +126,17 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
   const rel = useRelated(() => window.api.relations.pr(pr.repo, pr.number), [pr.repo, pr.number])
   const [context, setContext] = useState(null)
   const [error, setError] = useState(null)
+  const [events, setEvents] = useState([])
+  const strip = useMemo(() => deriveStageStrip(events, { isLiveNow: pr.isLiveNow }), [events, pr.isLiveNow])
 
   useEffect(() => {
     let cancelled = false
-    if (!pr.ticketNumber) {
+    if (!pr.ticketRef) {
       setContext({ ticket: null, parent: null })
       return
     }
     window.api.mr
-      .ticketContext(pr.ticketNumber, pr.repo)
+      .ticketContext(pr.ticketRef, pr.repo)
       .then((result) => {
         if (!cancelled) setContext(result)
       })
@@ -142,7 +146,21 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
     return () => {
       cancelled = true
     }
-  }, [pr.ticketNumber])
+  }, [pr.ticketRef, pr.repo])
+
+  useEffect(() => {
+    let cancelled = false
+    if (pr.ticketRef) {
+      window.api.activity.timeline(pr.ticketRef, pr.repo).then((e) => {
+        if (!cancelled) setEvents(e)
+      }).catch(() => {
+        if (!cancelled) setEvents([])
+      })
+    } else {
+      setEvents([])
+    }
+    return () => { cancelled = true }
+  }, [pr.ticketRef, pr.repo])
 
   const contextLoading = context === null && !error
 
@@ -262,6 +280,12 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
           <IssueBody label="Parent" issue={context.parent} repo={pr.repo} onOpenTicket={onOpenTicket} onOpenDocs={onOpenDocs} />
         )}
       </Section>
+
+      {strip.length > 0 && (
+        <Section title="Pipeline timeline">
+          <StageStrip strip={strip} />
+        </Section>
+      )}
 
       <Related
         rel={rel}

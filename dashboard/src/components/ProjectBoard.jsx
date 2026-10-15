@@ -9,6 +9,8 @@ import Markdown from './Markdown.jsx'
 import IssueBody from './IssueBody.jsx'
 import Related, { useRelated } from './Related.jsx'
 import CompletedView from './CompletedView.jsx'
+import StageStrip from './StageStrip.jsx'
+import { deriveStageStrip, STAGE_LABEL, formatTime, formatMoney } from '../lib/stage_strip.js'
 
 // Backstop only: triggers (window.api.triggers) drive refreshes; a poll that
 // finds a change no trigger announced is logged as a gap.
@@ -86,6 +88,22 @@ function Freshness({ at }) {
 }
 
 function Card({ card, repo, onSelect, onOpenMr, activeTags, onTag }) {
+  const [events, setEvents] = useState([])
+  useEffect(() => {
+    let cancelled = false
+    if (card.hasTimeline) {
+      window.api.activity.timeline(card.number, repo).then((e) => {
+        if (!cancelled) setEvents(e)
+      }).catch(() => {
+        if (!cancelled) setEvents([])
+      })
+    } else {
+      setEvents([])
+    }
+    return () => { cancelled = true }
+  }, [repo, card.number, card.hasTimeline])
+  const strip = useMemo(() => deriveStageStrip(events, { isLiveNow: card.isLive }), [events, card.isLive])
+
   return (
     <button
       onClick={() => onSelect(card)}
@@ -100,6 +118,11 @@ function Card({ card, repo, onSelect, onOpenMr, activeTags, onTag }) {
         )}
       </p>
       <p className={`mt-1 text-xs ${card.reason && /fail|block|stale|no activity/i.test(card.reason) ? 'text-red-400' : 'text-neutral-500'}`}>{card.reason}</p>
+      {strip.length > 0 && (
+        <div className="mt-2">
+          <StageStrip strip={strip} />
+        </div>
+      )}
       <div className="mt-2 flex flex-wrap items-center gap-1">
         {card.owner === 'human' && <span className="rounded bg-sky-950 px-1.5 py-0.5 text-[10px] text-sky-300">needs you</span>}
         {card.progress && (
@@ -213,25 +236,6 @@ function Column({ column, repo, onSelect, onOpenMr, activeTags, onTag, onAllComp
   )
 }
 
-const STAGE_LABEL = {
-  claimed: 'Claimed',
-  planning: 'Planning',
-  executing: 'Executing',
-  verifying: 'Verifying',
-  gate: 'Merge gate',
-  merging: 'Merging',
-  rebuilding: 'Rebuilding',
-  done: 'Done'
-}
-
-const money = (usd) => (usd ? `$${usd.toFixed(usd < 0.01 ? 4 : 2)}` : '$0.00')
-const when = (iso) => {
-  try {
-    return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
-  } catch {
-    return iso
-  }
-}
 
 // The ticket's pipeline history, stage by stage (what the old standalone "Pipeline log" listed for all
 // tickets at once): where it got to, where it failed, on which machine, and what it cost.
@@ -243,7 +247,7 @@ function PipelineHistory({ events }) {
       <div className="mb-1 flex items-baseline justify-between">
         <h3 className="text-xs uppercase tracking-wide text-neutral-500">Pipeline history</h3>
         <span className="font-mono text-xs text-neutral-400">
-          now: {STAGE_LABEL[last.stage] || last.stage} ({last.status}) · total {money(total)}
+          now: {STAGE_LABEL[last.stage] || last.stage} ({last.status}) · total {formatMoney(total)}
         </span>
       </div>
       {events.map((e, i) => {
@@ -255,8 +259,8 @@ function PipelineHistory({ events }) {
             </p>
             {e.detail && <p className="mt-0.5 whitespace-pre-wrap font-mono text-xs text-neutral-500">{e.detail}</p>}
             <p className="mt-0.5 text-xs text-neutral-600">
-              {when(e.timestamp)} · {e.machine}
-              {e.cost_usd != null ? ` · ${money(e.cost_usd)}` : ''}
+              {formatTime(e.timestamp)} · {e.machine}
+              {e.cost_usd != null ? ` · ${formatMoney(e.cost_usd)}` : ''}
             </p>
           </div>
         )

@@ -327,6 +327,38 @@ then) — a real, current fragility, not a hypothetical one.
   Gil's approve/deny = peer review. Not just a metaphor — it's the actual justification for why the
   sandbox and the metrics-comparison step both exist as hard requirements, not nice-to-haves.
 
+## Pipeline visibility — stage strip (2026-10-15, #161)
+
+- **Stage strip**: a compact horizontal timeline showing where a ticket/PR currently is in the
+  pipeline — stages rendered as colored pills, latest event per stage displayed, with hover
+  tooltips for time/machine/cost. Appears on ProjectBoard cards (marvin tickets), MR Review's
+  PrCard, and MrDetail (full view). Reuses the existing `ticket_stages.js` timeline data (what
+  the pipeline records at each stage: claimed, planning, executing, verifying, gate, merging,
+  versioning, rebuilding, done), not a separate query path.
+- **Remediation extraction**: failure stages carry remediation text extracted from detail strings
+  (e.g. "NOT_MERGEABLE: conflicts\n\nRemediation: Resolve on GitHub\nStep 2: Push it" stores both the code
+  and the actionable guidance separately, keeping all text after the marker). Shown in hover tooltips.
+  Both merge gate failures and refusal-path failures (wrong base, sent back) include remediation;
+  they use a shared `appendRemediation()` helper in failure.js to prevent duplication.
+- **Draft-marked-ready tracking**: when a PR's owner approves a draft, `readyIfDraft()` marks
+  it ready on GitHub and records "draft marked ready" in the merging:started stage detail.
+  Previously invisible in the timeline; now visible at a glance on the stage strip.
+- **Rebase-needed detection**: gate failures starting with "REBASE_CONFLICT" (rebase onto main
+  failed) are flagged with a ⚠ icon on the strip to distinguish from test-only failures.
+  Detection is restricted to the gate stage only, avoiding false positives on failures in other
+  stages. This is the opposite of the needs-rebase label approach — a transient state that
+  resolves once the rebase succeeds, not a persistent ticket label.
+- **Live running/stalled distinction**: when a ticket is currently being executed (dispatch busy),
+  the strip shows live status only on the most-recently-timestamped stage (not all stages), and
+  only when that stage's status is 'started'. Shows running vs. stalled (no progress in >1 hour).
+  Passed via `isLiveNow: true` to the derivation. Design avoids false positives (a stage that
+  finished hours ago doesn't look like it's "running now"; a finished stage never shows live
+  status regardless of age).
+- **Reuse and consolidation**: formatting helpers (formatMoney, formatTime) and stage labels
+  (STAGE_LABEL) moved to `stage_names.js` alongside TERMINAL_STAGE_ORDER, shared across
+  activity.js, stage_strip.js, and components. Components import via stage_strip.js for
+  backwards compatibility.
+
 ## Auto-merge (designed 2026-10-09, #332, ADR 0064)
 
 Why: a pipeline PR waits a median 9.4 h for Gil's Approve while building takes ~25 min, and only 5 pipeline PRs have

@@ -3,7 +3,7 @@ import { promisify } from 'util'
 import { mkdtemp, rm } from 'fs/promises'
 import { tmpdir } from 'os'
 import path from 'path'
-import { classifyFailure, summarizeGateFailure, withRetry, MergeFailure, refusal } from './failure.js'
+import { classifyFailure, summarizeGateFailure, withRetry, MergeFailure, refusal, appendRemediation } from './failure.js'
 import { recordFailure } from './failure_log.js'
 import { assertUiEvidence } from './ui_evidence.js'
 import { assertDecisions } from './decisions_gate.js'
@@ -417,7 +417,7 @@ async function mergePrUnqueued(
 
   await assertTargetsBase(prUrl, exec, ctx ? ctx.base : 'main')
   await assertNotSentBack(prUrl, exec)
-  await readyIfDraft(prUrl, exec)
+  const draftWasMarkedReady = await readyIfDraft(prUrl, exec)
   // A UI change merges only with images the owner has seen (marvin #374). Before any gate work: refusing is cheap.
   await uiEvidence(prUrl, exec, ctx ? ctx.uiPaths : [])
   // A PR that asks the owner to choose merges only once he has answered, in its Decisions section (2026-10-09).
@@ -503,7 +503,7 @@ async function mergePrUnqueued(
   // No code review here: it runs in the build loop before the PR opens (sandbox_orchestration.execute_ticket).
   // Approve only checks the PR merges cleanly: CI, conflicts, retest after a rebase.
 
-  stage('merging', 'started', '')
+  stage('merging', 'started', draftWasMarkedReady ? 'draft marked ready' : '')
   let mergeError = null
   // "Not mergeable" straight after our own rebase push is usually GitHub still recomputing the PR, not a conflict
   // (finance-os, clarity #66: a good PR was denied and its ticket wrongly sent back). So when merging says that, ask
@@ -533,7 +533,7 @@ async function mergePrUnqueued(
     }
     const failure = classifyFailure({ stage: 'merging', error })
     failure.attempts = error.attempts ?? 1
-    stage('merging', 'failed', `${failure.code}: ${failure.message}`)
+    stage('merging', 'failed', appendRemediation(`${failure.code}: ${failure.message}`, failure.remediation))
     recordFailureFn({ ticket: ticketNumber ?? prNumberOf(prUrl), code: failure.code, message: failure.message, project: repo, prUrl, stage: 'merging' })
     if (failure.action === 'reengage' && ticketNumber !== null) {
       // The PR's own work needs changing (e.g. conflicts main moved past): hand it back to

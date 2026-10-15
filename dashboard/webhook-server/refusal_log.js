@@ -6,6 +6,7 @@ import os from 'os'
 import { parseTicketRef } from '../electron/main/mr_review.js'
 import { repoFromPrUrl } from '../electron/main/mr_repos.js'
 import { recordStage } from './ticket_stages.js'
+import { appendRemediation } from './failure.js'
 
 // Every refused merge, wherever it was refused, is recorded with its PR, project, ticket, stage and time (#215).
 // PR #209 sat unmergeable for hours on 2026-10-07 and nothing said why: the dashboard kept its refusal in memory
@@ -25,7 +26,7 @@ function defaultAppend(file, line) {
   appendFileSync(file, line)
 }
 
-export function recordRefusal({ prUrl, ticket = null, code, message, stage }, {
+export function recordRefusal({ prUrl, ticket = null, code, message, stage, remediation }, {
   append = defaultAppend, recordStageFn = recordStage, now = () => new Date(), file = defaultFile(), writeStage = true
 } = {}) {
   const project = repoFromPrUrl(prUrl)
@@ -35,7 +36,8 @@ export function recordRefusal({ prUrl, ticket = null, code, message, stage }, {
   } catch { /* fail-soft */ }
   if (writeStage && ticket !== null) {
     try {
-      recordStageFn(ticket, 'merging', 'failed', `refused ${reason}`, { repo: project })
+      const detail = appendRemediation(`refused ${reason}`, remediation)
+      recordStageFn(ticket, 'merging', 'failed', detail, { repo: project })
     } catch { /* fail-soft */ }
   }
 }
@@ -56,7 +58,7 @@ async function ticketOfPr(prUrl, exec) {
 export async function recordApproveError(prUrl, payload, { exec = promisify(execFile), ...deps } = {}) {
   if (!REFUSAL_CODES.has(payload.code)) return
   const ticket = await ticketOfPr(prUrl, exec)
-  recordRefusal({ prUrl, ticket, code: payload.code, message: payload.message, stage: payload.stage },
+  recordRefusal({ prUrl, ticket, code: payload.code, message: payload.message, stage: payload.stage, remediation: payload.remediation },
     { ...deps, writeStage: payload.stage === 'request' })
 }
 

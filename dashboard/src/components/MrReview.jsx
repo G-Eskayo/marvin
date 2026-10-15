@@ -1,9 +1,11 @@
 import MrHistory from './MrHistory.jsx'
 import { prFetchBanner } from '../lib/pr_fetch_status.js'
 import { cleanIpcError } from '../lib/ipcError.js'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useMemo } from 'react'
 import { describePrState } from '../lib/prState.js'
 import MrDetail from './MrDetail.jsx'
+import StageStrip from './StageStrip.jsx'
+import { deriveStageStrip } from '../lib/stage_strip.js'
 
 const MR_LIST_REFRESH_MS = 120000
 
@@ -399,6 +401,22 @@ function ParitySummary({ parity }) {
 }
 
 function PrCard({ pr, parity, onOpenTicket, onApproved, onDenied, onSelect }) {
+  const [events, setEvents] = useState([])
+  useEffect(() => {
+    let cancelled = false
+    if (pr.ticketRef) {
+      window.api.activity.timeline(pr.ticketRef, pr.repo).then((e) => {
+        if (!cancelled) setEvents(e)
+      }).catch(() => {
+        if (!cancelled) setEvents([])
+      })
+    } else {
+      setEvents([])
+    }
+    return () => { cancelled = true }
+  }, [pr.ticketRef, pr.repo])
+  const strip = useMemo(() => deriveStageStrip(events, { isLiveNow: pr.isLiveNow }), [events, pr.isLiveNow])
+
   return (
     <div
       onClick={() => onSelect(pr)}
@@ -430,6 +448,11 @@ function PrCard({ pr, parity, onOpenTicket, onApproved, onDenied, onSelect }) {
             </>
           ) : (
             <p className="text-xs text-amber-400">No structured evidence — needs a manual look</p>
+          )}
+          {strip.length > 0 && (
+            <div className="mt-2">
+              <StageStrip strip={strip} />
+            </div>
           )}
           <TicketLine row={parity} onOpenTicket={onOpenTicket} />
         </div>
@@ -515,23 +538,45 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
   function reload() {
     window.api.mr.parity().then(setParity).catch(() => setParity(null))
     window.api.mr.autoMergeReport?.().then(setAmReport).catch(() => setAmReport(null))
-    window.api.mr
-      .list()
-      .then((list) => {
-        setPrs(list)
-        onCount?.(list.length)
-        window.api.mr.listStatus?.().then((st) => {
-          setFetchStatus(st)
-          // #422: an unread list is "?", never a reassuring 0.
-          if (st?.errors?.length && list.length === 0) onCount?.('?')
-        }).catch(() => setFetchStatus(null))
-        // Opening this list is what "seen" means for the tab's status dot
-        // (App.jsx) -- mark every currently-listed PR, not just ones you
-        // click into, since the dot is about "have you looked at the
-        // list," not "have you opened every item on it."
-        window.api.mr.markSeen(list.map((pr) => pr.key)).catch(() => {})
-      })
-      .catch((err) => setError(String(err)))
+    window.api.activity.list?.().then((activity) => {
+      const isLiveMap = new Map(activity.map((a) => [`${a.repo}#${a.number}`, a.isLiveNow]))
+      window.api.mr
+        .list()
+        .then((list) => {
+          const listWithLive = list.map((pr) => ({ ...pr, isLiveNow: isLiveMap.get(pr.key) || false }))
+          setPrs(listWithLive)
+          onCount?.(listWithLive.length)
+          window.api.mr.listStatus?.().then((st) => {
+            setFetchStatus(st)
+            // #422: an unread list is "?", never a reassuring 0.
+            if (st?.errors?.length && listWithLive.length === 0) onCount?.('?')
+          }).catch(() => setFetchStatus(null))
+          // Opening this list is what "seen" means for the tab's status dot
+          // (App.jsx) -- mark every currently-listed PR, not just ones you
+          // click into, since the dot is about "have you looked at the
+          // list," not "have you opened every item on it."
+          window.api.mr.markSeen(listWithLive.map((pr) => pr.key)).catch(() => {})
+        })
+        .catch((err) => setError(String(err)))
+    }).catch(() => {
+      window.api.mr
+        .list()
+        .then((list) => {
+          setPrs(list)
+          onCount?.(list.length)
+          window.api.mr.listStatus?.().then((st) => {
+            setFetchStatus(st)
+            // #422: an unread list is "?", never a reassuring 0.
+            if (st?.errors?.length && list.length === 0) onCount?.('?')
+          }).catch(() => setFetchStatus(null))
+          // Opening this list is what "seen" means for the tab's status dot
+          // (App.jsx) -- mark every currently-listed PR, not just ones you
+          // click into, since the dot is about "have you looked at the
+          // list," not "have you opened every item on it."
+          window.api.mr.markSeen(list.map((pr) => pr.key)).catch(() => {})
+        })
+        .catch((err) => setError(String(err)))
+    })
   }
 
   // Previously fetch-once-on-mount only -- a new MR raised while this tab
@@ -570,13 +615,25 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
 
   // Decisions were answered on the open PR: refresh it in place (its card state and Approve depend on them).
   function reloadKeepSelected() {
-    window.api.mr
-      .list()
-      .then((list) => {
-        setPrs(list)
-        setSelected((cur) => (cur ? list.find((p) => p.key === cur.key) || cur : cur))
-      })
-      .catch(() => {})
+    window.api.activity.list?.().then((activity) => {
+      const isLiveMap = new Map(activity.map((a) => [`${a.repo}#${a.number}`, a.isLiveNow]))
+      window.api.mr
+        .list()
+        .then((list) => {
+          const listWithLive = list.map((pr) => ({ ...pr, isLiveNow: isLiveMap.get(pr.key) || false }))
+          setPrs(listWithLive)
+          setSelected((cur) => (cur ? listWithLive.find((p) => p.key === cur.key) || cur : cur))
+        })
+        .catch(() => {})
+    }).catch(() => {
+      window.api.mr
+        .list()
+        .then((list) => {
+          setPrs(list)
+          setSelected((cur) => (cur ? list.find((p) => p.key === cur.key) || cur : cur))
+        })
+        .catch(() => {})
+    })
   }
 
   if (selected) {

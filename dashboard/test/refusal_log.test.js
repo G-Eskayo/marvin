@@ -87,3 +87,24 @@ describe('recordFailure carries project, PR and stage when given', () => {
     expect(JSON.parse(append.mock.calls[0][1])).toMatchObject({ kind: 'failure', project: 'G-Eskayo/clarity-captions', pr_url: CLARITY_PR, stage: 'merging' })
   })
 })
+
+describe('recordRefusal with remediation', () => {
+  it('includes remediation in the stage log when provided', () => {
+    const d = deps()
+    recordRefusal({ prUrl: PR, ticket: 158, code: 'WRONG_BASE', message: 'targets x', stage: 'request', remediation: 'Rebase onto main first' }, d)
+    expect(d.recordStageFn).toHaveBeenCalledWith(158, 'merging', 'failed', 'refused WRONG_BASE: targets x\n\nRemediation: Rebase onto main first', { repo: 'G-Eskayo/marvin' })
+  })
+
+  it('omits remediation from stage log when not provided', () => {
+    const d = deps()
+    recordRefusal({ prUrl: PR, ticket: 158, code: 'WRONG_BASE', message: 'targets x', stage: 'request' }, d)
+    expect(d.recordStageFn).toHaveBeenCalledWith(158, 'merging', 'failed', 'refused WRONG_BASE: targets x', { repo: 'G-Eskayo/marvin' })
+  })
+
+  it('handles multi-line remediation text', () => {
+    const d = deps()
+    const multiLineRemediation = 'Step 1: Fix the conflict\nStep 2: Rebase onto main\nStep 3: Approve again'
+    recordRefusal({ prUrl: PR, ticket: 158, code: 'WRONG_BASE', message: 'targets x', stage: 'request', remediation: multiLineRemediation }, d)
+    expect(d.recordStageFn).toHaveBeenCalledWith(158, 'merging', 'failed', `refused WRONG_BASE: targets x\n\nRemediation: ${multiLineRemediation}`, { repo: 'G-Eskayo/marvin' })
+  })
+})

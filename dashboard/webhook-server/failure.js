@@ -141,6 +141,10 @@ export function refusal(code, stage, message, remediation, action = 'escalate') 
   return { code, stage, action, retryable: false, remediation, message, evidence: '' }
 }
 
+export function appendRemediation(reason, remediation) {
+  return remediation ? `${reason}\n\nRemediation: ${remediation}` : reason
+}
+
 export async function withRetry(fn, { classify, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), retries = 3, baseMs = 2000 } = {}) {
   let attempts = 0
   for (;;) {
