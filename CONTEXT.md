@@ -1302,3 +1302,27 @@ Design lives in clarity-captions (ADR 0023 sending, ADR 0024 receiving, `docs/be
 - **Self-heal**: a `.git/index.lock` older than 10 minutes that no process holds is removed before pull/push, and
   logged as a fix (2026-10-13: a stale lock failed every Mini pull for 26 hours, silently).
 - **MR Review** never shows an unread list as "0": "Couldn't reach GitHub for N projects (cause)" and "Open (?)".
+
+## Endpoints and the brief (grilling 2026-10-15, in progress)
+
+Shaping the morning brief so it can be spoken with and shown on any device Gil names (the Jarvis goal, part of the
+MARVIN-as-OS north star).
+
+- **Endpoint**: anything MARVIN can put content on or take input from: iPhone, Mac, the dashboard, a MARVIN Surface,
+  a mirror, a speaker (e.g. a Sonos in the kitchen). Not the same as a **device** in the compute sense (a machine in
+  `marvin-network.json` that runs work): a Mac is both, a mirror or a speaker is only an endpoint.
+- **Abilities**: what an endpoint can do, from four: **show**, **touch**, **listen**, **speak**. MARVIN picks the
+  endpoint by the abilities a request needs ("read me the brief in the kitchen" needs *speak*; "put the articles on the
+  mirror" needs *show*). A new endpoint is a new entry with its abilities, not a new kind of thing.
+- **MARVIN Surface**: Gil's planned touch display with a holographic look. It is a Surface in the existing sense
+  (somewhere Gil interacts with MARVIN), with at least *show* and *touch*.
+- **Mirror**: a show-only endpoint (a screen behind two-way glass).
+- **Content**: anything MARVIN can put on an endpoint when asked ("show or say X on Y"): the brief, one article, a
+  ticket, a chart, the build status. The ability is general; the **brief is its first content**, and solid content
+  comes before more endpoints (Gil, 2026-10-15).
+- **Brief** (the morning brief, sharpened): modelled on the **President's Daily Brief**: a short, curated intelligence
+  briefing for one reader, drawn from many feeds, each item with what happened, why it matters to Gil, and the source
+  to open in full.
+- **Feed**: a source the brief draws from (today: the research colony and the daily digest). Candidates Gil named:
+  World Monitor (`koala73/worldmonitor`, open-source OSINT dashboard), a "God's Eye" repo and a "Pegasus" world-infosec
+  repo (both still to be identified by Gil).
