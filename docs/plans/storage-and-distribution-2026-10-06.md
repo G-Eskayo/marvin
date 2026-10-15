@@ -206,7 +206,7 @@ Each "reclaim" task is a proposal. It runs only after Gil approves that specific
 
 ### G. History store (ADR 0066), tracer bullet first
 - [x] G1. (done 2026-10-15, marvin#449) `lib/history_store.py`: open/create `~/.claude/history.db` (WAL), `events` table, `load(stream, device, lines)` idempotent by content hash. Tests try to break it: malformed lines, duplicates, huge lines, concurrent loaders, a locked database.
-- [x] G2. (built 2026-10-15, marvin#449; launchd `com.marvin.history-load`, Mini only) Loader for `gh-calls.jsonl` on the Mini: its own outbox plus the laptop's over ssh (unreachable laptop = skip, catch up later). launchd every 5 min. Last success is a Health check.
+- [x] G2. (live 2026-10-15, marvin#449; launchd `com.marvin.history-load` on the Mini, both Macs loading, 41.7k rows, 12.3 MB) Loader for `gh-calls.jsonl` on the Mini: its own outbox plus the laptop's over ssh (unreachable laptop = skip, catch up later). launchd every 5 min. Last success is a Health check.
 - [ ] G3. Backup to the laptop after each load (SQLite online backup + rsync --checksum), verified by row count and hash.
 - [ ] G4. Move `github_usage.py` and the gh health check to read the database; dashboard chart compared before and after (same numbers, timed).
 - [ ] G5. Turn on trimming for `gh-calls.jsonl` only after G1–G4 and a week of clean loads.
