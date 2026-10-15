@@ -4,6 +4,7 @@ import DashboardHome from './DashboardHome.jsx'
 import ActivityBanner from './ActivityBanner.jsx'
 import DeviceColumns from './DeviceColumns.jsx'
 import NextUpQueue from './NextUpQueue.jsx'
+import NeedsYouList from './NeedsYouList.jsx'
 import ParallelToggle from './ParallelToggle.jsx'
 
 // The Activity tab is the project boards. What used to sit beside them lives where it belongs now:
@@ -25,7 +26,10 @@ export default function ActivityBoard({ onOpenMr, onOpenDocs, onOpenTicket, onOp
       <ParallelToggle />
       <NextUpQueue onOpenTicket={onOpenTicket} />
       {view === 'home' ? (
-        <DashboardHome onOpenProject={onOpenProject} />
+        <>
+          <NeedsYouList onOpenTicket={onOpenTicket} />
+          <DashboardHome onOpenProject={onOpenProject} />
+        </>
       ) : (
         <>
           <button onClick={() => setView('home')} className="mb-4 ml-6 text-sm text-neutral-400 hover:text-neutral-200">

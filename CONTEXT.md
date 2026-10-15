@@ -542,6 +542,24 @@ its ticketing system creates shows up there with drill-down status. Boards live 
   15 min, and a running app is rebuilt once it is >=1h behind (was 2h / 24h, which made a new feature
   take up to a day to show). Trade-off accepted: the relaunch drops unsaved in-tab edits (Portfolio).
 
+### Needs You — Ranked list (decided 2026-10-15)
+
+60-second poll with **saved-state-first render** for instant display. Per-repo count of **tickets waiting on a human**. Data comes from the same board-building pipeline: any ticket with `ready-for-human` or `needs-info` label that is open, not held, and not pinned. Ranked in order: unblocks (how many other tickets depend on this one) descending, priority ascending (p0 first), age descending (oldest first). Appears in the Activity tab above the Project Boards on the home view.
+
+- **Sort control**: four sort modes — unblocks (default, matching the service's ranking), priority
+  (p0 first), age (oldest first), kind (needs-info tickets first). Preference saved to localStorage,
+  persists per browser session and device.
+- **Pagination**: 10 tickets per page. Navigation buttons disabled at boundaries; page counter shows
+  current/total. Page is clamped to valid range on refresh (no empty pages).
+- **Per-row display**: project name (resolved from row's `projectId` field matched against boards list), priority pill (p0 red, p1 orange, p2 yellow, p3+ gray), kind badge (needs-info amber, ready-for-human blue-950/300), the ask (what the ticket needs: missing section, specific guidance, or generic "needs human input"), and a count of unblocks if > 0.
+- **Project ID resolution**: each row includes a `projectId` field extracted from the ticket's `project:<id>` label if present, otherwise derived from the repo name. Resolved against the boards list to show the project name.
+- **Saved state**: the last fetched list is stored in localStorage and displayed instantly on load; refresh fetches behind it and updates in place. Age text shows how long ago the list was last updated.
+- **Empty state**: "Nothing needs you" when the list is empty.
+- **Fixed via `/relations:needsYou`**: counts come from `relations_service.overview()`, which now
+  computes `needsYou` per repo directly from `rankNeedsYou(tickets)` grouped by repo, replacing the
+  prior column-based tally (which only counted `ready` column with `owner: human` — missing `needs-
+  info` tickets and tickets that had moved to blocked or review while still waiting on human input).
+
 ### Triggers over polling (decided 2026-10-03)
 
 Principle: **trigger at the place state is stored, not at the places it's written** (writers are

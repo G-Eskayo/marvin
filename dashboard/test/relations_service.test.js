@@ -92,6 +92,72 @@ describe('review parity (MR Review <-> board)', () => {
     ).overview()
     expect(o['G-Eskayo/marvin']).toMatchObject({ review: 1, needsYou: 1, blocked: 1 })
   })
+
+  describe('overview() with rankNeedsYou per repo', () => {
+    it('test 1: computes needsYou count from rankNeedsYou with ready-for-human label', async () => {
+      const tickets = [
+        issue(1, { labels: [{ name: 'ready-for-human' }] }),
+        issue(2, { labels: [{ name: 'ready-for-human' }] }),
+        issue(3, { labels: [{ name: 'needs-info' }] })
+      ]
+      const o = await svc(tickets, []).overview()
+      expect(o['G-Eskayo/marvin'].needsYou).toBe(3)
+    })
+
+    it('test 2: ignores tickets with hold or pinned labels', async () => {
+      const tickets = [
+        issue(1, { labels: [{ name: 'ready-for-human' }] }),
+        issue(2, { labels: [{ name: 'ready-for-human' }, { name: 'hold' }] }),
+        issue(3, { labels: [{ name: 'ready-for-human' }, { name: 'pinned' }] })
+      ]
+      const o = await svc(tickets, []).overview()
+      expect(o['G-Eskayo/marvin'].needsYou).toBe(1)
+    })
+
+    it('test 3: counts review (via PR closing reference) and blocked separately from needsYou', async () => {
+      const tickets = [
+        issue(1, { labels: [{ name: 'ready-for-human' }] }),
+        issue(2, { labels: [{ name: 'blocked' }] })
+      ]
+      const prs = [pr(7, 'Closes #1')]
+      const o = await svc(tickets, prs).overview()
+      expect(o['G-Eskayo/marvin']).toMatchObject({ review: 1, needsYou: 1, blocked: 1 })
+    })
+
+    it('test 4: groups counts by repo correctly', async () => {
+      const marvinTickets = [
+        issue(1, { labels: [{ name: 'ready-for-human' }] })
+      ]
+      const financeTickets = [
+        { number: 10, title: 'T10', state: 'OPEN', labels: [{ name: 'ready-for-human' }], body: '', url: 'u10', createdAt: '2026-10-01T00:00:00Z', repo: 'G-Eskayo/finance-os' }
+      ]
+      const s = createRelationsService({
+        getRepos: () => ['G-Eskayo/marvin', 'G-Eskayo/finance-os'],
+        getBoardData: async (repo) => {
+          if (repo === 'G-Eskayo/marvin') return { issues: marvinTickets, prs: [] }
+          if (repo === 'G-Eskayo/finance-os') return { issues: financeTickets, prs: [] }
+          return { issues: [], prs: [] }
+        },
+        getDocs: async () => [],
+        getProjects: () => [
+          { id: 'marvin', repo: 'G-Eskayo/marvin' },
+          { id: 'finance-os', repo: 'G-Eskayo/finance-os' }
+        ]
+      })
+      const o = await s.overview()
+      expect(o['G-Eskayo/marvin'].needsYou).toBe(1)
+      expect(o['G-Eskayo/finance-os'].needsYou).toBe(1)
+    })
+
+    it('test 5: includes needs-info tickets in needsYou count', async () => {
+      const tickets = [
+        issue(1, { labels: [{ name: 'ready-for-human' }] }),
+        issue(2, { labels: [{ name: 'needs-info' }] })
+      ]
+      const o = await svc(tickets, []).overview()
+      expect(o['G-Eskayo/marvin'].needsYou).toBe(2)
+    })
+  })
 })
 
 describe('parity does not raise an alarm on a stale snapshot', () => {
@@ -133,6 +199,52 @@ describe('parity does not raise an alarm on a stale snapshot', () => {
     const svc = createRelationsService({ getRepos: () => ['G-Eskayo/marvin'], getBoardData: async () => ({ issues: [], prs: [] }), getDocs: async () => [], getProjects: () => projects, recheck })
     await svc.parity()
     expect(recheck).not.toHaveBeenCalled()
+  })
+
+  describe('needsYou() regression guards for projectId', () => {
+    const pr = (n, body, over = {}) => ({ number: n, title: `PR ${n}`, url: `p${n}`, state: 'OPEN', isDraft: false, body, files: [], ...over })
+    const svc = (issues, prs) => make({ getBoardData: async () => ({ issues, prs }) })
+
+    it('test 6: needsYou() includes projectId from rankNeedsYou output', async () => {
+      const tickets = [
+        issue(1, { labels: [{ name: 'ready-for-human' }] }),
+        issue(2, { labels: [{ name: 'needs-info' }] })
+      ]
+      const rows = await svc(tickets, []).needsYou()
+      expect(rows.every((r) => r.projectId !== undefined && typeof r.projectId === 'string')).toBe(true)
+    })
+
+    it('test 7: needsYou() uses project: label when present', async () => {
+      const tickets = [
+        issue(1, { labels: [{ name: 'ready-for-human' }, { name: 'project:custom' }] })
+      ]
+      const rows = await svc(tickets, []).needsYou()
+      expect(rows[0].projectId).toBe('custom')
+    })
+
+    it('test 8: needsYou() derives projectId from repo when no project: label', async () => {
+      const marvinTickets = [
+        issue(1, { labels: [{ name: 'ready-for-human' }] })
+      ]
+      const s = createRelationsService({
+        getRepos: () => ['G-Eskayo/marvin'],
+        getBoardData: async () => ({ issues: marvinTickets, prs: [] }),
+        getDocs: async () => [],
+        getProjects: () => [{ id: 'marvin', repo: 'G-Eskayo/marvin' }]
+      })
+      const rows = await s.needsYou()
+      expect(rows[0].projectId).toBe('marvin')
+    })
+
+    it('test 9: overview() counts needsYou correctly per repo regardless of projectId', async () => {
+      const tickets = [
+        issue(1, { labels: [{ name: 'ready-for-human' }] }),
+        issue(2, { labels: [{ name: 'ready-for-human' }, { name: 'project:other' }] }),
+        issue(3, { labels: [{ name: 'needs-info' }] })
+      ]
+      const o = await svc(tickets, []).overview()
+      expect(o['G-Eskayo/marvin'].needsYou).toBe(3)
+    })
   })
 })
 

@@ -383,4 +383,48 @@ describe('rankNeedsYou', () => {
       expect(result.indexOf(row1)).toBeLessThan(result.indexOf(row7))
     }
   })
+
+  it('test 1: includes projectId derived from repo when no project: label', () => {
+    const tickets = [
+      { repo: 'G-Eskayo/marvin', ...issue(1, { labels: [label('ready-for-human')], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' }) }
+    ]
+    const result = rankNeedsYou(tickets)
+    expect(result[0].projectId).toBe('marvin')
+  })
+
+  it('test 2: extracts projectId from project: label', () => {
+    const tickets = [
+      { repo: 'G-Eskayo/clarity-captions', ...issue(1, { labels: [label('ready-for-human'), label('project:custom-id')], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' }) }
+    ]
+    const result = rankNeedsYou(tickets)
+    expect(result[0].projectId).toBe('custom-id')
+  })
+
+  it('test 3: uses project: label over derived repo projectId', () => {
+    const tickets = [
+      { repo: 'G-Eskayo/finance-os', ...issue(1, { labels: [label('ready-for-human'), label('project:marvin')], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' }) }
+    ]
+    const result = rankNeedsYou(tickets)
+    expect(result[0].projectId).toBe('marvin')
+  })
+
+  it('test 4: handles multiple repos with different projectIds', () => {
+    const tickets = [
+      { repo: 'G-Eskayo/marvin', ...issue(1, { labels: [label('ready-for-human')], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' }) },
+      { repo: 'G-Eskayo/clarity-captions', ...issue(2, { labels: [label('ready-for-human'), label('project:captions')], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' }) }
+    ]
+    const result = rankNeedsYou(tickets)
+    expect(result[0].projectId).toBe('marvin')
+    expect(result[1].projectId).toBe('captions')
+  })
+
+  it('test 5: projectId is present in all output rows', () => {
+    const tickets = [
+      { repo: 'G-Eskayo/marvin', ...issue(1, { labels: [label('ready-for-human')], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' }) },
+      { repo: 'G-Eskayo/finance-os', ...issue(2, { labels: [label('needs-info')] }) },
+      { repo: 'G-Eskayo/clarity-captions', ...issue(3, { labels: [label('ready-for-human'), label('project:another')], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' }) }
+    ]
+    const result = rankNeedsYou(tickets)
+    expect(result.every((r) => typeof r.projectId === 'string' && r.projectId.length > 0)).toBe(true)
+  })
 })
