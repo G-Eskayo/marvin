@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { createRelationsService } from '../electron/main/relations_service.js'
+import { createRelationsService, resolveProjectRepo } from '../electron/main/relations_service.js'
 
 const issue = (n, over = {}) => ({ number: n, title: `T${n}`, state: 'OPEN', labels: [], body: '', url: `u${n}`, createdAt: '2026-10-01T00:00:00Z', ...over })
 const projects = [{ id: 'marvin', repo: 'G-Eskayo/marvin' }]
@@ -21,6 +21,24 @@ describe('relations service', () => {
     const r = await make().forTicket('G-Eskayo/marvin', 1)
     expect(r.docs.map((d) => d.path)).toEqual(['docs/adr/0033-health.md'])
     expect(r.tickets[0]).toMatchObject({ number: 2, relation: 'blocked by', column: 'ready' })
+  })
+
+  it('resolves project:<id> labels in needsYou rows', async () => {
+    const otherProject = { id: 'other', repo: 'G-Eskayo/other' }
+    const s = make({ getProjects: () => [...projects, otherProject] })
+    const rows = await s.needsYou()
+    expect(rows).toEqual([])
+
+    const s2 = make({
+      getProjects: () => [...projects, otherProject],
+      getBoardData: async () => ({
+        issues: [issue(1, { labels: [{ name: 'ready-for-human' }, { name: 'project:other' }] })],
+        prs: []
+      })
+    })
+    const rows2 = await s2.needsYou()
+    expect(rows2).toHaveLength(1)
+    expect(rows2[0]).toMatchObject({ projectRepo: 'G-Eskayo/other', repo: 'G-Eskayo/marvin', number: 1 })
   })
 
   it('answers for a doc with the tickets that mention it', async () => {
@@ -92,6 +110,49 @@ describe('review parity (MR Review <-> board)', () => {
     ).overview()
     expect(o['G-Eskayo/marvin']).toMatchObject({ review: 1, needsYou: 1, blocked: 1 })
   })
+
+  it('counts needs-info tickets in needsYou (filed under backlog)', async () => {
+    const o = await svc(
+      [issue(2), issue(3, { labels: [{ name: 'needs-info' }] })],
+      []
+    ).overview()
+    expect(o['G-Eskayo/marvin']).toMatchObject({ needsYou: 1 })
+  })
+
+  it('counts a project:<id> ticket under its resolved project, not its repo', async () => {
+    const otherProject = { id: 'other', repo: 'G-Eskayo/other' }
+    const s = make({
+      getProjects: () => [...projects, otherProject],
+      getBoardData: async () => ({
+        issues: [issue(2, { labels: [{ name: 'ready-for-human' }, { name: 'project:other' }] })],
+        prs: []
+      })
+    })
+    const o = await s.overview()
+    // The ticket is filed in G-Eskayo/marvin but labels it to G-Eskayo/other
+    expect(o['G-Eskayo/marvin']?.needsYou || 0).toBe(0) // not counted under original repo
+    expect(o['G-Eskayo/other']).toMatchObject({ needsYou: 1 }) // counted under resolved repo
+  })
+
+  it('overview count matches needsYou list length', async () => {
+    const otherProject = { id: 'other', repo: 'G-Eskayo/other' }
+    const s = make({
+      getProjects: () => [...projects, otherProject],
+      getBoardData: async () => ({
+        issues: [
+          issue(1, { labels: [{ name: 'ready-for-human' }] }),
+          issue(2, { labels: [{ name: 'ready-for-human' }, { name: 'project:other' }] }),
+          issue(3, { labels: [{ name: 'needs-info' }] })
+        ],
+        prs: []
+      })
+    })
+    const overview = await s.overview()
+    const rows = await s.needsYou()
+    expect(rows).toHaveLength(3)
+    const totalCount = Object.values(overview).reduce((sum, o) => sum + o.needsYou, 0)
+    expect(totalCount).toBe(3)
+  })
 })
 
 describe('parity does not raise an alarm on a stale snapshot', () => {
@@ -133,6 +194,78 @@ describe('parity does not raise an alarm on a stale snapshot', () => {
     const svc = createRelationsService({ getRepos: () => ['G-Eskayo/marvin'], getBoardData: async () => ({ issues: [], prs: [] }), getDocs: async () => [], getProjects: () => projects, recheck })
     await svc.parity()
     expect(recheck).not.toHaveBeenCalled()
+  })
+})
+
+describe('resolveProjectRepo helper', () => {
+  it('returns fallbackRepo when ticket is undefined', () => {
+    const fallback = 'G-Eskayo/marvin'
+    expect(resolveProjectRepo(undefined, {}, fallback)).toBe(fallback)
+  })
+
+  it('returns fallbackRepo when ticket is null', () => {
+    const fallback = 'G-Eskayo/marvin'
+    expect(resolveProjectRepo(null, {}, fallback)).toBe(fallback)
+  })
+
+  it('returns fallbackRepo when ticket has no labels', () => {
+    const fallback = 'G-Eskayo/marvin'
+    const ticket = { repo: 'G-Eskayo/other', number: 1 }
+    expect(resolveProjectRepo(ticket, {}, fallback)).toBe(fallback)
+  })
+
+  it('returns ticket.repo when no project:<id> label found', () => {
+    const ticket = { repo: 'G-Eskayo/marvin', labels: [{ name: 'ready-for-human' }] }
+    expect(resolveProjectRepo(ticket, {}, 'G-Eskayo/fallback')).toBe('G-Eskayo/marvin')
+  })
+
+  it('returns resolved project repo when project:<id> label exists', () => {
+    const ticket = { repo: 'G-Eskayo/marvin', labels: [{ name: 'project:other' }] }
+    const projectById = { other: { id: 'other', repo: 'G-Eskayo/other' } }
+    expect(resolveProjectRepo(ticket, projectById, 'G-Eskayo/fallback')).toBe('G-Eskayo/other')
+  })
+
+  it('ignores unknown project:<id> labels and falls back to ticket.repo', () => {
+    const ticket = { repo: 'G-Eskayo/marvin', labels: [{ name: 'project:unknown' }] }
+    expect(resolveProjectRepo(ticket, {}, 'G-Eskayo/fallback')).toBe('G-Eskayo/marvin')
+  })
+})
+
+describe('needsYou excludes hold/pinned tickets', () => {
+  const issue = (n, over = {}) => ({ number: n, title: `T${n}`, state: 'OPEN', labels: [], body: '', url: `u${n}`, createdAt: '2026-10-01T00:00:00Z', ...over })
+
+  it('filters out hold-labeled tickets from needsYou list', async () => {
+    const s = createRelationsService({
+      getRepos: () => ['G-Eskayo/marvin'],
+      getBoardData: async () => ({
+        issues: [
+          issue(1, { labels: [{ name: 'ready-for-human' }] }),
+          issue(2, { labels: [{ name: 'ready-for-human' }, { name: 'hold' }] })
+        ],
+        prs: []
+      }),
+      getDocs: async () => [],
+      getProjects: () => [{ id: 'marvin', repo: 'G-Eskayo/marvin' }]
+    })
+    const rows = await s.needsYou()
+    expect(rows.map((r) => r.number)).toEqual([1])
+  })
+
+  it('filters out pinned-labeled tickets from needsYou list', async () => {
+    const s = createRelationsService({
+      getRepos: () => ['G-Eskayo/marvin'],
+      getBoardData: async () => ({
+        issues: [
+          issue(1, { labels: [{ name: 'ready-for-human' }] }),
+          issue(2, { labels: [{ name: 'ready-for-human' }, { name: 'pinned' }] })
+        ],
+        prs: []
+      }),
+      getDocs: async () => [],
+      getProjects: () => [{ id: 'marvin', repo: 'G-Eskayo/marvin' }]
+    })
+    const rows = await s.needsYou()
+    expect(rows.map((r) => r.number)).toEqual([1])
   })
 })
 

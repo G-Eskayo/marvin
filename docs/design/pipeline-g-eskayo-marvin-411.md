@@ -1,0 +1,64 @@
+## North-star fit
+
+**Reuses before adding anything.** The ranked backend (`needs_you.js`'s `rankNeedsYou`/`blocksGraph`/`transitiveUnblocks`), `relations_service.needsYou()`/`overview()`, IPC `activity:needsYou`, preload `activity.needsYou()`, `saved_state.js`'s `readSaved`/`writeSaved`/`ageText`, and the `(storage, ...)` injection shape `needs_you_view.js` already uses for `readSort`/`writeSort` are untouched. The worktree already contains a near-complete implementation (`NeedsYou.jsx`, `needs_you_view.js`, wiring in `DashboardHome.jsx`) from the attempt that was denied — this plan is corrective: fix the two must-fix defects, fix the remaining notes the review left, and replace the stub test file with real coverage. No new files, no new backend logic, no new IPC.
+
+**Simplest sufficient approach.** Both must-fixes are one-line-scope changes with a clear cause: `NeedsYouRow` conflates "repo to show" with "repo to navigate to," and `resolveProjectRepo` conflates "ticket not found" with "no project label." Separating `projectRepo` (display/grouping) from `repo` (navigation, already present on every row from `needs_you.js`) removes the conflation without new state or props.
+
+**Token/resource cost.** Zero new runtime cost — `ticketMap` lookups and `boards` resolution are unchanged, still O(n), still zero extra `gh` calls. Spends tokens now to stop three further round-trips through the same ticket (this is its third documented failed attempt at the same two defects' root cause).
+
+**Leaves the user more capable.** Unchanged from the ticket's framing: this turns an invisible "N needs you" count into an answerable list, one tap from the real ticket. The must-fixes matter precisely because a wrong tap target (opening `G-Eskayo/other#1` instead of the ticket actually filed) makes the feature actively misleading rather than merely incomplete — worse than not shipping it.
+
+**Correction to the current code's implicit assumption:** `resolveProjectRepo(ticket, projectById)` returns `ticket?.repo || null` when `ticket` is `undefined` — i.e. it silently assumes every row returned by `rankNeedsYou(b.tickets)` has a matching entry in a `ticketMap` built from the same `b.tickets`. That assumption holds under every reachable code path today (rows and ticketMap both key off `t.repo`/`t.number` from the identical array in the same `build()`), which is exactly why no existing test catches it going `null`. The fix doesn't depend on finding a reachable path that breaks the assumption — it removes the assumption: pass the row's own `repo` as an explicit fallback so the function is correct even if a future refactor (e.g. two build sources merged, or `ticketMap` built from a filtered subset) breaks the current one-build invariant.
+
+## Decisions for the owner
+
+```markdown
+## Decisions
+<!-- marvin:decisions -->
+### unblocks-wording: How to show "what it unblocks" on a row?
+- [ ] A: Just the count — "unblocks 5"
+- [ ] B: Count plus up to 3 ticket refs, same as the backend already returns — "unblocks 5: #45, #46, #47 +2 more"
+```
+No other open question: rows-per-page (5), empty state ("Nothing needs you"), priority colours (P0 red / P1 orange / P2-P3-none grey, one combined pill with the kind as its text), sort control with persisted choice, and saved-state-first loading are all settled in Gil's 2026-10-13 answers and already reflected in the code as written.
+
+## Tests to write first
+
+**From the ticket's "Done when" + Gil's answers (no separate "How we'll try to break it" section exists on this ticket — these are its equivalent):**
+1. Pagination edges: 0 rows (pager hidden), exactly 5 (one page, no pager), 6 (two pages, page 2 has 1 row), 11 (three pages, page 3 has 1 row) — `needs_you_view.test.js` (`paginate`, already covered) + `NeedsYou.test.jsx` (pager hidden/shown in the rendered DOM).
+2. The saved list renders before the IPC refresh resolves — mount with a saved value in storage and a never-resolved `window.api.activity.needsYou` promise; assert saved rows are already in the DOM — `NeedsYou.test.jsx`.
+3. A refresh failure keeps the saved list on screen *and* shows the error, on both first mount (no saved state → plain empty/error state, never a throw) and the periodic 5-minute re-fetch (old rows must not vanish) — `NeedsYou.test.jsx`.
+4. A refresh that resolves to `[]` writes `[]` and a fresh `updatedAt`; a subsequent mount reading that saved state shows "Nothing needs you" with the *new* timestamp, not a stale one — `NeedsYou.test.jsx`.
+5. The sort choice persists between mounts (pick "Priority", unmount, remount a fresh instance reading the same injected storage object) — `NeedsYou.test.jsx`, reusing the `(storage, ...)` shape `needs_you_view.test.js` already exercises for `readSort`/`writeSort`.
+6. Tickets across several repos all appear, each row showing its own resolved project — `NeedsYou.test.jsx`.
+7. `hold`/`pinned` tickets are skipped end-to-end (`rankNeedsYou` already covers this in `needs_you.test.js`); add one assertion in `relations_service.test.js` that `needsYou()`'s output excludes them.
+8. **Must-fix #1 regression test:** a ticket filed in `G-Eskayo/marvin` labelled `project:other` shows `projectRepo: 'G-Eskayo/other'` for display but `repo: 'G-Eskayo/marvin'` unchanged, and the rendered row's click handler is called with `('G-Eskayo/marvin', <number>)` — not `('G-Eskayo/other', <number>)` — in `NeedsYou.test.jsx` on the actual `NeedsYouRow`/`onOpenTicket` wiring, not just on the data shape.
+9. **Must-fix #2 regression test:** `resolveProjectRepo(undefined, projectById, 'G-Eskayo/marvin')` returns `'G-Eskayo/marvin'`, not `null` — direct unit test on the exported helper (new export) in `relations_service.test.js`. Since no reachable path in `overview()`/`needsYou()` currently produces an undefined `ticket` (rows and `ticketMap` key off the same `b.tickets`), this is tested at the helper level rather than invented as a false integration scenario.
+10. Counts equal list length: for a fixture mixing same-project and cross-project (`project:<id>`) tickets across `ready-for-human` and `needs-info`, `sum(overview()[*].needsYou)` equals `needsYou()`'s total row count, and each per-project count equals that project's slice of the list — already present in `relations_service.test.js` ("overview count matches needsYou list length"); keep, no change needed.
+
+**Misuse the ticket didn't list, added per north-star testing rule:**
+11. Bad/malformed input: a row with `null` body, missing `labels`, or a priority label that doesn't match `p[0-3]` renders without throwing — `NeedsYou.test.jsx`.
+12. A saved/cached row missing `unblocks` entirely (older schema) renders without throwing — pins the `row.unblocks?.count` fix (see Task 2).
+13. A saved/cached row with a non-`pN` `priority` value doesn't produce `NaN` comparisons; falls back to the lowest-priority bucket — already covered in `needs_you_view.test.js`; strengthen the final assertion (see Task 5) so it actually checks the sort order claim, not just that `ageDays` inputs were never `NaN`.
+14. Huge input: 500+ qualifying rows — pagination still renders only 5 DOM rows per page — `NeedsYou.test.jsx`.
+15. Repeats: two renders of the same refresh result don't duplicate rows or double-write storage in a way that corrupts `ageText` — `NeedsYou.test.jsx`.
+16. Concurrency: two sort clicks or two page-forward clicks fired before a re-render settles don't desync the persisted sort from the displayed sort, or skip a page — `NeedsYou.test.jsx`.
+17. Wrong/stale permissions analogue: `storage()` throwing (private window) — sort, saved-state, and pagination all degrade to defaults without crashing — already covered for `readSort`/`writeSort` in `needs_you_view.test.js`; add the component-level case (storage throws inside `NeedsYou.jsx`'s own `storage()` guard) to `NeedsYou.test.jsx`.
+18. A person's mistake: double-clicking a row fires `onOpenTicket` with the correct, non-stale `(repo, number)` pair — never a wrong pair from a stale closure — `NeedsYou.test.jsx`.
+19. Real collaborator, not a mock: the `resolveProjectRepo` helper and the `overview()`/`needsYou()` fixes are tested against `createRelationsService` itself, as `relations_service.test.js` already does — no test mocks `rankNeedsYou` or `getProjects`.
+20. An archived/removed project: a `project:<id>` row whose resolved repo isn't in the `boards` list passed to `NeedsYou` falls back to showing the raw repo string instead of throwing or showing `undefined` — already implemented (`boards?.find(...)?.name || row.projectRepo`); add the regression test in `NeedsYou.test.jsx`.
+21. Verify-fails-without-a-test-changing guard: every line touched in the Task List below is pinned to at least one test above or already existing, so reverting any one production line fails exactly one test.
+
+## Task List
+
+1. **`relations_service.js`: fix must-fix #2.** Export `resolveProjectRepo(ticket, projectById, fallbackRepo)`; when `ticket` is falsy, return `fallbackRepo` instead of `ticket?.repo || null`. Update both call sites — `overview()`'s loop (`resolveProjectRepo(ticket, projectById, row.repo)`) and `needsYou()`'s `.map()` (same) — so the resolved key is never `"null"`/`null`. Test: task 9.
+2. **`NeedsYou.jsx`: fix must-fix #1.** Change the row click handler from `onOpenTicket(row.projectRepo, row.number)` to `onOpenTicket(row.repo, row.number)`. `row.projectRepo` stays used only for the display label (`boardName` lookup). Test: task 8.
+3. **`NeedsYou.jsx`: guard `row.unblocks.count`** as `row.unblocks?.count` in both the pill-render condition and the pill text, so a cached row from an older saved-state schema (no `unblocks` field) renders instead of throwing. Test: task 12.
+4. **`NeedsYou.jsx`: gate the empty state on load completion.** Change `if (rows.length === 0 && !error)` to also require `!loading && hasLoadedOnce` (track a `hasLoadedOnce` flag set `true` in the `load()` `finally`, separate from `loading`, so periodic refresh re-loading doesn't flip the empty state off mid-cycle) — so first mount with no saved state and a slow IPC call never shows "Nothing needs you" before the real answer is in. Test: covered by test 2 (saved-list-first) plus a new first-mount-no-saved-state-slow-IPC case.
+5. **`NeedsYou.jsx`: collapse the two near-identical branches in `load()`'s try block** (`data.length > 0` vs the `else`) into one — both branches do the same `writeSaved`/`setRows`/`setUpdatedAt` with the same `data`/`at`; the branching is redundant. Not a test-visible behaviour change, so no new test is required beyond the existing refresh tests continuing to pass.
+6. **`needs_you_view.js`/`needs_you_view.test.js`: strengthen the malformed-priority test's final assertion** (test 13 above) to assert the actual claim — the output order places malformed/`null` priorities in the lowest bucket (already asserted by `sorted.map(r => r.number)).toEqual(...)`) — and drop the vacuous `sorted.every((r) => !isNaN(r.ageDays))` line, which checks input, not the sort's behaviour under malformed priority.
+7. **Write the real `NeedsYou.test.jsx` suite**, replacing the current one-assertion stub, covering tests 1–6, 8, 11, 12, 14–18, 20 above. Use `vi.useFakeTimers()` for the 5-minute interval, resolved/rejected mocks for `window.api.activity.needsYou`, an injected fake `storage` object (or a real in-memory `localStorage` shim) consistent with `needs_you_view.test.js`'s pattern, and clean `unmount()` per test so no dangling timers leak between tests (matching `ActivityBanner.jsx`'s existing interval-cleanup test pattern).
+8. **Add the two `relations_service.test.js` tests** for tasks 7 and 9 above, alongside the existing `project:<id>` tests (tasks 8 and 10 are already present and passing — no change needed there).
+9. **Run the full dashboard vitest suite** and confirm a clean exit (no dangling timers/promises, no open handles) before considering this done.
+10. **Screenshots** (hard rule for any look change): list populated (several repos, a `project:<id>` row, a P0 and a P1 row visible), list empty ("Nothing needs you"), and a ticket opened from a row via its tap target — attached to the PR, taken against the real running dashboard.
+11. **Design doc hygiene:** this doc replaces `docs/design/pipeline-g-eskayo-marvin-411.md` in place (fixing its leaked agent preamble and the `writeRource` typo) and absorbs `docs/design/pipeline-g-eskayo-marvin-411-tasks.md`'s content; delete the `-tasks.md` file once this doc is committed so there is exactly one copy.
+12. **PR carries the Decisions section above**, unanswered, so Gil picks `unblocks-wording` before merge.

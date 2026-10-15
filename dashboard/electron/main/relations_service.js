@@ -4,6 +4,18 @@ import { rankNeedsYou } from './needs_you.js'
 
 const RECHECK_MS = 5 * 60_000
 
+// Resolve a ticket's effective project repo: check for project:<id> label, fall back to ticket.repo
+export function resolveProjectRepo(ticket, projectById, fallbackRepo) {
+  if (!ticket || !ticket.labels) return fallbackRepo
+  for (const label of ticket.labels) {
+    const name = label.name || label
+    if (typeof name !== 'string') continue
+    const m = name.match(/^project:(.+)$/)
+    if (m && projectById[m[1]]) return projectById[m[1]].repo
+  }
+  return ticket.repo
+}
+
 // Feeds relations.js real data (every board's tickets and PRs, every project's docs) and keeps the
 // result for a minute; invalidated by the same triggers that refresh the boards and docs.
 export function createRelationsService({ getRepos, getBoardData, getDocs, getProjects, getStages = () => ({}), getLive = () => new Set(), recheck = () => {}, ttlMs = 60_000, now = Date.now }) {
@@ -102,12 +114,22 @@ export function createRelationsService({ getRepos, getBoardData, getDocs, getPro
     // What is waiting on you, per project, from the same data the boards show.
     overview: async () => {
       const b = await ready()
+      const projects = getProjects()
+      const projectById = Object.fromEntries(projects.map((p) => [p.id, p]))
+      const ticketMap = Object.fromEntries(b.tickets.map((t) => [`${t.repo}#${t.number}`, t]))
       const out = {}
       for (const c of b.cards.values()) {
         const o = (out[c.repo] ||= { review: 0, needsYou: 0, blocked: 0 })
         if (c.column === 'review') o.review += 1
-        if (c.column === 'ready' && c.owner === 'human') o.needsYou += 1
         if (c.column === 'blocked') o.blocked += 1
+      }
+      // needsYou count derived from rankNeedsYou so it always equals the list it describes
+      const rows = rankNeedsYou(b.tickets)
+      for (const row of rows) {
+        const ticket = ticketMap[`${row.repo}#${row.number}`]
+        const resolvedRepo = resolveProjectRepo(ticket, projectById, row.repo)
+        const o = (out[resolvedRepo] ||= { review: 0, needsYou: 0, blocked: 0 })
+        o.needsYou += 1
       }
       return out
     },
@@ -124,7 +146,15 @@ export function createRelationsService({ getRepos, getBoardData, getDocs, getPro
     // What is waiting on you, ranked by impact: unblocks descending, priority ascending, age descending
     needsYou: async () => {
       const b = await ready()
-      return rankNeedsYou(b.tickets)
+      const rows = rankNeedsYou(b.tickets)
+      const projects = getProjects()
+      const projectById = Object.fromEntries(projects.map((p) => [p.id, p]))
+      const ticketMap = Object.fromEntries(b.tickets.map((t) => [`${t.repo}#${t.number}`, t]))
+      return rows.map((row) => {
+        const ticket = ticketMap[`${row.repo}#${row.number}`]
+        const projectRepo = resolveProjectRepo(ticket, projectById, row.repo)
+        return { ...row, projectRepo }
+      })
     }
   }
 }
