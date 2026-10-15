@@ -152,6 +152,14 @@ def _isolate_ticket_stages_everywhere(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_metrics_registry(tmp_path_factory, monkeypatch):
+    # Metrics are recorded for real under ~/.agents/bench/metrics/; tests must never write the real metrics.
+    # _load_snapshots() backs up corrupted files to .corrupted-* and this must not litter the real directory.
+    import metrics_registry
+    monkeypatch.setattr(metrics_registry, "METRICS_DIR", tmp_path_factory.mktemp("metrics"))
+
+
+@pytest.fixture(autouse=True)
 def _no_real_auto_merge_shadow(monkeypatch):
     # The shadow step reads real PRs and writes the real shadow state; tests opt in by replacing it.
     import ticket_pipeline

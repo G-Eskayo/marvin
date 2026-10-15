@@ -59,7 +59,21 @@ def _load_snapshots(subsystem: str, machine: str | None = None) -> list[dict]:
     path = _snapshot_path(subsystem, machine)
     if not path.exists():
         return []
-    return json.loads(path.read_text())
+    try:
+        data = json.loads(path.read_text())
+        if not isinstance(data, list):
+            # Root is not a list — file is corrupted (should be a list of snapshots)
+            raise ValueError("Expected list, got " + type(data).__name__)
+        return data
+    except (json.JSONDecodeError, OSError, ValueError) as e:
+        # File corrupted (concurrent writes, truncation, etc), unreadable, or wrong format — preserve and treat as empty history.
+        timestamp = datetime.now(timezone.utc).isoformat()
+        backup = path.parent / f"{path.name}.corrupted-{timestamp}"
+        try:
+            path.rename(backup)
+        except OSError:
+            pass
+        return []
 
 
 def record(subsystem: str, metrics: dict[str, dict], machine: str | None = None) -> None:
@@ -73,7 +87,10 @@ def record(subsystem: str, metrics: dict[str, dict], machine: str | None = None)
     snapshots = _load_snapshots(subsystem, machine)
     timestamp = datetime.now(timezone.utc).isoformat()
     snapshots.append({"timestamp": timestamp, "metrics": metrics})
-    _snapshot_path(subsystem, machine).write_text(json.dumps(snapshots, indent=2))
+    snapshot_path = _snapshot_path(subsystem, machine)
+    tmp = snapshot_path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(snapshots, indent=2))
+    tmp.replace(snapshot_path)
 
     narrative_lines = [f"## {timestamp} — {subsystem}\n"]
     for name, m in metrics.items():
@@ -118,9 +135,13 @@ def all_latest(subsystem: str) -> dict[str, dict[str, dict]]:
     # Check for legacy bare file: subsystem.json
     legacy_path = METRICS_DIR / f"{subsystem}.json"
     if legacy_path.exists():
-        snapshots = json.loads(legacy_path.read_text())
-        if snapshots:
-            result["legacy"] = snapshots[-1]["metrics"]
+        try:
+            snapshots = json.loads(legacy_path.read_text())
+            if snapshots:
+                result["legacy"] = snapshots[-1]["metrics"]
+        except (json.JSONDecodeError, OSError):
+            # Legacy file corrupted — skip it
+            pass
 
     return result
 

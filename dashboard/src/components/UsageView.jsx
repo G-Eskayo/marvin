@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { mergeTokenRows, dailySeries, sumRows, projectTable, ticketTable } from '../lib/usage_view.js'
+import { mergeTokenRows, dailySeries, sumRows, projectTable, ticketTable, autonomousSeries, weeklySeries, jobTable } from '../lib/usage_view.js'
 
 const KIND_STYLE = { headless: ['#3b82f6', 'Pipeline (headless)'], interactive: ['#10b981', 'Interactive'], subagent: ['#a78bfa', 'Subagents'] }
 const fmt = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(0)}k` : String(n))
@@ -63,6 +63,9 @@ export default function UsageView({ machines, which }) {
   const d30 = sumRows(rows, { days: 30, end })
   const headlessShare = d30.output ? d30.byKind.headless / d30.output : 0
   const maxProject = Math.max(1, ...projects.map((p) => p.output))
+  const autoSeries = useMemo(() => autonomousSeries(rows, { days: 30, end }), [rows, end])
+  const weeklySeries_data = useMemo(() => weeklySeries(rows, { weeks: 4, end }), [rows, end])
+  const jobs = useMemo(() => jobTable(machines, which), [machines, which])
 
   return (
     <div className="max-w-5xl">
@@ -94,6 +97,35 @@ export default function UsageView({ machines, which }) {
         </div>
       </div>
 
+      <h3 className="mt-5 text-sm font-medium text-neutral-200">Autonomous vs interactive, last 30 days</h3>
+      <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <Stat label="Autonomous share (today)" value={autoSeries.length > 0 ? `${(autoSeries[autoSeries.length - 1].share * 100).toFixed(0)}%` : '—'} hint="of today's output tokens" />
+        <Stat label="7-day avg" value={autoSeries.slice(-7).length > 0 ? `${(autoSeries.slice(-7).reduce((a, b) => a + b.share, 0) / 7 * 100).toFixed(0)}%` : '—'} hint="rolling average" />
+        <Stat label="30-day avg" value={autoSeries.length > 0 ? `${(autoSeries.reduce((a, b) => a + b.share, 0) / autoSeries.length * 100).toFixed(0)}%` : '—'} hint="full window" />
+      </div>
+
+      <h3 className="mt-5 text-sm font-medium text-neutral-200">Weekly breakdown</h3>
+      <div className="mt-2 rounded border border-neutral-800 bg-neutral-900 p-3">
+        <svg viewBox="0 0 760 150" className="w-full" role="img" aria-label="Weekly autonomous share with reference lines">
+          {weeklySeries_data.length > 0 && weeklySeries_data.map((w, i) => {
+            const x = (i / (weeklySeries_data.length - 1 || 1)) * 700 + 30
+            const y = 120 - w.share * 100
+            return (
+              <g key={w.week}>
+                <circle cx={x} cy={y} r={2} fill="#10b981" />
+                <text x={x} y={135} fontSize="9" textAnchor="middle" fill="#737373">{w.week}</text>
+              </g>
+            )
+          })}
+          {[0.3, 0.4, 0.5].map((ref) => (
+            <line key={ref} x1="30" x2="730" y1={120 - ref * 100} y2={120 - ref * 100} stroke="#3f3f46" strokeDasharray="4" strokeWidth="1" />
+          ))}
+          <text x="740" y={120 - 0.3 * 100 + 3} fontSize="8" fill="#737373">30%</text>
+          <text x="740" y={120 - 0.4 * 100 + 3} fontSize="8" fill="#737373">40%</text>
+          <text x="740" y={120 - 0.5 * 100 + 3} fontSize="8" fill="#737373">50%</text>
+        </svg>
+      </div>
+
       <Table title="Where it went: projects" hint="Output tokens by the project the session worked in (a directory inside a project counts for the project).">
         <table className="w-full text-sm">
           <thead><tr className="text-left text-xs text-neutral-500"><th className="pb-1 font-normal">Project</th><th className="pb-1 text-right font-normal">Output</th><th className="pb-1 pl-4 font-normal">Share</th><th className="pb-1 text-right font-normal">Responses</th></tr></thead>
@@ -120,6 +152,24 @@ export default function UsageView({ machines, which }) {
                   <td className="py-1 pr-2">{t.project} <span className="text-neutral-500">#{t.ticket}</span></td>
                   <td className="py-1 text-right">{fmt(t.output)}</td>
                   <td className="py-1 text-right text-neutral-500">{t.messages.toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Table>
+
+      <Table title="Top autonomous spenders" hint="Autonomous jobs (headless ticket runs) ranked by output tokens in the 30-day window.">
+        {jobs.length === 0 ? <p className="text-xs text-neutral-600">No autonomous job runs in this window.</p> : (
+          <table className="w-full text-sm">
+            <thead><tr className="text-left text-xs text-neutral-500"><th className="pb-1 font-normal">Job</th><th className="pb-1 text-right font-normal">Output</th><th className="pb-1 text-right font-normal">Cost</th><th className="pb-1 text-right font-normal">Runs</th></tr></thead>
+            <tbody className="font-mono text-neutral-300">
+              {jobs.slice(0, 15).map((j) => (
+                <tr key={`${j.job}-${j.kind}`} className="border-t border-neutral-900">
+                  <td className="py-1 pr-2">{j.job} <span className="text-neutral-500">({j.kind})</span></td>
+                  <td className="py-1 text-right">{fmt(j.output_tokens)}</td>
+                  <td className="py-1 text-right">${j.cost_usd?.toFixed(2) ?? '—'}</td>
+                  <td className="py-1 text-right text-neutral-500">{j.runs.toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>

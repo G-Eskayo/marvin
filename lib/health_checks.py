@@ -27,11 +27,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import code_sync  # noqa: E402
 import cron_health as ch  # noqa: E402
 import machine_profile  # noqa: E402
+import session_usage  # noqa: E402
 from task_dispatch import TAILSCALE_BIN, TAILSCALE_ENV  # noqa: E402  (absolute path -- launchd's PATH omits the shell's additions)
 import metrics_registry as mr  # noqa: E402
 
 HOME = Path.home()
 STATUS_PATH = HOME / ".claude" / "logs" / "health-status.json"
+USAGE_PATH = HOME / ".claude" / "logs" / "token-usage.json"
 LAUNCHAGENTS_DIR = HOME / "Library" / "LaunchAgents"
 SSH_OPTS = ["-o", "ConnectTimeout=5", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"]
 
@@ -520,6 +522,51 @@ def check_main_health(path: Path | None = None, now: datetime | None = None) -> 
     if when is None or (now - when).total_seconds() > MAIN_HEALTH_STALE_HOURS * 3600:
         return _result(cid, label, "yellow", f"last check ({d.get('sha', '?')}) is more than a day old")
     return _result(cid, label, "green", f"main @ {d.get('sha', '?')}: {d.get('summary', 'passing')}")
+
+
+# ── usage: autonomous share ────────────────────────────────────────────────
+
+def check_autonomous_share(path: Path | None = None) -> dict:
+    """Autonomous sessions' share of output tokens on the latest day. Green ≤50%,
+    yellow >50%. Never red; no cap/pause keys (informational only per ticket)."""
+    cid, label = "usage:autonomous-share", "Autonomous sessions' token share"
+    path = path or USAGE_PATH
+    try:
+        data = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError, ValueError):
+        return _result(cid, label, "green", "token-usage file not yet generated")
+    try:
+        rows = data.get("rows")
+        if not isinstance(rows, list) or not rows:
+            return _result(cid, label, "green", "no usage data available")
+    except (AttributeError, TypeError):
+        return _result(cid, label, "green", "no usage data available")
+    latest_day = None
+    for r in rows:
+        if not isinstance(r, dict) or "day" not in r:
+            continue
+        day = r.get("day")
+        if latest_day is None or day > latest_day:
+            latest_day = day
+    if latest_day is None:
+        return _result(cid, label, "green", "no days with usage data")
+    autonomous_out = 0
+    interactive_out = 0
+    for r in rows:
+        if not isinstance(r, dict) or r.get("day") != latest_day:
+            continue
+        out = r.get("output", 0)
+        if r.get("autonomous"):
+            autonomous_out += out
+        else:
+            interactive_out += out
+    total = autonomous_out + interactive_out
+    if total == 0:
+        return _result(cid, label, "green", f"no output tokens on {latest_day} (idle or cache-read day)", value=0)
+    share = autonomous_out / total
+    if share <= 0.50:
+        return _result(cid, label, "green", f"on {latest_day}: {autonomous_out:,} autonomous, {interactive_out:,} interactive ({share*100:.1f}%)", value=share)
+    return _result(cid, label, "yellow", f"on {latest_day}: {autonomous_out:,} autonomous, {interactive_out:,} interactive ({share*100:.1f}%)", value=share)
 
 
 GITHUB_BUDGET_YELLOW_BELOW = 0.20   # fraction of the hourly allowance
@@ -1417,6 +1464,7 @@ def run_all() -> dict:
     results.append(check_github_budget())
     results.append(check_gh_gate())
     results.append(check_main_health())
+    results.append(check_autonomous_share())
     cron_state = ch._load_state()
     cron_now = datetime.now().astimezone()
     for job in discover_launchd_jobs():

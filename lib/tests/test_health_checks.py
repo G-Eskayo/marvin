@@ -1230,3 +1230,220 @@ def test_output_contracts_reach_health(monkeypatch):
     import output_contracts
     monkeypatch.setattr(output_contracts, "health_findings", lambda: [{"id": "contract:x", "severity": "red"}])
     assert hc.check_output_contracts() == [{"id": "contract:x", "severity": "red"}]
+
+
+# ── autonomous share check ───────────────────────────────────────────────────
+
+def test_check_autonomous_share_green_when_usage_file_missing(tmp_path, monkeypatch):
+    """Green, 'not yet run,' when the usage file is missing."""
+    monkeypatch.setattr(hc, "USAGE_PATH", tmp_path / "missing.json")
+    result = hc.check_autonomous_share()
+    assert result["severity"] == "green"
+    assert "not yet" in result["detail"].lower()
+
+
+def test_check_autonomous_share_green_when_rows_empty(tmp_path, monkeypatch):
+    """Green when rows is empty."""
+    usage = tmp_path / "usage.json"
+    usage.write_text(json.dumps({"rows": []}))
+    monkeypatch.setattr(hc, "USAGE_PATH", usage)
+    result = hc.check_autonomous_share()
+    assert result["severity"] == "green"
+
+
+def test_check_autonomous_share_green_when_no_day_field(tmp_path, monkeypatch):
+    """Green when rows exist but none carry a day field."""
+    usage = tmp_path / "usage.json"
+    usage.write_text(json.dumps({"rows": [{"kind": "interactive", "model": "x"}, {"kind": "headless"}]}))
+    monkeypatch.setattr(hc, "USAGE_PATH", usage)
+    result = hc.check_autonomous_share()
+    assert result["severity"] == "green"
+
+
+def test_check_autonomous_share_green_when_total_output_zero(tmp_path, monkeypatch):
+    """Green when total output on the latest day is 0 (idle/all-cache-read day)."""
+    usage = tmp_path / "usage.json"
+    usage.write_text(json.dumps({"rows": [{"day": "2026-10-06", "kind": "interactive", "output": 0, "input": 0, "cache_write": 0, "cache_read": 100}]}))
+    monkeypatch.setattr(hc, "USAGE_PATH", usage)
+    result = hc.check_autonomous_share()
+    assert result["severity"] == "green"
+
+
+def test_check_autonomous_share_tolerates_concatenated_json_corruption(tmp_path, monkeypatch):
+    """The exact denial shape: file contains two concatenated JSON objects → green/informational, never raises."""
+    usage = tmp_path / "usage.json"
+    # Simulate a naive two-writer merge that appended two complete documents
+    obj1 = json.dumps({"rows": [{"day": "2026-10-06", "kind": "interactive", "output": 50}]})
+    obj2 = json.dumps({"rows": [{"day": "2026-10-06", "kind": "headless", "output": 100}]})
+    usage.write_text(obj1 + "\n" + obj2)  # Two complete JSON objects, no concatenation at parse level
+    monkeypatch.setattr(hc, "USAGE_PATH", usage)
+    result = hc.check_autonomous_share()
+    assert result["severity"] == "green"
+
+
+def test_check_autonomous_share_tolerates_truncated_json(tmp_path, monkeypatch):
+    """Truncated JSON (file cut off mid-write) → green, no raise."""
+    usage = tmp_path / "usage.json"
+    usage.write_text('{"rows": [{"day": "2026-10-06", "kind": "interactive", "output": 50')
+    monkeypatch.setattr(hc, "USAGE_PATH", usage)
+    result = hc.check_autonomous_share()
+    assert result["severity"] == "green"
+
+
+def test_check_autonomous_share_tolerates_non_dict_json_root(tmp_path, monkeypatch):
+    """Non-dict JSON root (bare array) → green, no raise."""
+    usage = tmp_path / "usage.json"
+    usage.write_text("[1, 2, 3]")
+    monkeypatch.setattr(hc, "USAGE_PATH", usage)
+    result = hc.check_autonomous_share()
+    assert result["severity"] == "green"
+
+
+def test_check_autonomous_share_tolerates_rows_not_list(tmp_path, monkeypatch):
+    """rows present but not a list → green, no raise."""
+    usage = tmp_path / "usage.json"
+    usage.write_text(json.dumps({"rows": "not a list"}))
+    monkeypatch.setattr(hc, "USAGE_PATH", usage)
+    result = hc.check_autonomous_share()
+    assert result["severity"] == "green"
+
+
+def test_check_autonomous_share_tolerates_non_dict_entry_in_rows(tmp_path, monkeypatch):
+    """A non-dict entry inside rows → tolerated, not a crash."""
+    usage = tmp_path / "usage.json"
+    usage.write_text(json.dumps({"rows": ["string entry", 42, {"day": "2026-10-06", "kind": "interactive", "output": 50}]}))
+    monkeypatch.setattr(hc, "USAGE_PATH", usage)
+    result = hc.check_autonomous_share()
+    assert result["severity"] == "green"
+
+
+def test_check_autonomous_share_green_at_exactly_50_percent(tmp_path, monkeypatch):
+    """Share exactly 50% → green (ticket says 'above 50%,' so boundary itself must stay green)."""
+    usage = tmp_path / "usage.json"
+    usage.write_text(json.dumps({"rows": [
+        {"day": "2026-10-06", "kind": "interactive", "autonomous": False, "output": 100, "input": 0, "cache_write": 0, "cache_read": 0},
+        {"day": "2026-10-06", "kind": "headless", "autonomous": True, "output": 100, "input": 0, "cache_write": 0, "cache_read": 0}
+    ]}))
+    monkeypatch.setattr(hc, "USAGE_PATH", usage)
+    result = hc.check_autonomous_share()
+    assert result["severity"] == "green"
+    assert "50" in result["detail"] or "50.0" in result["detail"]
+
+
+def test_check_autonomous_share_yellow_just_above_50(tmp_path, monkeypatch):
+    """Share just above 50% (e.g. 50.2%) → yellow."""
+    usage = tmp_path / "usage.json"
+    usage.write_text(json.dumps({"rows": [
+        {"day": "2026-10-06", "kind": "interactive", "autonomous": False, "output": 100, "input": 0, "cache_write": 0, "cache_read": 0},
+        {"day": "2026-10-06", "kind": "headless", "autonomous": True, "output": 101, "input": 0, "cache_write": 0, "cache_read": 0}
+    ]}))
+    monkeypatch.setattr(hc, "USAGE_PATH", usage)
+    result = hc.check_autonomous_share()
+    assert result["severity"] == "yellow"
+
+
+def test_check_autonomous_share_yellow_at_100_percent_autonomous(tmp_path, monkeypatch):
+    """Share 100% autonomous → yellow, detail names both counts."""
+    usage = tmp_path / "usage.json"
+    usage.write_text(json.dumps({"rows": [
+        {"day": "2026-10-06", "kind": "headless", "autonomous": True, "output": 200, "input": 0, "cache_write": 0, "cache_read": 0}
+    ]}))
+    monkeypatch.setattr(hc, "USAGE_PATH", usage)
+    result = hc.check_autonomous_share()
+    assert result["severity"] == "yellow"
+    assert "100" in result["detail"]
+
+
+def test_check_autonomous_share_asymmetric_counts_in_detail(tmp_path, monkeypatch):
+    """Asymmetric case asserts autonomous AND interactive numbers individually."""
+    usage = tmp_path / "usage.json"
+    usage.write_text(json.dumps({"rows": [
+        {"day": "2026-10-06", "kind": "interactive", "autonomous": False, "output": 100, "input": 0, "cache_write": 0, "cache_read": 0},
+        {"day": "2026-10-06", "kind": "headless", "autonomous": True, "output": 300, "input": 0, "cache_write": 0, "cache_read": 0}
+    ]}))
+    monkeypatch.setattr(hc, "USAGE_PATH", usage)
+    result = hc.check_autonomous_share()
+    assert result["severity"] == "yellow"
+    # Both counts should be visible
+    assert "300" in result["detail"]
+    assert "100" in result["detail"]
+
+
+def test_check_autonomous_share_uses_latest_day_only(tmp_path, monkeypatch):
+    """Multiple days present → uses only the most recent day."""
+    usage = tmp_path / "usage.json"
+    usage.write_text(json.dumps({"rows": [
+        {"day": "2026-10-04", "kind": "interactive", "autonomous": False, "output": 50, "input": 0, "cache_write": 0, "cache_read": 0},
+        {"day": "2026-10-05", "kind": "interactive", "autonomous": False, "output": 100, "input": 0, "cache_write": 0, "cache_read": 0},
+        {"day": "2026-10-06", "kind": "headless", "autonomous": True, "output": 200, "input": 0, "cache_write": 0, "cache_read": 0}
+    ]}))
+    monkeypatch.setattr(hc, "USAGE_PATH", usage)
+    result = hc.check_autonomous_share()
+    assert result["severity"] == "yellow"
+    # Only the 2026-10-06 day should be counted, so all 200 tokens are autonomous
+    assert result["value"] == 1.0
+    assert "0 interactive" in result["detail"]  # No interactive tokens on the latest day
+
+
+def test_check_autonomous_share_never_red_never_has_cap_key(tmp_path, monkeypatch):
+    """Severity never 'red', result never has a 'pause' or 'cap' key — locks in 'informational only' decision."""
+    usage = tmp_path / "usage.json"
+    usage.write_text(json.dumps({"rows": [
+        {"day": "2026-10-06", "kind": "headless", "output": 100, "input": 0, "cache_write": 0, "cache_read": 0},
+        {"day": "2026-10-06", "kind": "subagent", "output": 50, "input": 0, "cache_write": 0, "cache_read": 0}
+    ]}))
+    monkeypatch.setattr(hc, "USAGE_PATH", usage)
+    result = hc.check_autonomous_share()
+    assert result["severity"] != "red"
+    assert "pause" not in result
+    assert "cap" not in result
+
+
+def test_check_autonomous_share_wired_into_run_all(tmp_path, monkeypatch):
+    """run_all() wiring test: check_autonomous_share is in the checks list."""
+    usage = tmp_path / "usage.json"
+    usage.write_text(json.dumps({"rows": []}))
+    monkeypatch.setattr(hc, "USAGE_PATH", usage)
+    # Mock session_usage module to avoid importing real dependencies
+    import session_usage
+    monkeypatch.setattr(session_usage, "OUT_PATH", usage)
+
+    # Call run_all and verify the check is wired
+    result = hc.run_all()
+    check_ids = [c["id"] for c in result["checks"]]
+    assert "usage:autonomous-share" in check_ids
+
+
+def test_run_all_tolerates_corrupted_metrics_registry_file(tmp_path, monkeypatch):
+    """Regression test for PR #359 denial: corrupted health-monitor file doesn't crash run_all().
+
+    The denial happened because metrics_registry._load_snapshots() did json.loads() with no
+    exception handling, and record() wrote non-atomically. When two record() calls raced or
+    one was interrupted, the file could end up with concatenated JSON documents, causing
+    json.decoder.JSONDecodeError: Extra data.
+    """
+    import metrics_registry
+    import session_usage
+
+    # Set up isolated paths
+    metrics_dir = tmp_path / "metrics"
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(metrics_registry, "METRICS_DIR", metrics_dir)
+
+    # Set up usage file
+    usage = tmp_path / "usage.json"
+    usage.write_text(json.dumps({"rows": []}))
+    monkeypatch.setattr(hc, "USAGE_PATH", usage)
+    monkeypatch.setattr(session_usage, "OUT_PATH", usage)
+
+    # Seed a corrupted metrics file — the exact shape from the failure
+    metrics_file = metrics_dir / "health-monitor.test-machine.json"
+    # Concatenated JSON documents, what happens when two record() calls race
+    metrics_file.write_text('[{"timestamp": "2026-10-08T10:00:00+00:00"}]\n[{"timestamp": "2026-10-09T10:00:00+00:00"}]')
+
+    # run_all() should complete without raising JSONDecodeError
+    result = hc.run_all()
+
+    # Should be a normal result structure (not raised)
+    assert isinstance(result, dict)
+    assert "checks" in result

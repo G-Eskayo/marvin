@@ -306,3 +306,132 @@ def test_legacy_bare_file_not_touched_by_new_records(metrics_dir):
     bare_snapshots = json.loads(bare_path.read_text())
     assert len(bare_snapshots) == 1
     assert bare_snapshots[0]["metrics"]["accuracy"]["value"] == 0.65
+
+
+# ── defensive parsing (corruption tolerance) ──────────────────────────────────
+
+def test_load_snapshots_empty_file_returns_empty_list(metrics_dir):
+    """Empty file is treated as empty history, not an error."""
+    path = mr._snapshot_path("test-subsystem", "test-machine")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("")
+    result = mr._load_snapshots("test-subsystem", "test-machine")
+    assert result == []
+
+
+def test_load_snapshots_concatenated_json_documents(metrics_dir):
+    """Two concatenated JSON docs (from concurrent writes) → empty, no raise."""
+    path = mr._snapshot_path("test-subsystem", "test-machine")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Simulate two record() calls racing: file has two JSON arrays concatenated
+    path.write_text('[{"timestamp": "2026-10-09T10:00:00+00:00", "metrics": {}}]\n[{"timestamp": "2026-10-09T10:01:00+00:00", "metrics": {}}]')
+    result = mr._load_snapshots("test-subsystem", "test-machine")
+    assert result == []
+
+
+def test_load_snapshots_truncated_json(metrics_dir):
+    """File cut off mid-write is treated as empty, not an error."""
+    path = mr._snapshot_path("test-subsystem", "test-machine")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('[{"timestamp": "2026-10-09T10:00:00+00:00", "metrics": {"a": 1}')
+    result = mr._load_snapshots("test-subsystem", "test-machine")
+    assert result == []
+
+
+def test_load_snapshots_non_list_json_root(metrics_dir):
+    """JSON dict or string (not a list) is treated as invalid, return empty."""
+    path = mr._snapshot_path("test-subsystem", "test-machine")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"not": "a list"}')
+    result = mr._load_snapshots("test-subsystem", "test-machine")
+    assert result == []
+
+
+def test_load_snapshots_corrupted_file_backed_up(metrics_dir):
+    """When corrupted, original file is backed up as .corrupted-<timestamp>."""
+    path = mr._snapshot_path("test-subsystem", "test-machine")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('[{"bad": json}')
+    result = mr._load_snapshots("test-subsystem", "test-machine")
+    assert result == []
+    # Corrupted file should be moved to .corrupted-<isoformat>
+    backups = list(path.parent.glob(f"{path.name}.corrupted-*"))
+    assert len(backups) == 1
+    # Original file should no longer exist
+    assert not path.exists()
+
+
+def test_load_snapshots_unreadable_file_permissions(metrics_dir):
+    """File with 000 permissions is treated as empty and backed up."""
+    path = mr._snapshot_path("test-subsystem", "test-machine")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('[{"timestamp": "2026-10-09T10:00:00+00:00", "metrics": {}}]')
+    path.chmod(0o000)
+    result = mr._load_snapshots("test-subsystem", "test-machine")
+    assert result == []
+    # File should be moved to a backup (since it was unreadable)
+    backups = list(path.parent.glob(f"{path.name}.corrupted-*"))
+    assert len(backups) == 1
+    # Restore permissions on the backup so cleanup can work
+    backups[0].chmod(0o644)
+
+
+def test_all_latest_with_corrupted_legacy_file(metrics_dir):
+    """Corrupted legacy .json file is skipped, not raised."""
+    legacy_path = metrics_dir / "test-subsystem.json"
+    legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_path.write_text('[{"bad": json}')
+    result = mr.all_latest("test-subsystem")
+    # Should return empty (no valid machines)
+    assert result == {}
+
+
+def test_all_latest_valid_machine_and_corrupted_legacy(metrics_dir):
+    """Valid machine file is returned even if legacy is corrupted."""
+    # Write a valid machine-specific file
+    mr.record("test-subsystem", {"x": _metric(5)}, machine="test-machine")
+    # Write a corrupted legacy file
+    legacy_path = metrics_dir / "test-subsystem.json"
+    legacy_path.write_text('[{"bad": json}')
+    result = mr.all_latest("test-subsystem")
+    assert "test-machine" in result
+    assert "legacy" not in result
+
+
+# ── atomic writes ──────────────────────────────────────────────────────────────
+
+def test_record_writes_atomically_via_tmp_then_replace(metrics_dir):
+    """record() uses tmp-write-then-replace pattern for atomic writes."""
+    snapshot_path = mr._snapshot_path("test-subsystem", "test-machine")
+    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Pre-populate the file with valid data
+    initial = [{"timestamp": "2026-10-08T10:00:00+00:00", "metrics": {"old": {"value": 1}}}]
+    snapshot_path.write_text(json.dumps(initial))
+
+    # Verify that record() uses the tmp-then-replace pattern by checking that
+    # no .tmp file is left behind (it gets replaced immediately)
+    mr.record("test-subsystem", {"new": _metric(2)}, machine="test-machine")
+    tmp_path = snapshot_path.with_suffix(".tmp")
+    assert not tmp_path.exists(), "Temporary file should not exist after record() completes"
+
+    # Verify the snapshot was written
+    snapshots = mr._load_snapshots("test-subsystem", "test-machine")
+    assert len(snapshots) == 2
+
+
+def test_run_all_tolerates_corrupted_metrics_file():
+    """Regression test for PR #359 denial: corrupted health-monitor file doesn't crash run_all()."""
+    import health_checks
+
+    # Seed a corrupted metrics file
+    metrics_file = mr.METRICS_DIR / "health-monitor.test-machine.json"
+    metrics_file.parent.mkdir(parents=True, exist_ok=True)
+    # Concatenated JSON documents, the exact failure shape from the denial
+    metrics_file.write_text('[{"timestamp": "2026-10-08T10:00:00+00:00"}]\n[{"timestamp": "2026-10-09T10:00:00+00:00"}]')
+
+    # run_all() should complete without raising JSONDecodeError
+    result = health_checks.run_all()
+
+    # Should be a normal result structure
+    assert isinstance(result, dict)

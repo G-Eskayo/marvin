@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mergeTools, mergeRows, mergeInventory, mergeFailures, mergeTokenRows, dailySeries, sumRows, projectTable, ticketTable, machineFreshness } from '../src/lib/usage_view.js'
+import { mergeTools, mergeRows, mergeInventory, mergeFailures, mergeTokenRows, dailySeries, sumRows, projectTable, ticketTable, machineFreshness, autonomousSeries, weeklySeries, jobTable } from '../src/lib/usage_view.js'
 
 const tool = (name, calls, extra = {}) => ({ name, calls, ok: calls, error: 0, rejected: 0, interrupted: 0, invalid: 0, unresolved: 0, expected: 0, last_used: null,
   by_kind: { interactive: calls, headless: 0, subagent: 0 }, by_day: {}, causes: {}, purpose: '(no description recorded)', ...extra })
@@ -100,5 +100,126 @@ describe('skills, inventory and failures across machines', () => {
     const f = (at, tool) => ({ at, tool, outcome: 'error', kind: 'headless', message: 'm' })
     const out = mergeFailures([withInv('a', [], 1, [f('2026-10-05T10:00:00Z', 'Bash')]), withInv('b', [], 1, [f('2026-10-06T10:00:00Z', 'Read')])], 'all')
     expect(out.map((x) => [x.tool, x.machine])).toEqual([['Read', 'b'], ['Bash', 'a']])
+  })
+})
+
+describe('autonomous vs interactive split', () => {
+  it('autonomousSeries splits one day correctly into autonomous/interactive/total/share', () => {
+    const rows = [
+      { day: '2026-10-06', kind: 'interactive', output: 100, input: 0, cache_write: 0, cache_read: 0, autonomous: false },
+      { day: '2026-10-06', kind: 'headless', output: 200, input: 0, cache_write: 0, cache_read: 0, autonomous: true },
+      { day: '2026-10-06', kind: 'subagent', output: 50, input: 0, cache_write: 0, cache_read: 0, autonomous: true }
+    ]
+    const series = autonomousSeries(rows, { days: 1, end: '2026-10-06' })
+    expect(series).toHaveLength(1)
+    expect(series[0]).toMatchObject({
+      day: '2026-10-06',
+      interactive: 100,
+      autonomous: 250,
+      total: 350,
+      share: 250 / 350
+    })
+  })
+
+  it('autonomousSeries with zero rows results in all zero values', () => {
+    const series = autonomousSeries([], { days: 1, end: '2026-10-06' })
+    expect(series).toHaveLength(1)
+    expect(series[0]).toMatchObject({ day: '2026-10-06', interactive: 0, autonomous: 0, total: 0, share: 0 })
+  })
+
+  it('autonomousSeries at 100% one side returns share exactly 1 or 0', () => {
+    const allInteractive = autonomousSeries([{ day: '2026-10-06', kind: 'interactive', output: 50, autonomous: false, input: 0, cache_write: 0, cache_read: 0 }], { days: 1, end: '2026-10-06' })
+    expect(allInteractive[0].share).toBe(0)
+    const allAutonomous = autonomousSeries([{ day: '2026-10-06', kind: 'headless', output: 50, autonomous: true, input: 0, cache_write: 0, cache_read: 0 }], { days: 1, end: '2026-10-06' })
+    expect(allAutonomous[0].share).toBe(1)
+  })
+
+  it('autonomousSeries ignores rows outside the requested window', () => {
+    const rows = [
+      { day: '2026-10-04', kind: 'interactive', output: 100, autonomous: false, input: 0, cache_write: 0, cache_read: 0 },
+      { day: '2026-10-06', kind: 'headless', output: 50, autonomous: true, input: 0, cache_write: 0, cache_read: 0 }
+    ]
+    const series = autonomousSeries(rows, { days: 1, end: '2026-10-06' })
+    expect(series[0]).toMatchObject({ autonomous: 50, interactive: 0, total: 50 })
+  })
+})
+
+describe('weekly series composition', () => {
+  it('weeklySeries composes on autonomousSeries daily buckets correctly', () => {
+    const rows = [
+      { day: '2026-10-01', kind: 'interactive', output: 10, autonomous: false, input: 0, cache_write: 0, cache_read: 0 },
+      { day: '2026-10-02', kind: 'headless', output: 20, autonomous: true, input: 0, cache_write: 0, cache_read: 0 },
+      { day: '2026-10-08', kind: 'interactive', output: 100, autonomous: false, input: 0, cache_write: 0, cache_read: 0 }
+    ]
+    const weeks = weeklySeries(rows, { weeks: 2, end: '2026-10-08' })
+    expect(weeks).toHaveLength(2)
+    // Week 1: Oct 1-7 (has Oct 1 = 10 interactive, Oct 2 = 20 autonomous)
+    expect(weeks[0]).toMatchObject({ interactive: 10, autonomous: 20, total: 30 })
+    // Week 2: Oct 8 (has Oct 8 = 100 interactive)
+    expect(weeks[1]).toMatchObject({ interactive: 100, autonomous: 0, total: 100 })
+  })
+
+  it('weeklySeries handles a window missing some days by summing what exists', () => {
+    const rows = [
+      { day: '2026-10-01', kind: 'interactive', output: 50, autonomous: false, input: 0, cache_write: 0, cache_read: 0 }
+    ]
+    const weeks = weeklySeries(rows, { weeks: 2, end: '2026-10-08' })
+    expect(weeks[0]).toMatchObject({ interactive: 50, autonomous: 0, total: 50 })
+    expect(weeks[1]).toMatchObject({ interactive: 0, autonomous: 0, total: 0 })
+  })
+
+  it('weeklySeries counts each day in exactly one window, not zero or two (boundary test)', () => {
+    // Ensure Oct 7 (Sunday) and Oct 8 (Monday, start of new week in ISO) are in different buckets
+    const rows = [
+      { day: '2026-10-07', kind: 'interactive', output: 1, autonomous: false, input: 0, cache_write: 0, cache_read: 0 },
+      { day: '2026-10-08', kind: 'headless', output: 2, autonomous: true, input: 0, cache_write: 0, cache_read: 0 }
+    ]
+    const weeks = weeklySeries(rows, { weeks: 2, end: '2026-10-08' })
+    expect(weeks[0].interactive).toBe(1) // Oct 7
+    expect(weeks[0].autonomous).toBe(0)
+    expect(weeks[1].interactive).toBe(0)
+    expect(weeks[1].autonomous).toBe(2) // Oct 8
+  })
+})
+
+describe('job table (top autonomous spenders)', () => {
+  it('jobTable merges same (kind, job) across machines, summing all three counters', () => {
+    const a = { machine: 'mac-mini', tokens: { by_job: [{ job: 'clarity-captions', kind: 'background-analyst', output_tokens: 100, cost_usd: 0.5, runs: 2 }] } }
+    const b = { machine: 'macbook', tokens: { by_job: [{ job: 'clarity-captions', kind: 'background-analyst', output_tokens: 50, cost_usd: 0.25, runs: 1 }, { job: 'marvin', kind: 'background-analyst', output_tokens: 200, cost_usd: 1.0, runs: 3 }] } }
+    const table = jobTable([a, b], 'all')
+    const cc = table.find(x => x.job === 'clarity-captions')
+    expect(cc).toMatchObject({ job: 'clarity-captions', kind: 'background-analyst', output_tokens: 150, cost_usd: 0.75, runs: 3 })
+    expect(table.map(x => x.job)).toEqual(['marvin', 'clarity-captions'])
+  })
+
+  it('jobTable tolerates a machine whose by_job is absent (older scan format)', () => {
+    const a = { machine: 'mac-mini', tokens: { by_job: [{ job: 'x', kind: 'background-analyst', output_tokens: 100, cost_usd: 0.5, runs: 1 }] } }
+    const b = { machine: 'macbook', tokens: {} }  // No by_job
+    const table = jobTable([a, b], 'all')
+    expect(table).toHaveLength(1)
+    expect(table[0].job).toBe('x')
+  })
+
+  it('jobTable tolerates a machine object missing tokens entirely', () => {
+    const a = { machine: 'mac-mini', tokens: { by_job: [{ job: 'x', kind: 'background-analyst', output_tokens: 100, cost_usd: 0.5, runs: 1 }] } }
+    const b = { machine: 'macbook' }  // No tokens at all
+    const table = jobTable([a, b], 'all')
+    expect(table).toHaveLength(1)
+    expect(table[0].job).toBe('x')
+  })
+
+  it('jobTable is sorted descending by output_tokens', () => {
+    const a = { machine: 'mac-mini', tokens: { by_job: [
+      { job: 'a', kind: 'background-analyst', output_tokens: 50, cost_usd: 0.25, runs: 1 },
+      { job: 'b', kind: 'background-analyst', output_tokens: 200, cost_usd: 1.0, runs: 2 },
+      { job: 'c', kind: 'background-analyst', output_tokens: 100, cost_usd: 0.5, runs: 1 }
+    ] } }
+    const table = jobTable([a], 'all')
+    expect(table.map(x => x.job)).toEqual(['b', 'c', 'a'])
+  })
+
+  it('jobTable handles empty machines array', () => {
+    const table = jobTable([], 'all')
+    expect(table).toEqual([])
   })
 })

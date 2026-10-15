@@ -160,3 +160,43 @@ def test_a_finding_that_is_already_done_creates_nothing(monkeypatch):
     monkeypatch.setattr(tp.subprocess, "run", fake_run)
     assert tp._default_ticket_creator("f", "r") == tp.NOTHING_LEFT
     assert len(calls) == 1
+
+
+def test_default_evaluator_passes_ticket_label(monkeypatch):
+    """The evaluator launch() call includes ticket='ticket-promotion' for usage attribution."""
+    calls = []
+
+    def fake_launch(kind, prompt, **kwargs):
+        calls.append({"kind": kind, "kwargs": kwargs})
+        class R:
+            text = "PROMOTE: yes\nREASONING: unlocks future work"
+        return R()
+
+    monkeypatch.setattr(tp.marvin_launcher, "launch", fake_launch)
+    tp._default_evaluator("some finding")
+
+    assert len(calls) == 1
+    assert calls[0]["kwargs"].get("ticket") == "ticket-promotion"
+
+
+def test_default_ticket_creator_passes_ticket_label(monkeypatch):
+    """The ticket creator launch() call includes ticket='ticket-promotion' for usage attribution."""
+    calls = []
+
+    def fake_launch(kind, prompt, **kwargs):
+        calls.append({"kind": kind, "kwargs": kwargs})
+        class R:
+            text = "TITLE: Test Ticket\n---\n## What to build\nTest.\n\n## North-star fit\nTest."
+        return R()
+
+    def fake_run(cmd, **kwargs):
+        class R:
+            returncode, stderr, stdout = 0, "", json.dumps({"html_url": "https://github.com/G-Eskayo/marvin/issues/1"})
+        return R()
+
+    monkeypatch.setattr(tp.marvin_launcher, "launch", fake_launch)
+    monkeypatch.setattr(tp.subprocess, "run", fake_run)
+    tp._default_ticket_creator("some finding", "compounding leverage")
+
+    assert len(calls) == 1
+    assert calls[0]["kwargs"].get("ticket") == "ticket-promotion"

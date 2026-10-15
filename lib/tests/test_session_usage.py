@@ -99,3 +99,211 @@ def test_refresh_writes_the_result_with_the_machine_name(tmp_path, monkeypatch):
     tu.refresh(out_path=out, root=root, now=NOW)
     data = json.loads(out.read_text())
     assert data["machine"] == "mac-mini-1" and data["totals"]["messages"] == 1
+
+
+# ── autonomous field and by_job aggregation ──────────────────────────────
+
+def test_autonomous_classification_from_entrypoint(tmp_path):
+    """Autonomous = entrypoint not in (None, 'cli'); headless are autonomous, subagents inherit from their parent."""
+    f = write(tmp_path, "a.jsonl", [
+        line("a", entry="cli"),           # interactive: False
+        line("b", entry="sdk-cli"),       # headless: True
+        line("c", entry="cli", side=True),  # subagent from interactive: False
+        line("e", entry="sdk-cli", side=True),  # subagent from headless: True
+        line("d"),  # entrypoint=None (default): False
+    ])
+    r = tu.aggregate([f], now=NOW)
+    rows_by_kind = {row["kind"]: row.get("autonomous") for row in r["rows"] if row["kind"] in ("interactive", "headless", "subagent")}
+    assert rows_by_kind.get("interactive") is False
+    assert rows_by_kind.get("headless") is True
+    # Subagent's autonomy depends on parent entrypoint
+    subagent_rows = [row for row in r["rows"] if row["kind"] == "subagent"]
+    assert len(subagent_rows) == 2
+    assert {row.get("autonomous") for row in subagent_rows} == {True, False}
+
+
+def test_autonomous_defaults_false_when_entrypoint_missing(tmp_path):
+    """A transcript line with no entrypoint key defaults to non-autonomous (matches _kind's None handling)."""
+    # Manually construct a line with no entrypoint key
+    def line_no_entry(msg_id):
+        return json.dumps({"type": "assistant", "timestamp": "2026-10-05T10:00:00.000Z", "requestId": "req_1",
+                          "cwd": "/Users/g/proj", "isSidechain": False,  # no entrypoint
+                          "message": {"id": msg_id, "model": "claude-sonnet-5", "usage": {"input_tokens": 2, "output_tokens": 100,
+                                                                               "cache_creation_input_tokens": 1000, "cache_read_input_tokens": 5000}}})
+    f = write(tmp_path, "a.jsonl", [line_no_entry("m1")])
+    r = tu.aggregate([f], now=NOW)
+    assert r["rows"][0].get("autonomous") is False
+
+
+def test_by_job_sums_output_tokens_cost_and_runs(tmp_path, monkeypatch):
+    """by_job aggregates launches.jsonl by (kind, ticket), summing output_tokens, cost_usd, and run count."""
+    launches = tmp_path / "launches.jsonl"
+    lines = [
+        json.dumps({"at": "2026-10-05T10:00:00Z", "kind": "background-analyst", "ticket": "clarity-captions",
+                    "output_tokens": 100, "cost_usd": 0.5}),
+        json.dumps({"at": "2026-10-05T11:00:00Z", "kind": "background-analyst", "ticket": "clarity-captions",
+                    "output_tokens": 50, "cost_usd": 0.25}),
+        json.dumps({"at": "2026-10-05T12:00:00Z", "kind": "background-analyst", "ticket": "marvin",
+                    "output_tokens": 200, "cost_usd": 1.0}),
+    ]
+    launches.write_text("\n".join(lines) + "\n")
+    monkeypatch.setattr(tu, "LAUNCHES_LOG", launches)
+    r = tu.by_job(window_days=30, now=NOW)
+    assert len(r) == 2
+    cc = next((j for j in r if j["job"] == "clarity-captions"), None)
+    assert cc is not None
+    assert cc["output_tokens"] == 150
+    assert cc["cost_usd"] == 0.75
+    assert cc["runs"] == 2
+
+
+def test_by_job_missing_launches_log_returns_empty(tmp_path, monkeypatch):
+    """Missing launches.jsonl returns [], no crash."""
+    monkeypatch.setattr(tu, "LAUNCHES_LOG", tmp_path / "nonexistent.jsonl")
+    r = tu.by_job(window_days=30, now=NOW)
+    assert r == []
+
+
+def test_by_job_empty_launches_log_returns_empty(tmp_path, monkeypatch):
+    """Empty launches.jsonl returns [], no crash."""
+    launches = tmp_path / "launches.jsonl"
+    launches.write_text("")
+    monkeypatch.setattr(tu, "LAUNCHES_LOG", launches)
+    r = tu.by_job(window_days=30, now=NOW)
+    assert r == []
+
+
+def test_by_job_skips_malformed_lines(tmp_path, monkeypatch):
+    """Malformed JSON on one line is skipped; good lines are still counted."""
+    launches = tmp_path / "launches.jsonl"
+    good = json.dumps({"at": "2026-10-05T10:00:00Z", "kind": "background-analyst", "ticket": "marvin",
+                       "output_tokens": 100, "cost_usd": 0.5})
+    launches.write_text(f"{good}\nnot json\n{good}\n")
+    monkeypatch.setattr(tu, "LAUNCHES_LOG", launches)
+    r = tu.by_job(window_days=30, now=NOW)
+    assert len(r) == 1
+    assert r[0]["output_tokens"] == 200
+    assert r[0]["runs"] == 2
+
+
+def test_by_job_skips_non_dict_json(tmp_path, monkeypatch):
+    """Non-dict JSON (array, number, string) is skipped, not crashed."""
+    launches = tmp_path / "launches.jsonl"
+    good = json.dumps({"at": "2026-10-05T10:00:00Z", "kind": "background-analyst", "ticket": "marvin",
+                       "output_tokens": 100, "cost_usd": 0.5})
+    launches.write_text(f"{good}\n[1,2,3]\n\"string\"\n42\n{good}\n")
+    monkeypatch.setattr(tu, "LAUNCHES_LOG", launches)
+    r = tu.by_job(window_days=30, now=NOW)
+    assert len(r) == 1
+    assert r[0]["output_tokens"] == 200
+
+
+def test_by_job_treats_null_output_tokens_as_zero(tmp_path, monkeypatch):
+    """output_tokens/cost_usd null values are treated as 0."""
+    launches = tmp_path / "launches.jsonl"
+    launches.write_text(json.dumps({"at": "2026-10-05T10:00:00Z", "kind": "background-analyst", "ticket": "marvin",
+                                    "output_tokens": None, "cost_usd": None}) + "\n")
+    monkeypatch.setattr(tu, "LAUNCHES_LOG", launches)
+    r = tu.by_job(window_days=30, now=NOW)
+    assert r[0]["output_tokens"] == 0
+    assert r[0]["cost_usd"] == 0
+
+
+def test_by_job_excludes_launches_older_than_window(tmp_path, monkeypatch):
+    """Launches older than window_days are excluded."""
+    launches = tmp_path / "launches.jsonl"
+    old = json.dumps({"at": "2026-08-01T10:00:00Z", "kind": "background-analyst", "ticket": "marvin",
+                     "output_tokens": 100, "cost_usd": 0.5})
+    new = json.dumps({"at": "2026-10-05T10:00:00Z", "kind": "background-analyst", "ticket": "marvin",
+                     "output_tokens": 50, "cost_usd": 0.25})
+    launches.write_text(f"{old}\n{new}\n")
+    monkeypatch.setattr(tu, "LAUNCHES_LOG", launches)
+    r = tu.by_job(window_days=30, now=NOW)
+    assert len(r) == 1
+    assert r[0]["output_tokens"] == 50
+
+
+def test_by_job_null_ticket_falls_back_to_kind(tmp_path, monkeypatch):
+    """ticket null falls back to kind as the job label; launch still counted."""
+    launches = tmp_path / "launches.jsonl"
+    launches.write_text(json.dumps({"at": "2026-10-05T10:00:00Z", "kind": "background-analyst", "ticket": None,
+                                    "output_tokens": 100, "cost_usd": 0.5}) + "\n")
+    monkeypatch.setattr(tu, "LAUNCHES_LOG", launches)
+    r = tu.by_job(window_days=30, now=NOW)
+    assert len(r) == 1
+    assert r[0]["job"] == "background-analyst"
+
+
+def test_by_job_same_job_under_two_kinds_stays_split(tmp_path, monkeypatch):
+    """Same job name under two different kinds doesn't collapse; stays two separate rows."""
+    launches = tmp_path / "launches.jsonl"
+    lines = [
+        json.dumps({"at": "2026-10-05T10:00:00Z", "kind": "background-analyst", "ticket": "x",
+                    "output_tokens": 100, "cost_usd": 0.5}),
+        json.dumps({"at": "2026-10-05T11:00:00Z", "kind": "utility-call", "ticket": "x",
+                    "output_tokens": 50, "cost_usd": 0.25}),
+    ]
+    launches.write_text("\n".join(lines) + "\n")
+    monkeypatch.setattr(tu, "LAUNCHES_LOG", launches)
+    r = tu.by_job(window_days=30, now=NOW)
+    assert len(r) == 2
+    assert {(x["job"], x.get("kind")) for x in r} == {("x", "background-analyst"), ("x", "utility-call")}
+
+
+def test_by_job_result_sorted_descending_by_output_tokens(tmp_path, monkeypatch):
+    """Result is sorted descending by output_tokens."""
+    launches = tmp_path / "launches.jsonl"
+    lines = [
+        json.dumps({"at": "2026-10-05T10:00:00Z", "kind": "background-analyst", "ticket": "a",
+                    "output_tokens": 50, "cost_usd": 0.25}),
+        json.dumps({"at": "2026-10-05T11:00:00Z", "kind": "background-analyst", "ticket": "b",
+                    "output_tokens": 200, "cost_usd": 1.0}),
+        json.dumps({"at": "2026-10-05T12:00:00Z", "kind": "background-analyst", "ticket": "c",
+                    "output_tokens": 100, "cost_usd": 0.5}),
+    ]
+    launches.write_text("\n".join(lines) + "\n")
+    monkeypatch.setattr(tu, "LAUNCHES_LOG", launches)
+    r = tu.by_job(window_days=30, now=NOW)
+    assert [x["job"] for x in r] == ["b", "c", "a"]
+
+
+def test_by_job_unreadable_file_returns_empty(tmp_path, monkeypatch):
+    """Unreadable file (chmod 000) returns [], no crash; permissions are restored."""
+    launches = tmp_path / "launches.jsonl"
+    launches.write_text(json.dumps({"at": "2026-10-05T10:00:00Z", "kind": "background-analyst", "ticket": "marvin",
+                                   "output_tokens": 100, "cost_usd": 0.5}))
+    launches.chmod(0o000)
+    monkeypatch.setattr(tu, "LAUNCHES_LOG", launches)
+    try:
+        r = tu.by_job(window_days=30, now=NOW)
+        assert r == []
+    finally:
+        launches.chmod(0o644)
+
+
+def test_by_job_duplicate_identical_lines_sum_both(tmp_path, monkeypatch):
+    """Append-only log: duplicate identical lines sum both (no silent dedup)."""
+    launches = tmp_path / "launches.jsonl"
+    line = json.dumps({"at": "2026-10-05T10:00:00Z", "kind": "background-analyst", "ticket": "marvin",
+                       "output_tokens": 100, "cost_usd": 0.5})
+    launches.write_text(f"{line}\n{line}\n")
+    monkeypatch.setattr(tu, "LAUNCHES_LOG", launches)
+    r = tu.by_job(window_days=30, now=NOW)
+    assert len(r) == 1
+    assert r[0]["output_tokens"] == 200
+    assert r[0]["runs"] == 2
+
+
+def test_by_job_huge_file_aggregates_correctly(tmp_path, monkeypatch):
+    """Large file (5000+ lines) aggregates correctly with no pathological behavior."""
+    launches = tmp_path / "launches.jsonl"
+    lines = []
+    for i in range(5000):
+        lines.append(json.dumps({"at": "2026-10-05T10:00:00Z", "kind": "background-analyst", "ticket": "marvin",
+                               "output_tokens": 1, "cost_usd": 0.001}))
+    launches.write_text("\n".join(lines) + "\n")
+    monkeypatch.setattr(tu, "LAUNCHES_LOG", launches)
+    r = tu.by_job(window_days=30, now=NOW)
+    assert len(r) == 1
+    assert r[0]["output_tokens"] == 5000
+    assert r[0]["runs"] == 5000

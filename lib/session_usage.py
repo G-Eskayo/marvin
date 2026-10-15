@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 HOME = Path.home()
 TRANSCRIPTS = HOME / ".claude" / "projects"
 OUT_PATH = HOME / ".claude" / "logs" / "token-usage.json"
+LAUNCHES_LOG = HOME / ".claude" / "logs" / "launches.jsonl"
 WINDOW_DAYS = 30
 TOP_TICKETS = 40
 
@@ -71,6 +72,10 @@ def attribute(cwd) -> tuple[str, int | None]:
 
 def _kind(d) -> str:
     return "subagent" if d.get("isSidechain") else ("interactive" if d.get("entrypoint") in (None, "cli") else "headless")
+
+
+def _autonomous(d) -> bool:
+    return d.get("entrypoint") not in (None, "cli")
 
 
 def _blank():
@@ -120,13 +125,13 @@ def aggregate(files, now: datetime | None = None, window_days: int = WINDOW_DAYS
                 continue
             project, ticket = attribute(d.get("cwd"))
             messages[msg["id"]] = {
-                "day": when.date().isoformat(), "kind": _kind(d), "model": msg.get("model") or "?", "project": project, "ticket": ticket,
+                "day": when.date().isoformat(), "kind": _kind(d), "autonomous": _autonomous(d), "model": msg.get("model") or "?", "project": project, "ticket": ticket,
                 "usage": {"input": u.get("input_tokens", 0) or 0, "output": u.get("output_tokens", 0) or 0,
                           "cache_write": u.get("cache_creation_input_tokens", 0) or 0, "cache_read": u.get("cache_read_input_tokens", 0) or 0}}
     totals, rows, projects, tickets = _blank(), defaultdict(_blank), defaultdict(_blank), defaultdict(_blank)
     for m in messages.values():
         _add(totals, m["usage"])
-        _add(rows[(m["day"], m["kind"], m["model"])], m["usage"])
+        _add(rows[(m["day"], m["kind"], m["model"], m.get("autonomous"))], m["usage"])
         _add(projects[(m["project"], m["kind"])], m["usage"])
         if m["ticket"] is not None:
             _add(tickets[(m["project"], m["ticket"])], m["usage"])
@@ -139,10 +144,46 @@ def aggregate(files, now: datetime | None = None, window_days: int = WINDOW_DAYS
     return {
         "generated_at": now.isoformat(), "window_days": window_days, "machine": machine_id(), "files_scanned": len(list(files)),
         "totals": totals,
-        "rows": [{"day": d, "kind": k, "model": mo, **rec} for (d, k, mo), rec in sorted(rows.items())],
+        "rows": [{"day": d, "kind": k, "model": mo, "autonomous": aut, **rec} for (d, k, mo, aut), rec in sorted(rows.items())],
         "by_project": sorted(by_project.values(), key=lambda p: -p["output"]),
         "by_ticket": sorted(({"project": p, "ticket": t, **rec} for (p, t), rec in tickets.items()), key=lambda x: -x["output"])[:TOP_TICKETS],
     }
+
+
+def by_job(window_days: int = WINDOW_DAYS, now: datetime | None = None) -> list[dict]:
+    """Aggregate launches.jsonl by (kind, ticket/job), summing output_tokens, cost_usd, and run count.
+    Returns sorted by output_tokens descending."""
+    now = now or datetime.now(timezone.utc)
+    cutoff = (now - timedelta(days=window_days)).timestamp()
+    jobs = defaultdict(lambda: {"output_tokens": 0, "cost_usd": 0, "runs": 0})
+    try:
+        lines = LAUNCHES_LOG.read_text(errors="ignore").splitlines()
+    except OSError:
+        return []
+    for raw in lines:
+        try:
+            d = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(d, dict):
+            continue
+        at_str = d.get("at")
+        if not at_str:
+            continue
+        try:
+            at_ts = datetime.fromisoformat(at_str.replace("Z", "+00:00")).timestamp()
+        except (ValueError, AttributeError):
+            continue
+        if at_ts < cutoff:
+            continue
+        job = d.get("ticket") or d.get("kind", "unknown")
+        kind = d.get("kind")
+        key = (job, kind)
+        jobs[key]["output_tokens"] += d.get("output_tokens") or 0
+        jobs[key]["cost_usd"] += d.get("cost_usd") or 0
+        jobs[key]["runs"] += 1
+    result = [{"job": k[0], "kind": k[1], **v} for k, v in jobs.items()]
+    return sorted(result, key=lambda x: -x["output_tokens"])
 
 
 def refresh(out_path: Path = OUT_PATH, root: Path = TRANSCRIPTS, window_days: int = WINDOW_DAYS, now=None) -> dict:

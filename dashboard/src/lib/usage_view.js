@@ -128,3 +128,74 @@ export function machineFreshness(m, now = Date.now()) {
 }
 
 export const USAGE_KINDS = KINDS
+
+// Autonomous vs interactive split (by day)
+export function autonomousSeries(rows, { days = 30, end } = {}) {
+  const list = dayList(days, end || new Date().toISOString().slice(0, 10))
+  const idx = new Map(list.map((d, i) => [d, { day: d, interactive: 0, autonomous: 0, total: 0, share: 0 }]))
+  for (const r of rows) {
+    const cell = idx.get(r.day)
+    if (!cell) continue
+    const v = r.output || 0
+    if (r.autonomous) {
+      cell.autonomous += v
+    } else {
+      cell.interactive += v
+    }
+    cell.total += v
+  }
+  // Compute share
+  for (const cell of idx.values()) {
+    cell.share = cell.total > 0 ? cell.autonomous / cell.total : 0
+  }
+  return list.map((d) => idx.get(d))
+}
+
+// Weekly series built on top of daily autonomousSeries
+export function weeklySeries(rows, { weeks = 4, end } = {}) {
+  const endDate = new Date(`${end || new Date().toISOString().slice(0, 10)}T00:00:00Z`)
+  const daily = autonomousSeries(rows, { days: weeks * 7, end: end || new Date().toISOString().slice(0, 10) })
+
+  const result = []
+  for (let i = 0; i < weeks; i++) {
+    const weekStart = new Date(endDate)
+    weekStart.setUTCDate(weekStart.getUTCDate() - (weeks - 1 - i) * 7)
+    const weekEnd = new Date(weekStart)
+    weekEnd.setUTCDate(weekEnd.getUTCDate() + 6)
+
+    let weekInteractive = 0
+    let weekAutonomous = 0
+    for (const day of daily) {
+      const d = new Date(`${day.day}T00:00:00Z`)
+      if (d >= weekStart && d <= weekEnd) {
+        weekInteractive += day.interactive
+        weekAutonomous += day.autonomous
+      }
+    }
+    const weekTotal = weekInteractive + weekAutonomous
+    result.push({
+      week: `${weekStart.toISOString().slice(0, 10)}`,
+      interactive: weekInteractive,
+      autonomous: weekAutonomous,
+      total: weekTotal,
+      share: weekTotal > 0 ? weekAutonomous / weekTotal : 0
+    })
+  }
+  return result
+}
+
+// Top autonomous spenders: (job, kind) table merged across machines
+export function jobTable(machines, which = 'all') {
+  const byKey = new Map()
+  for (const m of pick(machines, which)) {
+    for (const j of m.tokens?.by_job || []) {
+      const key = `${j.job}:${j.kind}`
+      const cur = byKey.get(key) || { job: j.job, kind: j.kind, output_tokens: 0, cost_usd: 0, runs: 0 }
+      cur.output_tokens += j.output_tokens || 0
+      cur.cost_usd += j.cost_usd || 0
+      cur.runs += j.runs || 0
+      byKey.set(key, cur)
+    }
+  }
+  return [...byKey.values()].sort((a, b) => b.output_tokens - a.output_tokens)
+}
