@@ -207,8 +207,8 @@ Each "reclaim" task is a proposal. It runs only after Gil approves that specific
 ### G. History store (ADR 0066), tracer bullet first
 - [x] G1. (done 2026-10-15, marvin#449) `lib/history_store.py`: open/create `~/.claude/history.db` (WAL), `events` table, `load(stream, device, lines)` idempotent by content hash. Tests try to break it: malformed lines, duplicates, huge lines, concurrent loaders, a locked database.
 - [x] G2. (live 2026-10-15, marvin#449; launchd `com.marvin.history-load` on the Mini, both Macs loading, 41.7k rows, 12.3 MB) Loader for `gh-calls.jsonl` on the Mini: its own outbox plus the laptop's over ssh (unreachable laptop = skip, catch up later). launchd every 5 min. Last success is a Health check.
-- [ ] G3. Backup to the laptop after each load (SQLite online backup + rsync --checksum), verified by row count and hash.
-- [ ] G4. Move `github_usage.py` and the gh health check to read the database; dashboard chart compared before and after (same numbers, timed).
+- [x] G3. (live 2026-10-15, marvin#456: incremental O(new rows), tip check every run, weekly digest) Backup to the laptop after each load (SQLite online backup + rsync --checksum), verified by row count and hash.
+- [x] G4. (done 2026-10-15) Each Mac's GitHub usage report reads its own rows from the history store plus its log's newest lines (the dashboard already merges Macs, so a Mac counting both would double it). Real data: 23,628 vs 23,652 calls over 167 hours, the 24 difference being exactly the lines bin/gh wrote twice; budget identical; 19 ms per refresh. The gh health check now reads only the log's last hour from the end (O(k), was the whole file). The loader also collects `gh-budget`.
 - [ ] G5. Turn on trimming for `gh-calls.jsonl` only after G1–G4 and a week of clean loads.
 - [ ] G6. Repeat G2/G4/G5 for the other streams, one at a time.
 

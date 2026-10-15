@@ -7,6 +7,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import github_usage as gu  # noqa: E402
@@ -221,3 +223,104 @@ def test_top_callers_count_their_own_refusals_and_holds():
     top = {t["caller"]: t for t in gu.summarize(rows, [], NOW)["top"]}
     assert (top["ticket_pipeline.py"]["refused"], top["ticket_pipeline.py"]["deferred"]) == (1, 1)
     assert (top["zsh"]["refused"], top["zsh"]["deferred"]) == (1, 0)
+
+
+# ── reading from the history store (ADR 0066 G4) ───────────────────────────
+import history_store as hs  # noqa: E402
+
+
+def _db_with(tmp_path, rows_by_device: dict, budget_by_device: dict | None = None):
+    conn = hs.connect(tmp_path / "history.db")
+    for device, rows in rows_by_device.items():
+        hs.load(conn, "gh-calls", device, [json.dumps(r) for r in rows])
+    for device, rows in (budget_by_device or {}).items():
+        hs.load(conn, "gh-budget", device, [json.dumps(r) for r in rows])
+    return conn
+
+
+def _report_db(tmp_path, conn, me="mac-mini-1", calls=None, budget=None):
+    return gu.report(NOW, cache_path=tmp_path / "cache.json", db=conn, device=me,
+                     local_calls=calls or tmp_path / "none.jsonl", local_budget=budget or tmp_path / "none-b.jsonl")
+
+
+def _total(report):
+    return sum(h["total"] for h in report["hours"])
+
+
+def test_a_macs_report_counts_only_its_own_calls_so_the_dashboard_merge_never_double_counts(tmp_path):
+    conn = _db_with(tmp_path, {"mac-mini-1": [row(5, "a"), row(6, "b")], "macbook-pro-1": [row(5, "c")]})
+    assert _total(_report_db(tmp_path, conn, "mac-mini-1")) == 2
+    assert _total(gu.report(NOW, cache_path=tmp_path / "other.json", db=conn, device="macbook-pro-1",
+                            local_calls=tmp_path / "x", local_budget=tmp_path / "y")) == 1
+
+
+def test_each_report_reads_only_rows_added_since_the_last(tmp_path):
+    conn = _db_with(tmp_path, {"mac-mini-1": [row(i, "a") for i in range(1, 50)]})
+    _report_db(tmp_path, conn)
+    seen = json.loads((tmp_path / "cache.json").read_text())["db"]["after_id"]
+    hs.load(conn, "gh-calls", "mac-mini-1", [json.dumps(row(0.5, "a"))])
+    assert _total(_report_db(tmp_path, conn)) == 50
+    assert json.loads((tmp_path / "cache.json").read_text())["db"]["after_id"] == seen + 1
+
+
+def test_this_macs_newest_calls_come_from_its_log_until_the_database_has_them(tmp_path):
+    """The laptop's copy lags (or stops, away from home): its own newest calls still show."""
+    conn = _db_with(tmp_path, {"macbook-pro-1": [row(30, "a")]})
+    log = tmp_path / "gh-calls.jsonl"
+    log.write_text("".join(json.dumps(r) + "\n" for r in [row(30, "a"), row(2, "b"), row(1, "c")]))
+    r = gu.report(NOW, cache_path=tmp_path / "c.json", db=conn, device="macbook-pro-1", local_calls=log,
+                  local_budget=tmp_path / "nb")
+    assert _total(r) == 3
+
+
+def test_newest_calls_shown_from_the_log_are_never_counted_twice_once_the_database_catches_up(tmp_path):
+    conn = _db_with(tmp_path, {"macbook-pro-1": [row(30, "a")]})
+    log = tmp_path / "gh-calls.jsonl"
+    rows = [row(30, "a"), row(2, "b")]
+    log.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    kw = dict(cache_path=tmp_path / "c.json", db=conn, device="macbook-pro-1", local_calls=log, local_budget=tmp_path / "nb")
+    gu.report(NOW, **kw)
+    hs.load(conn, "gh-calls", "macbook-pro-1", [json.dumps(rows[1])])  # the copy catches up
+    assert _total(gu.report(NOW, **kw)) == 2
+
+
+def test_budget_readings_come_from_the_database_too(tmp_path):
+    conn = _db_with(tmp_path, {}, {"mac-mini-1": [{"at": T - 600, "graphql": 4000, "core": 4900}]})
+    assert _report_db(tmp_path, conn)["latest_budget"]["graphql"] == 4000
+
+
+def test_explicit_log_paths_never_touch_the_real_database(tmp_path, monkeypatch):
+    monkeypatch.setattr(hs, "connect", lambda *a, **k: pytest.fail("opened a database"))
+    calls = tmp_path / "c.jsonl"
+    calls.write_text(json.dumps(row(5, "a")) + "\n")
+    assert _total(gu.report(NOW, calls_path=calls, budget_path=tmp_path / "b", cache_path=tmp_path / "x.json")) == 1
+
+
+# ── reading only a log's recent end (O(k), not O(file)) ─────────────────────
+
+def test_tail_since_reads_backwards_only_as_far_as_it_needs(tmp_path, monkeypatch):
+    log = tmp_path / "big.jsonl"
+    log.write_text("".join(json.dumps(row(60 * 24 * 3 - i * 0.0719, "x")) + "\n" for i in range(60_000)))
+    reads = []
+    real_open = open
+    class Spy:
+        def __init__(self, f): self.f = f
+        def __enter__(self): return self
+        def __exit__(self, *a): self.f.close()
+        def seek(self, *a): return self.f.seek(*a)
+        def tell(self): return self.f.tell()
+        def read(self, n=-1):
+            b = self.f.read(n); reads.append(len(b)); return b
+    monkeypatch.setattr("builtins.open", lambda p, m="r", *a, **k: Spy(real_open(p, m, *a, **k)) if str(p) == str(log) else real_open(p, m, *a, **k))
+    recent = hs.tail_since(log, T - 3600)
+    assert recent and all(hs._ts(r) > T - 3600 for r in recent)
+    assert sum(reads) < log.stat().st_size / 10
+
+
+def test_tail_since_ignores_a_half_written_last_line_and_handles_empty_and_missing(tmp_path):
+    log = tmp_path / "l.jsonl"
+    assert hs.tail_since(log, 0) == []
+    log.write_text("")
+    assert hs.tail_since(log, 0) == []
+    log.write_text(json.dumps(row(1, "a")) + "\n" + '{"t": 1')
+    assert len(hs.tail_since(log, 0)) == 1

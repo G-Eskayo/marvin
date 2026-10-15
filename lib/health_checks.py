@@ -454,18 +454,11 @@ def check_gh_gate(log_path: Path | None = None, state_path: Path | None = None, 
     cid, label = "github:gate", "GitHub calls go through the gate"
     now = now or _now()
     t = now.timestamp()
-    try:
-        lines = Path(log_path or GH_CALLS_PATH).read_text().splitlines()
-    except OSError:
+    log = Path(log_path or GH_CALLS_PATH)
+    if not log.is_file():
         return _result(cid, label, "yellow", "no gh calls logged on this Mac: the gate is not installed (bin/install-gh-gate.sh)")
-    rows = []
-    for l in lines[-20000:]:
-        try:
-            r = json.loads(l)
-        except ValueError:
-            continue
-        if t - float(r.get("t", 0)) <= 3600:
-            rows.append(r)
+    import history_store
+    rows = history_store.tail_since(log, t - 3600)  # the last hour only, read from the end: O(k), not the whole log
     try:
         st = json.loads(Path(state_path or GH_GATE_PATH).read_text())
     except (OSError, ValueError):
