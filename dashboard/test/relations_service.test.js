@@ -85,12 +85,61 @@ describe('review parity (MR Review <-> board)', () => {
     expect(p.ok).toBe(false)
   })
 
-  it('counts what is waiting on you per project, from the same data', async () => {
+  it('counts what is waiting on you per project using rankNeedsYou (test #8)', async () => {
     const o = await svc(
       [issue(2), issue(3, { labels: [{ name: 'ready-for-human' }] }), issue(4, { body: 'Blocked by #2' })],
       [pr(7, 'Closes #2')]
     ).overview()
     expect(o['G-Eskayo/marvin']).toMatchObject({ review: 1, needsYou: 1, blocked: 1 })
+  })
+
+  it('needsYou counts only ready-for-human and needs-info tickets (test #9)', async () => {
+    const o = await svc(
+      [
+        issue(1, { labels: [{ name: 'ready-for-human' }], body: '## Your task\n**What I need from you:** X\n**Where:** Y\n**How:** Z\n**What to send back:** W' }),
+        issue(2, { labels: [{ name: 'needs-info' }] }),
+        issue(3, { labels: [{ name: 'ready-for-agent' }] })
+      ],
+      []
+    ).overview()
+    expect(o['G-Eskayo/marvin'].needsYou).toBe(2)
+  })
+
+  it('needsYou ignores hold-labelled tickets (test #10)', async () => {
+    const o = await svc(
+      [
+        issue(1, { labels: [{ name: 'ready-for-human' }, { name: 'hold' }], body: '## Your task\n**What I need from you:** X\n**Where:** Y\n**How:** Z\n**What to send back:** W' }),
+        issue(2, { labels: [{ name: 'ready-for-human' }], body: '## Your task\n**What I need from you:** X\n**Where:** Y\n**How:** Z\n**What to send back:** W' })
+      ],
+      []
+    ).overview()
+    expect(o['G-Eskayo/marvin'].needsYou).toBe(1)
+  })
+
+  it('needsYou ignores pinned tickets (test #11)', async () => {
+    const o = await svc(
+      [
+        issue(1, { labels: [{ name: 'ready-for-human' }, { name: 'pinned' }], body: '## Your task\n**What I need from you:** X\n**Where:** Y\n**How:** Z\n**What to send back:** W' }),
+        issue(2, { labels: [{ name: 'ready-for-human' }], body: '## Your task\n**What I need from you:** X\n**Where:** Y\n**How:** Z\n**What to send back:** W' })
+      ],
+      []
+    ).overview()
+    expect(o['G-Eskayo/marvin'].needsYou).toBe(1)
+  })
+
+  it('review and blocked counts remain card-column-based, separate from needsYou (test #12)', async () => {
+    const o = await svc(
+      [
+        issue(2, { labels: [{ name: 'ready-for-agent' }] }),
+        issue(3, { labels: [{ name: 'ready-for-human' }], body: '## Your task\n**What I need from you:** X\n**Where:** Y\n**How:** Z\n**What to send back:** W' }),
+        issue(4, { body: 'Blocked by #2' })
+      ],
+      [pr(7, 'Closes #2')]
+    ).overview()
+    const o2 = o['G-Eskayo/marvin']
+    expect(o2.review).toBe(1)
+    expect(o2.needsYou).toBe(1)
+    expect(o2.blocked).toBe(1)
   })
 })
 

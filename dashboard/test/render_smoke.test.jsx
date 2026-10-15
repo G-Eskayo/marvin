@@ -257,4 +257,16 @@ describe('DashboardHome', () => {
     const html = renderToStaticMarkup(<DashboardHome onOpenProject={() => {}} />)
     expect(html).toContain('Loading projects')
   })
+
+  it('includes NeedsYouList when onOpenTicket is provided (test #34)', () => {
+    const html = renderToStaticMarkup(<DashboardHome onOpenProject={() => {}} onOpenTicket={() => {}} />)
+    expect(html).toContain('Loading projects')
+    expect(html.indexOf('Loading projects')).toBeGreaterThan(html.indexOf('Nothing needs you'))
+  })
+
+  it('omits NeedsYouList when onOpenTicket is not provided (test #35)', () => {
+    const html = renderToStaticMarkup(<DashboardHome onOpenProject={() => {}} />)
+    expect(html).toContain('Loading projects')
+    expect(html).not.toContain('What needs you')
+  })
 })

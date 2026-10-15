@@ -210,6 +210,22 @@ describe('transitiveUnblocks', () => {
 })
 
 describe('rankNeedsYou', () => {
+  it('extracts projectId from project:* label when present', () => {
+    const tickets = [
+      { repo: 'o/r', ...issue(1, { labels: [label('ready-for-human'), label('project:custom-id')], body: '## Your task\n**What I need from you:** test\n**Where:** prod\n**How:** manually\n**What to send back:** results' }) }
+    ]
+    const result = rankNeedsYou(tickets)
+    expect(result[0].projectId).toBe('custom-id')
+  })
+
+  it('derives projectId from repo when no project:* label exists', () => {
+    const tickets = [
+      { repo: 'User/My-Awesome-Repo', ...issue(1, { labels: [label('ready-for-human')], body: '## Your task\n**What I need from you:** test\n**Where:** prod\n**How:** manually\n**What to send back:** results' }) }
+    ]
+    const result = rankNeedsYou(tickets)
+    expect(result[0].projectId).toBe('my-awesome-repo')
+  })
+
   it('prioritizes ready-for-human and needs-info tickets with labels', () => {
     const tickets = [
       { repo: 'o/r', ...issue(1, { labels: [label('ready-for-human')], body: '## Your task\n**What I need from you:** test\n**Where:** prod\n**How:** manually\n**What to send back:** results' }) },
@@ -382,5 +398,30 @@ describe('rankNeedsYou', () => {
       expect(row1.unblocks.count).toBeGreaterThan(row7.unblocks.count)
       expect(result.indexOf(row1)).toBeLessThan(result.indexOf(row7))
     }
+  })
+
+  it('includes projectId in output row (test #28)', () => {
+    const tickets = [
+      { repo: 'o/r', ...issue(1, { labels: [label('ready-for-human')], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' }) }
+    ]
+    const result = rankNeedsYou(tickets)
+    expect(result[0].projectId).toBeDefined()
+    expect(typeof result[0].projectId).toBe('string')
+  })
+
+  it('uses project:* label for projectId, taking first match (test #29)', () => {
+    const tickets = [
+      { repo: 'o/r', ...issue(1, { labels: [label('ready-for-human'), label('project:primary'), label('project:secondary')], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' }) }
+    ]
+    const result = rankNeedsYou(tickets)
+    expect(result[0].projectId).toBe('primary')
+  })
+
+  it('ignores project: label with empty suffix (test #30)', () => {
+    const tickets = [
+      { repo: 'o/r', ...issue(1, { labels: [label('ready-for-human'), label('project:')], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' }) }
+    ]
+    const result = rankNeedsYou(tickets)
+    expect(result[0].projectId).toBe('r')
   })
 })
