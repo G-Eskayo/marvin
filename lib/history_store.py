@@ -17,6 +17,12 @@ A line's identity is a hash of (device, stream, line): the same line twice from 
 two. A line that isn't valid JSON is still stored (ts NULL): once outboxes are trimmed the database is the only copy.
 
 Usage: history_store.py [stream ...]   (default: gh-calls; run every 5 min on the Mini by launchd)
+       history_store.py --replica-max | --apply < rows | --digest ID   (run over ssh against another Mac's copy)
+
+The laptop's copy (G3): after each load the Mini ships the rows the copy doesn't have yet (id > the copy's max, at
+most SHIP_LIMIT per run), so it costs O(new rows). Ids are kept, so the copy is identical. Once a week a digest of
+every row's hash is compared on both sides (O(n), weekly). A row already in the copy with different content is a
+divergence: the run fails loudly instead of skipping it.
 """
 from __future__ import annotations
 import hashlib
@@ -36,6 +42,9 @@ HOME = Path.home()
 DB_PATH = HOME / ".claude" / "history.db"
 LOGS_REL = "~/.claude/logs"
 FINGERPRINT_BYTES = 64
+HOME_DEVICE = "mac-mini-1"  # the database's home: the only Mac that loads outboxes (ADR 0066)
+SHIP_LIMIT = 50_000  # rows per run to the laptop's copy, so a long absence catches up in bounded steps
+VERIFY_EVERY_S = 7 * 86400
 SSH_OPTS = ["-o", "ConnectTimeout=5", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"]
 
 SCHEMA = """
@@ -48,6 +57,7 @@ CREATE TABLE IF NOT EXISTS events(
     data TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS events_stream_ts ON events(stream, ts);
+CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS cursors(
     device TEXT NOT NULL,
     path TEXT NOT NULL,
@@ -200,6 +210,129 @@ def load_sources(conn: sqlite3.Connection, stream: str,
     return results
 
 
+# ── the laptop's copy (G3, marvin#456): same ids, shipped incrementally ─────
+
+def max_id(conn: sqlite3.Connection) -> int:
+    return conn.execute("SELECT COALESCE(MAX(id), 0) FROM events").fetchone()[0]
+
+
+def tip(conn: sqlite3.Connection) -> tuple[int, bytes | None]:
+    """(highest id, its hash): what a copy reports so the Mini can check the copy still matches, in O(log n)."""
+    row = conn.execute("SELECT id, hash FROM events ORDER BY id DESC LIMIT 1").fetchone()
+    return (row[0], row[1]) if row else (0, None)
+
+
+def rows_after(conn: sqlite3.Connection, after_id: int, limit: int) -> list[tuple]:
+    return conn.execute("SELECT id, stream, device, ts, hash, data FROM events WHERE id > ? ORDER BY id LIMIT ?",
+                        (after_id, limit)).fetchall()
+
+
+def encode_rows(rows: Iterable[tuple]) -> bytes:
+    """One JSON array per line: json escapes newlines, so a record can never split a line."""
+    return b"".join(json.dumps([r[0], r[1], r[2], r[3], r[4].hex(), r[5]]).encode() + b"\n" for r in rows)
+
+
+def decode_rows(wire: bytes) -> list[tuple]:
+    rows = []
+    for line in wire.splitlines():
+        try:
+            i, stream, device, ts, h, data = json.loads(line)
+            rows.append((i, stream, device, ts, bytes.fromhex(h), data))
+        except (ValueError, TypeError):
+            continue  # a line cut off by a dropped connection: the next run sends it again
+    return rows
+
+
+def apply_rows(conn: sqlite3.Connection, rows: Iterable[tuple]) -> dict:
+    """Idempotent. A row whose id (or hash) is already there with different content is a divergence: counted."""
+    out = {"applied": 0, "already": 0, "conflict": 0}
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        for row in rows:
+            cur = conn.execute("INSERT OR IGNORE INTO events(id, stream, device, ts, hash, data) VALUES (?, ?, ?, ?, ?, ?)", row)
+            if cur.rowcount:
+                out["applied"] += 1
+                continue
+            same = conn.execute("SELECT 1 FROM events WHERE id = ? AND hash = ?", (row[0], row[4])).fetchone()
+            out["already" if same else "conflict"] += 1
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+    return out
+
+
+def ship(conn: sqlite3.Connection, remote_tip: Callable[[], tuple[int, bytes | None]],
+         apply: Callable[[list[tuple]], dict], limit: int = SHIP_LIMIT) -> dict:
+    """Send the rows the copy doesn't have yet: O(new rows). First check the copy's last row is ours (O(log n)):
+    if something wrote into the copy, its ids run ahead and a plain "id > max" would skip the divergence."""
+    try:
+        top, top_hash = remote_tip()
+    except Unreachable as exc:
+        return {"skipped": f"unreachable: {exc}"}
+    if top:
+        ours = conn.execute("SELECT hash FROM events WHERE id = ?", (top,)).fetchone()
+        if not ours or ours[0] != top_hash:
+            return {"sent": 0, "applied": 0, "already": 0, "conflict": 1}
+    rows = rows_after(conn, top, limit)
+    if not rows:
+        return {"sent": 0, "applied": 0, "already": 0, "conflict": 0}
+    try:
+        return {"sent": len(rows), **apply(rows)}
+    except Unreachable as exc:
+        return {"skipped": f"unreachable: {exc}"}
+
+
+def digest(conn: sqlite3.Connection, upto_id: int) -> str:
+    """Fingerprint of every row up to upto_id. O(n): run weekly, not every 5 minutes."""
+    h = hashlib.sha256()
+    for (row_hash,) in conn.execute("SELECT hash FROM events WHERE id <= ? ORDER BY id", (upto_id,)):
+        h.update(row_hash)
+    return h.hexdigest()
+
+
+def _remote(host: str, args: str, stdin: bytes | None = None) -> bytes:
+    cmd = f"cd ~/.agents && venv/bin/python lib/history_store.py {args}"
+    try:
+        result = subprocess.run(["ssh", *SSH_OPTS, host, cmd], input=stdin, capture_output=True, timeout=600)
+    except subprocess.TimeoutExpired as exc:
+        raise Unreachable(f"ssh to {host} timed out") from exc
+    if result.returncode != 0:
+        raise Unreachable(result.stderr.decode(errors="replace").strip()[-200:] or f"ssh exit {result.returncode}")
+    return result.stdout
+
+
+def ship_to(conn: sqlite3.Connection, host: str, now: float | None = None) -> dict:
+    """Ship to one Mac's copy over ssh, and once a week compare digests."""
+    import time
+    def remote_tip():
+        top, _, h = _remote(host, "--replica-max").decode().strip().partition(" ")
+        return int(top or 0), (bytes.fromhex(h) if h else None)
+    out = ship(conn, remote_tip, lambda rows: json.loads(_remote(host, "--apply", encode_rows(rows))))
+    if out.get("skipped"):
+        return out
+    now = now or time.time()
+    key = f"verified:{host}"
+    last = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    if not last or now - float(last[0]) >= VERIFY_EVERY_S:
+        try:
+            top = remote_tip()[0]
+            same = _remote(host, f"--digest {top}").strip().decode() == digest(conn, top)
+        except Unreachable as exc:
+            return {**out, "verify": f"skipped: {exc}"}
+        out["verify"] = "match" if same else f"MISMATCH up to row {top}"
+        if same:
+            conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", (key, str(now)))
+    return out
+
+
+def require_home() -> None:
+    import machine_profile
+    me = machine_profile.registry_id()
+    if me != HOME_DEVICE:
+        raise SystemExit(f"history_store loads outboxes only on {HOME_DEVICE} (this is {me}): the other Macs hold copies")
+
+
 def default_sources(stream: str) -> list[tuple[str, str, Callable]]:
     """This Mac's outbox plus every other registered Mac's, read over Tailscale ssh."""
     import machine_profile
@@ -223,18 +356,52 @@ def run(streams: list[str] | None = None, db_path: Path | None = None) -> dict:
 
 def main(streams: list[str] | None = None) -> dict:
     import job_events
+    import machine_profile
 
     @job_events.reported("history-load", "History store load")
     def _run():
+        require_home()
         results = run(streams)
         for stream, devices in results.items():
             job_events.step(stream, "; ".join(f"{d}: {r.get('skipped') or str(r.get('added', 0)) + ' new'}"
                                               for d, r in devices.items()))
+        conn = connect()
+        try:
+            for device, info in machine_profile.remote_devices().items():
+                host = info.get("tailscale_hostname")
+                if not host:
+                    continue
+                shipped = ship_to(conn, host)
+                results.setdefault("copies", {})[device] = shipped
+                job_events.step(f"copy to {device}", shipped.get("skipped") or
+                                f"{shipped['applied']} sent" + (f", verify {shipped['verify']}" if "verify" in shipped else ""))
+                if shipped.get("conflict") or "MISMATCH" in str(shipped.get("verify", "")):
+                    raise RuntimeError(f"{device}'s copy has diverged from the record: {shipped}")
+        finally:
+            conn.close()
         return results
     return _run()
 
 
+def _replica_cli(args: list[str]) -> None:
+    """What the Mini runs on another Mac over ssh, against that Mac's copy."""
+    conn = connect()
+    try:
+        if args[0] == "--replica-max":
+            top, h = tip(conn)
+            print(f"{top} {h.hex() if h else ''}".strip())
+        elif args[0] == "--apply":
+            print(json.dumps(apply_rows(conn, decode_rows(sys.stdin.buffer.read()))))
+        elif args[0] == "--digest":
+            print(digest(conn, int(args[1])))
+    finally:
+        conn.close()
+
+
 if __name__ == "__main__":
-    result = main(sys.argv[1:] or None)
-    if sys.stdout.isatty():  # launchd runs every 5 min: a log line each time would grow forever
-        print(json.dumps(result, indent=2))
+    if sys.argv[1:2] and sys.argv[1].startswith("--"):
+        _replica_cli(sys.argv[1:])
+    else:
+        result = main(sys.argv[1:] or None)
+        if sys.stdout.isatty():  # launchd runs every 5 min: a log line each time would grow forever
+            print(json.dumps(result, indent=2))
