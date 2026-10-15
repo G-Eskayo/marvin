@@ -2,7 +2,7 @@
   "repo": "G-Eskayo/marvin-mobile",
   "base_branch": "main",
   "clone_hints": [],
-  "dispatch": "off",
+  "dispatch": "on",
   "merge_from_dashboard": false,
   "verify": [],
   "clone_mode": "catalog",

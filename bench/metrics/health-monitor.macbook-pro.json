@@ -289,5 +289,58 @@
         "higher_is_better": false
       }
     }
+  },
+  {
+    "timestamp": "2026-10-15T19:40:17.525632+00:00",
+    "metrics": {
+      "route:intent-routing-collection": {
+        "value": 92,
+        "higher_is_better": true
+      },
+      "dispatch:lock-age": {
+        "value": 11.7835533,
+        "higher_is_better": false
+      },
+      "catalog:fresh": {
+        "value": 34.5,
+        "higher_is_better": false
+      },
+      "github:budget": {
+        "value": 4068,
+        "higher_is_better": false
+      },
+      "github:gate": {
+        "value": 487,
+        "higher_is_better": false
+      },
+      "repo:integrity:~/.claude": {
+        "value": 1,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.agents@macbook-pro-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.agents@mac-mini-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.claude@macbook-pro-1": {
+        "value": 1,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.claude@mac-mini-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "errors@macbook-pro-1": {
+        "value": 7,
+        "higher_is_better": false
+      },
+      "errors@mac-mini-1": {
+        "value": 5,
+        "higher_is_better": false
+      }
+    }
   }
 ]

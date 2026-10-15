@@ -1,7 +1,7 @@
 # ADR 0066 — History store: the files are the outbox, the database is the record
 
 **Date:** 2026-10-14  
-**Status:** Proposed (grilled with Gil 2026-10-14; build after the task list is approved)  
+**Status:** Accepted 2026-10-15 (grilled with Gil 2026-10-14)  
 **Related:** ADR 0065 (replacement cost), ADR 0021/0022 (code and data sync), north star #1, storage plan §9 F6, CONTEXT.md "Databases"
 
 ## Context
@@ -19,7 +19,7 @@ Two Macs rule out writing straight to one database: SQLite can't be written safe
 3. **One generic table, not a schema per stream:** `events(stream, device, ts, hash UNIQUE, data JSON)`, indexed on `(stream, ts)`. Per-stream shapes are SQLite JSON views. `hash` is the line's content hash, so loading is idempotent: running twice adds nothing.
 4. **A loader** runs every few minutes on the Mini. It remembers a byte offset (and inode, for rotation) per outbox, so each run reads only the new lines: O(new lines × log n), never O(file). It reads the Mini's outboxes, and the laptop's over ssh whenever the laptop is reachable. The laptop catches up when it comes back.
 5. **Backup = the laptop's read copy, shipped incrementally.** After each load, the rows added since the laptop's last confirmed row are sent and applied with the same idempotent insert: O(new rows) per cycle. A full copy (O(n)) every 5 minutes was the first draft and was rejected: it grows forever (2026-10-14 complexity review). The laptop's dashboard reads its local copy, which is fast, works offline, and is minutes stale at worst. A full verified copy runs only weekly, as the check.
-6. **Trimming comes last, per stream.** A line is trimmed from its outbox only when (a) it's in the database, (b) the backup holding it is verified on the other Mac, and (c) every reader of that stream reads the database. Until a stream's readers have moved, its file is never trimmed. History is irreplaceable (ADR 0065): it's kept forever in the database.
+6. **Trimming comes last, per stream.** A line is trimmed from its outbox only when (a) it's in the database, (b) the backup holding it is verified on the other Mac, and (c) every reader of that stream reads the database. Until a stream's readers have moved, its file is never trimmed. History is irreplaceable (ADR 0065): it's kept forever in the database. **Retention (Gil, 2026-10-15):** the two high-volume streams (`gh-calls`, `dashboard-timing`) keep every line for 30 days, then roll into hourly summaries kept forever; every other stream keeps every line forever.
 7. **Order:** one stream end to end first (tracer bullet), then the rest. First stream: `gh-calls.jsonl`, the biggest, read by the GitHub usage chart (24h/7d/30d) and a health check.
 
 ## Consequences
@@ -45,5 +45,5 @@ n = rows stored, k = rows a query returns, h = hours covered.
 - Raw log growth: laptop ~1.2 MB/day, Mini ~2.8 MB/day. About 95% of it is two streams (every GitHub call, every dashboard timing sample). Today these files are capped and rotated at 5 MB, so older history is thrown away; total today is ~17 MB.
 - SQLite with this schema is 1.71× the raw JSON (7.3 MB of logs → 12.5 MB database, index + hash included).
 - **Keep every line forever:** ~6.8 MB/day → ~2.5 GB/year on the Mini, the same again as the laptop backup (~5 GB/year across both).
-- **Keep raw for 30 days, then hourly summaries for the two big streams (open decision):** ~200 MB steady raw window, plus hourly rows (measured 116 B/row; ~80k rows/yr per Mac) and the small streams in full → ~0.25 GB in year one and ~60 MB more each year after; about double that counting the backup.
+- **Keep raw for 30 days, then hourly summaries for the two big streams (chosen 2026-10-15):** ~200 MB steady raw window, plus hourly rows (measured 116 B/row; ~80k rows/yr per Mac) and the small streams in full → ~0.25 GB in year one and ~60 MB more each year after; about double that counting the backup.
 - Caveats: rates come from 2.5–14 days of data and pipeline activity is bursty; the 1.71× is measured on the laptop's mix. The disk headroom forecast (ADR 0056) tracks the real numbers.

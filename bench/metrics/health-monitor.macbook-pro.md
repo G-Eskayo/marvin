@@ -76,3 +76,17 @@
 - **errors@macbook-pro-1**: 6
 - **errors@mac-mini-1**: 4
 
+## 2026-10-15T19:40:17.525632+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **dispatch:lock-age**: 11.7835533
+- **catalog:fresh**: 34.5
+- **github:budget**: 4068
+- **github:gate**: 487
+- **repo:integrity:~/.claude**: 1
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.agents@mac-mini-1**: 0
+- **repo:sync:~/.claude@macbook-pro-1**: 1
+- **repo:sync:~/.claude@mac-mini-1**: 0
+- **errors@macbook-pro-1**: 7
+- **errors@mac-mini-1**: 5
+
