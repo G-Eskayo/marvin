@@ -1,10 +1,11 @@
-import { execFile, spawn } from 'child_process'
+import { execFile, execFileSync, spawn } from 'child_process'
 import { promisify } from 'util'
 import { mkdtemp, rm } from 'fs/promises'
 import { tmpdir } from 'os'
 import path from 'path'
 import { classifyFailure, summarizeGateFailure, withRetry, MergeFailure, refusal } from './failure.js'
 import { recordFailure } from './failure_log.js'
+import { DEFAULT_TEST_TIMEOUT_MS, sizedTimeoutMs, recordDuration, countConcurrentPytest } from './gate_durations.js'
 import { assertUiEvidence } from './ui_evidence.js'
 import { assertDecisions } from './decisions_gate.js'
 import { fileURLToPath } from 'url'
@@ -24,9 +25,8 @@ const TICKET_PIPELINE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'ticke
 const VENV_PYTHON = path.resolve(__dirname, '..', '..', 'venv', 'bin', 'python')
 const PROFILE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'project_profile.py')
 const GENERATED_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'generated_paths.py')
-const DEFAULT_TEST_TIMEOUT_MS = 1200_000
 
-export async function execWithGroupTimeout(cmd, args, opts, timeoutMs = DEFAULT_TEST_TIMEOUT_MS) {
+export async function execWithGroupTimeout(cmd, args, opts, timeoutMs = DEFAULT_TEST_TIMEOUT_MS, meta = null) {
   const child = spawn(cmd, args, { ...opts, detached: true })
   let stdout = '', stderr = ''
   if (child.stdout) child.stdout.on('data', (d) => { stdout += d })
@@ -47,7 +47,16 @@ export async function execWithGroupTimeout(cmd, args, opts, timeoutMs = DEFAULT_
           process.kill(-child.pid, 'SIGKILL')
         } catch { /* process may have already exited */ }
         const mins = Math.max(1, Math.round(timeoutMs / 60000))
-        reject(Object.assign(new Error(`Tests did not finish within ${mins} min and were killed, running: ${cmd}`), { stdout, stderr }))
+        let message = `Tests did not finish within ${mins} min and were killed, running: ${cmd}`
+        // If meta.label is set, include the usual duration and concurrent pytest count
+        if (meta?.label) {
+          const usualMs = sizedTimeoutMs(meta.label, { capMs: timeoutMs })
+          const usualMins = Math.round(usualMs / 60000)
+          const concurrentPytest = countConcurrentPytest(execFileSync)
+          const concurrentInfo = concurrentPytest !== null ? ` (${concurrentPytest} concurrent pytest processes)` : ''
+          message = `${message}\nUsual duration for "${meta.label}": ${usualMins} min${concurrentInfo}`
+        }
+        reject(Object.assign(new Error(message), { stdout, stderr }))
       }, timeoutMs)
     })
   ]).finally(() => clearTimeout(timer))
@@ -96,10 +105,22 @@ export async function isBehindMain(headRef, exec = execFileAsync, repoPath = REP
   }
 }
 
-export async function _defaultRunTests(cwd, exec) {
+export async function _defaultRunTests(cwd, exec, capMs = GATE_TIMEOUT_MS) {
   // MARVIN_MERGE_GATE: tests that read ANOTHER repo's data (the portfolio figures) stay out of a PR's gate; they run in the
   // main-branch health check instead (lib/main_health.py).
-  await exec(VENV_PYTHON, ['-m', 'pytest', '-q'], { cwd, env: { ...process.env, MARVIN_MERGE_GATE: '1' } })
+  const pytestTimeoutMs = sizedTimeoutMs('pytest', { capMs })
+  const start1 = Date.now()
+  try {
+    // In production, exec is execFileAsync which only accepts (file, args, opts).
+    // In tests, exec might be a mock that accepts additional parameters. Either way,
+    // we use execWithGroupTimeout to ensure timeouts work correctly.
+    await execWithGroupTimeout(VENV_PYTHON, ['-m', 'pytest', '-q'], { cwd, env: { ...process.env, MARVIN_MERGE_GATE: '1' } }, pytestTimeoutMs, { label: 'pytest' })
+    recordDuration({ key: 'pytest', durationMs: Date.now() - start1, passed: true })
+  } catch (e) {
+    recordDuration({ key: 'pytest', durationMs: Date.now() - start1, passed: false })
+    throw e
+  }
+
   // Found live 2026-10-01 (PR #119's merge attempt): a `git worktree add`
   // scratch checkout has no dashboard/node_modules at all -- `npx vitest
   // run` hard-fails with a dependency-resolution error wall that has
@@ -111,7 +132,16 @@ export async function _defaultRunTests(cwd, exec) {
   // avoid.
   const dashboardDir = path.join(cwd, 'dashboard')
   await exec('npm', ['install'], { cwd: dashboardDir })
-  await exec('npx', ['vitest', 'run'], { cwd: dashboardDir })
+
+  const vitestTimeoutMs = sizedTimeoutMs('vitest', { capMs })
+  const start2 = Date.now()
+  try {
+    await execWithGroupTimeout('npx', ['vitest', 'run'], { cwd: dashboardDir }, vitestTimeoutMs, { label: 'vitest' })
+    recordDuration({ key: 'vitest', durationMs: Date.now() - start2, passed: true })
+  } catch (e) {
+    recordDuration({ key: 'vitest', durationMs: Date.now() - start2, passed: false })
+    throw e
+  }
 }
 
 // Rebases headRef onto origin/main inside a throwaway scratch worktree --
@@ -154,7 +184,7 @@ export async function baselineFailsOnMain(names, exec = execFileAsync, repoPath 
   }
 }
 
-export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = REPO_PATH, runTests = _defaultRunTests, base = 'main', resolveConflicts = null, sleep = null) {
+export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = REPO_PATH, runTests = _defaultRunTests, base = 'main', resolveConflicts = null, sleep = null, capMs = GATE_TIMEOUT_MS) {
   const scratchDir = await mkdtemp(path.join(tmpdir(), 'mr-merge-gate-'))
   try {
     await exec('git', ['fetch', 'origin', base, headRef], { cwd: repoPath })
@@ -173,7 +203,8 @@ export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = 
     }
 
     try {
-      await runTests(scratchDir, exec)
+      // _defaultRunTests needs capMs to compute individual step timeouts; other runTests implementations ignore it
+      await (runTests === _defaultRunTests ? runTests(scratchDir, exec, capMs) : runTests(scratchDir, exec))
     } catch (err) {
       return { ok: false, reason: `Tests failed after rebasing onto main:\n\n${testOutputOf(err)}` }
     }
@@ -241,8 +272,16 @@ export async function defaultGateContext(repo, exec = execFileAsync) {
     clone: info.clone,
     base: info.base_branch,
     // The same measuring code the pipeline uses, so "passes the gate" means what "passes verification" means.
-    runTests: async (cwd, run) => {
-      await run(VENV_PYTHON, [PROFILE_SCRIPT, 'verify', repo, cwd])
+    runTests: async (cwd, run, capMs) => {
+      const start = Date.now()
+      const key = `verify:${repo}`
+      try {
+        await run(VENV_PYTHON, [PROFILE_SCRIPT, 'verify', repo, cwd])
+        recordDuration({ key, durationMs: Date.now() - start, passed: true })
+      } catch (e) {
+        recordDuration({ key, durationMs: Date.now() - start, passed: false })
+        throw e
+      }
     },
     resolveConflicts: generatedResolver(repo, exec),
     // The project's own UI paths, added to ui_evidence.js's defaults (marvin #374).
@@ -384,7 +423,20 @@ export async function mergeableNow(prUrl, exec, sleep = (ms) => new Promise((r) 
 // test run that blocked reading an iCloud-managed folder under launchd sat forever, and three approvals of marvin #147
 // vanished with no result (2026-10-06). Past the limit the gate is abandoned and reported as the machine's problem,
 // not the PR's.
-export const GATE_TIMEOUT_MS = 40 * 60_000
+//
+// Derived dynamically (option C, 2026-10-15): computed as the sum of individual step timeouts plus overhead,
+// with a hard outer ceiling so a corrupted history can't make the gate wait forever.
+// Falls back to a conservative static floor if no historical data is available.
+export const GATE_TIMEOUT_MS = 90 * 60_000  // Hard ceiling: 90 minutes
+export function computeGateTimeoutMs() {
+  // Each step gets a sized timeout; sum them up plus a fixed overhead for rebase/push/etc.
+  const pytestMs = sizedTimeoutMs('pytest', { capMs: GATE_TIMEOUT_MS })
+  const vitestMs = sizedTimeoutMs('vitest', { capMs: GATE_TIMEOUT_MS })
+  const overheadMs = 5 * 60_000  // 5 min for rebase, conflict resolution, push, GitHub checks
+  const derived = pytestMs + vitestMs + overheadMs
+  // Never exceed the hard ceiling, never go below the minimum reasonable floor (20 min)
+  return Math.min(GATE_TIMEOUT_MS, Math.max(DEFAULT_TEST_TIMEOUT_MS, derived))
+}
 
 function withGateTimeout(promise, ms) {
   let timer
@@ -457,8 +509,8 @@ async function mergePrUnqueued(
     stage('gate', 'started', `rebasing onto ${ctx ? ctx.base : 'main'} + retesting (${ctx ? ctx.base : 'main'} changed files this PR also changes)`)
     const result = await withGateTimeout(
       Promise.resolve(ctx
-        ? rebaseAndRetestFn(headRefName, exec, ctx.clone, ctx.runTests, ctx.base, ctx.resolveConflicts)
-        : rebaseAndRetestFn(headRefName, exec, REPO_PATH, _defaultRunTests, 'main', generatedResolver(MARVIN_REPO, exec))),
+        ? rebaseAndRetestFn(headRefName, exec, ctx.clone, ctx.runTests, ctx.base, ctx.resolveConflicts, undefined, gateTimeoutMs)
+        : rebaseAndRetestFn(headRefName, exec, REPO_PATH, _defaultRunTests, 'main', generatedResolver(MARVIN_REPO, exec), undefined, gateTimeoutMs)),
       gateTimeoutMs)
     if (!result.ok) {
       // Structured, concise feedback (code header, failing test names, capped tail)
