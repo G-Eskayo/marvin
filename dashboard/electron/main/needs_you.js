@@ -1,5 +1,6 @@
 import { dependencyRefs, openDependencies } from './board.js'
 import { parseHumanTask } from '../../src/lib/human_task.js'
+import { projectIdOf } from '../../src/lib/projects.js'
 
 const DAY_MS = 86400_000
 
@@ -142,6 +143,17 @@ function getPriority(labelNames) {
   return priorityLabel || null
 }
 
+// Resolve project ID from labels or repo
+export function projectIdFor(ticket) {
+  const labelNames = (ticket.labels || []).map((l) => l.name || l)
+  for (const name of labelNames) {
+    if (name.startsWith('project:') && name.length > 8) {
+      return name.slice(8)
+    }
+  }
+  return projectIdOf(ticket.repo)
+}
+
 // Main ranking function
 export function rankNeedsYou(tickets, { now = Date.now() } = {}) {
   const rows = []
@@ -203,7 +215,8 @@ export function rankNeedsYou(tickets, { now = Date.now() } = {}) {
       unblocks,
       ask,
       priority,
-      ageDays
+      ageDays,
+      projectId: projectIdFor(t)
     })
   }
 

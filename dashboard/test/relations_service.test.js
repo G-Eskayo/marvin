@@ -92,6 +92,36 @@ describe('review parity (MR Review <-> board)', () => {
     ).overview()
     expect(o['G-Eskayo/marvin']).toMatchObject({ review: 1, needsYou: 1, blocked: 1 })
   })
+
+  it('includes needs-info tickets in needsYou count (bug fix)', async () => {
+    const o = await svc(
+      [issue(1, { labels: [{ name: 'needs-info' }], body: '## What to build\nX\n## Acceptance criteria\n- [ ] Y' })],
+      []
+    ).overview()
+    expect(o['G-Eskayo/marvin'].needsYou).toBe(1)
+  })
+
+  it('counts both ready-for-human and needs-info in needsYou', async () => {
+    const o = await svc(
+      [
+        issue(1, { labels: [{ name: 'ready-for-human' }], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' }),
+        issue(2, { labels: [{ name: 'ready-for-human' }], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' }),
+        issue(3, { labels: [{ name: 'needs-info' }], body: '## What to build\nX\n## Acceptance criteria\n- [ ] Y' })
+      ],
+      []
+    ).overview()
+    expect(o['G-Eskayo/marvin'].needsYou).toBe(3)
+  })
+
+  it('excludes hold-labelled ready-for-human from needsYou count', async () => {
+    const o = await svc(
+      [
+        issue(1, { labels: [{ name: 'ready-for-human' }, { name: 'hold' }], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' })
+      ],
+      []
+    ).overview()
+    expect(o['G-Eskayo/marvin'].needsYou).toBe(0)
+  })
 })
 
 describe('parity does not raise an alarm on a stale snapshot', () => {

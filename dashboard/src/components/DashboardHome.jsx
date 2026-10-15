@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { cleanIpcError } from '../lib/ipcError.js'
+import NeedsYouSection from './NeedsYouSection.jsx'
 
 // Format ISO timestamp relative to now: "just now", "5m ago", "2h ago", "3d ago", "2w ago", or short date
 export function formatRelativeTime(iso, now = Date.now()) {
@@ -93,7 +94,7 @@ function ProjectCard({ card, onOpen }) {
   )
 }
 
-export default function DashboardHome({ onOpenProject }) {
+export default function DashboardHome({ onOpenProject, onOpenTicket }) {
   // Every hook before any early return: a hook after the "no boards yet" return ran only once boards loaded, and
   // React blanked the Activity tab (error #310, 2026-10-09).
   const [showArchived, setShowArchived] = useState(false)
@@ -169,6 +170,7 @@ export default function DashboardHome({ onOpenProject }) {
 
   return (
     <div className="max-w-6xl space-y-6 p-6">
+      <NeedsYouSection onOpenTicket={onOpenTicket} />
       <div>
         <h1 className="mb-4 text-2xl font-semibold text-white">Project Boards</h1>
         <div className="grid auto-fit gap-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))' }}>

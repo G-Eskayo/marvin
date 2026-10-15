@@ -1,8 +1,9 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import Markdown, { parseDashLink } from '../src/components/Markdown.jsx'
 import Related from '../src/components/Related.jsx'
 import AgentsPanel from '../src/components/AgentsPanel.jsx'
+import { NeedsYouList } from '../src/components/NeedsYouSection.jsx'
 
 describe('Markdown with project context', () => {
   const ctx = { project: 'marvin', repo: 'G-Eskayo/marvin', adrs: { 33: 'docs/adr/0033-health.md' } }
@@ -67,6 +68,64 @@ describe('AgentsPanel', () => {
     expect(html).toContain('Not reporting steps yet')
     expect(html).toContain('pid 42')
     expect(html).toContain('1 of 3 report steps')
+  })
+})
+
+describe('NeedsYouList', () => {
+  const row = (num, over = {}) => ({
+    repo: 'G-Eskayo/marvin',
+    number: num,
+    title: `Ticket #${num}`,
+    url: `https://github.com/G-Eskayo/marvin/issues/${num}`,
+    kind: 'ready-for-human',
+    unblocks: { count: 0, items: [] },
+    ask: 'test it',
+    priority: 'p0',
+    ageDays: 5,
+    projectId: 'marvin',
+    ...over
+  })
+
+  it('renders list populated with pills and kind labels', () => {
+    const rows = [
+      row(1, { priority: 'p0', kind: 'ready-for-human' }),
+      row(2, { priority: null, kind: 'needs-info' })
+    ]
+    const boards = [{ repo: 'G-Eskayo/marvin', name: 'MARVIN' }]
+    const onOpenTicket = vi.fn()
+    const html = renderToStaticMarkup(<NeedsYouList rows={rows} boards={boards} onOpenTicket={onOpenTicket} />)
+    expect(html).toContain('#1')
+    expect(html).toContain('#2')
+    expect(html).toContain('p0')
+    expect(html).toContain('needs answer')
+    expect(html).toContain('needs you')
+  })
+
+  it('renders empty state with "Nothing needs you"', () => {
+    const html = renderToStaticMarkup(<NeedsYouList rows={[]} boards={[]} />)
+    expect(html).toContain('Nothing needs you')
+  })
+
+  it('renders pagination controls for 6 rows (more than 5)', () => {
+    const rows = Array.from({ length: 6 }, (_, i) => row(i + 1))
+    const html = renderToStaticMarkup(<NeedsYouList rows={rows} boards={[]} />)
+    expect(html).toContain('Page 1 of 2')
+    expect(html).toContain('Next')
+  })
+
+  it('does not render pagination controls for 5 rows (single page)', () => {
+    const rows = Array.from({ length: 5 }, (_, i) => row(i + 1))
+    const html = renderToStaticMarkup(<NeedsYouList rows={rows} boards={[]} />)
+    expect(html).not.toContain('Page')
+  })
+
+  it('renders sort buttons', () => {
+    const rows = [row(1)]
+    const html = renderToStaticMarkup(<NeedsYouList rows={rows} boards={[]} sort="unblocks" />)
+    expect(html).toContain('Impact')
+    expect(html).toContain('Priority')
+    expect(html).toContain('Oldest')
+    expect(html).toContain('Project')
   })
 })
 
@@ -253,8 +312,8 @@ describe('buildProjectCards', () => {
 })
 
 describe('DashboardHome', () => {
-  it('renders a loading state on mount', () => {
-    const html = renderToStaticMarkup(<DashboardHome onOpenProject={() => {}} />)
+  it('renders a loading state on mount (NeedsYouSection loads independently)', () => {
+    const html = renderToStaticMarkup(<DashboardHome onOpenProject={() => {}} onOpenTicket={() => {}} />)
     expect(html).toContain('Loading projects')
   })
 })

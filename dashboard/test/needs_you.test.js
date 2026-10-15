@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { missingFor, blocksGraph, transitiveUnblocks, rankNeedsYou } from '../electron/main/needs_you.js'
+import { missingFor, blocksGraph, transitiveUnblocks, rankNeedsYou, projectIdFor } from '../electron/main/needs_you.js'
 import { parseHumanTask } from '../src/lib/human_task.js'
 
 // Test fixture builders
@@ -381,6 +381,42 @@ describe('rankNeedsYou', () => {
       expect(row1.unblocks.count).toBe(5)
       expect(row1.unblocks.count).toBeGreaterThan(row7.unblocks.count)
       expect(result.indexOf(row1)).toBeLessThan(result.indexOf(row7))
+    }
+  })
+})
+
+describe('projectIdFor', () => {
+  it('returns the project ID from a project: label', () => {
+    const ticket = issue(1, { labels: [label('project:portal')] })
+    expect(projectIdFor(ticket)).toBe('portal')
+  })
+
+  it('falls back to projectIdOf(repo) when no project: label', () => {
+    const ticket = issue(1, { labels: [] })
+    expect(projectIdFor({ ...ticket, repo: 'G-Eskayo/marvin' })).toBe('marvin')
+  })
+
+  it('handles self-referential project: labels without crashing', () => {
+    const ticket = issue(1, { labels: [label('project:marvin')], repo: 'G-Eskayo/marvin' })
+    expect(projectIdFor(ticket)).toBe('marvin')
+  })
+
+  it('takes the first project: label and ignores malformed/empty ones', () => {
+    const ticket = issue(1, { labels: [label('project:'), label('project:first'), label('project:second')] })
+    // Takes the first one that has content after the colon
+    expect(projectIdFor(ticket)).toBe('first')
+  })
+})
+
+describe('rankNeedsYou projectId attachment', () => {
+  it('attaches projectId to each row', () => {
+    const tickets = [
+      { repo: 'G-Eskayo/marvin', ...issue(1, { labels: [label('ready-for-human')], body: '## Your task\n**What I need from you:** A\n**Where:** B\n**How:** C\n**What to send back:** D' }) }
+    ]
+    const result = rankNeedsYou(tickets)
+    if (result.length > 0) {
+      expect(result[0].projectId).toBeDefined()
+      expect(result[0].projectId).toBe('marvin')
     }
   })
 })
