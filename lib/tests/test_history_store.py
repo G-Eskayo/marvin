@@ -351,3 +351,21 @@ def test_the_copy_reports_its_tip_as_id_and_hash_through_the_real_cli(tmp_path):
     conn.close()
     top, h = subprocess.run(cli, env=env, capture_output=True, text=True).stdout.split()
     assert top == "1" and len(bytes.fromhex(h)) == 16
+
+
+def test_opening_a_new_database_waits_for_a_writer_instead_of_failing(tmp_path):
+    """Switching a fresh file to WAL needs an exclusive lock, and SQLite refuses that at once ("database is locked")
+    without honouring the busy timeout: 13 of 60 four-thread opens failed (2026-10-15, found by the merge gate)."""
+    import time
+    path = tmp_path / "h.db"
+    reader = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
+    reader.execute("CREATE TABLE x(a)")
+    reader.execute("BEGIN IMMEDIATE")  # a writer mid-transaction, as when another loader is creating the tables
+    reader.execute("INSERT INTO x VALUES (1)")
+    threading.Timer(0.3, lambda: reader.execute("COMMIT")).start()
+    started = time.time()
+    conn = hs.connect(path)
+    assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    assert time.time() - started >= 0.25  # it waited for the reader rather than failing
+    conn.close()
+    reader.close()

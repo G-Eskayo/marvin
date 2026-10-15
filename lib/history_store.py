@@ -74,12 +74,30 @@ class Unreachable(Exception):
     """The other Mac couldn't be read (asleep, away, ssh refused). Its outbox waits; nothing is lost."""
 
 
+def _enable_wal(conn: sqlite3.Connection, wait_s: float = 30.0) -> None:
+    """Switching a file to WAL needs an exclusive lock, and while another connection holds a write reservation SQLite
+    refuses at once ("database is locked") without honouring the busy timeout: 13 of 60 four-thread opens of a new
+    database failed that way (2026-10-15). Retry with backoff. Once set, WAL is stored in the file, so after the first
+    open this returns at once."""
+    import time
+    delay, deadline = 0.01, time.monotonic() + wait_s
+    while True:
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            return
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc) or time.monotonic() >= deadline:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 0.5)
+
+
 def connect(path: Path | str | None = None) -> sqlite3.Connection:
     path = Path(path or DB_PATH)
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, timeout=30, isolation_level=None)  # transactions are explicit (BEGIN IMMEDIATE)
-    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=30000")
+    _enable_wal(conn)
     conn.executescript(SCHEMA)
     return conn
 
