@@ -437,7 +437,10 @@ def _merge_remote(repo: Path) -> tuple[bool, str]:
     """Fetch + merge origin/main. On conflict, aborts the merge (tree left
     clean, nothing partially applied) rather than attempting resolution."""
     subprocess.run(["git", "fetch", "origin"], cwd=repo, capture_output=True)
-    ok, output = _git_ok(repo, ["merge", "origin/main", "--no-edit"])
+    # --autostash (marvin#450): push() reaches here with uncommitted edits (sync-log.md after every push since #427, or
+    # a file changed while the Mac slept mid-run), and a plain merge refuses: "local changes would be overwritten".
+    # A clash when putting them back leaves a stash, which _stuck_from_previous_run() refuses on loudly.
+    ok, output = _git_ok(repo, ["merge", "--autostash", "origin/main", "--no-edit"])
     if not ok:
         subprocess.run(["git", "merge", "--abort"], cwd=repo, capture_output=True)
         return False, output

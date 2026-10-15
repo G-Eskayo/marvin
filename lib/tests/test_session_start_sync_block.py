@@ -23,6 +23,7 @@ def _no_real_home_writes(monkeypatch, tmp_path):
     """A failing check must never log into the real ~/.claude."""
     monkeypatch.setattr(ssr, "log_hook_error", lambda *a, **kw: None)
     monkeypatch.setattr(ssr, "CLAUDE_DIR", tmp_path / "home" / ".claude")
+    monkeypatch.setattr(ssr, "_last_wake", lambda: None)  # never this Mac's real wake time (#451 tests set their own)
 
 
 NOW = datetime(2026, 10, 14, 16, 0, tzinfo=timezone.utc)
@@ -273,3 +274,64 @@ def test_report_still_prints_when_the_sync_check_crashes(monkeypatch, capsys, tm
         monkeypatch.setattr(ssr, name, lambda: None)
     ssr.main()
     assert capsys.readouterr().out.startswith("MARVIN active — test")
+
+
+# ── marvin#451: age counts from this Mac's last wake, not just the commit time ──
+
+def _behind_by_old_commit(tmp_path: Path) -> Path:
+    clone = _origin_and_clone(tmp_path)
+    other = _other_clone(tmp_path)
+    (other / "new.md").write_text("landed overnight while this Mac slept\n")
+    _git(other, "add", "-A")
+    _git(other, "commit", "-m", "theirs", env=_dated(NOW - timedelta(hours=8)))
+    _git(other, "push", "origin", "main")
+    _git(clone, "fetch", "origin")
+    return clone
+
+
+def test_old_commits_right_after_waking_are_not_a_block(tmp_path, monkeypatch):
+    clone = _behind_by_old_commit(tmp_path)
+    monkeypatch.setattr(ssr, "_last_wake", lambda: NOW - timedelta(minutes=30))
+    assert _block([clone]) is None
+
+
+def test_old_commits_long_after_waking_block_with_age_from_the_wake(tmp_path, monkeypatch):
+    clone = _behind_by_old_commit(tmp_path)
+    monkeypatch.setattr(ssr, "_last_wake", lambda: NOW - timedelta(hours=3))
+    out = _block([clone])
+    assert out and "not merged" in out and "3h 0m" in out, out
+
+
+def test_unpushed_commit_right_after_waking_is_not_a_block(tmp_path, monkeypatch):
+    clone = _origin_and_clone(tmp_path)
+    (clone / "file.md").write_text("v2\n")
+    _git(clone, "commit", "-am", "auto-sync before sleep", env=_dated(NOW - timedelta(hours=19)))
+    monkeypatch.setattr(ssr, "_last_wake", lambda: NOW - timedelta(minutes=10))
+    assert _block([clone]) is None
+
+
+def test_wake_in_the_future_or_unknown_falls_back_to_commit_time(tmp_path, monkeypatch):
+    clone = _behind_by_old_commit(tmp_path)
+    monkeypatch.setattr(ssr, "_last_wake", lambda: None)
+    assert "8h 0m" in (_block([clone]) or "")
+    monkeypatch.setattr(ssr, "_last_wake", lambda: NOW + timedelta(days=1))
+    assert "8h 0m" in (_block([clone]) or ""), "a clock-skewed wake time must not hide a real block"
+
+
+_real_last_wake = ssr._last_wake  # captured at import, before the autouse fixture stubs it
+
+
+def test_last_wake_parses_sysctl_and_survives_garbage(monkeypatch):
+    class R:
+        def __init__(self, out, rc=0):
+            self.stdout, self.returncode = out, rc
+    for out, rc, want in [("{ sec = 1792088940, usec = 501336 } Thu Oct 15 12:29:00 2026\n", 0, 1792088940),
+                          ("", 1, None), ("garbage", 0, None), ("{ sec = -5 }", 0, None)]:
+        monkeypatch.setattr(ssr.subprocess, "run", lambda *a, **kw: R(out, rc))
+        got = _real_last_wake()
+        assert (got.timestamp() if got else None) == want, (out, got)
+
+    def boom(*a, **kw):
+        raise OSError("no sysctl")
+    monkeypatch.setattr(ssr.subprocess, "run", boom)
+    assert _real_last_wake() is None
