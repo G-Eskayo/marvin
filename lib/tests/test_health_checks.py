@@ -864,6 +864,43 @@ def test_main_health_is_yellow_when_never_checked_or_stale(tmp_path):
     assert hc.check_main_health(path=p)["severity"] == "yellow"
 
 
+def test_carried_green_result_shows_carried_marker(tmp_path):
+    import json
+    p = tmp_path / "m.json"
+    p.write_text(json.dumps({
+        "sha": "aaa0002",
+        "ok": True,
+        "failed": [],
+        "summary": "100 passed",
+        "checked_at": hc._now().isoformat(),
+        "carried": True,
+        "carried_from": "aaa0001"
+    }))
+    r = hc.check_main_health(path=p)
+    assert r["severity"] == "green"
+    assert "aaa0001" in r["detail"]
+    assert "carried from" in r["detail"]
+
+
+def test_carried_red_result_shows_carried_marker_and_failures(tmp_path):
+    import json
+    p = tmp_path / "m.json"
+    p.write_text(json.dumps({
+        "sha": "aaa0002",
+        "ok": False,
+        "failed": ["tests/test_x.py::test_y"],
+        "summary": "1 failed",
+        "checked_at": hc._now().isoformat(),
+        "carried": True,
+        "carried_from": "aaa0001"
+    }))
+    r = hc.check_main_health(path=p)
+    assert r["severity"] == "red"
+    assert "tests/test_x.py::test_y" in r["detail"]
+    assert "aaa0001" in r["detail"]
+    assert "carried from" in r["detail"]
+
+
 # ── parallel dispatch: keeping up with the queue ──────────────────────────────
 
 def test_parallel_dispatch_green_when_off():

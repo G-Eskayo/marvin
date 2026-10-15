@@ -173,6 +173,25 @@ describe('the summary lines read real sources', () => {
     u.done()
   })
 
+  it('TEST shows CARRIED FROM marker when the result is carried forward from an earlier test', () => {
+    const h = GREEN()
+    h.checks = h.checks.map((c) => c.id === 'main:green' ? check('main:green', 'green', 'Main is green', 'main @ aaa0002: 100 passed (carried from aaa0001)') : c)
+    const t = tree({ health: h })
+    const testLine = line(buildBootData(t), 'TEST')
+    expect(testLine.text).toContain('100 PASSED')
+    expect(testLine.text).toContain('CARRIED FROM AAA0001')
+    t.done()
+  })
+
+  it('TEST shows CARRIED FROM marker even with non-standard summary text', () => {
+    const h = GREEN()
+    h.checks = h.checks.map((c) => c.id === 'main:green' ? check('main:green', 'green', 'Main is green', 'main @ aaa0002: custom summary (carried from aaa1234)') : c)
+    const t = tree({ health: h })
+    const testLine = line(buildBootData(t), 'TEST')
+    expect(testLine.text).toContain('CARRIED FROM AAA1234')
+    t.done()
+  })
+
   it('the feed is every check in order, with label and level only', () => {
     const t = tree({ health: GREEN() })
     const d = buildBootData(t)
