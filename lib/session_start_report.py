@@ -263,6 +263,16 @@ def _sync_failure_streak(text: str, machine: str, repo: Path) -> tuple[int, int,
     return (failed, refused, since, latest) if failed else None
 
 
+def _last_wake() -> datetime | None:
+    """When this Mac last woke from sleep (`sysctl kern.waketime`), or None if unknown."""
+    try:
+        out = subprocess.run(["/usr/sbin/sysctl", "-n", "kern.waketime"], capture_output=True, text=True, timeout=5)
+    except Exception:
+        return None
+    m = re.search(r"\bsec = (\d+)", out.stdout or "") if out.returncode == 0 else None
+    return datetime.fromtimestamp(int(m.group(1)), tz=timezone.utc) if m and int(m.group(1)) > 0 else None
+
+
 def _live_sync_problems(repo: Path, now: datetime) -> list[str]:
     status = _git_out(repo, "status", "--porcelain=v1")
     if status is None:
@@ -279,14 +289,18 @@ def _live_sync_problems(repo: Path, now: datetime) -> list[str]:
     if _git_out(repo, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/main") is None:
         return problems
     cutoff = now - timedelta(hours=SYNC_BLOCK_AFTER_HOURS)
+    # Count from this Mac's last wake too (marvin#451): commits that landed while it slept aren't stuck until the sync
+    # job has had its window since waking. A wake time in the future (clock skew) is ignored, never trusted to hide.
+    wake = _last_wake()
+    wake = wake if wake and wake <= now else None
     for rng, what in (("origin/main..main", "committed here but not pushed"),
                       ("main..origin/main", "on origin but not merged here")):
         stamps = [int(t) for t in (_git_out(repo, "log", "--format=%ct", rng) or "").split() if t.isdigit()]
         if not stamps:
             continue
-        oldest = datetime.fromtimestamp(min(stamps), tz=timezone.utc)
-        if oldest <= cutoff:
-            problems.append(f"{len(stamps)} commit(s) {what}, oldest {_fmt_age(now - oldest)} old")
+        stuck_from = max(datetime.fromtimestamp(min(stamps), tz=timezone.utc), wake or datetime.min.replace(tzinfo=timezone.utc))
+        if stuck_from <= cutoff:
+            problems.append(f"{len(stamps)} commit(s) {what}, for {_fmt_age(now - stuck_from)}")
     return problems
 
 
