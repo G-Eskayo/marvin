@@ -1,0 +1,7 @@
+The background exploration agent finished and corroborates everything in the plan above — same files, same gaps. Two refinements worth folding in:
+
+**1. Priority colors are duplicated, not just absent.** `TAG_STYLE.priority` (flat orange, no per-level distinction) is copy-pasted identically in both `ProjectBoard.jsx:47-53` and `CompletedView.jsx:4-10`. Since I'm inventing the P0/P1/P2-3 tiering fresh anyway, the cleaner move is a new `dashboard/src/lib/priority.js` exporting the tier→class mapping, with both existing call sites switched to import from it instead of keeping their own copies. Small addition to task 3/4 in the task list above — doesn't change the test list, just reduces duplication while I'm touching this area (composability: one source of truth instead of three).
+
+**2. Pytest-timeout root cause, confirmed precisely:** it's `lib/build_type_measure.py`'s `measure()` — it always runs the full, unscoped `pytest -q` (plus `vitest run`) twice (baseline + current diff), capped at 1200s per `evidence_capture.py`, regardless of what the ticket touches. This is systemic to every build-type ticket, not caused by anything in this plan. Confirms the mitigation already in the plan (keep new vitest tests synchronous, no real timers/IPC/localStorage dependency) is the right scope of response — I can't fix the infra-level timeout from inside this ticket, and shouldn't try.
+
+No change to the Decisions section (still none needed) or the task list's ordering. The plan as posted stands; treat this as a footnote, not a revision.
