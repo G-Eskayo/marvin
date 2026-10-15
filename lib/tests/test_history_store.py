@@ -218,3 +218,136 @@ def test_a_missing_remote_file_says_missing_through_the_real_command(tmp_path):
     cmd = hs.remote_read_command("~/.claude/logs/gh-calls.jsonl", 0)
     reply = subprocess.run(["bash", "-c", cmd], env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"}, capture_output=True).stdout
     assert hs.parse_remote_reply(reply) is None
+
+
+# ── the laptop's copy (G3, marvin#456): ship only new rows ──────────────────
+
+@pytest.fixture
+def pair(tmp_path):
+    src, dst = hs.connect(tmp_path / "mini.db"), hs.connect(tmp_path / "laptop.db")
+    yield src, dst
+    src.close(); dst.close()
+
+
+def _ship(src, dst, limit=hs.SHIP_LIMIT, sent=None):
+    def apply(rows):
+        rows = list(rows)
+        if sent is not None:
+            sent.append(len(rows))
+        return hs.apply_rows(dst, rows)
+    return hs.ship(src, lambda: hs.tip(dst), apply, limit=limit)
+
+
+def _rows(conn):
+    return conn.execute("SELECT id, stream, device, ts, hash, data FROM events ORDER BY id").fetchall()
+
+
+def test_the_copy_ends_up_identical_ids_included(pair):
+    src, dst = pair
+    hs.load(src, "gh-calls", "mac-mini-1", [_line(i) for i in range(50)])
+    out = _ship(src, dst)
+    assert out == {"sent": 50, "applied": 50, "already": 0, "conflict": 0}
+    assert _rows(dst) == _rows(src)
+
+
+def test_a_second_ship_sends_only_what_is_new(pair):
+    src, dst = pair
+    hs.load(src, "s", "d", [_line(i) for i in range(1000)])
+    _ship(src, dst)
+    hs.load(src, "s", "d", [_line(1000), _line(1001)])
+    sent = []
+    _ship(src, dst, sent=sent)
+    assert sent == [2]  # O(new rows), not O(n)
+    assert _rows(dst) == _rows(src)
+
+
+def test_nothing_new_sends_nothing(pair):
+    src, dst = pair
+    hs.load(src, "s", "d", [_line(1)])
+    _ship(src, dst)
+    sent = []
+    assert _ship(src, dst, sent=sent)["sent"] == 0 and sent in ([], [0])
+
+
+def test_a_long_absence_catches_up_in_bounded_batches(pair):
+    src, dst = pair
+    hs.load(src, "s", "d", [_line(i) for i in range(25)])
+    assert _ship(src, dst, limit=10)["sent"] == 10
+    _ship(src, dst, limit=10); _ship(src, dst, limit=10)
+    assert _rows(dst) == _rows(src)
+
+
+def test_the_same_batch_applied_twice_changes_nothing(pair):
+    src, dst = pair
+    hs.load(src, "s", "d", [_line(i) for i in range(5)])
+    rows = hs.rows_after(src, 0, 100)
+    hs.apply_rows(dst, rows)
+    assert hs.apply_rows(dst, rows) == {"applied": 0, "already": 5, "conflict": 0}
+
+
+def test_a_divergent_row_is_reported_never_silently_kept(pair):
+    """Same id, different record: the copy no longer matches the Mini. Say so."""
+    src, dst = pair
+    hs.load(src, "s", "d", [_line(1)])
+    hs.load(dst, "s", "laptop", [_line(99)])  # something wrote into the copy directly
+    out = _ship(src, dst)
+    assert out["conflict"] == 1
+
+
+def test_data_with_newlines_and_quotes_survives_the_wire(pair):
+    src, dst = pair
+    nasty = json.dumps({"t": 1.0, "msg": 'line one\nline "two"\r\n  \\ \x00 end'})
+    hs.load(src, "s", "d", [nasty, "{broken json \"quote"])
+    wire = hs.encode_rows(hs.rows_after(src, 0, 10))
+    hs.apply_rows(dst, hs.decode_rows(wire))
+    assert _rows(dst) == _rows(src)
+
+
+def test_a_batch_cut_off_mid_transfer_applies_what_arrived_whole(pair):
+    src, dst = pair
+    hs.load(src, "s", "d", [_line(i) for i in range(3)])
+    wire = hs.encode_rows(hs.rows_after(src, 0, 10))
+    out = hs.apply_rows(dst, hs.decode_rows(wire[: len(wire) - 5]))  # last line truncated by a dropped connection
+    assert out["applied"] == 2
+    _ship(src, dst)
+    assert _rows(dst) == _rows(src)
+
+
+def test_an_unreachable_laptop_is_skipped(pair):
+    src, _ = pair
+    hs.load(src, "s", "d", [_line(1)])
+    def gone():
+        raise hs.Unreachable("ssh: connect to host marvin-laptop: Operation timed out")
+    assert hs.ship(src, gone, lambda rows: None)["skipped"].startswith("unreachable")
+
+
+def test_the_digest_matches_when_identical_and_catches_a_changed_row(pair):
+    src, dst = pair
+    hs.load(src, "s", "d", [_line(i) for i in range(20)])
+    _ship(src, dst)
+    top = hs.max_id(dst)
+    assert hs.digest(src, top) == hs.digest(dst, top)
+    dst.execute("UPDATE events SET data = 'tampered' , hash = x'00' WHERE id = 7")
+    assert hs.digest(src, top) != hs.digest(dst, top)
+
+
+def test_only_the_databases_home_mac_loads_outboxes(monkeypatch):
+    """Loading into the laptop's copy would hand out ids that clash with the Mini's."""
+    import types
+    monkeypatch.setitem(sys.modules, "machine_profile", types.SimpleNamespace(registry_id=lambda: "macbook-pro-1"))
+    with pytest.raises(SystemExit) as exc:
+        hs.require_home()
+    assert "mac-mini-1" in str(exc.value)
+
+
+def test_the_copy_reports_its_tip_as_id_and_hash_through_the_real_cli(tmp_path):
+    """--replica-max is what the Mini reads over ssh: an empty copy and a filled one both parse."""
+    import subprocess
+    env = {**os.environ, "HOME": str(tmp_path)}
+    cli = [sys.executable, str(Path(hs.__file__)), "--replica-max"]
+    assert subprocess.run(cli, env=env, capture_output=True, text=True).stdout.strip() == "0"
+    conn = hs.connect(tmp_path / ".claude" / "history.db")
+    hs.load(conn, "s", "d", [_line(1)])
+    conn.close()
+    top, h = subprocess.run(cli, env=env, capture_output=True, text=True).stdout.split()
+    assert top == "1" and len(bytes.fromhex(h)) == 16
