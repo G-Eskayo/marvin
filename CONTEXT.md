@@ -1326,3 +1326,12 @@ MARVIN-as-OS north star).
 - **Feed**: a source the brief draws from (today: the research colony and the daily digest). Candidates Gil named:
   World Monitor (`koala73/worldmonitor`, open-source OSINT dashboard), a "God's Eye" repo and a "Pegasus" world-infosec
   repo (both still to be identified by Gil).
+- **Brief sections** (decided 2026-10-15): **World & security** (world events plus infosec research: breaches,
+  vulnerabilities, threat research), **Research** (AI and tech papers, repos and tools tied to Gil's projects),
+  **Your day** (calendar, deadlines, weather) and **Your projects** (only what needs Gil: PRs, decisions, anything
+  broken).
+- **ADHD-first** (Gil's design constraint for the brief): short and manageable beats complete, and when spoken it is a
+  conversation, not a read-out.
+- **Five-item cap** (decided 2026-10-15): the brief holds **at most five items across all sections**, one sentence
+  each, ranked by how much each matters to Gil today. A quiet day has fewer and nothing pads it. Everything else is
+  **one ask away** ("what else?", "more on 3", "put 1 on the mirror"). Spoken, MARVIN gives the top three and waits.
