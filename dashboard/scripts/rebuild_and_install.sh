@@ -1,9 +1,10 @@
 #!/bin/bash
-# Rebuilds the MARVIN Metrics dashboard and installs it over the running
+# Rebuilds the MARVIN dashboard app and installs it over the running
 # copy in /Applications, so a merged PR actually shows up in the app people
 # use day-to-day instead of only existing in dist/. Triggered by
-# webhook-server/merge.js after a merge that touched dashboard/ files;
-# safe to run by hand too.
+# webhook-server/merge.js after a merge that touched dashboard/ files, and by
+# lib/dashboard_rebuild.py when the app is behind origin/main (#443: any merge
+# path, within minutes); safe to run by hand too.
 set -euo pipefail
 # marvin#422: a failed rebuild is recorded in the one error log Health shows (it used to look "passed" once launched).
 on_error() {
@@ -11,11 +12,15 @@ on_error() {
   "$HOME/.agents/venv/bin/python" "$HOME/.agents/lib/error_log.py" record --source rebuild \
     --message "dashboard rebuild failed (exit $code at line $line)" \
     --raw "$(tail -n 20 "$HOME/.claude/logs/dashboard-rebuild.log" 2>/dev/null)" >/dev/null 2>&1 || true
+  # #443: dashboard_rebuild.py backs off only after a failure, until newer code lands; a success clears this mark.
+  date +%s > "$HOME/.claude/logs/dashboard-rebuild-failed" 2>/dev/null || true
 }
 trap 'on_error $LINENO' ERR
 cd "$(dirname "$0")/.."
 
-APP_NAME="MARVIN Metrics.app"
+APP_NAME="MARVIN.app"
+# #442: the app was "MARVIN Metrics.app" until 2026-10-14; an install replaces it, so a machine never has both.
+LEGACY_DEST="/Applications/MARVIN Metrics.app"
 SRC="dist/mac-arm64/${APP_NAME}"
 DEST="/Applications/${APP_NAME}"
 LOG_PREFIX="[rebuild-and-install]"
@@ -54,12 +59,17 @@ if [ ! -d "$SRC" ]; then
 fi
 
 echo "${LOG_PREFIX} quitting running app if open..."
+osascript -e 'quit app "MARVIN"' 2>/dev/null || true
 osascript -e 'quit app "MARVIN Metrics"' 2>/dev/null || true
 sleep 1
 
 echo "${LOG_PREFIX} installing to $DEST..."
 rm -rf "$DEST"
 cp -R "$SRC" "$DEST"
+if [ -d "$LEGACY_DEST" ]; then
+  echo "${LOG_PREFIX} removing the old MARVIN Metrics.app (renamed to MARVIN.app)..."
+  rm -rf "$LEGACY_DEST"
+fi
 
 echo "${LOG_PREFIX} relaunching..."
 open -a "$DEST"
@@ -76,4 +86,5 @@ if launchctl print "gui/$(id -u)/com.marvin.dashboard-webhook" >/dev/null 2>&1; 
   launchctl kickstart -k "gui/$(id -u)/com.marvin.dashboard-webhook" || echo "${LOG_PREFIX} merge server restart failed" >&2
 fi
 
+rm -f "$HOME/.claude/logs/dashboard-rebuild-failed"  # a good install clears any earlier failure (#443)
 echo "${LOG_PREFIX} done."
