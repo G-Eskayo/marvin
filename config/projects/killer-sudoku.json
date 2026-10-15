@@ -2,7 +2,7 @@
   "_readme": "How the ticket pipeline builds and verifies G-Eskayo/killer-sudoku (lib/project_profile.py; design in CONTEXT.md 'Per-project execution profiles'). dispatch is OFF. merge_from_dashboard lets you approve or deny this project's PRs in the dashboard's MR Review. Check the setup with: ~/.agents/venv/bin/python ~/.agents/lib/project_profile.py selftest G-Eskayo/killer-sudoku",
   "repo": "G-Eskayo/killer-sudoku",
   "base_branch": "main",
-  "dispatch": "on",
+  "dispatch": "off",
   "merge_from_dashboard": true,
   "clone_mode": "pipeline",
   "build_output": [".build"],
