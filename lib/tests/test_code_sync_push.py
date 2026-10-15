@@ -311,3 +311,69 @@ def test_still_failing_push_does_not_claim_the_failure_cleared(tmp_path, monkeyp
     cs.push(clone)
 
     assert "cleared" not in log.read_text()
+
+
+# ── marvin#450: merging over uncommitted edits (the Mac slept mid-run, 2026-10-15) ─
+
+def _union_log(clone: Path) -> None:
+    (clone / ".gitattributes").write_text("sync-log.md merge=union\n")
+    _git(clone, "add", ".gitattributes")
+    _git(clone, "commit", "-m", "union log")
+    _git(clone, "push", "origin", "main")
+
+
+def test_unpushed_commit_with_uncommitted_log_merges_and_pushes(tmp_path, monkeypatch):
+    """Clean-tree path: a pre-existing local commit, sync-log.md edited but not committed (as after every push since
+    #427), and the other Mac has pushed its own log entries. Used to fail: 'local changes would be overwritten'."""
+    clone = _make_origin_and_clone(tmp_path)
+    _union_log(clone)
+    log = clone / "sync-log.md"
+    _quiet(monkeypatch, log)
+    other = _second_clone(tmp_path)
+    with (other / "sync-log.md").open("a") as f:
+        f.write("\n## other mac's entry\n")
+    (other / "theirs.md").write_text("x\n")
+    _git(other, "add", "-A")
+    _git(other, "commit", "-m", "other mac")
+    _git(other, "push", "origin", "main")
+    (clone / "file.md").write_text("made before the sleep\n")
+    _git(clone, "commit", "-am", "auto-sync before sleep")
+    with log.open("a") as f:
+        f.write("\n## this mac's trailing entry\n")
+
+    cs.push(clone)
+
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=clone, capture_output=True, text=True).stdout.strip()
+    assert _origin_head(tmp_path) == head, log.read_text()
+    text = log.read_text()
+    assert "this mac's trailing entry" in text and "other mac's entry" in text
+    assert "CONFLICT" not in text
+    assert subprocess.run(["git", "stash", "list"], cwd=clone, capture_output=True, text=True).stdout == ""
+
+
+def test_uncommitted_edit_that_clashes_with_the_remote_is_never_lost(tmp_path, monkeypatch):
+    clone = _make_origin_and_clone(tmp_path)
+    log = tmp_path / "sync-log.md"
+    _quiet(monkeypatch, log)
+    other = _second_clone(tmp_path)
+    (other / "file.md").write_text("theirs\n")
+    _git(other, "commit", "-am", "theirs")
+    _git(other, "push", "origin", "main")
+    (clone / "other.md").write_text("committed before the sleep\n")
+    _git(clone, "add", "-A")
+    _git(clone, "commit", "-m", "auto-sync before sleep")
+    # an edit that lands mid-run, after push() read the status (the laptop slept in between)
+    real_merge = cs._merge_remote
+
+    def edit_then_merge(repo):
+        (clone / "file.md").write_text("my uncommitted edit\n")
+        return real_merge(repo)
+    monkeypatch.setattr(cs, "_merge_remote", edit_then_merge)
+
+    cs.push(clone)
+
+    kept = (clone / "file.md").read_text() == "my uncommitted edit\n" or "my uncommitted edit" in subprocess.run(
+        ["git", "stash", "show", "-p"], cwd=clone, capture_output=True, text=True).stdout
+    assert kept, "the uncommitted edit was lost"
+    if (clone / "file.md").read_text() != "my uncommitted edit\n":
+        assert cs._stuck_from_previous_run(clone), "a stashed edit must make the next run refuse loudly"
