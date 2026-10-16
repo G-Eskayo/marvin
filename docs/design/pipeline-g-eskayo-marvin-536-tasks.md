@@ -1,0 +1,13 @@
+1. Add `dashboard/webhook-server/gate_durations.js`: `DEFAULT_TEST_TIMEOUT_MS` (moved from `merge.js`), `GATE_TIMEOUT_CEILING_MS` (from the Decision), `recordDuration`, `recentPassingDurations`, `median`, `sizedTimeoutMs`, `countConcurrentPytest(exec)` (shaped for `execFileSync`'s real signature), `computeGateTimeoutMs`. Default log path `~/.claude/logs/gate-run-durations.jsonl`.
+2. Write `dashboard/test/gate_durations.test.js` covering tests-first items 1–24.
+3. In `merge.js`: import the above from `gate_durations.js`; drop the local `DEFAULT_TEST_TIMEOUT_MS` and the static `GATE_TIMEOUT_MS` constant.
+4. Extend `execWithGroupTimeout` with an optional 5th `meta = {}` param (`{ label, median, countConcurrent }`, all overridable, defaulting to the real `gate_durations.js` implementations). On timeout, when `meta.label` is set, best-effort append the duration/usual/concurrent marker to both `.message` and `.stderr`, inside try/catch so a lookup failure never blocks the base timeout error.
+5. Update `_defaultRunTests(cwd, exec, capMs)`: compute `sizedTimeoutMs('pytest', {capMs})` and `sizedTimeoutMs('vitest', {capMs})` separately; time each exec call with a fake-clock-friendly start/end; `recordDuration` on both the success and the catch-and-rethrow paths; pass the sized timeout + `{label}` meta into each `exec` call.
+6. Apply the same wrapping to `defaultGateContext`'s `runTests`, keyed `verify:${repo}`.
+7. Thread `capMs` through `rebaseAndRetest` (new optional 8th param) into its `runTests(scratchDir, exec, capMs)` call, and from `mergePrUnqueued` into both `rebaseAndRetestFn` call sites.
+8. In `mergePrUnqueued`: after `ctx` is resolved, compute the real `gateTimeoutMs` default via `computeGateTimeoutMs(...)` (pytest+vitest cutoffs for marvin, `verify:${repo}` cutoff for other projects), used only when `deps.gateTimeoutMs` was not explicitly supplied (`??`).
+9. In the `GATE_INFRA` branch (`merge.js:468-476`): extract the duration/usual/concurrent marker from the full, unsliced `result.reason` via regex and splice it into the refusal's `message`/`remediation`, instead of relying on `summary.comment.slice(0, 300)`.
+10. Add `gate_durations.js` to `merge.test.js`'s top-level `vi.mock(...)` block with safe fake defaults, overridden per-test via `vi.mocked(...)` where a test needs specific sizing/concurrency values.
+11. Add the `merge.test.js` tests from tests-first items 25–37.
+12. Update `CONTEXT.md`'s "Per-command timeout + process-group kill" section (~line 1134-1138) to describe the sized-cutoff, enrichment, and derived-`GATE_TIMEOUT_MS` behavior.
+13. Run the full `dashboard` vitest suite and `pytest -q` to confirm no regressions (existing passing counts unchanged) before calling this done.

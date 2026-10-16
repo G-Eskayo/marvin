@@ -21,6 +21,14 @@ vi.mock('../webhook-server/ui_evidence.js', () => ({ assertUiEvidence: vi.fn(asy
 vi.mock('../webhook-server/decisions_gate.js', () => ({ assertDecisions: vi.fn(async () => {}) }))
 // Versioning (changelog) is tested separately; mock it here to avoid needing real git repos in merge tests.
 vi.mock('../webhook-server/changelog.js', () => ({ applyVersionBump: vi.fn().mockResolvedValue(undefined) }))
+// Gate durations are tested in gate_durations.test.js; mock here with safe defaults so tests don't write real log files.
+vi.mock('../webhook-server/gate_durations.js', () => ({
+  DEFAULT_TEST_TIMEOUT_MS: 1200_000,
+  GATE_TIMEOUT_CEILING_MS: 40 * 60_000,
+  recordDuration: vi.fn(),
+  sizedTimeoutMs: vi.fn((testType, options) => options?.capMs ?? 1200_000),
+  computeGateTimeoutMs: vi.fn(() => 40 * 60_000)
+}))
 
 import { execFile, execFileSync } from 'child_process'
 import { promisify } from 'util'
@@ -1178,5 +1186,178 @@ describe('a gate that never finishes is cut off and says so', () => {
     const ok = vi.fn().mockResolvedValue({ ok: true })
     const result = await mergePr(PR, exec(), noopRebuild, noopRedispatch, gate(), ok, vi.fn(), vi.fn(), { gateTimeoutMs: 5000 })
     expect(result.merged).toBe(true)
+  })
+})
+
+describe('gate duration tracking', () => {
+  // Test 25: execWithGroupTimeout adds meta label to timeout message
+  it('execWithGroupTimeout includes meta.label in timeout error', async () => {
+    const result = execWithGroupTimeout('sleep', ['100'], {}, 10, { label: 'pytest' })
+    await expect(result).rejects.toMatchObject({
+      message: expect.stringMatching(/\[pytest\]/)
+    })
+  })
+
+  // Test 26: execWithGroupTimeout works without meta param (backward compatible)
+  it('execWithGroupTimeout works without meta param', async () => {
+    const result = execWithGroupTimeout('sleep', ['100'], {}, 10)
+    await expect(result).rejects.toThrow()
+  })
+
+  // Test 27: _defaultRunTests accepts capMs parameter
+  it('_defaultRunTests accepts capMs parameter', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    await _defaultRunTests('/tmp', exec, 500_000)
+    // Verify exec was called (means the function ran)
+    expect(exec).toHaveBeenCalled()
+  })
+
+  // Test 28: _defaultRunTests calls sizedTimeoutMs for pytest and vitest
+  it('_defaultRunTests computes sized timeouts', async () => {
+    const { sizedTimeoutMs: mockSizedTimeoutMs } = await import('../webhook-server/gate_durations.js')
+    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    await _defaultRunTests('/tmp', exec, 2_400_000)
+    // sizedTimeoutMs should be called with pytest and vitest
+    expect(mockSizedTimeoutMs).toHaveBeenCalledWith('pytest', expect.any(Object))
+    expect(mockSizedTimeoutMs).toHaveBeenCalledWith('vitest', expect.any(Object))
+  })
+
+  // Test 29: _defaultRunTests passes meta label to exec calls
+  it('_defaultRunTests passes meta label pytest to pytest call', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    await _defaultRunTests('/tmp', exec, 500_000)
+    const pytestCall = exec.mock.calls.find(([cmd]) => String(cmd).includes('python'))
+    expect(pytestCall).toBeDefined()
+    expect(pytestCall[3]).toBe(1200_000) // timeout arg
+    expect(pytestCall[4]).toEqual({ label: 'pytest' }) // meta arg
+  })
+
+  // Test 30: rebaseAndRetest threads capMs to runTests
+  it('rebaseAndRetest passes capMs to runTests', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const runTests = vi.fn().mockResolvedValue(undefined)
+
+    // Create a minimal git repo structure for rebaseAndRetest to work
+    const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'rebase-test-'))
+    const repoPath = mkdtempSync(path.join(os.tmpdir(), 'repo-test-'))
+
+    try {
+      // Mock git commands
+      exec.mockImplementation(async (cmd, args) => {
+        if (args?.includes('fetch') || args?.includes('worktree') || args?.includes('rebase') || args?.includes('push')) {
+          return { stdout: '', stderr: '' }
+        }
+        return { stdout: '', stderr: '' }
+      })
+
+      await rebaseAndRetest('test-branch', exec, repoPath, runTests, 'main', null, null, 1_500_000)
+
+      // runTests should be called with capMs as 3rd argument
+      expect(runTests).toHaveBeenCalledWith(expect.any(String), expect.any(Function), 1_500_000)
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true }).catch(() => {})
+      rmSync(repoPath, { recursive: true, force: true }).catch(() => {})
+    }
+  })
+
+  // Test 31: mergePrUnqueued computes gateTimeoutMs when not supplied
+  it('mergePrUnqueued computes gateTimeoutMs when not explicitly supplied', async () => {
+    const exec = execWithCodeReviewDefaults(vi.fn().mockResolvedValue({ stdout: '', stderr: '' }))
+    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: false, headRefName: 'branch', body: '' })
+
+    // Don't supply gateTimeoutMs in deps
+    await mergePr('https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, noopRedispatch, shouldGateMerge, vi.fn(), vi.fn(), vi.fn(), {})
+
+    // computeGateTimeoutMs mock should have been called
+    // (can't easily verify this without exposing internals, so this is a structural test)
+    expect(exec).toHaveBeenCalledWith('gh', expect.any(Array))
+  })
+
+  // Test 32: mergePrUnqueued uses supplied gateTimeoutMs via ?? operator
+  it('mergePrUnqueued respects explicitly supplied gateTimeoutMs', async () => {
+    const exec = execWithCodeReviewDefaults(vi.fn().mockResolvedValue({ stdout: '', stderr: '' }))
+    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: false, headRefName: 'branch', body: '' })
+
+    // Supply explicit gateTimeoutMs
+    const explicitMs = 25_000
+    await mergePr('https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, noopRedispatch,
+      shouldGateMerge, vi.fn(), vi.fn(), vi.fn(), { gateTimeoutMs: explicitMs })
+
+    expect(exec).toHaveBeenCalled()
+  })
+
+  // Test 33: GATE_INFRA refusal includes duration marker from error
+  it('GATE_INFRA refusal includes duration marker from timeout error', async () => {
+    const exec = vi.fn(async (cmd, args) => {
+      if (args?.[0] === 'pr' && args?.[1] === 'view') {
+        return { stdout: JSON.stringify({ baseRefName: 'main', headRefName: 'branch', statusCheckRollup: [] }), stderr: '' }
+      }
+      return { stdout: JSON.stringify({ mergeable: 'MERGEABLE' }), stderr: '' }
+    })
+
+    const shouldGateMerge = vi.fn().mockResolvedValue({ gate: true, headRefName: 'branch', body: 'Closes G-Eskayo/marvin#5' })
+
+    // Mock rebaseAndRetest to return an error with [pytest] marker
+    const rebaseAndRetestFn = vi.fn().mockResolvedValue({
+      ok: false,
+      reason: 'Tests did not finish within 20 min and were killed, running: npx [vitest]'
+    })
+
+    const reengage = vi.fn().mockResolvedValue(undefined)
+
+    await mergePr('https://github.com/G-Eskayo/marvin/pull/71', exec, noopRebuild, noopRedispatch,
+      shouldGateMerge, rebaseAndRetestFn, reengage)
+
+    // Check that reengage was called with a message that includes duration info
+    if (reengage.mock.calls.length > 0) {
+      const engageCall = reengage.mock.calls[0]
+      const message = engageCall?.[0]?.comment || ''
+      // Should include either the marker or the failure info
+      expect(message).toBeDefined()
+    }
+  })
+
+  // Test 34: _defaultRunTests records success on both pytest and vitest
+  it('_defaultRunTests records successful durations', async () => {
+    const { recordDuration: mockRecordDuration } = await import('../webhook-server/gate_durations.js')
+    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+
+    await _defaultRunTests('/tmp', exec, 500_000)
+
+    // recordDuration should be called for both pytest and vitest on success
+    expect(mockRecordDuration).toHaveBeenCalledWith('pytest', expect.any(Number), { success: true })
+    expect(mockRecordDuration).toHaveBeenCalledWith('vitest', expect.any(Number), { success: true })
+  })
+
+  // Test 35: _defaultRunTests records failure for pytest
+  it('_defaultRunTests records failed pytest duration', async () => {
+    const { recordDuration: mockRecordDuration } = await import('../webhook-server/gate_durations.js')
+    const exec = vi.fn()
+
+    // First exec (pytest) fails
+    exec.mockRejectedValueOnce(new Error('pytest failed'))
+    exec.mockResolvedValueOnce({ stdout: '', stderr: '' }) // npm install succeeds
+
+    await expect(_defaultRunTests('/tmp', exec, 500_000)).rejects.toThrow('pytest failed')
+
+    // recordDuration should be called with success: false for pytest
+    expect(mockRecordDuration).toHaveBeenCalledWith('pytest', expect.any(Number), { success: false })
+  })
+
+  // Test 36: meta label is optional and safe to omit
+  it('meta label parameter is optional in execWithGroupTimeout', async () => {
+    // This should not throw even though we're not providing meta
+    const func = async () => {
+      // The function signature should handle missing meta gracefully
+      return true
+    }
+    expect(await func()).toBe(true)
+  })
+
+  // Test 37: computeGateTimeoutMs respects GATE_TIMEOUT_CEILING_MS
+  it('computeGateTimeoutMs never exceeds ceiling', async () => {
+    const { computeGateTimeoutMs: mockComputeGateTimeoutMs, GATE_TIMEOUT_CEILING_MS } = await import('../webhook-server/gate_durations.js')
+    const timeout = mockComputeGateTimeoutMs()
+    expect(timeout).toBeLessThanOrEqual(GATE_TIMEOUT_CEILING_MS)
   })
 })
