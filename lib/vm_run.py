@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -44,8 +45,27 @@ class RunResult:
     exit_code: int | None = None
 
 
-def _host(cmd: list[str], timeout: float | None = None, check: bool = True) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=check)
+def _host(cmd: list[str], timeout: float | None = None, check: bool = True,
+          input: str | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=check, input=input)
+
+
+_SECRET_NAME = re.compile(r"^[A-Z_][A-Z0-9_]*$")
+_RESERVED = {"PATH", "HOME", "SHELL", "USER", "IFS", "PS4", "BASH_ENV", "ENV", "LD_PRELOAD", "LD_LIBRARY_PATH"}
+
+
+def _check_secrets(image: str, secrets: dict[str, str]) -> str | None:
+    """Why these secrets can't be handed in, or None. Quarantine never gets one: it runs untrusted code (ADR 0069)."""
+    if not secrets:
+        return None
+    if image == "quarantine":
+        return "quarantine VMs never receive secrets"
+    for name, value in secrets.items():
+        if not isinstance(name, str) or not _SECRET_NAME.match(name) or name in _RESERVED:
+            return f"bad secret name {name!r}"
+        if not isinstance(value, str) or "\n" in value or "\r" in value or "\0" in value:
+            return f"secret {name} has a line break or isn't text"
+    return None
 
 
 def _wait_for_ip(name: str, host, timeout: float) -> str:
@@ -69,9 +89,15 @@ def _wait_for_ssh(ip: str, opts: list[str], host, timeout: float) -> None:
 
 
 def run(image: str, command: str, repo_dir: Path | None = None, timeout: float = 1800, memory_mb: int = 2048,
-        boot_timeout: float = 180, host=_host) -> RunResult:
+        boot_timeout: float = 180, host=_host, secrets: dict[str, str] | None = None) -> RunResult:
+    """`secrets` (e.g. the bot's GitHub token for one ticket run) go in through ssh's stdin, are exported for this one
+    command only, and are never written to disk or put in any argv on the box or in the VM."""
     if image not in NETWORKS:
         return RunResult(ok=False, error=f"unknown image {image!r}; known: {', '.join(NETWORKS)}")
+    secrets = secrets or {}
+    refused = _check_secrets(image, secrets)
+    if refused:
+        return RunResult(ok=False, error=refused)
     golden = GOLDEN_DIR / f"{image}.qcow2"
     opts = _ssh_opts(image)
     name = f"run-{image}-{uuid.uuid4().hex[:8]}"
@@ -100,7 +126,11 @@ def run(image: str, command: str, repo_dir: Path | None = None, timeout: float =
                   "-e", "ssh " + " ".join(opts), f"{repo_dir}/", f"marvin@{ip}:work/"], timeout=600)
         step = "command"
         cd = "cd ~/work && " if repo_dir is not None else ""
-        proc = host(["ssh", *opts, f"marvin@{ip}", f"{cd}{command}"], timeout=timeout, check=False)
+        names = sorted(secrets)
+        reads = "".join(f"IFS= read -r {n}; export {n}; " for n in names)
+        remote = f"bash -c {shlex.quote(reads + cd + command)}" if names else f"{cd}{command}"
+        stdin = "".join(secrets[n] + "\n" for n in names) if names else None
+        proc = host(["ssh", *opts, f"marvin@{ip}", remote], timeout=timeout, check=False, input=stdin)
         output = (proc.stdout or "") + (proc.stderr or "")
         return RunResult(ok=proc.returncode == 0, output=output, exit_code=proc.returncode,
                          error="" if proc.returncode == 0 else f"command exited {proc.returncode}")
@@ -122,12 +152,15 @@ def main() -> None:
     ap.add_argument("--repo-dir", type=Path, default=None, help="directory copied into the VM as ~/work")
     ap.add_argument("--timeout", type=float, default=1800)
     ap.add_argument("--memory-mb", type=int, default=2048)
+    ap.add_argument("--secret-env", action="append", default=[], metavar="NAME",
+                    help="read one line from stdin per NAME and export it for the command only (never quarantine)")
     ap.add_argument("command", nargs=argparse.REMAINDER)
     args = ap.parse_args()
     command = " ".join(args.command[1:] if args.command[:1] == ["--"] else args.command)
     if not command:
         ap.error("no command given")
-    r = run(args.image, command, repo_dir=args.repo_dir, timeout=args.timeout, memory_mb=args.memory_mb)
+    secrets = {name: sys.stdin.readline().rstrip("\n") for name in args.secret_env}
+    r = run(args.image, command, repo_dir=args.repo_dir, timeout=args.timeout, memory_mb=args.memory_mb, secrets=secrets)
     print(r.output, end="")
     if not r.ok:
         print(f"[vm_run] FAILED: {r.error}", file=sys.stderr)

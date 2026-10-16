@@ -13,9 +13,10 @@ class FakeHost:
     def __init__(self, fail_on=None, ip="192.168.122.50", output="hello\n", exit_code=0):
         self.calls, self.fail_on, self.ip, self.output, self.exit_code = [], fail_on, ip, output, exit_code
 
-    def __call__(self, cmd, timeout=None, check=True):
+    def __call__(self, cmd, timeout=None, check=True, input=None):
         """Same contract as vm_run's real host runner: a CompletedProcess, raising on failure when check=True."""
         self.calls.append(cmd)
+        self.inputs = getattr(self, "inputs", []) + [input]
         text = " ".join(cmd)
         if self.fail_on and self.fail_on in text:
             if check:
@@ -123,3 +124,33 @@ def test_each_image_is_reached_with_its_own_key_and_quarantine_never_sees_the_te
     t_ssh = [" ".join(c) for c in t.calls if c[0] == "ssh"]
     assert q_ssh and all("marvin_quarantine" in c and "marvin_vm" not in c for c in q_ssh)
     assert t_ssh and all("marvin_vm" in c for c in t_ssh)
+
+
+SECRET = "ghp_" + "x" * 36
+
+
+def test_a_secret_reaches_the_command_only_through_stdin_never_argv():
+    host = FakeHost()
+    r = vm_run.run("marvin-test", "gh auth status", host=host, secrets={"GH_TOKEN": SECRET})
+    assert r.ok
+    assert not any(SECRET in " ".join(c) for c in host.calls), "a token in argv is visible to every process on the box"
+    assert any(i and SECRET in i for i in host.inputs)
+
+
+def test_quarantine_refuses_secrets_before_creating_anything():
+    host = FakeHost()
+    r = vm_run.run("quarantine", "true", host=host, secrets={"GH_TOKEN": SECRET})
+    assert not r.ok and "quarantine" in r.error
+    assert host.calls == []
+
+
+@pytest.mark.parametrize("name", ["GH TOKEN", "1ABC", "A;rm -rf /", "", "PATH"])
+def test_secret_names_must_be_plain_and_not_override_the_shell(name):
+    host = FakeHost()
+    r = vm_run.run("marvin-test", "true", host=host, secrets={name: "v"})
+    assert not r.ok and host.calls == []
+
+
+def test_a_secret_with_a_newline_is_refused():
+    r = vm_run.run("marvin-test", "true", host=FakeHost(), secrets={"GH_TOKEN": "a\nexport EVIL=1"})
+    assert not r.ok
