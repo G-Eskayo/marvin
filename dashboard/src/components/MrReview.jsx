@@ -2,6 +2,8 @@ import MrHistory from './MrHistory.jsx'
 import { prFetchBanner } from '../lib/pr_fetch_status.js'
 import { cleanIpcError } from '../lib/ipcError.js'
 import { useEffect, useRef, useState } from 'react'
+import ProposalsSection from './ProposalsSection.jsx'
+import { toggleLabel } from '../lib/proposals_view.js'
 import { describePrState } from '../lib/prState.js'
 import MrDetail from './MrDetail.jsx'
 
@@ -455,10 +457,11 @@ function PrCard({ pr, parity, onOpenTicket, onApproved, onDenied, onSelect }) {
 }
 
 // Open | Merged (marvin#419): the Merged view shows history, so a merged PR never just vanishes.
-export function ViewToggle({ view, setView, openCount }) {
+// Open | Merged | Proposals (marvin#419, #102): Proposals are big north-star ideas weighed in the same place as PRs (ADR 0068).
+export function ViewToggle({ view, setView, openCount, proposalCount }) {
   return (
     <div className="flex gap-1 px-6 pt-6" role="group" aria-label="Which PRs">
-      {[['open', `Open${openCount != null ? ` (${openCount})` : ''}`], ['merged', 'Merged']].map(([id, label]) => (
+      {[['open', `Open${openCount != null ? ` (${openCount})` : ''}`], ['merged', 'Merged'], ['proposals', toggleLabel(proposalCount)]].map(([id, label]) => (
         <button key={id} aria-pressed={view === id} onClick={() => setView(id)}
           className={`rounded-md px-3 py-1.5 text-sm ${view === id ? 'bg-neutral-800 text-white' : 'text-neutral-400 hover:text-neutral-200'}`}>{label}</button>
       ))}
@@ -471,6 +474,12 @@ export default function MrReview(props) {
   const [historyPr, setHistoryPr] = useState(null)
   const [historyError, setHistoryError] = useState(null)
   const [openCount, setOpenCount] = useState(null)
+  const [proposalCount, setProposalCount] = useState(null)
+  useEffect(() => {
+    let live = true
+    window.api.proposals?.list?.().then((r) => { if (live && r?.ok) setProposalCount(r.proposals.length) }).catch(() => {})
+    return () => { live = false }
+  }, [])
   if (historyPr) {
     return <MrDetail pr={historyPr} onBack={() => setHistoryPr(null)} onOpenDocs={props.onOpenDocs} onOpenBoard={props.onOpenBoard} onOpenTicket={props.onOpenTicket} />
   }
@@ -480,8 +489,10 @@ export default function MrReview(props) {
   }
   return (
     <div className="flex h-full flex-col">
-      <ViewToggle view={view} setView={setView} openCount={openCount} />
-      {view === 'open' ? (
+      <ViewToggle view={view} setView={setView} openCount={openCount} proposalCount={proposalCount} />
+      {view === 'proposals' ? (
+        <div className="min-h-0 flex-1"><ProposalsSection onCount={setProposalCount} /></div>
+      ) : view === 'open' ? (
         <div className="min-h-0 flex-1"><OpenPrs {...props} onCount={setOpenCount} /></div>
       ) : (
         <div className="p-6">
