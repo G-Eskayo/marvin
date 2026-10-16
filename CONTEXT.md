@@ -1370,6 +1370,10 @@ MARVIN-as-OS north star).
   apart from them on the box. How they're kept apart is still open.
 - **Snapshot rollback**: the box's own undo. btrfs snapshots of the root filesystem, taken before every package
   change and on demand. They protect the box itself and are not a substitute for a VM or for code review.
-- **Open in this design** (as of 2026-10-16): what "the numbers" are; how test runs are kept apart; registry entry
+- **The numbers** (decided 2026-10-16): what (b2) produces. (1) **marvin-bench A/B results** (does skill, prompt or
+  profile X beat Y) and (2) **MARVIN test results** per ticket/PR (pass/fail, flaky tests, suite time). Later:
+  (4) **security tool results** (scan findings). Speed numbers for model calls are not in scope here: models run
+  elsewhere, so this box measures quality, not model speed.
+- **Open in this design** (as of 2026-10-16): how test runs are kept apart; registry entry
   shape for a Linux device; which jobs run here and how dispatch knows which work this box may take; sudo scope;
   Claude Code sign-in on Linux.
