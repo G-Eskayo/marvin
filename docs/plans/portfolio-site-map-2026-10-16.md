@@ -123,6 +123,27 @@ Sharper video: `docs/screenshots/portfolio-landing-options-2026-10-16.mp4`.
 
 All three use today's text unchanged ("Gil Eskayo" / "Early-career AI Software Engineer" / "Focused on Machine Learning, Automation, and Agentic Systems"). The copy changes once the title is settled. They follow the system's reduced-motion setting, and use fewer particles on phones.
 
+## Landing round 2: the painting comes alive
+Gil's feedback on round 1: the whole-picture parallax doesn't suit the subject. What he wants instead:
+- Bring the painting to life. Only the things that move in real life move, as if in a light breeze: fog and cloud strokes drift, plants sway, water shimmers.
+- The mountains and the bridge stay solid.
+- The mouse acts like a gust of wind.
+- Keep the typing effect, and never break words.
+
+Live at **http://localhost:8080/homepagefiles/landing-proto/compare2.html**.
+
+![Round 2: A Alive painting, B Stroke rebuild](docs/screenshots/portfolio-landing-alive-2026-10-16.gif)
+
+Sharper video: `docs/screenshots/portfolio-landing-alive-2026-10-16.mp4`.
+
+- **A · Alive painting.** The original painting, split into regions: sky/fog, plants, water, and the solid bridge and mountains.
+  - The regions come from a segmentation model plus the depth map, cleaned by hand-tuned rules (cables and towers are forced solid).
+  - Plants sway and spring back from gusts. The sky's brush strokes drift and fold, and swirl where the mouse passes. Thin fog banks drift through.
+- **B · Stroke rebuild.** The painting's own dark sky strokes (about 4,500 pieces) are lifted out and painted out of a clean copy of the sky.
+  - They're then drawn back as separate ribbons, so each real stroke bends and gets swept by the mouse on its own.
+  - Plants and water move as in A.
+- **Text** is today's typing effect, with today's lines. Each line is laid out in full before it types, and words are unbreakable, so nothing jumps to a new line mid-word.
+
 ## Degree: verifiable like the certs
 The diploma (`Dropbox/Gil/Gil's resume/archive/2025/CollegeDiploma.pdf`) is a certified e-diploma with code **25Z8-DPSX-G40X** printed on it. Its verification page can be the click-through target, the same way the certs work. The exact verify URL still needs confirming.
 
@@ -135,9 +156,8 @@ The diploma (`Dropbox/Gil/Gil's resume/archive/2025/CollegeDiploma.pdf`) is a ce
 ## Decisions
 <!-- marvin:decisions -->
 ### landing: Which landing look do we build?
-- [ ] 2 · Living bridge
-- [ ] 3 · Particle type
-- [ ] 2+3 · Combined
+- [ ] A · Alive painting
+- [ ] B · Stroke rebuild
 - [ ] None yet: change it (text below)
 
 ### landing-notes: What to change on the one you like (text) (optional)
