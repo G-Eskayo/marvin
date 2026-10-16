@@ -1,0 +1,9 @@
+#!/bin/bash
+# Run a step and mirror it into the on-screen activity window. Usage: marvin-do "Heading" command...
+log=~/marvin-activity.log
+head="$1"; shift
+printf '\n\033[1;36m== %s  [%s]\033[0m\n' "$head" "$(date +%H:%M:%S)" >> "$log"
+"$@" 2>&1 | tee -a "$log"
+rc=${PIPESTATUS[0]}
+[ $rc -eq 0 ] && printf '\033[32m✓ done\033[0m\n' >> "$log" || printf '\033[31m✗ failed (exit %s)\033[0m\n' "$rc" >> "$log"
+exit $rc

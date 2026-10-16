@@ -1,0 +1,17 @@
+# Quarantine VMs (virbr-quar, ADR 0069) may reach this host only for DHCP/DNS and for replies to connections the
+# host opened (vm_run's SSH in). Nothing else in, and nothing forwarded anywhere.
+table inet marvin_quarantine
+delete table inet marvin_quarantine
+table inet marvin_quarantine {
+  chain input {
+    type filter hook input priority -10; policy accept;
+    iifname "virbr-quar" ct state established,related accept
+    iifname "virbr-quar" udp dport { 53, 67 } accept
+    iifname "virbr-quar" tcp dport 53 accept
+    iifname "virbr-quar" counter drop
+  }
+  chain forward {
+    type filter hook forward priority -10; policy accept;
+    iifname "virbr-quar" counter drop
+  }
+}
