@@ -1,0 +1,9 @@
+1. `lib/main_health.py`: rewrite `_acquire_lock`'s takeover branch — on `FileExistsError`, decide dead/stale as today, then `os.unlink(lock_path)` (catch `FileNotFoundError`, treat as "someone else already took it") and retry the same `O_CREAT|O_EXCL` create call used for the fresh-lock path; return its result. Delete the temp-file + `os.replace` takeover code entirely.
+2. `lib/main_health.py`: add `now: datetime | None = None` to `_is_stale`'s signature (default `datetime.now(timezone.utc)`), and change `>` to `>=` in its comparison.
+3. `lib/tests/test_main_health.py`: add the race test for item 1 above (two interleaved `_acquire_lock()` calls against one stale lock, exactly one wins).
+4. `lib/tests/test_main_health.py`: simplify `test_acquire_lock_atomic_takeover_via_temp_file` to drop the now-obsolete `.tmp.*` assertion; keep the PID-replaced assertion.
+5. `lib/tests/test_main_health.py`: rewrite `test_is_stale_includes_worktree_setup_timeout` to inject a fixed `now` into all three `_is_stale()` calls.
+6. `lib/tests/test_main_health.py`: rewrite `test_pid_alive_returns_true_for_permission_error` to monkeypatch `os.kill` raising `PermissionError`.
+7. `lib/tests/test_main_health.py`: rewrite `test_changed_paths_uses_two_dot_diff`'s second scenario to use an orphan commit, so two-dot and three-dot diffs provably differ; assert on that difference.
+8. `lib/tests/test_main_health.py`: add `changed_paths=lambda *_: ["lib/x.py"]` to `test_lock_survives_killed_run`, `test_run_suite_exception_returns_prior`, `test_run_suite_exception_releases_lock`, and `test_cannot_acquire_lock_returns_prior`.
+9. Run `lib/tests/test_main_health.py` in full (not just the new/changed tests), plus `lib/tests/test_health_checks.py` and `dashboard/test/boot_data.test.js`, to confirm no regression and clean collection before opening the PR.

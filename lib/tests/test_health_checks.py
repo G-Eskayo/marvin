@@ -1391,3 +1391,58 @@ def test_remote_machine_label_strips_the_registry_number():
     assert hc._remote_machine_label("mac-mini-1") == "mac-mini"
     assert hc._remote_machine_label("macbook-pro-12") == "macbook-pro"
     assert hc._remote_machine_label("kali") == "kali"
+
+
+# ── main_health carried marker ───────────────────────────────────────────────
+
+def test_check_main_health_green_with_carried_marker(tmp_path):
+    """Green when main is passing and result was carried (only docs changed)."""
+    path = tmp_path / "main-health.json"
+    path.write_text(json.dumps({
+        "sha": "def5678",
+        "tested_sha": "abc1234",
+        "ok": True,
+        "failed": [],
+        "summary": "1137 passed",
+        "checked_at": datetime(2026, 10, 14, 12, 0, tzinfo=timezone.utc).isoformat(),
+        "carried": True
+    }))
+
+    result = hc.check_main_health(path=path, now=datetime(2026, 10, 14, 13, 0, tzinfo=timezone.utc))
+    assert result["severity"] == "green"
+    assert "(carried from abc1234)" in result["detail"]
+
+
+def test_check_main_health_red_with_carried_marker(tmp_path):
+    """Red when main is failing and result was carried."""
+    path = tmp_path / "main-health.json"
+    path.write_text(json.dumps({
+        "sha": "def5678",
+        "tested_sha": "abc1234",
+        "ok": False,
+        "failed": ["tests/test_x.py::test_y"],
+        "summary": "1 failed",
+        "checked_at": datetime(2026, 10, 14, 12, 0, tzinfo=timezone.utc).isoformat(),
+        "carried": True
+    }))
+
+    result = hc.check_main_health(path=path, now=datetime(2026, 10, 14, 13, 0, tzinfo=timezone.utc))
+    assert result["severity"] == "red"
+    assert "(carried from abc1234)" in result["detail"]
+
+
+def test_check_main_health_no_marker_when_not_carried(tmp_path):
+    """Green without carried marker when result was freshly tested."""
+    path = tmp_path / "main-health.json"
+    path.write_text(json.dumps({
+        "sha": "abc1234",
+        "tested_sha": "abc1234",
+        "ok": True,
+        "failed": [],
+        "summary": "1137 passed",
+        "checked_at": datetime(2026, 10, 14, 12, 0, tzinfo=timezone.utc).isoformat()
+    }))
+
+    result = hc.check_main_health(path=path, now=datetime(2026, 10, 14, 13, 0, tzinfo=timezone.utc))
+    assert result["severity"] == "green"
+    assert "carried" not in result["detail"]

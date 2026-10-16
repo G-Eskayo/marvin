@@ -215,6 +215,28 @@ describe('each summary line knows where its real thing lives (#433)', () => {
   })
 })
 
+describe('carried results show their source commit', () => {
+  it('TEST line shows CARRIED FROM <sha> when result was carried from a prior commit', () => {
+    const h = GREEN()
+    h.checks = h.checks.map((c) =>
+      c.id === 'main:green'
+        ? { ...c, detail: 'main @ def5678: 2143 passed, 9 skipped (carried from abc1234)' }
+        : c
+    )
+    const t = tree({ health: h })
+    const line = buildBootData(t).lines.find((l) => l.chip === 'TEST')
+    expect(line.text).toMatch(/CARRIED FROM ABC1234/)
+    t.done()
+  })
+
+  it('TEST line does NOT show carried when result was freshly tested', () => {
+    const t = tree({ health: GREEN() })
+    const line = buildBootData(t).lines.find((l) => l.chip === 'TEST')
+    expect(line.text).not.toMatch(/CARRIED/)
+    t.done()
+  })
+})
+
 describe('the boot plays once per app launch', () => {
   it('the first window load gets the boot; reloads after it do not', () => {
     const gate = createBootGate()
