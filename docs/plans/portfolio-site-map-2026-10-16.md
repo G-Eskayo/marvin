@@ -107,6 +107,22 @@ Left out: Aircraft Dynamics, which was never completed. The ROTC leadership cour
 - **Contact:** email, LinkedIn and GitHub. No phone.
 - **Resume:** just the master resume.
 
+- **Title (provisional): "AI Engineer · Security · Research"**, to be checked with Gil's mum. No existing title fits him yet.
+- **The landing page isn't about MARVIN.** MARVIN gets its own subdomain site later (like seal-speak.gileskayo.me), which can go much deeper on what it is and what it can do. Portfolio pages link to it one way.
+
+## Landing options: 2, 3 and combined
+Live on the dev site. Open them side by side at **http://localhost:8080/homepagefiles/landing-proto/compare.html**, and move the mouse over each one.
+
+![Landing options side by side: 2 Living bridge, 3 Particle type, 2+3 Combined](docs/screenshots/portfolio-landing-options-2026-10-16.gif)
+
+Sharper video: `docs/screenshots/portfolio-landing-options-2026-10-16.mp4`.
+
+- **2 · Living bridge.** The bridge photo becomes a 3D scene. A depth map (made with Depth Anything V2) lets near parts of the bridge move more than the sky as the mouse moves, with fog drifting through and a soft light sweeping across. Each line's letters fly in from the viewer and fall away backwards.
+- **3 · Particle type.** On a dark backdrop, each line is built from about 5,000 glowing particles with a few pink and blue sparks. The cursor pushes them apart, and they scatter and re-form into the next line.
+- **2+3 · Combined.** The living bridge, dimmed, with the particle text floating in front and its own parallax, so the text feels closer than the bridge.
+
+All three use today's text unchanged ("Gil Eskayo" / "Early-career AI Software Engineer" / "Focused on Machine Learning, Automation, and Agentic Systems"). The copy changes once the title is settled. They follow the system's reduced-motion setting, and use fewer particles on phones.
+
 ## Degree: verifiable like the certs
 The diploma (`Dropbox/Gil/Gil's resume/archive/2025/CollegeDiploma.pdf`) is a certified e-diploma with code **25Z8-DPSX-G40X** printed on it. Its verification page can be the click-through target, the same way the certs work. The exact verify URL still needs confirming.
 
@@ -118,19 +134,13 @@ The diploma (`Dropbox/Gil/Gil's resume/archive/2025/CollegeDiploma.pdf`) is a ce
 
 ## Decisions
 <!-- marvin:decisions -->
-### title: Header title under your name (replaces "Software Engineer")
-- [ ] AI Systems Engineer
-- [ ] Autonomous Systems Engineer (ties together AI agents and aerospace)
-- [ ] Applied AI & Security Engineer
-- [ ] AI Engineer · Security · Research
-- [ ] Something else (text below)
+### landing: Which landing look do we build?
+- [ ] 2 · Living bridge
+- [ ] 3 · Particle type
+- [ ] 2+3 · Combined
+- [ ] None yet: change it (text below)
 
-### title-text: Your own title idea (text) (optional)
-
-### hero: Landing direction to prototype first (pick any)
-- [ ] 3D MARVIN brain: a rotating node graph with depth; your name assembles from it and dissolves into the next line
-- [ ] Living bridge: the bridge photo turned into a 3D parallax scene with moving fog and light; the text floats in 3D in front of it
-- [ ] Particle type: each line forms out of thousands of glowing particles that react to the cursor, then scatters into the next line
+### landing-notes: What to change on the one you like (text) (optional)
 
 ### degree: How the degree shows
 - [ ] The diploma image as a card, same as the certs
