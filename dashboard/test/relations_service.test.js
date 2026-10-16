@@ -92,6 +92,75 @@ describe('review parity (MR Review <-> board)', () => {
     ).overview()
     expect(o['G-Eskayo/marvin']).toMatchObject({ review: 1, needsYou: 1, blocked: 1 })
   })
+
+  it('counts needs-info tickets in needsYou tally', async () => {
+    const o = await svc(
+      [issue(1, { labels: [{ name: 'needs-info' }] }), issue(2, { labels: [{ name: 'ready-for-human' }] })],
+      []
+    ).overview()
+    expect(o['G-Eskayo/marvin'].needsYou).toBe(2)
+  })
+
+  it('needsYou count matches rankNeedsYou length for same repo', async () => {
+    const tickets = [
+      { repo: 'G-Eskayo/marvin', ...issue(1, { labels: [{ name: 'needs-info' }] }) },
+      { repo: 'G-Eskayo/marvin', ...issue(2, { labels: [{ name: 'ready-for-human' }] }) }
+    ]
+    const svc2 = make({ getBoardData: async () => ({ issues: [...tickets.map(t => ({ ...t }))], prs: [] }) })
+    const o = await svc2.overview()
+    const ranked = await svc2.needsYou()
+    expect(o['G-Eskayo/marvin'].needsYou).toBe(ranked.length)
+  })
+
+  it('splits per-repo counts correctly across two repos', async () => {
+    const makeMultiRepo = (over = {}) =>
+      createRelationsService({
+        getRepos: () => ['G-Eskayo/marvin', 'G-Eskayo/finance-os'],
+        getBoardData: async (repo) => {
+          if (repo === 'G-Eskayo/finance-os') return { issues: [issue(10, { labels: [{ name: 'needs-info' }] })], prs: [] }
+          return { issues: [issue(1, { labels: [{ name: 'needs-info' }] }), issue(2, { labels: [{ name: 'ready-for-human' }] })], prs: [] }
+        },
+        getDocs: async () => [],
+        getProjects: () => [{ id: 'marvin', repo: 'G-Eskayo/marvin' }, { id: 'finance-os', repo: 'G-Eskayo/finance-os' }],
+        ...over
+      })
+    const o = await makeMultiRepo().overview()
+    expect(o['G-Eskayo/marvin'].needsYou).toBe(2)
+    expect(o['G-Eskayo/finance-os'].needsYou).toBe(1)
+  })
+
+  it('readiness/pinned: a ready-for-human+pinned ticket is column=ready but excluded by rankNeedsYou, so needsYou must be 0', async () => {
+    const svc = make({ getBoardData: async () => ({ issues: [issue(1, { labels: [{ name: 'ready-for-human' }, { name: 'pinned' }] })], prs: [] }) })
+    const o = await svc.overview()
+    const ranked = await svc.needsYou()
+    expect(o['G-Eskayo/marvin'].needsYou).toBe(0)
+    expect(ranked.length).toBe(0)
+  })
+
+  it('sum of per-repo needsYou equals rankNeedsYou length even when pinned ready-for-human exists', async () => {
+    const svc = make({ getBoardData: async () => ({ issues: [issue(1, { labels: [{ name: 'ready-for-human' }, { name: 'pinned' }] }), issue(2, { labels: [{ name: 'ready-for-human' }] })], prs: [] }) })
+    const o = await svc.overview()
+    const ranked = await svc.needsYou()
+    const totalPerRepo = Object.values(o).reduce((sum, r) => sum + r.needsYou, 0)
+    expect(totalPerRepo).toBe(ranked.length)
+  })
+
+  it('per-repo counts with pinned ready-for-human across two repos stays accurate per repo', async () => {
+    const makeMultiRepo = (over = {}) =>
+      createRelationsService({
+        getRepos: () => ['G-Eskayo/marvin', 'G-Eskayo/finance-os'],
+        getBoardData: async (repo) => {
+          if (repo === 'G-Eskayo/finance-os') return { issues: [issue(10, { labels: [{ name: 'ready-for-human' }, { name: 'pinned' }] })], prs: [] }
+          return { issues: [issue(1, { labels: [{ name: 'ready-for-human' }] }), issue(2, { labels: [{ name: 'ready-for-human' }, { name: 'pinned' }] })], prs: [] }
+        },
+        getDocs: async () => [],
+        getProjects: () => [{ id: 'marvin', repo: 'G-Eskayo/marvin' }, { id: 'finance-os', repo: 'G-Eskayo/finance-os' }],
+        ...over
+      })
+    const o = await makeMultiRepo().overview()
+    expect(o['G-Eskayo/marvin'].needsYou).toBe(1)
+    expect(o['G-Eskayo/finance-os'].needsYou).toBe(0)
+  })
 })
 
 describe('parity does not raise an alarm on a stale snapshot', () => {

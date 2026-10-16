@@ -113,7 +113,7 @@ export function ticketTable(machines, which = 'all') {
   return [...byKey.values()].sort((a, b) => b.output - a.output)
 }
 
-const agoText = (ms) => {
+export const agoText = (ms) => {
   const min = Math.max(1, Math.round(ms / 60000))
   if (min < 60) return `${min} min ago`
   const h = Math.round(min / 60)

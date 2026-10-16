@@ -15,12 +15,15 @@ export function createRelationsService({ getRepos, getBoardData, getDocs, getPro
     const prs = []
     const columns = new Map()
     const cards = new Map()
+    const needsYouByRepo = {}
     await Promise.all(
       getRepos().map(async (repo) => {
         try {
           const data = await getBoardData(repo)
-          for (const i of data.issues) tickets.push({ ...i, repo })
+          const repoTickets = data.issues.map((i) => ({ ...i, repo }))
+          tickets.push(...repoTickets)
           for (const p of data.prs) prs.push({ ...p, repo })
+          needsYouByRepo[repo] = rankNeedsYou(repoTickets).length
           // The same inputs the board view uses (pipeline stages, live dispatch), so a ticket is in the
           // same column here as on screen -- the whole point of the parity check.
           const board = buildBoard({ repo, issues: data.issues, prs: data.prs, eventsByNumber: getStages(repo) || {}, liveNumbers: getLive(repo) })
@@ -36,7 +39,7 @@ export function createRelationsService({ getRepos, getBoardData, getDocs, getPro
       })
     )
     const docs = await getDocs().catch(() => [])
-    return { at: now(), index: buildRelationIndex({ tickets, prs, docs, projects: getProjects() }), columns, cards, prs, tickets }
+    return { at: now(), index: buildRelationIndex({ tickets, prs, docs, projects: getProjects() }), columns, cards, prs, tickets, needsYouByRepo }
   }
 
   async function ready() {
@@ -106,8 +109,10 @@ export function createRelationsService({ getRepos, getBoardData, getDocs, getPro
       for (const c of b.cards.values()) {
         const o = (out[c.repo] ||= { review: 0, needsYou: 0, blocked: 0 })
         if (c.column === 'review') o.review += 1
-        if (c.column === 'ready' && c.owner === 'human') o.needsYou += 1
         if (c.column === 'blocked') o.blocked += 1
+      }
+      for (const [repo, count] of Object.entries(b.needsYouByRepo)) {
+        (out[repo] ||= { review: 0, needsYou: 0, blocked: 0 }).needsYou = count
       }
       return out
     },

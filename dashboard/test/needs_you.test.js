@@ -262,6 +262,30 @@ describe('rankNeedsYou', () => {
     }
   })
 
+  it('includes project field derived from project: label or repo', () => {
+    const tickets = [
+      { repo: 'G-Eskayo/marvin', ...issue(1, { labels: [label('ready-for-human')], body: '## Your task\n**What I need from you:** test\n**Where:** B\n**How:** C\n**What to send back:** D' }) }
+    ]
+    const result = rankNeedsYou(tickets)
+    expect(result[0].project).toBe('marvin')
+  })
+
+  it('resolves project: label when present', () => {
+    const tickets = [
+      { repo: 'G-Eskayo/marvin', ...issue(1, { labels: [label('ready-for-human'), label('project:killer-sudoku')], body: '## Your task\n**What I need from you:** test\n**Where:** B\n**How:** C\n**What to send back:** D' }) }
+    ]
+    const result = rankNeedsYou(tickets)
+    expect(result[0].project).toBe('killer-sudoku')
+  })
+
+  it('ignores malformed project: label', () => {
+    const tickets = [
+      { repo: 'G-Eskayo/marvin', ...issue(1, { labels: [label('ready-for-human'), label('project:')], body: '## Your task\n**What I need from you:** test\n**Where:** B\n**How:** C\n**What to send back:** D' }) }
+    ]
+    const result = rankNeedsYou(tickets)
+    expect(result[0].project).toBe('marvin')
+  })
+
   it('includes ask for needs-info tickets (missing list)', () => {
     const tickets = [
       { repo: 'o/r', ...issue(1, { labels: [label('needs-info')], body: '## What to build\nX\n## Acceptance criteria\n- [ ] Y' }) }

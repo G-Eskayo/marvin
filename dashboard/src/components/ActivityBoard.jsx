@@ -25,7 +25,7 @@ export default function ActivityBoard({ onOpenMr, onOpenDocs, onOpenTicket, onOp
       <ParallelToggle />
       <NextUpQueue onOpenTicket={onOpenTicket} />
       {view === 'home' ? (
-        <DashboardHome onOpenProject={onOpenProject} />
+        <DashboardHome onOpenProject={onOpenProject} onOpenTicket={onOpenTicket} />
       ) : (
         <>
           <button onClick={() => setView('home')} className="mb-4 ml-6 text-sm text-neutral-400 hover:text-neutral-200">

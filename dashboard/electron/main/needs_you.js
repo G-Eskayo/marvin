@@ -1,5 +1,6 @@
 import { dependencyRefs, openDependencies } from './board.js'
 import { parseHumanTask } from '../../src/lib/human_task.js'
+import { projectIdOf } from '../../src/lib/projects.js'
 
 const DAY_MS = 86400_000
 
@@ -174,6 +175,10 @@ export function rankNeedsYou(tickets, { now = Date.now() } = {}) {
     const created = Date.parse(t.createdAt)
     const ageDays = Number.isFinite(created) ? Math.floor((now - created) / DAY_MS) : 0
 
+    // Resolve project from project: label or repo
+    const projectLabel = (labelNames || []).find((name) => name.startsWith('project:'))
+    const project = projectLabel ? projectLabel.slice(8) || projectIdOf(t.repo) : projectIdOf(t.repo)
+
     // Get the ask
     let ask = ''
     if (labels.has('needs-info')) {
@@ -203,7 +208,8 @@ export function rankNeedsYou(tickets, { now = Date.now() } = {}) {
       unblocks,
       ask,
       priority,
-      ageDays
+      ageDays,
+      project
     })
   }
 
