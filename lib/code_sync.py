@@ -99,6 +99,7 @@ from __future__ import annotations
 import json
 import re
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -113,6 +114,9 @@ import session_work  # noqa: E402
 
 DEFAULT_REPO = Path.home() / ".agents"
 LOG_PATH = Path.home() / ".claude" / "sync-log.md"
+# mirror() (pull-only node, ADR 0069) logs outside the synced files and backs up whatever it discards.
+MIRROR_LOG_PATH = Path.home() / ".claude" / "logs" / "code-sync-mirror.log"
+MIRROR_BACKUP_DIR = Path.home() / ".claude" / "backups" / "mirror"
 CONFLICT_MARKER_RE = re.compile(r"^(<{7}|={7}|>{7})(?: |$)", re.MULTILINE)
 UNTRACKED_OVERWRITE_RE = re.compile(
     r"(untracked working tree files.*would be overwritten|"
@@ -341,7 +345,9 @@ STALE_LOCK_SECONDS = 10 * 60
 
 def _lock_held(lock: Path) -> bool:
     """True if any process has the file open (lsof exits 0 when it lists one)."""
-    return subprocess.run(["/usr/sbin/lsof", "-t", "--", str(lock)], capture_output=True).returncode == 0
+    # Found on PATH: /usr/sbin on macOS, /usr/bin on Linux (ADR 0069). Not found raises, which callers treat as doubt.
+    lsof = shutil.which("lsof") or "/usr/sbin/lsof"
+    return subprocess.run([lsof, "-t", "--", str(lock)], capture_output=True).returncode == 0
 
 
 def heal_stale_index_lock(repo: Path, now: float | None = None) -> bool:
@@ -612,17 +618,70 @@ def pull(repo: Path) -> None:
 
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
+def _mirror_log(repo: Path, line: str) -> None:
+    MIRROR_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with MIRROR_LOG_PATH.open("a") as f:
+        f.write(f"{datetime.now(timezone.utc).isoformat()} [{repo}] {line}\n")
+
+
+def mirror(repo: Path) -> None:
+    """Code sync for a pull-only node (mac-mini-2012, ADR 0069): make `repo` identical to origin/main.
+
+    Never pushes and never writes the synced sync-log.md. Anything on the box that would be discarded -- local commits,
+    edits to tracked files, untracked files an incoming file would overwrite -- is saved under MIRROR_BACKUP_DIR first.
+    Untracked and ignored files are otherwise left alone (Claude's sign-in lives in one). A failure leaves the tree as
+    it was and goes to the error log, so Health sees it."""
+    ok, out = _git_ok(repo, ["fetch", "-q", "origin", "main"])
+    if not ok:
+        _mirror_log(repo, f"fetch failed: {out.strip()[:200]}")
+        error_log.record("sync:mirror", f"fetch failed in {Path(repo).name}", raw=out)
+        return
+    target = _git(repo, ["rev-parse", "origin/main"]).strip()
+    head = _git(repo, ["rev-parse", "HEAD"]).strip()
+    dirty = _git(repo, ["status", "--porcelain", "--untracked-files=no"]).strip()
+    if head == target and not dirty:
+        return
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup = MIRROR_BACKUP_DIR / Path(repo).name / stamp
+    saved = []
+    if dirty:
+        backup.mkdir(parents=True, exist_ok=True)
+        (backup / "uncommitted.patch").write_text(_git(repo, ["diff", "HEAD"]))
+        saved.append("uncommitted edits")
+    local_commits = _git(repo, ["rev-list", f"{target}..HEAD"]).split()
+    if local_commits:
+        backup.mkdir(parents=True, exist_ok=True)
+        (backup / "local-commits.patch").write_text(_git(repo, ["format-patch", "--stdout", f"{target}..HEAD"]))
+        saved.append(f"{len(local_commits)} local commit(s)")
+    incoming = set(_git(repo, ["ls-tree", "-r", "--name-only", target]).splitlines())
+    clobbered = [f for f in _git(repo, ["ls-files", "--others", "--exclude-standard"]).splitlines() if f in incoming]
+    for f in clobbered:
+        dest = backup / "untracked" / f
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes((Path(repo) / f).read_bytes())
+    if clobbered:
+        saved.append(f"{len(clobbered)} untracked file(s) an incoming file replaces")
+
+    ok, out = _git_ok(repo, ["reset", "-q", "--hard", target])
+    if not ok:
+        _mirror_log(repo, f"reset failed: {out.strip()[:200]}")
+        error_log.record("sync:mirror", f"reset failed in {Path(repo).name}", raw=out)
+        return
+    _mirror_log(repo, f"now at {target[:8]}" + (f"; saved {', '.join(saved)} to {backup}" if saved else ""))
+
+
 import job_events  # noqa: E402  (run log shown in the dashboard's Health tab)
 
 
 @job_events.reported("code-sync-push", "Code sync (git pull/push)")
 def main() -> None:
-    if len(sys.argv) not in (2, 3) or sys.argv[1] not in ("push", "pull"):
-        print("usage: code_sync.py {push|pull} [repo-path]", file=sys.stderr)
+    if len(sys.argv) not in (2, 3) or sys.argv[1] not in ("push", "pull", "mirror"):
+        print("usage: code_sync.py {push|pull|mirror} [repo-path]", file=sys.stderr)
         sys.exit(1)
     repo = Path(sys.argv[2]).expanduser() if len(sys.argv) == 3 else DEFAULT_REPO
     job_events.step(f"{sys.argv[1]} {repo}")
-    (push if sys.argv[1] == "push" else pull)(repo)
+    {"push": push, "pull": pull, "mirror": mirror}[sys.argv[1]](repo)
 
 
 if __name__ == "__main__":

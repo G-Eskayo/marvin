@@ -1,7 +1,7 @@
 {
   "id": "task-011-qa-recall",
   "type": "qa",
-  "cwd": "/Users/gileskayo",
+  "cwd": "~",
   "prompt_file": "prompt.md",
   "timeout": 180,
   "expect": ["1.1"],

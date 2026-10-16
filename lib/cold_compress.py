@@ -38,7 +38,8 @@ def _afsctool_compress(path: Path) -> bool:
 
 
 def _is_compressed(path: Path) -> bool:
-    return bool(os.stat(path).st_flags & stat.UF_COMPRESSED)
+    # st_flags is BSD/macOS only; on Linux (mac-mini-2012) nothing is APFS-compressed.
+    return bool(getattr(os.stat(path), "st_flags", 0) & stat.UF_COMPRESSED)
 
 
 def _disk_kb(path: Path) -> int:

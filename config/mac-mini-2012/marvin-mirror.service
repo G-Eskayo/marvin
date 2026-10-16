@@ -1,0 +1,12 @@
+[Unit]
+Description=MARVIN pull-only code sync: mirror ~/.agents and ~/.claude from the Macs (ADR 0069)
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.agents/venv/bin/python %h/.agents/lib/code_sync.py mirror %h/.agents
+ExecStart=%h/.agents/venv/bin/python %h/.agents/lib/code_sync.py mirror %h/.claude
+ExecStartPost=-%h/.agents/venv/bin/python %h/.agents/skills/self-improve/scripts/rebuild-manifest.py
+StandardOutput=append:%h/.claude/logs/marvin-mirror.out
+StandardError=append:%h/.claude/logs/marvin-mirror.out

@@ -21,6 +21,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import host_os  # noqa: E402  (memory_dir: the synced memory on every machine, ADR 0069)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 OWNER = "G-Eskayo"
 HOME = Path.home()
@@ -28,7 +31,7 @@ CATALOG_DIR = HOME / ".claude" / "catalog"
 OVERRIDES_PATH = CATALOG_DIR / "overrides.json"
 LOCAL_ROOTS = [HOME / "Documents" / "Projects", HOME / "Developer", HOME / "Documents" / "Money-and-Admin" / "budgeting"]
 EXTRA_LOCAL = [HOME / ".agents"]
-MEMORY_DIR = HOME / ".claude" / "projects" / ("-" + str(HOME).strip("/").replace("/", "-")) / "memory"
+MEMORY_DIR = host_os.memory_dir()
 
 PORTFOLIO_REPO_ID = "portfolio-website-updater"
 _PORTFOLIO_DEFAULT = HOME / "Developer" / "portfolio-website-updater"  # moved out of iCloud ~/Documents, #192

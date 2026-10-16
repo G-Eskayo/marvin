@@ -70,8 +70,13 @@ def area(path: str, rules: dict, existing_top_level, extra_core=()) -> str:
 
 
 def decide(repo: str, files: list[dict], rules: dict, *, existing_top_level, new_top_level_this_week: int,
-           ramp_open: bool, render_check_passed: bool = False, profile: dict | None = None) -> dict:
+           ramp_open: bool, render_check_passed: bool = False, profile: dict | None = None,
+           author: str | None = None) -> dict:
     reasons: list[str] = []
+    # ADR 0069 rule 5: PRs written on mac-mini-2012 (its own GitHub account) never auto-merge until that account has
+    # earned it; until a per-author streak exists, that means always.
+    if author and author.lower() in {a.lower() for a in rules.get("always_ask_authors", [])}:
+        reasons.append(f"{author} writes from mac-mini-2012, whose PRs wait for Gil until they earn trust (ADR 0069)")
     if rules.get("ask_all"):
         return {"verdict": "ask", "reasons": ["the auto-merge rules file is missing or unreadable, so everything waits"]}
     if not files:

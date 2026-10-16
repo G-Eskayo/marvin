@@ -49,7 +49,8 @@ def mutation_score(body: str) -> int | None:
 def verdict(pr: dict, facts: dict, rules: dict | None = None) -> dict:
     d = amp.decide(pr["repo"], pr["files"], rules or amp.load_rules(), existing_top_level=facts["existing_top_level"],
                    new_top_level_this_week=facts["new_top_level_this_week"], ramp_open=facts["ramp_open"],
-                   render_check_passed=facts.get("render_check_passed", False), profile=facts.get("profile"))
+                   render_check_passed=facts.get("render_check_passed", False), profile=facts.get("profile"),
+                   author=pr.get("author"))
     reasons = list(d["reasons"]) if d["verdict"] == "ask" else []
     score = mutation_score(pr.get("body", ""))
     if score is None:
@@ -231,7 +232,7 @@ def run(repo: str = "G-Eskayo/marvin", path: Path = STATE_PATH) -> list[dict]:
     import subprocess
     import trust_ramp
     prs = json.loads(_gh(["pr", "list", "--repo", repo, "--state", "open", "--limit", "100",
-                          "--json", "number,url,title,body,files,headRefName,headRefOid"]))
+                          "--json", "number,url,title,body,files,headRefName,headRefOid,author"]))
     _score_one(prs, repo, path)
     clone = Path.home() / ".agents"
     tops = {l for l in subprocess.run(["git", "ls-tree", "--name-only", "-d", "origin/main"], cwd=clone,
@@ -239,6 +240,7 @@ def run(repo: str = "G-Eskayo/marvin", path: Path = STATE_PATH) -> list[dict]:
     facts = {"existing_top_level": tops, "new_top_level_this_week": 0, "ramp_open": trust_ramp.is_open(repo),
              "render_check_passed": False}
     seen = observe([{"number": p["number"], "repo": repo, "url": p["url"], "title": p["title"], "body": p.get("body") or "",
+                     "author": (p.get("author") or {}).get("login"),
                      "files": [{"path": f["path"], "additions": f.get("additions", 0), "deletions": f.get("deletions", 0),
                                 "status": "modified", "previous_path": None} for f in p.get("files", [])]} for p in prs],
                    facts, path)
