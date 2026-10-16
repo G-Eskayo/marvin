@@ -144,6 +144,32 @@ Sharper video: `docs/screenshots/portfolio-landing-alive-2026-10-16.mp4`.
   - Plants and water move as in A.
 - **Text** is today's typing effect, with today's lines. Each line is laid out in full before it types, and words are unbreakable, so nothing jumps to a new line mid-word.
 
+## Landing round 3: step into the painting
+Gil's feedback on round 2:
+- A wins on resolution, but the scene still feels disconnected.
+- Each part should have its own physics:
+  - fog you can swirl around in, along with the strokes
+  - plants you can brush back and forth
+  - water that flows
+  - a bridge and mountains that look 3D but stay static and can't be messed with
+- "As if I was there in that world and could interact with it."
+
+Live at **http://localhost:8080/homepagefiles/landing-proto/living.html**.
+
+![Round 3: stirring the fog, brushing the plants, crossing the water](docs/screenshots/portfolio-landing-living-2026-10-16.gif)
+
+Sharper video: `docs/screenshots/portfolio-landing-living-2026-10-16.mp4`.
+
+**How it works**
+- **Air:** a small real-time air simulation runs under the picture, with swirl preservation (vorticity confinement). Only the mouse pushes it.
+- **Fog / sky strokes** are carried by that air. Stirring leaves swirls that curl on and drift back over a few seconds. Fog banks get swirled too.
+- **Plants** are damped springs driven by the air: brush them and they lean, then rock back and forth before settling. Tips move more than the base.
+- **Water** flows continuously (two staggered phases, so it never visibly resets), with glints, and the air ripples it.
+- **Bridge and mountains** never move. Every move shrinks to zero next to solid structure, so cables can't smear. Lighting from the depth map slowly shifts across them so they read as solid 3D forms.
+- **Idle breeze:** a gentle breeze runs separately from the simulation, so it can't build up.
+
+**Measured after brushing the plants** (mean pixel change): plants 8.8, bridge deck 0.2, tower 0.5, mountains 1.1 (fog and light only).
+
 ## Brand direction mockup (2026-10-16)
 Gil asked what his marketable themes would do to the site.
 
@@ -182,8 +208,8 @@ The diploma (`Dropbox/Gil/Gil's resume/archive/2025/CollegeDiploma.pdf`) is a ce
 ## Decisions
 <!-- marvin:decisions -->
 ### landing: Which landing look do we build?
-- [ ] A · Alive painting
-- [ ] B · Stroke rebuild
+- [ ] Round 3 · Step into the painting, as is
+- [ ] Round 3, with changes (text below)
 - [ ] None yet: change it (text below)
 
 ### landing-notes: What to change on the one you like (text) (optional)
