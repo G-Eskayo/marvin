@@ -15,8 +15,8 @@ import deliverable_location_guard as g  # noqa: E402
 SCRATCH = "/private/tmp/claude-501/-Users-x/abc/scratchpad/mock/shot.png"
 
 
-def _denied(result):
-    return result is not None and result["hookSpecificOutput"]["permissionDecision"] == "deny"
+def _denied(hook_response):
+    return hook_response is not None and hook_response["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
 def test_denies_scratchpad_file_sent_to_user():
