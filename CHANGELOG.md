@@ -1,5 +1,7 @@
 # Changelog
 
+- Signed dashboard builds crash after packaging (null publish 'channel'), so installs fall back to ad-hoc signing ([#541](https://github.com/G-Eskayo/marvin/pull/541))
+
 - code_sync push fails to merge when sync-log.md (or any file) has uncommitted edits, e.g. after the Mac sleeps mid-run ([#452](https://github.com/G-Eskayo/marvin/pull/452))
 
 - code_sync auto-commits onto whatever branch is checked out, sweeping other sessions' WIP into PR branches ([#445](https://github.com/G-Eskayo/marvin/pull/445))
