@@ -1,0 +1,8 @@
+1. `dashboard/electron/main/boot_data.js:98` — change `t.detail.match(/carried from (\S+)/)` to `t.detail.match(/carried from ([^\s):]+)/)`.
+2. `dashboard/test/boot_data.test.js` — tighten the carried-from test (line ~176-186) to an exact `toBe(...)` on the full chip text instead of a loose `toMatch`.
+3. `lib/main_health.py:_changed_paths` (~line 135) — widen `except (subprocess.CalledProcessError, subprocess.TimeoutExpired):` to also catch `OSError` (covers `FileNotFoundError` for a missing repo dir or `git` not on `PATH`).
+4. `lib/main_health.py:_acquire_lock` (~line 78) — add `lock_path.parent.mkdir(parents=True, exist_ok=True)` before the first `os.open` call.
+5. `lib/tests/test_main_health.py` — add `test_changed_paths_handles_missing_git_or_repo` and `test_acquire_lock_creates_missing_parent_directory` (+ a `refresh()`-level variant).
+6. `lib/tests/test_main_health.py` — inject `changed_paths=lambda *a, **k: None` into the three identified calls in `test_single_flight_concurrent_calls_skip_while_one_is_running`, `test_lock_is_released_after_success`, `test_exception_during_suite_leaves_state_untouched`.
+7. Run `lib/tests` (pytest) and the dashboard vitest suite; confirm all green, including the 5 new/changed tests failing against the pre-fix code and passing after.
+8. Diff-review the four production-code edits against the four review findings one-to-one before committing — no unrelated changes.

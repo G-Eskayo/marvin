@@ -173,6 +173,16 @@ describe('the summary lines read real sources', () => {
     u.done()
   })
 
+  it('TEST detects carried-from marker and appends it to the chip text', () => {
+    const h = GREEN()
+    h.checks = h.checks.map((c) => c.id === 'main:green' ? { ...c, detail: 'main @ abc1234 (carried from def5678): 2143 passed, 9 skipped' } : c)
+    const t = tree({ health: h })
+    const testLine = line(buildBootData(t), 'TEST')
+    expect(testLine.level).toBe('green')
+    expect(testLine.text).toBe('TESTS · 2143 PASSED · 9 SKIPPED · CARRIED FROM DEF5678')
+    t.done()
+  })
+
   it('the feed is every check in order, with label and level only', () => {
     const t = tree({ health: GREEN() })
     const d = buildBootData(t)

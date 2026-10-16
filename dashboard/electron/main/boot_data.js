@@ -95,7 +95,10 @@ function testLine(checks) {
   const t = checks.find((c) => c.id === 'main:green')
   if (!t) return { chip: 'TEST', level: 'yellow', text: 'TESTS · UNKNOWN', target: HEALTH }
   const counts = t.detail.match(/\d+ (?:passed|failed|skipped|errors?)/g) || []
-  return { chip: 'TEST', level: t.severity, text: 'TESTS · ' + (counts.length ? up(counts.join(' · ')) : up(t.detail).slice(0, 40)), target: onCheck(t) }
+  const carried = t.detail.match(/carried from ([^\s):]+)/)
+  let text = 'TESTS · ' + (counts.length ? up(counts.join(' · ')) : up(t.detail).slice(0, 40))
+  if (carried) text += ' · CARRIED FROM ' + carried[1].toUpperCase()
+  return { chip: 'TEST', level: t.severity, text, target: onCheck(t) }
 }
 
 function verdictOf(health, counts, ageMin) {

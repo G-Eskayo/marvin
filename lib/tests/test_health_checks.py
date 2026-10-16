@@ -1391,3 +1391,45 @@ def test_remote_machine_label_strips_the_registry_number():
     assert hc._remote_machine_label("mac-mini-1") == "mac-mini"
     assert hc._remote_machine_label("macbook-pro-12") == "macbook-pro"
     assert hc._remote_machine_label("kali") == "kali"
+
+
+# ── carried verdict display ──────────────────────────────────────────────
+
+def test_check_main_health_green_with_carried_verdict(tmp_path):
+    """Test #17: check_main_health() on a green, carried: true, carried_from: "<sha>"
+    record → severity green, detail contains carried from <sha>."""
+    path = tmp_path / "main-health.json"
+    path.write_text(json.dumps({
+        "sha": "new123",
+        "ok": True,
+        "failed": [],
+        "summary": "1000 passed",
+        "checked_at": datetime(2026, 10, 15, 12, 0, tzinfo=timezone.utc).isoformat(),
+        "carried": True,
+        "carried_from": "old456",
+    }))
+
+    result = hc.check_main_health(path=path, now=datetime(2026, 10, 15, 12, 30, tzinfo=timezone.utc))
+    assert result["severity"] == "green"
+    assert "carried from old456" in result["detail"]
+    assert "1000 passed" in result["detail"]
+
+
+def test_check_main_health_red_with_carried_verdict(tmp_path):
+    """Test #18: check_main_health() on a red, carried record → severity red,
+    detail still names the failing tests AND mentions carried from <sha>."""
+    path = tmp_path / "main-health.json"
+    path.write_text(json.dumps({
+        "sha": "new123",
+        "ok": False,
+        "failed": ["tests/test_x.py::test_a", "tests/test_y.py::test_b"],
+        "summary": "2 failed, 998 passed",
+        "checked_at": datetime(2026, 10, 15, 12, 0, tzinfo=timezone.utc).isoformat(),
+        "carried": True,
+        "carried_from": "old456",
+    }))
+
+    result = hc.check_main_health(path=path, now=datetime(2026, 10, 15, 12, 30, tzinfo=timezone.utc))
+    assert result["severity"] == "red"
+    assert "carried from old456" in result["detail"]
+    assert "tests/test_x.py::test_a" in result["detail"]  # failing tests still named

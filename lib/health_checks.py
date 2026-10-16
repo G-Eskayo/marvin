@@ -550,12 +550,13 @@ def check_main_health(path: Path | None = None, now: datetime | None = None) -> 
     except (OSError, ValueError):
         return _result(cid, label, "yellow", "main has not been checked yet on this machine")
     when = datetime.fromisoformat(str(d.get("checked_at", "")).replace("Z", "+00:00")) if d.get("checked_at") else None
+    carried_note = f" (carried from {d.get('carried_from', '?')})" if d.get("carried") else ""
     if not d.get("ok"):
         names = ", ".join(d.get("failed", [])[:3]) or d.get("summary", "failing")
-        return _result(cid, label, "red", f"main @ {d.get('sha', '?')} is failing: {names}. Merges are refused until it is fixed", value=len(d.get("failed", [])))
+        return _result(cid, label, "red", f"main @ {d.get('sha', '?')}{carried_note} is failing: {names}. Merges are refused until it is fixed", value=len(d.get("failed", [])))
     if when is None or (now - when).total_seconds() > MAIN_HEALTH_STALE_HOURS * 3600:
         return _result(cid, label, "yellow", f"last check ({d.get('sha', '?')}) is more than a day old")
-    return _result(cid, label, "green", f"main @ {d.get('sha', '?')}: {d.get('summary', 'passing')}")
+    return _result(cid, label, "green", f"main @ {d.get('sha', '?')}{carried_note}: {d.get('summary', 'passing')}")
 
 
 SEAL_BETA_STATUS_PATH = Path.home() / ".claude" / "seal-beta" / "status.json"
