@@ -144,6 +144,32 @@ Sharper video: `docs/screenshots/portfolio-landing-alive-2026-10-16.mp4`.
   - Plants and water move as in A.
 - **Text** is today's typing effect, with today's lines. Each line is laid out in full before it types, and words are unbreakable, so nothing jumps to a new line mid-word.
 
+## Brand direction mockup (2026-10-16)
+Gil asked what his marketable themes would do to the site.
+
+- **Themes:**
+  - Precision when it counts (CBRN, the life-saving award).
+  - A builder who ships (hackathon, MARVIN, apps).
+  - Range across disciplines (aerospace, CS, telemetry, security).
+  - Technology for people (Clarity Captions for his mom).
+  - Self-driven.
+- **Mood:** grounded, precise, quietly bold, cinematic; warm underneath.
+- **What it changes visually:**
+  - The hero's monochrome, hand-drawn bridge carries through every page.
+  - Paper-and-ink colours. Engineering-drawing details: numbered section labels, hairline rules, corner ticks around frames.
+  - A crisp sans for headings, a warm serif for story text, and a mono font for labels.
+  - Pink only marks "where you are / what matters", and blue only marks links.
+
+Live on the dev site:
+- About: **http://localhost:8080/homepagefiles/brand-proto/about.html**
+- Education: **http://localhost:8080/homepagefiles/brand-proto/education.html**
+
+![Before and after: About](docs/screenshots/portfolio-brand-about-before-after-2026-10-16.png)
+![Education mockup](docs/screenshots/portfolio-brand-education-2026-10-16.png)
+![Phone](docs/screenshots/portfolio-brand-phone-2026-10-16.png)
+
+The copy is a first pass built from facts already on the site; the real rewrite is still for Gil to approve. "Day job · Charter" has a placeholder for his role.
+
 ## Degree: verifiable like the certs
 The diploma (`Dropbox/Gil/Gil's resume/archive/2025/CollegeDiploma.pdf`) is a certified e-diploma with code **25Z8-DPSX-G40X** printed on it. Its verification page can be the click-through target, the same way the certs work. The exact verify URL still needs confirming.
 
@@ -161,6 +187,13 @@ The diploma (`Dropbox/Gil/Gil's resume/archive/2025/CollegeDiploma.pdf`) is a ce
 - [ ] None yet: change it (text below)
 
 ### landing-notes: What to change on the one you like (text) (optional)
+
+### brand: The brand direction
+- [ ] Yes, build the pages in this style
+- [ ] Close, but change things (text below)
+- [ ] No, try a different direction
+
+### brand-notes: What to change (text) (optional)
 
 ### degree: How the degree shows
 - [ ] The diploma image as a card, same as the certs
