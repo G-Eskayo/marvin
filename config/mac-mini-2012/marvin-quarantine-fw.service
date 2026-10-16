@@ -1,0 +1,13 @@
+[Unit]
+Description=MARVIN quarantine firewall (ADR 0069)
+After=network-pre.target libvirtd.service
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/marvin/quarantine.nft
+ExecStop=/usr/sbin/nft delete table inet marvin_quarantine
+
+[Install]
+WantedBy=multi-user.target
