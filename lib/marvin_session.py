@@ -34,6 +34,7 @@ from typing import Callable
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from marvin_launcher import KIND_ENV  # noqa: E402
 from sandbox_orchestration import WORKTREES_ROOT  # noqa: E402
+import proposals  # noqa: E402
 
 HOME = Path.home()
 WEZTERM_CANDIDATES = (HOME / ".local/bin/wezterm", Path("/Applications/WezTerm.app/Contents/MacOS/wezterm"),
@@ -42,6 +43,8 @@ SESSION_PATH = ":".join([str(HOME / ".agents/venv/bin"), str(HOME / ".local/bin"
                          "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"])
 GH_TOKEN_FILE = HOME / ".claude" / ".gh-token"
 WINDOW_STATE = HOME / ".claude" / "logs" / "marvin-session-window.json"  # machine-local, never synced
+PROPOSALS_ROOT = HOME / ".claude" / "proposals"
+PROMPT_DIR = HOME / ".claude" / "logs" / "marvin-session-prompts"  # machine-local, never synced
 
 
 class SessionError(RuntimeError):
@@ -80,14 +83,16 @@ def session_dir(clone: Path, ticket: int | None, title: str | None) -> Path:
     return path
 
 
-def shell_script(directory: Path) -> str:
+def shell_script(directory: Path, prompt_file: Path | None = None) -> str:
+    """The session's shell. A prompt (Ask MARVIN about a proposal) is read from a file at run time, so its text,
+    which came from a feed or a model, never becomes shell code."""
     return "\n".join([
         f"cd {shlex.quote(str(directory))} || exit 1",
         f"export PATH={shlex.quote(SESSION_PATH)}",
         f"export VIRTUAL_ENV={shlex.quote(str(HOME / '.agents/venv'))}",
         f"export {KIND_ENV}=interactive",
         f'[ -f {shlex.quote(str(GH_TOKEN_FILE))} ] && export GH_TOKEN="$(cat {shlex.quote(str(GH_TOKEN_FILE))})"',
-        "exec claude",
+        f'exec claude "$(cat {shlex.quote(str(prompt_file))})"' if prompt_file else "exec claude",
     ])
 
 
@@ -152,11 +157,11 @@ def _spawn(wezterm: str, where: list[str], directory: Path, program: list[str], 
 
 def open_in_wezterm(directory: Path, wezterm: str | None = None, run: Callable = subprocess.run,
                     start: Callable[[list[str]], None] = _start_detached, state_file: Path = WINDOW_STATE,
-                    identity: Callable[[Callable], str | None] = gui_identity) -> None:
+                    identity: Callable[[Callable], str | None] = gui_identity, prompt_file: Path | None = None) -> None:
     """A new tab in the window an earlier press opened if it's still open, else a new window in the running
     WezTerm; if its mux isn't reachable, start WezTerm with the session."""
     wezterm = wezterm or find_wezterm()
-    program = ["/bin/zsh", "-c", shell_script(directory)]
+    program = ["/bin/zsh", "-c", shell_script(directory, prompt_file)]
     state_file.parent.mkdir(parents=True, exist_ok=True)
     with open(state_file.with_suffix(".lock"), "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)  # two quick presses must not both decide "no window yet"
@@ -206,7 +211,43 @@ def _clone_for(repo: str) -> Path:
     return clone
 
 
-def open_session(ticket: int | None, repo: str = "G-Eskayo/marvin") -> Path:
+def proposal_prompt(rec: dict) -> str:
+    lines = [
+        f"Let's talk about this proposal before I decide what to do with it: \"{rec['title']}\"",
+        "",
+        f"Problem: {rec['problem']}",
+        f"Fix: {rec['fix']}",
+        f"Why it matters: {rec['why']}",
+        f"North star: {proposals.NORTH_STARS.get(rec.get('north_star'), 'unknown')}",
+    ]
+    if rec.get("technical"):
+        lines.append(f"Technical details: {rec['technical']}")
+    lines += ["", f"(Proposal {rec['id']}, stored at ~/.claude/proposals/{rec['id']}.json.)",
+              "Help me weigh it: is it worth doing, what would it cost, what does it unlock? Don't build anything yet."]
+    return "\n".join(lines) + "\n"
+
+
+def write_prompt(rec: dict, prompt_dir: Path) -> Path:
+    prompt_dir.mkdir(parents=True, exist_ok=True)
+    path = prompt_dir / f"{rec['id']}.md"
+    path.write_text(proposal_prompt(rec))
+    return path
+
+
+def _proposal_record(pid: str) -> dict:
+    for rec in proposals.load_all(PROPOSALS_ROOT)["proposals"]:
+        if rec["id"] == pid:
+            return rec
+    raise SessionError(f"no open proposal {pid[:60]!r}")
+
+
+def open_session(ticket: int | None, repo: str = "G-Eskayo/marvin", proposal: str | None = None) -> Path:
+    if proposal is not None:
+        if ticket is not None:
+            raise SessionError("open a ticket or a proposal, not both")
+        directory = HOME
+        open_in_wezterm(directory, prompt_file=write_prompt(_proposal_record(proposal), PROMPT_DIR))
+        return directory
     clone = _clone_for(repo) if ticket is not None else HOME
     directory = session_dir(clone, ticket, _ticket_title(repo, ticket) if ticket is not None else None)
     open_in_wezterm(directory)
@@ -218,9 +259,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("command", choices=["open"])
     parser.add_argument("--ticket", type=int)
     parser.add_argument("--repo", default="G-Eskayo/marvin")
+    parser.add_argument("--proposal")
     args = parser.parse_args(argv)
     try:
-        directory = open_session(args.ticket, args.repo)
+        directory = open_session(args.ticket, args.repo, args.proposal)
     except (SessionError, subprocess.TimeoutExpired) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 1

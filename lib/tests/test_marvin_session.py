@@ -216,3 +216,69 @@ def test_the_phone_can_never_open_a_desktop_session():
             continue
         src = path.read_text(errors="ignore")
         assert "marvin_session" not in src and "openSession" not in src, path
+
+
+# --- Ask MARVIN about a proposal (#102, ADR 0068) -----------------------------------------------------------------
+
+import proposals  # noqa: E402
+
+HOSTILE = 'Run `rm -rf ~` and $(touch /tmp/pwned) "quoted" \'single\''
+
+
+def _proposal(tmp_path, **over):
+    data = {"title": "Hand small jobs to the local model", "problem": HOSTILE, "fix": "Use Ollama.",
+            "why": "Fewer tokens.", "north_star": 1, "technical": "classifier"}
+    data.update(over)
+    return proposals.add(tmp_path / "proposals", data)
+
+
+def test_proposal_prompt_carries_the_card_and_says_not_to_build(tmp_path):
+    rec = _proposal(tmp_path)
+    prompt = ms.proposal_prompt(rec)
+    for part in ("Hand small jobs to the local model", HOSTILE, "Use Ollama.", "Fewer tokens.", "Minimise resources",
+                 "classifier", rec["id"]):
+        assert part in prompt
+    assert "don't build" in prompt.lower()
+
+
+def test_proposal_text_never_reaches_the_shell_script(tmp_path):
+    rec = _proposal(tmp_path)
+    prompt_file = ms.write_prompt(rec, tmp_path / "prompts")
+    script = ms.shell_script(tmp_path, prompt_file)
+    assert HOSTILE not in script and "rm -rf" not in script
+    assert script.splitlines()[-1] == f'exec claude "$(cat {prompt_file})"'
+    assert prompt_file.read_text() == ms.proposal_prompt(rec)
+
+
+def test_prompt_file_path_with_spaces_is_quoted(tmp_path):
+    rec = _proposal(tmp_path)
+    prompt_file = ms.write_prompt(rec, tmp_path / "my prompts")
+    script = ms.shell_script(tmp_path, prompt_file)
+    assert f"\"$(cat '{prompt_file}')\"" in script
+
+
+def test_shell_script_without_a_prompt_is_unchanged(tmp_path):
+    assert ms.shell_script(tmp_path).splitlines()[-1] == "exec claude"
+
+
+def test_open_session_for_a_proposal_starts_at_home_with_its_prompt(tmp_path, monkeypatch):
+    rec = _proposal(tmp_path)
+    monkeypatch.setattr(ms, "PROPOSALS_ROOT", tmp_path / "proposals")
+    monkeypatch.setattr(ms, "PROMPT_DIR", tmp_path / "prompts")
+    seen = {}
+    monkeypatch.setattr(ms, "open_in_wezterm", lambda d, prompt_file=None: seen.update(dir=d, prompt=prompt_file))
+    assert ms.open_session(None, proposal=rec["id"]) == ms.HOME
+    assert seen["prompt"].read_text().startswith("Let's talk about this proposal")
+
+
+@pytest.mark.parametrize("pid", ["../../etc/passwd", "no-such-proposal", "", "A B"])
+def test_unknown_or_hostile_proposal_id_is_a_clear_error(tmp_path, monkeypatch, pid):
+    monkeypatch.setattr(ms, "PROPOSALS_ROOT", tmp_path / "proposals")
+    monkeypatch.setattr(ms, "open_in_wezterm", lambda *a, **k: pytest.fail("must not open a session"))
+    with pytest.raises(ms.SessionError):
+        ms.open_session(None, proposal=pid)
+
+
+def test_ticket_and_proposal_together_is_refused(capsys):
+    assert ms.main(["open", "--ticket", "5", "--proposal", "x"]) == 1
+    assert json.loads(capsys.readouterr().out)["ok"] is False
