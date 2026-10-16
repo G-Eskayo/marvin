@@ -41,6 +41,8 @@ Split any slice matching one of these before presenting the list in step 4 — d
 
 **AFK slices must land in the repo the ticket is filed in.** The ticket pipeline judges a run by measuring *that* repo's tests. If the work actually lives in a different repo (a website, a companion app, a new repo that doesn't exist yet), every run measures "unchanged" and the ticket fails or gets parked even when the agent did the work. clarity-captions #44 (its website) was parked for exactly this reason. Either file the slice in the repo where the code will live, or mark it HITL.
 
+**AFK slices need acceptance criteria a machine can check.** If "done" is a matter of taste ("human readable", "a lay person could understand it", "visually appealing", "looks right"), no test can pass it. The pipeline keeps building, Gil keeps sending it back, and the loop never ends. marvin #102 "Suggestions tab" failed 119 times this way. Mark such slices HITL and build them interactively, the way the boot sequence was done (#431, #433): show mock-ups and real screenshots, let Gil pick, then lock what he chose into checkable criteria and tests. Or split it: AFK for the data and behaviour, HITL for how it reads and looks.
+
 ### 4. Quiz the user
 
 Present the proposed breakdown as a numbered list. For each slice, show:

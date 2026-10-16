@@ -1,5 +1,10 @@
 # Diagnose — Retrospective
 
+## 2026-10-15 — Sync alarms shipped + morning-brief audit
+**I:** Added a gotcha: repeated conflicts on one synced file can mean the same job runs on both machines and writes it. Fixing the conflict handling only treats the symptom; the fix is one owner per job. quarantine.md has conflicted at least four times (07-12, 09-01, 10-10, 10-15), and the audit showed the second Mac's run added nothing.
+**S:** The 10-14 alarm-visibility fix (#426) and the log-after-push fix (#427) are now built TDD in temp repos and verified on both Macs. Marked them verified in the skill, and added #438's twist: a no-op success must also clear an earlier failure.
+**F:** #450 (autostash merge) and #451 (wake-aware SYNC BLOCKED age, from `kern.waketime`) are still unmerged and unverified after a sleep, so they're not codified (evidence gate).
+
 ## 2026-10-14 — ~/.claude memory-sync 4-day stall
 **I:** Added two gotchas. (1) A check that fires every session but looks like a routine backlog count is silent in practice: the sync-conflict line was ignored for 4 days and 766 refusals. (2) A log entry written before the outcome is known can say "pushed" when the push was rejected.
 **F:** Detection already existed (the 2026-07-14 SessionStart hook was built for this exact failure), but it didn't get attention. The stuck state came from a hand-resolved conflict that was never `git add`ed, so it stayed `UU`, plus a leftover stash. Repair verified on both Macs (commit 3e978ef). The two fixes are scoped but not built yet.

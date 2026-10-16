@@ -1315,8 +1315,9 @@ MARVIN-as-OS north star).
   endpoint by the abilities a request needs ("read me the brief in the kitchen" needs *speak*; "put the articles on the
   mirror" needs *show*). A new endpoint is a new entry with its abilities, not a new kind of thing.
 - **MARVIN Surface**: Gil's planned touch display with a holographic look. It is a Surface in the existing sense
-  (somewhere Gil interacts with MARVIN), with at least *show* and *touch*.
-- **Mirror**: a show-only endpoint (a screen behind two-way glass).
+  (somewhere Gil interacts with MARVIN), with at least *show* and *touch*. A future **physical build**, after MARVIN
+  gets good at CAD and engineering software; the design only has to leave room for it.
+- **Mirror**: a show-only endpoint (a screen behind two-way glass). Also a future physical build.
 - **Content**: anything MARVIN can put on an endpoint when asked ("show or say X on Y"): the brief, one article, a
   ticket, a chart, the build status. The ability is general; the **brief is its first content**, and solid content
   comes before more endpoints (Gil, 2026-10-15).
@@ -1335,3 +1336,23 @@ MARVIN-as-OS north star).
 - **Five-item cap** (decided 2026-10-15): the brief holds **at most five items across all sections**, one sentence
   each, ranked by how much each matters to Gil today. A quiet day has fewer and nothing pads it. Everything else is
   **one ask away** ("what else?", "more on 3", "put 1 on the mirror"). Spoken, MARVIN gives the top three and waits.
+- **Ranking** (decided 2026-10-15): day one, items rank by fit with Gil's projects, deadlines and north stars. After
+  that MARVIN also **learns from what Gil does**: asking for more, opening an item or putting it on an endpoint
+  counts up; skipping counts down a little; "less of this" counts down strongly. No interest form to maintain.
+- **Held back** (decided 2026-10-15): the safety check judges **each brief item on its own**. A doubtful item is left
+  out, the next-ranked item takes its slot, and the brief still arrives on time. Held-back items wait in a short list
+  Gil can ask about ("what did you hold back?"), and his answers teach the checker. One doubtful item never holds the
+  whole brief (the old whole-digest quarantine kept research out of every brief from 2026-10-08 on).
+- **Delivery channels are experiments** (decided 2026-10-15): the brief goes out by **phone notification** (tapping
+  opens it in the MARVIN app), at **session start on whichever Mac Gil starts on**, and by **email**, and MARVIN keeps
+  trying new ways. Which channels Gil actually opens is measured the same way as item ranking, so channels nobody uses
+  get dropped. This is a start to something meant to grow much bigger.
+- **Brief owner** (decided 2026-10-15): the **Mac Mini** gathers the feeds and builds the brief before Gil wakes. The
+  MacBook builds it only if the Mini hasn't by an hour after its usual time. The research colony and daily digest no
+  longer run on both Macs (see ADR 0067).
+- **Item layers** (decided 2026-10-15): every brief item carries three layers, all prepared when the brief is built:
+  (1) **the line** (one sentence, what the brief shows or says), (2) **the summary** (what happened, why it matters to
+  Gil, what he could do), (3) **the source** (the original article or paper, plus links to related tickets and
+  projects). "More on 3" answers from layer 2 instantly; "put 3 on the Surface" shows layer 3.
+- **Open in this design** (as of 2026-10-15): the voice conversation style (waits on the Voice surface); identifying
+  the God's Eye and Pegasus feeds; how endpoints register and receive content (after the content is solid).
