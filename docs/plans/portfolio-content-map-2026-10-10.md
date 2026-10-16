@@ -67,6 +67,35 @@ Corrections to the agents' audits: recommendation and certificate images render 
 - **Employer:** Gil's current job is at Charter. Never mention the recruiter who placed him, anywhere.
 - **About:** undecided between separate pages (clutter of pages) and one page with sections (clutter on one page).
 
+## Organizing principle (Gil, 2026-10-16)
+
+"Tailoring the website to the audience and each page to its purpose." Every page decision starts from who reads it and its one job.
+
+**Audience (confirmed):** recruiters and hiring managers first, engineers on an interview loop second, Seal Speak users/family/press third (the marketing site serves them; the portfolio just needs to be a clean landing).
+
+**Target roles (confirmed):** AI/ML engineer, security engineer, research. Not generic software engineering. Gil knows the security side is thin: more security projects are planned next, and the cert pipeline is AWS Certified Generative AI Professional, then CompTIA SecAI+ (neither held yet; show only as in progress if he's enrolled or scheduled).
+
+| Page | Main reader | Its one job |
+|---|---|---|
+| Home | Everyone, first 10 seconds | Who Gil is and which roles he's after, then route: best 3-4 projects, Resume, Contact |
+| Projects | Engineers, then recruiters | Prove he can build: story first, technical depth below |
+| About | Recruiters | Trust and character (veteran, Eagle Scout, leadership), backed by recommendations |
+| Education | Recruiters checking boxes | Confirm credentials fast: degree, verifiable certs, skills linked to the projects that prove them |
+| Resume | Recruiters | The right role-specific PDF in one click, plus a quick-scan summary |
+| Contact | Anyone ready to reach out | Make reaching him effortless |
+
+The page jobs are a draft; the audience and roles are confirmed.
+
+## Ideas brought in from other chats (gathered 2026-10-16)
+
+From Gil's own messages in other sessions. None of these has been designed yet.
+
+1. **Show the research behind decisions** (Seal Speak chat, 2026-10-09): "link that and display what we are grabbing from it and how it is leading our decisions", on the portfolio and/or the marketing pages. Memory rule: every research-informed decision goes in the repo's evidence log (source, takeaway, confidence, decision, public use). This redesign's own research (the two reports above) qualifies, and so does Seal Speak's.
+2. **Redo the Clarity Captions project page** (2026-10-10) with the final app renderings and screenshots, at the level of detail the app is at now. The app is now called **Seal Speak** (renamed 2026-10-11; App Store name), so the page title, card and slug need the new name. This falls under the Projects discussion rule.
+3. **Seal Speak marketing site on a gileskayo.me subdomain** (2026-10-10). Gil set up a HostGator CNAME for `seal-captions.gileskayo.me` pointing at GitHub Pages. Checked 2026-10-16: it redirects to `g-eskayo.github.io` and shows GitHub's "Site not found", so it isn't live. The one-page site (clarity-captions #44 "[W] Seal website: a one-page static site, previewed on GitHub Pages") is closed. Still open: #46 "[W] Domain, hosting and DNS: choose and buy the domain, connect the site, link it from the portfolio and GitHub" and #47 "[W] Marketing assets: screenshots, a short demo video and store-ready images". Open question: the subdomain still says "seal-captions" while the app is Seal Speak.
+4. **v1 (bad) and v2 (better) versions of weaker projects** (2026-10-06): redo the less impressive projects, refine them for better results, and post both versions. Gil didn't know how to show version history on the site. MITRE is the one redo in progress. Projects discussion item.
+5. **Component parity** (2026-10-02, mostly built into the template system): one GitHub button in the same place on every project page, interactive elements as the reference templates. Applies to the new non-project pages too: they should be built from the same elements.
+
 ## Open
 
 - Resume and Contact: Gil mentioned earlier ideas for both; they weren't found in any transcript, handoff or doc, so they need restating.
