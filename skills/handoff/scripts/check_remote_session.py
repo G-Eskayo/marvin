@@ -35,9 +35,11 @@ from task_dispatch import dispatch  # noqa: E402
 
 STATE_PATH = Path.home() / ".claude" / ".session-continuity-state.json"
 CLAUDE_DIR_REL = ".claude"
-VENV_PYTHON = "/Users/gileskayo/.agents/venv/bin/python"
-GENERATE_SCRIPT = "/Users/gileskayo/.agents/skills/handoff/scripts/generate_handoff_from_transcript.py"
-CODE_SYNC = "/Users/gileskayo/.agents/lib/code_sync.py"
+# $HOME, not a literal path: these strings run in a shell on whichever machine is checked, and the home
+# directory differs between machines (ADR 0069).
+VENV_PYTHON = "$HOME/.agents/venv/bin/python"
+GENERATE_SCRIPT = "$HOME/.agents/skills/handoff/scripts/generate_handoff_from_transcript.py"
+CODE_SYNC = "$HOME/.agents/lib/code_sync.py"
 SSH_OPTS = ["-o", "ConnectTimeout=5", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"]
 
 
@@ -55,7 +57,7 @@ def _save_state(state: dict) -> None:
 
 def _check_remote(device_id: str, host: str) -> dict | None:
     result = subprocess.run(
-        ["ssh", *SSH_OPTS, host, f"{VENV_PYTHON} /Users/gileskayo/.agents/skills/handoff/scripts/find_freshest_session.py"],
+        ["ssh", *SSH_OPTS, host, f"{VENV_PYTHON} $HOME/.agents/skills/handoff/scripts/find_freshest_session.py"],
         capture_output=True, text=True, timeout=15,
     )
     if result.returncode != 0 or not result.stdout.strip():
@@ -110,7 +112,7 @@ def main() -> None:
     if freshest["mtime"] <= last_seen:
         return  # nothing new since we last checked this machine
 
-    generate_and_push = f"{VENV_PYTHON} {GENERATE_SCRIPT} {freshest['transcript_path']} && {VENV_PYTHON} {CODE_SYNC} push /Users/gileskayo/{CLAUDE_DIR_REL}"
+    generate_and_push = f"{VENV_PYTHON} {GENERATE_SCRIPT} {freshest['transcript_path']} && {VENV_PYTHON} {CODE_SYNC} push $HOME/{CLAUDE_DIR_REL}"
     result = dispatch(generate_and_push, target=device_id, mode="sync", timeout=180, task_label="generate handoff from live session")
     if not result.ok:
         return  # fail quiet — same as any other SSH-unreachable case elsewhere in MARVIN
