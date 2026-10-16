@@ -49,6 +49,8 @@ import { DISPATCH_STATE_PATH } from './dispatch_status.js'
 import { createHash } from 'crypto'
 import { JOBS_DIR } from './jobs.js'
 import { openMarvinSession } from './marvin_session.js'
+import { createProposals } from './proposals.js'
+const proposalsStore = createProposals()
 import { openDevSite } from './dev_site_chrome.js'
 import { listAgents } from './agents.js'
 import { buildWorkingNow } from './working.js'
@@ -227,6 +229,9 @@ function registerDispatchHandlers() {
 function registerSessionHandlers() {
   // The MARVIN button (marvin#228): a ready MARVIN session in WezTerm on this Mac.
   ipcMain.handle('marvin:openSession', (_event, request) => openMarvinSession(request))
+  // MR Review → Proposals (#102, ADR 0068): read and act through lib/proposals.py only.
+  ipcMain.handle('proposals:list', () => proposalsStore.list())
+  ipcMain.handle('proposals:act', (_event, id, action, args) => proposalsStore.act(id, action, args))
   // The Portfolio tab's "Open dev site" button (marvin#377): reuses the dev site's Chrome tab if one is open. The
   // renderer sends no URL; only the dev site can be opened this way.
   ipcMain.handle('portfolio:openDevSite', () => openDevSite())

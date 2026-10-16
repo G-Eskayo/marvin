@@ -25,3 +25,18 @@ describe('MARVIN button session launcher', () => {
     expect(bad).toEqual({ ok: false, error: 'Traceback...' })
   })
 })
+
+describe('Ask MARVIN about a proposal (#102)', () => {
+  it('passes a proposal id', () => {
+    expect(sessionArgs({ proposal: 'hand-small-jobs' }).slice(1)).toEqual(['open', '--proposal', 'hand-small-jobs'])
+  })
+
+  it('refuses a hostile id, or a ticket and proposal together, without running anything', async () => {
+    for (const req of [{ proposal: '../x' }, { proposal: '--ticket' }, { proposal: 'A B' }, { proposal: 'x'.repeat(81) }, { proposal: 7 }, { ticket: 5, proposal: 'x' }]) {
+      let ran = false
+      const result = await openMarvinSession(req, { run: () => { ran = true } })
+      expect(result.ok, JSON.stringify(req)).toBe(false)
+      expect(ran).toBe(false)
+    }
+  })
+})
