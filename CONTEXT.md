@@ -1386,5 +1386,9 @@ MARVIN-as-OS north star).
   and never falls back to a Mac, so untrusted code can't land on a Mac because the Kali box was down.
 - **Linux device identity** (settled from code 2026-10-16): same registry fields as the Macs, read from the
   firmware tables instead of macOS's `ioreg`, plus `os: linux`.
-- **Open in this design** (as of 2026-10-16): which jobs run here and which way sync
-  flows; sudo scope; Claude Code sign-in on Linux.
+- **Pull-only node** (decided 2026-10-16, ADR 0069): mac-mini-2012 receives code sync and never sends it. Its
+  only way to change MARVIN's code is a **gated branch**: a PR pushed from a disposable marvin-test VM with a
+  credential handed in for that run, which then earns trust under ADR 0064's ramp. `main` is PR-only for everyone
+  except the Macs' code sync. Scheduled jobs on the box: code-sync pull and the health check. Everything else
+  arrives as dispatched work.
+- **Open in this design** (as of 2026-10-16): the box's GitHub identity; sudo scope; Claude Code sign-in on Linux.
