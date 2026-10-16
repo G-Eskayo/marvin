@@ -189,6 +189,13 @@ def remote_devices() -> dict:
     return {k: v for k, v in _load_registry().items() if k != my_id}
 
 
+def remote_macs() -> dict:
+    """Remote devices running macOS. For Mac-only checks (launchd, dashboard) and for anything that copies MARVIN's
+    data out: mac-mini-2012 runs Linux and holds untrusted code (ADR 0069). An entry with no `os` predates the
+    field and is a Mac; any other value is not."""
+    return {k: v for k, v in remote_devices().items() if v.get("os", "macos") == "macos"}
+
+
 if __name__ == "__main__":
     profile = build_profile()
     PROFILE_PATH.parent.mkdir(parents=True, exist_ok=True)

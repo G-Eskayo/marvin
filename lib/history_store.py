@@ -427,7 +427,8 @@ def main(streams: list[str] | None = None) -> dict:
                                               for d, r in devices.items()))
         conn = connect()
         try:
-            for device, info in machine_profile.remote_devices().items():
+            # Copies go to the Macs only: mac-mini-2012 holds untrusted code and must never hold MARVIN's history.
+            for device, info in machine_profile.remote_macs().items():
                 host = info.get("tailscale_hostname")
                 if not host:
                     continue

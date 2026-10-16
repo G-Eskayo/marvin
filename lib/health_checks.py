@@ -1026,10 +1026,10 @@ def check_deploy_steps() -> list[dict]:
     results = []
     me = machine_profile.registry_id()
 
-    # Collect plist + job-events state from this machine + each remote device.
+    # Collect plist + job-events state from this machine + each remote Mac (launchd plists; ADR 0069).
     devices = [(me, None)] + [
         (dev, info.get("tailscale_hostname"))
-        for dev, info in machine_profile.remote_devices().items()
+        for dev, info in machine_profile.remote_macs().items()
     ]
 
     for dev, host in devices:
@@ -1380,7 +1380,7 @@ def check_machine_state_everywhere(reachability: dict[str, str], runner=_run_mac
     me = machine_profile.registry_id()
     devices = [(me, None, "local")] + [
         (dev, info.get("tailscale_hostname"), reachability.get(f"machine:{dev}", "yellow"))
-        for dev, info in machine_profile.remote_devices().items()
+        for dev, info in machine_profile.remote_macs().items()   # Mac-only state (dashboard, launchd); ADR 0069
     ]
     labels = {"dashboard:build": "Dashboard app build", "webhook:build": "Webhook server build", "auth:gh": "GitHub credential", "docs:access": "Docs tab GitHub access",
               "desktoplive:running": "Desktop brain-map background", "brainmap:data": "Brain-map data freshness", "jobs:placement": "Scheduled jobs vs. placement",
