@@ -23,11 +23,15 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+import sys  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import host_os  # noqa: E402  (memory_dir: the synced memory on every machine, ADR 0069)
 from typing import Callable
 
 import north_stars
 
-MEMORY_DIR = Path.home() / ".claude" / "projects" / str(Path.home()).replace("/", "-") / "memory"
+MEMORY_DIR = host_os.memory_dir()
 LEXICON = Path.home() / ".claude" / "lexicon.md"
 LAUNCH_LOG = Path.home() / ".claude" / "logs" / "launches.jsonl"
 KIND_ENV = "MARVIN_LAUNCH_KIND"
