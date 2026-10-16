@@ -184,3 +184,27 @@ def test_an_ordinary_file_in_an_existing_folder_is_owned():
 def test_deleted_lines_count_toward_the_size_limit():
     assert decide([f("lib/x.py", add=1000, rem=600)])["verdict"] == "ask"
     assert decide([f("lib/x.py", add=900, rem=600)])["verdict"] == "auto"
+
+
+# --- PRs from mac-mini-2012's bot account (ADR 0069 rule 5): always wait for Gil ---
+
+def test_a_bot_pr_waits_even_when_it_only_touches_owned_areas():
+    d = amp.decide(MARVIN, [f("lib/new_helper.py")], RULES, existing_top_level=TOP, new_top_level_this_week=0,
+                   ramp_open=True, author="MARVIN-bot-gil")
+    assert d["verdict"] == "ask" and any("mac-mini-2012" in r for r in d["reasons"])
+
+
+def test_the_bot_author_matches_whatever_the_case():
+    d = amp.decide(MARVIN, [f("lib/new_helper.py")], RULES, existing_top_level=TOP, new_top_level_this_week=0,
+                   ramp_open=True, author="marvin-BOT-gil")
+    assert d["verdict"] == "ask"
+
+
+def test_a_human_pr_is_unaffected_by_the_bot_rule():
+    d = amp.decide(MARVIN, [f("lib/new_helper.py")], RULES, existing_top_level=TOP, new_top_level_this_week=0,
+                   ramp_open=True, author="G-Eskayo")
+    assert d["verdict"] == "auto"
+
+
+def test_the_shipped_rules_name_the_bot():
+    assert "marvin-bot-gil" in [a.lower() for a in RULES.get("always_ask_authors", [])]

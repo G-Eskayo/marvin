@@ -160,3 +160,12 @@ def test_one_pr_is_picked_for_scoring_the_oldest_without_a_score_for_its_current
 def test_a_pr_whose_score_is_stale_after_a_new_push_is_rescored():
     pr_ = {"url": "u1", "number": 1, "body": "**Score:** 90% (9/10)", "headRefOid": "new"}
     assert sh.pick_unscored([pr_], scored={"u1": "old"})["url"] == "u1"
+
+
+def test_a_bot_pr_is_scored_ask_through_the_shadow_verdict():
+    import auto_merge_shadow as sh
+    pr = {"repo": "G-Eskayo/marvin", "author": "MARVIN-bot-gil", "body": "",
+          "files": [{"path": "lib/new_helper.py", "additions": 5, "deletions": 0, "status": "added", "previous_path": None}]}
+    facts = {"existing_top_level": {"lib"}, "new_top_level_this_week": 0, "ramp_open": True}
+    v = sh.verdict(pr, facts)
+    assert any("mac-mini-2012" in r for r in v.get("reasons", []))
