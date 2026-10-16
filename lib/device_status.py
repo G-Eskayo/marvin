@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 def probe_remote(host: str):
     import task_dispatch as td
     try:
-        p = subprocess.run(["ssh", *td.SSH_OPTS, host, f"cat {td.DISPATCH_STATE_PATH}"],
+        p = subprocess.run(["ssh", *td.SSH_OPTS, host, f"cat {td.SHELL_STATE_PATH}"],
                            capture_output=True, text=True, timeout=10)
     except Exception:
         return None

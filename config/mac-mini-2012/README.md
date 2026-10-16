@@ -51,3 +51,24 @@ Add to `~/.claude/marvin-network.json` on a Mac:
 `"mac-mini-2012": {"tailscale_hostname": "mac-mini-2012", "os": "linux", "kind": "desktop", "accepts": ["security",
 "quarantine", "test", "bench"], "hardware_uuid": "<from machine_profile on the box>"}` and give the Macs'
 entries `"accepts": ["general", "macos"]`.
+
+## 8. Dashboard and live wallpaper
+- `cd ~/.agents/dashboard && npm ci` (npm 12 runs only the install scripts named in `package.json`'s `allowScripts`:
+  Electron and esbuild). Electron needs no extra system packages on Kali.
+- Autostart at login: copy `marvin-dashboard.desktop` and `marvin-desktoplive.desktop` to `~/.config/autostart/`.
+  `marvin-dashboard.sh` rebuilds before opening; `marvin-desktoplive.sh` runs `brain-map/desktop-live-linux/main.js`.
+- The wallpaper is the Linux twin of `brain-map/DesktopLive` (same page, same hooks and timers). It must NOT use
+  Electron's `type: 'desktop'`: on X11 that makes an unmanaged window drawn over everything. It sets
+  `_NET_WM_WINDOW_TYPE_DESKTOP` with `xprop` before the window maps, so Xfwm keeps it behind every window.
+
+## 9. Mac data on the box (observer key)
+- The box reads from the Macs only through `marvin-observer.sh`, a forced command that matches the request against a
+  fixed list and runs its own copy of the command (never the requested text). Keep it in step with the callers:
+  `lib/tests/test_observer_allowlist.py` fails if a caller sends something not on the list.
+- On each Mac: `restrict,command="$HOME/.agents/config/mac-mini-2012/marvin-observer.sh" <box's marvin_observer.pub>`
+  in `~/.ssh/authorized_keys`. On the box, `~/.ssh/config` maps each Mac's Tailscale name to `User gileskayo`,
+  `IdentityFile ~/.ssh/marvin_observer`, `IdentitiesOnly yes`.
+- Health: `marvin-observer-feed.timer` copies the M4 Mini's `health-status.json` every 2 minutes (it covers all three
+  machines), so the box doesn't run health checks of its own.
+- GitHub on the box: a fine-grained **read-only** token (Issues, Pull requests, Checks, Commit statuses, Metadata) in
+  `gh auth`. The bot's write token never lives on the box.
