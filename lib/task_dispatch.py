@@ -29,6 +29,10 @@ from machine_profile import registry_id, remote_devices, _load_registry  # noqa:
 import host_os  # noqa: E402
 
 DISPATCH_STATE_PATH = Path.home() / ".claude" / "dispatch-state.json"
+# The same files as a shell sees them on whichever machine runs the command. Homes differ between machines
+# (/home/marvin on mac-mini-2012), so anything sent over ssh names $HOME, never this machine's path (ADR 0069).
+SHELL_STATE_PATH = '"$HOME/.claude/dispatch-state.json"'
+SHELL_TASKS_DIR = '"$HOME/.claude/dispatch/tasks"'
 TAILSCALE_BIN = host_os.tailscale_bin()
 # The GUI app's CLI refuses to run without a TERM ("The Tailscale GUI failed to start"), which is exactly what launchd
 # provides. Found 2026-10-05: under launchd it printed that error, and the parse below read it as one online host
@@ -75,7 +79,7 @@ def _read_local_dispatch_state() -> dict:
 def _read_remote_dispatch_state(host: str) -> dict:
     try:
         proc = subprocess.run(
-            ["ssh", *SSH_OPTS, host, f"cat {DISPATCH_STATE_PATH}"],
+            ["ssh", *SSH_OPTS, host, f"cat {SHELL_STATE_PATH}"],
             capture_output=True, text=True, timeout=10,
         )
         if proc.returncode != 0 or not proc.stdout.strip():
@@ -191,19 +195,19 @@ def _build_wrapper_script(command: str, task_id: str, task_label: str, device_id
     record_json = json.dumps(task_record)
     record_prefix = record_json[:-1]
 
-    tasks_dir = Path.home() / ".claude" / "dispatch" / "tasks"
+    tasks_dir, state = SHELL_TASKS_DIR, SHELL_STATE_PATH
     return f"""#!/bin/bash
 mkdir -p {tasks_dir}
-mkdir -p {DISPATCH_STATE_PATH.parent}
+mkdir -p "$HOME/.claude"
 printf '%s, "pid": %s}}' '{record_prefix}' "$BASHPID" > {tasks_dir}/{task_id}.json
-cat > {DISPATCH_STATE_PATH} << 'DISPATCH_STATE_EOF'
+cat > {state} << 'DISPATCH_STATE_EOF'
 {busy_json}
 DISPATCH_STATE_EOF
-python3 -m lib.dispatch_concurrency refresh-summary
-trap 'rm -f "$0" {tasks_dir}/{task_id}.json; cat > {DISPATCH_STATE_PATH} << 'DISPATCH_IDLE_EOF'
+(cd "$HOME/.agents" && "$HOME/.agents/venv/bin/python" -m lib.dispatch_concurrency refresh-summary)
+trap 'rm -f "$0" {tasks_dir}/{task_id}.json; cat > {state} << 'DISPATCH_IDLE_EOF'
 {idle_json}
 DISPATCH_IDLE_EOF
-python3 -m lib.dispatch_concurrency refresh-summary' EXIT
+(cd "$HOME/.agents" && "$HOME/.agents/venv/bin/python" -m lib.dispatch_concurrency refresh-summary)' EXIT
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 if [ -f "$HOME/.claude/.oauth-token" ]; then
   export CLAUDE_CODE_OAUTH_TOKEN="$(cat "$HOME/.claude/.oauth-token")"
