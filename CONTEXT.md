@@ -1379,6 +1379,13 @@ MARVIN-as-OS north star).
   MARVIN, never touches untrusted code) and **quarantine** (bare Kali for untrusted code). The host OS itself is the
   trusted control layer, and untrusted code never runs on it directly. Roughly 2 test VMs at once with Whonix up.
   The quarantine VM's network (none, or through Whonix) is decided later.
+- **Work tags** (decided 2026-10-16): how dispatch knows which work a device may take. Each registry entry lists
+  the tags it **accepts**: the Macs take `general` and `macos`, and mac-mini-2012 takes `security`, `quarantine`,
+  `test` and `bench`. A job may name the tag it **needs**, and untagged work counts as `general`, so every job that
+  exists today keeps running only on the Macs. If no device that accepts the tag is online, the job fails loudly
+  and never falls back to a Mac, so untrusted code can't land on a Mac because the Kali box was down.
+- **Linux device identity** (settled from code 2026-10-16): same registry fields as the Macs, read from the
+  firmware tables instead of macOS's `ioreg`, plus `os: linux`.
 - **Open in this design** (as of 2026-10-16): registry entry
   shape for a Linux device; which jobs run here and how dispatch knows which work this box may take; sudo scope;
   Claude Code sign-in on Linux.
