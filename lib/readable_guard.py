@@ -52,4 +52,6 @@ def exclude_portfolio_tests(environ=None, blocked: bool | None = None) -> bool:
     environ = os.environ if environ is None else environ
     if environ.get("MARVIN_MERGE_GATE") == "1":
         return True
+    if blocked is None and not PORTFOLIO_PROBE.exists():
+        return True   # not on this machine (mac-mini-2012): not all of those tests skip themselves (ADR 0069)
     return portfolio_repo_blocked() if blocked is None else blocked

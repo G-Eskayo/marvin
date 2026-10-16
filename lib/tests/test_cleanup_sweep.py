@@ -478,3 +478,11 @@ def test_the_sweep_log_says_when_compression_was_skipped(tmp_path, monkeypatch):
     monkeypatch.setattr(cs, "OUTPUT_PATH", tmp_path / "sweep.md")
     cs._write_log([], {"removed": [], "review": []}, None, {"compressed": [], "failed": [], "saved_kb": 0, "skipped": "afsctool not installed"})
     assert "Transcript compression skipped: afsctool not installed" in (tmp_path / "sweep.md").read_text()
+
+
+def test_no_xcrun_means_no_simulators_not_a_failed_sweep(monkeypatch):
+    # mac-mini-2012 runs Linux: no Xcode is a normal state, not something that "needs a look" (ADR 0069).
+    import cleanup_sweep as cs
+    monkeypatch.setattr(cs.shutil, "which", lambda name: None)
+    monkeypatch.setattr(cs.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError("xcrun")))
+    assert cs._simctl_json("devices") == {}

@@ -99,6 +99,7 @@ from __future__ import annotations
 import json
 import re
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -344,7 +345,9 @@ STALE_LOCK_SECONDS = 10 * 60
 
 def _lock_held(lock: Path) -> bool:
     """True if any process has the file open (lsof exits 0 when it lists one)."""
-    return subprocess.run(["/usr/sbin/lsof", "-t", "--", str(lock)], capture_output=True).returncode == 0
+    # Found on PATH: /usr/sbin on macOS, /usr/bin on Linux (ADR 0069). Not found raises, which callers treat as doubt.
+    lsof = shutil.which("lsof") or "/usr/sbin/lsof"
+    return subprocess.run([lsof, "-t", "--", str(lock)], capture_output=True).returncode == 0
 
 
 def heal_stale_index_lock(repo: Path, now: float | None = None) -> bool:
