@@ -486,3 +486,10 @@ def test_no_xcrun_means_no_simulators_not_a_failed_sweep(monkeypatch):
     monkeypatch.setattr(cs.shutil, "which", lambda name: None)
     monkeypatch.setattr(cs.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError("xcrun")))
     assert cs._simctl_json("devices") == {}
+
+
+def test_a_machine_without_xcode_has_no_simulators_to_review(monkeypatch):
+    # mac-mini-2012 runs Linux: "needs a look" every day for simulators that can't exist is noise (ADR 0069).
+    import cleanup_sweep as cs
+    monkeypatch.setattr(cs.shutil, "which", lambda name: None)
+    assert cs.sweep_simulators() == {"removed": [], "review": []}

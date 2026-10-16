@@ -57,7 +57,7 @@ def test_wrapper_script_puts_homebrew_on_path():
 
 def test_wrapper_script_writes_task_record_with_device_id():
     script = td._build_wrapper_script("echo hi", "task123", "my task", "mac-mini-1")
-    assert '.claude/dispatch/tasks/task123.json' in script
+    assert '"$HOME/.claude/dispatch/tasks"/task123.json' in script   # the RUNNING machine's home (ADR 0069)
     assert '"machine": "mac-mini-1"' in script
     assert '"pid":' in script  # PID injected at runtime
 

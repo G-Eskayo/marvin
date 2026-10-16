@@ -318,6 +318,8 @@ def sweep_simulators(
     ticket_open: Callable[[int], bool] | None = None,
     delete_simulator: Callable[[dict], bool] | None = None,
 ) -> dict:
+    if list_simulators is None and shutil.which("xcrun") is None:
+        return {"removed": [], "review": []}   # no Xcode on this machine (mac-mini-2012): no simulators exist
     sims = (list_simulators or _default_list_simulators)()
     stock = (stock_names or _default_stock_names)()
     if not stock:  # without it, "iPhone 17" looks like ticket #17: delete nothing
