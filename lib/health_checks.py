@@ -564,6 +564,74 @@ def check_main_health(path: Path | None = None, now: datetime | None = None) -> 
     return _result(cid, label, "green", f"main @ {d.get('sha', '?')}: {d.get('summary', 'passing')}")
 
 
+AUTONOMOUS_SHARE_STALE_DAYS = 2
+AUTONOMOUS_SHARE_MIN_MESSAGES = 5
+
+
+def check_autonomous_share(usage_path: Path | None = None, now: datetime | None = None) -> dict:
+    """The latest day's autonomous vs. interactive output split. Green at ≤50%, yellow above 50%, never red."""
+    cid, label = "usage:autonomous-share", "Autonomous output as a fraction of total"
+    now = now or _now()
+    try:
+        import session_usage
+        path = usage_path or session_usage.OUT_PATH
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return _result(cid, label, "green", "usage data not available (scan has not run yet)")
+    try:
+        rows = data.get("rows", [])
+        latest_day = None
+        day_totals = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            day = row.get("day")
+            if day is None:
+                continue
+            if latest_day is None or day > latest_day:
+                latest_day = day
+        if latest_day is None:
+            return _result(cid, label, "green", "no usage data for today")
+        autonomous_total = 0
+        interactive_total = 0
+        messages_count = 0
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if row.get("day") != latest_day:
+                continue
+            try:
+                output = row.get("output", 0)
+                if not isinstance(output, (int, float)):
+                    continue
+                messages = row.get("messages", 0)
+                if not isinstance(messages, (int, float)):
+                    continue
+                if row.get("autonomous"):
+                    autonomous_total += output
+                else:
+                    interactive_total += output
+                messages_count += messages
+            except (AttributeError, TypeError):
+                continue
+        total = autonomous_total + interactive_total
+        if total == 0:
+            return _result(cid, label, "green", "no usage recorded for today")
+        latest_date = datetime.fromisoformat(latest_day).date()
+        today = now.date()
+        days_old = (today - latest_date).days
+        if days_old >= AUTONOMOUS_SHARE_STALE_DAYS:
+            return _result(cid, label, "green", f"data is stale ({days_old}d old), no concern shown")
+        if messages_count < AUTONOMOUS_SHARE_MIN_MESSAGES:
+            return _result(cid, label, "green", f"sample too small ({messages_count} messages), no signal shown")
+        frac = autonomous_total / total
+        pct = round(frac * 100)
+        sev = "yellow" if frac > 0.5 else "green"
+        return _result(cid, label, sev, f"{pct}% autonomous on {latest_day}", value=pct)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return _result(cid, label, "green", "could not parse usage data")
+
+
 SEAL_BETA_STATUS_PATH = Path.home() / ".claude" / "seal-beta" / "status.json"
 SEAL_BETA_PLIST = "com.marvin.seal-beta-ingest.plist"
 SEAL_BETA_STALE_MINUTES = 60      # the job runs every 10 minutes
@@ -1567,6 +1635,7 @@ def run_all() -> dict:
     results.append(check_github_budget())
     results.append(check_gh_gate())
     results.append(check_main_health())
+    results.append(check_autonomous_share())
     seal = check_seal_beta_ingest()
     if seal:
         results.append(seal)

@@ -99,3 +99,145 @@ def test_refresh_writes_the_result_with_the_machine_name(tmp_path, monkeypatch):
     tu.refresh(out_path=out, root=root, now=NOW)
     data = json.loads(out.read_text())
     assert data["machine"] == "mac-mini-1" and data["totals"]["messages"] == 1
+
+
+def test_autonomous_is_true_for_non_cli_entrypoint(tmp_path):
+    f = write(tmp_path, "a.jsonl", [line("a", entry="sdk-cli"), line("b", entry="cli"), line("c", entry=None)])
+    r = tu.aggregate([f], now=NOW)
+    autonomous = [row["autonomous"] for row in r["rows"]]
+    assert True in autonomous and False in autonomous
+
+
+def test_rows_include_autonomous_in_bucket_key(tmp_path):
+    f = write(tmp_path, "a.jsonl", [line("a", entry="cli", out=100), line("b", entry="sdk-cli", out=200)])
+    r = tu.aggregate([f], now=NOW)
+    assert len(r["rows"]) == 2 and all("autonomous" in row for row in r["rows"])
+
+
+def test_by_job_aggregates_from_launches_jsonl(tmp_path):
+    launches = tmp_path / "launches.jsonl"
+    launches.write_text(json.dumps({"at": "2026-10-05T10:00:00Z", "ticket": "daily-digest", "output_tokens": 100,
+                                     "input_tokens": 10, "cache_write_tokens": 500, "cache_read_tokens": 2000}) + "\n")
+    r = tu.aggregate([], now=NOW, launches_path=launches)
+    assert len(r["by_job"]) == 1 and r["by_job"][0]["ticket"] == "daily-digest" and r["by_job"][0]["output"] == 100
+
+
+def test_by_job_requires_launches_path_non_none(tmp_path):
+    r = tu.aggregate([], now=NOW, launches_path=None)
+    assert r["by_job"] == []
+
+
+def test_by_job_sums_tokens_per_ticket(tmp_path):
+    launches = tmp_path / "launches.jsonl"
+    launches.write_text(
+        json.dumps({"at": "2026-10-05T10:00:00Z", "ticket": "daily-digest", "output_tokens": 100,
+                    "input_tokens": 10, "cache_write_tokens": 500, "cache_read_tokens": 2000}) + "\n" +
+        json.dumps({"at": "2026-10-05T11:00:00Z", "ticket": "daily-digest", "output_tokens": 50,
+                    "input_tokens": 5, "cache_write_tokens": 250, "cache_read_tokens": 1000}) + "\n"
+    )
+    r = tu.aggregate([], now=NOW, launches_path=launches)
+    job = r["by_job"][0]
+    assert job["output"] == 150 and job["input"] == 15 and job["messages"] == 2
+
+
+def test_by_job_ignores_missing_launches_file(tmp_path):
+    r = tu.aggregate([], now=NOW, launches_path=tmp_path / "nonexistent.jsonl")
+    assert r["by_job"] == []
+
+
+def test_by_job_tolerates_malformed_lines(tmp_path):
+    launches = tmp_path / "launches.jsonl"
+    launches.write_text(
+        "not json\n" +
+        json.dumps({"at": "2026-10-05T10:00:00Z", "ticket": "daily-digest", "output_tokens": 100, "input_tokens": 10, "cache_write_tokens": 500, "cache_read_tokens": 2000}) + "\n" +
+        json.dumps([1, 2, 3]) + "\n"
+    )
+    r = tu.aggregate([], now=NOW, launches_path=launches)
+    assert len(r["by_job"]) == 1 and r["by_job"][0]["ticket"] == "daily-digest"
+
+
+def test_by_job_tolerates_null_token_fields(tmp_path):
+    launches = tmp_path / "launches.jsonl"
+    launches.write_text(
+        json.dumps({"at": "2026-10-05T10:00:00Z", "ticket": "research-colony", "output_tokens": None, "input_tokens": 10}) + "\n" +
+        json.dumps({"at": "2026-10-05T11:00:00Z", "ticket": "daily-digest", "output_tokens": 100, "input_tokens": 10, "cache_write_tokens": 500, "cache_read_tokens": 2000}) + "\n"
+    )
+    r = tu.aggregate([], now=NOW, launches_path=launches)
+    assert len(r["by_job"]) == 1 and r["by_job"][0]["ticket"] == "daily-digest"
+
+
+def test_by_job_respects_window_days_cutoff(tmp_path):
+    launches = tmp_path / "launches.jsonl"
+    launches.write_text(
+        json.dumps({"at": "2026-08-01T10:00:00Z", "ticket": "old", "output_tokens": 100, "input_tokens": 10, "cache_write_tokens": 500, "cache_read_tokens": 2000}) + "\n" +
+        json.dumps({"at": "2026-10-05T10:00:00Z", "ticket": "recent", "output_tokens": 50, "input_tokens": 5, "cache_write_tokens": 250, "cache_read_tokens": 1000}) + "\n"
+    )
+    r = tu.aggregate([], now=NOW, window_days=30, launches_path=launches)
+    assert len(r["by_job"]) == 1 and r["by_job"][0]["ticket"] == "recent"
+
+
+def test_by_job_sorted_by_output_descending(tmp_path):
+    launches = tmp_path / "launches.jsonl"
+    launches.write_text(
+        json.dumps({"at": "2026-10-05T10:00:00Z", "ticket": "a", "output_tokens": 50, "input_tokens": 10, "cache_write_tokens": 500, "cache_read_tokens": 2000}) + "\n" +
+        json.dumps({"at": "2026-10-05T11:00:00Z", "ticket": "b", "output_tokens": 100, "input_tokens": 10, "cache_write_tokens": 500, "cache_read_tokens": 2000}) + "\n"
+    )
+    r = tu.aggregate([], now=NOW, launches_path=launches)
+    assert [j["ticket"] for j in r["by_job"]] == ["b", "a"]
+
+
+def test_by_job_handles_permission_errors_gracefully(tmp_path, monkeypatch):
+    launches = tmp_path / "launches.jsonl"
+    def raise_perm(*args, **kwargs):
+        raise PermissionError("access denied")
+    monkeypatch.setattr("pathlib.Path.read_text", raise_perm)
+    r = tu.aggregate([], now=NOW, launches_path=launches)
+    assert r["by_job"] == []
+
+
+def test_by_job_falls_back_to_kind_when_ticket_missing(tmp_path):
+    launches = tmp_path / "launches.jsonl"
+    launches.write_text(
+        json.dumps({"at": "2026-10-05T10:00:00Z", "kind": "daily-digest-job", "output_tokens": 100, "input_tokens": 10, "cache_write_tokens": 500, "cache_read_tokens": 2000}) + "\n"
+    )
+    r = tu.aggregate([], now=NOW, launches_path=launches)
+    assert len(r["by_job"]) == 1 and r["by_job"][0]["ticket"] == "daily-digest-job" and r["by_job"][0]["output"] == 100
+
+
+def test_by_job_skips_rows_with_no_ticket_and_no_kind(tmp_path):
+    launches = tmp_path / "launches.jsonl"
+    launches.write_text(
+        json.dumps({"at": "2026-10-05T10:00:00Z", "output_tokens": 100, "input_tokens": 10, "cache_write_tokens": 500, "cache_read_tokens": 2000}) + "\n" +
+        json.dumps({"at": "2026-10-05T11:00:00Z", "ticket": "daily-digest", "output_tokens": 50, "input_tokens": 5, "cache_write_tokens": 250, "cache_read_tokens": 1000}) + "\n"
+    )
+    r = tu.aggregate([], now=NOW, launches_path=launches)
+    assert len(r["by_job"]) == 1 and r["by_job"][0]["ticket"] == "daily-digest"
+
+
+def test_by_job_guards_non_numeric_token_fields(tmp_path):
+    launches = tmp_path / "launches.jsonl"
+    launches.write_text(
+        json.dumps({"at": "2026-10-05T10:00:00Z", "ticket": "test", "output_tokens": "100", "input_tokens": 10, "cache_write_tokens": 500, "cache_read_tokens": 2000}) + "\n" +
+        json.dumps({"at": "2026-10-05T11:00:00Z", "ticket": "valid", "output_tokens": 50, "input_tokens": 5, "cache_write_tokens": 250, "cache_read_tokens": 1000}) + "\n"
+    )
+    r = tu.aggregate([], now=NOW, launches_path=launches)
+    assert len(r["by_job"]) == 1 and r["by_job"][0]["ticket"] == "valid"
+
+
+def test_by_job_skips_non_hashable_job_identifiers(tmp_path):
+    launches = tmp_path / "launches.jsonl"
+    launches.write_text(
+        json.dumps({"at": "2026-10-05T10:00:00Z", "ticket": ["unhashable", "list"], "output_tokens": 100, "input_tokens": 10, "cache_write_tokens": 500, "cache_read_tokens": 2000}) + "\n" +
+        json.dumps({"at": "2026-10-05T11:00:00Z", "ticket": "valid", "output_tokens": 50, "input_tokens": 5, "cache_write_tokens": 250, "cache_read_tokens": 1000}) + "\n"
+    )
+    r = tu.aggregate([], now=NOW, launches_path=launches)
+    assert len(r["by_job"]) == 1 and r["by_job"][0]["ticket"] == "valid"
+
+
+def test_by_job_tolerates_float_token_values(tmp_path):
+    launches = tmp_path / "launches.jsonl"
+    launches.write_text(
+        json.dumps({"at": "2026-10-05T10:00:00Z", "ticket": "test", "output_tokens": 100.5, "input_tokens": 10.2, "cache_write_tokens": 500.7, "cache_read_tokens": 2000.1}) + "\n"
+    )
+    r = tu.aggregate([], now=NOW, launches_path=launches)
+    assert len(r["by_job"]) == 1 and r["by_job"][0]["output"] == 100.5

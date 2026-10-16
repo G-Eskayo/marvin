@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mergeTools, mergeRows, mergeInventory, mergeFailures, mergeTokenRows, dailySeries, sumRows, projectTable, ticketTable, machineFreshness } from '../src/lib/usage_view.js'
+import { mergeTools, mergeRows, mergeInventory, mergeFailures, mergeTokenRows, dailySeries, sumRows, projectTable, ticketTable, machineFreshness, autonomousSeries, autonomousWeeklySeries, weeklySeries, jobTable } from '../src/lib/usage_view.js'
 
 const tool = (name, calls, extra = {}) => ({ name, calls, ok: calls, error: 0, rejected: 0, interrupted: 0, invalid: 0, unresolved: 0, expected: 0, last_used: null,
   by_kind: { interactive: calls, headless: 0, subagent: 0 }, by_day: {}, causes: {}, purpose: '(no description recorded)', ...extra })
@@ -100,5 +100,93 @@ describe('skills, inventory and failures across machines', () => {
     const f = (at, tool) => ({ at, tool, outcome: 'error', kind: 'headless', message: 'm' })
     const out = mergeFailures([withInv('a', [], 1, [f('2026-10-05T10:00:00Z', 'Bash')]), withInv('b', [], 1, [f('2026-10-06T10:00:00Z', 'Read')])], 'all')
     expect(out.map((x) => [x.tool, x.machine])).toEqual([['Read', 'b'], ['Bash', 'a']])
+  })
+})
+
+describe('autonomous usage series', () => {
+  it('splits output by autonomous flag per day, filling empty days', () => {
+    const rows = [row('2026-10-04', 'headless', 60, { autonomous: true }), row('2026-10-04', 'interactive', 40, { autonomous: false }), row('2026-10-06', 'interactive', 100, { autonomous: false })]
+    const series = autonomousSeries(rows, { days: 3, end: '2026-10-06', metric: 'output' })
+    expect(series.map((d) => d.day)).toEqual(['2026-10-04', '2026-10-05', '2026-10-06'])
+    expect(series[0]).toMatchObject({ autonomous: 60, interactive: 40, total: 100 })
+    expect(series[1]).toMatchObject({ autonomous: 0, interactive: 0, total: 0 })
+    expect(series[2]).toMatchObject({ autonomous: 0, interactive: 100, total: 100 })
+  })
+
+  it('treats rows without autonomous flag as interactive', () => {
+    const rows = [row('2026-10-06', 'headless', 50, { autonomous: true }), row('2026-10-06', 'headless', 50)]
+    const series = autonomousSeries(rows, { days: 1, end: '2026-10-06' })
+    expect(series[0]).toMatchObject({ autonomous: 50, interactive: 50, total: 100 })
+  })
+
+  it('respects the metric parameter for autonomous series', () => {
+    const rows = [row('2026-10-06', 'headless', 100, { autonomous: true, input: 10, cache_write: 5, cache_read: 3 })]
+    const output = autonomousSeries(rows, { days: 1, end: '2026-10-06', metric: 'output' })[0].total
+    const all = autonomousSeries(rows, { days: 1, end: '2026-10-06', metric: 'all' })[0].total
+    expect(output).toBe(100)
+    expect(all).toBe(118)
+  })
+})
+
+describe('weekly usage series', () => {
+  it('aggregates output by week, split by kind, filling empty weeks', () => {
+    const rows = [
+      row('2026-09-22', 'headless', 10), row('2026-09-24', 'interactive', 20),
+      row('2026-10-06', 'subagent', 30),
+    ]
+    const series = weeklySeries(rows, { weeks: 3, end: '2026-10-06', metric: 'output' })
+    expect(series).toHaveLength(3)
+    expect(series[0]).toMatchObject({ week: '2026-09-16', headless: 10, interactive: 0, subagent: 0, total: 10 })
+    expect(series[1]).toMatchObject({ week: '2026-09-23', interactive: 20, total: 20 })
+    expect(series[2]).toMatchObject({ week: '2026-09-30', subagent: 30, total: 30 })
+  })
+
+  it('respects the metric for weekly series', () => {
+    const rows = [row('2026-10-06', 'headless', 100, { input: 20, cache_write: 10, cache_read: 5 })]
+    const output = weeklySeries(rows, { weeks: 1, end: '2026-10-06', metric: 'output' })[0].total
+    const all = weeklySeries(rows, { weeks: 1, end: '2026-10-06', metric: 'all' })[0].total
+    expect(output).toBe(100)
+    expect(all).toBe(135)
+  })
+
+  it('computes a weekly autonomous split', () => {
+    const rows = [
+      row('2026-09-30', 'headless', 60, { autonomous: true }), row('2026-10-01', 'interactive', 40, { autonomous: false }),
+      row('2026-10-06', 'interactive', 100, { autonomous: false })
+    ]
+    const series = autonomousWeeklySeries(rows, { weeks: 2, end: '2026-10-06', metric: 'output' })
+    expect(series).toHaveLength(2)
+    expect(series[0]).toMatchObject({ week: '2026-09-23', autonomous: 0, interactive: 0, total: 0 })
+    expect(series[1]).toMatchObject({ week: '2026-09-30', autonomous: 60, interactive: 140, total: 200 })
+  })
+
+  it('respects the metric for autonomous weekly series', () => {
+    const rows = [row('2026-10-06', 'headless', 100, { autonomous: true, input: 20, cache_write: 10, cache_read: 5 })]
+    const output = autonomousWeeklySeries(rows, { weeks: 1, end: '2026-10-06', metric: 'output' })[0].total
+    const all = autonomousWeeklySeries(rows, { weeks: 1, end: '2026-10-06', metric: 'all' })[0].total
+    expect(output).toBe(100)
+    expect(all).toBe(135)
+  })
+})
+
+describe('job table', () => {
+  it('merges jobs by ticket across machines, sorted by output descending', () => {
+    const a = m('a', null, tokens([], { by_job: [{ ticket: 'daily-digest', output: 100, input: 10, cache_write: 5, cache_read: 3, messages: 5 }] }))
+    const b = m('b', null, tokens([], { by_job: [{ ticket: 'daily-digest', output: 50, input: 5, cache_write: 2, cache_read: 1, messages: 2 }, { ticket: 'research-colony', output: 200, input: 20, cache_write: 10, cache_read: 8, messages: 10 }] }))
+    const t = jobTable([a, b], 'all')
+    expect(t.map((j) => j.ticket)).toEqual(['research-colony', 'daily-digest'])
+    expect(t[1]).toMatchObject({ ticket: 'daily-digest', output: 150, messages: 7, input: 15 })
+  })
+
+  it('filters to one machine when specified', () => {
+    const a = m('a', null, tokens([], { by_job: [{ ticket: 'daily-digest', output: 100, input: 10, cache_write: 5, cache_read: 3, messages: 5 }] }))
+    const b = m('b', null, tokens([], { by_job: [{ ticket: 'research-colony', output: 200, input: 20, cache_write: 10, cache_read: 8, messages: 10 }] }))
+    expect(jobTable([a, b], 'a')).toEqual([expect.objectContaining({ ticket: 'daily-digest', output: 100 })])
+  })
+
+  it('handles empty by_job data', () => {
+    const a = m('a', null, tokens([], { by_job: [] }))
+    const b = m('b', null, tokens([]))
+    expect(jobTable([a, b], 'all')).toEqual([])
   })
 })

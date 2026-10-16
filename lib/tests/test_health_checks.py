@@ -1391,3 +1391,159 @@ def test_remote_machine_label_strips_the_registry_number():
     assert hc._remote_machine_label("mac-mini-1") == "mac-mini"
     assert hc._remote_machine_label("macbook-pro-12") == "macbook-pro"
     assert hc._remote_machine_label("kali") == "kali"
+
+
+# ── autonomous usage share check ──────────────────────────────────────────
+
+def test_check_autonomous_share_green_when_50_percent():
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "token-usage.json"
+        p.write_text(json.dumps({
+            "rows": [
+                {"day": "2026-10-06", "autonomous": False, "output": 50, "messages": 10},
+                {"day": "2026-10-06", "autonomous": True, "output": 50, "messages": 10},
+            ]
+        }))
+        result = hc.check_autonomous_share(usage_path=p, now=datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc))
+    assert result["severity"] == "green" and "50%" in result["detail"]
+
+
+def test_check_autonomous_share_yellow_when_above_50_percent():
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "token-usage.json"
+        p.write_text(json.dumps({
+            "rows": [
+                {"day": "2026-10-06", "autonomous": False, "output": 40, "messages": 10},
+                {"day": "2026-10-06", "autonomous": True, "output": 60, "messages": 10},
+            ]
+        }))
+        result = hc.check_autonomous_share(usage_path=p, now=datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc))
+    assert result["severity"] == "yellow" and "60%" in result["detail"]
+
+
+def test_check_autonomous_share_uses_latest_day_only():
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "token-usage.json"
+        p.write_text(json.dumps({
+            "rows": [
+                {"day": "2026-10-05", "autonomous": True, "output": 100, "messages": 10},
+                {"day": "2026-10-06", "autonomous": False, "output": 100, "messages": 10},
+            ]
+        }))
+        result = hc.check_autonomous_share(usage_path=p, now=datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc))
+    assert "0%" in result["detail"]
+
+
+def test_check_autonomous_share_green_when_file_missing():
+    result = hc.check_autonomous_share(usage_path=Path("/nonexistent/path.json"))
+    assert result["severity"] == "green"
+
+
+def test_check_autonomous_share_green_when_json_malformed():
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "token-usage.json"
+        p.write_text("not json")
+        result = hc.check_autonomous_share(usage_path=p)
+    assert result["severity"] == "green"
+
+
+def test_check_autonomous_share_green_when_data_is_stale():
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "token-usage.json"
+        p.write_text(json.dumps({
+            "rows": [
+                {"day": "2026-10-04", "autonomous": True, "output": 100, "messages": 10},
+            ]
+        }))
+        result = hc.check_autonomous_share(usage_path=p, now=datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc))
+    assert result["severity"] == "green" and "stale" in result["detail"].lower()
+
+
+def test_check_autonomous_share_green_when_sample_too_small():
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "token-usage.json"
+        p.write_text(json.dumps({
+            "rows": [
+                {"day": "2026-10-06", "autonomous": True, "output": 100, "messages": 2},
+                {"day": "2026-10-06", "autonomous": False, "output": 100, "messages": 2},
+            ]
+        }))
+        result = hc.check_autonomous_share(usage_path=p, now=datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc))
+    assert result["severity"] == "green" and "too small" in result["detail"].lower()
+
+
+def test_check_autonomous_share_handles_non_dict_rows():
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "token-usage.json"
+        p.write_text(json.dumps({
+            "rows": [
+                "not a dict",
+                {"day": "2026-10-06", "autonomous": True, "output": 100, "messages": 10},
+            ]
+        }))
+        result = hc.check_autonomous_share(usage_path=p, now=datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc))
+    assert result["severity"] == "green" and "100%" in result["detail"]
+
+
+def test_check_autonomous_share_guards_non_numeric_fields():
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "token-usage.json"
+        p.write_text(json.dumps({
+            "rows": [
+                {"day": "2026-10-06", "autonomous": True, "output": "not a number", "messages": 10},
+                {"day": "2026-10-06", "autonomous": False, "output": 100, "messages": 10},
+            ]
+        }))
+        result = hc.check_autonomous_share(usage_path=p, now=datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc))
+    assert result["severity"] == "green" and "0%" in result["detail"]
+
+
+def test_run_all_includes_autonomous_share_check(tmp_path, monkeypatch):
+    """Hermetic test: run_all() includes check_autonomous_share with mocked usage path."""
+    p = tmp_path / "token-usage.json"
+    p.write_text(json.dumps({
+        "rows": [
+            {"day": "2026-10-06", "autonomous": True, "output": 75},
+            {"day": "2026-10-06", "autonomous": False, "output": 25},
+        ]
+    }))
+    monkeypatch.setattr(hc, "check_token_files", lambda: [])
+    monkeypatch.setattr(hc, "check_intent_routing_collection", lambda: hc._result("x", "x", "green", ""))
+    monkeypatch.setattr(hc, "check_dispatch_lock", lambda *a, **k: hc._result("x", "x", "green", ""))
+    monkeypatch.setattr(hc, "check_ticket_failure_streaks", lambda *a, **k: [])
+    monkeypatch.setattr(hc, "check_pipeline_breaker", lambda: hc._result("x", "x", "green", ""))
+    monkeypatch.setattr(hc, "check_sync_stuck", lambda: [])
+    monkeypatch.setattr(hc, "check_deploy_steps", lambda: [])
+    monkeypatch.setattr(hc, "check_parallel_dispatch", lambda: hc._result("x", "x", "green", ""))
+    monkeypatch.setattr(hc, "check_missed_purposes", lambda *a, **k: [])
+    monkeypatch.setattr(hc, "check_output_contracts", lambda: [])
+    monkeypatch.setattr(hc, "check_missing_profiles", lambda *a, **k: [])
+    monkeypatch.setattr(hc, "check_trigger_coverage", lambda *a, **k: hc._result("x", "x", "green", ""))
+    monkeypatch.setattr(hc, "check_catalog_fresh", lambda *a, **k: hc._result("x", "x", "green", ""))
+    monkeypatch.setattr(hc, "check_project_tags", lambda: hc._result("x", "x", "green", ""))
+    monkeypatch.setattr(hc, "check_hold_revisit", lambda: hc._result("x", "x", "green", ""))
+    monkeypatch.setattr(hc, "check_github_budget", lambda *a, **k: hc._result("x", "x", "green", ""))
+    monkeypatch.setattr(hc, "check_gh_gate", lambda *a, **k: hc._result("x", "x", "green", ""))
+    monkeypatch.setattr(hc, "check_main_health", lambda *a, **k: hc._result("x", "x", "green", ""))
+    monkeypatch.setattr(hc, "check_seal_beta_ingest", lambda *a, **k: None)
+    monkeypatch.setattr(hc, "discover_launchd_jobs", lambda: [])
+    monkeypatch.setattr(hc.ch, "_load_state", lambda: {})
+    monkeypatch.setattr(hc.ch, "_save_state", lambda *a, **k: None)
+    monkeypatch.setattr(hc, "check_repo_integrity", lambda *a, **k: hc._result("x", "x", "green", ""))
+    monkeypatch.setattr(hc, "check_machine_reachability", lambda: [])
+    monkeypatch.setattr(hc, "check_repo_sync_everywhere", lambda *a, **k: [])
+    monkeypatch.setattr(hc, "check_machine_state_everywhere", lambda *a, **k: [])
+    monkeypatch.setattr(hc, "check_recent_errors", lambda *a, **k: ([], []))
+    monkeypatch.setattr(hc, "check_autonomous_share", lambda **k: hc._result("usage:autonomous-share", "Autonomous share", "yellow", "75% autonomous on 2026-10-06", 75))
+    monkeypatch.setattr(hc, "record_anomaly_metrics", lambda *a, **k: None)
+    result = hc.run_all()
+    checks = result["checks"]
+    assert any(c["id"] == "usage:autonomous-share" for c in checks)

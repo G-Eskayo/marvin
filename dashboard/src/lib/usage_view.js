@@ -127,4 +127,95 @@ export function machineFreshness(m, now = Date.now()) {
   return { state: 'ok', text: `updated ${agoText(now - Math.max(...stamps))}` }
 }
 
+export function autonomousSeries(rows, { days = 30, end, metric = 'output' } = {}) {
+  const list = dayList(days, end || new Date().toISOString().slice(0, 10))
+  const idx = new Map(list.map((d, i) => [d, { day: d, autonomous: 0, interactive: 0, total: 0 }]))
+  for (const r of rows) {
+    const cell = idx.get(r.day)
+    if (!cell) continue
+    const v = valueOf(r, metric)
+    if (r.autonomous) {
+      cell.autonomous = (cell.autonomous || 0) + v
+    } else {
+      cell.interactive = (cell.interactive || 0) + v
+    }
+    cell.total += v
+  }
+  return list.map((d) => idx.get(d))
+}
+
+function weekList(weeks, end) {
+  const last = new Date(`${end}T00:00:00Z`)
+  return Array.from({ length: weeks }, (_, i) => {
+    const d = new Date(last)
+    d.setUTCDate(d.getUTCDate() - 6 - (weeks - 1 - i) * 7)
+    return d.toISOString().slice(0, 10)
+  })
+}
+
+export function autonomousWeeklySeries(rows, { weeks = 4, end, metric = 'output' } = {}) {
+  const weekStarts = weekList(weeks, end || new Date().toISOString().slice(0, 10))
+  const idx = new Map(weekStarts.map((d) => [d, { week: d, autonomous: 0, interactive: 0, total: 0 }]))
+  for (const r of rows) {
+    const rowDate = new Date(`${r.day}T00:00:00Z`).getTime()
+    let weekKey = null
+    for (let i = 0; i < weekStarts.length; i++) {
+      const weekStart = new Date(`${weekStarts[i]}T00:00:00Z`).getTime()
+      const nextWeekStart = weekStart + 7 * 24 * 60 * 60 * 1000
+      if (rowDate >= weekStart && rowDate < nextWeekStart) {
+        weekKey = weekStarts[i]
+        break
+      }
+    }
+    if (!weekKey) continue
+    const cell = idx.get(weekKey)
+    if (!cell) continue
+    const v = valueOf(r, metric)
+    if (r.autonomous) {
+      cell.autonomous = (cell.autonomous || 0) + v
+    } else {
+      cell.interactive = (cell.interactive || 0) + v
+    }
+    cell.total += v
+  }
+  return weekStarts.map((d) => idx.get(d))
+}
+
+export function weeklySeries(rows, { weeks = 4, end, metric = 'output' } = {}) {
+  const weekStarts = weekList(weeks, end || new Date().toISOString().slice(0, 10))
+  const idx = new Map(weekStarts.map((d) => [d, { week: d, interactive: 0, headless: 0, subagent: 0, total: 0 }]))
+  for (const r of rows) {
+    const rowDate = new Date(`${r.day}T00:00:00Z`).getTime()
+    let weekKey = null
+    for (let i = 0; i < weekStarts.length; i++) {
+      const weekStart = new Date(`${weekStarts[i]}T00:00:00Z`).getTime()
+      const nextWeekStart = i < weekStarts.length - 1 ? new Date(`${weekStarts[i + 1]}T00:00:00Z`).getTime() : Infinity
+      if (rowDate >= weekStart && rowDate < nextWeekStart) {
+        weekKey = weekStarts[i]
+        break
+      }
+    }
+    if (!weekKey) continue
+    const cell = idx.get(weekKey)
+    if (!cell) continue
+    const v = valueOf(r, metric)
+    cell[r.kind] = (cell[r.kind] || 0) + v
+    cell.total += v
+  }
+  return weekStarts.map((d) => idx.get(d))
+}
+
+export function jobTable(machines, which) {
+  const byTicket = new Map()
+  for (const m of pick(machines, which)) {
+    for (const j of m.tokens?.by_job || []) {
+      const ticket = j.ticket
+      const cur = byTicket.get(ticket) || { ticket, input: 0, output: 0, cache_write: 0, cache_read: 0, messages: 0 }
+      for (const f of ['input', 'output', 'cache_write', 'cache_read', 'messages']) cur[f] += j[f]
+      byTicket.set(ticket, cur)
+    }
+  }
+  return [...byTicket.values()].sort((a, b) => b.output - a.output)
+}
+
 export const USAGE_KINDS = KINDS

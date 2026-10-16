@@ -1,0 +1,1 @@
+The background full-suite run (`pytest lib/tests/ -q`) finished with exit code 0 — confirming no other test files in `lib/tests/` have regressions beyond the single assertion bug already identified and planned for. The design doc above stands as written; no changes needed.

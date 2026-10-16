@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 HOME = Path.home()
 TRANSCRIPTS = HOME / ".claude" / "projects"
 OUT_PATH = HOME / ".claude" / "logs" / "token-usage.json"
+LAUNCHES_LOG = HOME / ".claude" / "logs" / "launches.jsonl"
 WINDOW_DAYS = 30
 TOP_TICKETS = 40
 
@@ -73,6 +74,10 @@ def _kind(d) -> str:
     return "subagent" if d.get("isSidechain") else ("interactive" if d.get("entrypoint") in (None, "cli") else "headless")
 
 
+def _autonomous(d) -> bool:
+    return d.get("entrypoint") not in (None, "cli")
+
+
 def _blank():
     return {f: 0 for f in FIELDS}
 
@@ -83,6 +88,60 @@ def _add(rec, usage):
     rec["cache_write"] += usage["cache_write"]
     rec["cache_read"] += usage["cache_read"]
     rec["messages"] += 1
+
+
+def _aggregate_by_job(launches_path: Path | None = None, cutoff: datetime | None = None) -> list[dict]:
+    """Aggregate launch records by job/ticket from launches.jsonl. Tolerant of missing file, malformed lines, null fields, permission errors."""
+    if launches_path is None:
+        return []
+    cutoff = cutoff or (datetime.now(timezone.utc) - timedelta(days=WINDOW_DAYS))
+    by_ticket = defaultdict(_blank)
+    try:
+        lines = launches_path.read_text(errors="ignore").splitlines()
+    except OSError:
+        return []
+    for raw in lines:
+        try:
+            d = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(d, dict):
+            continue
+        when = _parse_ts(d.get("at"))
+        if when is None or when < cutoff:
+            continue
+        job = d.get("ticket")
+        if job is None:
+            job = d.get("kind")
+        if job is None:
+            continue
+        try:
+            hash(job)
+        except TypeError:
+            continue
+        output_tokens = d.get("output_tokens")
+        input_tokens = d.get("input_tokens")
+        cache_write_tokens = d.get("cache_write_tokens")
+        cache_read_tokens = d.get("cache_read_tokens")
+        if output_tokens is None or not isinstance(output_tokens, (int, float)):
+            continue
+        if input_tokens is not None and not isinstance(input_tokens, (int, float)):
+            input_tokens = None
+        if cache_write_tokens is not None and not isinstance(cache_write_tokens, (int, float)):
+            cache_write_tokens = None
+        if cache_read_tokens is not None and not isinstance(cache_read_tokens, (int, float)):
+            cache_read_tokens = None
+        rec = {
+            "input": input_tokens or 0, "output": output_tokens or 0,
+            "cache_write": cache_write_tokens or 0, "cache_read": cache_read_tokens or 0,
+            "messages": 1
+        }
+        for f_ in FIELDS:
+            by_ticket[job][f_] = (by_ticket[job].get(f_, 0) or 0) + (rec.get(f_) or 0)
+    return sorted(
+        ({"ticket": t, **rec} for t, rec in by_ticket.items()),
+        key=lambda x: -x["output"]
+    )
 
 
 def find_transcripts(root: Path, window_days: int = WINDOW_DAYS, now: datetime | None = None) -> list[Path]:
@@ -97,7 +156,7 @@ def find_transcripts(root: Path, window_days: int = WINDOW_DAYS, now: datetime |
     return sorted(out)
 
 
-def aggregate(files, now: datetime | None = None, window_days: int = WINDOW_DAYS) -> dict:
+def aggregate(files, now: datetime | None = None, window_days: int = WINDOW_DAYS, launches_path: Path | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(days=window_days)
     messages = {}  # message id -> record; the latest line of a message wins
@@ -120,13 +179,13 @@ def aggregate(files, now: datetime | None = None, window_days: int = WINDOW_DAYS
                 continue
             project, ticket = attribute(d.get("cwd"))
             messages[msg["id"]] = {
-                "day": when.date().isoformat(), "kind": _kind(d), "model": msg.get("model") or "?", "project": project, "ticket": ticket,
+                "day": when.date().isoformat(), "kind": _kind(d), "autonomous": _autonomous(d), "model": msg.get("model") or "?", "project": project, "ticket": ticket,
                 "usage": {"input": u.get("input_tokens", 0) or 0, "output": u.get("output_tokens", 0) or 0,
                           "cache_write": u.get("cache_creation_input_tokens", 0) or 0, "cache_read": u.get("cache_read_input_tokens", 0) or 0}}
     totals, rows, projects, tickets = _blank(), defaultdict(_blank), defaultdict(_blank), defaultdict(_blank)
     for m in messages.values():
         _add(totals, m["usage"])
-        _add(rows[(m["day"], m["kind"], m["model"])], m["usage"])
+        _add(rows[(m["day"], m["kind"], m["model"], m["autonomous"])], m["usage"])
         _add(projects[(m["project"], m["kind"])], m["usage"])
         if m["ticket"] is not None:
             _add(tickets[(m["project"], m["ticket"])], m["usage"])
@@ -136,22 +195,24 @@ def aggregate(files, now: datetime | None = None, window_days: int = WINDOW_DAYS
         for f_ in FIELDS:
             p[f_] += rec[f_]
         p["by_kind"][kind] = rec["output"]
+    by_job = _aggregate_by_job(launches_path, cutoff)
     return {
         "generated_at": now.isoformat(), "window_days": window_days, "machine": machine_id(), "files_scanned": len(list(files)),
         "totals": totals,
-        "rows": [{"day": d, "kind": k, "model": mo, **rec} for (d, k, mo), rec in sorted(rows.items())],
+        "rows": [{"day": d, "kind": k, "model": mo, "autonomous": aut, **rec} for (d, k, mo, aut), rec in sorted(rows.items())],
         "by_project": sorted(by_project.values(), key=lambda p: -p["output"]),
         "by_ticket": sorted(({"project": p, "ticket": t, **rec} for (p, t), rec in tickets.items()), key=lambda x: -x["output"])[:TOP_TICKETS],
+        "by_job": by_job,
     }
 
 
-def refresh(out_path: Path = OUT_PATH, root: Path = TRANSCRIPTS, window_days: int = WINDOW_DAYS, now=None) -> dict:
+def refresh(out_path: Path = OUT_PATH, root: Path = TRANSCRIPTS, window_days: int = WINDOW_DAYS, now=None, launches_path: Path | None = None) -> dict:
     import job_events
     with job_events.job_run("token-usage", "Token usage scan") as run:
         run.step("Finding transcripts", f"last {window_days} days")
         files = find_transcripts(root, window_days, now)
         run.step("Counting tokens", f"{len(files)} files")
-        result = aggregate(files, now=now, window_days=window_days)
+        result = aggregate(files, now=now, window_days=window_days, launches_path=launches_path or LAUNCHES_LOG)
         run.step("Writing", out_path.name)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = out_path.with_suffix(".tmp")
