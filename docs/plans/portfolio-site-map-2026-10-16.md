@@ -19,7 +19,7 @@ Everything below comes from the dev site (localhost:8080) as of today.
 |---|---|
 | "Hi, I'm Gil!" plus the pitch "I build AI systems that are meant to work in the real world." | About §1, with the pitch also on Home §2 |
 | Early-career AI engineer: ranking, personalization, evaluation, agentic behavior | About §1 |
-| Back-end lead for an AI-driven mobile app; LLM benchmarking with Snorkel AI | About §2 (decision below: is this current? Charter isn't mentioned) |
+| Back-end lead for an AI-driven mobile app; LLM benchmarking with Snorkel AI | **Replaced.** About §2 becomes MARVIN and the projects built with it; Charter becomes a secondary line. Snorkel AI is removed everywhere (only on /about-me/ today) |
 | Veteran, CBRN Defense Specialist | About §3 |
 | Mother: immigrant, single parent, lost her hearing in her 30s, built a software career without a degree | About §3 |
 | "AI as a system, not just a model" paragraph and closing line | About §4 |
@@ -50,9 +50,9 @@ Everything below comes from the dev site (localhost:8080) as of today.
 ### Computer Science (`/education/computer-science/`), being retired
 | Content | Goes to |
 |---|---|
-| B.S. Computer Science Engineering, CU Boulder, graduated Aug 2025 | Education §1 |
+| B.S. Computer Science Engineering, CU Boulder, graduated Aug 2025 | Education §1 as a diploma card. Fix the title: the diploma says **Bachelor of Science in Computer Science**, conferred 20 August 2025 |
 | 19 courses (includes Designing for Defense, Intelligent Leadership, Writing in Arts & Sciences) | Education §3; fix the "Anlysis" typo |
-| Capstone: Designing for Defense: DoD sponsors, SDA TAP Lab, CCDM detection, the goals, Python / Node-RED / AWS DoD cloud | Education §2 |
+| Capstone: Designing for Defense: DoD sponsors, SDA TAP Lab, CCDM detection, the goals, Python / Node-RED / AWS DoD cloud | **Removed** (Gil: no longer pertinent). The course name stays in Coursework |
 
 ### Certificates (`/education/certificates/`), being retired
 | Certificate | Completed | Length | Image | Verify link |
@@ -61,8 +61,19 @@ Everything below comes from the dev site (localhost:8080) as of today.
 | Web Security and Bug Bounty (Udemy) | 2024-03-12 | 10.5 h | `/wp-content/uploads/2024/03/Web-Security-certificate.jpg` | https://www.udemy.com/certificate/UC-4293b115-5d24-405b-9e82-5d196915adc6/ |
 | UML Class Diagrams for Programmers (Udemy) | 2025-09-06 | 1.5 h | `/wp-content/uploads/2025/10/UML-Certificate.jpg` | https://www.udemy.com/certificate/UC-74c5e0ce-5892-455d-bfbc-d6b888426e00/ |
 
-All three go to Education §4. Gil's spec: the certificate image is the card, it reacts on hover, and a click opens the verify link in a new tab.
+All three go to Education §4, the last section, keeping today's design. Gil's spec: the certificate image is the card, it reacts on hover, and a click opens the verify link in a new tab.
 Fix the "Lenght" typo while moving them.
+
+### Aerospace coursework (new), from the CU Boulder course history in Dropbox
+Course names only. Grades and the student ID never go on the site.
+| Course | Goes to |
+|---|---|
+| Aerospace Computing · Statics and Structures · Dynamics (transfer credit) | Education, Coursework (Aerospace) |
+| Statics, Structures & Materials · Thermodynamics & Aerodynamics · Experimental/Computational Methods in Aerospace | Education, Coursework (Aerospace) |
+| Dynamics & Systems · Vehicle Design & Performance · Thermodynamics & Heat Transfer | Education, Coursework (Aerospace) |
+| Structures · Aerodynamics · Aerospace Sciences Lab II | Education, Coursework (Aerospace) |
+
+Left out: Aircraft Dynamics, which was never completed. The ROTC leadership courses (Methods of Leadership & Management 1–2, Military Operations & Training 1–2) could support the veteran story on About (decision below).
 
 ### Skills (`/education/skills/`), being retired
 | Content | Goes to |
@@ -74,43 +85,62 @@ Fix the "Lenght" typo while moving them.
 ### Contact (`/contact/`)
 | Content | Goes to |
 |---|---|
-| Phone (650) 867-2527, geskayo@gmail.com, LinkedIn, GitHub | Contact (decision below on the phone number) |
+| Phone, email, LinkedIn, GitHub | Contact: email, LinkedIn and GitHub only. **Phone removed** |
 
 ### Resume (`/resume/`)
 | Content | Goes to |
 |---|---|
-| Three PDFs: AI Software Engineer, Python Software Engineer, Cybersecurity Engineer | Resume, unchanged |
+| Three PDFs: AI Software Engineer, Python Software Engineer, Cybersecurity Engineer | Replaced by **one master resume** PDF. Building the resume tailor into the site stays parked |
 
 ### Not in this pass
 - Project hubs (All Projects, AI & ML, Software Engineering, Cybersecurity) were rebuilt on 2026-10-08.
 - Project pages are deferred.
 - Orphans ml-projects-2, backend and website-build, plus the duplicate `/distributed-llm-inference/` (page 5950), get removed.
 
+## Gil's answers (2026-10-16)
+- **Home** is a landing page that brings people in. No more information than today. Keep the text that pops in and out, but make it hyper-realistic, 3D and attention-grabbing.
+- **About** gets rewritten. "What I work on" leads with MARVIN, its capabilities and the projects built with it, to show drive beyond the job. Charter is a secondary line that proves a real career in the field. Keep ideas from the current page.
+- **Snorkel AI** comes off the site wherever it appears.
+- **Nourished**, if it's mentioned anywhere, is "in development": it isn't on the App Store yet. It isn't on the site today.
+- **Recommendations** keep today's layout (photo, pink name, role, quote), refined with cleaner photos and type.
+- **Education** becomes a hub with a pink and blue left side menu, like the portfolio hubs. Order: Degree (shown like the certs, or as our own black and white line drawing, continuing the cert design up to it), Skills in full (where the Capstone was), Coursework (CS plus aerospace, which backs up the skills), Certificates (today's design). The Capstone is removed.
+- **Contact:** email, LinkedIn and GitHub. No phone.
+- **Resume:** just the master resume.
+
+## Degree: verifiable like the certs
+The diploma (`Dropbox/Gil/Gil's resume/archive/2025/CollegeDiploma.pdf`) is a certified e-diploma with code **25Z8-DPSX-G40X** printed on it. Its verification page can be the click-through target, the same way the certs work. The exact verify URL still needs confirming.
+
 ## Order of work
-1. **Education first.** Most of its content is already settled, and Education A was the one mockup Gil partly liked. Certificate cards to his spec.
-2. About Me, then Gil approves the copy.
-3. Home.
-4. Contact, Resume, then the nav and redirects.
+1. **Education first**, with the hub, the diploma card and the certificate cards.
+2. Home landing: prototype the 3D directions on the dev site and pick one.
+3. About rewrite. Gil approves the copy.
+4. Contact, Resume, then the nav, the header title and the redirects.
 
 ## Decisions
 <!-- marvin:decisions -->
-### hero: Home hero
-- [ ] Keep the "Hello. I am..." typing animation
-- [ ] Replace it with a portrait and the one-line pitch
-- [ ] Decide when we reach Home
+### title: Header title under your name (replaces "Software Engineer")
+- [ ] AI Systems Engineer
+- [ ] Autonomous Systems Engineer (ties together AI agents and aerospace)
+- [ ] Applied AI & Security Engineer
+- [ ] AI Engineer · Security · Research
+- [ ] Something else (text below)
 
-### work: About §2 "What I work on"
-- [ ] Rewrite it around Charter (current job)
-- [ ] Keep the mobile app and Snorkel AI work, and add Charter
-- [ ] I'll tell you what's current (text below)
+### title-text: Your own title idea (text) (optional)
 
-### work-text: What's current at work? (text) (optional)
+### hero: Landing direction to prototype first (pick any)
+- [ ] 3D MARVIN brain: a rotating node graph with depth; your name assembles from it and dissolves into the next line
+- [ ] Living bridge: the bridge photo turned into a 3D parallax scene with moving fog and light; the text floats in 3D in front of it
+- [ ] Particle type: each line forms out of thousands of glowing particles that react to the cursor, then scatters into the next line
 
-### skills: Where the Skills list lives
-- [ ] Education, trimmed to what's still true
-- [ ] Education, kept in full
-- [ ] Drop it from the site (the resume covers it)
+### degree: How the degree shows
+- [ ] The diploma image as a card, same as the certs
+- [ ] Our own black and white line-drawn version
+- [ ] Prototype both and I'll pick
 
-### phone: Phone number on Contact
-- [ ] Keep it public
-- [ ] Remove it (email, LinkedIn and GitHub only)
+### edu-layout: Education structure
+- [ ] Hub: a separate page per section, with the left menu (like Portfolio)
+- [ ] One page; the left menu jumps to each section
+
+### rotc: Mention the ROTC leadership courses on About? (optional)
+- [ ] Yes, in "How I got here"
+- [ ] No
