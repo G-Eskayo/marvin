@@ -113,3 +113,13 @@ def test_vms_always_get_a_video_device_and_vnc_only_listens_locally():
     install = next(c for c in host.calls if c[0] == "virt-install")
     assert "--video" in install and install[install.index("--graphics") + 1] != "none"
     assert "listen=127.0.0.1" in install[install.index("--graphics") + 1]
+
+
+def test_each_image_is_reached_with_its_own_key_and_quarantine_never_sees_the_test_key():
+    q, t = FakeHost(), FakeHost()
+    vm_run.run("quarantine", "true", host=q)
+    vm_run.run("marvin-test", "true", host=t)
+    q_ssh = [" ".join(c) for c in q.calls if c[0] == "ssh"]
+    t_ssh = [" ".join(c) for c in t.calls if c[0] == "ssh"]
+    assert q_ssh and all("marvin_quarantine" in c and "marvin_vm" not in c for c in q_ssh)
+    assert t_ssh and all("marvin_vm" in c for c in t_ssh)

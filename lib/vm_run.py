@@ -26,9 +26,13 @@ IMAGES_DIR = Path("/var/lib/libvirt/images")
 GOLDEN_DIR = IMAGES_DIR / "golden"
 RUNS_DIR = IMAGES_DIR / "runs"
 NETWORKS = {"marvin-test": "default", "quarantine": "marvin-isolated"}
-VM_KEY = Path.home() / ".ssh" / "marvin_vm"
+# One key per image: a compromised quarantine VM learns nothing that opens a test VM.
+VM_KEYS = {"marvin-test": Path.home() / ".ssh" / "marvin_vm", "quarantine": Path.home() / ".ssh" / "marvin_quarantine"}
 VIRSH = ["virsh", "-q", "-c", "qemu:///system"]
-SSH_OPTS = ["-i", str(VM_KEY), "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
+
+
+def _ssh_opts(image: str) -> list[str]:
+    return ["-i", str(VM_KEYS[image]), "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
             "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR"]
 
 
@@ -56,9 +60,9 @@ def _wait_for_ip(name: str, host, timeout: float) -> str:
         time.sleep(2)
 
 
-def _wait_for_ssh(ip: str, host, timeout: float) -> None:
+def _wait_for_ssh(ip: str, opts: list[str], host, timeout: float) -> None:
     deadline = time.monotonic() + timeout
-    while host(["ssh", *SSH_OPTS, f"marvin@{ip}", "true"], timeout=15, check=False).returncode != 0:
+    while host(["ssh", *opts, f"marvin@{ip}", "true"], timeout=15, check=False).returncode != 0:
         if time.monotonic() >= deadline:
             raise TimeoutError(f"no SSH on {ip} within {timeout:.0f}s")
         time.sleep(2)
@@ -69,6 +73,7 @@ def run(image: str, command: str, repo_dir: Path | None = None, timeout: float =
     if image not in NETWORKS:
         return RunResult(ok=False, error=f"unknown image {image!r}; known: {', '.join(NETWORKS)}")
     golden = GOLDEN_DIR / f"{image}.qcow2"
+    opts = _ssh_opts(image)
     name = f"run-{image}-{uuid.uuid4().hex[:8]}"
     disk = RUNS_DIR / f"{name}.qcow2"
     step = "start"
@@ -88,14 +93,14 @@ def run(image: str, command: str, repo_dir: Path | None = None, timeout: float =
         step = "domifaddr"
         ip = _wait_for_ip(name, host, boot_timeout)
         step = "ssh"
-        _wait_for_ssh(ip, host, boot_timeout)
+        _wait_for_ssh(ip, opts, host, boot_timeout)
         if repo_dir is not None:
             step = "rsync"
             host(["rsync", "-a", "--delete", "--exclude", ".venv", "--exclude", "node_modules",
-                  "-e", "ssh " + " ".join(SSH_OPTS), f"{repo_dir}/", f"marvin@{ip}:work/"], timeout=600)
+                  "-e", "ssh " + " ".join(opts), f"{repo_dir}/", f"marvin@{ip}:work/"], timeout=600)
         step = "command"
         cd = "cd ~/work && " if repo_dir is not None else ""
-        proc = host(["ssh", *SSH_OPTS, f"marvin@{ip}", f"{cd}{command}"], timeout=timeout, check=False)
+        proc = host(["ssh", *opts, f"marvin@{ip}", f"{cd}{command}"], timeout=timeout, check=False)
         output = (proc.stdout or "") + (proc.stderr or "")
         return RunResult(ok=proc.returncode == 0, output=output, exit_code=proc.returncode,
                          error="" if proc.returncode == 0 else f"command exited {proc.returncode}")
