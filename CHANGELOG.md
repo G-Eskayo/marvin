@@ -1,5 +1,7 @@
 # Changelog
 
+- Proposals section in MR Review: big north-star ideas, plain-language cards, actions ([#542](https://github.com/G-Eskayo/marvin/pull/542))
+
 - Signed dashboard builds crash after packaging (null publish 'channel'), so installs fall back to ad-hoc signing ([#541](https://github.com/G-Eskayo/marvin/pull/541))
 
 - code_sync push fails to merge when sync-log.md (or any file) has uncommitted edits, e.g. after the Mac sleeps mid-run ([#452](https://github.com/G-Eskayo/marvin/pull/452))
