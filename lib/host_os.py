@@ -6,8 +6,10 @@ never shadows the standard library's platform module.
 """
 from __future__ import annotations
 
+import json
 import shutil
 import sys
+from pathlib import Path
 
 MAC_TAILSCALE = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
 LINUX_TAILSCALE = "/usr/bin/tailscale"   # where the Debian/Kali package installs it
@@ -27,3 +29,24 @@ def tailscale_bin() -> str:
     if os_name() == "macos":
         return MAC_TAILSCALE
     return shutil.which("tailscale") or LINUX_TAILSCALE
+
+
+def memory_dir() -> Path:
+    """MARVIN's memory folder on this machine.
+
+    The synced ~/.claude/settings.json names it in `autoMemoryDirectory` as the Macs' absolute path. Re-root the part
+    after `.claude/` under THIS machine's ~/.claude, so mac-mini-2012 (home /home/marvin) reads the same synced memory
+    the Macs write. A missing, malformed or out-of-tree setting falls back to Claude Code's own default for this home."""
+    home = Path.home()
+    claude = home / ".claude"
+    default = claude / "projects" / str(home).replace("/", "-") / "memory"
+    try:
+        value = json.loads((claude / "settings.json").read_text()).get("autoMemoryDirectory")
+    except (OSError, ValueError, AttributeError):
+        return default
+    if not isinstance(value, str) or "/.claude/" not in value:
+        return default
+    rel = Path(value.split("/.claude/", 1)[1])
+    if rel.is_absolute() or ".." in rel.parts:
+        return default
+    return claude / rel

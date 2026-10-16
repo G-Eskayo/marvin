@@ -1,3 +1,5 @@
+import pytest
+
 import host_os
 
 
@@ -33,3 +35,32 @@ def test_tailscale_on_linux_falls_back_to_the_package_path_when_path_is_bare(mon
 def test_task_dispatch_uses_the_host_os_tailscale_path():
     import task_dispatch
     assert task_dispatch.TAILSCALE_BIN == host_os.tailscale_bin()
+
+
+def _settings(tmp_path, monkeypatch, body):
+    claude = tmp_path / "home" / ".claude"
+    claude.mkdir(parents=True)
+    if body is not None:
+        (claude / "settings.json").write_text(body)
+    monkeypatch.setattr(host_os.Path, "home", lambda: tmp_path / "home")
+    return claude
+
+
+def test_memory_dir_follows_the_synced_setting_on_a_machine_with_a_different_home(tmp_path, monkeypatch):
+    # The setting names the Mac's absolute path; on mac-mini-2012 (/home/marvin) it must land in this home's .claude.
+    claude = _settings(tmp_path, monkeypatch,
+                       '{"autoMemoryDirectory": "/Users/someone/.claude/projects/-Users-someone/memory"}')
+    assert host_os.memory_dir() == claude / "projects" / "-Users-someone" / "memory"
+
+
+def test_memory_dir_accepts_a_tilde_setting(tmp_path, monkeypatch):
+    claude = _settings(tmp_path, monkeypatch, '{"autoMemoryDirectory": "~/.claude/projects/-x/memory"}')
+    assert host_os.memory_dir() == claude / "projects" / "-x" / "memory"
+
+
+@pytest.mark.parametrize("body", [None, "not json", "{}", '{"autoMemoryDirectory": 5}',
+                                  '{"autoMemoryDirectory": "/etc/passwd"}', '{"autoMemoryDirectory": "/a/.claude/../../etc"}'])
+def test_memory_dir_falls_back_to_claude_codes_own_default_when_the_setting_is_missing_or_bad(tmp_path, monkeypatch, body):
+    claude = _settings(tmp_path, monkeypatch, body)
+    home = str(tmp_path / "home")
+    assert host_os.memory_dir() == claude / "projects" / home.replace("/", "-") / "memory"
