@@ -1356,3 +1356,20 @@ MARVIN-as-OS north star).
   projects). "More on 3" answers from layer 2 instantly; "put 3 on the Surface" shows layer 3.
 - **Open in this design** (as of 2026-10-15): the voice conversation style (waits on the Voice surface); identifying
   the God's Eye and Pegasus feeds; how endpoints register and receive content (after the content is solid).
+
+## Third node: mac-mini-2012 (in design, 2026-10-16)
+
+- **mac-mini-2012**: the 2012 Mac Mini running Kali Linux, MARVIN's third known device and its first non-macOS
+  one. Reached over Tailscale as `mac-mini-2012`, user `marvin`.
+- **Three roles, all on this one box** (decided 2026-10-16): (a) **security/network-tools host**: Kali tools,
+  Whonix, network/security work MARVIN hands it. (b1) **quarantine sandbox**: untrusted outside code (saved repos,
+  unknown MCP servers, scripts) runs here and never on the Macs. (b2) **MARVIN test environment**: MARVIN's own
+  changes get tested here, and it is where MARVIN gets its numbers. This keeps the original vision. The worktree
+  pipeline on the Macs is how changes start, and this box adapts to it rather than replacing it.
+- **Clean test context**: because (a)/(b1) run untrusted things and (b2) judges MARVIN's own code, (b2) runs kept
+  apart from them on the box. How they're kept apart is still open.
+- **Snapshot rollback**: the box's own undo. btrfs snapshots of the root filesystem, taken before every package
+  change and on demand. They protect the box itself and are not a substitute for a VM or for code review.
+- **Open in this design** (as of 2026-10-16): what "the numbers" are; how test runs are kept apart; registry entry
+  shape for a Linux device; which jobs run here and how dispatch knows which work this box may take; sudo scope;
+  Claude Code sign-in on Linux.
