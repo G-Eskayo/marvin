@@ -251,6 +251,8 @@ CAPTURE_SIM_RE = re.compile(r"^marvin-[0-9a-f]{8}$")  # simulator_capture._devic
 
 
 def _simctl_json(*args: str) -> dict:
+    if shutil.which("xcrun") is None:
+        return {}   # no Xcode (e.g. mac-mini-2012 on Linux): no simulators, nothing to sweep
     out = subprocess.run(["xcrun", "simctl", "list", *args, "--json"], capture_output=True, text=True, timeout=60)
     return json.loads(out.stdout) if out.returncode == 0 and out.stdout.strip() else {}
 

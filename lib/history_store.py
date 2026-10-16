@@ -156,7 +156,8 @@ def remote_read_command(path: str, from_byte: int) -> str:
     `~/` becomes "$HOME"/ so the rest of the path is quoted and can never run as a command."""
     path_expr = f'"$HOME"/{shlex.quote(path[2:])}' if path.startswith("~/") else shlex.quote(path)
     return (f"f={path_expr}; if [ ! -f \"$f\" ]; then echo MISSING; exit 0; fi; "
-            f"stat -f '%i %z' \"$f\" && tail -c +{int(from_byte) + 1} \"$f\"")
+            # GNU stat (Linux, mac-mini-2012) first; BSD stat (macOS) rejects -c and falls through to -f.
+            f"{{ stat -c '%i %s' \"$f\" 2>/dev/null || stat -f '%i %z' \"$f\"; }} && tail -c +{int(from_byte) + 1} \"$f\"")
 
 
 def parse_remote_reply(reply: bytes) -> tuple[int, int, bytes] | None:

@@ -369,3 +369,9 @@ def test_opening_a_new_database_waits_for_a_writer_instead_of_failing(tmp_path):
     assert time.time() - started >= 0.25  # it waited for the reader rather than failing
     conn.close()
     reader.close()
+
+
+def test_the_remote_read_command_works_with_gnu_stat_as_well_as_bsd():
+    # The Macs read mac-mini-2012's logs over ssh; Linux's stat -f means "filesystem", not BSD's format flag.
+    cmd = hs.remote_read_command("~/.claude/logs/x.jsonl", 0)
+    assert "stat -c '%i %s'" in cmd and "stat -f '%i %z'" in cmd

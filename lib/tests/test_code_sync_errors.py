@@ -142,3 +142,14 @@ def test_every_failure_kind_written_to_sync_log_also_reaches_the_error_log(tmp_p
     got = _entries(errors)
     assert [e["source"] for e in got] == ["sync:pull", "sync:push", "sync:push", "sync:pull", "sync:pull"]
     assert got[1]["message"].startswith("commit failed")
+
+
+def test_lsof_is_found_on_path_not_at_the_mac_location(monkeypatch, tmp_path):
+    # Kali installs lsof in /usr/bin; the Mac path /usr/sbin/lsof does not exist there (ADR 0069).
+    import code_sync
+    seen = {}
+    monkeypatch.setattr(code_sync.shutil, "which", lambda name: "/usr/bin/lsof" if name == "lsof" else None)
+    monkeypatch.setattr(code_sync.subprocess, "run",
+                        lambda cmd, **k: seen.setdefault("cmd", cmd) and __import__("subprocess").CompletedProcess(cmd, 1))
+    code_sync._lock_held(tmp_path / "index.lock")
+    assert seen["cmd"][0] == "/usr/bin/lsof"
