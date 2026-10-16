@@ -42,3 +42,13 @@ def test_a_failed_build_is_marked_and_a_successful_one_clears_the_mark():
     on_error = text[text.index("on_error()"):text.index("trap ")]
     assert "dashboard-rebuild-failed" in on_error  # written on failure
     assert text.rindex("dashboard-rebuild-failed") > text.index("installing to $DEST")  # cleared after a good install
+
+
+def test_electron_builder_never_tries_to_publish_auto_update_files():
+    # 2026-10-15: every signed build crashed after making the app ("Cannot read properties of null (reading 'channel')",
+    # plus the "Cannot cleanup" seen since at least 10-14) because electron-builder tried to write auto-update files
+    # with no publish target. The install then fell back to an ad-hoc signature, which can cost macOS permissions.
+    # MARVIN updates itself by rebuilding (dashboard_rebuild.py), never through electron-builder's updater.
+    import json
+    pkg = json.loads((SCRIPT.parents[1] / "package.json").read_text())
+    assert "publish" in pkg["build"] and pkg["build"]["publish"] is None
