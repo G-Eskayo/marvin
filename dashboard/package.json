@@ -37,6 +37,7 @@
   "build": {
     "appId": "com.gileskayo.marvin-metrics-dashboard",
     "productName": "MARVIN",
+    "publish": null,
     "directories": {
       "output": "dist"
     },
