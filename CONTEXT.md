@@ -1374,6 +1374,11 @@ MARVIN-as-OS north star).
   profile X beat Y) and (2) **MARVIN test results** per ticket/PR (pass/fail, flaky tests, suite time). Later:
   (4) **security tool results** (scan findings). Speed numbers for model calls are not in scope here: models run
   elsewhere, so this box measures quality, not model speed.
-- **Open in this design** (as of 2026-10-16): how test runs are kept apart; registry entry
+- **Disposable VM** (decided 2026-10-16): how test runs are kept apart. Each (b1) or (b2) run gets a throwaway copy
+  of a frozen **golden image**, runs, records its results, and is deleted. Two golden images: **marvin-test** (clean
+  MARVIN, never touches untrusted code) and **quarantine** (bare Kali for untrusted code). The host OS itself is the
+  trusted control layer, and untrusted code never runs on it directly. Roughly 2 test VMs at once with Whonix up.
+  The quarantine VM's network (none, or through Whonix) is decided later.
+- **Open in this design** (as of 2026-10-16): registry entry
   shape for a Linux device; which jobs run here and how dispatch knows which work this box may take; sudo scope;
   Claude Code sign-in on Linux.
