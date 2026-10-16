@@ -1386,6 +1386,5 @@ MARVIN-as-OS north star).
   and never falls back to a Mac, so untrusted code can't land on a Mac because the Kali box was down.
 - **Linux device identity** (settled from code 2026-10-16): same registry fields as the Macs, read from the
   firmware tables instead of macOS's `ioreg`, plus `os: linux`.
-- **Open in this design** (as of 2026-10-16): registry entry
-  shape for a Linux device; which jobs run here and how dispatch knows which work this box may take; sudo scope;
-  Claude Code sign-in on Linux.
+- **Open in this design** (as of 2026-10-16): which jobs run here and which way sync
+  flows; sudo scope; Claude Code sign-in on Linux.
