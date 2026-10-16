@@ -59,5 +59,8 @@
     "G-Eskayo/finance-os"
   ],
   "home_repo": "G-Eskayo/marvin",
-  "new_top_level_per_week": 3
+  "new_top_level_per_week": 3,
+  "always_ask_authors": [
+    "MARVIN-bot-gil"
+  ]
 }
