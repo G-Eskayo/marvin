@@ -12,7 +12,7 @@ and `CONTEXT.md` "Third node". Every file the box needs outside the repos is in 
 
 ## 2. Access (from a Mac)
 - `ssh-copy-id marvin@<tailscale ip>`; add `Host mac-mini-2012 / User marvin` to `~/.ssh/config` on **both** Macs.
-- Sudo (setup phase): `/etc/sudoers.d/90-marvin-setup`, to be narrowed (ADR 0069).
+- Sudo: setup used a temporary `NOPASSWD: ALL` rule, since removed. Unattended root is now only `/etc/sudoers.d/90-marvin`: two exact `cat`s of the root-only DMI files `product_uuid` and `product_serial`. No wildcards: `snapper create *` would allow `--command`, and nothing under `~/.agents` (fed from GitHub) may run as root. Anything else takes Gil's password. Caveat: the `libvirt` group (needed by vm_run) is near-root; per-user (session) libvirt would remove that.
 - Read-only access: a GitHub **read-only deploy key** (`~/.ssh/marvin_agents_ro`, alias `github-agents-ro`) and a
   key on the M4 Mini locked by `~/.ssh/marvin-claude-pull-only.sh` to fetching `~/.claude-sync.git` (alias
   `mini-claude-ro`). Neither can push.
