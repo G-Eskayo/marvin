@@ -49,12 +49,13 @@ purge_blank_entry "$HERE/lean"
 # --- clean profile ---
 CLEAN="$HERE/clean"
 rm -rf "$CLEAN"; mkdir -p "$CLEAN"
-cat > "$CLEAN/settings.json" <<'JSON'
+# Unquoted heredoc so $HOME expands: the absolute-path rule must name this machine's home (ADR 0069).
+cat > "$CLEAN/settings.json" <<JSON
 {
   "permissions": {
     "allow": [
       "Bash(~/.agents/venv/bin/python ~/.agents/skills/qa-agent/scripts/qa_query.py:*)",
-      "Bash(/Users/gileskayo/.agents/venv/bin/python /Users/gileskayo/.agents/skills/qa-agent/scripts/qa_query.py:*)"
+      "Bash($HOME/.agents/venv/bin/python $HOME/.agents/skills/qa-agent/scripts/qa_query.py:*)"
     ]
   }
 }

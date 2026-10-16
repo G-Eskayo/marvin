@@ -1,7 +1,7 @@
 {
   "id": "task-014-kb-lookup",
   "type": "qa",
-  "cwd": "/Users/gileskayo/.agents",
+  "cwd": "~/.agents",
   "prompt_file": "prompt.md",
   "timeout": 180,
   "expect": ["Context quality matters more than model size"],

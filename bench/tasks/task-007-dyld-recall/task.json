@@ -2,7 +2,7 @@
   "id": "task-007-dyld-recall",
   "type": "qa",
   "prompt_file": "prompt.md",
-  "cwd": "/Users/gileskayo",
+  "cwd": "~",
   "timeout": 180,
   "expect": ["176", "215"],
   "note": "Bench self-knowledge recall. Correct answer: output tokens — clean 176 vs marvin 215 — showed caveman mode made marvin MORE verbose than base, anti-correlated with goal. These numbers are in RESULTS.md (~/.agents/bench/RESULTS.md or ~/marvin-bench/RESULTS.md) which is readable by all profiles; the discriminator is whether the model finds and reads that specific file. Redesigned from original DYLD_LIBRARY_PATH version (Run 4: all 3 profiles scored 1.00 because render_pdf.py is a trivially findable file). New version still findable via file read — see task-008 for a true isolation approach. Expect: both token counts must appear."

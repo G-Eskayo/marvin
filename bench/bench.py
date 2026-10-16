@@ -225,7 +225,7 @@ def run_once(task: dict, profile: str, capture_snapshot: bool = False, model: st
             shutil.copytree(task["dir"] / "files", workdir, dirs_exist_ok=True)
         cleanup = True
     else:
-        workdir = Path(task.get("cwd", str(Path.home())))
+        workdir = Path(task.get("cwd", str(Path.home()))).expanduser()
         cleanup = False
 
     cmd = ["claude", "-p", task["prompt"],
