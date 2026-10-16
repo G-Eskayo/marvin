@@ -127,6 +127,43 @@ def tripped(now: datetime | None = None, project: str | None = None) -> list[dic
     return result
 
 
+def ticket_streak(ticket: int, project: str = MARVIN, now: datetime | None = None) -> dict:
+    """Per-ticket failure counter: reset at the last success/clear for that ticket+project.
+    Returns {"count": int, "signatures": [ordered, non-deduplicated, falsy-sig-excluded],
+    "reasons": [ordered, raw, truncated, falsy-excluded]}.
+    Index-based reset: if any success or clear appears in the log after the most recent
+    one at or before now(), everything before that is discarded. Falsy-sig fields are excluded."""
+    now = now or _now()
+    records = _read()
+    for r in records:
+        r.setdefault("project", MARVIN)
+    mine = [r for r in records if r["project"] == project and r["_t"] <= now]
+    last_reset_idx = -1
+    for idx, r in enumerate(mine):
+        if r["kind"] in ("success", "clear"):
+            last_reset_idx = idx
+    post_reset = mine[last_reset_idx + 1:] if last_reset_idx >= 0 else mine
+    failures = [r for r in post_reset if r["kind"] == "failure" and r.get("ticket") == ticket]
+    count = len(failures)
+    sigs = [f.get("sig") for f in failures if f.get("sig")]
+    reasons = [f.get("reason") for f in failures if f.get("reason")]
+    return {"count": count, "signatures": sigs, "reasons": reasons}
+
+
+def should_hold(ticket: int, project: str = MARVIN, threshold: int = 3, now: datetime | None = None) -> bool:
+    """Per-ticket park decision: hold = count >= threshold OR (last two reasons exist AND match).
+    For threshold=3, a ticket with 3+ failures parks; a ticket with exactly 2 identical
+    recent failures also parks (instant-park condition). Resets on any success/clear."""
+    streak = ticket_streak(ticket, project, now)
+    count = streak["count"]
+    reasons = streak["reasons"]
+    if count >= threshold:
+        return True
+    if len(reasons) >= 2 and reasons[-1] == reasons[-2]:
+        return True
+    return False
+
+
 def main() -> None:
     cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
     if cmd == "clear":

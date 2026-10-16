@@ -193,3 +193,126 @@ def test_merge_refusals_never_trip_the_breaker(tmp_path, monkeypatch):
         for ticket in (208, 209, 210):
             f.write(json.dumps({"t": now.isoformat(), "kind": "refusal", "ticket": ticket, "sig": "merge:OUT_OF_ORDER"}) + "\n")
     assert fb.tripped(now=now) == []
+
+
+# ── ticket_streak: per-ticket failure counter ──────────────────────────────
+
+def test_ticket_streak_counts_consecutive_failures_for_one_ticket():
+    _fail(99, "reason1", minutes_ago=10)
+    _fail(99, "reason2", minutes_ago=5)
+    _fail(88, "reason1", minutes_ago=7)
+    streak = fb.ticket_streak(99, now=NOW)
+    assert streak["count"] == 2
+    assert len(streak["signatures"]) == 2
+
+
+def test_ticket_streak_returns_empty_signatures_list_when_signatures_are_falsy():
+    fb.record_failure(99, "", now=NOW - timedelta(minutes=10))
+    fb.record_failure(99, "real reason", now=NOW - timedelta(minutes=5))
+    streak = fb.ticket_streak(99, now=NOW)
+    assert streak["count"] == 2
+    # Empty string produces "other:" (still truthy), followed by "other:real reason"
+    assert streak["signatures"] == ["other:", "other:real reason"]
+
+
+def test_ticket_streak_resets_after_a_success():
+    _fail(99, "reason1", minutes_ago=20)
+    _fail(99, "reason2", minutes_ago=15)
+    fb.record_success(99, now=NOW - timedelta(minutes=10))
+    _fail(99, "reason3", minutes_ago=5)
+    streak = fb.ticket_streak(99, now=NOW)
+    assert streak["count"] == 1
+    assert streak["signatures"] == ["other:reason"]
+
+
+def test_ticket_streak_resets_after_a_manual_clear():
+    _fail(99, "reason1", minutes_ago=20)
+    _fail(99, "reason2", minutes_ago=15)
+    fb.clear(now=NOW - timedelta(minutes=10))
+    _fail(99, "reason3", minutes_ago=5)
+    fb.record_failure(88, "reason3", now=NOW - timedelta(minutes=3))
+    streak = fb.ticket_streak(99, now=NOW)
+    assert streak["count"] == 1
+
+
+def test_ticket_streak_respects_project_scope():
+    fb.record_failure(99, "reason1", project="G-Eskayo/marvin", now=NOW - timedelta(minutes=10))
+    fb.record_failure(99, "reason2", project="G-Eskayo/marvin", now=NOW - timedelta(minutes=5))
+    fb.record_failure(99, "reason1", project="G-Eskayo/clarity-captions", now=NOW - timedelta(minutes=8))
+    streak_marvin = fb.ticket_streak(99, project="G-Eskayo/marvin", now=NOW)
+    streak_clarity = fb.ticket_streak(99, project="G-Eskayo/clarity-captions", now=NOW)
+    assert streak_marvin["count"] == 2
+    assert streak_clarity["count"] == 1
+
+
+def test_ticket_streak_returns_non_deduplicated_signatures():
+    for _ in range(3):
+        _fail(99, "same reason")
+    streak = fb.ticket_streak(99, now=NOW)
+    assert streak["count"] == 3
+    assert streak["signatures"] == ["other:same reason", "other:same reason", "other:same reason"]
+
+
+def test_ticket_streak_on_nonexistent_ticket_returns_zero():
+    _fail(99, "reason1")
+    streak = fb.ticket_streak(777, now=NOW)
+    assert streak["count"] == 0
+    assert streak["signatures"] == []
+
+
+def test_ticket_streak_excludes_future_records():
+    _fail(99, "reason1", minutes_ago=10)
+    _fail(99, "reason2", minutes_ago=5)
+    streak = fb.ticket_streak(99, now=NOW - timedelta(minutes=3))
+    # Both failures (at -10 and -5) are before the check time (-3), so both are included
+    assert streak["count"] == 2
+    # To test exclusion, check with a time between the two failures
+    streak_filtered = fb.ticket_streak(99, now=NOW - timedelta(minutes=7))
+    assert streak_filtered["count"] == 1  # Only the failure at -10
+
+
+def test_ticket_streak_handles_empty_log():
+    streak = fb.ticket_streak(99, now=NOW)
+    assert streak["count"] == 0
+    assert streak["signatures"] == []
+
+
+def test_ticket_streak_with_corrupted_log():
+    fb.LOG_PATH.write_text("not json\n")
+    _fail(99, "reason1")
+    streak = fb.ticket_streak(99, now=NOW)
+    assert streak["count"] == 1
+
+
+# ── should_hold: per-ticket park decision ──────────────────────────────────
+
+def test_should_hold_parks_at_threshold_by_default_three():
+    for i in range(3):
+        _fail(99, f"reason{i}")
+    assert fb.should_hold(99, now=NOW) is True
+
+
+def test_should_hold_parks_on_two_identical_signatures_instant_park():
+    _fail(99, "same reason")
+    _fail(99, "same reason")
+    assert fb.should_hold(99, now=NOW) is True
+
+
+def test_should_hold_respects_custom_threshold():
+    for i in range(4):
+        _fail(99, f"reason{i}")
+    assert fb.should_hold(99, threshold=5, now=NOW) is False
+    assert fb.should_hold(99, threshold=4, now=NOW) is True
+
+
+def test_should_hold_does_not_park_on_count_less_than_threshold():
+    _fail(99, "reason1")
+    _fail(99, "reason2")
+    assert fb.should_hold(99, now=NOW) is False
+
+
+def test_should_hold_resets_after_success():
+    for i in range(3):
+        _fail(99, f"reason{i}")
+    fb.record_success(99, now=NOW - timedelta(minutes=1))
+    assert fb.should_hold(99, now=NOW) is False

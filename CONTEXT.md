@@ -696,6 +696,28 @@ nothing connected them. "Where things are" was only the tidy agent's file-filing
   counted and shown in the run log ("Other projects ... no execution profile yet") instead of hidden. A
   per-project execution profile (clone path, test command, dev-env) is the open piece for clarity-captions.
 
+### Per-ticket failure breaker and parked tickets (decided 2026-10-XX)
+
+- **Per-ticket failure tracking** (`lib/failure_breaker.py`): `ticket_streak(ticket, project)` counts consecutive 
+  automated failures on a specific ticket (indexed-based reset at the last success/clear in the per-project
+  `~/.claude/logs/pipeline-failures.jsonl` log). Returns `{"count": int, "signatures": [ordered list]}` of
+  failure signatures, excluding falsy ones. Deterministic, cross-machine agreement via the shared log file
+  (each machine appends its own runs; no merge needed). Pure read operation, can be called by Health checks and the
+  park decision without side effects.
+- **Should-hold decision** (`failure_breaker.should_hold(...)`): returns `true` if a ticket should be parked:
+  `count >= threshold` OR (last two signatures exist AND match). Default threshold is 3, overridable per project
+  via `failure_threshold` in the project's execution profile. Instant-park on two identical failures (a signal
+  that the root cause is deterministic, not transient/environmental). Resets on any success/clear.
+- **Parked tickets** (state label `hold`): a ticket that hits the park decision gets the `hold` label (blocking
+  `triage` agent from re-triaging it back to `ready-for-agent`), claim removed, and a comment with failure
+  signatures plus a `Revisit by: YYYY-MM-DD — <reason>` line (convention reused from #213 and the `revisit`
+  agent). The revisit date is 7 days out by default; the reason is a 80-character truncation of the last failure
+  reason. A person can add context by replying to the comment; removing `hold` and adding `ready-for-agent`
+  sends it back to the queue.
+- **Health visibility** (`check_held_by_retry_storm()`): red if any `hold`-labeled ticket still has an active
+  retry streak (`count > 0`), green otherwise. Catches the case where a ticket was parked but is still
+  accumulating failures post-parking (a re-dispatch during hold, or a label glitch).
+
 ### Per-project execution profiles (decided 2026-10-05)
 
 The ticket executor (`sandbox_orchestration` + `run_ticket`) was written for marvin: marvin's checkout,

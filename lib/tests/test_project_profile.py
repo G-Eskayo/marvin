@@ -542,3 +542,22 @@ def test_read_only_inspection_never_includes_commands_that_change_things():
         for verb in ("push", "commit", "merge", "rebase", "reset", "checkout", "branch", "tag", "stash", "clean",
                      "create", "edit", "close", "comment", "api", "delete", "rm"):
             assert verb not in cmd.split()[1:], rule
+
+
+# ── failure_threshold validation ────────────────────────────────────────────
+
+def test_failure_threshold_defaults_to_none():
+    prof = pp._validate({"repo": "o/r", "verify": [{"id": "t", "command": ["true"]}]}, "p")
+    assert prof["failure_threshold"] is None
+
+
+def test_failure_threshold_must_be_a_positive_int_or_none():
+    import pytest
+    ok = pp._validate({"repo": "o/r", "failure_threshold": 5, "verify": [{"id": "t", "command": ["true"]}]}, "p")
+    assert ok["failure_threshold"] == 5
+    with pytest.raises(ValueError, match="failure_threshold"):
+        pp._validate({"repo": "o/r", "failure_threshold": 0, "verify": [{"id": "t", "command": ["true"]}]}, "p")
+    with pytest.raises(ValueError, match="failure_threshold"):
+        pp._validate({"repo": "o/r", "failure_threshold": -1, "verify": [{"id": "t", "command": ["true"]}]}, "p")
+    with pytest.raises(ValueError, match="failure_threshold"):
+        pp._validate({"repo": "o/r", "failure_threshold": "5", "verify": [{"id": "t", "command": ["true"]}]}, "p")

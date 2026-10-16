@@ -26,6 +26,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import code_sync  # noqa: E402
 import cron_health as ch  # noqa: E402
+import failure_breaker  # noqa: E402
 import machine_profile  # noqa: E402
 from task_dispatch import TAILSCALE_BIN, TAILSCALE_ENV  # noqa: E402  (absolute path -- launchd's PATH omits the shell's additions)
 import metrics_registry as mr  # noqa: E402
@@ -143,7 +144,8 @@ def check_ticket_failure_streaks(repo: str = "G-Eskayo/marvin", run=subprocess.r
     """Early-warning layer in front of run_ticket.py's own 3-strike guard
     (G-Eskayo/marvin, fixed 2026-10-01): a ticket sitting at streak 2 is
     one more automated failure from being parked -- worth surfacing before
-    that happens, not just after."""
+    that happens, not just after. Uses failure_breaker.ticket_streak for
+    consistency with the actual park decision."""
     try:
         proc = run(["gh", "issue", "list", "--repo", repo, "--label", "claimed:mac-mini,claimed:macbook-pro",
                     "--state", "open", "--json", "number,title,labels"],
@@ -155,18 +157,8 @@ def check_ticket_failure_streaks(repo: str = "G-Eskayo/marvin", run=subprocess.r
     results = []
     for issue in claimed:
         n = issue["number"]
-        try:
-            cproc = run(["gh", "issue", "view", str(n), "--repo", repo, "--json", "comments"],
-                        capture_output=True, text=True, timeout=20)
-            comments = json.loads(cproc.stdout)["comments"] if cproc.returncode == 0 else []
-        except (subprocess.TimeoutExpired, json.JSONDecodeError, KeyError):
-            continue
-        streak = 0
-        for c in reversed(comments):
-            if "did not pass verification" in c.get("body", ""):
-                streak += 1
-            else:
-                break
+        streak_info = failure_breaker.ticket_streak(n, project=repo)
+        streak = streak_info["count"]
         cid = f"ticket:streak:{n}"
         label = f"#{n} {issue['title'][:40]}"
         if streak >= 2:
@@ -175,6 +167,36 @@ def check_ticket_failure_streaks(repo: str = "G-Eskayo/marvin", run=subprocess.r
         else:
             results.append(_result(cid, label, "green", f"{streak} consecutive failure(s)", value=streak))
     return results
+
+
+def check_held_by_retry_storm(repo: str = "G-Eskayo/marvin", run=subprocess.run) -> dict:
+    """Tickets held due to repeated failures. Red if any held ticket has a retry
+    streak > 0 (still accumulating failures after being parked). Green if none found
+    or no held tickets exist."""
+    try:
+        proc = run(["gh", "issue", "list", "--repo", repo, "--label", "hold",
+                    "--state", "open", "--json", "number,title,labels"],
+                   capture_output=True, text=True, timeout=20)
+        held = json.loads(proc.stdout) if proc.returncode == 0 else []
+    except (subprocess.TimeoutExpired, json.JSONDecodeError):
+        held = []
+
+    cid = "ticket:held-by-storm"
+    label = "Held tickets (retry storm)"
+    held_with_streaks = []
+    for issue in held:
+        n = issue["number"]
+        streak_info = failure_breaker.ticket_streak(n, project=repo)
+        if streak_info["count"] > 0:
+            sigs = streak_info["signatures"]
+            sig_str = ", ".join(f"`{s}`" for s in sigs[:2])
+            held_with_streaks.append(f"#{n}: {streak_info['count']} failures ({sig_str})")
+    if held_with_streaks:
+        detail = "Held tickets still accumulating failures: " + "; ".join(held_with_streaks[:5])
+        if len(held_with_streaks) > 5:
+            detail += f"; ... and {len(held_with_streaks) - 5} more"
+        return _result(cid, label, "red", detail, value=len(held_with_streaks))
+    return _result(cid, label, "green", f"{len(held)} held ticket(s), none with active retry streaks", value=0)
 
 
 # ── cron jobs (absorbed from cron_health.py -- literally the same

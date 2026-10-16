@@ -358,3 +358,11 @@ def test_triage_leaves_a_ticket_the_pipeline_parked_alone():
     well-written parked ticket (another round of builds) nor overwrite the cause with a template complaint (#133)."""
     parked = issue(133, labels=["needs-info", "enhancement"], body=GOOD)
     assert ta.plan_triage(REPO, [parked], owned_needs_info=frozenset()) == []
+
+
+def test_triage_skips_held_tickets_so_revisit_agent_controls_their_release():
+    """A held ticket must not be re-triaged back to ready-for-agent, even if well-written. The revisit agent
+    owns the release decision via Revisit by: date."""
+    held = issue(150, labels=["hold"], body=GOOD, title="Held for retry")
+    acts = ta.plan_triage(REPO, [held], owned_needs_info=frozenset())
+    assert acts == []

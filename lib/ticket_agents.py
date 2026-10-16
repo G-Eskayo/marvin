@@ -108,7 +108,10 @@ def plan_prioritize(repo, issues, due, owned, now):
 def plan_triage(repo, issues, owned_needs_info=frozenset()):
     out = []
     for t in issues:
-        if t["number"] in owned_needs_info and "needs-info" in pol.label_names(t):
+        names = set(pol.label_names(t))
+        if "hold" in names:
+            continue  # held tickets stay parked; revisit agent handles their release
+        if t["number"] in owned_needs_info and "needs-info" in names:
             # "you answer -> triaged again": a ticket this agent parked is looked at again once it is complete
             v = pol.triage_verdict(t, recheck=True)
             if v and v["state"] != "needs-info":

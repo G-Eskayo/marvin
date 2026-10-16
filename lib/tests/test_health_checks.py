@@ -1304,3 +1304,103 @@ def test_seal_ingest_says_today_or_how_many_days_ago(tmp_path):
     assert "last report today" in today["detail"]
     old = _seal(_seal_status(tmp_path, last_report_at=(SEAL_NOW - timedelta(days=3, hours=1)).isoformat()))
     assert "last report 3 day(s) ago" in old["detail"]
+
+
+# ── held tickets with retry storm (tests 23-27) ──────────────────────────────
+
+def test_check_held_by_retry_storm_green_when_no_held_tickets(monkeypatch):
+    """Test that check_held_by_retry_storm is green when no held tickets exist."""
+    def fake_run(cmd, **kw):
+        class R:
+            returncode = 0
+            stdout = json.dumps([])
+        return R()
+
+    monkeypatch.setattr(hc.subprocess, "run", fake_run)
+    result = hc.check_held_by_retry_storm()
+    assert result["severity"] == "green"
+    assert "0" in result["detail"]
+
+
+def test_check_held_by_retry_storm_red_when_held_has_active_streak(monkeypatch, tmp_path):
+    """Test that check_held_by_retry_storm is red when held tickets have active retry streaks."""
+    import failure_breaker as fb
+    monkeypatch.setattr(fb, "LOG_PATH", tmp_path / "failures.jsonl")
+
+    def fake_run(cmd, **kw):
+        if "issue" in cmd and "list" in cmd:
+            return type("R", (), {"returncode": 0, "stdout": json.dumps([{"number": 99, "title": "Test ticket"}])})()
+        return type("R", (), {"returncode": 0, "stdout": ""})()
+
+    monkeypatch.setattr(hc.subprocess, "run", fake_run)
+
+    # Record failures for the held ticket
+    fb.record_failure(99, "failed for reason")
+    fb.record_failure(99, "failed for reason")
+
+    result = hc.check_held_by_retry_storm()
+    assert result["severity"] == "red"
+    assert "#99" in result["detail"]
+
+
+def test_check_held_by_retry_storm_green_when_held_no_active_streak(monkeypatch, tmp_path):
+    """Test that check_held_by_retry_storm is green when held tickets have no active streaks."""
+    import failure_breaker as fb
+    monkeypatch.setattr(fb, "LOG_PATH", tmp_path / "failures.jsonl")
+
+    def fake_run(cmd, **kw):
+        if "issue" in cmd and "list" in cmd:
+            return type("R", (), {"returncode": 0, "stdout": json.dumps([{"number": 99, "title": "Test ticket"}])})()
+        return type("R", (), {"returncode": 0, "stdout": ""})()
+
+    monkeypatch.setattr(hc.subprocess, "run", fake_run)
+
+    # Record failures then clear them
+    fb.record_failure(99, "failed for reason")
+    fb.record_failure(99, "failed for reason")
+    fb.record_success(99)  # Clear the streak
+
+    result = hc.check_held_by_retry_storm()
+    assert result["severity"] == "green"
+
+
+def test_check_ticket_failure_streaks_uses_ticket_streak_not_gh_comments(monkeypatch, tmp_path):
+    """Test that check_ticket_failure_streaks uses failure_breaker.ticket_streak."""
+    import failure_breaker as fb
+    monkeypatch.setattr(fb, "LOG_PATH", tmp_path / "failures.jsonl")
+
+    def fake_run(cmd, **kw):
+        if "issue" in cmd and "list" in cmd:
+            return type("R", (), {"returncode": 0, "stdout": json.dumps([{"number": 20, "title": "Test ticket"}])})()
+        return type("R", (), {"returncode": 0, "stdout": ""})()
+
+    monkeypatch.setattr(hc.subprocess, "run", fake_run)
+
+    # Record 2 failures via failure_breaker
+    fb.record_failure(20, "reason 1")
+    fb.record_failure(20, "reason 2")
+
+    results = hc.check_ticket_failure_streaks()
+    streak_results = {r["id"]: r for r in results}
+    assert "ticket:streak:20" in streak_results
+    assert streak_results["ticket:streak:20"]["value"] == 2
+
+
+def test_check_ticket_failure_streaks_yellow_at_threshold_2(monkeypatch, tmp_path):
+    """Test that check_ticket_failure_streaks turns yellow when streak reaches 2."""
+    import failure_breaker as fb
+    monkeypatch.setattr(fb, "LOG_PATH", tmp_path / "failures.jsonl")
+
+    def fake_run(cmd, **kw):
+        if "issue" in cmd and "list" in cmd:
+            return type("R", (), {"returncode": 0, "stdout": json.dumps([{"number": 20, "title": "Test"}])})()
+        return type("R", (), {"returncode": 0, "stdout": ""})()
+
+    monkeypatch.setattr(hc.subprocess, "run", fake_run)
+
+    fb.record_failure(20, "reason 1")
+    fb.record_failure(20, "reason 2")
+
+    results = hc.check_ticket_failure_streaks()
+    assert results[0]["severity"] == "yellow"
+    assert "one more parks it" in results[0]["detail"]
