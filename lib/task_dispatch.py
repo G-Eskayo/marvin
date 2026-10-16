@@ -26,9 +26,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from machine_profile import registry_id, remote_devices, _load_registry  # noqa: E402
+import host_os  # noqa: E402
 
 DISPATCH_STATE_PATH = Path.home() / ".claude" / "dispatch-state.json"
-TAILSCALE_BIN = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+TAILSCALE_BIN = host_os.tailscale_bin()
 # The GUI app's CLI refuses to run without a TERM ("The Tailscale GUI failed to start"), which is exactly what launchd
 # provides. Found 2026-10-05: under launchd it printed that error, and the parse below read it as one online host
 # called "Tailscale", so no peer ever looked reachable.
