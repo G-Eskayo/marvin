@@ -29,7 +29,10 @@ SAMPLE = {"URL": "/ai-projects/mancala/", "TITLE": "Mancala", "THUMBNAIL": "/u/t
 
 
 def entries():
-    return json.loads((ROOT / "templates.json").read_text())["templates"]
+    # Runs at collection, before pytestmark's skip applies: without the repo, return nothing rather than crash the
+    # whole suite (found running it on mac-mini-2012, which has no portfolio checkout; ADR 0069).
+    manifest = ROOT / "templates.json"
+    return json.loads(manifest.read_text())["templates"] if manifest.exists() else []
 
 
 @pytest.mark.parametrize("e", entries(), ids=lambda e: e["id"])
