@@ -122,3 +122,13 @@ def test_a_file_whose_content_changes_after_compression_is_reported_not_trusted(
         return ok
     out = cc.compress_cold(tmp_path, "*.jsonl", min_age_days=7, compress=corrupting)
     assert out["compressed"] == [] and "content changed" in out["failed"][0]["reason"]
+
+
+def test_a_file_system_without_bsd_flags_reads_as_not_compressed(tmp_path, monkeypatch):
+    # Linux os.stat results have no st_flags (found on mac-mini-2012, ADR 0069).
+    import types
+    p = tmp_path / "f"
+    p.write_text("x")
+    real = cc.os.stat(p)
+    monkeypatch.setattr(cc.os, "stat", lambda path, **kw: types.SimpleNamespace(st_mode=real.st_mode, st_blocks=real.st_blocks))
+    assert cc._is_compressed(p) is False

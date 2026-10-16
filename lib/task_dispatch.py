@@ -26,9 +26,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from machine_profile import registry_id, remote_devices, _load_registry  # noqa: E402
+import host_os  # noqa: E402
 
 DISPATCH_STATE_PATH = Path.home() / ".claude" / "dispatch-state.json"
-TAILSCALE_BIN = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+TAILSCALE_BIN = host_os.tailscale_bin()
 # The GUI app's CLI refuses to run without a TERM ("The Tailscale GUI failed to start"), which is exactly what launchd
 # provides. Found 2026-10-05: under launchd it printed that error, and the parse below read it as one online host
 # called "Tailscale", so no peer ever looked reachable.
@@ -89,16 +90,37 @@ def _candidates() -> dict:
     each tagged with whether it's self."""
     self_id = registry_id()
     devices = _load_registry()
-    result = {self_id: {"is_self": True, "tailscale_hostname": None}}
+    result = {self_id: {**devices.get(self_id, {}), "is_self": True, "tailscale_hostname": None}}
     for device_id, info in remote_devices().items():
         result[device_id] = {**info, "is_self": False}
     return result
 
 
-def select_machine(explicit_target: str | None = None) -> tuple[str, dict] | None:
+GENERAL = "general"
+
+
+def _normalise_need(need: str | None) -> str:
+    return (need or "").strip().lower() or GENERAL
+
+
+def accepts(info: dict, need: str) -> bool:
+    """Whether a registry entry takes work tagged `need` (ADR 0069). An entry with no `accepts` predates tags
+    and takes general work only; a malformed one takes nothing, so a registry typo fails closed."""
+    if "accepts" not in info:
+        return need == GENERAL
+    tags = info["accepts"]
+    if not isinstance(tags, list):
+        return False
+    return need in {str(t).strip().lower() for t in tags}
+
+
+def select_machine(explicit_target: str | None = None, need: str | None = None) -> tuple[str, dict] | None:
     """Pick a device to run on. Explicit target skips liveness/load checks
-    on OTHER machines but still validates the target itself is usable."""
-    devices = _candidates()
+    on OTHER machines but still validates the target itself is usable.
+    Only devices that accept `need` qualify (untagged work is "general"), named targets included: there is
+    no fallback to a device that doesn't accept it, so quarantine work can never land on a Mac."""
+    need = _normalise_need(need)
+    devices = {d: info for d, info in _candidates().items() if accepts(info, need)}
 
     if explicit_target:
         if explicit_target not in devices:
@@ -117,7 +139,7 @@ def select_machine(explicit_target: str | None = None) -> tuple[str, dict] | Non
     online = _tailscale_online_hosts()
     # Prefer self first (no SSH round-trip needed), then remotes in registry order.
     self_id = registry_id()
-    ordered_ids = [self_id] + [d for d in devices if d != self_id]
+    ordered_ids = [d for d in [self_id] if d in devices] + [d for d in devices if d != self_id]
     for device_id in ordered_ids:
         info = devices[device_id]
         if info["is_self"]:
@@ -199,14 +221,16 @@ fi
 
 def dispatch(command: str, target: str | None = None, mode: str = "sync",
              timeout: int = 300, task_label: str | None = None, ticket: str | None = None,
-             repo: str | None = None) -> DispatchResult:
+             repo: str | None = None, need: str | None = None) -> DispatchResult:
     """Run `command` on an available device. mode: "sync" (wait, capture
     output) or "async" (fire-and-forget, returns immediately). Fails loud,
     no automatic retry on a different machine. Optional ticket/repo metadata are stored
     in the task record for tracking and UI display."""
-    selected = select_machine(target)
+    selected = select_machine(target, need=need)
     if selected is None:
-        reason = f"target '{target}' unavailable" if target else "no machine currently available"
+        tag = _normalise_need(need)
+        reason = (f"target '{target}' unavailable or doesn't accept '{tag}' work" if target
+                  else f"no machine that accepts '{tag}' work is currently available")
         return DispatchResult(ok=False, error=reason)
 
     device_id, info = selected
@@ -279,9 +303,11 @@ def main() -> None:
     ap.add_argument("--target", default=None, help="explicit device id (e.g. mac-mini-1) instead of auto-select")
     ap.add_argument("--async", dest="async_mode", action="store_true", help="fire-and-forget, don't wait for completion")
     ap.add_argument("--timeout", type=int, default=300, help="seconds to wait in sync mode (default 300)")
+    ap.add_argument("--needs", default=None, help="work tag the job needs, e.g. quarantine or test (default: general)")
     args = ap.parse_args()
 
-    result = dispatch(args.command, target=args.target, mode="async" if args.async_mode else "sync", timeout=args.timeout)
+    result = dispatch(args.command, target=args.target, mode="async" if args.async_mode else "sync", timeout=args.timeout,
+                      need=args.needs)
     if result.ok:
         print(f"[dispatch] ran on {result.device_id}", file=sys.stderr)
         if result.output is not None:

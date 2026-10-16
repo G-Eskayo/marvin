@@ -26,6 +26,9 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import host_os  # noqa: E402  (memory_dir: the synced memory on every machine, ADR 0069)
+
 KIND_ENV = "MARVIN_LAUNCH_KIND"  # the same marker marvin_launcher sets
 HOME = Path.home()
 AGENTS = HOME / ".agents"
@@ -34,7 +37,7 @@ GATE_SCRIPT = AGENTS / "lib" / "marvin_hooks.py"
 USER_SETTINGS = HOME / ".claude" / "settings.json"
 LOCAL_SETTINGS = HOME / ".claude" / "settings.local.json"
 PROJECTS = HOME / ".claude" / "projects"
-MAIN_MEMORY = PROJECTS / str(HOME).replace("/", "-") / "memory"
+MAIN_MEMORY = host_os.memory_dir()
 
 
 @dataclass(frozen=True)

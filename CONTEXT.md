@@ -1376,9 +1376,11 @@ MARVIN-as-OS north star).
   elsewhere, so this box measures quality, not model speed.
 - **Disposable VM** (decided 2026-10-16): how test runs are kept apart. Each (b1) or (b2) run gets a throwaway copy
   of a frozen **golden image**, runs, records its results, and is deleted. Two golden images: **marvin-test** (clean
-  MARVIN, never touches untrusted code) and **quarantine** (bare Kali for untrusted code). The host OS itself is the
+  MARVIN, never touches untrusted code) and **quarantine** (bare Debian for untrusted code: no MARVIN, no sudo, its own
+  SSH key, never handed a secret). The host OS itself is the
   trusted control layer, and untrusted code never runs on it directly. Roughly 2 test VMs at once with Whonix up.
-  The quarantine VM's network (none, or through Whonix) is decided later.
+  The quarantine VM's network is decided later. Until then it is **isolated**: no route out, and the only thing it can
+  reach on the box is DHCP/DNS.
 - **Work tags** (decided 2026-10-16): how dispatch knows which work a device may take. Each registry entry lists
   the tags it **accepts**: the Macs take `general` and `macos`, and mac-mini-2012 takes `security`, `quarantine`,
   `test` and `bench`. A job may name the tag it **needs**, and untagged work counts as `general`, so every job that
@@ -1389,6 +1391,9 @@ MARVIN-as-OS north star).
 - **Pull-only node** (decided 2026-10-16, ADR 0069): mac-mini-2012 receives code sync and never sends it. Its
   only way to change MARVIN's code is a **gated branch**: a PR pushed from a disposable marvin-test VM with a
   credential handed in for that run, which then earns trust under ADR 0064's ramp. `main` is PR-only for everyone
-  except the Macs' code sync. Scheduled jobs on the box: code-sync pull and the health check. Everything else
-  arrives as dispatched work.
+  except the Macs' code sync. The box's only scheduled job is the **mirror** (pull-only code sync,
+  every 10 minutes). Its health is checked from the Macs, which already reach every registered device; Mac-only checks
+  skip it. Everything else arrives as dispatched work.
+- **Bot PRs** (built 2026-10-16): PRs by MARVIN-bot-gil always wait for Gil, which is stricter than the 5-PR ramp.
+  A per-author streak can replace that later.
 - **Open in this design** (as of 2026-10-16): the box's GitHub identity; sudo scope; Claude Code sign-in on Linux.
