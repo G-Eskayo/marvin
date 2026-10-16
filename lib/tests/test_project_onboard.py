@@ -2491,8 +2491,9 @@ import ticket_policy as _pol
 class FakeGitHub:
     """Just enough of `gh` for _apply_pr: answers by command, remembers every call."""
 
-    def __init__(self, issues=(), prs=(), fail=()):
+    def __init__(self, issues=(), prs=(), fail=(), remote_files=None):
         self.issues, self.prs, self.fail, self.calls = list(issues), list(prs), set(fail), []
+        self.remote_files = remote_files or {}  # path -> {"content": b64_content, "sha": sha}
 
     def __call__(self, args):
         self.calls.append(args)
@@ -2503,6 +2504,36 @@ class FakeGitHub:
             return json.dumps({"object": {"sha": "abc123"}})
         if "POST" in args and s.endswith("git/refs") or "-X POST" in s and "git/refs" in s:
             return json.dumps({"ref": "refs/heads/onboarding/agent-docs-ci"})
+
+        # Handle GET requests for file contents (no -X flag)
+        if "api" in args and "contents" in s and "-X" not in args:
+            for i, arg in enumerate(args):
+                if arg.startswith("repos/"):
+                    path_part = arg.split("contents/")[1] if "contents/" in arg else None
+                    if path_part and path_part in self.remote_files:
+                        return json.dumps(self.remote_files[path_part])
+            return ""  # file doesn't exist
+
+        # Handle PUT requests for file contents
+        if "api" in args and "contents" in s and "-X" in args and "PUT" in args:
+            # Extract file path and content from args
+            for i, arg in enumerate(args):
+                if arg.startswith("repos/") and "contents/" in arg:
+                    path_part = arg.split("contents/")[1]
+                    # Extract content from -f content=... arg
+                    content_arg = None
+                    for j, a in enumerate(args):
+                        if a.startswith("content="):
+                            content_arg = a.split("content=", 1)[1]
+                    if content_arg:
+                        # Update remote file
+                        self.remote_files[path_part] = {
+                            "content": content_arg,
+                            "sha": "abc123"  # simulated sha
+                        }
+                        return json.dumps({"ok": True})
+            return ""
+
         if args[:2] == ["issue", "list"]:
             return json.dumps([i for i in self.issues if i.get("state", "OPEN") == "OPEN"])
         if args[:2] == ["issue", "create"]:
@@ -2513,12 +2544,16 @@ class FakeGitHub:
         if args[:2] == ["pr", "create"]:
             if self.prs:
                 return ""  # one already open on this branch
-            self.prs.append({"number": 7, "url": "https://github.com/test/repo/pull/7", "body": args[args.index("--body") + 1]})
+            self.prs.append({"number": 7, "url": "https://github.com/test/repo/pull/7", "title": args[args.index("--title") + 1], "body": args[args.index("--body") + 1]})
             return "https://github.com/test/repo/pull/7\n"
         if args[:2] == ["pr", "list"]:
             return json.dumps(self.prs)
         if args[:2] == ["pr", "edit"]:
-            self.prs[0]["body"] = args[args.index("--body") + 1]
+            if "--title" in args:
+                self.prs[0]["title"] = args[args.index("--title") + 1]
+            if "--body" in args:
+                self.prs[0]["body"] = args[args.index("--body") + 1]
+            return "ok"  # return truthy for successful edit
         return ""
 
     def made(self, *head):
@@ -2577,6 +2612,82 @@ def test_a_pr_that_already_closes_the_ticket_is_left_alone():
     assert not gh.made("pr", "edit")
 
 
+def test_identical_content_skip_does_not_count_as_written():
+    """Files with identical remote content are skipped, not added to written list."""
+    # Seed remote_files with real _render_agent_docs output
+    rendered = po._render_agent_docs("test/repo")
+    remote_files = {
+        "docs/agents/issue-tracker.md": {
+            "content": po.base64.b64encode(rendered["docs/agents/issue-tracker.md"].encode()).decode(),
+            "sha": "abc123"
+        },
+        "docs/agents/triage-labels.md": {
+            "content": po.base64.b64encode(rendered["docs/agents/triage-labels.md"].encode()).decode(),
+            "sha": "abc123"
+        },
+        "docs/agents/domain.md": {
+            "content": po.base64.b64encode(rendered["docs/agents/domain.md"].encode()).decode(),
+            "sha": "abc123"
+        }
+    }
+    gh = FakeGitHub(remote_files=remote_files)
+    fresh_with_ci = {**_FRESH, "detected_stack": "swift-package"}
+    result = po._apply_pr("test/repo", fresh_with_ci, _MISSING, gh=gh, auth_status=_SCOPED)
+    # When content is identical, those files should not appear in the written list
+    assert result["action"] == "created"
+    files_written = result.get("files", [])
+    assert "docs/agents/issue-tracker.md" not in files_written
+    assert "docs/agents/triage-labels.md" not in files_written
+    assert "docs/agents/domain.md" not in files_written
+
+
+def test_ci_yml_write_failure_leaves_it_out_of_files():
+    """When CI write fails, the file is not included in the result's files list."""
+    gh = FakeGitHub(fail=("PUT",))  # fail all write operations
+    fresh_with_ci = {**_FRESH, "detected_stack": "swift-package"}
+    result = po._apply_pr("test/repo", fresh_with_ci, _MISSING, gh=gh, auth_status=_SCOPED)
+    assert ".github/workflows/ci.yml" not in result.get("files", [])
+
+
+def test_claude_md_write_tracks_content():
+    """When CLAUDE.md is written, it tracks the content correctly."""
+    gh = FakeGitHub()
+    fresh_with_ci = {**_FRESH, "detected_stack": "swift-package"}
+    result = po._apply_pr("test/repo", fresh_with_ci, _MISSING, gh=gh, auth_status=_SCOPED)
+    assert result["action"] == "created"
+    # Verify that CLAUDE.md was included in the written files list
+    files = result.get("files", [])
+    # CLAUDE.md should be in files since it needs the agent skills block
+    assert "CLAUDE.md" in files
+    # Verify that the remote_files now contain CLAUDE.md
+    assert "CLAUDE.md" in gh.remote_files or any("CLAUDE.md" in " ".join(c) for c in gh.made("api"))
+
+
+def test_pr_title_is_literal_repo_name_with_ci_added():
+    """PR title should use literal repo name like 'Onboarding test-repo: agent docs and CI'."""
+    gh = FakeGitHub()
+    result = po._apply_pr("test/repo", _FRESH, _MISSING, gh=gh, auth_status=_SCOPED)
+    pr = gh.prs[0]
+    assert "Onboarding" in pr["title"]
+    assert "repo" in pr["title"]
+    assert "agent docs" in pr["title"]
+
+
+def test_pr_body_contains_exact_files_written():
+    """PR body lists exactly the files that were written."""
+    gh = FakeGitHub()
+    result = po._apply_pr("test/repo", _FRESH, _MISSING, gh=gh, auth_status=_SCOPED)
+    pr = gh.prs[0]
+    # Body should start with "Onboarding repo: ..." format
+    assert pr["body"].startswith("Onboarding repo:")
+    # Body should contain "Files written:" if any files were written
+    files_written = result.get("files", [])
+    if files_written:
+        assert "Files written:" in pr["body"]
+        for f in files_written:
+            assert f"- {f}" in pr["body"]
+
+
 def test_no_ticket_means_no_pr_and_a_retry_next_hour():
     gh = FakeGitHub(fail=("issue create",))
     result = po._apply_pr("test/repo", _FRESH, _MISSING, gh=gh, auth_status=_SCOPED)
@@ -2612,3 +2723,65 @@ def test_link_onboarding_pr_with_no_open_pr_files_nothing():
     gh = FakeGitHub()
     assert po.link_onboarding_pr("test/repo", gh=gh) == {"action": "no-pr"}
     assert not gh.made("issue", "create")
+
+
+# ── B7-B13: onboarding PR title and body dynamic generation ────
+
+def test_onboarding_pr_title_includes_repo_name_b7():
+    """B7: Onboarding PR title includes the repo name."""
+    title = po._onboarding_pr_title("G-Eskayo/marvin", False)
+    assert "marvin" in title
+
+
+def test_onboarding_pr_title_includes_ci_when_added_b8():
+    """B8: Onboarding PR title includes 'and CI' when CI is added."""
+    title = po._onboarding_pr_title("G-Eskayo/finance-os", True)
+    assert "and CI" in title and "finance-os" in title
+
+
+def test_onboarding_pr_title_omits_ci_when_not_added_b9():
+    """B9: Onboarding PR title says 'agent docs' only when CI is not added."""
+    title = po._onboarding_pr_title("test/repo", False)
+    assert "and CI" not in title and "agent docs" in title
+
+
+def test_onboarding_pr_body_lists_written_files_b10():
+    """B10: Onboarding PR body lists the files that were written."""
+    body = po._onboarding_pr_body("test/repo", ["docs/agents/issue-tracker.md", "CLAUDE.md"], False)
+    assert "docs/agents/issue-tracker.md" in body and "CLAUDE.md" in body
+
+
+def test_onboarding_pr_files_written_when_success_b11():
+    """B11: PR body tracks which files were successfully written."""
+    gh = FakeGitHub()
+    result = po._apply_pr("test/repo", _FRESH, _MISSING, gh=gh, auth_status=_SCOPED)
+    assert result["action"] == "created"
+    files_written = result.get("files", [])
+    # Verify at least some files were written
+    assert len(files_written) > 0
+    # Verify the PR body mentions the files that were written
+    if files_written:
+        assert "Files written:" in gh.prs[0]["body"] or any(f in gh.prs[0]["body"] for f in files_written)
+
+
+def test_onboarding_pr_includes_ci_in_files_when_added_b12():
+    """B12: CI.yml is included in files list when missing and added."""
+    gh = FakeGitHub()
+    result = po._apply_pr("test/repo", _FRESH, _MISSING, gh=gh, auth_status=_SCOPED)
+    assert result["action"] == "created"
+    files_written = result.get("files", [])
+    # CI should be in files since ci is missing in plan
+    assert ".github/workflows/ci.yml" in files_written
+    # Agent docs should also be in files since they're missing
+    assert any("docs/agents" in f for f in files_written)
+
+
+def test_onboarding_pr_title_reflects_ci_added_b13():
+    """B13: PR title includes 'and CI' when CI.yml is added by _apply_pr."""
+    gh = FakeGitHub()
+    result = po._apply_pr("test/repo", _FRESH, _MISSING, gh=gh, auth_status=_SCOPED)
+    assert result["action"] == "created"
+    files_with_ci = result.get("files", [])
+    ci_in_title = "and CI" in gh.prs[0]["title"]
+    ci_written = ".github/workflows/ci.yml" in files_with_ci
+    assert ci_in_title == ci_written  # Title reflects actual written state

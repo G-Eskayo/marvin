@@ -656,7 +656,7 @@ function registerMrReviewHandlers() {
   const fixturePrs = process.env.MARVIN_MR_FIXTURE ? async () => JSON.parse(readFileSync(process.env.MARVIN_MR_FIXTURE, 'utf8')) : null
   ipcMain.handle('mr:list', () => {
     if (!fixturePrs) listOpenPrs().then((prs) => stackRetarget.check(prs)).catch(() => {})
-    return listPipelinePrs(fixturePrs || listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets, autoMergeShadow: getAutoMergeShadow, uiPathsFor: (repo) => readUiPaths(repo) })
+    return listPipelinePrs(fixturePrs || listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets, autoMergeShadow: getAutoMergeShadow, ghIssueView, uiPathsFor: (repo) => readUiPaths(repo) })
   })
 
   // Backs the MR Review tab's status dot -- red/blue/green computed from

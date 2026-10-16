@@ -206,13 +206,23 @@ export function createDashboardGhApiRouter(opts = {}) {
         // Get rework status
         const reworkStatus = reworkRun ? async () => getReworkStatus({ run: reworkRun }) : null
 
+        // Title normalization: resolve bare "Implement repo#n" to actual ticket titles
+        const ghIssueView = async (number, repo) => {
+          const { stdout } = await exec('gh', [
+            'issue', 'view', String(number), '--repo', repo,
+            '--json', 'number,title'
+          ])
+          return JSON.parse(stdout)
+        }
+
         const prs = await listPipelinePrs(listOpenPrs, {
           canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos(mergeableProfilesDir)),
           sentBackTickets,
           closedTickets,
           reworkStatus,
           rebaseStatus,
-          autoMergeShadow
+          autoMergeShadow,
+          ghIssueView
         })
 
         res.writeHead(200, { 'Content-Type': 'application/json' }).end(

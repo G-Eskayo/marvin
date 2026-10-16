@@ -1,0 +1,13 @@
+1. `dashboard/mobile-backend/dashboard_gh_api.js`: revert the `/mr/ticket-context` route's `ghIssueView` back to `--json 'number,title,body'` (leave the `listPipelinePrs` route's `ghIssueView` at `number,title`, unchanged).
+2. `dashboard/mobile-backend/dashboard_gh_api.js` test coverage: add/extend a test asserting `fetchTicketContext` via the `/mr/ticket-context` route still resolves a `## Parent` ref (i.e. `ticket.body` is populated) — this is the test that would have caught finding #1.
+3. `lib/tests/test_project_onboard.py`: rewrite `test_identical_content_skip_does_not_count_as_written` to seed `remote_files` from real `_render_agent_docs` output and assert on `files`, per Fix #2.
+4. `lib/tests/test_project_onboard.py`: replace B11/B12/B13 with the three non-circular, fault-targeted tests in Fix #3.
+5. `lib/tests/test_project_onboard.py`: rewrite `test_claude_md_write_failure_leaves_it_out_of_files` to target the PUT specifically and add the positive-control assertion, per Fix #4.
+6. `lib/tests/test_mr_raiser.py`: stub `_ticket_title` in A3/A4/A5.
+7. `lib/tests/test_mr_raiser.py`: rewrite A6 to fail at the `gh issue view` boundary instead of stubbing `_ticket_title`.
+8. `lib/tests/test_mr_raiser.py`: replace the malformed-ref and repeat-dispatch tests per Fix #5.
+9. `dashboard/test/mr_review.test.js`: add the dotted-repo-name and false-positive-guard tests (additions only — C14/C16/C21 stay as-is, verified correct).
+10. Run `lib/tests` and `dashboard/test` in full. Before finalizing, revert each production fix one at a time and confirm its corresponding new/rewritten test fails — the sanity check the last attempt's task list promised but that still needs doing for this round's changes specifically.
+11. Delete `docs/design/pipeline-g-eskayo-marvin-454-tasks.md` (leftover verbatim duplicate of a design doc's own task list, flagged by the last review as a drift risk — confirmed present and still a duplicate).
+12. Retitle the 3 open pipeline PRs: `gh pr edit 400 --repo G-Eskayo/marvin --title "Stop retry storms: hold a ticket after N failed pipeline runs (#218)"`, `gh pr edit 368 --repo G-Eskayo/marvin --title "Pipeline stage strip on PR and ticket cards (GitLab-style), showing where it failed (#217)"`, `gh pr edit 359 --repo G-Eskayo/marvin --title "Usage: show how much of the allowance autonomous work uses (no cap yet) (#81)"`. Skip #358 (confirmed CLOSED). Verify each with `gh pr view <n> --json title`.
+13. Screenshot evidence for the PR: MR Review tab showing (a) the existing non-marvin repo badge (pre-existing, confirmed at `MrReview.jsx:416`), (b) a card whose title now reads the real ticket title instead of a bare `Implement …#n`.

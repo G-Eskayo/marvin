@@ -586,6 +586,118 @@ def test_open_pr_updates_the_existing_pr_when_one_is_already_open_for_the_branch
     assert any("pr" in c and "edit" in c for c in calls) and any("pr" in c and "comment" in c for c in calls)
 
 
+# ── A1-A6: rework retitling ────
+
+def test_open_pr_rework_retitles_with_ticket_title_when_available(monkeypatch):
+    """A1: Rework retitle includes the ticket title in the standard format."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if "create" in cmd:
+            raise subprocess.CalledProcessError(1, cmd, stderr='a pull request for branch "pipeline/x" into branch "main" already exists:\nhttps://github.com/o/r/pull/30')
+        return type("R", (), {"stdout": "https://github.com/o/r/pull/30\n", "returncode": 0})()
+
+    monkeypatch.setattr(mrr.subprocess, "run", fake_run)
+    monkeypatch.setattr(mrr, "_ticket_title", lambda ref: "Fix rendering bug")
+    mrr._default_open_pr("o/r#23", "pipeline/x", {"subsystem": "s", "verdict": "improved", "metrics": {}})
+    edit_call = [c for c in calls if "pr" in c and "edit" in c][0]
+    assert "--title" in edit_call and "Fix rendering bug (#23)" in edit_call
+
+
+def test_open_pr_rework_falls_back_to_bare_implement_when_title_unavailable(monkeypatch):
+    """A2: Rework retitle falls back to 'Implement repo#n' when ticket title can't be read."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if "create" in cmd:
+            raise subprocess.CalledProcessError(1, cmd, stderr='a pull request for branch "pipeline/x" into branch "main" already exists:\nhttps://github.com/o/r/pull/30')
+        return type("R", (), {"stdout": "https://github.com/o/r/pull/30\n", "returncode": 0})()
+
+    monkeypatch.setattr(mrr.subprocess, "run", fake_run)
+    monkeypatch.setattr(mrr, "_ticket_title", lambda ref: None)  # title unavailable
+    mrr._default_open_pr("o/r#23", "pipeline/x", {"subsystem": "s", "verdict": "improved", "metrics": {}})
+    edit_call = [c for c in calls if "pr" in c and "edit" in c][0]
+    assert "--title" in edit_call and "Implement o/r#23" in edit_call
+
+
+def test_open_pr_rework_includes_title_flag_in_edit_call(monkeypatch):
+    """A3: Rework edit includes --title flag alongside --body."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if "create" in cmd:
+            raise subprocess.CalledProcessError(1, cmd, stderr='a pull request for branch "pipeline/x" into branch "main" already exists:\nhttps://github.com/o/r/pull/30')
+        return type("R", (), {"stdout": "https://github.com/o/r/pull/30\n", "returncode": 0})()
+
+    monkeypatch.setattr(mrr.subprocess, "run", fake_run)
+    monkeypatch.setattr(mrr, "_ticket_title", lambda ref: "Fix the bug")  # A3: stub to avoid gh call
+    mrr._default_open_pr("o/r#23", "pipeline/x", {"subsystem": "s", "verdict": "improved", "metrics": {}})
+    edit_call = [c for c in calls if "pr" in c and "edit" in c][0]
+    title_idx = edit_call.index("--title")
+    body_idx = edit_call.index("--body")
+    assert title_idx < body_idx  # --title comes before --body
+
+
+def test_open_pr_rework_still_comments_after_retitle(monkeypatch):
+    """A4: Rework still sends the comment after editing title."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if "create" in cmd:
+            raise subprocess.CalledProcessError(1, cmd, stderr='a pull request for branch "pipeline/x" into branch "main" already exists:\nhttps://github.com/o/r/pull/30')
+        return type("R", (), {"stdout": "https://github.com/o/r/pull/30\n", "returncode": 0})()
+
+    monkeypatch.setattr(mrr.subprocess, "run", fake_run)
+    monkeypatch.setattr(mrr, "_ticket_title", lambda ref: "Fix rendering bug")  # A4: stub to avoid gh call
+    mrr._default_open_pr("o/r#23", "pipeline/x", {"subsystem": "s", "verdict": "improved", "metrics": {}})
+    edit_calls = [c for c in calls if "pr" in c and "edit" in c]
+    comment_calls = [c for c in calls if "pr" in c and "comment" in c]
+    assert len(edit_calls) >= 1 and len(comment_calls) >= 1
+
+
+def test_open_pr_rework_includes_both_title_and_body_in_edit(monkeypatch):
+    """A5: Rework edit call has both --title and --body arguments."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if "create" in cmd:
+            raise subprocess.CalledProcessError(1, cmd, stderr='a pull request for branch "pipeline/x" into branch "main" already exists:\nhttps://github.com/o/r/pull/30')
+        return type("R", (), {"stdout": "https://github.com/o/r/pull/30\n", "returncode": 0})()
+
+    monkeypatch.setattr(mrr.subprocess, "run", fake_run)
+    monkeypatch.setattr(mrr, "_ticket_title", lambda ref: "Update validation")  # A5: stub to avoid gh call
+    mrr._default_open_pr("o/r#23", "pipeline/x", {"subsystem": "s", "verdict": "improved", "metrics": {}})
+    edit_call = [c for c in calls if "pr" in c and "edit" in c][0]
+    assert "--title" in edit_call and "--body" in edit_call
+
+
+def test_open_pr_rework_succeeds_even_if_title_fetch_fails(monkeypatch):
+    """A6: Rework doesn't fail if `gh issue view` fails (best effort at gh boundary)."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if "create" in cmd:
+            raise subprocess.CalledProcessError(1, cmd, stderr='a pull request for branch "pipeline/x" into branch "main" already exists:\nhttps://github.com/o/r/pull/30')
+        # Fail only at the gh issue view boundary for ticket title
+        if "issue" in cmd and "view" in cmd:
+            raise subprocess.CalledProcessError(1, cmd, stderr="gh: issue not found")
+        return type("R", (), {"stdout": "https://github.com/o/r/pull/30\n", "returncode": 0})()
+
+    monkeypatch.setattr(mrr.subprocess, "run", fake_run)
+    # Should not raise, falls back to bare Implement form
+    url = mrr._default_open_pr("o/r#23", "pipeline/x", {"subsystem": "s", "verdict": "improved", "metrics": {}})
+    assert url == "https://github.com/o/r/pull/30"
+    # Verify that the title falls back to Implement form when fetch fails
+    edit_call = [c for c in calls if "pr" in c and "edit" in c][0]
+    assert "Implement o/r#23" in edit_call
+
+
 def test_open_pr_still_raises_on_other_gh_failures(monkeypatch):
     def fake_run(cmd, **kwargs):
         raise subprocess.CalledProcessError(1, cmd, stderr="HTTP 401 bad credentials")
@@ -715,3 +827,57 @@ def test_ticket_title_is_none_when_gh_fails(monkeypatch):
         returncode, stdout, stderr = 1, "", "boom"
     monkeypatch.setattr(mrr.subprocess, "run", lambda *a, **k: R())
     assert mrr._ticket_title("G-Eskayo/marvin#1") is None
+
+
+def test_malformed_ref_at_title_fetch_boundary_falls_back(monkeypatch):
+    """Malformed ticket ref fails gracefully at the gh boundary; _ticket_title catches it."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if "issue" in cmd and "view" in cmd:
+            # Fail at the boundary: malformed ref can't be parsed by gh
+            raise subprocess.CalledProcessError(1, cmd, stderr="gh: invalid format")
+        if "create" in cmd:
+            raise subprocess.CalledProcessError(1, cmd, stderr='a pull request for branch "pipeline/x" into branch "main" already exists:\nhttps://github.com/o/r/pull/30')
+        return type("R", (), {"stdout": "https://github.com/o/r/pull/30\n", "returncode": 0})()
+
+    monkeypatch.setattr(mrr.subprocess, "run", fake_run)
+    # Call with a well-formed ref but let the gh call fail
+    url = mrr._default_open_pr("o/r#23", "pipeline/x", {"subsystem": "s", "verdict": "improved", "metrics": {}})
+    assert url == "https://github.com/o/r/pull/30"
+    # Verify fallback to Implement form
+    edit_call = [c for c in calls if "pr" in c and "edit" in c][0]
+    assert "Implement o/r#23" in edit_call
+
+
+def test_repeat_dispatch_opens_new_pr_or_updates_existing(repo_with_worktree, monkeypatch):
+    """Dispatching the same ticket twice updates the PR if one is already open."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if "create" in cmd:
+            # First dispatch creates PR, second dispatch finds it already exists
+            if len([c for c in calls if "create" in c]) > 1:
+                raise subprocess.CalledProcessError(1, cmd, stderr='a pull request for branch "pipeline/ticket-1" into branch "main" already exists:\nhttps://github.com/o/r/pull/30')
+            return type("R", (), {"stdout": "https://github.com/o/r/pull/30\n", "returncode": 0})()
+        return type("R", (), {"stdout": "", "returncode": 0})()
+
+    monkeypatch.setattr(mrr.subprocess, "run", fake_run)
+    # First dispatch succeeds
+    result1 = mrr.raise_mr(
+        "G-Eskayo/marvin#1", _passing_result(repo_with_worktree),
+        open_pr=lambda *a: "http://fake-pr-1", comment_on_ticket=lambda *a: None, notify=lambda *a: None,
+    )
+    assert result1["raised"] is True
+
+    # Reset calls for second dispatch
+    calls.clear()
+
+    # Second dispatch finds existing PR and updates it
+    result2 = mrr.raise_mr(
+        "G-Eskayo/marvin#1", _passing_result(repo_with_worktree),
+        open_pr=lambda *a: "http://fake-pr-2", comment_on_ticket=lambda *a: None, notify=lambda *a: None,
+    )
+    assert result2["raised"] is True

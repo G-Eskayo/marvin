@@ -402,6 +402,18 @@ describe('fetchTicketContext', () => {
     const result = await fetchTicketContext('78', ghIssueView)
     expect(result).toEqual({ ticket: null, parent: null })
   })
+
+  it('preserves the full ticket body including sections like ## Parent', async () => {
+    const ghIssueView = vi.fn().mockResolvedValue({
+      number: 78,
+      title: 'Ticket with parent',
+      body: TICKET_WITH_PARENT_BODY
+    })
+    const result = await fetchTicketContext('78', ghIssueView)
+    expect(result.ticket.body).toBe(TICKET_WITH_PARENT_BODY)
+    expect(result.ticket.body).toContain('## Parent')
+    expect(result.ticket.body).toContain('G-Eskayo/marvin#72')
+  })
 })
 
 describe('listPipelinePrs: sent-back tickets (marvin #129)', () => {
@@ -474,5 +486,118 @@ describe('listPipelinePrs: post-merge rebase result (#225)', () => {
     expect(withIt.rebase).toEqual({ state: 'conflict', after: 229, files: ['a.js'] })
     const [without] = await listPipelinePrs(list, { rebaseStatus: async () => { throw new Error('webhook down') } })
     expect(without.rebase).toBe(null)
+  })
+})
+
+
+describe('PR title normalization C14-C21', () => {
+  it('C14: listPipelinePrs calls ghIssueView for bare "Implement repo#n" titles', async () => {
+    const ghIssueView = vi.fn(async (number) => ({ number, title: 'Fix the bug' }))
+    const pr = { number: 42, title: 'Implement G-Eskayo/marvin#100', url: 'u', body: '' }
+    const list = async () => [pr]
+    const [result] = await listPipelinePrs(list, { ghIssueView })
+    expect(ghIssueView).toHaveBeenCalled()
+    expect(result.title).toContain('Fix the bug')
+  })
+
+  it('C15: normalizeTitle falls back to raw title when ghIssueView is not provided', async () => {
+    const pr = { title: 'Implement G-Eskayo/marvin#42' }
+    const list = async () => [pr]
+    const [result] = await listPipelinePrs(list)  // no ghIssueView passed
+    expect(result.title).toBe('Implement G-Eskayo/marvin#42')
+  })
+
+  it('C16: listPipelinePrs extracts repo and number from bare title and calls ghIssueView', async () => {
+    const ghIssueView = vi.fn(async (number, repo) => ({ number, title: `Issue ${number}` }))
+    const bareTitles = [
+      { pr: { number: 1, title: 'Implement G-Eskayo/marvin#42', url: 'u1', body: '' }, expectedRepo: 'G-Eskayo/marvin', expectedNumber: 42 },
+      { pr: { number: 2, title: 'Implement test-org/test-repo#100', url: 'u2', body: '' }, expectedRepo: 'test-org/test-repo', expectedNumber: 100 }
+    ]
+    for (const { pr, expectedRepo, expectedNumber } of bareTitles) {
+      const list = async () => [pr]
+      await listPipelinePrs(list, { ghIssueView })
+      const lastCall = ghIssueView.mock.calls[ghIssueView.mock.calls.length - 1]
+      expect(lastCall[0]).toBe(expectedNumber)
+      expect(lastCall[1]).toBe(expectedRepo)
+    }
+  })
+
+  it('C17: normalizeTitle calls ghIssueView with correct repo and number', async () => {
+    const calls = []
+    const ghIssueView = vi.fn(async (number, repo) => {
+      calls.push({ number, repo })
+      return { number, title: 'Fix the bug' }
+    })
+    const pr = { number: 42, title: 'Implement G-Eskayo/marvin#100', url: 'u', body: '' }
+    const list = async () => [pr]
+    await listPipelinePrs(list, { ghIssueView })
+    expect(calls.length).toBe(1)
+    expect(calls[0].repo).toBe('G-Eskayo/marvin')
+    expect(calls[0].number).toBe(100)
+  })
+
+  it('C18: normalizeTitle returns "Title (#n)" format when successful', async () => {
+    const ghIssueView = async (number) => ({ number, title: 'Fix rendering bug' })
+    const pr = { number: 42, title: 'Implement G-Eskayo/marvin#100', url: 'u', body: '' }
+    const list = async () => [pr]
+    const [result] = await listPipelinePrs(list, { ghIssueView })
+    expect(result.title).toBe('Fix rendering bug (#100)')
+  })
+
+  it('C19: normalizeTitle falls back to raw title on ghIssueView error', async () => {
+    const ghIssueView = async () => { throw new Error('GitHub API error') }
+    const pr = { number: 42, title: 'Implement G-Eskayo/marvin#100', url: 'u', body: '' }
+    const list = async () => [pr]
+    const [result] = await listPipelinePrs(list, { ghIssueView })
+    expect(result.title).toBe('Implement G-Eskayo/marvin#100')
+  })
+
+  it('C20: listPipelinePrs resolves titles via normalizeTitle for all PRs', async () => {
+    const ghIssueView = async (number) => ({ number, title: `Ticket ${number}` })
+    const prs = [
+      { number: 1, title: 'Implement G-Eskayo/marvin#10', url: 'u1', body: '' },
+      { number: 2, title: 'Implement G-Eskayo/clarity-captions#20', url: 'u2', body: '' },
+      { number: 3, title: 'Already has a real title', url: 'u3', body: '' }
+    ]
+    const list = async () => prs
+    const results = await listPipelinePrs(list, { ghIssueView })
+    expect(results[0].title).toBe('Ticket 10 (#10)')
+    expect(results[1].title).toBe('Ticket 20 (#20)')
+    expect(results[2].title).toBe('Already has a real title')  // Not a bare title, unchanged
+  })
+
+  it('C21: listPipelinePrs does not call ghIssueView for non-bare titles', async () => {
+    const ghIssueView = vi.fn()
+    const pr = { number: 5, title: 'Real PR title about something', url: 'u', body: '' }
+    const list = async () => [pr]
+    const [result] = await listPipelinePrs(list, { ghIssueView })
+    expect(ghIssueView).not.toHaveBeenCalled()
+    expect(result.title).toBe('Real PR title about something')
+  })
+
+  it('null-title: listPipelinePrs handles ghIssueView returning null title gracefully', async () => {
+    const ghIssueView = vi.fn(async () => ({ number: 42, title: null }))
+    const pr = { number: 5, title: 'Implement G-Eskayo/marvin#42', url: 'u', body: '' }
+    const list = async () => [pr]
+    const [result] = await listPipelinePrs(list, { ghIssueView })
+    expect(result.title).toBe('Implement G-Eskayo/marvin#42')  // Falls back to original
+  })
+
+  it('dotted-repo-name: listPipelinePrs handles repos with dots in the name', async () => {
+    const ghIssueView = vi.fn(async (number, repo) => ({ number, title: 'Fix issue' }))
+    const pr = { number: 1, title: 'Implement my-org/my.repo.name#99', url: 'u', body: '' }
+    const list = async () => [pr]
+    const [result] = await listPipelinePrs(list, { ghIssueView })
+    expect(result.title).toBe('Fix issue (#99)')
+    expect(ghIssueView).toHaveBeenCalledWith(99, 'my-org/my.repo.name')
+  })
+
+  it('false-positive-guard: does not treat "Implement" in middle of title as bare form', async () => {
+    const ghIssueView = vi.fn()
+    const pr = { number: 5, title: 'Implement auth: Fix login bug', url: 'u', body: '' }
+    const list = async () => [pr]
+    const [result] = await listPipelinePrs(list, { ghIssueView })
+    expect(result.title).toBe('Implement auth: Fix login bug')  // Not a bare title
+    expect(ghIssueView).not.toHaveBeenCalled()
   })
 })

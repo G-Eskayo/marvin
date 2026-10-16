@@ -960,7 +960,7 @@ under In review, the same as any other piece of work.
 
 ## Your task
 **What I need from you:** a review of the onboarding pull request, then merge it or close it.
-**Where:** the pull request titled "{ONBOARDING_TITLE}" in this repo: the dashboard's MR Review tab, or this ticket's linked pull request on GitHub.
+**Where:** the onboarding pull request in this repo: the dashboard's MR Review tab, or this ticket's linked pull request on GitHub.
 **How:**
 1. Open the pull request. It changes only docs/agents/, CLAUDE.md's "Agent skills" section, and .github/workflows/ci.yml if it adds CI.
 2. Check the CI run on it passes, if it adds CI. If CI fails, the template doesn't fit this project yet: say so here.
@@ -971,6 +971,29 @@ under In review, the same as any other piece of work.
 
 def _closes(ticket: int) -> str:
     return f"Closes #{ticket}"
+
+
+def _onboarding_pr_title(repo: str, ci_added: bool) -> str:
+    """Title for an onboarding PR, includes repo name and what was added (docs only or docs+CI)."""
+    repo_name = repo.rsplit('/', 1)[-1]
+    if ci_added:
+        return f"Onboarding {repo_name}: agent docs and CI"
+    return f"Onboarding {repo_name}: agent docs"
+
+
+def _onboarding_pr_body(repo: str, written_files: list[str], ci_added: bool) -> str:
+    """Body for an onboarding PR, lists the files that were written and notes if CI was added."""
+    repo_name = repo.split("/")[1]
+    if ci_added:
+        lines = [f"Onboarding {repo_name}: agent docs and CI"]
+    else:
+        lines = [f"Onboarding {repo_name}: agent docs"]
+    if written_files:
+        lines.append("")
+        lines.append("Files written:")
+        for f in sorted(written_files):
+            lines.append(f"- {f}")
+    return "\n".join(lines)
 
 
 def _onboarding_ticket(repo: str, gh=_gh) -> int | None:
@@ -1110,6 +1133,7 @@ def _apply_pr(repo: str, facts: dict, plan_out: dict, gh=_gh, auth_status: str |
 
     claude_append = files_to_write.pop("_CLAUDE_MD_APPEND", None)
 
+    written = []  # Track files actually written, not just attempted
     for file_path, content in files_to_write.items():
         try:
             existing = gh(["api", f"repos/{repo}/contents/{file_path}",
@@ -1122,22 +1146,27 @@ def _apply_pr(repo: str, facts: dict, plan_out: dict, gh=_gh, auth_status: str |
                         continue
                     sha = existing_data.get("sha")
                     encoded = base64.b64encode(content.encode()).decode()
-                    gh(["api", "-X", "PUT", f"repos/{repo}/contents/{file_path}",
+                    result = gh(["api", "-X", "PUT", f"repos/{repo}/contents/{file_path}",
                        "-f", f"message=Update {file_path}",
                        "-f", f"content={encoded}",
                        "-f", f"sha={sha}",
                        "-f", f"branch={branch_name}"])
+                    if result:
+                        written.append(file_path)
                 except (json.JSONDecodeError, KeyError):
                     pass
             else:
                 encoded = base64.b64encode(content.encode()).decode()
-                gh(["api", "-X", "PUT", f"repos/{repo}/contents/{file_path}",
+                result = gh(["api", "-X", "PUT", f"repos/{repo}/contents/{file_path}",
                    "-f", f"message=Add {file_path}",
                    "-f", f"content={encoded}",
                    "-f", f"branch={branch_name}"])
+                if result:
+                    written.append(file_path)
         except Exception:
             pass
 
+    claude_written = False
     if claude_append:
         try:
             existing = gh(["api", f"repos/{repo}/contents/CLAUDE.md",
@@ -1150,29 +1179,34 @@ def _apply_pr(repo: str, facts: dict, plan_out: dict, gh=_gh, auth_status: str |
                         new_content = existing_content.rstrip() + "\n\n" + claude_append + "\n"
                         sha = existing_data.get("sha")
                         encoded = base64.b64encode(new_content.encode()).decode()
-                        gh(["api", "-X", "PUT", f"repos/{repo}/contents/CLAUDE.md",
+                        result = gh(["api", "-X", "PUT", f"repos/{repo}/contents/CLAUDE.md",
                            "-f", "message=Add Agent skills section to CLAUDE.md",
                            "-f", f"content={encoded}",
                            "-f", f"sha={sha}",
                            "-f", f"branch={branch_name}"])
+                        if result:
+                            claude_written = True
                 except (json.JSONDecodeError, KeyError):
                     pass
             else:
                 new_content = claude_append + "\n"
                 encoded = base64.b64encode(new_content.encode()).decode()
-                gh(["api", "-X", "PUT", f"repos/{repo}/contents/CLAUDE.md",
+                result = gh(["api", "-X", "PUT", f"repos/{repo}/contents/CLAUDE.md",
                    "-f", "message=Create CLAUDE.md with Agent skills section",
                    "-f", f"content={encoded}",
                    "-f", f"branch={branch_name}"])
+                if result:
+                    claude_written = True
         except Exception:
             pass
 
-    files = list(files_to_write.keys()) + (["CLAUDE.md"] if claude_append else [])
+    files = written + (["CLAUDE.md"] if claude_written else [])
+    ci_added = ".github/workflows/ci.yml" in written
     try:
         pr_create = gh(["pr", "create", "--repo", repo, "--head", branch_name,
                        "--base", default_branch,
-                       "--title", ONBOARDING_TITLE,
-                       "--body", f"Automated agent docs and CI workflow setup\n\n{_closes(ticket)}"])
+                       "--title", _onboarding_pr_title(repo, ci_added),
+                       "--body", f"{_onboarding_pr_body(repo, files, ci_added)}\n\n{_closes(ticket)}"])
 
         if pr_create and "error" not in pr_create.lower():
             return {"action": "created", "pr_url": pr_create.strip(), "branch": branch_name, "files": files, "ticket": ticket}

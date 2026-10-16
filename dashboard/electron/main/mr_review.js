@@ -19,6 +19,9 @@ import { summarizeDecisions, vagueness } from '../../webhook-server/decisions.js
 // itself -- G-Eskayo/marvin#11 is explicit that the dashboard is a
 // trigger, not the thing that does the merge. Denying (ADR 0025) follows
 // the same trigger-not-executor shape, via a second webhook endpoint.
+
+const BARE_TITLE = /^Implement\s+([\w.-]+\/[\w.-]+)#(\d+)$/
+
 export const EVIDENCE_HEADERS = {
   device: '## Device',
   metrics: '## Metrics Comparison',
@@ -266,7 +269,23 @@ function needsImages(pr, uiPathsFor) {
   return files.length && !hasImage(pr.body || '') ? { files } : null
 }
 
-export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDashboard, sentBackTickets = null, reworkStatus = null, rebaseStatus = null, closedTickets = null, autoMergeShadow = null, uiPathsFor = () => [] } = {}) {
+async function normalizeTitle(pr, ghIssueView) {
+  if (!ghIssueView) return pr.title
+  const match = BARE_TITLE.exec(pr.title || '')
+  if (!match) return pr.title
+  try {
+    const [_, repo, number] = match
+    const issue = await ghIssueView(Number(number), repo)
+    if (issue && issue.title) {
+      return `${issue.title} (#${number})`
+    }
+  } catch {
+    // Fall back to the raw title on any error
+  }
+  return pr.title
+}
+
+export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDashboard, sentBackTickets = null, reworkStatus = null, rebaseStatus = null, closedTickets = null, autoMergeShadow = null, ghIssueView = null, uiPathsFor = () => [] } = {}) {
   const prs = await listOpenPrs()
   // The webhook's post-merge rebase results, by PR url (#225). Best effort: without them a card just doesn't say.
   let rebased = {}
@@ -318,13 +337,15 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
   // Each PR with the facts that decide whether it can be waited on (sent back for rework; conflicts), so merge order skips the
   // ones that cannot merge as they stand.
   const withState = markBlocked(markSentBack(prs, sentBackKeys), uiPathsFor)
-  return prs.map((pr) => {
+  // Resolve titles: bare "Implement repo#n" becomes "Ticket title (#n)" if ghIssueView is available
+  const resolvedTitles = await Promise.all(prs.map((pr) => normalizeTitle(pr, ghIssueView)))
+  return prs.map((pr, idx) => {
     const ticketRef = parseTicketRef(pr.body || '')
     const hasSchema = hasEvidenceSchema(pr.body)
     const evidence = hasSchema ? parseEvidence(pr.body) : null
     return {
       number: pr.number,
-      title: pr.title,
+      title: resolvedTitles[idx],
       url: pr.url,
       repo: pr.repo || MARVIN_REPO,
       key: prKey(pr.repo || MARVIN_REPO, pr.number),
