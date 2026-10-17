@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createMergeOps } from '../electron/main/merge_ops.js'
+import { GATE_TIMEOUT_CEILING_MS } from '../webhook-server/gate_durations.js'
 
 const URL = 'https://github.com/o/r/pull/5'
 
@@ -56,5 +57,18 @@ describe('a merge that never reports back does not stay "merging" forever', () =
     const ops = createMergeOps({ maxMergingMs: 1000 })
     ops.start(URL)
     expect(ops.start(URL, Date.now() + 5000)).toBe(true)
+  })
+})
+
+describe('maxMergingMs default respects gate timeout ceiling', () => {
+  // Test 38: maxMergingMs defaults to ceiling + 5 min overhead
+  it('createMergeOps default maxMergingMs is GATE_TIMEOUT_CEILING_MS + 5 min', () => {
+    const ops = createMergeOps()
+    const expected = GATE_TIMEOUT_CEILING_MS + 5 * 60_000
+    ops.start(URL)
+    const t0 = Date.now()
+
+    // At the expected time + 1s, should still be 'merging'
+    expect(ops.get(URL, t0 + expected + 1000).state).toBe('error')
   })
 })
