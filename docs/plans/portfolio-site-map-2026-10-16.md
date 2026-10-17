@@ -144,6 +144,25 @@ Sharper video: `docs/screenshots/portfolio-landing-alive-2026-10-16.mp4`.
   - Plants and water move as in A.
 - **Text** is today's typing effect, with today's lines. Each line is laid out in full before it types, and words are unbreakable, so nothing jumps to a new line mid-word.
 
+### Contact and Resume pages (added after Gil's review)
+Gil liked the About mockup. He asked for real Contact and Resume pages, not links that jump to the bottom of About.
+
+- **Contact** (`brand-proto/contact.html`): email, LinkedIn and GitHub as large cards, plus a line on the roles he's open to (AI/ML, security, research). No phone.
+- **Resume** (`brand-proto/resume.html`): a web version of the master resume.
+  - Left column: experience and selected projects. Side column: education, skills, training and recognition. A Download PDF button.
+  - Built from `~/.claude/resume/master.md`, leaving out the entries it marks private (Nourished, Snorkel AI) and the phone number.
+- The menu on every mockup page now goes to the real pages.
+- The About page's Charter line is filled in from the master: AI Engineer, Charter Communications, Apr 2026 to now.
+
+![Contact](docs/screenshots/portfolio-brand-contact-2026-10-16.png)
+![Resume](docs/screenshots/portfolio-brand-resume-2026-10-16.png)
+![Phone: Contact and Resume](docs/screenshots/portfolio-brand-phone-contact-resume-2026-10-16.png)
+
+**Found while building:**
+- **Eagle Scout merit badges:** the site says 22, the master resume says 31.
+- **Aircraft Dynamics:** the master lists it (ASEN 3128) among the aerospace courses, but the course history shows it was never completed. I left it off the site.
+- **The PDF button** needs a public master PDF. Nothing exists yet that exports a public version of the master (with private entries and the phone removed).
+
 ## Landing round 3: step into the painting
 Gil's feedback on round 2:
 - A wins on resolution, but the scene still feels disconnected.
@@ -220,6 +239,22 @@ The diploma (`Dropbox/Gil/Gil's resume/archive/2025/CollegeDiploma.pdf`) is a ce
 - [ ] No, try a different direction
 
 ### brand-notes: What to change (text) (optional)
+
+### eagle: Eagle Scout merit badges
+- [ ] 22 (what the site says)
+- [ ] 31 (what the master resume says)
+
+### clearance: Show "Secret clearance (reinstatable)" publicly on the Resume page?
+- [ ] Yes
+- [ ] No, resume PDF only
+
+### homedepot: Keep The Home Depot on the public resume?
+- [ ] Yes
+- [ ] No
+
+### pdf: The resume PDF
+- [ ] Generate one from the master (private entries and phone removed)
+- [ ] I'll upload my own
 
 ### degree: How the degree shows
 - [ ] The diploma image as a card, same as the certs
