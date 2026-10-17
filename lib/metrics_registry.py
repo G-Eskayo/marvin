@@ -26,6 +26,7 @@ rightmost '.' to extract the machine label.
 """
 from __future__ import annotations
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -62,6 +63,17 @@ def _load_snapshots(subsystem: str, machine: str | None = None) -> list[dict]:
     return json.loads(path.read_text())
 
 
+def _write_atomic(path: Path, text: str) -> None:
+    """Write a temp file next to `path` and swap it in, so a crash or a second writer can never leave a half-written
+    file (an in-place write left health-monitor.mac-mini.json with trailing junk and blinded Health for a week)."""
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(text)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def record(subsystem: str, metrics: dict[str, dict], machine: str | None = None) -> None:
     """Append a timestamped metrics snapshot for `subsystem`.
 
@@ -73,7 +85,7 @@ def record(subsystem: str, metrics: dict[str, dict], machine: str | None = None)
     snapshots = _load_snapshots(subsystem, machine)
     timestamp = datetime.now(timezone.utc).isoformat()
     snapshots.append({"timestamp": timestamp, "metrics": metrics})
-    _snapshot_path(subsystem, machine).write_text(json.dumps(snapshots, indent=2))
+    _write_atomic(_snapshot_path(subsystem, machine), json.dumps(snapshots, indent=2))
 
     narrative_lines = [f"## {timestamp} — {subsystem}\n"]
     for name, m in metrics.items():
