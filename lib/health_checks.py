@@ -1520,6 +1520,16 @@ def coverage(results: list[dict]) -> dict:
 HIGHER_IS_BETTER = {"route:intent-routing-collection"}
 
 
+def anomaly_or_red(results: list[dict]) -> tuple[dict | None, list[dict]]:
+    """The anomaly comparison, or one red check saying why it couldn't run. A broken metrics file must never stop
+    Health from being written: it crashed every run for a week (2026-10-09..16) and left health-status.json missing."""
+    try:
+        return record_anomaly_metrics(results), []
+    except Exception as e:  # noqa: BLE001 -- any failure here is reported, never fatal
+        return None, [_result("health:anomaly-metrics", "Health anomaly metrics", "red",
+                              f"couldn't read or write bench/metrics/health-monitor.*: {type(e).__name__}: {e}")]
+
+
 def record_anomaly_metrics(results: list[dict]) -> dict | None:
     """Any check carrying a numeric `value` gets recorded as a subsystem
     snapshot via the same baseline/compare primitive metrics_registry.py
@@ -1581,7 +1591,8 @@ def run_all() -> dict:
     results += error_results
 
     cov = coverage(results)
-    anomaly = record_anomaly_metrics(results)
+    anomaly, metric_problems = anomaly_or_red(results)
+    results += metric_problems
 
     severities = [r["severity"] for r in results]
     overall = overall_severity(severities)
