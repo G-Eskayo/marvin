@@ -51,8 +51,8 @@ def default_root() -> Path:
 
 # --- validation -----------------------------------------------------------------------------------------------------
 
-def _text(data: dict, key: str, required: bool) -> str | None:
-    v = data.get(key)
+def _text(proposal: dict, key: str, required: bool) -> str | None:
+    v = proposal.get(key)
     if v is None and not required:
         return None
     if not isinstance(v, str) or not v.strip():
@@ -62,19 +62,19 @@ def _text(data: dict, key: str, required: bool) -> str | None:
     return v.strip()
 
 
-def _validate(data: object) -> dict:
-    if not isinstance(data, dict):
+def _validate(proposal: object) -> dict:
+    if not isinstance(proposal, dict):
         raise ProposalError("a proposal must be a JSON object")
-    out = {k: _text(data, k, True) for k in REQUIRED}
+    out = {k: _text(proposal, k, True) for k in REQUIRED}
     for k in ("area", "source", "technical"):
-        v = _text(data, k, False)
+        v = _text(proposal, k, False)
         if v is not None:
             out[k] = v
-    star = data.get("north_star")
+    star = proposal.get("north_star")
     if type(star) is not int or star not in NORTH_STARS:
         raise ProposalError("north_star must be 1, 2, 3 or 4 (docs/north-stars.md)")
     out["north_star"] = star
-    size = data.get("size")
+    size = proposal.get("size")
     if size is not None and size not in SIZES:
         raise ProposalError(f"size must be one of {', '.join(SIZES)}")
     if size:
