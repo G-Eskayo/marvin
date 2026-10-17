@@ -198,7 +198,10 @@ def slots_in_use_remote(host: str, machine: str, run=None) -> list[dict] | None:
     try:
         proc = run(
             ["ssh", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new",
-             host, "python3 -m lib.dispatch_concurrency slots-in-use --machine " + machine],
+             # From ~/.agents with MARVIN's python (a bare `-m lib...` ran relative to the remote home and failed);
+             # exact form is on mac-mini-2012's observer-key list (ADR 0069).
+             host, 'cd "$HOME/.agents" && "$HOME/.agents/venv/bin/python" -m lib.dispatch_concurrency slots-in-use '
+                   '--machine ' + machine],
             capture_output=True, text=True, timeout=10,
         )
         if proc.returncode != 0:

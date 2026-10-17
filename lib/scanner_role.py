@@ -18,6 +18,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 HEARTBEAT_PATH = Path.home() / ".claude" / "ticket-scan-heartbeat.json"
+# Read on another machine: its own home, not this one's (ADR 0069; on the observer key's list).
+REMOTE_HEARTBEAT_COMMAND = 'cat "$HOME/.claude/ticket-scan-heartbeat.json"'
 PRIMARY_PREFIX = "mac-mini"
 STALE_AFTER = 150 * 60   # the scan runs hourly: miss two in a row and the primary is not doing its job
 
@@ -62,7 +64,7 @@ def check_primary(now: float | None = None, run=subprocess.run) -> tuple[float |
     if host not in task_dispatch._tailscale_online_hosts():
         return None, False
     try:
-        proc = run(["ssh", *task_dispatch.SSH_OPTS, host, f"cat {HEARTBEAT_PATH}"], capture_output=True, text=True, timeout=15)
+        proc = run(["ssh", *task_dispatch.SSH_OPTS, host, REMOTE_HEARTBEAT_COMMAND], capture_output=True, text=True, timeout=15)
         if proc.returncode != 0:
             return None, None
         ts = float(json.loads(proc.stdout)["ts"])

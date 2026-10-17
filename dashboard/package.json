@@ -55,5 +55,9 @@
     "files": [
       "out/**/*"
     ]
+  },
+  "allowScripts": {
+    "electron@30.5.1": true,
+    "esbuild@0.21.5": true
   }
 }

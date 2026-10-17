@@ -1,0 +1,7 @@
+[Unit]
+Description=Copy the M4 Mini's Health view to mac-mini-2012's dashboard (ADR 0069)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.agents/config/mac-mini-2012/marvin-observer-feed.sh

@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=MARVIN live wallpaper
+Exec=sh -c '"$HOME/.agents/config/mac-mini-2012/marvin-desktoplive.sh"'
+X-GNOME-Autostart-enabled=true
+NoDisplay=false
