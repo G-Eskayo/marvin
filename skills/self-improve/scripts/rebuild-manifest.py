@@ -61,8 +61,11 @@ def _hook_should_skip() -> bool:
     rebuild, matching this script's documented dual-mode use."""
     if sys.stdin.isatty():
         return False
+    raw = sys.stdin.read()
+    if not raw.strip():
+        return False  # nothing piped: a scheduled run (systemd gives /dev/null, not a tty), same as the CLI
     try:
-        payload = json.load(sys.stdin)
+        payload = json.loads(raw)
     except Exception as e:
         log_hook_error("rebuild-manifest", "parsing stdin payload", e)
         return False  # couldn't parse — rebuild anyway, safer than silently skipping

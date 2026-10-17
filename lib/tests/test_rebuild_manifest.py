@@ -100,3 +100,23 @@ tags: [type:skill, intent:test]
 
         assert should_include
         assert raw_scope == "haiku,sonnet"
+
+
+def test_an_empty_stdin_is_a_scheduled_run_not_a_bad_hook_payload(monkeypatch):
+    # mac-mini-2012's systemd mirror job runs this with stdin = /dev/null (not a tty): that logged
+    # "parsing stdin payload" to the error log every 10 minutes (ADR 0069).
+    import io
+    logged = []
+    monkeypatch.setattr(rebuild_manifest.sys, "stdin", io.StringIO(""))
+    monkeypatch.setattr(rebuild_manifest, "log_hook_error", lambda *a, **k: logged.append(a))
+    assert rebuild_manifest._hook_should_skip() is False     # full rebuild, as from the CLI
+    assert logged == []
+
+
+def test_a_garbled_hook_payload_is_still_logged(monkeypatch):
+    import io
+    logged = []
+    monkeypatch.setattr(rebuild_manifest.sys, "stdin", io.StringIO("{not json"))
+    monkeypatch.setattr(rebuild_manifest, "log_hook_error", lambda *a, **k: logged.append(a))
+    assert rebuild_manifest._hook_should_skip() is False
+    assert logged
