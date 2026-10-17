@@ -1,0 +1,9 @@
+[Unit]
+Description=Refresh the Health view from the M4 Mini every 2 minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=2min
+
+[Install]
+WantedBy=timers.target
