@@ -1,7 +1,9 @@
+import { GATE_TIMEOUT_CEILING_MS } from '../../webhook-server/gate_durations.js'
+
 // What each PR's Approve & Merge is doing right now, held in the main process so it survives the
 // renderer unmounting (navigating away used to reset the button to "Approve & Merge" mid-merge).
 // Failures and re-engagements are kept until the next attempt so the message is still there on return.
-export function createMergeOps({ maxMergingMs = 45 * 60_000 } = {}) {
+export function createMergeOps({ maxMergingMs = GATE_TIMEOUT_CEILING_MS + 5 * 60_000 } = {}) {
   const ops = new Map()
   // A merge that never reports back (a hung gate) must not read "Merging…" forever: past the limit it is an error,
   // and a new attempt may start.

@@ -39,6 +39,7 @@ import {
   assertTargetsBase,
   assertNotSentBack
 } from '../webhook-server/merge.js'
+import { DEFAULT_TEST_TIMEOUT_MS, GATE_TIMEOUT_CEILING_MS, GATE_OVERHEAD_MS, computeGateTimeoutMs, sizedStepTimeouts, median, recentPassingDurations } from '../webhook-server/gate_durations.js'
 import { MergeFailure, refusal, summarizeGateFailure } from '../webhook-server/failure.js'
 
 const realExec = promisify(execFile)
@@ -288,6 +289,134 @@ describe('mergePr', () => {
     expect(reengage).not.toHaveBeenCalled()
     expect(result.merged).toBe(true)
     expect(exec).toHaveBeenCalledWith('gh', ['pr', 'merge', 'https://github.com/G-Eskayo/marvin/pull/71', '--merge'])
+  })
+})
+
+describe('execWithGroupTimeout with meta parameter', () => {
+  // Test 22: execWithGroupTimeout accepts optional meta parameter without error
+  it('accepts optional meta parameter without changing behavior on success', async () => {
+    const result = await execWithGroupTimeout('echo', ['hello'], {}, DEFAULT_TEST_TIMEOUT_MS, { label: 'test', usualMs: 1000, countConcurrent: 0 })
+    expect(result.stdout).toContain('hello')
+  })
+
+  // Test 23: execWithGroupTimeout enriches error message with meta.label
+  it('enriches timeout error message with meta label and metrics', async () => {
+    const cmd = 'sleep'
+    const args = ['10']
+    try {
+      await execWithGroupTimeout(cmd, args, {}, 100, { label: 'pytest', usualMs: 5000, countConcurrent: 2 })
+      expect.fail('should have timed out')
+    } catch (err) {
+      expect(err.message).toContain('pytest')
+      expect(err.message).toContain('5000')
+      expect(err.message).toContain('concurrent=2')
+      expect(err.stderr).toContain('pytest')
+    }
+  })
+
+  // Test 24: execWithGroupTimeout does not enrich without meta.label
+  it('does not add enrichment when meta.label is null', async () => {
+    try {
+      await execWithGroupTimeout('sleep', ['10'], {}, 100, { usualMs: 5000 })
+      expect.fail('should have timed out')
+    } catch (err) {
+      expect(err.message).not.toContain('[')
+    }
+  })
+
+  // Test 25: execWithGroupTimeout handles missing meta gracefully
+  it('does not crash when meta is null', async () => {
+    try {
+      await execWithGroupTimeout('sleep', ['10'], {}, 100, null)
+      expect.fail('should have timed out')
+    } catch (err) {
+      expect(err.message).toContain('did not finish')
+    }
+  })
+})
+
+describe('lazy gate timeout resolution', () => {
+  // Test 26: mergePrUnqueued computes gateTimeoutMs lazily when not provided
+  it('computes gate timeout from step history when gateTimeoutMs is not provided', async () => {
+    const logLines = [
+      JSON.stringify({ kind: 'duration', step: 'pytest', ms: 1000, passed: true }),
+      JSON.stringify({ kind: 'duration', step: 'vitest', ms: 2000, passed: true })
+    ]
+    const fileReader = () => logLines
+    const timeout = computeGateTimeoutMs(['pytest', 'vitest'], fileReader)
+
+    expect(timeout).toBeGreaterThan(GATE_OVERHEAD_MS)
+    expect(timeout).toBeLessThanOrEqual(GATE_TIMEOUT_CEILING_MS)
+  })
+
+  // Test 27: computeGateTimeoutMs includes all step timeouts
+  it('includes all provided steps in the timeout calculation', () => {
+    const logLines = [
+      JSON.stringify({ kind: 'duration', step: 'pytest', ms: 1200000, passed: true }),
+      JSON.stringify({ kind: 'duration', step: 'vitest', ms: 1200000, passed: true })
+    ]
+    const fileReader = () => logLines
+    const timeout = computeGateTimeoutMs(['pytest', 'vitest'], fileReader)
+
+    // Both steps get 1200000 * 1.5 = 1800000, total = 3600000 + 300000 = 3900000, capped at 2400000
+    expect(timeout).toBeLessThanOrEqual(GATE_TIMEOUT_CEILING_MS)
+  })
+
+  // Test 28: sizedStepTimeouts respects minimum per-step timeout
+  it('sizedStepTimeouts enforces minimum timeout per step', () => {
+    const logLines = [
+      JSON.stringify({ kind: 'duration', step: 'pytest', ms: 100, passed: true })
+    ]
+    const fileReader = () => logLines
+    const timeouts = sizedStepTimeouts(['pytest'], fileReader)
+
+    expect(timeouts.pytest).toBe(DEFAULT_TEST_TIMEOUT_MS)
+  })
+
+  // Test 29: computeGateTimeoutMs never exceeds ceiling even with large histories
+  it('enforces GATE_TIMEOUT_CEILING_MS upper bound', () => {
+    const logLines = [
+      JSON.stringify({ kind: 'duration', step: 'pytest', ms: 30000, passed: true }),
+      JSON.stringify({ kind: 'duration', step: 'vitest', ms: 30000, passed: true })
+    ]
+    const fileReader = () => logLines
+    const timeout = computeGateTimeoutMs(['pytest', 'vitest'], fileReader)
+
+    expect(timeout).toBeLessThanOrEqual(GATE_TIMEOUT_CEILING_MS)
+  })
+
+  // Test 30: median is used for historical duration calculation
+  it('median is computed correctly from history', () => {
+    expect(median([1000, 1100, 1200])).toBe(1100)
+    expect(median([1000, 1100, 1200, 1300])).toBe(1150)
+    expect(median([])).toBe(0)
+  })
+
+  // Test 31: recentPassingDurations filters for the step
+  it('recentPassingDurations returns only recent passing durations for a step', () => {
+    const logLines = [
+      JSON.stringify({ kind: 'duration', step: 'pytest', ms: 1000, passed: true }),
+      JSON.stringify({ kind: 'duration', step: 'pytest', ms: 1100, passed: false }),
+      JSON.stringify({ kind: 'duration', step: 'vitest', ms: 2000, passed: true }),
+      JSON.stringify({ kind: 'duration', step: 'pytest', ms: 1050, passed: true })
+    ]
+    const readFile = () => logLines
+    const durations = recentPassingDurations('pytest', 'test.jsonl', 10, readFile)
+
+    expect(durations).toEqual([1000, 1050])
+  })
+
+  // Test 32: Gate timeout for single-step (project-specific) gates
+  it('computes timeout for verify:project gates', () => {
+    const logLines = [
+      JSON.stringify({ kind: 'duration', step: 'verify:clarity-captions', ms: 1000000, passed: true })
+    ]
+    const fileReader = () => logLines
+    const timeout = computeGateTimeoutMs(['verify:clarity-captions'], fileReader)
+
+    // 1000000 * 1.5 = 1500000 + 300000 (overhead) = 1800000
+    const expectedBase = Math.min(1500000 + GATE_OVERHEAD_MS, GATE_TIMEOUT_CEILING_MS)
+    expect(timeout).toBe(expectedBase)
   })
 })
 
