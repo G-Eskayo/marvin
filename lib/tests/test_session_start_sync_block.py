@@ -276,7 +276,7 @@ def test_report_still_prints_when_the_sync_check_crashes(monkeypatch, capsys, tm
     assert capsys.readouterr().out.startswith("MARVIN active — test")
 
 
-# ── marvin#451: age counts from this Mac's last wake, not just the commit time ──
+# ── marvin#451: age counts from this Mac's last wake as well as the commit time ──
 
 def _behind_by_old_commit(tmp_path: Path) -> Path:
     clone = _origin_and_clone(tmp_path)
