@@ -3328,5 +3328,103 @@
         "higher_is_better": false
       }
     }
+  },
+  {
+    "timestamp": "2026-10-17T07:24:08.261118+00:00",
+    "metrics": {
+      "route:intent-routing-collection": {
+        "value": 92,
+        "higher_is_better": true
+      },
+      "catalog:fresh": {
+        "value": 0.3,
+        "higher_is_better": false
+      },
+      "github:budget": {
+        "value": 4813,
+        "higher_is_better": false
+      },
+      "github:gate": {
+        "value": 468,
+        "higher_is_better": false
+      },
+      "main:green": {
+        "value": 2,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.agents@mac-mini-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.agents@mac-mini-2012": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.claude@mac-mini-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.claude@mac-mini-2012": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "errors@mac-mini-1": {
+        "value": 7,
+        "higher_is_better": false
+      },
+      "errors@mac-mini-2012": {
+        "value": 4,
+        "higher_is_better": false
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-17T07:40:30.230202+00:00",
+    "metrics": {
+      "route:intent-routing-collection": {
+        "value": 92,
+        "higher_is_better": true
+      },
+      "catalog:fresh": {
+        "value": 0.6,
+        "higher_is_better": false
+      },
+      "github:budget": {
+        "value": 4755,
+        "higher_is_better": false
+      },
+      "github:gate": {
+        "value": 479,
+        "higher_is_better": false
+      },
+      "main:green": {
+        "value": 2,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.agents@mac-mini-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.agents@mac-mini-2012": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.claude@mac-mini-1": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "repo:sync:~/.claude@mac-mini-2012": {
+        "value": 0,
+        "higher_is_better": false
+      },
+      "errors@mac-mini-1": {
+        "value": 7,
+        "higher_is_better": false
+      },
+      "errors@mac-mini-2012": {
+        "value": 4,
+        "higher_is_better": false
+      }
+    }
   }
 ]
