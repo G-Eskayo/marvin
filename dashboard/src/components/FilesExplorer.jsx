@@ -1,5 +1,5 @@
-import { useEffect, useState, useRef } from 'react'
-import Markdown from './Markdown.jsx'
+import { useEffect, useState } from 'react'
+import FileView from './FileView.jsx'
 
 function TreeItem({ item, depth = 0, onSelect, selectedPath }) {
   const [expanded, setExpanded] = useState(false)
@@ -13,9 +13,12 @@ function TreeItem({ item, depth = 0, onSelect, selectedPath }) {
         className={`w-full truncate px-2 py-1 text-left text-sm transition-colors ${
           isSelected ? 'bg-neutral-800 text-white' : 'text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200'
         }`}
-        title={item.path}
+        title={`${item.path} · ${item.label || 'File'}`}
       >
-        📄 {item.path.split('/').pop()}
+        <span className="flex items-center gap-2">
+          <span className="truncate">📄 {item.path.split('/').pop()}</span>
+          <span className="shrink-0 rounded bg-neutral-800 px-1 text-[10px] text-neutral-400">{item.label || 'File'}</span>
+        </span>
       </button>
     )
   }
@@ -53,45 +56,31 @@ function FileTree({ tree, onSelect, selectedPath }) {
   )
 }
 
-function FileViewer({ filePath, content, kind, truncated, loading, error }) {
+function FileViewer({ file, loading, error }) {
   if (error) {
     return <div className="p-6 text-red-400">Failed to load: {error}</div>
   }
   if (loading) {
     return <div className="p-6 text-neutral-500">Loading…</div>
   }
-  if (content === null) {
+  if (!file) {
     return (
-      <div className="flex h-full items-center justify-center text-neutral-500">
+      <div className="flex h-full flex-1 items-center justify-center text-neutral-500">
         Select a file to view it
       </div>
     )
   }
-
+  const fills = file.kind === 'pdf' || file.kind === 'html'
   return (
-    <div className="min-w-0 flex-1 overflow-auto p-6">
-      {truncated && <div className="mb-4 rounded bg-amber-950 p-3 text-sm text-amber-200">File was truncated (over 2 MB)</div>}
-      {kind === 'markdown' && (
-        <>
-          <Markdown content={content} />
-        </>
-      )}
-      {kind === 'json' && (
-        <pre className="mb-3 overflow-auto rounded-lg bg-neutral-900 p-3 font-mono text-sm text-neutral-200">
-          {(() => {
-            try {
-              return JSON.stringify(JSON.parse(content), null, 2)
-            } catch {
-              return content
-            }
-          })()}
-        </pre>
-      )}
-      {kind === 'text' && (
-        <pre className="mb-3 overflow-auto rounded-lg bg-neutral-900 p-3 font-mono text-sm text-neutral-200">
-          {content}
-        </pre>
-      )}
+    <div className={`min-w-0 flex-1 overflow-auto p-6${fills ? ' flex flex-col' : ''}`}>
+      <FileView
+        key={file.path}
+        file={file}
+        loadImage={(src) => window.api.outbox.image(file.path, src)}
+        onReveal={() => window.api.outbox.reveal(file.path).catch(() => {})}
+        onOpenFile={() => window.api.outbox.open(file.path).catch(() => {})}
+        onOpenLink={(url) => window.api.outbox.openLink(url).catch(() => {})}
+      />
     </div>
   )
 }
@@ -99,12 +88,9 @@ function FileViewer({ filePath, content, kind, truncated, loading, error }) {
 export default function FilesExplorer() {
   const [tree, setTree] = useState([])
   const [selectedPath, setSelectedPath] = useState(null)
-  const [content, setContent] = useState(null)
-  const [kind, setKind] = useState(null)
-  const [truncated, setTruncated] = useState(false)
+  const [file, setFile] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const loadingRef = useRef(false)
 
   // Load the outbox tree on mount
   useEffect(() => {
@@ -117,38 +103,21 @@ export default function FilesExplorer() {
   // Load file content when selection changes
   useEffect(() => {
     if (!selectedPath) {
-      setContent(null)
-      setKind(null)
-      setTruncated(false)
+      setFile(null)
       return
     }
 
     setLoading(true)
     setError(null)
-    loadingRef.current = true
-
+    // Per-selection flag: a slow read of the previous file can never overwrite the one now selected.
+    let live = true
     window.api.outbox
       .content(selectedPath)
-      .then((result) => {
-        if (loadingRef.current) {
-          setContent(result.content)
-          setKind(result.kind)
-          setTruncated(result.truncated)
-        }
-      })
-      .catch((err) => {
-        if (loadingRef.current) {
-          setError(String(err))
-        }
-      })
-      .finally(() => {
-        if (loadingRef.current) {
-          setLoading(false)
-        }
-      })
-
+      .then((result) => live && setFile(result))
+      .catch((err) => live && setError(String(err)))
+      .finally(() => live && setLoading(false))
     return () => {
-      loadingRef.current = false
+      live = false
     }
   }, [selectedPath])
 
@@ -159,7 +128,7 @@ export default function FilesExplorer() {
       </div>
       <div className="flex min-h-0 flex-1">
         <FileTree tree={tree} onSelect={setSelectedPath} selectedPath={selectedPath} />
-        <FileViewer filePath={selectedPath} content={content} kind={kind} truncated={truncated} loading={loading} error={error} />
+        <FileViewer file={file} loading={loading} error={error} />
       </div>
     </div>
   )
