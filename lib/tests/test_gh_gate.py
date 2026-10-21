@@ -118,3 +118,49 @@ def test_a_refusal_starts_a_cooldown_that_the_next_background_call_respects(tmp_
 
 def test_it_never_calls_itself(tmp_path):
     assert gg.find_real_gh(f"{GATE.parent}:{GATE.parent}:/nonexistent") in (None, "/opt/homebrew/bin/gh", "/usr/local/bin/gh")
+
+
+def _gate_copy(tmp_path, name):
+    """A second, separate copy of the gate (a worktree's bin/gh, a sandbox HOME's ~/.agents/bin/gh)."""
+    d = tmp_path / name
+    d.mkdir()
+    f = d / "gh"
+    f.write_bytes(GATE.read_bytes())
+    f.chmod(f.stat().st_mode | stat.S_IEXEC)
+    return d
+
+
+def test_it_never_hands_a_call_to_another_copy_of_the_gate(tmp_path):
+    # 2026-10-21: a worktree's bin/gh and ~/.agents/bin/gh both on PATH. Each took the other for the real gh and they
+    # called each other back and forth: 18,040 logged "pr list" calls in two hours, from a caller named "Python".
+    other = _gate_copy(tmp_path, "worktree-bin")
+    real = _fake_gh(tmp_path)
+    assert gg.find_real_gh(f"{other}:{real}:/nonexistent") == str(real / "gh")
+
+
+def test_two_gate_copies_on_path_make_one_real_call_and_one_log_line(tmp_path):
+    other = _gate_copy(tmp_path, "worktree-bin")
+    real = _fake_gh(tmp_path)
+    env = {"PATH": f"{other}:{GATE.parent}:{real}:/usr/bin:/bin", "HOME": str(tmp_path), "GH_GATE_NO_BUDGET": "1"}
+    p = subprocess.run([str(other / "gh"), "pr", "list"], capture_output=True, text=True, env=env, timeout=30)
+    assert p.returncode == 0 and p.stdout.strip() == "ok"
+    log = (tmp_path / ".claude" / "logs" / "gh-calls.jsonl").read_text().splitlines()
+    assert len(log) == 1, log
+
+
+def test_a_gate_reached_from_inside_a_gate_with_no_real_gh_fails_at_once(tmp_path):
+    # Only gate copies on PATH and no real gh anywhere: say so and stop, never loop.
+    other = _gate_copy(tmp_path, "worktree-bin")
+    env = {"PATH": f"{other}:{GATE.parent}:/usr/bin:/bin", "HOME": str(tmp_path), "GH_GATE_NO_BUDGET": "1"}
+    p = subprocess.run([str(other / "gh"), "pr", "list"], capture_output=True, text=True, env=env, timeout=30)
+    if gg.find_real_gh("/nonexistent"):  # a real gh is installed in a fallback location on this Mac: one call to it
+        assert len((tmp_path / ".claude" / "logs" / "gh-calls.jsonl").read_text().splitlines()) == 1
+    else:
+        assert p.returncode == 127 and "not installed" in p.stderr
+
+
+def test_a_gate_started_by_the_real_gh_passes_through_unlogged(tmp_path):
+    # A gh extension calling gh again: one call was already gated and logged; the inner one is not counted twice.
+    p = _run(tmp_path, _fake_gh(tmp_path), "issue", "list", env_extra={gg.INSIDE_ENV: "1"})
+    assert p.returncode == 0 and p.stdout.strip() == "ok"
+    assert not (tmp_path / ".claude" / "logs" / "gh-calls.jsonl").exists()
