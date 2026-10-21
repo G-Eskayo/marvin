@@ -191,3 +191,22 @@ describe('GitHub-only projects read the saved copy (#565)', () => {
       expect(gh.calls.probe).toBe(0)
     }))
 })
+
+// #570 speed budget: a local clone's tree is drawn without waiting for `git status` (75-100 ms on a real repo); the
+// badges come from the last-known states, and a change is announced so the view redraws them in place.
+describe('local badges come after the tree (#570)', () => {
+  it('the first tree has no badges and does not wait for git; a later one has them, and the change is announced', async () =>
+    withDir(async (dir) => {
+      const { execFileSync } = await import('child_process')
+      execFileSync('git', ['init', '-q', dir])
+      writeFileSync(path.join(dir, 'CONTEXT.md'), '# ctx\n')
+      const changed = []
+      const s = svc(catalog(rec({ localPaths: [dir], docs: { context: true, readme: false, adrCount: 0 } })), { onStatesChanged: (id) => changed.push(id) })
+      const first = await s.tree('p1')
+      expect(first.tree.find((e) => e.path === 'CONTEXT.md').state).toBeNull()
+      for (let i = 0; i < 50 && !changed.length; i++) await new Promise((r) => setImmediate(r)) || (await new Promise((r) => setTimeout(r, 20)))
+      expect(changed).toEqual(['p1'])
+      const second = await s.tree('p1')
+      expect(second.tree.find((e) => e.path === 'CONTEXT.md').state).toBe('uncommitted')
+    }))
+})

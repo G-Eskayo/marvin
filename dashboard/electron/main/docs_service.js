@@ -1,6 +1,8 @@
 import { existsSync } from 'fs'
 import { listRepoDocTree, fetchFileContent, searchableText } from './docs.js'
 import { listLocalTree, readLocalFile, localFileStates } from './docs_local.js'
+import { UNSORTED_ID } from './deliverables.js'
+import { extractOutline } from '../../src/lib/docs_text.js'
 
 // Everything the Docs tab asks for, driven by the project catalog
 // (lib/project_catalog.py) instead of "GitHub repos with a CONTEXT.md": every
@@ -13,7 +15,30 @@ const copyAge = (copy) => ({ savedAt: copy?.savedAt ?? null, checkedAt: copy?.ch
 
 // `saved` (docs_saved.js, #565) holds the saved copy of GitHub-only projects: with it, tree and content never call
 // GitHub, and revalidate (sent once when a project is opened) is the only request.
-export function createDocsService({ getCatalog, exec, readMaster, fallbackRepos = () => [], saved = null }) {
+// `deliverables` (deliverables.js, #570) is the outbox match map: each project's tree also carries the outbox items
+// matched to it, and "Unsorted deliverables" lists what no project claims. Everything it returns is local or saved.
+export { UNSORTED_ID }
+// `onStatesChanged(id)`: the uncommitted/unpushed badges (local `git status`, 75-100 ms) are read after the tree is
+// drawn, from the last-known states; when they differ, this is called so the open view redraws them in place.
+export function createDocsService({ getCatalog, exec, readMaster, fallbackRepos = () => [], saved = null, deliverables = null, onStatesChanged = () => {} }) {
+  const lastStates = new Map() // dir -> { path: state }
+  const statesInflight = new Map()
+  function refreshStates(id, dir) {
+    if (statesInflight.has(dir)) return statesInflight.get(dir)
+    const p = localFileStates(dir)
+      .then((states) => {
+        const before = JSON.stringify(lastStates.get(dir) ?? null)
+        lastStates.set(dir, states)
+        if (before !== JSON.stringify(states)) onStatesChanged(id)
+        return states
+      })
+      .catch(() => lastStates.get(dir) || {})
+      .finally(() => statesInflight.delete(dir))
+    statesInflight.set(dir, p)
+    return p
+  }
+  const outbox = () => deliverables?.view() || { byProject: {}, unsorted: { whole: [], leftovers: [] }, count: 0 }
+  const unsortedEntry = () => (deliverables ? [{ id: UNSORTED_ID, name: 'Unsorted deliverables', kind: 'unsorted', status: 'active', local: null, count: outbox().count }] : [])
   const catalog = () => getCatalog()
   const dirOf = (rec) => (rec?.localPaths || []).find((p) => existsSync(p)) || null
 
@@ -31,24 +56,36 @@ export function createDocsService({ getCatalog, exec, readMaster, fallbackRepos 
     const cat = catalog()
     const master = { id: MASTER_ID, name: 'Where things are', kind: 'master', status: 'active', local: null }
     if (!cat) {
-      return { generated_at: null, repos: [master, ...fallbackRepos().map((r) => ({ id: r.name, name: r.name, kind: 'repo', status: 'active', local: null }))] }
+      return { generated_at: null, repos: [master, ...unsortedEntry(), ...fallbackRepos().map((r) => ({ id: r.name, name: r.name, kind: 'repo', status: 'active', local: null }))] }
     }
     return {
       generated_at: cat.generated_at,
       repos: [
         master,
+        ...unsortedEntry(),
         ...cat.projects.map((p) => ({ id: p.id, name: p.name, kind: p.kind, status: p.status, local: dirOf(p), tags: p.tags, repo: p.repo, board: p.board }))
       ]
     }
   }
 
   async function tree(id) {
+    if (id === UNSORTED_ID) {
+      const u = outbox().unsorted
+      return { source: 'unsorted', dir: null, tree: [], deliverables: u.whole, leftovers: u.leftovers }
+    }
+    const t = await docTree(id)
+    return id === MASTER_ID ? t : { ...t, deliverables: outbox().byProject[id] || [] }
+  }
+
+  async function docTree(id) {
     if (id === MASTER_ID) return { source: 'master', dir: null, tree: [MASTER_FILE] }
     const rec = find(id)
     if (!rec) throw new Error(`Unknown project: ${id}`)
     const dir = dirOf(rec)
     if (dir) {
-      const states = await localFileStates(dir)
+      // Saved state first: the last-known badges now (none on the first open), the fresh ones in the background.
+      const states = lastStates.get(dir) || {}
+      refreshStates(id, dir)
       const annotate = (e) => ({ ...e, state: states[e.path] || null })
       const local = listLocalTree(dir).map((e) => (e.section ? { ...e, items: e.items.map(annotate) } : annotate(e)))
       return { source: 'local', dir, tree: [CARD, ...local] }
@@ -87,6 +124,20 @@ export function createDocsService({ getCatalog, exec, readMaster, fallbackRepos 
     return fetchFileContent(exec, ghName(rec), filePath)
   }
 
+  // The first heading of each doc, for the project overview's summary cards. Reads local files or the saved copy only.
+  async function headings(id, paths) {
+    const out = {}
+    for (const p of (Array.isArray(paths) ? paths : []).slice(0, 12)) {
+      try {
+        const text = await content(id, String(p))
+        out[p] = extractOutline(p.endsWith('.ipynb') ? '' : text)[0]?.text || null
+      } catch {
+        out[p] = null
+      }
+    }
+    return out
+  }
+
   // Sent once when a GitHub-only project is opened: one conditional request (a 304 is free). On a change the saved
   // copy is refreshed and the new tree comes back, so the open view can update in place.
   async function revalidate(id) {
@@ -118,6 +169,8 @@ export function createDocsService({ getCatalog, exec, readMaster, fallbackRepos 
         }
       }
     }
+    // Deliverables (#570): one search covers docs and deliverables. Cached per outbox item in deliverables.js.
+    if (deliverables) docs.push(...deliverables.searchDocs())
     return { repos: reposWithLocal, docs }
   }
 
@@ -129,5 +182,5 @@ export function createDocsService({ getCatalog, exec, readMaster, fallbackRepos 
 
   const localDirs = () => (catalog()?.projects || []).map(dirOf).filter(Boolean)
 
-  return { repos, tree, content, revalidate, localDocs, githubIndexRepos, localDirs }
+  return { repos, tree, content, headings, revalidate, localDocs, githubIndexRepos, localDirs }
 }
