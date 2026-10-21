@@ -37,7 +37,11 @@ BRANCH_NAME="$3"
 REPO="G-Eskayo/marvin"
 
 PROMPT_FILE=$(mktemp)
+# marvin#556: the standard delegation preamble (required reading + the reused pattern), from its one source.
+PREAMBLE=$("$HOME/.agents/venv/bin/python" "$(dirname "$0")/north_stars.py" preamble "$REPO")
 cat > "$PROMPT_FILE" <<EOF
+${PREAMBLE}
+
 You are implementing GitHub issue #${ISSUE_NUMBER} on repo ${REPO}. Read
 it in full first: \`gh issue view ${ISSUE_NUMBER} --repo ${REPO}\`. If it
 has a "## Parent" reference, read that issue too for full design context,

@@ -136,8 +136,10 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
     # `gh issue view owner/repo#17` is rejected by gh; the working form names the repo with --repo.
     m = re.fullmatch(r"([\w.-]+/[\w.-]+)#(\d+)", ticket_ref)
     view = f"gh issue view {m.group(2)} --repo {m.group(1)}" if m else f"gh issue view {ticket_ref}"
+    import north_stars  # marvin#556: required reading + the reused pattern, from one source
     plan_prompt = (
         f"{autonomy_note}{project_notes}\n\n"
+        f"{north_stars.delegation_preamble(m.group(1) if m else None)}\n\n"
         f"Read GitHub issue {ticket_ref} ({view}) and produce a "
         f"concise, concrete implementation plan covering its 'What to build' section "
         f"and every acceptance criterion. Also read its comments ({view} --comments): "
@@ -145,8 +147,8 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
         f"Plan only -- do not edit any files yet. "
         f"Before writing the design doc, read the current contents of every file your 'What to build' section and acceptance criteria say you will touch. "
         # marvin#276: the executor sees the north stars only through this section of the plan.
-        f"Open the plan with a short '## North-star fit' section, against the north stars above: what it reuses "
-        f"before adding anything, why it is the simplest sufficient approach, where it saves or spends tokens, and "
+        f"Open the plan with a short '## North-star fit' section, against the north stars above: which existing pattern it "
+        f"reuses (file and function) before adding anything, why it is the simplest sufficient approach, where it saves or spends tokens, and "
         f"whether it leaves the user more capable. If the ticket states a fit, check it against the code and correct it."
         # ADR 0063: tests try to break it, and come first.
         f" Then list the tests you will write FIRST: one for each case in the ticket's 'How we'll try to break it' "

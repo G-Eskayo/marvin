@@ -48,3 +48,27 @@ def test_no_north_star_text_is_hardcoded_in_any_script():
         src = path.read_text(errors="ignore")
         offenders += [f"{path.relative_to(AGENTS)}: {p}" for p in _COPIED if re.search(p, src)]
     assert offenders == []
+
+
+# marvin#556: delegated design/fix work skipped CONTEXT.md "Triggers over polling" (#554). One preamble, one source.
+def test_delegation_preamble_requires_the_reading_and_the_reused_pattern():
+    text = north_stars.delegation_preamble()
+    assert "docs/north-stars.md" in text
+    assert "CONTEXT.md" in text and "docs/adr" in text
+    assert "existing pattern" in text and "reused" in text
+    assert len(text) < 900  # short: it rides on every delegated prompt
+
+
+def test_delegation_preamble_names_the_target_repo_when_given():
+    assert "G-Eskayo/finance-os" in north_stars.delegation_preamble("G-Eskayo/finance-os")
+
+
+def test_delegation_preamble_cli_prints_it(capsys):
+    north_stars.main(["preamble", "o/r"])
+    assert capsys.readouterr().out.strip() == north_stars.delegation_preamble("o/r")
+
+
+def test_manual_dispatch_and_the_planner_use_the_preamble():
+    assert re.search(r'north_stars\.py"? preamble', (AGENTS / "lib" / "dispatch_ticket.sh").read_text())
+    assert "delegation_preamble(" in (AGENTS / "lib" / "sandbox_orchestration.py").read_text()
+    assert "north_stars.py preamble" in (AGENTS / "docs" / "north-stars.md").read_text()
