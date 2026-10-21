@@ -78,3 +78,6 @@ dashboard/node_modules
 
 # Claude Code worktrees are per-machine; auto-sync swept three in as gitlinks and broke every Mini push (marvin#430)
 .claude/worktrees/
+
+# MARVIN's own per-machine state and caches (dashboard/electron/main/marvin_paths.js): never committed, never in ~/.claude
+/var/
