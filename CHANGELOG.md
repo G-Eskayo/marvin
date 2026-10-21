@@ -1,5 +1,7 @@
 # Changelog
 
+- MR Review: show GitHub checks progress (N of M done, what's running, last checked) with a per-check drill-down ([#557](https://github.com/G-Eskayo/marvin/pull/557))
+
 - Proposals section in MR Review: big north-star ideas, plain-language cards, actions ([#542](https://github.com/G-Eskayo/marvin/pull/542))
 
 - Signed dashboard builds crash after packaging (null publish 'channel'), so installs fall back to ad-hoc signing ([#541](https://github.com/G-Eskayo/marvin/pull/541))
