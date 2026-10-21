@@ -398,6 +398,17 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   ruled out early. Kept as its own tab rather than folding into the planned "MARVIN activity/log"
   progress view (G-Eskayo/marvin#82) — the two serve different jobs: the Files tab shows *what
   MARVIN produced*, the activity tab (not yet built) shows *what MARVIN is doing*.
+- **File view** (marvin#402, 2026-10-21): every outbox file shows in its most readable form through one component,
+  `FileView` (also renders the Docs tab's documents, so #403's merge-or-not reuses it). Main (`outbox.js`) decides the
+  kind from the name and checks the bytes: images go as `data:` URLs (sniffed, so a text file named .png is a card),
+  markdown's relative images come through `outbox:image` (resolved against the file's folder, same traversal guard),
+  PDFs load in Chromium's viewer from `outbox://file/<path>` (served only for real PDFs inside the outbox; CSP
+  `frame-src 'self' outbox:`), HTML renders in `<iframe sandbox="" srcdoc>` behind a deny-all CSP (no scripts, no
+  network), CSV/TSV as a table. Anything else, too large or unreadable: a card with name, kind, size, Reveal in Finder.
+- **Image viewer**: one full-size viewer (`ImageViewer`) for MR Review, Docs, Files and Portfolio. ✕, Esc or a click
+  outside the picture closes it; pinch / ⌘-scroll / + − Fit 100% / double-click zoom; tall screenshots open
+  fit-to-width. Gotcha behind "✕ doesn't work": the header strip is a `-webkit-app-region: drag` title bar, and
+  Electron hit-tests drag regions above the page, so any overlay drawn over the header must declare `no-drag`.
 
 ## Health monitoring (in design, 2026-10-01)
 
