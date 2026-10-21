@@ -1,6 +1,8 @@
 // MR Review across projects. The list spans every registered board repo; the
 // merge gate (webhook-server/merge.js) is built in for marvin and profile-driven for other projects:
 // they get Approve/Deny only when their profile opts in (merge_from_dashboard).
+import { ciState } from '../../webhook-server/ci_status.js'
+
 export const MARVIN_REPO = 'G-Eskayo/marvin'
 
 export const prKey = (repo, number) => `${repo}#${number}`
@@ -37,4 +39,14 @@ export function repoFromPrUrl(url) {
 export function prListArgs(repo, { light = false } = {}) {
   const fields = light ? 'number,title,url' : 'number,title,url,body,files,baseRefName,headRefName,mergeable,statusCheckRollup'
   return ['pr', 'list', '--repo', repo, '--state', 'open', '--limit', '200', '--json', fields]
+}
+
+// How soon to re-read a repo's open-PR list whose checks are still running, or undefined when none are. The change
+// watch (gh_watch.js) only notices issue/PR updates; GitHub checks finishing is not one, so a list read right after a
+// push kept "Waiting for GitHub checks" until the 30-minute safety refresh (clarity-captions#143, 2026-10-21). Costs
+// one list read per repo per interval, and only while that repo has checks running and MR Review is open.
+export const PENDING_CHECKS_TTL_MS = 90_000
+export function pendingChecksTtl(prs) {
+  if (!Array.isArray(prs)) return undefined
+  return prs.some((p) => p && Array.isArray(p.statusCheckRollup) && ciState(p.statusCheckRollup).state === 'pending') ? PENDING_CHECKS_TTL_MS : undefined
 }
