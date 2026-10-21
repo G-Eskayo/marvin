@@ -384,6 +384,11 @@ export const GUIDANCE = [
   'dashboard/test/polling_guard.test.js with the count and a one-line reason.'
 ].join('\n')
 
+// Screenshot/evidence scripts (scripts/*_evidence.mjs) drive a local Electron app over CDP and must wait for windows
+// and renders: a bounded sleep loop there reads nothing remote and never ships. One rule instead of an entry per script,
+// so each new PR's evidence script doesn't collide with the allowlist. Intervals and TTLs in them still count.
+export const EVIDENCE_SCRIPT = /^scripts\/[\w-]+_evidence\.mjs$/
+
 // Compare findings with the allowlist: { 'path': { kind: [count, reason] } }. Returns problem strings ([] = ok).
 export function checkAllowlist(results, allowlist) {
   const problems = []
@@ -391,6 +396,7 @@ export function checkAllowlist(results, allowlist) {
   for (const [path, findings] of results) {
     for (const f of findings) {
       if (f.kind === 'ui-clock') continue
+      if (f.kind === 'timeout-loop' && EVIDENCE_SCRIPT.test(path)) continue
       const k = `${path}\0${f.kind}`
       if (!counted.has(k)) counted.set(k, [])
       counted.get(k).push(f)
