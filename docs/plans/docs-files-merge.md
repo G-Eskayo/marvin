@@ -33,6 +33,7 @@ The three layouts (mock-ups: `docs/screenshots/ticket-403-*.png`, and the phone-
 | **A. Section on the card** | The doc tree is unchanged. The project card ends with a **Deliverables** section: one card per folder, newest first, with image thumbnails and kind badges, and "Show all N". | A page listing the 7 whole items and the 10 leftovers from mixed folders, with the naming rule that files them. | One list. A `Doc` / `Deliverable` tag on each result. Image and folder hits show thumbnails. |
 | **B. Groups in the tree** | The second column has two collapsible groups, **Docs** and **Deliverables**. Deliverable folders expand to files with #402 kind badges. A file opens in the main pane exactly as a doc does. | The same tree, for the unsorted items. | Results grouped: Docs (n), then Deliverables (n). |
 | **C. Tabs on the page** | A tab strip: **Docs / Decisions / Deliverables**. The tree lists the active tab's items. Deliverables is a grid of folder cards with cover images. | Only a Deliverables tab, as a grid. | Filter chips: All, Docs, Decisions, Deliverables. |
+| **Hybrid of B and C** (added 2026-10-21 after Gil: "I like B and C") | B's tree with C's three groupings as top-level collapsible groups: **Docs**, **Decisions** (the ADRs), **Deliverables**. Selecting a file opens it in the main pane, as in B. Selecting a deliverable *folder* shows its contents as C's card grid. | The tree has only a Deliverables group. Its root shows the card grid of the whole items, plus the mixed-folder leftovers. | C's filter chips on top of results grouped Docs / Decisions / Deliverables. |
 
 ### New visual elements (everything else is the current app's markup and classes)
 
@@ -47,6 +48,19 @@ The three layouts (mock-ups: `docs/screenshots/ticket-403-*.png`, and the phone-
   file-card button.
 - C: the page tab strip with counts, and the grid of folder cards with a cover image. "Decisions" is a new
   grouping of `docs/adr/`. Search filter chips.
+- Hybrid (mock-ups `ticket-403-h-*.png`):
+  - Three top-level group headers in the tree (`▾ DOCS 33`, `▸ DECISIONS 24`, `▾ DELIVERABLES 8`). Decisions
+    holds `docs/adr/`, which moves out of the Docs group. B's collapsible doc sections and the `w-72` tree column
+    carry over.
+  - Deliverable folders in the tree expand to subfolders and files. A selected folder is highlighted like a
+    selected doc.
+  - A folder header in the main pane (name, date, file count, matched by, *Reveal in Finder*) and a 4-column grid of
+    item cards. Images show a cover; markdown shows its first heading and opening text; subfolders show their
+    first image and file count. The card classes are C's.
+  - The Unsorted root is a selectable group header that shows C's folder-card grid.
+  - Search: C's chips (All, Docs, Decisions, Deliverables) above group labels in B's style, now three groups.
+  - Alternative mocked but not recommended (`ticket-403-h-1b-file-open-tree-chips.png`): Docs / Decisions /
+    Deliverables as rounded chips at the top of the tree column, which then lists one grouping at a time.
 
 ## 2. Matching outbox items to projects
 
@@ -230,6 +244,17 @@ Definitions:
   and the "matched by" line teaches the naming rule instead of hiding it.
 
 ## 9. Recommendation
+
+**Update 2026-10-21:** Gil liked B and C, so the hybrid is now the recommended option. It keeps B's single tree, where
+files open like docs, and adds C's three groupings, folder grid and search chips.
+
+**Three top-level groups, not tab chips.** With groups, docs, decisions and deliverables are in view together (or
+collapsed to one line each), and that's what Gil asked for on 2026-10-21. Chips show one grouping at a time, which
+brings back C's separation. At the tree's width the three chips also wrap onto two lines (see `h-1b`). Collapsing
+covers the length problem: Decisions starts collapsed (24 ADRs for clarity-captions, 69 for marvin). Whether a
+group stays open per project is left to the build ticket, and it goes to Gil before anyone builds it.
+
+The original recommendation, before Gil's feedback:
 
 **B, groups in the tree.** A deliverable is then just another item in the project's tree and opens in the same pane,
 the same way a doc does. That's one mental model and the smallest new surface: two group headers, collapsible
