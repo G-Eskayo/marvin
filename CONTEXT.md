@@ -554,6 +554,14 @@ unbounded: any chat, either machine, raw `gh`, the GitHub UI). Polling stays onl
   against its most-recently-updated issue (304 = free against the rate limit) and, on change, pings the
   app's `/refresh` port with topics. Real GitHub webhooks were rejected: they need a public URL and the
   one static ngrok domain belongs to Marlin. The events feed was rejected: it lags by minutes.
+- **GitHub checks** (marvin#555, 2026-10-21; replaces #554's 90 s re-read of the whole PR list): checks
+  starting or finishing are not issue updates, so the change-detector never sees them. The **check watch**
+  (`createCheckWatcher` in `gh_watch.js`) runs in the dashboard's main process and the mobile backend, which
+  hold the cached PR lists: every ~20 s, for each commit the cached list shows with checks pending, one
+  conditional request to `GET /repos/{repo}/commits/{sha}/check-runs` (plus `/status` only when that PR uses
+  commit statuses). A 304 is free; a 200 re-reads that repo's list only if the checks differ from what the
+  list showed. A commit is dropped (etag forgotten) once the list no longer shows it pending. Its last
+  probe is MR Review's "Last checked".
 - **Coverage guard**: the 60s backstop poll compares what it fetched with what it last showed; a change
   no trigger announced is appended to `~/.claude/logs/trigger-misses.jsonl` and surfaces as the
   `triggers:missed` Health check, so a gap identifies itself instead of waiting to be noticed.

@@ -45,35 +45,41 @@ describe('createGithubState: the last-known GitHub state, re-read only when GitH
     expect(calls).toEqual(['q', 'q'])
   })
 
-  // 2026-10-21, clarity-captions#143: the change watch only sees issue/PR updates, and GitHub checks finishing is not one.
-  // A list read right after a push held "Waiting for GitHub checks" for up to 30 minutes after every check had passed.
-  it('ttlFor: a cached value can ask to be re-read sooner (checks still running), and only then', async () => {
-    let t = 0
+  // marvin#555: MR Review says "Last checked 20 s ago", so the time of the last real read must reach the screen; and the
+  // check watch reads which commits to watch from what is already in memory, without asking GitHub.
+  it('fetchedAt: when a value was last read from GitHub (not when it was last served from memory)', async () => {
+    let t = 1000
     const s = createGithubState({ now: () => t })
-    const fetches = []
-    const values = ['running', 'done', 'done']
-    const fetch = async () => { fetches.push(t); return values[fetches.length - 1] }
-    const ttlFor = (v) => (v === 'running' ? 90_000 : undefined)
-    expect(await s.get('prs', 'o/a', fetch, { ttlFor })).toBe('running')
-    t += 60_000
-    expect(await s.get('prs', 'o/a', fetch, { ttlFor })).toBe('running')
-    t += 31_000
-    expect(await s.get('prs', 'o/a', fetch, { ttlFor })).toBe('done')
-    t += 20 * 60_000
-    expect(await s.get('prs', 'o/a', fetch, { ttlFor })).toBe('done')
-    expect(fetches).toEqual([0, 91_000])
+    const { fetch } = counter()
+    expect(s.fetchedAt('prs', 'o/a')).toBe(null)
+    await s.get('prs', 'o/a', fetch('a'))
+    t = 5000
+    await s.get('prs', 'o/a', fetch('a'))
+    expect(s.fetchedAt('prs', 'o/a')).toBe(1000)
+    s.changed('o/a')
+    await s.get('prs', 'o/a', fetch('a'))
+    expect(s.fetchedAt('prs', 'o/a')).toBe(5000)
+    expect(s.fetchedAt('prs-light', 'o/a')).toBe(null)
   })
 
-  it('ttlFor never lengthens the safety refresh, and a throwing ttlFor falls back to it', async () => {
-    let t = 0
-    const s = createGithubState({ now: () => t })
-    const { calls, fetch } = counter()
-    await s.get('prs', 'o/a', fetch('a'), { ttlFor: () => 60 * 60_000 })
-    await s.get('prs', 'o/b', fetch('b'), { ttlFor: () => { throw new Error('bad value') } })
-    t += 31 * 60_000
-    await s.get('prs', 'o/a', fetch('a'), { ttlFor: () => 60 * 60_000 })
-    await s.get('prs', 'o/b', fetch('b'), { ttlFor: () => { throw new Error('bad value') } })
-    expect(calls).toEqual(['a', 'b', 'a', 'b'])
+  it('fetchedAt keeps the old time when a re-read fails (the screen must not claim a fresh look)', async () => {
+    let t = 1000
+    const s = createGithubState({ now: () => t, cooldownUntil: () => 0 })
+    await s.get('prs', 'o/a', async () => ['x'])
+    s.changed('o/a')
+    t = 9000
+    expect(await s.get('prs', 'o/a', async () => { throw new Error('offline') })).toEqual(['x'])
+    expect(s.fetchedAt('prs', 'o/a')).toBe(1000)
+  })
+
+  it("peek: every repo's last-known value of one kind, without reading GitHub", async () => {
+    const s = createGithubState({ now: () => 0 })
+    expect(s.peek('prs')).toEqual([])
+    await s.get('prs', 'o/a', async () => [1])
+    await s.get('prs', 'o/b', async () => [2])
+    await s.get('board', 'o/a', async () => 'board')
+    s.get('prs', 'o/c', () => new Promise(() => {})) // still in flight: nothing known yet
+    expect(s.peek('prs')).toEqual([{ repo: 'o/a', value: [1] }, { repo: 'o/b', value: [2] }])
   })
 
   it('a safety refresh after 30 minutes, or a per-key one', async () => {

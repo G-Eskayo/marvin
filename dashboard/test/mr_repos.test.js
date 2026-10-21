@@ -27,6 +27,22 @@ describe('listOpenPrsAcrossRepos', () => {
   })
 })
 
+describe("listOpenPrsAcrossRepos: when each repo's list was read (marvin#555)", () => {
+  it('tags every PR with the time its repo list was read, when asked', async () => {
+    const ghList = async (repo) => [{ number: 1, title: repo, url: repo, body: '' }]
+    const at = { [MARVIN_REPO]: 111, 'o/x': 222 }
+    const { prs } = await listOpenPrsAcrossRepos(['o/x'], ghList, { listedAt: (repo) => at[repo] })
+    expect(prs.map((p) => [p.repo, p.listedAt])).toEqual([[MARVIN_REPO, 111], ['o/x', 222]])
+  })
+  it('an unknown or throwing read time is null, never a guess and never a failed list', async () => {
+    const ghList = async () => [{ number: 1, title: 't', url: 'u', body: '' }]
+    expect((await listOpenPrsAcrossRepos([], ghList)).prs[0].listedAt).toBe(null)
+    const { prs, errors } = await listOpenPrsAcrossRepos([], ghList, { listedAt: () => { throw new Error('x') } })
+    expect(prs[0].listedAt).toBe(null)
+    expect(errors).toEqual([])
+  })
+})
+
 describe('keys, seen-tracking and merge permission', () => {
   it('qualifies PR numbers by repo so two projects can both have a #5', () => {
     expect(prKey('o/a', 5)).toBe('o/a#5')

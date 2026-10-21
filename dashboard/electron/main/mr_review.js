@@ -1,6 +1,6 @@
 import { MARVIN_REPO, prKey, canMergeFromDashboard, repoFromPrUrl } from './mr_repos.js'
 import { waitingOn, baseProblem } from './pr_order.js'
-import { ciState } from '../../webhook-server/ci_status.js'
+import { ciState, checkRuns } from '../../webhook-server/ci_status.js'
 import { uiFiles, hasImage } from '../../webhook-server/ui_evidence.js'
 import { parsePrImages } from './pr_images.js'
 import { summarizeDecisions, vagueness } from '../../webhook-server/decisions.js'
@@ -332,7 +332,9 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
       conflicts: pr.mergeable === 'CONFLICTING',
       rebase: rebased[pr.url] || null,
       autoMerge: shadow[pr.url]?.current || null,
-      checks: ciState(pr.statusCheckRollup),
+      // Each check's own state and times, and when GitHub was last asked (the check watch's probe, else the list read):
+      // MR Review's progress bar, drill-down and "Last checked" (marvin#555).
+      checks: { ...ciState(pr.statusCheckRollup), runs: checkRuns(pr.statusCheckRollup), checkedAt: pr.checkedAt ?? pr.listedAt ?? null },
       needsImages: needsImages(pr, uiPathsFor),
       // Choices the PR asks the owner to make (its Decisions section), and whether it asks in prose with nowhere to
       // answer (2026-10-09): either one holds Approve until it is answered or restated.
