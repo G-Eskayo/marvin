@@ -154,9 +154,12 @@ export function createSavedDocs({ dir = SAVED_DIR, probe, exec, seed = () => nul
     return inflight.get(repo)
   }
 
-  // A doc's saved text. A doc never seen before is fetched once and saved; a click during the first fill waits for it.
+  // A doc's saved text, at once, even while the open-time check runs (a change then updates it in place). A doc not in
+  // the copy yet waits for a running check (the first fill brings it), else is fetched once and saved.
   async function content(repo, filePath) {
     if (!isDocPath(filePath)) throw new Error(`Not a doc path: ${filePath}`)
+    const have = peek(repo)?.files?.[filePath]
+    if (typeof have === 'string') return have
     if (inflight.has(repo)) await inflight.get(repo)
     const copy = peek(repo)
     if (typeof copy?.files?.[filePath] === 'string') return copy.files[filePath]
