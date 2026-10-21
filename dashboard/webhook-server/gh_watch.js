@@ -48,6 +48,22 @@ export function createGithubProbe(env = process.env, doFetch = fetch) {
   }
 }
 
+// The Docs tab's saved copy of a GitHub-only project (#565, electron/main/docs_saved.js): the same conditional GET, on the
+// repo's recursive git tree. Sent once when the project is opened, never on a timer. A 304 is free; a 200's body is
+// the new tree, with each file's blob sha, so the caller downloads only the docs that changed.
+export const treeEndpoint = (repo) => `https://api.github.com/repos/${repo}/git/trees/HEAD?recursive=1`
+export function createTreeProbe(env = process.env, doFetch = fetch) {
+  return async (repo, etag) => {
+    const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'marvin-dashboard-watch' }
+    if (env.GH_TOKEN) headers.Authorization = `Bearer ${env.GH_TOKEN}`
+    if (etag) headers['If-None-Match'] = etag
+    const res = await doFetch(treeEndpoint(repo), { headers })
+    const out = { status: res.status, etag: res.headers.get('etag') || undefined }
+    if (res.status === 200) out.body = await res.json()
+    return out
+  }
+}
+
 export function startChangeWatch({ getRepos, probe, ping, intervalMs = 20_000, setIntervalFn = setInterval }) {
   const detector = createChangeDetector({ probe, onChange: (repo) => ping(repo) })
   let running = false
