@@ -4,7 +4,7 @@ import { promisify } from 'util'
 import { execFile } from 'child_process'
 import { createGithubState } from '../electron/main/github_state.js'
 import { loadBoard, fetchBoardData, getEvidence, readRegistry, REGISTRY_PATH } from '../electron/main/boards.js'
-import { listOpenPrsAcrossRepos, prListArgs, canMergeFromDashboard, MARVIN_REPO, normalizeSeen } from '../electron/main/mr_repos.js'
+import { listOpenPrsAcrossRepos, prListArgs, canMergeFromDashboard, MARVIN_REPO, normalizeSeen, pendingChecksTtl } from '../electron/main/mr_repos.js'
 import { listPipelinePrs, sentBackKeys, fetchTicketContext } from '../electron/main/mr_review.js'
 import { readMergeableRepos, PROFILES_DIR } from '../electron/main/profiles.js'
 import { computeReviewStatus, readSeenNumbers } from '../electron/main/mr_seen.js'
@@ -137,7 +137,8 @@ export function createDashboardGhApiRouter(opts = {}) {
         // Get open PRs across all repos
         const listOpenPrs = async () => {
           const ghList = async (repo) => {
-            const json = await githubState.get('prs', repo, () => gh(prListArgs(repo)))
+            // Checks still running: re-read sooner, as the desktop does (finishing checks send no change ping).
+            const json = await githubState.get('prs', repo, () => gh(prListArgs(repo)), { ttlFor: (cached) => pendingChecksTtl(JSON.parse(cached)) })
             return JSON.parse(json)
           }
           const { prs } = await listOpenPrsAcrossRepos(repoList, ghList)
