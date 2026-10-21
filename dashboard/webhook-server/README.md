@@ -19,6 +19,16 @@ in `MARVIN_MR_WEBHOOK_URL` (and, for Deny, `MARVIN_MR_DENY_WEBHOOK_URL`).
 - `200 { "merged": true }` on success
 - `500 { "merged": false, "error": "<message>" }` on failure (bad URL, merge conflict, already merged, etc.)
 
+**Streamed progress (marvin#568)**: send `Accept: application/x-ndjson` and the answer is `200` with one JSON line per
+stage event as it happens, `{"type":"progress","event":{id, seq, stage, state, at, detail?, count?, machine?, estimateMs?}}`
+(stages: queued, fetching, rebasing, installing, tests, merging, after, done; states: running, done, failed, skipped),
+then one `{"type":"result","status":<the status above>,"body":<the body above>}`. A stream that ends with no result
+line means the webhook went away mid-merge: the dashboard shows "interrupted". Without the header the response is
+exactly as above. The same events are also posted to the dashboard's refresh port on this Mac as
+`{"topics":["merge"],"merge":{"url","event"}}`. Each merge's start, stage changes and finish are logged to
+`~/.claude/logs/dashboard-webhook.log`; merges in flight are kept in `~/.claude/logs/merge-inflight.json` and reported
+as interrupted when the webhook starts again; real durations go to `~/.claude/logs/gate-run-durations.jsonl`.
+
 ## Contract: `POST /deny`
 
 ADR 0025's Deny action — one endpoint, two terminal actions carried in `action`.

@@ -11,7 +11,7 @@
 // click it is stale as soon as the state changes, so it is never shown as an error.
 const MIRRORED_REFUSALS = /^(SENT_BACK|CI_PENDING|CI_FAILED|WRONG_BASE|NO_UI_EVIDENCE|DECISIONS_PENDING|DECISIONS_UNSTRUCTURED)\b/
 
-export function describePrState(pr, { status = 'idle', errorMessage = null } = {}) {
+export function describePrState(pr, { status = 'idle', errorMessage = null, progress = false } = {}) {
   const ci = pr.checks || { state: 'none', failing: [], pending: [] }
   const waiting = pr.waitingOn || []
   const base = (kind, tone, headline, detail, approve, deny, extra = {}) => ({ kind, tone, headline, detail, approve, deny, actions: [], note: null, rework: null, checkProgress: false, ...extra })
@@ -20,7 +20,21 @@ export function describePrState(pr, { status = 'idle', errorMessage = null } = {
   const hasRuns = Array.isArray(ci.runs) && ci.runs.length > 0
 
   if (status === 'approving') {
-    return base('merging', 'working', 'Merging…', 'Merging. It is rebased and retested first only if main changed files this PR also changes. You can leave this screen; it carries on.', 'hidden', 'hidden')
+    // With the stage-by-stage view (marvin#568) the bar shows what is happening; the sentence only says it carries on.
+    return base('merging', 'working', 'Merging…', progress
+      ? 'You can leave this screen; it carries on.'
+      : 'Merging. It is rebased and retested first only if main changed files this PR also changes. You can leave this screen; it carries on.', 'hidden', 'hidden')
+  }
+
+  if (status === 'merged') {
+    return errorMessage
+      ? base('merged', 'ready', 'Merged on GitHub', 'It was merged on GitHub by hand while the dashboard was merging it, so the dashboard stopped following its merge.', 'hidden', 'hidden')
+      : base('merged', 'ready', 'Merged', null, 'hidden', 'hidden')
+  }
+
+  // The webhook restarted (or went away) mid-merge (marvin#568): said at once, and Approve again is offered.
+  if (status === 'interrupted') {
+    return base('interrupted', 'blocked', 'The merge was interrupted', errorMessage || 'The merge was interrupted when the webhook restarted. Approve again.', 'enabled', 'enabled')
   }
 
   if (pr.sentBack) {

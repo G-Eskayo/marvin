@@ -364,7 +364,7 @@ export async function listPipelinePrs(listOpenPrs, { canMerge = canMergeFromDash
 
 // Turns the webhook's structured failure body into a message that says what broke, where,
 // and what happens next -- "Webhook call failed: 500" hid the real reason (2026-10-02).
-function describeApproveFailure(status, body) {
+export function describeApproveFailure(status, body) {
   if (!body || !body.code) return `Webhook call failed: ${status}`
   const next =
     body.action === 'escalate'
