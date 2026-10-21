@@ -206,6 +206,19 @@ describe('revalidation: one conditional request per open', () => {
     expect(gh.calls.fetched.filter((p) => p === 'README.md').length).toBe(1)
   })
 
+  it('a click on a saved doc answers at once while the open-time check is still waiting on GitHub', async () => {
+    const gh = fakeGithub()
+    await store(gh).revalidate(REPO)
+    let release
+    const slow = createSavedDocs({ dir, exec: gh.exec, now: () => clock, probe: () => new Promise((r) => (release = () => r({ status: 304, etag: 'W/"v1"' }))) })
+    const check = slow.revalidate(REPO)
+    const t0 = Date.now()
+    expect(await slow.content(REPO, 'README.md')).toBe('# paper-dive\n')
+    expect(Date.now() - t0).toBeLessThan(50)
+    release()
+    expect((await check).status).toBe('unchanged')
+  })
+
   it('a doc that fails to download keeps the old ETag, so the next open retries it', async () => {
     const gh = fakeGithub()
     const s = store(gh)
