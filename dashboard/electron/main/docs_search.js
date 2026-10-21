@@ -15,9 +15,22 @@ function flatten(tree) {
   return tree.flatMap((e) => (e.section ? e.items : [e]))
 }
 
-export async function buildDocsIndex(execFileAsync, repos, indexPath = INDEX_PATH) {
+// With `saved` (docs_saved.js, #565) a rebuild goes through the Docs tab's saved copy: one conditional request per repo
+// (a 304 is free and downloads nothing), and only docs whose blob sha changed are fetched. Without it, every file of
+// every repo is downloaded again.
+export async function buildDocsIndex(execFileAsync, repos, indexPath = INDEX_PATH, { saved = null } = {}) {
   const docs = []
   for (const repo of repos) {
+    if (saved) {
+      const full = repo.repo || `G-Eskayo/${repo.name}`
+      await saved.revalidate(full)
+      const copy = saved.peek(full)
+      for (const f of flatten(copy?.tree || [])) {
+        const text = copy.files[f.path]
+        if (typeof text === 'string') docs.push({ repo: repo.id || repo.name, path: f.path, label: f.label, content: searchableText(f.path, text) })
+      }
+      continue
+    }
     let files = []
     try {
       files = flatten(await listRepoDocTree(execFileAsync, repo.name))

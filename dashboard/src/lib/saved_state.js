@@ -22,5 +22,6 @@ export function ageText(at, now = Date.now()) {
   if (s < 60) return 'updated just now'
   if (s < 3600) return `updated ${Math.floor(s / 60)} min ago`
   if (s < 86400) return `updated ${Math.floor(s / 3600)} h ago`
-  return `updated ${Math.floor(s / 86400)} days ago`
+  const d = Math.floor(s / 86400)
+  return `updated ${d} day${d === 1 ? '' : 's'} ago`
 }
