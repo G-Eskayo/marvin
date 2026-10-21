@@ -28,3 +28,5 @@ The single source for what MARVIN is aiming at and how it should be built (ADR 0
 ## Applying them to a piece of work
 
 State a short **north-star fit**: what it reuses before adding anything new, why it is the simplest sufficient approach, where it saves tokens (or why it spends them), what it does for the phone-OS direction, and whether it leaves the user more capable or just more passive. If a north star argues against the work, say so plainly. Grounded, not agreeable.
+
+**Delegating** design or fix work to another agent: open its prompt with the delegation preamble (`lib/north_stars.py preamble [owner/repo]`): required reading of this file and the repo's CONTEXT.md decisions, and a report that names the existing pattern it reused.

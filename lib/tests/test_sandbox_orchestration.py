@@ -1413,3 +1413,13 @@ def test_exec_reads_task_list_file_not_plan_string_directly(monkeypatch, tmp_pat
     assert "1. From planner" in exec_prompt
     # And the prompt doesn't accidentally include the full design doc
     assert "## North-star fit" not in exec_prompt
+
+
+def test_the_planner_gets_the_delegation_preamble(monkeypatch, tmp_path):
+    """marvin#556: required reading (north stars, the repo's CONTEXT.md decisions) and the reused pattern stated."""
+    import north_stars
+    prompts = []
+    monkeypatch.setattr(so, "_launch", lambda kind, prompt, **k: prompts.append((kind, prompt)) or (_fake_plan_response(), 0.0))
+    so._default_executor(tmp_path, "G-Eskayo/marvin#9", None)
+    plan = dict(prompts)["ticket-planner"]
+    assert north_stars.delegation_preamble("G-Eskayo/marvin") in plan

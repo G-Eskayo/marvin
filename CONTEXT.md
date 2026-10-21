@@ -557,6 +557,10 @@ unbounded: any chat, either machine, raw `gh`, the GitHub UI). Polling stays onl
 - **Coverage guard**: the 60s backstop poll compares what it fetched with what it last showed; a change
   no trigger announced is appended to `~/.claude/logs/trigger-misses.jsonl` and surfaces as the
   `triggers:missed` Health check, so a gap identifies itself instead of waiting to be noticed.
+- **Enforced, not remembered (marvin#556)**: `dashboard/test/polling_guard.test.js` fails on any new `setInterval`,
+  recurring `setTimeout` (self-rescheduling, in a loop, a sleep awaited in a loop) or TTL name in the dashboard's source
+  unless it is a UI clock (callback only calls useState setters) or allowlisted with a count and a one-line reason.
+  Delegated design/fix prompts open with `lib/north_stars.py preamble`: read this file's decisions, name the pattern reused.
 - **Not built, deliberately**: a rebuild-on-pull trigger (the sync cycle already rebuilds right after it
   pulls; only the cycle gap + 15-min settle remain) and a Docs-tab trigger (Docs still refreshes by hand).
 
