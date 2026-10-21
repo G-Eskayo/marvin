@@ -12,7 +12,7 @@ import { analyzeSource, scanFiles, checkAllowlist, GUIDANCE } from './polling_gu
 // Kinds (see polling_guard.js): interval, timeout-loop, ttl. UI clocks (callback only calls this file's useState
 // setters and Date.now) are allowed by rule, never by name, and need no entry.
 const TODO_558 = 'TODO: move to trigger, see follow-up #558'
-const TODO_TRIGGER_PR = 'TODO: removed by the #555 check-runs ETag trigger PR (replaces #554 pendingChecksTtl)'
+const CHECK_WATCH = 'the #557 check watch: one ETag (conditional) request per PR head with checks running, 304 is free, the same pattern as the change-detector; real push replaces it (#566)'
 export const ALLOWLIST = {
   // Renderer. Each reads main-process IPC; GitHub-backed IPC answers from github_state's cache (change-ping driven).
   'src/App.jsx': { interval: [2, 'backstops: MR status dot behind mr.onRefresh push (2 min), Health dot reads the local snapshot (60 s)'] },
@@ -32,21 +32,21 @@ export const ALLOWLIST = {
   // Main process.
   'electron/main/boards.js': { ttl: [2, 'cache bounds: cross-project 30 min safety net cleared by change pings (#318); evidence 5 min'] },
   'electron/main/devices.js': { ttl: [1, 'read-through cache bound (8 s) on an ssh round-trip; no timer, never triggers a read'] },
-  'electron/main/github_state.js': { ttl: [3, 'the cache itself: its 30-min safety lifetime and the ttlFor hook callers may pass'] },
-  'electron/main/index.js': { ttl: [2, TODO_TRIGGER_PR] },
-  'electron/main/mr_repos.js': { ttl: [2, TODO_TRIGGER_PR] },
+  'electron/main/github_state.js': { ttl: [1, 'the cache itself: its 30-min safety lifetime (#557 removed the ttlFor hook)'] },
+  'electron/main/index.js': { interval: [1, `starts ${CHECK_WATCH}`] },
   'electron/main/queue.js': { ttl: [1, 'read-through cache bound (60 s) on ticket_queue.py; no timer of its own'] },
   'electron/main/relations_service.js': { ttl: [1, 'read-through cache bound (60 s), invalidated by the board/docs triggers'] },
   'electron/main/rework.js': { ttl: [1, 'read-through cache bound (60 s); index.js calls it through github_state with minInterval'] },
   'electron/main/usage_report.js': { ttl: [1, 'read-through cache bound (60 s) on a local scan + ssh; no GitHub, no timer'] },
   // Servers.
-  'webhook-server/gh_watch.js': { interval: [1, 'THE change-detector: one ETag request per repo per ~20 s, 304 is free'] },
+  'webhook-server/gh_watch.js': { interval: [2, 'THE change-detector (one ETag request per repo per ~20 s, 304 is free) and the check watch beside it (#557)'] },
   'webhook-server/index.js': { interval: [1, 'starts the one gh_watch change-detector tick'] },
   'webhook-server/failure.js': { 'timeout-loop': [1, 'withRetry: bounded exponential backoff on a failed call, not a poll for change'] },
   'webhook-server/merge.js': { 'timeout-loop': [1, 'mergeableNow: GitHub computes mergeable lazily with no event; bounded 6 x 5 s'] },
-  'mobile-backend/dashboard_gh_api.js': { ttl: [2, TODO_TRIGGER_PR] },
+  'mobile-backend/dashboard_gh_api.js': { interval: [1, `starts ${CHECK_WATCH}`] },
   'mobile-backend/pending_actions.js': { 'timeout-loop': [1, 'waits on its own local store for an approval, bounded by the hook timeout; no network'] },
-  'scripts/proposals_evidence.mjs': { 'timeout-loop': [2, 'dev script: bounded wait for a local Electron CDP port/window'] }
+  'scripts/proposals_evidence.mjs': { 'timeout-loop': [2, 'dev script: bounded wait for a local Electron CDP port/window'] },
+  'scripts/check_progress_evidence.mjs': { 'timeout-loop': [2, 'dev script (#557 evidence): bounded wait for a local Electron CDP window'] }
 }
 
 const ROOT = path.resolve(__dirname, '..')
@@ -76,12 +76,14 @@ describe('the dashboard source keeps to Triggers over polling', () => {
     expect(problems, `${problems.join('\n')}\n\n${GUIDANCE}`).toEqual([])
   })
 
-  it('flags #554\'s pendingChecksTtl as it exists on main: without its temporary entries the guard fails there', () => {
-    const withoutTemporary = Object.fromEntries(Object.entries(ALLOWLIST).map(([p, k]) =>
-      [p, Object.fromEntries(Object.entries(k).filter(([, [, why]]) => why !== TODO_TRIGGER_PR))]))
-    const problems = checkAllowlist(scanFiles(sourceFiles()), withoutTemporary).join('\n')
-    const temporary = Object.entries(ALLOWLIST).filter(([, k]) => Object.values(k).some(([, why]) => why === TODO_TRIGGER_PR)).map(([p]) => p)
-    for (const p of temporary) expect(problems).toContain(`${p}: `)
+  it('still catches #554\'s pendingChecksTtl, the re-read that started #556 (its code before #557 removed it)', () => {
+    const src = `export const PENDING_CHECKS_TTL_MS = 90_000
+export function pendingChecksTtl(prs) {
+  if (!Array.isArray(prs)) return undefined
+  return prs.some((p) => p && ciState(p.statusCheckRollup).state === 'pending') ? PENDING_CHECKS_TTL_MS : undefined
+}`
+    const problems = checkAllowlist(scanFiles([{ path: 'electron/main/mr_repos.js', code: src }]), {})
+    expect(problems.join('\n')).toContain('electron/main/mr_repos.js: ')
   })
 
   it('every TODO entry points at an issue', () => {
