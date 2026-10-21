@@ -55,6 +55,26 @@ describe('describePrState: one headline, only the buttons that make sense', () =
     expect(s.detail).toMatch(/App builds/)
   })
 
+  // marvin#555 (Gil, 2026-10-21): with each check known, the sentence gives way to the progress bar and drill-down.
+  it('waiting on checks with per-check rows: no sentence, the progress view instead; Approve still disabled', () => {
+    const runs = [{ name: 'a', status: 'passed', done: true }, { name: 'b', status: 'running', done: false }]
+    const s = state({ checks: { state: 'pending', failing: [], pending: ['b'], runs } })
+    expect(s).toMatchObject({ kind: 'waiting-checks', headline: 'Waiting for GitHub checks', approve: 'disabled', deny: 'enabled', detail: null, checkProgress: true })
+  })
+
+  it('failed checks keep their sentence and also offer the rows (no redesign of the failure state)', () => {
+    const runs = [{ name: 'a', status: 'failed', done: true }]
+    const f = state({ checks: { state: 'failing', failing: ['a'], pending: [], runs } })
+    expect(f).toMatchObject({ kind: 'checks-failed', approve: 'hidden', checkProgress: true })
+    expect(f.detail).toMatch(/^a\. It is sent back/)
+  })
+
+  it('no rows (older data, or an empty list): the old sentence, and no progress view', () => {
+    expect(state({ checks: { state: 'pending', failing: [], pending: ['b'], runs: [] } })).toMatchObject({ checkProgress: false })
+    expect(state({ checks: { state: 'pending', failing: [], pending: ['b'], runs: [] } }).detail).toMatch(/b still running/)
+    expect(state({}).checkProgress).toBe(false)
+  })
+
   it('waiting on an older PR names it', () => {
     const s = state({ waitingOn: [{ number: 29, shared: ['ContentView.swift'] }] })
     expect(s).toMatchObject({ kind: 'waiting-order', approve: 'disabled' })

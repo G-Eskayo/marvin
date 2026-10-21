@@ -2,9 +2,10 @@ import { homedir } from 'os'
 import path from 'path'
 import { promisify } from 'util'
 import { execFile } from 'child_process'
-import { createGithubState } from '../electron/main/github_state.js'
+import { createGithubState, gateCooldownUntil } from '../electron/main/github_state.js'
 import { loadBoard, fetchBoardData, getEvidence, readRegistry, REGISTRY_PATH } from '../electron/main/boards.js'
-import { listOpenPrsAcrossRepos, prListArgs, canMergeFromDashboard, MARVIN_REPO, normalizeSeen, pendingChecksTtl } from '../electron/main/mr_repos.js'
+import { listOpenPrsAcrossRepos, prListArgs, canMergeFromDashboard, MARVIN_REPO, normalizeSeen, pendingCheckHeads } from '../electron/main/mr_repos.js'
+import { startCheckWatch, createCheckProbe } from '../webhook-server/gh_watch.js'
 import { listPipelinePrs, sentBackKeys, fetchTicketContext } from '../electron/main/mr_review.js'
 import { readMergeableRepos, PROFILES_DIR } from '../electron/main/profiles.js'
 import { computeReviewStatus, readSeenNumbers } from '../electron/main/mr_seen.js'
@@ -32,6 +33,21 @@ export function createDashboardGhApiRouter(opts = {}) {
 
   // Module-level singleton for GitHub state (one copy per process)
   const githubState = createGithubState()
+
+  // Check watch (marvin#555, same as the desktop): while a cached PR list shows checks running, ETag-probe each such
+  // commit's checks every 20 s; a real change marks that repo's list stale for the next read. Opt-in (index.js turns it
+  // on) so tests and other callers never start a timer.
+  const checkWatch = opts.watchChecks
+    ? startCheckWatch({
+        getHeads: () => githubState.peek('prs').flatMap(({ repo, value }) => {
+          try { return pendingCheckHeads(repo, JSON.parse(value)) } catch { return [] }
+        }),
+        probe: opts.checkProbe ?? createCheckProbe(),
+        onChange: (repo) => githubState.changed(repo),
+        skip: () => Date.now() < gateCooldownUntil(),
+        ...(opts.setIntervalFn ? { setIntervalFn: opts.setIntervalFn } : {})
+      })
+    : null
 
   // Helper to get board data (fetched data or cached)
   const getBoardData = async (repo, gh) => {
@@ -137,12 +153,16 @@ export function createDashboardGhApiRouter(opts = {}) {
         // Get open PRs across all repos
         const listOpenPrs = async () => {
           const ghList = async (repo) => {
-            // Checks still running: re-read sooner, as the desktop does (finishing checks send no change ping).
-            const json = await githubState.get('prs', repo, () => gh(prListArgs(repo)), { ttlFor: (cached) => pendingChecksTtl(JSON.parse(cached)) })
+            // Checks running are watched by checkWatch above (finishing checks send no change ping).
+            const json = await githubState.get('prs', repo, () => gh(prListArgs(repo)))
             return JSON.parse(json)
           }
-          const { prs } = await listOpenPrsAcrossRepos(repoList, ghList)
-          return prs
+          const { prs } = await listOpenPrsAcrossRepos(repoList, ghList, { listedAt: (repo) => githubState.fetchedAt('prs', repo) })
+          // "Last checked" (marvin#555): the latest of the list read and the check watch's probe of that commit.
+          return prs.map((p) => {
+            const probed = p.headRefOid ? checkWatch?.watcher.checkedAt(p.repo, p.headRefOid) : null
+            return { ...p, checkedAt: Math.max(p.listedAt || 0, probed || 0) || null }
+          })
         }
 
         // Helper to get sent back tickets for a set of repos
