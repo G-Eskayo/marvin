@@ -660,10 +660,13 @@ nothing connected them. "Where things are" was only the tidy agent's file-filing
   tabs. A **Deliverable** is an outbox item matched to a project from text (`electron/main/deliverables.js`, a port
   of the design's measurement script, tiers name / inside-name / number / content / docs phrase, each needing exactly
   one winner); **Unsorted** holds what no project claims (with "left in mixed folders" for split folders). The match
-  map is saved (`~/.claude/logs/outbox-matches.json`), cached by (item name, mtime) and re-matched per changed item on
+  map is saved (`~/.agents/var/outbox-matches.json`, MARVIN-owned), cached by (item name, mtime) and re-matched per changed item on
   the `outbox` file trigger (a recursive watch). One search covers docs and deliverables (text of md/txt/json/csv/html
   under 200 KB, every file by its path words). Every click is local: a test (`test/docs_clicks_network.test.js`)
   drives every Docs click handler through counting fakes and requires zero gh, fetch and network-git calls.
+  Card covers are 360 px thumbnails made once by Electron's own image code and kept in `~/.agents/var/thumbs`
+  (pruned to the newest 2,000). pdf.js (with one shared worker) and the markdown renderer are warmed at idle after
+  boot (`docs_warm.jsx`), so the first open is not the slow one. Tree groups' open state is remembered per project.
 - **Saved copy** (marvin#565, 2026-10-21): a project with no local clone is read from its saved copy
   (`electron/main/docs_saved.js`, one JSON per repo in `~/.agents/var/docs-github/`, MARVIN's own gitignored
   per-machine state, never `~/.claude`), so a click never calls

@@ -1,6 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import FileView from './FileView.jsx'
-import { loadPdfjs } from './PdfView.jsx'
 import Related, { useRelated } from './Related.jsx'
 import { extractOutline } from '../lib/docs_text.js'
 import { isNotebookPath, notebookToMarkdown } from '../lib/ipynb.js'
@@ -161,11 +160,18 @@ function OutboxChildren({ path, depth, sel, onSelectFile, onSelectFolder, open, 
 }
 
 // Level 3: the tree. Three collapsible groups; only the ones the chips allow show.
-const DocTree = memo(function DocTree({ groups, chips, sel, onSelectDoc, onSelectFolder, onSelectFile, onTicket, unsorted, leftovers, onSelectUnsortedRoot }) {
-  const [closed, setClosed] = useState(() => new Set(['decisions']))
-  const [open, setOpen] = useState(() => new Set())
-  const [allFolders, setAllFolders] = useState(false)
-  const [allDecisions, setAllDecisions] = useState(false)
+// Which groups and folders are open, remembered per project while the app runs (recommended default, #570 Decisions).
+const treeMemory = new Map() // projectId -> { closed, open, allFolders, allDecisions }
+
+const DocTree = memo(function DocTree({ projectId, groups, chips, sel, onSelectDoc, onSelectFolder, onSelectFile, onTicket, unsorted, leftovers, onSelectUnsortedRoot }) {
+  const saved = treeMemory.get(projectId)
+  const [closed, setClosed] = useState(() => saved?.closed || new Set(['decisions']))
+  const [open, setOpen] = useState(() => saved?.open || new Set())
+  const [allFolders, setAllFolders] = useState(() => saved?.allFolders || false)
+  const [allDecisions, setAllDecisions] = useState(() => saved?.allDecisions || false)
+  useEffect(() => {
+    treeMemory.set(projectId, { closed, open, allFolders, allDecisions })
+  }, [projectId, closed, open, allFolders, allDecisions])
   const toggle = (key) => setOpen((o) => toggleChip(o, key))
   const show = new Set(visibleKinds(chips))
   // Decisions start collapsed (marvin has 69); choosing the Decisions chip opens them.
@@ -581,10 +587,6 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
 
   useEffect(() => {
     window.api.docs.repos().then((r) => setCache(docsCacheFrom(r))).catch(() => {})
-    // Speed budget (#570: a PDF page under 200 ms): load pdf.js from the app bundle once the tab is idle, so the first
-    // PDF opened doesn't pay for parsing ~900 KB of viewer code. Local code only; nothing is fetched.
-    const idle = window.requestIdleCallback || ((fn) => fn())
-    idle(() => loadPdfjs().catch(() => {}))
   }, [])
 
   // Debounced search; a stale response never overwrites a newer query's. Only a new QUERY opens the results: a docs
@@ -910,6 +912,7 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
               <FileView
                 key={file.path}
                 file={file}
+                fitImage
                 loadImage={(src) => window.api.outbox.image(file.path, src)}
                 onReveal={() => window.api.outbox.reveal(file.path).catch(() => {})}
                 onOpenFile={() => window.api.outbox.open(file.path).catch(() => {})}
@@ -1002,6 +1005,8 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
                 <div className="p-2">{tree.map((e) => <TreeItem key={e.path} item={e} selected={selectedPath === e.path} onSelect={(p) => openFile(selectedRepo, p)} />)}</div>
               ) : (
                 <DocTree
+                  key={selectedRepo}
+                  projectId={selectedRepo}
                   groups={groups}
                   chips={chips}
                   sel={sel}

@@ -4,6 +4,7 @@ import path from 'path'
 import { createHash } from 'crypto'
 import { outboxRoot, resolveOutboxPath, summarizeOutbox, readHead, MAX_TEXT_BYTES } from './outbox.js'
 import { fileKind } from '../../src/lib/file_kinds.js'
+import { varPath, migrateOnce } from './marvin_paths.js'
 
 // Deliverables in the Docs tab (#570 "Docs: fold the Files tab into Docs", design docs/plans/docs-files-merge.md §2):
 // each top-level ~/.claude/outbox item is matched to a catalog project from text, never from a hand-kept list. A port
@@ -21,7 +22,9 @@ import { fileKind } from '../../src/lib/file_kinds.js'
 // plus bounded I/O for the content tier (≤ 20 files × 2 KB per unmatched item) and O(W · T) for the docs tier.
 // Results are cached by (item name, mtime): an outbox change re-matches only the changed item. Space: O(I + C) records.
 export const UNSORTED_ID = '__unsorted__'
-export const MATCHES_PATH = path.join(homedir(), '.claude', 'logs', 'outbox-matches.json')
+// MARVIN-owned per-machine state (self-reliance rule): ~/.agents/var, not ~/.claude. Resolved on first use.
+export const matchesPath = () => varPath('outbox-matches.json')
+const LEGACY_MATCHES = () => path.join(homedir(), '.claude', 'logs', 'outbox-matches.json')
 const VERSION = 1
 
 export const slug = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
@@ -270,13 +273,21 @@ const newestFirst = (a, b) => (b.date || '').localeCompare(a.date || '') || a.na
 
 // The cached match map. view() answers from memory (or the saved file) at once; refresh(names) re-matches only the
 // named top-level items, or every item whose (name, mtime) changed, and everything when the context changed.
-export function createDeliverables({ getContext, cachePath = MATCHES_PATH }) {
+export function createDeliverables({ getContext, cachePath = null }) {
+  let resolved = cachePath
+  const file = () => {
+    if (!resolved) {
+      resolved = matchesPath()
+      migrateOnce(LEGACY_MATCHES(), resolved)
+    }
+    return resolved
+  }
   let state = null // { key, items: { name: { mtimeMs, isDir, match, kids, summary, kidSummaries } } }
 
   function load() {
     if (state) return state
     try {
-      const d = JSON.parse(readFileSync(cachePath, 'utf8'))
+      const d = JSON.parse(readFileSync(file(), 'utf8'))
       if (d?.v === VERSION && d.items && typeof d.items === 'object') state = d
     } catch {
       state = null // missing or corrupt: rebuilt once below
@@ -286,9 +297,9 @@ export function createDeliverables({ getContext, cachePath = MATCHES_PATH }) {
 
   function save() {
     try {
-      mkdirSync(path.dirname(cachePath), { recursive: true })
-      writeFileSync(`${cachePath}.tmp`, JSON.stringify(state))
-      renameSync(`${cachePath}.tmp`, cachePath)
+      mkdirSync(path.dirname(file()), { recursive: true })
+      writeFileSync(`${file()}.tmp`, JSON.stringify(state))
+      renameSync(`${file()}.tmp`, file())
     } catch {
       // unwritable: memory still serves this session
     }

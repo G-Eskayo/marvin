@@ -75,7 +75,9 @@ beforeAll(async () => {
     build: () => buildDocsIndex(exec, docsService.githubIndexRepos(), path.join(home, '.claude/logs/idx.json'), { saved, offline: true }),
     getLocal: () => docsService.localDocs()
   })
-  const outbox = { list: outboxMod.listOutboxDir, summary: outboxMod.summarizeOutbox, preview: outboxMod.outboxPreview, content: outboxMod.readOutboxFile, image: outboxMod.readOutboxImage }
+  const { createThumbs } = await import('../electron/main/thumbs.js')
+  const thumbs = createThumbs({ resize: () => Buffer.from('jpeg') })
+  const outbox = { list: outboxMod.listOutboxDir, summary: outboxMod.summarizeOutbox, preview: outboxMod.outboxPreview, content: outboxMod.readOutboxFile, image: outboxMod.readOutboxImage, thumb: thumbs.thumb }
   h = docsClickHandlers({ docsService, docsIndexer, outbox })
 
   // Opening the GitHub-only project once: the open-time check fills its saved copy. Not a click; counted below.
@@ -113,6 +115,7 @@ describe('zero network calls on any click (#570)', () => {
             for (const c of entries) {
               await h['outbox:summary'](c.path)
               if (c.type === 'file') {
+                await h['outbox:thumb'](c.path)
                 await h['outbox:preview'](c.path)
                 await h['outbox:content'](c.path)
               }

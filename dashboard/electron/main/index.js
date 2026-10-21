@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, session, shell, protocol, net } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, session, shell, protocol, net, nativeImage } from 'electron'
 import { pathToFileURL } from 'url'
 import { instrumentIpc } from './timing.js'
 import { installDevSiteCors } from './dev_site_cors.js'
@@ -60,6 +60,7 @@ import { searchFiles, isRevealable, isLinkable, linkAction } from './files_searc
 import { safeExternalUrl } from '../../src/lib/pdf_nav.js'
 import { readOutboxFile, readOutboxImage, outboxRevealPath, outboxOpenPath, outboxRoot, listOutboxDir, summarizeOutbox, outboxPreview } from './outbox.js'
 import { createDeliverables } from './deliverables.js'
+import { createThumbs } from './thumbs.js'
 import { docsTextFor, maxNumbers, docsClickHandlers } from './docs_handlers.js'
 import { readCatalog, readMasterDoc, readOverrides, CATALOG_DIR, MASTER_DOC_PATH } from './catalog.js'
 import { STAGES_DIR } from '../../webhook-server/ticket_stages.js'
@@ -576,7 +577,15 @@ function registerDocsHandlers() {
     getLocal: () => docsService.localDocs()
   })
   // Every Docs click, from one table (docs_handlers.js; test/docs_clicks_network.test.js counts their network calls).
-  const outboxReads = { list: listOutboxDir, summary: summarizeOutbox, preview: outboxPreview, content: readOutboxFile, image: readOutboxImage }
+  // Card covers are downscaled once and cached (thumbs.js); Electron's own image code does the resize, nothing external.
+  const thumbs = createThumbs({
+    resize: (buf, width) => {
+      const img = nativeImage.createFromBuffer(buf)
+      if (img.isEmpty()) return null
+      return (img.getSize().width > width ? img.resize({ width, quality: 'good' }) : img).toJPEG(80)
+    }
+  })
+  const outboxReads = { list: listOutboxDir, summary: summarizeOutbox, preview: outboxPreview, content: readOutboxFile, image: readOutboxImage, thumb: thumbs.thumb }
   for (const [channel, fn] of Object.entries(docsClickHandlers({ docsService, docsIndexer, outbox: outboxReads }))) {
     ipcMain.handle(channel, (_event, ...args) => fn(...args))
   }

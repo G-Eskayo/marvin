@@ -107,6 +107,7 @@ contextBridge.exposeInMainWorld('api', {
     list: (relPath) => ipcRenderer.invoke('outbox:list', relPath),
     summary: (relPath) => ipcRenderer.invoke('outbox:summary', relPath),
     preview: (relPath) => ipcRenderer.invoke('outbox:preview', relPath),
+    thumb: (relPath) => ipcRenderer.invoke('outbox:thumb', relPath),
     content: (relPath) => ipcRenderer.invoke('outbox:content', relPath),
     image: (fromRel, src) => ipcRenderer.invoke('outbox:image', fromRel, src),
     reveal: (relPath) => ipcRenderer.invoke('outbox:reveal', relPath),
