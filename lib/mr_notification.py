@@ -68,11 +68,20 @@ def notify_mr_ready(ticket_ref: str, pr_url: str) -> dict:
     """Fire all three notification channels for a newly-raised MR. Never
     raises -- a failure in any channel is captured in the returned status
     dict."""
-    message = f"MR ready for review: {ticket_ref} -> {pr_url}"
+    return _fire("MARVIN: MR ready for review", f"MR ready for review: {ticket_ref} -> {pr_url}", pr_url)
 
+
+def notify_needs_you(ticket_ref: str, why: str, url: str | None = None) -> dict:
+    """A ticket the pipeline stopped retrying and handed to Gil (it now shows in the dashboard's Needs you):
+    the same three channels, so it is noticed rather than found later. Never raises."""
+    why = " ".join(str(why or "no reason recorded").split())[:200]
+    return _fire("MARVIN: a ticket needs you", f"Needs you: {ticket_ref}: {why}", url)
+
+
+def _fire(title: str, message: str, open_target: str | None) -> dict:
     desktop_sent = False
     try:
-        desktop_notify("MARVIN: MR ready for review", message, open_target=pr_url)
+        desktop_notify(title, message, open_target=open_target)
         desktop_sent = True
     except Exception:
         pass
