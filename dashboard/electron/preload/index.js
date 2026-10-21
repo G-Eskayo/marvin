@@ -18,7 +18,7 @@ contextBridge.exposeInMainWorld('api', {
     // Confirmation happens in the main process via a native dialog, not here --
     // see the comment on the mr:approve handler for why.
     approve: (pr) => ipcRenderer.invoke('mr:approve', pr),
-    mergeState: (url) => ipcRenderer.invoke('mr:mergeState', url),
+    mergeState: (url, head) => ipcRenderer.invoke('mr:mergeState', url, head),
     clearSentBack: (url) => ipcRenderer.invoke('mr:clearSentBack', url),
     sendBackForOptions: (payload) => ipcRenderer.invoke('mr:sendBackForOptions', payload),
     deny: (payload) => ipcRenderer.invoke('mr:deny', payload),
