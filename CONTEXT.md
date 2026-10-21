@@ -647,6 +647,13 @@ nothing connected them. "Where things are" was only the tidy agent's file-filing
 - **Docs tab**: lists every catalog project, not just doc-first repos. Each gets a "Project card" page;
   projects with a `CONTEXT.md`/`README.md` show those too (local first, GitHub fallback). The master doc
   appears as its own entry. Cards and the master are searchable.
+- **Saved copy** (marvin#565, 2026-10-21): a project with no local clone is read from its saved copy
+  (`electron/main/docs_saved.js`, one JSON per repo in `~/.claude/logs/docs-github/`), so a click never calls
+  GitHub. Opening the project sends **one conditional request** for its git tree (`If-None-Match`, the
+  `gh_watch.js` pattern): a 304 is free and ends there; a 200 downloads only the docs whose blob sha changed, and
+  the tree and open file update in place. The first copy is seeded from the docs search index, checked by git
+  blob sha. The source line shows the copy's age ("from GitHub, 2 h ago · checking…", then "· up to date").
+  The search index rebuild goes through the same copy: one conditional request per repo instead of every file.
 
 ### Cross-links by project, and Background work (decided 2026-10-05)
 

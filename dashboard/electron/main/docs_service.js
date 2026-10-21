@@ -9,8 +9,11 @@ import { listLocalTree, readLocalFile, localFileStates } from './docs_local.js'
 export const MASTER_ID = '__master__'
 const CARD = { path: 'PROJECT.md', label: 'Project card' }
 const MASTER_FILE = { path: 'WHERE-THINGS-ARE.md', label: 'Where things are' }
+const copyAge = (copy) => ({ savedAt: copy?.savedAt ?? null, checkedAt: copy?.checkedAt ?? null })
 
-export function createDocsService({ getCatalog, exec, readMaster, fallbackRepos = () => [] }) {
+// `saved` (docs_saved.js, #565) holds the saved copy of GitHub-only projects: with it, tree and content never call
+// GitHub, and revalidate (sent once when a project is opened) is the only request.
+export function createDocsService({ getCatalog, exec, readMaster, fallbackRepos = () => [], saved = null }) {
   const catalog = () => getCatalog()
   const dirOf = (rec) => (rec?.localPaths || []).find((p) => existsSync(p)) || null
 
@@ -50,6 +53,13 @@ export function createDocsService({ getCatalog, exec, readMaster, fallbackRepos 
       const local = listLocalTree(dir).map((e) => (e.section ? { ...e, items: e.items.map(annotate) } : annotate(e)))
       return { source: 'local', dir, tree: [CARD, ...local] }
     }
+    if (saved && rec.repo) {
+      const copy = saved.peek(rec.repo)
+      if (copy?.tree?.length) return { source: 'github', dir: null, tree: [CARD, ...copy.tree], copy: copyAge(copy) }
+      // No copy yet: what the catalog knows, at once; revalidate fills the copy and the view updates in place.
+      const known = [...(rec.docs.context ? [{ path: 'CONTEXT.md', label: 'CONTEXT.md' }] : []), ...(rec.docs.readme ? [{ path: 'README.md', label: 'README.md' }] : [])]
+      return { source: known.length ? 'github' : 'card', dir: null, tree: [CARD, ...known], copy: { savedAt: null, checkedAt: null } }
+    }
     if (rec.repo && rec.docs.context) {
       try {
         return { source: 'github', dir: null, tree: [CARD, ...(await listRepoDocTree(exec, ghName(rec)))] }
@@ -73,7 +83,18 @@ export function createDocsService({ getCatalog, exec, readMaster, fallbackRepos 
     const dir = dirOf(rec)
     if (dir) return readLocalFile(dir, filePath)
     if (!rec.repo) throw new Error(`${rec.name} has no readable copy of ${filePath}`)
+    if (saved) return saved.content(rec.repo, filePath)
     return fetchFileContent(exec, ghName(rec), filePath)
+  }
+
+  // Sent once when a GitHub-only project is opened: one conditional request (a 304 is free). On a change the saved
+  // copy is refreshed and the new tree comes back, so the open view can update in place.
+  async function revalidate(id) {
+    const rec = id === MASTER_ID ? null : find(id)
+    if (!saved || !rec?.repo || dirOf(rec) || !(rec.docs.context || rec.docs.readme)) return { status: 'not-github' }
+    const r = await saved.revalidate(rec.repo)
+    const copy = saved.peek(rec.repo)
+    return { ...r, tree: copy?.tree?.length ? [CARD, ...copy.tree] : undefined, copy: copyAge(copy) }
   }
 
   // Docs read live from disk (so uncommitted edits are searchable), plus every card and the master.
@@ -103,10 +124,10 @@ export function createDocsService({ getCatalog, exec, readMaster, fallbackRepos 
   function githubIndexRepos() {
     const cat = catalog()
     if (!cat) return fallbackRepos().map((r) => ({ name: r.name, id: r.name }))
-    return cat.projects.filter((p) => p.repo && !dirOf(p) && (p.docs.context || p.docs.readme)).map((p) => ({ name: ghName(p), id: p.id }))
+    return cat.projects.filter((p) => p.repo && !dirOf(p) && (p.docs.context || p.docs.readme)).map((p) => ({ name: ghName(p), id: p.id, repo: p.repo }))
   }
 
   const localDirs = () => (catalog()?.projects || []).map(dirOf).filter(Boolean)
 
-  return { repos, tree, content, localDocs, githubIndexRepos, localDirs }
+  return { repos, tree, content, revalidate, localDocs, githubIndexRepos, localDirs }
 }
