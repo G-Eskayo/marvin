@@ -102,7 +102,7 @@ def test_run_skips_evidence_capture_on_a_failing_result(monkeypatch):
         return {"raised": False, "pr_url": None, "reason": "did not pass"}
 
     monkeypatch.setattr(rt, "raise_mr", fake_raise_mr)
-    monkeypatch.setattr(rt, "_comment_failure", lambda *a: None)
+    monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: None)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
 
     rt.run(20)
@@ -119,7 +119,7 @@ def test_run_comments_the_failure_reason_when_not_raised(monkeypatch):
     monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda *a: 0)
 
     comments = []
-    monkeypatch.setattr(rt, "_comment_failure", lambda issue_number, reason: comments.append((issue_number, reason)))
+    monkeypatch.setattr(rt, "_comment_failure", lambda issue_number, reason, **k: comments.append((issue_number, reason)))
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
 
     rt.run(20)
@@ -135,7 +135,7 @@ def test_run_releases_the_claim_when_not_raised(monkeypatch):
     # from ever being retried by ticket_pipeline.py again.
     monkeypatch.setattr(rt, "execute_ticket", lambda *a: _failing_result())
     monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "nope"})
-    monkeypatch.setattr(rt, "_comment_failure", lambda *a: None)
+    monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: None)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
     monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda *a: 0)
 
@@ -184,7 +184,7 @@ def test_run_does_not_comment_on_a_successful_raise(monkeypatch):
     monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": True, "pr_url": "http://fake-pr", "reason": None})
 
     comments = []
-    monkeypatch.setattr(rt, "_comment_failure", lambda *a: comments.append(a))
+    monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: comments.append(a))
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
 
     rt.run(20)
@@ -221,7 +221,7 @@ def test_run_triggers_redispatch_even_when_not_raised(monkeypatch):
     # shouldn't leave it idle until the next hourly cron tick either.
     monkeypatch.setattr(rt, "execute_ticket", lambda *a: _failing_result())
     monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "nope"})
-    monkeypatch.setattr(rt, "_comment_failure", lambda *a: None)
+    monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: None)
     monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda *a: 0)
     monkeypatch.setattr(rt, "_release_claim", lambda *a, **kw: None)
 
@@ -261,7 +261,7 @@ def test_run_recovers_when_execute_ticket_raises_unexpectedly(monkeypatch):
     monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda *a: 0)
 
     comments = []
-    monkeypatch.setattr(rt, "_comment_failure", lambda issue_number, reason: comments.append((issue_number, reason)))
+    monkeypatch.setattr(rt, "_comment_failure", lambda issue_number, reason, **k: comments.append((issue_number, reason)))
     released = []
     monkeypatch.setattr(rt, "_release_claim", lambda issue_number, **kw: released.append(issue_number))
     redispatched = []
@@ -285,7 +285,7 @@ def test_run_parks_the_ticket_instead_of_releasing_at_the_failure_cap(monkeypatc
     monkeypatch.setattr(rt, "execute_ticket", lambda *a: _failing_result())
     monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "unchanged"})
     monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda issue_number: rt.MAX_CONSECUTIVE_FAILURES - 1)
-    monkeypatch.setattr(rt, "_comment_failure", lambda *a: None)
+    monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: None)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
 
     released = []
@@ -303,7 +303,7 @@ def test_run_still_releases_below_the_failure_cap(monkeypatch):
     monkeypatch.setattr(rt, "execute_ticket", lambda *a: _failing_result())
     monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "unchanged"})
     monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda issue_number: 0)
-    monkeypatch.setattr(rt, "_comment_failure", lambda *a: None)
+    monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: None)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
 
     released = []
@@ -438,7 +438,7 @@ def test_run_passes_the_cause_and_the_last_must_fix_findings_to_park(monkeypatch
     monkeypatch.setattr(rt, "execute_ticket", lambda *a: res)
     monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": res["explanation"]})
     monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda issue_number: rt.MAX_CONSECUTIVE_FAILURES - 1)
-    monkeypatch.setattr(rt, "_comment_failure", lambda *a: None)
+    monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: None)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
     got = {}
     monkeypatch.setattr(rt, "_park_stuck_ticket", lambda issue_number, streak, **kw: got.update(kw))
@@ -451,7 +451,7 @@ def test_a_crash_before_any_result_still_parks_with_the_crash_as_the_cause(monke
         raise RuntimeError("planner timed out")
     monkeypatch.setattr(rt, "execute_ticket", boom)
     monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda issue_number: rt.MAX_CONSECUTIVE_FAILURES - 1)
-    monkeypatch.setattr(rt, "_comment_failure", lambda *a: None)
+    monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: None)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
     got = {}
     monkeypatch.setattr(rt, "_park_stuck_ticket", lambda issue_number, streak, **kw: got.update(kw))
@@ -474,7 +474,7 @@ def test_run_recovers_when_raise_mr_itself_raises_unexpectedly(monkeypatch):
 
     released = []
     monkeypatch.setattr(rt, "_release_claim", lambda issue_number, **kw: released.append(issue_number))
-    monkeypatch.setattr(rt, "_comment_failure", lambda *a: None)
+    monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: None)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
 
     outcome = rt.run(27)
@@ -584,7 +584,7 @@ def test_a_failed_profile_ticket_is_handled_in_its_own_repo_and_feeds_its_own_br
     monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "tests regressed"})
     calls = {}
     monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda n, repo=rt.REPO: calls.setdefault("streak", (n, repo)) and 0)
-    monkeypatch.setattr(rt, "_comment_failure", lambda n, reason, repo=rt.REPO: calls.update(comment=(n, repo)))
+    monkeypatch.setattr(rt, "_comment_failure", lambda n, reason, repo=rt.REPO, **k: calls.update(comment=(n, repo)))
     monkeypatch.setattr(rt, "_release_claim", lambda n, repo=rt.REPO, run_id=None: calls.update(release=(n, repo)))
     import failure_breaker as fb
     monkeypatch.setattr(fb, "record_failure", lambda ticket, reason, now=None, project=fb.MARVIN: calls.update(breaker=(ticket, project)))
@@ -622,7 +622,7 @@ def test_a_timed_out_test_releases_the_claim_without_blaming_the_ticket(monkeypa
     monkeypatch.setattr(rt, "execute_ticket", boom)
     calls = {"gh_comment": 0, "breaker": 0, "park": 0}
     monkeypatch.setattr(rt, "_release_claim", lambda n, repo=rt.REPO, run_id=None: calls.update(release=(n, repo)))
-    monkeypatch.setattr(rt.subprocess, "run", lambda cmd, **kw: calls.update(gh_comment=calls["gh_comment"] + 1) if "issue" in cmd else None)
+    monkeypatch.setattr(rt.subprocess, "run", lambda cmd, **kw: calls.update(gh_comment=calls["gh_comment"] + 1) if "comment" in cmd else None)
     monkeypatch.setattr(rt, "_park_stuck_ticket", lambda *a, **k: calls.update(park=calls["park"] + 1))
     import failure_breaker as fb
     monkeypatch.setattr(fb, "record_failure", lambda *a, **k: calls.update(breaker=calls["breaker"] + 1))
@@ -729,7 +729,7 @@ def test_run_reads_marvin_run_id_from_the_environment(monkeypatch):
     monkeypatch.setattr(rt, "execute_ticket", capture_run_id)
     monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "nope"})
     monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda *a: 0)
-    monkeypatch.setattr(rt, "_comment_failure", lambda *a: None)
+    monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: None)
     monkeypatch.setattr(rt, "_release_claim", lambda *a, **kw: None)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
 
@@ -826,38 +826,57 @@ def test_release_claim_passes_run_id_from_generic_failure(monkeypatch, tmp_path)
 
 # ── TaskListTooVague handling (marvin#94) ──────────────────────────────────
 
-def test_too_vague_ticket_posts_comment_but_does_not_release_claim(monkeypatch):
-    """AC4: ticket is too vague to plan -> comment posted, claim NOT released, redispatch triggered."""
+def test_a_ticket_the_planner_calls_too_vague_goes_to_a_person_not_a_hidden_claim(monkeypatch):
+    """P6 (2026-10-21): a too-vague ticket used to keep its claim "so it isn't re-dispatched", which hid it from the
+    queue AND from people: ten tickets sat 5-11 days. Now it is parked in Needs you (needs-info, claim and
+    ready-for-agent off), with the planner's reason, and no breaker strike (it is the ticket, not the system)."""
     from sandbox_orchestration import TaskListTooVague
 
     def boom(*a, **k):
-        raise TaskListTooVague("Not enough detail to break into concrete steps")
+        raise TaskListTooVague("Planning model could not produce a concrete task list: which API?", needs_person=True)
 
     monkeypatch.setattr(rt, "execute_ticket", boom)
-
-    calls = {"comment": [], "release": 0, "breaker": 0, "park": 0}
-    monkeypatch.setattr(rt.subprocess, "run", lambda cmd, **kw: calls["comment"].append(cmd) if "issue" in cmd else None)
-    monkeypatch.setattr(rt, "_release_claim", lambda n, repo=rt.REPO, run_id=None: calls.update(release=n))
-    monkeypatch.setattr(rt, "_park_stuck_ticket", lambda *a, **k: calls.update(park=a[0]))
+    calls = {"release": 0, "breaker": 0, "park": None}
+    monkeypatch.setattr(rt.subprocess, "run", lambda cmd, **kw: None)
+    monkeypatch.setattr(rt, "_release_claim", lambda n, repo=rt.REPO, run_id=None: calls.update(release=calls["release"] + 1))
+    monkeypatch.setattr(rt, "_park_stuck_ticket", lambda *a, **k: calls.update(park=(a, k)))
     import failure_breaker as fb
     monkeypatch.setattr(fb, "record_failure", lambda *a, **k: calls.update(breaker=calls["breaker"] + 1))
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
 
     out = rt.run(20)
 
-    # NOT released (different from env_missing/timeout)
-    assert calls["release"] == 0
-    # Comment IS posted (different from env_missing)
-    assert len(calls["comment"]) == 1
-    assert "gh" in calls["comment"][0] and "issue" in calls["comment"][0] and "comment" in calls["comment"][0]
-    assert "Automated planning could not derive a concrete task list" in calls["comment"][0][-1]
-    # No park (not a repeated failure)
-    assert calls["park"] == 0
-    # No breaker strike (ticket issue, not system issue)
+    assert calls["park"] is not None and calls["park"][0][0] == 20
+    assert "which API?" in calls["park"][1]["reason"] and "too vague" in calls["park"][1]["headline"]
+    assert calls["release"] == 0          # the park itself takes the claim off
     assert calls["breaker"] == 0
-    # Outcome reflects the too_vague case
-    assert out["raised"] is False
-    assert "Not enough detail" in out["reason"]
+    assert out["raised"] is False and out["too_vague"] is True
+
+
+def test_a_plan_without_a_task_list_is_an_ordinary_failure_with_a_backoff(monkeypatch):
+    """The failure the ten stuck tickets actually had: the planner's text had no Task List. That is a bad run, not a
+    vague ticket: strike, release, retry later (with the retry time in the comment), park only at the cap."""
+    from sandbox_orchestration import TaskListTooVague
+
+    def boom(*a, **k):
+        raise TaskListTooVague("The planning run's output had no task list section (a bad run, retried)")
+
+    monkeypatch.setattr(rt, "execute_ticket", boom)
+    seen = {"comment": None, "release": 0, "park": 0, "breaker": 0}
+    monkeypatch.setattr(rt, "_comment_failure", lambda n, reason, **k: seen.update(comment=(reason, k)))
+    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda *a, **k: 0)
+    monkeypatch.setattr(rt, "_release_claim", lambda *a, **k: seen.update(release=seen["release"] + 1))
+    monkeypatch.setattr(rt, "_park_stuck_ticket", lambda *a, **k: seen.update(park=seen["park"] + 1))
+    monkeypatch.setattr(rt.failure_breaker, "record_failure", lambda *a, **k: seen.update(breaker=seen["breaker"] + 1))
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+
+    rt.run(20)
+
+    assert seen["release"] == 1 and seen["park"] == 0 and seen["breaker"] == 1
+    reason, kw = seen["comment"]
+    assert "no task list section" in reason
+    when, marker = kw["retry"]
+    assert "marvin:retry-after" in marker and "min" in when
 
 
 def test_too_vague_ticket_still_triggers_redispatch(monkeypatch):
@@ -876,3 +895,148 @@ def test_too_vague_ticket_still_triggers_redispatch(monkeypatch):
     rt.run(20)
 
     assert redispatched == [True]
+
+
+# ── P6 (2026-10-21): a failed model run, retries with backoff, and Needs you ─
+import json as _json  # noqa: E402
+from sandbox_orchestration import ModelRunFailed  # noqa: E402
+
+
+class _Thread:
+    """A fake gh for one ticket thread: answers `issue view --json comments` and records posted comments."""
+    def __init__(self, bodies=()):
+        self.comments = [{"body": b} for b in bodies]
+        self.posted, self.edits = [], []
+
+    def __call__(self, cmd, **kw):
+        if cmd[:3] == ["gh", "issue", "view"]:
+            return rt.subprocess.CompletedProcess(cmd, 0, _json.dumps({"comments": self.comments}), "")
+        if cmd[:3] == ["gh", "issue", "comment"]:
+            body = cmd[cmd.index("--body") + 1]
+            self.posted.append(body)
+            self.comments.append({"body": body})
+        if cmd[:3] == ["gh", "issue", "edit"]:
+            self.edits.append(cmd)
+        return rt.subprocess.CompletedProcess(cmd, 0, "", "")
+
+
+def _model_down(monkeypatch, thread, run_id="run1"):
+    monkeypatch.setenv("MARVIN_RUN_ID", run_id)
+
+    def boom(*a, **k):
+        raise ModelRunFailed("ticket-planner", 1, "Claude AI usage limit reached|1760590800")
+    monkeypatch.setattr(rt, "execute_ticket", boom)
+    monkeypatch.setattr(rt.subprocess, "run", thread)
+    seen = {"release": [], "park": 0, "redispatch": 0}
+    monkeypatch.setattr(rt, "_release_claim", lambda n, repo=rt.REPO, run_id=None: seen["release"].append((n, run_id)))
+    monkeypatch.setattr(rt, "_park_stuck_ticket", lambda *a, **k: seen.update(park=seen["park"] + 1))
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: seen.update(redispatch=seen["redispatch"] + 1))
+    return seen
+
+
+def test_a_usage_limit_releases_the_claim_with_a_retry_time_and_no_strike(monkeypatch):
+    thread = _Thread()
+    seen = _model_down(monkeypatch, thread)
+    out = rt.run(454)
+    assert out["model_unavailable"] and seen["release"] == [(454, "run1")] and seen["park"] == 0
+    assert len(thread.posted) == 1
+    body = thread.posted[0]
+    assert rt.MODEL_MARKER in body and rt.FAILURE_MARKER not in body and "marvin:retry-after" in body
+    import failure_breaker as fb
+    assert fb.signature(out["reason"]) == "model-unavailable"     # the breaker groups every ticket hit by it
+    assert any(r.get("sig") == "model-unavailable" for r in fb._read())
+
+
+def test_repeated_usage_limit_releases_wait_longer_each_time(monkeypatch):
+    import ticket_policy as pol
+    from datetime import datetime, timezone
+    monkeypatch.setattr(rt, "_machine_load", lambda: None)
+    waits = []
+    thread = _Thread()
+    for _ in range(3):
+        _model_down(monkeypatch, thread)
+        before = datetime.now(timezone.utc)
+        rt.run(454)
+        waits.append((pol.retry_not_before([{"body": thread.posted[-1]}], before) - before).total_seconds())
+    assert waits[0] < waits[1] < waits[2]
+    assert rt._consecutive_failure_streak(454) == 0     # never a strike, so never parked for the service's fault
+
+
+def test_model_releases_neither_count_nor_reset_the_failure_streak(monkeypatch):
+    f, m, t = rt.FAILURE_MARKER, rt.MODEL_MARKER, rt.TIMEOUT_MARKER
+    monkeypatch.setattr(rt.subprocess, "run", _Thread([f, m, f, m, t]))
+    assert rt._trailing_streaks(9) == (2, 1)
+    monkeypatch.setattr(rt.subprocess, "run", _Thread([f, "a person: try the other API", m, f]))
+    assert rt._trailing_streaks(9) == (1, 0)
+    monkeypatch.setattr(rt.subprocess, "run", _Thread([]))
+    assert rt._trailing_streaks(9) == (0, 0)
+
+
+def test_garbage_comment_history_counts_as_nothing(monkeypatch):
+    for out in ("not json", _json.dumps({"comments": "x"}), _json.dumps([1, 2]), _json.dumps({"comments": [None, 5, "s"]})):
+        monkeypatch.setattr(rt.subprocess, "run", lambda cmd, out=out, **kw: rt.subprocess.CompletedProcess(cmd, 0, out, ""))
+        assert rt._trailing_streaks(9) == (0, 0)
+        assert rt._trailing_model_failures(9) == 0
+    def raises(cmd, **kw):
+        raise FileNotFoundError("gh")
+    monkeypatch.setattr(rt.subprocess, "run", raises)
+    assert rt._trailing_streaks(9) == (0, 0)
+
+
+def test_a_timeout_on_a_loaded_machine_waits_longer_before_the_retry(monkeypatch):
+    import ticket_policy as pol
+    from datetime import datetime, timezone
+    def run_once(load):
+        thread = _Thread()
+        monkeypatch.setattr(rt, "_machine_load", lambda: load)
+        def boom(*a, **k):
+            raise rt.TestTimedOut(["pytest"], 1200, "...")
+        monkeypatch.setattr(rt, "execute_ticket", boom)
+        monkeypatch.setattr(rt.subprocess, "run", thread)
+        monkeypatch.setattr(rt, "_release_claim", lambda *a, **k: None)
+        monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+        before = datetime.now(timezone.utc)
+        rt.run(563)
+        body = thread.posted[-1]
+        assert rt.TIMEOUT_MARKER in body
+        return (pol.retry_not_before([{"body": body}], before) - before).total_seconds()
+    idle, loaded = run_once(0.3), run_once(3.0)
+    assert 850 < idle < 950 and loaded > 2.5 * idle
+
+
+def test_timeouts_alone_end_in_needs_you_at_the_retry_cap(monkeypatch):
+    thread = _Thread([rt.TIMEOUT_MARKER] * (rt.MAX_CONSECUTIVE_RETRIES - 1))
+    def boom(*a, **k):
+        raise rt.TestTimedOut(["pytest"], 1200, "...")
+    monkeypatch.setattr(rt, "execute_ticket", boom)
+    monkeypatch.setattr(rt.subprocess, "run", thread)
+    parked, released = [], []
+    monkeypatch.setattr(rt, "_park_stuck_ticket", lambda n, streak, **k: parked.append((n, streak)))
+    monkeypatch.setattr(rt, "_release_claim", lambda *a, **k: released.append(a))
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+    rt.run(563)
+    assert parked == [(563, rt.MAX_CONSECUTIVE_RETRIES)] and released == []
+
+
+def test_a_park_tells_gil_and_names_the_ticket(monkeypatch):
+    import mr_notification
+    sent = []
+    monkeypatch.setattr(mr_notification, "notify_needs_you", lambda ref, why, url=None: sent.append((ref, why, url)))
+    monkeypatch.setattr(rt.machine_profile, "registry_id", lambda: "mac-mini-1")
+    thread = _Thread()
+    monkeypatch.setattr(rt.subprocess, "run", thread)
+    rt._park_stuck_ticket(28, 3, repo="G-Eskayo/clarity-captions", reason="unchanged")
+    assert sent == [("clarity-captions#28", "unchanged", "https://github.com/G-Eskayo/clarity-captions/issues/28")]
+    assert any("needs-info" in e for e in thread.edits)
+
+
+def test_a_broken_notifier_never_stops_the_park(monkeypatch):
+    import mr_notification
+    def broken(*a, **k):
+        raise RuntimeError("notifier gone")
+    monkeypatch.setattr(mr_notification, "notify_needs_you", broken)
+    monkeypatch.setattr(rt.machine_profile, "registry_id", lambda: "mac-mini-1")
+    thread = _Thread()
+    monkeypatch.setattr(rt.subprocess, "run", thread)
+    rt._park_stuck_ticket(28, 3, reason="unchanged")
+    assert len(thread.posted) == 1 and len(thread.edits) == 2

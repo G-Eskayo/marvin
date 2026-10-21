@@ -358,3 +358,20 @@ def test_triage_leaves_a_ticket_the_pipeline_parked_alone():
     well-written parked ticket (another round of builds) nor overwrite the cause with a template complaint (#133)."""
     parked = issue(133, labels=["needs-info", "enhancement"], body=GOOD)
     assert ta.plan_triage(REPO, [parked], owned_needs_info=frozenset()) == []
+
+
+def test_claim_releases_are_applied_before_labels_when_the_budget_is_short(tmp_path):
+    """P6: after 12 days of crashed passes, 100+ priority labels were queued ahead of the stale-claim releases; at 30
+    actions a pass the queue would have stayed frozen for hours. Unfreezing work goes first."""
+    from datetime import datetime, timezone
+    now = datetime(2026, 10, 21, tzinfo=timezone.utc)
+    issues = [{"number": n, "title": f"t{n}", "labels": [{"name": "ready-for-agent"}], "body": "", "createdAt": "2026-01-01T00:00:00Z",
+               "updatedAt": "2026-10-01T00:00:00Z"} for n in range(1, 60)]
+    issues.append({"number": 99, "title": "stuck", "labels": [{"name": "ready-for-agent"}, {"name": "claimed:mac-mini"}],
+                   "body": "", "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-10-10T00:00:00Z"})
+    applied = []
+    res = ta.run({"G-Eskayo/marvin": {"issues": issues, "prs": []}}, lambda args: applied.append(args) or "",
+                 {"mode": "act", "agents": {}}, now, audit_path=tmp_path / "a.jsonl", proposals_path=tmp_path / "p.json",
+                 project_rules={"projects": {}})
+    assert res["by_agent"]["prioritize"]["planned"] > ta.MAX_ACTIONS_PER_RUN
+    assert applied[0][:2] == ["issue", "edit"] and "claimed:mac-mini" in applied[0]

@@ -16,6 +16,7 @@ sys.path.insert(0, str(LIB))
 
 import ticket_pipeline as tp  # noqa: E402
 import ticket_stages as ts  # noqa: E402
+REAL_RETRY_NOT_BEFORE = tp._retry_not_before   # conftest stubs it for every test; captured before that
 
 
 @pytest.fixture(autouse=True)
@@ -1354,3 +1355,65 @@ def test_concurrent_mains_run_one_scan_at_a_time(tmp_path, monkeypatch):
     threads = [threading.Thread(target=tp.main) for _ in range(4)]
     [t.start() for t in threads]; [t.join() for t in threads]
     assert peak[0] == 1
+
+
+# ── retry backoff at dispatch (P6, 2026-10-21) ─────────────────────────────
+from datetime import datetime as _dt, timedelta as _td, timezone as _tz  # noqa: E402
+import ticket_policy as _pol  # noqa: E402
+
+
+def test_a_ticket_waiting_out_its_retry_time_is_skipped_and_the_next_one_runs(monkeypatch):
+    later = _dt.now(_tz.utc) + _td(minutes=30)
+    _setup_projects(monkeypatch, marvin=[_ticket(563, "2026-01-01T00:00:00Z"), _ticket(570, "2026-01-02T00:00:00Z")])
+    monkeypatch.setattr(tp, "_retry_not_before", lambda repo, t, now=None: later if t["number"] == 563 else None)
+    got = _capture(monkeypatch)
+    tp.main()   # parallel off: still one ticket per scan, just not the one that is backing off
+    assert [c[0] for c in got["claims"]] == [570]
+
+
+def test_when_every_ticket_is_backing_off_nothing_is_claimed_and_the_scan_ends(monkeypatch):
+    later = _dt.now(_tz.utc) + _td(minutes=30)
+    _setup_projects(monkeypatch, marvin=[_ticket(n) for n in range(1, 40)])
+    monkeypatch.setattr(tp, "_retry_not_before", lambda repo, t, now=None: later)
+    got = _capture(monkeypatch)
+    tp.main()
+    assert got["claims"] == [] and got["dispatches"] == []
+
+
+def _gh_comments(monkeypatch, comments=None, rc=0, raw=None):
+    calls = []
+    def run(cmd, **kw):
+        calls.append(cmd)
+        out = raw if raw is not None else json.dumps({"comments": comments or []})
+        return SimpleNamespace(returncode=rc, stdout=out, stderr="")
+    monkeypatch.setattr(tp.subprocess, "run", run)
+    return calls
+
+
+def test_retry_time_is_read_from_the_tickets_own_failure_comment(monkeypatch):
+    now = _dt(2026, 10, 21, 20, 0, tzinfo=_tz.utc)
+    _gh_comments(monkeypatch, [{"body": "Automated verification timed out: x\n" + _pol.retry_marker(now + _td(minutes=20))}])
+    t = {"number": 563, "updatedAt": "2026-10-21T19:50:00Z"}
+    assert REAL_RETRY_NOT_BEFORE("G-Eskayo/marvin", t, now) == now + _td(minutes=20)
+    assert REAL_RETRY_NOT_BEFORE("G-Eskayo/marvin", t, now + _td(minutes=21)) is None   # its time has come
+
+
+def test_an_old_ticket_costs_no_github_call(monkeypatch):
+    calls = _gh_comments(monkeypatch, [])
+    now = _dt(2026, 10, 21, tzinfo=_tz.utc)
+    assert REAL_RETRY_NOT_BEFORE("G-Eskayo/marvin", {"number": 1, "updatedAt": "2026-10-01T00:00:00Z"}, now) is None
+    assert calls == []
+
+
+def test_unreadable_comments_never_block_a_dispatch(monkeypatch):
+    now = _dt(2026, 10, 21, tzinfo=_tz.utc)
+    t = {"number": 1, "updatedAt": "2026-10-21T00:00:00Z"}
+    for kwargs in ({"rc": 1}, {"raw": "not json"}, {"raw": json.dumps([1])}, {"raw": json.dumps({"comments": None})}):
+        _gh_comments(monkeypatch, **kwargs)
+        assert REAL_RETRY_NOT_BEFORE("G-Eskayo/marvin", t, now) is None, kwargs
+    def boom(cmd, **kw):
+        raise OSError("gh missing")
+    monkeypatch.setattr(tp.subprocess, "run", boom)
+    assert REAL_RETRY_NOT_BEFORE("G-Eskayo/marvin", t, now) is None
+    _gh_comments(monkeypatch, [])
+    assert REAL_RETRY_NOT_BEFORE("G-Eskayo/marvin", {"number": 1}, now) is None   # no updatedAt: checked, nothing found
