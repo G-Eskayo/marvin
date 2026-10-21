@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
+import ImageViewer from './ImageViewer.jsx'
 
 // The PR's images and recordings (mock-ups, screenshots, frame strips, GIFs, screen recordings) as a gallery at the top
 // of the PR detail, with a full-size viewer. Owner, 2026-10-09: "when I click on the MR, if there are UI photos I want
@@ -80,51 +81,12 @@ function Thumb({ img, loaded, onOpen }) {
   )
 }
 
-function Viewer({ images, loaded, index, setIndex }) {
-  const touchX = useRef(null)
-  const count = images.length
-  const go = (step) => setIndex((i) => (i + step + count) % count)
-  useEffect(() => {
-    const onKey = (e) => {
-      if (e.key === 'Escape') setIndex(null)
-      else if (e.key === 'ArrowRight') go(1)
-      else if (e.key === 'ArrowLeft') go(-1)
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [count])
-  const img = images[index]
-  const s = loaded[img.url] || { status: 'loading' }
-  return (
-    <div
-      role="dialog"
-      aria-label="Media viewer"
-      className="fixed inset-0 z-50 flex flex-col bg-black/95"
-      onClick={() => setIndex(null)}
-      onTouchStart={(e) => { touchX.current = e.touches[0].clientX }}
-      onTouchEnd={(e) => {
-        if (touchX.current === null) return
-        const dx = e.changedTouches[0].clientX - touchX.current
-        touchX.current = null
-        if (Math.abs(dx) > 50) go(dx < 0 ? 1 : -1)
-      }}
-    >
-      <div className="flex items-center justify-between p-3 text-sm text-neutral-300" onClick={(e) => e.stopPropagation()}>
-        <span>{img.group ? `${img.group} · ` : ''}{index + 1} of {count}</span>
-        <button onClick={() => setIndex(null)} className="rounded px-2 py-1 hover:bg-neutral-800" aria-label="Close">✕ Close</button>
-      </div>
-      <div className="flex min-h-0 flex-1 items-center justify-center gap-2 px-2" onClick={(e) => e.stopPropagation()}>
-        {count > 1 && <button onClick={() => go(-1)} className="rounded px-3 py-6 text-2xl text-neutral-400 hover:bg-neutral-800" aria-label="Previous">‹</button>}
-        {s.status === 'ok' ? (
-          <Media s={s} alt={img.alt} className="max-h-full max-w-full flex-1 object-contain" />
-        ) : (
-          <p className="flex-1 text-center text-sm text-neutral-400">{s.status === 'error' ? `couldn't load: ${s.reason}` : 'Loading…'}</p>
-        )}
-        {count > 1 && <button onClick={() => go(1)} className="rounded px-3 py-6 text-2xl text-neutral-400 hover:bg-neutral-800" aria-label="Next">›</button>}
-      </div>
-      {img.caption && <p className="p-3 text-center text-sm text-neutral-300" onClick={(e) => e.stopPropagation()}>{img.caption}</p>}
-    </div>
-  )
+// The full-size view is the shared ImageViewer (#402): ✕, Esc or a click outside closes it, and images zoom.
+export function viewerItems(images, loaded) {
+  return (images || []).map((img) => {
+    const s = loaded[img.url] || { status: 'loading' }
+    return { src: s.src, kind: s.kind, status: s.status, reason: s.reason, alt: img.alt, caption: img.caption, group: img.group }
+  })
 }
 
 export default function PrImages({ images, loadImage = (url) => window.api.mr.image(url) }) {
@@ -143,7 +105,7 @@ export default function PrImages({ images, loadImage = (url) => window.api.mr.im
           </div>
         </div>
       ))}
-      {index !== null && <Viewer images={images} loaded={loaded} index={index} setIndex={setIndex} />}
+      {index !== null && <ImageViewer items={viewerItems(images, loaded)} index={index} onIndex={setIndex} onClose={() => setIndex(null)} />}
     </div>
   )
 }

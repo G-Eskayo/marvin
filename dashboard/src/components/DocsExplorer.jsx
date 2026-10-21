@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import Markdown from './Markdown.jsx'
+import FileView from './FileView.jsx'
 import Related, { useRelated } from './Related.jsx'
 import { extractOutline } from '../lib/docs_text.js'
 import { isNotebookPath, notebookToMarkdown } from '../lib/ipynb.js'
@@ -144,7 +144,8 @@ function DocViewer({ content: rawContent, path, loading, error, scrollRef, onJum
   return (
     <div className="flex">
       <div ref={scrollRef} className="min-w-0 max-w-3xl flex-1 p-6">
-        <Markdown content={content} ctx={ctx} onLink={onLink} />
+        {/* The shared file viewer (#402): same renderer as the Files tab, and inline images open the full-size viewer. */}
+        <FileView key={path} file={{ kind: 'markdown', content, name: path, path }} markdown={{ ctx, onLink }} />
         <Related rel={rel} onTicket={onTicket} onDoc={onDoc} onPr={onPr} />
       </div>
       <Outline content={content} onJump={onJump} />
