@@ -88,13 +88,31 @@ def after_success(state: dict) -> dict:
 
 # ── plumbing ────────────────────────────────────────────────────────────────
 
+# Every copy of the gate starts with this docstring (a worktree's bin/gh, a sandbox HOME's ~/.agents/bin/gh, an older
+# install). 2026-10-21: two copies on PATH each took the other for the real gh and called each other back and forth,
+# 18,040 logged "pr list" calls in two hours from a caller named "Python". A copy of the gate is never the real gh.
+GATE_MARKER = "gh \u2014 the GitHub gate".encode("utf-8")
+# Set on the real gh's environment: a gate started from inside a gate (a gh extension calling gh, a copy that missed
+# the marker check) passes the call straight through, unlogged, instead of counting and gating it twice.
+INSIDE_ENV = "MARVIN_GH_GATE_INSIDE"
+
+
+def _is_gate(path: str) -> bool:
+    try:
+        with open(path, "rb") as f:
+            return GATE_MARKER in f.read(512)
+    except OSError:
+        return False
+
+
 def find_real_gh(path: str) -> str | None:
     me = os.path.realpath(__file__)
+    ok = lambda c: os.path.isfile(c) and os.access(c, os.X_OK) and os.path.realpath(c) != me and not _is_gate(c)
     for d in path.split(":"):
         c = os.path.join(d, "gh")
-        if d and os.path.isfile(c) and os.access(c, os.X_OK) and os.path.realpath(c) != me:
+        if d and ok(c):
             return c
-    return next((c for c in FALLBACKS if os.path.isfile(c) and os.path.realpath(c) != me), None)
+    return next((c for c in FALLBACKS if ok(c)), None)
 
 
 def _logs() -> Path:
@@ -234,6 +252,8 @@ def main(argv: list[str]) -> int:
     if not real:
         _say("the real gh is not installed")
         return 127
+    if os.environ.get(INSIDE_ENV):
+        return subprocess.call([real, *argv])
     prio = priority_of(os.environ)
     caller = _caller()
     cmd = " ".join(a for a in argv[:2] if not a.startswith("-"))
@@ -252,6 +272,7 @@ def main(argv: list[str]) -> int:
         time.sleep(secs)
 
     slot = _background_slot() if prio == "background" else None
+    os.environ[INSIDE_ENV] = "1"  # inherited by the real gh and anything it runs
     t0 = time.time()
     try:
         if sys.stdin.isatty() and sys.stderr.isatty():
