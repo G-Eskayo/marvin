@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync, readdirSync, statSync } from 'fs'
 import path from 'path'
-import { analyzeSource, scanFiles, checkAllowlist, GUIDANCE } from './polling_guard.js'
+import { analyzeSource, scanFiles, checkAllowlist, GUIDANCE, EVIDENCE_SCRIPT } from './polling_guard.js'
 
 // marvin#556: "Triggers over polling" (CONTEXT.md, decided 2026-10-03) enforced, not remembered. #554 added a 90 s
 // re-read of PR checks (pendingChecksTtl) although gh_watch.js's ETag change-detector already covered it at zero
@@ -44,9 +44,7 @@ export const ALLOWLIST = {
   'webhook-server/failure.js': { 'timeout-loop': [1, 'withRetry: bounded exponential backoff on a failed call, not a poll for change'] },
   'webhook-server/merge.js': { 'timeout-loop': [1, 'mergeableNow: GitHub computes mergeable lazily with no event; bounded 6 x 5 s'] },
   'mobile-backend/dashboard_gh_api.js': { interval: [1, `starts ${CHECK_WATCH}`] },
-  'mobile-backend/pending_actions.js': { 'timeout-loop': [1, 'waits on its own local store for an approval, bounded by the hook timeout; no network'] },
-  'scripts/proposals_evidence.mjs': { 'timeout-loop': [2, 'dev script: bounded wait for a local Electron CDP port/window'] },
-  'scripts/check_progress_evidence.mjs': { 'timeout-loop': [2, 'dev script (#557 evidence): bounded wait for a local Electron CDP window'] }
+  'mobile-backend/pending_actions.js': { 'timeout-loop': [1, 'waits on its own local store for an approval, bounded by the hook timeout; no network'] }
 }
 
 const ROOT = path.resolve(__dirname, '..')
@@ -84,6 +82,15 @@ export function pendingChecksTtl(prs) {
 }`
     const problems = checkAllowlist(scanFiles([{ path: 'electron/main/mr_repos.js', code: src }]), {})
     expect(problems.join('\n')).toContain('electron/main/mr_repos.js: ')
+  })
+
+  it('evidence scripts may wait in a loop for their local Electron window, but still may not poll on an interval', () => {
+    const waits = 'const sleep = (ms) => new Promise((r) => setTimeout(r, ms))\nlet page; for (let i = 0; i < 40 && !page; i++) { page = find(); if (!page) await sleep(250) }'
+    expect(checkAllowlist(scanFiles([{ path: 'scripts/new_thing_evidence.mjs', code: waits }]), {})).toEqual([])
+    expect(checkAllowlist(scanFiles([{ path: 'scripts/new_thing_evidence.mjs', code: 'setInterval(load, 20_000)' }]), {}).join('\n')).toContain('interval')
+    expect(checkAllowlist(scanFiles([{ path: 'scripts/sync_thing.mjs', code: waits }]), {}).join('\n')).toContain('timeout-loop')
+    expect(EVIDENCE_SCRIPT.test('scripts/../electron/x_evidence.mjs')).toBe(false)
+    expect(EVIDENCE_SCRIPT.test('src/x_evidence.mjs')).toBe(false)
   })
 
   it('every TODO entry points at an issue', () => {
