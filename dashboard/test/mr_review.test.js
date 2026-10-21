@@ -202,6 +202,26 @@ describe('parseTicketRef', () => {
 })
 
 describe('listPipelinePrs', () => {
+  // marvin#555: the card's progress bar and drill-down need each check, and "Last checked" needs a real time.
+  it('carries each check and when GitHub was last asked about them, beside the summary the gate uses', async () => {
+    const rollup = [
+      { __typename: 'CheckRun', name: 'Website checks', status: 'COMPLETED', conclusion: 'SUCCESS', startedAt: '2026-10-21T05:58:02Z', completedAt: '2026-10-21T05:58:50Z' },
+      { __typename: 'CheckRun', name: 'App builds (iOS)', status: 'IN_PROGRESS', conclusion: '', startedAt: '2026-10-21T05:58:02Z', completedAt: null }
+    ]
+    const [pr] = await listPipelinePrs(async () => [{ number: 1, title: 't', url: 'u', body: '', statusCheckRollup: rollup, listedAt: 1000, checkedAt: 4000 }])
+    expect(pr.checks).toMatchObject({ state: 'pending', pending: ['App builds (iOS)'], failing: [], checkedAt: 4000 })
+    expect(pr.checks.runs.map((r) => [r.name, r.status])).toEqual([['Website checks', 'passed'], ['App builds (iOS)', 'running']])
+  })
+
+  it('checkedAt falls back to the list read time, then to null; no checks means no rows', async () => {
+    const [a, b] = await listPipelinePrs(async () => [
+      { number: 1, title: 't', url: 'u1', body: '', statusCheckRollup: [], listedAt: 1000 },
+      { number: 2, title: 't', url: 'u2', body: '' }
+    ])
+    expect(a.checks).toMatchObject({ state: 'none', runs: [], checkedAt: 1000 })
+    expect(b.checks).toMatchObject({ state: 'none', runs: [], checkedAt: null })
+  })
+
   it('includes every open PR regardless of schema conformance', async () => {
     // Found live 2026-10-01: PR #119 (real, substantive, its own test-plan
     // checklist) sat invisible for 30 days because it didn't follow the
