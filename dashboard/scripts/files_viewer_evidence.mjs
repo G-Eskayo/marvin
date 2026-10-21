@@ -89,32 +89,126 @@ try {
   check('CSV table keeps quoted commas in one cell', cell)
   await shot('files-csv')
 
-  // 4. PDFs: our own pdf.js pages (not Chromium's viewer), lazily rendered, each page zoomable in the shared viewer.
+  // 4. PDFs: pdf.js's interactive viewer (text, links, forms, find) in the dashboard's style, with our toolbar.
   const pdfStats = () => page.evaluate(() => ({
     count: document.querySelector('[data-pdf-count]')?.textContent,
-    pages: document.querySelectorAll('[data-pdf-page]').length,
-    rendered: [...document.querySelectorAll('[data-pdf-page][data-rendered="1"]')].map((e) => Number(e.dataset.pdfPage)),
+    current: document.querySelector('[data-pdf-page-input]')?.value,
+    pages: document.querySelectorAll('.pdfViewer .page').length,
+    rendered: [...document.querySelectorAll('.pdfViewer .page')].filter((e) => e.querySelector('canvas')).map((e) => Number(e.dataset.pageNumber)),
     iframe: !!document.querySelector('iframe')
   }))
+  const waitFor = async (fn, ms = 8000) => { for (let t = 0; t < ms; t += 150) { if (await page.evaluate(fn)) return true; await sleep(150) } return false }
   await openFile('data/weekly-report.pdf')
-  await sleep(2500)
-  const p12 = await pdfStats()
+  await waitFor(() => !!document.querySelector('.pdfViewer .page canvas'))
+  await sleep(800)
   check('pdf.js runs in its real worker from the app bundle (no fake-worker fallback)', !consoleLines.some((l) => /fake worker/i.test(l)), consoleLines.filter((l) => /pdf|worker/i.test(l)).slice(0, 3).join(' | ') || 'no pdf.js warnings')
+  const p12 = await pdfStats()
   check('a 12-page PDF shows "12 pages" and draws its pages itself (no Chromium viewer)', p12.count === '12 pages' && p12.pages === 12 && p12.rendered.includes(1) && !p12.iframe, JSON.stringify(p12))
   await shot('files-pdf')
-  // The column scrolled to where page 1 ends and page 2 begins: pages stack with a gap and a shadow.
-  await page.evaluate(() => { const p2 = document.querySelector('[data-pdf-page="2"]'); p2.closest('.overflow-auto').scrollTop = p2.offsetTop - 420 })
-  await sleep(1500)
-  await shot('files-pdf-page-break')
 
-  await openFile('data/archive-200-pages.pdf')
-  await sleep(2500)
-  const p200 = await pdfStats()
-  check('a 200-page PDF renders only the pages near the viewport', p200.pages === 200 && p200.rendered.length > 1 && p200.rendered.length <= 6, `rendered ${p200.rendered.join(',')}`)
-  await page.evaluate(() => { const sc = document.querySelector('[data-pdf-page="100"]').closest('.overflow-auto'); sc.scrollTop = document.querySelector('[data-pdf-page="100"]').offsetTop - 40 })
-  await sleep(2500)
-  const mid = await pdfStats()
-  check('scrolling to page 100 renders it and releases the pages left behind', mid.rendered.includes(100) && !mid.rendered.includes(1) && mid.rendered.length <= 6, `rendered ${mid.rendered.join(',')}`)
+  // A 500-page handbook: outline, page jump, scroll-following indicator, find, links.
+  await openFile('data/handbook-500-pages.pdf')
+  await waitFor(() => !!document.querySelector('.pdfViewer .page canvas'))
+  await sleep(1000)
+  const outlineTitles = await page.evaluate(() => [...document.querySelectorAll('[data-pdf-outline] button')].map((b) => b.textContent))
+  check('the outline sidebar lists the bookmarks', outlineTitles.includes('Part 2: Health') && outlineTitles.includes('1.1 Dispatch'), outlineTitles.join(' / '))
+  const first = await pdfStats()
+  check('opening a 500-page PDF renders only its first pages', first.pages === 500 && first.rendered.length <= 3, `rendered ${first.rendered.join(',')}`)
+  await shot('files-pdf-outline')
+  await page.fill('[data-pdf-page-input]', '400')
+  await page.press('[data-pdf-page-input]', 'Enter')
+  await sleep(1800)
+  const j = await pdfStats()
+  const near = j.rendered.filter((n) => n >= 395 && n <= 405)
+  const stray = j.rendered.filter((n) => !(n >= 395 && n <= 405) && !first.rendered.includes(n))
+  check('jumping to page 400 renders only page 400 and its neighbours', j.current === '400' && near.includes(400) && stray.length === 0 && j.rendered.length <= 10, `now on ${j.current}; rendered ${j.rendered.join(',')}`)
+  await shot('files-pdf-jump-400')
+  await page.evaluate(() => [...document.querySelectorAll('[data-pdf-outline] button')].find((b) => b.textContent === 'Part 2: Health').click())
+  await sleep(1200)
+  check('clicking an outline entry jumps there', (await pdfStats()).current === '250')
+  await page.evaluate(() => { const sc = document.querySelector('[data-pdf-scroll]'); const p = document.querySelector('.pdfViewer .page[data-page-number="120"]'); sc.scrollTop = p.offsetTop + 50 })
+  await sleep(1000)
+  check('the page indicator follows scrolling', (await pdfStats()).current === '120', (await pdfStats()).current)
+  await page.click('button[aria-label="Previous page"]')
+  await sleep(600)
+  check('previous page button', (await pdfStats()).current === '119', (await pdfStats()).current)
+
+  // Find (⌘F with the PDF focused): many matches, then none.
+  await page.focus('[data-pdf-scroll]')
+  await page.keyboard.press('Meta+f')
+  await sleep(300)
+  check('⌘F opens find in the PDF', await page.evaluate(() => document.activeElement?.getAttribute('aria-label') === 'Find in PDF'))
+  await page.keyboard.type('throughput')
+  await waitFor(() => /of 500 matches/.test(document.querySelector('[data-pdf-find-status]')?.textContent || ''), 30000)
+  const fs1 = await page.evaluate(() => ({ status: document.querySelector('[data-pdf-find-status]').textContent, highlights: document.querySelectorAll('.textLayer .highlight').length }))
+  check('find counts every match and highlights them', /of 500 matches/.test(fs1.status) && fs1.highlights > 0, JSON.stringify(fs1))
+  await page.keyboard.press('Enter')
+  await sleep(500)
+  const fs2 = await page.evaluate(() => document.querySelector('[data-pdf-find-status]').textContent)
+  // pdf.js starts at the first match from the current page (as Chrome's viewer does), so check the step, not the number.
+  const k = parseInt(fs1.status, 10)
+  check('Enter goes to the next match', parseInt(fs2, 10) === k + 1, `${fs1.status} → ${fs2}`)
+  await shot('files-pdf-find')
+  await page.fill('[aria-label="Find in PDF"]', 'zzqqxx')
+  await waitFor(() => document.querySelector('[data-pdf-find-status]')?.textContent === 'No matches', 30000)
+  check('find with no matches says so', (await page.evaluate(() => document.querySelector('[data-pdf-find-status]').textContent)) === 'No matches')
+  await page.keyboard.press('Escape')
+  await sleep(300)
+
+  // Links on page 1: internal jumps; only the https link has a target; javascript:/file: never become links.
+  await page.fill('[data-pdf-page-input]', '1')
+  await page.press('[data-pdf-page-input]', 'Enter')
+  await waitFor(() => document.querySelectorAll('.pdfViewer .page[data-page-number="1"] .annotationLayer a').length > 0)
+  await sleep(600)
+  const links = await page.evaluate(() => [...document.querySelectorAll('.pdfViewer .page[data-page-number="1"] .annotationLayer a')].map((a) => a.getAttribute('href') || ''))
+  check('internal and https links are live; javascript: and file: links are refused', links.length === 2 && links.some((h) => h.startsWith('#')) && links.includes('https://example.com/') && !links.some((h) => /^(javascript|file):/i.test(h)), links.join(' '))
+  const ext = await rect('.pdfViewer .page[data-page-number="1"] .annotationLayer a[href^="https"]')
+  await page.mouse.move(ext.x + 5, ext.y + 5)
+  await page.mouse.move(ext.x + ext.w / 2, ext.y + ext.h / 2, { steps: 4 })
+  await sleep(400)
+  const hovered = await page.evaluate(() => {
+    const a = document.querySelector('.annotationLayer a[href^="https"]:hover')
+    if (!a) return null
+    const cs = getComputedStyle(a)
+    const r = a.getBoundingClientRect()
+    return { bg: cs.backgroundColor, opacity: cs.opacity, w: Math.round(r.width), h: Math.round(r.height) }
+  })
+  check('the hovered link highlights', !!hovered && hovered.bg !== 'rgba(0, 0, 0, 0)' && hovered.w > 0, JSON.stringify(hovered))
+  await page.hover('.annotationLayer a[href^="https"]')
+  await page.screenshot({ path: `${OUT}/ticket-402-files-pdf-link-hover.png` })
+  await page.click('.pdfViewer .page[data-page-number="1"] .annotationLayer a[href^="#"]')
+  await sleep(900)
+  check('an internal link jumps to its page', (await pdfStats()).current === '3', (await pdfStats()).current)
+
+  // In-place zoom keeps text, links and forms usable.
+  await page.click('[data-pdf-toolbar] button[aria-label="Zoom in"]')
+  await page.click('[data-pdf-toolbar] button[aria-label="Zoom in"]')
+  await sleep(900)
+  const zoomed = await page.evaluate(() => ({ level: document.querySelector('[data-pdf-toolbar] [aria-label="Zoom level"]').textContent, text: document.querySelectorAll('.pdfViewer .page .textLayer span').length }))
+  check('in-place zoom keeps the text layer', parseInt(zoomed.level, 10) > 100 && zoomed.text > 0, JSON.stringify(zoomed))
+  await page.click('[data-pdf-toolbar] button:has-text("Fit width")')
+  await sleep(500)
+
+  // A form: type, tick, choose. The file on disk must not change.
+  const formFile = path.join(HOME, '.claude', 'outbox', 'data', 'signup-form.pdf')
+  const formBefore = fs.readFileSync(formFile)
+  await openFile('data/signup-form.pdf')
+  await waitFor(() => !!document.querySelector('.annotationLayer input[type="text"], .annotationLayer textarea'))
+  await sleep(600)
+  await page.click('.annotationLayer .textWidgetAnnotation input, .annotationLayer .textWidgetAnnotation textarea')
+  await page.keyboard.type('Gil Eskayo')
+  await page.click('.annotationLayer .buttonWidgetAnnotation.checkBox input')
+  await page.selectOption('.annotationLayer .choiceWidgetAnnotation select', 'Blue')
+  await sleep(400)
+  const form = await page.evaluate(() => ({
+    text: document.querySelector('.annotationLayer .textWidgetAnnotation input, .annotationLayer .textWidgetAnnotation textarea').value,
+    checked: document.querySelector('.annotationLayer .buttonWidgetAnnotation.checkBox input').checked,
+    choice: document.querySelector('.annotationLayer .choiceWidgetAnnotation select').value,
+    note: document.querySelector('[data-pdf-form-note]')?.textContent
+  }))
+  check('form fields take typing, a tick and a choice, and the UI says edits are not saved', form.text === 'Gil Eskayo' && form.checked && form.choice === 'Blue' && /aren't saved/.test(form.note || ''), JSON.stringify(form))
+  await shot('files-pdf-form')
+  check('the PDF file on disk is unchanged', fs.readFileSync(formFile).equals(formBefore))
 
   await openFile('data/locked.pdf')
   await sleep(1500)
@@ -126,21 +220,21 @@ try {
   const corrupt = await page.evaluate(() => document.querySelector('[data-file-card]')?.innerText || '')
   check('a corrupt PDF gets the card', /damaged|couldn't be read|no pages/i.test(corrupt), corrupt.replace(/\n/g, ' | '))
 
-  // A page opened in the shared viewer, zoomed like any image.
+  // A page opened full size in the shared viewer, zoomed like any image.
   await openFile('data/weekly-report.pdf')
-  await sleep(2000)
-  await page.click('[data-pdf-page="1"]')
+  await waitFor(() => !!document.querySelector('.pdfViewer .page canvas'))
+  await page.click('[data-pdf-toolbar] button:has-text("Full size")')
   for (let i = 0; i < 40 && !(await viewerOpen()); i++) await sleep(150)
   await sleep(800)
   const pv = await page.evaluate(() => { const i = document.querySelector('[data-viewer-scroll] img'); return i && { w: i.naturalWidth, h: i.naturalHeight } })
-  check('clicking a PDF page opens it sharp in the shared viewer', !!pv && pv.h >= 3000, JSON.stringify(pv))
+  check('⤢ Full size opens the page sharp in the shared viewer', !!pv && pv.h >= 3000, JSON.stringify(pv))
   const psc = await rect('[data-viewer-scroll]')
   await page.mouse.move(psc.x + psc.w / 2, psc.y + 160)
   await page.keyboard.down('Meta')
   for (let i = 0; i < 3; i++) { await page.mouse.wheel(0, -100); await sleep(80) }
   await page.keyboard.up('Meta')
   await sleep(500)
-  const pz = await page.evaluate(() => document.querySelector('[aria-label="Zoom level"]').textContent)
+  const pz = await page.evaluate(() => document.querySelector('[data-image-viewer] [aria-label="Zoom level"]').textContent)
   check('the PDF page zooms like an image', parseInt(pz, 10) > 30, pz)
   await shot('viewer-pdf-page-zoomed')
   await page.keyboard.press('Escape')

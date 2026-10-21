@@ -1,0 +1,20 @@
+/* The interactive PDF view (G-Eskayo/marvin#402) in the dashboard's dark style: pdf.js's own viewer layers (canvas,
+   text, links, forms), with its light chrome replaced by pages floating on the panel with a shadow and a gap. */
+.marvin-pdf .pdfViewer {
+  --page-margin: 0 auto 16px;
+  --page-border: none;
+  padding: 16px 0 24px;
+}
+.marvin-pdf .pdfViewer .page {
+  border-radius: 4px;
+  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.45), 0 4px 6px -4px rgb(0 0 0 / 0.45);
+}
+.marvin-pdf .pdfViewer .page .loadingIcon { display: none; }
+.marvin-pdf:focus, .marvin-pdf-scroll:focus { outline: none; }
+/* A link under the pointer: a soft blue wash (pdf.js's default faint yellow didn't show on white pages). */
+.marvin-pdf .annotationLayer .linkAnnotation > a:hover {
+  opacity: 1 !important;
+  background-color: rgb(59 130 246 / 0.18) !important;
+  box-shadow: 0 0 0 1px rgb(59 130 246 / 0.5) !important;
+  border-radius: 2px;
+}
