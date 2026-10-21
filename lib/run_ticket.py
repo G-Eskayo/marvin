@@ -23,25 +23,74 @@ import project_profile as pp  # noqa: E402
 from build_type_measure import measure, test_command_for  # noqa: E402
 from evidence_capture import capture_dev_evidence, capture_test_results, ticket_touches_ui, TestTimedOut  # noqa: E402
 from mr_raiser import raise_mr  # noqa: E402
-from sandbox_orchestration import execute_ticket, _default_executor, TaskListTooVague  # noqa: E402
+from sandbox_orchestration import execute_ticket, _default_executor, TaskListTooVague, ModelRunFailed  # noqa: E402
 from cleanup_sweep import drop_build_output  # noqa: E402
 from ticket_pipeline import _label_for_device, _release  # noqa: E402
 import failure_breaker  # noqa: E402
 import ticket_stages as ts  # noqa: E402
 import redispatch_trigger  # noqa: E402
+import ticket_policy  # noqa: E402
+from datetime import datetime, timedelta, timezone  # noqa: E402
 
 REPO = "G-Eskayo/marvin"
 FAILURE_MARKER = "Automated implementation did not pass verification"
 TIMEOUT_MARKER = "Automated verification timed out"
+MODEL_MARKER = "The model service was unavailable"
 MAX_CONSECUTIVE_FAILURES = 3
+MAX_CONSECUTIVE_RETRIES = 5   # failures and verify timeouts together: a timeout is no strike, but retries still end
 
 
-def _comment_failure(issue_number: int, reason: str, repo: str = REPO) -> None:
+def _machine_load() -> float | None:
+    """This machine's 1-minute load average per core, or None when unreadable. A verify that timed out while the
+    machine was loaded (#563: the M4 running a long engine test) should wait longer before trying again."""
+    try:
+        return os.getloadavg()[0] / (os.cpu_count() or 1)
+    except (OSError, AttributeError):
+        return None
+
+
+def _retry_line(attempt: int) -> tuple[str, str]:
+    """(when, hidden marker) for retry number `attempt`, stretched by this machine's load (ticket_policy)."""
+    load = _machine_load()
+    wait = ticket_policy.retry_backoff_s(attempt, load)
+    at = datetime.now(timezone.utc) + timedelta(seconds=wait)
+    when = f"{at.strftime('%H:%M UTC')} (in {round(wait / 60)} min" + (f", machine load {load:.1f}/core" if load and load > 1 else "") + ")"
+    return when, ticket_policy.retry_marker(at)
+
+
+def _comment_failure(issue_number: int, reason: str, repo: str = REPO, retry: tuple[str, str] | None = None) -> None:
+    tail = f"\n\nIt goes back to the queue, not before {retry[0]}.\n{retry[1]}" if retry else ""
     subprocess.run(
         ["gh", "issue", "comment", str(issue_number), "--repo", repo, "--body",
-         f"{FAILURE_MARKER}: {reason}"],
+         f"{FAILURE_MARKER}: {reason}{tail}"],
         check=False,
     )
+
+
+def _issue_comments(issue_number: int, repo: str = REPO) -> list | None:
+    """The ticket's comments, or None when they can't be read (no gh, offline, garbage): callers then count nothing."""
+    try:
+        proc = subprocess.run(
+            ["gh", "issue", "view", str(issue_number), "--repo", repo, "--json", "comments"],
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+        if proc.returncode != 0:
+            return None
+        comments = json.loads(proc.stdout)["comments"]
+    except Exception:  # noqa: BLE001 -- unreadable history must never crash the cleanup that follows
+        return None
+    return comments if isinstance(comments, list) else None
+
+
+def _trailing_model_failures(issue_number: int, repo: str = REPO) -> int:
+    """How many model-unavailable releases in a row this ticket has had (most recent first), for its backoff."""
+    n = 0
+    for c in reversed(_issue_comments(issue_number, repo) or []):
+        if isinstance(c, dict) and MODEL_MARKER in str(c.get("body", "")):
+            n += 1
+        else:
+            break
+    return n
 
 
 def _consecutive_failure_streak(issue_number: int, repo: str = REPO) -> int:
@@ -58,25 +107,30 @@ def _consecutive_failure_streak(issue_number: int, repo: str = REPO) -> int:
     sessions over 3 days with every attempt reaching an identical
     'unchanged' verdict -- max_iterations=3 only bounds iterations *inside*
     one execute_ticket call, nothing bounded the outer release/redispatch
-    loop across calls. Timeouts do not count as failures; only FAILURE_MARKER."""
-    proc = subprocess.run(
-        ["gh", "issue", "view", str(issue_number), "--repo", repo,
-         "--json", "comments"],
-        capture_output=True, text=True, timeout=30, check=False,
-    )
-    if proc.returncode != 0:
-        return 0
-    try:
-        comments = json.loads(proc.stdout)["comments"]
-    except (json.JSONDecodeError, KeyError):
-        return 0
-    streak = 0
-    for c in reversed(comments):
-        if FAILURE_MARKER in c.get("body", ""):
-            streak += 1
+    loop across calls.
+
+    Timeouts are not strikes, but no longer reset the count either (P6, 2026-10-21); see _trailing_streaks."""
+    return _trailing_streaks(issue_number, repo)[0]
+
+
+def _trailing_streaks(issue_number: int, repo: str = REPO) -> tuple[int, int]:
+    """(failures, verify timeouts) in the trailing run of automated comments, most recent first, up to the first
+    comment from anyone else. Timeouts used to be free and to reset the failure count, so a ticket whose verify
+    always times out was retried for ever (#563: three runs in 46 minutes on a loaded M4); now they have their own
+    cap (MAX_CONSECUTIVE_RETRIES, with failures). A model-unavailable release is about the service: it is skipped,
+    neither counted nor a reset."""
+    failures = timeouts = 0
+    for c in reversed(_issue_comments(issue_number, repo) or []):
+        body = str(c.get("body", "")) if isinstance(c, dict) else ""
+        if MODEL_MARKER in body:
+            continue
+        if FAILURE_MARKER in body:
+            failures += 1
+        elif TIMEOUT_MARKER in body:
+            timeouts += 1
         else:
             break
-    return streak
+    return failures, timeouts
 
 
 PARKED_MARKER = "Parked after repeated failed builds"
@@ -84,7 +138,7 @@ MAX_PARK_FINDINGS = 15
 
 
 def _park_stuck_ticket(issue_number: int, streak: int, repo: str = REPO, reason: str = "",
-                       findings: list[str] | tuple = ()) -> None:
+                       findings: list[str] | tuple = (), headline: str | None = None) -> None:
     """Stop re-dispatching a ticket that keeps failing, and hand it to a person WITH the cause.
 
     needs-info is added before ready-for-agent comes off, so the ticket is never stateless: the triage agent treats
@@ -107,7 +161,7 @@ def _park_stuck_ticket(issue_number: int, streak: int, repo: str = REPO, reason:
     # ticket that kept its claim could never be revived by re-adding the label.
     shown = list(findings)[:MAX_PARK_FINDINGS]
     more = len(findings) - len(shown)
-    lines = [f"**{PARKED_MARKER}** ({streak} in a row), so it stops being re-dispatched.", "",
+    lines = [headline or f"**{PARKED_MARKER}** ({streak} in a row), so it stops being re-dispatched.", "",
              f"**Why it's stuck:** {(reason or 'no reason was recorded')[:500]}"]
     if shown:
         lines += ["", "**Must-fix findings the builder could not clear:**", *[f"- {f}" for f in shown]]
@@ -119,6 +173,13 @@ def _park_stuck_ticket(issue_number: int, streak: int, repo: str = REPO, reason:
         ["gh", "issue", "comment", str(issue_number), "--repo", repo, "--body", "\n".join(lines)],
         capture_output=True, text=True, timeout=15, check=False,
     )
+    # It is in the dashboard's Needs you now (needs-info); say so where Gil will see it, not only on the ticket.
+    try:
+        import mr_notification
+        mr_notification.notify_needs_you(f"{repo.split('/')[-1]}#{issue_number}", reason or "parked",
+                                         f"https://github.com/{repo}/issues/{issue_number}")
+    except Exception as exc:  # noqa: BLE001 -- a notification must never break the run's cleanup
+        print(f"[run_ticket] needs-you notification failed: {exc}", file=sys.stderr)
 
 
 def _release_claim(issue_number: int, repo: str = REPO, run_id: str | None = None) -> None:
@@ -235,13 +296,15 @@ def run(issue_number: int, repo: str = REPO) -> dict:
         # visibility), and redispatch so another machine can try.
         reason = str(exc)
         outcome = {"raised": False, "pr_url": None, "reason": reason, "timed_out": True}
+    except ModelRunFailed as exc:
+        # The model service failed (a usage limit, an outage): not the ticket's fault, so no strike. Release the
+        # claim with a backoff; the breaker still counts it, so a window that fails every ticket pauses dispatch.
+        outcome = {"raised": False, "pr_url": None, "reason": str(exc), "model_unavailable": True}
     except TaskListTooVague as exc:
-        # The planning call produced a design doc but could not derive a concrete task list. This is a
-        # ticket issue (too vague/ambiguous), not a machine or environment issue. Post an explanatory comment
-        # and deliberately do NOT release the claim -- it stays claimed so the ticket isn't re-dispatched to
-        # spin endlessly. The ticket needs human de-vague-ing before it's eligible again.
-        reason = str(exc)
-        outcome = {"raised": False, "pr_url": None, "reason": reason, "too_vague": True}
+        # The planner said the ticket is too vague: a person must answer, so it is parked in Needs you. It used to
+        # keep its claim "so it isn't re-dispatched", which hid it from everyone: ten tickets sat 5-11 days (P6).
+        # A plan that merely lacks its Task List is a bad run, handled like any failure below.
+        outcome = {"raised": False, "pr_url": None, "reason": str(exc), "too_vague": exc.needs_person}
     except Exception as exc:
         # A crash anywhere in execute_ticket/raise_mr (a planner timeout, a
         # worktree-creation failure, anything) must never skip the cleanup
@@ -260,31 +323,47 @@ def run(issue_number: int, repo: str = REPO) -> dict:
             ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
             _trigger_redispatch()
             return outcome
-        if outcome.get("timed_out"):
+        if outcome.get("model_unavailable"):
+            when, marker = _retry_line(_trailing_model_failures(issue_number, **kw) + 1)
             _release_claim(issue_number, **kw, run_id=run_id)
             subprocess.run(
                 ["gh", "issue", "comment", str(issue_number), "--repo", repo, "--body",
-                 f"{TIMEOUT_MARKER}: {outcome['reason']}"],
+                 f"{MODEL_MARKER}: {outcome['reason'][:300]}\n\nNothing is wrong with this ticket: the claim is released "
+                 f"and it goes back to the queue, not before {when}.\n{marker}"],
                 check=False,
             )
+            failure_breaker.record_failure(issue_number, outcome["reason"], **({"project": repo} if other else {}))
+            ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
+            _trigger_redispatch()
+            return outcome
+        if outcome.get("timed_out"):
+            tries = sum(_trailing_streaks(issue_number, **kw)) + 1
             ts.record_stage(issue_number, "verifying", "failed", outcome["reason"][:300], **kw)
+            if tries >= MAX_CONSECUTIVE_RETRIES:
+                _park_stuck_ticket(issue_number, tries, **kw, reason=outcome["reason"])
+                ts.record_stage(issue_number, "done", "failed", f"parked after {tries} consecutive failed or timed-out runs", **kw)
+                _trigger_redispatch()
+                return outcome
+            when, marker = _retry_line(tries)
+            _release_claim(issue_number, **kw, run_id=run_id)
+            subprocess.run(
+                ["gh", "issue", "comment", str(issue_number), "--repo", repo, "--body",
+                 f"{TIMEOUT_MARKER}: {outcome['reason']}\n\nIt goes back to the queue, not before {when}.\n{marker}"],
+                check=False,
+            )
             ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
             _trigger_redispatch()
             return outcome
         if outcome.get("too_vague"):
-            # Ticket is too vague to plan -- post an explanatory comment, leave the claim in place
-            # (do NOT call _release_claim), and trigger a redispatch so other tickets can run.
-            subprocess.run(
-                ["gh", "issue", "comment", str(issue_number), "--repo", repo, "--body",
-                 f"Automated planning could not derive a concrete task list: {outcome['reason']}. "
-                 f"This ticket needs human clarification or re-scoping before automated implementation can proceed."],
-                check=False,
-            )
+            _park_stuck_ticket(issue_number, 1, **kw, reason=outcome["reason"],
+                               headline="**The planner says this ticket is too vague to build**, so it is handed to a person "
+                                        "instead of being retried.")
             ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
             _trigger_redispatch()
             return outcome
         prior_streak = _consecutive_failure_streak(issue_number, **kw)
-        _comment_failure(issue_number, outcome["reason"], **kw)
+        parking = prior_streak + 1 >= MAX_CONSECUTIVE_FAILURES
+        _comment_failure(issue_number, outcome["reason"], **kw, **({} if parking else {"retry": _retry_line(prior_streak + 1)}))
         # Feed the cross-ticket breaker (failure_breaker.py): the SAME failure across
         # different tickets means the system is broken, not the tickets.
         failure_breaker.record_failure(issue_number, outcome["reason"], **({"project": repo} if other else {}))

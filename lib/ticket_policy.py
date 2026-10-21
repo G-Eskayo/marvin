@@ -57,6 +57,59 @@ def stale_claim(issue: dict, now: datetime, hours: int = STALE_CLAIM_HOURS) -> d
     return {"machine": machine, "idle_hours": round(idle)} if idle > hours else None
 
 
+# ── retry backoff (P6, 2026-10-21) ──────────────────────────────────────────
+# A ticket whose run failed for a reason that may pass (a verify timeout on a loaded machine, the model service
+# down) used to be released and re-dispatched at once: #563 ran three times in 46 minutes while the M4 was busy, and
+# a usage-limit window could spin a ticket every few seconds. The run that fails writes the earliest retry time into
+# its own comment on the ticket, so both Macs read the same answer from the thread with no new state store, and the
+# scan skips the ticket until then. The wait doubles per consecutive failure and stretches with the failing
+# machine's load (1-minute load average per core, counted from 1x, capped at LOAD_FACTOR_CAP).
+
+RETRY_MARKER = "marvin:retry-after"
+RETRY_BASE_S = 15 * 60
+RETRY_CAP_S = 4 * 3600
+LOAD_FACTOR_CAP = 4.0
+RETRY_HORIZON_S = int(RETRY_CAP_S * LOAD_FACTOR_CAP)   # no marker can point further ahead than this
+_RETRY_RE = re.compile(r"<!--\s*" + re.escape(RETRY_MARKER) + r"\s+(\S+)\s*-->")
+
+
+def retry_backoff_s(attempt, load_ratio=None) -> int:
+    """Seconds to wait before retry number `attempt` (1 = the first retry). Garbage in means the safe minimum wait."""
+    try:
+        n = max(1, int(attempt))
+    except (TypeError, ValueError):
+        n = 1
+    base = min(RETRY_CAP_S, RETRY_BASE_S * 2 ** min(n - 1, 16))
+    try:
+        load = float(load_ratio)
+    except (TypeError, ValueError):
+        load = 1.0
+    if load != load or load in (float("inf"), float("-inf")):   # NaN or infinite: unreadable, not huge
+        load = 1.0
+    return int(base * min(LOAD_FACTOR_CAP, max(1.0, load)))
+
+
+def retry_marker(not_before: datetime) -> str:
+    """The hidden line a failure comment carries: <!-- marvin:retry-after 2026-10-21T22:00:00Z -->"""
+    return f"<!-- {RETRY_MARKER} {not_before.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')} -->"
+
+
+def retry_not_before(comments, now: datetime | None = None) -> datetime | None:
+    """The latest retry time any comment asks for, or None. A time further ahead than the longest wait this policy
+    can produce is not ours (typed by hand, or forged) and is ignored, so no comment can park a ticket for ever."""
+    latest = None
+    horizon = (now or datetime.now(timezone.utc)).timestamp() + RETRY_HORIZON_S + 60
+    for c in comments if isinstance(comments, list) else []:
+        body = c.get("body") if isinstance(c, dict) else None
+        if not isinstance(body, str):
+            continue
+        for m in _RETRY_RE.finditer(body):
+            t = _parse(m.group(1))
+            if t is not None and t.timestamp() <= horizon and (latest is None or t > latest):
+                latest = t
+    return latest
+
+
 # ── priority ────────────────────────────────────────────────────────────────
 
 BUG_WEIGHT = 10  # a bare bug scores p1 (priority_for: >= 10)
