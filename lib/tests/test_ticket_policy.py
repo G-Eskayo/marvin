@@ -313,3 +313,51 @@ def test_a_huge_body_is_handled():
 def test_the_next_section_ends_the_break_it_section():
     body = "## What to build\n\nA thing.\n\n## How we'll try to break it\n\n## Acceptance criteria\n\n- [ ] works\n"
     assert tp.triage_verdict(issue(body=body))["state"] == "needs-info"  # empty section, followed by another heading
+
+
+# ── retry backoff (P6, 2026-10-21) ─────────────────────────────────────────
+from datetime import timedelta as _td  # noqa: E402
+
+
+def test_backoff_doubles_per_attempt_and_stops_at_the_cap():
+    waits = [tp.retry_backoff_s(n) for n in range(1, 8)]
+    assert waits[:5] == [900, 1800, 3600, 7200, 14400]
+    assert waits[5:] == [14400, 14400]
+
+
+def test_backoff_stretches_with_machine_load_but_never_shrinks_or_explodes():
+    assert tp.retry_backoff_s(1, 2.5) == 2250            # a loaded M4 waits longer
+    assert tp.retry_backoff_s(1, 0.2) == 900             # an idle machine never waits less than the base
+    assert tp.retry_backoff_s(9, 50.0) == 14400 * 4      # load is capped, so is the result
+    assert tp.retry_backoff_s(1, -3) == 900
+
+
+def test_backoff_takes_garbage_as_the_minimum_wait():
+    for attempt, load in ((0, None), (-5, None), (None, None), ("x", None), (10 ** 9, None),
+                          (1, float("nan")), (1, float("inf")), (1, "high"), (1, [1])):
+        w = tp.retry_backoff_s(attempt, load)
+        assert 900 <= w <= 14400, (attempt, load, w)
+
+
+def test_retry_marker_round_trips_and_the_latest_wins():
+    now = datetime(2026, 10, 21, 20, 0, tzinfo=timezone.utc)
+    a, b = now + _td(minutes=15), now + _td(minutes=45)
+    comments = [{"body": "x " + tp.retry_marker(b)}, {"body": tp.retry_marker(a) + " later text"}]
+    assert tp.retry_not_before(comments, now) == b
+
+
+def test_retry_markers_that_are_garbage_or_absurdly_far_ahead_are_ignored():
+    now = datetime(2026, 10, 21, 20, 0, tzinfo=timezone.utc)
+    forged = now + _td(days=400)
+    comments = [None, "text", 5, {"body": None}, {"body": 7}, {}, {"body": "<!-- marvin:retry-after not-a-date -->"},
+                {"body": "<!-- marvin:retry-after 2026-13-45T99:00:00Z -->"}, {"body": tp.retry_marker(forged)},
+                {"body": "<!--marvin:retry-after-->"}]
+    assert tp.retry_not_before(comments, now) is None
+    assert tp.retry_not_before(None, now) is None and tp.retry_not_before("x", now) is None
+    assert tp.retry_not_before([{"body": "<!-- marvin:retry-after 2026-10-21T21:00:00Z -->"}], now) == now + _td(hours=1)
+
+
+def test_a_huge_comment_is_scanned_without_trouble():
+    now = datetime(2026, 10, 21, 20, 0, tzinfo=timezone.utc)
+    big = "<!-- " * 200_000 + tp.retry_marker(now + _td(minutes=5))
+    assert tp.retry_not_before([{"body": big}], now) == now + _td(minutes=5)
