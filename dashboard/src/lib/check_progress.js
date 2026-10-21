@@ -42,7 +42,8 @@ export function summarizeChecks(runs, now) {
     .map((r) => {
       const started = toMs(r.startedAt)
       const time = r.done ? span(started, toMs(r.completedAt)) : span(started, now)
-      return { name: String(r.name ?? 'check'), status: r.status, label: String(r.status ?? ''), done: !!r.done, time }
+      // `label` overrides the word shown (marvin#568's merge stages say waiting/done; checks show their status).
+      return { name: String(r.name ?? 'check'), status: r.status, label: String(r.label ?? r.status ?? ''), done: !!r.done, waiting: r.waiting === true, time }
     })
   const total = rows.length
   const done = rows.filter((r) => r.done).length
@@ -50,7 +51,8 @@ export function summarizeChecks(runs, now) {
     total,
     done,
     percent: total ? Math.round((done / total) * 100) : 0,
-    running: rows.filter((r) => !r.done).map(({ name, status, time }) => ({ name, status, time })),
+    // A row marked `waiting` (a merge stage not reached yet) is not "still running".
+    running: rows.filter((r) => !r.done && !r.waiting).map(({ name, status, time }) => ({ name, status, time })),
     rows: rows.map(({ name, status, label, time }) => ({ name, status, label, time }))
   }
 }

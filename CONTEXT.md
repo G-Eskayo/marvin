@@ -576,6 +576,13 @@ unbounded: any chat, either machine, raw `gh`, the GitHub UI). Polling stays onl
   commit statuses). A 304 is free; a 200 re-reads that repo's list only if the checks differ from what the
   list showed. A commit is dropped (etag forgotten) once the list no longer shows it pending. Its last
   probe is MR Review's "Last checked".
+- **Merge progress** (marvin#568, 2026-10-21; replaces MR Review's 2 s `mergeState` re-read): the merge gate reports
+  each stage (queued, fetching, rebasing, installing, tests with a live count, merging, after-merge checks, done) and
+  the webhook pushes it on the Approve request's own response, streamed (it reaches the dashboard on whichever Mac
+  clicked, and a webhook restart drops it, which reads as "interrupted" at once), plus the local refresh port for a
+  merge started elsewhere. The main process folds the events into the merge op (`src/lib/merge_progress.js`, the same
+  reducer the webhook uses) and pushes `mr:mergeEvent`; a card reads once on mount. A PR merged by hand on GitHub mid-
+  merge ends as "Merged on GitHub" on the next change trigger (one `gh pr view` per merging op, none otherwise).
 - **Coverage guard**: the 60s backstop poll compares what it fetched with what it last showed; a change
   no trigger announced is appended to `~/.claude/logs/trigger-misses.jsonl` and surfaces as the
   `triggers:missed` Health check, so a gap identifies itself instead of waiting to be noticed.

@@ -20,10 +20,8 @@ export const ALLOWLIST = {
   'src/components/DeviceColumns.jsx': { interval: [1, 'remote machines have no push channel (ssh status, 15 s, cached 8 s in devices.js)'] },
   'src/components/DispatchStatusBadge.jsx': { interval: [1, TODO_558] },
   'src/components/HealthDashboard.jsx': { interval: [2, 'backstops: agents list behind the agents trigger, view over the local health snapshot (60 s each)'] },
-  'src/components/MrReview.jsx': {
-    interval: [1, 'backstop 2 min behind mr.onRefresh push; mr:list reads github_state cache, not GitHub'],
-    'timeout-loop': [1, TODO_558]
-  },
+  // #568 replaced the 2 s mergeState loop with the mr:mergeEvent push (one read on mount).
+  'src/components/MrReview.jsx': { interval: [1, 'backstop 2 min behind mr.onRefresh push; mr:list reads github_state cache, not GitHub'] },
   'src/components/NextUpQueue.jsx': { interval: [1, TODO_558] },
   'src/components/ProjectBoard.jsx': { interval: [1, 'the 60 s backstop + coverage guard CONTEXT.md names (trigger-misses.jsonl)'] },
   'src/components/ResourcesPanel.jsx': { interval: [1, 'resource samples from the 30 s collector files; no trigger exists, no GitHub'] },
