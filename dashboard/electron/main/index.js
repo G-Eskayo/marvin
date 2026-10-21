@@ -10,7 +10,7 @@ import { promisify } from 'util'
 import { listSubsystems, readHistory, buildIndex } from './metrics.js'
 import { getReworkStatus, clearReworkCache } from './rework.js'
 import { createGithubState, repoOfSource, gateCooldownUntil } from './github_state.js'
-import { startCheckWatch, createCheckProbe } from '../../webhook-server/gh_watch.js'
+import { startCheckWatch, createCheckProbe, createTreeProbe } from '../../webhook-server/gh_watch.js'
 import { createStackRetarget } from './stack_retarget.js'
 import { prsForOrderCheck, listPipelinePrs, approveMr, denyMr, fetchTicketContext, sentBackKeys, clearSentBackLabel } from './mr_review.js'
 import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
@@ -41,6 +41,7 @@ import { appendError } from './error_log.js'
 import { listOpenPrsAcrossRepos, prListArgs, normalizeSeen, canMergeFromDashboard, repoFromPrUrl, MARVIN_REPO, pendingCheckHeads } from './mr_repos.js'
 import { createIndexer, buildDocsIndex, loadIndex } from './docs_search.js'
 import { createDocsService, MASTER_ID } from './docs_service.js'
+import { createSavedDocs } from './docs_saved.js'
 import { readMergeableRepos, readUiPaths, listProfiles, setDispatch, setMergeFromDashboard } from './profiles.js'
 import { searchFiles, isRevealable, isLinkable, linkAction } from './files_search.js'
 import { safeExternalUrl } from '../../src/lib/pdf_nav.js'
@@ -412,11 +413,26 @@ const FIND_FILE_SCRIPT = join(homedir(), '.claude', 'organize', 'find_file.py') 
 function registerDocsHandlers() {
   // The Docs tab is driven by the project catalog (lib/project_catalog.py): every project gets a
   // card, docs come from a local clone when there is one (so uncommitted edits show), else GitHub.
+  // #565: GitHub-only projects read a saved copy on every click; opening one sends a single conditional request.
+  // The first copy is seeded from the search index's text (read once, only for a repo with no saved file yet).
+  let seedIndex = null
+  const savedDocs = createSavedDocs({
+    probe: createTreeProbe(),
+    exec: execFileAsync,
+    skip: () => Date.now() < gateCooldownUntil(),
+    seed: (repo) => {
+      const rec = (readCatalog({ deviceId: deviceId() })?.projects || []).find((p) => p.repo === repo)
+      if (!rec) return null
+      seedIndex = seedIndex || loadIndex()
+      return { at: seedIndex.generated_at, docs: seedIndex.docs.filter((d) => d.repo === rec.id) }
+    }
+  })
   const docsService = createDocsService({
     getCatalog: () => readCatalog({ deviceId: deviceId() }),
     exec: execFileAsync,
     readMaster: () => readMasterDoc(),
-    fallbackRepos: () => readCachedRepos().repos
+    fallbackRepos: () => readCachedRepos().repos,
+    saved: savedDocs
   })
 
   // Relationships between tickets, PRs and docs, derived from their text (relations.js). Docs come from
@@ -491,7 +507,7 @@ function registerDocsHandlers() {
   // Full-text search over every card, master and browsable doc; the GitHub part of the index
   // rebuilds in the background when stale, local docs are read live.
   const docsIndexer = createIndexer({
-    build: () => buildDocsIndex(execFileAsync, docsService.githubIndexRepos()),
+    build: () => buildDocsIndex(execFileAsync, docsService.githubIndexRepos(), undefined, { saved: savedDocs }),
     getLocal: () => docsService.localDocs()
   })
   // A docs change refreshes the search's in-memory copy of local docs in the background (docs_search.js).
@@ -524,6 +540,8 @@ function registerDocsHandlers() {
   })
   ipcMain.handle('docs:tree', (_event, id) => docsService.tree(id))
   ipcMain.handle('docs:content', (_event, id, filePath) => docsService.content(id, filePath))
+  // Once per open of a GitHub-only project (#565): one conditional request; a 304 is free, a change comes back in place.
+  ipcMain.handle('docs:revalidate', (_event, id) => docsService.revalidate(String(id)))
 
   // Files tab (outbox): read-only local file viewer
   ipcMain.handle('outbox:tree', () => listOutboxTree())

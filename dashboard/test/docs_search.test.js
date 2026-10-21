@@ -106,6 +106,29 @@ function fakeExec() {
   })
 }
 
+describe('buildDocsIndex through the saved copy (#565)', () => {
+  it('a rebuild costs one conditional request per repo, and nothing more when GitHub answers 304', async () => {
+    const { createSavedDocs, gitBlobSha } = await import('../electron/main/docs_saved.js')
+    const dir = mkdtempSync(path.join(tmpdir(), 'docsidx-'))
+    try {
+      const text = '# Ctx\n\nhello\n'
+      const calls = { probe: 0, exec: 0 }
+      const probe = async (_r, known) => (calls.probe++, known === 'e1' ? { status: 304, etag: 'e1' } : { status: 200, etag: 'e1', body: { tree: [{ path: 'CONTEXT.md', type: 'blob', sha: gitBlobSha(text) }] } })
+      const exec = async () => (calls.exec++, { stdout: Buffer.from(text).toString('base64') })
+      const saved = createSavedDocs({ dir: path.join(dir, 'saved'), probe, exec })
+      const repos = [{ name: 'marvin', id: 'marvin', repo: 'G-Eskayo/marvin' }]
+      const first = await buildDocsIndex(exec, repos, path.join(dir, 'i.json'), { saved })
+      expect(first.docs).toEqual([{ repo: 'marvin', path: 'CONTEXT.md', label: 'CONTEXT.md', content: text }])
+      expect(calls).toEqual({ probe: 1, exec: 1 })
+      const again = await buildDocsIndex(exec, repos, path.join(dir, 'i.json'), { saved })
+      expect(again.docs).toEqual(first.docs)
+      expect(calls).toEqual({ probe: 2, exec: 1 })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('buildDocsIndex / loadIndex', () => {
   it('fetches every browsable file of every repo and persists the index', async () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'docsidx-'))
