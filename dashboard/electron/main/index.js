@@ -9,7 +9,8 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { listSubsystems, readHistory, buildIndex } from './metrics.js'
 import { getReworkStatus, clearReworkCache } from './rework.js'
-import { createGithubState, repoOfSource } from './github_state.js'
+import { createGithubState, repoOfSource, gateCooldownUntil } from './github_state.js'
+import { startCheckWatch, createCheckProbe } from '../../webhook-server/gh_watch.js'
 import { createStackRetarget } from './stack_retarget.js'
 import { prsForOrderCheck, listPipelinePrs, approveMr, denyMr, fetchTicketContext, sentBackKeys, clearSentBackLabel } from './mr_review.js'
 import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
@@ -37,7 +38,7 @@ import { summarizeBoard, buildCompleted } from './board.js'
 import { createTriggerHub, createReconciler, refetchesGithub } from './triggers.js'
 import { createMrHistory, mergedPrArgs } from './mr_history.js'
 import { appendError } from './error_log.js'
-import { listOpenPrsAcrossRepos, prListArgs, normalizeSeen, canMergeFromDashboard, repoFromPrUrl, MARVIN_REPO, pendingChecksTtl } from './mr_repos.js'
+import { listOpenPrsAcrossRepos, prListArgs, normalizeSeen, canMergeFromDashboard, repoFromPrUrl, MARVIN_REPO, pendingCheckHeads } from './mr_repos.js'
 import { createIndexer, buildDocsIndex, loadIndex } from './docs_search.js'
 import { createDocsService, MASTER_ID } from './docs_service.js'
 import { readMergeableRepos, readUiPaths, listProfiles, setDispatch, setMergeFromDashboard } from './profiles.js'
@@ -115,12 +116,18 @@ function githubChanged(source) {
 // A full listing also answers a light one. `fresh` (a merge) re-reads every repo.
 async function fetchOpenPrs(light, fresh = false) {
   const perRepo = (repo) => {
-    const full = () => githubState.get('prs', repo, () => ghListOpenPrs(false)(repo), { fresh, ttlFor: pendingChecksTtl })
+    const full = () => githubState.get('prs', repo, () => ghListOpenPrs(false)(repo), { fresh })
     if (!light) return full()
     return githubState.get('prs-light', repo, () => ghListOpenPrs(true)(repo), { fresh })
   }
   const repos = readRegistry().map((b) => b.repo)
-  const { prs, errors } = await listOpenPrsAcrossRepos(repos, perRepo)
+  const listed = await listOpenPrsAcrossRepos(repos, perRepo, { listedAt: (repo) => githubState.fetchedAt(light ? 'prs-light' : 'prs', repo) })
+  const errors = listed.errors
+  // "Last checked" on a PR's checks (marvin#555): the check watch's last probe of its commit, if later than the list read.
+  const prs = listed.prs.map((p) => {
+    const probed = p.headRefOid ? checkWatch?.watcher.checkedAt(p.repo, p.headRefOid) : null
+    return { ...p, checkedAt: Math.max(p.listedAt || 0, probed || 0) || null }
+  })
   for (const e of errors) {
     console.error(`[mr] could not list PRs for ${e.repo}: ${e.message}`)
     appendError({ source: 'dashboard:mr:list', message: `could not list PRs for ${e.repo}`, raw: e.message })
@@ -132,6 +139,22 @@ async function fetchOpenPrs(light, fresh = false) {
   return prs
 }
 let prFetch = { errors: [], projects: 0, lastGoodAt: null }
+// Check watch (marvin#555, replacing #554's 90 s re-read): while a cached PR list shows checks running, ask GitHub about
+// each such commit's checks every 20 s with an ETag (a 304 is free). A real change re-reads just that repo's list and
+// tells an open MR Review to refresh. Reads only what is already in memory to decide what to watch. Started when the
+// app is ready.
+let checkWatch = null
+function startPrCheckWatch() {
+  checkWatch = startCheckWatch({
+    getHeads: () => githubState.peek('prs').flatMap(({ repo, value }) => pendingCheckHeads(repo, value)),
+    probe: createCheckProbe(),
+    onChange: (repo) => {
+      githubChanged(`github:${repo}`)
+      mainWindow?.webContents.send('mr:refresh')
+    },
+    skip: () => Date.now() < gateCooldownUntil()
+  })
+}
 const listOpenPrs = ({ light = false, fresh = false } = {}) => fetchOpenPrs(light, fresh)
 // Sent-back tickets' rework status spans every project (lib/rework_status.py reads GitHub): same rule as the queue.
 // #324: at most one run every 5 minutes, however many change pings arrive (each run reads every project).
@@ -829,6 +852,7 @@ app.whenReady().then(() => {
 
   // External pings (webhook-server): bare = the legacy "MR list changed"; with topics = what changed.
   // Port already taken (another dashboard running) = one log line, not a crash (#384).
+  startPrCheckWatch()
   startRefreshServer((payload = {}) => {
     const topics = Array.isArray(payload.topics) ? payload.topics : ['mr']
     for (const topic of topics) {

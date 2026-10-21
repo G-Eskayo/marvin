@@ -55,7 +55,7 @@ function getUptimeSeconds() {
 }
 
 const dashboardApiRouter = createDashboardApiRouter()
-const dashboardGhApiRouter = createDashboardGhApiRouter({ mrWebhookUrl: MR_WEBHOOK_URL })
+const dashboardGhApiRouter = createDashboardGhApiRouter({ mrWebhookUrl: MR_WEBHOOK_URL, watchChecks: true })
 const threadStore = createThreadStore()
 const chatApiRouter = createChatApiRouter({ threadStore })
 const offlineBatchApiRouter = createOfflineBatchApiRouter({ threadStore })

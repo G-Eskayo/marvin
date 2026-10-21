@@ -163,6 +163,46 @@ describe('dashboard GitHub API', () => {
       })
     })
 
+    // marvin#555: the phone gets the same per-check rows and "Last checked" as the desktop, and the same check watch.
+    it('with watchChecks: running checks are probed by commit, a change re-reads the list, and rows + checkedAt reach the phone', async () => {
+      return withTempDirs(({ root }) => {
+        const registry = path.join(root, 'registry.json')
+        writeFileSync(registry, JSON.stringify({ boards: [{ repo: 'G-Eskayo/marvin', name: 'MARVIN' }] }))
+        let state = 'IN_PROGRESS'
+        const execMock = vi.fn((cmd, args) => {
+          if (args[0] === 'pr' && args[1] === 'list') {
+            return Promise.resolve({ stdout: JSON.stringify([
+              { number: 7, title: 'x', url: 'https://github.com/G-Eskayo/marvin/pull/7', body: '', headRefOid: 'abc123', mergeable: 'MERGEABLE',
+                statusCheckRollup: [{ __typename: 'CheckRun', name: 'tests', status: state, conclusion: state === 'COMPLETED' ? 'SUCCESS' : '', startedAt: '2026-10-21T06:00:00Z', completedAt: null }] }
+            ]) })
+          }
+          if (args[0] === 'issue' && args[1] === 'list') return Promise.resolve({ stdout: JSON.stringify([]) })
+          return Promise.reject(new Error('Unexpected call'))
+        })
+        let tick
+        const checkProbe = vi.fn(async () => ({ status: 200, etag: 'e', digest: 'tests|passed' }))
+        const router = createDashboardGhApiRouter({ registryPath: registry, exec: execMock, watchChecks: true, checkProbe, setIntervalFn: (fn) => { tick = fn } })
+        return startTestServer(router).then(async ({ server, url }) => {
+          try {
+            const first = await makeRequest(url, '/mr/list')
+            const pr = first.body.data[0]
+            expect(pr.checks.runs).toEqual([{ name: 'tests', status: 'running', done: false, startedAt: '2026-10-21T06:00:00Z', completedAt: null }])
+            expect(typeof pr.checks.checkedAt).toBe('number')
+            const listReads = () => execMock.mock.calls.filter((c) => c[1][0] === 'pr' && c[1][1] === 'list').length
+            const before = listReads()
+            state = 'COMPLETED'
+            await tick()
+            expect(checkProbe).toHaveBeenCalledWith(expect.objectContaining({ kind: 'check-runs', repo: 'G-Eskayo/marvin', sha: 'abc123' }))
+            const second = await makeRequest(url, '/mr/list')
+            expect(listReads()).toBeGreaterThan(before) // the repo was marked changed, so its list is read again
+            expect(second.body.data[0].checks.state).toBe('passing')
+          } finally {
+            server.close()
+          }
+        })
+      })
+    })
+
     it('one repo failure does not hide other repos', async () => {
       return withTempDirs(({ root }) => {
         const registry = path.join(root, 'registry.json')

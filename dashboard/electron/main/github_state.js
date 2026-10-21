@@ -25,17 +25,6 @@ export function gateCooldownUntil(file = process.env.MARVIN_GH_GATE_STATE || GAT
   }
 }
 
-// What a value's ttlFor asks for, in ms, or null (none, not a positive number, or it threw).
-function ownTtl(ttlFor, value) {
-  if (typeof ttlFor !== 'function') return null
-  try {
-    const ms = ttlFor(value)
-    return Number.isFinite(ms) && ms > 0 ? ms : null
-  } catch {
-    return null
-  }
-}
-
 export function createGithubState({ now = Date.now, safetyMs = SAFETY_MS, cooldownUntil = gateCooldownUntil } = {}) {
   const entries = new Map()   // `${kind}|${repo ?? '*'}` -> { value, at, gen, has, pending }
   const failures = new Map()  // same key -> { kind, repo, since, message } while its last read failed (#422)
@@ -48,12 +37,10 @@ export function createGithubState({ now = Date.now, safetyMs = SAFETY_MS, cooldo
   // a per-repo entry depends only on its repo; changedAll() bumps every repo too
   const currentGen = (repo) => (repo == null ? allGen : gens.get(repo) || 0)
 
-  // ttlFor(value): a shorter lifetime the cached value itself asks for, e.g. a PR list with checks still running. GitHub
-  // checks finishing is not an issue/PR update, so the change watch never pings for it (clarity-captions#143, 2026-10-21).
-  async function get(kind, repo, fetch, { fresh = false, safetyMs: own, minIntervalMs = 0, ttlFor = null } = {}) {
+  async function get(kind, repo, fetch, { fresh = false, safetyMs: own, minIntervalMs = 0 } = {}) {
     const key = `${kind}|${repo ?? '*'}`
     const e = entries.get(key) || { has: false }
-    const ttl = Math.min(own ?? safetyMs, (e.has && ownTtl(ttlFor, e.value)) || Infinity)
+    const ttl = own ?? safetyMs
     if (!fresh && e.has && e.gen === currentGen(repo) && now() - e.at < ttl) {
       hits += 1
       return e.value
@@ -112,7 +99,24 @@ export function createGithubState({ now = Date.now, safetyMs = SAFETY_MS, cooldo
     return [...failures.values()].filter((f) => f.kind === kind).map(({ repo, message, since }) => ({ repo, message, since }))
   }
 
-  return { get, changed, changedAll, failing, stats: () => ({ hits, reads, entries: entries.size }), _genOf: genOf }
+  // When a value was last read from GitHub (ms), or null: not when it was last served from memory, and a failed re-read
+  // keeps the old time (marvin#555, MR Review's "Last checked").
+  function fetchedAt(kind, repo) {
+    const e = entries.get(`${kind}|${repo ?? '*'}`)
+    return e?.has ? e.at : null
+  }
+
+  // Every repo's last-known value of one kind, without asking GitHub: [{repo, value}] (the check watch's input).
+  function peek(kind) {
+    const out = []
+    for (const [key, e] of entries) {
+      const bar = key.indexOf('|')
+      if (key.slice(0, bar) === kind && e.has) out.push({ repo: key.slice(bar + 1), value: e.value })
+    }
+    return out
+  }
+
+  return { get, changed, changedAll, failing, fetchedAt, peek, stats: () => ({ hits, reads, entries: entries.size }), _genOf: genOf }
 }
 
 // "github:owner/repo" (the change watch's ping source) -> "owner/repo"
