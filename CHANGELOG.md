@@ -1,5 +1,7 @@
 # Changelog
 
+- Guard: fail the build when new code polls instead of using a trigger (Triggers over polling) ([#559](https://github.com/G-Eskayo/marvin/pull/559))
+
 - MR Review: show GitHub checks progress (N of M done, what's running, last checked) with a per-check drill-down ([#557](https://github.com/G-Eskayo/marvin/pull/557))
 
 - Proposals section in MR Review: big north-star ideas, plain-language cards, actions ([#542](https://github.com/G-Eskayo/marvin/pull/542))
