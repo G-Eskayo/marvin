@@ -17,7 +17,8 @@ export function docsClickHandlers({ docsService, docsIndexer, outbox }) {
     'outbox:summary': (relPath) => outbox.summary(String(relPath)),
     'outbox:preview': (relPath) => outbox.preview(String(relPath)),
     'outbox:content': (relPath) => outbox.content(relPath),
-    'outbox:image': (fromRel, src) => outbox.image(fromRel, src)
+    'outbox:image': (fromRel, src) => outbox.image(fromRel, src),
+    'outbox:thumb': (relPath) => outbox.thumb(String(relPath))
   }
 }
 

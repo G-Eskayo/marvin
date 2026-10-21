@@ -3,11 +3,12 @@ import { formatDay, matchedBy } from '../lib/docs_view.js'
 import { formatSize } from '../lib/file_kinds.js'
 
 // Deliverables inside the Docs tab (#570, mock-ups docs/screenshots/ticket-403-f-*.png and h-2/h-3): the folder-card
-// grid, a folder's item grid, the headers over a folder or file, and the #n ticket chip. Images come from the outbox
-// through outbox:content (local, behind its guard); a small in-memory cache keeps a revisit instant.
+// grid, a folder's item grid, the headers over a folder or file, and the #n ticket chip. Covers are 360 px thumbnails
+// made once and cached on disk by the main process (outbox:thumb, behind the outbox guard); a small in-memory cache
+// keeps a revisit instant.
 
 const imageCache = new Map() // rel -> dataUrl | null, bounded
-const IMAGE_CACHE_MAX = 80
+const IMAGE_CACHE_MAX = 200
 export function useOutboxImage(rel) {
   const [url, setUrl] = useState(() => (rel ? imageCache.get(rel) ?? null : null))
   useEffect(() => {
@@ -15,9 +16,9 @@ export function useOutboxImage(rel) {
     if (imageCache.has(rel)) return setUrl(imageCache.get(rel))
     let live = true
     window.api.outbox
-      .content(rel)
-      .then((f) => {
-        const u = f?.kind === 'image' ? f.dataUrl : null
+      .thumb(rel)
+      .then((t) => {
+        const u = t?.ok ? t.dataUrl : null
         imageCache.set(rel, u)
         if (imageCache.size > IMAGE_CACHE_MAX) imageCache.delete(imageCache.keys().next().value)
         if (live) setUrl(u)

@@ -4,6 +4,7 @@ import MrReview from '@components/MrReview.jsx'
 import HealthDashboard from '@components/HealthDashboard.jsx'
 import BootSequence from '@components/BootSequence.jsx'
 import DocsExplorer from '@components/DocsExplorer.jsx'
+import { warmDocs } from '@components/docs_warm.jsx'
 import ActivityBoard from '@components/ActivityBoard.jsx'
 import PortfolioHub from '@components/PortfolioHub.jsx'
 import DispatchStatusBadge from '@components/DispatchStatusBadge.jsx'
@@ -56,6 +57,8 @@ export default function App() {
   const [reviewStatus, setReviewStatus] = useState(null)
   const [healthOverall, setHealthOverall] = useState(null)
 
+  // Docs speed budget (#570): pdf.js and the markdown renderer are warmed once, when the app is idle after boot.
+  useEffect(() => warmDocs(), [])
   useEffect(() => {
     let cancelled = false
     async function refresh() {
