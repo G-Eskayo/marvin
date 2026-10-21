@@ -186,7 +186,7 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
     let timer
     const check = async () => {
       try {
-        const m = await window.api.mr.mergeState(pr.url)
+        const m = await window.api.mr.mergeState(pr.url, pr.headRefOid)
         if (cancelled) return
         if (m.state === 'merging') {
           setStatus('approving')
@@ -195,19 +195,21 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
           setStatus(m.state)
           setErrorMessage(m.reason)
         } else {
-          setStatus((s) => (s === 'approving' ? 'idle' : s))
+          // Idle: nothing running, or the last failure was on an older commit than this PR's head (a fix was pushed).
+          setStatus((s) => (s === 'approving' || s === 'error' || s === 'reengaged' ? 'idle' : s))
+          setErrorMessage(null)
         }
       } catch { /* keep whatever this component already knows */ }
     }
     check()
     return () => { cancelled = true; clearTimeout(timer) }
-  }, [pr.url])
+  }, [pr.url, pr.headRefOid])
 
   async function handleApprove() {
     setStatus('approving')
     setErrorMessage(null)
     try {
-      const result = await window.api.mr.approve({ number: pr.number, url: pr.url })
+      const result = await window.api.mr.approve({ number: pr.number, url: pr.url, head: pr.headRefOid })
       if (result.cancelled) {
         setStatus('idle')
         return
