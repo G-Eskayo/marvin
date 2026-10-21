@@ -726,7 +726,7 @@ function registerMrReviewHandlers() {
   // requirement (G-Eskayo/marvin#11's acceptance criteria) lives here, not in
   // the renderer -- a native OS-level confirm dialog can't be spoofed by a
   // fast double-click the way a custom in-page confirm affordance could.
-  ipcMain.handle('mr:approve', async (_event, { number, url }) => {
+  ipcMain.handle('mr:approve', async (_event, { number, url, head = null }) => {
     // Checked here, not just greyed out in the UI, so a stale screen can't skip it. Sent-back PRs are marked the same way
     // the list marks them, or a newer PR waits forever on one that can't merge (marvin #209). A refusal is recorded (#215).
     await guardApprove(url, {
@@ -734,7 +734,7 @@ function registerMrReviewHandlers() {
       loadPrs: async () => prsForOrderCheck(await listOpenPrs({ fresh: true }), sentBackTickets),
       record: recordRefusal
     })
-    if (!mergeOps.start(url)) return { merged: false, cancelled: true, alreadyMerging: true }
+    if (!mergeOps.start(url, Date.now(), head)) return { merged: false, cancelled: true, alreadyMerging: true }
     try {
       // The Approve & Merge click is the decision. The native popup is opt-in (prefs.json: confirmMerge) -- the
       // duplicate-start guard above, the merge gate's retest and the base/order checks are what protect a stray click.
@@ -763,7 +763,7 @@ function registerMrReviewHandlers() {
     }
   })
 
-  ipcMain.handle('mr:mergeState', (_event, url) => mergeOps.get(url))
+  ipcMain.handle('mr:mergeState', (_event, url, head = null) => mergeOps.get(url, Date.now(), head))
 
   // The owner's answers to a Decisions section, on a PR or a ticket (2026-10-09): written into the description, then
   // recorded as a comment. See decisions_submit.js.

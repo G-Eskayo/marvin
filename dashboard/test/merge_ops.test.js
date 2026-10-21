@@ -58,3 +58,41 @@ describe('a merge that never reports back does not stay "merging" forever', () =
     expect(ops.start(URL, Date.now() + 5000)).toBe(true)
   })
 })
+
+// Gil, 2026-10-21: "the last merge attempt failed" stayed on #559 after a fix was pushed, so the card looked stale.
+// A failure belongs to the commit it happened on; a new head means a new PR state.
+describe('a failure clears once a new commit is pushed', () => {
+  it('reports the failure while the head is unchanged', () => {
+    const ops = createMergeOps()
+    ops.start(URL, Date.now(), 'aaa111')
+    ops.fail(URL, 'Tests fail on the latest main')
+    expect(ops.get(URL, Date.now(), 'aaa111')).toMatchObject({ state: 'error', reason: 'Tests fail on the latest main' })
+  })
+  it('is idle again when the PR has a newer head', () => {
+    const ops = createMergeOps()
+    ops.start(URL, Date.now(), 'aaa111')
+    ops.fail(URL, 'Tests fail on the latest main')
+    expect(ops.get(URL, Date.now(), 'bbb222').state).toBe('idle')
+  })
+  it('a re-engagement also clears on a new head', () => {
+    const ops = createMergeOps()
+    ops.start(URL, Date.now(), 'aaa111')
+    ops.finish(URL, { reengaged: true, reason: 'sent back' })
+    expect(ops.get(URL, Date.now(), 'bbb222').state).toBe('idle')
+  })
+  it('keeps the failure when the head is unknown on either side (older callers), so nothing is hidden', () => {
+    const ops = createMergeOps()
+    ops.start(URL)
+    ops.fail(URL, 'boom')
+    expect(ops.get(URL, Date.now(), 'bbb222').state).toBe('error')
+    const ops2 = createMergeOps()
+    ops2.start(URL, Date.now(), 'aaa111')
+    ops2.fail(URL, 'boom')
+    expect(ops2.get(URL).state).toBe('error')
+  })
+  it('never hides a merge that is still running, whatever head is asked about', () => {
+    const ops = createMergeOps()
+    ops.start(URL, Date.now(), 'aaa111')
+    expect(ops.get(URL, Date.now(), 'bbb222').state).toBe('merging')
+  })
+})
