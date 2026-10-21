@@ -384,3 +384,29 @@ describe('createTreeProbe (gh_watch.js pattern)', () => {
     expect(await createTreeProbe({}, doFetch)('o/r')).toEqual({ status: 200, etag: 'W/"e2"', body: { tree: [] } })
   })
 })
+
+describe('where the saved copy lives (self-reliance: MARVIN-owned, not ~/.claude)', () => {
+  it('defaults to ~/.agents/var/docs-github and moves an old ~/.claude/logs copy over once', async () => {
+    const prev = process.env.HOME
+    const prevVar = process.env.MARVIN_VAR_DIR
+    delete process.env.MARVIN_VAR_DIR
+    const home = mkdtempSync(path.join(tmpdir(), 'saved-home-'))
+    process.env.HOME = home
+    try {
+      const gh = fakeGithub()
+      const oldDir = path.join(home, '.claude', 'logs', 'docs-github')
+      mkdirSync(oldDir, { recursive: true })
+      writeFileSync(savedFileFor(oldDir, REPO), JSON.stringify({ v: 1, repo: REPO, etag: 'W/"v1"', savedAt: 1, checkedAt: 1, shas: {}, tree: [{ path: 'README.md', label: 'README.md' }], files: { 'README.md': '# old copy\n' } }))
+      const s = createSavedDocs({ probe: gh.probe, exec: gh.exec })
+      expect(existsSync(path.join(home, '.agents', 'var', 'docs-github'))).toBe(false) // nothing touched until used
+      expect(await s.content(REPO, 'README.md')).toBe('# old copy\n')
+      expect(existsSync(savedFileFor(path.join(home, '.agents', 'var', 'docs-github'), REPO))).toBe(true)
+      expect(existsSync(oldDir)).toBe(false)
+      expect(gh.calls.exec).toBe(0)
+    } finally {
+      process.env.HOME = prev
+      if (prevVar !== undefined) process.env.MARVIN_VAR_DIR = prevVar
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+})

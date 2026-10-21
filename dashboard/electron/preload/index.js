@@ -19,6 +19,13 @@ contextBridge.exposeInMainWorld('api', {
     // see the comment on the mr:approve handler for why.
     approve: (pr) => ipcRenderer.invoke('mr:approve', pr),
     mergeState: (url, head) => ipcRenderer.invoke('mr:mergeState', url, head),
+    // marvin#568: every change to a PR's merge (stage events, the end) pushed from the main process. Returns an
+    // unsubscribe function. callback(url, op).
+    onMergeEvent: (callback) => {
+      const listener = (_e, url, op) => callback(url, op)
+      ipcRenderer.on('mr:mergeEvent', listener)
+      return () => ipcRenderer.removeListener('mr:mergeEvent', listener)
+    },
     clearSentBack: (url) => ipcRenderer.invoke('mr:clearSentBack', url),
     sendBackForOptions: (payload) => ipcRenderer.invoke('mr:sendBackForOptions', payload),
     deny: (payload) => ipcRenderer.invoke('mr:deny', payload),

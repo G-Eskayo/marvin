@@ -581,6 +581,13 @@ unbounded: any chat, either machine, raw `gh`, the GitHub UI). Polling stays onl
   commit statuses). A 304 is free; a 200 re-reads that repo's list only if the checks differ from what the
   list showed. A commit is dropped (etag forgotten) once the list no longer shows it pending. Its last
   probe is MR Review's "Last checked".
+- **Merge progress** (marvin#568, 2026-10-21; replaces MR Review's 2 s `mergeState` re-read): the merge gate reports
+  each stage (queued, fetching, rebasing, installing, tests with a live count, merging, after-merge checks, done) and
+  the webhook pushes it on the Approve request's own response, streamed (it reaches the dashboard on whichever Mac
+  clicked, and a webhook restart drops it, which reads as "interrupted" at once), plus the local refresh port for a
+  merge started elsewhere. The main process folds the events into the merge op (`src/lib/merge_progress.js`, the same
+  reducer the webhook uses) and pushes `mr:mergeEvent`; a card reads once on mount. A PR merged by hand on GitHub mid-
+  merge ends as "Merged on GitHub" on the next change trigger (one `gh pr view` per merging op, none otherwise).
 - **Coverage guard**: the 60s backstop poll compares what it fetched with what it last showed; a change
   no trigger announced is appended to `~/.claude/logs/trigger-misses.jsonl` and surfaces as the
   `triggers:missed` Health check, so a gap identifies itself instead of waiting to be noticed.
@@ -658,12 +665,17 @@ nothing connected them. "Where things are" was only the tidy agent's file-filing
   under 200 KB, every file by its path words). Every click is local: a test (`test/docs_clicks_network.test.js`)
   drives every Docs click handler through counting fakes and requires zero gh, fetch and network-git calls.
 - **Saved copy** (marvin#565, 2026-10-21): a project with no local clone is read from its saved copy
-  (`electron/main/docs_saved.js`, one JSON per repo in `~/.claude/logs/docs-github/`), so a click never calls
+  (`electron/main/docs_saved.js`, one JSON per repo in `~/.agents/var/docs-github/`, MARVIN's own gitignored
+  per-machine state, never `~/.claude`), so a click never calls
   GitHub. Opening the project sends **one conditional request** for its git tree (`If-None-Match`, the
   `gh_watch.js` pattern): a 304 is free and ends there; a 200 downloads only the docs whose blob sha changed, and
   the tree and open file update in place. The first copy is seeded from the docs search index, checked by git
   blob sha. The source line shows the copy's age ("from GitHub, 2 h ago · checking…", then "· up to date").
   The search index rebuild goes through the same copy: one conditional request per repo instead of every file.
+  The phone backend (`mobile-backend/dashboard_api.js`) serves the same copy: `/docs/tree` sends the open-time check
+  after answering, `/docs/revalidate` waits for it.
+- **MARVIN-owned state** (2026-10-21, self-reliance): per-machine state and caches live under `~/.agents/var/`
+  (`marvin_paths.js`, gitignored). Nothing new goes under `~/.claude`; an older copy there is moved over once.
 
 ### Cross-links by project, and Background work (decided 2026-10-05)
 

@@ -4,6 +4,7 @@ import { homedir } from 'os'
 import path from 'path'
 import { groupDocSections } from './doc_paths.js'
 import { fetchFileContent } from './docs.js'
+import { varPath, migrateOnce } from './marvin_paths.js'
 
 // The saved copy of a GitHub-only project's docs (#565 "Docs tab: stop calling GitHub on every click for projects
 // without a local clone"). Before this, opening such a project cost 2-4 `gh api` calls and every file open one more,
@@ -18,7 +19,11 @@ import { fetchFileContent } from './docs.js'
 //   ones that differ.
 //
 // Space: O(docs text) of the GitHub-only repos, one file each. Time per click: O(1) map lookups.
-export const SAVED_DIR = path.join(homedir(), '.claude', 'logs', 'docs-github')
+//
+// Where: ~/.agents/var/docs-github/, MARVIN's own per-machine state (self-reliance rule: nothing of MARVIN's under
+// ~/.claude). An earlier build kept it in ~/.claude/logs/docs-github/; that copy is moved over once.
+export const savedDir = () => varPath('docs-github')
+const LEGACY_DIR = () => path.join(homedir(), '.claude', 'logs', 'docs-github')
 const VERSION = 1
 
 // git's blob id: sha1 of "blob <byte length>\0<bytes>". Lets a seeded copy be checked against the tree without a download.
@@ -53,13 +58,22 @@ function validCopy(d) {
   return d && typeof d === 'object' && Array.isArray(d.tree) && d.files && typeof d.files === 'object' && !Array.isArray(d.files) && d.shas && typeof d.shas === 'object'
 }
 
-export function createSavedDocs({ dir = SAVED_DIR, probe, exec, seed = () => null, skip = () => false, now = Date.now }) {
+export function createSavedDocs({ dir = null, probe, exec, seed = () => null, skip = () => false, now = Date.now }) {
+  // Resolved (and the old copy moved) on first use, so constructing a store touches no disk.
+  let resolvedDir = dir
+  const getDir = () => {
+    if (!resolvedDir) {
+      resolvedDir = savedDir()
+      migrateOnce(LEGACY_DIR(), resolvedDir)
+    }
+    return resolvedDir
+  }
   const copies = new Map() // repo -> copy, or null when there is none (so a missing or corrupt file is read once)
   const inflight = new Map()
 
   function readDisk(repo) {
     try {
-      const d = JSON.parse(readFileSync(savedFileFor(dir, repo), 'utf8'))
+      const d = JSON.parse(readFileSync(savedFileFor(getDir(), repo), 'utf8'))
       return validCopy(d) ? d : null
     } catch {
       return null // missing or corrupt: rebuilt by the next check, never re-read in a loop
@@ -82,8 +96,8 @@ export function createSavedDocs({ dir = SAVED_DIR, probe, exec, seed = () => nul
   function save(repo, copy) {
     copies.set(repo, copy)
     try {
-      mkdirSync(dir, { recursive: true })
-      const file = savedFileFor(dir, repo)
+      mkdirSync(getDir(), { recursive: true })
+      const file = savedFileFor(getDir(), repo)
       writeFileSync(`${file}.tmp`, JSON.stringify(copy))
       renameSync(`${file}.tmp`, file)
     } catch {
