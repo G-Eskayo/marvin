@@ -402,8 +402,9 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   `FileView` (also renders the Docs tab's documents, so #403's merge-or-not reuses it). Main (`outbox.js`) decides the
   kind from the name and checks the bytes: images go as `data:` URLs (sniffed, so a text file named .png is a card),
   markdown's relative images come through `outbox:image` (resolved against the file's folder, same traversal guard),
-  PDFs load in Chromium's viewer from `outbox://file/<path>` (served only for real PDFs inside the outbox; CSP
-  `frame-src 'self' outbox:`), HTML renders in `<iframe sandbox="" srcdoc>` behind a deny-all CSP (no scripts, no
+  PDFs are drawn by our own pdf.js view (`PdfView`; Chromium's embedded viewer was rejected by Gil 2026-10-21 as
+  clashing): pages stacked at panel width, rendered lazily near the viewport, a click opens a page in the image
+  viewer; the worker loads from the app bundle under `script-src 'self'`. HTML renders in `<iframe sandbox="" srcdoc>` behind a deny-all CSP (no scripts, no
   network), CSV/TSV as a table. Anything else, too large or unreadable: a card with name, kind, size, Reveal in Finder.
 - **Image viewer**: one full-size viewer (`ImageViewer`) for MR Review, Docs, Files and Portfolio. ✕, Esc or a click
   outside the picture closes it; pinch / ⌘-scroll / + − Fit 100% / double-click zoom; tall screenshots open

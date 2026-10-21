@@ -29,6 +29,8 @@ await page.setViewportSize({ width: 1280, height: 820 })
 await sleep(9000)
 
 const results = []
+const consoleLines = []
+page.on('console', (m) => consoleLines.push(m.text()))
 const check = (name, ok, detail = '') => { results.push({ name, ok, detail }); console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ` (${detail})` : ''}`) }
 const shot = async (name) => { await sleep(900); await page.screenshot({ path: `${OUT}/ticket-402-${name}.png` }); console.log('shot', name) }
 const clickText = (sel, text) => page.evaluate(([s, t]) => {
@@ -87,11 +89,62 @@ try {
   check('CSV table keeps quoted commas in one cell', cell)
   await shot('files-csv')
 
-  // 4. PDF in the tab.
-  await openFile('data/weekly-summary.pdf')
+  // 4. PDFs: our own pdf.js pages (not Chromium's viewer), lazily rendered, each page zoomable in the shared viewer.
+  const pdfStats = () => page.evaluate(() => ({
+    count: document.querySelector('[data-pdf-count]')?.textContent,
+    pages: document.querySelectorAll('[data-pdf-page]').length,
+    rendered: [...document.querySelectorAll('[data-pdf-page][data-rendered="1"]')].map((e) => Number(e.dataset.pdfPage)),
+    iframe: !!document.querySelector('iframe')
+  }))
+  await openFile('data/weekly-report.pdf')
   await sleep(2500)
-  check('PDF iframe loads from outbox://', !!(await page.evaluate(() => document.querySelector('iframe[src^="outbox://"]'))))
+  const p12 = await pdfStats()
+  check('pdf.js runs in its real worker from the app bundle (no fake-worker fallback)', !consoleLines.some((l) => /fake worker/i.test(l)), consoleLines.filter((l) => /pdf|worker/i.test(l)).slice(0, 3).join(' | ') || 'no pdf.js warnings')
+  check('a 12-page PDF shows "12 pages" and draws its pages itself (no Chromium viewer)', p12.count === '12 pages' && p12.pages === 12 && p12.rendered.includes(1) && !p12.iframe, JSON.stringify(p12))
   await shot('files-pdf')
+  // The column scrolled to where page 1 ends and page 2 begins: pages stack with a gap and a shadow.
+  await page.evaluate(() => { const p2 = document.querySelector('[data-pdf-page="2"]'); p2.closest('.overflow-auto').scrollTop = p2.offsetTop - 420 })
+  await sleep(1500)
+  await shot('files-pdf-page-break')
+
+  await openFile('data/archive-200-pages.pdf')
+  await sleep(2500)
+  const p200 = await pdfStats()
+  check('a 200-page PDF renders only the pages near the viewport', p200.pages === 200 && p200.rendered.length > 1 && p200.rendered.length <= 6, `rendered ${p200.rendered.join(',')}`)
+  await page.evaluate(() => { const sc = document.querySelector('[data-pdf-page="100"]').closest('.overflow-auto'); sc.scrollTop = document.querySelector('[data-pdf-page="100"]').offsetTop - 40 })
+  await sleep(2500)
+  const mid = await pdfStats()
+  check('scrolling to page 100 renders it and releases the pages left behind', mid.rendered.includes(100) && !mid.rendered.includes(1) && mid.rendered.length <= 6, `rendered ${mid.rendered.join(',')}`)
+
+  await openFile('data/locked.pdf')
+  await sleep(1500)
+  const locked = await page.evaluate(() => document.querySelector('[data-file-card]')?.innerText || '')
+  check('a password-protected PDF gets the card with the reason', /password-protected/i.test(locked), locked.replace(/\n/g, ' | '))
+  await shot('files-pdf-locked')
+  await openFile('data/corrupt.pdf')
+  await sleep(1500)
+  const corrupt = await page.evaluate(() => document.querySelector('[data-file-card]')?.innerText || '')
+  check('a corrupt PDF gets the card', /damaged|couldn't be read|no pages/i.test(corrupt), corrupt.replace(/\n/g, ' | '))
+
+  // A page opened in the shared viewer, zoomed like any image.
+  await openFile('data/weekly-report.pdf')
+  await sleep(2000)
+  await page.click('[data-pdf-page="1"]')
+  for (let i = 0; i < 40 && !(await viewerOpen()); i++) await sleep(150)
+  await sleep(800)
+  const pv = await page.evaluate(() => { const i = document.querySelector('[data-viewer-scroll] img'); return i && { w: i.naturalWidth, h: i.naturalHeight } })
+  check('clicking a PDF page opens it sharp in the shared viewer', !!pv && pv.h >= 3000, JSON.stringify(pv))
+  const psc = await rect('[data-viewer-scroll]')
+  await page.mouse.move(psc.x + psc.w / 2, psc.y + 160)
+  await page.keyboard.down('Meta')
+  for (let i = 0; i < 3; i++) { await page.mouse.wheel(0, -100); await sleep(80) }
+  await page.keyboard.up('Meta')
+  await sleep(500)
+  const pz = await page.evaluate(() => document.querySelector('[aria-label="Zoom level"]').textContent)
+  check('the PDF page zooms like an image', parseInt(pz, 10) > 30, pz)
+  await shot('viewer-pdf-page-zoomed')
+  await page.keyboard.press('Escape')
+  await sleep(300)
 
   // 5. HTML rendered sandboxed.
   await openFile('seal-speak-ipad-2026-10-21/seal-speak-ipad-duo.html')

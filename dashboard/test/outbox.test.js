@@ -6,8 +6,8 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, chmodSync, 
 import { tmpdir, homedir } from 'os'
 import path from 'path'
 import {
-  listOutboxTree, readOutboxFile, readOutboxImage, outboxPdfFile, outboxRevealPath, outboxRoot, outboxFileUrl,
-  outboxRelFromUrl, MAX_IMAGE_BYTES, MAX_TEXT_BYTES
+  listOutboxTree, readOutboxFile, readOutboxImage, outboxRevealPath, outboxOpenPath, outboxRoot,
+  MAX_IMAGE_BYTES, MAX_TEXT_BYTES, MAX_PDF_BYTES
 } from '../electron/main/outbox.js'
 
 // A real 1x1 PNG, a real 1x1 JPEG (smallest valid baseline), and an SVG.
@@ -155,31 +155,38 @@ describe('readOutboxFile: text kinds', () => {
 })
 
 describe('readOutboxFile: PDFs', () => {
-  it('a real PDF comes back as an outbox:// URL for the in-tab viewer, not bytes', () => {
+  it('a real PDF comes back as its exact bytes for the renderer\'s pdf.js view', () => {
     put('docs/r p.pdf', PDF)
     const r = readOutboxFile('docs/r p.pdf')
-    expect(r).toMatchObject({ kind: 'pdf', label: 'PDF' })
-    expect(r.url).toBe(outboxFileUrl('docs/r p.pdf'))
-    expect(outboxRelFromUrl(r.url)).toBe('docs/r p.pdf')
-    expect(outboxPdfFile('docs/r p.pdf')).toBe(path.join(root, 'docs/r p.pdf'))
+    expect(r).toMatchObject({ kind: 'pdf', label: 'PDF', size: PDF.length })
+    expect(Buffer.from(r.data).equals(PDF)).toBe(true)
+    expect(r.content).toBeUndefined()
   })
-  it('a .pdf that is not a PDF gets the card and is never served', () => {
+  it('a .pdf that is really text, or empty, gets the card and no bytes', () => {
     put('fake.pdf', '<html>hi</html>')
-    expect(readOutboxFile('fake.pdf').kind).toBe('other')
-    expect(outboxPdfFile('fake.pdf')).toBeNull()
+    put('empty.pdf', '')
+    for (const n of ['fake.pdf', 'empty.pdf']) {
+      const r = readOutboxFile(n)
+      expect(r.kind, n).toBe('other')
+      expect(r.data).toBeUndefined()
+    }
   })
-  it('the PDF server only serves PDFs inside the outbox', () => {
-    put('a.png', PNG)
+  it('a PDF over the size limit gets the card without being read', () => {
+    put('huge.pdf', Buffer.concat([PDF, Buffer.alloc(MAX_PDF_BYTES)]))
+    const r = readOutboxFile('huge.pdf')
+    expect(r.kind).toBe('other')
+    expect(r.reason).toMatch(/too large/i)
+    expect(r.data).toBeUndefined()
+  })
+  it('Open in Preview only opens PDFs inside the outbox', () => {
+    put('a.pdf', PDF)
+    put('run.command', '#!/bin/sh\necho hi')
     writeFileSync(path.join(home, 'secret.pdf'), PDF)
-    expect(outboxPdfFile('a.png')).toBeNull()
-    expect(outboxPdfFile('../secret.pdf')).toBeNull()
-    expect(outboxPdfFile(path.join(home, 'secret.pdf'))).toBeNull()
-    expect(outboxPdfFile('missing.pdf')).toBeNull()
-    expect(outboxPdfFile(null)).toBeNull()
-    expect(outboxRelFromUrl('outbox://file/..%2Fsecret.pdf')).toBe('../secret.pdf')   // decoded, then rejected by the guard
-    expect(outboxPdfFile(outboxRelFromUrl('outbox://file/..%2Fsecret.pdf'))).toBeNull()
-    expect(outboxRelFromUrl('https://evil.example/a.pdf')).toBeNull()
-    expect(outboxRelFromUrl('outbox://file/%E0%A4%A')).toBeNull()                       // malformed escape
+    expect(outboxOpenPath('a.pdf')).toBe(path.join(root, 'a.pdf'))
+    expect(() => outboxOpenPath('run.command')).toThrow(/only pdfs/i)
+    expect(() => outboxOpenPath('../secret.pdf')).toThrow()
+    expect(() => outboxOpenPath(path.join(home, 'secret.pdf'))).toThrow()
+    expect(() => outboxOpenPath('missing.pdf')).toThrow()
   })
 })
 

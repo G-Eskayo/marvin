@@ -70,7 +70,7 @@ function FileViewer({ file, loading, error }) {
       </div>
     )
   }
-  const fills = file.kind === 'pdf' || file.kind === 'html'
+  const fills = file.kind === 'html'
   return (
     <div className={`min-w-0 flex-1 overflow-auto p-6${fills ? ' flex flex-col' : ''}`}>
       <FileView
@@ -78,6 +78,7 @@ function FileViewer({ file, loading, error }) {
         file={file}
         loadImage={(src) => window.api.outbox.image(file.path, src)}
         onReveal={() => window.api.outbox.reveal(file.path).catch(() => {})}
+        onOpenFile={() => window.api.outbox.open(file.path).catch(() => {})}
       />
     </div>
   )
