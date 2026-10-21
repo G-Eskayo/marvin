@@ -6,6 +6,7 @@ import ProposalsSection from './ProposalsSection.jsx'
 import { toggleLabel } from '../lib/proposals_view.js'
 import { describePrState } from '../lib/prState.js'
 import MrDetail from './MrDetail.jsx'
+import CheckProgress from './CheckProgress.jsx'
 
 const MR_LIST_REFRESH_MS = 120000
 
@@ -290,6 +291,7 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
       ) : null}
       <p className={`max-w-xs text-right text-sm font-medium ${TONE[view.tone] || ''}`}>{view.headline}</p>
       {view.detail && <p className="max-w-xs text-right text-xs text-neutral-400">{view.detail}</p>}
+      {view.checkProgress && <CheckProgress checks={pr.checks} tone={view.tone} />}
       {view.note && <p className="text-right text-xs text-emerald-400">{view.note}</p>}
       {view.rework && (
         <div className={`max-w-xs rounded-md border px-2 py-1 text-right text-xs ${REWORK_TONE[view.rework.state] || 'border-neutral-700 text-neutral-300'}`} data-rework={view.rework.state}>

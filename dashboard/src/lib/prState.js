@@ -14,8 +14,10 @@ const MIRRORED_REFUSALS = /^(SENT_BACK|CI_PENDING|CI_FAILED|WRONG_BASE|NO_UI_EVI
 export function describePrState(pr, { status = 'idle', errorMessage = null } = {}) {
   const ci = pr.checks || { state: 'none', failing: [], pending: [] }
   const waiting = pr.waitingOn || []
-  const base = (kind, tone, headline, detail, approve, deny, extra = {}) => ({ kind, tone, headline, detail, approve, deny, actions: [], note: null, rework: null, ...extra })
+  const base = (kind, tone, headline, detail, approve, deny, extra = {}) => ({ kind, tone, headline, detail, approve, deny, actions: [], note: null, rework: null, checkProgress: false, ...extra })
   const main = pr.baseProblem?.expected || 'main'
+  // Each check's own row is known (marvin#555): the card can show the progress bar and per-check drill-down.
+  const hasRuns = Array.isArray(ci.runs) && ci.runs.length > 0
 
   if (status === 'approving') {
     return base('merging', 'working', 'Merging…', 'Merging. It is rebased and retested first only if main changed files this PR also changes. You can leave this screen; it carries on.', 'hidden', 'hidden')
@@ -52,7 +54,8 @@ export function describePrState(pr, { status = 'idle', errorMessage = null } = {
 
   if (ci.state === 'failing') {
     return base('checks-failed', 'blocked', 'GitHub checks failed',
-      `${ci.failing.join(', ')}. It is sent back for rework automatically, so there is nothing to approve.`, 'hidden', 'hidden')
+      `${ci.failing.join(', ')}. It is sent back for rework automatically, so there is nothing to approve.`, 'hidden', 'hidden',
+      { checkProgress: hasRuns })
   }
 
   // The owner's hard rule (marvin #374): a change to how the app looks is approved only with images to look at.
@@ -106,8 +109,11 @@ export function describePrState(pr, { status = 'idle', errorMessage = null } = {
   }
 
   if (ci.state === 'pending') {
+    // Gil, 2026-10-21: with each check known, the progress view (N of M done, what's running, last checked) replaces
+    // the sentence. Without the rows (older data), the sentence stays.
     return base('waiting-checks', 'wait', 'Waiting for GitHub checks',
-      `${ci.pending.join(', ')} still running. Approve becomes available when they finish.`, 'disabled', 'enabled')
+      hasRuns ? null : `${ci.pending.join(', ')} still running. Approve becomes available when they finish.`, 'disabled', 'enabled',
+      { checkProgress: hasRuns })
   }
 
   if (status === 'error' && /^GITHUB_OUTAGE\b/.test(errorMessage || '')) {
