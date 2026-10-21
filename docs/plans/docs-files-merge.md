@@ -12,49 +12,69 @@ before a build ticket is cut.
 
 ## 0. Chosen layout (Gil, 2026-10-21)
 
-Gil picked this layout after the A/B/C and hybrid rounds. Mock-ups: `docs/screenshots/ticket-403-f-*.png`, shown
-first on the phone page.
+Gil settled the layout after the A/B/C and hybrid rounds and one more pass. In that pass he dropped the page tabs and
+the second chip row: "I was just having a hard time understanding the relationship and logical drill down map."
+Mock-ups: `docs/screenshots/ticket-403-f-*.png`, shown first on the phone page.
 
-- **Tree (second column):** three collapsible groups: **Docs**, **Decisions** (the project's `docs/adr/`) and
-  **Deliverables** (its outbox items). Deliverable folders expand to subfolders and files.
-- **Chips over the tree:** Docs / Decisions / Deliverables, each with a count. With no chip active, every group shows.
-  Active chips filter the tree to the matching groups. Mocked states:
-  - none active (`f-1`)
-  - Deliverables only (`f-2`)
-  - Docs + Decisions (`f-3`)
-- **Tabs on the project's own page (main pane):** Docs / Decisions / Deliverables.
-  - The Docs tab shows the project card and a list of its docs (path and first heading).
-  - The Deliverables tab shows the folder-card grid.
-  - The Decisions tab lists the ADRs (not mocked).
-- **Files and folders:**
-  - Selecting a file opens it in the main pane through #402's `FileView` / `ImageViewer`, exactly as a doc opens
-    (`f-1`).
-  - Selecting a deliverable folder shows its contents as a card grid (`h-2`).
-- **Search:** chips (All, Docs, Decisions, Deliverables) above results grouped Docs / Decisions / Deliverables (`f-4`).
-- **Staleness, for a project with no clone on this Mac** (`f-5a`, `f-5b`, paper-dive):
-  - The saved copy renders instantly. The source line adds "from GitHub, 2 h ago · checking…".
-  - One conditional request goes to GitHub (`If-None-Match` with the saved ETag). A `304 Not Modified` doesn't count
-    against GitHub's rate limit, so the check is free.
-  - The line then settles to "from GitHub · up to date". If something changed, the new tree or text replaces the
-    old one in place: no reload, no spinner, and the scroll position is kept.
-  - The check runs once per open, never on a timer.
-  - This follows the memory rule that the dashboard loads from saved state. `docs.js` would need to save each
-    response's ETag next to the cached copy, a small extension of the GitHub reads it already makes.
-- Board counts in the mock-ups are illustrative. Everything else is real.
+### The drill-down map: one control per level
+
+| Level | Control | Where | What it does |
+|---|---|---|---|
+| 1. Project | The project list | Sidebar (first column) | Picks the project, *Where things are*, or *Unsorted deliverables*. |
+| 2. Kind | **One chip row**: Docs / Decisions / Deliverables, multi-select | Under the search box, over the tree column, level with the sidebar's "Projects" header | Filters the levels below it. No chip active = everything shows. |
+| 3. Folder or file | The tree | Second column | Three collapsible groups (Docs, Decisions = `docs/adr/`, Deliverables = outbox items). Only the groups the chips allow show. |
+| 4. Content | The main pane | Third column | Shows what level 3 selected. |
+
+No other control chooses a kind, so each level has exactly one control. Searching doesn't add a level: the same chips,
+in the same place, filter the results.
+
+### What the main pane shows
+
+- **Project selected (Project card, or nothing below it):** the overview.
+  - The project card, and the board line under the source line.
+  - One summary card per group the chips allow:
+    - Docs: the first few docs, as path and first heading.
+    - Decisions: the latest three ADRs.
+    - Deliverables: the newest folders with a cover image.
+  - Each summary has "Show all N →", which sets that chip. (`f-3`, `f-5a`)
+- **Only the Deliverables chip active, or a deliverable folder selected:** the folder-card grid.
+  - For the whole project, it shows one card per folder. (`f-2`)
+  - For one folder, it shows one card per file or subfolder. (`h-2`)
+- **A file selected:** the file opens in the main pane through #402's `FileView` / `ImageViewer`, exactly as a doc
+  opens. (`f-1`)
+- **A search typed:** results grouped Docs / Decisions / Deliverables. Only the groups the chips allow show, and the
+  count line says what's hidden ("2 Docs and 1 Decision hidden"). Clearing the search returns to browsing with the
+  same chips. (`f-4`)
+
+### Staleness, for a project with no clone on this Mac (`f-5a`, `f-5b`, paper-dive)
+
+- The saved copy renders instantly. The source line adds "from GitHub, 2 h ago · checking…".
+- One conditional request goes to GitHub (`If-None-Match` with the saved ETag). A `304 Not Modified` doesn't count
+  against GitHub's rate limit, so the check is free.
+- The line then settles to "from GitHub · up to date". If something changed, the new tree or text replaces the old one
+  in place: no reload, no spinner, and the scroll position is kept.
+- The check runs once per open, never on a timer.
+- This follows the memory rule that the dashboard loads from saved state. `docs.js` would need to save each response's
+  ETag next to the cached copy.
+
+Board counts in the mock-ups are illustrative. Everything else is real.
 
 ### New visual elements in the chosen layout
 
-- The chip row at the top of the tree column. It reuses the search-chip classes, smaller (`text-[11px]`, `px-2`) so
-  all three fit on one line in `w-72`.
-- The three group headers in the tree (`▾ DOCS 33`, `▾ DECISIONS 24`, `▾ DELIVERABLES 8`), collapsible. B's
-  collapsible doc sections and the `w-72` column carry over.
-- The page tab strip with counts (C's), placed under the board line on the project page.
-- The Docs tab's doc list: bordered rows with a monospace path and the doc's first heading.
-- The Deliverables tab's folder-card grid (C's), and the folder header and item-card grid when a folder is selected
-  (hybrid).
-- The staleness part of the source line: a pulsing blue dot with "from GitHub, 2 h ago · checking…", then a green
+- **The chip row** (level 2), at the top of the tree column. It is the same height as the sidebar's "Projects"
+  header, so the two read as the row of level headers. Classes come from the search chips, smaller (`text-[11px]`,
+  `px-2`) so the three chips fit in `w-72`. There is no chip row over the search results and no tab strip on the
+  project page.
+- **The three tree group headers** (`▾ DOCS 33`, `▾ DECISIONS 24`, `▾ DELIVERABLES 8`), collapsible. B's collapsible
+  doc sections and the `w-72` column carry over.
+- **The overview's summary cards:** the search-result card style with an uppercase title, a count and
+  "Show all N →". Docs and Decisions rows are a monospace path and the first heading. Deliverables shows cover
+  thumbnails.
+- **The folder-card grid** (C's), and the folder header with an item-card grid for a selected folder (hybrid).
+- **The search count line's hidden-groups note.**
+- **The staleness part of the source line:** a pulsing blue dot with "from GitHub, 2 h ago · checking…", then a green
   dot with "from GitHub · up to date". The dot and pulse reuse `DispatchStatusBadge`'s classes.
-- Kept from the earlier rounds: the Unsorted entry and its count, the "matched by …" line, the `#n` ticket chip,
+- **Kept from the earlier rounds:** the Unsorted entry and its count, the "matched by …" line, the `#n` ticket chip,
   #402's kind badges, and *Reveal in Finder*.
 
 ## 1. What Gil sees
