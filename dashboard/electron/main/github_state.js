@@ -25,6 +25,17 @@ export function gateCooldownUntil(file = process.env.MARVIN_GH_GATE_STATE || GAT
   }
 }
 
+// What a value's ttlFor asks for, in ms, or null (none, not a positive number, or it threw).
+function ownTtl(ttlFor, value) {
+  if (typeof ttlFor !== 'function') return null
+  try {
+    const ms = ttlFor(value)
+    return Number.isFinite(ms) && ms > 0 ? ms : null
+  } catch {
+    return null
+  }
+}
+
 export function createGithubState({ now = Date.now, safetyMs = SAFETY_MS, cooldownUntil = gateCooldownUntil } = {}) {
   const entries = new Map()   // `${kind}|${repo ?? '*'}` -> { value, at, gen, has, pending }
   const failures = new Map()  // same key -> { kind, repo, since, message } while its last read failed (#422)
@@ -37,10 +48,12 @@ export function createGithubState({ now = Date.now, safetyMs = SAFETY_MS, cooldo
   // a per-repo entry depends only on its repo; changedAll() bumps every repo too
   const currentGen = (repo) => (repo == null ? allGen : gens.get(repo) || 0)
 
-  async function get(kind, repo, fetch, { fresh = false, safetyMs: own, minIntervalMs = 0 } = {}) {
+  // ttlFor(value): a shorter lifetime the cached value itself asks for, e.g. a PR list with checks still running. GitHub
+  // checks finishing is not an issue/PR update, so the change watch never pings for it (clarity-captions#143, 2026-10-21).
+  async function get(kind, repo, fetch, { fresh = false, safetyMs: own, minIntervalMs = 0, ttlFor = null } = {}) {
     const key = `${kind}|${repo ?? '*'}`
     const e = entries.get(key) || { has: false }
-    const ttl = own ?? safetyMs
+    const ttl = Math.min(own ?? safetyMs, (e.has && ownTtl(ttlFor, e.value)) || Infinity)
     if (!fresh && e.has && e.gen === currentGen(repo) && now() - e.at < ttl) {
       hits += 1
       return e.value

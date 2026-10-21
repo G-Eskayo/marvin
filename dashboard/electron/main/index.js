@@ -37,7 +37,7 @@ import { summarizeBoard, buildCompleted } from './board.js'
 import { createTriggerHub, createReconciler, refetchesGithub } from './triggers.js'
 import { createMrHistory, mergedPrArgs } from './mr_history.js'
 import { appendError } from './error_log.js'
-import { listOpenPrsAcrossRepos, prListArgs, normalizeSeen, canMergeFromDashboard, repoFromPrUrl, MARVIN_REPO } from './mr_repos.js'
+import { listOpenPrsAcrossRepos, prListArgs, normalizeSeen, canMergeFromDashboard, repoFromPrUrl, MARVIN_REPO, pendingChecksTtl } from './mr_repos.js'
 import { createIndexer, buildDocsIndex, loadIndex } from './docs_search.js'
 import { createDocsService, MASTER_ID } from './docs_service.js'
 import { readMergeableRepos, readUiPaths, listProfiles, setDispatch, setMergeFromDashboard } from './profiles.js'
@@ -115,7 +115,7 @@ function githubChanged(source) {
 // A full listing also answers a light one. `fresh` (a merge) re-reads every repo.
 async function fetchOpenPrs(light, fresh = false) {
   const perRepo = (repo) => {
-    const full = () => githubState.get('prs', repo, () => ghListOpenPrs(false)(repo), { fresh })
+    const full = () => githubState.get('prs', repo, () => ghListOpenPrs(false)(repo), { fresh, ttlFor: pendingChecksTtl })
     if (!light) return full()
     return githubState.get('prs-light', repo, () => ghListOpenPrs(true)(repo), { fresh })
   }
