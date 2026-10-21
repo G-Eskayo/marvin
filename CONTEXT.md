@@ -390,7 +390,12 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   always waits for Gil (supply-chain trust); more than 1,500 changed lines (tests included) waits too (the ticket was
   probably too big). Design complete: ADR 0064.
 
-## Dashboard app — Files tab (in design, 2026-08-27)
+## Dashboard app — Files tab (in design, 2026-08-27; folded into Docs 2026-10-21, #403 / #570)
+
+- **Folded into Docs** (marvin#570 "Docs: fold the Files tab into Docs", decided in #403, design
+  `docs/plans/docs-files-merge.md` §0): there is no Files tab any more. Each outbox item shows in the Docs tab under
+  the project it is matched to, as a **Deliverable**; what no project claims is **Unsorted**. The history below is
+  kept for the reasoning; `outbox.js` and its guards are still the only way into `~/.claude/outbox`.
 
 - **Files tab**: a read-only viewer tab in the MARVIN dashboard (`~/.agents/dashboard`, alongside
   the already-shipped Metrics and MR Review tabs) for browsing files MARVIN produces as
@@ -584,7 +589,9 @@ unbounded: any chat, either machine, raw `gh`, the GitHub UI). Polling stays onl
   unless it is a UI clock (callback only calls useState setters) or allowlisted with a count and a one-line reason.
   Delegated design/fix prompts open with `lib/north_stars.py preamble`: read this file's decisions, name the pattern reused.
 - **Not built, deliberately**: a rebuild-on-pull trigger (the sync cycle already rebuilds right after it
-  pulls; only the cycle gap + 15-min settle remain) and a Docs-tab trigger (Docs still refreshes by hand).
+  pulls; only the cycle gap + 15-min settle remain). The Docs tab has its triggers since 2026-10-21: local clones'
+  docs and refs (`docs`), the outbox (`outbox`, #570), and one conditional request when a GitHub-only project is
+  opened (#565).
 
 ## Project catalog and the master "Where things are" doc (decided 2026-10-05)
 
@@ -640,6 +647,16 @@ nothing connected them. "Where things are" was only the tidy agent's file-filing
 - **Docs tab**: lists every catalog project, not just doc-first repos. Each gets a "Project card" page;
   projects with a `CONTEXT.md`/`README.md` show those too (local first, GitHub fallback). The master doc
   appears as its own entry. Cards and the master are searchable.
+- **Deliverables** (marvin#570, 2026-10-21): the Docs tab also shows `~/.claude/outbox`. Drill-down, one control per
+  level: Project (sidebar) → Kind (ONE chip row: Docs / Decisions / Deliverables, filtering the tree while browsing
+  and the results while searching) → Folder or file (tree, three collapsible groups) → Content (main pane). No page
+  tabs. A **Deliverable** is an outbox item matched to a project from text (`electron/main/deliverables.js`, a port
+  of the design's measurement script, tiers name / inside-name / number / content / docs phrase, each needing exactly
+  one winner); **Unsorted** holds what no project claims (with "left in mixed folders" for split folders). The match
+  map is saved (`~/.claude/logs/outbox-matches.json`), cached by (item name, mtime) and re-matched per changed item on
+  the `outbox` file trigger (a recursive watch). One search covers docs and deliverables (text of md/txt/json/csv/html
+  under 200 KB, every file by its path words). Every click is local: a test (`test/docs_clicks_network.test.js`)
+  drives every Docs click handler through counting fakes and requires zero gh, fetch and network-git calls.
 - **Saved copy** (marvin#565, 2026-10-21): a project with no local clone is read from its saved copy
   (`electron/main/docs_saved.js`, one JSON per repo in `~/.claude/logs/docs-github/`), so a click never calls
   GitHub. Opening the project sends **one conditional request** for its git tree (`If-None-Match`, the

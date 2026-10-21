@@ -90,13 +90,16 @@ contextBridge.exposeInMainWorld('api', {
     tree: (repo) => ipcRenderer.invoke('docs:tree', repo),
     content: (repo, path) => ipcRenderer.invoke('docs:content', repo, path),
     revalidate: (repo) => ipcRenderer.invoke('docs:revalidate', repo),
+    headings: (repo, paths) => ipcRenderer.invoke('docs:headings', repo, paths),
     search: (query, opts) => ipcRenderer.invoke('docs:search', query, opts),
     files: (query) => ipcRenderer.invoke('docs:files', query),
     reveal: (filePath) => ipcRenderer.invoke('docs:reveal', filePath),
     openLink: (filePath) => ipcRenderer.invoke('docs:openLink', filePath)
   },
   outbox: {
-    tree: () => ipcRenderer.invoke('outbox:tree'),
+    list: (relPath) => ipcRenderer.invoke('outbox:list', relPath),
+    summary: (relPath) => ipcRenderer.invoke('outbox:summary', relPath),
+    preview: (relPath) => ipcRenderer.invoke('outbox:preview', relPath),
     content: (relPath) => ipcRenderer.invoke('outbox:content', relPath),
     image: (fromRel, src) => ipcRenderer.invoke('outbox:image', fromRel, src),
     reveal: (relPath) => ipcRenderer.invoke('outbox:reveal', relPath),
