@@ -1,9 +1,8 @@
 // The Files tab's reader (G-Eskayo/marvin#89, #402): a read-only view of ~/.claude/outbox. Every file comes back in the
 // form the renderer can show best: images as data: URLs read as bytes (the CSP allows img-src data:, same as
-// portfolio.js), PDFs as an outbox:// URL the in-tab PDF viewer loads (served by index.js through outboxPdfFile),
-// text kinds as text, and anything else (or too large, or unreadable) as a card: name, kind, size, reason. Never raw
+// portfolio.js), PDFs as their bytes for the renderer's own pdf.js view (PdfView), text kinds as text, and anything else (or too large, or unreadable) as a card: name, kind, size, reason. Never raw
 // bytes decoded as UTF-8. Every path, including images a markdown file embeds, goes through resolveOutboxPath.
-import { readFileSync, readdirSync, lstatSync, existsSync, realpathSync, openSync, readSync, closeSync } from 'fs'
+import { readFileSync, readdirSync, lstatSync, existsSync, realpathSync } from 'fs'
 import { homedir } from 'os'
 import path from 'path'
 import { fileKind } from '../../src/lib/file_kinds.js'
@@ -13,6 +12,7 @@ import { sniffMime } from './pr_images.js'
 export const outboxRoot = () => path.join(homedir(), '.claude', 'outbox')
 export const MAX_TEXT_BYTES = 2 * 1024 * 1024 // 2 MB
 export const MAX_IMAGE_BYTES = 15 * 1024 * 1024 // same cap as PR images (pr_images.js)
+export const MAX_PDF_BYTES = 50 * 1024 * 1024 // sent over IPC once; pdf.js renders pages lazily from it
 const MAX_DEPTH = 8
 
 export function resolveOutboxPath(relPath) {
@@ -74,17 +74,6 @@ function imageMime(buf, name) {
 
 const isPdf = (buf) => buf.length >= 5 && buf.subarray(0, 5).toString('latin1') === '%PDF-'
 
-function readHead(fullPath, n) {
-  const fd = openSync(fullPath, 'r')
-  try {
-    const buf = Buffer.alloc(n)
-    const got = readSync(fd, buf, 0, n, 0)
-    return buf.subarray(0, got)
-  } finally {
-    closeSync(fd)
-  }
-}
-
 const mb = (n) => `${(n / 1048576).toFixed(n < 10 * 1048576 ? 1 : 0)} MB`
 
 // A regular file inside the outbox, or a thrown plain reason.
@@ -100,19 +89,6 @@ function statFile(relPath) {
   return { fullPath, size: stat.size }
 }
 
-// The URL the in-tab PDF viewer loads; index.js serves it through outboxPdfFile.
-export const outboxFileUrl = (relPath) => `outbox://file/${relPath.split('/').map(encodeURIComponent).join('/')}`
-
-export function outboxRelFromUrl(url) {
-  const m = typeof url === 'string' && url.match(/^outbox:\/\/file\/(.+)$/)
-  if (!m) return null
-  try {
-    return m[1].split('/').map(decodeURIComponent).join('/')
-  } catch {
-    return null
-  }
-}
-
 export function readOutboxFile(relPath) {
   const { fullPath, size } = statFile(relPath)
   const name = path.basename(relPath)
@@ -120,12 +96,12 @@ export function readOutboxFile(relPath) {
   const base = { name, path: relPath, label, size }
   const card = (reason) => ({ ...base, kind: 'other', reason })
 
-  const cap = kind === 'image' ? MAX_IMAGE_BYTES : kind === 'pdf' ? Infinity : MAX_TEXT_BYTES
+  const cap = kind === 'image' ? MAX_IMAGE_BYTES : kind === 'pdf' ? MAX_PDF_BYTES : MAX_TEXT_BYTES
   if (size > cap) return card(`Too large to show here (${mb(size)}; the limit is ${mb(cap)}).`)
 
   let buf
   try {
-    buf = kind === 'pdf' ? readHead(fullPath, 5) : readFileSync(fullPath)
+    buf = readFileSync(fullPath)
   } catch (err) {
     return card(`This file can't be read (${err.code === 'EACCES' || err.code === 'EPERM' ? 'permission denied' : err.code || err.message}).`)
   }
@@ -137,7 +113,8 @@ export function readOutboxFile(relPath) {
   }
   if (kind === 'pdf') {
     if (!isPdf(buf)) return card('Not a valid PDF: the contents don\'t start like a PDF.')
-    return { ...base, kind, url: outboxFileUrl(relPath) }
+    // The bytes arrive in the renderer as a Uint8Array; pdf.js there decides if the inside is readable (card if not).
+    return { ...base, kind, data: buf }
   }
   // Everything else is shown as text, so it must be text: a NUL byte means binary.
   if (buf.includes(0)) return card(kind === 'other' ? 'No preview for this kind of file.' : 'This looks like a binary file, so there is no text to show.')
@@ -183,18 +160,14 @@ export function readOutboxImage(fromRel, src) {
   }
 }
 
-// The file behind an outbox:// URL, only when it is a real PDF inside the outbox; null otherwise.
-export function outboxPdfFile(relPath) {
-  try {
-    if (fileKind(relPath).kind !== 'pdf') return null
-    const { fullPath } = statFile(relPath)
-    return isPdf(readHead(fullPath, 5)) ? fullPath : null
-  } catch {
-    return null
-  }
+// The full path of an outbox file for Reveal in Finder / Open in Preview; throws for anything outside the outbox or missing.
+export function outboxRevealPath(relPath) {
+  return statFile(relPath).fullPath
 }
 
-// The full path of an outbox file for Reveal in Finder; throws for anything outside the outbox or missing.
-export function outboxRevealPath(relPath) {
+// Open in Preview is only for PDFs: opening an arbitrary outbox file with its default app could run it (a .command,
+// an .app, a script), so everything else stays Reveal in Finder only.
+export function outboxOpenPath(relPath) {
+  if (fileKind(relPath).kind !== 'pdf') throw new Error('Only PDFs open from here')
   return statFile(relPath).fullPath
 }

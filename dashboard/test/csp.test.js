@@ -26,9 +26,11 @@ describe('renderer Content Security Policy', () => {
     expect(directive('media-src')).toEqual(["'self'", 'prmedia:'])
   })
 
-  it('lets the Files tab frame outbox PDFs (outbox:), and frames nothing remote (#402)', () => {
-    // A sandboxed HTML file is a srcdoc frame (not fetched), so a link clicked inside it can only reach these.
-    expect(directive('frame-src')).toEqual(["'self'", 'outbox:'])
+  it('frames nothing remote, and runs the PDF worker only from the app bundle (#402)', () => {
+    // A sandboxed HTML file is a srcdoc frame (not fetched); frames and workers fall back to default-src / script-src.
+    expect(directive('frame-src')).toBeNull()
+    expect(directive('worker-src')).toBeNull()
+    expect(directive('child-src')).toBeNull()
   })
 
   it('lets the Portfolio tab show images from the dev site and data: URLs', () => {

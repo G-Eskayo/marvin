@@ -66,10 +66,11 @@ describe('FileView', () => {
     expect(html).toContain(`Showing the first ${TABLE_ROW_LIMIT} of ${TABLE_ROW_LIMIT + 50} rows.`)
   })
 
-  it('shows a PDF inside the tab, from the outbox:// URL', () => {
-    const html = render({ kind: 'pdf', name: 'r.pdf', url: 'outbox://file/r.pdf' })
-    expect(html).toContain('<iframe')
-    expect(html).toContain('src="outbox://file/r.pdf"')
+  it('renders a PDF with its own pdf.js view (no Chromium viewer iframe), starting with a loading line', () => {
+    const html = render({ kind: 'pdf', name: 'r.pdf', data: new Uint8Array([37, 80, 68, 70, 45]) })
+    expect(html).toContain('Loading PDF…')
+    expect(html).not.toContain('<iframe')
+    expect(html).not.toContain('outbox://')
   })
 
   it('renders HTML in an empty sandbox (no scripts, forms, popups) behind a no-network CSP', () => {
