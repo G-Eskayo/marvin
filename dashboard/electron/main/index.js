@@ -43,7 +43,7 @@ import { createIndexer, buildDocsIndex, loadIndex } from './docs_search.js'
 import { createDocsService, MASTER_ID } from './docs_service.js'
 import { readMergeableRepos, readUiPaths, listProfiles, setDispatch, setMergeFromDashboard } from './profiles.js'
 import { searchFiles, isRevealable, isLinkable, linkAction } from './files_search.js'
-import { listOutboxTree, readOutboxFile } from './outbox.js'
+import { listOutboxTree, readOutboxFile, readOutboxImage, outboxPdfFile, outboxRelFromUrl, outboxRevealPath } from './outbox.js'
 import { readCatalog, readMasterDoc, CATALOG_DIR, MASTER_DOC_PATH } from './catalog.js'
 import { STAGES_DIR } from '../../webhook-server/ticket_stages.js'
 import { DISPATCH_STATE_PATH } from './dispatch_status.js'
@@ -527,6 +527,9 @@ function registerDocsHandlers() {
   // Files tab (outbox): read-only local file viewer
   ipcMain.handle('outbox:tree', () => listOutboxTree())
   ipcMain.handle('outbox:content', (_event, relPath) => readOutboxFile(relPath))
+  // An image a markdown file embeds, resolved against that file's folder; read-only, never outside the outbox (#402).
+  ipcMain.handle('outbox:image', (_event, fromRel, src) => readOutboxImage(fromRel, src))
+  ipcMain.handle('outbox:reveal', (_event, relPath) => shell.showItemInFolder(outboxRevealPath(relPath)))
 
   // Portfolio tab (CONTEXT.md "Dashboard app -- Portfolio tab"): component library, design rules, guide,
   // evaluation, images. Dev-only: every write is confined to the portfolio repo's templates/.
@@ -820,13 +823,23 @@ function registerMrReviewHandlers() {
 // PR recordings (screen recordings in PR descriptions) are cached by the main process and streamed to the PR detail's
 // <video> players from here, with byte ranges so they can seek. Only ids of files already in the cache are served.
 const prMediaDir = () => join(app.getPath('userData'), 'pr-image-cache')
-protocol.registerSchemesAsPrivileged([{ scheme: 'prmedia', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } }])
+// Outbox PDFs (Files tab, #402) load in Chromium's PDF viewer from outbox://file/<path>; only real PDFs inside the outbox
+// are served (outbox.js outboxPdfFile keeps the same traversal guard as every other outbox read).
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'prmedia', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } },
+  { scheme: 'outbox', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } }
+])
 
 app.whenReady().then(() => {
   protocol.handle('prmedia', (request) => {
     const found = mediaFileFor(prMediaDir(), new URL(request.url).pathname.replace(/^\/+/, ''))
     if (!found) return new Response('not found', { status: 404 })
     return net.fetch(pathToFileURL(found.file).toString(), { headers: request.headers })
+  })
+  protocol.handle('outbox', (request) => {
+    const file = outboxPdfFile(outboxRelFromUrl(request.url))
+    if (!file) return new Response('not found', { status: 404 })
+    return net.fetch(pathToFileURL(file).toString(), { headers: request.headers })
   })
   installDevSiteCors(session.defaultSession)   // previews need the dev site's web fonts (see dev_site_cors.js)
   registerMetricsHandlers()

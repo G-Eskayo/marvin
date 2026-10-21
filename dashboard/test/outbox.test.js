@@ -1,128 +1,278 @@
-import { describe, it, expect, beforeEach } from 'vitest'
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync } from 'fs'
-import { tmpdir } from 'os'
+// The Files tab's main-process reader (G-Eskayo/marvin#89, #402). Every test runs against a throwaway HOME so the real
+// ~/.claude is never read or written (a past test wiped real logs). os.homedir() follows $HOME, and outbox.js resolves
+// the root on every call, so pointing HOME at a temp dir is enough.
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, chmodSync, realpathSync } from 'fs'
+import { tmpdir, homedir } from 'os'
 import path from 'path'
-import { listOutboxTree, readOutboxFile } from '../electron/main/outbox.js'
+import {
+  listOutboxTree, readOutboxFile, readOutboxImage, outboxPdfFile, outboxRevealPath, outboxRoot, outboxFileUrl,
+  outboxRelFromUrl, MAX_IMAGE_BYTES, MAX_TEXT_BYTES
+} from '../electron/main/outbox.js'
 
-const withOutboxRoot = (fn) => {
-  const root = mkdtempSync(path.join(tmpdir(), 'outbox-test-'))
-  const makeOutboxRoot = () => root
-  try {
-    return fn(makeOutboxRoot)
-  } finally {
-    rmSync(root, { recursive: true, force: true })
-  }
+// A real 1x1 PNG, a real 1x1 JPEG (smallest valid baseline), and an SVG.
+const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c6360000002000154a24f5d0000000049454e44ae426082', 'hex')
+const JPEG = Buffer.from('ffd8ffe000104a46494600010100000100010000ffdb004300080606070605080707070909080a0c140d0c0b0b0c1912130f141d1a1f1e1d1a1c1c20242e2720222c231c1c2837292c30313434341f27393d38323c2e333432ffc0000b080001000101011100ffc4001f0000010501010101010100000000000000000102030405060708090a0bffc400b5100002010303020403050504040000017d01020300041105122131410613516107227114328191a1082342b1c11552d1f02433627282090a161718191a25262728292a3435363738393a434445464748494a535455565758595a636465666768696a737475767778797a838485868788898a92939495969798999aa2a3a4a5a6a7a8a9aab2b3b4b5b6b7b8b9bac2c3c4c5c6c7c8c9cad2d3d4d5d6d7d8d9dae1e2e3e4e5e6e7e8e9eaf1f2f3f4f5f6f7f8f9faffda0008010100003f00fbd3ffd9', 'hex')
+const SVG = '<?xml version="1.0"?>\n<!-- drawn by hand -->\n<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4"/></svg>'
+const PDF = Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n')
+
+let home, prevHome, root
+beforeEach(() => {
+  prevHome = process.env.HOME
+  home = mkdtempSync(path.join(tmpdir(), 'outbox-home-'))
+  process.env.HOME = home
+  root = path.join(home, '.claude', 'outbox')
+  mkdirSync(root, { recursive: true })
+})
+afterEach(() => {
+  process.env.HOME = prevHome
+  rmSync(home, { recursive: true, force: true })
+})
+const put = (rel, data) => {
+  mkdirSync(path.dirname(path.join(root, rel)), { recursive: true })
+  writeFileSync(path.join(root, rel), data)
 }
+const dataUrlBytes = (u) => Buffer.from(u.split(',')[1], 'base64')
 
-describe('outbox functions', () => {
-  it('lists an empty outbox tree when the root does not exist', () =>
-    withOutboxRoot((makeRoot) => {
-      // Temporarily override homedir for testing
-      const origList = listOutboxTree
-      // Can't directly mock homedir in a pure function, so we test with actual temp root
-      // This is implicitly tested when we create files below
-      const tree = listOutboxTree()
-      // If root doesn't exist, should return empty array
-      expect(Array.isArray(tree)).toBe(true)
-    }))
-
-  it('lists nested tree structure with directories first, then alphabetical', () =>
-    withOutboxRoot((makeRoot) => {
-      const root = makeRoot()
-      // Create a test structure
-      mkdirSync(path.join(root, 'migrations', 'project-a'), { recursive: true })
-      mkdirSync(path.join(root, 'ci-workflows'), { recursive: true })
-      mkdirSync(path.join(root, 'alpha-dir'), { recursive: true })
-      writeFileSync(path.join(root, 'migrations', 'project-a', 'file1.json'), '{}')
-      writeFileSync(path.join(root, 'ci-workflows', 'build.yml'), 'steps: []')
-      writeFileSync(path.join(root, 'zebra.md'), '# Zebra')
-      writeFileSync(path.join(root, 'alpha.txt'), 'alpha')
-
-      // We need to test with actual outbox, but listOutboxTree reads from homedir()/.claude/outbox
-      // For now just verify the function structure works with real temp directories
-      // The actual test would require mocking homedir or refactoring to accept a root parameter
-      expect(typeof listOutboxTree).toBe('function')
-    }))
-
-  it('reads markdown files and marks them as "markdown" kind', () =>
-    withOutboxRoot((makeRoot) => {
-      const root = makeRoot()
-      mkdirSync(path.join(root, 'docs'), { recursive: true })
-      const mdContent = '# Test\n\nContent'
-      writeFileSync(path.join(root, 'docs', 'test.md'), mdContent)
-
-      // Test would require mocking the outbox root path
-      expect(typeof readOutboxFile).toBe('function')
-    }))
-
-  it('reads JSON files, parses them, and marks them as "json" kind', () =>
-    withOutboxRoot((makeRoot) => {
-      const root = makeRoot()
-      const jsonContent = { items: [1, 2, 3] }
-      writeFileSync(path.join(root, 'data.json'), JSON.stringify(jsonContent))
-
-      expect(typeof readOutboxFile).toBe('function')
-    }))
-
-  it('reads text files and marks them as "text" kind', () =>
-    withOutboxRoot((makeRoot) => {
-      const root = makeRoot()
-      writeFileSync(path.join(root, 'notes.txt'), 'Plain text')
-
-      expect(typeof readOutboxFile).toBe('function')
-    }))
-
-  it('rejects traversal attempts with ..', () => {
-    expect(typeof readOutboxFile).toBe('function')
+describe('the sandbox really is a temp HOME', () => {
+  it('points the outbox at the temp HOME, not the real one', () => {
+    expect(homedir()).toBe(home)
+    expect(outboxRoot()).toBe(root)
+    expect(outboxRoot()).not.toContain('/Users/gileskayo/.claude')
   })
+})
 
-  it('rejects absolute paths', () => {
-    expect(typeof readOutboxFile).toBe('function')
+describe('listOutboxTree', () => {
+  it('returns [] when the outbox does not exist', () => {
+    rmSync(root, { recursive: true })
+    expect(listOutboxTree()).toEqual([])
   })
-
-  it('rejects encoded traversal attempts like ..%2f', () => {
-    expect(typeof readOutboxFile).toBe('function')
+  it('lists folders first, then files, alphabetically, each file with its kind in plain words', () => {
+    put('zeta/a.png', PNG)
+    put('alpha/notes.md', '# hi')
+    put('b.csv', 'a,b')
+    put('a.pdf', PDF)
+    put('c.bin', Buffer.from([0, 1, 2]))
+    const tree = listOutboxTree()
+    expect(tree.map((t) => t.path)).toEqual(['alpha', 'zeta', 'a.pdf', 'b.csv', 'c.bin'])
+    expect(tree[0].children).toEqual([{ path: 'alpha/notes.md', type: 'file', kind: 'markdown', label: 'Markdown' }])
+    expect(tree[1].children[0]).toMatchObject({ kind: 'image', label: 'Image' })
+    expect(tree.slice(2).map((t) => t.label)).toEqual(['PDF', 'Table', 'File'])
   })
+})
 
-  it('rejects symlinks pointing outside the outbox root', () =>
-    withOutboxRoot((makeRoot) => {
-      const root = makeRoot()
-      // Create a file outside the root
-      const outside = path.join(path.dirname(root), 'outside.txt')
-      writeFileSync(outside, 'secret')
-
-      // Create a symlink inside the outbox pointing outside
-      try {
-        symlinkSync(outside, path.join(root, 'bad-link'))
-        expect(true).toBe(true)
-      } catch {
-        // symlinks might not be supported on all systems
-        expect(true).toBe(true)
-      }
-    }))
-
-  it('truncates oversized files and sets truncated flag', () => {
-    expect(typeof readOutboxFile).toBe('function')
+describe('readOutboxFile: images', () => {
+  it('round-trips PNG, JPEG and SVG byte for byte with the right MIME type', () => {
+    put('shots/a.png', PNG)
+    put('b.jpg', JPEG)
+    put('c.svg', SVG)
+    const png = readOutboxFile('shots/a.png')
+    expect(png).toMatchObject({ kind: 'image', label: 'Image', mime: 'image/png', size: PNG.length, name: 'a.png' })
+    expect(png.dataUrl.startsWith('data:image/png;base64,')).toBe(true)
+    expect(dataUrlBytes(png.dataUrl).equals(PNG)).toBe(true)
+    const jpg = readOutboxFile('b.jpg')
+    expect(jpg.mime).toBe('image/jpeg')
+    expect(dataUrlBytes(jpg.dataUrl).equals(JPEG)).toBe(true)
+    const svg = readOutboxFile('c.svg')
+    expect(svg.mime).toBe('image/svg+xml')
+    expect(dataUrlBytes(svg.dataUrl).toString('utf8')).toBe(SVG)
+    expect(png.content).toBeUndefined()   // never a text dump of the bytes
   })
-
-  it('rejects non-regular files (FIFO, device, socket)', () => {
-    expect(typeof readOutboxFile).toBe('function')
+  it('a text file named .png gets the card, not an image and not its text', () => {
+    put('fake.png', 'this is not an image')
+    const r = readOutboxFile('fake.png')
+    expect(r.kind).toBe('other')
+    expect(r.reason).toMatch(/not a valid image/i)
+    expect(r.dataUrl).toBeUndefined()
+    expect(r.content).toBeUndefined()
   })
-
-  it('handles invalid JSON gracefully, falling back to text kind', () => {
-    expect(typeof readOutboxFile).toBe('function')
+  it('a truncated PNG still goes to the renderer as its exact bytes (the viewer falls back to the card if it cannot draw it)', () => {
+    const cut = PNG.subarray(0, 30)
+    put('cut.png', cut)
+    const r = readOutboxFile('cut.png')
+    expect(r.kind).toBe('image')
+    expect(dataUrlBytes(r.dataUrl).equals(cut)).toBe(true)
   })
+  it('an empty .png is the card', () => {
+    put('empty.png', '')
+    expect(readOutboxFile('empty.png').kind).toBe('other')
+  })
+  it('an image over the size limit gives the card with its size, never garbage', () => {
+    put('huge.png', Buffer.concat([PNG, Buffer.alloc(MAX_IMAGE_BYTES)]))
+    const r = readOutboxFile('huge.png')
+    expect(r).toMatchObject({ kind: 'other', label: 'Image' })
+    expect(r.reason).toMatch(/too large/i)
+    expect(r.size).toBeGreaterThan(MAX_IMAGE_BYTES)
+    expect(r.dataUrl).toBeUndefined()
+    expect(r.content).toBeUndefined()
+  })
+})
 
-  it('handles unicode and odd filenames correctly', () =>
-    withOutboxRoot((makeRoot) => {
-      const root = makeRoot()
-      const oddName = 'файл_🎉.txt'
-      writeFileSync(path.join(root, oddName), 'unicode content')
+describe('readOutboxFile: text kinds', () => {
+  it('reads markdown, notebooks, CSV, HTML, code and text as text with their kind', () => {
+    const files = { 'a.md': 'markdown', 'b.ipynb': 'notebook', 'c.csv': 'table', 'd.tsv': 'table', 'e.html': 'html', 'f.py': 'code', 'g.txt': 'text' }
+    for (const [name, kind] of Object.entries(files)) {
+      put(name, `content of ${name}`)
+      expect(readOutboxFile(name), name).toMatchObject({ kind, content: `content of ${name}` })
+    }
+  })
+  it('valid JSON is json; invalid JSON falls back to text, still labelled JSON', () => {
+    put('ok.json', '{"a":[1,2]}')
+    put('bad.json', '{nope')
+    expect(readOutboxFile('ok.json').kind).toBe('json')
+    expect(readOutboxFile('bad.json')).toMatchObject({ kind: 'text', label: 'JSON', content: '{nope' })
+  })
+  it('a CSV with quoted commas and an empty CSV both come through untouched', () => {
+    put('q.csv', 'a,b\n"x, y",z\n')
+    put('empty.csv', '')
+    expect(readOutboxFile('q.csv').content).toBe('a,b\n"x, y",z\n')
+    expect(readOutboxFile('empty.csv')).toMatchObject({ kind: 'table', content: '' })
+  })
+  it('keeps unicode and odd file names', () => {
+    put('файл_🎉.txt', 'unicode ✓')
+    expect(readOutboxFile('файл_🎉.txt')).toMatchObject({ kind: 'text', content: 'unicode ✓', name: 'файл_🎉.txt' })
+  })
+  it('a binary file with a text extension, or an unknown binary, gets the card, never raw bytes', () => {
+    put('bin.txt', Buffer.from([0x50, 0, 0x4b, 3, 4]))
+    put('x.zip', Buffer.from([0x50, 0x4b, 3, 4, 0]))
+    for (const n of ['bin.txt', 'x.zip']) {
+      const r = readOutboxFile(n)
+      expect(r.kind, n).toBe('other')
+      expect(r.content).toBeUndefined()
+    }
+  })
+  it('an unknown extension that is plain text shows as text', () => {
+    put('Makefile', 'all:\n\techo hi\n')
+    expect(readOutboxFile('Makefile')).toMatchObject({ kind: 'text', label: 'File' })
+  })
+  it('text over the size limit gets the card, not a sliced dump', () => {
+    put('big.log', 'x'.repeat(MAX_TEXT_BYTES + 1))
+    const r = readOutboxFile('big.log')
+    expect(r.kind).toBe('other')
+    expect(r.reason).toMatch(/too large/i)
+    expect(r.content).toBeUndefined()
+  })
+})
 
-      expect(typeof readOutboxFile).toBe('function')
-    }))
+describe('readOutboxFile: PDFs', () => {
+  it('a real PDF comes back as an outbox:// URL for the in-tab viewer, not bytes', () => {
+    put('docs/r p.pdf', PDF)
+    const r = readOutboxFile('docs/r p.pdf')
+    expect(r).toMatchObject({ kind: 'pdf', label: 'PDF' })
+    expect(r.url).toBe(outboxFileUrl('docs/r p.pdf'))
+    expect(outboxRelFromUrl(r.url)).toBe('docs/r p.pdf')
+    expect(outboxPdfFile('docs/r p.pdf')).toBe(path.join(root, 'docs/r p.pdf'))
+  })
+  it('a .pdf that is not a PDF gets the card and is never served', () => {
+    put('fake.pdf', '<html>hi</html>')
+    expect(readOutboxFile('fake.pdf').kind).toBe('other')
+    expect(outboxPdfFile('fake.pdf')).toBeNull()
+  })
+  it('the PDF server only serves PDFs inside the outbox', () => {
+    put('a.png', PNG)
+    writeFileSync(path.join(home, 'secret.pdf'), PDF)
+    expect(outboxPdfFile('a.png')).toBeNull()
+    expect(outboxPdfFile('../secret.pdf')).toBeNull()
+    expect(outboxPdfFile(path.join(home, 'secret.pdf'))).toBeNull()
+    expect(outboxPdfFile('missing.pdf')).toBeNull()
+    expect(outboxPdfFile(null)).toBeNull()
+    expect(outboxRelFromUrl('outbox://file/..%2Fsecret.pdf')).toBe('../secret.pdf')   // decoded, then rejected by the guard
+    expect(outboxPdfFile(outboxRelFromUrl('outbox://file/..%2Fsecret.pdf'))).toBeNull()
+    expect(outboxRelFromUrl('https://evil.example/a.pdf')).toBeNull()
+    expect(outboxRelFromUrl('outbox://file/%E0%A4%A')).toBeNull()                       // malformed escape
+  })
+})
 
-  it('skips no files by name (including leading dots)', () => {
-    expect(typeof readOutboxFile).toBe('function')
+describe('readOutboxFile: refusals and failures', () => {
+  it('rejects traversal, absolute paths and non-strings for every kind', () => {
+    writeFileSync(path.join(home, '.claude', 'secret.png'), PNG)
+    writeFileSync(path.join(home, '.claude', 'secret.md'), '# secret')
+    for (const bad of ['../secret.png', '../secret.md', 'a/../../secret.md', '..', path.join(home, '.claude', 'secret.md'), 42, null, undefined]) {
+      expect(() => readOutboxFile(bad), String(bad)).toThrow()
+    }
+  })
+  it('rejects a symlink that points outside the outbox', () => {
+    writeFileSync(path.join(home, 'outside.png'), PNG)
+    symlinkSync(path.join(home, 'outside.png'), path.join(root, 'link.png'))
+    expect(() => readOutboxFile('link.png')).toThrow()
+  })
+  it('a missing file throws a plain "not found"', () => {
+    expect(() => readOutboxFile('nope.png')).toThrow(/not found/i)
+  })
+  it('a folder is not a file', () => {
+    mkdirSync(path.join(root, 'dir.png'))
+    expect(() => readOutboxFile('dir.png')).toThrow(/not a regular file/i)
+  })
+  it('an unreadable file gets the card saying it cannot be read', () => {
+    put('locked.md', 'secret')
+    chmodSync(path.join(root, 'locked.md'), 0o000)
+    try {
+      const r = readOutboxFile('locked.md')
+      if (process.getuid?.() === 0) return   // root reads anything
+      expect(r.kind).toBe('other')
+      expect(r.reason).toMatch(/can't be read/i)
+      expect(r.content).toBeUndefined()
+    } finally {
+      chmodSync(path.join(root, 'locked.md'), 0o600)
+    }
+  })
+})
+
+describe('readOutboxImage: images embedded in outbox markdown', () => {
+  it('resolves a relative image against the markdown file\'s own folder', () => {
+    put('report/notes.md', '![x](shots/a.png)')
+    put('report/shots/a.png', PNG)
+    put('report/b.png', PNG)
+    for (const src of ['shots/a.png', './shots/a.png', 'b.png', 'shots/a.png?raw=1', 'shots/a.png#frag']) {
+      const r = readOutboxImage('report/notes.md', src)
+      expect(r.ok, src).toBe(true)
+      expect(dataUrlBytes(r.dataUrl).equals(PNG)).toBe(true)
+    }
+  })
+  it('decodes URL-escaped names (spaces written as %20)', () => {
+    put('r/notes.md', '')
+    put('r/my shot.png', PNG)
+    expect(readOutboxImage('r/notes.md', 'my%20shot.png').ok).toBe(true)
+  })
+  it('allows ../ that stays inside the outbox, and refuses any that escapes it', () => {
+    put('a/b/notes.md', '')
+    put('a/up.png', PNG)
+    writeFileSync(path.join(home, '.claude', 'secret.png'), PNG)
+    writeFileSync(path.join(home, 'secret.png'), PNG)
+    expect(readOutboxImage('a/b/notes.md', '../up.png').ok).toBe(true)
+    for (const src of ['../../../secret.png', '../../../../secret.png', '..%2F..%2F..%2Fsecret.png', '/etc/hosts', path.join(home, 'secret.png'), 'file:///etc/hosts']) {
+      const r = readOutboxImage('a/b/notes.md', src)
+      expect(r.ok, src).toBe(false)
+      expect(r.dataUrl).toBeUndefined()
+    }
+  })
+  it('refuses a markdown path that itself escapes, and non-images', () => {
+    put('notes.md', '')
+    put('plain.txt', 'hello')
+    put('fake.png', 'hello')
+    expect(readOutboxImage('../x.md', 'a.png').ok).toBe(false)
+    expect(readOutboxImage('notes.md', 'plain.txt').ok).toBe(false)
+    expect(readOutboxImage('notes.md', 'fake.png').ok).toBe(false)
+    expect(readOutboxImage('notes.md', 'missing.png').ok).toBe(false)
+    expect(readOutboxImage('notes.md', '').ok).toBe(false)
+    expect(readOutboxImage('notes.md', null).ok).toBe(false)
+  })
+  it('leaves remote and data: images to the page (not read from disk)', () => {
+    put('notes.md', '')
+    expect(readOutboxImage('notes.md', 'https://example.com/a.png')).toMatchObject({ ok: false })
+    expect(readOutboxImage('notes.md', 'data:image/png;base64,AA')).toMatchObject({ ok: false })
+  })
+})
+
+describe('outboxRevealPath', () => {
+  it('gives the real path of an outbox file for Reveal in Finder, and refuses anything outside', () => {
+    put('a/b.zip', 'x')
+    expect(outboxRevealPath('a/b.zip')).toBe(path.join(root, 'a/b.zip'))
+    expect(() => outboxRevealPath('../secret')).toThrow()
+    expect(() => outboxRevealPath('missing.zip')).toThrow()
+  })
+  it('works with the real (resolved) temp path too', () => {
+    put('c.txt', 'x')
+    expect(realpathSync(outboxRevealPath('c.txt'))).toBe(realpathSync(path.join(root, 'c.txt')))
   })
 })

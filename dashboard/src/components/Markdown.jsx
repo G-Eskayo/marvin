@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { linkify } from '../lib/linkify.js'
@@ -23,7 +24,15 @@ export const markdownComponents = {
   ),
   th: (props) => <th className="border border-neutral-700 bg-neutral-900 px-2 py-1 text-left font-semibold text-neutral-100" {...props} />,
   td: (props) => <td className="border border-neutral-800 px-2 py-1 align-top text-neutral-300" {...props} />,
-  img: ({ alt, ...props }) => <img alt={alt} className="my-3 max-w-full rounded-lg bg-white/5" {...props} />,
+  // onOpen (optional): clicking opens the image in the shared full-size viewer (ImageViewer).
+  img: ({ alt, onOpen, node: _node, ...props }) => (
+    <img
+      alt={alt}
+      className={`my-3 max-w-full rounded-lg bg-white/5${onOpen ? ' cursor-zoom-in' : ''}`}
+      onClick={onOpen ? () => onOpen(props.src) : undefined}
+      {...props}
+    />
+  ),
   ul: (props) => <ul className="mb-3 list-disc pl-6 text-neutral-300" {...props} />,
   ol: (props) => <ol className="mb-3 list-decimal pl-6 text-neutral-300" {...props} />,
   blockquote: (props) => <blockquote className="mb-3 border-l-2 border-neutral-700 pl-3 text-neutral-400" {...props} />
@@ -55,11 +64,38 @@ export function resolveImage(src, repo) {
   return `https://raw.githubusercontent.com/${full}/HEAD/${src.replace(/^\.?\//, '')}`
 }
 
-export default function Markdown({ content, ctx, onLink }) {
+// An image whose bytes come from the main process (an outbox markdown file's `shots/x.png`, G-Eskayo/marvin#402).
+// `load(src)` resolves to { ok, dataUrl } | { ok: false, reason }; a failure shows a short note, never a broken icon.
+function LoadedImage({ src, alt, load, onOpen }) {
+  const [state, setState] = useState({ status: 'loading' })
+  useEffect(() => {
+    let live = true
+    setState({ status: 'loading' })
+    Promise.resolve()
+      .then(() => load(src))
+      .then((r) => live && setState(r?.ok ? { status: 'ok', src: r.dataUrl } : { status: 'error', reason: r?.reason || 'not found' }))
+      .catch((err) => live && setState({ status: 'error', reason: String(err?.message || err) }))
+    return () => { live = false }
+  }, [src])
+  if (state.status === 'error') return <span className="my-3 block text-xs text-red-400">Image {src} couldn't load: {state.reason}</span>
+  if (state.status === 'loading') return <span className="my-3 block h-24 animate-pulse rounded-lg bg-neutral-800" aria-label="Loading image" />
+  return markdownComponents.img({ alt, src: state.src, onOpen })
+}
+
+// Markdown images: `loadImage` (optional) fetches a relative image's bytes; `onOpenImage({ src, alt })` (optional)
+// opens a clicked image in the shared full-size viewer.
+function MarkdownImage({ src, alt, repo, loadImage, onOpenImage }) {
+  const isRelative = src && !/^([a-z][a-z0-9+.-]*:|\/\/)/i.test(src)
+  const onOpen = onOpenImage ? (resolved) => onOpenImage({ src: resolved, alt }) : undefined
+  if (loadImage && isRelative) return <LoadedImage src={src} alt={alt} load={loadImage} onOpen={onOpen} />
+  return markdownComponents.img({ alt, src: resolveImage(src, repo), onOpen })
+}
+
+export default function Markdown({ content, ctx, onLink, loadImage, onOpenImage }) {
   const text = ctx ? linkify(content, ctx) : content
   const components = {
     ...markdownComponents,
-    img: (props) => markdownComponents.img({ ...props, src: resolveImage(props.src, ctx?.repo) }),
+    img: ({ src, alt }) => <MarkdownImage src={src} alt={alt} repo={ctx?.repo} loadImage={loadImage} onOpenImage={onOpenImage} />,
     a: ({ href, children, ...rest }) => {
       const dash = href && parseDashLink(href)
       if (dash) {

@@ -26,6 +26,11 @@ describe('renderer Content Security Policy', () => {
     expect(directive('media-src')).toEqual(["'self'", 'prmedia:'])
   })
 
+  it('lets the Files tab frame outbox PDFs (outbox:), and frames nothing remote (#402)', () => {
+    // A sandboxed HTML file is a srcdoc frame (not fetched), so a link clicked inside it can only reach these.
+    expect(directive('frame-src')).toEqual(["'self'", 'outbox:'])
+  })
+
   it('lets the Portfolio tab show images from the dev site and data: URLs', () => {
     expect(directive('img-src')).toEqual(expect.arrayContaining(["'self'", 'data:', DEV]))
   })
@@ -79,10 +84,13 @@ describe('reference previews are inert', () => {
 
 describe('image lightbox and delete', () => {
   const src = () => _read(new URL('../src/components/PortfolioHub.jsx', import.meta.url), 'utf8')
-  it('closes on Escape and on a click outside the picture', () => {
-    expect(src()).toMatch(/e\.key === 'Escape'/)
-    expect(src()).toMatch(/onClick=\{onClose\}/)
-    expect(src()).toMatch(/stopPropagation/)
+  it('uses the shared full-size viewer (#402), which closes on Escape, ✕ and a click outside the picture', () => {
+    expect(src()).toMatch(/<ImageViewer items=\{\[\{ src: zoom\.src/)
+    expect(src()).not.toMatch(/function Lightbox/)
+    const viewer = _read(new URL('../src/components/ImageViewer.jsx', import.meta.url), 'utf8')
+    expect(viewer).toMatch(/action === 'close'\) onClose/)
+    expect(viewer).toMatch(/onClick=\{onBackdropClick\}/)
+    expect(viewer).toMatch(/WebkitAppRegion: 'no-drag'/)
   })
   it('every image in the Images tab can be opened full size, and variants can be deleted but not the one in use', () => {
     expect(src()).toMatch(/setZoom\(\{ src: preview/)

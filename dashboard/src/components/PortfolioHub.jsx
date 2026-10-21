@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import ImageViewer from './ImageViewer.jsx'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
@@ -928,21 +929,6 @@ function Evaluation() {
 
 // ── Images ──────────────────────────────────────────────────────────────────
 
-// Full-size view of an image: Esc (or a click outside the picture) closes it.
-function Lightbox({ src, caption, onClose }) {
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose() }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
-  return (
-    <div role="dialog" aria-label="Full-size image" onClick={onClose} className="fixed inset-0 z-50 flex cursor-zoom-out flex-col items-center justify-center gap-3 bg-black/85 p-6">
-      <img src={src} alt={caption || ''} onClick={(e) => e.stopPropagation()} className="max-h-[85vh] max-w-full cursor-default rounded shadow-2xl" />
-      <p className="text-xs text-neutral-300">{caption ? `${caption} · ` : ''}press Esc to close</p>
-    </div>
-  )
-}
-
 // One generated variant: its picture and a button to put it in use. Every image ever generated stays here, so a
 // liked one is never lost to a re-roll.
 function FluxVariantTile({ slug, v, onChoose, onDelete, onZoom, busy }) {
@@ -1106,7 +1092,7 @@ function ImageCard({ item, motifs, onGenerate }) {
 
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-neutral-800 p-3">
-      {zoom && <Lightbox src={zoom.src} caption={zoom.caption} onClose={closeZoom} />}
+      {zoom && <ImageViewer items={[{ src: zoom.src, caption: zoom.caption, alt: zoom.caption }]} onClose={closeZoom} />}
       <div className="flex items-center gap-2">
         <h3 className="truncate text-sm font-medium text-white">{item.title}</h3>
         {item.heroMismatch && (
