@@ -99,7 +99,8 @@ contextBridge.exposeInMainWorld('api', {
     content: (relPath) => ipcRenderer.invoke('outbox:content', relPath),
     image: (fromRel, src) => ipcRenderer.invoke('outbox:image', fromRel, src),
     reveal: (relPath) => ipcRenderer.invoke('outbox:reveal', relPath),
-    open: (relPath) => ipcRenderer.invoke('outbox:open', relPath)
+    open: (relPath) => ipcRenderer.invoke('outbox:open', relPath),
+    openLink: (url) => ipcRenderer.invoke('outbox:openLink', url)
   },
   portfolio: {
     // Opens the dev site in Google Chrome, or takes you to the tab that already has it (marvin#377).

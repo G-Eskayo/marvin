@@ -11,7 +11,7 @@ import { formatSize } from '../lib/file_kinds.js'
 //   { kind, label, name, path, size, content | dataUrl | data (PDF bytes) | reason }
 // kinds: image, markdown, notebook, json, table, pdf, html, code, text, other (the card).
 // `loadImage(src)`: bytes for a markdown file's relative images. `onReveal()`: Reveal in Finder for the card.
-// `onOpenFile()`: Open in Preview (shown for PDFs).
+// `onOpenFile()`: Open in Preview (shown for PDFs). `onOpenLink(url)`: a safe external link clicked inside a PDF.
 // `markdown`: extra props for Markdown (ctx, onLink) when the Docs tab uses it.
 
 const pre = 'mb-3 overflow-auto rounded-lg bg-neutral-900 p-3 font-mono text-sm text-neutral-200'
@@ -65,7 +65,7 @@ function prettyJson(content) {
   }
 }
 
-export default function FileView({ file, loadImage, onReveal, onOpenFile, markdown = {} }) {
+export default function FileView({ file, loadImage, onReveal, onOpenFile, onOpenLink, markdown = {} }) {
   const [viewer, setViewer] = useState(null)
   const [broken, setBroken] = useState(false)
   const open = ({ src, alt }) => setViewer({ src, alt, caption: alt || '' })
@@ -86,8 +86,8 @@ export default function FileView({ file, loadImage, onReveal, onOpenFile, markdo
   } else if (kind === 'table') {
     body = <DataTable content={file.content} delimiter={/\.tsv$/i.test(file.name || '') ? '\t' : ','} />
   } else if (kind === 'pdf') {
-    // Our own pdf.js pages in the dashboard's style (owner, 2026-10-21: Chromium's embedded viewer clashed). See PdfView.
-    body = <PdfView file={file} onOpenImage={open} onOpen={onOpenFile} card={card} />
+    // pdf.js's interactive viewer in the dashboard's style (owner, 2026-10-21: Chromium's embedded viewer clashed). See PdfView.
+    body = <PdfView file={file} onOpenImage={open} onOpen={onOpenFile} onOpenLink={onOpenLink} card={card} />
   } else if (kind === 'html') {
     // Rendered, sandboxed: no scripts, no network (owner decision 2026-10-21). See sandboxedHtml.
     body = <iframe title={file.name} sandbox="" srcDoc={sandboxedHtml(file.content)} className="h-full min-h-[70vh] w-full rounded border border-neutral-800 bg-white" />

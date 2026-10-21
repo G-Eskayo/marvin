@@ -1,7 +1,7 @@
 // The real pdf.js (legacy build, runs in Node) against real good, broken, encrypted, empty and huge PDFs (#402).
 import { describe, it, expect } from 'vitest'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
-import { openPdf, pdfErrorReason, pageScale, viewerScale, pageCountLabel, PDF_RENDER_MAX_PX, PDF_RENDER_MAX_PIXELS } from '../src/lib/pdf_doc.js'
+import { openPdf, pdfErrorReason, viewerScale, pageCountLabel, PDF_RENDER_MAX_PX, PDF_RENDER_MAX_PIXELS } from '../src/lib/pdf_doc.js'
 import { makePdf } from './fixtures/make_pdf.js'
 
 describe('openPdf with the real pdf.js', () => {
@@ -68,17 +68,6 @@ describe('pdfErrorReason', () => {
 })
 
 describe('render scales', () => {
-  it('fits a page to the panel width and renders sharp on a Retina display', () => {
-    const s = pageScale(612, 792, 900, 2)
-    expect(612 * s.css).toBeCloseTo(900)
-    expect(s.pixel).toBeCloseTo(s.css * 2)
-  })
-  it('caps the canvas for huge pages and survives junk', () => {
-    const s = pageScale(14400, 14400, 1000, 2)
-    expect(14400 * s.pixel).toBeLessThanOrEqual(PDF_RENDER_MAX_PX + 1)
-    expect(pageScale(0, 0, 900, 2)).toEqual({ css: 1, pixel: 1 })
-    expect(pageScale(612, 792, NaN)).toEqual({ css: 1, pixel: 1 })
-  })
   it('renders a page for the viewer at about 4096 px on the long side, within the area cap', () => {
     const v = viewerScale(612, 792)
     expect(792 * v).toBeLessThanOrEqual(PDF_RENDER_MAX_PX + 0.5)

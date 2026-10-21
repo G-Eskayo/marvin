@@ -43,6 +43,7 @@ import { createIndexer, buildDocsIndex, loadIndex } from './docs_search.js'
 import { createDocsService, MASTER_ID } from './docs_service.js'
 import { readMergeableRepos, readUiPaths, listProfiles, setDispatch, setMergeFromDashboard } from './profiles.js'
 import { searchFiles, isRevealable, isLinkable, linkAction } from './files_search.js'
+import { safeExternalUrl } from '../../src/lib/pdf_nav.js'
 import { listOutboxTree, readOutboxFile, readOutboxImage, outboxRevealPath, outboxOpenPath } from './outbox.js'
 import { readCatalog, readMasterDoc, CATALOG_DIR, MASTER_DOC_PATH } from './catalog.js'
 import { STAGES_DIR } from '../../webhook-server/ticket_stages.js'
@@ -530,6 +531,13 @@ function registerDocsHandlers() {
   // An image a markdown file embeds, resolved against that file's folder; read-only, never outside the outbox (#402).
   ipcMain.handle('outbox:image', (_event, fromRel, src) => readOutboxImage(fromRel, src))
   ipcMain.handle('outbox:reveal', (_event, relPath) => shell.showItemInFolder(outboxRevealPath(relPath)))
+  // A link clicked inside a PDF: only http/https/mailto go to the default browser or mail app (pdf_nav.js
+  // safeExternalUrl, checked again here so a compromised page can't widen it). Never file:, javascript: or custom schemes.
+  ipcMain.handle('outbox:openLink', async (_event, url) => {
+    const safe = safeExternalUrl(url)
+    if (!safe) throw new Error('Only web and mail links open from a PDF')
+    await shell.openExternal(safe)
+  })
   // Open in Preview (PDFs only, see outboxOpenPath), like docs:openLink; same guard as every outbox read.
   ipcMain.handle('outbox:open', async (_event, relPath) => {
     const err = await shell.openPath(outboxOpenPath(relPath))
