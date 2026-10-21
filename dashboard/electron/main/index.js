@@ -12,7 +12,8 @@ import { getReworkStatus, clearReworkCache } from './rework.js'
 import { createGithubState, repoOfSource, gateCooldownUntil } from './github_state.js'
 import { startCheckWatch, createCheckProbe } from '../../webhook-server/gh_watch.js'
 import { createStackRetarget } from './stack_retarget.js'
-import { prsForOrderCheck, listPipelinePrs, approveMr, denyMr, fetchTicketContext, sentBackKeys, clearSentBackLabel } from './mr_review.js'
+import { prsForOrderCheck, listPipelinePrs, denyMr, fetchTicketContext, sentBackKeys, clearSentBackLabel } from './mr_review.js'
+import { approveMrStream } from './approve_stream.js'
 import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
 import { readDispatchStatus } from './dispatch_status.js'
 import { readHealthStatus, runHealthCheckNow } from './health.js'
@@ -32,6 +33,18 @@ import { recordRefusal } from '../../webhook-server/refusal_log.js'
 import { submitDecisions, sendBackForOptions } from './decisions_submit.js'
 
 const mergeOps = createMergeOps()
+// marvin#568: every change to a merge op is pushed to the renderer (the card subscribes; it reads once on mount).
+function pushMergeOp(url, op) {
+  if (op) mainWindow?.webContents.send('mr:mergeEvent', url, op)
+}
+// A merge running here whose PR GitHub now calls merged was merged on GitHub by hand: end it as "Merged on GitHub"
+// (merge_ops.githubChanged). Asked only on a change trigger, once per merging op; nothing while no merge runs.
+const viewPrState = async (url) => JSON.parse((await execFileAsync('gh', ['pr', 'view', url, '--json', 'state'])).stdout)
+function checkMergedElsewhere(repo, only = null) {
+  mergeOps.githubChanged(repo, viewPrState, Date.now(), only)
+    .then((urls) => urls.forEach((u) => pushMergeOp(u, mergeOps.get(u))))
+    .catch(() => {})
+}
 import { readRegistry, loadBoard, fetchBoardData, fetchCompletedData, withProjectStatus, defaultStagesFor, defaultLiveNumbers, getEvidence, clearCrossProjectCache, REGISTRY_PATH } from './boards.js'
 import { createRelationsService } from './relations_service.js'
 import { summarizeBoard, buildCompleted } from './board.js'
@@ -124,6 +137,12 @@ async function fetchOpenPrs(light, fresh = false) {
   const repos = readRegistry().map((b) => b.repo)
   const listed = await listOpenPrsAcrossRepos(repos, perRepo, { listedAt: (repo) => githubState.fetchedAt(light ? 'prs-light' : 'prs', repo) })
   const errors = listed.errors
+  // A merge running here whose PR is no longer in its repo's open list (and that repo was read fine) was closed or
+  // merged elsewhere: ask GitHub about just those (marvin#568).
+  const open = new Set(listed.prs.map((p) => p.url))
+  const failed = new Set(errors.map((e) => e.repo))
+  const gone = mergeOps.mergingUrls().filter((u) => !open.has(u) && !failed.has(repoFromPrUrl(u)))
+  if (gone.length) checkMergedElsewhere(null, new Set(gone))
   // "Last checked" on a PR's checks (marvin#555): the check watch's last probe of its commit, if later than the list read.
   const prs = listed.prs.map((p) => {
     const probed = p.headRefOid ? checkWatch?.watcher.checkedAt(p.repo, p.headRefOid) : null
@@ -152,6 +171,7 @@ function startPrCheckWatch() {
     onChange: (repo) => {
       githubChanged(`github:${repo}`)
       mainWindow?.webContents.send('mr:refresh')
+      checkMergedElsewhere(repo)
     },
     skip: () => Date.now() < gateCooldownUntil()
   })
@@ -751,6 +771,7 @@ function registerMrReviewHandlers() {
       record: recordRefusal
     })
     if (!mergeOps.start(url, Date.now(), head)) return { merged: false, cancelled: true, alreadyMerging: true }
+    pushMergeOp(url, mergeOps.get(url))
     try {
       // The Approve & Merge click is the decision. The native popup is opt-in (prefs.json: confirmMerge) -- the
       // duplicate-start guard above, the merge gate's retest and the base/order checks are what protect a stray click.
@@ -765,20 +786,28 @@ function registerMrReviewHandlers() {
         })
         if (response !== 1) {
           mergeOps.cancel(url)
+          pushMergeOp(url, { state: 'idle' })
           return { merged: false, cancelled: true }
         }
       }
-      const result = await approveMr(url, MR_WEBHOOK_URL, postJson)
-      mergeOps.finish(url, result)
+      // marvin#568: the webhook streams each stage as it happens; each one is folded into the op and pushed.
+      const result = await approveMrStream(url, MR_WEBHOOK_URL, { onEvent: (event) => pushMergeOp(url, mergeOps.event(url, event)) })
+      if (result?.interrupted) {
+        pushMergeOp(url, mergeOps.interrupt(url))
+        return { ...result, cancelled: false }
+      }
+      pushMergeOp(url, mergeOps.finish(url, result))
       githubChanged(null)  // the list must not keep showing a PR that just merged
       clearReworkCache()
       return { ...result, cancelled: false }
     } catch (err) {
-      mergeOps.fail(url, err.message)
+      pushMergeOp(url, mergeOps.fail(url, err.message))
       throw err
     }
   })
 
+  // The one read a card makes when it mounts (a merge already running, or how the last one ended); after that,
+  // changes arrive as 'mr:mergeEvent' pushes.
   ipcMain.handle('mr:mergeState', (_event, url, head = null) => mergeOps.get(url, Date.now(), head))
 
   // The owner's answers to a Decisions section, on a PR or a ticket (2026-10-09): written into the description, then
@@ -872,8 +901,15 @@ app.whenReady().then(() => {
   startRefreshServer((payload = {}) => {
     const topics = Array.isArray(payload.topics) ? payload.topics : ['mr']
     for (const topic of topics) {
-      if (topic === 'mr') { githubChanged(payload.source); mainWindow?.webContents.send('mr:refresh') }
-      else triggerHub.emit(topic, payload.source || 'ping')
+      if (topic === 'mr') {
+        githubChanged(payload.source)
+        mainWindow?.webContents.send('mr:refresh')
+        checkMergedElsewhere(repoOfSource(payload.source))
+      } else if (topic === 'merge') {
+        // A merge's stage event from the webhook on this Mac (marvin#568): local state only, never a GitHub read.
+        const m = payload.merge
+        if (m && typeof m.url === 'string' && m.url.startsWith('https://github.com/')) pushMergeOp(m.url, mergeOps.event(m.url, m.event))
+      } else triggerHub.emit(topic, payload.source || 'ping')
     }
   }, { port: DASHBOARD_REFRESH_PORT, host: '127.0.0.1' })
 

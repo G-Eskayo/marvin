@@ -1,6 +1,7 @@
 import { execFile, spawn } from 'child_process'
 import { promisify } from 'util'
 import { mkdtemp, rm } from 'fs/promises'
+import { readdirSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
 import { classifyFailure, summarizeGateFailure, withRetry, MergeFailure, refusal } from './failure.js'
@@ -15,6 +16,7 @@ import { recordStage } from './ticket_stages.js'
 import { assertChecksGreen } from './ci_status.js'
 import { checkOpenPrs } from './post_merge_rebase.js'
 import { applyVersionBump } from './changelog.js'
+import { createCountParser, gateExtension, machineLoad } from './merge_progress.js'
 
 const execFileAsync = promisify(execFile)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -26,11 +28,15 @@ const PROFILE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'project_profi
 const GENERATED_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'generated_paths.py')
 const DEFAULT_TEST_TIMEOUT_MS = 1200_000
 
-export async function execWithGroupTimeout(cmd, args, opts, timeoutMs = DEFAULT_TEST_TIMEOUT_MS) {
-  const child = spawn(cmd, args, { ...opts, detached: true })
+// opts.onOutput(chunk), when given, sees the output as it arrives (marvin#568: live test counts, and the "still making
+// progress" signal the gate's time limit reads). It is not passed on to spawn.
+export async function execWithGroupTimeout(cmd, args, opts = {}, timeoutMs = DEFAULT_TEST_TIMEOUT_MS) {
+  const { onOutput, ...spawnOpts } = opts || {}
+  const child = spawn(cmd, args, { ...spawnOpts, detached: true })
   let stdout = '', stderr = ''
-  if (child.stdout) child.stdout.on('data', (d) => { stdout += d })
-  if (child.stderr) child.stderr.on('data', (d) => { stderr += d })
+  const seen = (d) => { if (onOutput) { try { onOutput(String(d)) } catch { /* a progress reader never breaks the run */ } } }
+  if (child.stdout) child.stdout.on('data', (d) => { stdout += d; seen(d) })
+  if (child.stderr) child.stderr.on('data', (d) => { stderr += d; seen(d) })
   const promise = new Promise((resolve, reject) => {
     child.on('error', reject)
     child.on('close', (code) => {
@@ -96,10 +102,26 @@ export async function isBehindMain(headRef, exec = execFileAsync, repoPath = REP
   }
 }
 
-export async function _defaultRunTests(cwd, exec) {
-  // MARVIN_MERGE_GATE: tests that read ANOTHER repo's data (the portfolio figures) stay out of a PR's gate; they run in the
-  // main-branch health check instead (lib/main_health.py).
-  await exec(VENV_PYTHON, ['-m', 'pytest', '-q'], { cwd, env: { ...process.env, MARVIN_MERGE_GATE: '1' } })
+// How many dashboard test files vitest will run, for "120 of 183 files". 0 when unknown (the count then grows as it goes).
+export function countTestFiles(dir) {
+  try {
+    return readdirSync(dir, { recursive: true }).filter((n) => !String(n).includes('node_modules') && /\.(test|spec)\.[cm]?[jt]sx?$/.test(String(n))).length
+  } catch {
+    return 0
+  }
+}
+
+const noProgress = () => {}
+
+export async function _defaultRunTests(cwd, exec, progress = noProgress) {
+  const dashboardDir = path.join(cwd, 'dashboard')
+  // Each output chunk is a heartbeat for the gate's time limit; the parsers turn the runners' own lines into counts.
+  const watch = (runner, label, totalFiles = 0) => {
+    const parse = createCountParser(runner, { totalFiles, onCount: (count) => progress('tests', 'running', { detail: label, count }) })
+    return (chunk) => { progress('tests', 'output'); parse(chunk) }
+  }
+  // npm install first (marvin#568), so the stages read in order: Installing, then Tests (Python, then Dashboard).
+  progress('installing', 'running')
   // Found live 2026-10-01 (PR #119's merge attempt): a `git worktree add`
   // scratch checkout has no dashboard/node_modules at all -- `npx vitest
   // run` hard-fails with a dependency-resolution error wall that has
@@ -109,9 +131,14 @@ export async function _defaultRunTests(cwd, exec) {
   // separate filesystem location so nothing can be shared/symlinked in
   // safely without risking the exact collision this isolation exists to
   // avoid.
-  const dashboardDir = path.join(cwd, 'dashboard')
-  await exec('npm', ['install'], { cwd: dashboardDir })
-  await exec('npx', ['vitest', 'run'], { cwd: dashboardDir })
+  await exec('npm', ['install'], { cwd: dashboardDir, onOutput: () => progress('installing', 'output') })
+  progress('installing', 'done')
+  progress('tests', 'running', { detail: 'Python' })
+  // MARVIN_MERGE_GATE: tests that read ANOTHER repo's data (the portfolio figures) stay out of a PR's gate; they run in the
+  // main-branch health check instead (lib/main_health.py).
+  await exec(VENV_PYTHON, ['-m', 'pytest', '-q'], { cwd, env: { ...process.env, MARVIN_MERGE_GATE: '1' }, onOutput: watch('pytest', 'Python') })
+  progress('tests', 'running', { detail: 'Dashboard', logDetail: true })
+  await exec('npx', ['vitest', 'run'], { cwd: dashboardDir, onOutput: watch('vitest', 'Dashboard', countTestFiles(path.join(dashboardDir, 'test'))) })
 }
 
 // Rebases headRef onto origin/main inside a throwaway scratch worktree --
@@ -154,8 +181,9 @@ export async function baselineFailsOnMain(names, exec = execFileAsync, repoPath 
   }
 }
 
-export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = REPO_PATH, runTests = _defaultRunTests, base = 'main', resolveConflicts = null, sleep = null) {
+export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = REPO_PATH, runTests = _defaultRunTests, base = 'main', resolveConflicts = null, sleep = null, progress = noProgress) {
   const scratchDir = await mkdtemp(path.join(tmpdir(), 'mr-merge-gate-'))
+  progress('rebasing', 'running', { detail: `onto ${base}` })
   try {
     await exec('git', ['fetch', 'origin', base, headRef], { cwd: repoPath })
     await exec('git', ['worktree', 'add', '--detach', scratchDir, `origin/${headRef}`], { cwd: repoPath })
@@ -172,11 +200,13 @@ export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = 
       }
     }
 
+    progress('rebasing', 'done')
     try {
-      await runTests(scratchDir, exec)
+      await runTests(scratchDir, exec, progress)
     } catch (err) {
       return { ok: false, reason: `Tests failed after rebasing onto main:\n\n${testOutputOf(err)}` }
     }
+    progress('tests', 'done')
 
     // The retest above may have taken many minutes; a GitHub blip on the push must not discard it.
     await withRetry(() => exec('git', ['push', '--force-with-lease', 'origin', `HEAD:${headRef}`], { cwd: scratchDir }), {
@@ -241,8 +271,9 @@ export async function defaultGateContext(repo, exec = execFileAsync) {
     clone: info.clone,
     base: info.base_branch,
     // The same measuring code the pipeline uses, so "passes the gate" means what "passes verification" means.
-    runTests: async (cwd, run) => {
-      await run(VENV_PYTHON, [PROFILE_SCRIPT, 'verify', repo, cwd])
+    runTests: async (cwd, run, progress = noProgress) => {
+      progress('tests', 'running', { detail: name })
+      await run(VENV_PYTHON, [PROFILE_SCRIPT, 'verify', repo, cwd], { onOutput: () => progress('tests', 'output') })
     },
     resolveConflicts: generatedResolver(repo, exec),
     // The project's own UI paths, added to ui_evidence.js's defaults (marvin #374).
@@ -271,13 +302,25 @@ function generatedResolver(repo, exec) {
 // Merging one PR changes what every other PR must be tested against, so they go one at a time, in the order
 // asked. A failure never blocks the ones behind it. Different repos do not wait for each other.
 const repoQueues = new Map()
+const queueDepth = new Map() // jobs queued or running per repo, for "Queued: 1 merge ahead" (marvin#568)
 function inRepoQueue(key, fn) {
   const prev = repoQueues.get(key) || Promise.resolve()
+  queueDepth.set(key, (queueDepth.get(key) || 0) + 1)
   const run = prev.then(fn, fn)
   const tail = run.catch(() => {})
   repoQueues.set(key, tail)
-  tail.then(() => { if (repoQueues.get(key) === tail) repoQueues.delete(key) })
+  tail.then(() => {
+    const left = (queueDepth.get(key) || 1) - 1
+    if (left > 0) queueDepth.set(key, left)
+    else queueDepth.delete(key)
+    if (repoQueues.get(key) === tail) repoQueues.delete(key)
+  })
   return run
+}
+
+// How many jobs (merges, post-merge checks) a new merge of this PR would wait behind.
+export function mergesAhead(prUrl) {
+  return queueDepth.get(repoFromPrUrl(prUrl) || '(unknown)') || 0
 }
 
 export function mergePr(prUrl, ...rest) {
@@ -386,12 +429,28 @@ export async function mergeableNow(prUrl, exec, sleep = (ms) => new Promise((r) 
 // not the PR's.
 export const GATE_TIMEOUT_MS = 40 * 60_000
 
-function withGateTimeout(promise, ms) {
+// The limit is decided when it runs out (marvin#568): `decide()` may extend it once, with a stated reason (a busy
+// machine whose tests are still printing), or say why it is cut off. Two fixed deadlines, never a loop.
+const CUT = Symbol('cut')
+function deadline(promise, ms) {
   let timer
-  const cut = new Promise((resolve) => {
-    timer = setTimeout(() => resolve({ ok: false, reason: `Tests failed after rebasing onto main:\n\nThe check did not finish within ${Math.max(1, Math.round(ms / 60000))} min and was cut off.` }), ms)
-  })
+  const cut = new Promise((resolve) => { timer = setTimeout(() => resolve(CUT), ms) })
   return Promise.race([promise, cut]).finally(() => clearTimeout(timer))
+}
+const cutOff = (ms, note) => ({ ok: false, reason: `Tests failed after rebasing onto main:\n\nThe check did not finish within ${Math.max(1, Math.round(ms / 60000))} min and was cut off.${note ? ` ${note}.` : ''}` })
+
+export async function withGateTimeout(promise, ms, decide = () => ({ extendMs: 0 }), onExtend = () => {}) {
+  const first = await deadline(promise, ms)
+  if (first !== CUT) return first
+  let d = { extendMs: 0 }
+  try { d = decide() || d } catch { /* no extension */ }
+  if (!(d.extendMs > 0)) return cutOff(ms, d.note)
+  try { onExtend(d.reason) } catch { /* reporting must not break the gate */ }
+  const second = await deadline(promise, d.extendMs)
+  if (second !== CUT) return second
+  let after = { extendMs: 0 }
+  try { after = decide() || after } catch { /* as above */ }
+  return cutOff(ms + d.extendMs, `It was extended once already (${d.reason})${after.note ? `; at the end ${after.note}` : ''}`)
 }
 
 async function mergePrUnqueued(
@@ -405,10 +464,19 @@ async function mergePrUnqueued(
   recordStageFn = recordStage,
   deps = {}
 ) {
-  const { sleep, recordFailureFn = recordFailure, gateContext = defaultGateContext, baselineFails = null, gateTimeoutMs = GATE_TIMEOUT_MS, rebaseOpen = checkOpenPrs, uiEvidence = assertUiEvidence, decisions = assertDecisions } = deps
+  const { sleep, recordFailureFn = recordFailure, gateContext = defaultGateContext, baselineFails = null, gateTimeoutMs = GATE_TIMEOUT_MS, rebaseOpen = checkOpenPrs, uiEvidence = assertUiEvidence, decisions = assertDecisions,
+    progress: report = noProgress, loadNow = () => machineLoad(), now = Date.now } = deps
   if (typeof prUrl !== 'string' || !prUrl.startsWith('https://github.com/')) {
     throw new MergeFailure(classifyFailure({ stage: 'request', error: new Error(`Not a GitHub PR URL: ${prUrl}`) }))
   }
+  // marvin#568: each stage is reported as it starts and ends (index.js turns that into pushed events and log lines).
+  // Output from the tests is a heartbeat: the time limit reads it to tell "slow" from "hung".
+  let lastOutputAt = null
+  const progress = (stage, state, extra) => {
+    if (state === 'output' || extra?.count) lastOutputAt = now()
+    try { report(stage, state, extra) } catch { /* a progress reader never breaks the merge */ }
+  }
+  progress('fetching', 'running')
 
   // marvin's own PRs use the built-in gate. Any other project needs its profile to say it may be
   // merged from here -- enforced here, not just on the screen.
@@ -450,6 +518,11 @@ async function mergePrUnqueued(
     throw e
   }
 
+  progress('fetching', 'done', { gated: !!gate })
+  if (!gate) {
+    const why = behind ? `${ctx ? ctx.base : 'main'} changed none of this PR's files` : `already up to date with ${ctx ? ctx.base : 'main'}`
+    for (const s of ['rebasing', 'installing', 'tests']) progress(s, 'skipped', { detail: `no retest needed: ${why}` })
+  }
   if (!gate && behind) {
     stage('gate', 'passed', `no retest needed: behind ${ctx ? ctx.base : 'main'}, but ${ctx ? ctx.base : 'main'} changed none of this PR's files, so it merges directly (main-health re-runs the suite after the merge)`)
   }
@@ -457,9 +530,11 @@ async function mergePrUnqueued(
     stage('gate', 'started', `rebasing onto ${ctx ? ctx.base : 'main'} + retesting (${ctx ? ctx.base : 'main'} changed files this PR also changes)`)
     const result = await withGateTimeout(
       Promise.resolve(ctx
-        ? rebaseAndRetestFn(headRefName, exec, ctx.clone, ctx.runTests, ctx.base, ctx.resolveConflicts)
-        : rebaseAndRetestFn(headRefName, exec, REPO_PATH, _defaultRunTests, 'main', generatedResolver(MARVIN_REPO, exec))),
-      gateTimeoutMs)
+        ? rebaseAndRetestFn(headRefName, exec, ctx.clone, ctx.runTests, ctx.base, ctx.resolveConflicts, sleep ?? null, progress)
+        : rebaseAndRetestFn(headRefName, exec, REPO_PATH, _defaultRunTests, 'main', generatedResolver(MARVIN_REPO, exec), sleep ?? null, progress)),
+      gateTimeoutMs,
+      () => gateExtension({ baseMs: gateTimeoutMs, load: loadNow(), lastOutputAt, now: now() }),
+      (reason) => progress('tests', 'running', { detail: reason, logDetail: true }))
     if (!result.ok) {
       // Structured, concise feedback (code header, failing test names, capped tail)
       // instead of a raw output wall: this comment is what the ticket's executor reads
@@ -469,8 +544,10 @@ async function mergePrUnqueued(
         // The machine failed, not the PR: leave the ticket and PR alone so it can simply be approved again.
         stage('gate', 'failed', 'GATE_INFRA: the build machine or test setup failed, not the code')
         const timedOut = /did not finish within \d+ min/.test(summary.comment)
+        // marvin#568: say what the machine was doing when the limit ran out (busy, or idle so the tests hung).
+        const loadNote = (String(result.reason).match(/cut off\. (.+?)\.?\s*$/s) || [])[1]
         throw new MergeFailure(refusal('GATE_INFRA', 'gate', timedOut
-          ? 'the check on this PR did not finish in time and was cut off. That points at the machine or its setup, not at the PR\'s code'
+          ? `the check on this PR did not finish in time and was cut off${loadNote ? ` (${loadNote})` : ''}. That points at the machine or its setup, not at the PR's code`
           : 'the build machine or the project\'s test setup failed while checking this PR, not the PR\'s code',
           `Approve it again. The PR was not sent back for rework. What failed: ${summary.comment.slice(0, 300)}`))
       }
@@ -504,6 +581,7 @@ async function mergePrUnqueued(
   // Approve only checks the PR merges cleanly: CI, conflicts, retest after a rebase.
 
   stage('merging', 'started', '')
+  progress('merging', 'running')
   let mergeError = null
   // "Not mergeable" straight after our own rebase push is usually GitHub still recomputing the PR, not a conflict
   // (finance-os, clarity #66: a good PR was denied and its ticket wrongly sent back). So when merging says that, ask
@@ -548,6 +626,8 @@ async function mergePrUnqueued(
     throw new MergeFailure(failure)
   }
   stage('merging', 'passed', '')
+  progress('merging', 'done')
+  progress('after', 'running')
   if (!ctx && ticketNumber !== null) {
     stage('versioning', 'started', '')
     try {
@@ -570,6 +650,7 @@ async function mergePrUnqueued(
   inRepoQueue(integrateRepo, () => rebaseOpen({ repo: integrateRepo, mergedPrUrl: prUrl, base: ctx ? ctx.base : 'main', exec, check }))
     .catch((e) => console.error(`[post-merge] ${integrateRepo}: after ${prUrl}: ${String(e?.message || e).slice(0, 300)}`))
     .then(() => redispatch())
+  progress('after', 'done')
   stage('done', 'passed', `merged: ${prUrl}`)
   return { merged: true, reengaged: false, reason: null }
 }

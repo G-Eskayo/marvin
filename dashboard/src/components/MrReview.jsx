@@ -7,6 +7,8 @@ import { toggleLabel } from '../lib/proposals_view.js'
 import { describePrState } from '../lib/prState.js'
 import MrDetail from './MrDetail.jsx'
 import CheckProgress from './CheckProgress.jsx'
+import MergeProgress from './MergeProgress.jsx'
+import { opForHead } from '../lib/merge_progress.js'
 
 const MR_LIST_REFRESH_MS = 120000
 
@@ -172,37 +174,51 @@ const REWORK_TONE = {
   'not-queued': 'border-red-800 text-red-300'
 }
 
+// What a card's merge is doing, from the main process's op (marvin#568): the status this card shows, its message, and
+// the stage-by-stage progress. Exported for the tests.
+export function statusFromOp(m) {
+  if (!m || !m.state || m.state === 'idle') return { status: 'idle', errorMessage: null, progress: null }
+  if (m.state === 'merging') return { status: 'approving', errorMessage: null, progress: m.progress || null }
+  if (m.state === 'merged') return { status: 'merged', errorMessage: m.elsewhere ? m.reason || 'Merged on GitHub' : null, progress: m.progress || null }
+  return { status: m.state, errorMessage: m.reason || null, progress: m.progress || null }
+}
+const MERGE_STATUSES = new Set(['approving', 'error', 'reengaged', 'interrupted', 'merged'])
+
 export function ApproveDenyActions({ pr, onApproved, onDenied }) {
-  const [status, setStatus] = useState('idle') // idle | approving | error | reengaged
+  const [status, setStatus] = useState('idle') // idle | approving | error | reengaged | interrupted | merged
   const [errorMessage, setErrorMessage] = useState(null)
   const [showDenyModal, setShowDenyModal] = useState(false)
   const [clearing, setClearing] = useState(null) // null | 'confirm' | 'working' | 'done' | { failed }
   const [optionsAsk, setOptionsAsk] = useState(null) // null | 'working' | 'done' | { failed }
+  const [progress, setProgress] = useState(null) // the merge's stages (marvin#568)
 
-  // The merge runs in the main process, so this button can be unmounted (you navigate away) and
-  // remounted mid-merge. Ask the main process what this PR is doing, and keep asking while it merges.
+  // The merge runs in the main process, so this button can be unmounted (you navigate away) and remounted mid-merge.
+  // One read when the card mounts (or the PR's head changes) picks up a merge already running; after that every
+  // change is pushed (mr:mergeEvent), never re-read on a timer (marvin#568, CONTEXT "Triggers over polling").
   useEffect(() => {
     let cancelled = false
-    let timer
-    const check = async () => {
-      try {
-        const m = await window.api.mr.mergeState(pr.url, pr.headRefOid)
-        if (cancelled) return
-        if (m.state === 'merging') {
-          setStatus('approving')
-          timer = setTimeout(check, 2000)
-        } else if (m.state === 'reengaged' || m.state === 'error') {
-          setStatus(m.state)
-          setErrorMessage(m.reason)
-        } else {
-          // Idle: nothing running, or the last failure was on an older commit than this PR's head (a fix was pushed).
-          setStatus((s) => (s === 'approving' || s === 'error' || s === 'reengaged' ? 'idle' : s))
-          setErrorMessage(null)
-        }
-      } catch { /* keep whatever this component already knows */ }
+    let pushed = false
+    const apply = (m) => {
+      const v = statusFromOp(m)
+      setProgress(v.progress)
+      if (v.status === 'idle') {
+        // Nothing running, or the last failure was on an older commit than this PR's head (a fix was pushed).
+        setStatus((s) => (MERGE_STATUSES.has(s) ? 'idle' : s))
+        setErrorMessage(null)
+      } else {
+        setStatus(v.status)
+        setErrorMessage(v.errorMessage)
+      }
     }
-    check()
-    return () => { cancelled = true; clearTimeout(timer) }
+    const off = window.api.mr.onMergeEvent?.((url, op) => {
+      if (cancelled || url !== pr.url) return
+      pushed = true
+      apply(opForHead(op, pr.headRefOid))
+    })
+    window.api.mr.mergeState(pr.url, pr.headRefOid)
+      .then((m) => { if (!cancelled && !pushed) apply(m) }) // a push that arrived first is newer than this read
+      .catch(() => { /* keep whatever this component already knows */ })
+    return () => { cancelled = true; off?.() }
   }, [pr.url, pr.headRefOid])
 
   async function handleApprove() {
@@ -211,7 +227,13 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
     try {
       const result = await window.api.mr.approve({ number: pr.number, url: pr.url, head: pr.headRefOid })
       if (result.cancelled) {
-        setStatus('idle')
+        if (!result.alreadyMerging) setStatus('idle')
+        return
+      }
+      // The webhook went away mid-merge (marvin#568): say so now; Approve again is safe.
+      if (result.interrupted) {
+        setStatus('interrupted')
+        setErrorMessage(result.reason)
         return
       }
       // G-Eskayo/marvin#91's merge-time gate: a rebase or retest failure
@@ -223,6 +245,7 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
         setErrorMessage(result.reason)
         return
       }
+      setStatus('merged')
       onApproved(pr.number)
     } catch (err) {
       setStatus('error')
@@ -242,7 +265,7 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
     )
   }
 
-  const view = describePrState(pr, { status, errorMessage })
+  const view = describePrState(pr, { status, errorMessage, progress: !!progress })
   const TONE = { ready: 'text-emerald-400', wait: 'text-amber-400', blocked: 'text-red-400', working: 'text-blue-400' }
 
   // "Too vague: needs options" (2026-10-09): one click asks the author to restate the questions as a Decisions section.
@@ -294,6 +317,7 @@ export function ApproveDenyActions({ pr, onApproved, onDenied }) {
       <p className={`max-w-xs text-right text-sm font-medium ${TONE[view.tone] || ''}`}>{view.headline}</p>
       {view.detail && <p className="max-w-xs text-right text-xs text-neutral-400">{view.detail}</p>}
       {view.checkProgress && <CheckProgress checks={pr.checks} tone={view.tone} />}
+      {progress && MERGE_STATUSES.has(status) && <MergeProgress progress={progress} />}
       {view.note && <p className="text-right text-xs text-emerald-400">{view.note}</p>}
       {view.rework && (
         <div className={`max-w-xs rounded-md border px-2 py-1 text-right text-xs ${REWORK_TONE[view.rework.state] || 'border-neutral-700 text-neutral-300'}`} data-rework={view.rework.state}>
