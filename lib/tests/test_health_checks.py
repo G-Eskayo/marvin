@@ -1140,6 +1140,7 @@ def test_check_parallel_dispatch_calls_the_real_selector_with_its_keywords(monke
 
     monkeypatch.setattr(dispatch_concurrency, "load", lambda: {"parallel": True, "max_total": 2, "max_per_project": 1})
     monkeypatch.setattr(pp, "dispatchable_repos", lambda: [])
+    monkeypatch.setattr(pp, "runnable_repos", lambda: [])
     monkeypatch.setattr(failure_breaker, "tripped", lambda: [])
     monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda repo: [{"number": 1}])
     monkeypatch.setattr(tp, "_inflight_by_repo", lambda repos: {r: 0 for r in repos})
@@ -1391,3 +1392,17 @@ def test_remote_machine_label_strips_the_registry_number():
     assert hc._remote_machine_label("mac-mini-1") == "mac-mini"
     assert hc._remote_machine_label("macbook-pro-12") == "macbook-pro"
     assert hc._remote_machine_label("kali") == "kali"
+
+
+def test_a_profile_that_can_never_run_is_one_yellow_line(tmp_path):
+    import json as _j
+    real = _j.loads((Path(__file__).resolve().parents[2] / "config" / "projects" / "marvin-mobile.json").read_text())
+    def prof(repo, dispatch, machines):
+        return _j.dumps({**real, "repo": repo, "dispatch": dispatch, "machines": machines})
+    (tmp_path / "a.json").write_text(prof("G-Eskayo/marvin-mobile", "on", []))
+    (tmp_path / "b.json").write_text(prof("G-Eskayo/clarity-captions", "on", ["mac-mini-1"]))
+    (tmp_path / "c.json").write_text(prof("G-Eskayo/paper-dive", "off", []))
+    out = hc.check_unrunnable_profiles(profiles_dir=tmp_path)
+    assert [r["id"] for r in out] == ["profile:no-machines:G-Eskayo/marvin-mobile"]
+    assert out[0]["severity"] == "yellow" and "marvin-mobile.json lists no machines" in out[0]["detail"]
+    assert hc.check_unrunnable_profiles(profiles_dir=tmp_path / "empty") == []

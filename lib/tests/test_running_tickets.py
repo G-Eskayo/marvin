@@ -39,3 +39,15 @@ def test_an_unreachable_machine_is_skipped_not_guessed():
         raise OSError("timed out")
     got = rt.all_running({"mac-mini-1": None, "macbook-pro-1": "h"}, lambda: "x run_ticket.py 5\n", remote, "G-Eskayo/marvin")
     assert [r["machine"] for r in got] == ["mac-mini-1"]
+
+
+def test_an_unreadable_machine_is_reported_to_a_caller_that_asks():
+    """#453: releasing a claim needs to know "nothing running" from "couldn't look"."""
+    def remote(host):
+        raise OSError("ssh: connect timed out")
+    unreadable = []
+    out = rt.all_running({"mac-mini-1": None, "macbook-pro-1": "gils-macbook"}, lambda: "python run_ticket.py 5",
+                         remote, "G-Eskayo/marvin", unreadable)
+    assert out == [{"machine": "mac-mini-1", "repo": "G-Eskayo/marvin", "number": 5}]
+    assert unreadable == ["macbook-pro-1"]
+    assert rt.all_running({"mac-mini-1": None}, lambda: "", remote, "G-Eskayo/marvin") == []   # old callers unchanged

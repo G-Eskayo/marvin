@@ -542,3 +542,15 @@ def test_read_only_inspection_never_includes_commands_that_change_things():
         for verb in ("push", "commit", "merge", "rebase", "reset", "checkout", "branch", "tag", "stash", "clean",
                      "create", "edit", "close", "comment", "api", "delete", "rm"):
             assert verb not in cmd.split()[1:], rule
+
+
+def test_a_profile_with_dispatch_on_but_no_machines_is_not_runnable(tmp_path):
+    """P6: portfolio-website-updater and marvin-mobile had dispatch on and machines [], so every scan logged "no suitable
+    machine" for their tickets for ever. They are named once (unrunnable) and kept out of dispatch."""
+    d = write_profile(tmp_path, dispatch="on", machines=[])
+    assert pp.dispatchable_repos(directory=d) == ["G-Eskayo/proj"]
+    assert pp.runnable_repos(directory=d) == [] and pp.unrunnable_repos(directory=d) == ["G-Eskayo/proj"]
+    d2 = write_profile(tmp_path, dispatch="on")
+    assert pp.runnable_repos(directory=d2) == ["G-Eskayo/proj"] and pp.unrunnable_repos(directory=d2) == []
+    d3 = write_profile(tmp_path, dispatch="off", machines=[])
+    assert pp.runnable_repos(directory=d3) == [] and pp.unrunnable_repos(directory=d3) == []
