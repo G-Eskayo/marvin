@@ -315,3 +315,33 @@ def test_render_markdown_counts_papers_by_stance():
     assert "(3 papers)" in md  # supports
     assert "(2 papers)" in md  # refutes
     assert "(1 paper)" in md   # mixed
+
+
+# ── base_url parameter test ────────────────────────────────────────────────
+
+def test_ollama_chat_passes_base_url_to_check_ollama_pulled(monkeypatch):
+    """Test that ollama_chat passes OLLAMA_BASE as base_url parameter."""
+    import competing_ideas as ci
+    from unittest.mock import MagicMock
+    import json
+
+    captured_kwargs = {}
+
+    def mock_check_ollama(model, registry=None, base_url=None):
+        captured_kwargs["base_url"] = base_url
+        return True, ""
+
+    monkeypatch.setattr("competing_ideas.model_registry.check_ollama_pulled", mock_check_ollama)
+
+    def mock_urlopen(*args, **kwargs):
+        resp = MagicMock()
+        resp.__enter__.return_value = resp
+        resp.__exit__.return_value = None
+        resp.read.return_value = json.dumps({"message": {"content": "test"}}).encode()
+        return resp
+
+    monkeypatch.setattr("competing_ideas.urllib.request.urlopen", mock_urlopen)
+
+    ci.ollama_chat("test-model", [{"role": "user", "content": "test"}])
+    assert captured_kwargs["base_url"] == "http://localhost:11434", \
+        f"Expected OLLAMA_BASE to be passed, got {captured_kwargs.get('base_url')}"

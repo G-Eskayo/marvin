@@ -1,0 +1,9 @@
+{
+  "id": "task-033-paperdive-judge-benchmark",
+  "type": "qa",
+  "prompt_file": "prompt.md",
+  "timeout": 60,
+  "expect": ["NONE"],
+  "profile": "clean",
+  "note": "Paper-dive: judge construct validity of StrongREJECT benchmark's autograder. Tests local-judge-medium capability (qwen2.5:14b). Should return NONE (no findings) because validation against expert human judgments (92% accuracy) is genuine evidence of construct validity — the autograder measures what it claims. Regression guard for 7b→14b fix: qwen2.5:7b mistakenly treated human-agreement evidence as insufficient."
+}

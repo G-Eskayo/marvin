@@ -11,6 +11,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -239,6 +240,55 @@ def check_consistency(reg: ModelRegistry | None = None) -> dict[str, list[str]]:
             soft_warnings.append(f"Model {model_name!r} has empty reason field")
 
     return {"hard_errors": hard_errors, "soft_warnings": soft_warnings}
+
+
+def check_ollama_pulled(model: str, registry: ModelRegistry | None = None,
+                        base_url: str = "http://localhost:11434") -> tuple[bool, str]:
+    """Check if an Ollama model is pulled and available locally.
+
+    Returns (ok, error_message). If ok=True, error_message is "".
+    If ok=False, error_message describes what's wrong and how to fix it.
+
+    Matching semantics:
+    - Exact match on the registry key (e.g., "qwen2.5:7b" matches exactly)
+    - Bare names without tag are normalized to ":latest" (e.g., "ollama pull mymodel" becomes "mymodel:latest" in Ollama's /api/tags)
+    - No prefix matching; if you need a variant (e.g., "-instruct-q4_K_M"), list it explicitly in the registry
+
+    Checks:
+    - Server is up and responding at base_url/api/tags
+    - Model is in the pulled models list (exact match after normalization)
+    - Looks up model size from registry for the error message
+    """
+    try:
+        with urllib.request.urlopen(f"{base_url}/api/tags", timeout=5) as resp:
+            data = json.loads(resp.read())
+    except Exception as exc:
+        return False, f"Ollama server not responding ({exc}). Start with: ollama serve"
+
+    if not isinstance(data, dict):
+        return False, f"Ollama /api/tags returned non-dict JSON: {type(data).__name__}"
+
+    available = [m.get("name", "") for m in data.get("models", []) if isinstance(m, dict) and m.get("name")]
+
+    # Normalize model name: if it has no tag (no colon), append ":latest" for matching
+    normalized_model = model if ":" in model else f"{model}:latest" if model else ""
+
+    # Exact match only
+    if normalized_model and normalized_model in available:
+        return True, ""
+
+    # Model not found; build error message with size info from registry
+    size_info = ""
+    if registry is None:
+        registry = ModelRegistry()
+    meta = registry.get(model) if model else None
+    if meta:
+        size_gb = meta.get("size_gb", "unknown")
+        size_info = f" (~{size_gb} GB)"
+
+    error_msg = (f"Model '{model}'{size_info} not found. Available: {available}\n"
+                 f"Pull with: ollama pull {model}")
+    return False, error_msg
 
 
 if __name__ == "__main__":

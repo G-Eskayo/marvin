@@ -30,7 +30,9 @@ from logic_auditor import (
     needs_second_look,
     build_audit_report,
     render_markdown,
+    ollama_chat,
 )
+import logic_auditor
 
 
 # ── classify_paper_type ──────────────────────────────────────────────────────
@@ -759,3 +761,111 @@ def test_render_markdown_handles_no_findings_gracefully():
     }]
     md = render_markdown(report)
     assert "no findings" in md.lower() or "none" in md.lower()
+
+
+# ── Model availability checking (tests 8-10) ────────────────────────────────
+# Test 8-10: Verify that check_ollama_pulled is wired correctly into ollama_chat
+# and that it doesn't get called during test invocations (which pass chat_fn=).
+
+def test_ollama_chat_raises_on_missing_model(monkeypatch):
+    """Test 8: Missing model on the real path raises RuntimeError before urlopen."""
+    # Mock check_ollama_pulled to return model not available
+    def mock_check(model, *args, **kwargs):
+        return False, f"Model {model} not found"
+
+    monkeypatch.setattr("logic_auditor.model_registry.check_ollama_pulled", mock_check)
+
+    # Attempting ollama_chat should raise before ever trying urlopen
+    with pytest.raises(RuntimeError, match="not found"):
+        logic_auditor.ollama_chat("missing-model", [])
+
+
+def test_judgment_model_overrides_fail_loud_not_silent(monkeypatch):
+    """Test 9: JUDGMENT_MODEL_OVERRIDES must fail loud if override model is unavailable."""
+    import logic_auditor as la
+
+    # Mock ollama_chat to raise if called with the override model
+    def failing_ollama_chat(model, messages, timeout=60):
+        if model == "qwen2.5:14b":  # The benchmark override model
+            raise RuntimeError(f"Model {model} not pulled")
+        return "NONE"
+
+    monkeypatch.setattr(la, "ollama_chat", failing_ollama_chat)
+
+    # judge_extraction("benchmark") without chat_fn should use the override (qwen2.5:14b)
+    # and raise, not silently fall back to JUDGMENT_MODEL (qwen2.5:7b)
+    extraction = {"measures": "m", "construct_validity_evidence": "e", "scope": "s"}
+    with pytest.raises(RuntimeError, match="qwen2.5:14b"):
+        judge_extraction(extraction, "benchmark")
+
+
+def test_classify_paper_type_with_chat_fn_never_calls_check_ollama_pulled(monkeypatch):
+    """Test 10: Regression guard - tests using chat_fn= must never call check_ollama_pulled."""
+    # Set up a guard that raises if check_ollama_pulled is called
+    call_count = {"count": 0}
+
+    def guard_check_ollama(*args, **kwargs):
+        call_count["count"] += 1
+        raise AssertionError("check_ollama_pulled should not be called in test path")
+
+    monkeypatch.setattr("logic_auditor.model_registry.check_ollama_pulled", guard_check_ollama)
+
+    # When chat_fn is provided, ollama_chat is never called, so check_ollama_pulled is never invoked
+    def fake_chat(messages):
+        return "empirical"
+
+    result = classify_paper_type("Title", "Abstract", chat_fn=fake_chat)
+    assert result == "empirical"
+    assert call_count["count"] == 0, "check_ollama_pulled was called in test path"
+
+
+def test_classify_all_with_chat_fn_never_calls_ollama(monkeypatch):
+    """Test 11: Verify classify_all doesn't call check_ollama_pulled."""
+    call_count = {"count": 0}
+
+    def guard_check_ollama(*args, **kwargs):
+        call_count["count"] += 1
+        raise AssertionError("check_ollama_pulled should not be called")
+
+    monkeypatch.setattr("logic_auditor.model_registry.check_ollama_pulled", guard_check_ollama)
+
+    def fake_chat(messages):
+        return "empirical"
+
+    papers = {
+        "paper-1": ("Title 1", "Abstract 1"),
+        "paper-2": ("Title 2", "Abstract 2"),
+    }
+
+    result = classify_all(papers, chat_fn=fake_chat)
+    assert all(v == "empirical" for v in result.values())
+    assert call_count["count"] == 0, "check_ollama_pulled should not be called with chat_fn="
+
+
+def test_ollama_chat_passes_base_url_to_check_ollama_pulled(monkeypatch):
+    """Test 12: ollama_chat must pass OLLAMA_BASE as base_url parameter."""
+    import json
+    from unittest.mock import MagicMock
+    import logic_auditor as la
+
+    captured_kwargs = {}
+
+    def mock_check_ollama(model, registry=None, base_url=None):
+        captured_kwargs["base_url"] = base_url
+        return True, ""
+
+    monkeypatch.setattr("logic_auditor.model_registry.check_ollama_pulled", mock_check_ollama)
+
+    def mock_urlopen(*args, **kwargs):
+        # Return a mock response that doesn't crash
+        resp = MagicMock()
+        resp.__enter__.return_value = resp
+        resp.__exit__.return_value = None
+        resp.read.return_value = json.dumps({"message": {"content": "test"}}).encode()
+        return resp
+
+    monkeypatch.setattr("logic_auditor.urllib.request.urlopen", mock_urlopen)
+
+    la.ollama_chat("test-model", [{"role": "user", "content": "test"}])
+    assert captured_kwargs["base_url"] == "http://localhost:11434", \
+        f"Expected OLLAMA_BASE to be passed, got {captured_kwargs.get('base_url')}"

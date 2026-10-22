@@ -7,6 +7,7 @@ import json
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -203,6 +204,200 @@ class TestCheckConsistency:
             warnings = result.get("soft_warnings", [])
             assert any("unused-test" in w for w in warnings), \
                 "Should warn about model with empty used_by"
+
+
+# ── check_ollama_pulled function ──────────────────────────────────────────
+
+class TestCheckOllamaPulled:
+    """Test check_ollama_pulled() for Ollama server/model detection."""
+
+    def test_exact_model_match(self):
+        """Test 1: exact match against /api/tags returns (True, '')."""
+        response_data = json.dumps({
+            "models": [{"name": "qwen2.5:7b"}]
+        }).encode()
+
+        mock_response = MagicMock()
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = None
+        mock_response.read.return_value = response_data
+
+        with patch("model_registry.urllib.request.urlopen", return_value=mock_response):
+            ok, msg = model_registry.check_ollama_pulled("qwen2.5:7b")
+            assert ok is True
+            assert msg == ""
+
+    def test_bare_name_normalized_to_latest(self):
+        """Test 2: bare name without tag is normalized to :latest (e.g., 'mymodel' -> 'mymodel:latest')."""
+        response_data = json.dumps({
+            "models": [{"name": "mymodel:latest"}]
+        }).encode()
+
+        mock_response = MagicMock()
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = None
+        mock_response.read.return_value = response_data
+
+        with patch("model_registry.urllib.request.urlopen", return_value=mock_response):
+            ok, msg = model_registry.check_ollama_pulled("mymodel")
+            assert ok is True
+            assert msg == ""
+
+    def test_no_prefix_matching(self):
+        """Test 2b: Prefix matching is no longer supported. qwen2.5:7b does NOT match qwen2.5:7b-instruct-q4_K_M."""
+        response_data = json.dumps({
+            "models": [{"name": "qwen2.5:7b-instruct-q4_K_M"}]
+        }).encode()
+
+        mock_response = MagicMock()
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = None
+        mock_response.read.return_value = response_data
+
+        with TemporaryRegistry() as reg:
+            with patch("model_registry.urllib.request.urlopen", return_value=mock_response):
+                ok, msg = model_registry.check_ollama_pulled("qwen2.5:7b", registry=reg)
+                assert ok is False, "Prefix matching should not work; exact match is required"
+                assert "not found" in msg.lower()
+
+    def test_server_unreachable(self):
+        """Test 3: Ollama server unreachable (connection refused) returns helpful error."""
+        with patch("model_registry.urllib.request.urlopen", side_effect=ConnectionRefusedError("Connection refused")):
+            ok, msg = model_registry.check_ollama_pulled("qwen2.5:7b")
+            assert ok is False
+            assert "ollama serve" in msg
+            assert "not responding" in msg.lower()
+
+    def test_model_not_pulled(self):
+        """Test 4: Server up, model not pulled returns error with ollama pull command."""
+        response_data = json.dumps({
+            "models": [{"name": "other-model"}]
+        }).encode()
+
+        mock_response = MagicMock()
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = None
+        mock_response.read.return_value = response_data
+
+        with TemporaryRegistry() as reg:
+            with patch("model_registry.urllib.request.urlopen", return_value=mock_response):
+                ok, msg = model_registry.check_ollama_pulled("qwen2.5:7b", registry=reg)
+                assert ok is False
+                assert "Model 'qwen2.5:7b' (~4.7 GB) not found." in msg
+                assert "ollama pull qwen2.5:7b" in msg
+
+    def test_malformed_response(self):
+        """Test 5: Malformed /api/tags response (missing models key) treated as not available."""
+        response_data = json.dumps({}).encode()  # missing "models" key
+
+        mock_response = MagicMock()
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = None
+        mock_response.read.return_value = response_data
+
+        with TemporaryRegistry() as reg:
+            with patch("model_registry.urllib.request.urlopen", return_value=mock_response):
+                ok, msg = model_registry.check_ollama_pulled("qwen2.5:7b", registry=reg)
+                assert ok is False
+                assert "not found" in msg.lower()
+
+    def test_empty_model_name(self):
+        """Test 6: Empty or absurdly long model name causes no crash."""
+        response_data = json.dumps({
+            "models": [{"name": "some-model"}]
+        }).encode()
+
+        mock_response = MagicMock()
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = None
+        mock_response.read.return_value = response_data
+
+        with TemporaryRegistry() as reg:
+            with patch("model_registry.urllib.request.urlopen", return_value=mock_response):
+                # Empty name
+                ok, msg = model_registry.check_ollama_pulled("", registry=reg)
+                assert ok is False
+
+                # Long name (no injection possible without shell invocation)
+                ok, msg = model_registry.check_ollama_pulled("a" * 1000, registry=reg)
+                assert ok is False
+
+    def test_concurrent_calls_independent(self):
+        """Test 7: Two concurrent calls against a missing model fail independently."""
+        response_data = json.dumps({
+            "models": []
+        }).encode()
+
+        mock_response = MagicMock()
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = None
+        mock_response.read.return_value = response_data
+
+        with TemporaryRegistry() as reg:
+            with patch("model_registry.urllib.request.urlopen", return_value=mock_response):
+                ok1, msg1 = model_registry.check_ollama_pulled("model-a", registry=reg)
+                ok2, msg2 = model_registry.check_ollama_pulled("model-b", registry=reg)
+
+                assert ok1 is False
+                assert ok2 is False
+                assert "model-a" in msg1
+                assert "model-b" in msg2
+
+    def test_no_default_registry_construction_when_passed(self):
+        """Test 8: Regression - check_ollama_pulled must not construct default ModelRegistry when registry= is given."""
+        response_data = json.dumps({
+            "models": [{"name": "some-model:latest"}]
+        }).encode()
+
+        mock_response = MagicMock()
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = None
+        mock_response.read.return_value = response_data
+
+        with TemporaryRegistry() as provided_reg:
+            with patch("model_registry.urllib.request.urlopen", return_value=mock_response):
+                # Call with explicit registry - should find the exact match after normalization
+                ok, msg = model_registry.check_ollama_pulled("some-model", registry=provided_reg)
+                assert ok is True, "Should find exact model match (bare name normalized to :latest)"
+
+    def test_non_dict_json_response(self):
+        """Test 5: Non-dict JSON response (e.g., array) is handled gracefully."""
+        response_data = json.dumps(["model1", "model2"]).encode()  # Array, not dict
+
+        mock_response = MagicMock()
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = None
+        mock_response.read.return_value = response_data
+
+        with TemporaryRegistry() as reg:
+            with patch("model_registry.urllib.request.urlopen", return_value=mock_response):
+                ok, msg = model_registry.check_ollama_pulled("qwen2.5:7b", registry=reg)
+                assert ok is False
+                assert "non-dict" in msg.lower() or "not responding" in msg.lower()
+
+    def test_model_entry_missing_name_field(self):
+        """Test 6: Model entries missing 'name' field are skipped gracefully."""
+        response_data = json.dumps({
+            "models": [
+                {"size": 123},  # Missing "name"
+                {"name": "valid-model:latest"}
+            ]
+        }).encode()
+
+        mock_response = MagicMock()
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = None
+        mock_response.read.return_value = response_data
+
+        with TemporaryRegistry() as reg:
+            with patch("model_registry.urllib.request.urlopen", return_value=mock_response):
+                # Should not crash, should check against "valid-model" (normalized to "valid-model:latest")
+                ok, msg = model_registry.check_ollama_pulled("valid-model", registry=reg)
+                assert ok is True, "Should find 'valid-model' even with malformed entry present"
+
+                ok, msg = model_registry.check_ollama_pulled("qwen2.5:7b", registry=reg)
+                assert ok is False, "Should not find missing model"
+                assert "not found" in msg.lower()
 
 
 # ── Regression tests for paper-dive scripts ────────────────────────────────

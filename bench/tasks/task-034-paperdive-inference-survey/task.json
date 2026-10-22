@@ -1,0 +1,9 @@
+{
+  "id": "task-034-paperdive-inference-survey",
+  "type": "qa",
+  "prompt_file": "prompt.md",
+  "timeout": 60,
+  "expect": ["inductive"],
+  "profile": "clean",
+  "note": "Paper-dive: check argument form (inductive vs deductive) for a survey paper. Tests local-inference-large capability (qwen2.5:14b). Surveys synthesize existing work into patterns (inductive reasoning), not derive new conclusions from existing premises (deductive)."
+}

@@ -127,10 +127,13 @@ def main() -> None:
                 skipped = True
                 break
 
-            if run.get("infra_error"):
-                sys.exit(f"aborting sweep — hit an infra error (rate/session limit or "
-                         f"stale auth) mid-run on {label}; re-run after quota resets "
-                         f"rather than trusting a partial sweep")
+            # Treat spawn_error and missing judge scores as infra aborts
+            is_infra_error = run.get("infra_error") or run.get("spawn_error")
+            is_judge_infra_error = run.get("judge_correctness") and run["judge_correctness"].get("score") is None
+            if is_infra_error or is_judge_infra_error:
+                sys.exit(f"aborting sweep — hit an infra error (rate/session limit, "
+                         f"stale auth, or judge subprocess failure) mid-run on {label}; "
+                         f"re-run after quota resets rather than trusting a partial sweep")
 
             runs.append(run)
             sc = (run.get("correctness") or {}).get("score")

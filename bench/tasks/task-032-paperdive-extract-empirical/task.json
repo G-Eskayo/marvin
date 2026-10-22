@@ -1,0 +1,9 @@
+{
+  "id": "task-032-paperdive-extract-empirical",
+  "type": "qa",
+  "prompt_file": "prompt.md",
+  "timeout": 60,
+  "expect": ["attention mechanism", "Transformer"],
+  "profile": "clean",
+  "note": "Paper-dive: extract core claims from an empirical paper. Tests local-extract-small capability (qwen2.5:3b)."
+}

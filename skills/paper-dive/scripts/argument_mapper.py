@@ -38,7 +38,8 @@ import model_registry  # noqa: E402
 
 CHROMA_PATH = Path.home() / ".claude" / "chroma"
 COLLECTION_NAME = "paper-knowledge"
-OLLAMA_URL = "http://localhost:11434/api/chat"
+OLLAMA_BASE = "http://localhost:11434"
+OLLAMA_URL = f"{OLLAMA_BASE}/api/chat"
 _claim_model_list = model_registry.resolve_capability("local-extract-small")
 CLAIM_MODEL = _claim_model_list[0]
 assert CLAIM_MODEL == "qwen2.5:3b", f"Regression: expected qwen2.5:3b, got {CLAIM_MODEL}"
@@ -46,6 +47,12 @@ OPENALEX_WORKS_BASE = "https://api.openalex.org/works"
 
 
 def ollama_chat(model: str, messages: list[dict], timeout: int = 60) -> str:
+    """Call Ollama /api/chat endpoint. Raises RuntimeError if model is not pulled."""
+    # Check model availability before attempting the request (real path only)
+    ok, err_msg = model_registry.check_ollama_pulled(model, base_url=OLLAMA_BASE)
+    if not ok:
+        raise RuntimeError(err_msg)
+
     payload = json.dumps({"model": model, "messages": messages, "stream": False}).encode()
     req = urllib.request.Request(OLLAMA_URL, data=payload, headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:

@@ -229,3 +229,33 @@ def test_render_markdown_handles_no_references_gracefully():
     ]
     md = render_markdown(argument_map)
     assert "no discovered references" in md.lower()
+
+
+# ── base_url parameter test ────────────────────────────────────────────────
+
+def test_ollama_chat_passes_base_url_to_check_ollama_pulled(monkeypatch):
+    """Test that ollama_chat passes OLLAMA_BASE as base_url parameter."""
+    import argument_mapper as am
+    from unittest.mock import MagicMock
+    import json
+
+    captured_kwargs = {}
+
+    def mock_check_ollama(model, registry=None, base_url=None):
+        captured_kwargs["base_url"] = base_url
+        return True, ""
+
+    monkeypatch.setattr("argument_mapper.model_registry.check_ollama_pulled", mock_check_ollama)
+
+    def mock_urlopen(*args, **kwargs):
+        resp = MagicMock()
+        resp.__enter__.return_value = resp
+        resp.__exit__.return_value = None
+        resp.read.return_value = json.dumps({"message": {"content": "test"}}).encode()
+        return resp
+
+    monkeypatch.setattr("argument_mapper.urllib.request.urlopen", mock_urlopen)
+
+    am.ollama_chat("test-model", [{"role": "user", "content": "test"}])
+    assert captured_kwargs["base_url"] == "http://localhost:11434", \
+        f"Expected OLLAMA_BASE to be passed, got {captured_kwargs.get('base_url')}"
