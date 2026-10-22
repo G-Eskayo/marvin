@@ -7,7 +7,8 @@ import {
   resolveDeviceId,
   primaryHostTailscaleName,
   isPrimaryHost,
-  resolveServiceDefaults
+  resolveServiceDefaults,
+  peerHosts
 } from '../electron/main/device_identity.js'
 
 const registryFixture = {
@@ -95,5 +96,15 @@ describe('resolveServiceDefaults', () => {
     withRegistry({ 'macbook-pro-1': registryFixture['macbook-pro-1'] }, (networkPath) => {
       expect(resolveServiceDefaults(() => 'MACBOOK-UUID', networkPath)).toEqual({ host: 'localhost' })
     })
+  })
+})
+
+describe('peerHosts (#612: whose webhook servers to read)', () => {
+  it('lists every other device with a Tailscale name, never this one', () => {
+    withRegistry({ ...registryFixture, kali: { hardware_uuid: 'K', kind: 'desktop' }, broken: null }, (p) =>
+      expect(peerHosts(() => 'MACBOOK-UUID', p)).toEqual([{ id: 'mac-mini-1', host: 'gils-mac-mini' }]))
+  })
+  it('a missing or unreadable registry has no peers', () => {
+    expect(peerHosts(() => 'X', '/nonexistent/marvin-network.json')).toEqual([])
   })
 })

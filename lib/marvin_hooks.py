@@ -46,6 +46,7 @@ class Hook:
     command: tuple[str, ...]
     kinds: frozenset[str]
     matcher: str | None = None
+    timeout: int | None = None  # seconds Claude Code waits before giving up on it (its default is 60)
 
 
 def _py(script: str) -> tuple[str, ...]:
@@ -79,6 +80,14 @@ HOOKS: list[Hook] = [
     Hook("UserPromptSubmit", (*_py("lib/session_work.py"), "hook", "prompt"), _ALL),
     Hook("PostToolUse", (*_py("lib/session_work.py"), "hook", "post"), _ALL, _EDITS),
     Hook("PreToolUse", (*_py("lib/session_work.py"), "hook", "pre"), _INTERACTIVE, _EDITS),
+    # Helpers a chat starts with the Agent tool get a run log the Activity tab shows (#612). A person's chats only:
+    # the pipeline's own subagents are already its run. Capped at 5 s here and 3 s inside the script.
+    *(Hook(event, (*_py("lib/chat_helpers.py"), "hook", step), _INTERACTIVE, matcher, 5) for event, matcher, step in (
+        ("SubagentStart", None, "start"),
+        ("PostToolUse", "Agent", "launched"),
+        ("PreToolUse", "SubagentHandback", "report"),
+        ("SubagentStop", None, "stop"),
+    )),
 ]
 
 
@@ -103,7 +112,7 @@ def settings_hooks() -> dict:
         if group is None:
             group = {"matcher": hook.matcher, "hooks": []} if hook.matcher else {"hooks": []}
             groups.append(group)
-        group["hooks"].append({"type": "command", "command": cmd})
+        group["hooks"].append({"type": "command", "command": cmd, **({"timeout": hook.timeout} if hook.timeout else {})})
     return out
 
 

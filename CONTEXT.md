@@ -1140,6 +1140,21 @@ row, Other Projects footer) plus a stack of **sections** after the title card.
 
 `lib/device_status.py` gives one row per device in `marvin-network.json`: idle / busy (task) / unreachable. It reuses task_dispatch's readers, but a failed SSH read is *unreachable*, not idle (task_dispatch's own reader treats failure as idle, which is right for picking a machine and wrong for a status view). The dashboard shows them above the boards (`DeviceColumns.jsx`, cached 8s); this machine's column embeds `DispatchStatusBadge`. Closes #115 and #117.
 
+## Chat helpers in Activity (2026-10-22, #612)
+
+Helpers a person's chat starts with the Agent tool showed nowhere ("where is the investigation running?"). Now each one is a
+run log in the jobs folder (`lib/chat_helpers.py`, `~/.claude/logs/jobs/helper-<agent id>.json`, the `job_events` format plus
+a `helper` block: chat request, session, machine, transcript, links). The writers are Claude Code hooks (interactive sessions only,
+in `marvin_hooks.HOOKS`, 5 s cap there and 3 s inside the script): SubagentStart creates it, PostToolUse `Agent` names it
+(`description`), PreToolUse `SubagentHandback` holds the report, SubagentStop ends it (done with a one-line summary and the
+tickets/PRs its report names, derived from the text; failed if there is no result). Hooks are used, not transcript scans: they are
+the event. No per-tool heartbeat (it would cost a process on every tool call in every chat): a helper killed mid-run is
+"stopped unexpectedly" once its own transcript has been quiet 15 min, decided when the log is read. Newest 30 kept per Mac
+(~2 KB each); a running one is never pruned. Activity lists them under the device columns with Health's agent card, unchanged
+except a "Done" state and the ticket chip Markdown uses; they are not counted among Health's agents. The other Mac's come from
+its webhook server's `GET /helpers` (the `/sessions` channel, #331), read through a 10 s cache with a 30 s backstop, since that
+Mac has no push channel. Gil applies the hooks on each Mac with `marvin_hooks.py install`.
+
 ## Merge order and the sent-back loop (2026-10-05)
 
 - **Order:** a PR waits on every OLDER open PR in its repo that shares a changed file (`dashboard/electron/main/pr_order.js`). Derived from the PRs' file lists each time; the MR list shows it, Approve & Merge is disabled with the reason, and `mr:approve` re-checks it in the main process so a stale screen cannot skip it. Deny stays available.
