@@ -129,6 +129,49 @@ def tripped(now: datetime | None = None, project: str | None = None) -> list[dic
     return result
 
 
+def ticket_streak(ticket: int, project: str = MARVIN) -> dict:
+    """Per-ticket failure count and signatures since the last success (or clear).
+    Returns {"count": N, "signatures": [sig1, sig2, ...]} (oldest-first, scoped to ticket+project).
+    Clear records do not reset the streak; they are skipped. Signatures are ALL signatures in order (not unique)."""
+    records = _read()
+    for r in records:
+        r.setdefault("project", MARVIN)
+    # Find records for this ticket in this project
+    mine = [r for r in records if r.get("ticket") == ticket and r.get("project") == project]
+    # Find the latest success for this ticket+project
+    success_times = [r["_t"] for r in mine if r["kind"] == "success"]
+    last_success = max(success_times) if success_times else None
+    # Failures after the last success (or all failures if no success yet)
+    failures = [r for r in mine if r["kind"] == "failure" and (last_success is None or r["_t"] > last_success)]
+    # Sort oldest-first
+    failures.sort(key=lambda r: r["_t"])
+    # Extract all signatures in order
+    sigs = [f["sig"] for f in failures]
+    return {"count": len(failures), "signatures": sigs}
+
+
+def should_hold(ticket: int, project: str = MARVIN, threshold: int = 3) -> dict | None:
+    """Check if a ticket should be held (parked). Returns {"count", "signatures", "condition"} or None.
+    Trips when: (1) failure count >= threshold, OR (2) the last two distinct signatures match.
+    Clamps bad threshold to 3."""
+    try:
+        threshold = max(1, int(threshold)) if threshold else 3
+    except (TypeError, ValueError):
+        threshold = 3
+    streak = ticket_streak(ticket, project)
+    count = streak["count"]
+    sigs = streak["signatures"]
+    # Condition 1: threshold reached
+    if count >= threshold:
+        # Find the condition: the signature that pushed us over
+        return {"count": count, "signatures": sigs, "condition": f"{sigs[-1] if sigs else 'unknown'}-limit"}
+    # Condition 2: last two distinct signatures match (requires at least 2 distinct signatures)
+    if len(sigs) >= 2 and sigs[-1] == sigs[-2]:
+        # Last two distinct signatures match
+        return {"count": count, "signatures": sigs, "condition": f"repeating-{sigs[-1]}"}
+    return None
+
+
 def main() -> None:
     cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
     if cmd == "clear":

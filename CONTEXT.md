@@ -818,7 +818,16 @@ untouched (it is the "legacy profile"); only repos with a profile file use the p
   catalog's newest local path first), `machines` (eligible device ids), `dispatch` (`"off"` | `"on"`; **starts
   off**: a profile does nothing until a person turns it on), `env` (e.g. `DEVELOPER_DIR` = the first existing
   Xcode, so `swift test` works without `sudo xcode-select`), `executor` (extra allowed tools and context notes
-  for the headless model), `verify` (tiers), `evidence`.
+  for the headless model), `verify` (tiers), `evidence`, and `failure_threshold` (optional; see retry-storm holds below).
+- **Retry-storm holds (#28/#30/#94, 2026-10-22)**: a ticket that fails the same way several times in a row is moved
+  to the `hold` state with a "Revisit by: YYYY-MM-DD" line, rather than being parked in needs-info or retried forever.
+  The count is per ticket + project, read from `pipeline-failures.jsonl` (cross-machine local only: each machine counts
+  its own dispatches). A ticket is held when either (1) failures >= `failure_threshold` (default 3; configurable per
+  project via the profile's `failure_threshold` field, or `None` to disable holds), OR (2) the last two distinct
+  failure signatures are identical (repeating the same thing). The `hold` label blocks dispatch until a person
+  manually removes it; the revisit agent and dashboard pick up the "Revisit by:" line unchanged (same as #213's
+  hold-with-revisit pattern). Health shows held tickets due to retry storms (yellow, truncated). One of the cross-machine
+  checks; mitigates systemic cascades without inventing new state stores or breaking existing conventions.
 - **Verify tiers**: each has `command`, `cwd`, `requires` (capabilities such as `swift`, `xcode`, `xcodegen`),
   a `parser` (`swift-test`, `xcodebuild`, `exit-code`), and `required`. A required tier whose tools are missing
   on the executing machine is an **environment problem, not a ticket failure**: the claim is released, no

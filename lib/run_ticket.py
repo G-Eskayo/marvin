@@ -38,6 +38,7 @@ TIMEOUT_MARKER = "Automated verification timed out"
 MODEL_MARKER = "The model service was unavailable"
 MAX_CONSECUTIVE_FAILURES = 3
 MAX_CONSECUTIVE_RETRIES = 5   # failures and verify timeouts together: a timeout is no strike, but retries still end
+DEFAULT_REVISIT_DAYS = 7  # how long to hold a ticket before revisiting
 
 
 def _machine_load() -> float | None:
@@ -110,7 +111,7 @@ def _consecutive_failure_streak(issue_number: int, repo: str = REPO) -> int:
     loop across calls.
 
     Timeouts are not strikes, but no longer reset the count either (P6, 2026-10-21); see _trailing_streaks."""
-    return _trailing_streaks(issue_number, repo)[0]
+    return failure_breaker.ticket_streak(issue_number, project=repo)["count"]
 
 
 def _trailing_streaks(issue_number: int, repo: str = REPO) -> tuple[int, int]:
@@ -138,45 +139,78 @@ MAX_PARK_FINDINGS = 15
 
 
 def _park_stuck_ticket(issue_number: int, streak: int, repo: str = REPO, reason: str = "",
-                       findings: list[str] | tuple = (), headline: str | None = None) -> None:
+                       findings: list[str] | tuple = (), headline: str | None = None,
+                       hold_data: dict | None = None) -> None:
     """Stop re-dispatching a ticket that keeps failing, and hand it to a person WITH the cause.
 
     needs-info is added before ready-for-agent comes off, so the ticket is never stateless: the triage agent treats
     a ticket with no state label as new, and would put a well-written one straight back to ready-for-agent (another
     round of builds; this comment resets the failure streak) or bury the cause under a template complaint (#133,
-    2026-10-09). Triage only re-checks needs-info it set itself, so this one stays until a person acts."""
+    2026-10-09). Triage only re-checks needs-info it set itself, so this one stays until a person acts.
+
+    When hold_data is provided (from should_hold), the ticket is held instead of parked in needs-info, with
+    a revisit line."""
     label = _label_for_device(machine_profile.registry_id())
-    subprocess.run(
-        ["gh", "issue", "edit", str(issue_number), "--repo", repo, "--add-label", "needs-info"],
-        capture_output=True, text=True, timeout=15, check=False,
-    )
-    subprocess.run(
-        ["gh", "issue", "edit", str(issue_number), "--repo", repo,
-         "--remove-label", "ready-for-agent",
-         "--remove-label", f"claimed:{label}"],
-        capture_output=True, text=True, timeout=15, check=False,
-    )
-    # The claim is dropped too, not only ready-for-agent: ticket_pipeline only
-    # dispatches ready-for-agent tickets with no claimed:* label, so a parked
-    # ticket that kept its claim could never be revived by re-adding the label.
-    shown = list(findings)[:MAX_PARK_FINDINGS]
-    more = len(findings) - len(shown)
-    lines = [headline or f"**{PARKED_MARKER}** ({streak} in a row), so it stops being re-dispatched.", "",
-             f"**Why it's stuck:** {(reason or 'no reason was recorded')[:500]}"]
-    if shown:
-        lines += ["", "**Must-fix findings the builder could not clear:**", *[f"- {f}" for f in shown]]
-        if more:
-            lines.append(f"- ... and {more} more")
-    lines += ["", "**What it needs:** re-scope or split it, answer what's unclear, or build it by hand. "
-              "To send it back to the pipeline, remove `needs-info` and add `ready-for-agent`."]
-    subprocess.run(
-        ["gh", "issue", "comment", str(issue_number), "--repo", repo, "--body", "\n".join(lines)],
-        capture_output=True, text=True, timeout=15, check=False,
-    )
-    # It is in the dashboard's Needs you now (needs-info); say so where Gil will see it, not only on the ticket.
+    if hold_data is not None:
+        # Hold the ticket instead of parking in needs-info
+        subprocess.run(
+            ["gh", "issue", "edit", str(issue_number), "--repo", repo, "--add-label", "hold"],
+            capture_output=True, text=True, timeout=15, check=False,
+        )
+        subprocess.run(
+            ["gh", "issue", "edit", str(issue_number), "--repo", repo,
+             "--remove-label", "ready-for-agent",
+             "--remove-label", f"claimed:{label}"],
+            capture_output=True, text=True, timeout=15, check=False,
+        )
+        # Build a comment with failure signatures and a revisit line
+        sigs = hold_data.get("signatures", [])[:3]  # truncate to 3
+        sig_str = ", ".join(sigs) if sigs else "unknown"
+        if len(hold_data.get("signatures", [])) > 3:
+            sig_str += f", ... ({len(hold_data.get('signatures', []))} total)"
+        lines = [f"**Held after {streak} consecutive failures** due to repeated issues: {sig_str}.", "",
+                 "This ticket is on hold until conditions change. When they do, remove the `hold` label and add `ready-for-agent` to try again."]
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        revisit_date = (datetime.now(timezone.utc) + timedelta(days=DEFAULT_REVISIT_DAYS)).strftime("%Y-%m-%d")
+        lines.append("")
+        lines.append(ticket_policy.format_revisit(revisit_date, hold_data.get("condition")))
+        subprocess.run(
+            ["gh", "issue", "comment", str(issue_number), "--repo", repo, "--body", "\n".join(lines)],
+            capture_output=True, text=True, timeout=15, check=False,
+        )
+    else:
+        # Traditional park in needs-info
+        subprocess.run(
+            ["gh", "issue", "edit", str(issue_number), "--repo", repo, "--add-label", "needs-info"],
+            capture_output=True, text=True, timeout=15, check=False,
+        )
+        subprocess.run(
+            ["gh", "issue", "edit", str(issue_number), "--repo", repo,
+             "--remove-label", "ready-for-agent",
+             "--remove-label", f"claimed:{label}"],
+            capture_output=True, text=True, timeout=15, check=False,
+        )
+        # The claim is dropped too, not only ready-for-agent: ticket_pipeline only
+        # dispatches ready-for-agent tickets with no claimed:* label, so a parked
+        # ticket that kept its claim could never be revived by re-adding the label.
+        shown = list(findings)[:MAX_PARK_FINDINGS]
+        more = len(findings) - len(shown)
+        lines = [headline or f"**{PARKED_MARKER}** ({streak} in a row), so it stops being re-dispatched.", "",
+                 f"**Why it's stuck:** {(reason or 'no reason was recorded')[:500]}"]
+        if shown:
+            lines += ["", "**Must-fix findings the builder could not clear:**", *[f"- {f}" for f in shown]]
+            if more:
+                lines.append(f"- ... and {more} more")
+        lines += ["", "**What it needs:** re-scope or split it, answer what's unclear, or build it by hand. "
+                  "To send it back to the pipeline, remove `needs-info` and add `ready-for-agent`."]
+        subprocess.run(
+            ["gh", "issue", "comment", str(issue_number), "--repo", repo, "--body", "\n".join(lines)],
+            capture_output=True, text=True, timeout=15, check=False,
+        )
+    # It is in the dashboard's Needs you now (needs-info or hold); say so where Gil will see it, not only on the ticket.
     try:
         import mr_notification
-        mr_notification.notify_needs_you(f"{repo.split('/')[-1]}#{issue_number}", reason or "parked",
+        mr_notification.notify_needs_you(f"{repo.split('/')[-1]}#{issue_number}", reason or ("held" if hold_data else "parked"),
                                          f"https://github.com/{repo}/issues/{issue_number}")
     except Exception as exc:  # noqa: BLE001 -- a notification must never break the run's cleanup
         print(f"[run_ticket] needs-you notification failed: {exc}", file=sys.stderr)
@@ -362,17 +396,27 @@ def run(issue_number: int, repo: str = REPO) -> dict:
             _trigger_redispatch()
             return outcome
         prior_streak = _consecutive_failure_streak(issue_number, **kw)
-        parking = prior_streak + 1 >= MAX_CONSECUTIVE_FAILURES
-        _comment_failure(issue_number, outcome["reason"], **kw, **({} if parking else {"retry": _retry_line(prior_streak + 1)}))
         # Feed the cross-ticket breaker (failure_breaker.py): the SAME failure across
         # different tickets means the system is broken, not the tickets.
         failure_breaker.record_failure(issue_number, outcome["reason"], **({"project": repo} if other else {}))
-        if prior_streak + 1 >= MAX_CONSECUTIVE_FAILURES:
-            _park_stuck_ticket(issue_number, prior_streak + 1, **kw, reason=outcome["reason"], findings=findings)
-            ts.record_stage(issue_number, "done", "failed", f"parked after {prior_streak + 1} consecutive failures", **kw)
+        # Check if we should hold the ticket instead of retrying
+        threshold = (profile or {}).get("failure_threshold") or MAX_CONSECUTIVE_FAILURES
+        hold_data = failure_breaker.should_hold(issue_number, project=repo, threshold=threshold)
+        if hold_data is not None:
+            # Hold the ticket with a revisit date
+            _park_stuck_ticket(issue_number, prior_streak + 1, **kw, reason=outcome["reason"],
+                             findings=findings, hold_data=hold_data)
+            ts.record_stage(issue_number, "done", "failed", f"held after {prior_streak + 1} consecutive failures", **kw)
         else:
-            _release_claim(issue_number, **kw, run_id=run_id)
-            ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
+            # Retry with backoff or park in needs-info if at the retry limit
+            parking = prior_streak + 1 >= MAX_CONSECUTIVE_FAILURES
+            _comment_failure(issue_number, outcome["reason"], **kw, **({} if parking else {"retry": _retry_line(prior_streak + 1)}))
+            if prior_streak + 1 >= MAX_CONSECUTIVE_FAILURES:
+                _park_stuck_ticket(issue_number, prior_streak + 1, **kw, reason=outcome["reason"], findings=findings)
+                ts.record_stage(issue_number, "done", "failed", f"parked after {prior_streak + 1} consecutive failures", **kw)
+            else:
+                _release_claim(issue_number, **kw, run_id=run_id)
+                ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
     else:
         ts.record_stage(issue_number, "done", "passed", f"PR raised: {outcome['pr_url']}", **kw)
         failure_breaker.record_success(issue_number, **({"project": repo} if other else {}))  # proves this project's environment works

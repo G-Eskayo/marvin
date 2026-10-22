@@ -609,6 +609,39 @@ def check_github_budget(query=None) -> dict:
     return _result(cid, label, sev, f"{left:,} of {limit:,} left, resets {when}", value=left)
 
 
+def check_retry_storm_holds(snapshot: dict | None = None, repos: list[str] | None = None, gh=None) -> list[dict]:
+	"""Held tickets due to retry storms: those with `hold` label and active failure streaks.
+	This check surfaces them in the Health tab (severity yellow, truncated) so the hold
+	mechanism is visible as an automated response to cascade failures."""
+	if snapshot is None:
+		import ticket_agents
+		repos = repos or ticket_agents.board_repos()
+		if not repos:
+			return []
+		gh = gh or ticket_agents._gh
+		snapshot = ticket_agents.collect(repos, gh=gh)
+
+	import failure_breaker
+	import ticket_policy
+
+	results = []
+	for repo, tickets in snapshot.items():
+		held = [t for t in tickets if "hold" in ticket_policy.label_names(t)]
+		for ticket in held:
+			streak_data = failure_breaker.ticket_streak(ticket["number"], project=repo)
+			count = streak_data["count"]
+			if count == 0:
+				continue  # no active failures, not a retry storm hold
+			sigs = streak_data["signatures"][:2]  # truncate to 2 for display
+			sig_str = ", ".join(sigs) if sigs else "unknown"
+			cid = f"hold:retry-storm:{repo}#{ticket['number']}"
+			label = f"{repo.split('/')[-1]}#{ticket['number']} {ticket.get('title', '')[0:60]}"
+			detail = f"on hold after {count} failures ({sig_str})"
+			results.append(_result(cid, label, "yellow", detail, value=count))
+
+	return results
+
+
 def check_missing_profiles(snapshot: dict | None = None, repos: list[str] | None = None, gh=None, profiles_dir: Path | None = None) -> list[dict]:
 	"""Projects with ready-for-agent tickets but no execution profile will never dispatch.
 	This check surfaces those projects so profiles can be created and dispatch turned on.
@@ -1475,6 +1508,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("dispatch:parallel", "Parallel dispatch keeping up", check_parallel_dispatch, CHECK_BUDGET_S),
         ("purpose:missed", "Purpose metrics", check_missed_purposes, CHECK_BUDGET_S),
         ("contract", "Output contracts", check_output_contracts, CHECK_BUDGET_S),
+        ("hold:retry-storm", "Held tickets due to retry storms", check_retry_storm_holds, CHECK_BUDGET_S),
         ("profile:missing", "Projects without an execution profile", check_missing_profiles, CHECK_BUDGET_S),
         ("profile:no-machines", "Projects with no machines", check_unrunnable_profiles, CHECK_BUDGET_S),
         ("triggers:missed", "Dashboard triggers cover every change", check_trigger_coverage, CHECK_BUDGET_S),

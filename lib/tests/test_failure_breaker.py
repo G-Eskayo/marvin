@@ -193,3 +193,77 @@ def test_merge_refusals_never_trip_the_breaker(tmp_path, monkeypatch):
         for ticket in (208, 209, 210):
             f.write(json.dumps({"t": now.isoformat(), "kind": "refusal", "ticket": ticket, "sig": "merge:OUT_OF_ORDER"}) + "\n")
     assert fb.tripped(now=now) == []
+
+
+# ── per-ticket streak (ticket_streak, should_hold) ──────────────────────
+
+def test_ticket_streak_returns_count_and_signatures():
+    fb.record_failure(20, VITEST, now=NOW - timedelta(minutes=10))
+    fb.record_failure(20, VITEST, now=NOW - timedelta(minutes=5))
+    streak = fb.ticket_streak(20)
+    assert streak["count"] == 2
+    assert streak["signatures"] == ["measure:vitest-no-summary", "measure:vitest-no-summary"]
+
+
+def test_ticket_streak_is_empty_after_a_success():
+    fb.record_failure(21, "Unhandled exception: Command '['npm', 'run', 'build']' returned non-zero exit status 1.", now=NOW - timedelta(minutes=20))
+    fb.record_success(21, now=NOW - timedelta(minutes=15))
+    fb.record_failure(21, "Unhandled exception: Command '['npm', 'run', 'build']' returned non-zero exit status 1.", now=NOW - timedelta(minutes=10))
+    streak = fb.ticket_streak(21)
+    assert streak["count"] == 1
+
+
+def test_ticket_streak_ignores_clear_records():
+    fb.record_failure(22, "Unhandled exception: Command '['npm', 'run', 'build']' returned non-zero exit status 1.", now=NOW - timedelta(minutes=20))
+    fb.clear(now=NOW - timedelta(minutes=15))
+    fb.record_failure(22, "Unhandled exception: Command '['npm', 'run', 'build']' returned non-zero exit status 1.", now=NOW - timedelta(minutes=10))
+    streak = fb.ticket_streak(22)
+    assert streak["count"] == 2  # clear doesn't reset it
+
+
+def test_ticket_streak_is_per_project():
+    fb.record_failure(23, "swift test: no such module 'XCTest'", project="G-Eskayo/clarity-captions", now=NOW - timedelta(minutes=10))
+    fb.record_failure(23, "Unhandled exception: Command '['npm', 'run', 'build']' returned non-zero exit status 1.", project="G-Eskayo/marvin", now=NOW - timedelta(minutes=5))
+    marvin_streak = fb.ticket_streak(23, project="G-Eskayo/marvin")
+    clarity_streak = fb.ticket_streak(23, project="G-Eskayo/clarity-captions")
+    assert marvin_streak["count"] == 1
+    assert clarity_streak["count"] == 1
+
+
+def test_should_hold_returns_none_when_below_threshold():
+    fb.record_failure(24, VITEST, now=NOW - timedelta(minutes=10))
+    fb.record_failure(24, "Unhandled exception: Command '['npm', 'run', 'build']' returned non-zero exit status 1.", now=NOW - timedelta(minutes=5))
+    hold = fb.should_hold(24, threshold=3)
+    assert hold is None
+
+
+def test_should_hold_trips_at_threshold():
+    for i in range(3):
+        fb.record_failure(25, VITEST, now=NOW - timedelta(minutes=(3-i)*5))
+    hold = fb.should_hold(25, threshold=3)
+    assert hold is not None
+    assert hold["count"] == 3
+    assert "measure:vitest-no-summary" in hold["signatures"]
+    assert "limit" in hold["condition"]
+
+
+def test_should_hold_trips_when_last_two_distinct_sigs_match():
+    # sigs should be [vitest, npm, npm] (last two distinct are npm, npm)
+    fb.record_failure(26, VITEST, now=NOW - timedelta(minutes=20))
+    fb.record_failure(26, "Unhandled exception: Command '['npm', 'run', 'build']' returned non-zero exit status 1.", now=NOW - timedelta(minutes=15))
+    fb.record_failure(26, VITEST, now=NOW - timedelta(minutes=10))
+    fb.record_failure(26, VITEST, now=NOW - timedelta(minutes=5))
+    hold = fb.should_hold(26, threshold=999)
+    assert hold is not None
+    assert hold["count"] == 4
+    assert "repeating" in hold["condition"]
+
+
+def test_should_hold_clamps_bad_threshold_to_3():
+    fb.record_failure(27, VITEST, now=NOW - timedelta(minutes=10))
+    hold1 = fb.should_hold(27, threshold=-1)
+    hold2 = fb.should_hold(27, threshold="not-a-number")
+    hold3 = fb.should_hold(27, threshold=None)
+    assert hold1 is not None  # -1 clamped to 1, so 1 failure is >= 1, trips
+    assert hold2 is None  # bad input clamped to 3
+    assert hold3 is None  # None clamped to 3
