@@ -46,6 +46,8 @@ def signature(reason: str) -> str:
     m = re.search(r"final verdict: (\w+)", low)
     if m:
         return f"verdict:{m.group(1)}"
+    if re.search(r"the [\w-]+ model run failed", low):
+        return "model-unavailable"   # usage limit or outage: every ticket fails alike, so three in a row pause dispatch
     if "'claude'" in low and "timed out" in low:
         return "claude-timeout"
     if "no such file or directory: 'claude'" in low:

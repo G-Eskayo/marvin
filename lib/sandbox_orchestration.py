@@ -45,8 +45,28 @@ WORKTREES_ROOT = Path.home() / ".agents-pipeline-worktrees"
 
 
 class TaskListTooVague(RuntimeError):
-    """Raised when the planning model cannot produce a concrete task list for a ticket."""
-    pass
+    """Raised when the planning model cannot produce a concrete task list for a ticket.
+
+    needs_person is True only when the planner itself said the ticket is too vague (the TOO_VAGUE sentinel): that is
+    a question for a person. A plan that merely lacks its Task List section is a bad run, retried like any failure."""
+    def __init__(self, message: str, needs_person: bool = False):
+        super().__init__(message)
+        self.needs_person = needs_person
+
+
+class ModelRunFailed(RuntimeError):
+    """A model run exited non-zero, so its text is an error, not a plan or an implementation.
+
+    Found 2026-10-21: in the weekly usage-limit windows of 10-10 and 10-16 every launch on both Macs exited 1, most in
+    under 2 s at zero cost. _launch dropped the exit code, the error text was searched for a Task List, and ten tickets
+    were labelled "too vague" and kept their claims for up to 11 days. This is about the model service, not the
+    ticket: run_ticket releases the claim with a backoff and no strike."""
+    def __init__(self, kind: str, exit_code: int, detail: str):
+        self.kind, self.exit_code, self.detail = kind, exit_code, (detail or "").strip()
+        self.usage_limit = bool(re.search(r"usage limit|limit reached|rate.?limit|hit your limit|resets? at|overloaded|quota",
+                                          self.detail, re.I))
+        super().__init__(f"the {kind} model run failed (exit {exit_code}"
+                         f"{', usage limit' if self.usage_limit else ''}): {self.detail[:200] or 'no output'}")
 
 
 FLAGSHIP_MODEL = "claude-sonnet-5"
@@ -93,6 +113,8 @@ def _launch(kind: str, prompt: str, *, ticket_ref: str, **kwargs) -> tuple[str, 
     adds the kind's layers of MARVIN context, resolves the claude binary, and records the run with its
     real cost and tokens. Returns (result_text, cost_usd) for ticket_stages' per-stage cost field."""
     result = marvin_launcher.launch(kind, prompt, ticket=ticket_ref, **kwargs)
+    if result.exit_code != 0:
+        raise ModelRunFailed(kind, result.exit_code, result.text or result.stderr)
     return result.text, result.cost_usd
 
 
@@ -204,9 +226,11 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
     task_list_body = task_list_match.group(1).strip() if task_list_match else ""
 
     # Check for the "too vague" sentinel
-    if not task_list_body or task_list_body.startswith("TOO_VAGUE:"):
-        reason = task_list_body[len("TOO_VAGUE:"):].strip() if task_list_body.startswith("TOO_VAGUE:") else "(no task list section provided)"
-        raise TaskListTooVague(f"Planning model could not produce a concrete task list: {reason}")
+    if task_list_body.startswith("TOO_VAGUE:"):
+        reason = task_list_body[len("TOO_VAGUE:"):].strip() or "(no reason given)"
+        raise TaskListTooVague(f"Planning model could not produce a concrete task list: {reason}", needs_person=True)
+    if not task_list_body:
+        raise TaskListTooVague("The planning run's output had no task list section (a bad run, retried)")
 
     # Write task list to disk
     task_list_path = _task_list_path(worktree_path, ticket_ref)
