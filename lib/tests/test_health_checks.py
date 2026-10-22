@@ -3,6 +3,7 @@
 """
 from __future__ import annotations
 import json
+import subprocess
 import pytest
 import sys
 from datetime import datetime, timedelta, timezone
@@ -1391,3 +1392,33 @@ def test_remote_machine_label_strips_the_registry_number():
     assert hc._remote_machine_label("mac-mini-1") == "mac-mini"
     assert hc._remote_machine_label("macbook-pro-12") == "macbook-pro"
     assert hc._remote_machine_label("kali") == "kali"
+
+
+# ---- webhook-server uptime (pipeline review 2026-10-21, F14: "not running" while it served, on both Macs) ----
+
+@pytest.mark.parametrize("etime,secs", [("00:07", 7), ("05:07", 307), ("01:09:48", 4188), ("3-02:00:00", 3 * 86400 + 7200),
+                                        ("  12:00  ", 720), ("10-00:00:01", 864001)])
+def test_ps_etime_is_turned_into_seconds(etime, secs):
+    out = subprocess.run(["/usr/bin/awk", hc._ETIME_AWK], input=etime + "\n", capture_output=True, text=True, timeout=10)
+    assert out.stdout.strip() == str(secs)
+
+
+def test_no_ps_output_gives_no_seconds_so_the_check_says_not_running():
+    out = subprocess.run(["/usr/bin/awk", hc._ETIME_AWK], input="", capture_output=True, text=True, timeout=10)
+    assert out.stdout == ""
+
+
+def test_the_machine_script_reads_a_real_process_uptime_with_this_machines_ps():
+    """The real ps, not a fake: macOS ps has no `etimes`, which is how the false alarm happened."""
+    import time
+    assert "etimes" not in hc._MACHINE_STATE_SCRIPT
+    line = next(l for l in hc._MACHINE_STATE_SCRIPT.splitlines() if "ELAPSED=$(" in l)
+    child = subprocess.Popen(["sleep", "30"])
+    try:
+        time.sleep(1.2)
+        snippet = f'WEBHOOK_PID={child.pid}\n{line}\necho "$ELAPSED"'
+        out = subprocess.run(["/bin/sh", "-c", snippet], capture_output=True, text=True, timeout=10)
+        assert out.stderr == ""
+        assert 1 <= int(out.stdout.strip()) <= 20
+    finally:
+        child.kill()
