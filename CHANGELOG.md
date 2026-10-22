@@ -1,5 +1,7 @@
 # Changelog
 
+- Docs: fold the Files tab into Docs (chosen layout from #562) ([#579](https://github.com/G-Eskayo/marvin/pull/579))
+
 - main-health runs pile up (3 full test suites at once) and starve the merge gate: single-flight lock + skip docs/log-only commits ([#576](https://github.com/G-Eskayo/marvin/pull/576))
 
 - Docs tab: stop calling GitHub on every click for projects without a local clone ([#571](https://github.com/G-Eskayo/marvin/pull/571))
