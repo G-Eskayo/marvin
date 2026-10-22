@@ -180,6 +180,16 @@ def dispatchable_repos(directory: Path | None = None) -> list[str]:
     return [p["repo"] for p in all_profiles(directory) if p["dispatch"] == "on"]
 
 
+def runnable_repos(directory: Path | None = None) -> list[str]:
+    """Dispatch on AND at least one machine listed: the projects the pipeline can actually run."""
+    return [p["repo"] for p in all_profiles(directory) if p["dispatch"] == "on" and p.get("machines")]
+
+
+def unrunnable_repos(directory: Path | None = None) -> list[str]:
+    """Dispatch on but no machines listed: no ticket of theirs can ever run. Said once, in Health, not every scan."""
+    return [p["repo"] for p in all_profiles(directory) if p["dispatch"] == "on" and not p.get("machines")]
+
+
 def _token_env() -> dict:
     """GH_TOKEN from the pipeline's shared token file, so a clone/fetch authenticates as the pipeline does."""
     try:

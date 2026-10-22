@@ -470,12 +470,14 @@ def _run_ticket_agents(step, summary) -> None:
     try:
         cfg = ticket_agents.load_config()
         snap = ticket_agents.collect(ticket_agents.board_repos())
-        executable = {REPO, *pp.dispatchable_repos()}
+        executable = {REPO, *pp.runnable_repos()}
+        live = _live_runs()
         res = ticket_agents.run(snap, ticket_agents._gh, cfg, datetime.now(timezone.utc),
                                 in_flight=lambda repo: ticket_agents.in_flight_numbers(repo, snap),
                                 due_for=ticket_agents.due_for_repo, executable=executable,
                                 tags_state_path=ticket_agents.project_tagger.STATE_PATH,
-                                report=lambda agent, detail: step(f"Ticket agents · {agent}", detail))
+                                report=lambda agent, detail: step(f"Ticket agents · {agent}", detail),
+                                running=lambda repo: None if live is None else {n for r, n in live if r == repo})
         step("Ticket agents", f"{res['applied']} applied, {res['proposed']} proposed, {res['failed']} failed")
         _update_board_lifecycle(snap, step)
         _auto_merge_shadow(step)
@@ -487,11 +489,26 @@ def _run_ticket_agents(step, summary) -> None:
                     prof = pp.load_profile(r)
                 except ValueError:
                     pass
+                if prof and prof.get("dispatch") == "on" and not prof.get("machines"):
+                    return "not set up for agents: no machines listed"
                 return "profile ready, dispatch is off" if prof else "no execution profile yet"
             step("Other projects", "ready for an agent but not dispatched: " + ", ".join(f"{r.split('/')[1]} {n} ({why(r)})" for r, n in elsewhere.items()))
     except Exception as e:  # noqa: BLE001
         print(f"{LOG_PREFIX} ticket agents: {e}", file=sys.stderr)
         step("Ticket agents", f"skipped: {e}")
+
+
+def _live_runs() -> set[tuple[str, int]] | None:
+    """(repo, number) of every ticket with a live run_ticket on any machine, or None when a machine couldn't be read:
+    the dead-claim rule must never release a claim on a guess (#453)."""
+    try:
+        import running_tickets
+        unreadable: list = []
+        runs = running_tickets.current(unreadable)
+        return None if unreadable else {(r["repo"], r["number"]) for r in runs}
+    except Exception as e:  # noqa: BLE001
+        print(f"{LOG_PREFIX} live runs unreadable: {e}", file=sys.stderr)
+        return None
 
 
 def _auto_merge_shadow(step) -> None:
@@ -799,7 +816,7 @@ def _scan(run, dry_run: bool) -> None:
     if not dry_run:
         _background_checks()
         step("Conflicted PRs", "sending back PRs that no longer merge")
-        sent = _requeue_all([REPO, *pp.dispatchable_repos()])
+        sent = _requeue_all([REPO, *pp.runnable_repos()])
         step("Conflicted PRs", ", ".join(sent) + " sent back" if sent else "none")
 
     # Cross-ticket circuit breaker, per project: the same failure across different tickets of one
@@ -816,7 +833,9 @@ def _scan(run, dry_run: bool) -> None:
     else:
         step("Circuit breaker", "clear")
     paused = {t.get("project", REPO) for t in trips}
-    repos = [r for r in [REPO, *pp.dispatchable_repos()] if r not in paused]
+    # A profile with dispatch on but no machines can never run: Health says so once (profile:no-machines), instead of
+    # this scan logging "no suitable machine" for each of its tickets every hour (132 times each by 10-21).
+    repos = [r for r in [REPO, *pp.runnable_repos()] if r not in paused]
     breaker_tripped = bool(trips)
 
     settings = dispatch_concurrency.load()
