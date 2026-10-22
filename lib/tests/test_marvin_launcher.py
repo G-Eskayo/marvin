@@ -2,6 +2,7 @@
 import json
 import subprocess
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -207,3 +208,77 @@ def test_a_judge_runs_in_an_empty_folder_of_its_own(memory, tmp_path):
 def test_a_reported_error_counts_as_a_failed_run(memory, tmp_path):
     fake = FakeRun(stdout=json.dumps({"result": "boom", "is_error": True}))
     assert ml.launch("utility-call", "x", log_path=tmp_path / "l.jsonl", runner=fake).exit_code == 1
+
+
+# ── Test 1-5: job parameter and spend_report ─────────────────────────────
+
+def test_launch_accepts_optional_job_parameter(memory, tmp_path):
+    """Test 1: launch accepts job parameter."""
+    fake = FakeRun()
+    result = ml.launch("background-analyst", "x", cwd=tmp_path, log_path=tmp_path / "l.jsonl",
+                       runner=fake, job="digest")
+    assert result.cost_usd == 0.25
+    rec = json.loads((tmp_path / "l.jsonl").read_text().splitlines()[-1])
+    assert rec["job"] == "digest"
+
+
+def test_launch_records_job_in_log(memory, tmp_path):
+    """Test 2: job is recorded in the launch log."""
+    log = tmp_path / "launches.jsonl"
+    ml.launch("background-analyst", "x", cwd=tmp_path, allowed_tools="Read", timeout=5,
+              log_path=log, runner=FakeRun(), job="research-colony")
+    rec = json.loads(log.read_text().splitlines()[-1])
+    assert rec["job"] == "research-colony"
+
+
+def test_launch_records_none_job_when_not_provided(memory, tmp_path):
+    """Test 3: job defaults to None when not provided."""
+    log = tmp_path / "launches.jsonl"
+    ml.launch("background-analyst", "x", cwd=tmp_path, allowed_tools="Read",
+              log_path=log, runner=FakeRun())
+    rec = json.loads(log.read_text().splitlines()[-1])
+    assert rec.get("job") is None
+
+
+def test_spend_report_summarizes_launches_by_job(memory, tmp_path):
+    """Test 4: spend_report aggregates cost_usd by job over N days."""
+    log = tmp_path / "launches.jsonl"
+    now = datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc)
+
+    # Add launches with different jobs
+    for i in range(3):
+        ml.launch("background-analyst", f"x{i}", cwd=tmp_path, log_path=log, runner=FakeRun(), job="digest")
+    for i in range(2):
+        ml.launch("background-analyst", f"y{i}", cwd=tmp_path, log_path=log, runner=FakeRun(), job="research-colony")
+    ml.launch("ticket-executor", "z", cwd=tmp_path, log_path=log, runner=FakeRun())  # job=None
+
+    report = ml.spend_report(log_path=log, days=30, now=now)
+    assert report["digest"] > 0
+    assert report["research-colony"] > 0
+    assert report[None] > 0
+
+
+def test_spend_report_only_includes_recent_launches(memory, tmp_path):
+    """Test 5: spend_report only includes launches within days window."""
+    log = tmp_path / "launches.jsonl"
+    now = datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc)
+
+    # Write old launch directly (older than days=30)
+    old = datetime(2026, 9, 20, tzinfo=timezone.utc)  # 32 days ago
+    with log.open("a") as f:
+        f.write(json.dumps({
+            "at": old.isoformat(), "kind": "background-analyst", "cost_usd": 0.5,
+            "job": "digest", "exit_code": 0
+        }) + "\n")
+
+    # Add a recent launch
+    with log.open("a") as f:
+        recent = now - timedelta(days=5)
+        f.write(json.dumps({
+            "at": recent.isoformat(), "kind": "background-analyst", "cost_usd": 0.25,
+            "job": "digest", "exit_code": 0
+        }) + "\n")
+
+    report = ml.spend_report(log_path=log, days=30, now=now)
+    # Should only include the recent one (0.25), not the old one
+    assert report["digest"] == pytest.approx(0.25, abs=0.01)

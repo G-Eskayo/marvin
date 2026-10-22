@@ -84,6 +84,24 @@ def _peer_docs(host: str, ssh) -> tuple[dict | None, dict | None, bool]:
     return out[0], out[1], answered
 
 
+def local_launches() -> dict | None:
+    """This Mac's autonomous background job spend by job category: digest, research-colony, self-review, etc."""
+    try:
+        import marvin_launcher
+        return marvin_launcher.spend_report()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _peer_launches(host: str, ssh) -> dict | None:
+    """The other Mac's autonomous spend by job, read over SSH."""
+    try:
+        result = ssh(host, f"{AGENTS_PYTHON} ~/.agents/lib/marvin_launcher.py", timeout=30)
+        return json.loads(result)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
 def local_github() -> dict | None:
     """This Mac's GitHub use, from the gh gate's logs (lib/github_usage.py): hourly aggregates that only read new log bytes."""
     try:
@@ -110,7 +128,7 @@ def report(now: datetime | None = None, ssh=default_ssh) -> dict:
             tools, tokens = _read(TOOL_PATH), _read(TOKEN_PATH)
         except Exception:  # noqa: BLE001  a failed scan must not hide what was already there
             pass
-    machines = [{"machine": this_machine(), "this": True, "reachable": True, "tools": tools, "tokens": tokens, "github": local_github()}]
+    machines = [{"machine": this_machine(), "this": True, "reachable": True, "tools": tools, "tokens": tokens, "github": local_github(), "launches": local_launches()}]
     for dev, host in peer_machines().items():
         ptools, ptokens, reachable = _peer_docs(host, ssh)
         old = any(d is None or (_age_min(d, now) or 1e9) > STALE_PEER_MIN for d in (ptools, ptokens))
@@ -121,7 +139,7 @@ def report(now: datetime | None = None, ssh=default_ssh) -> dict:
             except (OSError, ValueError, subprocess.SubprocessError):
                 pass
         machines.append({"machine": dev, "this": False, "reachable": reachable, "tools": ptools, "tokens": ptokens,
-                         "github": _peer_github(host, ssh) if reachable else None})
+                         "github": _peer_github(host, ssh) if reachable else None, "launches": _peer_launches(host, ssh) if reachable else None})
     return {"generated_at": now.isoformat(), "machines": machines}
 
 

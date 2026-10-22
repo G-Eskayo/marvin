@@ -127,4 +127,67 @@ export function machineFreshness(m, now = Date.now()) {
   return { state: 'ok', text: `updated ${agoText(now - Math.max(...stamps))}` }
 }
 
+export function weeklySeries(rows, end = new Date().toISOString().slice(0, 10)) {
+  const weeks = 4
+  const endDate = new Date(`${end}T00:00:00Z`)
+
+  const byWeek = new Map()
+  for (let i = 0; i < weeks; i++) {
+    const weekStart = new Date(endDate)
+    weekStart.setUTCDate(weekStart.getUTCDate() - (weeks - 1 - i) * 7)
+    const weekStartStr = weekStart.toISOString().slice(0, 10)
+    byWeek.set(weekStartStr, { week: weekStartStr, interactive: 0, headless: 0, subagent: 0, total: 0 })
+  }
+
+  for (const r of rows) {
+    const rowDate = new Date(`${r.day}T00:00:00Z`)
+    const daysSinceEnd = Math.floor((endDate - rowDate) / (1000 * 60 * 60 * 24))
+    const weeksBack = daysSinceEnd === 0 ? 0 : Math.ceil(daysSinceEnd / 7)
+    if (weeksBack >= 0 && weeksBack < weeks) {
+      const weekStart = new Date(endDate)
+      weekStart.setUTCDate(weekStart.getUTCDate() - weeksBack * 7)
+      const weekKey = weekStart.toISOString().slice(0, 10)
+      const week = byWeek.get(weekKey)
+      if (week) {
+        const v = r.output || 0
+        week[r.kind] = (week[r.kind] || 0) + v
+        week.total += v
+      }
+    }
+  }
+
+  const result = []
+  for (let i = 0; i < weeks; i++) {
+    const weekStart = new Date(endDate)
+    weekStart.setUTCDate(weekStart.getUTCDate() - (weeks - 1 - i) * 7)
+    const weekKey = weekStart.toISOString().slice(0, 10)
+    result.push(byWeek.get(weekKey))
+  }
+  return result
+}
+
+export function autonomousShare(rows, end = new Date().toISOString().slice(0, 10)) {
+  let autonomousTokens = 0
+  let totalTokens = 0
+  for (const r of rows) {
+    if (r.day !== end) continue
+    const v = r.output || 0
+    totalTokens += v
+    if (r.kind === 'headless') autonomousTokens += v
+  }
+  return totalTokens > 0 ? autonomousTokens / totalTokens : 0
+}
+
+export function launchSpendTable(machines, which = 'all') {
+  const byJob = new Map()
+  for (const m of pick(machines, which)) {
+    const launches = m.launches || {}
+    for (const [job, cost] of Object.entries(launches)) {
+      if (job === 'null' || job === null) continue
+      byJob.set(job, (byJob.get(job) || 0) + cost)
+    }
+  }
+  return [...byJob.entries()].map(([job, total]) => ({ job, total })).sort((a, b) => b.total - a.total)
+}
+
 export const USAGE_KINDS = KINDS

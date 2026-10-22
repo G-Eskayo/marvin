@@ -1494,3 +1494,54 @@ def test_only_the_planners_own_too_vague_verdict_asks_a_person(monkeypatch, tmp_
     with pytest.raises(so.TaskListTooVague) as e:
         so._default_executor(tmp_path, "T-1", None)
     assert not e.value.needs_person
+
+
+# ── _launch job parameter (tests 5-7) ────────────────────────────────────────
+
+def test_launch_defaults_job_to_ticket_pipeline_when_not_provided(monkeypatch, tmp_path):
+    """Test 5: _launch should set job='ticket-pipeline' as default"""
+    import marvin_launcher
+    launch_calls = []
+
+    def mock_launch(kind, prompt, **kwargs):
+        launch_calls.append((kind, kwargs))
+        return marvin_launcher.LaunchResult(text="done", cost_usd=0.01, exit_code=0)
+
+    monkeypatch.setattr(marvin_launcher, "launch", mock_launch)
+
+    result = so._launch("ticket-planner", "test prompt", ticket_ref="TICKET-1")
+    assert len(launch_calls) == 1
+    assert launch_calls[0][1].get("job") == "ticket-pipeline"
+    assert result == ("done", 0.01)
+
+
+def test_launch_preserves_explicit_job_parameter(monkeypatch, tmp_path):
+    """Test 6: _launch should preserve an explicitly provided job parameter"""
+    import marvin_launcher
+    launch_calls = []
+
+    def mock_launch(kind, prompt, **kwargs):
+        launch_calls.append((kind, kwargs))
+        return marvin_launcher.LaunchResult(text="done", cost_usd=0.02, exit_code=0)
+
+    monkeypatch.setattr(marvin_launcher, "launch", mock_launch)
+
+    result = so._launch("ticket-executor", "test prompt", ticket_ref="TICKET-1", job="custom-job")
+    assert len(launch_calls) == 1
+    assert launch_calls[0][1].get("job") == "custom-job"
+    assert result == ("done", 0.02)
+
+
+def test_launch_raises_ModelRunFailed_on_non_zero_exit(monkeypatch):
+    """Test 7: _launch should raise ModelRunFailed when launcher returns non-zero exit code"""
+    import marvin_launcher
+
+    def mock_launch(kind, prompt, **kwargs):
+        return marvin_launcher.LaunchResult(text="error details", cost_usd=0.0, exit_code=1)
+
+    monkeypatch.setattr(marvin_launcher, "launch", mock_launch)
+
+    with pytest.raises(so.ModelRunFailed) as exc_info:
+        so._launch("ticket-planner", "test prompt", ticket_ref="TICKET-1")
+    assert exc_info.value.exit_code == 1
+    assert "error details" in exc_info.value.detail

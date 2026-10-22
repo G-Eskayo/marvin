@@ -112,6 +112,7 @@ def _launch(kind: str, prompt: str, *, ticket_ref: str, **kwargs) -> tuple[str, 
     """Every model run this module makes goes through the MARVIN launcher (ADR 0059, marvin#302), which
     adds the kind's layers of MARVIN context, resolves the claude binary, and records the run with its
     real cost and tokens. Returns (result_text, cost_usd) for ticket_stages' per-stage cost field."""
+    kwargs.setdefault("job", "ticket-pipeline")
     result = marvin_launcher.launch(kind, prompt, ticket=ticket_ref, **kwargs)
     if result.exit_code != 0:
         raise ModelRunFailed(kind, result.exit_code, result.text or result.stderr)

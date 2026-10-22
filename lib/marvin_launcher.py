@@ -21,7 +21,7 @@ import subprocess
 import tempfile
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import sys  # noqa: E402
@@ -120,7 +120,7 @@ def launch(kind: str, prompt: str, *, cwd: Path | None = None, model: str | None
            allowed_tools: str | None = None, disallowed_tools: str | None = None, tools: str | None = None,
            permission_mode: str | None = "dontAsk", timeout: float | None = None, env: dict | None = None,
            ticket: str | None = None, preflight: Callable[[], None] | None = None,
-           log_path: Path | None = None, runner: Callable | None = None) -> LaunchResult:
+           log_path: Path | None = None, runner: Callable | None = None, job: str | None = None) -> LaunchResult:
     """Start one headless run of `kind`. Raises before spending tokens if the preflight fails.
 
     Flags left as None aren't passed, so the caller's leash is exactly what it asks for. A Judge with no
@@ -158,9 +158,41 @@ def launch(kind: str, prompt: str, *, cwd: Path | None = None, model: str | None
     _record(log_path or LAUNCH_LOG, {
         "at": datetime.now(timezone.utc).isoformat(), "kind": kind, "model": model, "ticket": ticket,
         "cwd": str(run_cwd) if run_cwd else None, "exit_code": exit_code, "duration_s": round(time.monotonic() - started, 1),
-        "cost_usd": cost, "context_chars": len(context),
+        "cost_usd": cost, "context_chars": len(context), "job": job,
         "input_tokens": usage.get("input_tokens", 0), "output_tokens": usage.get("output_tokens", 0),
         "cache_read_tokens": usage.get("cache_read_input_tokens", 0),
         "cache_write_tokens": usage.get("cache_creation_input_tokens", 0),
     })
     return LaunchResult(text, cost, exit_code, getattr(proc, "stderr", "") or "")
+
+
+def spend_report(log_path: Path | None = None, days: int = 30, now: datetime | None = None) -> dict[str | None, float]:
+    """Aggregate cost_usd by job over the last N days from the launch log. Returns {job: total_cost, ...}."""
+    log_path = log_path or LAUNCH_LOG
+    now = now or datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=days)
+
+    by_job: dict[str | None, float] = {}
+    try:
+        for line in log_path.read_text().splitlines():
+            try:
+                rec = json.loads(line)
+                at = datetime.fromisoformat(rec.get("at", ""))
+                if at >= cutoff:
+                    job = rec.get("job")
+                    cost = rec.get("cost_usd") or 0.0
+                    by_job[job] = by_job.get(job, 0.0) + cost
+            except (ValueError, json.JSONDecodeError, TypeError):
+                continue
+    except OSError:
+        pass
+    return by_job
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Print the spend report as JSON to stdout."""
+    print(json.dumps(spend_report()))
+
+
+if __name__ == "__main__":
+    main()

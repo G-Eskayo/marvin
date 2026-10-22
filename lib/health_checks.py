@@ -1068,10 +1068,60 @@ def _parse_job_exits(text: str) -> list[tuple[str, int | None, int]]:
     return out
 
 
+# Autonomous job spending as a fraction of total. Above this, the system is very busy
+# with background work and may have headroom constraints.
+AUTONOMOUS_SHARE_YELLOW_ABOVE = 0.5
+
 # Free-space thresholds (share of the disk). Found 2026-10-06: the mac-mini at 6% free; below ~10% macOS
 # evicts iCloud files aggressively, and background jobs then block reading them.
 DISK_YELLOW_BELOW_PCT = 20
 DISK_RED_BELOW_PCT = 10
+
+
+def usage_report(now: datetime | None = None) -> dict:
+    """Load the usage report (machine/tokens/tool/launches data) for the most recent sweep."""
+    import usage_report as ur
+    return ur.report(now)
+
+
+def check_autonomous_share(report: dict | None = None, now: datetime | None = None) -> dict:
+    """Red while autonomous (background) job spend is >50% of total. Signals system saturation.
+    Combines headless (autonomous background job) token use from all machines for today."""
+    now = now or _now()
+    cid, label = "dispatch:autonomous-share", "Autonomous job spending"
+
+    try:
+        rep = report or usage_report(now)
+        if not rep or not rep.get("machines"):
+            return _result(cid, label, "yellow", "could not read token spend data")
+
+        today = now.strftime("%Y-%m-%d")
+        autonomous_tokens = 0
+        total_tokens = 0
+
+        for m in rep.get("machines", []):
+            tokens_doc = m.get("tokens")
+            if tokens_doc is None:
+                continue
+            for row in tokens_doc.get("rows", []):
+                if row.get("day") != today:
+                    continue
+                v = row.get("output", 0)
+                total_tokens += v
+                if row.get("kind") == "headless":
+                    autonomous_tokens += v
+
+        if total_tokens == 0:
+            return _result(cid, label, "green", "no autonomous jobs recorded yet")
+
+        share = autonomous_tokens / total_tokens
+        pct = round(share * 100)
+        sev = "yellow" if share > AUTONOMOUS_SHARE_YELLOW_ABOVE else "green"
+        detail = f"{pct}% of today's tokens are from headless (autonomous) runs" + \
+                 ("" if sev == "green" else " — background jobs are consuming >50% of resources")
+        return _result(cid, label, sev, detail, value=pct)
+    except Exception as exc:  # noqa: BLE001
+        return _result(cid, label, "yellow", f"could not compute autonomous share: {str(exc)[:100]}")
 
 
 def forecast_days_to_critical(ledger: list[dict], critical_kb: int = 15 * 1048576) -> tuple[str, float, str] | None:
@@ -1471,6 +1521,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("route:intent-routing-collection", "route.py embedding classifier (ChromaDB)", check_intent_routing_collection, CHECK_BUDGET_S),
         ("dispatch:lock-age", "Local dispatch lock", check_dispatch_lock, CHECK_BUDGET_S),
         ("pipeline:breaker", "Ticket pipeline circuit breaker", lambda: check_pipeline_breaker(reach), CROSS_MACHINE_BUDGET_S),
+        ("dispatch:autonomous-share", "Autonomous job spending", check_autonomous_share, CROSS_MACHINE_BUDGET_S),
         ("sync:stuck", "Code sync", lambda: check_sync_stuck(reach), CROSS_MACHINE_BUDGET_S),
         ("dispatch:parallel", "Parallel dispatch keeping up", check_parallel_dispatch, CHECK_BUDGET_S),
         ("purpose:missed", "Purpose metrics", check_missed_purposes, CHECK_BUDGET_S),

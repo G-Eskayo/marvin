@@ -117,3 +117,58 @@ def test_a_peer_without_the_github_summary_still_reports(monkeypatch, tmp_path):
     monkeypatch.setattr(ur, "local_github", lambda: None)
     r = ur.report(now=NOW, ssh=Peers({"tool-usage.json": doc("macbook-pro-1", 5), "token-usage.json": doc("macbook-pro-1", 5)}))
     assert all(m["github"] is None for m in r["machines"])
+
+
+# ── Test 6-8: launches reporting ──────────────────────────────────────────
+
+def test_local_launches_calls_marvin_launcher_spend_report(monkeypatch, tmp_path):
+    """Test 6: local_launches delegates to marvin_launcher.spend_report()."""
+    def mock_spend_report(log_path=None, days=30, now=None):
+        return {"digest": 0.3, "research-colony": 0.15, None: 0.0}
+
+    # Patch at the module level where it's imported and used
+    import marvin_launcher
+    monkeypatch.setattr(marvin_launcher, "spend_report", mock_spend_report)
+
+    launches_data = ur.local_launches()
+    assert launches_data.get("digest") == 0.3
+    assert launches_data.get("research-colony") == 0.15
+
+
+def test_peer_launches_reads_from_remote_over_ssh():
+    """Test 7: _peer_launches calls spend_report on a remote machine."""
+    class MockSSH:
+        def __call__(self, host, command, timeout=20):
+            if "spend_report" in command or "marvin_launcher" in command:
+                # Return JSON-encoded launch spend data
+                return json.dumps({"digest": 0.5, "self-review": 0.25})
+            raise ValueError(f"unexpected command: {command}")
+
+    launches_data = ur._peer_launches("remote-host", ssh=MockSSH())
+    assert launches_data.get("digest") == 0.5
+    assert launches_data.get("self-review") == 0.25
+
+
+def test_report_includes_launches_per_machine(monkeypatch, tmp_path):
+    """Test 8: report() includes launches in each machine's dict."""
+    setup(monkeypatch, tmp_path, doc("mac-mini-1", 1), doc("mac-mini-1", 1))
+
+    class MockSSH(Peers):
+        def __init__(self):
+            super().__init__({"tool-usage.json": doc("macbook-pro-1", 5), "token-usage.json": doc("macbook-pro-1", 5)})
+
+        def __call__(self, host, command, timeout=20):
+            if "marvin_launcher" in command:
+                return json.dumps({"digest": 0.3, "self-review": 0.1})
+            return super().__call__(host, command, timeout)
+
+    def mock_local_launches():
+        return {"digest": 0.2, "research-colony": 0.1, None: 0.05}
+
+    monkeypatch.setattr(ur, "local_launches", mock_local_launches)
+    r = ur.report(now=NOW, ssh=MockSSH())
+
+    by_machine = {m["machine"]: m for m in r["machines"]}
+    assert "launches" in by_machine["mac-mini-1"]
+    assert by_machine["mac-mini-1"]["launches"]["digest"] == 0.2
+    assert "launches" in by_machine["macbook-pro-1"]

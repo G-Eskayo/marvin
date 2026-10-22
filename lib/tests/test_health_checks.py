@@ -1299,3 +1299,164 @@ def test_the_machine_script_reads_a_real_process_uptime_with_this_machines_ps():
         assert 1 <= int(out.stdout.strip()) <= 20
     finally:
         child.kill()
+
+
+# ── Test 9-14: autonomous share check ────────────────────────────────────
+
+def test_check_autonomous_share_green_when_below_threshold(monkeypatch):
+    """Test 9: check_autonomous_share is green when autonomous spend is low."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    today = now.strftime("%Y-%m-%d")
+    report = {
+        "generated_at": now.isoformat(),
+        "machines": [
+            {
+                "machine": "mac-mini-1",
+                "tokens": {
+                    "rows": [
+                        {"day": today, "kind": "headless", "output": 10},
+                        {"day": today, "kind": "interactive", "output": 80}
+                    ]
+                }
+            }
+        ]
+    }
+    result = hc.check_autonomous_share(report=report, now=now)
+    assert result["severity"] == "green"
+    assert "autonomous" in result["detail"].lower()
+
+
+def test_check_autonomous_share_yellow_when_above_threshold(monkeypatch):
+    """Test 10: check_autonomous_share is yellow when autonomous share exceeds threshold."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    today = now.strftime("%Y-%m-%d")
+    report = {
+        "generated_at": now.isoformat(),
+        "machines": [
+            {
+                "machine": "mac-mini-1",
+                "tokens": {
+                    "rows": [
+                        {"day": today, "kind": "headless", "output": 60},
+                        {"day": today, "kind": "interactive", "output": 20}
+                    ]
+                }
+            }
+        ]
+    }
+    result = hc.check_autonomous_share(report=report, now=now)
+    assert result["severity"] == "yellow"
+    assert "75" in result["detail"]  # 75% autonomous (60 / 80)
+
+
+def test_check_autonomous_share_aggregates_all_machines(monkeypatch):
+    """Test 11: check_autonomous_share combines data from all machines."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    today = now.strftime("%Y-%m-%d")
+    report = {
+        "generated_at": now.isoformat(),
+        "machines": [
+            {"machine": "mac-mini-1", "tokens": {"rows": [{"day": today, "kind": "headless", "output": 10}, {"day": today, "kind": "interactive", "output": 90}]}},
+            {"machine": "macbook-pro-1", "tokens": {"rows": [{"day": today, "kind": "headless", "output": 20}, {"day": today, "kind": "interactive", "output": 80}]}}
+        ]
+    }
+    result = hc.check_autonomous_share(report=report, now=now)
+    # Total: headless=30, interactive=170 -> 30/200 = 15% autonomous
+    assert result["severity"] == "green"
+
+
+def test_check_autonomous_share_handles_none_launches(monkeypatch):
+    """Test 12: check_autonomous_share handles machines without tokens data."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    today = now.strftime("%Y-%m-%d")
+    report = {
+        "generated_at": now.isoformat(),
+        "machines": [
+            {"machine": "mac-mini-1", "tokens": {"rows": [{"day": today, "kind": "headless", "output": 10}, {"day": today, "kind": "interactive", "output": 90}]}},
+            {"machine": "macbook-pro-1", "tokens": None}  # No tokens data
+        ]
+    }
+    result = hc.check_autonomous_share(report=report, now=now)
+    assert result["severity"] in ("green", "yellow")  # Should not crash
+    assert "detail" in result
+
+
+def test_check_autonomous_share_calls_usage_report_by_default(monkeypatch):
+    """Test 13: check_autonomous_share calls usage_report() by default."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    today = now.strftime("%Y-%m-%d")
+
+    def mock_report(now=None):
+        return {
+            "machines": [
+                {"machine": "mac-mini-1", "tokens": {"rows": [{"day": today, "kind": "headless", "output": 60}, {"day": today, "kind": "interactive", "output": 40}]}}
+            ]
+        }
+
+    monkeypatch.setattr(hc, "usage_report", mock_report)
+    result = hc.check_autonomous_share(now=now)
+    assert result["severity"] == "yellow"
+
+
+def test_autonomous_share_registered_in_default_checks(monkeypatch):
+    """Test 14: check_autonomous_share is registered in default_checks()."""
+    checks = hc.default_checks()
+    check_ids = [c[0] for c in checks]
+    assert any("autonomous" in cid for cid in check_ids)
+
+
+def test_check_autonomous_share_day_filter_excludes_old_data(monkeypatch):
+    """Test 15: check_autonomous_share only considers today's data, not old rows."""
+    from datetime import datetime, timezone, timedelta
+    now = datetime(2026, 10, 10, 12, 0, tzinfo=timezone.utc)
+    today = "2026-10-10"
+    yesterday = "2026-10-09"
+    report = {
+        "generated_at": now.isoformat(),
+        "machines": [
+            {
+                "machine": "mac-mini-1",
+                "tokens": {
+                    "rows": [
+                        {"day": yesterday, "kind": "headless", "output": 1000},  # old, should be excluded
+                        {"day": today, "kind": "headless", "output": 5},
+                        {"day": today, "kind": "interactive", "output": 95}
+                    ]
+                }
+            }
+        ]
+    }
+    result = hc.check_autonomous_share(report=report, now=now)
+    # With only today's data: 5/(5+95) = 5% (green)
+    # If it included yesterday: 1005/1100 = 91% (yellow)
+    assert result["severity"] == "green"
+
+
+def test_check_autonomous_share_no_cap_field_guard(monkeypatch):
+    """Test 16: check_autonomous_share safely handles missing 'output' field in rows."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    today = now.strftime("%Y-%m-%d")
+    report = {
+        "generated_at": now.isoformat(),
+        "machines": [
+            {
+                "machine": "mac-mini-1",
+                "tokens": {
+                    "rows": [
+                        {"day": today, "kind": "headless"},  # missing 'output' field
+                        {"day": today, "kind": "interactive", "output": 50}
+                    ]
+                }
+            }
+        ]
+    }
+    # Should not crash on missing 'output' field
+    result = hc.check_autonomous_share(report=report, now=now)
+    assert "severity" in result
+    assert result["severity"] in ("green", "yellow", "red")

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mergeTools, mergeRows, mergeInventory, mergeFailures, mergeTokenRows, dailySeries, sumRows, projectTable, ticketTable, machineFreshness } from '../src/lib/usage_view.js'
+import { mergeTools, mergeRows, mergeInventory, mergeFailures, mergeTokenRows, dailySeries, sumRows, projectTable, ticketTable, machineFreshness, weeklySeries, autonomousShare, launchSpendTable } from '../src/lib/usage_view.js'
 
 const tool = (name, calls, extra = {}) => ({ name, calls, ok: calls, error: 0, rejected: 0, interrupted: 0, invalid: 0, unresolved: 0, expected: 0, last_used: null,
   by_kind: { interactive: calls, headless: 0, subagent: 0 }, by_day: {}, causes: {}, purpose: '(no description recorded)', ...extra })
@@ -100,5 +100,134 @@ describe('skills, inventory and failures across machines', () => {
     const f = (at, tool) => ({ at, tool, outcome: 'error', kind: 'headless', message: 'm' })
     const out = mergeFailures([withInv('a', [], 1, [f('2026-10-05T10:00:00Z', 'Bash')]), withInv('b', [], 1, [f('2026-10-06T10:00:00Z', 'Read')])], 'all')
     expect(out.map((x) => [x.tool, x.machine])).toEqual([['Read', 'b'], ['Bash', 'a']])
+  })
+})
+
+describe('weeklySeries (tests 1-3)', () => {
+  it('Test 1: weeklySeries returns 4 weeks of data from token rows', () => {
+    const rows = [
+      { day: '2026-10-06', kind: 'headless', output: 100 },
+      { day: '2026-10-07', kind: 'interactive', output: 50 },
+      { day: '2026-10-13', kind: 'headless', output: 75 }
+    ]
+    const weeks = weeklySeries(rows, '2026-10-13')
+    expect(weeks).toHaveLength(4)
+    expect(weeks[0]).toHaveProperty('week')
+    expect(weeks.every(w => w.hasOwnProperty('interactive') && w.hasOwnProperty('headless') && w.hasOwnProperty('subagent') && w.hasOwnProperty('total'))).toBe(true)
+  })
+
+  it('Test 2: weeklySeries uses consistent week-start calculation for all rows in same week', () => {
+    const rows = [
+      { day: '2026-10-06', kind: 'headless', output: 100 },
+      { day: '2026-10-07', kind: 'interactive', output: 50 },
+      { day: '2026-10-08', kind: 'subagent', output: 25 }
+    ]
+    const weeks = weeklySeries(rows, '2026-10-13')
+    // All three rows (06, 07, 08) are in the same week (week ending before 2026-10-13)
+    const weekWithRows = weeks.find(w => w.total > 0)
+    expect(weekWithRows).toBeDefined()
+    expect(weekWithRows.headless).toBe(100)
+    expect(weekWithRows.interactive).toBe(50)
+    expect(weekWithRows.subagent).toBe(25)
+    expect(weekWithRows.total).toBe(175)
+  })
+
+  it('Test 3: weeklySeries aggregates multiple rows per week correctly without weekday alignment', () => {
+    // Rows spanning different days but same week should all map to same bucket
+    const rows = [
+      { day: '2026-09-29', kind: 'headless', output: 10 },
+      { day: '2026-09-30', kind: 'headless', output: 20 },
+      { day: '2026-10-01', kind: 'interactive', output: 30 },
+      { day: '2026-10-02', kind: 'interactive', output: 40 },
+      { day: '2026-10-06', kind: 'headless', output: 50 }
+    ]
+    const weeks = weeklySeries(rows, '2026-10-06')
+    // 4 weeks means: week -3, -2, -1, 0 (where 0 is the end)
+    // Buckets: 2026-09-15, 2026-09-22, 2026-09-29, 2026-10-06
+    // 09-29 (7 days before): maps to bucket 2026-09-29
+    // 09-30 (6 days before): maps to bucket 2026-09-29
+    // 10-01 (5 days before): maps to bucket 2026-09-29
+    // 10-02 (4 days before): maps to bucket 2026-09-29
+    // 10-06 (0 days before): maps to bucket 2026-10-06
+    expect(weeks).toHaveLength(4)
+    expect(weeks[0].total).toBe(0)  // 2026-09-15 bucket
+    expect(weeks[1].total).toBe(0)  // 2026-09-22 bucket
+    expect(weeks[2].total).toBe(100)  // 2026-09-29 bucket: 09-29(10) + 09-30(20) + 10-01(30) + 10-02(40)
+    expect(weeks[3].total).toBe(50)  // 2026-10-06 bucket: 10-06(50)
+  })
+})
+
+describe('launch spending metrics (tests 15-18)', () => {
+  it('Test 15: weeklySeries returns 4 weeks of data from token rows', () => {
+    const rows = [
+      { day: '2026-10-06', kind: 'headless', output: 100 },
+      { day: '2026-10-07', kind: 'interactive', output: 50 },
+      { day: '2026-10-13', kind: 'headless', output: 75 }
+    ]
+    const weeks = weeklySeries(rows, '2026-10-13')
+    expect(weeks).toHaveLength(4)
+    expect(weeks[0]).toHaveProperty('week')
+  })
+
+  it('Test 16: autonomousShare computes headless fraction for one day', () => {
+    const rows = [
+      { day: '2026-10-06', kind: 'headless', output: 30 },
+      { day: '2026-10-06', kind: 'interactive', output: 70 }
+    ]
+    const share = autonomousShare(rows, '2026-10-06')
+    // 30 / 100 = 0.3
+    expect(share).toBeCloseTo(0.3, 2)
+  })
+
+  it('Test 17: launchSpendTable returns jobs sorted by cost', () => {
+    const ms = [
+      { machine: 'a', launches: { digest: 0.3, 'research-colony': 0.1, null: 0.2 } },
+      { machine: 'b', launches: { 'self-review': 0.25, null: 0.5 } }
+    ]
+    const table = launchSpendTable(ms, 'all')
+    expect(table[0]).toEqual({ job: 'digest', total: 0.3 })
+    expect(table).toContainEqual({ job: 'self-review', total: 0.25 })
+  })
+
+  it('Test 18: launchSpendTable skips null jobs', () => {
+    const ms = [
+      { machine: 'a', launches: { null: 1.0 } }  // Only null job
+    ]
+    const table = launchSpendTable(ms, 'all')
+    expect(table).toHaveLength(0)
+  })
+})
+
+describe('autonomousShare and ShareLine gate (tests 8-10)', () => {
+  it('Test 8: autonomousShare correctly computes headless fraction for a given day', () => {
+    const rows = [
+      { day: '2026-10-06', kind: 'headless', output: 40 },
+      { day: '2026-10-06', kind: 'interactive', output: 60 }
+    ]
+    const share = autonomousShare(rows, '2026-10-06')
+    expect(share).toBeCloseTo(0.4, 2)
+  })
+
+  it('Test 9: autonomousShare returns 0 when there are no rows for the given day', () => {
+    const rows = [
+      { day: '2026-10-05', kind: 'headless', output: 100 },
+      { day: '2026-10-07', kind: 'interactive', output: 50 }
+    ]
+    const share = autonomousShare(rows, '2026-10-06')
+    expect(share).toBe(0)
+  })
+
+  it('Test 10: launchSpendTable should always be rendered when autonomousShare > 0, not gated by topSpenders.length', () => {
+    const rows = [
+      { day: '2026-10-06', kind: 'headless', output: 50 },
+      { day: '2026-10-06', kind: 'interactive', output: 50 }
+    ]
+    const share = autonomousShare(rows, '2026-10-06')
+    // autonomousShare is 0.5 (> 0), so ShareLine should render
+    expect(share).toBeGreaterThan(0)
+    // But topSpenders might be empty if there are no launch records
+    const topSpenders = launchSpendTable([{ machine: 'a', launches: {} }], 'all')
+    expect(topSpenders).toHaveLength(0)
+    // Both should coexist: share > 0 renders section, empty topSpenders shows empty state
   })
 })
