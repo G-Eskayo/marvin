@@ -128,7 +128,7 @@ def _open_issues(repo: str = REPO) -> list[dict] | None:
 
 
 def _unclaimed_ready_tickets(repo: str = REPO, issues: list[dict] | None = None) -> list[dict]:
-    """What this machine may dispatch next, in order: ready-for-agent, unclaimed, not pinned, and with
+    """What this machine may dispatch next, in order: ready-for-agent, unclaimed, not held, not with a person, and with
     no open blocker, highest priority first and oldest first among equals. One call fetches every open
     ticket because whether a blocker is still open depends on the others; a caller that already has that
     list passes it in (#324)."""
@@ -140,7 +140,7 @@ def _unclaimed_ready_tickets(repo: str = REPO, issues: list[dict] | None = None)
 
     def eligible(i):
         names = set(ticket_policy.label_names(i))
-        return ("ready-for-agent" in names and not names & HOLD_LABELS
+        return ("ready-for-agent" in names and not names & HOLD_LABELS and not ticket_policy.needs_person(names)
                 and not any(n.startswith("claimed:") for n in names)
                 and not ticket_policy.open_blockers(i, open_numbers))
 
@@ -305,7 +305,8 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
     """A PR that GitHub says CONFLICTS with its base can never be merged as it stands, and the first anyone
     learned was a human clicking Approve (finance-os #9, clarity #48). So the pipeline sends the ticket back
     by itself: label `needs-reengagement` + a comment saying why, and the existing sent-back loop rebuilds it
-    on the current main. Tickets already sent back, or protected by `pinned`/`held`, are left alone, and any
+    on the current main. Tickets already sent back, protected by `pinned`/`held`, or with a person
+    (ticket_policy.NEEDS_PERSON_LABELS) are left alone, and any
     gh failure just means 'try again next scan'."""
     def gh(*args):
         return subprocess.run(["gh", *args], capture_output=True, text=True, timeout=30)
@@ -327,8 +328,8 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
             continue
         n = int(m.group(1))
         names = labels_of.get(n)
-        if names is None or names & HOLD_LABELS:
-            continue
+        if names is None or names & HOLD_LABELS or ticket_policy.needs_person(names):
+            continue  # a person's: no send-back, no paid repair, no comment (#605: #81/#218 were re-sent every scan)
         if "needs-reengagement" in names:
             # Already sent back, but its PR still conflicts: the rebuild hasn't happened (#257 sat 12 hours, still
             # claimed). A repair makes the rebuild unnecessary; anything else stays the sent-back loop's business.
@@ -340,7 +341,7 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
                 if fix["outcome"] == "repaired":
                     gh("issue", "edit", str(n), "--repo", repo, "--remove-label", "needs-reengagement")
                     gh("issue", "comment", str(n), "--repo", repo, "--body",
-                       f"PR #{pr['number']}'s conflict with main was resolved automatically and pushed, so no rebuild is needed: "
+                       f"PR #{pr['number']}'s {ticket_policy.REPAIRED_MARKER} and pushed, so no rebuild is needed: "
                        f"the sent-back flag is cleared and the PR is ready for review.")
                     print(f"{LOG_PREFIX} {repo}#{n}: sent-back PR #{pr['number']} repaired instead of rebuilt", file=sys.stderr)
             continue
@@ -387,7 +388,7 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
            (f"PR #{pr['number']}'s GitHub checks failed: {', '.join(red)}. " if red else
             f"PR #{pr['number']} now conflicts with main{' in ' + ', '.join(files) if files else ''} (the same lines changed on both "
             f"sides, so it could not be resolved automatically). ") +
-           "Sent back automatically: the pipeline will rebuild it on the current main and update the same PR.")
+           f"{ticket_policy.SENT_BACK_MARKER} the pipeline will rebuild it on the current main and update the same PR.")
         print(f"{LOG_PREFIX} {repo}#{n}: PR #{pr['number']} {'failed its checks' if red else 'conflicts with main'}, sent back for rework", file=sys.stderr)
         sent.append(n)
     return sent

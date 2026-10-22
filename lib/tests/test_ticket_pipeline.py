@@ -621,6 +621,69 @@ def test_a_ticket_on_hold_is_never_sent_back(monkeypatch):
         assert not any("edit" in c or "comment" in c for c in calls), label
 
 
+# ── one needs-a-person state (#605) ──
+
+def test_a_ticket_with_a_person_is_never_sent_back_even_if_it_still_says_ready_for_agent(monkeypatch):
+    """#81 and #218 on 2026-10-22: PR #359/#400 kept conflicting, and every scan re-added needs-reengagement."""
+    for labels in (["ready-for-human"], ["needs-info"], ["ready-for-human", "ready-for-agent", "claimed:mac-mini"],
+                   ["needs-info", "ready-for-agent"]):
+        for already_sent_back in (False, True):
+            calls = []
+            seen = _repair(monkeypatch, {"outcome": "rebuild", "files": ["lib/health_checks.py"]})
+            names = labels + (["needs-reengagement"] if already_sent_back else [])
+            issues = [{"number": 81, "labels": [{"name": l} for l in names]}]
+            monkeypatch.setattr(tp.subprocess, "run", _requeue([_pr(359, "o/r#81")], issues, calls))
+            assert tp._requeue_conflicted_prs("o/r") == [], names
+            assert not any("edit" in c or "comment" in c for c in calls), names
+            assert seen == [], names     # no paid repair attempt on a person's ticket either
+
+
+def test_a_ticket_with_a_person_is_never_dispatched_whatever_else_it_carries():
+    issues = [_issue(218, "2026-01-01T00:00:00Z", labels=["ready-for-agent", "ready-for-human", "needs-reengagement"]),
+              _issue(455, "2026-01-02T00:00:00Z", labels=["ready-for-agent", "needs-info"]),
+              _issue(104, "2026-01-03T00:00:00Z", labels=["ready-for-agent"])]
+    assert [i["number"] for i in tp._unclaimed_ready_tickets(issues=issues)] == [104]
+
+
+def test_a_conflicting_pr_on_a_ticket_past_its_re_queues_hands_it_over_once_and_then_goes_quiet(monkeypatch):
+    """The 2026-10-22 loop end to end, with the real send-back, the real refeed planner and the real dispatcher filter:
+    labels and comments are applied to one in-memory ticket scan after scan while its PR keeps conflicting."""
+    import ticket_agents as ta
+    labels = {"ready-for-agent", "claimed:mac-mini"}
+    comments: list[str] = []
+    dispatched = []
+    _repair(monkeypatch, {"outcome": "rebuild", "files": ["lib/health_checks.py"]})
+    for scan in range(6):
+        calls = []
+        issues = [{"number": 81, "labels": [{"name": l} for l in sorted(labels)]}]
+        monkeypatch.setattr(tp.subprocess, "run", _requeue([_pr(359, "o/r#81")], issues, calls))
+        tp._requeue_conflicted_prs("o/r")
+        for c in calls:
+            if "edit" in c:
+                for i, a in enumerate(c):
+                    if a == "--add-label":
+                        labels.add(c[i + 1])
+                    elif a == "--remove-label":
+                        labels.discard(c[i + 1])
+            elif "comment" in c:
+                comments.append(c[c.index("--body") + 1])
+        t = {"number": 81, "title": "t", "body": "", "labels": [{"name": l} for l in labels]}
+        for a in ta.plan_refeed("o/r", [t], counts={81: 2}):    # already re-queued twice
+            if a["op"] == "add_label":
+                labels.add(a["arg"])
+            elif a["op"] == "remove_label":
+                labels.discard(a["arg"])
+            elif a["op"] == "comment":
+                comments.append(a["arg"])
+        ready = tp._unclaimed_ready_tickets(issues=[{**t, "labels": [{"name": l} for l in labels],
+                                                     "createdAt": "2026-01-01T00:00:00Z"}])
+        dispatched += [scan for _ in ready]
+    assert sum("It needs a person" in c for c in comments) == 1, comments
+    assert sum("Sent back automatically" in c for c in comments) == 1, comments
+    assert dispatched == []
+    assert labels == {"ready-for-human"}
+
+
 def test_sending_a_ticket_back_releases_its_claim_or_nothing_would_ever_rebuild_it(monkeypatch):
     """clarity-captions #51 sat 'sent back' for hours: it still carried claimed:mac-mini from the run that raised the PR,
     and the dispatcher only takes tickets with no claim, so the rebuild was never started."""
