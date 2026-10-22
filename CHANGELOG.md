@@ -1,5 +1,7 @@
 # Changelog
 
+- Show chat helper agents in the Activity tab ([#614](https://github.com/G-Eskayo/marvin/pull/614))
+
 - Owner decisions on a PR go unanswered: flag them, then file a follow-up ticket after N hours ([#608](https://github.com/G-Eskayo/marvin/pull/608))
 
 - Change-detector fires on ETag churn: decide 'changed' from the newest issue's content, not the ETag ([#604](https://github.com/G-Eskayo/marvin/pull/604))
