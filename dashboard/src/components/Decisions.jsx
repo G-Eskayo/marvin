@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 // The owner answers a PR's or ticket's Decisions section here (2026-10-09): big tappable options, a note per question,
 // and text boxes for written answers. Submitting writes the answers into the description on GitHub (decisions_submit.js)
@@ -109,11 +109,42 @@ function Question({ q, d, onChange, readOnly }) {
   )
 }
 
-export default function Decisions({ repo, number, decisions, onSubmitted, submit = (p) => window.api.decisions.submit(p) }) {
+// Which options are ticked (and text answers), as one comparable string: what GitHub's copy currently says.
+export const answersSignature = (questions = []) => JSON.stringify(questions.map((q) => [q.id, (q.options || []).filter((o) => o.checked).map((o) => o.label), q.answer || '']))
+
+// What the panel shows after a submit. GitHub's reply decides it, not what was sent: if GitHub kept something else, the
+// answers were not saved, the panel stays open to pick again, and the note above the panel says what GitHub has.
+export function submitOutcome(r) {
+  if (r?.disagreed) return { editing: true, status: { state: 'error', message: 'GitHub kept a different answer than the one you sent (the note above says what it has). Pick again and submit.' } }
+  return { editing: false, status: { state: 'saved', result: { ...r, recording: !r?.unchanged && !r?.commentUrl && !r?.commentError }, savedSig: r?.pr?.decisions ? answersSignature(r.pr.decisions.questions) : null } }
+}
+
+// The panel follows GitHub's copy while it is not being edited: a background correction re-ticks what GitHub has, and
+// a "Saved" message that no longer holds becomes a plain warning.
+export function followGithub({ questions, editing, status }) {
+  if (editing) return null
+  const sig = answersSignature(questions)
+  const stale = status?.state === 'saved' && status.savedSig && status.savedSig !== sig
+  return { draft: initialDraft(questions), status: stale ? { state: 'error', message: 'GitHub now has different answers than the ones you saved (the note above says what changed).' } : status }
+}
+
+export default function Decisions({ repo, number, decisions, onSubmitted, submit = (p) => window.api.decisions.submit(p), onRecorded = (cb) => window.api.decisions.onRecorded?.(cb) }) {
   const questions = decisions?.questions || []
   const [draft, setDraft] = useState(() => initialDraft(questions))
   const [editing, setEditing] = useState(() => (decisions?.pending || []).length > 0)
   const [status, setStatus] = useState({ state: 'idle' }) // idle | saving | saved | error
+  // Local-first: the answers show as soon as GitHub accepted the edit; the record comment lands a moment later.
+  const sig = answersSignature(questions)
+  useEffect(() => {
+    const next = followGithub({ questions, editing, status })
+    if (!next) return
+    setDraft(next.draft)
+    if (next.status !== status) setStatus(next.status)
+  }, [sig])
+  useEffect(() => onRecorded((rec) => {
+    if (rec?.repo !== repo || Number(rec?.number) !== Number(number)) return
+    setStatus((s) => (s.state === 'saved' ? { ...s, result: { ...s.result, ...rec, recording: false } } : s))
+  }), [repo, number])
   if (!decisions?.present || !questions.length) return null
 
   const missing = missingRequired(questions, draft)
@@ -125,8 +156,9 @@ export default function Decisions({ repo, number, decisions, onSubmitted, submit
     setStatus({ state: 'saving' })
     try {
       const r = await submit({ repo, number, answers: changes })
-      setStatus({ state: 'saved', result: r })
-      setEditing(false)
+      const out = submitOutcome(r)
+      setStatus(out.status)
+      setEditing(out.editing)
       onSubmitted?.(r)
     } catch (err) {
       setStatus({ state: 'error', message: String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') })
@@ -174,6 +206,7 @@ export default function Decisions({ repo, number, decisions, onSubmitted, submit
         <p className="mt-3 text-right text-sm text-emerald-300">
           Saved to the description.{' '}
           {status.result?.commentUrl && <a href={status.result.commentUrl} target="_blank" rel="noreferrer" className="underline">Recorded on GitHub ↗</a>}
+          {status.result?.recording && <span className="text-neutral-400">Recording on GitHub…</span>}
           {status.result?.commentError && <span className="block text-amber-300">{status.result.commentError}</span>}
           {status.result?.labelsChanged && <span className="block">The ticket is now ready for an agent.</span>}
         </p>

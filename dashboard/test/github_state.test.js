@@ -219,3 +219,77 @@ describe('repoOfSource', () => {
     expect(calls).toEqual(['r', 'r'])
   })
 })
+
+// Local-first actions (CONTEXT.md "Dashboard actions render their true result locally at once"): a write the dashboard
+// made is applied to its memory at once, from GitHub's own answer to the write, and a re-read that was already on its
+// way (it left before the write) must not put the old state back.
+describe('createGithubState.patch: apply what the dashboard just wrote', () => {
+  const deferred = () => { let resolve; const p = new Promise((r) => (resolve = r)); return { p, resolve } }
+
+  it('changes the remembered value in place, without a GitHub read or invalidating the repo', async () => {
+    const s = createGithubState({ now: () => 0 })
+    const { calls, fetch } = counter({ a: [{ number: 1, body: 'old' }] })
+    await s.get('prs', 'o/a', fetch('a'))
+    expect(s.patch('prs', 'o/a', (list) => list.map((p) => ({ ...p, body: 'new' })))).toBe(true)
+    expect(await s.get('prs', 'o/a', fetch('a'))).toEqual([{ number: 1, body: 'new' }])
+    expect(calls).toEqual(['a'])
+  })
+
+  it('a slow re-read that left before the write arrives after it: the newer local state survives', async () => {
+    const s = createGithubState({ now: () => 0 })
+    await s.get('prs', 'o/a', async () => [{ number: 1, body: 'old' }])
+    const slow = deferred()
+    const reading = s.get('prs', 'o/a', () => slow.p, { fresh: true })
+    s.patch('prs', 'o/a', (list) => list.map((p) => (p.number === 1 ? { ...p, body: 'answered' } : p)))
+    slow.resolve([{ number: 1, body: 'old' }, { number: 2, body: 'a new PR' }]) // GitHub's answer from before the write
+    const got = await reading
+    expect(got).toEqual([{ number: 1, body: 'answered' }, { number: 2, body: 'a new PR' }])
+    expect(await s.get('prs', 'o/a', async () => { throw new Error('must not read') })).toEqual(got)
+  })
+
+  it('a re-read that starts after the write is GitHub\'s word and replaces the local value', async () => {
+    const s = createGithubState({ now: () => 0 })
+    await s.get('prs', 'o/a', async () => [{ number: 1, body: 'old' }])
+    s.patch('prs', 'o/a', (list) => list.map((p) => ({ ...p, body: 'answered' })))
+    expect(await s.get('prs', 'o/a', async () => [{ number: 1, body: 'github says otherwise' }], { fresh: true })).toEqual([{ number: 1, body: 'github says otherwise' }])
+  })
+
+  it('a write while the first read is still on its way (nothing remembered yet) is applied when it lands', async () => {
+    const s = createGithubState({ now: () => 0 })
+    const slow = deferred()
+    const reading = s.get('prs', 'o/a', () => slow.p)
+    expect(s.patch('prs', 'o/a', (list) => list.filter((p) => p.number !== 1))).toBe(false)
+    slow.resolve([{ number: 1 }, { number: 2 }])
+    expect(await reading).toEqual([{ number: 2 }])
+  })
+
+  it('nothing remembered and nothing on its way: a patch is a no-op, and the next read asks GitHub', async () => {
+    const s = createGithubState({ now: () => 0 })
+    expect(s.patch('prs', 'o/a', () => { throw new Error('not called') })).toBe(false)
+    expect(await s.get('prs', 'o/a', async () => ['fresh'])).toEqual(['fresh'])
+  })
+
+  it('a patch that throws leaves the remembered value as it was', async () => {
+    const s = createGithubState({ now: () => 0 })
+    await s.get('prs', 'o/a', async () => ['kept'])
+    expect(() => s.patch('prs', 'o/a', () => { throw new Error('bad patch') })).toThrow('bad patch')
+    expect(await s.get('prs', 'o/a', async () => ['x'])).toEqual(['kept'])
+  })
+
+  it('a failed re-read keeps the patched value, not the one from before the write', async () => {
+    const s = createGithubState({ now: () => 0 })
+    await s.get('prs', 'o/a', async () => ['old'])
+    const slow = deferred()
+    const reading = s.get('prs', 'o/a', () => slow.p, { fresh: true })
+    s.patch('prs', 'o/a', () => ['answered'])
+    slow.resolve(Promise.reject(new Error('offline')))
+    expect(await reading).toEqual(['answered'])
+  })
+
+  it('counts local writes, so a coalesced reader can tell its answer is older than a write', () => {
+    const s = createGithubState({ now: () => 0 })
+    const before = s.localSeq()
+    s.patch('prs', 'o/a', (v) => v)
+    expect(s.localSeq()).toBe(before + 1)
+  })
+})

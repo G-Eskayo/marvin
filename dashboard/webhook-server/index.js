@@ -2,7 +2,8 @@ import { readFileSync } from 'fs'
 import os from 'os'
 import path from 'path'
 import { createServer } from 'http'
-import { mergePr, baselineFailsOnMain, mergesAhead } from './merge.js'
+import { mergePr, baselineFailsOnMain, mergesAhead, execWithGroupTimeout } from './merge.js'
+import { snapshotExec } from './pr_snapshot.js'
 import { createMergeTracker, createInflightStore, takeInterruptedMerges, recordMergeDuration, estimateMergeMs, machineLoad, approveResponder, wantsStream } from './merge_progress.js'
 import { resolveDeviceId } from '../electron/main/device_identity.js'
 import { sendFeedback, dropEntirely } from './deny.js'
@@ -186,7 +187,8 @@ const server = createServer(async (req, res) => {
       // to re-engagement instead (merged: false, reengaged: true) -- the
       // latter is an expected outcome, not a server error, so it gets a
       // 200 with the real reason attached rather than a bare 500.
-      const result = await mergePr(payload.pr_url, undefined, undefined, undefined, undefined, undefined, undefined, undefined, {
+      // P5: the preflight's seven reads of this PR share one (pr_snapshot.js); merge.js and its checks are unchanged.
+      const result = await mergePr(payload.pr_url, snapshotExec(payload.pr_url, execWithGroupTimeout), undefined, undefined, undefined, undefined, undefined, undefined, {
         baselineFails: (names) => baselineFailsOnMain(names),
         progress: tracker ? tracker.progress : undefined,
         loadNow: () => ({ ...machineLoad(), id: machineId })
