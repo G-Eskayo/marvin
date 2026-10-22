@@ -493,3 +493,23 @@ def test_a_machine_without_xcode_has_no_simulators_to_review(monkeypatch):
     import cleanup_sweep as cs
     monkeypatch.setattr(cs.shutil, "which", lambda name: None)
     assert cs.sweep_simulators() == {"removed": [], "review": []}
+
+
+def test_a_second_sweep_while_one_is_running_skips_at_once(monkeypatch, tmp_path):
+    """#586: a sweep stuck in a size walk must not have tomorrow's launchd run queue up behind it."""
+    import fcntl
+    import subprocess as sp
+    lock = tmp_path / "cleanup-sweep.lock"
+    monkeypatch.setattr(cs, "LOCK_PATH", lock)
+    monkeypatch.setattr(cs, "run_daily_sweep", lambda: pytest.fail("swept while another sweep held the lock"))
+    holder = sp.Popen([sys.executable, "-c", f"import fcntl,time; f=open({str(lock)!r},'a'); "
+                       f"fcntl.flock(f, fcntl.LOCK_EX); print('held', flush=True); time.sleep(30)"],
+                      stdout=sp.PIPE, text=True)
+    try:
+        assert holder.stdout.readline().strip() == "held"
+        assert cs.main() == {"busy": True}
+    finally:
+        holder.kill()
+        holder.wait()
+    monkeypatch.setattr(cs, "run_daily_sweep", lambda: {"ok": 1})
+    assert cs.main() == {"ok": 1}, "the lock outlived the process that held it"

@@ -19,6 +19,13 @@
         <key>PATH</key>
         <string>/Users/gileskayo/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/Users/gileskayo/.agents/venv/bin</string>
     </dict>
+    <!-- #586: housekeeping yields to real work: low CPU and disk priority for the job and every du it starts -->
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+    <key>Nice</key>
+    <integer>10</integer>
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
