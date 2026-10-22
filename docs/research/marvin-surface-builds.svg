@@ -31,12 +31,12 @@
   <rect x="134" y="184" width="352" height="172" fill="none" stroke="#ff8a5f" stroke-width="2" stroke-dasharray="8 5"/>
 
   <!-- labels V1 front -->
-  <line x1="480" y1="167" x2="610" y2="150" class="ln"/><text x="615" y="154" class="lbl">LED strip into top edge (24 V, CRI ≥ 90, tunable white)</text>
+  <line x1="480" y1="167" x2="610" y2="150" class="ln"/><text x="615" y="154" class="lbl">CORRECTED: LEDs go in the SHORT ends (left/right), not here</text>
   <line x1="470" y1="205" x2="610" y2="182" class="ln"/><text x="615" y="186" class="lbl">21.5" or 32" transparent LCD + HDMI board (showcase kit)</text>
   <line x1="505" y1="230" x2="610" y2="214" class="ln"/><text x="615" y="218" class="lbl">6 mm cast-acrylic light-guide plate (laser dots behind display)</text>
   <line x1="486" y1="320" x2="610" y2="246" class="ln"/><text x="615" y="250" class="lbl">IR touch frame, flat, over the display only (orange dashes)</text>
   <line x1="540" y1="330" x2="610" y2="278" class="ln"/><text x="615" y="282" class="lbl">Legs: 2020 aluminium extrusion + 3D-printed slotted clamps + gaskets</text>
-  <line x1="480" y1="374" x2="610" y2="310" class="ln"/><text x="615" y="314" class="lbl">LED strip into bottom edge (light from both long edges = even glow)</text>
+  <line x1="480" y1="374" x2="610" y2="310" class="ln"/><text x="615" y="314" class="lbl">Short-edge light, both ends, graded dots = even glow (see §0.7)</text>
   <text x="615" y="346" class="lbl">Brain: ESP32 running WLED + VEML7700 light sensor.</text>
   <text x="615" y="366" class="lbl">MARVIN sets glow brightness and colour from room light + screen content.</text>
   <text x="615" y="386" class="lbl">Video: M4 Mac mini over HDMI. Touch: USB (UPDD on macOS, native on Linux).</text>
@@ -73,7 +73,7 @@
   <text x="655" y="700" class="m">Cold-bent cast acrylic only to about 330x thickness (6 mm → R ≥ 2 m)</text>
   <line x1="395" y1="690" x2="650" y2="730" class="ln"/><text x="655" y="734" class="lbl">2–3 flat transparent LCDs angled along the arc</text>
   <text x="655" y="754" class="m">or a transparent OLED centrepiece, or a bent Xeneon Flex 45" (opaque)</text>
-  <line x1="500" y1="712" x2="650" y2="786" class="ln"/><text x="655" y="790" class="lbl">Edge-glow LEDs along the arc's top and bottom edges</text>
+  <line x1="500" y1="712" x2="650" y2="786" class="ln"/><text x="655" y="790" class="lbl">V3: LEDs in the legs at the SHORT ends only (see v3-design)</text>
   <line x1="620" y1="768" x2="650" y2="822" class="ln"/><text x="655" y="826" class="lbl">End legs: CNC aluminium, full-height slotted clamps</text>
   <text x="655" y="856" class="lbl">Curved PCAP foil laminated behind the face</text>
   <text x="655" y="876" class="m">The only touch that follows a curve (IR frames need flat)</text>
