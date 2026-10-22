@@ -137,6 +137,44 @@ def test_after_two_re_queues_it_goes_to_a_person_instead_of_looping():
     assert "ready-for-agent" not in {a["arg"] for a in ops(acts, op="add_label")}
 
 
+def test_going_to_a_person_takes_the_ticket_out_of_the_agent_queue_and_drops_its_claim():
+    """#605: refeed added ready-for-human but left ready-for-agent on, so the dispatcher kept starting #218/#81."""
+    t = issue(218, labels=["needs-reengagement", "ready-for-agent", "claimed:mac-mini", "claimed:macbook-pro"])
+    acts = ta.plan_refeed(REPO, [t], counts={218: 2})
+    removed = {a["arg"] for a in ops(acts, op="remove_label")}
+    assert {"needs-reengagement", "ready-for-agent", "claimed:mac-mini", "claimed:macbook-pro"} <= removed
+    assert ops(acts, op="add_label", arg="ready-for-human")
+    assert "It needs a person" in ops(acts, op="comment")[0]["arg"]
+    # never stateless on the way: the person label goes on before the agent label comes off
+    order = [(a["op"], a["arg"]) for a in acts]
+    assert order.index(("add_label", "ready-for-human")) < order.index(("remove_label", "ready-for-agent"))
+
+
+def test_a_ticket_already_with_a_person_is_never_told_so_again():
+    """#81 got "It needs a person" eight times on 2026-10-22: every scan re-sent it back and refeed said it again."""
+    for state in ("ready-for-human", "needs-info"):
+        for count in (0, 1, 2, 9):
+            t = issue(81, labels=["needs-reengagement", state, "ready-for-agent"])
+            acts = ta.plan_refeed(REPO, [t], counts={81: count})
+            assert not ops(acts, op="comment"), (state, count)
+            assert not ops(acts, op="add_label"), (state, count)        # no ready-for-agent, no second ready-for-human
+            assert ops(acts, op="remove_label", arg="needs-reengagement"), (state, count)  # the stray flag goes quietly
+
+
+def test_a_ticket_with_a_person_and_no_sent_back_flag_is_left_alone():
+    assert ta.plan_refeed(REPO, [issue(81, labels=["ready-for-human", "ready-for-agent"])], counts={81: 5}) == []
+
+
+def test_every_hand_off_to_a_person_is_marked_so_the_failure_streak_stops_there():
+    import ticket_policy as pol
+    acts = ta.plan_refeed(REPO, [issue(20, labels=["needs-reengagement"])], counts={20: 2})
+    acts += ta.plan_stale_claims(REPO, [issue(21, labels=["claimed:mac-mini"], updated=7)], set(), NOW, running=set(), releases={21: 2})
+    bodies = [a["arg"] for a in ops(acts, op="comment")]
+    assert len(bodies) == 2 and all(pol.automated_comment(b) == "handoff" for b in bodies)
+    # an ordinary re-queue note is a bot comment, not a hand-off
+    assert pol.automated_comment(ta.AUTOMATED_NOTE(0)) == "bot"
+
+
 # ── running ─────────────────────────────────────────────────────────────────
 
 class FakeGh:
