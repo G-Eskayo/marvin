@@ -30,6 +30,7 @@ from pathlib import Path
 LOG_PATH = Path.home() / ".claude" / "logs" / "pipeline-failures.jsonl"
 WINDOW_HOURS = 2
 MIN_DISTINCT_TICKETS = 3
+MODEL_UNAVAILABLE_SIG = "model-unavailable"
 
 
 def _now() -> datetime:
@@ -47,7 +48,7 @@ def signature(reason: str) -> str:
     if m:
         return f"verdict:{m.group(1)}"
     if re.search(r"the [\w-]+ model run failed", low):
-        return "model-unavailable"   # usage limit or outage: every ticket fails alike, so three in a row pause dispatch
+        return MODEL_UNAVAILABLE_SIG   # usage limit or outage: every ticket fails alike, so three in a row pause dispatch
     if "'claude'" in low and "timed out" in low:
         return "claude-timeout"
     if "no such file or directory: 'claude'" in low:
@@ -77,6 +78,11 @@ def record_failure(ticket: int, reason: str, now: datetime | None = None, projec
 
 def record_success(ticket: int, now: datetime | None = None, project: str = MARVIN) -> None:
     _append({"t": (now or _now()).isoformat(), "kind": "success", "ticket": ticket, "project": project})
+
+
+def record_hold(ticket: int, project: str = MARVIN, now: datetime | None = None) -> None:
+    """Record that a ticket was parked on hold, treating it as a reset point like success or clear."""
+    _append({"t": (now or _now()).isoformat(), "kind": "hold", "ticket": ticket, "project": project})
 
 
 def clear(now: datetime | None = None) -> None:
@@ -127,6 +133,68 @@ def tripped(now: datetime | None = None, project: str | None = None) -> list[dic
                                "last_seen": max(f["_t"] for f in group).isoformat(),
                                "example": group[-1].get("reason", "")})
     return result
+
+
+def ticket_streak(ticket: int, project: str = MARVIN, now: datetime | None = None) -> dict:
+    """Count and list consecutive failures for a single ticket+project, resetting on success, hold, or clear.
+
+    Returns {"count": int, "signatures": [sig1, sig2, ...]}, where signatures is the list of
+    distinct signatures from consecutive failures (excluding model-unavailable). Count is reset
+    at the last success/hold/clear in file order (not timestamp order).
+    """
+    records = _read()
+    for r in records:
+        r.setdefault("project", MARVIN)
+
+    # Find the last success/hold (for this ticket+project) or clear (global) in file order
+    last_reset_idx = -1
+    for i, r in enumerate(records):
+        if r.get("kind") == "clear" or (r.get("ticket") == ticket and r.get("project") == project and r.get("kind") in ("success", "hold")):
+            last_reset_idx = i
+
+    # Count failures after the last reset, excluding model-unavailable
+    failures = []
+    for i in range(last_reset_idx + 1, len(records)):
+        r = records[i]
+        if r.get("ticket") == ticket and r.get("project") == project and r["kind"] == "failure":
+            # Filter out model-unavailable from both count and signatures
+            if r.get("sig") != MODEL_UNAVAILABLE_SIG:
+                failures.append(r)
+
+    signatures = [f.get("sig") for f in failures if f.get("sig") is not None]
+    return {"count": len(failures), "signatures": signatures}
+
+
+def should_hold(ticket: int, project: str = MARVIN, threshold: int = 3, streak: dict | None = None) -> dict | None:
+    """Check if a ticket should be held (not retried). Returns dict with hold reason or None.
+
+    A ticket is held if:
+    1. The last two non-empty signatures are identical (repeat-signature check), or
+    2. Failure count >= threshold
+
+    Args:
+        ticket: ticket number
+        project: project name
+        threshold: failure count threshold for holding
+        streak: optional precomputed streak dict (from ticket_streak()) to avoid re-reading the log
+
+    Returns {"reason": "reason", "count": int} or None.
+    """
+    if streak is None:
+        streak = ticket_streak(ticket, project)
+    count = streak["count"]
+    signatures = streak["signatures"]
+
+    # Check for repeat signature (last two non-empty signatures are the same)
+    non_empty_sigs = [s for s in signatures if s]
+    if len(non_empty_sigs) >= 2 and non_empty_sigs[-1] == non_empty_sigs[-2]:
+        return {"reason": "repeat-signature", "count": count}
+
+    # Check for threshold
+    if count >= threshold:
+        return {"reason": "consecutive-failures", "count": count}
+
+    return None
 
 
 def main() -> None:
