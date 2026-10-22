@@ -32,7 +32,10 @@ OVERRIDES = CLAUDE / "catalog" / "overrides.json"
 REPOS = ("G-Eskayo/marvin", "G-Eskayo/clarity-captions", "G-Eskayo/marvin-mobile")
 DEADLINE_HORIZON_DAYS = 45
 LATE_HOUR = 23  # local time; a session still active after this counts as a late night
+MINI_HOST = "gils-mac-mini"
 
+
+_LIST_PREFIX = r"(?:[-*]|\d+[.)])\s+"
 
 # ── sources (each is a small reader; gather() tolerates any of them failing) ──────────────────────────────────
 
@@ -113,16 +116,52 @@ def _top_tickets() -> list[dict]:
     return sorted(out, key=lambda t: t["priority"])[:6]
 
 
-def _first_paragraph(path: Path, heading: str | None) -> str | None:
+def _read_text(path: Path) -> str | None:
+    """Read file, returning None on missing file or decode errors."""
     if not path.exists():
         return None
-    text = path.read_text()
+    try:
+        return path.read_text()
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _ssh_cat_mini(relpath: str) -> str | None:
+    """Cat file from Mini over ssh, with timeout and error tolerance."""
+    try:
+        out = subprocess.run(
+            ["ssh", "-o", "ConnectTimeout=3", "-o", "BatchMode=yes", MINI_HOST,
+             f"cat {relpath}"],
+            capture_output=True, text=True, timeout=5)
+        return out.stdout if out.returncode == 0 else None
+    except Exception:
+        return None
+
+
+def _first_paragraph_text(text: str, heading: str | None) -> str | None:
+    """Extract first paragraph from text, optionally under a heading with optional list prefix."""
     if heading:
-        m = re.search(rf"^## {re.escape(heading)}\s*$\n+(.+?)(?:\n\n|\n##|\Z)", text, re.M | re.S)
+        # Tolerate optional list prefix (-, *, 1., 1) ) before the heading
+        pattern = rf"^(?:{_LIST_PREFIX})?## {re.escape(heading)}\s*$\n+(.+?)(?:\n\n|\n##|\Z)"
+        m = re.search(pattern, text, re.M | re.S)
+        return m.group(1).strip() if m else None
     else:
-        m = re.search(r"^\*\*(.+?)\*\*:?\s*(.+?)(?:\n\n|\Z)", text, re.M | re.S)
+        # Also tolerate optional list prefix before the bold label
+        # Use [^\n*]+ to prevent title from matching across blank lines into unrelated bullets
+        pattern = rf"^(?:{_LIST_PREFIX})?\*\*([^\n*]+)\*\*:?\s*(.+?)(?:\n\n|\Z)"
+        m = re.search(pattern, text, re.M | re.S)
         return f"{m.group(1)}: {m.group(2).split('. ')[0].strip()}." if m else None
-    return m.group(1).strip() if m else None
+
+
+def _is_quarantined(text: str) -> bool:
+    """Check if text is quarantined by the safety monitor (catches both exact and paraphrased forms)."""
+    return "quarantined" in text.lower() and "safety-monitor" in text.lower()
+
+
+def _first_paragraph(path: Path, heading: str | None) -> str | None:
+    """Wrapper: read file at path and extract first paragraph."""
+    text = _read_text(path)
+    return _first_paragraph_text(text, heading) if text else None
 
 
 def _digest_idea(now: datetime) -> str | None:
@@ -134,9 +173,39 @@ def _digest_idea(now: datetime) -> str | None:
     return None
 
 
+def _research_text(day: str) -> str | None:
+    """Read research digest for day: merged (local) → Mini via ssh → own (local)."""
+    import machine_profile
+    merged_path = CLAUDE / "research-digest" / f"{day}-merged.md"
+    own_path = CLAUDE / "research-digest" / f"{day}.md"
+
+    # Try local merged first
+    text = _read_text(merged_path)
+    if text:
+        return text
+
+    # If not on Mini, try Mini via ssh
+    try:
+        is_mini = machine_profile.machine_label() == "mac-mini"
+    except Exception:
+        is_mini = False
+    if not is_mini:
+        mini_text = _ssh_cat_mini(f"~/.claude/research-digest/{day}-merged.md") or _ssh_cat_mini(f"~/.claude/research-digest/{day}.md")
+        if mini_text:
+            return mini_text
+
+    # Fall back to local own
+    return _read_text(own_path)
+
+
 def _research_idea(now: datetime) -> str | None:
     day = now.astimezone().strftime("%Y-%m-%d")
-    return _first_paragraph(CLAUDE / "research-digest" / f"{day}.md", None)
+    text = _research_text(day)
+    if not text:
+        return None
+    if _is_quarantined(text):
+        return None
+    return _first_paragraph_text(text, None)
 
 
 def _late_night(now: datetime) -> str | None:

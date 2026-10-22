@@ -341,11 +341,18 @@ def check_sync_block(repos: list[Path] | None = None, log_path: Path | None = No
 
 
 def _check_digest(label: str, dirpath: Path) -> str | None:
+    from morning_brief import _is_quarantined
     today = _now().astimezone().strftime("%Y-%m-%d")
     f = dirpath / f"{today}.md"
     if not f.exists():
         return None
-    m = re.search(r"^\*(.+?)\*\s*$", f.read_text(), re.MULTILINE)
+    try:
+        body = f.read_text()
+    except (OSError, UnicodeDecodeError):
+        return None
+    if _is_quarantined(body):
+        return f"{label} held back by the safety monitor — see ~/.claude/quarantine.md"
+    m = re.search(r"^\*(.+?)\*\s*$", body, re.MULTILINE)
     extra = f" — {m.group(1)}" if m else ""
     return f"{label} ready ({f.name}){extra}"
 
