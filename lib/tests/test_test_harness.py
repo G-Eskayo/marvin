@@ -98,12 +98,19 @@ def test_read_only_inputs_are_linked_in_and_still_cannot_be_written(tmp_path):
     (mem / "MEMORY.md").write_text("# Memory Index\n")
     (real / ".claude" / "settings.json").write_text("{}")
     (real / ".claude" / "projects" / slug / "transcript.jsonl").write_text("private\n")
+    (real / ".claude" / "portfolio" / "inventory" / "chrome").mkdir(parents=True)
+    (real / ".claude" / "portfolio" / "inventory" / "inventory.json").write_text("{}")
+    (real / ".claude" / "portfolio" / "images").mkdir()
     home = rhg.make_test_home(real, parent=str(tmp_path))
     assert (home / ".claude" / "projects" / slug / "memory" / "MEMORY.md").read_text() == "# Memory Index\n"
     assert (home / ".claude" / "settings.json").read_text() == "{}"
     assert not (home / ".claude" / "projects" / slug / "transcript.jsonl").exists(), "only the memory, not transcripts"
+    # main-health's portfolio parity tests compare against the captured inventory; generated images stay out.
+    assert (home / ".claude" / "portfolio" / "inventory" / "inventory.json").read_text() == "{}"
+    assert not (home / ".claude" / "portfolio" / "images").exists()
     g = rhg.WriteGuard(rhg.protected_roots(real), resolve_under=(str(home / ".claude"),))
     for target in (home / ".claude" / "settings.json", home / ".claude" / "projects" / slug / "memory" / "new.md",
+                   home / ".claude" / "portfolio" / "inventory" / "inventory.json",
                    home / ".claude" / "projects" / slug / "memory" / "deep" / "er.md"):
         with pytest.raises(PermissionError):
             g("open", (str(target), "w", 0))

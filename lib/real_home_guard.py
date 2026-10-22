@@ -48,8 +48,9 @@ def protected_roots(home: Path) -> tuple[str, ...]:
 def read_through(real: Path) -> tuple[str, ...]:
     """Inputs under the real ~/.claude that code reads as configuration, linked into the temp .claude so tests see
     them as before: the settings (which name the memory folder), the memory itself, the lexicon, the skill manifest,
-    and the organize scripts that live there. Writes through these links are still refused (WriteGuard resolves them)."""
-    return ("settings.json", "manifest.json", "lexicon.md", "organize", f"projects/{str(real).replace('/', '-')}/memory")
+    the organize scripts that live there, and the captured portfolio inventory the portfolio parity tests compare
+    against (main-health only). Writes through these links are still refused (WriteGuard resolves them)."""
+    return ("settings.json", "manifest.json", "lexicon.md", "organize", "portfolio/inventory", f"projects/{str(real).replace('/', '-')}/memory")
 
 
 def make_test_home(real: Path, parent: str | None = None, links: tuple[str, ...] | None = None) -> Path:
