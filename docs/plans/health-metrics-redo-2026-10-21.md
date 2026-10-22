@@ -451,7 +451,103 @@ Lesion colours avoid every region hue, and the brain map's reserved amber means 
 - **Prototype:** `docs/screenshots/health-v2-overview-prototype.html`. It's animated, opens with no network, and takes
   `?mode=a|b|c`.
 
-## 13. Decisions for Gil
+## 13. Decisions recorded
 
-They're in the PR description in the Decisions format: the overview style (a, b or c), the tab name, and the
-`history.db` move confirm.
+- **Tab name: Vitals** (Gil, 2026-10-21). Health and Metrics become the one **Vitals** tab.
+- **Overview:** Gil leans toward (c), the globe that opens into each machine's brain. v3 designs (c); whether to also keep
+  (a) is still open.
+- **UI direction:** Gil leads it (§14).
+
+## 14. v3: Vitals as an app in MARVIN OS on the Surface
+
+**Target.** The **MARVIN Surface** (CONTEXT.md "Endpoints and the brief") is Gil's planned glass touch display. Gil:
+"the touch monitor is really meant to become the full monitor experience with everything". So the Surface runs a MARVIN
+OS desktop, and **Vitals is one app inside it**. The hologram parts (frames, nodes, type, motion, touch patterns) are a
+**system kit** every MARVIN OS app uses. Vitals adds only its own visuals. Gil's brief: "futuristic… evangelion… like an
+old hologram and building on the startup sequence… a tony stark hologram." Design at 16:9 (about 27 inches, touch).
+The same app also runs in the Mac dashboard window.
+
+**Built on what exists; no new style:**
+- the celestial-navigation identity from #428: tokens on `design/celestial-navigation`, Saira Condensed and Share Tech
+  Mono, the NERV palette;
+- the shipped boot (#431/#432, `electron/main/boot_data.js`) and its `ICON` geometry;
+- the R6 icon's target lock;
+- the modern raster (3% texture, a beam pass only on refresh, afterglow on change);
+- Gil's choice of glow over flat for the HUD.
+
+### Rules these designs follow
+
+1. **Black means glass.** On a transparent display, black pixels show through. All content is luminous lines, glyphs
+   and soft glows on true black (`--glass: #000`). There are no filled panels: frames are hairlines with diamond nodes
+   on their edges, and depth comes from layering, with brighter meaning nearer. Behind a drilled-in view, the globe
+   shrinks and dims.
+2. **Touch first.**
+   - Targets are at least 44 pt (56 px chips, a 72 px fix button, a 60 px or larger hit area on machines and lesions).
+   - One control per level.
+   - Tap drills in, and the back chip top-left walks up.
+   - Pinch or twist turns the globe.
+   - Nothing is hover-only.
+3. **Readable from across a room.** The critical count is the largest thing on screen (112 px Saira 800). Detail only
+   appears on drill-in.
+4. **Motion with meaning.**
+   - The boot flows into Vitals: the five M stars become the five places, with the core star (MARVIN) as the Mac mini,
+     the primary host.
+   - The beam pass marks a data refresh, and afterglow marks a changed value.
+   - A lesion's lock brackets pulse.
+   - Arcs carry pings at the measured rate (×60 time, 1 ping = 10 events).
+   - Reduce Motion skips the boot, stops travelling pings, holds the locks still and crossfades.
+5. **Truthful only.** Every star, arc, ping and number maps to a real check, link or measured event. The disk trend is
+   the Mini's real disk ledger. The globe graticule is the only purely visual element.
+6. **System kit vs app.** The style sheet tags each piece **SYSTEM** (every MARVIN OS app) or **VITALS ONLY**.
+   - **System:** all tokens, type, hairline frames, touch chips, the fix action, the verdict banner, the raster, the
+     beam and afterglow, the target lock, the severity glyphs, the OS dock, the drill-in zoom and back chip, and the boot
+     dissolving into whichever app opens.
+   - **Vitals only:** machine diamonds, link arcs, region constellations, activity pings and the pinch-twist globe.
+
+### Screens (Surface 1920×1080 points; Mac 1280×800 in the dashboard window)
+
+**Overview: all machines.** A hairline globe with a diamond per machine. Lock brackets mark trouble. The 2012 box's
+GitHub link is drawn broken (sign-in expired, 640 refused calls today). Top left reads 4 CRITICAL / 5 CAUTION.
+![Vitals overview, Surface](../screenshots/vitals-v3-1-overview-surface.png)
+![Vitals overview, Mac](../screenshots/vitals-v3-1-overview-mac.png)
+
+**Tap the Mac mini: its brain.** Each region is a constellation and each star is one check. Red stars with a lock are
+lesions. The globe steps back to the corner.
+![Mac mini brain, Surface](../screenshots/vitals-v3-0-brain-surface.png)
+
+**Tap a region: Body.** The hairline panel lists the checks worst first, in 64 px rows, with the real 12-day disk
+trend.
+![Body region, Surface](../screenshots/vitals-v3-2-region-surface.png)
+![Body region, Mac](../screenshots/vitals-v3-2-region-mac.png)
+
+**Tap the lesion: evidence and fix.** It shows 8% / 18 GiB free of 228, why it matters, the ledger trend, evidence,
+freshness and confidence, a 72 px RUN CLEANUP SWEEP button and NOT USEFUL.
+![Disk evidence, Surface](../screenshots/vitals-v3-3-evidence-surface.png)
+![Disk evidence, Mac](../screenshots/vitals-v3-3-evidence-mac.png)
+
+**Boot → Vitals.**
+![Boot to Vitals](../screenshots/vitals-v3-boot-strip.png)
+
+**Style sheet** (reused vs new, system vs Vitals only):
+![Style sheet](../screenshots/vitals-v3-style-sheet.png)
+
+**Prototype:** `docs/screenshots/vitals-v3-prototype.html`. It's local only, with its fonts embedded from
+`@fontsource`.
+- What it does: boot, then dissolve into the globe. Tap the Mac mini to zoom into its brain, tap a region for its
+  checks, and tap a lesion for its evidence.
+- Parameters: `?auto` plays the whole path. `?target=mac` shows the dashboard-window version. `?glow=0..1` sets the
+  glow level, and `?rm` simulates Reduce Motion.
+
+### Build notes
+
+- **The system kit becomes one shared stylesheet plus a small drawing module** (frames, chips, glyphs, lock, beam,
+  afterglow), used by the dashboard and the Surface shell. It's a sibling of `boot.css`, using the same tokens.
+- **Vitals' canvas layer extends the brain-map renderer** (§12 build notes): the same camera and `renderFrame(t)`.
+- **The Mac dashboard keeps its own tab bar.** On the Surface, the OS dock replaces it.
+- **The dashboard redo beyond Vitals is still Gil's call** (memory: no unapproved UI changes). This designs Vitals and
+  the kit it needs, nothing more.
+
+## 15. Decisions for Gil
+
+They're in the PR description: the overview (c, or keep both), the glow intensity, and whether the boot flows into
+Vitals. The tab name (Vitals) is recorded as answered.
