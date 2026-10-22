@@ -78,6 +78,22 @@ def _no_real_disk_housekeeping(request, monkeypatch):
     monkeypatch.setattr(disk_trim, "trim_with_logging", lambda *a, **k: {})
 
 
+@pytest.fixture(autouse=True)
+def _no_du_on_the_real_home(monkeypatch):
+    # The hang behind the merge gate's 20-minute cuts (pipeline review 2026-10-21, F3): a test reached the real
+    # disk_ledger.du on ~/Documents, which blocks forever under launchd (iCloud/TCC). du runs only on temp folders in
+    # tests; anything else fails at once, naming the path. Tests that inject their own du are unaffected.
+    import disk_ledger
+    import real_home_guard
+    real_du = disk_ledger._default_du_kb
+
+    def du_temp_only(path):
+        if not real_home_guard.outside_real_home(path):
+            raise AssertionError(f"tests must not run du on the real home ({path}): pass du= or patch _default_du_kb")
+        return real_du(path)
+    monkeypatch.setattr(disk_ledger, "_default_du_kb", du_temp_only)
+
+
 def pytest_terminal_summary(terminalreporter):
     if _GH_BLOCK_DIR is not None and (_GH_BLOCK_DIR / "calls.log").exists():
         calls = [l.split("|")[0].split(" ")[0] for l in (_GH_BLOCK_DIR / "calls.log").read_text().splitlines()]
