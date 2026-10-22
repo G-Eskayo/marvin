@@ -83,7 +83,8 @@ import { isEvidenceCapture, installCaptureGuard } from './capture_mode.js'
 import { adoptLoginShellPath, adoptSharedGhToken, useGhGate } from './path.js'
 import { postTicketInput } from './ticket_input.js'
 import { createImageLoader, mediaFileFor } from './pr_images.js'
-import { resolveServiceDefaults, resolveDeviceId } from './device_identity.js'
+import { resolveServiceDefaults, resolveDeviceId, peerHosts } from './device_identity.js'
+import { createHelpersReader } from './chat_helpers.js'
 
 // The pipeline's screenshot copy runs unattended beside the real dashboard: log, never show a modal (#384).
 if (isEvidenceCapture(process.env)) installCaptureGuard(process)
@@ -393,6 +394,10 @@ function registerHealthHandlers() {
 
 function registerActivityHandlers() {
   ipcMain.handle('activity:list', () => listTicketActivity())
+  // Chat helpers, this Mac's and the other's (#612). This Mac's arrive by the 'agents' trigger (same jobs folder).
+  let peers = null // the registry changes rarely and the app is relaunched on every rebuild
+  const readHelpers = createHelpersReader({ peers: () => (peers ||= peerHosts()) })
+  ipcMain.handle('activity:helpers', () => readHelpers())
   ipcMain.handle('activity:timeline', (_event, number, repo) => getTicketTimeline(number, undefined, repo || null))
 
   // Project boards: only repos in the registry are fetchable, so the renderer

@@ -6,12 +6,33 @@ const DOT = {
   running: 'bg-blue-500 animate-pulse',
   stopped: 'bg-red-500',
   idle: 'bg-emerald-500',
+  done: 'bg-emerald-500',
   failed: 'bg-red-500',
   crashed: 'bg-red-500',
   never: 'bg-neutral-600'
 }
-const STATUS_TEXT = { running: 'Running', idle: 'Idle', failed: 'Last run failed', crashed: 'Stopped unexpectedly', stopped: 'Not running', never: 'Has not run yet' }
-const KIND_TEXT = { scheduled: 'scheduled', service: 'always-on service', job: 'sub-job' }
+const STATUS_TEXT = { running: 'Running', done: 'Done', idle: 'Idle', failed: 'Last run failed', crashed: 'Stopped unexpectedly', stopped: 'Not running', never: 'Has not run yet' }
+const KIND_TEXT = { scheduled: 'scheduled', service: 'always-on service', job: 'sub-job', helper: 'chat helper' }
+
+// The same chip a ticket reference gets in rendered markdown (Markdown.jsx), for the tickets and PRs a chat
+// helper's result names (#612). A PR opens in MR Review, a ticket on its board.
+function Links({ links, onOpenTicket, onOpenMr }) {
+  return (
+    <p className="mt-1 flex flex-wrap gap-1 pl-5 text-xs">
+      {links.map((l) => (
+        <button
+          key={`${l.kind}:${l.repo}#${l.number}`}
+          onClick={() => (l.kind === 'pr' ? onOpenMr?.(`${l.repo}#${l.number}`) : onOpenTicket?.(l.repo, l.number))}
+          className="rounded bg-blue-950 px-1 text-blue-300 hover:bg-blue-900"
+          title={l.kind === 'pr' ? `Open PR #${l.number}` : `Open ticket #${l.number}`}
+        >
+          {l.kind === 'pr' ? 'PR ' : ''}
+          {l.repo.split('/')[1]}#{l.number}
+        </button>
+      ))}
+    </p>
+  )
+}
 
 function ago(iso, now) {
   const s = Math.max(0, Math.round((now - Date.parse(iso)) / 1000))
@@ -48,7 +69,7 @@ function RunHistory({ runs, now }) {
   )
 }
 
-function AgentCard({ agent, now }) {
+export function AgentCard({ agent, now, onOpenTicket, onOpenMr }) {
   const [open, setOpen] = useState(false)
   const job = agent.job
   const bad = agent.status === 'failed' || agent.status === 'crashed' || agent.status === 'stopped'
@@ -87,6 +108,7 @@ function AgentCard({ agent, now }) {
         </div>
         {job && <span className="text-xs text-neutral-600">{open ? 'hide' : 'history'}</span>}
       </button>
+      {agent.links?.length > 0 && <Links links={agent.links} onOpenTicket={onOpenTicket} onOpenMr={onOpenMr} />}
       {open && job && <RunHistory runs={job.runs} now={now} />}
     </div>
   )
