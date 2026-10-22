@@ -28,14 +28,18 @@ def parse(ps_output: str, marvin: str) -> list[tuple[str, int]]:
     return seen
 
 
-def all_running(machines: dict, local_ps, remote_ps, marvin: str) -> list[dict]:
-    """`machines` maps a device id to its ssh host (None for this machine). Each reader returns `ps -axo command` output."""
+def all_running(machines: dict, local_ps, remote_ps, marvin: str, unreadable: list | None = None) -> list[dict]:
+    """`machines` maps a device id to its ssh host (None for this machine). Each reader returns `ps -axo command` output.
+    A machine that can't be read is appended to `unreadable` when given, so a caller that must not guess (releasing a
+    claim) can tell "nothing running" from "couldn't look"."""
     out = []
     for machine, host in machines.items():
         try:
             text = local_ps() if host is None else remote_ps(host)
         except Exception as exc:  # noqa: BLE001
             print(f"[running-tickets] {machine} unreadable: {exc}", file=sys.stderr)
+            if unreadable is not None:
+                unreadable.append(machine)
             continue
         out += [{"machine": machine, "repo": repo, "number": n} for repo, n in parse(text, marvin)]
     return out
@@ -53,8 +57,8 @@ def _remote_ps(host: str) -> str:
     return p.stdout
 
 
-def current() -> list[dict]:
+def current(unreadable: list | None = None) -> list[dict]:
     import task_dispatch as td
     import ticket_pipeline as tp
     machines = {td.registry_id(): None, **{d: info["tailscale_hostname"] for d, info in td.remote_devices().items()}}
-    return all_running(machines, _local_ps, _remote_ps, tp.REPO)
+    return all_running(machines, _local_ps, _remote_ps, tp.REPO, unreadable)
