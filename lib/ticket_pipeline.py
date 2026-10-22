@@ -35,6 +35,7 @@ Run standalone: ~/.agents/venv/bin/python ticket_pipeline.py [--dry-run]
 """
 from __future__ import annotations
 import fcntl
+import functools
 import json
 import subprocess
 import sys
@@ -117,7 +118,7 @@ def _open_issues(repo: str = REPO) -> list[dict] | None:
     """Every open ticket in `repo`, in one call (None when GitHub can't be read)."""
     proc = subprocess.run(
         ["gh", "issue", "list", "--repo", repo, "--state", "open", "--limit", "1000",
-         "--json", "number,title,labels,createdAt,body"],
+         "--json", "number,title,labels,createdAt,updatedAt,body"],
         capture_output=True, text=True, timeout=30,
     )
     if proc.returncode != 0:
@@ -244,8 +245,12 @@ def _try_conflict_repair(repo: str, pr: dict) -> dict:
         def resolve_hunks(scratch_dir, prompt):
             return _resolve_hunks_with_model(scratch_dir, prompt)
 
+        # attempt() calls do_repair(repo, head, clone, base, pr=pr). A lambda without `pr` crashed every repair
+        # from 10-10 to 10-21 (523 times), so each conflict fell through to a full rebuild. The tests are looked
+        # up at call time so a test can swap them; bound as repair()'s default they never could be.
         return conflict_repair.attempt(repo, pr, _REPAIR_BUDGET,
-                                      do_repair=lambda r, h, c, b: conflict_repair.repair(r, h, c, b, pr=pr, resolve_hunks=resolve_hunks))
+                                      do_repair=functools.partial(conflict_repair.repair, resolve_hunks=resolve_hunks,
+                                                                  run_tests=conflict_repair.default_tests))
     except Exception as e:  # noqa: BLE001 -- a broken repair falls back to today's behaviour
         return {"outcome": "rebuild", "files": [], "reason": f"repair crashed: {e}", "cost_usd": 0.0}
 
@@ -623,6 +628,25 @@ def _order_key(ticket: dict) -> tuple:
     return (rank, not labelled, not is_bug, -ticket.get("_score", 0.0), ticket["createdAt"])
 
 
+def _retry_not_before(repo: str, ticket: dict, now: datetime | None = None) -> datetime | None:
+    """When a ticket whose last run failed may run again (the retry time its failure comment carries, ticket_policy),
+    or None. Only a ticket updated within the longest possible wait can carry one, so older tickets cost no call.
+    Unreadable comments never block a dispatch."""
+    now = now or datetime.now(timezone.utc)
+    updated = ticket_policy._parse(ticket.get("updatedAt"))
+    if updated is not None and (now - updated).total_seconds() > ticket_policy.RETRY_HORIZON_S:
+        return None
+    try:
+        proc = subprocess.run(["gh", "issue", "view", str(ticket["number"]), "--repo", repo, "--json", "comments"],
+                              capture_output=True, text=True, timeout=30)
+        if proc.returncode != 0:
+            return None
+        nb = ticket_policy.retry_not_before(json.loads(proc.stdout).get("comments"), now)
+    except Exception:  # noqa: BLE001
+        return None
+    return nb if nb is not None and nb > now else None
+
+
 def _flag_busy() -> bool:
     try:
         from task_dispatch import _read_local_dispatch_state
@@ -839,6 +863,9 @@ def _scan(run, dry_run: bool) -> None:
             break
         repo, ticket = min(candidates, key=lambda c: _order_key(c[1]))
         outcome = _dispatch_one(repo, ticket, ready_total, step, summary, fail, dry_run, settings, taken, local_base, refusals)
+        if outcome == "backoff":
+            pools[repo].pop(0)          # waiting out its retry time: the next ticket may still run, in any mode
+            continue
         if outcome == "started":
             started += 1
             started_by_repo[repo] = started_by_repo.get(repo, 0) + 1
@@ -852,10 +879,14 @@ def _scan(run, dry_run: bool) -> None:
 
 
 def _dispatch_one(repo, ticket, ready_total, step, summary, fail, dry_run, settings, taken, local_base, refusals) -> str:
-    """Claim one ticket and dispatch it. Returns "started", "no-machine" or "failed"."""
+    """Claim one ticket and dispatch it. Returns "started", "backoff", "no-machine" or "failed"."""
     other = repo != REPO
     issue_number = ticket["number"]
     where = f"{repo.split('/')[-1]} " if other else ""
+    not_before = _retry_not_before(repo, ticket)
+    if not_before is not None:
+        step("Scanning tickets", f"{where}#{issue_number} waits until {not_before.strftime('%H:%M UTC')} after a failed run")
+        return "backoff"
     step("Scanning tickets", f"{ready_total} ready; next is {where}#{issue_number} {ticket['title']}")
 
     profile = pp.load_profile(repo) if other else None
