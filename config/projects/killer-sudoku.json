@@ -3,6 +3,8 @@
   "repo": "G-Eskayo/killer-sudoku",
   "base_branch": "main",
   "dispatch": "off",
+  "playbook": "ios-app",
+  "playbook_variant": "macos",
   "merge_from_dashboard": true,
   "clone_mode": "pipeline",
   "build_output": [".build"],
