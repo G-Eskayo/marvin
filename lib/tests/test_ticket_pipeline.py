@@ -305,6 +305,7 @@ def _setup_projects(monkeypatch, marvin=(), cc=(), profile=CC_PROFILE, missing_h
     """marvin's tickets come from the zero-argument call exactly as before; another project's from repo=..."""
     monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda repo=tp.REPO: list(marvin) if repo == tp.REPO else (list(cc) if repo == CC else []))
     monkeypatch.setattr(tp.pp, "dispatchable_repos", lambda directory=None: [CC] if profile and profile["dispatch"] == "on" else [])
+    monkeypatch.setattr(tp.pp, "runnable_repos", lambda directory=None: [CC] if profile and profile["dispatch"] == "on" and profile.get("machines") else [])
     monkeypatch.setattr(tp.pp, "load_profile", lambda repo, directory=None: profile if repo == CC else None)
     monkeypatch.setattr(tp.pp, "missing_here", lambda p: list(missing_here))
     monkeypatch.setattr(tp.failure_breaker, "tripped", lambda now=None, project=None: [])
@@ -943,6 +944,7 @@ def test_scan_summary_reports_breaker_even_when_dispatchable_project_has_no_read
 
     monkeypatch.setattr(tp, "REPO", "G-Eskayo/marvin")
     monkeypatch.setattr(tp.pp, "dispatchable_repos", lambda: ["owner/other-project"])
+    monkeypatch.setattr(tp.pp, "runnable_repos", lambda: ["owner/other-project"])
     monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda repo=None: [])
     monkeypatch.setattr(tp.dispatch_concurrency, "load", lambda path=None: {"parallel": False})
 
@@ -1417,3 +1419,27 @@ def test_unreadable_comments_never_block_a_dispatch(monkeypatch):
     assert REAL_RETRY_NOT_BEFORE("G-Eskayo/marvin", t, now) is None
     _gh_comments(monkeypatch, [])
     assert REAL_RETRY_NOT_BEFORE("G-Eskayo/marvin", {"number": 1}, now) is None   # no updatedAt: checked, nothing found
+
+
+def test_a_project_with_no_machines_is_not_scanned_and_logs_nothing_per_ticket(monkeypatch, capsys):
+    no_machines = {**CC_PROFILE, "machines": []}
+    _setup_projects(monkeypatch, cc=[_ticket(2, title="Edit the home page")], profile=no_machines)
+    got = _capture(monkeypatch)
+    tp.main()
+    assert got["claims"] == []
+    assert "no suitable machine" not in capsys.readouterr().err
+
+
+def test_live_runs_is_none_when_any_machine_cannot_be_read(monkeypatch):
+    import running_tickets
+    def current(unreadable=None):
+        unreadable.append("macbook-pro-1")
+        return [{"machine": "mac-mini-1", "repo": tp.REPO, "number": 5}]
+    monkeypatch.setattr(running_tickets, "current", current)
+    assert tp._live_runs() is None
+    monkeypatch.setattr(running_tickets, "current", lambda unreadable=None: [{"machine": "m", "repo": tp.REPO, "number": 5}])
+    assert tp._live_runs() == {(tp.REPO, 5)}
+    def boom(unreadable=None):
+        raise RuntimeError("ps failed")
+    monkeypatch.setattr(running_tickets, "current", boom)
+    assert tp._live_runs() is None

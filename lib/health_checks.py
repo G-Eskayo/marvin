@@ -676,6 +676,19 @@ def check_missing_profiles(snapshot: dict | None = None, repos: list[str] | None
 	return results
 
 
+def check_unrunnable_profiles(profiles_dir: Path | None = None) -> list[dict]:
+	"""Profiles with dispatch on but no machines listed: none of their tickets can ever run. One line each, here, instead
+	of the scan logging "no suitable machine" for every ticket every hour (P6, 2026-10-21)."""
+	import project_profile
+	out = []
+	for repo in project_profile.unrunnable_repos(directory=profiles_dir):
+		name = repo.split("/")[-1]
+		out.append(_result(f"profile:no-machines:{repo}", f"{name}: not set up for agents", "yellow",
+		                   f"dispatch is on but config/projects/{name}.json lists no machines, so the pipeline never runs this "
+		                   f"project's tickets. Add the machines that can build it, or switch dispatch off."))
+	return out
+
+
 # ── parallel dispatch: keeping up with the queue ───────────────────────────
 
 _GUARD_MARKERS = ("disk ", "GitHub request budget", "circuit breaker tripped", "lacks tools")
@@ -784,7 +797,7 @@ def check_parallel_dispatch() -> dict:
 	import ticket_pipeline as tp
 	import failure_breaker
 
-	repos = [tp.REPO, *pp.dispatchable_repos()]
+	repos = [tp.REPO, *pp.runnable_repos()]
 	breaker_trips = failure_breaker.tripped()
 	repos = [r for r in repos if r not in {t.get("project", tp.REPO) for t in breaker_trips}]
 
@@ -1569,6 +1582,7 @@ def run_all() -> dict:
     results += check_missed_purposes()
     results += check_output_contracts()
     results += check_missing_profiles()
+    results += check_unrunnable_profiles()
     results.append(check_trigger_coverage())
     results.append(check_catalog_fresh())
     results.append(check_project_tags())
