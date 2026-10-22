@@ -1,5 +1,7 @@
 # Changelog
 
+- Change-detector fires on ETag churn: decide 'changed' from the newest issue's content, not the ETag ([#604](https://github.com/G-Eskayo/marvin/pull/604))
+
 - Cleanup sweep leaves du processes hung on protected folders (TCC); add timeouts and single-flight ([#589](https://github.com/G-Eskayo/marvin/pull/589))
 
 - Main is red on two portfolio tests (project-card parity, reference templates) ([#588](https://github.com/G-Eskayo/marvin/pull/588))
