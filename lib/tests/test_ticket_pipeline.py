@@ -1242,9 +1242,15 @@ def test_two_concurrent_scans_dispatch_a_ticket_only_once(monkeypatch, tmp_path)
     # Run two scans concurrently: the lock should serialize them
     results = []
 
+    # The scan that waits must wait long enough for the other to finish, and must not scan without the lock (as
+    # main() does). With a 1 s wait and the scan run regardless, a busy machine (the suite in parallel, 2026-10-21)
+    # let the waiter time out and claim too: a timing flake in the test, not a race in the pipeline.
     def run_scan():
         try:
-            with tp._scan_lock(tmp_path / "scan.lock", 1):
+            with tp._scan_lock(tmp_path / "scan.lock", 30) as got:
+                if not got:
+                    results.append("lock busy")
+                    return
                 tp._scan(
                     SimpleNamespace(
                         step=lambda *a, **k: None,
@@ -1261,11 +1267,11 @@ def test_two_concurrent_scans_dispatch_a_ticket_only_once(monkeypatch, tmp_path)
     t2 = threading.Thread(target=run_scan)
     t1.start()
     t2.start()
-    t1.join(timeout=5)
-    t2.join(timeout=5)
+    t1.join(timeout=60)
+    t2.join(timeout=60)
 
-    # Both threads should have completed
-    assert len(results) == 2, f"Threads did not complete: {results}"
+    # Both threads should have completed: the second waited for the lock, then found the ticket already claimed
+    assert results == ["completed", "completed"], f"Threads did not complete: {results}"
 
     # The ticket should have been claimed exactly once (not twice)
     claims = [x for x in claim_order if x[0] == "claim"]
