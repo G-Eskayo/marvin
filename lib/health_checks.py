@@ -609,6 +609,38 @@ def check_github_budget(query=None) -> dict:
     return _result(cid, label, sev, f"{left:,} of {limit:,} left, resets {when}", value=left)
 
 
+def check_autonomous_share(usage_path: Path | None = None, now: datetime | None = None) -> dict:
+    """Monitor the share of tokens spent on autonomous (headless) runs vs interactive sessions.
+    Green when autonomous is under 30%, yellow 30-50%, red 50%+. Helps catch runaway autonomous
+    background jobs consuming budget meant for interactive work."""
+    cid, label = "usage:autonomous-share", "Autonomous vs interactive token share"
+    now = now or _now()
+    try:
+        import session_usage
+        usage_path = usage_path or session_usage.OUT_PATH
+        if not usage_path.is_file():
+            return _result(cid, label, "yellow", "token-usage.json not scanned yet (runs hourly)")
+        data = json.loads(usage_path.read_text())
+    except Exception as exc:  # noqa: BLE001
+        return _result(cid, label, "yellow", f"could not read token usage: {str(exc)[:100]}")
+
+    # Find totals by kind from rows in the last 30 days
+    by_kind = {"interactive": 0, "headless": 0, "subagent": 0}
+    for row in data.get("rows", []):
+        kind = row.get("kind")
+        if kind in by_kind:
+            by_kind[kind] += row.get("output", 0)
+
+    total = sum(by_kind.values())
+    if total == 0:
+        return _result(cid, label, "green", "no recent token usage recorded")
+
+    headless_pct = 100 * by_kind["headless"] / total
+    sev = "red" if headless_pct >= 50 else "yellow" if headless_pct >= 30 else "green"
+    detail = f"headless {headless_pct:.0f}% ({by_kind['headless']:,} tokens), interactive {100*by_kind['interactive']/total:.0f}%, subagents {100*by_kind['subagent']/total:.0f}%"
+    return _result(cid, label, sev, detail, value=round(headless_pct, 1))
+
+
 def check_missing_profiles(snapshot: dict | None = None, repos: list[str] | None = None, gh=None, profiles_dir: Path | None = None) -> list[dict]:
 	"""Projects with ready-for-agent tickets but no execution profile will never dispatch.
 	This check surfaces those projects so profiles can be created and dispatch turned on.
@@ -1485,6 +1517,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("github:gate", "GitHub calls go through the gate", check_gh_gate, CHECK_BUDGET_S),
         ("main:green", "The main branch passes its tests", check_main_health, CHECK_BUDGET_S),
         ("seal:beta-ingest", "Seal Speak beta reports are picked up", check_seal_beta_ingest, CHECK_BUDGET_S),
+        ("usage:autonomous-share", "Autonomous vs interactive token share", check_autonomous_share, CHECK_BUDGET_S),
         ("cron", "Cron job logs", _cron_job_logs, CHECK_BUDGET_S),
         ("machine", "Machine reachability", lambda: list(reach_results or []), CHECK_BUDGET_S),
         ("repo:sync", "Repo sync", lambda: check_repo_sync_everywhere(reach), CROSS_MACHINE_BUDGET_S),

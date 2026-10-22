@@ -1,0 +1,11 @@
+1. `lib/tests/conftest.py`: add an autouse fixture isolating `session_usage.OUT_PATH` to a tmp path (mirrors `_isolate_github_usage`).
+2. `lib/session_usage.py`: add `_autonomous(d)` (entrypoint-based), add `"autonomous"` into each row's bucket key/output, add `LAUNCHES_LOG`/`TOP_JOBS` constants, and a `by_job` aggregation step inside `aggregate()` (new `launches_path` param, default `LAUNCHES_LOG`) with all the malformed/missing/permission/window-day handling from tests 14-24.
+3. `lib/tests/test_session_usage.py`: write tests 13-24.
+4. `lib/health_checks.py`: add `check_autonomous_share(usage_path=None, now=None)` next to `check_github_budget`, registered as an entry in `default_checks()` (never a raw `run_all()` append).
+5. `lib/tests/test_health_checks.py`: write tests 2-12.
+6. Tag the autonomous launch sites with `ticket=`: `skills/improve/scripts/daily_digest.py` (`"daily-digest"`), `skills/research-colony/scripts/research_digest.py` (`"research-colony"`), `skills/self-improve/scripts/background_review.py` (`"self-improve"`), `skills/architecture-review/scripts/background_architecture_review.py` (`"architecture-review"`), `lib/ticket_promotion.py`'s two call sites (`"ticket-promotion"`), `skills/improve/scripts/auto_fix.py` (`"auto-fix"`).
+7. Extend each of those scripts' existing launcher-call tests to assert the new `ticket=` kwarg (test 31).
+8. `dashboard/src/lib/usage_view.js`: add `autonomousSeries`, `weeklySeries` (single precomputed window-boundary list, not PR #359's per-row `indexOf` recomputation), `jobTable`.
+9. `dashboard/test/usage_view.test.js`: write tests 25-30.
+10. `dashboard/src/components/UsageView.jsx`: add the day/week autonomous-vs-interactive bars with dashed 30/40/50% reference lines, and the "Top autonomous spenders" table, built from the task-8 helpers.
+11. Run the full pytest + vitest suites locally, rebased onto current `main` (not PR #359's stale/conflicting branch, which `gh pr view 359` shows as `DIRTY`/`CONFLICTING`), before raising the PR — specifically re-running `lib/tests/test_health_checks.py` and `lib/tests/test_session_usage.py` to catch the exact failure class that sank the previous attempt ahead of the merge gate.

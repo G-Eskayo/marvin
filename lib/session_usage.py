@@ -27,8 +27,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 HOME = Path.home()
 TRANSCRIPTS = HOME / ".claude" / "projects"
 OUT_PATH = HOME / ".claude" / "logs" / "token-usage.json"
+LAUNCHES_LOG = HOME / ".claude" / "logs" / "launches.jsonl"
 WINDOW_DAYS = 30
 TOP_TICKETS = 40
+TOP_JOBS = 40
 
 _WORKTREE = re.compile(r"pipeline-g-eskayo-(.+?)[-#](\d+)(?=/|$)")  # older worktrees keep the '#' in the directory name
 _PROJECT_ROOTS = re.compile(r"/(?:Developer|Documents/Projects(?:/experiments)?)/([^/]+)")
@@ -73,6 +75,11 @@ def _kind(d) -> str:
     return "subagent" if d.get("isSidechain") else ("interactive" if d.get("entrypoint") in (None, "cli") else "headless")
 
 
+def _autonomous(d) -> bool:
+    """True if d is a headless (non-interactive, non-subagent) run."""
+    return _kind(d) == "headless"
+
+
 def _blank():
     return {f: 0 for f in FIELDS}
 
@@ -97,9 +104,47 @@ def find_transcripts(root: Path, window_days: int = WINDOW_DAYS, now: datetime |
     return sorted(out)
 
 
-def aggregate(files, now: datetime | None = None, window_days: int = WINDOW_DAYS) -> dict:
+def _load_launches(launches_path: Path = LAUNCHES_LOG, now: datetime | None = None,
+                   window_days: int = WINDOW_DAYS) -> dict[tuple[str, str], str]:
+    """Load launches.jsonl and return a map of (cwd, timestamp_isoformat[:19]) -> job_name.
+    Handles: malformed lines, missing files, permission errors, entries outside window."""
+    cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=window_days)
+    launches = {}
+    if not launches_path.is_file():
+        return launches
+    try:
+        lines = launches_path.read_text(errors="ignore").splitlines()
+    except OSError:
+        return launches
+    for raw in lines:
+        try:
+            d = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(d, dict):
+            continue
+        at_str = d.get("at")
+        if not at_str:
+            continue
+        try:
+            at = datetime.fromisoformat(at_str.replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            continue
+        if at < cutoff:
+            continue
+        ticket = d.get("ticket")
+        cwd = d.get("cwd")
+        if ticket and cwd:
+            key = (cwd, at_str[:19])
+            launches[key] = ticket
+    return launches
+
+
+def aggregate(files, now: datetime | None = None, window_days: int = WINDOW_DAYS,
+              launches_path: Path | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(days=window_days)
+    launches = _load_launches(launches_path or LAUNCHES_LOG, now, window_days)
     messages = {}  # message id -> record; the latest line of a message wins
     for f in files:
         try:
@@ -119,17 +164,23 @@ def aggregate(files, now: datetime | None = None, window_days: int = WINDOW_DAYS
             if d.get("type") != "assistant" or not isinstance(u, dict) or not msg.get("id") or when is None or when < cutoff:
                 continue
             project, ticket = attribute(d.get("cwd"))
+            cwd_str = d.get("cwd") or ""
+            when_str = d.get("timestamp") or ""
+            job = launches.get((cwd_str, when_str[:19]))
             messages[msg["id"]] = {
-                "day": when.date().isoformat(), "kind": _kind(d), "model": msg.get("model") or "?", "project": project, "ticket": ticket,
+                "day": when.date().isoformat(), "kind": _kind(d), "autonomous": _autonomous(d), "model": msg.get("model") or "?",
+                "project": project, "ticket": ticket, "job": job,
                 "usage": {"input": u.get("input_tokens", 0) or 0, "output": u.get("output_tokens", 0) or 0,
                           "cache_write": u.get("cache_creation_input_tokens", 0) or 0, "cache_read": u.get("cache_read_input_tokens", 0) or 0}}
-    totals, rows, projects, tickets = _blank(), defaultdict(_blank), defaultdict(_blank), defaultdict(_blank)
+    totals, rows, projects, tickets, jobs = _blank(), defaultdict(_blank), defaultdict(_blank), defaultdict(_blank), defaultdict(_blank)
     for m in messages.values():
         _add(totals, m["usage"])
         _add(rows[(m["day"], m["kind"], m["model"])], m["usage"])
         _add(projects[(m["project"], m["kind"])], m["usage"])
         if m["ticket"] is not None:
             _add(tickets[(m["project"], m["ticket"])], m["usage"])
+        if m["job"] is not None:
+            _add(jobs[m["job"]], m["usage"])
     by_project: dict = {}
     for (project, kind), rec in projects.items():
         p = by_project.setdefault(project, {"project": project, **_blank(), "by_kind": {}})
@@ -142,6 +193,7 @@ def aggregate(files, now: datetime | None = None, window_days: int = WINDOW_DAYS
         "rows": [{"day": d, "kind": k, "model": mo, **rec} for (d, k, mo), rec in sorted(rows.items())],
         "by_project": sorted(by_project.values(), key=lambda p: -p["output"]),
         "by_ticket": sorted(({"project": p, "ticket": t, **rec} for (p, t), rec in tickets.items()), key=lambda x: -x["output"])[:TOP_TICKETS],
+        "by_job": sorted(({"job": j, **rec} for j, rec in jobs.items()), key=lambda x: -x["output"])[:TOP_JOBS],
     }
 
 

@@ -260,3 +260,10 @@ def _isolate_github_usage(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(github_usage, "CALLS_PATH", d / "gh-calls.jsonl")
     monkeypatch.setattr(github_usage, "BUDGET_PATH", d / "gh-budget.jsonl")
     monkeypatch.setattr(github_usage, "HOURLY_PATH", d / "gh-usage-hourly.json")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_session_usage(tmp_path_factory, monkeypatch):
+    # session_usage.py reads transcripts and writes the token-usage.json; tests must never write the real ~/.claude/logs.
+    import session_usage
+    monkeypatch.setattr(session_usage, "OUT_PATH", tmp_path_factory.mktemp("session-usage") / "token-usage.json")

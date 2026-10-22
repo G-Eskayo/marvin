@@ -99,3 +99,163 @@ def test_refresh_writes_the_result_with_the_machine_name(tmp_path, monkeypatch):
     tu.refresh(out_path=out, root=root, now=NOW)
     data = json.loads(out.read_text())
     assert data["machine"] == "mac-mini-1" and data["totals"]["messages"] == 1
+
+
+# ── autonomous launches ──────────────────────────────────────────────────
+
+def test_autonomous_detects_headless_runs():
+    """Headless runs (not interactive, not subagent) are autonomous."""
+    assert tu._autonomous({"entrypoint": "sdk-cli"}) == True
+    assert tu._autonomous({"entrypoint": None}) == False
+    assert tu._autonomous({"entrypoint": "cli"}) == False
+    assert tu._autonomous({"isSidechain": True}) == False
+
+
+def test_load_launches_reads_ticket_field(tmp_path):
+    """_load_launches reads the ticket field from launches.jsonl and maps (cwd, timestamp[:19]) -> job."""
+    launches = tmp_path / "launches.jsonl"
+    launches.write_text(json.dumps({
+        "at": "2026-10-05T10:00:00.000Z", "cwd": "/Users/g/proj", "ticket": "daily-digest", "kind": "background-analyst"
+    }) + "\n")
+    result = tu._load_launches(launches, now=NOW, window_days=30)
+    assert result[("/Users/g/proj", "2026-10-05T10:00:00")] == "daily-digest"
+
+
+def test_load_launches_ignores_malformed_lines(tmp_path):
+    """_load_launches skips malformed JSON and entries missing required fields."""
+    launches = tmp_path / "launches.jsonl"
+    launches.write_text("\n".join([
+        "not json",
+        json.dumps({"at": "2026-10-05T10:00:00.000Z", "cwd": "/Users/g/proj"}),  # no ticket
+        json.dumps({"at": "2026-10-05T10:00:00.000Z", "ticket": "daily-digest"}),  # no cwd
+        json.dumps({"at": "2026-10-05T10:00:00.000Z", "cwd": "/Users/g/proj", "ticket": "daily-digest", "kind": "background-analyst"}),  # valid
+    ]) + "\n")
+    result = tu._load_launches(launches, now=NOW, window_days=30)
+    assert len(result) == 1
+    assert result[("/Users/g/proj", "2026-10-05T10:00:00")] == "daily-digest"
+
+
+def test_load_launches_handles_missing_file(tmp_path):
+    """_load_launches returns empty dict if file doesn't exist."""
+    result = tu._load_launches(tmp_path / "nope.jsonl", now=NOW)
+    assert result == {}
+
+
+def test_load_launches_handles_permission_error(tmp_path, monkeypatch):
+    """_load_launches returns empty dict if file can't be read."""
+    launches = tmp_path / "launches.jsonl"
+    launches.write_text(json.dumps({"at": "2026-10-05T10:00:00.000Z", "cwd": "/Users/g", "ticket": "daily-digest"}) + "\n")
+
+    def bad_read(*a, **k):
+        raise OSError("permission denied")
+    monkeypatch.setattr(launches, "read_text", bad_read)
+    result = tu._load_launches(launches, now=NOW)
+    assert result == {}
+
+
+def test_load_launches_respects_window_days(tmp_path):
+    """_load_launches filters out entries older than the window."""
+    launches = tmp_path / "launches.jsonl"
+    launches.write_text("\n".join([
+        json.dumps({"at": "2026-10-05T10:00:00.000Z", "cwd": "/Users/g/proj", "ticket": "daily-digest"}),  # within 30 days
+        json.dumps({"at": "2026-08-01T10:00:00.000Z", "cwd": "/Users/g/proj", "ticket": "research-colony"}),  # outside window
+    ]) + "\n")
+    result = tu._load_launches(launches, now=NOW, window_days=30)
+    assert len(result) == 1
+    assert result[("/Users/g/proj", "2026-10-05T10:00:00")] == "daily-digest"
+
+
+def test_aggregate_correlates_launches_with_transcripts(tmp_path):
+    """aggregate matches transcript messages with launch log entries by (cwd, timestamp[:19])."""
+    transcripts = tmp_path / "transcripts"
+    transcripts.mkdir()
+    launches = tmp_path / "launches.jsonl"
+
+    # A transcript with timestamp matching a launch entry
+    f = write(transcripts, "s.jsonl", [line("m1", ts="2026-10-05T10:00:00.123Z", cwd="/Users/g/proj")])
+
+    # Launch log entry for the same (cwd, timestamp[:19])
+    launches.write_text(json.dumps({
+        "at": "2026-10-05T10:00:00.000Z", "cwd": "/Users/g/proj", "ticket": "daily-digest"
+    }) + "\n")
+
+    result = tu.aggregate([f], now=NOW, launches_path=launches)
+    msg = list(result["totals"].items())  # any message should be correlated
+    assert len(result["by_job"]) == 1
+    assert result["by_job"][0]["job"] == "daily-digest"
+
+
+def test_aggregate_includes_by_job_aggregation(tmp_path):
+    """aggregate groups usage by job (from the launch log ticket field)."""
+    transcripts = tmp_path / "transcripts"
+    transcripts.mkdir()
+    launches = tmp_path / "launches.jsonl"
+
+    f = write(transcripts, "s.jsonl", [
+        line("m1", ts="2026-10-05T10:00:00.123Z", cwd="/Users/g/proj", out=100, entry="sdk-cli"),
+        line("m2", ts="2026-10-05T11:00:00.456Z", cwd="/Users/g/proj", out=200, entry="sdk-cli"),
+    ])
+
+    launches.write_text("\n".join([
+        json.dumps({"at": "2026-10-05T10:00:00.000Z", "cwd": "/Users/g/proj", "ticket": "daily-digest"}),
+        json.dumps({"at": "2026-10-05T11:00:00.000Z", "cwd": "/Users/g/proj", "ticket": "auto-fix"}),
+    ]) + "\n")
+
+    result = tu.aggregate([f], now=NOW, launches_path=launches)
+    jobs = {j["job"]: j["output"] for j in result["by_job"]}
+    assert jobs["daily-digest"] == 100
+    assert jobs["auto-fix"] == 200
+
+
+def test_aggregate_by_job_limits_to_top_jobs(tmp_path):
+    """aggregate by_job respects TOP_JOBS limit."""
+    transcripts = tmp_path / "transcripts"
+    transcripts.mkdir()
+    launches = tmp_path / "launches.jsonl"
+
+    lines = [line(f"m{i}", ts=f"2026-10-05T{10+i:02d}:00:00.000Z", cwd="/Users/g/proj", out=i*10, entry="sdk-cli")
+             for i in range(50)]
+    f = write(transcripts, "s.jsonl", lines)
+
+    launch_lines = [json.dumps({
+        "at": f"2026-10-05T{10+i:02d}:00:00.000Z", "cwd": "/Users/g/proj", "ticket": f"job-{i}"
+    }) for i in range(50)]
+    launches.write_text("\n".join(launch_lines) + "\n")
+
+    result = tu.aggregate([f], now=NOW, launches_path=launches)
+    assert len(result["by_job"]) <= tu.TOP_JOBS
+
+
+def test_autonomous_marked_on_rows(tmp_path):
+    """Rows in the aggregate output are marked with 'autonomous' field."""
+    f = write(tmp_path, "s.jsonl", [
+        line("a", ts="2026-10-05T10:00:00Z", entry="cli"),  # interactive
+        line("b", ts="2026-10-05T10:00:00Z", entry="sdk-cli"),  # headless
+    ])
+    result = tu.aggregate([f], now=NOW)
+    rows = {r["kind"]: r for r in result["rows"]}
+    assert all("autonomous" in r for r in result["rows"])
+
+
+def test_by_job_includes_all_fields(tmp_path):
+    """by_job entries have all the same usage fields as other aggregations."""
+    transcripts = tmp_path / "transcripts"
+    transcripts.mkdir()
+    launches = tmp_path / "launches.jsonl"
+
+    f = write(transcripts, "s.jsonl", [
+        line("m1", ts="2026-10-05T10:00:00.123Z", cwd="/Users/g/proj",
+             inp=2, out=100, cw=1000, cr=5000, entry="sdk-cli")
+    ])
+    launches.write_text(json.dumps({
+        "at": "2026-10-05T10:00:00.000Z", "cwd": "/Users/g/proj", "ticket": "daily-digest"
+    }) + "\n")
+
+    result = tu.aggregate([f], now=NOW, launches_path=launches)
+    job = result["by_job"][0]
+    assert job["job"] == "daily-digest"
+    assert job["input"] == 2
+    assert job["output"] == 100
+    assert job["cache_write"] == 1000
+    assert job["cache_read"] == 5000
+    assert job["messages"] == 1
