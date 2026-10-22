@@ -155,93 +155,6 @@ def test_check_cron_job_log_returns_none_for_unmapped_job():
     assert hc.check_cron_job_log("some-job-with-no-known-logs", {}, datetime.now(timezone.utc)) is None
 
 
-# ── repo integrity ────────────────────────────────────────────────────────
-
-def test_check_repo_integrity_red_on_leftover_stash(tmp_path, monkeypatch):
-    class FakeProc:
-        def __init__(self, stdout):
-            self.stdout = stdout
-
-    def fake_run(cmd, **kw):
-        if "stash" in cmd:
-            return FakeProc("stash@{0}: WIP on main: abc123 msg\n")
-        return FakeProc("")
-
-    def fake_stash_file_names(repo):
-        return ["file1.txt", "file2.txt"]
-
-    monkeypatch.setattr(hc.subprocess, "run", fake_run)
-    monkeypatch.setattr(hc.code_sync, "_stash_file_names", fake_stash_file_names)
-    result = hc.check_repo_integrity("~/.agents", ".agents")
-    assert result["severity"] == "red"
-    assert result["value"] == 1
-    assert "file1.txt" in result["detail"]
-    assert "file2.txt" in result["detail"]
-
-
-def test_check_repo_integrity_red_on_unresolved_conflict(monkeypatch):
-    class FakeProc:
-        def __init__(self, stdout):
-            self.stdout = stdout
-
-    def fake_run(cmd, **kw):
-        if "stash" in cmd:
-            return FakeProc("")
-        return FakeProc("UU quarantine.md\n")
-
-    monkeypatch.setattr(hc.subprocess, "run", fake_run)
-    result = hc.check_repo_integrity("~/.claude", ".claude")
-    assert result["severity"] == "red"
-
-
-def test_check_repo_integrity_green_when_clean(monkeypatch):
-    class FakeProc:
-        def __init__(self, stdout):
-            self.stdout = stdout
-
-    monkeypatch.setattr(hc.subprocess, "run", lambda cmd, **kw: FakeProc(""))
-    result = hc.check_repo_integrity("~/.agents", ".agents")
-    assert result["severity"] == "green"
-
-
-# ── numeric anomaly recording ────────────────────────────────────────────
-
-def test_record_anomaly_metrics_returns_none_with_no_numeric_values():
-    assert hc.record_anomaly_metrics([{"id": "x", "value": None}]) is None
-
-
-def test_record_anomaly_metrics_returns_none_with_no_prior_baseline(monkeypatch):
-    monkeypatch.setattr(hc.mr, "latest", lambda subsystem: None)
-    recorded = {}
-    monkeypatch.setattr(hc.mr, "record", lambda subsystem, metrics: recorded.update(metrics))
-    out = hc.record_anomaly_metrics([{"id": "cron:daily-digest", "value": 3}])
-    assert out is None
-    assert recorded["cron:daily-digest"]["value"] == 3
-    assert recorded["cron:daily-digest"]["higher_is_better"] is False
-
-
-def test_record_anomaly_metrics_compares_against_prior_baseline(monkeypatch):
-    monkeypatch.setattr(hc.mr, "latest", lambda subsystem: {"cron:daily-digest": {"value": 0, "higher_is_better": False}})
-    monkeypatch.setattr(hc.mr, "record", lambda subsystem, metrics: None)
-    captured = {}
-
-    def fake_compare(subsystem, baseline, current):
-        captured["baseline"] = baseline
-        captured["current"] = current
-        return {"verdict": "regressed"}
-
-    monkeypatch.setattr(hc.mr, "compare", fake_compare)
-    out = hc.record_anomaly_metrics([{"id": "cron:daily-digest", "value": 5}])
-    assert out == {"verdict": "regressed"}
-    assert captured["baseline"]["cron:daily-digest"]["value"] == 0
-    assert captured["current"]["cron:daily-digest"]["value"] == 5
-
-
-def test_higher_is_better_only_for_the_one_registered_metric():
-    assert "route:intent-routing-collection" in hc.HIGHER_IS_BETTER
-    assert "dispatch:lock-age" not in hc.HIGHER_IS_BETTER
-
-
 # ── machine reachability: a closed laptop is asleep, not broken ─────────────
 # The Health tab marked the MacBook red whenever it was unreachable, i.e. every
 # time the lid was closed. Red is supposed to mean "needs your immediate
@@ -606,7 +519,7 @@ def _mstate(**kw):
 def test_parse_machine_state_reads_key_value_output():
     st = hc.parse_machine_state("app_built_ts=1759000000\ndashboard_commit_ts=1759100000\ngh_token=invalid\n")
     assert st["app_built_ts"] == 1759000000 and st["dashboard_commit_ts"] == 1759100000 and st["gh_token"] == "invalid"
-    assert st["docs_access"] == "" and st["brain_data_ts"] is None
+    assert "docs_access" not in st and "brain_data_ts" not in st  # both checks dropped (Health P0)
 
 
 def test_parse_machine_state_missing_app_is_none():
@@ -733,12 +646,12 @@ def test_catalog_check_is_green_when_fresh_amber_when_stale_red_when_missing_or_
     assert r["id"] == "catalog:fresh" and "30" in r["detail"]
 
 
-def test_machine_state_parity_checks_docs_background_and_data():
-    st = hc.parse_machine_state("docs_access=failed\ndesktoplive=stopped\nbrain_data_ts=%d\n" % int((NOW - timedelta(days=9)).timestamp()))
-    res = {k: s for k, s, _ in hc.evaluate_machine_state(_mstate(**{k: st[k] for k in ("docs_access", "desktoplive", "brain_data_ts")}), NOW)}
-    assert res["docs:access"] == "red" and res["desktoplive:running"] == "yellow" and res["brainmap:data"] == "yellow"
-    ok = {k: s for k, s, _ in hc.evaluate_machine_state(_mstate(docs_access="ok", desktoplive="running", brain_data_ts=int(NOW.timestamp())), NOW)}
-    assert ok["docs:access"] == ok["desktoplive:running"] == ok["brainmap:data"] == "green"
+def test_machine_state_parity_checks_the_desktop_background():
+    st = hc.parse_machine_state("desktoplive=stopped\n")
+    res = {k: s for k, s, _ in hc.evaluate_machine_state(_mstate(desktoplive=st["desktoplive"]), NOW)}
+    assert res["desktoplive:running"] == "yellow"
+    ok = {k: s for k, s, _ in hc.evaluate_machine_state(_mstate(desktoplive="running"), NOW)}
+    assert ok["desktoplive:running"] == "green"
 
 
 def test_job_placement_flags_missing_stray_and_unplaced_jobs():
@@ -973,9 +886,6 @@ def test_parallel_dispatch_green_when_idle_slot_and_selectable():
 def test_run_all_includes_parallel_dispatch_check(monkeypatch):
     import dispatch_concurrency
     monkeypatch.setattr(dispatch_concurrency, "load", lambda path=None: {"parallel": False})
-    monkeypatch.setattr(hc.mr, "latest", lambda subsystem: None)
-    monkeypatch.setattr(hc.mr, "record", lambda subsystem, metrics: None)
-    monkeypatch.setattr(hc.mr, "compare", lambda subsystem, baseline, current: None)
     out = hc.run_all()
     check_ids = {r["id"] for r in out["checks"]}
     assert "dispatch:parallel" in check_ids
@@ -1074,54 +984,6 @@ CONFLICT in working tree
     results = hc.check_sync_stuck()
     assert len(results) == 1
     assert results[0]["severity"] == "red"
-
-
-# ── deploy steps check ──────────────────────────────────────────────────────
-
-def test_check_deploy_steps_green_when_plist_exists_and_job_ran(tmp_path, monkeypatch):
-    monkeypatch.setattr(hc, "HOME", tmp_path)
-    monkeypatch.setattr(hc, "LAUNCHAGENTS_DIR", tmp_path / "Library" / "LaunchAgents")
-    monkeypatch.setattr(hc.machine_profile, "registry_id", lambda: "mac-mini-1")
-    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
-    agents = tmp_path / ".claude" / "logs" / "jobs"
-    agents.mkdir(parents=True)
-    (agents / "snapshot-deploy.json").write_text("{}")
-    launchagents = tmp_path / "Library" / "LaunchAgents"
-    launchagents.mkdir(parents=True)
-    (launchagents / "com.marvin.snapshot-deploy-nightly.plist").write_text("")
-    (launchagents / "com.marvin.snapshot-deploy-reactive.plist").write_text("")
-
-    results = hc.check_deploy_steps()
-    snap = [r for r in results if "snapshot-deploy" in r["id"]]
-    assert snap and all(r["severity"] == "green" for r in snap)
-
-
-def test_check_deploy_steps_red_when_plist_missing(tmp_path, monkeypatch):
-    monkeypatch.setattr(hc, "HOME", tmp_path)
-    monkeypatch.setattr(hc, "LAUNCHAGENTS_DIR", tmp_path / "Library" / "LaunchAgents")
-    monkeypatch.setattr(hc.machine_profile, "registry_id", lambda: "mac-mini-1")
-    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
-    launchagents = tmp_path / "Library" / "LaunchAgents"
-    launchagents.mkdir(parents=True)
-
-    results = hc.check_deploy_steps()
-    snap = [r for r in results if "snapshot-deploy" in r["id"]]
-    assert snap and any(r["severity"] == "red" and "not installed" in r["detail"] for r in snap)
-
-
-def test_check_deploy_steps_red_when_job_never_ran(tmp_path, monkeypatch):
-    monkeypatch.setattr(hc, "HOME", tmp_path)
-    monkeypatch.setattr(hc, "LAUNCHAGENTS_DIR", tmp_path / "Library" / "LaunchAgents")
-    monkeypatch.setattr(hc.machine_profile, "registry_id", lambda: "mac-mini-1")
-    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
-    launchagents = tmp_path / "Library" / "LaunchAgents"
-    launchagents.mkdir(parents=True)
-    (launchagents / "com.marvin.snapshot-deploy-nightly.plist").write_text("")
-    (launchagents / "com.marvin.snapshot-deploy-reactive.plist").write_text("")
-
-    results = hc.check_deploy_steps()
-    snap = [r for r in results if "snapshot-deploy" in r["id"]]
-    assert snap and any(r["severity"] == "red" and "never actually run" in r["detail"] for r in snap)
 
 
 def test_check_parallel_dispatch_calls_the_real_selector_with_its_keywords(monkeypatch):
