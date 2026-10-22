@@ -206,4 +206,14 @@ describe('submitDecisions: GitHub\'s answer to the write, and the record off the
     release()
     expect((await r.recorded).labelsChanged).toBe(true)
   })
+
+  it('held + needs-info + answered decisions: answers are saved but the label is not moved because the ticket is on hold', async () => {
+    const { exec, state } = fakeGh({ labels: ['needs-info', 'held'], pullRequest: false })
+    const r = await submitDecisions({ repo: 'o/r', number: 5, answers: { dance: { choices: ['A: Clap & wiggle'] }, handoff: { choices: ['Glide'] } } }, { exec })
+    expect(r.ok).toBe(true)
+    expect(state.patched).toContain('- [x] A: Clap & wiggle')
+    expect(state.patched).toContain('- [x] Glide')
+    expect(state.labelEdits).toHaveLength(0) // no label change while held
+    expect(r.labelError).toMatch(/on hold/)
+  })
 })

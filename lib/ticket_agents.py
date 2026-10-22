@@ -142,12 +142,12 @@ def plan_stale_claims(repo, issues, in_flight, now, running=None, releases=None)
            has been idle DEAD_CLAIM_HOURS, and no PR or branch is in flight: the run that held it died or failed.
     A ticket already released MAX_CLAIM_RELEASES times (`releases`, from this agent's own audit log) is not put back
     a third time: it goes to ready-for-human, shown in the dashboard's Needs you, and Gil is notified.
-    `held` keeps a claim (an interactive session that wants a long quiet claim adds it); `pinned` is never touched."""
+    hold labels keep a claim (an interactive session that wants a long quiet claim adds it); `pinned` is never touched."""
     out = []
     releases = releases or {}
     for t in issues:
         names = set(pol.label_names(t))
-        if names & pol.SKIP_LABELS or "held" in names or t["number"] in in_flight:
+        if names & pol.SKIP_LABELS or names & pol.HOLD_LABELS or t["number"] in in_flight:
             continue
         s = pol.stale_claim(t, now, hours=DEAD_CLAIM_HOURS) if running is not None and t["number"] not in running else None
         why = f"claimed by {s['machine']}, idle {s['idle_hours']}h, no run alive for it anywhere" if s else ""
@@ -179,7 +179,15 @@ def plan_refeed(repo, issues, counts):
     out = []
     for t in issues:
         names = set(pol.label_names(t))
-        if "needs-reengagement" not in names or names & pol.SKIP_LABELS or "held" in names:
+        if "needs-reengagement" not in names:
+            continue
+        if names & pol.SKIP_LABELS:  # pinned: never touch
+            continue
+        # Check for held status: post a comment explaining why we're not re-queueing
+        if names & pol.HOLD_LABELS:
+            out.append(_act("refeed", repo, t, "comment",
+                           f"{AGENT_COMMENT_PREFIX} this ticket is on hold and waiting for a person (check the hold label's comment for context). "
+                           f"Remove the hold label when ready to proceed.", "ticket is held"))
             continue
         n = counts.get(t["number"], 0)
         out.append(_act("refeed", repo, t, "remove_label", "needs-reengagement", "denied or failed the merge gate"))
@@ -285,6 +293,7 @@ def refeed_counts(path: Path, repo: str) -> dict[int, int]:
 
 
 HOLD_REVISIT_PATH = HOME / ".claude" / "logs" / "hold-revisit.json"
+CONTRADICTION_PATH = HOME / ".claude" / "logs" / "label-contradictions.json"
 
 
 def collect_hold_comments(repo: str, held_numbers: set[int], gh) -> dict[int, list]:
@@ -317,6 +326,23 @@ def write_revisit_state(tickets_without_revisit: list[dict], path: Path, now: da
             "generated_at": now.isoformat(),
             "without_revisit": [{"repo": t["repo"], "number": t["number"], "title": t.get("title", "")}
                                for t in tickets_without_revisit[:50]]  # truncate at 50 like project_tags
+        }
+        tmp.write_text(json.dumps(data) + "\n")
+        tmp.replace(path)
+    except OSError:
+        pass  # never stop the run
+
+
+def write_contradiction_state(contradictions: list[dict], path: Path, now: datetime) -> None:
+    """Write {generated_at, contradictions: []} atomically via tmp-then-rename.
+    Mirrors write_revisit_state pattern."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_stem(path.stem + ".tmp")
+        data = {
+            "generated_at": now.isoformat(),
+            "contradictions": [{"repo": t["repo"], "number": t["number"], "title": t.get("title", ""), "conflicting": t.get("conflicting", [])}
+                              for t in contradictions[:50]]
         }
         tmp.write_text(json.dumps(data) + "\n")
         tmp.replace(path)
@@ -360,16 +386,18 @@ def _write(path: Path, rows: list[dict], mode="a") -> None:
 
 def run(snapshot, gh, cfg, now, audit_path=AUDIT_PATH, proposals_path=PROPOSALS_PATH, in_flight=lambda repo: set(),
         due_for=lambda repo: None, report=None, executable=None, project_rules=None, tags_state_path=None, revisit_state_path=None,
-        running=lambda repo: None) -> dict:
+        running=lambda repo: None, contradiction_path=CONTRADICTION_PATH) -> dict:
     """One pass over every repo in `snapshot` ({repo: {"issues": [...], "prs": [...]}}).
     `tags_state_path`: where the project tagger's unclear list goes (the real run passes project_tagger.STATE_PATH).
-    `revisit_state_path`: where the revisit agent's "without revisit" list goes."""
+    `revisit_state_path`: where the revisit agent's "without revisit" list goes.
+    `contradiction_path`: where label contradictions are written (unconditional, not gated by agent mode)."""
     report = report or (lambda *a, **k: None)
     rules = project_rules if project_rules is not None else project_tagger.load_rules()
     labels_now = {(r, t["number"]): pol.label_names(t) for r, d in snapshot.items() for t in d["issues"]}
     removed = project_tagger.removed_by_people(_read_audit(audit_path), labels_now)
     unclear: list[dict] = []
     without_revisit: list[dict] = []
+    contradictions: list[dict] = []
     executable = set(executable) if executable else {"G-Eskayo/marvin"}  # projects the executor can run
     modes = {a: effective_mode(cfg, a, now) for a in AGENTS}
     planned: list[dict] = []
@@ -408,6 +436,16 @@ def run(snapshot, gh, cfg, now, audit_path=AUDIT_PATH, proposals_path=PROPOSALS_
             planned += tags
             unclear += unsure
 
+        # Contradiction detection: unconditional, not gated by agent mode
+        for t in issues:
+            names = set(pol.label_names(t))
+            held = names & pol.HOLD_LABELS
+            if held:
+                conflicting = (names & {"ready-for-agent", "needs-reengagement"})
+                if conflicting:
+                    contradictions.append({"repo": repo, "number": t["number"], "title": t.get("title", ""),
+                                         "conflicting": list(conflicting | held)})
+
     # Unfreezing the queue goes first: claims, re-queues and lifted holds before labels. With a backlog (12 days of
     # crashed passes left 100+ label changes) the per-pass budget would otherwise hold claim releases back for hours.
     planned.sort(key=lambda a: APPLY_ORDER.index(a["agent"]) if a["agent"] in APPLY_ORDER else len(APPLY_ORDER))
@@ -443,6 +481,8 @@ def run(snapshot, gh, cfg, now, audit_path=AUDIT_PATH, proposals_path=PROPOSALS_
         project_tagger.write_state(unclear, pending, tags_state_path, ts)
     if revisit_state_path is not None:
         write_revisit_state(without_revisit, revisit_state_path, now)
+    if contradiction_path is not None:
+        write_contradiction_state(contradictions, contradiction_path, now)
     _write(audit_path, rows)
     _write(proposals_path, [{
         "generated_at": ts, "mode": cfg.get("mode"), "act_after": cfg.get("act_after"),

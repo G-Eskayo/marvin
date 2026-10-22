@@ -13,6 +13,7 @@ STALE_CLAIM_HOURS = 48
 PRIORITY_LABELS = ("priority:p0", "priority:p1", "priority:p2", "priority:p3")
 STATE_LABELS = {"ready-for-agent", "ready-for-human", "needs-info", "needs-reengagement", "wontfix"}
 SKIP_LABELS = {"pinned"}  # a person has taken the wheel: no agent touches it
+HOLD_LABELS = frozenset({"pinned", "hold", "held"})  # a person's hands off: never dispatched, never sent back (#387)
 
 
 def label_names(issue: dict) -> list[str]:

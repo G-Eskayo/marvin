@@ -249,3 +249,14 @@ describe('describePrState: auto-merge shadow verdict (#341)', () => {
     expect(describePrState({ ...ready }).note || '').not.toMatch(/Auto-merge/)
   })
 })
+
+describe('describePrState: held rework state (#387)', () => {
+  it('a sent-back ticket that is held shows it cannot be reworked until the hold is lifted', () => {
+    const s = state({ sentBack: true, waitingOn: [] })
+    expect(s).toMatchObject({ kind: 'sent-back' })
+    // Now add held information to the ticket waiting state
+    const held = state({ sentBack: true, reworkBlocked: { reason: 'held', holdLabel: 'hold', addedBy: 'geskayo', addedAt: '2026-10-21T14:30:00Z' } })
+    expect(held.kind).toBe('sent-back')
+    expect(held.detail || held.note).toMatch(/hold|paused/i)
+  })
+})

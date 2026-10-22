@@ -137,6 +137,20 @@ def test_after_two_re_queues_it_goes_to_a_person_instead_of_looping():
     assert "ready-for-agent" not in {a["arg"] for a in ops(acts, op="add_label")}
 
 
+def test_a_held_ticket_needing_reengagement_posts_a_comment_instead_of_re_queuing():
+    for lab in ("held", "hold"):
+        acts = ta.plan_refeed(REPO, [issue(20, labels=["needs-reengagement", lab])], counts={})
+        assert not ops(acts, op="add_label")  # no ready-for-agent added
+        assert not ops(acts, op="remove_label")  # no needs-reengagement removed
+        comments = ops(acts, op="comment")
+        assert comments and "on hold" in comments[0]["arg"]
+
+
+def test_a_pinned_ticket_needing_reengagement_is_skipped_entirely():
+    acts = ta.plan_refeed(REPO, [issue(20, labels=["needs-reengagement", "pinned"])], counts={})
+    assert acts == []
+
+
 # ── running ─────────────────────────────────────────────────────────────────
 
 class FakeGh:
@@ -486,3 +500,23 @@ def test_in_propose_mode_nothing_is_released_or_notified(tmp_path, monkeypatch):
                  {"mode": "propose", "agents": {}}, NOW, audit_path=tmp_path / "a.jsonl", proposals_path=tmp_path / "p.json",
                  project_rules={"projects": {}}, running=lambda repo: set())
     assert calls == [] and sent == [] and res["by_agent"]["stale_claims"]["planned"] == 2
+
+
+# ── label contradictions: held/pinned with ready-for-agent or needs-reengagement ──
+
+def test_run_writes_contradictions_in_propose_and_act_modes(tmp_path):
+    """Contradiction detection runs unconditionally (not gated by agent mode) and writes the state."""
+    snap = {R: {"issues": [
+        issue(1, labels=("ready-for-agent",)),
+        issue(2, labels=("held", "ready-for-agent")),  # contradiction
+        issue(3, labels=("pinned", "needs-reengagement")),  # contradiction
+    ], "prs": []}}
+    contradiction_path = tmp_path / "contradictions.json"
+    for mode in ("propose", "act"):
+        ta.run(snap, lambda args: "", {"mode": mode, "agents": {}}, NOW,
+               audit_path=tmp_path / f"a_{mode}.jsonl", proposals_path=tmp_path / f"p_{mode}.json",
+               project_rules={"projects": {}}, contradiction_path=contradiction_path)
+        state = json.loads(contradiction_path.read_text())
+        assert state["contradictions"]
+        assert any(c["number"] == 2 and "held" in c["conflicting"] for c in state["contradictions"])
+        assert any(c["number"] == 3 and "pinned" in c["conflicting"] for c in state["contradictions"])

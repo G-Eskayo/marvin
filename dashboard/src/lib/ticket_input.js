@@ -7,12 +7,17 @@
 
 export const HUMAN_INPUT_MARKER = '<!-- marvin:human-input -->'
 
+import { isHeld } from './holdLabels.js'
+
 const claims = (labels) => labels.filter((l) => l.startsWith('claimed:'))
 
 export function planInput(labels, state = 'OPEN') {
   const none = { requeue: false, add: [], remove: [] }
   const has = (l) => labels.includes(l)
   if (state && state !== 'OPEN') return { ...none, effect: 'This ticket is closed: your comment is posted, nothing is queued.' }
+  if (isHeld(labels)) {
+    return { ...none, effect: 'This ticket is on hold: the comment is posted, but the ticket stays off the pipeline until the hold is removed.' }
+  }
   if (has('needs-reengagement')) {
     return { ...none, effect: 'This ticket is already queued to be rebuilt; the agent will read your comment when it does.' }
   }

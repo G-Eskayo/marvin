@@ -99,6 +99,28 @@ def test_diagnosis_is_included_when_present(monkeypatch, tmp_path):
     assert s["diagnosis"]["route"] == "fix_forward"
 
 
+def test_held_shows_all_hold_labels():
+    """'pinned', 'hold', and 'held' all trigger the held state."""
+    for lab in ("held", "hold", "pinned"):
+        s = rs.status_for(ticket(labels=("needs-reengagement", lab)), ctx())
+        assert s["state"] == "held"
+        assert lab in s["detail"]
+
+
+def test_held_with_hold_info_shows_details():
+    """When hold information is provided, it shows who added it and when."""
+    hold_info = {
+        "date": "2026-10-21T14:30:00+00:00",
+        "added_by": "geskayo",
+        "label": "hold",
+        "comment": "Waiting for design review"
+    }
+    s = rs.status_for(ticket(labels=("needs-reengagement", "hold")), ctx(hold=hold_info))
+    assert "geskayo" in s["detail"]
+    assert "2026-10-21" in s["detail"]
+    assert "Waiting for design review" in s["detail"]
+
+
 def test_diagnosis_is_omitted_when_not_logged(monkeypatch, tmp_path):
     """status_for() doesn't include diagnosis if none is logged."""
     import rework_status as rs_module
@@ -130,3 +152,24 @@ def test_collect_reads_each_projects_open_issues_once(monkeypatch):
     assert len(calls) == 2
     assert set(out) == {"G-Eskayo/marvin#5", "G-Eskayo/clarity-captions#5"}
     assert out["G-Eskayo/marvin#5"]["state"] in {"queued", "not-queued", "blocked", "paused", "running", "held", "needs-person", "parked"}
+
+
+# ── hold detail: malformed gh output guard ──
+
+def test_hold_detail_gracefully_handles_malformed_events():
+    """_hold_detail must not crash on missing/malformed createdAt or other fields."""
+    events_with_malformed = [
+        {"event": "labeled", "label": {"name": "hold"}, "createdAt": "2026-10-21T14:30:00Z", "actor": {"login": "geskayo"}},
+        {"event": "labeled", "label": {"name": "hold"}, "createdAt": None, "actor": {"login": "other"}},  # missing date
+        {"event": "labeled", "label": {"name": "hold"}, "createdAt": "invalid-date", "actor": None},  # malformed date and actor
+    ]
+    comments = [
+        {"createdAt": "2026-10-21T14:31:00Z", "body": "Waiting for review"},
+        {"createdAt": "invalid", "body": "Bad date comment"},  # malformed date
+        {"createdAt": None, "body": "No date comment"}  # missing date
+    ]
+    result = rs._hold_detail(events_with_malformed, comments, {"hold"})
+    assert result is not None
+    assert result["added_by"] == "geskayo"  # from the valid event
+    assert result["label"] == "hold"
+    assert result["comment"] == "Waiting for review"  # found the matching comment

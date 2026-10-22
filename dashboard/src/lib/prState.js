@@ -38,10 +38,17 @@ export function describePrState(pr, { status = 'idle', errorMessage = null, prog
   }
 
   if (pr.sentBack) {
+    const rework = pr.rework || null
+    if (rework?.state === 'held') {
+      return base('sent-back', 'blocked', 'Held: waiting for a person',
+        "This PR's ticket was sent back for rework, but it is on hold waiting for a person. No rebuild will happen until the hold is removed.",
+        'hidden', 'hidden',
+        { rework, actions: [{ id: 'clearSentBack', label: 'The hold is removed? Clear the sent-back label' }] })
+    }
     return base('sent-back', 'blocked', 'Sent back for rework',
       "This PR's ticket was rejected, and a reworked version will update this same PR, so there is nothing to approve.",
       'hidden', 'hidden',
-      { rework: pr.rework || null, actions: [{ id: 'clearSentBack', label: 'The rework is already in? Clear the sent-back label' }] })
+      { rework, actions: [{ id: 'clearSentBack', label: 'The rework is already in? Clear the sent-back label' }] })
   }
 
   // Its ticket is closed: the work landed another way (built directly, or by another PR), so this one is probably a

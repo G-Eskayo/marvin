@@ -2,6 +2,7 @@ import { mkdtemp, writeFile, rm } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { parseDecisions, applyAnswers, pendingDecisions, decisionsComment } from '../../webhook-server/decisions.js'
+import { isHeld } from '../../src/lib/holdLabels.js'
 
 // Submitting the owner's answers to a Decisions section (PR or ticket), from the dashboard. The description is the
 // source of truth: it is re-read fresh, the answers are written into it (ticked boxes, Answer/Note lines), and only
@@ -56,11 +57,14 @@ async function recordAnswers({ repo, n, issue, parsed, answers, pending }, exec)
     .then(({ stdout: url }) => { out.commentUrl = String(url).trim() || null })
     .catch((error) => { out.commentError = `answers saved in the description, but the record comment failed: ${String(error?.stderr || error?.message || error).split('\n')[0]}` })
   // A ticket waiting on these decisions (needs-info) is ready for an agent once every required one is answered.
+  // Skip label moves if the ticket is on hold.
   const labels = (issue.labels || []).map((l) => (typeof l === 'string' ? l : l.name))
-  const move = !issue.pull_request && !pending.length && labels.includes('needs-info')
+  const move = !issue.pull_request && !pending.length && labels.includes('needs-info') && !isHeld(labels)
     ? exec('gh', ['issue', 'edit', String(n), '--repo', repo, '--remove-label', 'needs-info', '--add-label', 'ready-for-agent'])
       .then(() => { out.labelsChanged = true })
       .catch((error) => { out.labelError = `answers saved, but moving the ticket to ready-for-agent failed: ${String(error?.stderr || error?.message || error).split('\n')[0]}` })
+    : isHeld(labels) && !issue.pull_request && !pending.length && labels.includes('needs-info')
+    ? Promise.resolve().then(() => { out.labelError = 'answers saved in the description, but the ticket is on hold and cannot be moved to ready-for-agent until the hold is removed' })
     : null
   await Promise.all([comment, move])
   return out

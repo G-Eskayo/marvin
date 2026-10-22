@@ -14,6 +14,16 @@ describe('planInput: what leaving a comment does to a ticket', () => {
     expect(p).toMatchObject({ requeue: true, add: ['ready-for-agent'], remove: ['claimed:macbook-pro'] })
   })
 
+  it('leaves a held ticket alone: comment only, no requeue', () => {
+    for (const lab of ['held', 'hold', 'pinned']) {
+      const p = planInput(['needs-info', lab], 'OPEN')
+      expect(p.requeue, `label ${lab}`).toBe(false)
+      expect(p.add).toEqual([])
+      expect(p.remove).toEqual([])
+      expect(p.effect).toMatch(/on hold/i)
+    }
+  })
+
   it('leaves a ticket that is already queued, or being rebuilt, or yours, or closed alone: comment only', () => {
     for (const [labels, state] of [
       [['ready-for-agent'], 'OPEN'],

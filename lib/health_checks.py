@@ -511,6 +511,8 @@ def check_project_tags(path: Path | None = None, now: datetime | None = None) ->
 
 HOLD_REVISIT_PATH = Path.home() / ".claude" / "logs" / "hold-revisit.json"
 HOLD_REVISIT_STALE_HOURS = 3
+LABEL_CONTRADICTIONS_PATH = Path.home() / ".claude" / "logs" / "label-contradictions.json"
+LABEL_CONTRADICTIONS_STALE_HOURS = 3
 
 
 def check_hold_revisit(path: Path | None = None, now: datetime | None = None) -> dict:
@@ -533,6 +535,29 @@ def check_hold_revisit(path: Path | None = None, now: datetime | None = None) ->
     if len(without) > 5:
         detail += f" (+ {len(without) - 5} more)"
     return _result(cid, label, "yellow", detail, value=len(without))
+
+
+def check_label_contradictions(path: Path | None = None, now: datetime | None = None) -> dict:
+    """Tickets with contradictory labels: held/pinned alongside ready-for-agent or needs-reengagement.
+    Written hourly by the ticket_agents run() function (unconditional, not gated by agent mode)."""
+    cid, label = "tickets:label-contradictions", "Tickets have consistent label states"
+    now = now or _now()
+    try:
+        d = json.loads(Path(path or LABEL_CONTRADICTIONS_PATH).read_text())
+        at = datetime.fromisoformat(d["generated_at"])
+    except (OSError, ValueError, KeyError):
+        return _result(cid, label, "yellow", "the contradiction detector has not run on this machine yet")
+    age_h = (now - at).total_seconds() / 3600
+    if age_h > LABEL_CONTRADICTIONS_STALE_HOURS:
+        return _result(cid, label, "yellow", f"the contradiction detector last ran {age_h:.0f} hours ago (it runs hourly with the ticket agents)")
+    contradictions = d.get("contradictions") or []
+    if not contradictions:
+        return _result(cid, label, "green", "no label contradictions found", value=0)
+    parts = [f"{c['repo'].split('/')[-1]}#{c['number']} {c.get('title', '')} (conflicting: {', '.join(c.get('conflicting', []))})" for c in contradictions[:5]]
+    detail = f"{len(contradictions)} with conflicting labels: " + "; ".join(parts)
+    if len(contradictions) > 5:
+        detail += f" (+ {len(contradictions) - 5} more)"
+    return _result(cid, label, "red", detail, value=len(contradictions))
 
 
 MAIN_HEALTH_PATH = Path.home() / ".claude" / "logs" / "main-health.json"
@@ -1587,6 +1612,7 @@ def run_all() -> dict:
     results.append(check_catalog_fresh())
     results.append(check_project_tags())
     results.append(check_hold_revisit())
+    results.append(check_label_contradictions())
     results.append(check_github_budget())
     results.append(check_gh_gate())
     results.append(check_main_health())

@@ -110,7 +110,6 @@ def _label_for_device(device_id: str) -> str:
     return "mac-mini" if device_id.startswith("mac-mini") else "macbook-pro"
 
 
-HOLD_LABELS = frozenset({"pinned", "hold", "held"})  # a person's hands off: never dispatched, never sent back (#387)
 UNSCORED_RANK = 2  # a ticket the prioritizer hasn't scored yet counts as middle priority
 
 
@@ -140,7 +139,7 @@ def _unclaimed_ready_tickets(repo: str = REPO, issues: list[dict] | None = None)
 
     def eligible(i):
         names = set(ticket_policy.label_names(i))
-        return ("ready-for-agent" in names and not names & HOLD_LABELS
+        return ("ready-for-agent" in names and not names & ticket_policy.HOLD_LABELS
                 and not any(n.startswith("claimed:") for n in names)
                 and not ticket_policy.open_blockers(i, open_numbers))
 
@@ -317,7 +316,7 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
             continue
         n = int(m.group(1))
         names = labels_of.get(n)
-        if names is None or names & HOLD_LABELS:
+        if names is None or names & ticket_policy.HOLD_LABELS:
             continue
         if "needs-reengagement" in names:
             # Already sent back, but its PR still conflicts: the rebuild hasn't happened (#257 sat 12 hours, still

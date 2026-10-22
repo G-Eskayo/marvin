@@ -490,6 +490,46 @@ def test_pipeline_breaker_check_is_red_and_names_the_signature_and_tickets_when_
     assert "32" in r["detail"] and "paused" in r["detail"].lower()
 
 
+# ── label contradictions: held/pinned with ready-for-agent or needs-reengagement ──
+
+def test_check_label_contradictions_green_when_no_contradictions(tmp_path):
+    import json
+    p = tmp_path / "label-contradictions.json"
+    p.write_text(json.dumps({"generated_at": hc._now().isoformat(), "contradictions": []}))
+    r = hc.check_label_contradictions(path=p, now=hc._now())
+    assert r["severity"] == "green" and r["value"] == 0
+
+
+def test_check_label_contradictions_red_and_names_tickets_when_found(tmp_path):
+    import json
+    now = datetime(2026, 10, 21, 12, 0, tzinfo=timezone.utc)
+    p = tmp_path / "label-contradictions.json"
+    contradictions = [
+        {"repo": "G-Eskayo/marvin", "number": 77, "title": "Add feature", "conflicting": ["held", "ready-for-agent"]},
+        {"repo": "G-Eskayo/clarity-captions", "number": 3, "title": "Fix bug", "conflicting": ["pinned", "needs-reengagement"]}
+    ]
+    p.write_text(json.dumps({"generated_at": now.isoformat(), "contradictions": contradictions}))
+    r = hc.check_label_contradictions(path=p, now=now)
+    assert r["severity"] == "red" and r["value"] == 2
+    assert "marvin#77" in r["detail"] and "captions#3" in r["detail"]
+    assert "held, ready-for-agent" in r["detail"] or "pinned, needs-reengagement" in r["detail"]
+
+
+def test_check_label_contradictions_yellow_when_never_run(tmp_path):
+    r = hc.check_label_contradictions(path=tmp_path / "none.json", now=hc._now())
+    assert r["severity"] == "yellow" and "has not run" in r["detail"]
+
+
+def test_check_label_contradictions_yellow_when_stale(tmp_path):
+    import json
+    now = datetime(2026, 10, 21, 12, 0, tzinfo=timezone.utc)
+    p = tmp_path / "label-contradictions.json"
+    stale = (now - timedelta(hours=25)).isoformat()
+    p.write_text(json.dumps({"generated_at": stale, "contradictions": []}))
+    r = hc.check_label_contradictions(path=p, now=now)
+    assert r["severity"] == "yellow" and "25" in r["detail"]
+
+
 # ── missing execution profiles for projects with ready tickets ─────────────────
 # A project with ready-for-agent tickets but no profile will never dispatch.
 
