@@ -1,5 +1,7 @@
 # Changelog
 
+- Profiles with dispatch on and no machines: assign the Mini, stop calling marvin unrunnable ([#617](https://github.com/G-Eskayo/marvin/pull/617))
+
 - Project playbooks, slice 1: iOS app playbook, profile playbook field, three profile gaps ([#615](https://github.com/G-Eskayo/marvin/pull/615))
 
 - Ticket pipeline: honour one needs-a-person state, stop bot comments resetting the failure streak, reuse the plan across review rounds ([#606](https://github.com/G-Eskayo/marvin/pull/606))
