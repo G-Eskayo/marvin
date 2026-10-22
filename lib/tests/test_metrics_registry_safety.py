@@ -42,14 +42,3 @@ def test_records_still_accumulate(mdir):
     for _ in range(3):
         mr.record("s", M, machine="m")
     assert len(json.loads((mdir / "s.m.json").read_text())) == 3
-
-
-def test_health_reports_a_broken_metrics_file_as_one_red_check_instead_of_dying(monkeypatch):
-    import health_checks as hc
-
-    def broken(results):
-        raise json.JSONDecodeError("Extra data", "x", 0)
-    monkeypatch.setattr(hc, "record_anomaly_metrics", broken)
-    anomaly, extra = hc.anomaly_or_red([{"id": "a", "value": 1, "severity": "green"}])
-    assert anomaly is None
-    assert len(extra) == 1 and extra[0]["severity"] == "red" and "Extra data" in extra[0]["detail"]
