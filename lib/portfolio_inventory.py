@@ -175,15 +175,22 @@ def _wpcli(args: list[str]) -> str | None:
 
 
 def collect(base: str = "http://localhost:8080", out_dir: Path = OUT_DIR, manifest_path: Path = MANIFEST_PATH) -> dict:
+    # Ask WordPress for its pages FIRST. When wp-cli cannot answer (dev site down, container restarting) the crawl used to
+    # carry on with only the "/" fallback and overwrite a good inventory with a 1-page one, which then emptied the
+    # reference index (marvin#585). No pages listed = a failed crawl: stop before writing anything.
+    listing = _wpcli(["post", "list", "--post_type=page", "--post_status=publish", "--fields=ID,post_name,post_title,post_parent", "--format=json"])
+    try:
+        wp_pages = json.loads(listing) if listing else []
+    except json.JSONDecodeError:
+        wp_pages = []
+    if not wp_pages:
+        raise RuntimeError("could not list the dev site's WordPress pages (is the dev site running?); the existing inventory is kept")
     from playwright.sync_api import sync_playwright
     from PIL import Image
     manifest_urls = [p["url"] for p in json.loads(Path(manifest_path).read_text())]
     (out_dir / "pages").mkdir(parents=True, exist_ok=True)
     (out_dir / "buttons").mkdir(parents=True, exist_ok=True)
     (out_dir / "raw").mkdir(parents=True, exist_ok=True)
-
-    listing = _wpcli(["post", "list", "--post_type=page", "--post_status=publish", "--fields=ID,post_name,post_title,post_parent", "--format=json"])
-    wp_pages = json.loads(listing) if listing else []
     pages, records, seen_variants, seen_urls = [], [], set(), set()
 
     with sync_playwright() as pw:
