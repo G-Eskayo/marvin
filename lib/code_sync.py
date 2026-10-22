@@ -453,6 +453,21 @@ def _merge_remote(repo: Path) -> tuple[bool, str]:
     return True, output
 
 
+# Machine-written history that must never ride along in an auto-sync commit, even on a Mac whose checkout still tracks it
+# (one that hasn't pulled the untrack commit) or whose .gitignore was edited. Health's history was 191 of ~200 auto-sync
+# commits on main (2026-10-17..21), each re-running CI and main-health (plan health-metrics-redo-2026-10-21, P0).
+NEVER_COMMIT = ("bench/metrics/health-monitor.*",)
+
+
+def _never_commit(path: str) -> bool:
+    import fnmatch
+    return any(fnmatch.fnmatch(path, pat) for pat in NEVER_COMMIT)
+
+
+def _excluded_pathspecs() -> list[str]:
+    return [f":(exclude,glob){pat}" for pat in NEVER_COMMIT]
+
+
 def push(repo: Path, now: float | None = None) -> None:
     label = machine_label()
     heal_stale_index_lock(repo)
@@ -474,7 +489,7 @@ def push(repo: Path, now: float | None = None) -> None:
     # after the commit it describes) would make every push think there's
     # real work to do, and would make "nothing to commit" impossible to ever
     # detect once the log has grown at all.
-    real_changes = [f for f in all_changed if f != LOG_PATH.name]
+    real_changes = [f for f in all_changed if f != LOG_PATH.name and not _never_commit(f)]
     if not real_changes:
         # Working tree can be clean while HEAD still holds commits that were
         # never pushed — e.g. a manual conflict-resolution `git commit` made
@@ -522,8 +537,9 @@ def push(repo: Path, now: float | None = None) -> None:
     # so it would be swept into it instead of trailing in ~/.claude; on 2026-10-14 that line said "committed +
     # pushed" for a push that was rejected and never reached origin. sync-log.md is merge=union now
     # (~/.claude/.gitattributes), so a trailing entry no longer conflicts.
-    changed_files = [line[3:].strip() for line in _git(repo, ["status", "--porcelain", "--ignore-submodules=dirty"]).splitlines() if line.strip()]
-    _git(repo, ["add", "-A"])
+    changed_files = [f for f in (line[3:].strip() for line in _git(repo, ["status", "--porcelain", "--ignore-submodules=dirty"]).splitlines() if line.strip())
+                     if not _never_commit(f)]
+    _git(repo, ["add", "-A", "--", ".", *_excluded_pathspecs()])
     msg = f"auto-sync ({label}): {len(changed_files)} file(s) changed\n\n" + "\n".join(f"- {f}" for f in changed_files[:20])
     # marks its commit for the direct-commit check (#337): never blocked, but code swept up without tests is logged
     commit_ok, commit_out = _git_ok(repo, ["commit", "-m", msg], env={"MARVIN_COMMIT_KIND": "auto-sync"})

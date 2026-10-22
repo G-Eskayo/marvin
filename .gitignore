@@ -81,3 +81,7 @@ dashboard/node_modules
 
 # MARVIN's own per-machine state and caches (dashboard/electron/main/marvin_paths.js): never committed, never in ~/.claude
 /var/
+
+# Health's per-machine history: never committed (191 of ~200 auto-sync commits on main were these, 2026-10-17..21).
+# Each Mac keeps its own; code_sync.NEVER_COMMIT refuses them even where still tracked (plan health-metrics-redo P0).
+/bench/metrics/health-monitor.*
