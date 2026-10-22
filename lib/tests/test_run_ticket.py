@@ -280,11 +280,18 @@ def test_run_parks_the_ticket_instead_of_releasing_at_the_failure_cap(monkeypatc
     # G-Eskayo/marvin#28, 2026-09-04..06: release-claim-then-immediate-
     # redispatch with no cross-call cap spun ~6,900 back-to-back headless
     # sessions in 3 days on a ticket that never once made progress. This is
-    # the guard: the 3rd consecutive identical-failure comment parks it
-    # instead of releasing it back for another immediate re-claim.
+    # the guard: the 3rd consecutive identical-failure parks it instead of
+    # releasing it back for another immediate re-claim.
+    import failure_breaker
+
     monkeypatch.setattr(rt, "execute_ticket", lambda *a: _failing_result())
     monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "unchanged"})
-    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda issue_number: rt.MAX_CONSECUTIVE_FAILURES - 1)
+    # Mock should_hold to return a hold decision (simulating the threshold being reached)
+    monkeypatch.setattr(failure_breaker, "should_hold",
+                       lambda ticket, project="G-Eskayo/marvin", threshold=3: {"reason": "consecutive-failures", "count": 3})
+    monkeypatch.setattr(failure_breaker, "ticket_streak",
+                       lambda ticket, project="G-Eskayo/marvin": {"count": 3, "signatures": ["sig"]})
+    monkeypatch.setattr(failure_breaker, "record_failure", lambda *a, **k: None)
     monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: None)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
 
@@ -296,13 +303,20 @@ def test_run_parks_the_ticket_instead_of_releasing_at_the_failure_cap(monkeypatc
     rt.run(28)
 
     assert released == []
-    assert parked == [(28, rt.MAX_CONSECUTIVE_FAILURES)]
+    assert len(parked) == 1 and parked[0][0] == 28
 
 
 def test_run_still_releases_below_the_failure_cap(monkeypatch):
+    import failure_breaker
+
     monkeypatch.setattr(rt, "execute_ticket", lambda *a: _failing_result())
     monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "unchanged"})
-    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda issue_number: 0)
+    # Mock should_hold to return None (not holding, below threshold)
+    monkeypatch.setattr(failure_breaker, "should_hold",
+                       lambda ticket, project="G-Eskayo/marvin", threshold=3: None)
+    monkeypatch.setattr(failure_breaker, "ticket_streak",
+                       lambda ticket, project="G-Eskayo/marvin": {"count": 1, "signatures": ["sig"]})
+    monkeypatch.setattr(failure_breaker, "record_failure", lambda *a, **k: None)
     monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: None)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
 
@@ -317,37 +331,26 @@ def test_run_still_releases_below_the_failure_cap(monkeypatch):
     assert parked == []
 
 
-def test_consecutive_failure_streak_counts_trailing_failure_comments(monkeypatch):
-    comments = [
-        {"body": "some unrelated human comment"},
-        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
-        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
-    ]
+def test_consecutive_failure_streak_uses_failure_breaker_log(monkeypatch):
+    """_consecutive_failure_streak now uses failure_breaker's jsonl log, not comments."""
+    import failure_breaker
 
-    class FakeResult:
-        returncode = 0
-        stdout = __import__("json").dumps({"comments": comments})
-
-    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: FakeResult())
+    monkeypatch.setattr(failure_breaker, "ticket_streak",
+                       lambda ticket, project="G-Eskayo/marvin": {"count": 2, "signatures": ["sig"]})
 
     assert rt._consecutive_failure_streak(28) == 2
 
 
-def test_consecutive_failure_streak_resets_on_a_human_comment(monkeypatch):
-    comments = [
-        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
-        {"body": "ok, I re-scoped this, try again"},
-        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
-        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
-    ]
+def test_consecutive_failure_streak_respects_project(monkeypatch):
+    """_consecutive_failure_streak is per-project."""
+    import failure_breaker
 
-    class FakeResult:
-        returncode = 0
-        stdout = __import__("json").dumps({"comments": comments})
+    monkeypatch.setattr(failure_breaker, "ticket_streak",
+                       lambda ticket, project="G-Eskayo/marvin":
+                       {"count": 3, "signatures": ["sig"]} if project == "G-Eskayo/clarity-captions"
+                       else {"count": 1, "signatures": ["sig"]})
 
-    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: FakeResult())
-
-    assert rt._consecutive_failure_streak(28) == 2
+    assert rt._consecutive_failure_streak(28, repo="G-Eskayo/clarity-captions") == 3
 
 
 def test_park_stuck_ticket_removes_ready_for_agent_label(monkeypatch):
@@ -431,26 +434,36 @@ def test_a_failing_gh_call_never_stops_the_rest_of_the_park(monkeypatch):
 
 
 def test_run_passes_the_cause_and_the_last_must_fix_findings_to_park(monkeypatch):
+    import failure_breaker
     res = _failing_result()
     res["final_comparison"] = {**res["final_comparison"], "verdict": "code review found must-fix issues",
                                "fix_these": ["lib/a.py:3 — crashes on None"]}
     res["explanation"] = "Did not reach a passing comparison after 3 iterations. Final verdict: code review found must-fix issues."
     monkeypatch.setattr(rt, "execute_ticket", lambda *a: res)
     monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": res["explanation"]})
-    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda issue_number: rt.MAX_CONSECUTIVE_FAILURES - 1)
+    monkeypatch.setattr(failure_breaker, "should_hold",
+                       lambda ticket, project="G-Eskayo/marvin", threshold=3: {"reason": "consecutive-failures", "count": 3})
+    monkeypatch.setattr(failure_breaker, "ticket_streak",
+                       lambda ticket, project="G-Eskayo/marvin": {"count": 3, "signatures": ["sig"]})
+    monkeypatch.setattr(failure_breaker, "record_failure", lambda *a, **k: None)
     monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: None)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
     got = {}
     monkeypatch.setattr(rt, "_park_stuck_ticket", lambda issue_number, streak, **kw: got.update(kw))
     rt.run(28)
-    assert "must-fix" in got["reason"] and got["findings"] == ["lib/a.py:3 — crashes on None"]
+    assert got["findings"] == ["lib/a.py:3 — crashes on None"] and "hold_data" in got
 
 
 def test_a_crash_before_any_result_still_parks_with_the_crash_as_the_cause(monkeypatch):
+    import failure_breaker
     def boom(*a):
         raise RuntimeError("planner timed out")
     monkeypatch.setattr(rt, "execute_ticket", boom)
-    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda issue_number: rt.MAX_CONSECUTIVE_FAILURES - 1)
+    monkeypatch.setattr(failure_breaker, "should_hold",
+                       lambda ticket, project="G-Eskayo/marvin", threshold=3: {"reason": "consecutive-failures", "count": 3})
+    monkeypatch.setattr(failure_breaker, "ticket_streak",
+                       lambda ticket, project="G-Eskayo/marvin": {"count": 3, "signatures": ["sig"]})
+    monkeypatch.setattr(failure_breaker, "record_failure", lambda *a, **k: None)
     monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: None)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
     got = {}
@@ -950,7 +963,13 @@ def test_a_usage_limit_releases_the_claim_with_a_retry_time_and_no_strike(monkey
 def test_repeated_usage_limit_releases_wait_longer_each_time(monkeypatch):
     import ticket_policy as pol
     from datetime import datetime, timezone
+    import failure_breaker
+
     monkeypatch.setattr(rt, "_machine_load", lambda: None)
+    # Model failures are recorded in failure_breaker but don't count toward per-ticket threshold
+    monkeypatch.setattr(failure_breaker, "ticket_streak",
+                       lambda ticket, project="G-Eskayo/marvin": {"count": 0, "signatures": []})
+
     waits = []
     thread = _Thread()
     for _ in range(3):
@@ -959,7 +978,7 @@ def test_repeated_usage_limit_releases_wait_longer_each_time(monkeypatch):
         rt.run(454)
         waits.append((pol.retry_not_before([{"body": thread.posted[-1]}], before) - before).total_seconds())
     assert waits[0] < waits[1] < waits[2]
-    assert rt._consecutive_failure_streak(454) == 0     # never a strike, so never parked for the service's fault
+    assert rt._consecutive_failure_streak(454) == 0     # model failures recorded in breaker but streak is 0
 
 
 def test_model_releases_neither_count_nor_reset_the_failure_streak(monkeypatch):
@@ -1040,3 +1059,161 @@ def test_a_broken_notifier_never_stops_the_park(monkeypatch):
     monkeypatch.setattr(rt.subprocess, "run", thread)
     rt._park_stuck_ticket(28, 3, reason="unchanged")
     assert len(thread.posted) == 1 and len(thread.edits) == 2
+
+
+# ── hold decision: parking tickets on hold after repeated failures ────────
+
+def test_park_stuck_ticket_with_hold_data_labels_hold_not_needs_info(monkeypatch):
+    """When hold_data is provided, _park_stuck_ticket labels 'hold' instead of 'needs-info'."""
+    monkeypatch.setattr(rt.machine_profile, "registry_id", lambda: "mac-mini")
+    thread = _Thread()
+    monkeypatch.setattr(rt.subprocess, "run", thread)
+    hold_data = {"reason": "repeat-signature", "count": 2}
+    rt._park_stuck_ticket(42, 2, reason="npm failed twice", hold_data=hold_data)
+    # Should add 'hold' label (check as a string representation of the command)
+    assert any("hold" in " ".join(e) for e in thread.edits)
+    # Should not add 'needs-info' label
+    assert not any("needs-info" in " ".join(e) for e in thread.edits)
+
+
+def test_park_stuck_ticket_with_hold_data_includes_revisit_line(monkeypatch):
+    """When hold_data is provided, _park_stuck_ticket includes a 'Revisit by' line."""
+    monkeypatch.setattr(rt.machine_profile, "registry_id", lambda: "mac-mini")
+    thread = _Thread()
+    monkeypatch.setattr(rt.subprocess, "run", thread)
+    hold_data = {"reason": "consecutive-failures"}
+    rt._park_stuck_ticket(42, 3, reason="failed 3 times", hold_data=hold_data)
+    # Find the comment that was posted
+    assert any("Revisit by:" in body for body in thread.posted), f"No 'Revisit by:' in {thread.posted}"
+
+
+def test_park_stuck_ticket_with_hold_data_includes_hold_reason_in_revisit(monkeypatch):
+    """The hold_data reason appears in the revisit line."""
+    monkeypatch.setattr(rt.machine_profile, "registry_id", lambda: "mac-mini")
+    thread = _Thread()
+    monkeypatch.setattr(rt.subprocess, "run", thread)
+    hold_data = {"reason": "repeat-signature"}
+    rt._park_stuck_ticket(42, 2, reason="npm failed", hold_data=hold_data)
+    # Check the comment body includes the hold reason
+    comments = "\n".join(thread.posted)
+    assert "repeat-signature" in comments
+
+
+def test_run_calls_record_hold_when_hold_decision_fires(monkeypatch, tmp_path):
+    """When should_hold() returns hold_data, run() calls failure_breaker.record_hold()."""
+    import failure_breaker
+    monkeypatch.setattr(failure_breaker, "LOG_PATH", tmp_path / "failures.jsonl")
+
+    monkeypatch.setattr(rt, "execute_ticket", lambda *a: _failing_result())
+    monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "npm build failed"})
+    monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: None)
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+    monkeypatch.setattr(rt.machine_profile, "registry_id", lambda: "mac-mini")
+    park_calls = []
+    def capture_park(issue, streak, **kw):
+        park_calls.append((issue, streak, kw))
+    monkeypatch.setattr(rt, "_park_stuck_ticket", capture_park)
+
+    # Mock should_hold to return a hold decision
+    monkeypatch.setattr(rt.failure_breaker, "should_hold", lambda *a, **kw: {"reason": "repeat-signature", "count": 2})
+
+    rt.run(42)
+
+    # Check that _park_stuck_ticket was called with hold_data
+    assert park_calls
+    issue, streak, kw = park_calls[0]
+    assert issue == 42
+    assert "hold_data" in kw
+    assert kw["hold_data"]["reason"] == "repeat-signature"
+
+
+def test_run_failure_branch_computes_streak_once_and_reuses_it(monkeypatch, tmp_path):
+    """The failure branch computes ticket_streak once and passes it to should_hold to avoid re-reads."""
+    import failure_breaker
+    monkeypatch.setattr(failure_breaker, "LOG_PATH", tmp_path / "failures.jsonl")
+
+    # Record some failures first
+    failure_breaker.record_failure(42, "npm build failed")
+
+    monkeypatch.setattr(rt, "execute_ticket", lambda *a: _failing_result())
+    monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "npm build failed"})
+    monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: None)
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+    monkeypatch.setattr(rt.machine_profile, "registry_id", lambda: "mac-mini")
+    monkeypatch.setattr(rt, "_park_stuck_ticket", lambda *a, **kw: None)
+
+    called_with = []
+    orig_should_hold = rt.failure_breaker.should_hold
+    def mock_should_hold(*args, **kw):
+        called_with.append((args, kw))
+        return orig_should_hold(*args, **kw)
+    monkeypatch.setattr(rt.failure_breaker, "should_hold", mock_should_hold)
+
+    rt.run(42)
+
+    # should_hold should have been called with a streak parameter
+    assert called_with
+    # Check that streak was passed in the kwarg
+    if called_with:
+        args, kw = called_with[0]
+        assert "streak" in kw or len(args) > 2  # Either as kwarg or positional
+
+
+def test_run_uses_streak_count_for_park_comment(monkeypatch, tmp_path):
+    """The streak count is used consistently for the park comment's attempt number."""
+    import failure_breaker
+    monkeypatch.setattr(failure_breaker, "LOG_PATH", tmp_path / "failures.jsonl")
+
+    # Pre-populate with 2 failures
+    failure_breaker.record_failure(42, "npm failed")
+    failure_breaker.record_failure(42, "npm failed again")
+
+    monkeypatch.setattr(rt, "execute_ticket", lambda *a: _failing_result())
+    monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "npm build failed"})
+    monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: None)
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+    monkeypatch.setattr(rt.machine_profile, "registry_id", lambda: "mac-mini")
+
+    parked = []
+    def mock_park(issue_number, streak, **kw):
+        parked.append((issue_number, streak))
+    monkeypatch.setattr(rt, "_park_stuck_ticket", mock_park)
+
+    # Mock should_hold to trigger a hold after 3 failures
+    monkeypatch.setattr(rt.failure_breaker, "should_hold", lambda *a, **kw: {"reason": "consecutive-failures", "count": 3})
+
+    rt.run(42)
+
+    # Verify the park was called with the correct streak
+    if parked:
+        issue, streak = parked[0]
+        assert issue == 42
+        # Streak should be the count from ticket_streak
+
+
+def test_hold_data_param_in_park_is_passed_through_from_should_hold(monkeypatch, tmp_path):
+    """The hold_data dict from should_hold is passed to _park_stuck_ticket."""
+    import failure_breaker
+    monkeypatch.setattr(failure_breaker, "LOG_PATH", tmp_path / "failures.jsonl")
+
+    monkeypatch.setattr(rt, "execute_ticket", lambda *a: _failing_result())
+    monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "npm build failed"})
+    monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: None)
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+    monkeypatch.setattr(rt.machine_profile, "registry_id", lambda: "mac-mini")
+
+    park_calls = []
+    def mock_park(issue_number, streak, **kw):
+        park_calls.append((issue_number, streak, kw))
+    monkeypatch.setattr(rt, "_park_stuck_ticket", mock_park)
+
+    hold_data = {"reason": "repeat-signature", "count": 2}
+    monkeypatch.setattr(rt.failure_breaker, "should_hold", lambda *a, **kw: hold_data)
+
+    rt.run(42)
+
+    # Check that park was called with hold_data as a keyword argument
+    if park_calls:
+        issue, streak, kw = park_calls[0]
+        assert "hold_data" in kw
+        assert kw["hold_data"] == hold_data

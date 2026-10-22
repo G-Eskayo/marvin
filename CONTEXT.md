@@ -794,6 +794,16 @@ nothing connected them. "Where things are" was only the tidy agent's file-filing
      `needs-triage` when the date has passed or the condition (if a `#N` ticket reference) has closed.
      Held tickets are grouped in the Backlog's "On hold" collapsible block with their revisit dates shown
      inline, or flagged as missing their revisit line.
+  
+  - **Hold (from retry storms)** - a ticket is held when it accumulates consecutive failures (AC #1):
+    - Source: append-only jsonl log (`~/.claude/logs/pipeline-failures.jsonl`) per machine, not GitHub comments.
+    - Count threshold: `failure_threshold` from the project profile, or 3 for marvin.
+    - Repeat-signature check: if the last two failures have the *same* signature (e.g., the same npm error), hold immediately regardless of count.
+    - State: labeled `hold` instead of `needs-info`; move it to `needs-triage` when the revisit condition is met.
+    - **Reset mechanism**: a ticket's failure count resets at the last success, hold decision, or manual clear in file order (not timestamp order). A hold itself acts as a reset point: if ticket #42 fails 3x, gets held, then fails again on a retry, the new count starts at 1, not 4. This bounds the problem: a parked ticket can eventually come off hold without getting stuck in a second infinite loop.
+    - **Model-unavailable exclusion**: failures whose signature is "model-unavailable" (Claude service outage or usage limit) do not contribute to the count or signature list. They are recorded for the breaker's cross-ticket systemic check, but a ticket experiencing only model-unavailable responses never gets held.
+    - Caveat: counting is per-machine (each Mac tracks its own runs); a failure on one Mac doesn't reset the count on the other. The same caveat applies to the per-machine health check that watches failure streaks approaching the hold threshold.
+    - Comment resets: a human comment alone no longer resets the count (AC #1 trade-off). The count persists unless the ticket succeeds, times out indefinitely, or the pipeline manually clears the breaker. This trades "human comment felt like a reset" for robustness: a person can add context without accidentally resetting the hold decision.
 - **Modes** (`config/ticket_agents.json`): `auto` = propose until `act_after` (2026-10-12), then act. In
   propose mode an agent lists what it would change and changes nothing; the review screen is Health ->
   Autonomous agents -> Ticket agents. **stale_claims and refeed are pinned to propose** until a person edits
@@ -818,7 +828,8 @@ untouched (it is the "legacy profile"); only repos with a profile file use the p
   catalog's newest local path first), `machines` (eligible device ids), `dispatch` (`"off"` | `"on"`; **starts
   off**: a profile does nothing until a person turns it on), `env` (e.g. `DEVELOPER_DIR` = the first existing
   Xcode, so `swift test` works without `sudo xcode-select`), `executor` (extra allowed tools and context notes
-  for the headless model), `verify` (tiers), `evidence`.
+  for the headless model), `verify` (tiers), `evidence`, `failure_threshold` (optional: the max consecutive failures
+  before the ticket is held, default 3; overrides `MAX_CONSECUTIVE_FAILURES` only for this project).
 - **Verify tiers**: each has `command`, `cwd`, `requires` (capabilities such as `swift`, `xcode`, `xcodegen`),
   a `parser` (`swift-test`, `xcodebuild`, `exit-code`), and `required`. A required tier whose tools are missing
   on the executing machine is an **environment problem, not a ticket failure**: the claim is released, no

@@ -361,3 +361,17 @@ def test_a_huge_comment_is_scanned_without_trouble():
     now = datetime(2026, 10, 21, 20, 0, tzinfo=timezone.utc)
     big = "<!-- " * 200_000 + tp.retry_marker(now + _td(minutes=5))
     assert tp.retry_not_before([{"body": big}], now) == now + _td(minutes=5)
+
+
+# ── revisit: on-hold tickets ────────────────────────────────────────────────
+
+def test_format_revisit_with_date_only():
+    """format_revisit() outputs 'Revisit by: YYYY-MM-DD' with no condition."""
+    result = tp.format_revisit("2026-10-30")
+    assert result == "Revisit by: 2026-10-30"
+
+
+def test_format_revisit_with_date_and_condition():
+    """format_revisit() outputs 'Revisit by: YYYY-MM-DD — condition' when condition is provided."""
+    result = tp.format_revisit("2026-10-30", "failure: repeat-signature")
+    assert result == "Revisit by: 2026-10-30 — failure: repeat-signature"

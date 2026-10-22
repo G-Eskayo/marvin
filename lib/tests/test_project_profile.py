@@ -554,3 +554,76 @@ def test_a_profile_with_dispatch_on_but_no_machines_is_not_runnable(tmp_path):
     assert pp.runnable_repos(directory=d2) == ["G-Eskayo/proj"] and pp.unrunnable_repos(directory=d2) == []
     d3 = write_profile(tmp_path, dispatch="off", machines=[])
     assert pp.runnable_repos(directory=d3) == [] and pp.unrunnable_repos(directory=d3) == []
+
+
+def test_failure_threshold_must_be_none_or_positive_int(tmp_path):
+    """failure_threshold validation: None is OK, positive ints are OK, others are errors."""
+    # failure_threshold = None is OK
+    d = write_profile(tmp_path, failure_threshold=None)
+    assert pp.load_profile("G-Eskayo/proj", directory=d)["failure_threshold"] is None
+
+    # positive integers are OK
+    d2 = write_profile(tmp_path, failure_threshold=5)
+    assert pp.load_profile("G-Eskayo/proj", directory=d2)["failure_threshold"] == 5
+
+    # zero is not allowed
+    (tmp_path / "zero.json").write_text(json.dumps({
+        **json.loads((tmp_path / "proj.json").read_text()),
+        "failure_threshold": 0
+    }))
+    try:
+        pp._validate(json.loads((tmp_path / "zero.json").read_text()), "zero.json")
+    except ValueError as e:
+        assert "failure_threshold" in str(e)
+    else:
+        raise AssertionError("should reject zero")
+
+    # negative is not allowed
+    try:
+        pp._validate({"repo": "G-Eskayo/test", "verify": [], "failure_threshold": -1}, "test.json")
+    except ValueError as e:
+        assert "failure_threshold" in str(e)
+    else:
+        raise AssertionError("should reject negative")
+
+    # string is not allowed
+    try:
+        pp._validate({"repo": "G-Eskayo/test", "verify": [], "failure_threshold": "5"}, "test.json")
+    except ValueError as e:
+        assert "failure_threshold" in str(e)
+    else:
+        raise AssertionError("should reject string")
+
+
+def test_failure_threshold_rejects_bool_explicitly():
+    """Bool (True/False) must be rejected even though bool is a subclass of int in Python."""
+    # True is technically isinstance(True, int), but must be rejected
+    try:
+        pp._validate({"repo": "G-Eskayo/test", "verify": [], "failure_threshold": True}, "test.json")
+    except ValueError as e:
+        assert "failure_threshold" in str(e)
+    else:
+        raise AssertionError("should reject bool True")
+
+    # False is technically isinstance(False, int), but must be rejected
+    try:
+        pp._validate({"repo": "G-Eskayo/test", "verify": [], "failure_threshold": False}, "test.json")
+    except ValueError as e:
+        assert "failure_threshold" in str(e)
+    else:
+        raise AssertionError("should reject bool False")
+
+
+def test_failure_threshold_allows_positive_ints_but_not_bool():
+    """Ensure 1 (int) is allowed but True (bool) is not, despite isinstance(True, int) being True."""
+    # 1 as an int should be allowed
+    prof = pp._validate({"repo": "G-Eskayo/test", "verify": [], "failure_threshold": 1}, "test.json")
+    assert prof["failure_threshold"] == 1
+
+    # True should be rejected
+    try:
+        pp._validate({"repo": "G-Eskayo/test", "verify": [], "failure_threshold": True}, "test.json")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("should reject True even though it equals 1")

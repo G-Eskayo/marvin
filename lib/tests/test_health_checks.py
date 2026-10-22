@@ -1299,3 +1299,91 @@ def test_the_machine_script_reads_a_real_process_uptime_with_this_machines_ps():
         assert 1 <= int(out.stdout.strip()) <= 20
     finally:
         child.kill()
+
+
+# ---- retry-storm holds detection (tickets held due to consecutive failures) ----
+
+def test_check_retry_storm_holds_no_held_tickets():
+    """No held tickets returns empty list."""
+    snapshot = {
+        "G-Eskayo/marvin": {"issues": []},
+    }
+    out = hc.check_retry_storm_holds(snapshot=snapshot)
+    assert out == []
+
+
+def test_check_retry_storm_holds_held_tickets_with_no_failure_streak():
+    """Held tickets with zero failure count are ignored."""
+    import failure_breaker as fb
+    # Mock the failure breaker to always return zero count
+    def mock_streak(ticket, project="G-Eskayo/marvin"):
+        return {"count": 0, "signatures": []}
+
+    snapshot = {
+        "G-Eskayo/marvin": {"issues": [
+            {"number": 42, "title": "example", "labels": [{"name": "hold"}]},
+        ]},
+    }
+    original_streak = fb.ticket_streak
+    try:
+        fb.ticket_streak = mock_streak
+        out = hc.check_retry_storm_holds(snapshot=snapshot)
+        assert out == []
+    finally:
+        fb.ticket_streak = original_streak
+
+
+def test_check_retry_storm_holds_detects_held_tickets_with_active_failures():
+    """Held tickets with active failure streaks are reported."""
+    import failure_breaker as fb
+
+    def mock_streak(ticket, project="G-Eskayo/marvin"):
+        if ticket == 42:
+            return {"count": 3, "signatures": ["sig-a", "sig-b", "sig-c"]}
+        return {"count": 0, "signatures": []}
+
+    snapshot = {
+        "G-Eskayo/marvin": {"issues": [
+            {"number": 42, "title": "broken build", "labels": [{"name": "hold"}]},
+            {"number": 43, "title": "working", "labels": [{"name": "ready-for-agent"}]},
+        ]},
+    }
+    original_streak = fb.ticket_streak
+    try:
+        fb.ticket_streak = mock_streak
+        out = hc.check_retry_storm_holds(snapshot=snapshot)
+        assert len(out) == 1
+        assert out[0]["severity"] == "yellow"
+        assert "#42: broken build (3 failures)" in out[0]["detail"]
+    finally:
+        fb.ticket_streak = original_streak
+
+
+def test_check_retry_storm_holds_multiple_repos():
+    """Check handles multiple repos, reporting each separately."""
+    import failure_breaker as fb
+
+    def mock_streak(ticket, project="G-Eskayo/marvin"):
+        if (ticket, project) == (1, "G-Eskayo/marvin"):
+            return {"count": 2, "signatures": ["sig"]}
+        if (ticket, project) == (100, "G-Eskayo/clarity-captions"):
+            return {"count": 5, "signatures": ["sig"] * 5}
+        return {"count": 0, "signatures": []}
+
+    snapshot = {
+        "G-Eskayo/marvin": {"issues": [
+            {"number": 1, "title": "t1", "labels": [{"name": "hold"}]},
+        ]},
+        "G-Eskayo/clarity-captions": {"issues": [
+            {"number": 100, "title": "t100", "labels": [{"name": "hold"}]},
+        ]},
+    }
+    original_streak = fb.ticket_streak
+    try:
+        fb.ticket_streak = mock_streak
+        out = hc.check_retry_storm_holds(snapshot=snapshot)
+        assert len(out) == 2
+        repos = [r["label"] for r in out]
+        assert "marvin" in repos and "clarity-captions" in repos
+    finally:
+        fb.ticket_streak = original_streak

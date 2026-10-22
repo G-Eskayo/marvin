@@ -26,8 +26,8 @@ def isolated_log(tmp_path, monkeypatch):
     monkeypatch.setattr(fb, "LOG_PATH", tmp_path / "pipeline-failures.jsonl")
 
 
-def _fail(ticket, reason, minutes_ago=5):
-    fb.record_failure(ticket, reason, now=NOW - timedelta(minutes=minutes_ago))
+def _fail(ticket, reason, minutes_ago=5, project="G-Eskayo/marvin"):
+    fb.record_failure(ticket, reason, now=NOW - timedelta(minutes=minutes_ago), project=project)
 
 
 VITEST = "Unhandled exception: vitest produced no test summary (crashed or never ran): ...vite-node/dist/server.mjs:504:17"
@@ -193,3 +193,197 @@ def test_merge_refusals_never_trip_the_breaker(tmp_path, monkeypatch):
         for ticket in (208, 209, 210):
             f.write(json.dumps({"t": now.isoformat(), "kind": "refusal", "ticket": ticket, "sig": "merge:OUT_OF_ORDER"}) + "\n")
     assert fb.tripped(now=now) == []
+
+
+# ── ticket_streak: per-ticket failure count ────────────────────────────────
+
+def test_ticket_streak_counts_consecutive_failures():
+    """ticket_streak returns consecutive failures after the last success/clear."""
+    for i in range(3):
+        _fail(42, VITEST, minutes_ago=10-i)
+    streak = fb.ticket_streak(42)
+    assert streak["count"] == 3
+    assert streak["signatures"] == ["measure:vitest-no-summary"] * 3
+
+
+def test_ticket_streak_is_reset_by_success():
+    """Failures after a success don't count toward the streak."""
+    _fail(42, VITEST, minutes_ago=30)
+    fb.record_success(42, now=NOW - timedelta(minutes=20))
+    _fail(42, VITEST, minutes_ago=5)
+    streak = fb.ticket_streak(42)
+    assert streak["count"] == 1
+
+
+def test_ticket_streak_is_reset_by_clear():
+    """Failures after a manual clear don't count."""
+    for i in range(3):
+        _fail(42, VITEST, minutes_ago=30-i)
+    fb.clear(now=NOW - timedelta(minutes=10))
+    _fail(42, VITEST, minutes_ago=5)
+    streak = fb.ticket_streak(42)
+    assert streak["count"] == 1
+
+
+def test_ticket_streak_ignores_other_tickets():
+    """A ticket's streak only counts its own failures."""
+    for i in range(3):
+        _fail(42, VITEST, minutes_ago=10-i)
+    for i in range(5):
+        _fail(43, VITEST, minutes_ago=10-i)
+    assert fb.ticket_streak(42)["count"] == 3
+    assert fb.ticket_streak(43)["count"] == 5
+
+
+def test_ticket_streak_ignores_other_projects():
+    """ticket_streak is per-ticket+project."""
+    for i in range(3):
+        fb.record_failure(42, VITEST, now=NOW - timedelta(minutes=10-i), project="G-Eskayo/marvin")
+    for i in range(2):
+        fb.record_failure(42, VITEST, now=NOW - timedelta(minutes=10-i), project="G-Eskayo/clarity-captions")
+    assert fb.ticket_streak(42, project="G-Eskayo/marvin")["count"] == 3
+    assert fb.ticket_streak(42, project="G-Eskayo/clarity-captions")["count"] == 2
+
+
+def test_ticket_streak_preserves_signature_list():
+    """signatures list contains the actual signatures of failures in order."""
+    fb.record_failure(42, VITEST, now=NOW - timedelta(minutes=10))
+    fb.record_failure(42, "Did not reach a passing comparison ... Final verdict: unchanged.", now=NOW - timedelta(minutes=5))
+    fb.record_failure(42, VITEST, now=NOW - timedelta(minutes=1))
+    streak = fb.ticket_streak(42)
+    assert streak["signatures"] == ["measure:vitest-no-summary", "verdict:unchanged", "measure:vitest-no-summary"]
+
+
+# ── should_hold: retry-storm hold decision ─────────────────────────────────
+
+def test_should_hold_returns_none_when_count_below_threshold():
+    """A ticket with 2 different failures and threshold 3 is not held."""
+    _fail(42, VITEST, minutes_ago=10)
+    _fail(42, "Did not reach a passing comparison ... Final verdict: unchanged.", minutes_ago=5)
+    hold = fb.should_hold(42, threshold=3)
+    assert hold is None
+
+
+def test_should_hold_holds_on_threshold():
+    """A ticket with 3+ different failures is held when count >= threshold."""
+    # Use three different signatures to avoid triggering repeat-signature check
+    fb.record_failure(42, VITEST, now=NOW - timedelta(minutes=10))
+    fb.record_failure(42, "Did not reach a passing comparison ... Final verdict: unchanged.", now=NOW - timedelta(minutes=5))
+    fb.record_failure(42, "Unhandled exception: Command '['npm', 'run', 'build']' returned non-zero exit status 1.", now=NOW - timedelta(minutes=1))
+    hold = fb.should_hold(42, threshold=3)
+    assert hold is not None
+    assert hold["reason"] == "consecutive-failures"
+    assert hold["count"] == 3
+
+
+def test_should_hold_detects_repeat_signature():
+    """Same signature twice in a row triggers hold regardless of count."""
+    _fail(42, VITEST, minutes_ago=10)
+    _fail(42, VITEST, minutes_ago=5)
+    hold = fb.should_hold(42, threshold=999)  # threshold high, so count alone wouldn't hold
+    assert hold is not None
+    assert hold["reason"] == "repeat-signature"
+    assert hold["count"] == 2
+
+
+def test_should_hold_ignores_repeat_if_signatures_different():
+    """Two different signatures do not trigger repeat-check hold."""
+    _fail(42, VITEST, minutes_ago=10)
+    _fail(42, "Did not reach a passing comparison ... Final verdict: unchanged.", minutes_ago=5)
+    hold = fb.should_hold(42, threshold=999)  # threshold high
+    assert hold is None  # no repeat, and count < threshold
+
+
+# ── record_hold: parking records for the hold decision ──────────────────────
+
+def test_record_hold_appends_a_hold_record_with_ticket_and_project():
+    """record_hold() mirrors record_success(): one line per hold, with ticket, project, and timestamp."""
+    fb.record_hold(42, project="G-Eskayo/marvin", now=NOW)
+    records = fb._read()
+    assert any(r.get("kind") == "hold" and r.get("ticket") == 42 and r.get("project") == "G-Eskayo/marvin" for r in records)
+
+
+def test_record_hold_defaults_to_marvin():
+    """record_hold without a project defaults to G-Eskayo/marvin."""
+    fb.record_hold(42, now=NOW)
+    records = fb._read()
+    assert any(r.get("kind") == "hold" and r.get("project") == "G-Eskayo/marvin" for r in records)
+
+
+def test_ticket_streak_treats_hold_as_reset():
+    """A hold record acts as a reset point, clearing the count like success or clear."""
+    _fail(42, VITEST, minutes_ago=30)
+    _fail(42, VITEST, minutes_ago=20)
+    fb.record_hold(42, now=NOW - timedelta(minutes=10))
+    _fail(42, VITEST, minutes_ago=5)
+    streak = fb.ticket_streak(42)
+    assert streak["count"] == 1  # only the failure after the hold
+
+
+def test_ticket_streak_filters_model_unavailable_from_both_count_and_signatures():
+    """model-unavailable failures don't contribute to count or signature list."""
+    fb.record_failure(42, "the x model run failed", now=NOW - timedelta(minutes=10))
+    _fail(42, VITEST, minutes_ago=5)
+    streak = fb.ticket_streak(42)
+    # Only the vitest failure counts; the model-unavailable is filtered out
+    assert streak["count"] == 1
+    assert streak["signatures"] == ["measure:vitest-no-summary"]
+
+
+def test_ticket_streak_mixed_failures_and_model_unavailable():
+    """Model-unavailable signatures are filtered out even among mixed failures."""
+    fb.record_failure(42, "the x model run failed", now=NOW - timedelta(minutes=15))
+    fb.record_failure(42, VITEST, now=NOW - timedelta(minutes=10))
+    fb.record_failure(42, "the x model run failed", now=NOW - timedelta(minutes=5))
+    streak = fb.ticket_streak(42)
+    assert streak["count"] == 1
+    assert streak["signatures"] == ["measure:vitest-no-summary"]
+
+
+def test_should_hold_with_precomputed_streak():
+    """should_hold accepts an optional precomputed streak dict for efficiency."""
+    _fail(42, VITEST, minutes_ago=10)
+    _fail(42, VITEST, minutes_ago=5)
+    streak = fb.ticket_streak(42)
+    hold = fb.should_hold(42, threshold=999, streak=streak)
+    assert hold is not None
+    assert hold["reason"] == "repeat-signature"
+
+
+def test_should_hold_ignores_empty_signatures_for_repeat_check():
+    """If all signatures are filtered out (e.g., all model-unavailable), repeat-check doesn't trigger."""
+    fb.record_failure(42, "the x model run failed", now=NOW - timedelta(minutes=10))
+    fb.record_failure(42, "the x model run failed", now=NOW - timedelta(minutes=5))
+    hold = fb.should_hold(42, threshold=999)
+    assert hold is None  # count is 0 after filtering, no repeat
+
+
+def test_model_unavailable_signature_constant():
+    """MODEL_UNAVAILABLE_SIG constant is defined and used in signature()."""
+    assert hasattr(fb, "MODEL_UNAVAILABLE_SIG")
+    assert fb.MODEL_UNAVAILABLE_SIG == "model-unavailable"
+    reason = "the x model run failed unexpectedly"
+    sig = fb.signature(reason)
+    assert sig == "model-unavailable"
+
+
+def test_ticket_streak_project_scoped_holds():
+    """ticket_streak treats hold as reset only for the same project."""
+    fb.record_hold(42, project="G-Eskayo/marvin", now=NOW - timedelta(minutes=10))
+    _fail(42, VITEST, minutes_ago=5, project="G-Eskayo/marvin")
+    _fail(42, VITEST, minutes_ago=5, project="G-Eskayo/clarity-captions")
+    assert fb.ticket_streak(42, project="G-Eskayo/marvin")["count"] == 1
+    assert fb.ticket_streak(42, project="G-Eskayo/clarity-captions")["count"] == 1
+
+
+def test_hold_record_and_holds_reset_resets_correctly():
+    """A hold does reset the streak, and is still itself included in the log."""
+    _fail(42, VITEST, minutes_ago=30)
+    fb.record_hold(42, now=NOW - timedelta(minutes=20))
+    _fail(42, VITEST, minutes_ago=10)
+    records = fb._read()
+    # Verify hold record exists
+    assert any(r.get("kind") == "hold" and r.get("ticket") == 42 for r in records)
+    # Verify streak only counts after the hold
+    streak = fb.ticket_streak(42)
+    assert streak["count"] == 1

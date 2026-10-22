@@ -609,6 +609,49 @@ def check_github_budget(query=None) -> dict:
     return _result(cid, label, sev, f"{left:,} of {limit:,} left, resets {when}", value=left)
 
 
+def check_retry_storm_holds(snapshot: dict | None = None, repos: list[str] | None = None, gh=None) -> list[dict]:
+	"""Tickets in 'hold' state due to retry storms (consecutive failures). Returns a list of results, one per
+	repo, only if that repo has held tickets with an active failure count."""
+	if snapshot is None:
+		import ticket_agents
+		repos = repos or ticket_agents.board_repos()
+		if not repos:
+			return []
+		gh = gh or ticket_agents._gh
+		snapshot = ticket_agents.collect(repos, gh=gh)
+
+	import failure_breaker
+
+	# If repos not specified, infer from snapshot
+	if repos is None:
+		repos = list(snapshot.keys()) if snapshot else []
+
+	results = []
+	for repo in repos:
+		all_issues = snapshot.get(repo, {}).get("issues", [])
+		held = [i for i in all_issues if any(l.get("name") == "hold" for l in i.get("labels", []))]
+
+		# Keep only those with active failure streaks
+		active = []
+		for issue in held:
+			streak = failure_breaker.ticket_streak(issue["number"], project=repo)
+			if streak["count"] > 0:
+				active.append((issue["number"], issue.get("title", ""), streak["count"]))
+
+		if not active:
+			continue
+
+		cid = f"hold:retry-storm:{repo}"
+		label = repo.split("/")[-1]
+		parts = [f"#{n}: {t} ({c} failures)" for n, t, c in active[:3]]
+		detail = f"{len(active)} held ticket(s) with retry storms: " + "; ".join(parts)
+		if len(active) > 3:
+			detail += f" (+ {len(active) - 3} more)"
+		results.append(_result(cid, label, "yellow", detail, value=len(active)))
+
+	return results
+
+
 def check_missing_profiles(snapshot: dict | None = None, repos: list[str] | None = None, gh=None, profiles_dir: Path | None = None) -> list[dict]:
 	"""Projects with ready-for-agent tickets but no execution profile will never dispatch.
 	This check surfaces those projects so profiles can be created and dispatch turned on.
@@ -1477,6 +1520,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("contract", "Output contracts", check_output_contracts, CHECK_BUDGET_S),
         ("profile:missing", "Projects without an execution profile", check_missing_profiles, CHECK_BUDGET_S),
         ("profile:no-machines", "Projects with no machines", check_unrunnable_profiles, CHECK_BUDGET_S),
+        ("hold:retry-storm", "Held tickets with retry storms", check_retry_storm_holds, CHECK_BUDGET_S),
         ("triggers:missed", "Dashboard triggers cover every change", check_trigger_coverage, CHECK_BUDGET_S),
         ("catalog:fresh", "Project catalog is current", check_catalog_fresh, CHECK_BUDGET_S),
         ("tickets:project-tags", "Tickets are on their project's board", check_project_tags, CHECK_BUDGET_S),

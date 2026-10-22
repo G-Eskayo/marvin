@@ -217,6 +217,20 @@ def test_is_revisit_due_ref_without_state():
     assert pol.is_revisit_due(revisit, now, ref_state) is False
 
 
+# ── format_revisit: generate revisit comment lines ──────────────────────────
+
+def test_format_revisit_date_only():
+    """Format date only (no condition)"""
+    line = pol.format_revisit("2026-10-15")
+    assert line == "Revisit by: 2026-10-15"
+
+
+def test_format_revisit_with_condition():
+    """Format date with condition"""
+    line = pol.format_revisit("2026-10-15", "pending review")
+    assert line == "Revisit by: 2026-10-15 — pending review"
+
+
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))
