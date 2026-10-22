@@ -101,12 +101,10 @@ def _find_unused_ollama_models(threshold_days: int = 30) -> list[dict]:
                 mtime = datetime.fromtimestamp(model_path.stat().st_mtime, tz=timezone.utc)
                 if mtime < cutoff:
                     # Get size
-                    size_result = subprocess.run(
-                        ["du", "-sk", str(model_path)],
-                        capture_output=True, text=True, timeout=5,
-                    )
-                    if size_result.returncode == 0:
-                        size = int(size_result.stdout.split()[0]) * 1024
+                    import disk_ledger as dl  # noqa: E402 -- the bounded du (#586): never hangs on a protected folder
+                    kb = dl.du_kb(model_path, timeout=60)
+                    if isinstance(kb, int) and kb:
+                        size = kb * 1024
                         candidates.append({
                             "path": model_path,
                             "size": size,
