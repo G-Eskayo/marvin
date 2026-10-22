@@ -277,12 +277,36 @@ def _day(now: datetime) -> str:
     return now.astimezone().strftime("%Y-%m-%d")
 
 
-def write(now: datetime | None = None, sources: dict[str, Callable] | None = None) -> Path:
+def write(now: datetime | None = None, sources: dict[str, Callable] | None = None, builder_reason: str = "primary") -> Path:
     now = now or datetime.now(timezone.utc)
     BRIEFS.mkdir(parents=True, exist_ok=True)
     path = BRIEFS / f"{_day(now)}.md"
+
+    # Idempotent: don't overwrite an existing brief for today
+    if path.exists():
+        return path
+
     path.write_text(render(gather(now, sources), now))
+
+    # Write sidecar tracking which machine built it
+    import machine_profile
+    label = machine_profile.machine_label()
+    sidecar_path = BRIEFS / f"{_day(now)}.built-by"
+    sidecar_path.write_text(f"{label}: {builder_reason}\n")
+
     return path
+
+
+def build(now: datetime | None = None, sources: dict[str, Callable] | None = None) -> Path:
+    """Build the morning brief for today. Checks fallback gate before building."""
+    import brief_fallback
+    now = now or datetime.now(timezone.utc)
+    brief_path = BRIEFS / f"{_day(now)}.md"
+    decision = brief_fallback.should_run(local_path=brief_path, usual_hour=9, usual_minute=15)
+    if not decision.should_build:
+        print(f"[morning-brief] {decision.reason} — skipping", file=sys.stderr)
+        return brief_path
+    return write(now, sources, builder_reason=decision.reason)
 
 
 def show_today(now: datetime | None = None) -> str | None:
@@ -307,9 +331,22 @@ def read_dates() -> list[datetime]:
     return _dates(".read")
 
 
+def builder_of(day: str) -> str | None:
+    """Read the .built-by sidecar for a given day (YYYY-MM-DD format).
+    Returns a string like "mac-mini: primary" or None if no sidecar exists."""
+    sidecar_path = BRIEFS / f"{day}.built-by"
+    if not sidecar_path.exists():
+        return None
+    try:
+        return sidecar_path.read_text().strip()
+    except Exception:
+        return None
+
+
 if __name__ == "__main__":
     if sys.argv[1:] == ["build"]:
-        print(write())
+        path = build()
+        print(path)
     elif sys.argv[1:] == ["show"]:
         print(show_today() or "No brief for today yet.")
     else:
