@@ -11,7 +11,7 @@
         <string>/Users/gileskayo/.agents/skills/research-colony/scripts/run_colony.py</string>
     </array>
 
-    <!-- Run every day at 09:00 (after daily-digest at 08:30) -->
+    <!-- Run every day at 09:00 on the Mini only (after daily-digest at 08:30; primary builder; laptop fallback runs at 10:00) -->
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
