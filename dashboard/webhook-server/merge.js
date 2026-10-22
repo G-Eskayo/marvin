@@ -26,17 +26,25 @@ const TICKET_PIPELINE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'ticke
 const VENV_PYTHON = path.resolve(__dirname, '..', '..', 'venv', 'bin', 'python')
 const PROFILE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'project_profile.py')
 const GENERATED_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'generated_paths.py')
+// The per-command limit for commands run OUTSIDE the merge gate (gh reads, post-merge checks). Inside the gate the gate
+// owns the clock (pipeline review 2026-10-21, F3): this 20-minute kill used to fire first, so #568's load-aware
+// extension of the 40-minute gate limit could never apply, and a hung test was a silent 20-minute GATE_INFRA. Now a
+// hung test fails in two minutes by name (pytest-timeout, pytest.ini), and the gate passes `signal` plus no limit here.
 const DEFAULT_TEST_TIMEOUT_MS = 1200_000
 
 // opts.onOutput(chunk), when given, sees the output as it arrives (marvin#568: live test counts, and the "still making
-// progress" signal the gate's time limit reads). It is not passed on to spawn.
+// progress" signal the gate's time limit reads). opts.signal (an AbortSignal), when given, kills the whole process
+// group on abort: that is how the gate's own limit stops a run. Neither is passed on to spawn. timeoutMs that is not a
+// positive finite number means no per-command limit (the caller's signal bounds it).
 export async function execWithGroupTimeout(cmd, args, opts = {}, timeoutMs = DEFAULT_TEST_TIMEOUT_MS) {
-  const { onOutput, ...spawnOpts } = opts || {}
+  const { onOutput, signal, ...spawnOpts } = opts || {}
+  if (signal?.aborted) throw Object.assign(new Error(`Cut off before it started (the merge gate's time limit ran out): ${cmd}`), { stdout: '', stderr: '' })
   const child = spawn(cmd, args, { ...spawnOpts, detached: true })
   let stdout = '', stderr = ''
   const seen = (d) => { if (onOutput) { try { onOutput(String(d)) } catch { /* a progress reader never breaks the run */ } } }
   if (child.stdout) child.stdout.on('data', (d) => { stdout += d; seen(d) })
   if (child.stderr) child.stderr.on('data', (d) => { stderr += d; seen(d) })
+  const killGroup = () => { try { process.kill(-child.pid, 'SIGKILL') } catch { /* process may have already exited */ } }
   const promise = new Promise((resolve, reject) => {
     child.on('error', reject)
     child.on('close', (code) => {
@@ -44,19 +52,39 @@ export async function execWithGroupTimeout(cmd, args, opts = {}, timeoutMs = DEF
       else reject(Object.assign(new Error(`Command failed with exit code ${code}`), { stdout, stderr, code }))
     })
   })
-  let timer
-  return Promise.race([
-    promise,
-    new Promise((resolve, reject) => {
+  let timer, onAbort
+  const limits = []
+  if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+    limits.push(new Promise((resolve, reject) => {
       timer = setTimeout(() => {
-        try {
-          process.kill(-child.pid, 'SIGKILL')
-        } catch { /* process may have already exited */ }
+        killGroup()
         const mins = Math.max(1, Math.round(timeoutMs / 60000))
         reject(Object.assign(new Error(`Tests did not finish within ${mins} min and were killed, running: ${cmd}`), { stdout, stderr }))
       }, timeoutMs)
-    })
-  ]).finally(() => clearTimeout(timer))
+    }))
+  }
+  if (signal) {
+    limits.push(new Promise((resolve, reject) => {
+      onAbort = () => {
+        killGroup()
+        reject(Object.assign(new Error(`Cut off: the merge gate's time limit ran out, running: ${cmd}`), { stdout, stderr }))
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
+    }))
+  }
+  return Promise.race([promise, ...limits]).finally(() => {
+    clearTimeout(timer)
+    if (onAbort) signal.removeEventListener('abort', onAbort)
+  })
+}
+
+// Inside the gate: every command gets the gate's abort signal and no per-command limit, so the gate's limit (with its
+// one load-aware extension) is the only clock. Once the gate has been cut off, cleanup commands (worktree remove) run
+// with the normal per-command limit instead of being killed on the spot. O(1) per command.
+export function gateExec(exec, signal) {
+  return (cmd, args, opts = {}, timeoutMs) => signal.aborted
+    ? exec(cmd, args, opts, timeoutMs)
+    : exec(cmd, args, { ...opts, signal }, timeoutMs ?? Infinity)
 }
 
 // The overlap rule (Gil 2026-10-09): a PR behind main is retested only when main changed a file the PR also changes
@@ -439,18 +467,21 @@ function deadline(promise, ms) {
 }
 const cutOff = (ms, note) => ({ ok: false, reason: `Tests failed after rebasing onto main:\n\nThe check did not finish within ${Math.max(1, Math.round(ms / 60000))} min and was cut off.${note ? ` ${note}.` : ''}` })
 
-export async function withGateTimeout(promise, ms, decide = () => ({ extendMs: 0 }), onExtend = () => {}) {
+// onCut runs when the limit finally runs out, before the result is returned: the gate aborts its commands there, so a
+// cut-off run is killed, not left running behind the next merge.
+export async function withGateTimeout(promise, ms, decide = () => ({ extendMs: 0 }), onExtend = () => {}, onCut = () => {}) {
+  const cut = (result) => { try { onCut() } catch { /* stopping must not break the report */ } return result }
   const first = await deadline(promise, ms)
   if (first !== CUT) return first
   let d = { extendMs: 0 }
   try { d = decide() || d } catch { /* no extension */ }
-  if (!(d.extendMs > 0)) return cutOff(ms, d.note)
+  if (!(d.extendMs > 0)) return cut(cutOff(ms, d.note))
   try { onExtend(d.reason) } catch { /* reporting must not break the gate */ }
   const second = await deadline(promise, d.extendMs)
   if (second !== CUT) return second
   let after = { extendMs: 0 }
   try { after = decide() || after } catch { /* as above */ }
-  return cutOff(ms + d.extendMs, `It was extended once already (${d.reason})${after.note ? `; at the end ${after.note}` : ''}`)
+  return cut(cutOff(ms + d.extendMs, `It was extended once already (${d.reason})${after.note ? `; at the end ${after.note}` : ''}`))
 }
 
 async function mergePrUnqueued(
@@ -528,13 +559,18 @@ async function mergePrUnqueued(
   }
   if (gate) {
     stage('gate', 'started', `rebasing onto ${ctx ? ctx.base : 'main'} + retesting (${ctx ? ctx.base : 'main'} changed files this PR also changes)`)
+    // One clock (pipeline review 2026-10-21, F3): the gate's limit, extended at most once under load. Its commands run
+    // with no per-command limit of their own and are killed through this signal when it finally runs out.
+    const gateAbort = new AbortController()
+    const run = gateExec(exec, gateAbort.signal)
     const result = await withGateTimeout(
       Promise.resolve(ctx
-        ? rebaseAndRetestFn(headRefName, exec, ctx.clone, ctx.runTests, ctx.base, ctx.resolveConflicts, sleep ?? null, progress)
-        : rebaseAndRetestFn(headRefName, exec, REPO_PATH, _defaultRunTests, 'main', generatedResolver(MARVIN_REPO, exec), sleep ?? null, progress)),
+        ? rebaseAndRetestFn(headRefName, run, ctx.clone, ctx.runTests, ctx.base, ctx.resolveConflicts, sleep ?? null, progress)
+        : rebaseAndRetestFn(headRefName, run, REPO_PATH, _defaultRunTests, 'main', generatedResolver(MARVIN_REPO, run), sleep ?? null, progress)),
       gateTimeoutMs,
       () => gateExtension({ baseMs: gateTimeoutMs, load: loadNow(), lastOutputAt, now: now() }),
-      (reason) => progress('tests', 'running', { detail: reason, logDetail: true }))
+      (reason) => progress('tests', 'running', { detail: reason, logDetail: true }),
+      () => gateAbort.abort())
     if (!result.ok) {
       // Structured, concise feedback (code header, failing test names, capped tail)
       // instead of a raw output wall: this comment is what the ticket's executor reads
