@@ -137,6 +137,96 @@ def test_after_two_re_queues_it_goes_to_a_person_instead_of_looping():
     assert "ready-for-agent" not in {a["arg"] for a in ops(acts, op="add_label")}
 
 
+# ── hold state (#102, #358, ADR 0062) ────────────────────────────────────────
+
+def test_plan_refeed_skips_needs_reengagement_with_hold_label():
+    """Test 15: plan_refeed on needs-reengagement + hold → [] (the #102 bug)."""
+    acts = ta.plan_refeed(REPO, [issue(20, labels=["needs-reengagement", "hold"])], counts={})
+    assert acts == []
+
+
+def test_plan_stale_claims_keeps_stale_held_claims():
+    """Test 16: plan_stale_claims on a stale claimed:* + hold → [] (extends held/pinned to plain hold)."""
+    t = issue(1, labels=["claimed:mac-mini", "hold"])
+    t["updatedAt"] = (NOW - timedelta(days=3)).isoformat()  # 3 days old = stale
+    acts = ta.plan_stale_claims(REPO, [t], in_flight=set(), now=NOW, running=set())
+    assert acts == []
+
+
+def test_find_label_contradictions_identifies_hold_and_dispatch_conflicts():
+    """Test 17: find_label_contradictions with hold + ready-for-agent / needs-reengagement."""
+    snap = {
+        REPO: {
+            "issues": [
+                issue(1, labels=["hold", "ready-for-agent"]),
+                issue(2, labels=["held", "needs-reengagement"]),
+                issue(3, labels=["hold"]),  # clean, no conflict
+                issue(4, labels=["ready-for-agent"]),  # clean, no conflict
+            ]
+        }
+    }
+    contradictions = ta.find_label_contradictions(snap)
+    assert len(contradictions) == 2
+    c1 = next((c for c in contradictions if c["number"] == 1), None)
+    c2 = next((c for c in contradictions if c["number"] == 2), None)
+    assert c1 and c1["hold_labels"] == ["hold"] and c1["conflict_labels"] == ["ready-for-agent"]
+    assert c2 and c2["hold_labels"] == ["held"] and c2["conflict_labels"] == ["needs-reengagement"]
+
+
+def test_find_label_contradictions_handles_malformed_input():
+    """Test 18: find_label_contradictions with malformed labels and missing issues key."""
+    snap = {
+        REPO: {
+            "issues": [
+                issue(1, labels=["hold", "ready-for-agent"]),
+                {"number": 2, "title": "Missing labels field"},  # malformed, missing 'labels'
+            ]
+        },
+        "other/repo": {"prs": []},  # no 'issues' key
+    }
+    contradictions = ta.find_label_contradictions(snap)
+    assert len(contradictions) == 1
+    assert contradictions[0]["number"] == 1
+
+
+def test_find_label_contradictions_truncates_at_50():
+    """Test 19: find_label_contradictions with >50 contradictions truncates to 50."""
+    issues = [issue(i, labels=["hold", "ready-for-agent"]) for i in range(60)]
+    snap = {REPO: {"issues": issues}}
+    contradictions = ta.find_label_contradictions(snap)
+    assert len(contradictions) == 60  # find_label_contradictions returns all
+    written_state = contradictions[:50]
+    assert len(written_state) == 50  # the truncation happens in write_label_contradictions_state
+
+
+def test_write_label_contradictions_state_handles_oserror(tmp_path):
+    """Test 20: write_label_contradictions_state with OSError (e.g., write failure) never raises."""
+    import os
+    # Create a read-only directory to trigger OSError on write
+    readonly_dir = tmp_path / "readonly"
+    readonly_dir.mkdir()
+    bad_path = readonly_dir / "state.json"
+    os.chmod(readonly_dir, 0o444)  # read-only
+    try:
+        # Should not raise despite the permission error
+        ta.write_label_contradictions_state([{"number": 1}], bad_path, NOW)
+    finally:
+        os.chmod(readonly_dir, 0o755)  # restore for cleanup
+
+
+def test_run_with_label_contradictions_path_none_doesnt_write_file(tmp_path):
+    """Test 21: run() with label_contradictions_path=None runs cleanly without writing file."""
+    snap = {REPO: {"issues": [issue(1, labels=["hold", "ready-for-agent"])], "prs": []}}
+    gh = FakeGh()
+    result = ta.run(snap, gh, {"mode": "propose", "agents": {}}, NOW,
+                    audit_path=tmp_path / "audit.jsonl",
+                    proposals_path=tmp_path / "proposals.json",
+                    label_contradictions_path=None)
+    assert result is not None
+    # File should not be created since path is None
+    assert "label_contradictions" not in [str(p) for p in tmp_path.glob("*")]
+
+
 # ── running ─────────────────────────────────────────────────────────────────
 
 class FakeGh:

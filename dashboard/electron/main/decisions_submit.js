@@ -2,6 +2,7 @@ import { mkdtemp, writeFile, rm } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { parseDecisions, applyAnswers, pendingDecisions, decisionsComment } from '../../webhook-server/decisions.js'
+import { HOLD_LABELS } from '../../src/lib/ticket_input.js'
 
 // Submitting the owner's answers to a Decisions section (PR or ticket), from the dashboard. The description is the
 // source of truth: it is re-read fresh, the answers are written into it (ticked boxes, Answer/Note lines), and only
@@ -55,13 +56,23 @@ async function recordAnswers({ repo, n, issue, parsed, answers, pending }, exec)
   const comment = exec('gh', ['api', `repos/${repo}/issues/${n}/comments`, '-f', `body=${decisionsComment(parsed, answers)}`, '--jq', '.html_url'])
     .then(({ stdout: url }) => { out.commentUrl = String(url).trim() || null })
     .catch((error) => { out.commentError = `answers saved in the description, but the record comment failed: ${String(error?.stderr || error?.message || error).split('\n')[0]}` })
-  // A ticket waiting on these decisions (needs-info) is ready for an agent once every required one is answered.
+  // A ticket waiting on these decisions (needs-info) is ready for an agent once every required one is answered,
+  // unless it is on hold for a person.
   const labels = (issue.labels || []).map((l) => (typeof l === 'string' ? l : l.name))
-  const move = !issue.pull_request && !pending.length && labels.includes('needs-info')
-    ? exec('gh', ['issue', 'edit', String(n), '--repo', repo, '--remove-label', 'needs-info', '--add-label', 'ready-for-agent'])
+  const hasHold = labels.some((l) => HOLD_LABELS.has(l))
+  const canMove = !issue.pull_request && !pending.length && labels.includes('needs-info')
+
+  let move
+  if (canMove && !hasHold) {
+    move = exec('gh', ['issue', 'edit', String(n), '--repo', repo, '--remove-label', 'needs-info', '--add-label', 'ready-for-agent'])
       .then(() => { out.labelsChanged = true })
       .catch((error) => { out.labelError = `answers saved, but moving the ticket to ready-for-agent failed: ${String(error?.stderr || error?.message || error).split('\n')[0]}` })
-    : null
+  } else if (canMove && hasHold) {
+    out.labelSkipped = 'the ticket is on hold, so it was not moved to ready-for-agent'
+    move = null
+  } else {
+    move = null
+  }
   await Promise.all([comment, move])
   return out
 }

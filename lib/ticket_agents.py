@@ -142,12 +142,12 @@ def plan_stale_claims(repo, issues, in_flight, now, running=None, releases=None)
            has been idle DEAD_CLAIM_HOURS, and no PR or branch is in flight: the run that held it died or failed.
     A ticket already released MAX_CLAIM_RELEASES times (`releases`, from this agent's own audit log) is not put back
     a third time: it goes to ready-for-human, shown in the dashboard's Needs you, and Gil is notified.
-    `held` keeps a claim (an interactive session that wants a long quiet claim adds it); `pinned` is never touched."""
+    Hold labels keep a claim (an interactive session that wants a long quiet claim adds it)."""
     out = []
     releases = releases or {}
     for t in issues:
         names = set(pol.label_names(t))
-        if names & pol.SKIP_LABELS or "held" in names or t["number"] in in_flight:
+        if names & pol.HOLD_LABELS or t["number"] in in_flight:
             continue
         s = pol.stale_claim(t, now, hours=DEAD_CLAIM_HOURS) if running is not None and t["number"] not in running else None
         why = f"claimed by {s['machine']}, idle {s['idle_hours']}h, no run alive for it anywhere" if s else ""
@@ -179,7 +179,7 @@ def plan_refeed(repo, issues, counts):
     out = []
     for t in issues:
         names = set(pol.label_names(t))
-        if "needs-reengagement" not in names or names & pol.SKIP_LABELS or "held" in names:
+        if "needs-reengagement" not in names or names & pol.HOLD_LABELS:
             continue
         n = counts.get(t["number"], 0)
         out.append(_act("refeed", repo, t, "remove_label", "needs-reengagement", "denied or failed the merge gate"))
@@ -285,6 +285,40 @@ def refeed_counts(path: Path, repo: str) -> dict[int, int]:
 
 
 HOLD_REVISIT_PATH = HOME / ".claude" / "logs" / "hold-revisit.json"
+LABEL_CONTRADICTIONS_PATH = HOME / ".claude" / "logs" / "label-contradictions.json"
+
+
+def find_label_contradictions(snapshot: dict) -> list[dict]:
+    """Find tickets with hold labels AND ready-for-agent or needs-reengagement labels.
+    Returns [{"repo": ..., "number": ..., "title": ..., "hold_labels": [...], "conflict_labels": [...]}, ...]"""
+    out = []
+    for repo, data in snapshot.items():
+        for t in data.get("issues", []):
+            names = set(pol.label_names(t))
+            hold = names & pol.HOLD_LABELS
+            conflict = names & {"ready-for-agent", "needs-reengagement"}
+            if hold and conflict:
+                out.append({
+                    "repo": repo, "number": t["number"], "title": t.get("title", ""),
+                    "hold_labels": sorted(hold), "conflict_labels": sorted(conflict)
+                })
+    return out
+
+
+def write_label_contradictions_state(contradictions: list[dict], path: Path, now: datetime) -> None:
+    """Write {generated_at, contradictions: []} atomically via tmp-then-rename.
+    Mirrors write_revisit_state pattern."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_stem(path.stem + ".tmp")
+        data = {
+            "generated_at": now.isoformat(),
+            "contradictions": contradictions[:50]  # truncate at 50 like project_tags
+        }
+        tmp.write_text(json.dumps(data) + "\n")
+        tmp.replace(path)
+    except OSError:
+        pass  # never stop the run
 
 
 def collect_hold_comments(repo: str, held_numbers: set[int], gh) -> dict[int, list]:
@@ -360,10 +394,11 @@ def _write(path: Path, rows: list[dict], mode="a") -> None:
 
 def run(snapshot, gh, cfg, now, audit_path=AUDIT_PATH, proposals_path=PROPOSALS_PATH, in_flight=lambda repo: set(),
         due_for=lambda repo: None, report=None, executable=None, project_rules=None, tags_state_path=None, revisit_state_path=None,
-        running=lambda repo: None) -> dict:
+        label_contradictions_path=None, running=lambda repo: None) -> dict:
     """One pass over every repo in `snapshot` ({repo: {"issues": [...], "prs": [...]}}).
     `tags_state_path`: where the project tagger's unclear list goes (the real run passes project_tagger.STATE_PATH).
-    `revisit_state_path`: where the revisit agent's "without revisit" list goes."""
+    `revisit_state_path`: where the revisit agent's "without revisit" list goes.
+    `label_contradictions_path`: where contradictory label combinations are written."""
     report = report or (lambda *a, **k: None)
     rules = project_rules if project_rules is not None else project_tagger.load_rules()
     labels_now = {(r, t["number"]): pol.label_names(t) for r, d in snapshot.items() for t in d["issues"]}
@@ -443,6 +478,9 @@ def run(snapshot, gh, cfg, now, audit_path=AUDIT_PATH, proposals_path=PROPOSALS_
         project_tagger.write_state(unclear, pending, tags_state_path, ts)
     if revisit_state_path is not None:
         write_revisit_state(without_revisit, revisit_state_path, now)
+    label_contradictions = find_label_contradictions(snapshot)
+    if label_contradictions_path is not None:
+        write_label_contradictions_state(label_contradictions, label_contradictions_path, now)
     _write(audit_path, rows)
     _write(proposals_path, [{
         "generated_at": ts, "mode": cfg.get("mode"), "act_after": cfg.get("act_after"),

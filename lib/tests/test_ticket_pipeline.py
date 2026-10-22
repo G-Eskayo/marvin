@@ -1299,9 +1299,11 @@ def test_research_runs_when_nothing_else_is_ready_one_at_a_time():
 
 
 def test_a_ticket_on_hold_is_never_dispatched():
+    # Test 27: extends to include 'pinned' label to confirm HOLD_LABELS import preserves all labels.
     issues = [_issue(102, "2026-01-01T00:00:00Z", labels=["ready-for-agent", "hold"]),
               _issue(103, "2026-01-02T00:00:00Z", labels=["ready-for-agent", "held"]),
-              _issue(104, "2026-01-03T00:00:00Z", labels=["ready-for-agent"])]
+              _issue(104, "2026-01-03T00:00:00Z", labels=["ready-for-agent"]),
+              _issue(105, "2026-01-04T00:00:00Z", labels=["ready-for-agent", "pinned"])]
     assert [i["number"] for i in tp._unclaimed_ready_tickets(issues=issues)] == [104]
 
 

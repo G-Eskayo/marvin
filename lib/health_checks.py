@@ -499,6 +499,33 @@ def check_hold_revisit(path: Path | None = None, now: datetime | None = None) ->
     return _result(cid, label, "yellow", detail, value=len(without))
 
 
+LABEL_CONTRADICTIONS_PATH = Path.home() / ".claude" / "logs" / "label-contradictions.json"
+LABEL_CONTRADICTIONS_STALE_HOURS = 3
+
+
+def check_label_contradictions(path: Path | None = None, now: datetime | None = None) -> dict:
+    """Tickets with hold labels AND ready-for-agent or needs-reengagement (contradictory states).
+    Written hourly by the ticket agents."""
+    cid, label = "tickets:label-contradictions", "No contradictory hold + ready labels"
+    now = now or _now()
+    try:
+        d = json.loads(Path(path or LABEL_CONTRADICTIONS_PATH).read_text())
+        at = datetime.fromisoformat(d["generated_at"])
+    except (OSError, ValueError, KeyError):
+        return _result(cid, label, "yellow", "the ticket agents have not written label contradictions yet")
+    age_h = (now - at).total_seconds() / 3600
+    if age_h > LABEL_CONTRADICTIONS_STALE_HOURS:
+        return _result(cid, label, "yellow", f"the ticket agents last ran {age_h:.0f} hours ago (it runs hourly with the agents)")
+    contradictions = d.get("contradictions") or []
+    if not contradictions:
+        return _result(cid, label, "green", "no contradictory label combinations found", value=0)
+    parts = [f"{(c.get('repo') or 'unknown').split('/')[-1]}#{c.get('number', '?')} {c.get('title', '')} ({', '.join(c.get('hold_labels', []))} + {', '.join(c.get('conflict_labels', []))})" for c in contradictions[:5]]
+    detail = f"{len(contradictions)} with hold + ready labels: " + "; ".join(parts)
+    if len(contradictions) > 5:
+        detail += f" (+ {len(contradictions) - 5} more)"
+    return _result(cid, label, "red", detail, value=len(contradictions))
+
+
 MAIN_HEALTH_PATH = Path.home() / ".claude" / "logs" / "main-health.json"
 MAIN_HEALTH_STALE_HOURS = 24
 
@@ -1481,6 +1508,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("catalog:fresh", "Project catalog is current", check_catalog_fresh, CHECK_BUDGET_S),
         ("tickets:project-tags", "Tickets are on their project's board", check_project_tags, CHECK_BUDGET_S),
         ("tickets:hold-revisit", "Hold tickets have revisit dates", check_hold_revisit, CHECK_BUDGET_S),
+        ("tickets:label-contradictions", "No contradictory hold + ready labels", check_label_contradictions, CHECK_BUDGET_S),
         ("github:budget", "GitHub request budget", check_github_budget, CHECK_BUDGET_S),
         ("github:gate", "GitHub calls go through the gate", check_gh_gate, CHECK_BUDGET_S),
         ("main:green", "The main branch passes its tests", check_main_health, CHECK_BUDGET_S),

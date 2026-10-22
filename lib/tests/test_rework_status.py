@@ -51,7 +51,7 @@ def test_attempts_used_up_means_it_needs_a_person():
 
 
 def test_held_or_pinned_is_untouched_on_purpose():
-    for lab in ("held", "pinned"):
+    for lab in ("hold", "held", "pinned"):  # Test 1: extends to include "hold"
         s = rs.status_for(ticket(labels=("needs-reengagement", lab)), ctx())
         assert s["state"] == "held"
 
@@ -130,3 +130,175 @@ def test_collect_reads_each_projects_open_issues_once(monkeypatch):
     assert len(calls) == 2
     assert set(out) == {"G-Eskayo/marvin#5", "G-Eskayo/clarity-captions#5"}
     assert out["G-Eskayo/marvin#5"]["state"] in {"queued", "not-queued", "blocked", "paused", "running", "held", "needs-person", "parked"}
+
+
+# ── hold state with detail (#102, #358, ADR 0062) ────────────────────────────
+
+def test_status_for_with_hold_info_includes_label_date_and_comment():
+    """Test 2: status_for with hold_info → detail names label, elapsed time, and comment text."""
+    hold_info = {
+        "label": "hold",
+        "since": (NOW - timedelta(hours=2, minutes=30)).isoformat(),
+        "comment": "119 failed pipeline runs, debugging batch timeout issue"
+    }
+    s = rs.status_for(ticket(labels=("needs-reengagement", "hold")), ctx(hold_info=hold_info))
+    assert s["state"] == "held"
+    assert "hold" in s["detail"]
+    assert "2 h ago" in s["detail"] or "150 min" in s["detail"] or "2h" in s["detail"]  # elapsed time
+    assert "119 failed pipeline runs" in s["detail"]  # comment text without ellipsis
+
+
+def test_status_for_with_hold_info_absent_still_reports_held():
+    """Test 3: status_for with hold_info absent (gh unreachable) → state 'held', detail without date."""
+    s = rs.status_for(ticket(labels=("needs-reengagement", "hold")), ctx(hold_info=None))
+    assert s["state"] == "held"
+    assert "not to touch this ticket" in s["detail"]
+    assert "ago" not in s["detail"]  # no date
+
+
+def test_status_for_with_malformed_comment_doesnt_crash():
+    """Test 4: status_for with hold_info['comment'] as None/empty/non-string → detail omits without crashing."""
+    for comment_val in (None, "", 123, {"bad": "object"}):
+        hold_info = {"label": "held", "since": NOW.isoformat(), "comment": comment_val}
+        s = rs.status_for(ticket(labels=("held",)), ctx(hold_info=hold_info))
+        assert s["state"] == "held"
+        assert "detail" in s
+
+
+def test_status_for_with_both_hold_and_held_labels():
+    """Test 5: status_for with both 'hold' and 'held' labels (person's mistake) → still 'held', no crash."""
+    hold_info = {"label": "hold", "since": NOW.isoformat()}
+    s = rs.status_for(ticket(labels=("hold", "held", "needs-reengagement")), ctx(hold_info=hold_info))
+    assert s["state"] == "held"
+
+
+def test_hold_info_with_gh_exception_returns_none():
+    """Test 6: _hold_info when gh raises → returns None."""
+    def gh_raises(args):
+        raise OSError("Connection refused")
+
+    result = rs._hold_info("G-Eskayo/marvin", 1, "hold", gh=gh_raises)
+    assert result is None
+
+
+def test_hold_info_with_no_labeled_event_returns_none():
+    """Test 7: _hold_info when events list has no 'labeled' event for this label → returns None."""
+    import json
+    import subprocess
+
+    def gh_no_labeled(args):
+        if "events" in args[1]:
+            # With --slurp, the response is a single flattened array
+            return subprocess.CompletedProcess(args, 0, json.dumps([
+                {"event": "commented", "created_at": NOW.isoformat()},
+                {"event": "labeled", "label": {"name": "other-label"}, "created_at": NOW.isoformat()}
+            ]), "")
+        return subprocess.CompletedProcess(args, 0, "{}", "")
+
+    result = rs._hold_info("G-Eskayo/marvin", 1, "hold", gh=gh_no_labeled)
+    assert result is None
+
+
+def test_hold_info_partial_degradation_when_comments_fetch_fails():
+    """Test 8: _hold_info when events succeed but comments fetch fails → returns partial result."""
+    import json
+    import subprocess
+
+    def gh_partial_fail(args):
+        if "events" in args[1]:
+            # With --slurp, events is a flattened array
+            return subprocess.CompletedProcess(args, 0, json.dumps([
+                {"event": "labeled", "label": {"name": "hold"}, "created_at": NOW.isoformat()}
+            ]), "")
+        if "issue" in args[1]:
+            return subprocess.CompletedProcess(args, 1, "", "Error")  # fail
+        return subprocess.CompletedProcess(args, 0, "{}", "")
+
+    result = rs._hold_info("G-Eskayo/marvin", 1, "hold", gh=gh_partial_fail)
+    assert result is not None
+    assert result["label"] == "hold"
+    assert result["since"] is not None
+    assert "comment" not in result  # no comment due to failed fetch
+
+
+def test_hold_info_ignores_comment_outside_window():
+    """Test 9: _hold_info with comment outside HOLD_COMMENT_WINDOW_S → no comment key."""
+    import json
+    import subprocess
+
+    event_time = NOW
+    comment_time = NOW - timedelta(minutes=10)  # 10 minutes before event (outside default window)
+
+    def gh_old_comment(args):
+        if "events" in args[1]:
+            # With --slurp, events is a flattened array
+            return subprocess.CompletedProcess(args, 0, json.dumps([
+                {"event": "labeled", "label": {"name": "hold"}, "created_at": event_time.isoformat()}
+            ]), "")
+        if "issue" in args[1]:
+            return subprocess.CompletedProcess(args, 0, json.dumps({
+                "comments": [{"body": "Old reason", "createdAt": comment_time.isoformat()}]
+            }), "")
+        return subprocess.CompletedProcess(args, 0, "{}", "")
+
+    result = rs._hold_info("G-Eskayo/marvin", 1, "hold", gh=gh_old_comment)
+    assert result is not None
+    assert "comment" not in result  # outside window
+
+
+def test_hold_info_picks_latest_labeled_event():
+    """Test 10: _hold_info with repeats of same label → picks latest."""
+    import json
+    import subprocess
+
+    first_time = NOW - timedelta(hours=1)
+    latest_time = NOW
+
+    def gh_repeats(args):
+        if "events" in args[1]:
+            # With --slurp, events is a flattened array
+            return subprocess.CompletedProcess(args, 0, json.dumps([
+                {"event": "labeled", "label": {"name": "hold"}, "created_at": first_time.isoformat()},
+                {"event": "unlabeled", "label": {"name": "hold"}, "created_at": (NOW - timedelta(minutes=30)).isoformat()},
+                {"event": "labeled", "label": {"name": "hold"}, "created_at": latest_time.isoformat()}
+            ]), "")
+        return subprocess.CompletedProcess(args, 0, json.dumps({"comments": []}), "")
+
+    result = rs._hold_info("G-Eskayo/marvin", 1, "hold", gh=gh_repeats)
+    assert result is not None
+    assert result["since"] == latest_time.isoformat()
+
+
+def test_collect_end_to_end_with_hold_ticket():
+    """Test 11: collect() end-to-end on needs-reengagement + hold → hold_info populated, state 'held'."""
+    import json as _json
+    import subprocess as _sp
+    import ticket_pipeline as tp
+    import rework_status as rs
+
+    calls = []
+    issues = [{"number": 5, "title": "On hold", "labels": [{"name": "needs-reengagement"}, {"name": "hold"}], "body": "", "createdAt": "2026-10-01T00:00:00Z"}]
+    events = [{"event": "labeled", "label": {"name": "hold"}, "created_at": NOW.isoformat()}]
+
+    def fake_run(cmd, **kw):
+        if cmd[:3] == ["gh", "issue", "list"]:
+            calls.append(cmd)
+            return _sp.CompletedProcess(cmd, 0, _json.dumps(issues), "")
+        if "events" in " ".join(cmd):
+            return _sp.CompletedProcess(cmd, 0, _json.dumps(events), "")
+        return _sp.CompletedProcess(cmd, 0, _json.dumps({"comments": []}), "")
+
+    import subprocess
+    original_run = subprocess.run
+    try:
+        subprocess.run = fake_run
+        import ticket_pipeline
+        original_attempts = ticket_pipeline._attempts
+        ticket_pipeline._attempts = lambda repo, n: 0
+        out = rs.collect(repos=["G-Eskayo/marvin"])
+        assert "G-Eskayo/marvin#5" in out
+        assert out["G-Eskayo/marvin#5"]["state"] == "held"
+        assert "hold" in out["G-Eskayo/marvin#5"]["detail"] or "On hold" in out["G-Eskayo/marvin#5"]["headline"]
+    finally:
+        subprocess.run = original_run
+        ticket_pipeline._attempts = original_attempts

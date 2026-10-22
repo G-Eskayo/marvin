@@ -13,6 +13,7 @@ STALE_CLAIM_HOURS = 48
 PRIORITY_LABELS = ("priority:p0", "priority:p1", "priority:p2", "priority:p3")
 STATE_LABELS = {"ready-for-agent", "ready-for-human", "needs-info", "needs-reengagement", "wontfix"}
 SKIP_LABELS = {"pinned"}  # a person has taken the wheel: no agent touches it
+HOLD_LABELS = frozenset({"pinned", "hold", "held"})  # a person has taken the wheel: never dispatched, never sent back
 
 
 def label_names(issue: dict) -> list[str]:
@@ -227,11 +228,11 @@ def has_break_it(body: str) -> bool:
 
 def triage_verdict(issue: dict, recheck: bool = False) -> dict | None:
     """What to do with an untriaged ticket, deterministically (no model, no tokens): None if it is
-    already triaged or pinned. `state` is one of ready-for-agent / ready-for-human / needs-info.
+    already triaged or on hold. `state` is one of ready-for-agent / ready-for-human / needs-info.
     `recheck`: look again at a needs-info ticket (the triage agent re-checks the ones it parked)."""
     names = set(label_names(issue))
     states = (STATE_LABELS - {"needs-info"}) if recheck else STATE_LABELS
-    if names & states or names & SKIP_LABELS or any(l.startswith("claimed:") for l in names):
+    if names & states or names & HOLD_LABELS or any(l.startswith("claimed:") for l in names):
         return None
     body = issue.get("body") or ""
     title = issue.get("title") or ""

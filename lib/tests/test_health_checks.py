@@ -1271,6 +1271,106 @@ def test_a_profile_that_can_never_run_is_one_yellow_line(tmp_path):
     assert hc.check_unrunnable_profiles(profiles_dir=tmp_path / "empty") == []
 
 
+# ── label contradictions (#102, #358, ADR 0062) ──────────────────────────────
+
+def test_check_label_contradictions_missing_state_file():
+    """Test 22: missing state file → yellow, 'have not written... yet'."""
+    result = hc.check_label_contradictions(path=Path("/nonexistent/path.json"))
+    assert result["severity"] == "yellow"
+    assert "have not written label contradictions yet" in result["detail"]
+
+
+def test_check_label_contradictions_stale_state_file():
+    """Test 23: stale state file (> 3h old) → yellow, states how old."""
+    now = datetime(2026, 10, 22, 12, tzinfo=timezone.utc)
+    stale_time = now - timedelta(hours=4)  # 4 hours ago = stale (threshold is 3h)
+    data = {"generated_at": stale_time.isoformat(), "contradictions": []}
+
+    # Create a temporary file with the stale data
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        json.dump(data, f)
+        temp_path = Path(f.name)
+
+    try:
+        result = hc.check_label_contradictions(path=temp_path, now=now)
+        assert result["severity"] == "yellow"
+        assert "hours ago" in result["detail"]
+    finally:
+        temp_path.unlink()
+
+
+def test_check_label_contradictions_zero_contradictions():
+    """Test 24: zero contradictions → green, value == 0."""
+    now = datetime(2026, 10, 22, 12, tzinfo=timezone.utc)
+    data = {"generated_at": now.isoformat(), "contradictions": []}
+
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        json.dump(data, f)
+        temp_path = Path(f.name)
+
+    try:
+        result = hc.check_label_contradictions(path=temp_path, now=now)
+        assert result["severity"] == "green"
+        assert result["value"] == 0
+        assert "no contradictory label combinations" in result["detail"]
+    finally:
+        temp_path.unlink()
+
+
+def test_check_label_contradictions_many_contradictions():
+    """Test 25: N contradictions (> 5) → red, value == N, lists first 5, '+ K more'."""
+    now = datetime(2026, 10, 22, 12, tzinfo=timezone.utc)
+    contradictions = [
+        {"repo": "G-Eskayo/marvin", "number": i, "title": f"Ticket {i}", "hold_labels": ["hold"], "conflict_labels": ["ready-for-agent"]}
+        for i in range(1, 12)  # 11 contradictions
+    ]
+    data = {"generated_at": now.isoformat(), "contradictions": contradictions}
+
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        json.dump(data, f)
+        temp_path = Path(f.name)
+
+    try:
+        result = hc.check_label_contradictions(path=temp_path, now=now)
+        assert result["severity"] == "red"
+        assert result["value"] == 11
+        assert "+ 6 more" in result["detail"]  # 11 - 5 = 6
+    finally:
+        temp_path.unlink()
+
+
+def test_check_label_contradictions_malformed_state_file():
+    """Test 26: malformed state file (not valid JSON, or missing 'generated_at') → yellow."""
+    import tempfile
+
+    # Test invalid JSON
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        f.write("not valid json {")
+        temp_path = Path(f.name)
+
+    try:
+        result = hc.check_label_contradictions(path=temp_path)
+        assert result["severity"] == "yellow"
+        assert "have not written label contradictions yet" in result["detail"]
+    finally:
+        temp_path.unlink()
+
+    # Test valid JSON but missing 'generated_at'
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        json.dump({"contradictions": []}, f)
+        temp_path = Path(f.name)
+
+    try:
+        result = hc.check_label_contradictions(path=temp_path)
+        assert result["severity"] == "yellow"
+        assert "have not written label contradictions yet" in result["detail"]
+    finally:
+        temp_path.unlink()
+
+
 # ---- webhook-server uptime (pipeline review 2026-10-21, F14: "not running" while it served, on both Macs) ----
 
 @pytest.mark.parametrize("etime,secs", [("00:07", 7), ("05:07", 307), ("01:09:48", 4188), ("3-02:00:00", 3 * 86400 + 7200),

@@ -120,6 +120,21 @@ def test_already_triaged_tickets_are_left_alone():
     assert tp.triage_verdict(issue(labels=["pinned"], body=GOOD)) is None
 
 
+def test_triage_verdict_on_hold_label_returns_none():
+    """Test 12: triage_verdict on an untriaged, well-specified ticket labelled `hold` → `None`."""
+    assert tp.triage_verdict(issue(labels=["hold"], body=GOOD)) is None
+
+
+def test_triage_verdict_on_held_label_returns_none():
+    """Test 13: triage_verdict on an untriaged, well-specified ticket labelled `held` → `None`."""
+    assert tp.triage_verdict(issue(labels=["held"], body=GOOD)) is None
+
+
+def test_hold_labels_constant_defined():
+    """Test 14: HOLD_LABELS == {"pinned", "hold", "held"} lives on `ticket_policy`."""
+    assert tp.HOLD_LABELS == frozenset({"pinned", "hold", "held"})
+
+
 def test_triage_leaves_parent_prds_and_claimed_tickets_alone():
     prd = "## Problem Statement\n\nx\n\n## Solution\n\ny\n\n## User Stories\n\n1. as a user"
     assert tp.triage_verdict(issue(body=prd, title="Add the board")) is None

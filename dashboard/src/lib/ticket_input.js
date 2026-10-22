@@ -6,6 +6,7 @@
 // failures) is put back in the queue, otherwise nothing would ever look at the answer.
 
 export const HUMAN_INPUT_MARKER = '<!-- marvin:human-input -->'
+export const HOLD_LABELS = new Set(['pinned', 'hold', 'held'])
 
 const claims = (labels) => labels.filter((l) => l.startsWith('claimed:'))
 
@@ -13,6 +14,9 @@ export function planInput(labels, state = 'OPEN') {
   const none = { requeue: false, add: [], remove: [] }
   const has = (l) => labels.includes(l)
   if (state && state !== 'OPEN') return { ...none, effect: 'This ticket is closed: your comment is posted, nothing is queued.' }
+  if (labels.some((l) => HOLD_LABELS.has(l))) {
+    return { ...none, effect: 'This ticket is on hold for a person, so the pipeline is not touching it: your comment is posted, nothing is queued.' }
+  }
   if (has('needs-reengagement')) {
     return { ...none, effect: 'This ticket is already queued to be rebuilt; the agent will read your comment when it does.' }
   }

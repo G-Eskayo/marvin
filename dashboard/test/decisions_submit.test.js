@@ -119,6 +119,30 @@ describe('submitDecisions', () => {
   it('validateAnswers rejects a non-object', () => {
     expect(() => validateAnswers(parseDecisions(BODY), null)).toThrow(/no answers/)
   })
+
+  // Test 32-34: hold state (#102, #358, ADR 0062)
+  it('does not move a held ticket from needs-info, but posts the comment anyway (Test 32)', async () => {
+    const { exec, state } = fakeGh({ labels: ['needs-info', 'hold'], pullRequest: false })
+    const r = await submitDecisions({ repo: 'o/r', number: 5, answers: { dance: { choices: ['A: Clap & wiggle'] }, handoff: { choices: ['Glide'] } } }, { exec })
+    expect(r.ok).toBe(true)
+    expect(r.labelSkipped).toMatch(/on hold/)
+    expect(state.labelEdits).toHaveLength(0)
+    expect(state.comments).toHaveLength(1)
+  })
+
+  it('does not touch labels on a PR even with hold (Test 33)', async () => {
+    const { exec, state } = fakeGh({ labels: ['needs-info', 'hold'] })  // pullRequest: true by default
+    const r = await submitDecisions({ repo: 'o/r', number: 5, answers: { dance: { choices: ['A: Clap & wiggle'] }, handoff: { choices: ['Glide'] } } }, { exec })
+    expect(state.labelEdits).toHaveLength(0)
+  })
+
+  it('comment failure does not prevent labelSkipped from being set (Test 34)', async () => {
+    const { exec, state } = fakeGh({ labels: ['needs-info', 'hold'], pullRequest: false, failComment: true })
+    const r = await submitDecisions({ repo: 'o/r', number: 5, answers: { dance: { choices: ['A: Clap & wiggle'] }, handoff: { choices: ['Glide'] } } }, { exec })
+    expect(r.labelSkipped).toMatch(/on hold/)
+    expect(r.commentError).toMatch(/record comment failed/)
+    expect(state.labelEdits).toHaveLength(0)
+  })
 })
 
 describe('sendBackForOptions', () => {

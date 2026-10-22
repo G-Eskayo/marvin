@@ -177,6 +177,31 @@ describe('a sent-back PR says where its rework stands', () => {
     expect(s.rework).toBeNull()
     expect(s.detail).toMatch(/nothing to approve/i)
   })
+
+  // Test 35-37: hold state (#102, #358, ADR 0062)
+  it('when the rework is held, the card says it is waiting for a person, not that a version will update (Test 35)', () => {
+    const heldStatus = { state: 'held', headline: 'On hold', detail: 'A person put it on hold' }
+    const s = describePrState({ ...ready, sentBack: true, rework: heldStatus }, { status: 'idle', errorMessage: null })
+    expect(s.kind).toBe('sent-back')
+    expect(s.rework.state).toBe('held')
+    expect(s.headline).toMatch(/held|waiting/i)
+    expect(s.detail).toMatch(/hold|person/i)
+    expect(s.detail).not.toMatch(/reworked version will update|will update this same PR/i)
+    expect(s.actions.map((a) => a.id)).toContain('clearSentBack')
+  })
+
+  it('a null rework status falls back to the original sent-back wording (Test 36)', () => {
+    const s = describePrState({ ...ready, sentBack: true, rework: null }, { status: 'idle', errorMessage: null })
+    expect(s.kind).toBe('sent-back')
+    expect(s.detail).toMatch(/nothing to approve/i)
+  })
+
+  it('queued or other non-held rework states use the original wording (Test 37)', () => {
+    const queuedStatus = { state: 'queued', headline: 'Queued: 1st of 3 waiting' }
+    const s = describePrState({ ...ready, sentBack: true, rework: queuedStatus }, { status: 'idle', errorMessage: null })
+    expect(s.kind).toBe('sent-back')
+    expect(s.rework).toEqual(queuedStatus)
+  })
 })
 
 import { getReworkStatus, clearReworkCache } from '../electron/main/rework.js'

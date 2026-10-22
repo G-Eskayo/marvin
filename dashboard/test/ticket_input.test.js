@@ -30,6 +30,32 @@ describe('planInput: what leaving a comment does to a ticket', () => {
       expect(p.effect.length).toBeGreaterThan(10)
     }
   })
+
+  // Test 28-31: hold state (#102, #358, ADR 0062)
+  it('does not requeue a hold ticket (Test 28)', () => {
+    const p = planInput(['needs-info', 'hold'], 'OPEN')
+    expect(p.requeue).toBe(false)
+    expect(p.add).toEqual([])
+    expect(p.effect).toMatch(/hold|waiting/i)
+  })
+
+  it('does not requeue a claimed held ticket (Test 29)', () => {
+    const p = planInput(['claimed:mac-mini', 'held'], 'OPEN')
+    expect(p.requeue).toBe(false)
+    expect(p.add).toEqual([])
+  })
+
+  it('closed ticket takes precedence over hold (Test 30)', () => {
+    const p = planInput(['needs-info', 'hold'], 'CLOSED')
+    expect(p.requeue).toBe(false)
+    expect(p.effect).toMatch(/closed/i)
+  })
+
+  it('multiple hold labels do not crash (Test 31)', () => {
+    const p = planInput(['hold', 'pinned', 'held', 'needs-info'], 'OPEN')
+    expect(p.requeue).toBe(false)
+    expect(p.add).toEqual([])
+  })
 })
 
 const fakeGh = (labels, state = 'OPEN', failOn = null) => {

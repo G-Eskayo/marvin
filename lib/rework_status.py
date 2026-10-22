@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ticket_policy  # noqa: E402
 
 
 def ordinal(n: int) -> str:
@@ -32,6 +33,67 @@ def _minutes(since: datetime | None, now: datetime) -> str:
         return "a while"
     m = max(0, int((now - since).total_seconds() // 60))
     return f"{m} min" if m < 120 else f"{m // 60} h"
+
+
+HOLD_COMMENT_WINDOW_S = 300  # 5 minutes: find comments within this window of the hold label event
+
+
+def _gh(args):
+    from project_catalog import run_env
+    try:
+        return subprocess.run(["gh", *args], capture_output=True, text=True, timeout=30, check=True, env=run_env())
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return None
+
+
+def _hold_info(repo: str, number: int, label: str, gh=None) -> dict | None:
+    """Fetch the hold label event and nearby comment for a ticket. Returns {"label", "since", "comment"} or None.
+    Never raises."""
+    gh = gh or _gh
+    try:
+        events_proc = gh(["api", f"repos/{repo}/issues/{number}/events", "--paginate", "--slurp"])
+        if not events_proc or events_proc.returncode != 0:
+            return None
+        events = json.loads(events_proc.stdout)
+        events = events if isinstance(events, list) else []
+        labeled_event = None
+        for event in reversed(events):
+            if event.get("event") == "labeled" and event.get("label", {}).get("name") == label:
+                labeled_event = event
+                break
+        if not labeled_event:
+            return None
+        event_ts = labeled_event.get("created_at")
+        if not event_ts:
+            return None
+        try:
+            event_time = datetime.fromisoformat(event_ts.replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            return None
+        view_proc = gh(["issue", "view", str(number), "--repo", repo, "--json", "comments"])
+        if not view_proc or view_proc.returncode != 0:
+            return {"label": label, "since": event_time.isoformat()}
+        view = json.loads(view_proc.stdout)
+        comments = view.get("comments", [])
+        best_comment = None
+        for comment in comments:
+            comment_ts = comment.get("createdAt")
+            if not comment_ts:
+                continue
+            try:
+                comment_time = datetime.fromisoformat(comment_ts.replace("Z", "+00:00"))
+            except (ValueError, AttributeError):
+                continue
+            time_diff = abs((comment_time - event_time).total_seconds())
+            if time_diff <= HOLD_COMMENT_WINDOW_S:
+                best_comment = comment.get("body", "")
+                break
+        result = {"label": label, "since": event_time.isoformat()}
+        if best_comment:
+            result["comment"] = best_comment[:200]
+        return result
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _read_diagnosis(ticket_number: int, repo: str) -> dict | None:
@@ -65,9 +127,29 @@ def status_for(ticket: dict, ctx: dict) -> dict:
     if claim:
         result = {"state": "running", "headline": "Being rebuilt right now",
                 "detail": f"Running on {claim} for {_minutes(ctx.get('claim_started'), now)} (attempt {attempts + 1} of {cap}). It updates this same PR when it finishes."}
-    elif names & {"held", "pinned"}:
-        result = {"state": "held", "headline": "On hold",
-                "detail": "A person asked the pipeline not to touch this ticket (held or pinned), so it will not be rebuilt until that label is removed."}
+    elif names & ticket_policy.HOLD_LABELS:
+        hold_info = ctx.get("hold_info")
+        if hold_info:
+            since_parts = []
+            if hold_info.get("label"):
+                since_parts.append(f"{hold_info['label']}")
+            if hold_info.get("since"):
+                try:
+                    hold_dt = datetime.fromisoformat(hold_info["since"].replace("Z", "+00:00"))
+                    since_parts.append(f"{_minutes(hold_dt, now)} ago")
+                except (ValueError, AttributeError):
+                    pass
+            since_str = ", ".join(since_parts) if since_parts else "on hold"
+            detail = f"A person asked the pipeline not to touch this ticket ({since_str}), so it will not be rebuilt until that label is removed."
+            comment = hold_info.get("comment")
+            if comment and isinstance(comment, str) and comment.strip():
+                comment_trunc = comment[:100]
+                ellipsis = "..." if len(comment) > 100 else ""
+                detail += f" — Reason: \"{comment_trunc}{ellipsis}\""
+            result = {"state": "held", "headline": "On hold", "detail": detail}
+        else:
+            result = {"state": "held", "headline": "On hold",
+                    "detail": "A person asked the pipeline not to touch this ticket, so it will not be rebuilt until that label is removed."}
     elif attempts >= cap:
         result = {"state": "needs-person", "headline": "Needs you",
                 "detail": f"It has been rebuilt {attempts} times and still does not pass, so the pipeline stopped. Look at the denial comments on its ticket."}
@@ -139,10 +221,15 @@ def collect(repos: list[str] | None = None) -> dict:
             stages = ts.read_stages(n, None if r == tp.REPO else r)
             starts = [e["timestamp"] for e in stages if e.get("stage") == "claimed" and e.get("status") == "started"]
             started = datetime.fromisoformat(starts[-1].replace("Z", "+00:00")) if starts else None
+            names = _names(t)
+            hold_info = None
+            if names & ticket_policy.HOLD_LABELS:
+                hold_label = sorted(names & ticket_policy.HOLD_LABELS)[0]
+                hold_info = _hold_info(r, n, hold_label)
             out[f"{r}#{n}"] = status_for(t, dict(
                 queue=queue, key=f"{r}#{n}", attempts=tp._attempts(r, n), max_attempts=tp.MAX_REENGAGE_ATTEMPTS,
                 claim_started=started, paused=tripped.get(r), blockers=ticket_policy.open_blockers(t, open_numbers),
-                running=running, project=r.split("/")[-1], now=now))
+                running=running, project=r.split("/")[-1], now=now, hold_info=hold_info))
     return out
 
 

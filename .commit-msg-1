@@ -1,0 +1,11 @@
+test: ticket_policy HOLD_LABELS and triage_verdict with hold/held labels (tests 12-14)
+
+Test that triage_verdict correctly leaves tickets alone when they carry 'hold' or 'held'
+labels, and verify the HOLD_LABELS constant is properly defined on ticket_policy.
+
+Tests 12-14 from the hold-state PR plan:
+- test_triage_verdict_on_hold_label_returns_none: 'hold' label → None
+- test_triage_verdict_on_held_label_returns_none: 'held' label → None
+- test_hold_labels_constant_defined: verify HOLD_LABELS == {"pinned", "hold", "held"}
+
+Co-Authored-By: Claude Haiku 4.5 <noreply@anthropic.com>
