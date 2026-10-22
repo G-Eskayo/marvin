@@ -199,6 +199,16 @@ def _background_checks() -> None:
     _refresh_main_health()
 
 
+def _owner_decisions() -> str:
+    """Owner decisions unanswered for N hours become a ready-for-agent follow-up ticket (marvin#607): one GraphQL
+    call for every registered repo. Never breaks the scan."""
+    try:
+        import owner_decisions
+        return owner_decisions.summary_line(owner_decisions.sync(owner_decisions._registered_repos()))
+    except Exception as exc:  # noqa: BLE001 -- a failed side step must not stop dispatch
+        return f"skipped ({str(exc)[:120]})"
+
+
 def _requeue_all(repos) -> list[str]:
     return [f"{r.split('/')[-1]}#{n}" for r in repos for n in _requeue_conflicted_prs(r)]
 
@@ -818,6 +828,8 @@ def _scan(run, dry_run: bool) -> None:
         step("Conflicted PRs", "sending back PRs that no longer merge")
         sent = _requeue_all([REPO, *pp.runnable_repos()])
         step("Conflicted PRs", ", ".join(sent) + " sent back" if sent else "none")
+        step("Owner decisions", "PRs whose owner decisions went unanswered (#607)")
+        step("Owner decisions", _owner_decisions())
 
     # Cross-ticket circuit breaker, per project: the same failure across different tickets of one
     # project means ITS environment is broken, not the tickets -- stop feeding that project more

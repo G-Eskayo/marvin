@@ -604,6 +604,12 @@ unbounded: any chat, either machine, raw `gh`, the GitHub UI). Polling stays onl
   docs and refs (`docs`), the outbox (`outbox`, #570), and one conditional request when a GitHub-only project is
   opened (#565).
 
+- **Owner decisions waiting on MARVIN** (marvin#607, 2026-10-22): "nothing happened for N hours" needs a clock, and
+  the hourly ticket scan already is one, so there is no new loop. One GraphQL search per scan reads every registered
+  repo's open PRs (last commit, last 30 comments) and the follow-up tickets (2 points). An unanswered owner Decisions
+  comment becomes one `ready-for-agent` follow-up ticket after 4 h; the dashboard ranks it first from the issue list it
+  already caches. Rules in `docs/agents/decisions-format.md`.
+
 ### Dashboard actions render their true result locally at once, and confirm in the background (decided 2026-10-21)
 
 Gil, 2026-10-21: "Clicks render the true result instantly and confirm in the background", and "I want that to be
