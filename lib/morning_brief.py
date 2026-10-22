@@ -44,11 +44,21 @@ def _gh(path: str):
 
 
 def _open_prs() -> list[dict]:
-    prs = []
-    for repo in REPOS:
-        for p in _gh(f"repos/{repo}/pulls?state=open&per_page=50"):
-            prs.append({"number": p["number"], "title": p["title"], "repo": repo.split("/")[1]})
-    return prs
+    """Open PRs, one GraphQL call for all REPOS. A PR whose owner decisions are in and not yet acted on is marked
+    waiting_on_marvin (marvin#607): it is MARVIN's move, so it is not listed under "Needs you"."""
+    import owner_decisions
+    now = datetime.now(timezone.utc)
+    data = owner_decisions.fetch(REPOS)
+    if data is None:
+        raise OSError("gh failed")
+    waiting = {(s["repo"], s["number"]): s for s in owner_decisions.statuses(data, now, owner_decisions.grace_hours())
+               if not s["addressed_by"]}
+    out = []
+    for p in data["prs"]:
+        s = waiting.get((p["repo"], p["number"]))
+        out.append({"number": p["number"], "title": p["title"], "repo": p["repo"].split("/")[1],
+                    "waiting_on_marvin": bool(s), "question": bool(s and s["question"])})
+    return out
 
 
 def _red_checks() -> list[dict]:
@@ -215,10 +225,15 @@ def render(brief: dict, now: datetime) -> str:
     day = now.astimezone().strftime("%A %Y-%m-%d")
     lines = [f"# Morning brief, {day}", ""]
     needs = [f"- {brief['auto_merge']}"] if brief.get("auto_merge") else []
-    needs += [f"- Review {_ref(p, pr=True)}" for p in brief.get("open_prs") or []]
+    prs = brief.get("open_prs") or []
+    needs += [f"- Review {_ref(p, pr=True)}" for p in prs if not p.get("waiting_on_marvin")]
     needs += [f"- {c['label']}: {c['detail']}" for c in brief.get("red_checks") or []]
     needs += [f"- Your task: {_ref(t)}" for t in brief.get("human_tickets") or []]
     lines += ["## Needs you", "", *(needs or ["- Nothing is waiting on you."]), ""]
+    marvin = [f"- {_ref(p, pr=True)}: your decisions are in{' and you asked a question' if p.get('question') else ''}"
+              for p in prs if p.get("waiting_on_marvin")]
+    if marvin:
+        lines += ["## Waiting on MARVIN", "", *marvin, ""]
 
     runs = brief.get("launches") or []
     merged = brief.get("merged") or []

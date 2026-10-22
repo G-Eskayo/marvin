@@ -142,6 +142,51 @@ function getPriority(labelNames) {
   return priorityLabel || null
 }
 
+// A follow-up ticket filed by the hourly scan when owner decisions on a PR went unanswered (lib/owner_decisions.py,
+// marvin#607). Its body carries the marker; the issue list the boards already cache is the only input, so this costs
+// no GitHub call and arrives through the usual change watch.
+const OWNER_DECISIONS_RE = /<!-- marvin:owner-decisions pr=(\d+) comment=(\d+) since=(\S+) question=(yes|no) -->/
+
+export function ownerDecisionsMarker(body) {
+  const m = String(body || '').match(OWNER_DECISIONS_RE)
+  return m ? { pr: Number(m[1]), comment: Number(m[2]), since: m[3], question: m[4] === 'yes' } : null
+}
+
+// Waiting on MARVIN: owner decisions not acted on. Ranked above everything waiting on Gil, oldest first.
+export function needsMarvinRows(tickets, { now = Date.now() } = {}) {
+  const rows = []
+  for (const t of tickets || []) {
+    if (!t || t.state !== 'OPEN') continue
+    // Only collaborators can label: the label, not the body text anyone can type, makes it a real follow-up.
+    const labels = new Set((t.labels || []).map((l) => l?.name || l))
+    if (!labels.has('owner-decisions') || labels.has('hold')) continue
+    const mk = ownerDecisionsMarker(t.body)
+    if (!mk) continue
+    const since = Date.parse(mk.since)
+    const hours = Number.isFinite(since) ? Math.max(0, Math.floor((now - since) / 3600_000)) : null
+    const waited = hours == null ? '' : ` ${hours} h ago`
+    rows.push({
+      repo: t.repo,
+      number: t.number,
+      title: t.title,
+      url: t.url,
+      kind: 'needs-marvin',
+      owner: 'marvin',
+      question: mk.question,
+      pr: { number: mk.pr, url: t.repo ? `https://github.com/${t.repo}/pull/${mk.pr}` : null },
+      unblocks: { count: 0, items: [] },
+      ask: mk.question
+        ? `Owner asked a question on PR #${mk.pr}${waited}: no answer yet`
+        : `Owner decisions on PR #${mk.pr}${waited}: not acted on yet`,
+      priority: null,
+      ageDays: hours == null ? 0 : Math.floor(hours / 24),
+      sinceMs: Number.isFinite(since) ? since : Infinity
+    })
+  }
+  rows.sort((a, b) => (b.question - a.question) || (a.sinceMs - b.sinceMs))
+  return rows.map(({ sinceMs, ...r }) => r)
+}
+
 // Main ranking function
 export function rankNeedsYou(tickets, { now = Date.now() } = {}) {
   const rows = []
@@ -218,5 +263,5 @@ export function rankNeedsYou(tickets, { now = Date.now() } = {}) {
     return b.ageDays - a.ageDays // oldest first (higher ageDays = older = comes first)
   })
 
-  return rows
+  return [...needsMarvinRows(tickets, { now }), ...rows]
 }

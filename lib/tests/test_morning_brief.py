@@ -94,3 +94,32 @@ def test_the_auto_merge_shadow_report_heads_needs_you_when_ready():
     needs = text.split("## Needs you")[1].split("##")[0]
     assert needs.strip().startswith("- Auto-merge shadow report ready")
     assert "Auto-merge" not in mb.render({}, now)
+
+
+def test_a_pr_whose_decisions_are_in_waits_on_marvin_not_on_gil():
+    """marvin#607: #577's decisions were in, yet the wrap-up still listed it as waiting on Gil."""
+    prs = lambda: [{"number": 577, "title": "Vitals design v3", "waiting_on_marvin": True, "question": True},
+                   {"number": 590, "title": "Real PR titles", "waiting_on_marvin": False}]
+    text = mb.render(mb.gather(NOW, _sources(open_prs=prs)), NOW)
+    needs = text.split("## Needs you", 1)[1].split("##", 1)[0]
+    assert "PR #590 Real PR titles" in needs and "#577" not in needs
+    marvin = text.split("## Waiting on MARVIN", 1)[1].split("##", 1)[0]
+    assert "PR #577 Vitals design v3" in marvin and "asked a question" in marvin
+
+
+def test_open_prs_marks_waiting_from_one_graphql_read(monkeypatch):
+    import owner_decisions as od
+    from datetime import timedelta
+    at = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    dec = {"databaseId": 1, "url": "u", "createdAt": at, "author": {"login": "G-Eskayo"},
+           "body": od.HEADING + '\n\n```marvin-decisions\n{"answers": {"n": {"text": "why?"}}}\n```'}
+    data = {"prs": [{"repo": "G-Eskayo/marvin", "number": 577, "title": "V", "url": "", "last_commit_at": None,
+                     "comments": [dec]},
+                    {"repo": "G-Eskayo/marvin", "number": 590, "title": "T", "url": "", "last_commit_at": None,
+                     "comments": []}], "followups": [], "complete": True}
+    monkeypatch.setattr(od, "fetch", lambda repos, run=None: data)
+    got = {p["number"]: p for p in mb._open_prs()}
+    assert got[577]["waiting_on_marvin"] and got[577]["question"] and not got[590]["waiting_on_marvin"]
+    monkeypatch.setattr(od, "fetch", lambda repos, run=None: None)
+    brief = mb.gather(NOW, {"open_prs": mb._open_prs})
+    assert brief["open_prs"] is None and "open PRs" in brief["missing"][0]
