@@ -9,6 +9,9 @@ import { readRegistry, REGISTRY_PATH, withProjectStatus } from '../electron/main
 import { readCatalog, CATALOG_DIR, MASTER_DOC_PATH, readMasterDoc } from '../electron/main/catalog.js'
 import { resolveDeviceId } from '../electron/main/device_identity.js'
 import { createDocsService } from '../electron/main/docs_service.js'
+import { createSavedDocs } from '../electron/main/docs_saved.js'
+import { createTreeProbe } from '../webhook-server/gh_watch.js'
+import { gateCooldownUntil } from '../electron/main/github_state.js'
 import { MARVIN_REPO } from '../electron/main/mr_repos.js'
 
 const execFileP = promisify(execFile)
@@ -27,10 +30,21 @@ export function createDashboardApiRouter(opts = {}) {
   const deviceId = opts.deviceId ?? resolveDeviceId()
   const exec = opts.exec ?? execFileP
 
+  // The phone obeys the same rule as the desktop Docs tab (#565): a GitHub-only project is read from the saved copy
+  // (~/.agents/var/docs-github, shared with the dashboard on this machine), so a request never calls GitHub per click.
+  // Opening a project's tree sends the one conditional request in the background (a 304 is free); a change lands in
+  // the copy, and the phone's next read sees it.
+  const savedDocs = createSavedDocs({
+    dir: opts.savedDocsDir,
+    probe: opts.probe ?? createTreeProbe(),
+    exec,
+    skip: () => Date.now() < gateCooldownUntil()
+  })
   const docsService = createDocsService({
     getCatalog: () => readCatalog({ dir: catalogDir, deviceId }),
     exec,
-    readMaster: () => readMasterDoc(masterDocPath)
+    readMaster: () => readMasterDoc(masterDocPath),
+    saved: savedDocs
   })
 
   // Handler for all dashboard API routes
@@ -181,6 +195,24 @@ export function createDashboardApiRouter(opts = {}) {
           return true
         }
         const data = await docsService.tree(id)
+        res.writeHead(200, { 'Content-Type': 'application/json' }).end(
+          JSON.stringify({ ok: true, data })
+        )
+        // Opening a project = its one conditional request, after the answer has gone out (never per click).
+        docsService.revalidate(id).catch(() => {})
+        return true
+      }
+
+      // GET /docs/revalidate?id=<id>: the same check, for a client that wants to wait for it and update in place.
+      if (req.method === 'GET' && pathname === '/docs/revalidate') {
+        const id = searchParams.get('id')
+        if (!id) {
+          res.writeHead(400, { 'Content-Type': 'application/json' }).end(
+            JSON.stringify({ ok: false, error: 'Missing id parameter' })
+          )
+          return true
+        }
+        const data = await docsService.revalidate(id)
         res.writeHead(200, { 'Content-Type': 'application/json' }).end(
           JSON.stringify({ ok: true, data })
         )

@@ -105,17 +105,19 @@ export function searchableText(filePath, content) {
   return filePath.endsWith('.ipynb') ? notebookToMarkdown(content, { images: false }) : content
 }
 
+// `repo` is a name under G-Eskayo, or a full "owner/name" (the saved copy, docs_saved.js, keys by the full name).
 export async function fetchFileContent(execFileAsync, repo, filePath) {
+  const full = String(repo).includes('/') ? repo : `${GH_OWNER}/${repo}`
   if (filePath.endsWith('.ipynb')) {
     // Notebooks carry their images inline and easily pass the contents API's 1 MB base64 limit: ask for the raw bytes.
     const { stdout } = await execFileAsync(
-      'gh', ['api', '-H', 'Accept: application/vnd.github.raw', `repos/${GH_OWNER}/${repo}/contents/${filePath}`],
+      'gh', ['api', '-H', 'Accept: application/vnd.github.raw', `repos/${full}/contents/${filePath}`],
       { maxBuffer: 100 * 1024 * 1024 }
     )
     return stdout
   }
   const { stdout } = await run(execFileAsync, [
-    'api', `repos/${GH_OWNER}/${repo}/contents/${filePath}`, '--jq', '.content'
+    'api', `repos/${full}/contents/${filePath}`, '--jq', '.content'
   ])
   return Buffer.from(stdout.trim(), 'base64').toString('utf-8')
 }

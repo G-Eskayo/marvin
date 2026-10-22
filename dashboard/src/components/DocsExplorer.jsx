@@ -3,7 +3,7 @@ import FileView from './FileView.jsx'
 import Related, { useRelated } from './Related.jsx'
 import { extractOutline } from '../lib/docs_text.js'
 import { isNotebookPath, notebookToMarkdown } from '../lib/ipynb.js'
-import { docsCacheFrom } from '../lib/docs_cache.js'
+import { docsCacheFrom, savedCopyLine } from '../lib/docs_cache.js'
 
 function formatTimestamp(iso) {
   if (!iso) return 'never'
@@ -103,6 +103,19 @@ function TreeItem({ item, selected, onSelect }) {
       <span className="truncate">{item.label}</span>
       <StateBadge state={item.state} />
     </button>
+  )
+}
+
+// The saved copy's age and check (#565), after the source line: the dot and pulse are DispatchStatusBadge's classes.
+const COPY_DOT = { checking: 'animate-pulse bg-blue-500', ok: 'bg-emerald-500', stale: 'bg-neutral-600' }
+function SavedCopyNote({ line }) {
+  if (!line) return null
+  return (
+    <>
+      <span className="px-1">·</span>
+      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${COPY_DOT[line.dot]}`} />
+      <span className="text-neutral-500">{line.text}</span>
+    </>
   )
 }
 
@@ -298,6 +311,10 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
   const [showResults, setShowResults] = useState(false)
   const [pendingHeading, setPendingHeading] = useState(null)
   const [source, setSource] = useState(null)
+  // #565: a GitHub-only project's saved copy and its one open-time check ({ copy, status }).
+  const [copyCheck, setCopyCheck] = useState(null)
+  const openRef = useRef({ repo: null, path: null })
+  openRef.current = { repo: selectedRepo, path: selectedPath }
   const [docsTick, setDocsTick] = useState(0)
   const [filesState, setFilesState] = useState(null)
   const scrollRef = useRef(null)
@@ -440,13 +457,32 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
     }
   }
 
+  // Opening a project (keep = false) draws its tree from saved state, then, for a GitHub-only project, sends the one
+  // conditional request (#565). A change updates the tree and the open file in place: no reload, no spinner.
   function loadTree(repoName, { keep = false } = {}) {
-    if (!keep) setTree([])
+    if (!keep) {
+      setTree([])
+      setCopyCheck(null)
+    }
     window.api.docs
       .tree(repoName)
       .then((r) => {
         setTree(r.tree)
         setSource({ source: r.source, dir: r.dir })
+        if (keep || r.source !== 'github' || !r.copy) return
+        setCopyCheck({ copy: r.copy, status: 'checking' })
+        return window.api.docs.revalidate(repoName).then((v) => {
+          if (openRef.current.repo !== repoName) return
+          setCopyCheck({ copy: v.copy || r.copy, status: v.status })
+          if (v.tree) setTree(v.tree)
+          const open = openRef.current.path
+          if (v.status === 'changed' && open && open !== 'PROJECT.md') {
+            window.api.docs
+              .content(repoName, open)
+              .then((text) => openRef.current.repo === repoName && openRef.current.path === open && setContent((cur) => (cur === text ? cur : text)))
+              .catch(() => {})
+          }
+        })
       })
       .catch((err) => setError(String(err)))
   }
@@ -514,8 +550,9 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
           ) : (
             <>
               {source && selectedRepo && (
-                <p className="border-b border-neutral-900 px-6 py-1 text-[11px] text-neutral-600">
+                <p className="flex items-center gap-1 border-b border-neutral-900 px-6 py-1 text-[11px] text-neutral-600">
                   {source.source === 'local' ? `Reading local clone · ${source.dir.replace(/^\/Users\/[^/]+/, '~')}` : source.source === 'github' ? 'Reading GitHub · no clone of this project on this machine' : source.source === 'master' ? 'Generated daily by the tidy agent from the project catalog' : 'Generated from the project catalog (no docs of its own yet)'}
+                  <SavedCopyNote line={source.source === 'github' && copyCheck ? savedCopyLine(copyCheck.copy, copyCheck.status) : null} />
                 </p>
               )}
               {boardSummary && (
