@@ -117,3 +117,23 @@ def test_a_peer_without_the_github_summary_still_reports(monkeypatch, tmp_path):
     monkeypatch.setattr(ur, "local_github", lambda: None)
     r = ur.report(now=NOW, ssh=Peers({"tool-usage.json": doc("macbook-pro-1", 5), "token-usage.json": doc("macbook-pro-1", 5)}))
     assert all(m["github"] is None for m in r["machines"])
+
+
+def test_the_scan_command_says_what_it_did_so_its_launchd_log_is_not_empty(monkeypatch, capsys):
+    """#597: usage-scan.log was 0 bytes for two weeks because a successful scan printed nothing."""
+    monkeypatch.setattr(ur, "refresh_local", lambda: None)
+    monkeypatch.setattr(ur.sys, "argv", ["usage_report.py", "scan"])
+    ur._cli()
+    out = capsys.readouterr().out
+    assert out.startswith("[usage-scan] ok ") and out.endswith("\n") and out.count("\n") == 1
+
+
+def test_a_failing_scan_logs_to_stderr_and_exits_nonzero(monkeypatch, capsys):
+    def boom():
+        raise RuntimeError("disk full")
+    monkeypatch.setattr(ur, "refresh_local", boom)
+    monkeypatch.setattr(ur.sys, "argv", ["usage_report.py", "scan"])
+    import pytest
+    with pytest.raises(SystemExit) as e:
+        ur._cli()
+    assert e.value.code == 1 and "disk full" in capsys.readouterr().err

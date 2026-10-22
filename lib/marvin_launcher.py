@@ -106,6 +106,28 @@ class LaunchResult:
     stderr: str = ""
 
 
+_USAGE_LIMIT = re.compile(r"session limit|usage limit|weekly limit|limit reached|rate.?limit|\b429\b|resets \d", re.I)
+_UNAVAILABLE = re.compile(r"overloaded|\b(?:50[0-4]|52\d)\b|not_found|model\W.{0,40}(?:unavailable|not found)|"
+                          r"invalid api key|authentication|credit balance|could not connect|connection (?:error|refused)", re.I)
+
+
+def classify_exit(exit_code: int, text: str | None, stderr: str | None, *, timed_out: bool = False,
+                  reported_error: bool = False) -> str:
+    """Why a headless run exited, as a short stable key for Vitals (#597): ok, usage-limit, model-unavailable,
+    timeout, error (the model reported a failure in its own words) or crash (no usable output at all). Text only
+    counts when the run failed: a successful run that merely mentions a limit is still ok."""
+    if timed_out:
+        return "timeout"
+    if exit_code == 0:
+        return "ok"
+    said = " ".join(t for t in (text, stderr) if isinstance(t, str))
+    if _USAGE_LIMIT.search(said):
+        return "usage-limit"
+    if _UNAVAILABLE.search(said):
+        return "model-unavailable"
+    return "error" if reported_error and said.strip() else "crash"
+
+
 def _record(log_path: Path, record: dict) -> None:
     # Best-effort: a broken log must never break the run it observes.
     try:
@@ -142,6 +164,14 @@ def launch(kind: str, prompt: str, *, cwd: Path | None = None, model: str | None
     try:
         proc = (runner or subprocess.run)(cmd, cwd=run_cwd, timeout=timeout, env=run_env,
                                           capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        # A killed run used to leave no launch record at all (#597), so timeouts were invisible in the rate.
+        _record(log_path or LAUNCH_LOG, {
+            "at": datetime.now(timezone.utc).isoformat(), "kind": kind, "model": model, "ticket": ticket,
+            "cwd": str(run_cwd) if run_cwd else None, "exit_code": 124, "exit_cause": "timeout",
+            "duration_s": round(time.monotonic() - started, 1), "cost_usd": 0.0, "context_chars": len(context),
+            "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0})
+        raise
     finally:
         if scratch:
             scratch.cleanup()
@@ -155,12 +185,14 @@ def launch(kind: str, prompt: str, *, cwd: Path | None = None, model: str | None
     text = parsed.get("result", "") if parsed else (getattr(proc, "stdout", None) or "")
     cost = (parsed or {}).get("total_cost_usd", 0.0) or 0.0
     exit_code = proc.returncode or (1 if parsed and parsed.get("is_error") else 0)
+    stderr = getattr(proc, "stderr", "") or ""
+    cause = classify_exit(exit_code, text, stderr, reported_error=bool(parsed and parsed.get("is_error")))
     _record(log_path or LAUNCH_LOG, {
         "at": datetime.now(timezone.utc).isoformat(), "kind": kind, "model": model, "ticket": ticket,
-        "cwd": str(run_cwd) if run_cwd else None, "exit_code": exit_code, "duration_s": round(time.monotonic() - started, 1),
+        "cwd": str(run_cwd) if run_cwd else None, "exit_code": exit_code, "exit_cause": cause, "duration_s": round(time.monotonic() - started, 1),
         "cost_usd": cost, "context_chars": len(context),
         "input_tokens": usage.get("input_tokens", 0), "output_tokens": usage.get("output_tokens", 0),
         "cache_read_tokens": usage.get("cache_read_input_tokens", 0),
         "cache_write_tokens": usage.get("cache_creation_input_tokens", 0),
     })
-    return LaunchResult(text, cost, exit_code, getattr(proc, "stderr", "") or "")
+    return LaunchResult(text, cost, exit_code, stderr)
