@@ -1,16 +1,20 @@
 import { buildRelationIndex } from './relations.js'
 import { buildBoard } from './board.js'
 import { rankNeedsYou } from './needs_you.js'
+import { projectIdOf } from '../../src/lib/projects.js'
 
 const RECHECK_MS = 5 * 60_000
 
 // Feeds relations.js real data (every board's tickets and PRs, every project's docs) and keeps the
 // result for a minute; invalidated by the same triggers that refresh the boards and docs.
 export function createRelationsService({ getRepos, getBoardData, getDocs, getProjects, getStages = () => ({}), getLive = () => new Set(), recheck = () => {}, ttlMs = 60_000, now = Date.now }) {
-  let built = null // { at, index, columns }
+  let built = null // { at, index, columns, generation }
+  let generation = 0 // Incremented on invalidate(); stale builds discarded when generation changes
   let lastRecheck = -Infinity
+  let buildInFlight = null // Dedupe concurrent build calls
 
   async function build() {
+    const buildGeneration = generation
     const tickets = []
     const prs = []
     const columns = new Map()
@@ -36,11 +40,27 @@ export function createRelationsService({ getRepos, getBoardData, getDocs, getPro
       })
     )
     const docs = await getDocs().catch(() => [])
-    return { at: now(), index: buildRelationIndex({ tickets, prs, docs, projects: getProjects() }), columns, cards, prs, tickets }
+    return { at: now(), index: buildRelationIndex({ tickets, prs, docs, projects: getProjects() }), columns, cards, prs, tickets, generation: buildGeneration }
   }
 
   async function ready() {
-    if (!built || now() - built.at > ttlMs) built = await build()
+    if (!built || built.generation !== generation || now() - built.at > ttlMs) {
+      if (!buildInFlight || buildInFlight.generation !== generation) {
+        const startedFor = generation
+        const p = build().then(result => {
+          if (buildInFlight === p) buildInFlight = null
+          return result
+        }).catch(err => {
+          if (buildInFlight === p) buildInFlight = null
+          throw err
+        })
+        p.generation = startedFor
+        buildInFlight = p
+      }
+      const result = await buildInFlight
+      if (result.generation !== generation) return ready()
+      built = result
+    }
     return built
   }
 
@@ -48,7 +68,7 @@ export function createRelationsService({ getRepos, getBoardData, getDocs, getPro
 
   return {
     invalidate: () => {
-      built = null
+      generation += 1
     },
     forTicket: async (repo, number) => {
       const b = await ready()
@@ -106,8 +126,13 @@ export function createRelationsService({ getRepos, getBoardData, getDocs, getPro
       for (const c of b.cards.values()) {
         const o = (out[c.repo] ||= { review: 0, needsYou: 0, blocked: 0 })
         if (c.column === 'review') o.review += 1
-        if (c.column === 'ready' && c.owner === 'human') o.needsYou += 1
         if (c.column === 'blocked') o.blocked += 1
+      }
+      // Count what's waiting on you from rankNeedsYou grouped by repo
+      const ranked = rankNeedsYou(b.tickets)
+      for (const row of ranked) {
+        const o = (out[row.repo] ||= { review: 0, needsYou: 0, blocked: 0 })
+        o.needsYou += 1
       }
       return out
     },
@@ -124,7 +149,24 @@ export function createRelationsService({ getRepos, getBoardData, getDocs, getPro
     // What is waiting on you, ranked by impact: unblocks descending, priority ascending, age descending
     needsYou: async () => {
       const b = await ready()
-      return rankNeedsYou(b.tickets)
+      const rows = rankNeedsYou(b.tickets)
+      // Build a repo#number → ticket Map once instead of .find() per row
+      const ticketMap = new Map()
+      for (const t of b.tickets) {
+        ticketMap.set(`${t.repo}#${t.number}`, t)
+      }
+      // Attach project field: either from project:<id> label or derived from repo
+      return rows.map(row => {
+        const ticket = ticketMap.get(`${row.repo}#${row.number}`)
+        const projectLabel = (ticket?.labels || []).find(l => {
+          const labelName = typeof l === 'string' ? l : (l?.name || '')
+          return labelName.startsWith('project:')
+        })
+        let projectId = projectLabel ? (typeof projectLabel === 'string' ? projectLabel : (projectLabel?.name || '')).replace('project:', '') : projectIdOf(row.repo)
+        // Fall back to repo if project: label is empty
+        projectId = projectId || projectIdOf(row.repo)
+        return { ...row, project: projectId }
+      })
     }
   }
 }

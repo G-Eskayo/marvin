@@ -92,6 +92,85 @@ describe('review parity (MR Review <-> board)', () => {
     ).overview()
     expect(o['G-Eskayo/marvin']).toMatchObject({ review: 1, needsYou: 1, blocked: 1 })
   })
+
+  it('ready() dedupes concurrent build() calls', async () => {
+    const getBoardData = vi.fn(async () => {
+      await new Promise(r => setTimeout(r, 10))
+      return { issues: [issue(1)], prs: [] }
+    })
+    const s = make({ getBoardData })
+    const [r1, r2] = await Promise.all([s.forTicket('G-Eskayo/marvin', 1), s.forTicket('G-Eskayo/marvin', 1)])
+    expect(getBoardData).toHaveBeenCalledTimes(1)
+    expect(r1).toEqual(r2)
+  })
+
+  it('needsYou() attaches project field from label or derived from repo', async () => {
+    const tickets = [
+      issue(2, { labels: [{ name: 'ready-for-human' }] }),
+      issue(3, { labels: [{ name: 'ready-for-human' }, { name: 'project:custom-id' }] })
+    ]
+    const s = svc(tickets, [])
+    const rows = await s.needsYou()
+    expect(rows[0]).toMatchObject({ number: 2, project: 'marvin' })
+    expect(rows[1]).toMatchObject({ number: 3, project: 'custom-id' })
+  })
+
+  it('invalidate() during an in-flight build() does not let the stale result get served or cached', async () => {
+    let release
+    let calls = 0
+    const getBoardData = vi.fn(async () => {
+      calls += 1
+      if (calls === 1) await new Promise(r => { release = r })
+      return { issues: [issue(1)], prs: [] }
+    })
+    const s = make({ getBoardData })
+    const first = s.forTicket('G-Eskayo/marvin', 1) // build #1 starts, blocks inside getBoardData
+    await Promise.resolve() // let the microtask queue reach the pending await
+    s.invalidate()
+    release()
+    await first
+    await s.forTicket('G-Eskayo/marvin', 1) // must not reuse build #1's stale result
+    expect(getBoardData).toHaveBeenCalledTimes(2)
+  })
+
+  it('needsYou() attaches each row to its own ticket, not a same-numbered ticket in another repo', async () => {
+    const s = createRelationsService({
+      getRepos: () => ['G-Eskayo/marvin', 'G-Eskayo/other'],
+      getBoardData: async (repo) => ({
+        issues: [issue(2, { labels: [{ name: 'ready-for-human' }, { name: repo.endsWith('other') ? 'project:other-proj' : 'project:marvin-proj' }] })],
+        prs: []
+      }),
+      getDocs: async () => [], getProjects: () => projects
+    })
+    const rows = await s.needsYou()
+    const marvinRow = rows.find(r => r.repo === 'G-Eskayo/marvin')
+    const otherRow = rows.find(r => r.repo === 'G-Eskayo/other')
+    expect(marvinRow.project).toBe('marvin-proj')
+    expect(otherRow.project).toBe('other-proj')
+  })
+
+  it('needsYou() handles label names as strings or objects', async () => {
+    const ticketsWithStringLabels = [
+      issue(2, { labels: ['ready-for-human', 'project:custom'], })
+    ]
+    const stringS = createRelationsService({
+      getRepos: () => ['G-Eskayo/marvin'],
+      getBoardData: async () => ({ issues: ticketsWithStringLabels, prs: [] }),
+      getDocs: async () => [],
+      getProjects: () => projects
+    })
+    const rows = await stringS.needsYou()
+    expect(rows[0].project).toBe('custom')
+  })
+
+  it('needsYou() treats bare project: label (empty id) as missing and falls back to projectIdOf(repo)', async () => {
+    const tickets = [
+      issue(2, { labels: [{ name: 'ready-for-human' }, { name: 'project:' }] })
+    ]
+    const s = svc(tickets, [])
+    const rows = await s.needsYou()
+    expect(rows[0].project).toBe('marvin')
+  })
 })
 
 describe('parity does not raise an alarm on a stale snapshot', () => {
