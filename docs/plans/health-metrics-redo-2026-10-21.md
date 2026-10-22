@@ -11,7 +11,7 @@ They approved the direction the same day. This is design only: no production cod
 `feedback-marvin-self-reliance`.
 
 **The one-paragraph answer.** Health doesn't tell the truth today, and its history is the main thing flooding main.
-Each Mac should measure itself and keep its own history in a MARVIN-owned SQLite file under `~/.agents/state/`,
+Each Mac should measure itself and keep its own history in a MARVIN-owned SQLite file under `~/.agents/var/`,
 gitignored. Each Mac tells its peers the moment something changes, over Tailscale, through the webhook-server it already
 runs. Nothing goes through git or `~/.claude`, and nothing needs a subscription. While doing that, drop the 7 check
 families that lie or are dead, fix 14, keep 15, and alert only on things Gil can act on, each with a reason and a fix.
@@ -109,11 +109,11 @@ The tab shows each check's freshness as text ("2 min ago · direct") instead of 
 The header shows how much of the picture is trustworthy, for example "41 of 44 checks are fresh", so a stale tab says
 so in the header.
 
-## 4. The store: one SQLite file per Mac, under `~/.agents/state/`
+## 4. The store: one SQLite file per Mac, under `~/.agents/var/`
 
-**Where:** `~/.agents/state/marvin.db`, gitignored (`state/` in `.gitignore`). It's MARVIN's own directory, so it
+**Where:** `~/.agents/var/marvin.db`, gitignored (`/var/` is already in `.gitignore`: it's the folder `dashboard/electron/main/marvin_paths.js` set up on 2026-10-21 for MARVIN's per-machine state, reused here rather than adding a second one). It's MARVIN's own directory, so it
 works with no Claude subscription and no `~/.claude`. `code_sync` gains a guard that refuses to commit anything under
-`state/`, so a mistaken `git add -f` can't put it back on main.
+`var/`, so a mistaken `git add -f` can't put it back on main.
 
 **Why SQLite, not append-only JSONL:**
 1. **Writes are atomic.** A crash mid-write leaves the last good state, not a half-written file. A half-written JSON
@@ -166,7 +166,7 @@ CREATE TABLE peer_cursor(peer TEXT PRIMARY KEY, sent_upto INTEGER, recv_upto INT
 rename it), from the store, so today's readers (the dashboard, the mobile backend's `/health`) keep working unchanged
 through the migration. Once every reader asks the store or the webhook, the file goes away.
 
-**ADR 0066's history store moves too (recommended).** `~/.claude/history.db` becomes `~/.agents/state/history.db`, by
+**ADR 0066's history store moves too (recommended).** `~/.claude/history.db` becomes `~/.agents/var/history.db`, by
 the self-reliance rule. It's a path change plus a one-time file move per Mac, under a new ADR that amends 0066's
 location. It's listed in Decisions only as a confirm.
 
@@ -271,9 +271,9 @@ object, separate from a red card, built only for things a person should act on.
    - `dashboard/electron/main/health.js` and `mobile-backend/dashboard_api.js`: read `GET /health` (this Mac and peers)
      instead of the local file. Until then, the file is still written as a view.
    - `code_sync.py`: drop the metrics stash-merge special case once no auto-synced file is under `bench/metrics/`
-     (ticket metrics are committed by the pipeline, not auto-sync). Add the `state/` refuse-to-commit guard.
+     (ticket metrics are committed by the pipeline, not auto-sync). Add the `var/` refuse-to-commit guard.
    - `lib/tests/test_metrics_registry_safety.py`: retarget it at the store's atomicity.
-4. **Move ADR 0066's `history.db`** to `~/.agents/state/` (one file move per Mac, and a path constant).
+4. **Move ADR 0066's `history.db`** to `~/.agents/var/` (one file move per Mac, and a path constant).
 
 ## 8. Optional consumers
 
@@ -291,17 +291,17 @@ Each phase is one PR with tests that try to break it (ADR 0063).
 | Phase | What | Acceptance tests | Success measure |
 |---|---|---|---|
 | **P0: stop the flood, stop the crash** (about 1 day) | Gitignore and untrack `bench/metrics/health-monitor.*`. Delete the anomaly compare. Wrap each check in a timeout guard: one failing check becomes a grey, low-confidence result, never a dead sweep. Drop `ticket:streak`, `deploy:missing`, `brainmap:data`, `docs:access`, `repo:integrity`. | An ssh stub that times out still produces a written status, with that check grey and the reason. A run with the metrics file corrupted still writes status. `git status` stays clean after 3 sweeps. | Auto-sync commits a day: 48 → under 5 (3-day average). Main-health runs a day: about 30 → only real merges. Failed sweeps: 3 of 20 → 0 in 48 h with the MacBook asleep. |
-| **P1: the store and honest checks** | `~/.agents/state/marvin.db` (events, results on change, sweep heartbeat, metric samples, hourly rollup). Freshness and confidence fields. Fix the 14 "fix" checks that need no peer. One-time import. `health-status.json` written as a view. | Kill -9 mid-sweep leaves the store readable and the last view intact. Import run twice adds 0 rows. Rollup across an hour boundary. Per-check tolerance greys exactly at its limit. | False or noisy reds and yellows: about 9 standing today → 0. Coverage counts only MARVIN jobs. |
+| **P1: the store and honest checks** | `~/.agents/var/marvin.db` (events, results on change, sweep heartbeat, metric samples, hourly rollup). Freshness and confidence fields. Fix the 14 "fix" checks that need no peer. One-time import. `health-status.json` written as a view. | Kill -9 mid-sweep leaves the store readable and the last view intact. Import run twice adds 0 rows. Rollup across an hour boundary. Per-check tolerance greys exactly at its limit. | False or noisy reds and yellows: about 9 standing today → 0. Coverage counts only MARVIN jobs. |
 | **P2: peer push** | Webhook `GET /health`, `POST /events`, `GET /events`. Push on commit, catch-up on start, open and piggyback. The sweep runs on every Mac, locally only. ssh readers deleted. | Forged IP → 403. Wrong-device rows → rejected. 2 MB body → 413. Duplicate batch → 0 rows. A peer asleep 3 days catches up in batches of 5,000 or fewer. 10-min clock skew → `clock:skew`. | MacBook Health age after wake: 6 days → under 1 min. ssh calls from Health: about 15 per sweep → 0. |
 | **P3: alerts** | Alert objects (open, escalate, resolve), fingerprints, required fix text, the Needs a decision lane, delivery via `/refresh` and `notify.py`, the **Not useful** button. `disk_forecast_notify`'s `claude -p` path deleted. | The same red over 10 sweeps → 1 notification. Escalation → 1 more. A check with no fix can't alert. Resolution posts once. | Alerts a week, and the share marked Not useful (target under 10%). |
 | **P4: producers report** | The scanner reports its dispatch decision and missing profiles. `code_sync` and `failure_breaker` report outcomes. `github:budget` and `auth:gh` come from the gate log. Rolling-baseline anomaly on 3 rates (GitHub calls an hour, errors an hour, comments an hour). | Scanner decision visible in Health within one scan, with 0 extra gh calls. A budget change shows without a GraphQL call. | Health's GitHub calls: about 4,000 a day → under 300. Sweep duration: about 73 s → under 15 s. |
-| **P5 (optional)** | The 2012 node and the phone backend as consumers. ADR 0066 `history.db` moved to `~/.agents/state/`. | The 2012 node's credential expiry → 1 red alert with the fix. | |
+| **P5 (optional)** | The 2012 node and the phone backend as consumers. ADR 0066 `history.db` moved to `~/.agents/var/`. | The 2012 node's credential expiry → 1 red alert with the fix. | |
 
 **Tracking the measures.** Commits a day come from `git log --author auto-sync`. M4 CPU comes from main-health run
 count × duration, which needs `main-health.json` to keep more than the latest run (PR #572 F11). GitHub calls come from
 `gh-calls.jsonl` by caller. False alarms a week are the **Not useful** count plus alerts resolved within one sweep.
 
-## 10. Mock-ups of the redone Health tab
+## 10. v1 mock-ups (superseded by §12)
 
 Drill-down map first (one control per level, memory `feedback-one-control-per-drilldown-level`):
 
@@ -327,11 +327,131 @@ Gil has to pick between two layouts for the Checks view:
 ![Option B: machine grid](../screenshots/health-redo-option-b.png)
 ![Check drill-down with evidence, freshness and fix](../screenshots/health-redo-drilldown.png)
 
-## 11. Decisions for Gil
+## 11. Status (2026-10-21, after Gil's review)
 
-They're in the PR description in the Decisions format.
+Gil liked both v1 layouts and picked neither: "keep developing it and going down the path of merging metrics and health
+together." So:
 
-1. Which Checks layout (A or B)?
-2. Confirm moving ADR 0066's `history.db` out of `~/.claude`. This is recommended under the self-reliance rule.
-3. Which alert delivery to start with, before the phone path exists?
-4. Whether the 2012 node joins Health in P5 or later.
+- **P0 is built: PR #587** (green CI, not merged). It guards each check, writes status atomically, deletes the anomaly
+  compare, drops the dead checks, and makes code-sync never commit `bench/metrics/health-monitor.*`. Expected effect:
+  auto-sync commits from about 48 a day to about 3.
+- **The untrack happens one step later, not in P0.** If P0 also untracked the files, a Mac still on the old writer would
+  auto-commit a change to them before pulling, and its next pull would hit a modify/delete conflict that stops
+  code-sync. P0 stops the writer and ignores the files. A one-line follow-up runs `git rm --cached` once both Macs show
+  the P0 commit.
+- **Store location changed** from `~/.agents/state/` to `~/.agents/var/`, the per-machine state folder MARVIN already
+  set up that day.
+
+## 12. v2: Health and Metrics as one tab
+
+### What the two tabs are today
+
+- **Health:** a view switch (Checks / Autonomous agents / Project readiness) and a grid of check cards. The machine is
+  part of the check id (`disk:space@mac-mini-1`), with no control for it.
+- **Metrics:** four sections (Tools & skills, Usage, GitHub, Pipeline results) and a machine chip row (Both machines /
+  one Mac). Machine resources live in `ResourcesPanel`.
+- So the machine is filtered two different ways in two places, and a trend (GitHub calls an hour) lives in a different
+  tab from the check it explains (`github:gate`).
+
+### Merged: one drill-down, one control per level
+
+![Drill-down map](../screenshots/health-v2-drillmap.png)
+
+Every level has one control, and the breadcrumb only walks back up. **Picture | List** chooses how to look and isn't a
+filter. Both renderings walk the same path, and only one is on screen at a time. Each option is a different order of
+the same levels:
+
+| Option | Level 1 | Level 2 | Level 3 |
+|---|---|---|---|
+| **(a) Brain** | Region (what part of MARVIN) | Check (one row per Mac) | Evidence, trend, fix |
+| **(b) Globe** | Place or link (where) | Check (grouped under fixed region headings) | Evidence, trend, fix |
+| **(c) Globe → brain** | Place | Region, in that Mac's brain | Check → evidence, trend, fix |
+
+**Where Metrics goes:** trends live on the region or check they explain.
+
+| Today's Metrics section | Region it moves to |
+|---|---|
+| Tools & skills | Skills & tools. The failure rate becomes a check (Bash failed 9.6% in 30 days, 1,357 auto-mode denials). The table is the region's trend. |
+| Usage | Energy (tokens a day, pipeline share, costliest tickets) |
+| GitHub | GitHub (calls an hour by caller, budget, gate) |
+| Pipeline results | Pipeline (benchmark cards) |
+| Machine resources | Body |
+| Health's Autonomous agents view | Producers |
+| Project readiness | The Activity tab, beside the boards it's about |
+
+![GitHub region: checks and the folded-in Metrics trends](../screenshots/health-v2-region.png)
+
+### Regions
+
+The regions are MARVIN's subsystems. Their names and colours come from the brain map's own region table
+(`brain-map/template.html` `CAT`), which already gives each part a brain analogy:
+
+| Region | Analogy | Example checks |
+|---|---|---|
+| Pipeline | motor | lock, breaker, parallel dispatch |
+| GitHub | senses | budget, gate, sign-in per Mac |
+| Code & tests | judgement | main green, dashboard and webhook builds, trigger coverage |
+| Skills & tools | cortex | intent classifier, tool failure rate, hook errors |
+| Code sync | corpus callosum | repo sync per Mac, peer heartbeats |
+| Producers | autonomic | catalog, tagger, revisit agent, digests, beta ingest |
+| Energy | metabolism | usage scans, tokens |
+| Body | brainstem | disk, headroom, jobs, placement, DesktopLive |
+
+Lesion colours avoid every region hue, and the brain map's reserved amber means activity only.
+
+### (a) Brain as diagnosis
+
+![Brain: one neuron per check on one Mac](../screenshots/health-v2-a-brain.png)
+
+- **A neuron is one check instance** (a check on one Mac): 45 of them from today's real status.
+- **Healthy neurons fire** with the brain map's amber ripple, at their region's **measured** rate. For example, GitHub
+  is 1,562 calls in the last hour and the pipeline 1,109, from `gh-calls.jsonl`. The legend states the scale: ×60 time,
+  1 pulse = 10 events.
+- **A failing check is a lesion:** a red core with a jagged halo that misfires. Today's lesions are `main:green`,
+  `disk:space@mac-mini-1`, `auth:gh@mac-mini-2012` and the hook errors on the Mini.
+- **Degraded** is a ring. **A producer that stopped writing** is a dark, quiet neuron (the project tagger since 10-09).
+  **Couldn't measure** is a dashed outline.
+- **A stuck sweep** shows as a whole region gone quiet: no firing.
+- **Clicking a region** dims the others and opens its checks:
+
+![Brain, GitHub region open](../screenshots/health-v2-a-brain-region.png)
+
+### (b) Globe, the "where" view
+
+![Globe: places, Tailscale arcs, weather](../screenshots/health-v2-b-globe.png)
+
+- **Places:** the Mac mini, the MacBook, the 2012 box and the iPhone (marked "not reporting yet").
+- **Tailscale links are arcs** carrying their real traffic. GitHub sits outside the tailnet.
+- **Problems are weather:** a storm over the Mac mini (disk at 8%, errors), a storm over the 2012 box, a cloud over the
+  MacBook (disk at 16%, gh down ×33).
+- **The 2012 box's GitHub link is drawn broken**, because every call is refused (sign-in expired, 640 today).
+- **Truth note:** all four machines are at home, so places sit by role, not geography. The legend says so. A laptop
+  that's asleep turns to night, like today's `asleep` state.
+
+### (c) Globe → brain
+
+![Globe outside, the Mac mini's brain inside](../screenshots/health-v2-c-joined.png)
+
+- The globe is the way in. Clicking a place zooms into that machine's own brain: its checks plus the shared ones.
+- On the Mac mini today, GitHub is healthy (the expired sign-in is the 2012 box's), while Body and Code & tests carry
+  lesions.
+
+### Build notes
+
+- **One renderer.** Production extends `brain-map/template.html` with a health layer, rather than shipping the
+  prototype. Same `project()` camera, region palette, ripple pulse and `renderFrame(t)` drive, so DesktopLive's
+  wallpaper can show it too.
+- **Data:** neurons come from Health's store (§4). Pulses come from the map server's live events, which already stream
+  skill calls, files touched, job events and pipeline stages (ADR 0049); add GitHub calls and peer pushes to that stream.
+- **The globe** is new drawing code (a graticule, arcs, weather) on the same camera. It has no physics, matching ADR
+  0049's no-physics rule.
+- **No decoration.** Every neuron, arc, pulse and cloud maps to a check, a link or a measured event. The faint globe
+  graticule is the only purely visual element.
+- **The plain list stays one click away** (Picture | List). It's the accessible view, and the one the phone uses.
+- **Prototype:** `docs/screenshots/health-v2-overview-prototype.html`. It's animated, opens with no network, and takes
+  `?mode=a|b|c`.
+
+## 13. Decisions for Gil
+
+They're in the PR description in the Decisions format: the overview style (a, b or c), the tab name, and the
+`history.db` move confirm.
