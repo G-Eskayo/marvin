@@ -1,5 +1,7 @@
 # Changelog
 
+- Ticket pipeline: honour one needs-a-person state, stop bot comments resetting the failure streak, reuse the plan across review rounds ([#606](https://github.com/G-Eskayo/marvin/pull/606))
+
 - Show chat helper agents in the Activity tab ([#614](https://github.com/G-Eskayo/marvin/pull/614))
 
 - Owner decisions on a PR go unanswered: flag them, then file a follow-up ticket after N hours ([#608](https://github.com/G-Eskayo/marvin/pull/608))
