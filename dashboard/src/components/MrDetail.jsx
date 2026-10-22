@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { EvidenceTable, ApproveDenyActions } from './MrReview.jsx'
+import { EvidenceTable, ApproveDenyActions, CorrectionNotice } from './MrReview.jsx'
 import { projectIdOf } from '../lib/projects.js'
 import Related, { useRelated } from './Related.jsx'
 import PrImages from './PrImages.jsx'
@@ -120,7 +120,7 @@ function IssueBody({ label, issue, repo, onOpenTicket, onOpenDocs }) {
   )
 }
 
-export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs, onOpenBoard, onOpenTicket, onChanged }) {
+export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs, onOpenBoard, onOpenTicket, onChanged, notice = null }) {
   const rel = useRelated(() => window.api.relations.pr(pr.repo, pr.number), [pr.repo, pr.number])
   const [context, setContext] = useState(null)
   const [error, setError] = useState(null)
@@ -189,6 +189,8 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
         )}
       </div>
 
+      {notice && <CorrectionNotice notice={notice} />}
+
       {pr.refusal && (
         <div data-refusal="1" className="rounded-lg border border-red-800 bg-red-950/40 px-4 py-3 text-sm text-red-200">
           Approve refused {new Date(pr.refusal.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}: <strong>{pr.refusal.reason}</strong>
@@ -199,11 +201,11 @@ export default function MrDetail({ pr, onBack, onApproved, onDenied, onOpenDocs,
       {/* What the PR asks the owner to choose: answered here, and Approve waits until the required ones are. */}
       {pr.decisions?.present && !pr.readOnly && (
         <Decisions
-          key={JSON.stringify(pr.decisions.questions)}
+          key={JSON.stringify(pr.decisions.questions.map((q) => [q.id, q.question, q.options.map((o) => o.label)]))}
           repo={pr.repo}
           number={pr.number}
           decisions={pr.decisions}
-          onSubmitted={() => onChanged?.()}
+          onSubmitted={(r) => onChanged?.(r)}
         />
       )}
 

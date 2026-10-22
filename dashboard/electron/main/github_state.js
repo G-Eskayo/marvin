@@ -32,6 +32,11 @@ export function createGithubState({ now = Date.now, safetyMs = SAFETY_MS, cooldo
   let allGen = 0              // bumped on any change: what values spanning every repo depend on
   let hits = 0
   let reads = 0
+  // Local writes (patch): numbered, and kept per key while a read that left before them is still on its way, so that
+  // read's answer gets them re-applied instead of putting the old state back.
+  let seq = 0
+  const patches = new Map()   // key -> [{ seq, fn }]
+  const reading = new Map()   // key -> [seq when each in-flight read left]
 
   const genOf = (repo) => (repo == null ? allGen : `${allGen}:${gens.get(repo) || 0}`)
   // a per-repo entry depends only on its repo; changedAll() bumps every repo too
@@ -60,26 +65,51 @@ export function createGithubState({ now = Date.now, safetyMs = SAFETY_MS, cooldo
     }
     const gen = currentGen(repo)
     reads += 1
+    const since = seq
+    if (!reading.has(key)) reading.set(key, [])
+    reading.get(key).push(since)
     const pending = (async () => {
       try {
-        const value = await fetch()
+        let value = await fetch()
+        // Writes made while this read was on its way are newer than its answer: apply them on top.
+        for (const p of patches.get(key) || []) if (p.seq > since) value = p.fn(value)
         entries.set(key, { value, at: now(), gen, has: true })
         failures.delete(key)
         return value
       } catch (err) {
         // GitHub refused or is unreachable: show what we last knew, and wait before asking again.
-        const failCount = (e.failures || 0) + 1
+        const cur = entries.get(key) || e // a local write may have changed it since this read left
+        const failCount = (cur.failures || 0) + 1
         const retryAt = now() + Math.min(BACKOFF_MS * 2 ** (failCount - 1), MAX_BACKOFF_MS)
-        entries.set(key, { ...e, pending: null, failures: failCount, retryAt, error: err })
+        entries.set(key, { ...cur, pending: null, failures: failCount, retryAt, error: err })
         // marvin#422: remember which repos are being answered from an old copy (or not at all), so the screen can say so.
         if (!failures.has(key)) failures.set(key, { kind, repo, since: now() })
         failures.get(key).message = String(err?.message || err).split('\n')[0]
-        if (e.has) return e.value
+        if (cur.has) return cur.value
         throw err
+      } finally {
+        const left = reading.get(key) || []
+        left.splice(left.indexOf(since), 1)
+        if (!left.length) { reading.delete(key); patches.delete(key) }
+        else patches.set(key, (patches.get(key) || []).filter((p) => p.seq > Math.min(...left)))
       }
     })()
     entries.set(key, { ...e, pending })
     return pending
+  }
+
+  // A write the dashboard itself just made (local-first actions): change the remembered value at once, from GitHub's own
+  // answer to the write, without a read and without marking the repo changed. A read already on its way gets the same
+  // change applied to its answer when it lands. Returns whether a value was remembered. O(1) plus fn.
+  function patch(kind, repo, fn) {
+    const key = `${kind}|${repo ?? '*'}`
+    const e = entries.get(key)
+    const next = e?.has ? fn(e.value) : undefined // a throwing fn changes nothing
+    seq += 1
+    if (reading.has(key)) patches.set(key, [...(patches.get(key) || []), { seq, fn }])
+    if (!e?.has) return false
+    entries.set(key, { ...e, value: next })
+    return true
   }
 
   function changed(repo) {
@@ -116,7 +146,7 @@ export function createGithubState({ now = Date.now, safetyMs = SAFETY_MS, cooldo
     return out
   }
 
-  return { get, changed, changedAll, failing, fetchedAt, peek, stats: () => ({ hits, reads, entries: entries.size }), _genOf: genOf }
+  return { get, patch, localSeq: () => seq, changed, changedAll, failing, fetchedAt, peek, stats: () => ({ hits, reads, entries: entries.size }), _genOf: genOf }
 }
 
 // "github:owner/repo" (the change watch's ping source) -> "owner/repo"

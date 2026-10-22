@@ -3,6 +3,8 @@
 // where the state is stored (gh_watch.js's ETag change-detector for GitHub, triggerHub.watchFiles for local files) and
 // polling stays only as a backstop. marvin#554 re-added a 90 s re-read of PR checks anyway; a rule that is only
 // remembered fails that way, so this one is read from the code.
+// An action's own result is not something to poll for either: CONTEXT.md "Dashboard actions render their true result
+// locally at once, and confirm in the background" (2026-10-21) shows it from GitHub's reply and confirms it once.
 //
 // It parses (comments and strings can't match) and reports, per file:
 //   interval      a setInterval reference in any form (call, alias, globalThis./window., destructured, imported from
