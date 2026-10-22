@@ -591,6 +591,8 @@ unbounded: any chat, either machine, raw `gh`, the GitHub UI). Polling stays onl
 - **Coverage guard**: the 60s backstop poll compares what it fetched with what it last showed; a change
   no trigger announced is appended to `~/.claude/logs/trigger-misses.jsonl` and surfaces as the
   `triggers:missed` Health check, so a gap identifies itself instead of waiting to be noticed.
+- **Actions confirm, they do not poll**: what an action wrote is shown at once and confirmed once (see "Dashboard actions
+  render their true result locally at once, and confirm in the background" below).
 - **Enforced, not remembered (marvin#556)**: `dashboard/test/polling_guard.test.js` fails on any new `setInterval`,
   recurring `setTimeout` (self-rescheduling, in a loop, a sleep awaited in a loop) or TTL name in the dashboard's source
   unless it is a UI clock (callback only calls useState setters) or allowlisted with a count and a one-line reason.
@@ -599,6 +601,31 @@ unbounded: any chat, either machine, raw `gh`, the GitHub UI). Polling stays onl
   pulls; only the cycle gap + 15-min settle remain). The Docs tab has its triggers since 2026-10-21: local clones'
   docs and refs (`docs`), the outbox (`outbox`, #570), and one conditional request when a GitHub-only project is
   opened (#565).
+
+### Dashboard actions render their true result locally at once, and confirm in the background (decided 2026-10-21)
+
+Gil, 2026-10-21: "Clicks render the true result instantly and confirm in the background", and "I want that to be
+accurate, not just a show." Measured before (pipeline review, PR #572): answering Decisions on PR #569 took 46.7 s to
+unlock Approve, because the dashboard marked all 13 repos changed and re-listed them before showing what it had just
+written. Approve spent 10.4 s re-listing every repo for its order check, and the webhook read the PR 7 times in a row.
+
+- **Show GitHub's own answer to the write, at once.** A write's reply (the PATCH's body and ETag, the merge result, the
+  label the webhook set) is applied to the dashboard's memory of GitHub (`github_state.js` `patch`). The screen reads it
+  from there, so Approve unlocks the moment GitHub accepts the Decisions edit. Never a guess.
+- **Confirm that one PR or ticket, once, in the background**: a conditional request (the `gh_watch.js` ETag pattern; a
+  304 is free). No timer, and no retry loop. Later changes arrive the usual way (change watch).
+- **If GitHub disagrees, the view takes GitHub's version and says so** in plain words (MR Review's amber "GitHub
+  disagreed" note). No record comment claims answers GitHub did not store.
+- **Never re-list every repo after one action.** `githubChanged(null)` is not an action's follow-up. Overlapping
+  `mr:list` calls share one build. A slow read that left before a local write never overwrites it, and two clicks on
+  one PR write in order.
+- **Approve's preflight uses what the dashboard has**: the remembered list plus one conditional check of that repo's
+  open PRs (heads, bases). The webhook's checks share one PR read (`webhook-server/pr_snapshot.js`). The merge gate
+  still re-checks everything server-side, so a stale screen cannot merge what it should not.
+- Code: `dashboard/electron/main/local_first.js` and `mr_actions.js`. Tests try to break it: GitHub rejecting the write,
+  storing something else, changing after it, rapid clicks, a slow re-read and offline (`test/local_first.test.js`,
+  `test/mr_actions.test.js`, which also counts GitHub calls over a boot and a session of clicks).
+- New dashboard actions follow this rule, and the polling guard's header points here.
 
 ## Project catalog and the master "Where things are" doc (decided 2026-10-05)
 

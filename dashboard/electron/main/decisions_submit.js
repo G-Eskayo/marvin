@@ -34,7 +34,41 @@ export function validateAnswers(parsed, answers) {
   }
 }
 
-export async function submitDecisions({ repo, number, answers }, { exec, writeTemp = writeTempJson }) {
+// `gh api --include` prints the status line and headers, a blank line, then the body. GitHub's reply to the PATCH is
+// the issue as stored: that, not what was sent, is what the screen shows (local-first actions).
+export function parseIncluded(stdout) {
+  const text = String(stdout || '')
+  if (!/^HTTP\/[\d.]+ \d{3}/.test(text)) {
+    try { return { etag: null, json: JSON.parse(text) } } catch { return { etag: null, json: null } }
+  }
+  const split = text.search(/\r?\n\r?\n/)
+  const head = split < 0 ? text : text.slice(0, split)
+  const rest = split < 0 ? '' : text.slice(split).replace(/^\r?\n\r?\n/, '')
+  const etag = (head.match(/^etag:\s*(.+?)\s*$/im) || [])[1] || null
+  try { return { etag, json: JSON.parse(rest) } } catch { return { etag, json: null } }
+}
+
+// The record of the answers (a comment) and, for a ticket that was waiting on them, its move to ready-for-agent. The two
+// are independent, so they run side by side; neither failing undoes the answers.
+async function recordAnswers({ repo, n, issue, parsed, answers, pending }, exec) {
+  const out = { commentUrl: null, commentError: null, labelsChanged: false }
+  const comment = exec('gh', ['api', `repos/${repo}/issues/${n}/comments`, '-f', `body=${decisionsComment(parsed, answers)}`, '--jq', '.html_url'])
+    .then(({ stdout: url }) => { out.commentUrl = String(url).trim() || null })
+    .catch((error) => { out.commentError = `answers saved in the description, but the record comment failed: ${String(error?.stderr || error?.message || error).split('\n')[0]}` })
+  // A ticket waiting on these decisions (needs-info) is ready for an agent once every required one is answered.
+  const labels = (issue.labels || []).map((l) => (typeof l === 'string' ? l : l.name))
+  const move = !issue.pull_request && !pending.length && labels.includes('needs-info')
+    ? exec('gh', ['issue', 'edit', String(n), '--repo', repo, '--remove-label', 'needs-info', '--add-label', 'ready-for-agent'])
+      .then(() => { out.labelsChanged = true })
+      .catch((error) => { out.labelError = `answers saved, but moving the ticket to ready-for-agent failed: ${String(error?.stderr || error?.message || error).split('\n')[0]}` })
+    : null
+  await Promise.all([comment, move])
+  return out
+}
+
+// background: return as soon as GitHub has accepted the edit (with GitHub's own body), and hand the record comment and
+// label change back as `recorded`, a promise that never rejects. Without it, everything is awaited as before.
+export async function submitDecisions({ repo, number, answers }, { exec, writeTemp = writeTempJson, background = false }) {
   if (!REPO_RE.test(String(repo || ''))) throw new Error(`not a repository: ${repo}`)
   const n = Number(number)
   if (!Number.isInteger(n) || n <= 0) throw new Error(`not an issue or PR number: ${number}`)
@@ -47,35 +81,25 @@ export async function submitDecisions({ repo, number, answers }, { exec, writeTe
   validateAnswers(parsed, answers)
 
   const updated = applyAnswers(body, answers)
-  const pending = pendingDecisions(parseDecisions(updated))
-  if (updated === body) return { ok: true, unchanged: true, pending, commentUrl: null }
+  if (updated === body) return { ok: true, unchanged: true, pending: pendingDecisions(parsed), commentUrl: null, body, etag: null, disagreed: false }
 
   const tmp = await writeTemp({ body: updated })
+  let answer
   try {
-    await exec('gh', ['api', '-X', 'PATCH', `repos/${repo}/issues/${n}`, '--input', tmp.file])
+    answer = parseIncluded((await exec('gh', ['api', '-X', 'PATCH', `repos/${repo}/issues/${n}`, '--input', tmp.file, '--include'])).stdout)
   } finally {
     await tmp.cleanup()
   }
+  const stored = typeof answer.json?.body === 'string' ? answer.json.body : updated
+  const pending = pendingDecisions(parseDecisions(stored))
+  const result = { ok: true, unchanged: false, pending, body: stored, sent: updated, etag: answer.etag, disagreed: stored !== updated, commentUrl: null, commentError: null, labelsChanged: false }
 
-  const result = { ok: true, unchanged: false, pending, commentUrl: null, commentError: null, labelsChanged: false }
-  try {
-    const { stdout: url } = await exec('gh', ['api', `repos/${repo}/issues/${n}/comments`, '-f', `body=${decisionsComment(parsed, answers)}`, '--jq', '.html_url'])
-    result.commentUrl = String(url).trim() || null
-  } catch (error) {
-    result.commentError = `answers saved in the description, but the record comment failed: ${String(error?.stderr || error?.message || error).split('\n')[0]}`
-  }
-
-  // A ticket waiting on these decisions (needs-info) is ready for an agent once every required one is answered.
-  const labels = (issue.labels || []).map((l) => (typeof l === 'string' ? l : l.name))
-  if (!issue.pull_request && !pending.length && labels.includes('needs-info')) {
-    try {
-      await exec('gh', ['issue', 'edit', String(n), '--repo', repo, '--remove-label', 'needs-info', '--add-label', 'ready-for-agent'])
-      result.labelsChanged = true
-    } catch (error) {
-      result.labelError = `answers saved, but moving the ticket to ready-for-agent failed: ${String(error?.stderr || error?.message || error).split('\n')[0]}`
-    }
-  }
-  return result
+  // GitHub kept something other than what was sent: no comment may claim answers the description does not hold.
+  const recorded = result.disagreed
+    ? Promise.resolve({ commentUrl: null, commentError: null, labelsChanged: false, skipped: 'GitHub did not store the answers as sent' })
+    : recordAnswers({ repo, n, issue, parsed, answers, pending }, exec)
+  if (background) return { ...result, recorded }
+  return { ...result, ...(await recorded) }
 }
 
 export const OPTIONS_REQUEST = (reasons = []) =>

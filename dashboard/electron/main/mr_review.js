@@ -429,5 +429,5 @@ export async function clearSentBackLabel(prUrl, exec) {
   await exec('gh', ['issue', 'edit', ticket, '--repo', repo, '--remove-label', 'needs-reengagement'])
   await exec('gh', ['issue', 'comment', ticket, '--repo', repo, '--body',
     `The "sent back" label was cleared from the dashboard: this PR (${prUrl}) is judged fine as it stands, so it can be reviewed and merged.`])
-  return { cleared: true }
+  return { cleared: true, ticket: Number(ticket) }
 }

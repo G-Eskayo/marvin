@@ -30,7 +30,9 @@ import { createMergeOps } from './merge_ops.js'
 import { readPrefs } from './prefs.js'
 import { guardApprove } from './approve_guard.js'
 import { recordRefusal } from '../../webhook-server/refusal_log.js'
-import { submitDecisions, sendBackForOptions } from './decisions_submit.js'
+import { sendBackForOptions } from './decisions_submit.js'
+import { createLocalFirst, coalesce, createIssueReader, createRepoHeadCheck } from './local_first.js'
+import { createMrActions } from './mr_actions.js'
 
 const mergeOps = createMergeOps()
 // marvin#568: every change to a merge op is pushed to the renderer (the card subscribes; it reads once on mount).
@@ -488,7 +490,9 @@ function registerDocsHandlers() {
     getProjects: () => (readCatalog({ deviceId: deviceId() })?.projects || []).filter((p) => p.repo).map((p) => ({ id: p.id, repo: p.repo })),
     getStages: defaultStagesFor,
     getLive: defaultLiveNumbers,
-    recheck: (repos = []) => (repos.length ? repos.forEach((r) => githubChanged(`github:${r}`)) : githubChanged(null))
+    // Only the repos parity named. With none named there is nothing specific to re-read, and marking all 13 changed
+    // re-listed every repo (the fan-out local-first actions removed, 2026-10-21).
+    recheck: (repos = []) => repos.forEach((r) => githubChanged(`github:${r}`))
   })
   triggerHub.onTrigger((t) => {
     if (t.topic === 'activity' || t.topic === 'docs') {
@@ -794,9 +798,57 @@ function registerMrReviewHandlers() {
   // MARVIN_MR_FIXTURE=<file.json> (gh pr list JSON) shows a fixed PR list instead of GitHub's: used to screenshot card
   // states no open PR happens to be in (e.g. "Too vague: needs options") for the owner's image rule.
   const fixturePrs = process.env.MARVIN_MR_FIXTURE ? async () => JSON.parse(readFileSync(process.env.MARVIN_MR_FIXTURE, 'utf8')) : null
+  // Overlapping callers share one build of the list (2026-10-21: three ran at once after one Decisions submit, the
+  // longest 43 s). A caller after a local write or a change ping gets a new build, from memory, never an older answer.
+  const remembered = (kind) => githubState.peek(kind)
+  const keysFromBoards = (pick) => async (repos) => {
+    const want = new Set(repos)
+    const keys = new Set()
+    for (const { repo, value } of remembered('board')) if (want.has(repo)) for (const k of pick(repo, value?.issues || [])) keys.add(k)
+    return keys
+  }
+  async function pipelineCardFromMemory(url) {
+    const prs = remembered('prs').flatMap(({ repo, value }) => (Array.isArray(value) ? value.map((p) => ({ ...p, repo, listedAt: githubState.fetchedAt('prs', repo) })) : []))
+    if (!prs.some((p) => p.url === url)) return null
+    const rework = remembered('rework')[0]?.value
+    const cards = await listPipelinePrs(async () => prs, {
+      canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()),
+      sentBackTickets: keysFromBoards(sentBackKeys),
+      closedTickets: keysFromBoards((repo, issues) => issues.filter((i) => i.state === 'CLOSED').map((i) => `${repo}#${i.number}`)),
+      reworkStatus: rework ? async () => rework : null,
+      rebaseStatus: getRebaseStatus,
+      autoMergeShadow: getAutoMergeShadow,
+      uiPathsFor: (repo) => readUiPaths(repo)
+    })
+    return cards.find((p) => p.url === url) || null
+  }
+  const mrList = coalesce(
+    () => listPipelinePrs(fixturePrs || listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets, autoMergeShadow: getAutoMergeShadow, uiPathsFor: (repo) => readUiPaths(repo) }),
+    () => `${githubState.localSeq()}:${githubState._genOf(null)}`
+  )
   ipcMain.handle('mr:list', () => {
     if (!fixturePrs) listOpenPrs().then((prs) => stackRetarget.check(prs)).catch(() => {})
-    return listPipelinePrs(fixturePrs || listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets, autoMergeShadow: getAutoMergeShadow, uiPathsFor: (repo) => readUiPaths(repo) })
+    return mrList()
+  })
+
+  // Local-first actions (CONTEXT.md "Dashboard actions render their true result locally at once, and confirm in the
+  // background"): each action applies GitHub's answer to its own write to memory, asks GitHub about that one PR or
+  // ticket once in the background (a conditional request), and says so if GitHub disagrees. See mr_actions.js.
+  const notify = (channel, payload) => {
+    mainWindow?.webContents.send(channel, payload)
+    if (channel === 'mr:corrected') mainWindow?.webContents.send('mr:refresh') // redraw from memory, now GitHub's version
+  }
+  const localFirst = createLocalFirst({ state: githubState, readIssue: createIssueReader(), onCorrected: (c) => notify('mr:corrected', c) })
+  const mrActions = createMrActions({
+    state: githubState,
+    exec: execFileAsync,
+    localFirst,
+    listOpenPrs: () => listOpenPrs(),
+    // The PR as it now stands, built from memory only: the answer is what GitHub just returned, and anything else a
+    // repo needs re-reading for is the background's job, never the click's (a re-read here cost 1.3 s in the sandbox).
+    card: (url) => pipelineCardFromMemory(url),
+    headCheck: createRepoHeadCheck(),
+    notify
   })
 
   // Backs the MR Review tab's status dot -- red/blue/green computed from
@@ -841,9 +893,11 @@ function registerMrReviewHandlers() {
   ipcMain.handle('mr:approve', async (_event, { number, url, head = null }) => {
     // Checked here, not just greyed out in the UI, so a stale screen can't skip it. Sent-back PRs are marked the same way
     // the list marks them, or a newer PR waits forever on one that can't merge (marvin #209). A refusal is recorded (#215).
+    // P5: the order check runs on the remembered list after one conditional check of this repo's open PRs (heads,
+    // bases), not a fresh re-list of all 13 repos (10.4 s for PR #569). Stale re-reads that one repo.
     await guardApprove(url, {
       assertMergeable,
-      loadPrs: async () => prsForOrderCheck(await listOpenPrs({ fresh: true }), sentBackTickets),
+      loadPrs: async () => prsForOrderCheck(await mrActions.approvePrs(url), sentBackTickets),
       record: recordRefusal
     })
     if (!mergeOps.start(url, Date.now(), head)) return { merged: false, cancelled: true, alreadyMerging: true }
@@ -873,7 +927,9 @@ function registerMrReviewHandlers() {
         return { ...result, cancelled: false }
       }
       pushMergeOp(url, mergeOps.finish(url, result))
-      githubChanged(null)  // the list must not keep showing a PR that just merged
+      // The list must not keep showing a PR that just merged: it leaves at once, and GitHub confirms in the background.
+      if (result?.merged) mrActions.merged(url)
+      else mrActions.reengaged(url)
       clearReworkCache()
       return { ...result, cancelled: false }
     } catch (err) {
@@ -888,11 +944,9 @@ function registerMrReviewHandlers() {
 
   // The owner's answers to a Decisions section, on a PR or a ticket (2026-10-09): written into the description, then
   // recorded as a comment. See decisions_submit.js.
-  ipcMain.handle('decisions:submit', async (_event, { repo, number, answers }) => {
-    const result = await submitDecisions({ repo, number, answers }, { exec: execFileAsync })
-    githubChanged(null)
-    return result
-  })
+  // Returns as soon as GitHub accepted the edit, with the PR card as it now stands (Approve unlocks from it); the record
+  // comment follows as 'decisions:recorded'.
+  ipcMain.handle('decisions:submit', (_event, { repo, number, answers }) => mrActions.submitDecisions({ repo, number, answers }))
 
   // "Too vague: needs options": ask the author to restate the questions as a Decisions section.
   ipcMain.handle('mr:sendBackForOptions', async (_event, { url, ticketNumber, reasons }) => {
@@ -901,7 +955,7 @@ function registerMrReviewHandlers() {
       exec: execFileAsync,
       deny: (payload) => denyMr(payload, MR_DENY_WEBHOOK_URL, postJson)
     })
-    githubChanged(null)
+    if (result.sentBack) mrActions.denied({ url, ticketNumber, action: 'feedback' })
     return result
   })
 
@@ -909,7 +963,7 @@ function registerMrReviewHandlers() {
   ipcMain.handle('mr:clearSentBack', async (_event, url) => {
     assertMergeable(url)
     const result = await clearSentBackLabel(url, execFileAsync)
-    if (result.cleared) githubChanged(null)
+    if (result.cleared) mrActions.cleared({ url, ticket: result.ticket })
     return result
   })
 
@@ -933,7 +987,7 @@ function registerMrReviewHandlers() {
       return { done: false, cancelled: true }
     }
     await denyMr({ prUrl: url, ticketNumber, action, reasons, comment }, MR_DENY_WEBHOOK_URL, postJson)
-    githubChanged(null)
+    mrActions.denied({ url, ticketNumber, action })
     return { done: true, cancelled: false }
   })
 }
