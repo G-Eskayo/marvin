@@ -586,6 +586,98 @@ def test_open_pr_updates_the_existing_pr_when_one_is_already_open_for_the_branch
     assert any("pr" in c and "edit" in c for c in calls) and any("pr" in c and "comment" in c for c in calls)
 
 
+def test_rework_retitle_includes_new_title_in_pr_edit(monkeypatch):
+    """When a reworked PR is sent back and pushed to the same branch, the PR is retitled to the current _subject."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if "create" in cmd:
+            raise subprocess.CalledProcessError(1, cmd, stderr='a pull request for branch "pipeline/x" into branch "main" already exists:\nhttps://github.com/o/r/pull/30')
+        return type("R", (), {"stdout": "https://github.com/o/r/pull/30\n", "returncode": 0})()
+
+    monkeypatch.setattr(mrr.subprocess, "run", fake_run)
+    # Stub _ticket_title so we get a resolved title, not the fallback "Implement"
+    monkeypatch.setattr(mrr, "_ticket_title", lambda ref: "Fix the cache bug (o/r#23)")
+
+    url = mrr._default_open_pr("o/r#23", "pipeline/x", {"subsystem": "s", "verdict": "improved", "metrics": {}})
+
+    # Find the pr edit call and verify it includes both --body and --title
+    edit_calls = [c for c in calls if "pr" in c and "edit" in c]
+    assert len(edit_calls) == 1
+    edit_cmd = edit_calls[0]
+    assert "--title" in edit_cmd
+    title_idx = edit_cmd.index("--title")
+    title_value = edit_cmd[title_idx + 1]
+    assert "Fix the cache bug" in title_value
+
+
+def test_stale_title_rework_gets_new_title(monkeypatch):
+    """On a second rework, the PR is retitled again if the ticket title changed."""
+    calls = []
+    title_calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if "create" in cmd:
+            raise subprocess.CalledProcessError(1, cmd, stderr='a pull request for branch "pipeline/x" into branch "main" already exists:\nhttps://github.com/o/r/pull/30')
+        return type("R", (), {"stdout": "https://github.com/o/r/pull/30\n", "returncode": 0})()
+
+    def fake_ticket_title(ref):
+        title_calls.append(ref)
+        # Simulate changed title on second call (reworked)
+        return "Improved cache performance" if len(title_calls) > 1 else "Fix the cache bug"
+
+    monkeypatch.setattr(mrr.subprocess, "run", fake_run)
+    monkeypatch.setattr(mrr, "_ticket_title", fake_ticket_title)
+
+    # First call
+    mrr._default_open_pr("o/r#23", "pipeline/x", {"subsystem": "s", "verdict": "improved", "metrics": {}})
+    # Second call (rework)
+    mrr._default_open_pr("o/r#23", "pipeline/x", {"subsystem": "s", "verdict": "improved", "metrics": {}})
+
+    edit_calls = [c for c in calls if "pr" in c and "edit" in c]
+    assert len(edit_calls) == 2
+    # Second edit should have the new title
+    second_edit = edit_calls[1]
+    assert "--title" in second_edit
+    title_idx = second_edit.index("--title")
+    title_value = second_edit[title_idx + 1]
+    assert "Improved cache performance" in title_value
+
+
+def test_subject_never_returns_bare_implement_without_title(monkeypatch):
+    """_subject always returns "Title (#n)" form when ticket title is available."""
+    monkeypatch.setattr(mrr, "_ticket_title", lambda ref: "Test ticket title")
+    result = mrr._subject("o/r#23")
+    assert result == "Test ticket title (#23)"
+    assert not result.startswith("Implement o/r")
+
+
+def test_subject_falls_back_to_implement_when_title_fetch_times_out(monkeypatch):
+    """_subject falls back to 'Implement' when GitHub doesn't respond in time."""
+    # Simulate a timeout during title fetch
+    monkeypatch.setattr(mrr, "_ticket_title", lambda ref: None)
+    result = mrr._subject("o/r#23")
+    assert result == "Implement o/r#23"
+
+
+def test_failed_pr_edit_on_rework_is_not_swallowed(monkeypatch):
+    """If pr edit fails during rework, the error is raised, not ignored."""
+    def fake_run(cmd, **kwargs):
+        if "create" in cmd:
+            raise subprocess.CalledProcessError(1, cmd, stderr='already exists')
+        if "edit" in cmd:
+            raise subprocess.CalledProcessError(1, cmd, stderr="HTTP 422: validation failed")
+        return type("R", (), {"stdout": "https://github.com/o/r/pull/30\n", "returncode": 0})()
+
+    monkeypatch.setattr(mrr.subprocess, "run", fake_run)
+    monkeypatch.setattr(mrr, "_ticket_title", lambda ref: "Test title")
+
+    with pytest.raises(subprocess.CalledProcessError):
+        mrr._default_open_pr("o/r#23", "pipeline/x", {"subsystem": "s", "verdict": "v", "metrics": {}})
+
+
 def test_open_pr_still_raises_on_other_gh_failures(monkeypatch):
     def fake_run(cmd, **kwargs):
         raise subprocess.CalledProcessError(1, cmd, stderr="HTTP 401 bad credentials")

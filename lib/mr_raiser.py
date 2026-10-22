@@ -212,7 +212,7 @@ def _default_open_pr(
     # refresh its description with the new results instead of opening a duplicate.
     url = subprocess.run(["gh", "pr", "view", branch, *repo_args, "--json", "url", "-q", ".url"],
                          check=True, capture_output=True, text=True).stdout.strip()
-    subprocess.run(["gh", "pr", "edit", url, "--body", body], check=True, capture_output=True, text=True)
+    subprocess.run(["gh", "pr", "edit", url, "--title", _subject(ticket_ref), "--body", body], check=True, capture_output=True, text=True)
     subprocess.run(["gh", "pr", "comment", url, "--body",
                     "Reworked after being sent back: rebuilt on the current base branch and re-verified. The results above are the new ones."],
                    check=True, capture_output=True, text=True)

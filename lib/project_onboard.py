@@ -960,7 +960,7 @@ under In review, the same as any other piece of work.
 
 ## Your task
 **What I need from you:** a review of the onboarding pull request, then merge it or close it.
-**Where:** the pull request titled "{ONBOARDING_TITLE}" in this repo: the dashboard's MR Review tab, or this ticket's linked pull request on GitHub.
+**Where:** this ticket's linked pull request in this repo: the dashboard's MR Review tab, or on GitHub.
 **How:**
 1. Open the pull request. It changes only docs/agents/, CLAUDE.md's "Agent skills" section, and .github/workflows/ci.yml if it adds CI.
 2. Check the CI run on it passes, if it adds CI. If CI fails, the template doesn't fit this project yet: say so here.
@@ -971,6 +971,24 @@ under In review, the same as any other piece of work.
 
 def _closes(ticket: int) -> str:
     return f"Closes #{ticket}"
+
+
+def _pr_title(repo: str, includes_ci: bool) -> str:
+    """Generate PR title based on what files are included."""
+    repo_name = repo.split('/')[1]
+    base = f"Onboarding {repo_name}: agent docs"
+    return f"{base} and CI" if includes_ci else base
+
+
+def _pr_body(files: list[str], ticket: int, includes_ci: bool) -> str:
+    """Generate PR body with summary and file list."""
+    if includes_ci:
+        summary = "Adds agent docs and a CI workflow."
+    else:
+        summary = "Adds agent docs."
+
+    file_list = "\n".join(f"- {f}" for f in files)
+    return f"{summary}\n\n{file_list}\n\n{_closes(ticket)}"
 
 
 def _onboarding_ticket(repo: str, gh=_gh) -> int | None:
@@ -1168,11 +1186,12 @@ def _apply_pr(repo: str, facts: dict, plan_out: dict, gh=_gh, auth_status: str |
             pass
 
     files = list(files_to_write.keys()) + (["CLAUDE.md"] if claude_append else [])
+    includes_ci = ".github/workflows/ci.yml" in files_to_write
     try:
         pr_create = gh(["pr", "create", "--repo", repo, "--head", branch_name,
                        "--base", default_branch,
-                       "--title", ONBOARDING_TITLE,
-                       "--body", f"Automated agent docs and CI workflow setup\n\n{_closes(ticket)}"])
+                       "--title", _pr_title(repo, includes_ci),
+                       "--body", _pr_body(files, ticket, includes_ci)])
 
         if pr_create and "error" not in pr_create.lower():
             return {"action": "created", "pr_url": pr_create.strip(), "branch": branch_name, "files": files, "ticket": ticket}
