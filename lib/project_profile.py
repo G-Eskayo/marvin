@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from evidence_capture import TestTimedOut  # noqa: E402
 
 PROFILES_DIR = Path.home() / ".agents" / "config" / "projects"
+PLAYBOOKS_DIR = Path(__file__).resolve().parent.parent / "config" / "playbooks"  # versioned with the code that reads it
 PIPELINE_CLONES = Path.home() / ".agents-pipeline-clones"  # dedicated clones: not a working copy, not in iCloud
 _NO_TESTS_MARKERS = ("no tests ran", "no test files found")
 
@@ -145,7 +146,129 @@ def _validate(profile: dict, source: str) -> dict:
     profile.setdefault("env", {})
     profile.setdefault("executor", {})
     profile.setdefault("evidence", {})
+    if "playbook" in profile or "playbook_variant" in profile:
+        if "playbook" not in profile:
+            raise ValueError(f"{source}: playbook_variant is set but playbook is not")
+        try:
+            load_playbook(profile["playbook"], profile.get("playbook_variant"))
+        except ValueError as e:
+            raise ValueError(f"{source}: {e}") from e
     return profile
+
+
+# ── playbooks (config/playbooks/<name>.json; marvin #613) ───────────────────
+# One way of working per project type: stages, proof per stage, owner gates, machines (design:
+# docs/plans/project-playbooks-2026-10-22.md). A profile names one; the executor's notes get a section generated
+# from it, so a profile's free text can't drift from it. Static files: one read per file version (cached by mtime).
+
+_PLAYBOOK_NAME_RE = re.compile(r"[a-z0-9][a-z0-9-]*")
+_PLAYBOOK_CACHE: dict[tuple, dict] = {}
+PLAYBOOK_MARKER = "--- Playbook "
+
+
+def _check_playbook(pb, name: str, fname: str) -> dict:
+    if not isinstance(pb, dict):
+        raise ValueError(f"playbook {fname}: must be a JSON object")
+    if pb.get("name") != name:
+        raise ValueError(f"playbook {fname}: its name is {pb.get('name')!r}, expected {name!r}")
+    stages = pb.get("stages")
+    if not isinstance(stages, list) or not stages:
+        raise ValueError(f"playbook {fname}: needs a non-empty stages list")
+    seen = set()
+    for st in stages:
+        if not isinstance(st, dict) or not st.get("id") or not st.get("label"):
+            raise ValueError(f"playbook {fname}: every stage needs an id and a label")
+        if not isinstance(st.get("proof"), list) or not st["proof"] or not st.get("machine"):
+            raise ValueError(f"playbook {fname}: stage {st['id']} needs a non-empty proof list and a machine")
+        if st["id"] in seen:
+            raise ValueError(f"playbook {fname}: stage id {st['id']} appears twice")
+        seen.add(st["id"])
+    variants = pb.setdefault("variants", {})
+    if not isinstance(variants, dict):
+        raise ValueError(f"playbook {fname}: variants must be an object")
+    for vname, v in variants.items():
+        unknown = [x for x in (v.get("drop_stages") or []) + list((v.get("stage_overrides") or {})) if x not in seen]
+        if unknown:
+            raise ValueError(f"playbook {fname}: variant {vname} names stages that don't exist: {', '.join(unknown)}")
+    for key in ("owner_gates", "known_traps", "ship_checklist"):
+        pb.setdefault(key, [])
+    pb.setdefault("machines", {})
+    return pb
+
+
+def _known_playbooks(directory: Path) -> list[str]:
+    return sorted(f.stem for f in directory.glob("*.json")) if directory.is_dir() else []
+
+
+def load_playbook(name, variant: str | None = None, directory: Path | None = None) -> dict:
+    """The named playbook with its variant applied (dropped stages removed, overrides merged). ValueError, naming
+    what is wrong and the known playbooks/variants, for anything unknown or malformed. Never mutates the cache."""
+    directory = directory or PLAYBOOKS_DIR
+    if not isinstance(name, str) or not _PLAYBOOK_NAME_RE.fullmatch(name):
+        raise ValueError(f"playbook {name!r} is not a playbook name (lowercase letters, digits and dashes)")
+    path = directory / f"{name}.json"
+    if not path.is_file():
+        raise ValueError(f"unknown playbook {name!r}; known: {', '.join(_known_playbooks(directory)) or 'none'} (config/playbooks/)")
+    key = (str(path), path.stat().st_mtime_ns)
+    if key not in _PLAYBOOK_CACHE:
+        try:
+            raw = json.loads(path.read_text())
+        except json.JSONDecodeError as e:
+            raise ValueError(f"playbook {path.name}: not valid JSON ({e})") from e
+        _PLAYBOOK_CACHE[key] = _check_playbook(raw, name, path.name)
+    pb = copy.deepcopy(_PLAYBOOK_CACHE[key])
+    if variant is None:
+        return pb
+    v = pb["variants"].get(variant) if isinstance(variant, str) else None
+    if v is None:
+        raise ValueError(f"playbook {name!r} has no variant {variant!r}; known: {', '.join(sorted(pb['variants'])) or 'none'}")
+    drop = set(v.get("drop_stages") or [])
+    overrides = v.get("stage_overrides") or {}
+    pb["stages"] = [{**st, **overrides.get(st["id"], {})} for st in pb["stages"] if st["id"] not in drop]
+    gate_overrides = v.get("owner_gate_overrides") or {}
+    pb["owner_gates"] = [{**g, **gate_overrides.get(g.get("id"), {})} for g in pb["owner_gates"]]
+    if v.get("drop_ship_checklist"):
+        pb["ship_checklist"] = []
+    pb["variant"] = variant
+    return pb
+
+
+def playbook_notes(profile: dict) -> str:
+    """The executor's section generated from the profile's playbook: the proof its stages need, the owner gates and
+    the traps that apply to it. Only the executor's own stages: shipping and device checks are the owner's."""
+    if not profile.get("playbook"):
+        return ""
+    pb = load_playbook(profile["playbook"], profile.get("playbook_variant"))
+    title = pb["name"] + (f", {pb['variant']} variant" if pb.get("variant") else "")
+    captures = bool(((profile.get("evidence") or {}).get("dev") or {}).get("ios_simulator"))
+    lines = [f"{PLAYBOOK_MARKER}{title} (generated from {pb.get('doc', 'config/playbooks/' + pb['name'] + '.json')}; "
+             "change the playbook, not this text) ---",
+             "What each of your stages needs before it moves on (the line under a stage says what this run can and can't do):"]
+    for st in pb["stages"]:
+        if not st.get("executor"):
+            continue
+        lines.append(f"- {st['label']}: {'; '.join(st['proof'])}.")
+        extra = st.get("executor_with_capture" if captures else "executor_without_capture")
+        if extra:
+            lines.append(f"  {extra}")
+    if pb["owner_gates"]:
+        lines.append("Owner gates (Gil decides these: unless the ticket already carries his approval, never do one on your own "
+                     "judgment; stop and say so in your plan and the PR):")
+        lines += [f"- {g['text']}." for g in pb["owner_gates"]]
+    traps = [t["text"] for t in pb["known_traps"] if t.get("executor")]
+    if traps:
+        lines.append("Known traps:")
+        lines += [f"- {t}" for t in traps]
+    return "\n".join(lines)
+
+
+def profile_problems(profile: dict) -> list[str]:
+    """Things that make a profile unable to do its job, said by selftest before it touches any clone."""
+    out = []
+    if profile.get("dispatch") == "on" and not profile.get("machines"):
+        out.append("dispatch is on but machines is empty, so the pipeline can never run this project's tickets: "
+                   "list the machines that can build it, or switch dispatch off")
+    return out
 
 
 def load_profile(repo: str, directory: Path | None = None) -> dict | None:
@@ -510,7 +633,13 @@ def selftest(profile: dict, runner=_default_runner, have=None, catalog: dict | N
     import sandbox_orchestration as so
     import metrics_registry as mr
 
-    profile = _validate(copy.deepcopy(profile), "profile")
+    try:
+        profile = _validate(copy.deepcopy(profile), "profile")
+    except ValueError as e:
+        return {"ok": False, "kind": "profile", "error": str(e)}
+    problems = profile_problems(profile)
+    if problems:
+        return {"ok": False, "kind": "profile", "error": "; ".join(problems)}
     clone = resolve_clone(profile, catalog if catalog is not None else _catalog(), ensure=True)
     if clone is None:
         return {"ok": False, "kind": "no_clone", "error": f"no local clone of {profile['repo']} on this machine"}
@@ -586,17 +715,27 @@ def executor_tools(profile: dict, clone: Path | None = None) -> tuple[str, str]:
 
 
 def executor_notes(profile: dict) -> str:
-    return (profile.get("executor") or {}).get("notes", "")
+    """The project's own notes, then the section generated from its playbook. Idempotent: a generated section that
+    was pasted back into the profile is dropped and regenerated, never doubled."""
+    own = (profile.get("executor") or {}).get("notes", "") or ""
+    if PLAYBOOK_MARKER in own:
+        own = own.split(PLAYBOOK_MARKER, 1)[0].rstrip()
+    generated = playbook_notes(profile)
+    return f"{own}\n\n{generated}" if own and generated else (own or generated)
 
 
 def main() -> int:
     cmd = sys.argv[1] if len(sys.argv) > 1 else "list"
     if cmd == "list":
         for p in all_profiles():
-            print(f"{p['repo']:<36} dispatch={p['dispatch']:<4} machines={','.join(p['machines']) or '-':<24} tiers={','.join(t['id'] for t in p['verify'])}")
+            print(f"{p['repo']:<36} dispatch={p['dispatch']:<4} machines={','.join(p['machines']) or '-':<24} tiers={','.join(t['id'] for t in p['verify'])} playbook={p.get('playbook', '-')}{'/' + p['playbook_variant'] if p.get('playbook_variant') else ''}")
         return 0
     if cmd == "selftest" and len(sys.argv) > 2:
-        profile = load_profile(sys.argv[2])
+        try:
+            profile = load_profile(sys.argv[2])
+        except ValueError as e:
+            print(f"SELFTEST FAILED: the profile is invalid: {e}")
+            return 1
         if profile is None:
             print(f"no profile for {sys.argv[2]}", file=sys.stderr)
             return 1

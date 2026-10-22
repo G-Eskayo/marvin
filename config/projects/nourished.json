@@ -1,15 +1,66 @@
 {
+  "_readme": "How the ticket pipeline would build and verify G-Eskayo/nourished (lib/project_profile.py). dispatch is OFF and no machines are listed. Playbook ios-app (the product is an iOS app; this repo holds its Fastify API and Next.js portal, the Swift app is not in it yet). Known gap: no tests yet (apps/api has vitest wired but no test files), so the only check is type-check. Check it with: ~/.agents/venv/bin/python ~/.agents/lib/project_profile.py selftest G-Eskayo/nourished",
   "repo": "G-Eskayo/nourished",
   "base_branch": "main",
-  "clone_hints": [],
   "dispatch": "off",
+  "playbook": "ios-app",
   "merge_from_dashboard": false,
-  "verify": [],
-  "clone_mode": "catalog",
-  "generated": [],
-  "setup": [],
   "machines": [],
+  "clone_hints": [
+    "~/Developer/nourished"
+  ],
+  "clone_mode": "pipeline",
+  "build_output": [
+    "node_modules"
+  ],
+  "generated": [],
   "env": {},
-  "executor": {},
-  "evidence": {}
+  "executor": {
+    "notes": "This is Nourished, a dish-discovery app: a pnpm + Turborepo monorepo with apps/api (Fastify v5, TypeScript), apps/portal (Next.js restaurant portal) and packages/database (Prisma, PostgreSQL + PostGIS). The architecture is in docs/Nourished_Backend_Architecture.md. There are no tests yet, so write tests first (vitest in apps/api) for anything you change, and say plainly which behavior is untested. Verify with: corepack pnpm db:generate, then corepack pnpm type-check (turbo's type-check does not generate the Prisma client by itself: its dependsOn names a db:generate task the database package doesn't have). Never commit secrets or a real .env (only .env.example).",
+    "allowed_tools": [
+      "Bash(corepack pnpm*)"
+    ]
+  },
+  "setup": [
+    {
+      "id": "install",
+      "label": "Install dependencies (pnpm via corepack)",
+      "command": [
+        "corepack",
+        "pnpm",
+        "install",
+        "--frozen-lockfile"
+      ],
+      "creates": "node_modules",
+      "requires": [
+        "node",
+        "corepack"
+      ],
+      "timeout_s": 1800
+    }
+  ],
+  "verify": [
+    {
+      "id": "type-check",
+      "label": "Prisma client + type-check every package (turbo)",
+      "cwd": ".",
+      "command": [
+        "bash",
+        "-c",
+        "B=$(mktemp -d \"${TMPDIR:-/tmp}/pnpm-shim.XXXXXX\"); trap 'rm -rf \"$B\"' EXIT; corepack enable --install-directory \"$B\" pnpm && export PATH=\"$B:$PATH\" && pnpm db:generate && pnpm type-check"
+      ],
+      "requires": [
+        "node",
+        "corepack"
+      ],
+      "parser": "exit-code",
+      "required": true,
+      "timeout_s": 1200
+    }
+  ],
+  "evidence": {
+    "dev": {
+      "na": "no dev-environment capture for the portal or the API yet"
+    }
+  }
 }

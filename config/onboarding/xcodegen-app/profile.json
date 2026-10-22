@@ -20,5 +20,5 @@
       "confirm": true
     }
   ],
-  "profile_fragment": {}
+  "profile_fragment": {"playbook": "ios-app"}
 }
