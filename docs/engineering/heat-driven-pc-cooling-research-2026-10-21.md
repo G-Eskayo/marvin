@@ -601,3 +601,15 @@ With a liquid-metal TIM: R1234ze(E) 56.7 °C, R1233zd(E) 53.9 °C. Optimistic ce
 - CPC / concentrating collectors: https://ideas.repec.org/a/eee/renene/v50y2013icp299-306.html ; https://www.osti.gov/biblio/355747 ; https://www.frontiersin.org/journals/energy-research/articles/10.3389/fenrg.2021.754546/pdf
 
 **Reproduce:** a Python with CoolProp, then `python ~/.agents/docs/engineering/scripts/fluids.py`. Sensitivity: `TA=30`, `APP=3` or `APP=5`, `F_FLOW=4`, `DIE_MAX=70`.
+
+## Reference: Rongchai & Tundee 2022 copper thermosyphon HX (added 2026-10-21)
+
+Source: Rongchai, K. & Tundee, S., "Development, testing and design optimisation of a water and R134a based thermosyphon heat exchanger for air-water heat recovery systems", *Case Studies in Thermal Engineering* 39 (2022) 102453, doi:10.1016/j.csite.2022.102453 (CC BY-NC-ND). Gil's copy: ~/Downloads.
+
+- **Build:** 28 copper thermosyphons (25.4 mm OD, 1 mm wall, 1000 mm long; 700 mm evaporator, 295 mm condenser), 4×7 array. Hot air at 80–140 °C on the evaporator, water-cooled condenser.
+- **Result:** R134a beat distilled water clearly. Effectiveness was 51 % vs 30 % (40 % for the hybrid) at Cr = 0.15. Heat transfer was about 2000 W vs 500 W at the highest Re ratio. The authors recommend R134a.
+- **Fill ratio:** studies cited in the paper put the optimum around 30–40 % for closed tubes and 55–75 % for loop thermosyphons.
+- **Why R134a wins at low temperature** (CoolProp): water is at a deep vacuum at PC temperatures (0.07 bar at 40 °C, 0.20 bar at 60 °C). Its vapour is thin, so the vapour-flow limits bite. R134a sits at 10.2 bar at 40 °C, 13.2 bar at 50 °C, 16.8 bar at 60 °C and 21.2 bar at 70 °C, so it has dense vapour and high flux.
+- **What transfers to a PC:** copper construction, R134a as a working fluid a civilian can buy (≤2 lb car-AC cans, no 608 certification), fill-ratio guidance, and ε-NTU sizing for the condenser.
+- **What doesn't transfer:** their evaporator is a long tube in low-flux hot air. A CPU or GPU die puts about 30–50 W/cm² into a few cm². The PC evaporator has to be a boiling cold plate (skived fins, microchannels or a sintered surface), not a bare tube.
+- **Pressure:** R134a needs pressure-rated copper (ACR tube and brazed joints, not soft-soldered fittings). Design it to withstand a hot-case or fire overpressure well above 21 bar, and fit a relief device. Building it needs a vacuum pump, gauges and a leak test.
