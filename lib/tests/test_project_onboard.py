@@ -2612,3 +2612,25 @@ def test_link_onboarding_pr_with_no_open_pr_files_nothing():
     gh = FakeGitHub()
     assert po.link_onboarding_pr("test/repo", gh=gh) == {"action": "no-pr"}
     assert not gh.made("issue", "create")
+
+
+# ── playbooks (marvin #613): a detected app repo inherits its playbook ──────
+
+def test_apply_profile_gives_a_detected_ios_app_the_ios_playbook(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    result = po._apply_profile("test/iosapp", {"detected_stack": "xcodegen-app", "default_branch": "main"}, profiles_dir=tmp_path)
+    assert result["action"] == "created"
+    assert result["profile"]["playbook"] == "ios-app" and "playbook_variant" not in result["profile"]
+    assert result["profile"]["dispatch"] == "off"  # the playbook never turns dispatch on
+
+
+def test_apply_profile_gives_a_swift_package_app_the_macos_variant(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    result = po._apply_profile("test/macapp", {"detected_stack": "swift-package", "default_branch": "main"}, profiles_dir=tmp_path)
+    assert result["profile"]["playbook"] == "ios-app" and result["profile"]["playbook_variant"] == "macos"
+
+
+def test_apply_profile_gives_a_non_apple_stack_no_playbook(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    result = po._apply_profile("test/py", {"detected_stack": "python", "default_branch": "main"}, profiles_dir=tmp_path)
+    assert "playbook" not in result.get("profile", {})
