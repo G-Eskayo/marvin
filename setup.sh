@@ -209,6 +209,11 @@ install_deps() {
     "$VENV_PYTHON" -m pip install chromadb rank_bm25 requests --quiet
     log "chromadb, rank_bm25, requests installed"
 
+    # The test harness: a hung test fails in 2 min by name (pytest.ini `timeout`), and the suite can run in parallel.
+    # lib/tests/test_test_harness.py fails on a machine without them, so the merge gate never silently loses its limit.
+    "$VENV_PYTHON" -m pip install pytest pytest-timeout pytest-xdist --quiet
+    log "pytest, pytest-timeout, pytest-xdist installed (test harness)"
+
     # resume-tailor's deps — this was missing entirely until a fresh-machine
     # setup was actually attempted and it silently left the skill non-functional.
     if [[ "$OS" == "macos-arm" || "$OS" == "macos-x86" ]]; then
