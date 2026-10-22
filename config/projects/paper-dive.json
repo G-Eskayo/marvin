@@ -8,7 +8,9 @@
   "clone_mode": "catalog",
   "generated": [],
   "setup": [],
-  "machines": [],
+  "machines": [
+    "mac-mini-1"
+  ],
   "env": {},
   "executor": {},
   "evidence": {}
