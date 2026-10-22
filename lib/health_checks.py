@@ -971,6 +971,11 @@ def check_repo_sync_everywhere(reachability: dict[str, str], runner=_run_repo_st
 
 # ── per-machine state that silently rots: dashboard build + GitHub credential ──
 
+# macOS ps has no `etimes` (seconds), so asking for it printed an error and nothing: Health said "webhook-server is not
+# running" on both Macs while it served (pipeline review 2026-10-21, F14). `etime` is [[dd-]hh:]mm:ss on every ps;
+# this turns it into seconds.
+_ETIME_AWK = r'''{s=$1; d=0; if (index(s, "-")) {split(s, a, "-"); d=a[1]; s=a[2]} n=split(s, t, ":"); e=0; for (i=1; i<=n; i++) e=e*60+t[i]; print d*86400+e}'''
+
 # One script, run locally or piped over ssh, so every machine is judged by the same
 # logic. Absolute paths throughout (launchd/ssh PATHs omit /opt/homebrew/bin).
 _MACHINE_STATE_SCRIPT = r'''
@@ -981,7 +986,7 @@ echo "dashboard_commit_ts=$(git -C "$HOME/.agents" log -1 --format=%ct origin/ma
 echo "webhook_commit_ts=$(git -C "$HOME/.agents" log -1 --format=%ct origin/main -- dashboard/webhook-server dashboard/electron/main 2>/dev/null)"
 WEBHOOK_PID=$(/bin/launchctl list 2>/dev/null | /usr/bin/awk '$3 ~ /com\.marvin\.dashboard-webhook/ {print $1}')
 if [ -n "$WEBHOOK_PID" ] && [ "$WEBHOOK_PID" != "-" ] && [ "$WEBHOOK_PID" -gt 0 ] 2>/dev/null; then
-  ELAPSED=$(/bin/ps -o etimes= -p "$WEBHOOK_PID" 2>/dev/null | /usr/bin/tr -d ' ')
+  ELAPSED=$(/bin/ps -o etime= -p "$WEBHOOK_PID" 2>/dev/null | /usr/bin/awk '__ETIME_AWK__')
   if [ -n "$ELAPSED" ] && [ "$ELAPSED" -gt 0 ] 2>/dev/null; then
     echo "webhook_server_start_ts=$(($(date +%s) - ELAPSED))"
   else echo "webhook_server_start_ts="
@@ -1005,7 +1010,7 @@ WT="$HOME/.agents-pipeline-worktrees"
 if [ -d "$WT" ]; then echo "worktrees_kb=$(/usr/bin/du -sk "$WT" 2>/dev/null | /usr/bin/cut -f1)"; echo "worktrees_n=$(/bin/ls -1 "$WT" | /usr/bin/wc -l | /usr/bin/tr -d ' ')"; fi
 LEDGER="$HOME/.claude/logs/disk-ledger.jsonl"
 if [ -f "$LEDGER" ]; then echo "disk_ledger=$(tail -14 "$LEDGER" | /usr/bin/tr '\n' '|')"; fi
-'''
+'''.replace("__ETIME_AWK__", _ETIME_AWK)
 
 
 # Declared deployment steps (ADR 0033 acceptance #3): real incidents where plists were added but the

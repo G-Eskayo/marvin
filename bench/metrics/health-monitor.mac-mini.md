@@ -6383,3 +6383,275 @@
 - **errors@macbook-pro-1**: 5
 - **errors@mac-mini-2012**: 1
 
+## 2026-10-21T21:53:52.210008+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.2
+- **github:budget**: 3675
+- **github:gate**: 903
+- **main:green**: 3
+- **repo:sync:~/.agents@mac-mini-1**: 0
+- **repo:sync:~/.agents@mac-mini-2012**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 0
+- **repo:sync:~/.claude@mac-mini-2012**: 0
+- **errors@mac-mini-1**: 4
+- **errors@mac-mini-2012**: 1
+
+## 2026-10-21T22:10:16.622074+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.4
+- **github:budget**: 4861
+- **github:gate**: 964
+- **main:green**: 3
+- **repo:sync:~/.agents@mac-mini-1**: 0
+- **repo:sync:~/.agents@mac-mini-2012**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 0
+- **repo:sync:~/.claude@mac-mini-2012**: 0
+- **errors@mac-mini-1**: 4
+- **errors@mac-mini-2012**: 1
+
+## 2026-10-21T22:26:41.839562+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.7
+- **github:budget**: 4771
+- **github:gate**: 1160
+- **main:green**: 3
+- **repo:sync:~/.agents@mac-mini-1**: 0
+- **repo:sync:~/.agents@mac-mini-2012**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 0
+- **repo:sync:~/.claude@mac-mini-2012**: 0
+- **errors@mac-mini-1**: 4
+- **errors@mac-mini-2012**: 1
+
+## 2026-10-21T22:43:07.144524+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 1.0
+- **github:budget**: 4682
+- **github:gate**: 954
+- **main:green**: 3
+- **repo:sync:~/.agents@mac-mini-1**: 0
+- **repo:sync:~/.agents@mac-mini-2012**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 0
+- **repo:sync:~/.claude@mac-mini-2012**: 0
+- **errors@mac-mini-1**: 4
+- **errors@mac-mini-2012**: 1
+
+## 2026-10-21T22:59:53.502976+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.2
+- **github:budget**: 4465
+- **github:gate**: 1053
+- **main:green**: 3
+- **repo:sync:~/.agents@mac-mini-1**: 0
+- **repo:sync:~/.agents@mac-mini-2012**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 0
+- **repo:sync:~/.claude@mac-mini-2012**: 0
+- **errors@mac-mini-1**: 4
+- **errors@mac-mini-2012**: 1
+
+## 2026-10-21T23:16:30.255456+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.5
+- **github:budget**: 4946
+- **github:gate**: 802
+- **main:green**: 3
+- **repo:sync:~/.agents@mac-mini-1**: 0
+- **repo:sync:~/.agents@mac-mini-2012**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 0
+- **repo:sync:~/.claude@mac-mini-2012**: 0
+- **errors@mac-mini-1**: 5
+- **errors@mac-mini-2012**: 1
+
+## 2026-10-21T23:33:11.188926+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.8
+- **github:budget**: 4894
+- **github:gate**: 547
+- **main:green**: 3
+- **repo:sync:~/.agents@mac-mini-1**: 0
+- **repo:sync:~/.agents@mac-mini-2012**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 0
+- **repo:sync:~/.claude@mac-mini-2012**: 0
+- **errors@mac-mini-1**: 5
+- **errors@mac-mini-2012**: 1
+
+## 2026-10-21T23:49:55.406320+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 1.0
+- **github:budget**: 4836
+- **github:gate**: 280
+- **main:green**: 3
+- **repo:sync:~/.agents@mac-mini-1**: 0
+- **repo:sync:~/.agents@mac-mini-2012**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 0
+- **repo:sync:~/.claude@mac-mini-2012**: 0
+- **errors@mac-mini-1**: 5
+- **errors@mac-mini-2012**: 1
+
+## 2026-10-22T00:06:28.865769+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.3
+- **github:budget**: 4949
+- **github:gate**: 463
+- **main:green**: 3
+- **repo:sync:~/.agents@mac-mini-1**: 0
+- **repo:sync:~/.agents@mac-mini-2012**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 0
+- **repo:sync:~/.claude@mac-mini-2012**: 0
+- **errors@mac-mini-1**: 5
+- **errors@mac-mini-2012**: 1
+
+## 2026-10-22T00:23:05.840149+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.5
+- **github:budget**: 4976
+- **github:gate**: 459
+- **main:green**: 3
+- **repo:sync:~/.agents@mac-mini-1**: 0
+- **repo:sync:~/.agents@mac-mini-2012**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 0
+- **repo:sync:~/.claude@mac-mini-2012**: 0
+- **errors@mac-mini-1**: 5
+- **errors@mac-mini-2012**: 1
+
+## 2026-10-22T00:39:53.154320+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.8
+- **github:budget**: 4663
+- **github:gate**: 717
+- **main:green**: 3
+- **repo:sync:~/.agents@mac-mini-1**: 0
+- **repo:sync:~/.agents@mac-mini-2012**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 0
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-2012**: 0
+- **errors@mac-mini-1**: 5
+- **errors@macbook-pro-1**: 5
+- **errors@mac-mini-2012**: 1
+
+## 2026-10-22T00:56:23.937672+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.0
+- **github:budget**: 4488
+- **github:gate**: 719
+- **main:green**: 3
+- **repo:sync:~/.agents@mac-mini-1**: 0
+- **repo:sync:~/.agents@mac-mini-2012**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 0
+- **repo:sync:~/.claude@mac-mini-2012**: 0
+- **errors@mac-mini-1**: 5
+- **errors@mac-mini-2012**: 1
+
+## 2026-10-22T01:12:48.876768+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.3
+- **github:budget**: 4954
+- **github:gate**: 719
+- **main:green**: 3
+- **repo:sync:~/.agents@mac-mini-1**: 0
+- **repo:sync:~/.agents@mac-mini-2012**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 0
+- **repo:sync:~/.claude@mac-mini-2012**: 0
+- **errors@mac-mini-1**: 5
+- **errors@mac-mini-2012**: 1
+
+## 2026-10-22T01:28:47.367981+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.6
+- **github:budget**: 4796
+- **github:gate**: 459
+- **main:green**: 3
+- **repo:sync:~/.agents@mac-mini-1**: 0
+- **repo:sync:~/.agents@mac-mini-2012**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 0
+- **repo:sync:~/.claude@mac-mini-2012**: 0
+- **errors@mac-mini-1**: 5
+- **errors@mac-mini-2012**: 1
+
+## 2026-10-22T01:44:57.609204+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.9
+- **github:budget**: 4715
+- **github:gate**: 459
+- **main:green**: 3
+- **repo:sync:~/.agents@mac-mini-1**: 0
+- **repo:sync:~/.agents@mac-mini-2012**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 0
+- **repo:sync:~/.claude@mac-mini-2012**: 0
+- **errors@mac-mini-1**: 5
+- **errors@mac-mini-2012**: 1
+
+## 2026-10-22T02:01:27.527967+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.1
+- **github:budget**: 4382
+- **github:gate**: 546
+- **main:green**: 3
+- **repo:sync:~/.agents@mac-mini-1**: 0
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.agents@mac-mini-2012**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 0
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-2012**: 0
+- **errors@mac-mini-1**: 5
+- **errors@mac-mini-2012**: 1
+
+## 2026-10-22T02:17:22.256049+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.3
+- **github:budget**: 4953
+- **github:gate**: 547
+- **main:green**: 3
+- **repo:sync:~/.agents@mac-mini-1**: 0
+- **repo:sync:~/.agents@mac-mini-2012**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 0
+- **repo:sync:~/.claude@mac-mini-2012**: 0
+- **errors@mac-mini-1**: 5
+- **errors@mac-mini-2012**: 1
+
+## 2026-10-22T02:33:37.019251+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.6
+- **github:budget**: 4658
+- **github:gate**: 545
+- **main:green**: 3
+- **repo:sync:~/.agents@mac-mini-1**: 0
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.agents@mac-mini-2012**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 0
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-2012**: 0
+- **errors@mac-mini-1**: 5
+- **errors@macbook-pro-1**: 5
+- **errors@mac-mini-2012**: 1
+
+## 2026-10-22T02:49:36.929558+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.9
+- **github:budget**: 4993
+- **github:gate**: 815
+- **main:green**: 3
+- **repo:sync:~/.agents@mac-mini-1**: 0
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 0
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-2012**: 0
+- **errors@mac-mini-1**: 5
+- **errors@macbook-pro-1**: 5
+- **errors@mac-mini-2012**: 1
+
+## 2026-10-22T03:05:35.235735+00:00 — health-monitor
+- **route:intent-routing-collection**: 92
+- **catalog:fresh**: 0.1
+- **github:budget**: 3601
+- **github:gate**: 735
+- **main:green**: 3
+- **repo:sync:~/.agents@mac-mini-1**: 0
+- **repo:sync:~/.agents@macbook-pro-1**: 0
+- **repo:sync:~/.agents@mac-mini-2012**: 0
+- **repo:sync:~/.claude@mac-mini-1**: 0
+- **repo:sync:~/.claude@macbook-pro-1**: 0
+- **repo:sync:~/.claude@mac-mini-2012**: 0
+- **errors@mac-mini-1**: 5
+- **errors@macbook-pro-1**: 5
+- **errors@mac-mini-2012**: 1
+
