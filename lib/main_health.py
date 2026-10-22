@@ -46,13 +46,27 @@ def _head() -> str | None:
         return None
 
 
+def parallel_args(python: Path = VENV_PY) -> list[str]:
+    """`-n auto` when the venv has pytest-xdist (391 s serial vs 39 s on the M4, 2026-10-21); otherwise serial, with a
+    line saying why. Asked of the venv's own python: this script itself may run under another interpreter."""
+    try:
+        ok = subprocess.run([str(python), "-c", "import xdist"], capture_output=True, timeout=60).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        ok = False
+    if ok:
+        return ["-n", "auto"]
+    print(f"[main-health] pytest-xdist is not installed in {python}: running the suite serially (slower). "
+          f"Fix: {python} -m pip install pytest-xdist", file=sys.stderr)
+    return []
+
+
 def _run_suite() -> tuple[bool, list[str], str]:
     tmp = tempfile.mkdtemp(prefix="main-health-")
     try:
         subprocess.run(["git", "worktree", "add", "-q", "--detach", tmp, "origin/main"], cwd=REPO_DIR, check=True, capture_output=True, timeout=120)
         # Niced: a background backstop must not starve the merge gate or Gil's own work (marvin#457).
-        p = subprocess.run(["nice", "-n", "10", str(VENV_PY), "-m", "pytest", "lib/tests", "-q", "-p", "no:cacheprovider"],
-                           cwd=tmp, capture_output=True, text=True, timeout=1800)
+        p = subprocess.run(["nice", "-n", "10", str(VENV_PY), "-m", "pytest", "lib/tests", "-q", "-p", "no:cacheprovider",
+                            *parallel_args()], cwd=tmp, capture_output=True, text=True, timeout=1800)
         last = [l for l in p.stdout.strip().splitlines() if l.strip()][-1:] or [""]
         return p.returncode == 0, failed_ids(p.stdout), last[0].strip(" =")
     finally:

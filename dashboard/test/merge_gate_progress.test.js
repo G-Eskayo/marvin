@@ -11,7 +11,7 @@ vi.mock('../webhook-server/changelog.js', () => ({ applyVersionBump: vi.fn().moc
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
-import { mergePr, withGateTimeout, execWithGroupTimeout, gateExec, _defaultRunTests, countTestFiles } from '../webhook-server/merge.js'
+import { mergePr, withGateTimeout, execWithGroupTimeout, gateExec, _defaultRunTests, countTestFiles, pytestParallelArgs } from '../webhook-server/merge.js'
 import {
   createMergeTracker, createInflightStore, takeInterruptedMerges, recordMergeDuration, estimateMergeMs,
   createCountParser, machineLoad, gateExtension, inflightPath, durationsPath, topProcess
@@ -92,7 +92,7 @@ describe('the gate reports each stage in order', () => {
     const cwd = path.join(home, 'scratch')
     mkdirSync(path.join(cwd, 'dashboard', 'test'), { recursive: true })
     for (const f of ['a.test.js', 'b.test.jsx']) writeFileSync(path.join(cwd, 'dashboard', 'test', f), '')
-    await _defaultRunTests(cwd, exec, progress)
+    await _defaultRunTests(cwd, exec, progress, async () => ['-n', 'auto'])
     expect(exec.mock.calls.map(([c, a]) => a[0] === 'install' ? 'npm install' : a.includes('pytest') ? 'pytest' : 'vitest')).toEqual(['npm install', 'pytest', 'vitest'])
     const counts = events.filter(([s, st]) => s === 'tests' && st === 'running').map((e) => e[2])
     expect(counts).toEqual(['Python', 'Python', 'Python', 'Dashboard', 'Dashboard', 'Dashboard'])
@@ -461,5 +461,41 @@ describe('one clock inside the gate', () => {
     const r = await mergePr(PR, exec, noop, noop, gate(true), retest, vi.fn(), vi.fn(), {})
     expect(r.merged).toBe(true)
     expect(seen).toEqual([Infinity])
+  })
+})
+
+// The Python suite in parallel (pytest-xdist): 327 s serial vs 47 s on the M4, 2026-10-21.
+describe('the gate runs the Python suite in parallel when it can', () => {
+  it('pytestParallelArgs: the plugin imports, so -n auto', async () => {
+    const run = vi.fn(async () => ({ stdout: '', stderr: '' }))
+    expect(await pytestParallelArgs('/venv/python', run, vi.fn())).toEqual(['-n', 'auto'])
+    expect(run).toHaveBeenCalledWith('/venv/python', ['-c', 'import xdist'])
+  })
+
+  it('no plugin: serial, with a log line that names the fix; a throwing logger changes nothing', async () => {
+    const log = vi.fn()
+    const missing = async () => { throw Object.assign(new Error('exit 1'), { stderr: 'No module named xdist' }) }
+    expect(await pytestParallelArgs('/venv/python', missing, log)).toEqual([])
+    expect(log.mock.calls[0][0]).toMatch(/pytest-xdist is not installed in \/venv\/python: running the Python suite serially.*pip install pytest-xdist/)
+    expect(await pytestParallelArgs('/venv/python', missing, () => { throw new Error('closed') })).toEqual([])
+  })
+
+  it('a real python that cannot import it, or no python at all, is serial, never a crash', async () => {
+    const fake = path.join(home, 'python')
+    writeFileSync(fake, '#!/bin/sh\nexit 1\n', { mode: 0o755 })
+    expect(await pytestParallelArgs(fake, undefined, vi.fn())).toEqual([])
+    expect(await pytestParallelArgs(path.join(home, 'nope'), undefined, vi.fn())).toEqual([])
+  })
+
+  it('_defaultRunTests passes the parallel args to pytest only, and says when it runs serially', async () => {
+    for (const [args, detail] of [[['-n', 'auto'], 'Python'], [[], 'Python (serial: pytest-xdist missing)']]) {
+      const calls = [], events = []
+      const exec = vi.fn(async (cmd, a) => { calls.push(a); return { stdout: '', stderr: '' } })
+      await _defaultRunTests(path.join(home, 'scratch'), exec, (s, st, e) => events.push([s, st, e?.detail]), async () => args)
+      const py = calls.find((a) => a.includes('pytest'))
+      expect(py).toEqual(['-m', 'pytest', '-q', ...args])
+      expect(calls.find((a) => a.includes('vitest'))).toEqual(['vitest', 'run'])
+      expect(events.some(([s, st, d]) => s === 'tests' && st === 'running' && d === detail)).toBe(true)
+    }
   })
 })

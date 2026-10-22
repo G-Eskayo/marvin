@@ -211,3 +211,42 @@ def test_the_suite_runs_niced_so_it_never_starves_the_merge_gate(monkeypatch):
     ok, failed, summary = mh._run_suite()
     suite = [c for c in seen if "pytest" in c][0]
     assert suite[:3] == ["nice", "-n", "10"] and ok is True and summary == "5 passed in 1s"
+
+
+# ---- parallel suite (pytest-xdist) ----
+
+def test_parallel_args_with_the_real_venv_is_n_auto():
+    import pytest
+    if mh.subprocess.run([str(mh.VENV_PY), "-c", "import xdist"], capture_output=True).returncode != 0:
+        pytest.skip("this machine's venv has no pytest-xdist")
+    assert mh.parallel_args() == ["-n", "auto"]
+
+
+def test_a_python_without_xdist_runs_serially_and_says_why(tmp_path, capsys):
+    fake = tmp_path / "python"
+    fake.write_text("#!/bin/sh\necho 'ModuleNotFoundError: No module named xdist' >&2\nexit 1\n")
+    fake.chmod(0o755)
+    assert mh.parallel_args(fake) == []
+    err = capsys.readouterr().err
+    assert "pytest-xdist is not installed" in err and "serially" in err and "pip install pytest-xdist" in err
+
+
+def test_a_missing_or_broken_python_runs_serially_never_crashes(tmp_path):
+    assert mh.parallel_args(tmp_path / "no-such-python") == []
+    d = tmp_path / "a-dir"
+    d.mkdir()
+    assert mh.parallel_args(d) == []
+
+
+def test_the_suite_gets_n_auto_when_the_plugin_is_there_and_not_when_it_is_missing(monkeypatch):
+    for probe_rc, expect in ((0, True), (1, False)):
+        seen = []
+
+        class R:
+            def __init__(self, cmd):
+                self.returncode = probe_rc if cmd[1:] == ["-c", "import xdist"] else 0
+                self.stdout, self.stderr = "5 passed in 1s\n", ""
+        monkeypatch.setattr(mh.subprocess, "run", lambda cmd, **k: seen.append(cmd) or R(cmd))
+        mh._run_suite()
+        suite = [c for c in seen if "pytest" in c][0]
+        assert (suite[-2:] == ["-n", "auto"]) is expect, (probe_rc, suite)
