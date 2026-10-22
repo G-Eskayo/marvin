@@ -141,7 +141,20 @@ export function countTestFiles(dir) {
 
 const noProgress = () => {}
 
-export async function _defaultRunTests(cwd, exec, progress = noProgress) {
+// The Python suite runs in parallel (pytest-xdist, `-n auto`): 327 s serial vs 47 s on the M4's 10 cores, same 2,685
+// tests, measured 2026-10-21. A machine without the plugin runs it serially and says so in the log, never fails on it.
+// One `python -c` per gate run (~0.1 s); not cached, so installing the plugin takes effect on the next run.
+export async function pytestParallelArgs(python = VENV_PYTHON, run = execFileAsync, log = console.warn) {
+  try {
+    await run(python, ['-c', 'import xdist'])
+    return ['-n', 'auto']
+  } catch {
+    try { log(`[merge-gate] pytest-xdist is not installed in ${python}: running the Python suite serially (slower). Fix: ${python} -m pip install pytest-xdist`) } catch { /* logging never breaks the gate */ }
+    return []
+  }
+}
+
+export async function _defaultRunTests(cwd, exec, progress = noProgress, parallelArgs = pytestParallelArgs) {
   const dashboardDir = path.join(cwd, 'dashboard')
   // Each output chunk is a heartbeat for the gate's time limit; the parsers turn the runners' own lines into counts.
   const watch = (runner, label, totalFiles = 0) => {
@@ -161,10 +174,11 @@ export async function _defaultRunTests(cwd, exec, progress = noProgress) {
   // avoid.
   await exec('npm', ['install'], { cwd: dashboardDir, onOutput: () => progress('installing', 'output') })
   progress('installing', 'done')
-  progress('tests', 'running', { detail: 'Python' })
+  const parallel = await parallelArgs()
+  progress('tests', 'running', { detail: parallel.length ? 'Python' : 'Python (serial: pytest-xdist missing)', logDetail: !parallel.length })
   // MARVIN_MERGE_GATE: tests that read ANOTHER repo's data (the portfolio figures) stay out of a PR's gate; they run in the
   // main-branch health check instead (lib/main_health.py).
-  await exec(VENV_PYTHON, ['-m', 'pytest', '-q'], { cwd, env: { ...process.env, MARVIN_MERGE_GATE: '1' }, onOutput: watch('pytest', 'Python') })
+  await exec(VENV_PYTHON, ['-m', 'pytest', '-q', ...parallel], { cwd, env: { ...process.env, MARVIN_MERGE_GATE: '1' }, onOutput: watch('pytest', 'Python') })
   progress('tests', 'running', { detail: 'Dashboard', logDetail: true })
   await exec('npx', ['vitest', 'run'], { cwd: dashboardDir, onOutput: watch('vitest', 'Dashboard', countTestFiles(path.join(dashboardDir, 'test'))) })
 }
