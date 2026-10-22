@@ -1,5 +1,7 @@
 # Changelog
 
+- Main is red on two portfolio tests (project-card parity, reference templates) ([#588](https://github.com/G-Eskayo/marvin/pull/588))
+
 - Release dead ticket claims automatically, so the queue never freezes on a run that died ([#582](https://github.com/G-Eskayo/marvin/pull/582))
 
 - Docs: fold the Files tab into Docs (chosen layout from #562) ([#579](https://github.com/G-Eskayo/marvin/pull/579))
