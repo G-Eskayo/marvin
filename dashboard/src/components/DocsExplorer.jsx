@@ -4,6 +4,7 @@ import Related, { useRelated } from './Related.jsx'
 import { extractOutline } from '../lib/docs_text.js'
 import { isNotebookPath, notebookToMarkdown } from '../lib/ipynb.js'
 import { docsCacheFrom, savedCopyLine } from '../lib/docs_cache.js'
+import { getCachedFile, putCachedFile, clearCachedFiles, prefetchTextFiles } from '../lib/outbox_text_cache.js'
 import { KINDS, KIND_LABEL, groupTree, visibleKinds, toggleChip, mainView, searchGroups, countLine, overviewPicks, formatDay, matchedBy, deliverableSummary } from '../lib/docs_view.js'
 import { formatSize as kindSize } from '../lib/file_kinds.js'
 import { DeliverablesGrid, DeliverableHeader, FolderGrid, TicketChip, Thumbs } from './DocsDeliverables.jsx'
@@ -127,7 +128,14 @@ function OutboxChildren({ path, depth, sel, onSelectFile, onSelectFolder, open, 
   const [listing, setListing] = useState(null)
   useEffect(() => {
     let live = true
-    window.api.outbox.list(path).then((l) => live && setListing(l)).catch(() => live && setListing({ entries: [], more: 0 }))
+    window.api.outbox
+      .list(path)
+      .then((l) => {
+        if (!live) return
+        setListing(l)
+        prefetchTextFiles(l.entries, (p) => window.api.outbox.content(p)) // at idle: the next open renders at once
+      })
+      .catch(() => live && setListing({ entries: [], more: 0 }))
     return () => {
       live = false
     }
@@ -309,6 +317,16 @@ function SavedCopyNote({ line }) {
 }
 
 const HEADING_SELECTOR = 'h1,h2,h3,h4,h5,h6'
+
+// Docs already read this session (#570 speed budget: a reopen renders once, with no IPC). Bounded; cleared by the
+// `docs` trigger (a local doc or git ref changed) and per repo when a GitHub-only project's check finds a change.
+const docTexts = new Map()
+function rememberDoc(key, text) {
+  if (typeof text !== 'string' || text.length > 400 * 1024) return
+  docTexts.delete(key)
+  docTexts.set(key, text)
+  while (docTexts.size > 60) docTexts.delete(docTexts.keys().next().value)
+}
 
 // A function whose identity never changes but always calls the latest `fn`: lets the memoized sidebar and tree skip
 // re-rendering when only the main pane's content changes (speed budget, #570).
@@ -634,7 +652,15 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
 
   // Local docs, git refs or the outbox changed (file watches in the main process): refresh what is on screen in
   // place, without resetting scroll or selection.
-  useEffect(() => window.api.triggers.on((t) => (t.topic === 'docs' || t.topic === 'outbox') && setDocsTick((n) => n + 1)), [])
+  useEffect(
+    () =>
+      window.api.triggers.on((t) => {
+        if (t.topic === 'outbox') clearCachedFiles() // outbox changed: never show stale deliverable text
+        if (t.topic === 'docs') docTexts.clear() // a doc changed on disk: re-read on the next open
+        if (t.topic === 'docs' || t.topic === 'outbox') setDocsTick((n) => n + 1)
+      }),
+    []
+  )
   // The badges' background git status came back different: redraw the tree in place.
   const [statesTick, setStatesTick] = useState(0)
   useEffect(() => window.api.triggers.on((t) => t.topic === 'docs-states' && setStatesTick((n) => n + 1)), [])
@@ -648,7 +674,10 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
     if (selectedRepo && selectedPath) {
       window.api.docs
         .content(selectedRepo, selectedPath)
-        .then((text) => setContent((cur) => (cur === text ? cur : text)))
+        .then((text) => {
+          rememberDoc(`${selectedRepo}\0${selectedPath}`, text)
+          setContent((cur) => (cur === text ? cur : text))
+        })
         .catch(() => {})
     }
   }, [docsTick])
@@ -769,6 +798,7 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
           setCopyCheck({ copy: v.copy || r.copy, status: v.status })
           if (v.tree) setTree(v.tree)
           const open = openRef.current.path
+          if (v.status === 'changed') for (const k of [...docTexts.keys()]) if (k.startsWith(`${repoName}\0`)) docTexts.delete(k)
           if (v.status === 'changed' && open && open !== 'PROJECT.md') {
             window.api.docs
               .content(repoName, open)
@@ -792,15 +822,24 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
 
   function openFile(repoName, filePath, headingIndex = null) {
     setSel({ type: 'doc', path: filePath })
-    setContent(null)
     setFile(null)
-    setLoading(true)
     setError(null)
     setShowResults(false)
     setPendingHeading(headingIndex)
+    const key = `${repoName}\0${filePath}`
+    if (docTexts.has(key)) {
+      setContent(docTexts.get(key)) // read before: one render, no IPC; a docs trigger clears these
+      setLoading(false)
+      return
+    }
+    setContent(null)
+    setLoading(true)
     window.api.docs
       .content(repoName, filePath)
-      .then((text) => setContent(text))
+      .then((text) => {
+        rememberDoc(key, text)
+        setContent(text)
+      })
       .catch((err) => setError(String(err)))
       .finally(() => setLoading(false))
   }
@@ -812,11 +851,20 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
     setSel({ type: 'deliverable', path: rel })
     setShowResults(false)
     setError(null)
+    const cached = getCachedFile(rel)
+    if (cached) {
+      setFile(cached) // already read: one render, no IPC
+      setLoading(false)
+      return
+    }
     setFile(null)
     setLoading(true)
     window.api.outbox
       .content(rel)
-      .then((f) => req === fileReq.current && setFile(f))
+      .then((f) => {
+        putCachedFile(rel, f)
+        if (req === fileReq.current) setFile(f)
+      })
       .catch((err) => req === fileReq.current && setError(String(err)))
       .finally(() => req === fileReq.current && setLoading(false))
   }

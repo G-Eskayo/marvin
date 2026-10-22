@@ -185,6 +185,15 @@ try {
   }
   report('open a 500-page PDF, first page drawn (5): median / max (ms)', `${pct(pdfTimes, 50)} / ${Math.max(...pdfTimes)}`)
   report('  each (ms)', pdfTimes)
+  // Cold markdown opens: loose files in marvin's Deliverables, never prefetched or opened before (no cache).
+  const mdReady = `(() => !!document.querySelector('.flex-1.overflow-auto h1, .flex-1.overflow-auto h2') && !document.body.innerText.includes('Loading…'))()`
+  const cold = []
+  for (const n of ['audit-research-colony-daily-digest-2026-10-15.md', 'pr-119-code-review-findings.md']) {
+    await click('.w-72 button', 'Project card', true)
+    await sleep(300)
+    cold.push(await clickTimed('.w-72 button', n, mdReady))
+  }
+  report('open a markdown deliverable cold (never read before) (ms)', cold)
   const clickNet = netLines().slice(mark)
   report('network calls during all the clicks above (Docs-related)', clickNet.filter(isDocsNet).length)
   report('all gh/fetch lines in that window, by command', Object.entries(clickNet.reduce((m, l) => { const k = l.split(' ').slice(1, 4).join(' '); m[k] = (m[k] || 0) + 1; return m }, {})))
