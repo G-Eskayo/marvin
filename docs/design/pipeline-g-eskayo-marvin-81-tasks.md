@@ -1,0 +1,4 @@
+1. `dashboard/test/usage_view_render.test.jsx`: rewrite the job-table test to assert a real job name renders (test 1), add the empty-jobs inverse test (test 2).
+2. `dashboard/test/usage_view_render.test.jsx`: rewrite the reference-line test to assert all three percentage labels render (test 3), add the 100%-share inverse test (test 4).
+3. Run `npx vitest run dashboard/test/usage_view_render.test.jsx`; temporarily revert each of `UsageView.jsx`'s job-table rendering and reference-line rendering in turn (locally, not committed) and confirm tests 1 and 3 each fail without the corresponding code — this is the check that the new assertions actually catch the regression the code review described — then restore and confirm green.
+4. Run the full `pytest -q` and `npx vitest run` suites once more to confirm no count regression against the last comparison baseline (pytest 3218/0, vitest 2080/0) — no production code changes are expected to move these numbers.

@@ -161,7 +161,7 @@ def _diagnose(issue: dict, spec: dict, value: float, per: dict) -> str:
               f"{spec['baseline']:g}; target {spec['target']}.\n\nIn at most 6 lines, give the most likely reasons, "
               "grounded in the code and data you can read (cite files). No fixes yet, just the why. Grounded, not agreeable.")
     result = marvin_launcher.launch("background-analyst", prompt, tools="Read,Grep,Glob", permission_mode="dontAsk",
-                                    allowed_tools="Read,Grep,Glob", timeout=600, ticket=f"#{issue['number']}")
+                                    allowed_tools="Read,Grep,Glob", timeout=600, ticket="purpose-metrics")
     return result.text.strip() or "(the analyst gave no answer; investigate by hand)"
 
 

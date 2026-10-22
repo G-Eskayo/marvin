@@ -60,8 +60,8 @@ def _default_evaluator(finding_text: str) -> dict:
         f"Finding:\n{finding_text}\n\n"
         "Respond with exactly two lines:\nPROMOTE: yes or no\nREASONING: <one or two sentences>"
     )
-    stdout = marvin_launcher.launch("background-analyst", prompt, model=EVALUATOR_MODEL, permission_mode=None,
-                                    timeout=EVALUATE_TIMEOUT_S).text
+    stdout = marvin_launcher.launch("background-analyst", prompt, model=EVALUATOR_MODEL, ticket="ticket-promotion",
+                                    permission_mode=None, timeout=EVALUATE_TIMEOUT_S).text
     promote_match = PROMOTE_RE.search(stdout)
     reasoning_match = REASONING_RE.search(stdout)
     return {
@@ -83,8 +83,8 @@ def _default_ticket_creator(finding_text: str, reasoning: str) -> str | None:
         "remains. If nothing remains, reply with exactly NOTHING_LEFT.\n\n"
         f"Finding:\n{finding_text}\n\nWhy it was promoted (compounding leverage): {reasoning}"
     )
-    text = marvin_launcher.launch("background-analyst", prompt, model=CREATOR_MODEL, tools="", permission_mode=None,
-                                  timeout=CREATE_TIMEOUT_S).text
+    text = marvin_launcher.launch("background-analyst", prompt, model=CREATOR_MODEL, tools="", ticket="ticket-promotion",
+                                  permission_mode=None, timeout=CREATE_TIMEOUT_S).text
     if text.strip() == "NOTHING_LEFT":
         return NOTHING_LEFT
     m = re.match(r"\s*TITLE:\s*(.+?)\s*\n-{3,}\s*\n(.+)", text, re.S)

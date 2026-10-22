@@ -1299,3 +1299,102 @@ def test_the_machine_script_reads_a_real_process_uptime_with_this_machines_ps():
         assert 1 <= int(out.stdout.strip()) <= 20
     finally:
         child.kill()
+
+
+# ── autonomous share health ──────────────────────────────────────────────────
+
+def test_check_autonomous_share_green_when_below_50_percent(tmp_path, monkeypatch):
+    import session_usage
+    usage_data = {
+        "generated_at": datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc).isoformat(),
+        "rows": [
+            {"day": "2026-10-06", "autonomous": "autonomous", "output": 100},
+            {"day": "2026-10-06", "autonomous": "interactive", "output": 200},
+        ],
+    }
+    usage_path = tmp_path / "token-usage.json"
+    usage_path.write_text(json.dumps(usage_data))
+    monkeypatch.setattr(session_usage, "OUT_PATH", usage_path)
+    result = hc.check_autonomous_share(now=datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc))
+    assert result["severity"] == "green"
+
+
+def test_check_autonomous_share_yellow_when_above_50_percent():
+    usage_data = {
+        "generated_at": datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc).isoformat(),
+        "rows": [
+            {"day": "2026-10-06", "autonomous": "autonomous", "output": 150},
+            {"day": "2026-10-06", "autonomous": "interactive", "output": 100},
+        ],
+    }
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        usage_path = Path(d) / "token-usage.json"
+        usage_path.write_text(json.dumps(usage_data))
+        import session_usage
+        import unittest.mock as mock
+        with mock.patch.object(session_usage, "OUT_PATH", usage_path):
+            result = hc.check_autonomous_share(now=datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc))
+    assert result["severity"] == "yellow"
+    assert "60%" in result["detail"]
+
+
+def test_check_autonomous_share_green_when_no_data():
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        usage_path = Path(d) / "token-usage.json"
+        import session_usage
+        import unittest.mock as mock
+        with mock.patch.object(session_usage, "OUT_PATH", usage_path):
+            result = hc.check_autonomous_share(now=datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc))
+    assert result["severity"] == "green"
+
+
+def test_check_autonomous_share_latest_day_only():
+    usage_data = {
+        "generated_at": datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc).isoformat(),
+        "rows": [
+            {"day": "2026-10-05", "autonomous": "autonomous", "output": 500},
+            {"day": "2026-10-05", "autonomous": "interactive", "output": 10},
+            {"day": "2026-10-06", "autonomous": "autonomous", "output": 10},
+            {"day": "2026-10-06", "autonomous": "interactive", "output": 500},
+        ],
+    }
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        usage_path = Path(d) / "token-usage.json"
+        usage_path.write_text(json.dumps(usage_data))
+        import session_usage
+        import unittest.mock as mock
+        with mock.patch.object(session_usage, "OUT_PATH", usage_path):
+            result = hc.check_autonomous_share(now=datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc))
+    assert result["severity"] == "green"  # 10/(10+500) = 2%, below 50%
+
+
+def test_check_autonomous_share_handles_malformed_json():
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        usage_path = Path(d) / "token-usage.json"
+        usage_path.write_text("not valid json")
+        import session_usage
+        import unittest.mock as mock
+        with mock.patch.object(session_usage, "OUT_PATH", usage_path):
+            result = hc.check_autonomous_share(now=datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc))
+    assert result["severity"] == "green"  # degrade to green on malformed input
+
+
+def test_check_autonomous_share_handles_missing_file():
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        usage_path = Path(d) / "token-usage.json"
+        import session_usage
+        import unittest.mock as mock
+        with mock.patch.object(session_usage, "OUT_PATH", usage_path):
+            result = hc.check_autonomous_share(now=datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc))
+    assert result["severity"] == "green"
+
+
+def test_run_all_includes_autonomous_share_check():
+    checks = hc.default_checks()
+    check_ids = [c[0] for c in checks]
+    assert "usage:autonomous-share" in check_ids

@@ -99,3 +99,102 @@ def test_refresh_writes_the_result_with_the_machine_name(tmp_path, monkeypatch):
     tu.refresh(out_path=out, root=root, now=NOW)
     data = json.loads(out.read_text())
     assert data["machine"] == "mac-mini-1" and data["totals"]["messages"] == 1
+
+
+def test_autonomous_detection_based_on_entrypoint(tmp_path):
+    f = write(tmp_path, "a.jsonl", [
+        line("m1", entry="cli"),  # cli = interactive run, never autonomous
+        line("m2", entry="sdk-cli"),  # sdk-cli = headless (pipeline/agent), always autonomous
+    ])
+    r = tu.aggregate([f], now=NOW)
+    rows_by_kind = {row["kind"]: row["autonomous"] for row in r["rows"]}
+    assert rows_by_kind["interactive"] == "interactive"
+    assert rows_by_kind["headless"] == "autonomous"
+
+
+def test_rows_include_autonomous_axis(tmp_path):
+    f = write(tmp_path, "a.jsonl", [line("m1", ts="2026-10-05T10:00:00Z", out=100, entry="sdk-cli")])
+    r = tu.aggregate([f], now=NOW)
+    assert r["rows"][0]["autonomous"] == "autonomous"
+
+
+def test_rows_group_by_day_kind_model_and_autonomous(tmp_path):
+    f = write(tmp_path, "a.jsonl", [
+        line("a", ts="2026-10-05T10:00:00Z", out=100, entry="cli"),
+        line("b", ts="2026-10-05T10:00:00Z", out=50, entry="cli"),
+    ])
+    r = tu.aggregate([f], now=NOW)
+    # Both are interactive (entrypoint='cli'), same day/kind/model/autonomous
+    assert len(r["rows"]) == 1
+    assert r["rows"][0]["output"] == 150
+
+
+def test_by_job_aggregates_launch_log(tmp_path, monkeypatch):
+    import marvin_launcher
+    log_path = tmp_path / "launches.jsonl"
+    log_path.write_text(
+        json.dumps({"at": "2026-10-05T10:00:00Z", "ticket": "daily-digest", "output_tokens": 100, "input_tokens": 10}) + "\n" +
+        json.dumps({"at": "2026-10-05T10:00:00Z", "ticket": "daily-digest", "output_tokens": 50, "input_tokens": 5}) + "\n" +
+        json.dumps({"at": "2026-10-05T10:00:00Z", "ticket": "auto-fix", "output_tokens": 30, "input_tokens": 3}) + "\n"
+    )
+    monkeypatch.setattr(marvin_launcher, "LAUNCH_LOG", log_path)
+    root = tmp_path / "projects"
+    root.mkdir()
+    r = tu.aggregate([], now=NOW)  # just load from launch log
+    assert len(r["by_job"]) == 2
+    daily = next((j for j in r["by_job"] if j["job"] == "daily-digest"), None)
+    assert daily is not None and daily["output"] == 150 and daily["messages"] == 2
+
+
+def test_by_job_respects_window_days(tmp_path, monkeypatch):
+    import marvin_launcher
+    log_path = tmp_path / "launches.jsonl"
+    log_path.write_text(
+        json.dumps({"at": "2026-10-05T10:00:00Z", "ticket": "daily-digest", "output_tokens": 100, "input_tokens": 10}) + "\n" +
+        json.dumps({"at": "2026-08-01T10:00:00Z", "ticket": "old-job", "output_tokens": 50, "input_tokens": 5}) + "\n"
+    )
+    monkeypatch.setattr(marvin_launcher, "LAUNCH_LOG", log_path)
+    r = tu.aggregate([], now=NOW, window_days=30)
+    by_job = r["by_job"]
+    assert len(by_job) == 1
+    assert by_job[0]["job"] == "daily-digest"
+
+
+def test_by_job_capped_at_top_jobs(tmp_path, monkeypatch):
+    import marvin_launcher
+    log_path = tmp_path / "launches.jsonl"
+    lines = []
+    for i in range(30):
+        lines.append(json.dumps({"at": "2026-10-05T10:00:00Z", "ticket": f"job-{i}", "output_tokens": 100 - i, "input_tokens": 10}))
+    log_path.write_text("\n".join(lines) + "\n")
+    monkeypatch.setattr(marvin_launcher, "LAUNCH_LOG", log_path)
+    r = tu.aggregate([], now=NOW)
+    assert len(r["by_job"]) == tu.TOP_JOBS
+    # Largest output first
+    assert r["by_job"][0]["output"] == 100
+
+
+def test_aggregate_ignores_malformed_lines_in_transcript(tmp_path):
+    f = write(tmp_path, "a.jsonl", [
+        "not json at all",
+        line("m1", out=100),
+        '{"incomplete": "json"',
+        line("m2", out=50),
+    ])
+    r = tu.aggregate([f], now=NOW)
+    assert r["totals"]["output"] == 150
+    assert r["totals"]["messages"] == 2
+
+
+def test_launch_log_ignores_malformed_lines(tmp_path, monkeypatch):
+    import marvin_launcher
+    log_path = tmp_path / "launches.jsonl"
+    log_path.write_text(
+        json.dumps({"at": "2026-10-05T10:00:00Z", "ticket": "good-1", "output_tokens": 100, "input_tokens": 10}) + "\n" +
+        "not json\n" +
+        json.dumps({"at": "2026-10-05T10:00:00Z", "ticket": "good-2", "output_tokens": 50, "input_tokens": 5}) + "\n"
+    )
+    monkeypatch.setattr(marvin_launcher, "LAUNCH_LOG", log_path)
+    r = tu.aggregate([], now=NOW)
+    assert len(r["by_job"]) == 2
+    assert sum(j["output"] for j in r["by_job"]) == 150

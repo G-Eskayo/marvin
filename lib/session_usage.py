@@ -29,6 +29,7 @@ TRANSCRIPTS = HOME / ".claude" / "projects"
 OUT_PATH = HOME / ".claude" / "logs" / "token-usage.json"
 WINDOW_DAYS = 30
 TOP_TICKETS = 40
+TOP_JOBS = 20
 
 _WORKTREE = re.compile(r"pipeline-g-eskayo-(.+?)[-#](\d+)(?=/|$)")  # older worktrees keep the '#' in the directory name
 _PROJECT_ROOTS = re.compile(r"/(?:Developer|Documents/Projects(?:/experiments)?)/([^/]+)")
@@ -73,6 +74,11 @@ def _kind(d) -> str:
     return "subagent" if d.get("isSidechain") else ("interactive" if d.get("entrypoint") in (None, "cli") else "headless")
 
 
+def _autonomous(d) -> str:
+    """'autonomous' if the run was headless (pipeline/agent), 'interactive' if interactive."""
+    return "autonomous" if d.get("entrypoint") not in (None, "cli") else "interactive"
+
+
 def _blank():
     return {f: 0 for f in FIELDS}
 
@@ -113,6 +119,8 @@ def aggregate(files, now: datetime | None = None, window_days: int = WINDOW_DAYS
                 d = json.loads(raw)
             except json.JSONDecodeError:
                 continue
+            if not isinstance(d, dict):
+                continue
             msg = d.get("message") or {}
             u = msg.get("usage")
             when = _parse_ts(d.get("timestamp"))
@@ -121,12 +129,12 @@ def aggregate(files, now: datetime | None = None, window_days: int = WINDOW_DAYS
             project, ticket = attribute(d.get("cwd"))
             messages[msg["id"]] = {
                 "day": when.date().isoformat(), "kind": _kind(d), "model": msg.get("model") or "?", "project": project, "ticket": ticket,
-                "usage": {"input": u.get("input_tokens", 0) or 0, "output": u.get("output_tokens", 0) or 0,
+                "autonomous": _autonomous(d), "usage": {"input": u.get("input_tokens", 0) or 0, "output": u.get("output_tokens", 0) or 0,
                           "cache_write": u.get("cache_creation_input_tokens", 0) or 0, "cache_read": u.get("cache_read_input_tokens", 0) or 0}}
     totals, rows, projects, tickets = _blank(), defaultdict(_blank), defaultdict(_blank), defaultdict(_blank)
     for m in messages.values():
         _add(totals, m["usage"])
-        _add(rows[(m["day"], m["kind"], m["model"])], m["usage"])
+        _add(rows[(m["day"], m["kind"], m["model"], m["autonomous"])], m["usage"])
         _add(projects[(m["project"], m["kind"])], m["usage"])
         if m["ticket"] is not None:
             _add(tickets[(m["project"], m["ticket"])], m["usage"])
@@ -136,13 +144,50 @@ def aggregate(files, now: datetime | None = None, window_days: int = WINDOW_DAYS
         for f_ in FIELDS:
             p[f_] += rec[f_]
         p["by_kind"][kind] = rec["output"]
+    by_job: dict = _load_jobs_from_launch_log(window_days, now)
     return {
         "generated_at": now.isoformat(), "window_days": window_days, "machine": machine_id(), "files_scanned": len(list(files)),
         "totals": totals,
-        "rows": [{"day": d, "kind": k, "model": mo, **rec} for (d, k, mo), rec in sorted(rows.items())],
+        "rows": [{"day": d, "kind": k, "model": mo, "autonomous": a, **rec} for (d, k, mo, a), rec in sorted(rows.items())],
         "by_project": sorted(by_project.values(), key=lambda p: -p["output"]),
         "by_ticket": sorted(({"project": p, "ticket": t, **rec} for (p, t), rec in tickets.items()), key=lambda x: -x["output"])[:TOP_TICKETS],
+        "by_job": by_job,
     }
+
+
+def _load_jobs_from_launch_log(window_days: int = WINDOW_DAYS, now: datetime | None = None) -> list[dict]:
+    """Aggregate autonomous jobs from the launch log, capped at TOP_JOBS."""
+    import marvin_launcher
+    now = now or datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=window_days)
+    by_job = defaultdict(_blank)
+    try:
+        lines = marvin_launcher.LAUNCH_LOG.read_text(errors="ignore").splitlines()
+    except (OSError, AttributeError):
+        return []
+    for raw in lines:
+        try:
+            d = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(d, dict):
+            continue
+        when = _parse_ts(d.get("at"))
+        if when is None or when < cutoff:
+            continue
+        job = d.get("ticket") or "unknown"
+        usage_dict = {
+            "input": d.get("input_tokens", 0) or 0,
+            "output": d.get("output_tokens", 0) or 0,
+            "cache_write": d.get("cache_write_tokens", 0) or 0,
+            "cache_read": d.get("cache_read_tokens", 0) or 0,
+        }
+        rec = by_job[job]
+        _add(rec, usage_dict)
+    return sorted(
+        ({"job": job, **rec} for job, rec in by_job.items()),
+        key=lambda x: -x["output"]
+    )[:TOP_JOBS]
 
 
 def refresh(out_path: Path = OUT_PATH, root: Path = TRANSCRIPTS, window_days: int = WINDOW_DAYS, now=None) -> dict:

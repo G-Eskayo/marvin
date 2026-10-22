@@ -781,6 +781,33 @@ TRIGGER_MISS_LOG = Path.home() / ".claude" / "logs" / "trigger-misses.jsonl"
 TRIGGER_MISS_WINDOW_HOURS = 24
 
 
+def check_autonomous_share(now: datetime | None = None) -> dict:
+    """Latest-day-only: yellow if autonomous (pipeline/agent) runs exceed 50% of output tokens."""
+    cid, label = "usage:autonomous-share", "Autonomous run share"
+    now = now or _now()
+    try:
+        import session_usage
+        data = json.loads(session_usage.OUT_PATH.read_text())
+        rows = data.get("rows", [])
+        if not rows:
+            return _result(cid, label, "green", "no usage data")
+        latest_day = max((r.get("day") for r in rows), default=None)
+        if not latest_day:
+            return _result(cid, label, "green", "no usage data")
+        day_rows = [r for r in rows if r.get("day") == latest_day]
+        auto_output = sum(r.get("output", 0) for r in day_rows if r.get("autonomous") == "autonomous")
+        total_output = sum(r.get("output", 0) for r in day_rows)
+        if total_output == 0:
+            return _result(cid, label, "green", "no output tokens today")
+        share = auto_output / total_output
+        pct = round(share * 100)
+        if share > 0.5:
+            return _result(cid, label, "yellow", f"{pct}% autonomous (pipeline/agent runs); >50% indicates heavy automation", value=pct)
+        return _result(cid, label, "green", f"{pct}% autonomous", value=pct)
+    except Exception:  # noqa: BLE001
+        return _result(cid, label, "green", "no usage data yet or malformed")
+
+
 def check_trigger_coverage(log_path: Path | None = None, now: datetime | None = None) -> dict:
     """Yellow when the dashboard's slow backstop poll found changes no trigger announced
     (logged by the app's reconciler): a place state changes that has no trigger yet."""
@@ -1477,6 +1504,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("contract", "Output contracts", check_output_contracts, CHECK_BUDGET_S),
         ("profile:missing", "Projects without an execution profile", check_missing_profiles, CHECK_BUDGET_S),
         ("profile:no-machines", "Projects with no machines", check_unrunnable_profiles, CHECK_BUDGET_S),
+        ("usage:autonomous-share", "Autonomous run share", check_autonomous_share, CHECK_BUDGET_S),
         ("triggers:missed", "Dashboard triggers cover every change", check_trigger_coverage, CHECK_BUDGET_S),
         ("catalog:fresh", "Project catalog is current", check_catalog_fresh, CHECK_BUDGET_S),
         ("tickets:project-tags", "Tickets are on their project's board", check_project_tags, CHECK_BUDGET_S),

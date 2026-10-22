@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
-import { mergeTokenRows, dailySeries, sumRows, projectTable, ticketTable } from '../lib/usage_view.js'
+import { mergeTokenRows, dailySeries, sumRows, projectTable, ticketTable, autonomousSeries, weeklySeries, jobTable } from '../lib/usage_view.js'
 
 const KIND_STYLE = { headless: ['#3b82f6', 'Pipeline (headless)'], interactive: ['#10b981', 'Interactive'], subagent: ['#a78bfa', 'Subagents'] }
+const AUTONOMOUS_STYLE = { autonomous: ['#f59e0b', 'Autonomous (pipeline/agents)'], interactive: ['#10b981', 'Interactive'] }
 const fmt = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(0)}k` : String(n))
 
 function Stat({ label, value, hint }) {
@@ -11,6 +12,39 @@ function Stat({ label, value, hint }) {
       <p className="text-xl font-semibold text-white">{value}</p>
       {hint && <p className="text-[11px] text-neutral-600">{hint}</p>}
     </div>
+  )
+}
+
+// Stacked autonomous/interactive bars with reference lines at 30/40/50%
+function ShareBars({ series, height = 100, isWeekly = false }) {
+  const W = 760, H = height, bw = W / series.length
+  const refLines = [0.3, 0.4, 0.5]
+  return (
+    <svg viewBox={`0 0 ${W} ${H + 18}`} className="w-full" role="img" aria-label={isWeekly ? "Autonomous vs interactive share per week" : "Autonomous vs interactive share per day"}>
+      {/* Reference lines */}
+      {refLines.map((pct) => (
+        <g key={`ref-${pct}`}>
+          <line x1="0" y1={H - H * pct} x2={W} y2={H - H * pct} stroke="#404040" strokeDasharray="4,2" strokeWidth="0.5" />
+          <text x={W + 2} y={H - H * pct + 3} fontSize="8" fill="#737373">{Math.round(pct * 100)}%</text>
+        </g>
+      ))}
+      {/* Bars */}
+      {series.map((d, i) => {
+        const total = d.total || 1
+        const autoFrac = d.autonomous / total
+        const interFrac = d.interactive / total
+        const label = isWeekly ? (d.startDay ? d.startDay.slice(5) : '') : (d.day ? d.day.slice(5) : '')
+        const key = d.weekIndex !== undefined ? `w${d.weekIndex}` : d.day
+        return (
+          <g key={key}>
+            <title>{`${label}: ${Math.round(autoFrac * 100)}% autonomous`}</title>
+            <rect x={i * bw + 1} y={H * (1 - autoFrac)} width={bw - 2} height={H * autoFrac} fill={AUTONOMOUS_STYLE.autonomous[0]} />
+            <rect x={i * bw + 1} y={H * (1 - autoFrac - interFrac)} width={bw - 2} height={H * interFrac} fill={AUTONOMOUS_STYLE.interactive[0]} />
+            {i % 5 === 0 && <text x={i * bw} y={H + 13} fontSize="9" fill="#737373">{label}</text>}
+          </g>
+        )
+      })}
+    </svg>
   )
 }
 
@@ -55,10 +89,13 @@ export default function UsageView({ machines, which }) {
   const rows = useMemo(() => mergeTokenRows(machines, which), [machines, which])
   const projects = useMemo(() => projectTable(machines, which), [machines, which])
   const tickets = useMemo(() => ticketTable(machines, which), [machines, which])
+  const jobs = useMemo(() => jobTable(machines, which), [machines, which])
   if (rows.length === 0) return <p className="p-2 text-neutral-500">No token usage scan for {which === 'all' ? 'any machine' : which} yet. It is created within the hour.</p>
 
   const end = new Date().toISOString().slice(0, 10)
   const series = dailySeries(rows, { days: 30, end, metric })
+  const autoSeries = autonomousSeries(rows, { days: 30, end, metric: 'output' })
+  const weeklySeries_data = weeklySeries(rows, { weeks: 4, end, metric: 'output' })
   const d7 = sumRows(rows, { days: 7, end })
   const d30 = sumRows(rows, { days: 30, end })
   const headlessShare = d30.output ? d30.byKind.headless / d30.output : 0
@@ -78,6 +115,19 @@ export default function UsageView({ machines, which }) {
       </div>
 
       <div className="mt-5 flex items-center justify-between">
+        <h3 className="text-sm font-medium text-neutral-200">Autonomous vs interactive share, last 30 days</h3>
+      </div>
+      <div className="mt-2 rounded border border-neutral-800 bg-neutral-900 p-3">
+        <ShareBars series={autoSeries} />
+        <div className="mt-1 flex gap-4 text-[11px] text-neutral-500">
+          {Object.entries(AUTONOMOUS_STYLE).map(([k, [color, label]]) => (
+            <span key={k} className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-sm" style={{ background: color }} />{label}</span>
+          ))}
+        </div>
+        <p className="mt-2 text-[11px] text-neutral-600">Dashed lines at 30%, 40%, 50% for reference. Yellow alert when {'>'} 50% autonomous share.</p>
+      </div>
+
+      <div className="mt-5 flex items-center justify-between">
         <h3 className="text-sm font-medium text-neutral-200">Per day, last 30 days</h3>
         <div className="flex gap-1">
           {[['output', 'Output tokens'], ['all', 'All tokens']].map(([id, label]) => (
@@ -89,6 +139,18 @@ export default function UsageView({ machines, which }) {
         <DailyBars series={series} metric={metric} />
         <div className="mt-1 flex gap-4 text-[11px] text-neutral-500">
           {Object.entries(KIND_STYLE).map(([k, [color, label]]) => (
+            <span key={k} className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-sm" style={{ background: color }} />{label}</span>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-5">
+        <h3 className="text-sm font-medium text-neutral-200">Per week, last 4 weeks</h3>
+      </div>
+      <div className="mt-2 rounded border border-neutral-800 bg-neutral-900 p-3">
+        <ShareBars series={weeklySeries_data} height={80} isWeekly={true} />
+        <div className="mt-1 flex gap-4 text-[11px] text-neutral-500">
+          {Object.entries(AUTONOMOUS_STYLE).map(([k, [color, label]]) => (
             <span key={k} className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-sm" style={{ background: color }} />{label}</span>
           ))}
         </div>
@@ -120,6 +182,23 @@ export default function UsageView({ machines, which }) {
                   <td className="py-1 pr-2">{t.project} <span className="text-neutral-500">#{t.ticket}</span></td>
                   <td className="py-1 text-right">{fmt(t.output)}</td>
                   <td className="py-1 text-right text-neutral-500">{t.messages.toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Table>
+
+      <Table title="Top autonomous spenders" hint="The background agents/pipeline jobs that used the most output tokens. Each job is a distinct automation task.">
+        {jobs.length === 0 ? <p className="text-xs text-neutral-600">No autonomous jobs in this window.</p> : (
+          <table className="w-full text-sm">
+            <thead><tr className="text-left text-xs text-neutral-500"><th className="pb-1 font-normal">Job</th><th className="pb-1 text-right font-normal">Output</th><th className="pb-1 text-right font-normal">Responses</th></tr></thead>
+            <tbody className="font-mono text-neutral-300">
+              {jobs.slice(0, 15).map((j) => (
+                <tr key={j.job} className="border-t border-neutral-900">
+                  <td className="py-1 pr-2">{j.job}</td>
+                  <td className="py-1 text-right">{fmt(j.output)}</td>
+                  <td className="py-1 text-right text-neutral-500">{j.messages.toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>

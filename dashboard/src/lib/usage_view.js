@@ -127,4 +127,53 @@ export function machineFreshness(m, now = Date.now()) {
   return { state: 'ok', text: `updated ${agoText(now - Math.max(...stamps))}` }
 }
 
+export function autonomousSeries(rows, { days = 30, end, metric = 'output' } = {}) {
+  const list = dayList(days, end || new Date().toISOString().slice(0, 10))
+  const idx = new Map(list.map((d, i) => [d, { day: d, autonomous: 0, interactive: 0, total: 0 }]))
+  for (const r of rows) {
+    const cell = idx.get(r.day)
+    if (!cell) continue
+    const v = valueOf(r, metric)
+    const key = r.autonomous || 'interactive'
+    cell[key] = (cell[key] || 0) + v
+    cell.total += v
+  }
+  return list.map((d) => idx.get(d))
+}
+
+export function weeklySeries(rows, { weeks = 4, end, metric = 'output' } = {}) {
+  const dayList_result = dayList(weeks * 7, end || new Date().toISOString().slice(0, 10))
+  const weeks_list = Array.from({ length: weeks }, (_, i) => {
+    const startIdx = i * 7
+    const startDay = dayList_result[startIdx]
+    return { weekIndex: i, startDay }
+  })
+  const idx = new Map(weeks_list.map(w => [w.weekIndex, { weekIndex: w.weekIndex, startDay: w.startDay, autonomous: 0, interactive: 0, total: 0 }]))
+  for (const r of rows) {
+    const dayIdx = dayList_result.indexOf(r.day)
+    if (dayIdx === -1) continue
+    const weekIndex = Math.floor(dayIdx / 7)
+    if (weekIndex >= weeks) continue
+    const cell = idx.get(weekIndex)
+    if (!cell) continue
+    const v = valueOf(r, metric)
+    const key = r.autonomous || 'interactive'
+    cell[key] = (cell[key] || 0) + v
+    cell.total += v
+  }
+  return weeks_list.map(w => idx.get(w.weekIndex))
+}
+
+export function jobTable(machines, which = 'all') {
+  const byJob = new Map()
+  for (const m of pick(machines, which)) {
+    for (const j of m.tokens?.by_job || []) {
+      const cur = byJob.get(j.job) || { job: j.job, input: 0, output: 0, cache_write: 0, cache_read: 0, messages: 0 }
+      for (const f of ['input', 'output', 'cache_write', 'cache_read', 'messages']) cur[f] += j[f]
+      byJob.set(j.job, cur)
+    }
+  }
+  return [...byJob.values()].sort((a, b) => b.output - a.output)
+}
+
 export const USAGE_KINDS = KINDS
