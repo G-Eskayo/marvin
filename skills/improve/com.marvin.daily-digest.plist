@@ -11,7 +11,7 @@
         <string>/Users/gileskayo/.agents/skills/improve/scripts/daily_digest.py</string>
     </array>
 
-    <!-- Run every day at 08:30 local time -->
+    <!-- Run every day at 08:30 local time on the Mini only (primary builder; laptop fallback runs at 09:30) -->
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
