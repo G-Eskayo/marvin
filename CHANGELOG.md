@@ -1,5 +1,7 @@
 # Changelog
 
+- Release dead ticket claims automatically, so the queue never freezes on a run that died ([#582](https://github.com/G-Eskayo/marvin/pull/582))
+
 - Docs: fold the Files tab into Docs (chosen layout from #562) ([#579](https://github.com/G-Eskayo/marvin/pull/579))
 
 - main-health runs pile up (3 full test suites at once) and starve the merge gate: single-flight lock + skip docs/log-only commits ([#576](https://github.com/G-Eskayo/marvin/pull/576))
