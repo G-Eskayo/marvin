@@ -1391,3 +1391,96 @@ def test_remote_machine_label_strips_the_registry_number():
     assert hc._remote_machine_label("mac-mini-1") == "mac-mini"
     assert hc._remote_machine_label("macbook-pro-12") == "macbook-pro"
     assert hc._remote_machine_label("kali") == "kali"
+
+
+# ── autonomous output share (marvin#450 background job monitoring) ──
+
+def test_check_autonomous_share_green_on_missing_file(tmp_path):
+    r = hc.check_autonomous_share(usage_path=tmp_path / "nope.json")
+    assert r["severity"] == "green" and "missing" not in r["detail"].lower()
+
+
+def test_check_autonomous_share_green_on_zero_output_or_empty(tmp_path):
+    usage_file = tmp_path / "usage.json"
+    usage_file.write_text(json.dumps({"totals": {"output": 0}, "rows": []}))
+    r = hc.check_autonomous_share(usage_path=usage_file)
+    assert r["severity"] == "green"
+
+
+def test_check_autonomous_share_green_when_autonomous_below_50_percent(tmp_path):
+    usage_file = tmp_path / "usage.json"
+    usage_file.write_text(json.dumps({
+        "totals": {"output": 1000},
+        "rows": [
+            {"kind": "headless", "autonomous": True, "output": 300, "day": "2026-10-15"},
+            {"kind": "interactive", "autonomous": False, "output": 400, "day": "2026-10-15"}
+        ]
+    }))
+    r = hc.check_autonomous_share(usage_path=usage_file)
+    assert r["severity"] == "green" and r["value"] is not None
+
+
+def test_check_autonomous_share_yellow_when_autonomous_above_50_percent(tmp_path):
+    usage_file = tmp_path / "usage.json"
+    usage_file.write_text(json.dumps({
+        "totals": {"output": 1000},
+        "rows": [
+            {"kind": "headless", "autonomous": True, "output": 600, "day": "2026-10-15"},
+            {"kind": "interactive", "autonomous": False, "output": 200, "day": "2026-10-15"}
+        ]
+    }))
+    r = hc.check_autonomous_share(usage_path=usage_file)
+    assert r["severity"] == "yellow"
+    assert "75" in r["detail"] or "0.75" in r["detail"]
+
+
+def test_check_autonomous_share_handles_missing_rows_key(tmp_path):
+    usage_file = tmp_path / "usage.json"
+    usage_file.write_text(json.dumps({"totals": {"output": 1000}}))
+    r = hc.check_autonomous_share(usage_path=usage_file)
+    assert r["severity"] == "green"
+
+
+def test_check_autonomous_share_tolerates_non_dict_rows(tmp_path):
+    usage_file = tmp_path / "usage.json"
+    usage_file.write_text(json.dumps({
+        "totals": {"output": 1000},
+        "rows": [
+            {"kind": "headless", "autonomous": True, "output": 300, "day": "2026-10-15"},
+            "not a dict",
+            None,
+            {"kind": "interactive", "autonomous": False, "output": 200, "day": "2026-10-15"}
+        ]
+    }))
+    r = hc.check_autonomous_share(usage_path=usage_file)
+    assert r["severity"] == "yellow"  # 300 of (300+200) is 60%
+    assert r["value"] == 0.6
+
+
+def test_check_autonomous_share_guards_numeric_output(tmp_path):
+    usage_file = tmp_path / "usage.json"
+    usage_file.write_text(json.dumps({
+        "totals": {"output": 1000},
+        "rows": [
+            {"kind": "headless", "autonomous": True, "output": 300, "day": "2026-10-15"},
+            {"kind": "interactive", "autonomous": False, "output": "not a number", "day": "2026-10-15"},
+            {"kind": "interactive", "autonomous": False, "output": 200.5, "day": "2026-10-15"}
+        ]
+    }))
+    r = hc.check_autonomous_share(usage_path=usage_file)
+    assert r["severity"] == "yellow"  # 300 of (300+200.5) is ~60%
+    assert r["value"] > 0.59 and r["value"] < 0.61
+
+
+def test_run_all_includes_autonomous_share_check(monkeypatch, tmp_path):
+    usage_file = tmp_path / "usage.json"
+    usage_file.write_text(json.dumps({
+        "totals": {"output": 1000},
+        "rows": [{"kind": "headless", "autonomous": True, "output": 300, "day": "2026-10-15"}]
+    }))
+    monkeypatch.setattr(hc.mr, "latest", lambda subsystem: None)
+    monkeypatch.setattr(hc.mr, "record", lambda subsystem, metrics: None)
+    monkeypatch.setattr(hc.mr, "compare", lambda subsystem, baseline, current: None)
+    out = hc.run_all(usage_path=usage_file)
+    check_ids = {r["id"] for r in out["checks"]}
+    assert "usage:autonomous-share" in check_ids

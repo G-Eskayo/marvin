@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mergeTools, mergeRows, mergeInventory, mergeFailures, mergeTokenRows, dailySeries, sumRows, projectTable, ticketTable, machineFreshness } from '../src/lib/usage_view.js'
+import { mergeTools, mergeRows, mergeInventory, mergeFailures, mergeTokenRows, dailySeries, sumRows, projectTable, ticketTable, machineFreshness, autonomousSeries, weeklySeries, jobTable } from '../src/lib/usage_view.js'
 
 const tool = (name, calls, extra = {}) => ({ name, calls, ok: calls, error: 0, rejected: 0, interrupted: 0, invalid: 0, unresolved: 0, expected: 0, last_used: null,
   by_kind: { interactive: calls, headless: 0, subagent: 0 }, by_day: {}, causes: {}, purpose: '(no description recorded)', ...extra })
@@ -100,5 +100,123 @@ describe('skills, inventory and failures across machines', () => {
     const f = (at, tool) => ({ at, tool, outcome: 'error', kind: 'headless', message: 'm' })
     const out = mergeFailures([withInv('a', [], 1, [f('2026-10-05T10:00:00Z', 'Bash')]), withInv('b', [], 1, [f('2026-10-06T10:00:00Z', 'Read')])], 'all')
     expect(out.map((x) => [x.tool, x.machine])).toEqual([['Read', 'b'], ['Bash', 'a']])
+  })
+})
+
+describe('autonomous series', () => {
+  it('builds a day-by-day series with autonomous jobs and totals', () => {
+    const rows = [
+      row('2026-10-05', 'headless', 100, { autonomous: true }),
+      row('2026-10-05', 'interactive', 50, { autonomous: false }),
+      row('2026-10-06', 'headless', 75, { autonomous: true })
+    ]
+    const series = autonomousSeries(rows, { days: 3, end: '2026-10-06' })
+    expect(series.map((d) => d.day)).toEqual(['2026-10-04', '2026-10-05', '2026-10-06'])
+    expect(series[1]).toMatchObject({ autonomous: 100, total: 150 })
+    expect(series[2]).toMatchObject({ autonomous: 75, total: 75 })
+  })
+
+  it('fills in empty days with zero autonomous and total', () => {
+    const rows = [row('2026-10-04', 'headless', 50, { autonomous: true })]
+    const series = autonomousSeries(rows, { days: 3, end: '2026-10-06' })
+    expect(series[1]).toMatchObject({ day: '2026-10-05', autonomous: 0, total: 0 })
+  })
+
+  it('respects metric parameter (output vs all)', () => {
+    const rows = [row('2026-10-06', 'headless', 100, { autonomous: true })]
+    expect(autonomousSeries(rows, { days: 1, end: '2026-10-06', metric: 'output' })[0].total).toBe(100)
+    expect(autonomousSeries(rows, { days: 1, end: '2026-10-06', metric: 'all' })[0].total).toBe(106)
+  })
+})
+
+describe('weekly series', () => {
+  it('builds a week-by-week series with autonomous jobs', () => {
+    const rows = [
+      row('2026-10-05', 'headless', 100, { autonomous: true }),
+      row('2026-10-06', 'interactive', 50, { autonomous: false })
+    ]
+    const series = weeklySeries(rows, { weeks: 2, end: '2026-10-06' })
+    expect(series).toHaveLength(2)
+    expect(series[1].autonomous).toBeGreaterThanOrEqual(100)
+  })
+
+  it('groups rows by week correctly', () => {
+    const rows = [
+      row('2026-10-01', 'headless', 75, { autonomous: true }),
+      row('2026-10-07', 'headless', 25, { autonomous: true })
+    ]
+    const series = weeklySeries(rows, { weeks: 2, end: '2026-10-07' })
+    expect(series[0].autonomous + series[1].autonomous).toBe(100)
+  })
+
+  it('includes start and end dates in returned objects', () => {
+    const series = weeklySeries([], { weeks: 1, end: '2026-10-06' })
+    expect(series[0]).toHaveProperty('start')
+    expect(series[0]).toHaveProperty('end')
+  })
+
+  it('does not reset weeks at calendar-year boundaries', () => {
+    const rows = [
+      row('2026-12-31', 'headless', 50, { autonomous: true }),
+      row('2027-01-01', 'headless', 50, { autonomous: true })
+    ]
+    const series = weeklySeries(rows, { weeks: 2, end: '2027-01-01' })
+    expect(series[0].autonomous + series[1].autonomous).toBe(100)
+  })
+
+  it('is timezone-independent (uses UTC epoch arithmetic)', () => {
+    const rows = [row('2026-10-06', 'headless', 100, { autonomous: true })]
+    const series = weeklySeries(rows, { weeks: 1, end: '2026-10-06' })
+    expect(series[0].total).toBe(100)
+  })
+
+  it('tolerates gaps in data', () => {
+    const rows = [
+      row('2026-10-01', 'headless', 100, { autonomous: true }),
+      row('2026-10-15', 'headless', 50, { autonomous: true })
+    ]
+    const series = weeklySeries(rows, { weeks: 3, end: '2026-10-15' })
+    expect(series[0].total).toBe(100)
+    expect(series[2].total).toBe(50)
+  })
+
+  it('preserves float totals exactly', () => {
+    const rows = [
+      row('2026-10-06', 'headless', 10.5, { autonomous: true }),
+      row('2026-10-06', 'interactive', 20.7, { autonomous: false })
+    ]
+    const series = weeklySeries(rows, { weeks: 1, end: '2026-10-06' })
+    expect(series[0].autonomous).toBeCloseTo(10.5)
+    expect(series[0].total).toBeCloseTo(31.2)
+  })
+
+  it('respects metric parameter (output vs all)', () => {
+    const rows = [row('2026-10-06', 'headless', 100, { autonomous: true })]
+    expect(weeklySeries(rows, { weeks: 1, end: '2026-10-06', metric: 'output' })[0].total).toBe(100)
+    expect(weeklySeries(rows, { weeks: 1, end: '2026-10-06', metric: 'all' })[0].total).toBe(106)
+  })
+})
+
+describe('job table', () => {
+  it('merges the same job across machines, biggest first', () => {
+    const a = m('a', null, tokens([], { by_job: [{ kind: 'background-analyst', ticket: 'daily-digest', output_tokens: 100, cost_usd: 0.1, runs: 2 }] }))
+    const b = m('b', null, tokens([], { by_job: [{ kind: 'background-analyst', ticket: 'daily-digest', output_tokens: 50, cost_usd: 0.05, runs: 1 }] }))
+    const jobs = jobTable([a, b], 'all')
+    expect(jobs).toHaveLength(1)
+    expect(jobs[0].kind).toBe('background-analyst')
+    expect(jobs[0].ticket).toBe('daily-digest')
+    expect(jobs[0].output_tokens).toBe(150)
+    expect(jobs[0].cost_usd).toBeCloseTo(0.15)
+    expect(jobs[0].runs).toBe(3)
+  })
+
+  it('sorts jobs by output tokens descending', () => {
+    const a = m('a', null, tokens([], { by_job: [
+      { kind: 'background-analyst', ticket: 'daily-digest', output_tokens: 50, cost_usd: 0.05, runs: 1 },
+      { kind: 'judge', output_tokens: 200, cost_usd: 0.2, runs: 1 }
+    ] }))
+    const jobs = jobTable([a], 'all')
+    expect(jobs[0].kind).toBe('judge')
+    expect(jobs[1].kind).toBe('background-analyst')
   })
 })

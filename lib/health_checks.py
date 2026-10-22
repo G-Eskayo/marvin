@@ -652,6 +652,50 @@ def check_github_budget(query=None) -> dict:
     return _result(cid, label, sev, f"{left:,} of {limit:,} left, resets {when}", value=left)
 
 
+def check_autonomous_share(usage_path: Path | None = None, now: datetime | None = None) -> dict:
+    """Green below 50% autonomous output; yellow above. Autonomous jobs (headless runs with non-cli entrypoint)
+    should not dominate token spend. Never red, no pause field — it's advisory."""
+    import session_usage as su
+    cid, label = "usage:autonomous-share", "Autonomous (background job) token share"
+    usage_path = usage_path or su.OUT_PATH
+    now = now or _now()
+
+    try:
+        data = json.loads(usage_path.read_text())
+    except (OSError, ValueError):
+        return _result(cid, label, "green", "no usage data available")
+
+    rows = data.get("rows", [])
+    rows = [r for r in rows if isinstance(r, dict)]
+    if not rows:
+        return _result(cid, label, "green", "no usage data available")
+
+    # Filter to the latest day only for daily assessment
+    max_day = max((r.get("day") for r in rows if r.get("day")), default=None)
+    if not max_day:
+        return _result(cid, label, "green", "no usage data available")
+
+    day_rows = [r for r in rows if r.get("day") == max_day]
+
+    def _add_output(acc, r):
+        v = r.get("output")
+        return acc + (v if isinstance(v, (int, float)) else 0)
+
+    total_output = sum(_add_output(0, r) for r in day_rows)
+
+    if total_output == 0:
+        return _result(cid, label, "green", "no token output recorded")
+
+    autonomous_output = sum(_add_output(0, r) for r in day_rows if r.get("autonomous"))
+    share = autonomous_output / total_output if total_output else 0
+
+    sev = "yellow" if share > 0.5 else "green"
+    pct = round(100 * share, 0)
+    return _result(cid, label, sev,
+                   f"autonomous jobs {pct}% of output" + (" — approaching interactive threshold" if share > 0.5 else ""),
+                   value=round(share, 2))
+
+
 def check_missing_profiles(snapshot: dict | None = None, repos: list[str] | None = None, gh=None, profiles_dir: Path | None = None) -> list[dict]:
 	"""Projects with ready-for-agent tickets but no execution profile will never dispatch.
 	This check surfaces those projects so profiles can be created and dispatch turned on.
@@ -1548,7 +1592,7 @@ def record_anomaly_metrics(results: list[dict]) -> dict | None:
 
 # ── orchestration ────────────────────────────────────────────────────────
 
-def run_all() -> dict:
+def run_all(usage_path: Path | None = None) -> dict:
     results: list[dict] = []
     results += check_token_files()
     results.append(check_intent_routing_collection())
@@ -1567,6 +1611,7 @@ def run_all() -> dict:
     results.append(check_hold_revisit())
     results.append(check_github_budget())
     results.append(check_gh_gate())
+    results.append(check_autonomous_share(usage_path=usage_path))
     results.append(check_main_health())
     seal = check_seal_beta_ingest()
     if seal:

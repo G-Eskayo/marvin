@@ -187,8 +187,8 @@ def run_review(chunk: dict, trigger_reason: str, is_threshold_trigger: bool) -> 
         log.write(f"\n=== run {datetime.now(timezone.utc).isoformat()} — chunk: {chunk['name']} — trigger: {trigger_reason} ===\n")
         log.flush()
         try:
-            result = marvin_launcher.launch("background-analyst", prompt, tools="Read,Write,Edit",
-                                            permission_mode="bypassPermissions", timeout=CLAUDE_CALL_TIMEOUT)
+            result = marvin_launcher.launch("background-analyst", prompt, ticket="architecture-review",
+                                            tools="Read,Write,Edit", permission_mode="bypassPermissions", timeout=CLAUDE_CALL_TIMEOUT)
             log.write(result.text + (f"\n{result.stderr}" if result.stderr else "") + "\n")
             log.write(f"=== claude exit {result.exit_code} ===\n")
             if result.exit_code != 0:

@@ -1,6 +1,7 @@
 """lib/session_usage.py: how many tokens the Claude sessions on this machine used, when, by what kind of run, for which project/ticket."""
 from __future__ import annotations
 import json
+import pytest
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +12,12 @@ sys.path.insert(0, str(LIB))
 import session_usage as tu  # noqa: E402
 
 NOW = datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc)
+
+
+@pytest.fixture(autouse=True)
+def isolate_launches_log(tmp_path, monkeypatch):
+    """Isolate by_job() tests from real launches.jsonl; patch the default path."""
+    monkeypatch.setattr(tu, "LAUNCHES_LOG", tmp_path / "launches.jsonl")
 
 
 def line(msg_id, ts="2026-10-05T10:00:00.000Z", inp=2, out=100, cw=1000, cr=5000, model="claude-sonnet-5", entry="cli",
@@ -99,3 +106,72 @@ def test_refresh_writes_the_result_with_the_machine_name(tmp_path, monkeypatch):
     tu.refresh(out_path=out, root=root, now=NOW)
     data = json.loads(out.read_text())
     assert data["machine"] == "mac-mini-1" and data["totals"]["messages"] == 1
+
+
+def test_autonomous_identifies_headless_jobs_with_non_cli_entrypoint():
+    assert tu._autonomous({"entrypoint": "sdk-cli", "isSidechain": False}) is True
+    assert tu._autonomous({"entrypoint": None, "isSidechain": False}) is False
+    assert tu._autonomous({"entrypoint": "cli", "isSidechain": False}) is False
+    assert tu._autonomous({"entrypoint": "sdk-cli", "isSidechain": True}) is True
+
+
+def test_by_job_aggregates_autonomous_launches_by_kind_and_ticket(tmp_path):
+    launches = tmp_path / "launches.jsonl"
+    launches.write_text(
+        json.dumps({"at": "2026-10-06T10:00:00Z", "kind": "background-analyst", "ticket": "daily-digest", "output_tokens": 100}) + "\n"
+        + json.dumps({"at": "2026-10-06T10:00:00Z", "kind": "background-analyst", "ticket": "daily-digest", "output_tokens": 50}) + "\n"
+        + json.dumps({"at": "2026-10-06T10:00:00Z", "kind": "background-analyst", "ticket": "research-colony", "output_tokens": 200}) + "\n"
+        + json.dumps({"at": "2026-10-05T10:00:00Z", "kind": "background-analyst", "ticket": "daily-digest", "output_tokens": 75}) + "\n"
+    )
+    by_job = tu.by_job(launches, window_days=1, now=NOW)  # only 2026-10-06
+    assert by_job is not None
+    by_key = {(j["kind"], j.get("ticket") or j["kind"]): j for j in by_job}
+    assert by_key[("background-analyst", "daily-digest")]["output_tokens"] == 150
+    assert by_key[("background-analyst", "research-colony")]["output_tokens"] == 200
+    assert all(j.get("runs", 0) > 0 for j in by_job)
+
+
+def test_by_job_tolerates_missing_file_and_malformed_lines(tmp_path):
+    launches = tmp_path / "launches.jsonl"
+    # file doesn't exist
+    result = tu.by_job(launches, window_days=1, now=NOW)
+    assert result is not None and result == []
+    # file with bad lines
+    launches.write_text(
+        json.dumps({"at": "2026-10-06T10:00:00Z", "kind": "x", "output_tokens": 100}) + "\n"
+        + "not json\n"
+        + json.dumps({"at": "2026-10-06T10:00:00Z"}) + "\n"  # missing kind
+        + json.dumps({"at": "2026-10-06T10:00:00Z", "kind": "y", "output_tokens": None}) + "\n"  # null output_tokens
+    )
+    result = tu.by_job(launches, window_days=1, now=NOW)
+    assert result is not None and len(result) == 2
+    # kind x has output_tokens, kind y has none but is still included with 0 output_tokens
+    by_kind = {j["kind"]: j for j in result}
+    assert by_kind["x"]["output_tokens"] == 100
+    assert by_kind["y"]["output_tokens"] == 0
+
+
+def test_by_job_groups_by_job_ticket_or_kind_when_no_ticket(tmp_path):
+    launches = tmp_path / "launches.jsonl"
+    launches.write_text(
+        json.dumps({"at": "2026-10-06T10:00:00Z", "kind": "background-analyst", "ticket": "daily-digest", "output_tokens": 100, "cost_usd": 0.01}) + "\n"
+        + json.dumps({"at": "2026-10-06T10:00:00Z", "kind": "judge", "output_tokens": 50, "cost_usd": 0.005}) + "\n"  # no ticket
+    )
+    r = tu.by_job(launches, window_days=1, now=NOW)
+    by_key = {(j["kind"], j.get("ticket") or j["kind"]): j for j in r}
+    assert ("background-analyst", "daily-digest") in by_key
+    assert ("judge", "judge") in by_key
+
+
+def test_by_job_respects_window_days_and_sorts_descending(tmp_path):
+    launches = tmp_path / "launches.jsonl"
+    launches.write_text(
+        json.dumps({"at": "2026-10-06T10:00:00Z", "kind": "a", "ticket": "t1", "output_tokens": 100, "cost_usd": 0.01}) + "\n"
+        + json.dumps({"at": "2026-10-06T10:00:00Z", "kind": "b", "ticket": "t2", "output_tokens": 300, "cost_usd": 0.03}) + "\n"
+        + json.dumps({"at": "2026-10-05T10:00:00Z", "kind": "c", "ticket": "t3", "output_tokens": 1000, "cost_usd": 0.1}) + "\n"
+    )
+    r = tu.by_job(launches, window_days=1, now=NOW)  # only 2026-10-06
+    assert len(r) == 2
+    assert r[0]["output_tokens"] == 300  # descending
+    assert r[1]["output_tokens"] == 100
+    assert all(r[i]["output_tokens"] >= r[i + 1]["output_tokens"] for i in range(len(r) - 1))

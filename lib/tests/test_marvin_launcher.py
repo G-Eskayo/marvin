@@ -207,3 +207,10 @@ def test_a_judge_runs_in_an_empty_folder_of_its_own(memory, tmp_path):
 def test_a_reported_error_counts_as_a_failed_run(memory, tmp_path):
     fake = FakeRun(stdout=json.dumps({"result": "boom", "is_error": True}))
     assert ml.launch("utility-call", "x", log_path=tmp_path / "l.jsonl", runner=fake).exit_code == 1
+
+
+def test_auto_fix_records_ticket_field(memory, tmp_path):
+    log = tmp_path / "launches.jsonl"
+    ml.launch("background-analyst", "Fix.", cwd=tmp_path, log_path=log, runner=FakeRun(), ticket="auto-fix")
+    rec = json.loads(log.read_text().splitlines()[-1])
+    assert rec["ticket"] == "auto-fix"

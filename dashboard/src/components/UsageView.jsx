@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { mergeTokenRows, dailySeries, sumRows, projectTable, ticketTable } from '../lib/usage_view.js'
+import { mergeTokenRows, dailySeries, sumRows, projectTable, ticketTable, autonomousSeries, weeklySeries, jobTable } from '../lib/usage_view.js'
 
 const KIND_STYLE = { headless: ['#3b82f6', 'Pipeline (headless)'], interactive: ['#10b981', 'Interactive'], subagent: ['#a78bfa', 'Subagents'] }
 const fmt = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(0)}k` : String(n))
@@ -39,6 +39,37 @@ function DailyBars({ series, metric }) {
   )
 }
 
+function AutonomousBars({ series, label, days }) {
+  const max = Math.max(1, ...series.map((d) => d.total))
+  const W = 760, H = 150, bw = W / series.length
+  const refY30 = Math.round(H - (H * 30) / 100)
+  const refY40 = Math.round(H - (H * 40) / 100)
+  const refY50 = Math.round(H - (H * 50) / 100)
+  return (
+    <svg viewBox={`0 0 ${W} ${H + 18}`} className="w-full" role="img" aria-label={`Autonomous vs total tokens ${label}`}>
+      <line x1="0" y1={refY30} x2={W} y2={refY30} stroke="#4b5563" strokeWidth="1" strokeDasharray="2,2" />
+      <line x1="0" y1={refY40} x2={W} y2={refY40} stroke="#4b5563" strokeWidth="1" strokeDasharray="2,2" />
+      <line x1="0" y1={refY50} x2={W} y2={refY50} stroke="#4b5563" strokeWidth="1" strokeDasharray="2,2" />
+      {series.map((d, i) => {
+        const totalH = (d.total / max) * H
+        const autoH = (d.autonomous / max) * H
+        const y = H - totalH
+        return (
+          <g key={i}>
+            <rect x={i * bw + 1} y={y} width={bw - 2} height={totalH} fill="#374151" opacity="0.3" />
+            <rect x={i * bw + 1} y={H - autoH} width={bw - 2} height={autoH} fill="#f59e0b" />
+            {i % (Math.ceil(series.length / 5)) === 0 && <text x={i * bw} y={H + 13} fontSize="9" fill="#737373">{d.day || d.start || ''}</text>}
+          </g>
+        )
+      })}
+      <text x={W} y={10} fontSize="9" fill="#737373" textAnchor="end">peak {fmt(max)}</text>
+      <text x={10} y={refY30 - 3} fontSize="8" fill="#737373">30%</text>
+      <text x={10} y={refY40 - 3} fontSize="8" fill="#737373">40%</text>
+      <text x={10} y={refY50 - 3} fontSize="8" fill="#737373">50%</text>
+    </svg>
+  )
+}
+
 function Table({ title, hint, children }) {
   return (
     <section className="mt-6">
@@ -55,6 +86,10 @@ export default function UsageView({ machines, which }) {
   const rows = useMemo(() => mergeTokenRows(machines, which), [machines, which])
   const projects = useMemo(() => projectTable(machines, which), [machines, which])
   const tickets = useMemo(() => ticketTable(machines, which), [machines, which])
+  const autonomousDaily = useMemo(() => autonomousSeries(rows, { days: 30, end: new Date().toISOString().slice(0, 10), metric }), [rows, metric])
+  const autonomousWeekly = useMemo(() => weeklySeries(rows, { weeks: 12, end: new Date().toISOString().slice(0, 10), metric }), [rows, metric])
+  const jobs = useMemo(() => jobTable(machines, which), [machines, which])
+
   if (rows.length === 0) return <p className="p-2 text-neutral-500">No token usage scan for {which === 'all' ? 'any machine' : which} yet. It is created within the hour.</p>
 
   const end = new Date().toISOString().slice(0, 10)
@@ -120,6 +155,36 @@ export default function UsageView({ machines, which }) {
                   <td className="py-1 pr-2">{t.project} <span className="text-neutral-500">#{t.ticket}</span></td>
                   <td className="py-1 text-right">{fmt(t.output)}</td>
                   <td className="py-1 text-right text-neutral-500">{t.messages.toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Table>
+
+      <Table title="Autonomous job usage (daily)" hint="Background jobs (ticket pipeline, daily digest, etc.) should not exceed 50% of tokens. Orange bars show autonomous output; gray area shows total including interactive.">
+        <div className="rounded border border-neutral-800 bg-neutral-900 p-3">
+          <AutonomousBars series={autonomousDaily} label="per day, last 30 days" days={30} />
+        </div>
+      </Table>
+
+      <Table title="Autonomous job usage (weekly)" hint="12-week rolling view of background job share.">
+        <div className="rounded border border-neutral-800 bg-neutral-900 p-3">
+          <AutonomousBars series={autonomousWeekly} label="per week, last 12 weeks" days={12} />
+        </div>
+      </Table>
+
+      <Table title="Top autonomous spenders" hint="Which background job types consumed the most tokens (aggregated launches, not interactive sessions).">
+        {jobs.length === 0 ? <p className="text-xs text-neutral-600">No background job launches yet.</p> : (
+          <table className="w-full text-sm">
+            <thead><tr className="text-left text-xs text-neutral-500"><th className="pb-1 font-normal">Job</th><th className="pb-1 text-right font-normal">Output</th><th className="pb-1 text-right font-normal">Cost</th><th className="pb-1 text-right font-normal">Runs</th></tr></thead>
+            <tbody className="font-mono text-neutral-300">
+              {jobs.slice(0, 15).map((j) => (
+                <tr key={`${j.kind}:${j.ticket || j.kind}`} className="border-t border-neutral-900">
+                  <td className="py-1 pr-2">{j.kind} {j.ticket && <span className="text-neutral-500">({j.ticket})</span>}</td>
+                  <td className="py-1 text-right">{fmt(j.output_tokens)}</td>
+                  <td className="py-1 text-right text-neutral-500">${j.cost_usd?.toFixed(2) || '0.00'}</td>
+                  <td className="py-1 text-right text-neutral-500">{j.runs}</td>
                 </tr>
               ))}
             </tbody>

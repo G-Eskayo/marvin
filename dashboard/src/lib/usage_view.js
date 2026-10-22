@@ -127,4 +127,62 @@ export function machineFreshness(m, now = Date.now()) {
   return { state: 'ok', text: `updated ${agoText(now - Math.max(...stamps))}` }
 }
 
+export function autonomousSeries(rows, { days = 30, end, metric = 'output' } = {}) {
+  const list = dayList(days, end || new Date().toISOString().slice(0, 10))
+  const idx = new Map(list.map((d, i) => [d, { day: d, autonomous: 0, total: 0 }]))
+  for (const r of rows) {
+    const cell = idx.get(r.day)
+    if (!cell) continue
+    const v = valueOf(r, metric)
+    if (r.autonomous) cell.autonomous += v
+    cell.total += v
+  }
+  return list.map((d) => idx.get(d))
+}
+
+const shareLineY = (pct, H = 150) => Math.round(H - (H * pct) / 100)
+
+function weekList(weeks, end) {
+  const endMs = Date.parse(`${end}T00:00:00Z`)
+  const endWeekOffset = Math.floor(endMs / 604800000)
+  return Array.from({ length: weeks }, (_, i) => {
+    const weekOffset = endWeekOffset - (weeks - 1 - i)
+    const startMs = weekOffset * 604800000
+    const endMs = startMs + 6 * 86400000
+    const start = new Date(startMs).toISOString().slice(0, 10)
+    const end = new Date(endMs).toISOString().slice(0, 10)
+    return { week: weekOffset, start, end }
+  })
+}
+
+export function weeklySeries(rows, { weeks = 12, end, metric = 'output' } = {}) {
+  const list = weekList(weeks, end || new Date().toISOString().slice(0, 10))
+  const idx = new Map(list.map((w) => [w.week, { ...w, autonomous: 0, total: 0 }]))
+  for (const r of rows) {
+    const rMs = Date.parse(`${r.day}T00:00:00Z`)
+    const rWeek = Math.floor(rMs / 604800000)
+    const cell = idx.get(rWeek)
+    if (!cell) continue
+    const v = valueOf(r, metric)
+    if (r.autonomous) cell.autonomous += v
+    cell.total += v
+  }
+  return list.map((w) => idx.get(w.week))
+}
+
+export function jobTable(machines, which = 'all') {
+  const byKey = new Map()
+  for (const m of pick(machines, which)) {
+    for (const j of m.tokens?.by_job || []) {
+      const key = j.ticket ? `${j.kind}:${j.ticket}` : j.kind
+      const cur = byKey.get(key) || { kind: j.kind, ticket: j.ticket, output_tokens: 0, cost_usd: 0, runs: 0 }
+      cur.output_tokens += j.output_tokens || 0
+      cur.cost_usd += j.cost_usd || 0
+      cur.runs += j.runs || 0
+      byKey.set(key, cur)
+    }
+  }
+  return [...byKey.values()].sort((a, b) => b.output_tokens - a.output_tokens)
+}
+
 export const USAGE_KINDS = KINDS
