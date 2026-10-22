@@ -217,7 +217,7 @@ def test_a_scan_with_nothing_ready_leaves_a_run_log_saying_so(monkeypatch):
     run = json.loads((job_events.JOBS_DIR / "ticket-pipeline.json").read_text())["runs"][-1]
     assert run["status"] == "passed" and run["summary"] == "no ready tickets"
     steps = [s["step"] for s in run["steps"]]
-    assert steps == ["Board discovery", "Onboarding plans", "Project catalog", "Conflicted PRs", "Circuit breaker", "Scanning tickets"]
+    assert steps == ["Board discovery", "Onboarding plans", "Project catalog", "Conflicted PRs", "Owner decisions", "Circuit breaker", "Scanning tickets"]
 
 
 def test_a_tripped_breaker_is_visible_in_the_run_log(monkeypatch):

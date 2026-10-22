@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { missingFor, blocksGraph, transitiveUnblocks, rankNeedsYou } from '../electron/main/needs_you.js'
+import { missingFor, blocksGraph, transitiveUnblocks, rankNeedsYou, needsMarvinRows, ownerDecisionsMarker } from '../electron/main/needs_you.js'
 import { parseHumanTask } from '../src/lib/human_task.js'
 
 // Test fixture builders
@@ -382,5 +382,46 @@ describe('rankNeedsYou', () => {
       expect(row1.unblocks.count).toBeGreaterThan(row7.unblocks.count)
       expect(result.indexOf(row1)).toBeLessThan(result.indexOf(row7))
     }
+  })
+})
+
+// marvin#607: owner decisions on a PR that nothing acted on rank above everything waiting on Gil.
+describe('needs MARVIN: unanswered owner decisions', () => {
+  const NOW = Date.parse('2026-10-22T20:04:28Z')
+  const marker = (pr, q, since = '2026-10-22T05:04:28Z') =>
+    `<!-- marvin:owner-decisions pr=${pr} comment=1001 since=${since} question=${q ? 'yes' : 'no'} -->\n## What to build`
+  const followup = (num, pr, q, over = {}) =>
+    issue(num, { repo: 'G-Eskayo/marvin', title: `Act on owner decisions on PR #${pr}`, body: marker(pr, q),
+      labels: [label('ready-for-agent'), label('owner-decisions')], ...over })
+
+  it('puts the follow-up at the top, flagged as an owner question, linked to the PR', () => {
+    const human = issue(5, { repo: 'G-Eskayo/marvin', labels: [label('ready-for-human'), label('p0')] })
+    const rows = rankNeedsYou([human, followup(900, 577, true)], { now: NOW })
+    expect(rows[0]).toMatchObject({ number: 900, kind: 'needs-marvin', owner: 'marvin', question: true,
+      pr: { number: 577, url: 'https://github.com/G-Eskayo/marvin/pull/577' } })
+    expect(rows[0].ask).toBe('Owner asked a question on PR #577 15 h ago: no answer yet')
+    expect(rows[1].number).toBe(5)
+  })
+
+  it('says "not acted on" when there is no question, and questions rank first', () => {
+    const rows = rankNeedsYou([followup(901, 600, false), followup(902, 601, true)], { now: NOW })
+    expect(rows.map((r) => r.number)).toEqual([902, 901])
+    expect(rows[1].ask).toMatch(/Owner decisions on PR #600 15 h ago: not acted on yet/)
+  })
+
+  it('ignores a closed, held or unlabelled ticket, and a body that only types the marker', () => {
+    const rows = rankNeedsYou([
+      followup(903, 1, true, { state: 'CLOSED' }),
+      followup(904, 2, true, { labels: [label('owner-decisions'), label('hold')] }),
+      issue(905, { repo: 'G-Eskayo/marvin', body: marker(3, true), labels: [label('ready-for-agent')] })
+    ], { now: NOW })
+    expect(rows).toEqual([])
+  })
+
+  it('survives a malformed marker or date', () => {
+    expect(ownerDecisionsMarker('<!-- marvin:owner-decisions pr=x -->')).toBeNull()
+    expect(ownerDecisionsMarker(null)).toBeNull()
+    const rows = needsMarvinRows([followup(906, 7, false, { body: marker(7, false, 'garbage') }), null], { now: NOW })
+    expect(rows[0].ask).toBe('Owner decisions on PR #7: not acted on yet')
   })
 })
