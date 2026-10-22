@@ -129,6 +129,51 @@ def tripped(now: datetime | None = None, project: str | None = None) -> list[dic
     return result
 
 
+def ticket_streak(ticket: int, project: str = MARVIN, now: datetime | None = None) -> dict:
+    """Analyze this ticket's failure history: count consecutive failures since last success,
+    and return the signatures that make up that streak (oldest first).
+    Returns {"count": N, "signatures": [sig1, sig2, ...]}."""
+    records = _read()
+    for r in records:
+        r.setdefault("project", MARVIN)
+
+    ticket_records = [r for r in records if r.get("ticket") == ticket and r.get("project") == project]
+    ticket_records.sort(key=lambda r: r.get("_t", datetime.min))
+
+    last_success_idx = -1
+    for i in range(len(ticket_records) - 1, -1, -1):
+        if ticket_records[i].get("kind") == "success":
+            last_success_idx = i
+            break
+
+    failures = ticket_records[last_success_idx + 1:]
+    failure_sigs = [r.get("sig", "unknown") for r in failures if r.get("kind") == "failure"]
+
+    return {"count": len(failure_sigs), "signatures": failure_sigs}
+
+
+def should_hold(ticket: int, project: str = MARVIN, threshold: int = 3, now: datetime | None = None) -> dict | None:
+    """Decide whether to hold a ticket based on its failure patterns.
+    Holds if: count >= threshold, OR the last two non-empty signatures are identical.
+    Returns {"count": N, "signatures": [sigs...]} if should hold, else None.
+    Returns None if threshold <= 0."""
+    if threshold <= 0:
+        return None
+
+    streak = ticket_streak(ticket, project=project, now=now)
+    count = streak.get("count", 0)
+    sigs = streak.get("signatures", [])
+
+    if count >= threshold:
+        return streak
+
+    non_empty_sigs = [s for s in sigs if s]
+    if len(non_empty_sigs) >= 2 and non_empty_sigs[-1] == non_empty_sigs[-2]:
+        return streak
+
+    return None
+
+
 def main() -> None:
     cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
     if cmd == "clear":

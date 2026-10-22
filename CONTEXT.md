@@ -806,6 +806,17 @@ nothing connected them. "Where things are" was only the tidy agent's file-filing
   counted and shown in the run log ("Other projects ... no execution profile yet") instead of hidden. A
   per-project execution profile (clone path, test command, dev-env) is the open piece for clarity-captions.
 
+### Per-ticket hold rule (failure retry storms)
+
+A ticket that keeps failing with the **same signature twice in a row** or **N consecutive failures** (where N is the
+project's `failure_threshold` in its profile, or 3 by default) is **held** instead of repeatedly retried. The hold
+is implemented as a `hold` state label (like `needs-info`, but distinct: the existing `revisit` agent and Backlog
+"On hold" view pick it up automatically). A held ticket carries a `Revisit by: YYYY-MM-DD — condition` comment
+line that names the reason ("same failure signature twice in a row" vs "N consecutive pipeline failures"). Manual
+release does not auto-reset the failure counter (the ticket stays held if it fails again with the same reason);
+only a successful run clears it. The hold counter is per-machine (not cross-machine), so both Macs count their own
+failures independently — a ticket parked on mac-mini can still run on the MacBook.
+
 ### Per-project execution profiles (decided 2026-10-05)
 
 The ticket executor (`sandbox_orchestration` + `run_ticket`) was written for marvin: marvin's checkout,
@@ -818,7 +829,8 @@ untouched (it is the "legacy profile"); only repos with a profile file use the p
   catalog's newest local path first), `machines` (eligible device ids), `dispatch` (`"off"` | `"on"`; **starts
   off**: a profile does nothing until a person turns it on), `env` (e.g. `DEVELOPER_DIR` = the first existing
   Xcode, so `swift test` works without `sudo xcode-select`), `executor` (extra allowed tools and context notes
-  for the headless model), `verify` (tiers), `evidence`.
+  for the headless model), `verify` (tiers), `evidence`, `failure_threshold` (positive integer, or null; when set,
+  overrides the default 3-strike limit for deciding whether to hold a ticket on repeated failures).
 - **Verify tiers**: each has `command`, `cwd`, `requires` (capabilities such as `swift`, `xcode`, `xcodegen`),
   a `parser` (`swift-test`, `xcodebuild`, `exit-code`), and `required`. A required tier whose tools are missing
   on the executing machine is an **environment problem, not a ticket failure**: the claim is released, no

@@ -13,6 +13,7 @@ sys.path.insert(0, str(LIB))
 
 import run_ticket as rt  # noqa: E402
 import ticket_stages as ts  # noqa: E402
+import failure_breaker as fb  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -23,6 +24,8 @@ def _isolate_ticket_stages(tmp_path, monkeypatch):
     # 27, 28...), and ran unmocked they wrote real files under the
     # account's actual ticket-stages directory.
     monkeypatch.setattr(ts, "STAGES_DIR", tmp_path / "ticket-stages")
+    # Also isolate the failure log since _consecutive_failure_streak now reads from it
+    monkeypatch.setattr(fb, "LOG_PATH", tmp_path / "pipeline-failures.jsonl")
 
 
 def _passing_result(worktree_path=Path("/tmp/fake-worktree")):
@@ -287,6 +290,7 @@ def test_run_parks_the_ticket_instead_of_releasing_at_the_failure_cap(monkeypatc
     monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda issue_number: rt.MAX_CONSECUTIVE_FAILURES - 1)
     monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: None)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+    monkeypatch.setattr(rt.failure_breaker, "should_hold", lambda ticket, project, threshold: {"count": threshold, "signatures": ["sig"]})
 
     released = []
     monkeypatch.setattr(rt, "_release_claim", lambda issue_number, **kw: released.append(issue_number))
@@ -305,6 +309,7 @@ def test_run_still_releases_below_the_failure_cap(monkeypatch):
     monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda issue_number: 0)
     monkeypatch.setattr(rt, "_comment_failure", lambda *a, **k: None)
     monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+    monkeypatch.setattr(rt.failure_breaker, "should_hold", lambda ticket, project, threshold: None)
 
     released = []
     monkeypatch.setattr(rt, "_release_claim", lambda issue_number, **kw: released.append(issue_number))
@@ -318,35 +323,20 @@ def test_run_still_releases_below_the_failure_cap(monkeypatch):
 
 
 def test_consecutive_failure_streak_counts_trailing_failure_comments(monkeypatch):
-    comments = [
-        {"body": "some unrelated human comment"},
-        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
-        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
-    ]
-
-    class FakeResult:
-        returncode = 0
-        stdout = __import__("json").dumps({"comments": comments})
-
-    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: FakeResult())
-
+    # Now reads from the failure log instead of GitHub comments
+    from datetime import datetime, timezone
+    fb.record_failure(28, "unchanged", now=datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc))
+    fb.record_failure(28, "unchanged", now=datetime(2026, 10, 22, 13, 0, tzinfo=timezone.utc))
     assert rt._consecutive_failure_streak(28) == 2
 
 
-def test_consecutive_failure_streak_resets_on_a_human_comment(monkeypatch):
-    comments = [
-        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
-        {"body": "ok, I re-scoped this, try again"},
-        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
-        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
-    ]
-
-    class FakeResult:
-        returncode = 0
-        stdout = __import__("json").dumps({"comments": comments})
-
-    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: FakeResult())
-
+def test_consecutive_failure_streak_resets_on_a_success(monkeypatch):
+    # With the new failure_log implementation, the streak is reset by a success record
+    from datetime import datetime, timezone
+    fb.record_failure(28, "unchanged", now=datetime(2026, 10, 22, 11, 0, tzinfo=timezone.utc))
+    fb.record_success(28, now=datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc))
+    fb.record_failure(28, "unchanged", now=datetime(2026, 10, 22, 13, 0, tzinfo=timezone.utc))
+    fb.record_failure(28, "unchanged", now=datetime(2026, 10, 22, 14, 0, tzinfo=timezone.utc))
     assert rt._consecutive_failure_streak(28) == 2
 
 

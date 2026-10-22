@@ -653,6 +653,45 @@ def check_unrunnable_profiles(profiles_dir: Path | None = None) -> list[dict]:
 	return out
 
 
+def check_retry_storm_holds(snapshot: dict | None = None, repos: list[str] | None = None, gh=None) -> list[dict]:
+	"""Tickets on hold due to retry storms (same failure signature twice in a row, or N consecutive failures).
+	Reports per-repo summary with truncated signature list."""
+	if snapshot is None:
+		import ticket_agents
+		repos = repos or ticket_agents.board_repos()
+		if not repos:
+			return []
+		gh = gh or ticket_agents._gh
+		snapshot = ticket_agents.collect(repos, gh=gh)
+
+	import failure_breaker
+	import ticket_policy
+
+	results = []
+	for repo, issues in (snapshot or {}).items():
+		held = []
+		for issue in issues:
+			if isinstance(issue, dict):
+				labels = ticket_policy.label_names(issue)
+				if "hold" in labels:
+					number = issue.get("number")
+					streak = failure_breaker.ticket_streak(number, project=repo)
+					count = streak.get("count", 0)
+					if count > 0:
+						held.append({"number": number, "count": count, "signatures": streak.get("signatures", [])})
+
+		if held:
+			total = len(held)
+			example_ticket = held[0]
+			sigs = example_ticket["signatures"][-5:] if len(example_ticket["signatures"]) > 5 else example_ticket["signatures"]
+			sig_list = ", ".join(sigs) if sigs else "(no signatures)"
+			detail = f"{total} ticket(s) held (e.g., #{example_ticket['number']}: {sig_list})"
+			results.append(_result(f"retry-hold:{repo}", f"{repo.split('/')[-1]}: {total} on hold",
+			                       "yellow" if total <= 2 else "red", detail, value=total))
+
+	return results
+
+
 # ── parallel dispatch: keeping up with the queue ───────────────────────────
 
 _GUARD_MARKERS = ("disk ", "GitHub request budget", "circuit breaker tripped", "lacks tools")
@@ -1477,6 +1516,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("contract", "Output contracts", check_output_contracts, CHECK_BUDGET_S),
         ("profile:missing", "Projects without an execution profile", check_missing_profiles, CHECK_BUDGET_S),
         ("profile:no-machines", "Projects with no machines", check_unrunnable_profiles, CHECK_BUDGET_S),
+        ("retry-hold", "Retry storm holds", check_retry_storm_holds, CHECK_BUDGET_S),
         ("triggers:missed", "Dashboard triggers cover every change", check_trigger_coverage, CHECK_BUDGET_S),
         ("catalog:fresh", "Project catalog is current", check_catalog_fresh, CHECK_BUDGET_S),
         ("tickets:project-tags", "Tickets are on their project's board", check_project_tags, CHECK_BUDGET_S),
