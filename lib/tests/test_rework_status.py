@@ -130,3 +130,172 @@ def test_collect_reads_each_projects_open_issues_once(monkeypatch):
     assert len(calls) == 2
     assert set(out) == {"G-Eskayo/marvin#5", "G-Eskayo/clarity-captions#5"}
     assert out["G-Eskayo/marvin#5"]["state"] in {"queued", "not-queued", "blocked", "paused", "running", "held", "needs-person", "parked"}
+
+
+def test_hold_detail_includes_who_held_it_when_provided():
+    """When hold info is provided, the detail should mention who held it and when."""
+    hold_info = {"who": "test-user", "when": datetime(2026, 10, 7, 10, 30, tzinfo=timezone.utc), "comment": None}
+    s = rs.status_for(ticket(labels=("needs-reengagement", "held")), ctx(hold=hold_info))
+    assert s["state"] == "held"
+    assert "test-user" in s["detail"]
+    assert "2026-10-07" in s["detail"]
+
+
+def test_hold_detail_is_generic_when_no_hold_info_provided():
+    """When no hold info is provided, use the generic message."""
+    s = rs.status_for(ticket(labels=("needs-reengagement", "held")), ctx(hold=None))
+    assert s["state"] == "held"
+    assert "person asked the pipeline not to touch this ticket" in s["detail"]
+
+
+def test_parse_iso_handles_valid_dates():
+    """_parse_iso should parse valid ISO 8601 timestamps with Z suffix."""
+    dt = rs._parse_iso("2026-10-07T12:00:00Z")
+    assert dt == datetime(2026, 10, 7, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def test_parse_iso_returns_none_for_invalid_input():
+    """_parse_iso should return None for invalid input."""
+    assert rs._parse_iso(None) is None
+    assert rs._parse_iso("invalid-date") is None
+    assert rs._parse_iso(12345) is None
+
+
+def test_latest_hold_event_returns_most_recent_event():
+    """_latest_hold_event() should return the event with the latest created_at timestamp."""
+    import json
+    events = [
+        json.dumps({"actor": "user1", "created_at": "2026-10-07T10:00:00Z"}),
+        json.dumps({"actor": "user2", "created_at": "2026-10-07T12:00:00Z"}),
+        json.dumps({"actor": "user3", "created_at": "2026-10-07T11:00:00Z"}),
+    ]
+    stdout = "\n".join(events)
+    result = rs._latest_hold_event(stdout)
+    assert result is not None
+    assert result["actor"] == "user2"
+
+
+def test_latest_hold_event_skips_malformed_lines():
+    """_latest_hold_event() should skip malformed JSON lines."""
+    import json
+    events = [
+        json.dumps({"actor": "user1", "created_at": "2026-10-07T10:00:00Z"}),
+        "not valid json",
+        json.dumps({"actor": "user2", "created_at": "2026-10-07T12:00:00Z"}),
+    ]
+    stdout = "\n".join(events)
+    result = rs._latest_hold_event(stdout)
+    assert result is not None
+    assert result["actor"] == "user2"
+
+
+def test_latest_hold_event_returns_none_for_empty_input():
+    """_latest_hold_event() should return None for empty input."""
+    assert rs._latest_hold_event("") is None
+    assert rs._latest_hold_event("\n\n") is None
+
+
+def test_comment_near_finds_comment_within_window():
+    """_comment_near() should find a comment within HOLD_COMMENT_WINDOW_S."""
+    import json
+    import subprocess as sp
+
+    gh_output = json.dumps({
+        "comments": [
+            {"body": "Old comment", "createdAt": "2026-10-07T10:00:00Z"},
+            {"body": "Recent comment", "createdAt": "2026-10-07T12:04:00Z"},
+        ]
+    })
+
+    def fake_gh(args):
+        return gh_output
+
+    when = datetime(2026, 10, 7, 12, 0, tzinfo=timezone.utc)
+    result = rs._comment_near(fake_gh, "repo", 123, when)
+    assert result == "Recent comment"
+
+
+def test_comment_near_returns_none_outside_window():
+    """_comment_near() should return None if no comment is within the window."""
+    import json
+
+    gh_output = json.dumps({
+        "comments": [
+            {"body": "Old comment", "createdAt": "2026-10-07T10:00:00Z"},
+            {"body": "Too late", "createdAt": "2026-10-07T12:10:00Z"},
+        ]
+    })
+
+    def fake_gh(args):
+        return gh_output
+
+    when = datetime(2026, 10, 7, 12, 0, tzinfo=timezone.utc)
+    result = rs._comment_near(fake_gh, "repo", 123, when)
+    assert result is None
+
+
+def test_comment_near_returns_none_on_error():
+    """_comment_near() should return None if gh call fails."""
+    def fake_gh(args):
+        raise Exception("gh call failed")
+
+    when = datetime(2026, 10, 7, 12, 0, tzinfo=timezone.utc)
+    result = rs._comment_near(fake_gh, "repo", 123, when)
+    assert result is None
+
+
+def test_hold_info_returns_dict_with_comment():
+    """_hold_info() should return dict with who, when, and comment."""
+    import json
+
+    events_output = json.dumps({"actor": "test-user", "created_at": "2026-10-07T12:00:00Z"})
+    comments_output = json.dumps({
+        "comments": [
+            {"body": "Hold this", "createdAt": "2026-10-07T12:02:00Z"}
+        ]
+    })
+
+    def fake_gh(args):
+        # args is a list like ["api", "repos/...", ...] or ["issue", "view", ...]
+        if len(args) > 0 and "events" in "".join(args):
+            return events_output
+        elif len(args) > 1 and args[0] == "issue" and args[1] == "view":
+            return comments_output
+        return ""
+
+    result = rs._hold_info("repo", 123, gh=fake_gh)
+    assert result is not None
+    assert result["who"] == "test-user"
+    assert result["comment"] == "Hold this"
+
+
+def test_hold_comment_truncates_at_max_chars():
+    """status_for() should truncate long hold comments."""
+    # Use a more distinctive comment to verify truncation
+    long_comment = "a" * 200 + "b" * 150 + "c" * 100
+    hold_info = {
+        "who": "test-user",
+        "when": datetime(2026, 10, 7, 10, 30, tzinfo=timezone.utc),
+        "comment": long_comment
+    }
+    s = rs.status_for(ticket(labels=("needs-reengagement", "held")), ctx(hold=hold_info))
+    assert s["state"] == "held"
+    assert "…" in s["detail"]
+    # Check that the comment is included but truncated at 300 chars
+    assert "a" * 100 in s["detail"]  # Part of the 'a' section is included
+    # The 'c' section should not be fully present (it starts at position 350)
+    assert "c" * 50 not in s["detail"]
+
+
+def test_hold_detail_without_comment():
+    """status_for() should handle hold info without comment gracefully."""
+    hold_info = {
+        "who": "test-user",
+        "when": datetime(2026, 10, 7, 10, 30, tzinfo=timezone.utc),
+        "comment": None
+    }
+    s = rs.status_for(ticket(labels=("needs-reengagement", "held")), ctx(hold=hold_info))
+    assert s["state"] == "held"
+    assert "test-user" in s["detail"]
+    assert "2026-10-07" in s["detail"]
+    assert "Comment:" not in s["detail"]

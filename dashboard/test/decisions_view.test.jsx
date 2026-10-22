@@ -112,3 +112,11 @@ describe('after a submit, the panel follows GitHub', () => {
     expect(followGithub({ questions: d.questions, editing: true, status: { state: 'idle' } })).toBeNull()
   })
 })
+
+describe('hold labels on decision tickets', () => {
+  it('renders the Decisions panel even when the ticket has hold labels', () => {
+    const html = renderToStaticMarkup(<Decisions repo="o/r" number={99} decisions={d} submit={vi.fn()} held={true} />)
+    expect(html).toContain('Which launch animation?')
+    expect(html).toContain('Submit decisions')
+  })
+})

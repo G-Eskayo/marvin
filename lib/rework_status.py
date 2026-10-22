@@ -17,6 +17,81 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import ticket_policy as pol  # noqa: E402
+
+HOLD_COMMENT_WINDOW_S = 300
+HOLD_COMMENT_MAX_CHARS = 300
+
+
+def _gh(args: list[str], timeout: int = 10) -> str:
+    """Run a gh command and return stdout. Uses the same env as ticket_agents._gh."""
+    from project_catalog import run_env
+    proc = subprocess.run(["gh", *args], capture_output=True, text=True, check=True, timeout=timeout, env=run_env())
+    return proc.stdout
+
+
+def _parse_iso(ts: str) -> datetime | None:
+    """Parse ISO 8601 timestamp, handling Z suffix."""
+    if not isinstance(ts, str):
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+
+
+def _latest_hold_event(stdout: str) -> dict | None:
+    """Parse gh events-call output for hold labels; return event with latest valid created_at, skipping malformed lines."""
+    if not stdout or not stdout.strip():
+        return None
+    latest = None
+    latest_ts = None
+    for line in stdout.strip().split("\n"):
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+            ts = _parse_iso(event.get("created_at"))
+            if ts and (latest_ts is None or ts > latest_ts):
+                latest = event
+                latest_ts = ts
+        except (json.JSONDecodeError, ValueError):
+            continue
+    return latest
+
+
+def _comment_near(gh, repo: str, number: int, when: datetime) -> str | None:
+    """Fetch a comment within HOLD_COMMENT_WINDOW_S of `when`. Returns comment body or None. Never raises."""
+    try:
+        data = json.loads(gh(["issue", "view", str(number), "--repo", repo, "--json", "comments"]))
+        for comment in reversed(data.get("comments", [])):
+            comment_time = _parse_iso(comment.get("createdAt"))
+            if comment_time and abs((comment_time - when).total_seconds()) <= HOLD_COMMENT_WINDOW_S:
+                return comment.get("body")
+    except Exception:
+        pass
+    return None
+
+
+def _hold_info(repo: str, number: int, gh=None) -> dict | None:
+    """Fetch hold label info: who held it and when, plus any associated comment.
+    Returns {"who": str, "when": datetime, "comment": str or None} or None on failure."""
+    gh = gh or _gh
+    try:
+        stdout = gh(["api", f"repos/{repo}/issues/{number}/events", "--paginate",
+                     "-q", ".[] | select(.event==\"labeled\") | select(.label.name | IN(\"hold\", \"held\", \"pinned\")) | {actor: .actor.login, created_at: .created_at, label: .label.name}"])
+        event = _latest_hold_event(stdout)
+        if not event:
+            return None
+        who = event.get("actor", "unknown")
+        when = _parse_iso(event.get("created_at"))
+        if not when:
+            return None
+        comment = _comment_near(gh, repo, number, when)
+        return {"who": who, "when": when, "comment": comment}
+    except Exception:
+        return None
+
 
 def ordinal(n: int) -> str:
     suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
@@ -65,9 +140,21 @@ def status_for(ticket: dict, ctx: dict) -> dict:
     if claim:
         result = {"state": "running", "headline": "Being rebuilt right now",
                 "detail": f"Running on {claim} for {_minutes(ctx.get('claim_started'), now)} (attempt {attempts + 1} of {cap}). It updates this same PR when it finishes."}
-    elif names & {"held", "pinned"}:
-        result = {"state": "held", "headline": "On hold",
-                "detail": "A person asked the pipeline not to touch this ticket (held or pinned), so it will not be rebuilt until that label is removed."}
+    elif names & pol.HOLD_LABELS:
+        hold = ctx.get("hold")
+        if hold and hold.get("who") and hold.get("when"):
+            when_str = hold["when"].strftime("%Y-%m-%d %H:%M UTC") if isinstance(hold["when"], datetime) else str(hold["when"])
+            detail_parts = [f"{hold['who']} held this ticket on {when_str}"]
+            if hold.get("comment"):
+                comment = hold["comment"]
+                if len(comment) > HOLD_COMMENT_MAX_CHARS:
+                    comment = comment[:HOLD_COMMENT_MAX_CHARS] + "…"
+                detail_parts.append(f"Comment: {comment}")
+            detail_parts.append("It will not be rebuilt until the hold label is removed.")
+            detail = " ".join(detail_parts)
+        else:
+            detail = "A person asked the pipeline not to touch this ticket (held or pinned), so it will not be rebuilt until that label is removed."
+        result = {"state": "held", "headline": "On hold", "detail": detail}
     elif attempts >= cap:
         result = {"state": "needs-person", "headline": "Needs you",
                 "detail": f"It has been rebuilt {attempts} times and still does not pass, so the pipeline stopped. Look at the denial comments on its ticket."}
@@ -139,10 +226,16 @@ def collect(repos: list[str] | None = None) -> dict:
             stages = ts.read_stages(n, None if r == tp.REPO else r)
             starts = [e["timestamp"] for e in stages if e.get("stage") == "claimed" and e.get("status") == "started"]
             started = datetime.fromisoformat(starts[-1].replace("Z", "+00:00")) if starts else None
+
+            # Fetch hold info if ticket is held
+            hold = None
+            if _names(t) & pol.HOLD_LABELS:
+                hold = _hold_info(r, n)
+
             out[f"{r}#{n}"] = status_for(t, dict(
                 queue=queue, key=f"{r}#{n}", attempts=tp._attempts(r, n), max_attempts=tp.MAX_REENGAGE_ATTEMPTS,
                 claim_started=started, paused=tripped.get(r), blockers=ticket_policy.open_blockers(t, open_numbers),
-                running=running, project=r.split("/")[-1], now=now))
+                running=running, project=r.split("/")[-1], now=now, hold=hold))
     return out
 
 

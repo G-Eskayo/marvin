@@ -209,6 +209,7 @@ export default function Decisions({ repo, number, decisions, onSubmitted, submit
           {status.result?.recording && <span className="text-neutral-400">Recording on GitHub…</span>}
           {status.result?.commentError && <span className="block text-amber-300">{status.result.commentError}</span>}
           {status.result?.labelsChanged && <span className="block">The ticket is now ready for an agent.</span>}
+          {status.result?.heldNote && <span className="block text-amber-300">{status.result.heldNote}</span>}
         </p>
       )}
       {status.state === 'error' && <p className="mt-3 text-right text-sm text-red-400">Not saved: {status.message}</p>}

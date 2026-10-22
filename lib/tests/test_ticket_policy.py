@@ -361,3 +361,30 @@ def test_a_huge_comment_is_scanned_without_trouble():
     now = datetime(2026, 10, 21, 20, 0, tzinfo=timezone.utc)
     big = "<!-- " * 200_000 + tp.retry_marker(now + _td(minutes=5))
     assert tp.retry_not_before([{"body": big}], now) == now + _td(minutes=5)
+
+
+# ── hold labels ──────────────────────────────────────────────────────────────
+
+def test_hold_labels_includes_all_three_labels():
+    assert tp.HOLD_LABELS == frozenset({"pinned", "hold", "held"})
+
+
+def test_triage_verdict_returns_none_for_pinned_tickets():
+    t = issue(labels=["pinned"], body="## What to build\nx\n## Acceptance\n- [ ] x")
+    assert tp.triage_verdict(t) is None
+
+
+def test_triage_verdict_returns_none_for_held_tickets():
+    t = issue(labels=["held"], body="## What to build\nx\n## Acceptance\n- [ ] x")
+    assert tp.triage_verdict(t) is None
+
+
+def test_triage_verdict_returns_none_for_hold_label():
+    t = issue(labels=["hold"], body="## What to build\nx\n## Acceptance\n- [ ] x")
+    assert tp.triage_verdict(t) is None
+
+
+def test_triage_verdict_allows_tickets_without_hold_labels():
+    t = issue(labels=["priority:p1"], body="## What to build\nx\n## Acceptance\n- [ ] x\n## How we'll try to break it\n- test")
+    v = tp.triage_verdict(t)
+    assert v is not None and v["state"] == "ready-for-agent"

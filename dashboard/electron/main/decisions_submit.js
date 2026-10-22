@@ -9,6 +9,8 @@ import { parseDecisions, applyAnswers, pendingDecisions, decisionsComment } from
 // the answers; the result says what happened.
 
 const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
+// Matches lib/ticket_policy.py: HOLD_LABELS
+const HOLD_LABELS = new Set(['pinned', 'hold', 'held'])
 
 async function writeTempJson(value) {
   const dir = await mkdtemp(join(tmpdir(), 'marvin-decisions-'))
@@ -56,12 +58,17 @@ async function recordAnswers({ repo, n, issue, parsed, answers, pending }, exec)
     .then(({ stdout: url }) => { out.commentUrl = String(url).trim() || null })
     .catch((error) => { out.commentError = `answers saved in the description, but the record comment failed: ${String(error?.stderr || error?.message || error).split('\n')[0]}` })
   // A ticket waiting on these decisions (needs-info) is ready for an agent once every required one is answered.
+  // Skip the move if the ticket is held by a person.
   const labels = (issue.labels || []).map((l) => (typeof l === 'string' ? l : l.name))
-  const move = !issue.pull_request && !pending.length && labels.includes('needs-info')
+  const labelSet = new Set(labels)
+  const isHeld = Array.from(HOLD_LABELS).some(h => labelSet.has(h))
+  const move = !issue.pull_request && !pending.length && labels.includes('needs-info') && !isHeld
     ? exec('gh', ['issue', 'edit', String(n), '--repo', repo, '--remove-label', 'needs-info', '--add-label', 'ready-for-agent'])
       .then(() => { out.labelsChanged = true })
       .catch((error) => { out.labelError = `answers saved, but moving the ticket to ready-for-agent failed: ${String(error?.stderr || error?.message || error).split('\n')[0]}` })
-    : null
+    : isHeld && !issue.pull_request && !pending.length && labels.includes('needs-info')
+      ? Promise.resolve().then(() => { out.heldNote = 'answers saved, but the ticket is held: it will not move to ready-for-agent until the hold label is removed' })
+      : null
   await Promise.all([comment, move])
   return out
 }

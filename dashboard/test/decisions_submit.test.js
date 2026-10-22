@@ -137,6 +137,21 @@ describe('sendBackForOptions', () => {
   })
 })
 
+describe('submitDecisions: hold labels', () => {
+  it('preserves hold labels when submitting decisions', async () => {
+    const { exec, state } = fakeGh({ labels: ['hold', 'priority:p1'], pullRequest: true })
+    const r = await submitDecisions({ repo: 'o/r', number: 9, answers: { handoff: { choices: ['Glide'] } } }, { exec })
+    expect(r.ok).toBe(true)
+    expect(state.labelEdits).toHaveLength(0) // hold labels should not be modified
+  })
+
+  it('leaves held tickets untouched during decisions submission', async () => {
+    const { exec, state } = fakeGh({ labels: ['held', 'needs-reengagement'], pullRequest: false })
+    const r = await submitDecisions({ repo: 'o/r', number: 5, answers: { dance: { choices: ['A: Clap & wiggle'] }, handoff: { choices: ['Glide'] } } }, { exec })
+    expect(state.labelEdits).toHaveLength(0) // held label should prevent label changes
+  })
+})
+
 
 // Local-first (CONTEXT.md "Dashboard actions render their true result locally at once"): the answer to show is GitHub's
 // own reply to the PATCH, and the record comment no longer holds the screen up.

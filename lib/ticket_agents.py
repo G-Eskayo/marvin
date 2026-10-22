@@ -179,7 +179,7 @@ def plan_refeed(repo, issues, counts):
     out = []
     for t in issues:
         names = set(pol.label_names(t))
-        if "needs-reengagement" not in names or names & pol.SKIP_LABELS or "held" in names:
+        if "needs-reengagement" not in names or names & pol.HOLD_LABELS:
             continue
         n = counts.get(t["number"], 0)
         out.append(_act("refeed", repo, t, "remove_label", "needs-reengagement", "denied or failed the merge gate"))

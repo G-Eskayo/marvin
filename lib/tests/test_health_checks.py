@@ -1299,3 +1299,174 @@ def test_the_machine_script_reads_a_real_process_uptime_with_this_machines_ps():
         assert 1 <= int(out.stdout.strip()) <= 20
     finally:
         child.kill()
+
+
+# ── contradictory hold labels ────────────────────────────────────────────
+
+def test_check_contradictory_hold_labels_green_with_no_tickets():
+    """Check returns empty list when no tickets have hold labels."""
+    results = hc.check_contradictory_hold_labels(snapshot={})
+    assert results == []
+
+
+def test_check_contradictory_hold_labels_ignores_multiple_hold_labels_alone():
+    """Check ignores tickets with only multiple hold labels (no pipeline labels)."""
+    snapshot = {
+        "test/repo": {
+            "issues": [
+                {"number": 1, "title": "T1", "labels": [{"name": "hold"}, {"name": "held"}]},
+                {"number": 2, "title": "T2", "labels": [{"name": "pinned"}]},
+            ],
+            "prs": []
+        }
+    }
+    results = hc.check_contradictory_hold_labels(snapshot=snapshot)
+    assert results == []
+
+
+def test_check_contradictory_hold_labels_detects_hold_with_pipeline_labels():
+    """Check detects tickets with hold label + pipeline labels (ready-for-agent or needs-reengagement)."""
+    snapshot = {
+        "test/repo": {
+            "issues": [
+                {"number": 1, "title": "T1", "labels": [{"name": "hold"}, {"name": "ready-for-agent"}]},
+                {"number": 2, "title": "T2", "labels": [{"name": "held"}, {"name": "needs-reengagement"}]},
+                {"number": 3, "title": "T3", "labels": [{"name": "pinned"}, {"name": "ready-for-agent"}]},
+                {"number": 4, "title": "T4", "labels": [{"name": "ready-for-agent"}]},
+            ],
+            "prs": []
+        }
+    }
+    results = hc.check_contradictory_hold_labels(snapshot=snapshot)
+
+    # Should find tickets 1, 2, 3 (all have hold/held/pinned + pipeline labels), but not 4
+    assert len(results) == 3
+    assert all(r["severity"] == "yellow" for r in results)
+    assert all("contradictory" in r["detail"].lower() for r in results)
+
+
+def test_check_contradictory_hold_labels_caps_at_5_plus_summary():
+    """Check caps at 5 individual cards plus one '+N more' summary card."""
+    issues = []
+    for i in range(1, 11):
+        issues.append({
+            "number": i,
+            "title": f"T{i}",
+            "labels": [{"name": "hold"}, {"name": "ready-for-agent"}]
+        })
+    snapshot = {"test/repo": {"issues": issues, "prs": []}}
+    results = hc.check_contradictory_hold_labels(snapshot=snapshot)
+
+    # Should have 5 individual + 1 summary = 6 results
+    assert len(results) == 6
+    # Last result should be the "+N more" card
+    assert "5" in results[-1]["detail"]
+    assert results[-1]["id"] == "hold:contradictory:more"
+    # Verify first 5 results are individual tickets
+    for i in range(5):
+        assert results[i]["severity"] == "yellow"
+
+
+def test_check_contradictory_hold_labels_skips_malformed_non_dict_issues():
+    """Check skips non-dict issue entries gracefully."""
+    snapshot = {
+        "test/repo": {
+            "issues": [
+                {"number": 1, "title": "T1", "labels": [{"name": "hold"}, {"name": "ready-for-agent"}]},
+                "not a dict",  # malformed
+                None,  # malformed
+                {"number": 2, "title": "T2", "labels": [{"name": "hold"}, {"name": "needs-reengagement"}]},
+            ],
+            "prs": []
+        }
+    }
+    results = hc.check_contradictory_hold_labels(snapshot=snapshot)
+    assert len(results) == 2
+    assert results[0]["id"].endswith("#1")
+    assert results[1]["id"].endswith("#2")
+
+
+def test_check_contradictory_hold_labels_snapshot_passed_directly():
+    """Check that passing snapshot directly skips collecting."""
+    calls = {"board_repos": 0, "collect": 0}
+    snapshot = {"test/repo": {"issues": [], "prs": []}}
+
+    import ticket_agents
+    original_board_repos = ticket_agents.board_repos
+    original_collect = ticket_agents.collect
+
+    try:
+        ticket_agents.board_repos = lambda: (calls.update({"board_repos": calls["board_repos"] + 1}), [])[1]
+        ticket_agents.collect = lambda repos, gh=None: (calls.update({"collect": calls["collect"] + 1}), {})[1]
+
+        results = hc.check_contradictory_hold_labels(snapshot=snapshot)
+
+        assert calls["board_repos"] == 0, "board_repos should not be called when snapshot is provided"
+        assert calls["collect"] == 0, "collect should not be called when snapshot is provided"
+        assert results == []
+    finally:
+        ticket_agents.board_repos = original_board_repos
+        ticket_agents.collect = original_collect
+
+
+def test_check_contradictory_hold_labels_snapshot_none_end_to_end(monkeypatch):
+    """Check that snapshot=None triggers collection end-to-end."""
+    import ticket_agents
+
+    call_log = []
+
+    def mock_board_repos():
+        call_log.append("board_repos")
+        return ["test/repo"]
+
+    def mock_collect(repos, gh=None):
+        call_log.append("collect")
+        return {
+            "test/repo": {
+                "issues": [
+                    {"number": 1, "title": "T1", "labels": [{"name": "hold"}, {"name": "ready-for-agent"}]},
+                ],
+                "prs": []
+            }
+        }
+
+    monkeypatch.setattr(ticket_agents, "board_repos", mock_board_repos)
+    monkeypatch.setattr(ticket_agents, "collect", mock_collect)
+
+    results = hc.check_contradictory_hold_labels(snapshot=None)
+
+    assert "board_repos" in call_log
+    assert "collect" in call_log
+    assert len(results) == 1
+    assert results[0]["severity"] == "yellow"
+
+
+def test_check_contradictory_hold_labels_empty_repos_short_circuits():
+    """Check that empty repos list returns immediately."""
+    import ticket_agents
+
+    calls = []
+
+    def mock_board_repos():
+        calls.append("board_repos")
+        return []
+
+    def mock_collect(repos, gh=None):
+        calls.append("collect")
+        return {}
+
+    original_board_repos = ticket_agents.board_repos
+    original_collect = ticket_agents.collect
+
+    try:
+        ticket_agents.board_repos = mock_board_repos
+        ticket_agents.collect = mock_collect
+
+        results = hc.check_contradictory_hold_labels(snapshot=None)
+
+        assert "board_repos" in calls
+        assert "collect" not in calls, "collect should not be called when board_repos returns empty"
+        assert results == []
+    finally:
+        ticket_agents.board_repos = original_board_repos
+        ticket_agents.collect = original_collect

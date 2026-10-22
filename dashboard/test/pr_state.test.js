@@ -249,3 +249,17 @@ describe('describePrState: auto-merge shadow verdict (#341)', () => {
     expect(describePrState({ ...ready }).note || '').not.toMatch(/Auto-merge/)
   })
 })
+
+describe('describePrState: held tickets and PRs', () => {
+  it('describes a ready PR correctly even when its ticket has hold labels', () => {
+    const s = state({ ticketHeld: true })
+    expect(s).toMatchObject({ kind: 'ready' })
+    expect(s.approve).toBe('enabled')
+  })
+
+  it('a held PR or sent-back PR with held state shows it is on hold', () => {
+    const s = state({ sentBack: true, ticketHeld: true })
+    expect(s).toMatchObject({ kind: 'sent-back' })
+    expect(s.detail).not.toMatch(/hold|pinned|held/) // the PR state reflects GitHub labels, not ticket hold status
+  })
+})

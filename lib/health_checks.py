@@ -640,6 +640,44 @@ def check_missing_profiles(snapshot: dict | None = None, repos: list[str] | None
 	return results
 
 
+def check_contradictory_hold_labels(snapshot: dict | None = None, repos: list[str] | None = None, gh=None) -> list[dict]:
+	"""Tickets with both a hold label and a pipeline label (hold + ready-for-agent or hold + needs-reengagement).
+	Hold blocks the pipeline, so these contradict each other and need cleanup."""
+	if snapshot is None:
+		import ticket_agents
+		repos = repos or ticket_agents.board_repos()
+		if not repos:
+			return []
+		gh = gh or ticket_agents._gh
+		snapshot = ticket_agents.collect(repos, gh=gh)
+
+	import ticket_policy as pol
+
+	findings = []
+	for repo, data in snapshot.items():
+		issues = data.get("issues") or []
+		for issue in issues:
+			if not isinstance(issue, dict):
+				continue
+			label_names = {l["name"] if isinstance(l, dict) else l for l in issue.get("labels", [])}
+			hold_labels = label_names & pol.HOLD_LABELS
+			pipeline_labels = label_names & {"ready-for-agent", "needs-reengagement"}
+
+			if hold_labels and pipeline_labels:
+				contradictions = sorted(hold_labels) + sorted(pipeline_labels)
+				cid = f"hold:contradictory:{repo}#{issue['number']}"
+				label = f"{repo.split('/')[-1]}#{issue['number']} {issue.get('title', '')}"
+				detail = f"has contradictory labels: {', '.join(contradictions)} — hold blocks pipeline"
+				findings.append((cid, label, detail))
+
+	results = [_result(cid, label, "yellow", detail) for cid, label, detail in findings[:5]]
+	if len(findings) > 5:
+		results.append(_result("hold:contradictory:more", f"+{len(findings) - 5} more", "yellow",
+		                       f"{len(findings) - 5} additional tickets with contradictory hold labels"))
+
+	return results
+
+
 def check_unrunnable_profiles(profiles_dir: Path | None = None) -> list[dict]:
 	"""Profiles with dispatch on but no machines listed: none of their tickets can ever run. One line each, here, instead
 	of the scan logging "no suitable machine" for every ticket every hour (P6, 2026-10-21)."""
@@ -1481,6 +1519,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("catalog:fresh", "Project catalog is current", check_catalog_fresh, CHECK_BUDGET_S),
         ("tickets:project-tags", "Tickets are on their project's board", check_project_tags, CHECK_BUDGET_S),
         ("tickets:hold-revisit", "Hold tickets have revisit dates", check_hold_revisit, CHECK_BUDGET_S),
+        ("tickets:hold-contradictory", "Hold tickets have no contradictory labels", check_contradictory_hold_labels, CHECK_BUDGET_S),
         ("github:budget", "GitHub request budget", check_github_budget, CHECK_BUDGET_S),
         ("github:gate", "GitHub calls go through the gate", check_gh_gate, CHECK_BUDGET_S),
         ("main:green", "The main branch passes its tests", check_main_health, CHECK_BUDGET_S),

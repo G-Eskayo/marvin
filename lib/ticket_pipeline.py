@@ -110,7 +110,7 @@ def _label_for_device(device_id: str) -> str:
     return "mac-mini" if device_id.startswith("mac-mini") else "macbook-pro"
 
 
-HOLD_LABELS = frozenset({"pinned", "hold", "held"})  # a person's hands off: never dispatched, never sent back (#387)
+HOLD_LABELS = ticket_policy.HOLD_LABELS
 UNSCORED_RANK = 2  # a ticket the prioritizer hasn't scored yet counts as middle priority
 
 
