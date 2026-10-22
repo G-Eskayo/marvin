@@ -4,7 +4,7 @@ import MrReview from '@components/MrReview.jsx'
 import HealthDashboard from '@components/HealthDashboard.jsx'
 import BootSequence from '@components/BootSequence.jsx'
 import DocsExplorer from '@components/DocsExplorer.jsx'
-import FilesExplorer from '@components/FilesExplorer.jsx'
+import { warmDocs } from '@components/docs_warm.jsx'
 import ActivityBoard from '@components/ActivityBoard.jsx'
 import PortfolioHub from '@components/PortfolioHub.jsx'
 import DispatchStatusBadge from '@components/DispatchStatusBadge.jsx'
@@ -16,7 +16,6 @@ const TABS = [
   { id: 'mr-review', label: 'MR Review' },
   { id: 'health', label: 'Health' },
   { id: 'docs', label: 'Docs' },
-  { id: 'files', label: 'Files' },
   { id: 'activity', label: 'Activity' },
   { id: 'portfolio', label: 'Portfolio' }
 ]
@@ -58,6 +57,8 @@ export default function App() {
   const [reviewStatus, setReviewStatus] = useState(null)
   const [healthOverall, setHealthOverall] = useState(null)
 
+  // Docs speed budget (#570): pdf.js and the markdown renderer are warmed once, when the app is idle after boot.
+  useEffect(() => warmDocs(), [])
   useEffect(() => {
     let cancelled = false
     async function refresh() {
@@ -148,8 +149,6 @@ export default function App() {
           <HealthDashboard nav={nav} />
         ) : activeTab === 'docs' ? (
           <DocsExplorer nav={nav} onOpenBoard={(repo) => navigate('activity', { repo })} onOpenTicket={(repo, number) => navigate('activity', { repo, ticketNumber: number })} onOpenPr={(repo, number) => navigate('mr-review', { prKey: `${repo}#${number}` })} />
-        ) : activeTab === 'files' ? (
-          <FilesExplorer />
         ) : activeTab === 'portfolio' ? (
           <PortfolioHub />
         ) : (

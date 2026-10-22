@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, session, shell, protocol, net } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, session, shell, protocol, net, nativeImage } from 'electron'
 import { pathToFileURL } from 'url'
 import { instrumentIpc } from './timing.js'
 import { installDevSiteCors } from './dev_site_cors.js'
@@ -58,8 +58,11 @@ import { createSavedDocs } from './docs_saved.js'
 import { readMergeableRepos, readUiPaths, listProfiles, setDispatch, setMergeFromDashboard } from './profiles.js'
 import { searchFiles, isRevealable, isLinkable, linkAction } from './files_search.js'
 import { safeExternalUrl } from '../../src/lib/pdf_nav.js'
-import { listOutboxTree, readOutboxFile, readOutboxImage, outboxRevealPath, outboxOpenPath } from './outbox.js'
-import { readCatalog, readMasterDoc, CATALOG_DIR, MASTER_DOC_PATH } from './catalog.js'
+import { readOutboxFile, readOutboxImage, outboxRevealPath, outboxOpenPath, outboxRoot, listOutboxDir, summarizeOutbox, outboxPreview } from './outbox.js'
+import { createDeliverables } from './deliverables.js'
+import { createThumbs } from './thumbs.js'
+import { docsTextFor, maxNumbers, docsClickHandlers } from './docs_handlers.js'
+import { readCatalog, readMasterDoc, readOverrides, CATALOG_DIR, MASTER_DOC_PATH } from './catalog.js'
 import { STAGES_DIR } from '../../webhook-server/ticket_stages.js'
 import { DISPATCH_STATE_PATH } from './dispatch_status.js'
 import { createHash } from 'crypto'
@@ -447,12 +450,25 @@ function registerDocsHandlers() {
       return { at: seedIndex.generated_at, docs: seedIndex.docs.filter((d) => d.repo === rec.id) }
     }
   })
+  // #570: outbox items matched to projects from text (deliverables.js). The match map is saved, so the tab draws it at
+  // once; the outbox trigger re-matches only what changed. Its context reads only what is local or already in memory:
+  // the catalog, overrides, each project's docs (local clone or saved copy) and the board numbers github_state holds.
+  let docsTextCache = null
+  const deliverables = createDeliverables({
+    getContext: () => {
+      const projects = readCatalog({ deviceId: deviceId() })?.projects || []
+      docsTextCache = docsTextCache || docsTextFor(projects, { saved: savedDocs })
+      return { projects, overrides: readOverrides(), maxNumber: maxNumbers(githubState.peek('board')), docsText: docsTextCache }
+    }
+  })
   const docsService = createDocsService({
     getCatalog: () => readCatalog({ deviceId: deviceId() }),
     exec: execFileAsync,
     readMaster: () => readMasterDoc(),
     fallbackRepos: () => readCachedRepos().repos,
-    saved: savedDocs
+    saved: savedDocs,
+    deliverables,
+    onStatesChanged: () => triggerHub.emit('docs-states', 'git-status')
   })
 
   // Relationships between tickets, PRs and docs, derived from their text (relations.js). Docs come from
@@ -466,7 +482,7 @@ function registerDocsHandlers() {
       const local = await docsService.localDocs()
       const remote = (loadIndex().docs || []).filter((d) => !local.repos.has(d.repo))
       return [...local.docs, ...remote]
-        .filter((d) => d.path !== 'PROJECT.md' && d.repo !== MASTER_ID)
+        .filter((d) => d.path !== 'PROJECT.md' && d.repo !== MASTER_ID && d.kind !== 'deliverable') // outbox items are search-only (#570)
         .map((d) => ({ project: d.repo, path: d.path, label: d.label, content: d.content }))
     },
     getProjects: () => (readCatalog({ deviceId: deviceId() })?.projects || []).filter((p) => p.repo).map((p) => ({ id: p.id, repo: p.repo })),
@@ -523,22 +539,64 @@ function registerDocsHandlers() {
   watchSources()
   if (!readCatalog({ deviceId: deviceId() })) refreshCatalog().then(watchSources) // first run: build it now
 
-  ipcMain.handle('docs:repos', () => docsService.repos())
+  // The outbox trigger (#570): every changed path in a burst is collected, then only those top-level items re-match.
+  const outboxChanged = new Set()
+  triggerHub.watchFiles('outbox', [{ dir: outboxRoot(), recursive: true, match: (n) => (outboxChanged.add(n), true) }])
+  triggerHub.onTrigger((t) => {
+    if (t.topic === 'docs') docsTextCache = null // a doc changed: the docs-phrase tier re-reads, the map rebuilds in the background
+    // GitHub-side board changes can add ticket numbers (the number tier); a refresh with nothing new is a few stats.
+    const boards = t.topic === 'activity' && refetchesGithub(t)
+    if (t.topic !== 'outbox' && t.topic !== 'docs' && !boards) return
+    const names = t.topic === 'outbox' ? [...outboxChanged] : null
+    outboxChanged.clear()
+    setImmediate(() => {
+      try {
+        deliverables.refresh(names)
+      } catch (err) {
+        console.error('[docs] could not re-match the outbox:', err)
+      }
+    })
+  })
+  // Saved state first: the tab draws the saved map; this one background pass catches what changed while the app was closed.
+  setImmediate(() => {
+    try {
+      deliverables.refresh()
+      triggerHub.emit('outbox', 'startup')
+    } catch (err) {
+      console.error('[docs] could not match the outbox:', err)
+    }
+  })
+
   // Full-text search over every card, master and browsable doc; the GitHub part of the index
   // rebuilds in the background when stale, local docs are read live.
+  // The automatic build (empty or stale index) reads the saved copies only, so typing a search never reaches GitHub;
+  // the explicit Refresh (docs:refresh) is the online build: one conditional request per GitHub-only repo (#565).
+  const buildIndex = (online) => buildDocsIndex(execFileAsync, docsService.githubIndexRepos(), undefined, { saved: savedDocs, offline: !online })
   const docsIndexer = createIndexer({
-    build: () => buildDocsIndex(execFileAsync, docsService.githubIndexRepos(), undefined, { saved: savedDocs }),
+    build: () => buildIndex(false),
     getLocal: () => docsService.localDocs()
   })
+  // Every Docs click, from one table (docs_handlers.js; test/docs_clicks_network.test.js counts their network calls).
+  // Card covers are downscaled once and cached (thumbs.js); Electron's own image code does the resize, nothing external.
+  const thumbs = createThumbs({
+    resize: (buf, width) => {
+      const img = nativeImage.createFromBuffer(buf)
+      if (img.isEmpty()) return null
+      return (img.getSize().width > width ? img.resize({ width, quality: 'good' }) : img).toJPEG(80)
+    }
+  })
+  const outboxReads = { list: listOutboxDir, summary: summarizeOutbox, preview: outboxPreview, content: readOutboxFile, image: readOutboxImage, thumb: thumbs.thumb }
+  for (const [channel, fn] of Object.entries(docsClickHandlers({ docsService, docsIndexer, outbox: outboxReads }))) {
+    ipcMain.handle(channel, (_event, ...args) => fn(...args))
+  }
   // A docs change refreshes the search's in-memory copy of local docs in the background (docs_search.js).
-  triggerHub.onTrigger((t) => { if (t.topic === 'docs') docsIndexer.localChanged() })
+  triggerHub.onTrigger((t) => { if (t.topic === 'docs' || t.topic === 'outbox') docsIndexer.localChanged() })
   ipcMain.handle('docs:refresh', async () => {
     await refreshCatalog()
-    docsIndexer.reindex()
+    docsIndexer.reindex(() => buildIndex(true))
     watchSources()
     return docsService.repos()
   })
-  ipcMain.handle('docs:search', (_event, query, opts) => docsIndexer.search(String(query || ''), opts))
   // "Files on this Mac": the same Spotlight search as the `findit` command, attributed to projects.
   ipcMain.handle('docs:files', (_event, query) =>
     searchFiles(String(query || ''), {
@@ -558,16 +616,16 @@ function registerDocsHandlers() {
     const err = await shell.openPath(filePath)
     if (err) throw new Error(err)
   })
-  ipcMain.handle('docs:tree', (_event, id) => docsService.tree(id))
-  ipcMain.handle('docs:content', (_event, id, filePath) => docsService.content(id, filePath))
   // Once per open of a GitHub-only project (#565): one conditional request; a 304 is free, a change comes back in place.
-  ipcMain.handle('docs:revalidate', (_event, id) => docsService.revalidate(String(id)))
+  ipcMain.handle('docs:revalidate', async (_event, id) => {
+    const r = await docsService.revalidate(String(id))
+    if (r.status === 'changed') docsIndexer.reindex() // the search sees the new text (saved copies, no network)
+    return r
+  })
 
-  // Files tab (outbox): read-only local file viewer
-  ipcMain.handle('outbox:tree', () => listOutboxTree())
-  ipcMain.handle('outbox:content', (_event, relPath) => readOutboxFile(relPath))
+
+  // Deliverables (the outbox, shown inside Docs since #570): read-only, local, one folder at a time.
   // An image a markdown file embeds, resolved against that file's folder; read-only, never outside the outbox (#402).
-  ipcMain.handle('outbox:image', (_event, fromRel, src) => readOutboxImage(fromRel, src))
   ipcMain.handle('outbox:reveal', (_event, relPath) => shell.showItemInFolder(outboxRevealPath(relPath)))
   // A link clicked inside a PDF: only http/https/mailto go to the default browser or mail app (pdf_nav.js
   // safeExternalUrl, checked again here so a compromised page can't widen it). Never file:, javascript: or custom schemes.
