@@ -9,6 +9,7 @@ import MrDetail from './MrDetail.jsx'
 import CheckProgress from './CheckProgress.jsx'
 import MergeProgress from './MergeProgress.jsx'
 import { opForHead } from '../lib/merge_progress.js'
+import { displayTitle } from '../lib/pr_title.js'
 
 const MR_LIST_REFRESH_MS = 120000
 
@@ -442,7 +443,7 @@ function PrCard({ pr, parity, onOpenTicket, onApproved, onDenied, onSelect }) {
       <div className="mb-2 flex items-center justify-between gap-3">
         <div>
           <p className="font-mono text-sm font-semibold text-white">
-            #{pr.number} — {pr.title}{' '}
+            #{pr.number} — {displayTitle(pr.title, parity?.ticket?.title)}{' '}
             {pr.repo !== 'G-Eskayo/marvin' && <span className="rounded bg-sky-950 px-1.5 py-0.5 font-sans text-[10px] font-normal text-sky-300">{pr.repo.split('/')[1]}</span>}
           </p>
           {pr.hasSchema ? (
