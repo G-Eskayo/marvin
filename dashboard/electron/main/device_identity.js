@@ -69,3 +69,13 @@ export function resolveServiceDefaults(readHardwareUuid = defaultReadHardwareUui
   const hostname = primaryHostTailscaleName(networkPath)
   return { host: hostname || 'localhost' }
 }
+
+// Every other registered Mac and its Tailscale name, for reads from their webhook servers (#612, as GET /sessions
+// does for #331). No hardware UUID means "unknown which one is me": every device is listed.
+export function peerHosts(readHardwareUuid = defaultReadHardwareUuid, networkPath = NETWORK_PATH) {
+  const registry = loadRegistry(networkPath)
+  const me = resolveDeviceId(readHardwareUuid, networkPath)
+  return Object.entries(registry)
+    .filter(([id, info]) => id !== me && info && info.tailscale_hostname)
+    .map(([id, info]) => ({ id, host: info.tailscale_hostname }))
+}
