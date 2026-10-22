@@ -15,9 +15,23 @@ function flatten(tree) {
   return tree.flatMap((e) => (e.section ? e.items : [e]))
 }
 
-export async function buildDocsIndex(execFileAsync, repos, indexPath = INDEX_PATH) {
+// With `saved` (docs_saved.js, #565) a rebuild goes through the Docs tab's saved copy: one conditional request per repo
+// (a 304 is free and downloads nothing), and only docs whose blob sha changed are fetched. Without it, every file of
+// every repo is downloaded again.
+// `offline` builds from the saved copies alone: no request at all (the automatic build; #570).
+export async function buildDocsIndex(execFileAsync, repos, indexPath = INDEX_PATH, { saved = null, offline = false } = {}) {
   const docs = []
   for (const repo of repos) {
+    if (saved) {
+      const full = repo.repo || `G-Eskayo/${repo.name}`
+      if (!offline) await saved.revalidate(full)
+      const copy = saved.peek(full)
+      for (const f of flatten(copy?.tree || [])) {
+        const text = copy.files[f.path]
+        if (typeof text === 'string') docs.push({ repo: repo.id || repo.name, path: f.path, label: f.label, content: searchableText(f.path, text) })
+      }
+      continue
+    }
     let files = []
     try {
       files = flatten(await listRepoDocTree(execFileAsync, repo.name))
@@ -91,7 +105,10 @@ export function searchDocs(index, query, { repo = null, limit = 50 } = {}) {
       const label = doc.label.toLowerCase()
       const all = `${head}\n${body}`
       if (!terms.every((t) => all.includes(t))) continue
-      const score = terms.reduce((s, t) => s + count(all, t) + (head.includes(t) ? 5 : 0) + (label.includes(t) ? 2 : 0), 0)
+      // A deliverable's text counts at most 3 times a term: a long JSON or log that repeats a word must not outrank the
+      // file or folder actually named for it (#570). Docs keep their plain counts.
+      const cap = doc.kind === 'deliverable' ? 3 : Infinity
+      const score = terms.reduce((s, t) => s + Math.min(count(all, t), cap) + (head.includes(t) ? 5 : 0) + (label.includes(t) ? 2 : 0), 0)
       results.push({
         repo: doc.repo,
         path: doc.path,
@@ -101,6 +118,8 @@ export function searchDocs(index, query, { repo = null, limit = 50 } = {}) {
         snippet: snippetAround(section.text || section.heading, terms),
         terms,
         state: doc.state ?? null,
+        kind: doc.kind ?? null,
+        isDir: doc.isDir ?? false,
         score
       })
     }
@@ -136,9 +155,9 @@ export function createIndexer({ build, load = loadIndex, maxAgeMs = MAX_AGE_MS, 
     return local
   }
 
-  function rebuild() {
+  function rebuild(fn = build) {
     if (!inflight) {
-      inflight = build()
+      inflight = fn()
         .then((idx) => (current = idx))
         .catch(() => current) // keep serving the old index; next search retries
         .finally(() => (inflight = null))
@@ -163,7 +182,8 @@ export function createIndexer({ build, load = loadIndex, maxAgeMs = MAX_AGE_MS, 
         results: searchDocs({ docs }, query, opts),
         indexedAt: idx.generated_at,
         indexing: inflight !== null,
-        docCount: docs.length
+        docCount: docs.filter((d) => d.kind !== 'deliverable').length,
+        deliverableCount: docs.filter((d) => d.kind === 'deliverable' && !d.isDir).length
       }
     }
   }

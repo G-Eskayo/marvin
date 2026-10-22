@@ -118,7 +118,7 @@ describe('clearSentBackLabel: the way out when the label is wrong', () => {
   it('removes the label from the PR\'s own ticket and leaves a comment saying who did it and why', async () => {
     const w = world(['ready-for-agent', 'needs-reengagement'])
     const r = await clearSentBackLabel(URL, w.exec)
-    expect(r).toEqual({ cleared: true })
+    expect(r).toEqual({ cleared: true, ticket: 27 }) // the ticket, so the card can drop the label at once (local-first)
     const edit = w.calls.find((a) => a[1] === 'edit')
     expect(edit).toEqual(expect.arrayContaining(['27', '--repo', 'G-Eskayo/clarity-captions', '--remove-label', 'needs-reengagement']))
     expect(w.calls.some((a) => a[1] === 'comment')).toBe(true)

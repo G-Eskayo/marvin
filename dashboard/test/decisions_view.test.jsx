@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import Decisions, { initialDraft, missingRequired, changedAnswers, toggleChoice } from '../src/components/Decisions.jsx'
+import Decisions, { initialDraft, missingRequired, changedAnswers, toggleChoice, submitOutcome, followGithub, answersSignature } from '../src/components/Decisions.jsx'
 import MrDetail from '../src/components/MrDetail.jsx'
 import { summarizeDecisions } from '../webhook-server/decisions.js'
 
@@ -81,5 +81,34 @@ describe('Decisions panel', () => {
     expect(html.indexOf('data-decisions')).toBeGreaterThan(0)
     expect(html.indexOf('data-decisions')).toBeLessThan(html.indexOf('Images &amp; recordings'))
     expect(html).toContain('Answer the decisions first')
+  })
+})
+
+// Local-first: the panel shows what GitHub has, never only what was sent.
+describe('after a submit, the panel follows GitHub', () => {
+  const answered = summarizeDecisions(BODY.replace('- [ ] Glide', '- [x] Glide'))
+  it('GitHub kept a different answer: not "saved", stays open to pick again', () => {
+    const out = submitOutcome({ ok: true, disagreed: true, pending: ['handoff'] })
+    expect(out.editing).toBe(true)
+    expect(out.status.state).toBe('error')
+    expect(out.status.message).toMatch(/GitHub kept a different answer/)
+  })
+  it('agreed: saved, recording until the comment lands, remembering what GitHub had', () => {
+    const out = submitOutcome({ ok: true, pending: [], pr: { decisions: answered } })
+    expect(out).toMatchObject({ editing: false, status: { state: 'saved', result: { recording: true }, savedSig: answersSignature(answered.questions) } })
+    expect(submitOutcome({ ok: true, commentUrl: 'u', pr: null }).status.result.recording).toBe(false)
+  })
+  it('a background correction re-ticks GitHub\'s answers and turns "Saved" into a warning', () => {
+    const saved = submitOutcome({ ok: true, pending: [], pr: { decisions: answered } }).status
+    const next = followGithub({ questions: d.questions, editing: false, status: saved })
+    expect(next.draft.handoff.choices).toEqual([])
+    expect(next.status.state).toBe('error')
+  })
+  it('the save itself is not mistaken for a correction', () => {
+    const saved = submitOutcome({ ok: true, pending: [], pr: { decisions: answered } }).status
+    expect(followGithub({ questions: answered.questions, editing: false, status: saved }).status).toBe(saved)
+  })
+  it('while Gil is editing, his picks are left alone', () => {
+    expect(followGithub({ questions: d.questions, editing: true, status: { state: 'idle' } })).toBeNull()
   })
 })
