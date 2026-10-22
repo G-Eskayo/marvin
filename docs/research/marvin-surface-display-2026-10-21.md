@@ -137,7 +137,12 @@ distance. **Confidence: Established** (geometry).
   - Leave the rest of the long sheet clear, or edge-lit only at its polished edges for a glowing outline. That outline
     is a strong Evangelion/Stark cue.
 - **Long or curved panels:**
-  - Light from both long edges, top and bottom, rather than the short ends. A 1.5 m path from one end won't stay even.
+  - **Light from the short edges only** (the left and right ends, inside the legs). *Corrected 2026-10-22 per Gil:
+    an earlier draft said long edges.* One end alone won't stay even over 1.5 m, but light from **both** ends only
+    has to reach the centre (about 780 mm). Edge-lit TVs push light that far through 2–4 mm guides. Keep it even with
+    a dot gradient made for two-ended light (densest at the centre), a thicker guide (10 mm) and about twice the LED
+    density per metre, because the short edges are less than half the entry length of the long edges. Details in
+    §0.7.
   - Gentle curves (R ≥ 1 m) keep the light trapped inside the sheet. Tight thermoformed bends leak light at the bend.
     *(Inference from the optics of total internal reflection.)*
 - **LEDs:**
@@ -249,6 +254,35 @@ Three routes for the display:
 | **Total** | **about $5,000–$12,000+** |
 
 Gate V3 on MARVIN's engineering tools (CAD for the arc and brackets), per the workshop vision.
+
+### 0.7 V3 goal build (design, 2026-10-22)
+
+*Full spec and dimensioned drawing: `~/.claude/outbox/marvin-surface-research-2026-10-21/v3-design/`
+(`surface-v3-spec.md`, `surface-v3-concept.svg`). This replaces the three V3 routes above as the target that V1
+builds toward.*
+
+- **Panel:** **one flat 55" 4K transparent LCD** (1210 × 680 active, 80 PPI). It has no seams and needs one video
+  output. Tiled panels add 10–20 mm opaque driver-bezel seams. No transparent stretched-bar panel at this size was
+  found. Transparent OLED at 55" is only 1080p (40 PPI). A 1080p 55" transparent LCD is too coarse at this viewing
+  distance, so **insist on 4K**.
+- **Curve:** the pixels stay flat, and the curve lives in the light guide behind them. The guide is 10 mm cast acrylic,
+  1560 × 760 mm, cold-bent to **R 3.5 m** (the limit for 10 mm is about 3.3 m). The leg clamps, each turned 12.8°
+  inward, bend it. The panel is a chord in front of the arc: 10 mm gap at its ends, 63 mm at its centre.
+- **Light:** **short edges only**, two rows of high-CRI tunable-white strip per edge, about 100 W in total, with the
+  aluminium legs as heatsinks. It is sized for about 1,500 nits behind the panel, which gives about 150–225 nits at
+  the front. The 175 mm ends have no dots and act as LED mixing zones. A PDLC film between the panel and the guide is
+  frosted when the glow is on, hiding the dots, and clear when the glow is off.
+- **Touch:** flat 55" PCAP cover glass over the whole screen. The curved foil isn't needed.
+- **Stance:** 45° drafting tilt (hinge 35–50°) on short legs and a **100 mm riser** that is also the equipment bay,
+  on a 36" (914 mm) table. Riser = 1014 mm − table height.
+- **Ergonomics** for a 5'10" standing viewer (eye 1680 mm): screen centre at about 1333 mm, 583 mm from the eye, gaze
+  37° down and 8° off square to the face. The top edge (1573 mm) is below eye level. The lower 77% of the screen is
+  within comfortable reach.
+- **Cost:** about **$2,800–$9,800**, less than the earlier $5k–$12k+ because there are no tiled panels and no custom
+  curved foil.
+- **V1 changes so that it steps toward V3:** cut V1's guide at V3's size and thickness, lit from the short edges at V3
+  LED density. Build the riser and leg geometry at V3 dimensions. The ESP32/WLED, LEDs, guide, riser, UPDD and software
+  carry forward. The 32" panel, the IR frame and the extrusion legs don't. V1 cost becomes about $550–$1,300.
 
 **Risks specific to this concept**
 1. **Readability:** transparent LCDs are low-contrast smoked glass. V1 exists to test exactly this, so do it before
