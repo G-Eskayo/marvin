@@ -12,19 +12,19 @@ const NOW = new Date('2026-10-14T17:00:00Z')
 const minutesAgo = (m) => new Date(NOW.getTime() - m * 60_000).toISOString()
 const check = (id, severity, label = id, detail = '') => ({ id, label, severity, detail })
 
-function tree({ health, memoryIndex = '- [A](a.md) — x\n- [B](b.md) — y\n', memoryFiles = ['a.md', 'b.md'], commands = ['tdd.md', 'diagnose.md'], handoffs = [] } = {}) {
+function tree({ health, memoryIndex = '- [A](a.md) — x\n- [B](b.md) — y\n', memoryFiles = ['a.md', 'b.md'], skills = ['tdd', 'diagnose'], handoffs = [] } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'boot-data-'))
   const p = {
     healthPath: path.join(root, 'logs', 'health-status.json'),
     memoryDir: path.join(root, 'memory'),
-    commandsDir: path.join(root, 'commands'),
+    skillsDir: path.join(root, 'skills'),
     handoffsDir: path.join(root, 'handoffs')
   }
-  for (const d of [path.dirname(p.healthPath), p.memoryDir, p.commandsDir, p.handoffsDir]) mkdirSync(d, { recursive: true })
+  for (const d of [path.dirname(p.healthPath), p.memoryDir, p.skillsDir, p.handoffsDir]) mkdirSync(d, { recursive: true })
   if (health !== undefined) writeFileSync(p.healthPath, typeof health === 'string' ? health : JSON.stringify(health))
   if (memoryIndex !== null) writeFileSync(path.join(p.memoryDir, 'MEMORY.md'), '# Memory Index\n\n' + memoryIndex)
   for (const f of memoryFiles) writeFileSync(path.join(p.memoryDir, f), 'x')
-  for (const f of commands) writeFileSync(path.join(p.commandsDir, f), 'x')
+  for (const s of skills) { mkdirSync(path.join(p.skillsDir, s)); writeFileSync(path.join(p.skillsDir, s, 'SKILL.md'), 'x') }
   handoffs.forEach(([name, mtime]) => {
     const f = path.join(p.handoffsDir, name); writeFileSync(f, 'x'); utimesSync(f, mtime, mtime)
   })
@@ -125,6 +125,24 @@ describe('the summary lines read real sources', () => {
     expect(b.level).toBe('yellow')
     expect(b.text).toMatch(/1 BROKEN LINK$/)
     broken.done()
+  })
+
+  it('skills are the skill folders with a SKILL.md, not slash-command files', () => {
+    // 2026-10-22 the line said 36: it counted ~/.claude/commands (3 third-party commands, one dead link) for 33 skills.
+    const t = tree({ health: GREEN(), skills: ['tdd', 'diagnose', 'variable-tracker'] })
+    mkdirSync(path.join(t.skillsDir, 'empty-folder'))                                  // no SKILL.md: not a skill
+    writeFileSync(path.join(t.skillsDir, 'conftest.py'), 'x')                           // a file, not a folder
+    mkdirSync(path.join(t.skillsDir, 'renamed')); writeFileSync(path.join(t.skillsDir, 'renamed', 'skill.md'), 'x')
+    mkdirSync(path.join(t.skillsDir, 'SKILL.md'))                                       // a folder named like the file
+    expect(line(buildBootData(t), 'OK').text).toBe('2 MEMORIES CHARTED · 3 SKILLS WIRED')
+    t.done()
+  })
+
+  it('a missing skills folder reads as 0 skills, never a crash', () => {
+    const t = tree({ health: GREEN() })
+    rmSync(t.skillsDir, { recursive: true, force: true })
+    expect(line(buildBootData(t), 'OK').text).toBe('2 MEMORIES CHARTED · 0 SKILLS WIRED')
+    t.done()
   })
 
   it('a missing memory index is a warning, not a zero-memories green', () => {

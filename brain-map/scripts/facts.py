@@ -3,7 +3,7 @@
 facts.py — the MARVIN page's numbers, computed from the system so they can't go stale
 (docs/plans/living-marvin-page-2026-10-08.md, layer 1; published with the map under ADR 0057's extension).
 
-  skills       entries in the skill index (~/.claude/manifest.json)
+  skills       entries in the skill index (~/.claude/manifest.json) whose file is a SKILL.md, not the memories it also holds
   tests        tests_passed in the newest pipeline run (bench/metrics/ticket-*.json): what runs on every change
   prs_merged   merged pull requests the pipeline wrote ("Implement G-Eskayo/<repo>#N"), from GitHub search
   agents       background jobs MARVIN schedules (lib/health_checks.py JOB_PLACEMENT)
@@ -28,8 +28,10 @@ REPO = Path(__file__).resolve().parents[2]
 def compute_facts(*, manifest: dict, test_runs: list[list[dict]], merged_prs: int | None, placement: dict,
                   adr_names: list[str], network: dict, today: str) -> dict:
     out: dict = {}
-    if manifest.get("index"):
-        out["skills"] = len(manifest["index"])
+    # The index also holds memories; a skill is an entry whose file is a SKILL.md (type tags vary: agent, library...).
+    skills = [e for e in manifest.get("index") or [] if isinstance(e, dict) and str(e.get("path", "")).endswith("/SKILL.md")]
+    if skills:
+        out["skills"] = len(skills)
     entries = [e for run in test_runs for e in run if isinstance(e, dict) and "tests_passed" in e.get("metrics", {})]
     if entries:
         newest = max(entries, key=lambda e: e.get("timestamp", ""))
