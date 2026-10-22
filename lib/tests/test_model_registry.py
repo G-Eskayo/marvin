@@ -207,6 +207,188 @@ class TestCheckConsistency:
 
 # ── Regression tests for paper-dive scripts ────────────────────────────────
 
+class TestCheckOllamaPulled:
+    """Test check_ollama_pulled() for verifying Ollama model availability."""
+
+    def test_check_ollama_pulled_handles_server_down(self):
+        """If Ollama server is unreachable, should return error."""
+        def fake_urlopen(url, timeout=5):
+            raise ConnectionRefusedError("Connection refused")
+
+        import urllib.request
+        original_urlopen = urllib.request.urlopen
+        try:
+            urllib.request.urlopen = fake_urlopen
+            ok, err = model_registry.check_ollama_pulled("qwen2.5:7b", base_url="http://localhost:9999")
+            assert ok is False
+            assert "Ollama server not responding" in err
+        finally:
+            urllib.request.urlopen = original_urlopen
+
+    def test_check_ollama_pulled_accepts_exact_match(self):
+        """Should return True if the model is in the available list exactly."""
+        def fake_get(url, timeout=5):
+            class FakeResp:
+                def read(self):
+                    import json
+                    return json.dumps({"models": [{"name": "qwen2.5:7b"}]}).encode()
+                def __enter__(self):
+                    return self
+                def __exit__(self, *args):
+                    pass
+            return FakeResp()
+
+        import urllib.request
+        original_urlopen = urllib.request.urlopen
+        try:
+            urllib.request.urlopen = fake_get
+            ok, err = model_registry.check_ollama_pulled("qwen2.5:7b")
+            assert ok is True
+            assert err == ""
+        finally:
+            urllib.request.urlopen = original_urlopen
+
+    def test_check_ollama_pulled_accepts_prefix_match(self):
+        """Should return True if the model is a prefix match (quantization variant)."""
+        def fake_get(url, timeout=5):
+            class FakeResp:
+                def read(self):
+                    import json
+                    return json.dumps({"models": [{"name": "qwen2.5:7b-instruct-q4_K_M"}]}).encode()
+                def __enter__(self):
+                    return self
+                def __exit__(self, *args):
+                    pass
+            return FakeResp()
+
+        import urllib.request
+        original_urlopen = urllib.request.urlopen
+        try:
+            urllib.request.urlopen = fake_get
+            ok, err = model_registry.check_ollama_pulled("qwen2.5:7b")
+            assert ok is True
+            assert err == ""
+        finally:
+            urllib.request.urlopen = original_urlopen
+
+    def test_check_ollama_pulled_rejects_missing_model(self):
+        """Should return error if model is not available."""
+        def fake_get(url, timeout=5):
+            class FakeResp:
+                def read(self):
+                    import json
+                    return json.dumps({"models": [{"name": "other-model:7b"}]}).encode()
+                def __enter__(self):
+                    return self
+                def __exit__(self, *args):
+                    pass
+            return FakeResp()
+
+        import urllib.request
+        original_urlopen = urllib.request.urlopen
+        try:
+            urllib.request.urlopen = fake_get
+            ok, err = model_registry.check_ollama_pulled("qwen2.5:7b")
+            assert ok is False
+            assert "Model 'qwen2.5:7b' not found" in err
+        finally:
+            urllib.request.urlopen = original_urlopen
+
+
+# ── resolve_available_capability ────────────────────────────────────────────
+
+class TestResolveAvailableCapability:
+    """Test resolve_available_capability() for fallback handling."""
+
+    def test_resolve_available_capability_returns_first_available(self):
+        """Should return the first available model from the capability list."""
+        def fake_check(model, base_url=None):
+            # First model is available
+            return model == "qwen2.5:14b", ""
+
+        original_check = model_registry.check_ollama_pulled
+        try:
+            model_registry.check_ollama_pulled = fake_check
+            model, is_fallback = model_registry.resolve_available_capability("local-classify-medium")
+            assert model == "qwen2.5:14b"
+            assert is_fallback is False
+        finally:
+            model_registry.check_ollama_pulled = original_check
+
+    def test_resolve_available_capability_returns_fallback_when_first_missing(self):
+        """Should fall back to second model if first isn't available."""
+        def fake_check(model, base_url=None):
+            # Only second model is available
+            return model == "qwen2.5:7b", ""
+
+        # Adjust capability to have fallback: add qwen2.5:7b as fallback for classify
+        with TemporaryRegistry() as reg:
+            data = reg._read()
+            data["capabilities"]["local-classify-medium"] = ["qwen2.5:14b", "qwen2.5:7b"]
+            reg._write(data)
+            model, is_fallback = model_registry.resolve_available_capability(
+                "local-classify-medium", reg=reg, check_fn=fake_check
+            )
+            assert model == "qwen2.5:7b"
+            assert is_fallback is True
+
+    def test_resolve_available_capability_raises_when_none_available(self):
+        """Should raise RuntimeError if no models in the capability are available."""
+        def fake_check(model, base_url=None):
+            return False, "not available"
+
+        with TemporaryRegistry() as reg:
+            with __import__("pytest").raises(RuntimeError, match="No models available"):
+                model_registry.resolve_available_capability(
+                    "local-classify-medium", reg=reg, check_fn=fake_check
+                )
+
+    def test_resolve_available_capability_raises_on_unknown_capability(self):
+        """Should raise KeyError if capability doesn't exist."""
+        with TemporaryRegistry() as reg:
+            with __import__("pytest").raises(KeyError):
+                model_registry.resolve_available_capability("unknown-capability", reg=reg)
+
+    def test_resolve_available_capability_empty_list_raises(self):
+        """Should raise RuntimeError if capability list is empty."""
+        with TemporaryRegistry() as reg:
+            data = reg._read()
+            data["capabilities"]["empty-cap"] = []
+            reg._write(data)
+            with __import__("pytest").raises(RuntimeError, match="has no models"):
+                model_registry.resolve_available_capability("empty-cap", reg=reg)
+
+
+# ── request_pull ─────────────────────────────────────────────────────────────
+
+class TestRequestPull:
+    """Test request_pull() for model pulling with confirmation."""
+
+    def test_request_pull_skips_on_refusal(self):
+        """Should return False if user refuses confirmation."""
+        confirm_fn = lambda msg: False
+        result = model_registry.request_pull("qwen2.5:7b", confirm_fn=confirm_fn)
+        assert result is False
+
+    def test_request_pull_pulls_on_confirmation(self):
+        """Should call puller_fn if user confirms."""
+        confirm_fn = lambda msg: True
+        pulled_models = []
+        puller_fn = lambda m: pulled_models.append(m)
+        result = model_registry.request_pull("qwen2.5:7b", confirm_fn=confirm_fn, puller_fn=puller_fn)
+        assert result is True
+        assert pulled_models == ["qwen2.5:7b"]
+
+    def test_request_pull_returns_false_on_puller_error(self):
+        """Should return False if puller_fn raises an exception."""
+        confirm_fn = lambda msg: True
+        puller_fn = lambda m: (_ for _ in ()).throw(RuntimeError("pull failed"))
+        result = model_registry.request_pull("qwen2.5:7b", confirm_fn=confirm_fn, puller_fn=puller_fn)
+        assert result is False
+
+
+# ── Regression tests for paper-dive scripts ────────────────────────────────
+
 class TestPaperDiveModelResolution:
     """Ensure paper-dive scripts resolve to the right models via registry."""
 

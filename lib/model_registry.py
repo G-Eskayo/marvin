@@ -202,6 +202,94 @@ def resolve_capability(name: str, reg: ModelRegistry | None = None) -> list[str]
     return capabilities[name]
 
 
+def check_ollama_pulled(model: str, base_url: str = "http://localhost:11434") -> tuple[bool, str]:
+    """Check whether an Ollama model is available locally.
+
+    Returns (ok: bool, error_message: str).
+    - If ok=True, error_message is empty and the model is available.
+    - If ok=False, error_message explains what's wrong (server down, model not pulled, etc.).
+
+    Accepts exact match (e.g., "qwen2.5:7b") or prefix match for quantization variants
+    (e.g., "qwen2.5:7b" matches "qwen2.5:7b-instruct-q4_K_M").
+    """
+    import json
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(f"{base_url}/api/tags", timeout=5) as resp:
+            data = json.loads(resp.read())
+    except Exception as exc:
+        return False, f"Ollama server not responding ({exc}). Start with: ollama serve"
+
+    available = [m["name"] for m in data.get("models", [])]
+    # Accept exact match or prefix match (e.g. "qwen2.5:7b" matches "qwen2.5:7b-instruct-q4_K_M")
+    if not any(a == model or a.startswith(model) for a in available):
+        return False, (f"Model '{model}' not found. Available: {available}\n"
+                       f"Pull with: ollama pull {model}")
+    return True, ""
+
+
+def resolve_available_capability(name: str, reg: ModelRegistry | None = None,
+                                 check_fn=None) -> tuple[str, bool]:
+    """Resolve a capability to an available model, walking the candidate list in order.
+
+    Returns (model_name: str, is_fallback: bool).
+    - model_name: the first model in the capability list that's available locally.
+    - is_fallback: True if it's not the first choice (index > 0).
+
+    Raises KeyError if the capability doesn't exist.
+    Raises RuntimeError if none of the models in the capability list are available.
+
+    check_fn: injected function to check model availability (for testing). If None, uses check_ollama_pulled.
+    """
+    check_fn = check_fn or check_ollama_pulled
+
+    models = resolve_capability(name, reg=reg)
+    if not models:
+        raise RuntimeError(f"Capability {name!r} has no models in its list")
+
+    for i, model in enumerate(models):
+        ok, _ = check_fn(model)
+        if ok:
+            return model, i > 0
+
+    # None available
+    raise RuntimeError(
+        f"No models available for capability {name!r}. "
+        f"Candidates (in order): {models}. "
+        f"Pull at least one via: ollama pull <model>"
+    )
+
+
+def request_pull(model: str, confirm_fn=None, puller_fn=None) -> bool:
+    """Request to pull a model, with confirmation prompt.
+
+    confirm_fn: injected confirmation function (for testing). If None, uses real input().
+    puller_fn: injected pull function (for testing). If None, uses subprocess to call ollama.
+
+    Returns True if pulled successfully, False if skipped/refused/error.
+    """
+    import subprocess
+
+    confirm_fn = confirm_fn or (
+        lambda msg: input(f"{msg} [y/N] ").lower().strip() == "y"
+    )
+    puller_fn = puller_fn or (
+        lambda m: subprocess.run(["ollama", "pull", m], check=True)
+    )
+
+    msg = f"Pull model '{model}'?"
+    if not confirm_fn(msg):
+        return False
+
+    try:
+        puller_fn(model)
+        return True
+    except Exception as exc:
+        print(f"Error pulling {model}: {exc}", file=__import__("sys").stderr)
+        return False
+
+
 def is_heavy(model_name: str, reg: ModelRegistry | None = None) -> bool:
     """Check if a model is marked as heavy (long-running, needs queue coordination)."""
     if reg is None:

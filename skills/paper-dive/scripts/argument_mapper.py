@@ -39,9 +39,15 @@ import model_registry  # noqa: E402
 CHROMA_PATH = Path.home() / ".claude" / "chroma"
 COLLECTION_NAME = "paper-knowledge"
 OLLAMA_URL = "http://localhost:11434/api/chat"
-_claim_model_list = model_registry.resolve_capability("local-extract-small")
-CLAIM_MODEL = _claim_model_list[0]
-assert CLAIM_MODEL == "qwen2.5:3b", f"Regression: expected qwen2.5:3b, got {CLAIM_MODEL}"
+CLAIM_MODEL = None
+_claim_is_fallback = None
+
+def _resolve_claim_model():
+    global CLAIM_MODEL, _claim_is_fallback
+    if CLAIM_MODEL is None:
+        CLAIM_MODEL, _claim_is_fallback = model_registry.resolve_available_capability("local-extract-small")
+        assert CLAIM_MODEL == "qwen2.5:3b", f"Regression: expected qwen2.5:3b, got {CLAIM_MODEL}"
+    return CLAIM_MODEL
 OPENALEX_WORKS_BASE = "https://api.openalex.org/works"
 
 
@@ -63,7 +69,9 @@ Core claim (one sentence):"""
 
 
 def extract_core_claim(title: str, abstract: str, chat_fn=None) -> str:
-    chat_fn = chat_fn or (lambda messages: ollama_chat(CLAIM_MODEL, messages))
+    if chat_fn is None:
+        model = _resolve_claim_model()
+        chat_fn = lambda messages: ollama_chat(model, messages)
     prompt = CLAIM_PROMPT.format(title=title, abstract=abstract)
     response = chat_fn([{"role": "user", "content": prompt}])
     return response.strip().strip('"')

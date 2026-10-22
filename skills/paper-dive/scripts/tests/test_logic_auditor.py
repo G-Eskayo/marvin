@@ -339,6 +339,7 @@ def test_judge_extraction_uses_14b_override_for_benchmark_when_no_chat_fn_given(
     # the other 2 benchmarks. Only "benchmark" gets the override; the other
     # 3 types have no evidence of a problem at 7b.
     import logic_auditor as la
+    import model_registry as mr
 
     captured = {}
 
@@ -346,7 +347,14 @@ def test_judge_extraction_uses_14b_override_for_benchmark_when_no_chat_fn_given(
         captured["model"] = model
         return "NONE"
 
+    def fake_check_ollama(model, base_url="http://localhost:11434"):
+        # Mock: all qwen2.5 models are available
+        if model.startswith("qwen2.5"):
+            return True, ""
+        return False, f"Model {model} not found"
+
     monkeypatch.setattr(la, "ollama_chat", fake_ollama_chat)
+    monkeypatch.setattr(mr, "check_ollama_pulled", fake_check_ollama)
 
     extraction = {"measures": "m", "construct_validity_evidence": "e", "scope": "s"}
     judge_extraction(extraction, "benchmark")  # no chat_fn -- exercises the real default path
@@ -355,6 +363,7 @@ def test_judge_extraction_uses_14b_override_for_benchmark_when_no_chat_fn_given(
 
 def test_judge_extraction_uses_default_7b_for_non_benchmark_types(monkeypatch):
     import logic_auditor as la
+    import model_registry as mr
 
     captured = {}
 
@@ -362,11 +371,60 @@ def test_judge_extraction_uses_default_7b_for_non_benchmark_types(monkeypatch):
         captured["model"] = model
         return "NONE"
 
+    def fake_check_ollama(model, base_url="http://localhost:11434"):
+        # Mock: all qwen2.5 models are available
+        if model.startswith("qwen2.5"):
+            return True, ""
+        return False, f"Model {model} not found"
+
     monkeypatch.setattr(la, "ollama_chat", fake_ollama_chat)
+    monkeypatch.setattr(mr, "check_ollama_pulled", fake_check_ollama)
 
     extraction = {"claim": "c", "grounds": "g", "warrant": "w", "qualifier": "q"}
     judge_extraction(extraction, "empirical")
     assert captured["model"] == "qwen2.5:7b"
+
+
+def test_judge_extraction_with_chat_fn_does_not_acquire_model_queue(monkeypatch):
+    # Regression test: when chat_fn is provided, we must not call
+    # model_queue.acquire() or try to resolve the model -- those should only
+    # happen on the real path (chat_fn is None).
+    import logic_auditor as la
+
+    # Track if model resolution happens
+    resolve_calls = []
+
+    def fake_resolve(paper_type):
+        resolve_calls.append(paper_type)
+        return "qwen2.5:7b", False
+
+    def fake_chat(messages):
+        return "NONE"
+
+    monkeypatch.setattr(la, "_get_judgment_model_for_type", fake_resolve)
+
+    extraction = {"claim": "c", "grounds": "g", "warrant": "w", "qualifier": "q"}
+    # Providing chat_fn should skip model resolution entirely
+    result = judge_extraction(extraction, "empirical", chat_fn=fake_chat)
+
+    assert result == []
+    assert resolve_calls == []  # Should never be called when chat_fn is provided
+
+
+def test_judge_extraction_benchmark_with_chat_fn_does_not_use_queue():
+    # Regression test: benchmark papers should use queue coordination only
+    # when taking the real path (no chat_fn provided). When chat_fn is
+    # provided by a test, it should never try to acquire.
+    def fake_chat(messages):
+        return "NONE"
+
+    extraction = {"measures": "m", "construct_validity_evidence": "e", "scope": "s"}
+    result = judge_extraction(extraction, "benchmark", chat_fn=fake_chat)
+
+    # If queue acquisition tried to happen, this would hang or error. The fact
+    # that it completes without a chat_fn being called multiple times shows we
+    # didn't enter the queue context.
+    assert result == []
 
 
 def test_judge_extraction_conceptual_returns_findings_list():

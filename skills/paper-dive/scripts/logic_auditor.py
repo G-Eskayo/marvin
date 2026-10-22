@@ -32,9 +32,16 @@ import model_queue  # noqa: E402
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
 # Model selection via capability names (validated 2026-07-13):
-_classify_model_list = model_registry.resolve_capability("local-classify-medium")
-CLASSIFY_MODEL = _classify_model_list[0]  # Use first available model for the capability
-assert CLASSIFY_MODEL == "qwen2.5:14b", f"Regression: expected qwen2.5:14b, got {CLASSIFY_MODEL}"
+# Note: resolution is lazy so tests can mock it; runtime resolution happens on first use
+CLASSIFY_MODEL = None
+_classify_is_fallback = None
+
+def _resolve_classify_model():
+    global CLASSIFY_MODEL, _classify_is_fallback
+    if CLASSIFY_MODEL is None:
+        CLASSIFY_MODEL, _classify_is_fallback = model_registry.resolve_available_capability("local-classify-medium")
+        assert CLASSIFY_MODEL == "qwen2.5:14b", f"Regression: expected qwen2.5:14b, got {CLASSIFY_MODEL}"
+    return CLASSIFY_MODEL
 
 PAPER_TYPES = {"empirical", "survey", "benchmark", "conceptual"}
 
@@ -74,7 +81,9 @@ def classify_paper_type(title: str, abstract: str, chat_fn=None) -> str:
     parsed into exactly one of them -- deliberately not guessing/defaulting
     silently, since a wrong type routes the paper to the wrong evaluation
     method downstream."""
-    chat_fn = chat_fn or (lambda messages: ollama_chat(CLASSIFY_MODEL, messages))
+    if chat_fn is None:
+        model = _resolve_classify_model()
+        chat_fn = lambda messages: ollama_chat(model, messages)
     prompt = CLASSIFY_PROMPT.format(title=title, abstract=abstract)
     response = chat_fn([{"role": "user", "content": prompt}]).strip().lower()
 
@@ -95,9 +104,15 @@ def classify_all(papers: dict[str, tuple[str, str]], chat_fn=None) -> dict[str, 
 # ── Layer 1: type-adaptive visible extraction ───────────────────────────────
 # Model: qwen2.5:3b, validated in the design's spot-check (task 11) -- clean,
 # accurate Toulmin extraction on real abstracts, no hallucinated content.
-_extraction_model_list = model_registry.resolve_capability("local-extract-small")
-EXTRACTION_MODEL = _extraction_model_list[0]
-assert EXTRACTION_MODEL == "qwen2.5:3b", f"Regression: expected qwen2.5:3b, got {EXTRACTION_MODEL}"
+EXTRACTION_MODEL = None
+_extraction_is_fallback = None
+
+def _resolve_extraction_model():
+    global EXTRACTION_MODEL, _extraction_is_fallback
+    if EXTRACTION_MODEL is None:
+        EXTRACTION_MODEL, _extraction_is_fallback = model_registry.resolve_available_capability("local-extract-small")
+        assert EXTRACTION_MODEL == "qwen2.5:3b", f"Regression: expected qwen2.5:3b, got {EXTRACTION_MODEL}"
+    return EXTRACTION_MODEL
 
 # Field names per paper type, per docs/logic-auditor-design.md's table.
 # Order matters -- it's both the prompt's requested response order and
@@ -193,7 +208,9 @@ def extract_structure(title: str, abstract: str, paper_type: str, chat_fn=None) 
     if paper_type not in _EXTRACTION_PROMPTS:
         raise ValueError(f"unknown paper_type {paper_type!r} -- expected one of {PAPER_TYPES}")
 
-    chat_fn = chat_fn or (lambda messages: ollama_chat(EXTRACTION_MODEL, messages))
+    if chat_fn is None:
+        model = _resolve_extraction_model()
+        chat_fn = lambda messages: ollama_chat(model, messages)
     prompt = _EXTRACTION_PROMPTS[paper_type].format(title=title, abstract=abstract)
     response = chat_fn([{"role": "user", "content": prompt}])
     return _parse_fields(response, EXTRACTION_FIELDS[paper_type])
@@ -219,27 +236,37 @@ def extract_all(papers: dict[str, tuple[str, str, str]], chat_fn=None) -> dict[s
 # "(no findings)" on papers with genuinely strong support. Notably the
 # mirror image of the classifier result (7b was a regression there) --
 # reinforces that model size must be validated per-task, not assumed.
-_judgment_model_list = model_registry.resolve_capability("local-judge-medium")
-JUDGMENT_MODEL = _judgment_model_list[0]
-assert JUDGMENT_MODEL == "qwen2.5:7b", f"Regression: expected qwen2.5:7b, got {JUDGMENT_MODEL}"
+JUDGMENT_MODEL = None
+_judgment_is_fallback = None
+_INFERENCE_MODEL = None
+_inference_is_fallback = None
 
-# benchmark judgment specifically needs 14b, not the 7b default -- found
-# 2026-07-13 reviewing flagged results (task 19): 7b called StrongREJECT's
-# construct-validity evidence "merely asserted" even though its own
-# extraction already states real comparison-based evidence ("achieves
-# state-of-the-art agreement with human judgments"), and kept doing so
-# even after two rounds of more forceful prompt wording -- the model was
-# overriding explicit instructions with its own second-order skepticism
-# about whether human-judgment agreement should count. 14b followed the
-# instruction correctly on the first try, with zero regression on the
-# other 2 benchmarks (jailbreakbench, sorry-bench correctly still flagged,
-# since their own evidence genuinely has no comparison at all). The other
-# 3 paper types stay on 7b -- no evidence of a problem there, no reason to
-# pay for a bigger model where the cheaper one already works.
-_inference_model_list = model_registry.resolve_capability("local-inference-large")
-_inference_model = _inference_model_list[0]
-assert _inference_model == "qwen2.5:14b", f"Regression: expected qwen2.5:14b for inference, got {_inference_model}"
-JUDGMENT_MODEL_OVERRIDES = {"benchmark": _inference_model}
+def _resolve_judgment_model():
+    global JUDGMENT_MODEL, _judgment_is_fallback
+    if JUDGMENT_MODEL is None:
+        JUDGMENT_MODEL, _judgment_is_fallback = model_registry.resolve_available_capability("local-judge-medium")
+        assert JUDGMENT_MODEL == "qwen2.5:7b", f"Regression: expected qwen2.5:7b, got {JUDGMENT_MODEL}"
+    return JUDGMENT_MODEL
+
+def _resolve_inference_model():
+    global _INFERENCE_MODEL, _inference_is_fallback
+    if _INFERENCE_MODEL is None:
+        _INFERENCE_MODEL, _inference_is_fallback = model_registry.resolve_available_capability("local-inference-large")
+        assert _INFERENCE_MODEL == "qwen2.5:14b", f"Regression: expected qwen2.5:14b for inference, got {_INFERENCE_MODEL}"
+    return _INFERENCE_MODEL
+
+JUDGMENT_MODEL_OVERRIDES = {}
+
+def _get_judgment_model_for_type(paper_type: str) -> str:
+    """Get the appropriate judgment model for the paper type.
+
+    Benchmark papers need 14b, others use 7b. This is lazy so tests
+    can mock it without actually resolving unavailable models.
+    """
+    if paper_type == "benchmark":
+        return _resolve_inference_model()
+    else:
+        return _resolve_judgment_model()
 
 _GENERAL_FALLACY_CHECKLIST = (
     "hasty generalization, circular reasoning, false dichotomy, unfalsifiable claims, "
@@ -345,9 +372,6 @@ def judge_extraction(extraction: dict[str, str], paper_type: str, chat_fn=None) 
     if paper_type not in _JUDGMENT_PROMPTS:
         raise ValueError(f"unknown paper_type {paper_type!r} -- expected one of {PAPER_TYPES}")
 
-    if chat_fn is None:
-        model = JUDGMENT_MODEL_OVERRIDES.get(paper_type, JUDGMENT_MODEL)
-        chat_fn = lambda messages: ollama_chat(model, messages)
     # extract_structure can legitimately omit a field the model never returned
     # (see its docstring) -- fill any gap so .format() doesn't KeyError on a
     # missing extraction rather than surfacing it as a finding-worthy gap.
@@ -357,7 +381,14 @@ def judge_extraction(extraction: dict[str, str], paper_type: str, chat_fn=None) 
         for name in EXTRACTION_FIELDS[paper_type]
     }
     prompt = _JUDGMENT_PROMPTS[paper_type].format(fallacies=_GENERAL_FALLACY_CHECKLIST, **fields)
-    response = chat_fn([{"role": "user", "content": prompt}])
+
+    if chat_fn is None:
+        # Benchmark papers use qwen2.5:14b (heavy model), coordinate via queue
+        model = _get_judgment_model_for_type(paper_type)
+        with model_queue.acquire(model, machine="local", caller="logic_auditor.judge_extraction"):
+            response = ollama_chat(model, [{"role": "user", "content": prompt}])
+    else:
+        response = chat_fn([{"role": "user", "content": prompt}])
     return _parse_findings(response)
 
 
