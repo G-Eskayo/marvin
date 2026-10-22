@@ -190,6 +190,19 @@ def test_profile_problems_is_quiet_for_dispatch_off_or_listed_machines():
     assert pp.profile_problems(_base(dispatch="on", machines=[]))
 
 
+def test_the_home_repo_is_never_called_unrunnable_because_the_pipeline_runs_it_on_every_machine(tmp_path):
+    # ticket_pipeline dispatches G-Eskayo/marvin whatever its profile lists; listing a machine would narrow it
+    assert pp.profile_problems(_base(repo=pp.HOME_REPO, dispatch="on", machines=[])) == []
+    assert pp.HOME_REPO not in pp.unrunnable_repos(directory=REAL_PROFILES)
+    # callers add HOME_REPO themselves ([REPO, *runnable_repos()]): it must not appear here too, or it is scanned twice
+    assert pp.HOME_REPO not in pp.runnable_repos(directory=REAL_PROFILES)
+
+
+def test_only_the_exact_home_repo_is_exempt_not_a_lookalike():
+    for repo in ("G-Eskayo/marvin-mobile", "g-eskayo/marvin-x", "Other/marvin"):
+        assert pp.profile_problems(_base(repo=repo, dispatch="on", machines=[]))
+
+
 def test_selftest_reports_an_unknown_playbook_as_a_profile_error_not_a_crash(tmp_path):
     r = pp.selftest(_base(playbook="nope", clone_hints=[str(tmp_path)]), have=lambda c, e: True, catalog={"projects": []})
     assert r["ok"] is False and r["kind"] == "profile" and "nope" in r["error"]
