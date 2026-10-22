@@ -6,6 +6,21 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import generate  # noqa: E402
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _own_generated_output(tmp_path_factory):
+    """Generate the files this module checks into its own temp folder. It used to read whatever test_generate_rebuild
+    had left in brain-map/, so it failed when run alone or on another xdist worker, and could read a half-written file."""
+    out = tmp_path_factory.mktemp("brain-map-out")
+    saved = generate.OUTPUT_PATH, generate.TREE_DATA_PATH
+    generate.OUTPUT_PATH, generate.TREE_DATA_PATH = out / "index.html", out / "tree-data.json"
+    try:
+        generate.main()
+        yield
+    finally:
+        generate.OUTPUT_PATH, generate.TREE_DATA_PATH = saved
 
 
 def test_tree_data_contains_tests_field():

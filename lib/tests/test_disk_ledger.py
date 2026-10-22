@@ -123,6 +123,10 @@ def test_run_daily_ledger_returns_summary(tmp_path, monkeypatch):
     ledger_path = tmp_path / "disk-ledger.jsonl"
     monkeypatch.setattr(dl, "LEDGER_PATH", ledger_path)
     monkeypatch.setattr("machine_profile.registry_id", lambda: "mac-mini")
+    # Never the real du: on the Mini, du on ~/Documents blocks forever under launchd (iCloud/TCC). This test ran it on
+    # every category of the real home and was the hang behind the merge gate's 20-minute cuts (2026-10-21).
+    measured = []
+    monkeypatch.setattr(dl, "_default_du_kb", lambda p: measured.append(p) or 1)
 
     result = dl.run_daily_ledger()
 
@@ -130,6 +134,7 @@ def test_run_daily_ledger_returns_summary(tmp_path, monkeypatch):
     assert "timestamp" in result
     assert "categories" in result or "free_kb" in result
     assert ledger_path.exists()
+    assert measured, "the ledger measured nothing: the stub was bypassed"
 
 
 def test_xcode_and_app_data_are_measured(monkeypatch, tmp_path):
