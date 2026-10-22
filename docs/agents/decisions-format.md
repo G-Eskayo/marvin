@@ -53,5 +53,14 @@ The description is the source of truth: the card, the merge gate and GitHub all 
 - **Tickets:** a ticket labelled `needs-info` with a Decisions section moves to `ready-for-agent` once every required
   question is answered.
 
+## After the owner answers: it is MARVIN's move (marvin#607)
+
+A PR whose latest *Decisions from the owner* comment has no commit after it, no owner-account reply carrying
+`<!-- marvin:decisions-addressed -->`, and no completed follow-up ticket, is **waiting on MARVIN**, never on the owner.
+After 4 hours (`MARVIN_DECISIONS_GRACE_HOURS`) the hourly ticket scan files one follow-up ticket *Act on owner decisions
+on PR #N* (`ready-for-agent`, `owner-decisions`), flagged when the notes ask a question, and closes it once the PR is
+addressed or closes. It shows at the top of the dashboard's ranked attention list. Whoever acts replies on the PR with
+the marker. Code: `lib/owner_decisions.py`.
+
 Code: `dashboard/webhook-server/decisions.js` (parser, pure), `decisions_gate.js` (merge-server check),
 `dashboard/electron/main/decisions_submit.js` (submit), `dashboard/src/components/Decisions.jsx` (the form).
