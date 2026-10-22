@@ -805,6 +805,15 @@ nothing connected them. "Where things are" was only the tidy agent's file-filing
   tickets: the executor works in marvin's checkout with marvin's test suites. Ready work in other projects is
   counted and shown in the run log ("Other projects ... no execution profile yet") instead of hidden. A
   per-project execution profile (clone path, test command, dev-env) is the open piece for clarity-captions.
+- **Retry-storm circuit breaker** (#28/#30/#94): A ticket that fails the same way repeatedly (hitting the
+  per-ticket strike limit again and again) indicates the ticket is genuinely unsolvable in the current state,
+  and re-trying it just spins wheels. `failure_breaker.should_hold()` reads the append-only log
+  (`~/.claude/logs/pipeline-failures.jsonl`) and detects when a ticket has failed N times (configurable per
+  project via `failure_threshold` in the profile, default 3). When tripped, the ticket is labeled `hold` with a
+  `Revisit by: <date>` comment (reuses the dashboard's existing revisit UI from #213, so the Backlog "On hold"
+  view picks it up automatically). The retry storm is visible in Health as "Retry-storm detector paused tickets".
+  No new state store — the same shared comment thread already has everything a machine needs to read. Manually
+  moving a held ticket back to `ready-for-agent` re-engages it; a person decides when to try again.
 
 ### Per-project execution profiles (decided 2026-10-05)
 
@@ -818,7 +827,8 @@ untouched (it is the "legacy profile"); only repos with a profile file use the p
   catalog's newest local path first), `machines` (eligible device ids), `dispatch` (`"off"` | `"on"`; **starts
   off**: a profile does nothing until a person turns it on), `env` (e.g. `DEVELOPER_DIR` = the first existing
   Xcode, so `swift test` works without `sudo xcode-select`), `executor` (extra allowed tools and context notes
-  for the headless model), `verify` (tiers), `evidence`.
+  for the headless model), `verify` (tiers), `evidence`, `failure_threshold` (retry-storm hold trigger; a positive
+  int or null for the default of 3).
 - **Verify tiers**: each has `command`, `cwd`, `requires` (capabilities such as `swift`, `xcode`, `xcodegen`),
   a `parser` (`swift-test`, `xcodebuild`, `exit-code`), and `required`. A required tier whose tools are missing
   on the executing machine is an **environment problem, not a ticket failure**: the claim is released, no

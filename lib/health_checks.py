@@ -499,6 +499,43 @@ def check_hold_revisit(path: Path | None = None, now: datetime | None = None) ->
     return _result(cid, label, "yellow", detail, value=len(without))
 
 
+def check_retry_storm_holds(snapshot: dict | None = None, repos: list[str] | None = None,
+                            gh=None) -> dict:
+    """Tickets held by the retry-storm detector (failure_breaker.should_hold).
+    These are open tickets with 'hold' label where failure_breaker sees a streak.
+    Green if none; yellow if any. Mirrors check_hold_revisit's pattern."""
+    import failure_breaker
+    import project_profile
+    cid, label = "tickets:retry-storm-holds", "Retry-storm detector paused tickets"
+    # Snapshot pattern: repos is injected for testing, gh for testing.
+    if repos is None:
+        repos = [project_profile.MARVIN] + project_profile.dispatchable_repos()
+    held = {}
+    for repo in repos:
+        try:
+            cmd = ["gh", "issue", "list", "--repo", repo, "--label", "hold", "--state", "open", "--json", "number,title"]
+            if gh is None:
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
+                data = json.loads(proc.stdout) if proc.returncode == 0 else []
+            else:
+                data = gh(cmd)
+            for issue in data:
+                num = issue.get("number")
+                title = issue.get("title", "")
+                streak = failure_breaker.ticket_streak(num, project=repo)
+                if streak["count"] > 0:
+                    held[f"{repo}#{num}"] = {"title": title, "count": streak["count"]}
+        except Exception:  # noqa: BLE001 -- gh or parse failure must not crash the check
+            continue
+    if not held:
+        return _result(cid, label, "green", "no retry-storm holds active", value=0)
+    parts = [f"{k} ({v['count']} failures)" for k, v in list(held.items())[:5]]
+    detail = f"{len(held)} tickets on hold due to failure streaks: " + "; ".join(parts)
+    if len(held) > 5:
+        detail += f" (+ {len(held) - 5} more)"
+    return _result(cid, label, "yellow", detail, value=len(held))
+
+
 MAIN_HEALTH_PATH = Path.home() / ".claude" / "logs" / "main-health.json"
 MAIN_HEALTH_STALE_HOURS = 24
 
@@ -1481,6 +1518,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("catalog:fresh", "Project catalog is current", check_catalog_fresh, CHECK_BUDGET_S),
         ("tickets:project-tags", "Tickets are on their project's board", check_project_tags, CHECK_BUDGET_S),
         ("tickets:hold-revisit", "Hold tickets have revisit dates", check_hold_revisit, CHECK_BUDGET_S),
+        ("tickets:retry-storm-holds", "Retry-storm detector paused tickets", check_retry_storm_holds, CHECK_BUDGET_S),
         ("github:budget", "GitHub request budget", check_github_budget, CHECK_BUDGET_S),
         ("github:gate", "GitHub calls go through the gate", check_gh_gate, CHECK_BUDGET_S),
         ("main:green", "The main branch passes its tests", check_main_health, CHECK_BUDGET_S),

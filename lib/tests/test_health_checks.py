@@ -1299,3 +1299,91 @@ def test_the_machine_script_reads_a_real_process_uptime_with_this_machines_ps():
         assert 1 <= int(out.stdout.strip()) <= 20
     finally:
         child.kill()
+
+
+# ── retry-storm holds (tests 19-23) ────────────────────────────────────────
+
+def test_check_retry_storm_holds_is_green_with_no_held_tickets():
+    # Test 19: no held tickets -> green
+    def fake_gh(cmd):
+        return []  # no issues with "hold" label
+
+    result = hc.check_retry_storm_holds(repos=["G-Eskayo/marvin"], gh=fake_gh)
+    assert result["severity"] == "green"
+    assert result["value"] == 0
+
+
+def test_check_retry_storm_holds_is_yellow_with_held_tickets():
+    # Test 20: held tickets with failure streaks -> yellow
+    import failure_breaker as fb
+
+    def fake_gh(cmd):
+        if "label" in " ".join(cmd):
+            return [{"number": 100, "title": "A stuck ticket"}]
+        return []
+
+    # Mock ticket_streak to return a non-zero count
+    original_streak = fb.ticket_streak
+    try:
+        fb.ticket_streak = lambda *a, **kw: {"count": 2, "signatures": []}
+        result = hc.check_retry_storm_holds(repos=["G-Eskayo/marvin"], gh=fake_gh)
+        assert result["severity"] == "yellow"
+        assert result["value"] >= 1
+        assert "failure streaks" in result["detail"]
+    finally:
+        fb.ticket_streak = original_streak
+
+
+def test_check_retry_storm_holds_includes_ticket_number_and_count():
+    # Test 21: detail includes ticket number and failure count
+    import failure_breaker as fb
+
+    def fake_gh(cmd):
+        if "label" in " ".join(cmd):
+            return [
+                {"number": 50, "title": "Retry-storm test"},
+                {"number": 51, "title": "Another stuck one"},
+            ]
+        return []
+
+    original_streak = fb.ticket_streak
+    try:
+        def fake_streak(num, **kw):
+            return {"count": 3 if num == 50 else 2, "signatures": []}
+        fb.ticket_streak = fake_streak
+        result = hc.check_retry_storm_holds(repos=["G-Eskayo/marvin"], gh=fake_gh)
+        assert "50" in result["detail"]
+        assert "51" in result["detail"]
+        assert "3 failures" in result["detail"] or "failures)" in result["detail"]
+    finally:
+        fb.ticket_streak = original_streak
+
+
+def test_check_retry_storm_holds_caps_display_at_5_tickets():
+    # Test 22: if many tickets are held, show first 5 + count
+    import failure_breaker as fb
+
+    def fake_gh(cmd):
+        if "label" in " ".join(cmd):
+            return [{"number": 60 + i, "title": f"Ticket {60+i}"} for i in range(10)]
+        return []
+
+    original_streak = fb.ticket_streak
+    try:
+        fb.ticket_streak = lambda *a, **kw: {"count": 2, "signatures": []}
+        result = hc.check_retry_storm_holds(repos=["G-Eskayo/marvin"], gh=fake_gh)
+        assert result["value"] == 10
+        assert "+ 5 more" in result["detail"]
+    finally:
+        fb.ticket_streak = original_streak
+
+
+def test_check_retry_storm_holds_handles_gh_errors_gracefully():
+    # Test 23: gh failures don't crash the check
+    def failing_gh(cmd):
+        raise RuntimeError("gh error")
+
+    result = hc.check_retry_storm_holds(repos=["G-Eskayo/marvin"], gh=failing_gh)
+    # Should be green with no results, not crash
+    assert result["severity"] == "green"
+    assert result["value"] == 0

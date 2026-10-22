@@ -97,6 +97,61 @@ def _read() -> list[dict]:
     return out
 
 
+def ticket_streak(ticket: int, project: str = MARVIN, now: datetime | None = None) -> dict:
+    """Consecutive failures for one ticket on one project since its last success, oldest-first.
+    Returns {"count": int, "signatures": [{"sig": str, "reason": str}, ...]} (empty signatures
+    exclude "model-unavailable" since that's a service failure, not a ticket failure)."""
+    now = now or _now()
+    records = _read()
+    for r in records:
+        r.setdefault("project", MARVIN)
+    mine = [r for r in records if r["project"] == project and r["ticket"] == ticket]
+    # Find the last success; everything after it is a streak.
+    last_success_idx = None
+    for i in range(len(mine) - 1, -1, -1):
+        if mine[i].get("kind") == "success":
+            last_success_idx = i
+            break
+    # Build failures list, using enumerate for safe indexing
+    failures = []
+    if last_success_idx is None:
+        # No success found; the streak is all failures in the record (or all records if none match).
+        for r in mine:
+            if r.get("kind") == "failure":
+                failures.append(r)
+    else:
+        # Everything after the last success is the current streak.
+        for i, r in enumerate(mine):
+            if i > last_success_idx and r.get("kind") == "failure":
+                failures.append(r)
+    # Exclude model-unavailable failures: they don't count toward a ticket's own strike limit.
+    sigs = [{"sig": f.get("sig", "unknown"), "reason": f.get("reason", "")} for f in failures if f.get("sig") != "model-unavailable"]
+    return {"count": len(sigs), "signatures": sigs}
+
+
+def should_hold(ticket: int, project: str = MARVIN, threshold: int = 3, now: datetime | None = None) -> dict | None:
+    """Decides if a ticket should be held (parked) based on its failure streak. Returns
+    {"count": int, "signatures": [...], "condition": str | None} or None if not tripped.
+    Trips if: count >= threshold OR the last two non-empty signatures match consecutively.
+    Non-positive or non-numeric threshold is clamped to 3; valid positive overrides are honored."""
+    try:
+        t = int(threshold) if threshold else None
+        threshold = t if t and t > 0 else 3
+    except (TypeError, ValueError):
+        threshold = 3
+    streak = ticket_streak(ticket, project, now)
+    count = streak["count"]
+    sigs = streak["signatures"]
+    # Trip on count threshold.
+    if count >= threshold:
+        sig_names = [s["sig"] for s in sigs[-threshold:]]
+        return {"count": count, "signatures": sigs, "condition": f"failed {count} times with {', '.join(set(sig_names))}"}
+    # Trip on the last two non-empty signatures matching consecutively.
+    if len(sigs) >= 2 and sigs[-2]["sig"] == sigs[-1]["sig"]:
+        return {"count": count, "signatures": sigs, "condition": f"repeated failure: {sigs[-1]['sig']}"}
+    return None
+
+
 def tripped(now: datetime | None = None, project: str | None = None) -> list[dict]:
     """Signatures currently tripped, per project: [{project, signature, tickets, first_seen, last_seen,
     example}]. One project's broken environment (say, a missing Xcode) must not pause the others, and a

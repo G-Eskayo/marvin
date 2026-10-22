@@ -145,6 +145,13 @@ def _validate(profile: dict, source: str) -> dict:
     profile.setdefault("env", {})
     profile.setdefault("executor", {})
     profile.setdefault("evidence", {})
+    profile.setdefault("failure_threshold", None)
+    ft = profile.get("failure_threshold")
+    if ft is not None:
+        if not isinstance(ft, int) or isinstance(ft, bool):
+            raise ValueError(f"{source}: failure_threshold must be a positive int, got {ft!r}")
+        if ft <= 0:
+            raise ValueError(f"{source}: failure_threshold must be a positive int, got {ft}")
     return profile
 
 

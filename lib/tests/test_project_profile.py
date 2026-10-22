@@ -94,6 +94,63 @@ def test_a_malformed_profile_is_reported_not_silently_used(tmp_path):
         raise AssertionError("should refuse a tier with no command")
 
 
+def test_failure_threshold_rejects_float(tmp_path):
+    # Test 7: failure_threshold must reject floats
+    base = {"repo": "G-Eskayo/proj", "base_branch": "main", "dispatch": "off", "machines": ["mac-mini-1"],
+            "verify": [{"id": "core", "command": ["swift", "test"]}]}
+    try:
+        (tmp_path / "bad.json").write_text(json.dumps({**base, "failure_threshold": 3.5}))
+        pp.load_profile("G-Eskayo/proj", directory=tmp_path)
+    except ValueError as e:
+        assert "must be a positive int" in str(e)
+    else:
+        raise AssertionError("should refuse float failure_threshold")
+    # Also reject numeric strings
+    try:
+        (tmp_path / "bad2.json").write_text(json.dumps({**base, "failure_threshold": "3"}))
+        pp.load_profile("G-Eskayo/proj", directory=tmp_path)
+    except ValueError as e:
+        assert "must be a positive int" in str(e)
+    else:
+        raise AssertionError("should refuse numeric string failure_threshold")
+    # Reject boolean (which is a subclass of int in Python)
+    try:
+        (tmp_path / "bad3.json").write_text(json.dumps({**base, "failure_threshold": True}))
+        pp.load_profile("G-Eskayo/proj", directory=tmp_path)
+    except ValueError as e:
+        assert "must be a positive int" in str(e)
+    else:
+        raise AssertionError("should refuse boolean failure_threshold")
+
+
+def test_failure_threshold_is_validated_as_positive_int_or_null(tmp_path):
+    # Test 12: failure_threshold must be a positive int or null
+    base = {"repo": "G-Eskayo/proj", "base_branch": "main", "dispatch": "off", "machines": ["mac-mini-1"],
+            "verify": [{"id": "core", "command": ["swift", "test"]}]}
+    # Valid: null/None
+    p = write_profile(tmp_path, failure_threshold=None)
+    assert pp.load_profile("G-Eskayo/proj", directory=p)["failure_threshold"] is None
+    # Valid: positive int
+    p2 = write_profile(tmp_path, failure_threshold=5)
+    assert pp.load_profile("G-Eskayo/proj", directory=p2)["failure_threshold"] == 5
+    # Invalid: zero
+    try:
+        (tmp_path / "bad.json").write_text(json.dumps({**base, "failure_threshold": 0}))
+        pp.load_profile("G-Eskayo/proj", directory=tmp_path)
+    except ValueError as e:
+        assert "must be a positive int" in str(e)
+    else:
+        raise AssertionError("should refuse failure_threshold=0")
+    # Invalid: negative
+    try:
+        (tmp_path / "bad2.json").write_text(json.dumps({**base, "failure_threshold": -1}))
+        pp.load_profile("G-Eskayo/proj", directory=tmp_path)
+    except ValueError as e:
+        assert "must be a positive int" in str(e)
+    else:
+        raise AssertionError("should refuse negative failure_threshold")
+
+
 # ── capabilities / environment ──────────────────────────────────────────────
 
 def test_env_uses_the_first_xcode_that_exists_without_touching_the_system_selection(tmp_path):

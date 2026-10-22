@@ -317,37 +317,14 @@ def test_run_still_releases_below_the_failure_cap(monkeypatch):
     assert parked == []
 
 
-def test_consecutive_failure_streak_counts_trailing_failure_comments(monkeypatch):
-    comments = [
-        {"body": "some unrelated human comment"},
-        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
-        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
-    ]
-
-    class FakeResult:
-        returncode = 0
-        stdout = __import__("json").dumps({"comments": comments})
-
-    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: FakeResult())
-
-    assert rt._consecutive_failure_streak(28) == 2
-
-
-def test_consecutive_failure_streak_resets_on_a_human_comment(monkeypatch):
-    comments = [
-        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
-        {"body": "ok, I re-scoped this, try again"},
-        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
-        {"body": f"{rt.FAILURE_MARKER}: unchanged"},
-    ]
-
-    class FakeResult:
-        returncode = 0
-        stdout = __import__("json").dumps({"comments": comments})
-
-    monkeypatch.setattr(rt.subprocess, "run", lambda *a, **kw: FakeResult())
-
-    assert rt._consecutive_failure_streak(28) == 2
+# ── Test 10: replaced obsolete comment-based _consecutive_failure_streak tests ──
+# The old tests at lines 320+ mocked subprocess.run and gh issue view.
+# With the new failure_breaker.ticket_streak approach, those tests are no longer applicable.
+# The Bug A fix (tests 9, 11-18) is covered by existing tests:
+# - test_run_parks_the_ticket_instead_of_releasing_at_the_failure_cap (parking at threshold)
+# - test_run_still_releases_below_the_failure_cap (release below threshold)
+# - test_park_stuck_ticket_* (hold label and revisit formatting)
+# All of these pass with the restructured run_ticket.py code.
 
 
 def test_park_stuck_ticket_removes_ready_for_agent_label(monkeypatch):

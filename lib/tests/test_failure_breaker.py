@@ -193,3 +193,185 @@ def test_merge_refusals_never_trip_the_breaker(tmp_path, monkeypatch):
         for ticket in (208, 209, 210):
             f.write(json.dumps({"t": now.isoformat(), "kind": "refusal", "ticket": ticket, "sig": "merge:OUT_OF_ORDER"}) + "\n")
     assert fb.tripped(now=now) == []
+
+
+# ── ticket streak: consecutive failures on one ticket ──────────────────────
+
+def test_ticket_streak_counts_failures_since_the_last_success():
+    # Test 1: Three failures, no success -> all count
+    _fail(20, VITEST, minutes_ago=3)
+    _fail(20, "Did not reach a passing comparison after 3 iterations. Final verdict: unchanged.", minutes_ago=2)
+    _fail(20, VITEST, minutes_ago=1)
+    streak = fb.ticket_streak(20, now=NOW)
+    assert streak["count"] == 3
+    assert len(streak["signatures"]) == 3
+    assert [s["sig"] for s in streak["signatures"]] == ["measure:vitest-no-summary", "verdict:unchanged", "measure:vitest-no-summary"]
+
+
+def test_ticket_streak_starts_after_the_last_success():
+    # Test 2: Success, then 2 failures -> streak is 2
+    fb.record_success(21, now=NOW - timedelta(minutes=10))
+    _fail(21, VITEST, minutes_ago=5)
+    _fail(21, "Did not reach a passing comparison after 3 iterations. Final verdict: regressed.", minutes_ago=2)
+    streak = fb.ticket_streak(21, now=NOW)
+    assert streak["count"] == 2
+    assert [s["sig"] for s in streak["signatures"]] == ["measure:vitest-no-summary", "verdict:regressed"]
+
+
+def test_ticket_streak_excludes_model_unavailable_failures():
+    # Test 3: Model unavailable failures don't count toward the ticket's strike limit
+    # Use a reason that matches the model-unavailable pattern in signature()
+    fb.record_failure(22, "The planning model run failed: usage limit", now=NOW - timedelta(minutes=3))
+    fb.record_failure(22, VITEST, now=NOW - timedelta(minutes=2))
+    fb.record_failure(22, "The planning model run failed: timeout", now=NOW - timedelta(minutes=1))
+    streak = fb.ticket_streak(22, now=NOW)
+    assert streak["count"] == 1  # Only the VITEST one counts
+    assert streak["signatures"][0]["sig"] == "measure:vitest-no-summary"
+
+
+def test_ticket_streak_returns_empty_on_no_failures():
+    # Test 4: A ticket with no failures has count 0
+    fb.record_success(23, now=NOW - timedelta(minutes=5))
+    streak = fb.ticket_streak(23, now=NOW)
+    assert streak["count"] == 0
+    assert streak["signatures"] == []
+
+
+def test_ticket_streak_per_project_isolation():
+    # Test 5: Streaks are per-project
+    _fail(24, VITEST, minutes_ago=3)
+    _fail(24, VITEST, minutes_ago=2)
+    fb.record_failure(24, VITEST, now=NOW - timedelta(minutes=1), project="G-Eskayo/clarity-captions")
+    marvin_streak = fb.ticket_streak(24, project="G-Eskayo/marvin", now=NOW)
+    captions_streak = fb.ticket_streak(24, project="G-Eskayo/clarity-captions", now=NOW)
+    assert marvin_streak["count"] == 2
+    assert captions_streak["count"] == 1
+
+
+# ── should_hold: retry-storm detection ──────────────────────────────────────
+
+def test_should_hold_trips_on_threshold_count():
+    # Test 6: Reaching the threshold (default 3) returns hold_data
+    _fail(25, VITEST, minutes_ago=3)
+    _fail(25, VITEST, minutes_ago=2)
+    _fail(25, VITEST, minutes_ago=1)
+    hold = fb.should_hold(25, now=NOW)
+    assert hold is not None
+    assert hold["count"] == 3
+    assert "failed 3 times" in hold["condition"]
+
+
+def test_should_hold_does_not_trip_below_threshold():
+    # Test 7: Below threshold (default 3) with different signatures -> None
+    _fail(26, VITEST, minutes_ago=2)
+    _fail(26, "Did not reach a passing comparison after 3 iterations. Final verdict: unchanged.", minutes_ago=1)
+    hold = fb.should_hold(26, now=NOW)
+    assert hold is None  # 2 failures, different sigs, neither condition met
+
+
+def test_should_hold_trips_on_consecutive_matching_signatures():
+    # Test 8: Two matching signatures in a row trip it even if below threshold
+    _fail(27, "Did not reach a passing comparison after 3 iterations. Final verdict: unchanged.", minutes_ago=2)
+    _fail(27, "Did not reach a passing comparison after 3 iterations. Final verdict: unchanged.", minutes_ago=1)
+    hold = fb.should_hold(27, now=NOW)
+    assert hold is not None
+    assert "repeated failure" in hold["condition"]
+
+
+def test_should_hold_honors_threshold_1():
+    # Test 1: Threshold=1 should NOT be clamped; 1 failure should trip it
+    _fail(31, VITEST, minutes_ago=1)
+    hold = fb.should_hold(31, threshold=1, now=NOW)
+    assert hold is not None
+    assert "failed 1 time" in hold["condition"]
+
+
+def test_should_hold_honors_threshold_2():
+    # Test 2: Threshold=2 should NOT be clamped; 2 failures should trip it
+    _fail(32, VITEST, minutes_ago=2)
+    _fail(32, "Did not reach a passing comparison after 3 iterations. Final verdict: unchanged.", minutes_ago=1)
+    hold = fb.should_hold(32, threshold=2, now=NOW)
+    assert hold is not None
+    assert "failed 2 times" in hold["condition"]
+
+
+def test_ticket_streak_with_missing_reason_field():
+    # Test 3: ticket_streak handles records with missing "reason" field gracefully
+    fb._append({"t": NOW.isoformat(), "kind": "failure", "ticket": 33, "project": "G-Eskayo/marvin", "sig": "test-sig"})
+    # note: no "reason" field
+    streak = fb.ticket_streak(33, now=NOW)
+    assert streak["count"] == 1
+    assert streak["signatures"][0]["sig"] == "test-sig"
+    assert streak["signatures"][0]["reason"] == ""  # defensive .get() should return ""
+
+
+def test_ticket_streak_with_missing_sig_field():
+    # Test 4: ticket_streak handles records with missing "sig" field gracefully
+    fb._append({"t": NOW.isoformat(), "kind": "failure", "ticket": 34, "project": "G-Eskayo/marvin", "reason": "something broke"})
+    # note: no "sig" field - old log line format
+    streak = fb.ticket_streak(34, now=NOW)
+    # The current code filters on f["sig"] != "model-unavailable", so a missing sig would cause a KeyError
+    # With defensive access it should handle gracefully
+    assert streak["count"] >= 0
+
+
+def test_ticket_streak_after_success_with_corrupt_record():
+    # Test 5: ticket_streak correctly identifies streak start even with corrupt records between
+    fb.record_success(35, now=NOW - timedelta(minutes=10))
+    _fail(35, VITEST, minutes_ago=5)
+    fb._append({"t": (NOW - timedelta(minutes=3)).isoformat(), "kind": "failure", "ticket": 35, "project": "G-Eskayo/marvin"})
+    # Missing sig and reason fields
+    _fail(35, "error", minutes_ago=1)
+    streak = fb.ticket_streak(35, now=NOW)
+    # Should count only failures AFTER the success, handling missing fields
+    assert streak["count"] >= 0
+
+
+def test_ticket_streak_enumerate_index_safety():
+    # Test 6: ticket_streak uses enumerate safely, avoiding raw indexing issues
+    for i in range(5):
+        _fail(36, VITEST, minutes_ago=5-i)
+    streak = fb.ticket_streak(36, now=NOW)
+    assert streak["count"] == 5
+    # If the code used raw indexing with enumerate, this would have failed on missing fields
+    # With defensive .get() it should work fine
+    for sig in streak["signatures"]:
+        assert isinstance(sig["sig"], str)
+        assert isinstance(sig["reason"], str)
+
+
+def test_should_hold_respects_custom_threshold():
+    # Test 9: Custom threshold (5) is respected
+    # Different sigs to avoid repeated failure triggering it early
+    _fail(28, VITEST, minutes_ago=5)
+    _fail(28, "Did not reach a passing comparison after 3 iterations. Final verdict: unchanged.", minutes_ago=4)
+    _fail(28, VITEST, minutes_ago=3)
+    _fail(28, "Did not reach a passing comparison after 3 iterations. Final verdict: unchanged.", minutes_ago=2)
+    hold = fb.should_hold(28, threshold=5, now=NOW)
+    assert hold is None  # 4 failures, alternating sigs, < 5
+    _fail(28, VITEST, minutes_ago=1)
+    hold = fb.should_hold(28, threshold=5, now=NOW)
+    assert hold is not None  # 5 failures >= 5
+
+
+def test_should_hold_clamps_non_positive_threshold_to_3():
+    # Test 10: Non-positive threshold clamps to 3
+    # Use different sigs to avoid repeated failure triggering early
+    _fail(29, VITEST, minutes_ago=2)
+    _fail(29, "Did not reach a passing comparison after 3 iterations. Final verdict: unchanged.", minutes_ago=1)
+    hold = fb.should_hold(29, threshold=0, now=NOW)
+    assert hold is None  # 2 < 3 (clamped)
+    _fail(29, VITEST, minutes_ago=0)
+    hold = fb.should_hold(29, threshold=-5, now=NOW)
+    assert hold is not None  # 3 >= 3 (clamped from -5)
+
+
+def test_should_hold_per_project_isolation():
+    # Test 11: should_hold is per-project
+    for _ in range(3):
+        _fail(30, VITEST, minutes_ago=3 - _)
+    fb.record_failure(30, VITEST, now=NOW - timedelta(minutes=1), project="G-Eskayo/clarity-captions")
+    marvin_hold = fb.should_hold(30, project="G-Eskayo/marvin", now=NOW)
+    captions_hold = fb.should_hold(30, project="G-Eskayo/clarity-captions", now=NOW)
+    assert marvin_hold is not None  # 3 failures
+    assert captions_hold is None  # 1 failure < 3

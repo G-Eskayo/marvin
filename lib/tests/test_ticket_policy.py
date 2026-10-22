@@ -361,3 +361,47 @@ def test_a_huge_comment_is_scanned_without_trouble():
     now = datetime(2026, 10, 21, 20, 0, tzinfo=timezone.utc)
     big = "<!-- " * 200_000 + tp.retry_marker(now + _td(minutes=5))
     assert tp.retry_not_before([{"body": big}], now) == now + _td(minutes=5)
+
+
+# ── hold label and revisit formatting ──────────────────────────────────────
+
+def test_hold_is_in_state_labels():
+    # Test 13: "hold" is a valid state label for the triage system
+    assert "hold" in tp.STATE_LABELS
+
+
+def test_format_revisit_separator_collision_edge_case():
+    # Test 8: format_revisit/parse_revisit_comment handle conditions with em-dash or hyphen
+    date = "2026-10-29"
+    # Condition containing em-dash should not break parsing
+    condition_with_emdash = "retry-storm broken—try with fewer iterations"
+    formatted = tp.format_revisit(date, condition_with_emdash)
+    parsed = tp.parse_revisit_comment(formatted)
+    assert parsed is not None
+    assert parsed["date"] == date
+    assert parsed["condition"] == condition_with_emdash
+    # Condition with multiple dashes/hyphens
+    condition_with_dashes = "model-unavailable - service down"
+    formatted2 = tp.format_revisit(date, condition_with_dashes)
+    parsed2 = tp.parse_revisit_comment(formatted2)
+    assert parsed2 is not None
+    assert parsed2["condition"] == condition_with_dashes
+
+
+def test_format_revisit_rounds_trip_with_parse():
+    # Test 14: format_revisit creates strings that parse_revisit_comment can read
+    date = "2026-10-29"
+    condition = "retry-storm broken after 3 attempts"
+    formatted = tp.format_revisit(date, condition)
+    assert "Revisit by:" in formatted
+    assert date in formatted
+    assert condition in formatted
+    parsed = tp.parse_revisit_comment(formatted)
+    assert parsed is not None
+    assert parsed["date"] == date
+    assert parsed["condition"] == condition
+    # Without condition
+    formatted_no_cond = tp.format_revisit(date)
+    parsed_no_cond = tp.parse_revisit_comment(formatted_no_cond)
+    assert parsed_no_cond["date"] == date
+    assert parsed_no_cond["condition"] is None
