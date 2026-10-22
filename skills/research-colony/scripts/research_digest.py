@@ -125,6 +125,7 @@ def generate() -> Path | None:
             # script's own file write below is the only thing that should
             # ever write the file.
             permission_mode=None, disallowed_tools="Write,Edit", timeout=120,
+            ticket="research-colony",
         )
     except Exception as exc:
         print(f"[colony] claude call failed: {exc}", file=sys.stderr)

@@ -91,6 +91,158 @@ def test_check_dispatch_lock_green_shortly_after_start():
     assert result["severity"] == "green"
 
 
+# ── autonomous share: headless+subagent vs interactive output-token split ──────
+
+def _make_usage_file(tmp_path, rows):
+    """Helper to create a token-usage.json file with the given rows."""
+    usage = {
+        "generated_at": "2026-10-06T12:00:00+00:00",
+        "window_days": 30,
+        "machine": "test",
+        "files_scanned": 1,
+        "totals": {"input": 100, "output": 500, "cache_write": 0, "cache_read": 0, "messages": 5},
+        "rows": rows,
+        "by_project": [],
+        "by_ticket": [],
+        "by_job": []
+    }
+    p = tmp_path / "token-usage.json"
+    p.write_text(json.dumps(usage))
+    return p
+
+
+def test_check_autonomous_share_green_when_headless_under_50_percent():
+    """Share ≤50% is green."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        rows = [
+            {"day": "2026-10-06", "kind": "interactive", "model": "sonnet", "input": 10, "output": 100, "cache_write": 0, "cache_read": 0, "messages": 1},
+            {"day": "2026-10-06", "kind": "headless", "model": "sonnet", "input": 5, "output": 60, "cache_write": 0, "cache_read": 0, "messages": 1},
+        ]
+        path = _make_usage_file(tmp, rows)
+        result = hc.check_autonomous_share(usage_path=path, now=datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc))
+        assert result["severity"] == "green"
+        assert "60" in result["detail"]  # raw autonomous count
+        assert "160" in result["detail"]  # raw total count
+
+
+def test_check_autonomous_share_yellow_when_headless_over_50_percent():
+    """Share >50% is yellow."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        rows = [
+            {"day": "2026-10-06", "kind": "interactive", "model": "sonnet", "input": 10, "output": 50, "cache_write": 0, "cache_read": 0, "messages": 1},
+            {"day": "2026-10-06", "kind": "headless", "model": "sonnet", "input": 5, "output": 60, "cache_write": 0, "cache_read": 0, "messages": 1},
+        ]
+        path = _make_usage_file(tmp, rows)
+        result = hc.check_autonomous_share(usage_path=path, now=datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc))
+        assert result["severity"] == "yellow"
+        assert "60" in result["detail"]
+
+
+def test_check_autonomous_share_includes_subagent_in_autonomous():
+    """Subagent runs count as autonomous (along with headless)."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        rows = [
+            {"day": "2026-10-06", "kind": "interactive", "model": "sonnet", "input": 10, "output": 100, "cache_write": 0, "cache_read": 0, "messages": 1},
+            {"day": "2026-10-06", "kind": "headless", "model": "sonnet", "input": 5, "output": 40, "cache_write": 0, "cache_read": 0, "messages": 1},
+            {"day": "2026-10-06", "kind": "subagent", "model": "sonnet", "input": 5, "output": 60, "cache_write": 0, "cache_read": 0, "messages": 1},
+        ]
+        path = _make_usage_file(tmp, rows)
+        result = hc.check_autonomous_share(usage_path=path, now=datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc))
+        # 40 + 60 = 100 autonomous, total 200: 50% — should be green (<=50%)
+        assert result["severity"] == "green"
+        assert "100" in result["detail"]  # autonomous count
+
+
+def test_check_autonomous_share_uses_most_recent_day():
+    """Only the most recent day's data is used for the share calculation."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        rows = [
+            {"day": "2026-10-05", "kind": "interactive", "model": "sonnet", "input": 10, "output": 100, "cache_write": 0, "cache_read": 0, "messages": 1},
+            {"day": "2026-10-05", "kind": "headless", "model": "sonnet", "input": 5, "output": 200, "cache_write": 0, "cache_read": 0, "messages": 1},
+            {"day": "2026-10-06", "kind": "interactive", "model": "sonnet", "input": 10, "output": 100, "cache_write": 0, "cache_read": 0, "messages": 1},
+            {"day": "2026-10-06", "kind": "headless", "model": "sonnet", "input": 5, "output": 20, "cache_write": 0, "cache_read": 0, "messages": 1},
+        ]
+        path = _make_usage_file(tmp, rows)
+        result = hc.check_autonomous_share(usage_path=path, now=datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc))
+        # Only 2026-10-06 counts: 20/(100+20) = 16.7% — should be green
+        assert result["severity"] == "green"
+        assert "20" in result["detail"]
+        assert "120" in result["detail"]
+
+
+def test_check_autonomous_share_green_when_no_file():
+    """Green when no token-usage file exists yet."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        result = hc.check_autonomous_share(usage_path=tmp / "not-yet.json", now=datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc))
+        assert result["severity"] == "green"
+        assert "not run" in result["detail"] or "no scan" in result["detail"]
+
+
+def test_check_autonomous_share_defensive_against_malformed_json():
+    """Defensive against invalid JSON."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        p = tmp / "token-usage.json"
+        p.write_text("not valid json {")
+        result = hc.check_autonomous_share(usage_path=p, now=datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc))
+        assert result["severity"] == "yellow"
+        assert "could not read" in result["detail"].lower()
+
+
+def test_check_autonomous_share_empty_rows_is_green():
+    """Green when no rows yet."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        rows = []
+        path = _make_usage_file(tmp, rows)
+        result = hc.check_autonomous_share(usage_path=path, now=datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc))
+        assert result["severity"] == "green"
+        assert "no data" in result["detail"].lower() or "no usage" in result["detail"].lower()
+
+
+def test_check_autonomous_share_never_red():
+    """Share never goes red, even if very high."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        rows = [
+            {"day": "2026-10-06", "kind": "interactive", "model": "sonnet", "input": 1, "output": 10, "cache_write": 0, "cache_read": 0, "messages": 1},
+            {"day": "2026-10-06", "kind": "headless", "model": "sonnet", "input": 100, "output": 900, "cache_write": 0, "cache_read": 0, "messages": 1},
+        ]
+        path = _make_usage_file(tmp, rows)
+        result = hc.check_autonomous_share(usage_path=path, now=datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc))
+        assert result["severity"] in ("green", "yellow")
+        assert result["severity"] != "red"
+
+
+def test_check_autonomous_share_label_mentions_tokens_not_cost():
+    """Label should mention tokens, not cost."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        rows = [
+            {"day": "2026-10-06", "kind": "interactive", "model": "sonnet", "input": 10, "output": 100, "cache_write": 0, "cache_read": 0, "messages": 1},
+            {"day": "2026-10-06", "kind": "headless", "model": "sonnet", "input": 5, "output": 60, "cache_write": 0, "cache_read": 0, "messages": 1},
+        ]
+        path = _make_usage_file(tmp, rows)
+        result = hc.check_autonomous_share(usage_path=path, now=datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc))
+        assert "token" in result["label"].lower()
+        assert "cost" not in result["label"].lower()
+        assert "autonomous" in result["label"].lower()
+
+
 # ── coverage / auto-discovery ────────────────────────────────────────────
 
 def test_coverage_flags_jobs_with_no_registered_check(monkeypatch):
@@ -1299,3 +1451,17 @@ def test_the_machine_script_reads_a_real_process_uptime_with_this_machines_ps():
         assert 1 <= int(out.stdout.strip()) <= 20
     finally:
         child.kill()
+
+
+# ── autonomous share check (tests 13-24, 33) ──────────────────────────────────
+
+
+
+def test_autonomous_share_value_field_is_numeric_or_none(tmp_path):
+    """The value field (if present) is a number between 0 and 1."""
+    usage_file = tmp_path / "usage.json"
+    usage_file.write_text(json.dumps({"by_job": [{"ticket": "test", "cost_usd": 0.5}]}))
+    result = hc.check_autonomous_share(usage_path=usage_file, now=NOW)
+    if "value" in result and result["value"] is not None:
+        assert isinstance(result["value"], (int, float))
+        assert 0 <= result["value"] <= 1

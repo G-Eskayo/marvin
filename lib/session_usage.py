@@ -24,9 +24,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import history_store  # noqa: E402
+
 HOME = Path.home()
 TRANSCRIPTS = HOME / ".claude" / "projects"
 OUT_PATH = HOME / ".claude" / "logs" / "token-usage.json"
+LAUNCHES_LOG = HOME / ".claude" / "logs" / "launches.jsonl"
 WINDOW_DAYS = 30
 TOP_TICKETS = 40
 
@@ -97,7 +100,7 @@ def find_transcripts(root: Path, window_days: int = WINDOW_DAYS, now: datetime |
     return sorted(out)
 
 
-def aggregate(files, now: datetime | None = None, window_days: int = WINDOW_DAYS) -> dict:
+def aggregate(files, now: datetime | None = None, window_days: int = WINDOW_DAYS, launches_path: Path | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(days=window_days)
     messages = {}  # message id -> record; the latest line of a message wins
@@ -136,12 +139,31 @@ def aggregate(files, now: datetime | None = None, window_days: int = WINDOW_DAYS
         for f_ in FIELDS:
             p[f_] += rec[f_]
         p["by_kind"][kind] = rec["output"]
+
+    # Aggregate by_job from launches.jsonl using history_store.tail_since
+    by_job_map = defaultdict(lambda: {"ticket": "", "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0, "runs": 0})
+    launches_file = launches_path or LAUNCHES_LOG
+    entries = history_store.tail_since(launches_file, cutoff.timestamp())
+    for entry in entries:
+        ticket = entry.get("ticket")
+        if not ticket:
+            continue
+        rec = by_job_map[ticket]
+        rec["ticket"] = ticket
+        rec["input_tokens"] += entry.get("input_tokens", 0) or 0
+        rec["output_tokens"] += entry.get("output_tokens", 0) or 0
+        rec["cache_read_tokens"] += entry.get("cache_read_tokens", 0) or 0
+        rec["cache_write_tokens"] += entry.get("cache_write_tokens", 0) or 0
+        rec["runs"] += 1
+    by_job = sorted(by_job_map.values(), key=lambda j: -j["output_tokens"])
+
     return {
         "generated_at": now.isoformat(), "window_days": window_days, "machine": machine_id(), "files_scanned": len(list(files)),
         "totals": totals,
         "rows": [{"day": d, "kind": k, "model": mo, **rec} for (d, k, mo), rec in sorted(rows.items())],
         "by_project": sorted(by_project.values(), key=lambda p: -p["output"]),
         "by_ticket": sorted(({"project": p, "ticket": t, **rec} for (p, t), rec in tickets.items()), key=lambda x: -x["output"])[:TOP_TICKETS],
+        "by_job": by_job,
     }
 
 

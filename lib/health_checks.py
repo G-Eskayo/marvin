@@ -747,6 +747,64 @@ def check_output_contracts() -> list[dict]:
     return output_contracts.health_findings()
 
 
+def check_autonomous_share(usage_path: Path | None = None, now: datetime | None = None) -> dict:
+    """Share of output tokens from autonomous runs (headless+subagent) vs interactive, most recent day only.
+
+    Green when autonomous is ≤50% of daily output tokens; yellow >50%; never red.
+    High autonomous usage without corresponding progress can indicate a stuck loop (marvin#318).
+    """
+    cid, label = "usage:autonomous-share", "Autonomous share of daily output tokens"
+    now = now or _now()
+    usage_file = usage_path or (HOME / ".claude" / "logs" / "token-usage.json")
+
+    if not usage_file.exists():
+        return _result(cid, label, "green", "token-usage scan has not run on this machine yet")
+
+    try:
+        usage_data = json.loads(usage_file.read_text())
+    except (json.JSONDecodeError, OSError):
+        return _result(cid, label, "yellow", "could not read token-usage scan")
+
+    if not isinstance(usage_data, dict):
+        return _result(cid, label, "yellow", "could not read token-usage scan")
+
+    rows = usage_data.get("rows") or []
+    if not rows:
+        return _result(cid, label, "green", "no usage data recorded yet")
+
+    # Find the most recent day
+    days = {r.get("day") for r in rows if isinstance(r, dict) and r.get("day")}
+    if not days:
+        return _result(cid, label, "green", "no days with usage data recorded yet")
+    most_recent_day = max(days)
+
+    # Sum output tokens by kind for the most recent day
+    autonomous_output = 0  # headless + subagent
+    interactive_output = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if row.get("day") != most_recent_day:
+            continue
+        output = row.get("output", 0) or 0
+        kind = row.get("kind", "")
+        if kind in ("headless", "subagent"):
+            autonomous_output += output
+        elif kind == "interactive":
+            interactive_output += output
+
+    total_output = autonomous_output + interactive_output
+    if total_output <= 0:
+        return _result(cid, label, "green", f"no output tokens on {most_recent_day}")
+
+    share = autonomous_output / total_output if total_output > 0 else 0
+    pct = round(share * 100)
+    sev = "yellow" if share > 0.50 else "green"
+    detail = f"{pct}% autonomous ({autonomous_output:,} of {total_output:,} output tokens on {most_recent_day})"
+
+    return _result(cid, label, sev, detail, value=share)
+
+
 def check_parallel_dispatch() -> dict:
 	"""Check if parallel dispatch is keeping up with the queue."""
 	cid, label = "dispatch:parallel", "Parallel dispatch keeping up"
@@ -1475,6 +1533,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("dispatch:parallel", "Parallel dispatch keeping up", check_parallel_dispatch, CHECK_BUDGET_S),
         ("purpose:missed", "Purpose metrics", check_missed_purposes, CHECK_BUDGET_S),
         ("contract", "Output contracts", check_output_contracts, CHECK_BUDGET_S),
+        ("usage:autonomous-share", "Autonomous share of daily output tokens", check_autonomous_share, CHECK_BUDGET_S),
         ("profile:missing", "Projects without an execution profile", check_missing_profiles, CHECK_BUDGET_S),
         ("profile:no-machines", "Projects with no machines", check_unrunnable_profiles, CHECK_BUDGET_S),
         ("triggers:missed", "Dashboard triggers cover every change", check_trigger_coverage, CHECK_BUDGET_S),

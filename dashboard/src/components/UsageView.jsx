@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react'
-import { mergeTokenRows, dailySeries, sumRows, projectTable, ticketTable } from '../lib/usage_view.js'
+import { mergeTokenRows, dailySeries, sumRows, projectTable, ticketTable, autonomousSeries, weeklySeries, jobTable } from '../lib/usage_view.js'
 
 const KIND_STYLE = { headless: ['#3b82f6', 'Pipeline (headless)'], interactive: ['#10b981', 'Interactive'], subagent: ['#a78bfa', 'Subagents'] }
 const fmt = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(0)}k` : String(n))
+const pick = (machines, which) => machines.filter((m) => which === 'all' || m.machine === which)
 
 function Stat({ label, value, hint }) {
   return (
@@ -39,6 +40,34 @@ function DailyBars({ series, metric }) {
   )
 }
 
+function ShareBars({ series, label }) {
+  const W = 760, H = 150, bw = W / series.length
+  const shareLine = (pct) => ({ y: H - (pct / 100) * H, color: pct <= 40 ? '#10b981' : pct <= 50 ? '#f59e0b' : '#dc2626', label: `${pct}%` })
+  const lines = [shareLine(30), shareLine(40), shareLine(50)]
+  return (
+    <svg viewBox={`0 0 ${W} ${H + 18}`} className="w-full" role="img" aria-label={`${label} autonomous share of output tokens`}>
+      {lines.map((line, idx) => (
+        <g key={`line-${idx}`}>
+          <line x1="0" y1={line.y} x2={W} y2={line.y} stroke={line.color} strokeDasharray="4" strokeWidth="1" opacity="0.5" />
+          <text x={W - 2} y={line.y - 3} fontSize="8" fill={line.color} textAnchor="end">{line.label}</text>
+        </g>
+      ))}
+      {series.map((d, i) => {
+        const share = d.share || 0
+        const h = (share / 100) * H
+        return (
+          <g key={d.day || d.week}>
+            <title>{`${d.day || d.week}: ${share}% autonomous (${d.autonomous} of ${d.total} output tokens)`}</title>
+            {h > 0 && <rect x={i * bw + 1} y={H - h} width={bw - 2} height={h} fill="#f59e0b" />}
+            {i % 5 === 0 && <text x={i * bw} y={H + 13} fontSize="9" fill="#737373">{(d.day || d.week).slice(5)}</text>}
+          </g>
+        )
+      })}
+      <text x={W} y={10} fontSize="9" fill="#737373" textAnchor="end">0–100%</text>
+    </svg>
+  )
+}
+
 function Table({ title, hint, children }) {
   return (
     <section className="mt-6">
@@ -52,6 +81,7 @@ function Table({ title, hint, children }) {
 // How much the Claude sessions used, when, by what kind of run, and where it went (project, ticket) for the chosen machine(s).
 export default function UsageView({ machines, which }) {
   const [metric, setMetric] = useState('output')
+  const [sharePeriod, setSharePeriod] = useState('daily')
   const rows = useMemo(() => mergeTokenRows(machines, which), [machines, which])
   const projects = useMemo(() => projectTable(machines, which), [machines, which])
   const tickets = useMemo(() => ticketTable(machines, which), [machines, which])
@@ -126,6 +156,39 @@ export default function UsageView({ machines, which }) {
           </table>
         )}
       </Table>
+
+      {rows.length > 0 && (
+        <>
+          <div className="mt-5 flex items-center justify-between">
+            <h3 className="text-sm font-medium text-neutral-200">Autonomous share of output tokens</h3>
+            <div className="flex gap-1">
+              {[['daily', 'Daily'], ['weekly', 'Weekly']].map(([id, label]) => (
+                <button key={id} onClick={() => setSharePeriod(id)} className={`rounded px-2 py-1 text-xs ${sharePeriod === id ? 'bg-neutral-700 text-white' : 'bg-neutral-900 text-neutral-400 hover:text-neutral-200'}`}>{label}</button>
+              ))}
+            </div>
+          </div>
+          <div className="mt-2 rounded border border-neutral-800 bg-neutral-900 p-3">
+            <ShareBars series={sharePeriod === 'weekly' ? weeklySeries(rows) : autonomousSeries(rows)} label={sharePeriod === 'weekly' ? 'Weekly' : 'Daily'} />
+          </div>
+        </>
+      )}
+
+      {pick(machines, which).some((m) => m.tokens?.by_job && m.tokens.by_job.length > 0) && (
+        <Table title="Top autonomous spenders" hint="Background job launches by ticket, ranked by output tokens.">
+          <table className="w-full text-sm">
+            <thead><tr className="text-left text-xs text-neutral-500"><th className="pb-1 font-normal">Job</th><th className="pb-1 text-right font-normal">Output tokens</th><th className="pb-1 pl-4 font-normal">Share</th></tr></thead>
+            <tbody className="font-mono text-neutral-300">
+              {jobTable(machines, which).slice(0, 15).map((j) => (
+                <tr key={j.ticket} className="border-t border-neutral-900">
+                  <td className="py-1 pr-2">{j.ticket}</td>
+                  <td className="py-1 text-right">{fmt(j.output_tokens)}</td>
+                  <td className="py-1 pl-4"><div className="h-2 rounded-sm bg-amber-500/70" style={{ width: `${Math.max(2, j.share_pct)}%` }} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Table>
+      )}
     </div>
   )
 }

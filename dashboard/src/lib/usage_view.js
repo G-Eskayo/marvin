@@ -127,4 +127,79 @@ export function machineFreshness(m, now = Date.now()) {
   return { state: 'ok', text: `updated ${agoText(now - Math.max(...stamps))}` }
 }
 
+export function autonomousSeries(rows, { days = 30, end } = {}) {
+  const list = dayList(days, end || new Date().toISOString().slice(0, 10))
+  const idx = new Map(list.map((d) => [d, { day: d, autonomous: 0, interactive: 0, total: 0 }]))
+  for (const r of rows) {
+    const cell = idx.get(r.day)
+    if (!cell) continue
+    const v = r.output || 0
+    if (r.kind === 'headless' || r.kind === 'subagent') {
+      cell.autonomous += v
+      cell.total += v
+    } else if (r.kind === 'interactive') {
+      cell.interactive += v
+      cell.total += v
+    }
+  }
+  return list.map((d) => {
+    const c = idx.get(d)
+    return { day: d, autonomous: c.autonomous, interactive: c.interactive, total: c.total, share: c.total > 0 ? Math.round(100 * c.autonomous / c.total) : 0 }
+  })
+}
+
+export function weeklySeries(rows, { end } = {}) {
+  const endDate = new Date((end || new Date().toISOString().slice(0, 10)) + 'T00:00:00Z')
+  const weeks = new Map()
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(endDate)
+    d.setUTCDate(d.getUTCDate() - (7 * (11 - i)))
+    const weekStart = new Date(d)
+    weekStart.setUTCDate(weekStart.getUTCDate() - weekStart.getUTCDay())
+    const week = weekStart.toISOString().slice(0, 10)
+    weeks.set(week, { week, autonomous: 0, interactive: 0, total: 0 })
+  }
+  for (const r of rows) {
+    const d = new Date(r.day + 'T00:00:00Z')
+    const weekStart = new Date(d)
+    weekStart.setUTCDate(weekStart.getUTCDate() - weekStart.getUTCDay())
+    const week = weekStart.toISOString().slice(0, 10)
+    const w = weeks.get(week)
+    if (w) {
+      const v = r.output || 0
+      if (r.kind === 'headless' || r.kind === 'subagent') {
+        w.autonomous += v
+        w.total += v
+      } else if (r.kind === 'interactive') {
+        w.interactive += v
+        w.total += v
+      }
+    }
+  }
+  return [...weeks.values()].map(w => ({ ...w, share: w.total > 0 ? Math.round(100 * w.autonomous / w.total) : 0 })).sort((a, b) => a.week.localeCompare(b.week))
+}
+
+export function jobTable(machines, which = 'all') {
+  const byTicket = new Map()
+  for (const m of pick(machines, which)) {
+    for (const j of m.tokens?.by_job || []) {
+      const ticket = j.ticket
+      const cur = byTicket.get(ticket) || { ticket, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, runs: 0 }
+      cur.input_tokens += j.input_tokens || 0
+      cur.output_tokens += j.output_tokens || 0
+      cur.cache_read_tokens += j.cache_read_tokens || 0
+      cur.cache_write_tokens += j.cache_write_tokens || 0
+      cur.runs += j.runs || 0
+      byTicket.set(ticket, cur)
+    }
+  }
+  const list = [...byTicket.values()]
+  const total = list.reduce((sum, j) => sum + (j.output_tokens || 0), 0)
+  return list.map((j) => ({
+    ticket: j.ticket,
+    output_tokens: j.output_tokens || 0,
+    share_pct: total > 0 ? Math.round(100 * (j.output_tokens || 0) / total) : 0,
+  })).sort((a, b) => b.output_tokens - a.output_tokens)
+}
+
 export const USAGE_KINDS = KINDS

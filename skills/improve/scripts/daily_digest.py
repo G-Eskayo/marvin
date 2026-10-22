@@ -239,6 +239,7 @@ def call_claude(prompt: str) -> str:
             # text — this script's own OUT_FILE.write_text() below is the
             # only thing that should ever write the file.
             permission_mode=None, disallowed_tools="Write,Edit", timeout=240,
+            ticket="daily-digest",
         )
     except Exception as exc:
         return f"(claude call failed: {exc})"

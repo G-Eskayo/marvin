@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mergeTools, mergeRows, mergeInventory, mergeFailures, mergeTokenRows, dailySeries, sumRows, projectTable, ticketTable, machineFreshness } from '../src/lib/usage_view.js'
+import { mergeTools, mergeRows, mergeInventory, mergeFailures, mergeTokenRows, dailySeries, sumRows, projectTable, ticketTable, machineFreshness, autonomousSeries, weeklySeries, jobTable } from '../src/lib/usage_view.js'
 
 const tool = (name, calls, extra = {}) => ({ name, calls, ok: calls, error: 0, rejected: 0, interrupted: 0, invalid: 0, unresolved: 0, expected: 0, last_used: null,
   by_kind: { interactive: calls, headless: 0, subagent: 0 }, by_day: {}, causes: {}, purpose: '(no description recorded)', ...extra })
@@ -100,5 +100,135 @@ describe('skills, inventory and failures across machines', () => {
     const f = (at, tool) => ({ at, tool, outcome: 'error', kind: 'headless', message: 'm' })
     const out = mergeFailures([withInv('a', [], 1, [f('2026-10-05T10:00:00Z', 'Bash')]), withInv('b', [], 1, [f('2026-10-06T10:00:00Z', 'Read')])], 'all')
     expect(out.map((x) => [x.tool, x.machine])).toEqual([['Read', 'b'], ['Bash', 'a']])
+  })
+})
+
+describe('autonomous share series (tests 28-37)', () => {
+  const autonomousRow = (day, output) => ({ day, kind: 'headless', model: 'sonnet', input: 0, output, cache_write: 0, cache_read: 0, messages: 0 })
+  const interactiveRow = (day, output) => ({ day, kind: 'interactive', model: 'sonnet', input: 0, output, cache_write: 0, cache_read: 0, messages: 0 })
+  const subagentRow = (day, output) => ({ day, kind: 'subagent', model: 'sonnet', input: 0, output, cache_write: 0, cache_read: 0, messages: 0 })
+
+  it('autonomousSeries computes share of headless+subagent output tokens per day', () => {
+    const rows = [autonomousRow('2026-10-05', 100), interactiveRow('2026-10-05', 50)]
+    const series = autonomousSeries(rows, { days: 1, end: '2026-10-05' })
+    expect(series[0].autonomous).toBe(100)
+    expect(series[0].interactive).toBe(50)
+    expect(series[0].total).toBe(150)
+    expect(series[0].share).toBe(67) // 100/150
+  })
+
+  it('autonomousSeries includes subagents in autonomous count', () => {
+    const rows = [subagentRow('2026-10-05', 40), interactiveRow('2026-10-05', 60)]
+    const series = autonomousSeries(rows, { days: 1, end: '2026-10-05' })
+    expect(series[0].autonomous).toBe(40)
+    expect(series[0].share).toBe(40)
+  })
+
+  it('autonomousSeries fills empty days with zero counts', () => {
+    const rows = [autonomousRow('2026-10-05', 100), interactiveRow('2026-10-05', 50)]
+    const series = autonomousSeries(rows, { days: 3, end: '2026-10-05' })
+    expect(series.length).toBe(3)
+    expect(series[1].total).toBe(0)
+    expect(series[1].share).toBe(0)
+  })
+
+  it('weeklySeries buckets rows into calendar weeks and computes share', () => {
+    const rows = [
+      autonomousRow('2026-10-05', 100), interactiveRow('2026-10-05', 50), // Monday Oct 5 = week starting Oct 4 (Sun)
+      autonomousRow('2026-10-12', 60), interactiveRow('2026-10-12', 40), // Monday Oct 12 = week starting Oct 11 (Sun)
+    ]
+    const series = weeklySeries(rows, { end: '2026-10-12' })
+    const weeks = series.map(w => w.week)
+    expect(weeks.length).toBe(12) // 12 weeks default
+    const oct5week = series.find(w => w.week === '2026-10-04') // week containing Oct 5
+    const oct12week = series.find(w => w.week === '2026-10-11') // week containing Oct 12
+    expect(oct5week).toBeDefined()
+    expect(oct5week.autonomous).toBe(100)
+    expect(oct5week.share).toBe(67)
+    expect(oct12week).toBeDefined()
+    expect(oct12week.autonomous).toBe(60)
+    expect(oct12week.share).toBe(60)
+  })
+
+  it('weeklySeries sorts by week ascending', () => {
+    const rows = [autonomousRow('2026-10-05', 100)]
+    const series = weeklySeries(rows, { end: '2026-10-05' })
+    const weeks = series.map(w => w.week)
+    for (let i = 1; i < weeks.length; i++) {
+      expect(weeks[i] >= weeks[i - 1]).toBe(true)
+    }
+  })
+
+  it('jobTable merges by_job across machines by ticket and returns output tokens and share', () => {
+    const m1 = m('a', null, tokens([], { by_job: [{ ticket: 'job-1', output_tokens: 100, input_tokens: 10, runs: 1 }] }))
+    const m2 = m('b', null, tokens([], { by_job: [{ ticket: 'job-1', output_tokens: 50, input_tokens: 5, runs: 1 }] }))
+    const result = jobTable([m1, m2], 'all')
+    expect(result).toHaveLength(1)
+    expect(result[0]).toMatchObject({ ticket: 'job-1', output_tokens: 150, share_pct: 100 })
+  })
+
+  it('jobTable sorts by output_tokens descending', () => {
+    const m1 = m('a', null, tokens([], { by_job: [{ ticket: 'low', output_tokens: 10, input_tokens: 0, runs: 1 }, { ticket: 'high', output_tokens: 100, input_tokens: 0, runs: 1 }] }))
+    const result = jobTable([m1], 'all')
+    expect(result.map(r => r.ticket)).toEqual(['high', 'low'])
+  })
+
+  it('jobTable includes share as percentage of total output tokens', () => {
+    const m1 = m('a', null, tokens([], { by_job: [{ ticket: 'a', output_tokens: 25, input_tokens: 0, runs: 1 }, { ticket: 'b', output_tokens: 75, input_tokens: 0, runs: 1 }] }))
+    const result = jobTable([m1], 'all')
+    expect(result[0]).toMatchObject({ ticket: 'b', share_pct: 75 })
+    expect(result[1]).toMatchObject({ ticket: 'a', share_pct: 25 })
+  })
+
+  it('jobTable returns empty array when no by_job data', () => {
+    const m1 = m('a', null, tokens([]))
+    expect(jobTable([m1], 'all')).toEqual([])
+  })
+
+  it('autonomousSeries ignores rows with unrecognized kind and does not inflate total', () => {
+    const rows = [
+      autonomousRow('2026-10-05', 100),
+      interactiveRow('2026-10-05', 50),
+      { day: '2026-10-05', kind: 'unknown', model: 'sonnet', input: 0, output: 30, cache_write: 0, cache_read: 0, messages: 0 }
+    ]
+    const series = autonomousSeries(rows, { days: 1, end: '2026-10-05' })
+    expect(series[0].autonomous).toBe(100)
+    expect(series[0].interactive).toBe(50)
+    expect(series[0].total).toBe(150) // Should NOT include the unknown kind's 30
+    expect(series[0].share).toBe(67) // 100/150, not 100/180
+  })
+
+  it('weeklySeries ignores rows with unrecognized kind and does not inflate total', () => {
+    const rows = [
+      autonomousRow('2026-10-05', 100),
+      interactiveRow('2026-10-05', 50),
+      { day: '2026-10-05', kind: 'custom-agent', model: 'sonnet', input: 0, output: 25, cache_write: 0, cache_read: 0, messages: 0 }
+    ]
+    const series = weeklySeries(rows, { end: '2026-10-05' })
+    const week = series.find(w => w.week === '2026-10-04')
+    expect(week.autonomous).toBe(100)
+    expect(week.interactive).toBe(50)
+    expect(week.total).toBe(150) // Should NOT include the custom-agent's 25
+    expect(week.share).toBe(67)
+  })
+
+  it('jobTable includes cache tokens and runs in merged result', () => {
+    const m1 = m('a', null, tokens([], { by_job: [{ ticket: 'job-1', input_tokens: 50, output_tokens: 100, cache_read_tokens: 200, cache_write_tokens: 25, runs: 2 }] }))
+    const m2 = m('b', null, tokens([], { by_job: [{ ticket: 'job-1', input_tokens: 30, output_tokens: 50, cache_read_tokens: 100, cache_write_tokens: 15, runs: 1 }] }))
+    const result = jobTable([m1, m2], 'all')
+    expect(result[0]).toMatchObject({
+      ticket: 'job-1',
+      output_tokens: 150,
+      share_pct: 100
+    })
+  })
+
+  it('pick filters machines by the which parameter and verifies jobTable uses pick', () => {
+    const m1 = m('a', null, tokens([], { by_job: [{ ticket: 'job-1', output_tokens: 100, input_tokens: 10, runs: 1 }] }))
+    const m2 = m('b', null, tokens([], { by_job: [{ ticket: 'job-2', output_tokens: 50, input_tokens: 5, runs: 1 }] }))
+    const result = jobTable([m1, m2], 'a')
+    expect(result).toHaveLength(1)
+    expect(result[0].ticket).toBe('job-1')
+    expect(result[0].output_tokens).toBe(100)
   })
 })
