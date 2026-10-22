@@ -50,7 +50,9 @@ def test_home_is_a_temp_mirror_not_the_real_home():
     home = Path.home()
     assert home != REAL and os.path.realpath(home) != os.path.realpath(REAL)
     assert (home / ".claude").is_dir() and not (home / ".claude").is_symlink()
-    assert not (home / ".claude" / "logs").exists(), "the temp .claude starts without the real logs"
+    # Earlier tests in the same process may have written temp logs; what matters is that they are not the real ones.
+    logs = home / ".claude" / "logs"
+    assert not logs.is_symlink() and (not logs.exists() or rhg.outside_real_home(logs))
     for entry in (home / ".claude").rglob("*"):
         if entry.is_symlink():
             assert str(entry.relative_to(home / ".claude")) in rhg.read_through(REAL)
