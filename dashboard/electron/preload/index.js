@@ -11,7 +11,13 @@ contextBridge.exposeInMainWorld('api', {
     usage: () => ipcRenderer.invoke('metrics:usage')
   },
   decisions: {
-    submit: (payload) => ipcRenderer.invoke('decisions:submit', payload)
+    submit: (payload) => ipcRenderer.invoke('decisions:submit', payload),
+    // The record comment landing after a submit already shown (local-first). callback({repo, number, commentUrl, ...}).
+    onRecorded: (callback) => {
+      const listener = (_e, rec) => callback(rec)
+      ipcRenderer.on('decisions:recorded', listener)
+      return () => ipcRenderer.removeListener('decisions:recorded', listener)
+    }
   },
   mr: {
     list: () => ipcRenderer.invoke('mr:list'),
@@ -46,6 +52,13 @@ contextBridge.exposeInMainWorld('api', {
       const listener = () => callback()
       ipcRenderer.on('mr:refresh', listener)
       return () => ipcRenderer.removeListener('mr:refresh', listener)
+    },
+    // GitHub disagreed with an action already shown, and the view now shows GitHub's version (local-first).
+    // callback({repo, number, url, message}).
+    onCorrected: (callback) => {
+      const listener = (_e, c) => callback(c)
+      ipcRenderer.on('mr:corrected', listener)
+      return () => ipcRenderer.removeListener('mr:corrected', listener)
     }
   },
   dispatch: {

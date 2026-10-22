@@ -18,16 +18,18 @@ const BODY = `Images above.
 `
 
 // A fake gh: answers the issue read, records PATCH bodies (read from the --input file) and comments.
-function fakeGh({ body = BODY, labels = [], pullRequest = true, failPatch = false, failComment = false } = {}) {
+function fakeGh({ body = BODY, labels = [], pullRequest = true, failPatch = false, failComment = false, patchAnswer = null, commentGate = null } = {}) {
   const state = { patched: null, comments: [], labelEdits: [] }
   const exec = vi.fn(async (cmd, args) => {
     if (args[0] === 'api' && args[1] === '-X' && args[2] === 'PATCH') {
       if (failPatch) throw Object.assign(new Error('Command failed'), { stderr: 'HTTP 502' })
       const { readFileSync } = await import('fs')
       state.patched = JSON.parse(readFileSync(args[args.indexOf('--input') + 1], 'utf8')).body
+      if (patchAnswer) return { stdout: patchAnswer(state.patched) }
       return { stdout: '{}' }
     }
     if (args[0] === 'api' && /\/comments$/.test(args[1])) {
+      if (commentGate) await commentGate
       if (failComment) throw Object.assign(new Error('Command failed'), { stderr: 'HTTP 500: comment failed' })
       state.comments.push(args[args.indexOf('-f') + 1].slice('body='.length))
       return { stdout: 'https://github.com/o/r/pull/9#issuecomment-1\n' }
@@ -132,5 +134,76 @@ describe('sendBackForOptions', () => {
     const r = await sendBackForOptions({ prUrl: 'https://github.com/o/r/pull/9', ticketNumber: null, reasons: [] }, { exec, deny: vi.fn() })
     expect(r).toEqual({ sentBack: false, commented: true })
     expect(state.comments[0]).toBe(OPTIONS_REQUEST([]))
+  })
+})
+
+
+// Local-first (CONTEXT.md "Dashboard actions render their true result locally at once"): the answer to show is GitHub's
+// own reply to the PATCH, and the record comment no longer holds the screen up.
+describe('submitDecisions: GitHub\'s answer to the write, and the record off the critical path', () => {
+  const included = (body, etag = 'W/"abc"') => `HTTP/2.0 200 OK\r\nEtag: ${etag}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify({ body, number: 9 })}`
+
+  it('returns the body and etag GitHub answered the PATCH with', async () => {
+    const { exec } = fakeGh({ patchAnswer: (sent) => included(sent) })
+    const r = await submitDecisions({ repo: 'o/r', number: 9, answers: { handoff: { choices: ['Glide'] } } }, { exec })
+    expect(r.body).toContain('- [x] Glide')
+    expect(r.etag).toBe('W/"abc"')
+    expect(r.disagreed).toBe(false)
+    const patch = exec.mock.calls.find((c) => c[1][2] === 'PATCH')[1]
+    expect(patch).toContain('--include')
+  })
+
+  it('GitHub stores something other than what was sent: the result is GitHub\'s, flagged', async () => {
+    const { exec } = fakeGh({ patchAnswer: () => included(BODY) }) // GitHub kept the old body
+    const r = await submitDecisions({ repo: 'o/r', number: 9, answers: { handoff: { choices: ['Glide'] } } }, { exec })
+    expect(r.body).toBe(BODY)
+    expect(r.disagreed).toBe(true)
+    expect(r.pending).toContain('handoff') // pending follows GitHub's body, not the hoped-for one
+    expect(exec.mock.calls.some((c) => /comments$/.test(c[1][1]))).toBe(false) // no record of answers GitHub lacks
+    expect(r.commentUrl).toBeNull()
+  })
+
+  it('an old gh that prints no headers still works: the sent body stands in', async () => {
+    const { exec } = fakeGh()
+    const r = await submitDecisions({ repo: 'o/r', number: 9, answers: { handoff: { choices: ['Glide'] } } }, { exec })
+    expect(r.body).toContain('- [x] Glide')
+    expect(r.etag).toBeNull()
+  })
+
+  it('background: answers right after the PATCH; the comment lands later through `recorded`', async () => {
+    let release
+    const gate = new Promise((r) => (release = r))
+    const { exec, state } = fakeGh({ patchAnswer: (sent) => included(sent), commentGate: gate })
+    const r = await submitDecisions({ repo: 'o/r', number: 9, answers: { handoff: { choices: ['Glide'] } } }, { exec, background: true })
+    expect(r.ok).toBe(true)
+    expect(r.commentUrl).toBeNull()
+    expect(state.comments).toHaveLength(0) // not posted yet: the screen did not wait for it
+    release()
+    const rec = await r.recorded
+    expect(rec.commentUrl).toBe('https://github.com/o/r/pull/9#issuecomment-1')
+    expect(state.comments).toHaveLength(1)
+  })
+
+  it('background: a failed comment is reported through `recorded`, never thrown', async () => {
+    const { exec } = fakeGh({ failComment: true })
+    const r = await submitDecisions({ repo: 'o/r', number: 9, answers: { handoff: { choices: ['Glide'] } } }, { exec, background: true })
+    await expect(r.recorded).resolves.toMatchObject({ commentError: expect.stringMatching(/answers saved/) })
+  })
+
+  it('background: a rejected PATCH still throws before anything is recorded', async () => {
+    const { exec, state } = fakeGh({ failPatch: true })
+    await expect(submitDecisions({ repo: 'o/r', number: 9, answers: { handoff: { choices: ['Glide'] } } }, { exec, background: true })).rejects.toThrow()
+    expect(state.comments).toHaveLength(0)
+  })
+
+  it('background: the ticket label change and the comment run side by side, not one after the other', async () => {
+    let release
+    const gate = new Promise((r) => (release = r))
+    const { exec, state } = fakeGh({ labels: ['needs-info'], pullRequest: false, commentGate: gate })
+    const r = await submitDecisions({ repo: 'o/r', number: 5, answers: { dance: { choices: ['A: Clap & wiggle'] }, handoff: { choices: ['Glide'] } } }, { exec, background: true })
+    await new Promise((res) => setImmediate(res))
+    expect(state.labelEdits).toHaveLength(1) // moved to ready-for-agent while the comment is still held
+    release()
+    expect((await r.recorded).labelsChanged).toBe(true)
   })
 })
