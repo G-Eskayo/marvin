@@ -1,5 +1,7 @@
 # Changelog
 
+- Cleanup sweep leaves du processes hung on protected folders (TCC); add timeouts and single-flight ([#589](https://github.com/G-Eskayo/marvin/pull/589))
+
 - Main is red on two portfolio tests (project-card parity, reference templates) ([#588](https://github.com/G-Eskayo/marvin/pull/588))
 
 - Release dead ticket claims automatically, so the queue never freezes on a run that died ([#582](https://github.com/G-Eskayo/marvin/pull/582))
