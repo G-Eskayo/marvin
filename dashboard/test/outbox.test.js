@@ -3,7 +3,7 @@
 // the root on every call, so pointing HOME at a temp dir is enough.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, chmodSync, realpathSync } from 'fs'
-import { tmpdir, homedir } from 'os'
+import { tmpdir, homedir, userInfo } from 'os'
 import path from 'path'
 import {
   listOutboxDir, readOutboxFile, readOutboxImage, outboxRevealPath, outboxOpenPath, outboxRoot,
@@ -38,7 +38,7 @@ describe('the sandbox really is a temp HOME', () => {
   it('points the outbox at the temp HOME, not the real one', () => {
     expect(homedir()).toBe(home)
     expect(outboxRoot()).toBe(root)
-    expect(outboxRoot()).not.toContain('/Users/gileskayo/.claude')
+    expect(outboxRoot()).not.toContain(path.join(userInfo().homedir, '.claude')) // the account's real home, whatever HOME says
   })
 })
 

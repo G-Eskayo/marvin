@@ -43,3 +43,171 @@ def test_a_run_that_could_not_happen_keeps_the_last_good_answer(tmp_path):
 def test_pytest_failures_are_read_from_the_output():
     out = "FAILED tests/test_a.py::test_x - AssertionError\nFAILED tests/test_b.py::test_y\n2 failed, 10 passed in 3s\n"
     assert mh.failed_ids(out) == ["tests/test_a.py::test_x", "tests/test_b.py::test_y"]
+
+
+# ---- marvin#457: single flight, and only when code moved ----
+
+def _seed(state, sha="aaa", ok=True, failed=None):
+    mh.refresh(state_path=state, head=lambda: sha, run_suite=lambda: (ok, failed or [], "seed"), now=NOW,
+               changed=lambda a, b: None)
+
+
+def test_a_refresh_while_one_is_running_returns_at_once_and_runs_nothing(tmp_path):
+    import fcntl
+    state = tmp_path / "m.json"
+    with open(state.with_suffix(".lock"), "a") as held:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)  # another refresh, mid-suite
+        calls = []
+        res = mh.refresh(state_path=state, head=lambda: calls.append("head") or "abc",
+                         run_suite=lambda: calls.append("suite") or (True, [], "ok"), now=NOW)
+    assert res == {"ran": False, "busy": True}
+    assert calls == [], "a busy refresh must not even fetch"
+    assert not state.exists()
+
+
+def test_the_lock_is_released_after_a_run_and_after_a_crash(tmp_path):
+    state = tmp_path / "m.json"
+    def boom():
+        raise RuntimeError("worktree add failed")
+    import pytest
+    with pytest.raises(RuntimeError):
+        mh.refresh(state_path=state, head=lambda: "abc", run_suite=boom, now=NOW)
+    res = mh.refresh(state_path=state, head=lambda: "abc", run_suite=lambda: (True, [], "ok"), now=NOW)
+    assert res["ran"] is True
+
+
+def test_two_processes_at_once_run_one_suite(tmp_path):
+    """Real processes racing for the lock: exactly one suite runs (three ran at once on the mini, 2026-10-21)."""
+    import subprocess, textwrap
+    state = tmp_path / "m.json"
+    runs = tmp_path / "runs"
+    script = textwrap.dedent(f"""
+        import sys, time
+        sys.path.insert(0, {str(Path(mh.__file__).parent)!r})
+        import main_health as mh
+        from pathlib import Path
+        def suite():
+            with open({str(runs)!r}, "a") as f: f.write("x")
+            time.sleep(1.5)
+            return True, [], "ok"
+        print(mh.refresh(state_path=Path({str(state)!r}), head=lambda: "abc", run_suite=suite, changed=lambda a, b: None))
+    """)
+    procs = [subprocess.Popen([sys.executable, "-c", script], stdout=subprocess.PIPE, text=True) for _ in range(3)]
+    outs = [p.communicate(timeout=60)[0] for p in procs]
+    assert runs.read_text() == "x"
+    assert sum("'busy': True" in o for o in outs) == 2
+
+
+def test_a_metrics_only_move_carries_the_verdict_forward_without_running(tmp_path):
+    state = tmp_path / "m.json"
+    _seed(state, "aaa")
+    calls = []
+    res = mh.refresh(state_path=state, head=lambda: "bbb", run_suite=lambda: calls.append(1) or (False, ["x"], "1 failed"),
+                     now=NOW + timedelta(hours=30),
+                     changed=lambda a, b: ["bench/metrics/health-monitor.mac-mini.json", "bench/metrics/health-monitor.mac-mini.md"],
+                     named_by_a_test=lambda p, s: True)
+    assert calls == []
+    assert res["sha"] == "bbb" and res["ok"] is True and res["tested_sha"] == "aaa" and res["ran"] is False
+    assert "carried" in res
+    saved = json.loads(state.read_text())
+    assert saved["sha"] == "bbb" and saved["checked_at"] == (NOW + timedelta(hours=30)).isoformat()  # not "a day old"
+
+
+def test_a_red_main_stays_red_across_a_docs_only_move(tmp_path):
+    state = tmp_path / "m.json"
+    _seed(state, "aaa", ok=False, failed=["lib/tests/test_a.py::test_x"])
+    res = mh.refresh(state_path=state, head=lambda: "bbb", run_suite=lambda: (True, [], "ok"), now=NOW,
+                     changed=lambda a, b: ["docs/plans/x.md"], named_by_a_test=lambda p, s: False)
+    assert res["ok"] is False and res["failed"] == ["lib/tests/test_a.py::test_x"] and res["sha"] == "bbb"
+
+
+def test_carried_forward_twice_still_names_the_commit_actually_tested(tmp_path):
+    state = tmp_path / "m.json"
+    _seed(state, "aaa")
+    for sha in ("bbb", "ccc"):
+        res = mh.refresh(state_path=state, head=lambda s=sha: s, run_suite=lambda: (True, [], "ok"), now=NOW,
+                         changed=lambda a, b: ["x.log"], named_by_a_test=lambda p, s: False)
+    assert res["sha"] == "ccc" and res["tested_sha"] == "aaa"
+
+
+def test_any_code_change_runs_the_suite(tmp_path):
+    state = tmp_path / "m.json"
+    _seed(state, "aaa")
+    for changed in (["lib/main_health.py"], ["bench/metrics/x.json", "lib/a.py"], ["dashboard/src/App.jsx"], ["pytest.ini"],
+                    ["VERSION"], ["config/projects/marvin.json"]):
+        res = mh.refresh(state_path=state, head=lambda c=changed: "s" + str(len(c)) + c[-1], run_suite=lambda: (True, [], "ran"),
+                         now=NOW, changed=lambda a, b, c=changed: c, named_by_a_test=lambda p, s: False)
+        assert res["ran"] is True, changed
+
+
+def test_a_doc_a_test_reads_runs_the_suite(tmp_path):
+    state = tmp_path / "m.json"
+    _seed(state, "aaa")
+    res = mh.refresh(state_path=state, head=lambda: "bbb", run_suite=lambda: (True, [], "ran"), now=NOW,
+                     changed=lambda a, b: ["docs/north-stars.md"], named_by_a_test=lambda p, s: p == "docs/north-stars.md")
+    assert res["ran"] is True
+
+
+def test_unknown_changes_run_the_suite(tmp_path):
+    state = tmp_path / "m.json"
+    _seed(state, "aaa")
+    res = mh.refresh(state_path=state, head=lambda: "bbb", run_suite=lambda: (True, [], "ran"), now=NOW,
+                     changed=lambda a, b: None)
+    assert res["ran"] is True
+
+
+def test_no_prior_record_runs_the_suite(tmp_path):
+    res = mh.refresh(state_path=tmp_path / "m.json", head=lambda: "aaa", run_suite=lambda: (True, [], "ran"), now=NOW,
+                     changed=lambda a, b: [], named_by_a_test=lambda p, s: False)
+    assert res["ran"] is True
+
+
+def test_needs_suite_classifies_paths():
+    never = lambda p: False
+    assert mh.needs_suite([], never) is False
+    assert mh.needs_suite(["bench/metrics/a.json", "logs/x.jsonl", "a.log", "docs/adr/0099-x.md", "README.md"], never) is False
+    assert mh.needs_suite(["bench/bench.py"], never) is True          # bench code is code
+    assert mh.needs_suite(["docs/build.sh"], never) is False           # under docs/: a doc unless a test names it
+    assert mh.needs_suite(["lib/x.mdx"], never) is True
+    assert mh.needs_suite(["CONTEXT.md"], lambda p: p == "CONTEXT.md") is True
+    assert mh.needs_suite(None, never) is True
+
+
+def test_named_by_a_test_uses_git_grep_on_the_new_commit(tmp_path, monkeypatch):
+    import subprocess
+    repo = tmp_path / "r"
+    (repo / "lib" / "tests").mkdir(parents=True)
+    (repo / "lib" / "tests" / "test_x.py").write_text('assert "north-stars.md" in open("docs/north-stars.md").read()\n')
+    (repo / "docs").mkdir()
+    (repo / "docs" / "north-stars.md").write_text("x")
+    (repo / "docs" / "plan.md").write_text("x")
+    for cmd in (["init", "-q"], ["add", "-A"], ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "c"]):
+        subprocess.run(["git", *cmd], cwd=repo, check=True)
+    monkeypatch.setattr(mh, "REPO_DIR", repo)
+    sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
+    assert mh._named_by_a_test("docs/north-stars.md", sha) is True
+    assert mh._named_by_a_test("docs/plan.md", sha) is False
+    assert mh._named_by_a_test("docs/plan.md", "no-such-sha") is True  # unknown: run the suite
+    (repo / "docs" / "plan.md").write_text("y")
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qam", "d"], cwd=repo, check=True)
+    new = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
+    assert mh._changed_paths(sha, new) == ["docs/plan.md"]
+    assert mh._changed_paths("nope", new) is None
+
+
+def test_a_half_written_state_file_is_never_left(tmp_path):
+    state = tmp_path / "m.json"
+    _seed(state, "aaa")
+    assert not state.with_suffix(".tmp").exists()
+    assert json.loads(state.read_text())["sha"] == "aaa"
+
+
+def test_the_suite_runs_niced_so_it_never_starves_the_merge_gate(monkeypatch):
+    seen = []
+
+    class R:
+        returncode, stdout, stderr = 0, "5 passed in 1s\n", ""
+    monkeypatch.setattr(mh.subprocess, "run", lambda cmd, **k: seen.append(cmd) or R())
+    ok, failed, summary = mh._run_suite()
+    suite = [c for c in seen if "pytest" in c][0]
+    assert suite[:3] == ["nice", "-n", "10"] and ok is True and summary == "5 passed in 1s"
