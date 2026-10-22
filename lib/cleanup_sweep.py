@@ -49,6 +49,7 @@ import ticket_claim  # noqa: E402
 from sandbox_orchestration import WORKTREES_ROOT  # noqa: E402
 
 OUTPUT_PATH = Path.home() / ".claude" / "logs" / "mr-pipeline-sweep.md"
+LOCK_PATH = Path.home() / ".claude" / "logs" / "cleanup-sweep.lock"
 STALE_THRESHOLD_HOURS = 24
 EMPTY_MIN_AGE_HOURS = 24
 ISSUE_NUMBER_RE = re.compile(r"#(\d+)$|^ticket/(\d+)(?:-|$)")  # pipeline/…#N, or ticket/<n>-<slug> (#226)
@@ -444,6 +445,20 @@ def run_daily_sweep(
             "worktrees_for_review": len(worktrees["review"]), "simulators_removed": len(simulators["removed"])}
 
 
+def main() -> dict:
+    """launchd entry point, single flight (#586, the #457 main-health pattern): a sweep still running (say, stuck in a
+    size walk) makes the next one return {"busy": True} at once instead of queueing. The flock dies with its process,
+    so it can never go stale."""
+    import fcntl
+    LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(LOCK_PATH, "a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            print("[cleanup-sweep] another sweep is still running; skipped", file=sys.stderr)
+            return {"busy": True}
+        return run_daily_sweep()
+
+
 if __name__ == "__main__":
-    summary = run_daily_sweep()
-    print(json.dumps(summary))
+    print(json.dumps(main()))
