@@ -124,7 +124,6 @@ describe('cloneState', () => {
 describe('createCloneFreshener', () => {
   const projects = (dir, extra = {}) => [{ id: 'p', repo: 'G-Eskayo/p', localPaths: [dir], ...extra }]
   const make = (o = {}) => {
-    o = { openInXcode: async () => false, ...o }
     const log = path.join(home, '.agents', 'var', 'clone-freshen.jsonl')
     let t = 1_000_000
     const f = createCloneFreshener({ exec: envExec, home, logPath: log, now: () => t, minIntervalMs: 30 * 60 * 1000, ...o })
@@ -238,27 +237,59 @@ describe('createCloneFreshener', () => {
     expect(readFileSync(log, 'utf8')).toContain('fetch-failed')
   })
 
-  it('a clone open in Xcode is left alone, even clean and behind (Gil: never change a repo open in Xcode)', async () => {
+  // Gil, 2026-10-22 (#618): never update a repo that has an Xcode project. `project.yml` is XcodeGen's spec (the
+  // .xcodeproj itself may not be committed). Such a clone is searched from its GitHub saved copy, like a mid-work one.
+  for (const [marker, make_] of [
+    ['an .xcodeproj', (c) => (mkdirSync(path.join(c, 'App.xcodeproj'), { recursive: true }), writeFileSync(path.join(c, 'App.xcodeproj', 'project.pbxproj'), '// !$*UTF8*$!\n'))],
+    ['an .xcworkspace, nested', (c) => (mkdirSync(path.join(c, 'ios', 'App.xcworkspace'), { recursive: true }), writeFileSync(path.join(c, 'ios', 'App.xcworkspace', 'contents.xcworkspacedata'), '<Workspace/>\n'))],
+    ['an XcodeGen project.yml', (c) => writeFileSync(path.join(c, 'project.yml'), 'name: App\n')]
+  ]) {
+    it(`a clone with ${marker} is never fast-forwarded, even clean and behind; logged with the reason`, async () => {
+      const { seed, clone } = setup()
+      make_(clone)
+      git(clone, 'add', '-A')
+      git(clone, 'commit', '-q', '-m', 'xcode project')
+      git(clone, 'push', '-q', 'origin', 'main')
+      git(seed, 'pull', '-q')
+      pushNew(seed)
+      const before = head(clone)
+      const calls = []
+      const counting = (cmd, args, opts) => (calls.push(args.join(' ')), envExec(cmd, args, opts))
+      const { f, log } = make({ exec: counting })
+      const r = await f.freshen(projects(clone))
+      expect(head(clone)).toBe(before)
+      expect(r.updated).toEqual([])
+      expect(r.midWork).toEqual(['p']) // searched from the saved GitHub copy
+      expect(f.midWork(clone)).toBe(true)
+      expect(calls.some((c) => c.includes('fetch') || c.includes('merge'))).toBe(false)
+      const line = JSON.parse(readFileSync(log, 'utf8').trim().split('\n').at(-1))
+      expect(line).toMatchObject({ project: 'p', result: 'left-alone', status: 'xcode-project' })
+      expect(line.marker).toBeTruthy()
+    })
+  }
+
+  it('a marker under .claude/ (agent worktrees) is not the repo\'s own project: still freshened', async () => {
     const { seed, clone } = setup()
+    mkdirSync(path.join(clone, '.claude'), { recursive: true }) // keep the tree "clean" otherwise
+    mkdirSync(path.join(clone, '.claude', 'App.xcodeproj'), { recursive: true }) // inside .claude/: not the repo's
     pushNew(seed)
-    const before = head(clone)
-    const calls = []
-    const counting = (cmd, args, opts) => (calls.push(args.join(' ')), envExec(cmd, args, opts))
-    const { f, log } = make({ exec: counting, openInXcode: async (dir) => dir === clone })
+    const { f } = make()
     const r = await f.freshen(projects(clone))
-    expect(head(clone)).toBe(before)
-    expect(r.updated).toEqual([])
-    expect(calls.some((c) => c.includes('fetch') || c.includes('merge'))).toBe(false)
-    expect(readFileSync(log, 'utf8')).toContain('open-in-xcode')
+    expect(r.updated).toEqual(['p']) // a marker under .claude/, node_modules or .git is not the repo's own project
   })
 
-  it('when the Xcode check itself fails, the clone is left alone (fail closed)', async () => {
+  it('a repo with none of the markers is still freshened (a "project.yaml" or "xcodeproj.md" is not a marker)', async () => {
     const { seed, clone } = setup()
+    writeFileSync(path.join(clone, 'docs', 'xcodeproj.md'), '# notes about xcodeproj files\n')
+    writeFileSync(path.join(clone, 'project.yaml'), 'x: 1\n')
+    git(clone, 'add', '-A')
+    git(clone, 'commit', '-q', '-m', 'lookalikes')
+    git(clone, 'push', '-q', 'origin', 'main')
+    git(seed, 'pull', '-q')
     pushNew(seed)
-    const before = head(clone)
-    const { f } = make({ openInXcode: async () => { throw new Error('lsof missing') } })
-    await f.freshen(projects(clone))
-    expect(head(clone)).toBe(before)
+    const { f } = make()
+    const r = await f.freshen(projects(clone))
+    expect(r.updated).toEqual(['p'])
   })
 
   it('a project with no clone on this machine, or no repo, is skipped', async () => {
