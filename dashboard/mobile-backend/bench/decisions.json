@@ -1,0 +1,13 @@
+{
+  "quic_lib": "curl",
+  "_quic_lib_note": "Option B: External CLI (curl --http3) over new Node dependency. Rationale: keeps package.json clean, consistent with using external tools (dnctl, pfctl), no native bindings to maintain.",
+
+  "phone_leg": "cli-on-macbook",
+  "_phone_leg_note": "Option B: Run identical CLI client from MacBook Pro over Tailscale. Rationale: fully automatable today, validates harness before needing real phone hardware, battery measurements deferred to follow-up ticket.",
+
+  "headscale_deploy": "paper",
+  "_headscale_deploy_note": "Option B: Paper comparison only from Headscale docs/threat model. Rationale: no machinery overhead for measurement, threat model is well-documented, consistent with KISS principle.",
+
+  "variant_c_auth": "trusted-network",
+  "_variant_c_auth_note": "Option C: Scope variant (c) as 'trusted local network only'. Rationale: variant (c) fundamentally has different threat model than Tailscale-based variants; avoids adding complexity (TLS certs) or secret management (tokens); clear about scope."
+}

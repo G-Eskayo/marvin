@@ -1,0 +1,11 @@
+1. Scaffold `dashboard/mobile-backend/bench/` (new, standalone — no edits to production route files) with a shared harness module: payload generation/checksums, packet-loss/reorder helpers wrapping `dnctl`/`pfctl`, and the `metrics_registry.py` recording wrapper.
+2. Write tests 1–4, 10–13, 15 (the harness-logic and dependency-failure tests that don't need two variants built yet) against the harness module and variant (a).
+3. Build variant (a) bench client: RTT/TTFT/throughput measurement against the real `dashboard/mobile-backend` process's `/live` stream and a new minimal `/bench/echo` endpoint (separate bench-only server reusing `device_gate.js`, not mounted on production `index.js`).
+4. Write and pass tests 5–9, 14 against variant (a) to prove the harness itself (packet loss, reorder, kill-mid-stream, network-switch, replay, repeatability) before trusting its numbers for variants (b)/(c).
+5. Build variant (b) bench server/client (HTTP/3 or WebTransport over Tailscale) using the library chosen in `quic_lib`; re-run the full test suite (1–14) against it.
+6. Build variant (c) bench server/client (QUIC directly between devices, bypassing Tailscale) using the auth model chosen in `variant_c_auth`; re-run the applicable subset of the test suite against it, respecting that decision's scope.
+7. Run the full measurement pass for all three variants per the `phone_leg` decision (Mac-to-Mac always; phone leg per chosen option), recording every metric into `metrics_registry` (repeatable from one orchestration command).
+8. Produce the security/privacy comparison table (encryption, authentication, what a third party incl. Tailscale's coordination service can see) including Headscale, per the `headscale_deploy` decision.
+9. Write test 15 (report-generation purity) and the report generator that reads the recorded snapshots and renders the one-page markdown recommendation.
+10. Generate the one-page result doc at `docs/plans/device-link-bakeoff-results.md` with the numbers, the security/privacy table, and a stated recommendation.
+11. Run the log-secrets check (test 12) across every variant's logs produced during the full run, fixing any leak found before calling the ticket done.
