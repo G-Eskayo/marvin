@@ -4,6 +4,7 @@
 from __future__ import annotations
 import json
 import os
+import shutil
 import sqlite3
 import sys
 import threading
@@ -343,10 +344,10 @@ def test_only_the_databases_home_mac_loads_outboxes(monkeypatch):
 def test_the_copy_reports_its_tip_as_id_and_hash_through_the_real_cli(tmp_path):
     """--replica-max is what the Mini reads over ssh: an empty copy and a filled one both parse."""
     import subprocess
-    env = {**os.environ, "HOME": str(tmp_path)}
+    env = {**os.environ, "HOME": str(tmp_path), "MARVIN_VAR_DIR": str(tmp_path / ".agents" / "var")}
     cli = [sys.executable, str(Path(hs.__file__)), "--replica-max"]
     assert subprocess.run(cli, env=env, capture_output=True, text=True).stdout.strip() == "0"
-    conn = hs.connect(tmp_path / ".claude" / "history.db")
+    conn = hs.connect(tmp_path / ".agents" / "var" / "history.db")
     hs.load(conn, "s", "d", [_line(1)])
     conn.close()
     top, h = subprocess.run(cli, env=env, capture_output=True, text=True).stdout.split()
@@ -375,3 +376,262 @@ def test_the_remote_read_command_works_with_gnu_stat_as_well_as_bsd():
     # The Macs read mac-mini-2012's logs over ssh; Linux's stat -f means "filesystem", not BSD's format flag.
     cmd = hs.remote_read_command("~/.claude/logs/x.jsonl", 0)
     assert "stat -c '%i %s'" in cmd and "stat -f '%i %z'" in cmd
+
+
+# ── migration: old ~/.claude/history.db → new ~/.agents/var/history.db ────────
+
+def test_migrate_once_is_a_noop_when_no_source_and_no_dest(tmp_path, monkeypatch):
+    monkeypatch.setenv("MARVIN_VAR_DIR", str(tmp_path / "var"))
+    old = tmp_path / "old.db"
+    new = tmp_path / "new.db"
+    assert hs.migrate_once(old, new) is False
+    assert not old.exists() and not new.exists()
+
+
+def test_migrate_once_copies_and_retires_the_old_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("MARVIN_VAR_DIR", str(tmp_path / "var"))
+    old = tmp_path / "old.db"
+    new = tmp_path / "new.db"
+
+    old_conn = hs.connect(old)
+    hs.load(old_conn, "s", "d", [_line(i) for i in range(10)])
+    old_conn.close()
+
+    assert hs.migrate_once(old, new) is True
+    assert new.exists() and _count(hs.connect(new)) == 10
+
+    retired = [f for f in tmp_path.glob("old.migrated-*")]
+    assert len(retired) == 1
+    assert hs.connect(retired[0]).execute("SELECT COUNT(*) FROM events").fetchone()[0] == 10
+
+
+def test_migrate_once_run_twice_is_a_clean_noop(tmp_path, monkeypatch):
+    monkeypatch.setenv("MARVIN_VAR_DIR", str(tmp_path / "var"))
+    old = tmp_path / "old.db"
+    new = tmp_path / "new.db"
+
+    old_conn = hs.connect(old)
+    hs.load(old_conn, "s", "d", [_line(1)])
+    old_conn.close()
+
+    assert hs.migrate_once(old, new) is True
+    assert hs.migrate_once(old, new) is False
+    assert _count(hs.connect(new)) == 1
+
+
+def test_migrate_once_cleans_up_a_leftover_half_written_temp_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("MARVIN_VAR_DIR", str(tmp_path / "var"))
+    old = tmp_path / "old.db"
+    new = tmp_path / "new.db"
+
+    old_conn = hs.connect(old)
+    hs.load(old_conn, "s", "d", [_line(i) for i in range(5)])
+    old_conn.close()
+
+    (new.with_suffix(new.suffix + ".migrating")).write_text("garbage")
+    assert hs.migrate_once(old, new) is True
+    assert new.exists() and _count(hs.connect(new)) == 5
+    assert not new.with_suffix(new.suffix + ".migrating").exists()
+
+
+def test_migrate_once_folds_in_an_unflushed_wal(tmp_path, monkeypatch):
+    monkeypatch.setenv("MARVIN_VAR_DIR", str(tmp_path / "var"))
+    old = tmp_path / "old.db"
+    new = tmp_path / "new.db"
+
+    old_conn = hs.connect(old)
+    hs.load(old_conn, "s", "d", [_line(i) for i in range(5)])
+    old_conn.close()
+
+    old_conn = sqlite3.connect(old, isolation_level=None)
+    old_conn.execute("BEGIN IMMEDIATE")
+    hs.load(old_conn, "s", "d", [_line(99)])
+    old_conn.execute("COMMIT")
+
+    assert hs.migrate_once(old, new) is True
+    assert _count(hs.connect(new)) == 6
+
+
+def test_connect_doesnt_error_when_database_already_exists_after_migration(tmp_path, monkeypatch):
+    """Verify migration is idempotent: multiple connect() calls to same path work fine."""
+    var_dir = tmp_path / "var"
+    old = tmp_path / ".claude" / "history.db"
+    old.parent.mkdir(parents=True, exist_ok=True)
+    new = var_dir / "history.db"
+
+    old_conn = hs.connect(old)
+    hs.load(old_conn, "s", "d", [_line(1)])
+    old_conn.close()
+
+    monkeypatch.setattr(hs, "DB_PATH", new)
+    monkeypatch.setattr(hs, "OLD_DB_PATH", old)
+
+    c1 = hs.connect(new)
+    assert _count(c1) == 1
+    c1.close()
+
+    c2 = hs.connect(new)
+    assert _count(c2) == 1
+    c2.close()
+
+
+def test_connect_with_arbitrary_path_never_triggers_migrate(tmp_path, monkeypatch):
+    monkeypatch.setenv("MARVIN_VAR_DIR", str(tmp_path / "var"))
+
+    call_count = [0]
+    original_migrate = hs.migrate_once
+    def spy_migrate(o=None, n=None):
+        call_count[0] += 1
+        return original_migrate(o, n)
+    monkeypatch.setattr(hs, "migrate_once", spy_migrate)
+
+    conn = hs.connect(tmp_path / "arbitrary.db")
+    conn.close()
+
+    assert call_count[0] == 0
+
+
+def test_connect_creates_var_dir_if_missing(tmp_path, monkeypatch):
+    var_dir = tmp_path / "var"
+    monkeypatch.setenv("MARVIN_VAR_DIR", str(var_dir))
+    assert not var_dir.exists()
+
+    conn = hs.connect(var_dir / "history.db")
+    conn.close()
+
+    assert var_dir.exists()
+
+
+# ── runs view and ticket index ────────────────────────────────────────────────
+
+def test_a_wellformed_launch_line_surfaces_through_runs(db):
+    launch = json.dumps({"t": 1791498937.0, "kind": "agent", "model": "claude-opus", "ticket": "#621",
+                        "cost_usd": 0.05, "tokens_in": 100, "tokens_out": 50, "tokens_cached": 0,
+                        "tokens_created_cache": 0, "exit_code": 0, "duration_s": 1.5})
+    hs.load(db, "launches", "d", [launch])
+    row = db.execute("SELECT kind, model, ticket, cost_usd FROM runs WHERE ticket = ?", ("#621",)).fetchone()
+    assert row == ("agent", "claude-opus", "#621", 0.05)
+
+
+def test_a_malformed_launch_line_does_not_break_runs_queries(db):
+    hs.load(db, "launches", "d", ["{not json"])
+    assert hs.load(db, "launches", "d", [json.dumps({"t": 1.0, "ticket": "#99"})]) == {"added": 1, "duplicate": 0, "malformed": 0}
+    assert db.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 1
+
+
+def test_a_malformed_launch_line_still_inserts_into_events(db):
+    hs.load(db, "launches", "d", ["{not json"])
+    assert _count(db) == 1
+    assert db.execute("SELECT ts FROM events WHERE stream = 'launches'").fetchone()[0] is None
+
+
+def test_runs_index_uses_events_launches_ticket(db):
+    plan = " ".join(r[3] for r in db.execute(
+        "EXPLAIN QUERY PLAN SELECT * FROM runs WHERE ticket = ?", ("#1",)))
+    assert "events_launches_ticket" in plan
+
+
+def test_a_launch_with_no_ticket_is_excluded_from_ticket_keyed_aggregation(db):
+    hs.load(db, "launches", "d", [json.dumps({"t": 1.0, "kind": "utility-call", "cost_usd": 0.05, "tokens_in": 10, "tokens_out": 5, "tokens_cached": 0, "tokens_created_cache": 0})])
+    costs = hs.cost_by_ticket(db)
+    assert costs == {}
+    assert db.execute("SELECT COUNT(*) FROM events WHERE stream = 'launches'").fetchone()[0] == 1
+
+
+# ── cost_by_ticket and cost_per_merged_pr ──────────────────────────────────────
+
+def test_two_runs_under_the_same_ticket_aggregate_correctly(db):
+    l1 = json.dumps({"t": 1.0, "ticket": "#621", "cost_usd": 0.05, "tokens_in": 100, "tokens_out": 50, "tokens_cached": 10, "tokens_created_cache": 5})
+    l2 = json.dumps({"t": 2.0, "ticket": "#621", "cost_usd": 0.03, "tokens_in": 80, "tokens_out": 40, "tokens_cached": 5, "tokens_created_cache": 2})
+    hs.load(db, "launches", "d", [l1, l2])
+    costs = hs.cost_by_ticket(db)
+    assert costs["#621"] == {"cost_usd": 0.08, "tokens_in": 180, "tokens_out": 90, "tokens_cached": 15,
+                             "tokens_created_cache": 7, "paid_cost_usd": 0.08, "local_cost_usd": 0}
+
+
+def test_zero_cost_and_paid_cost_split_correctly(db):
+    l1 = json.dumps({"t": 1.0, "ticket": "#621", "cost_usd": 0.0, "tokens_in": 10, "tokens_out": 5, "tokens_cached": 0, "tokens_created_cache": 0})
+    l2 = json.dumps({"t": 2.0, "ticket": "#621", "cost_usd": 0.1, "tokens_in": 20, "tokens_out": 10, "tokens_cached": 0, "tokens_created_cache": 0})
+    hs.load(db, "launches", "d", [l1, l2])
+    costs = hs.cost_by_ticket(db)
+    assert costs["#621"]["paid_cost_usd"] == 0.1
+    assert costs["#621"]["local_cost_usd"] == 0.0
+    assert costs["#621"]["cost_usd"] == 0.1
+
+
+def test_merged_prs_raises_on_gh_failure(tmp_path, monkeypatch):
+    def mock_run(cmd, **kwargs):
+        result = type('Result', (), {'returncode': 1, 'stderr': 'gh error'})()
+        return result
+    with pytest.raises(RuntimeError, match="gh pr list failed"):
+        hs.merged_prs("repo", runner=mock_run)
+
+
+def test_merged_prs_skips_a_pr_with_empty_closing_issues(tmp_path, monkeypatch):
+    def mock_run(cmd, **kwargs):
+        result = type('Result', (), {
+            'returncode': 0,
+            'stdout': json.dumps([{"number": 1, "closingIssuesReferences": []}])
+        })()
+        return result
+    prs = hs.merged_prs("repo", runner=mock_run)
+    assert len(prs) == 1 and prs[0]["closingIssuesReferences"] == []
+
+
+def test_a_pr_that_closed_multiple_tickets_is_represented_once_per_ticket(db):
+    l1 = json.dumps({"t": 1.0, "ticket": "#621", "cost_usd": 0.05, "tokens_in": 100, "tokens_out": 50, "tokens_cached": 0, "tokens_created_cache": 0})
+    l2 = json.dumps({"t": 2.0, "ticket": "#622", "cost_usd": 0.03, "tokens_in": 80, "tokens_out": 40, "tokens_cached": 0, "tokens_created_cache": 0})
+    hs.load(db, "launches", "d", [l1, l2])
+
+    def mock_run(cmd, **kwargs):
+        result = type('Result', (), {
+            'returncode': 0,
+            'stdout': json.dumps([{"number": 100, "closingIssuesReferences": [{"number": 621}, {"number": 622}]}])
+        })()
+        return result
+
+    costs = hs.cost_per_merged_pr(db, "repo", runner=mock_run)
+    assert costs[100]["closed_issues"] == [621, 622]
+    assert costs[100]["cost_usd"] == pytest.approx(0.08, abs=0.001)
+
+
+def test_a_ticket_with_recorded_runs_and_no_merged_pr_is_absent_from_cost_per_merged_pr(db):
+    l1 = json.dumps({"t": 1.0, "ticket": "#999", "cost_usd": 0.05, "tokens_in": 100, "tokens_out": 50, "tokens_cached": 0, "tokens_created_cache": 0})
+    hs.load(db, "launches", "d", [l1])
+
+    def mock_run(cmd, **kwargs):
+        result = type('Result', (), {
+            'returncode': 0,
+            'stdout': json.dumps([{"number": 100, "closingIssuesReferences": [{"number": 621}]}])
+        })()
+        return result
+
+    costs = hs.cost_per_merged_pr(db, "repo", runner=mock_run)
+    assert 100 not in costs
+
+
+def test_ticket_field_format_variability_correlates_to_the_same_issue(db):
+    l1 = json.dumps({"t": 1.0, "ticket": "G-Eskayo/marvin#621", "cost_usd": 0.05, "tokens_in": 100, "tokens_out": 50, "tokens_cached": 0, "tokens_created_cache": 0})
+    l2 = json.dumps({"t": 2.0, "ticket": "#621", "cost_usd": 0.03, "tokens_in": 80, "tokens_out": 40, "tokens_cached": 0, "tokens_created_cache": 0})
+    hs.load(db, "launches", "d", [l1, l2])
+
+    def mock_run(cmd, **kwargs):
+        result = type('Result', (), {
+            'returncode': 0,
+            'stdout': json.dumps([{"number": 100, "closingIssuesReferences": [{"number": 621}]}])
+        })()
+        return result
+
+    costs = hs.cost_per_merged_pr(db, "repo", runner=mock_run)
+    assert costs[100]["closed_issues"] == [621, 621]
+    assert costs[100]["cost_usd"] == pytest.approx(0.08, abs=0.001)
+
+
+# ── isolation fixture verification ──────────────────────────────────────────
+
+def test_the_isolation_fixture_points_db_path_away_from_the_real_machine():
+    """Verify _isolate_history_store redirects to temp paths, never the real machine's defaults."""
+    real_db = Path.home() / ".agents" / "var" / "history.db"
+    real_old_db = Path.home() / ".claude" / "history.db"
+    assert hs.DB_PATH != real_db, f"DB_PATH should be redirected away from {real_db}"
+    assert hs.OLD_DB_PATH != real_old_db, f"OLD_DB_PATH should be redirected away from {real_old_db}"

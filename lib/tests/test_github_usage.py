@@ -12,6 +12,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import github_usage as gu  # noqa: E402
+import history_store as hs  # noqa: E402
 
 NOW = datetime(2026, 10, 9, 12, 30, tzinfo=timezone.utc)
 T = NOW.timestamp()
@@ -324,3 +325,16 @@ def test_tail_since_ignores_a_half_written_last_line_and_handles_empty_and_missi
     assert hs.tail_since(log, 0) == []
     log.write_text(json.dumps(row(1, "a")) + "\n" + '{"t": 1')
     assert len(hs.tail_since(log, 0)) == 1
+
+
+def test_report_and_main_with_no_args_never_touch_the_real_database(monkeypatch):
+    """main([]) calls report() with no database argument; the isolation fixture redirects DB_PATH away from the
+    real machine, so hs.connect is never called. This test verifies by failing loudly if it is."""
+    call_count = [0]
+    def spy_connect(*args, **kwargs):
+        call_count[0] += 1
+        pytest.fail(f"hs.connect called when main([]) should not use the database (call #{call_count[0]})")
+    monkeypatch.setattr(hs, "connect", spy_connect)
+    result = gu.main([])
+    assert result == 0
+    assert call_count[0] == 0

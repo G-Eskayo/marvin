@@ -2,7 +2,7 @@
 """History store (ADR 0066, marvin#449): one SQLite record of what MARVIN did on both Macs.
 
 Jobs keep appending to their JSONL logs, which are now *outboxes*. This module moves new outbox lines into
-`~/.claude/history.db` on the Mini, the laptop's over ssh whenever it's reachable. The database is the record.
+`~/.agents/var/history.db` on the Mini, the laptop's over ssh whenever it's reachable. The database is the record.
 
 Complexity (north star #1):
 - load: O(new lines x log n). A cursor per outbox (device, path) remembers the byte offset and inode, so a run reads
@@ -16,7 +16,7 @@ Complexity (north star #1):
 A line's identity is a hash of (device, stream, line): the same line twice from one Mac is one record, from two Macs
 two. A line that isn't valid JSON is still stored (ts NULL): once outboxes are trimmed the database is the only copy.
 
-Usage: history_store.py [stream ...]   (default: gh-calls gh-budget; run every 5 min on the Mini by launchd)
+Usage: history_store.py [stream ...]   (default: gh-calls gh-budget launches; run every 5 min on the Mini by launchd)
        history_store.py --replica-max | --apply < rows | --digest ID   (run over ssh against another Mac's copy)
 
 The laptop's copy (G3): after each load the Mini ships the rows the copy doesn't have yet (id > the copy's max, at
@@ -28,24 +28,28 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shlex
+import shutil
 import sqlite3
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, date
 from pathlib import Path
 from typing import Callable, Iterable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 HOME = Path.home()
-DB_PATH = HOME / ".claude" / "history.db"
+VAR_DIR = Path(os.environ.get("MARVIN_VAR_DIR", HOME / ".agents" / "var"))
+DB_PATH = VAR_DIR / "history.db"
+OLD_DB_PATH = HOME / ".claude" / "history.db"
 LOGS_REL = "~/.claude/logs"
 FINGERPRINT_BYTES = 64
 HOME_DEVICE = "mac-mini-1"  # the database's home: the only Mac that loads outboxes (ADR 0066)
 SHIP_LIMIT = 50_000  # rows per run to the laptop's copy, so a long absence catches up in bounded steps
 VERIFY_EVERY_S = 7 * 86400
-DEFAULT_STREAMS = ["gh-calls", "gh-budget"]  # gh-budget: the allowance readings the GitHub usage chart draws (G4)
+DEFAULT_STREAMS = ["gh-calls", "gh-budget", "launches"]  # gh-budget: allowance readings (G4); launches: marvin_launcher.LAUNCH_LOG
 SSH_OPTS = ["-o", "ConnectTimeout=5", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"]
 
 SCHEMA = """
@@ -67,11 +71,76 @@ CREATE TABLE IF NOT EXISTS cursors(
     fingerprint BLOB NOT NULL,
     PRIMARY KEY(device, path)
 );
+CREATE VIEW IF NOT EXISTS runs AS
+    SELECT
+        id,
+        json_extract(data, '$.kind') as kind,
+        json_extract(data, '$.model') as model,
+        json_extract(data, '$.ticket') as ticket,
+        json_extract(data, '$.cost_usd') as cost_usd,
+        json_extract(data, '$.tokens_in') as tokens_in,
+        json_extract(data, '$.tokens_out') as tokens_out,
+        json_extract(data, '$.tokens_cached') as tokens_cached,
+        json_extract(data, '$.tokens_created_cache') as tokens_created_cache,
+        json_extract(data, '$.exit_code') as exit_code,
+        json_extract(data, '$.duration_s') as duration_s
+    FROM events
+    WHERE stream = 'launches' AND json_valid(data);
+CREATE INDEX IF NOT EXISTS events_launches_ticket ON events(json_extract(data, '$.ticket'))
+    WHERE stream = 'launches' AND json_valid(data);
 """
 
 
 class Unreachable(Exception):
     """The other Mac couldn't be read (asleep, away, ssh refused). Its outbox waits; nothing is lost."""
+
+
+def migrate_once(old: Path | str | None = None, new: Path | str | None = None) -> bool:
+    """Move the history database from old to new, with verification. A rerun is a no-op (new already exists).
+    On divergence (content changed mid-move), raises and leaves old untouched. Never deletes old (retires it
+    as <name>.migrated-<date> instead). Returns True if a migration ran, False if skipped (no-op)."""
+    old = Path(old or OLD_DB_PATH)
+    new = Path(new or DB_PATH)
+
+    if not old.exists() or new.exists():
+        return False
+
+    new.parent.mkdir(parents=True, exist_ok=True)
+    temp = new.with_suffix(new.suffix + ".migrating")
+    temp.unlink(missing_ok=True)
+
+    old_conn = sqlite3.connect(old, timeout=30, isolation_level=None)
+    try:
+        old_conn.execute("PRAGMA journal_mode=WAL")
+        old_conn.execute("PRAGMA wal_checkpoint(RESTART)")
+        old_id = max_id(old_conn)
+        old_digest_val = digest(old_conn, old_id)
+    finally:
+        old_conn.close()
+
+    shutil.copy2(old, temp)
+
+    new_conn = sqlite3.connect(temp, timeout=30, isolation_level=None)
+    try:
+        new_conn.execute("PRAGMA journal_mode=WAL")
+        new_id = max_id(new_conn)
+        new_digest_val = digest(new_conn, new_id)
+    finally:
+        new_conn.close()
+
+    if old_id != new_id or old_digest_val != new_digest_val:
+        temp.unlink(missing_ok=True)
+        raise RuntimeError(f"Migration verification failed: source changed during copy (old id={old_id}, new id={new_id})")
+
+    temp.rename(new)
+
+    retired = old.with_stem(old.stem + f".migrated-{date.today().isoformat()}")
+    old.rename(retired)
+
+    return True
+
+
+
 
 
 def _enable_wal(conn: sqlite3.Connection, wait_s: float = 30.0) -> None:
@@ -94,6 +163,8 @@ def _enable_wal(conn: sqlite3.Connection, wait_s: float = 30.0) -> None:
 
 def connect(path: Path | str | None = None) -> sqlite3.Connection:
     path = Path(path or DB_PATH)
+    if path == DB_PATH:
+        migrate_once()
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, timeout=30, isolation_level=None)  # transactions are explicit (BEGIN IMMEDIATE)
     conn.execute("PRAGMA busy_timeout=30000")
@@ -350,6 +421,78 @@ def digest(conn: sqlite3.Connection, upto_id: int) -> str:
     for (row_hash,) in conn.execute("SELECT hash FROM events WHERE id <= ? ORDER BY id", (upto_id,)):
         h.update(row_hash)
     return h.hexdigest()
+
+
+def cost_by_ticket(conn: sqlite3.Connection) -> dict:
+    """Aggregate runs by ticket: {ticket: {cost_usd, tokens_in, tokens_out, tokens_cached, tokens_created_cache,
+    paid_cost_usd (sum of cost > 0), local_cost_usd (sum of cost == 0)}}. Tickets with no runs are absent."""
+    result = {}
+    for row in conn.execute("""
+        SELECT
+            ticket,
+            SUM(cost_usd) as cost_usd,
+            SUM(tokens_in) as tokens_in,
+            SUM(tokens_out) as tokens_out,
+            SUM(tokens_cached) as tokens_cached,
+            SUM(tokens_created_cache) as tokens_created_cache,
+            SUM(CASE WHEN cost_usd > 0 THEN cost_usd ELSE 0 END) as paid_cost_usd,
+            SUM(CASE WHEN cost_usd = 0 THEN cost_usd ELSE 0 END) as local_cost_usd
+        FROM runs
+        WHERE ticket IS NOT NULL
+        GROUP BY ticket
+    """):
+        ticket = row[0]
+        result[ticket] = {
+            "cost_usd": row[1] or 0,
+            "tokens_in": row[2] or 0,
+            "tokens_out": row[3] or 0,
+            "tokens_cached": row[4] or 0,
+            "tokens_created_cache": row[5] or 0,
+            "paid_cost_usd": row[6] or 0,
+            "local_cost_usd": row[7] or 0,
+        }
+    return result
+
+
+def merged_prs(repo: str, limit: int = 100, runner: Callable = subprocess.run) -> list[dict]:
+    """List merged PRs in a repo, returning [{number, closingIssuesReferences: [issue_numbers]}].
+    `closingIssuesReferences` is already [ints]; empty if the PR closes no tickets."""
+    cmd = ["gh", "pr", "list", "-R", repo, "--state", "merged", "--limit", str(limit), "--json",
+           "number,closingIssuesReferences"]
+    result = runner(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(f"gh pr list failed: {result.stderr}")
+    prs = []
+    for row in json.loads(result.stdout):
+        prs.append({"number": row["number"], "closingIssuesReferences": [r["number"] for r in row.get("closingIssuesReferences", [])]})
+    return prs
+
+
+def cost_per_merged_pr(conn: sqlite3.Connection, repo: str, limit: int = 100,
+                       runner: Callable = subprocess.run) -> dict:
+    """Cost split by merged PR: {pr_number: {closed_issues: [issue_numbers], cost_usd, tokens_in, ..., paid_cost_usd, local_cost_usd}}.
+    Only includes PRs that closed at least one ticket with recorded runs."""
+    costs = cost_by_ticket(conn)
+    prs = merged_prs(repo, limit, runner)
+    result = {}
+    for pr in prs:
+        pr_costs = {"closed_issues": [], "cost_usd": 0, "tokens_in": 0, "tokens_out": 0, "tokens_cached": 0,
+                    "tokens_created_cache": 0, "paid_cost_usd": 0, "local_cost_usd": 0}
+        for issue_num in pr["closingIssuesReferences"]:
+            ticket_keys = [k for k in costs.keys() if re.search(rf"#{issue_num}$", k)]
+            for ticket_key in ticket_keys:
+                cost_data = costs[ticket_key]
+                pr_costs["closed_issues"].append(issue_num)
+                pr_costs["cost_usd"] += cost_data["cost_usd"]
+                pr_costs["tokens_in"] += cost_data["tokens_in"]
+                pr_costs["tokens_out"] += cost_data["tokens_out"]
+                pr_costs["tokens_cached"] += cost_data["tokens_cached"]
+                pr_costs["tokens_created_cache"] += cost_data["tokens_created_cache"]
+                pr_costs["paid_cost_usd"] += cost_data["paid_cost_usd"]
+                pr_costs["local_cost_usd"] += cost_data["local_cost_usd"]
+        if pr_costs["closed_issues"]:
+            result[pr["number"]] = pr_costs
+    return result
 
 
 def _remote(host: str, args: str, stdin: bytes | None = None) -> bytes:

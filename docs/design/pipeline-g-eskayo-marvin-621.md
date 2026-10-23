@@ -1,0 +1,42 @@
+## North-star fit
+
+**What's already true (verified directly, not assumed):** the worktree already contains the implementation from the prior attempt — `lib/history_store.py` has `migrate_once()`, the `runs` view + `events_launches_ticket` partial index (both `json_valid`-guarded), `cost_by_ticket()`, `merged_prs()`, `cost_per_merged_pr()`, and `lib/tests/test_history_store.py` has the 21 tests for them. I ran all of it: `test_history_store.py` (52/52), `test_github_usage.py` + `test_remote_macs.py` (33/33), and the full `lib/` suite (2893 passed, 2 skipped, 0 failed). **This part is correct and does not need to be redone.** The ticket's "move the DB, migrate once, load `launches`, `runs` view, cost-per-PR query, temp-HOME tests" acceptance criteria are already met in code.
+
+**The regression, found and reproduced, not guessed:** `lib/github_usage.py:304-305`'s `report()` auto-connects to the *real* `hs.DB_PATH` whenever it's called with no explicit `calls_path`/`budget_path`/`db` (`main()` does exactly this: `report()` with zero arguments). Before this ticket, `connect(hs.DB_PATH)` on that path was a cheap, inert open. This ticket wired `migrate_once()` into `connect()` whenever `path == DB_PATH` — so that same call now also attempts a real checkpoint + copy + O(n) digest-verify + rename-aside of the **real production `~/.claude/history.db`** the instant any code (including a test) calls `report()`/`main()` with no args. `lib/tests/conftest.py` isolates *every other* piece of real state a module under test might touch (`_isolate_launch_log`, `_isolate_job_events`, `_isolate_github_usage`'s `CALLS_PATH`/`BUDGET_PATH`/`HOURLY_PATH`, etc.) but has **no fixture for `history_store.DB_PATH`/`OLD_DB_PATH`**. I confirmed this is live, not theoretical: running `test_github_usage.py::test_cli_prints_json` (which calls `gu.main([])`) alone took **9.63 s** — milliseconds everywhere else in this file — direct evidence it's reaching real I/O. The full `lib/` suite took **439 s**, consistent with the same path being hit repeatedly. This is also a direct violation of the ticket's own acceptance criterion — "Tests use a temp HOME and never the real `~/.claude` or `~/.agents/var`" — at exactly this call site. A race between a test's real migration attempt and the live `com.marvin.history-load` launchd job (which runs every 5 minutes on this machine) is the most likely source of the one flaky `pytest_failed` the metrics reported; it didn't reproduce in my own run because the race is timing-dependent, not deterministic — which is worse, not better.
+
+**Reuses, before adding anything:** the fix is to apply the *exact existing idiom* already used nine times in `lib/tests/conftest.py` (`_isolate_launch_log:134`, `_isolate_job_events:127`, `_isolate_github_usage:255`, etc.) — an autouse fixture that `monkeypatch.setattr`s the module's real-state constant to a fresh `tmp_path_factory` path. The prior attempt's task list (item 7) touched only doc comments and missed this; it never added the one isolation fixture this exact file exists to hold.
+
+**Simplest sufficient approach:** one ~5-line autouse fixture in `conftest.py`, plus two small regression tests. No change to `lib/history_store.py` or `lib/github_usage.py` production code — both are already correct; the defect is purely in test isolation.
+
+**Tokens:** spends a handful of lines; saves the cost of a 7+ minute test run racing a live production job against an irreplaceable (ADR 0065) 57 MB+ database on every merge-gate re-run.
+
+**Capability:** leaves Gil able to trust that running tests can never touch, migrate, or race his real history database — exactly the guarantee the rest of `conftest.py` already gives every other piece of MARVIN state.
+
+## Tests (written first)
+
+1. `test_report_and_main_with_no_args_never_touch_the_real_database` (`test_github_usage.py`): monkeypatch `hs.connect` to `pytest.fail(...)` if called, then call `gu.main([])` — must return valid JSON and must never call `hs.connect`. This is the ticket's own "never touch the real `~/.claude`/`~/.agents/var`" criterion, applied to the exact call shape (`report()`/`main()` with no args) that the current code violates.
+2. Same test also asserts wall time is small (e.g. `< 2s`) — a timing regression guard, so a future reintroduction of a real-I/O path fails loudly even if it happens not to raise.
+3. `test_the_isolation_fixture_points_db_path_away_from_the_real_machine` (`test_history_store.py` or `conftest.py` itself): asserts `hs.DB_PATH != Path.home()/".agents"/"var"/"history.db"` and `hs.OLD_DB_PATH != Path.home()/".claude"/"history.db"` while the autouse fixture is in effect — "verified, not assumed" that the fixture actually redirects away from the real paths, not just that it compiles.
+4. Regression guard on the existing suite: every test in `test_history_store.py` that **already** monkeypatches `hs.DB_PATH`/`hs.OLD_DB_PATH` explicitly (`test_connect_doesnt_error_when_database_already_exists_after_migration`) must keep passing unchanged — proves the new autouse default doesn't fight a test's own explicit override (pytest fixture ordering: the test body's `monkeypatch.setattr` runs after setup and simply wins).
+5. Misuse not named by the ticket but relevant here: a test forgetting to pass `calls_path`/`budget_path` to `report()` (exactly today's bug) must get a fast, well-formed, empty-but-valid result rather than silently succeeding by luck of real data being absent — covered by test 1+2 together.
+6. Full-suite timing check (not a pytest assertion, a manual verification step in the task list below): re-run `lib/` and confirm wall time drops back from the measured 439 s to in-line with the rest of the suite, as concrete evidence the real-I/O path is actually closed, not just individually mocked.
+
+No other acceptance criterion needs new tests — the 21 tests already in the worktree for migration/`runs`/cost-by-ticket/cost-per-merged-PR already cover the ticket's adversarial list (half-written destination, rerun, source changing mid-copy, missing source, WAL, `gh` failing, empty `closingIssuesReferences`, multi-ticket PRs, unmatched tickets, ticket-ref format variability) and all currently pass.
+
+## Decisions
+
+<!-- marvin:decisions -->
+### paid-local-split: How does `cost_per_merged_pr` classify a run as "paid" vs "local"?
+- [ ] By recorded cost: `cost_usd > 0` is paid, `cost_usd == 0` is local. This is what the code already does. Reuses only data already recorded today; every run currently goes through Claude Code and reports a nonzero cost, so everything is "paid" until a genuinely free (local-model) run exists — but the split is correct the day one does.
+- [ ] By model identity: compare the recorded `model` field against a maintained list of known-local model names (e.g. `config/models.json`'s ollama/hf entries), paid otherwise. Needs a small new classification step and a place to maintain the list; more future-proof if a $0 Claude run (full cache hit) should still count as "paid" rather than "local".
+
+### notes: Anything to add? (text) (optional)
+
+## Task List
+
+1. `lib/tests/conftest.py`: add an autouse fixture `_isolate_history_store(tmp_path_factory, monkeypatch)` that redirects `history_store.DB_PATH` and `history_store.OLD_DB_PATH` to two fresh, nonexistent `tmp_path_factory` paths — mirroring `_isolate_launch_log`/`_isolate_job_events`/`_isolate_github_usage` exactly.
+2. `lib/tests/test_github_usage.py`: add `test_report_and_main_with_no_args_never_touch_the_real_database` (fails loudly if `hs.connect` is called; asserts `gu.main([])` is fast and returns valid output).
+3. `lib/tests/test_history_store.py`: add `test_the_isolation_fixture_points_db_path_away_from_the_real_machine`, asserting `hs.DB_PATH`/`hs.OLD_DB_PATH` never equal the real machine's default paths.
+4. Run `~/.agents/venv/bin/python -m pytest lib/tests/test_history_store.py lib/tests/test_github_usage.py lib/tests/test_remote_macs.py -v` — confirm green and fast (sub-second per file, no 9 s outlier).
+5. Run `~/.agents/venv/bin/python -m pytest lib/ -q` in full — confirm 0 failed and wall time back in line with the rest of the suite (not the 439 s measured with the gap open).
+6. No changes needed to `lib/history_store.py`, `lib/github_usage.py`, or `config/launchd/com.marvin.history-load.plist` — all already correct and already tested; confirmed by direct measurement in this plan, not assumed.

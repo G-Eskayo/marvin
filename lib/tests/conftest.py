@@ -260,3 +260,13 @@ def _isolate_github_usage(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(github_usage, "CALLS_PATH", d / "gh-calls.jsonl")
     monkeypatch.setattr(github_usage, "BUDGET_PATH", d / "gh-budget.jsonl")
     monkeypatch.setattr(github_usage, "HOURLY_PATH", d / "gh-usage-hourly.json")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_history_store(tmp_path_factory, monkeypatch):
+    # history_store.connect() reads/writes to the real history.db; no test may touch it.
+    import history_store
+    d_new = tmp_path_factory.mktemp("history-db")
+    d_old = tmp_path_factory.mktemp("history-old-db")
+    monkeypatch.setattr(history_store, "DB_PATH", d_new / "history.db")
+    monkeypatch.setattr(history_store, "OLD_DB_PATH", d_old / "history.db")

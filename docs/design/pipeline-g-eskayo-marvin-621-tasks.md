@@ -1,0 +1,6 @@
+1. `lib/tests/conftest.py`: add an autouse fixture `_isolate_history_store(tmp_path_factory, monkeypatch)` that redirects `history_store.DB_PATH` and `history_store.OLD_DB_PATH` to two fresh, nonexistent `tmp_path_factory` paths — mirroring `_isolate_launch_log`/`_isolate_job_events`/`_isolate_github_usage` exactly.
+2. `lib/tests/test_github_usage.py`: add `test_report_and_main_with_no_args_never_touch_the_real_database` (fails loudly if `hs.connect` is called; asserts `gu.main([])` is fast and returns valid output).
+3. `lib/tests/test_history_store.py`: add `test_the_isolation_fixture_points_db_path_away_from_the_real_machine`, asserting `hs.DB_PATH`/`hs.OLD_DB_PATH` never equal the real machine's default paths.
+4. Run `~/.agents/venv/bin/python -m pytest lib/tests/test_history_store.py lib/tests/test_github_usage.py lib/tests/test_remote_macs.py -v` — confirm green and fast (sub-second per file, no 9 s outlier).
+5. Run `~/.agents/venv/bin/python -m pytest lib/ -q` in full — confirm 0 failed and wall time back in line with the rest of the suite (not the 439 s measured with the gap open).
+6. No changes needed to `lib/history_store.py`, `lib/github_usage.py`, or `config/launchd/com.marvin.history-load.plist` — all already correct and already tested; confirmed by direct measurement in this plan, not assumed.
