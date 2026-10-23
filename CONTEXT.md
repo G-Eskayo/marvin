@@ -1374,7 +1374,7 @@ A GitHub 5xx (`remote: Internal Server Error`, HTTP 500, 503) is classified `GIT
   improvement queue) gets one MARVIN triage pass: promote to a ticket, merge into one, or archive with a
   reason (moved, never deleted). Architecture review, audit and self-improve review feed **ticket
   promotion** (to be wired). Research digest attaches findings to the tickets or north stars they relate
-  to. Auto-fix's output is its commits. The safety monitor's flags show on Health with their age. Any
+  to (integration with research skill pending — see ADR 0070 for lateral-mode design pattern). Auto-fix's output is its commits. The safety monitor's flags show on Health with their age. Any
   analyst whose output goes unconsumed for 30 days shows red on Health as a **cut candidate** (Gil decides).
 - **Morning brief**: the daily digest's real purpose (Gil, 2026-10-08). It is for *Gil*, not a report about
   MARVIN: the research digest folds into it, and it's part of a wake-up routine that gets Gil into his day.
