@@ -1,4 +1,4 @@
-import { existsSync, statSync, realpathSync, mkdirSync, appendFileSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, statSync, realpathSync, mkdirSync, appendFileSync, readFileSync, writeFileSync, readdirSync } from 'fs'
 import { homedir } from 'os'
 import path from 'path'
 import { varPath } from './marvin_paths.js'
@@ -8,9 +8,11 @@ import { varPath } from './marvin_paths.js'
 // has no work in it (staged, unstaged or untracked, ignoring .claude/ agent folders), has no rebase/merge/cherry-pick in
 // progress and is not ahead of origin: `git fetch` then `git merge --ff-only`. Never reset, never force. A clone that is
 // mid-work is left alone and reported mid-work, so its docs are searched from the GitHub saved copy (docs_service.js).
-// Never touched: the shared ~/.agents checkout (auto-sync owns it), any git worktree, and a clone open in Xcode.
+// Never touched: the shared ~/.agents checkout (auto-sync owns it), any git worktree, and any repo with an Xcode
+// project (*.xcodeproj, *.xcworkspace or XcodeGen's project.yml; Gil, 2026-10-22, #618).
 //
-// Cost: per project at most once per `minIntervalMs` (30 min): 4-5 local git commands (~10 ms each) and, for a clean
+// Cost: per project at most once per `minIntervalMs` (30 min): one bounded Xcode-marker walk (1-10 ms on the real
+// clones), 4-5 local git commands (~10 ms each) and, for a clean
 // clone only, one `git fetch` (network) and possibly one fast-forward. Nothing polls: it runs when the Docs tab opens
 // and on the docs change watch. Memory O(projects); the log is trimmed to its last `maxLogLines` lines.
 
@@ -60,19 +62,31 @@ export async function cloneState(dir, exec) {
   return { status, branch, base, ahead, behind }
 }
 
-// True when an Xcode process has a file under `dir` open (Gil's rule: never change a repo that is open in Xcode). Asks
-// lsof for Xcode's open files only (`-c Xcode`), not `lsof +D` over the whole clone, which walks every file. lsof exits 1
-// when Xcode has nothing open (or is not running): that is "not open". Absolute path: launchd's PATH omits /usr/sbin.
-export async function defaultOpenInXcode(dir, exec) {
-  let stdout = ''
-  try {
-    stdout = String((await exec('/usr/sbin/lsof', ['-w', '-a', '-c', 'Xcode', '-Fn'], { timeout: 20_000, maxBuffer: 32 * 1024 * 1024 })).stdout)
-  } catch (err) {
-    if (err?.code === 1 && !String(err?.stdout || '').trim()) return false
-    throw err
+// Gil, 2026-10-22 (#618): never update a repo that has an Xcode project. The first marker found, or null: a
+// `*.xcodeproj` or `*.xcworkspace`, or an XcodeGen `project.yml` (the .xcodeproj it generates is often not committed).
+// On disk, committed or not. Walks at most `maxDepth` levels and `maxEntries` entries, skipping hidden folders (.git,
+// .claude agent worktrees) and build/dependency folders: O(entries) readdir calls, bounded.
+const SKIP_DIRS = new Set(['node_modules', 'build', 'DerivedData', 'Pods', 'Carthage', 'dist', 'out', 'venv'])
+export function findXcodeMarker(dir, { maxDepth = 4, maxEntries = 20_000 } = {}) {
+  const stack = [[dir, 0]]
+  let seen = 0
+  while (stack.length && seen < maxEntries) {
+    const [d, depth] = stack.pop()
+    let entries
+    try {
+      entries = readdirSync(d, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const e of entries) {
+      seen++
+      if (e.name.endsWith('.xcodeproj') || e.name.endsWith('.xcworkspace') || (e.name === 'project.yml' && e.isFile())) {
+        return path.relative(dir, path.join(d, e.name))
+      }
+      if (e.isDirectory() && !e.name.startsWith('.') && !SKIP_DIRS.has(e.name) && depth < maxDepth) stack.push([path.join(d, e.name), depth + 1])
+    }
   }
-  const root = real(dir)
-  return stdout.split('\n').some((l) => l.startsWith('n') && (l.slice(1) === root || l.slice(1).startsWith(`${root}/`)))
+  return null
 }
 
 const real = (p) => {
@@ -90,7 +104,7 @@ export function createCloneFreshener({
   now = Date.now,
   minIntervalMs = 30 * 60 * 1000,
   maxLogLines = 500,
-  openInXcode = (dir) => defaultOpenInXcode(dir, exec)
+  xcodeMarker = (dir) => findXcodeMarker(dir)
 }) {
   const lastRun = new Map() // dir -> ms
   const mid = new Map() // dir -> true when mid-work at the last look
@@ -109,15 +123,10 @@ export function createCloneFreshener({
 
   async function one(rec, dir) {
     const project = rec.id
-    let xcode = true
-    try {
-      xcode = await openInXcode(dir)
-    } catch {
-      xcode = true // could not tell: fail closed, leave it alone
-    }
-    if (xcode) {
-      mid.set(dir, true)
-      log({ project, dir, result: 'left-alone', status: 'open-in-xcode' })
+    const marker = xcodeMarker(dir)
+    if (marker) {
+      mid.set(dir, true) // searched from its saved GitHub copy, like a mid-work clone
+      log({ project, dir, result: 'left-alone', status: 'xcode-project', marker })
       return false
     }
     let st = await cloneState(dir, exec)
