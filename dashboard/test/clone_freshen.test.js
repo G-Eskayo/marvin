@@ -242,7 +242,9 @@ describe('createCloneFreshener', () => {
   for (const [marker, make_] of [
     ['an .xcodeproj', (c) => (mkdirSync(path.join(c, 'App.xcodeproj'), { recursive: true }), writeFileSync(path.join(c, 'App.xcodeproj', 'project.pbxproj'), '// !$*UTF8*$!\n'))],
     ['an .xcworkspace, nested', (c) => (mkdirSync(path.join(c, 'ios', 'App.xcworkspace'), { recursive: true }), writeFileSync(path.join(c, 'ios', 'App.xcworkspace', 'contents.xcworkspacedata'), '<Workspace/>\n'))],
-    ['an XcodeGen project.yml', (c) => writeFileSync(path.join(c, 'project.yml'), 'name: App\n')]
+    ['an XcodeGen project.yml', (c) => writeFileSync(path.join(c, 'project.yml'), 'name: App\n')],
+    ['a root Package.swift (SwiftPM, opened in Xcode: killer-sudoku)', (c) => writeFileSync(path.join(c, 'Package.swift'), '// swift-tools-version:5.9\n')],
+    ['a nested Package.swift', (c) => (mkdirSync(path.join(c, 'Packages', 'Core'), { recursive: true }), writeFileSync(path.join(c, 'Packages', 'Core', 'Package.swift'), '// swift-tools-version:5.9\n'))]
   ]) {
     it(`a clone with ${marker} is never fast-forwarded, even clean and behind; logged with the reason`, async () => {
       const { seed, clone } = setup()
@@ -278,10 +280,11 @@ describe('createCloneFreshener', () => {
     expect(r.updated).toEqual(['p']) // a marker under .claude/, node_modules or .git is not the repo's own project
   })
 
-  it('a repo with none of the markers is still freshened (a "project.yaml" or "xcodeproj.md" is not a marker)', async () => {
+  it('a repo with none of the markers is still freshened (a "project.yaml", "xcodeproj.md" or "docs/Package.swift.md" is not a marker)', async () => {
     const { seed, clone } = setup()
     writeFileSync(path.join(clone, 'docs', 'xcodeproj.md'), '# notes about xcodeproj files\n')
     writeFileSync(path.join(clone, 'project.yaml'), 'x: 1\n')
+    writeFileSync(path.join(clone, 'docs', 'Package.swift.md'), '# Notes on Package.swift\n')
     git(clone, 'add', '-A')
     git(clone, 'commit', '-q', '-m', 'lookalikes')
     git(clone, 'push', '-q', 'origin', 'main')
