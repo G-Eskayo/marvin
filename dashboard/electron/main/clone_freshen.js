@@ -9,7 +9,7 @@ import { varPath } from './marvin_paths.js'
 // progress and is not ahead of origin: `git fetch` then `git merge --ff-only`. Never reset, never force. A clone that is
 // mid-work is left alone and reported mid-work, so its docs are searched from the GitHub saved copy (docs_service.js).
 // Never touched: the shared ~/.agents checkout (auto-sync owns it), any git worktree, and any repo with an Xcode
-// project (*.xcodeproj, *.xcworkspace or XcodeGen's project.yml; Gil, 2026-10-22, #618).
+// project (*.xcodeproj, *.xcworkspace, XcodeGen's project.yml or SwiftPM's Package.swift; Gil, 2026-10-22, #618).
 //
 // Cost: per project at most once per `minIntervalMs` (30 min): one bounded Xcode-marker walk (1-10 ms on the real
 // clones), 4-5 local git commands (~10 ms each) and, for a clean
@@ -63,7 +63,8 @@ export async function cloneState(dir, exec) {
 }
 
 // Gil, 2026-10-22 (#618): never update a repo that has an Xcode project. The first marker found, or null: a
-// `*.xcodeproj` or `*.xcworkspace`, or an XcodeGen `project.yml` (the .xcodeproj it generates is often not committed).
+// `*.xcodeproj` or `*.xcworkspace`, an XcodeGen `project.yml` (the .xcodeproj it generates is often not committed), or a
+// SwiftPM `Package.swift` (Xcode opens it directly: killer-sudoku).
 // On disk, committed or not. Walks at most `maxDepth` levels and `maxEntries` entries, skipping hidden folders (.git,
 // .claude agent worktrees) and build/dependency folders: O(entries) readdir calls, bounded.
 const SKIP_DIRS = new Set(['node_modules', 'build', 'DerivedData', 'Pods', 'Carthage', 'dist', 'out', 'venv'])
@@ -80,7 +81,7 @@ export function findXcodeMarker(dir, { maxDepth = 4, maxEntries = 20_000 } = {})
     }
     for (const e of entries) {
       seen++
-      if (e.name.endsWith('.xcodeproj') || e.name.endsWith('.xcworkspace') || (e.name === 'project.yml' && e.isFile())) {
+      if (e.name.endsWith('.xcodeproj') || e.name.endsWith('.xcworkspace') || ((e.name === 'project.yml' || e.name === 'Package.swift') && e.isFile())) {
         return path.relative(dir, path.join(d, e.name))
       }
       if (e.isDirectory() && !e.name.startsWith('.') && !SKIP_DIRS.has(e.name) && depth < maxDepth) stack.push([path.join(d, e.name), depth + 1])
