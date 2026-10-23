@@ -1,5 +1,7 @@
 # Changelog
 
+- Docs search: a doc's own name doesn't find it, and long sections outrank it ([#610](https://github.com/G-Eskayo/marvin/pull/610))
+
 - Profiles with dispatch on and no machines: assign the Mini, stop calling marvin unrunnable ([#617](https://github.com/G-Eskayo/marvin/pull/617))
 
 - Project playbooks, slice 1: iOS app playbook, profile playbook field, three profile gaps ([#615](https://github.com/G-Eskayo/marvin/pull/615))
