@@ -2,7 +2,7 @@
 """History store (ADR 0066, marvin#449): one SQLite record of what MARVIN did on both Macs.
 
 Jobs keep appending to their JSONL logs, which are now *outboxes*. This module moves new outbox lines into
-`~/.claude/history.db` on the Mini, the laptop's over ssh whenever it's reachable. The database is the record.
+`~/.agents/var/history.db` on the Mini, the laptop's over ssh whenever it's reachable. The database is the record.
 
 Complexity (north star #1):
 - load: O(new lines x log n). A cursor per outbox (device, path) remembers the byte offset and inode, so a run reads
@@ -16,7 +16,7 @@ Complexity (north star #1):
 A line's identity is a hash of (device, stream, line): the same line twice from one Mac is one record, from two Macs
 two. A line that isn't valid JSON is still stored (ts NULL): once outboxes are trimmed the database is the only copy.
 
-Usage: history_store.py [stream ...]   (default: gh-calls gh-budget; run every 5 min on the Mini by launchd)
+Usage: history_store.py [stream ...]   (default: gh-calls gh-budget launches; run every 5 min on the Mini by launchd)
        history_store.py --replica-max | --apply < rows | --digest ID   (run over ssh against another Mac's copy)
 
 The laptop's copy (G3): after each load the Mini ships the rows the copy doesn't have yet (id > the copy's max, at
@@ -25,6 +25,7 @@ every row's hash is compared on both sides (O(n), weekly). A row already in the 
 divergence: the run fails loudly instead of skipping it.
 """
 from __future__ import annotations
+import fcntl
 import hashlib
 import json
 import os
@@ -32,6 +33,8 @@ import shlex
 import sqlite3
 import subprocess
 import sys
+import tempfile
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Iterable
@@ -39,13 +42,14 @@ from typing import Callable, Iterable
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 HOME = Path.home()
-DB_PATH = HOME / ".claude" / "history.db"
+OLD_DB_PATH = HOME / ".claude" / "history.db"
+DB_PATH = HOME / ".agents" / "var" / "history.db"
 LOGS_REL = "~/.claude/logs"
 FINGERPRINT_BYTES = 64
 HOME_DEVICE = "mac-mini-1"  # the database's home: the only Mac that loads outboxes (ADR 0066)
 SHIP_LIMIT = 50_000  # rows per run to the laptop's copy, so a long absence catches up in bounded steps
 VERIFY_EVERY_S = 7 * 86400
-DEFAULT_STREAMS = ["gh-calls", "gh-budget"]  # gh-budget: the allowance readings the GitHub usage chart draws (G4)
+DEFAULT_STREAMS = ["gh-calls", "gh-budget", "launches"]  # launches: every AI run (models, tokens, cost, ticket)
 SSH_OPTS = ["-o", "ConnectTimeout=5", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"]
 
 SCHEMA = """
@@ -58,6 +62,7 @@ CREATE TABLE IF NOT EXISTS events(
     data TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS events_stream_ts ON events(stream, ts);
+CREATE INDEX IF NOT EXISTS events_launches_ticket ON events(json_extract(data,'$.ticket')) WHERE stream='launches' AND json_valid(data);
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS cursors(
     device TEXT NOT NULL,
@@ -67,6 +72,22 @@ CREATE TABLE IF NOT EXISTS cursors(
     fingerprint BLOB NOT NULL,
     PRIMARY KEY(device, path)
 );
+CREATE VIEW IF NOT EXISTS runs AS
+    SELECT
+        id,
+        json_extract(data, '$.ticket') as ticket,
+        json_extract(data, '$.model') as model,
+        json_extract(data, '$.cost_usd') as cost_usd,
+        json_extract(data, '$.input_tokens') as input_tokens,
+        json_extract(data, '$.output_tokens') as output_tokens,
+        json_extract(data, '$.cache_read_tokens') as cache_read_tokens,
+        json_extract(data, '$.cache_write_tokens') as cache_write_tokens,
+        ts,
+        stream,
+        device,
+        data
+    FROM events
+    WHERE stream = 'launches' AND json_valid(data);
 """
 
 
@@ -92,8 +113,101 @@ def _enable_wal(conn: sqlite3.Connection, wait_s: float = 30.0) -> None:
             delay = min(delay * 2, 0.5)
 
 
+def migrate_from_old(old_path: Path | str | None = None, new_path: Path | str | None = None) -> dict:
+    """Migrate data from OLD_DB_PATH to DB_PATH using SQLite backup(). Idempotent: if new_path exists, skip.
+    If old_path is missing or doesn't exist, skip. Returns {skipped: reason} or {migrated: N}.
+    Uses fcntl file locking to prevent concurrent migrations."""
+    old_path = Path(old_path or OLD_DB_PATH)
+    new_path = Path(new_path or DB_PATH)
+    new_path.parent.mkdir(parents=True, exist_ok=True)
+
+    lock_file = new_path.parent / f".{new_path.name}.migrate.lock"
+    with open(lock_file, "w") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            if new_path.exists():
+                return {"skipped": "already-migrated"}
+            if not old_path.exists():
+                return {"skipped": "no-old-database"}
+
+            # Open the old database read-only
+            try:
+                old_conn = sqlite3.connect(f"file:{old_path}?mode=ro", timeout=30, isolation_level=None, uri=True)
+                old_conn.execute("PRAGMA busy_timeout=30000")
+            except sqlite3.OperationalError as exc:
+                raise RuntimeError(f"failed to open old database {old_path}: {exc}") from exc
+
+            try:
+                # Compute old_top and old_dig inside a deferred transaction
+                old_conn.execute("BEGIN DEFERRED")
+                try:
+                    old_has_events = old_conn.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='events'").fetchone()
+                    if old_has_events:
+                        old_top = old_conn.execute("SELECT MAX(id) FROM events").fetchone()[0] or 0
+                        old_dig = digest(old_conn, old_top) if old_top > 0 else ""
+                    else:
+                        old_top, old_dig = 0, ""
+                finally:
+                    old_conn.execute("ROLLBACK")
+
+                # Create a temporary file for the backup
+                tmp_fd, tmp_path_str = tempfile.mkstemp(
+                    prefix=f".{new_path.name}.",
+                    suffix=".migrating",
+                    dir=new_path.parent
+                )
+                os.close(tmp_fd)
+                tmp_path = Path(tmp_path_str)
+
+                try:
+                    # Open the temporary file for backup
+                    new_conn = sqlite3.connect(tmp_path, timeout=30, isolation_level=None)
+                    new_conn.execute("PRAGMA busy_timeout=30000")
+
+                    try:
+                        # Perform the backup
+                        old_conn.backup(new_conn)
+                        new_conn.execute("PRAGMA journal_mode=WAL")
+
+                        # Compute new_top and new_dig from the backup
+                        new_has_events = new_conn.execute(
+                            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='events'").fetchone()
+                        if new_has_events:
+                            new_top = new_conn.execute("SELECT MAX(id) FROM events").fetchone()[0] or 0
+                            new_dig = digest(new_conn, old_top) if old_top > 0 else ""
+                        else:
+                            new_top, new_dig = 0, ""
+
+                        # Verify the backup
+                        if new_top < old_top or old_dig != new_dig:
+                            raise RuntimeError(f"backup verification failed: old {old_top}/{old_dig[:8]}, new {new_top}/{new_dig[:8]}")
+
+                        new_conn.close()
+
+                        # Atomically move the temp file into place
+                        os.replace(tmp_path, new_path)
+                        return {"migrated": new_top}
+                    except Exception:
+                        new_conn.close()
+                        raise
+                finally:
+                    # Clean up the temp file on failure
+                    try:
+                        tmp_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+            finally:
+                old_conn.close()
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
 def connect(path: Path | str | None = None) -> sqlite3.Connection:
     path = Path(path or DB_PATH)
+    # Migrate from old location if this is the default path and we're using it for the first time
+    if path == DB_PATH:
+        migrate_from_old()
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, timeout=30, isolation_level=None)  # transactions are explicit (BEGIN IMMEDIATE)
     conn.execute("PRAGMA busy_timeout=30000")
@@ -350,6 +464,56 @@ def digest(conn: sqlite3.Connection, upto_id: int) -> str:
     for (row_hash,) in conn.execute("SELECT hash FROM events WHERE id <= ? ORDER BY id", (upto_id,)):
         h.update(row_hash)
     return h.hexdigest()
+
+
+def cost_per_ticket(conn: sqlite3.Connection, tickets: list[str] | None = None, registry=None) -> dict[str, dict]:
+    """Group the runs view by ticket, splitting paid/local costs and tokens using model registry.
+    Returns {ticket: {paid_cost_usd, local_cost_usd, paid_tokens, local_tokens, runs}}.
+    If tickets is None, includes all tickets in the runs view. If tickets is [], returns {}."""
+    if tickets is not None and len(tickets) == 0:
+        return {}
+
+    if registry is None:
+        import model_registry
+        registry = model_registry.ModelRegistry()
+
+    results = {}
+
+    # Build the WHERE clause: always filter by ticket IS NOT NULL
+    where = " WHERE ticket IS NOT NULL"
+    params = []
+    if tickets:
+        placeholders = ",".join("?" * len(tickets))
+        where += f" AND ticket IN ({placeholders})"
+        params = tickets
+
+    query = f"SELECT ticket, model, cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens FROM runs{where} ORDER BY ticket"
+
+    for ticket, model, cost_usd, input_tok, output_tok, cache_read, cache_write in conn.execute(query, params):
+        if ticket not in results:
+            results[ticket] = {"paid_cost_usd": 0.0, "local_cost_usd": 0.0, "paid_tokens": 0, "local_tokens": 0, "runs": 0}
+
+        # Classify the model as local or paid using registry only
+        is_local = False
+        meta = registry.get(model)
+        if meta and meta.get("runtime") in ("ollama", "hf", "mlx", "flux"):
+            is_local = True
+
+        # Sum the four token counts
+        total_tokens = sum(t or 0 for t in (input_tok, output_tok, cache_read, cache_write))
+
+        # Add to the appropriate bucket
+        cost_usd = cost_usd or 0.0
+        if is_local:
+            results[ticket]["local_cost_usd"] += cost_usd
+            results[ticket]["local_tokens"] += total_tokens
+        else:
+            results[ticket]["paid_cost_usd"] += cost_usd
+            results[ticket]["paid_tokens"] += total_tokens
+
+        results[ticket]["runs"] += 1
+
+    return results
 
 
 def _remote(host: str, args: str, stdin: bytes | None = None) -> bytes:

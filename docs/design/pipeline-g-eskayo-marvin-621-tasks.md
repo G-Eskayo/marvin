@@ -1,0 +1,5 @@
+1. Edit `migrate_from_old()` in `lib/history_store.py` (lines ~173-190): change `new_dig = digest(new_conn, new_top)` to `digest(new_conn, old_top)`, change the verification condition from `old_top != new_top or old_dig != new_dig` to `new_top < old_top or old_dig != new_dig`, and change `return {"migrated": old_top}` to `return {"migrated": new_top}`.
+2. Add test 1 (`test_a_source_that_changes_mid_copy_is_still_captured_consistently`) to `lib/tests/test_history_store.py`; run it against the unmodified code first to confirm it fails with `RuntimeError("backup verification failed...")`, then confirm it passes after step 1.
+3. Add tests 2–7 (stale tmp file, corrupt source, backup failure, concurrent migrations, empty source, no-read-permission) to `lib/tests/test_history_store.py`.
+4. Run `~/.agents/venv/bin/python -m pytest lib/tests/test_history_store.py -v` — confirm all pass, including the 6 pre-existing migration tests unchanged by step 1.
+5. Run the full `lib/ -q` suite — confirm 0 failed, count only up by the new tests added here, no timing regression.

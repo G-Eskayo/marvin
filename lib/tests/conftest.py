@@ -260,3 +260,12 @@ def _isolate_github_usage(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(github_usage, "CALLS_PATH", d / "gh-calls.jsonl")
     monkeypatch.setattr(github_usage, "BUDGET_PATH", d / "gh-budget.jsonl")
     monkeypatch.setattr(github_usage, "HOURLY_PATH", d / "gh-usage-hourly.json")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_history_store(tmp_path_factory, monkeypatch):
+    # history_store keeps the database and migration sources; tests must never write the real ~/.agents or ~/.claude.
+    import history_store
+    d = tmp_path_factory.mktemp("history")
+    monkeypatch.setattr(history_store, "DB_PATH", d / "history.db")
+    monkeypatch.setattr(history_store, "OLD_DB_PATH", d / "old_history.db")

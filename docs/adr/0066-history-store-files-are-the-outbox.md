@@ -47,3 +47,7 @@ n = rows stored, k = rows a query returns, h = hours covered.
 - **Keep every line forever:** ~6.8 MB/day → ~2.5 GB/year on the Mini, the same again as the laptop backup (~5 GB/year across both).
 - **Keep raw for 30 days, then hourly summaries for the two big streams (chosen 2026-10-15):** ~200 MB steady raw window, plus hourly rows (measured 116 B/row; ~80k rows/yr per Mac) and the small streams in full → ~0.25 GB in year one and ~60 MB more each year after; about double that counting the backup.
 - Caveats: rates come from 2.5–14 days of data and pipeline activity is bursty; the 1.71× is measured on the laptop's mix. The disk headroom forecast (ADR 0056) tracks the real numbers.
+
+## Updates
+
+**2026-10-23 (marvin#621):** Moved database from `~/.claude/history.db` to `~/.agents/var/history.db` (aligning with system ownership and storage plan). Added `migrate_from_old()` for idempotent migration via SQLite backup; `connect()` runs it transparently. Added `launches` stream and a `runs` view to query by ticket, with `cost_per_ticket()` for cost tracking per ticket, split by local/paid models.
