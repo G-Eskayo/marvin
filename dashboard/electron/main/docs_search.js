@@ -93,22 +93,34 @@ function sectionsOf(doc) {
   return hit.sections
 }
 
+// A doc's own name: its path and label, as typed ("docs/adr/0067-one-brief…", "pr-requirements") and as words
+// ("docs adr 0067 one brief"), so "ADR 0067" or "life-of-a-ticket" finds the file (#609).
+function nameText(doc) {
+  const raw = `${doc.path || ''} ${doc.label || ''}`.toLowerCase()
+  return `${raw} ${raw.replace(/[-_/.]+/g, ' ')}`
+}
+
+// Every word must appear in the same section, or (first section only) in the doc's name. A term's body count is capped
+// at 3: a long section or JSON that repeats "a" or "of" hundreds of times must not bury the doc whose name or heading
+// is the query (#570 capped deliverables; #609 docs too). A name hit outranks a heading hit, which outranks body text.
+const BODY_CAP = 3
+const HEADING_BONUS = 5
+const NAME_BONUS = 8
 export function searchDocs(index, query, { repo = null, limit = 50 } = {}) {
   const terms = (query || '').toLowerCase().split(/\s+/).filter(Boolean)
   if (terms.length === 0) return []
   const results = []
   for (const doc of index.docs) {
     if (repo && doc.repo !== repo) continue
-    for (const section of sectionsOf(doc)) {
+    const name = nameText(doc)
+    const named = new Set(terms.filter((t) => name.includes(t)))
+    sectionsOf(doc).forEach((section, i) => {
       const body = section.text.toLowerCase()
       const head = section.heading.toLowerCase()
-      const label = doc.label.toLowerCase()
       const all = `${head}\n${body}`
-      if (!terms.every((t) => all.includes(t))) continue
-      // A deliverable's text counts at most 3 times a term: a long JSON or log that repeats a word must not outrank the
-      // file or folder actually named for it (#570). Docs keep their plain counts.
-      const cap = doc.kind === 'deliverable' ? 3 : Infinity
-      const score = terms.reduce((s, t) => s + Math.min(count(all, t), cap) + (head.includes(t) ? 5 : 0) + (label.includes(t) ? 2 : 0), 0)
+      const byName = (t) => i === 0 && named.has(t)
+      if (!terms.every((t) => all.includes(t) || byName(t))) return
+      const score = terms.reduce((s, t) => s + Math.min(count(all, t), BODY_CAP) + (head.includes(t) ? HEADING_BONUS : 0) + (byName(t) ? NAME_BONUS : 0), 0)
       results.push({
         repo: doc.repo,
         path: doc.path,
@@ -122,7 +134,7 @@ export function searchDocs(index, query, { repo = null, limit = 50 } = {}) {
         isDir: doc.isDir ?? false,
         score
       })
-    }
+    })
   }
   return results.sort((a, b) => b.score - a.score).slice(0, limit)
 }

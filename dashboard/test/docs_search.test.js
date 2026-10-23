@@ -257,3 +257,65 @@ describe('createIndexer: local docs are read once, not on every keystroke (2026-
     expect((await ix.search('gamma')).results.length).toBe(1)
   })
 })
+
+// marvin#609 (2026-10-22, "search does nothing for finding anything"): the doc you typed the name of was missing or
+// buried. Shapes below are the real ones that failed: the ADR 0067 file, docs/life-of-a-ticket.md against CONTEXT.md's
+// long "MR pipeline" section, clarity-captions' docs/agents/pr-requirements.md.
+describe('searchDocs finds a doc by its own name (#609)', () => {
+  const longSection = `# Context\n\n## MR pipeline (in design)\n\nThe ticket lifecycle, end to end.\n\n${'a ticket moves along a lane of a board; each of a kind of stage has a gate of its own. '.repeat(60)}\n`
+  const docs = {
+    docs: [
+      { repo: 'marvin', path: 'CONTEXT.md', label: 'CONTEXT.md', content: `${longSection}\n## Endpoints\n\nThe brief no longer runs on both Macs (see ADR 0067).\n` },
+      {
+        repo: 'marvin',
+        path: 'docs/adr/0067-one-brief-built-once-on-the-mini.md',
+        label: '0067-one-brief-built-once-on-the-mini.md',
+        content: '# 0067 — One brief, built once on the Mini\n\n## Status\n\nAccepted.\n\n## Decision\n\nOne brief.\n'
+      },
+      { repo: 'marvin', path: 'docs/life-of-a-ticket.md', label: 'life-of-a-ticket.md', content: '# The life of a MARVIN ticket\n\nHow work moves.\n\n## The picture\n\nStart to finish.\n' },
+      { repo: 'clarity-captions', path: 'docs/agents/pr-requirements.md', label: 'pr-requirements.md', content: '# What every PR carries\n\nScreenshots for look changes.\n' }
+    ]
+  }
+
+  it('"ADR 0067" puts the ADR first although "ADR" is only in its path', () => {
+    const r = searchDocs(docs, 'ADR 0067')
+    expect(r[0].path).toBe('docs/adr/0067-one-brief-built-once-on-the-mini.md')
+    expect(r[0].heading).toBe('0067 — One brief, built once on the Mini')
+  })
+
+  it('a file name with dashes finds that file', () => {
+    expect(searchDocs(docs, 'life-of-a-ticket')[0].path).toBe('docs/life-of-a-ticket.md')
+    expect(searchDocs(docs, 'pr-requirements')[0].path).toBe('docs/agents/pr-requirements.md')
+  })
+
+  it('a name hit is one result per doc (its first section), not one per section', () => {
+    const r = searchDocs(docs, 'ADR 0067').filter((x) => x.path.startsWith('docs/adr/0067'))
+    expect(r).toHaveLength(1)
+  })
+
+  it('"life of a ticket" ranks the doc titled so above a long section that repeats "a" and "of" hundreds of times', () => {
+    const r = searchDocs(docs, 'life of a ticket')
+    expect(r[0].path).toBe('docs/life-of-a-ticket.md')
+  })
+
+  it('a word repeated 100 times in a body does not outrank a heading hit', () => {
+    const idx = {
+      docs: [
+        { repo: 'm', path: 'docs/a.md', label: 'a.md', content: `# Notes\n\n${'vitals '.repeat(100)}\n` },
+        { repo: 'm', path: 'docs/b.md', label: 'b.md', content: '# Vitals\n\nThe page.\n' }
+      ]
+    }
+    expect(searchDocs(idx, 'vitals')[0].path).toBe('docs/b.md')
+  })
+
+  it('still needs every word: a word in neither the name nor the section finds nothing', () => {
+    expect(searchDocs(docs, 'ADR 0068')).toEqual([])
+    expect(searchDocs(docs, 'pr-requirements parakeet')).toEqual([])
+  })
+
+  it('a name hit still shows its terms and a snippet from the section', () => {
+    const r = searchDocs(docs, 'pr-requirements')[0]
+    expect(r.terms).toEqual(['pr-requirements'])
+    expect(r.snippet).toContain('Screenshots')
+  })
+})
