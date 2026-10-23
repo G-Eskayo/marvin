@@ -273,7 +273,8 @@ const newestFirst = (a, b) => (b.date || '').localeCompare(a.date || '') || a.na
 
 // The cached match map. view() answers from memory (or the saved file) at once; refresh(names) re-matches only the
 // named top-level items, or every item whose (name, mtime) changed, and everything when the context changed.
-export function createDeliverables({ getContext, cachePath = null }) {
+// `pdfText` (pdf_text.js, #611): the cached text of a PDF by absolute path, or null; PDFs stay name-only without it.
+export function createDeliverables({ getContext, cachePath = null, pdfText = null }) {
   let resolved = cachePath
   const file = () => {
     if (!resolved) {
@@ -375,20 +376,26 @@ export function createDeliverables({ getContext, cachePath = null }) {
   }
 
   // Search entries, cached per top-level item: an outbox change re-reads only the item that changed.
-  const docsCache = new WeakMap()
+  let docsCache = new WeakMap()
+  const readText = (rel) => readSmallText(rel, pdfText)
   function searchDocs(opts) {
     if (!load()) refresh()
     const s = state
     const out = []
     for (const [name, it] of Object.entries(s.items)) {
       let d = docsCache.get(it)
-      if (!d) docsCache.set(it, (d = deliverableDocs(placed(name, it), opts)))
+      if (!d) docsCache.set(it, (d = deliverableDocs(placed(name, it), { readText, ...opts })))
       out.push(...d)
     }
     return out
   }
 
-  return { view, refresh, searchDocs }
+  // New PDF text arrived (pdf_text.js onReady): the next search re-reads each item's text once.
+  function invalidateSearch() {
+    docsCache = new WeakMap()
+  }
+
+  return { view, refresh, searchDocs, invalidateSearch }
 }
 
 // What the docs search indexes for deliverables (design §3): one section of path words for every file (so images,
@@ -438,7 +445,15 @@ function filesUnder(rel, limit = 2000) {
   return out.sort()
 }
 
-function readSmallText(rel) {
+function readSmallText(rel, pdfText = null) {
+  if (fileKind(rel).kind === 'pdf') {
+    if (!pdfText) return null
+    try {
+      return pdfText.peek(resolveOutboxPath(rel)) // cached text, or null while the background pass reads it
+    } catch {
+      return null
+    }
+  }
   if (!TEXT_KINDS.has(fileKind(rel).kind)) return null
   try {
     const full = resolveOutboxPath(rel)

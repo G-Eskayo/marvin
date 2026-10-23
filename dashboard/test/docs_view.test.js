@@ -1,6 +1,6 @@
 // #570: the Docs tab's drill-down rules (src/lib/docs_view.js). One chip row chooses the kind, while browsing and searching.
 import { describe, it, expect } from 'vitest'
-import { groupTree, visibleKinds, toggleChip, mainView, searchGroups, hiddenNote, countLine, overviewPicks, formatDay, matchedBy, deliverableSummary, resultKind } from '../src/lib/docs_view.js'
+import { groupTree, visibleKinds, toggleChip, mainView, searchGroups, hiddenNote, countLine, overviewPicks, formatDay, matchedBy, deliverableSummary, resultKind, rankedResults } from '../src/lib/docs_view.js'
 
 const tree = [
   { path: 'PROJECT.md', label: 'Project card' },
@@ -99,5 +99,42 @@ describe('overview and labels', () => {
     expect(matchedBy({})).toMatch(/^not matched/)
     expect(deliverableSummary({ isDir: true, count: 1 })).toBe('Folder · 1 file')
     expect(deliverableSummary({ isDir: false, kinds: ['Code'] })).toBe('Code · from ~/.claude/outbox')
+  })
+})
+
+// #611 (Gil, 2026-10-22): one list ranked by match, best first whatever its kind, each result tagged with its kind.
+describe('rankedResults (#611)', () => {
+  const r = (path, score, kind = null) => ({ repo: 'marvin', path, score, kind })
+  const results = [
+    r('CONTEXT.md', 11),
+    r('outbox/marvin-merge-system-2026-10-21/merge-system.html', 32, 'deliverable'),
+    r('docs/adr/0026-concurrent-dispatch-smart-merge.md', 5),
+    r('outbox/marvin-merge-system-2026-10-21/', 28, 'deliverable')
+  ]
+
+  it('puts the best match first even when it is a deliverable', () => {
+    const out = rankedResults(results, new Set())
+    expect(out.map((x) => x.score)).toEqual([32, 28, 11, 5])
+  })
+
+  it('tags each result Doc, Decision or Deliverable', () => {
+    const out = rankedResults(results, new Set())
+    expect(out.map((x) => x.tag)).toEqual(['Deliverable', 'Deliverable', 'Doc', 'Decision'])
+  })
+
+  it('the chip row still filters, keeping the rank order', () => {
+    expect(rankedResults(results, new Set(['docs', 'decisions'])).map((x) => x.tag)).toEqual(['Doc', 'Decision'])
+  })
+
+  it('keeps the original order on equal scores and tolerates no results', () => {
+    const tie = [r('a.md', 3), r('docs/adr/1.md', 3), r('b.md', 3)]
+    expect(rankedResults(tie, new Set()).map((x) => x.path)).toEqual(['a.md', 'docs/adr/1.md', 'b.md'])
+    expect(rankedResults(undefined, new Set())).toEqual([])
+  })
+
+  it('does not mutate the results it is given', () => {
+    const copy = JSON.parse(JSON.stringify(results))
+    rankedResults(results, new Set())
+    expect(results).toEqual(copy)
   })
 })

@@ -9,7 +9,7 @@ import fs from 'node:fs'
 import { captureLaunchEnv } from '../src/lib/screenshot_capture.js'
 import { freePort } from '../src/lib/cdp_capture.js'
 
-const APP = path.resolve(import.meta.dirname, '..')
+const APP = process.env.EVIDENCE_APP || path.resolve(import.meta.dirname, '..') // EVIDENCE_APP: another build (the before)
 const [OUT, LABEL, QUERIES, SHOT] = process.argv.slice(2)
 if (!OUT || process.env.HOME === '/Users/gileskayo' || !QUERIES) {
   console.error('usage: HOME=<sandbox> node docs_search_evidence.mjs <out-dir> <label> <queries-json> [shot-query]')
@@ -31,7 +31,7 @@ try {
   for (let i = 0; i < 40 && (await page.evaluate(() => !!document.querySelector('[data-b="sky"]'))); i++) await sleep(250)
   await sleep(1500)
   await page.evaluate(() => [...document.querySelectorAll('button')].find((e) => e.textContent.trim() === 'Docs')?.click())
-  await sleep(1500)
+  await sleep(Number(process.env.EVIDENCE_WAIT || 1500)) // background work the Docs tab starts (#611: clone freshen)
   const input = page.locator('input[placeholder^="Search all docs"]')
   const rows = []
   for (const q of JSON.parse(QUERIES)) {
