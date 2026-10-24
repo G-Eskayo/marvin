@@ -3,7 +3,7 @@
 import json
 import subprocess
 import sys
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 DIGEST_DIR = Path.home() / ".claude" / "research-digest"
@@ -14,6 +14,8 @@ SAFETY_MONITOR_SCRIPTS = Path.home() / ".agents" / "skills" / "safety-monitor" /
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 from notify import notify  # noqa: E402
 import marvin_launcher  # noqa: E402
+import brief_fallback  # noqa: E402
+import machine_profile  # noqa: E402
 
 sys.path.insert(0, str(SAFETY_MONITOR_SCRIPTS))
 try:
@@ -99,8 +101,17 @@ def generate() -> Path | None:
     today = date.today().isoformat()
     out_path = DIGEST_DIR / f"{today}.md"
 
+    # Check via brief_fallback gate: if digest was produced recently, skip
+    now = datetime.now(timezone.utc)
+    decision = brief_fallback.should_run(
+        local_path=out_path, usual_hour=9, usual_minute=0, grace_minutes=60, now=now
+    )
+    if not decision.should_build:
+        print(f"[colony] {decision.reason}", file=sys.stderr)
+        return out_path if out_path.exists() else None
+
     if out_path.exists():
-        print(f"[colony] research digest already exists for {today}", file=sys.stderr)
+        print(f"[colony] Today's digest already exists: {out_path}", file=sys.stderr)
         return out_path
 
     all_items = load_today_cache()
@@ -157,6 +168,8 @@ def generate() -> Path | None:
         + body
         + "\n"
     )
+    machine = machine_profile.registry_id()
+    brief_fallback.record_built_by(out_path, machine, "normal", now=now)
     print(f"[colony] research digest written → {out_path}", file=sys.stderr)
     return out_path
 

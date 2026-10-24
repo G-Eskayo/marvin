@@ -1299,3 +1299,63 @@ def test_the_machine_script_reads_a_real_process_uptime_with_this_machines_ps():
         assert 1 <= int(out.stdout.strip()) <= 20
     finally:
         child.kill()
+
+
+# ── brief built-by check (marvin#458) ──────────────────────────────────────
+
+def test_check_brief_built_by_returns_none_if_no_brief(tmp_path, monkeypatch):
+    """check_brief_built_by() returns None if today's brief doesn't exist."""
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+    result = hc.check_brief_built_by()
+    assert result is None
+
+
+def test_check_brief_built_by_green_when_fresh(tmp_path, monkeypatch):
+    """check_brief_built_by() returns green when sidecar is recent."""
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+    briefs_dir = tmp_path / ".claude" / "briefs"
+    briefs_dir.mkdir(parents=True)
+
+    now = datetime(2026, 10, 24, 12, 0, tzinfo=timezone.utc)
+    brief_file = briefs_dir / "2026-10-24.md"
+    brief_file.write_text("# Brief")
+
+    sidecar = brief_file.with_name("2026-10-24.built-by.json")
+    sidecar.write_text(json.dumps({"built_at": now.isoformat(), "built_on": "mac-mini-1"}))
+
+    result = hc.check_brief_built_by(path=brief_file, now=now)
+    assert result["severity"] == "green"
+    assert "0.0h ago" in result["detail"]
+
+
+def test_check_brief_built_by_yellow_when_old(tmp_path, monkeypatch):
+    """check_brief_built_by() returns yellow when sidecar is more than 2h old."""
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+    briefs_dir = tmp_path / ".claude" / "briefs"
+    briefs_dir.mkdir(parents=True)
+
+    now = datetime(2026, 10, 24, 12, 0, tzinfo=timezone.utc)
+    old_time = now - timedelta(hours=5)
+    brief_file = briefs_dir / "2026-10-24.md"
+    brief_file.write_text("# Brief")
+
+    sidecar = brief_file.with_name("2026-10-24.built-by.json")
+    sidecar.write_text(json.dumps({"built_at": old_time.isoformat(), "built_on": "mac-mini-1"}))
+
+    result = hc.check_brief_built_by(path=brief_file, now=now)
+    assert result["severity"] == "yellow"
+    assert "5.0h ago" in result["detail"]
+
+
+def test_check_brief_built_by_yellow_when_sidecar_missing(tmp_path, monkeypatch):
+    """check_brief_built_by() returns yellow if sidecar doesn't exist."""
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+    briefs_dir = tmp_path / ".claude" / "briefs"
+    briefs_dir.mkdir(parents=True)
+
+    brief_file = briefs_dir / "2026-10-24.md"
+    brief_file.write_text("# Brief")
+
+    result = hc.check_brief_built_by(path=brief_file)
+    assert result["severity"] == "yellow"
+    assert "sidecar is missing" in result["detail"]

@@ -337,3 +337,84 @@ def test_missing_helper_format():
     result = dd._missing("test message")
     assert "❌ **Missing input:**" in result
     assert "test message" in result
+
+
+# ── brief fallback gate tests (marvin#458) ─────────────────────────────────────
+
+def test_main_skips_when_should_run_returns_false(tmp_path, monkeypatch, capsys):
+    """main() returns early when brief_fallback.should_run() returns False."""
+    import io
+    digest_dir = tmp_path / ".claude" / "daily-digest"
+    digest_dir.mkdir(parents=True, exist_ok=True)
+    out_file = digest_dir / "2026-10-24.md"
+
+    monkeypatch.setattr(dd, "OUT_FILE", out_file)
+    monkeypatch.setattr(dd, "DIGEST_DIR", digest_dir)
+
+    # Mock should_run to return False (brief is fresh on primary)
+    from lib import brief_fallback
+    mock_decision = brief_fallback.Decision(
+        should_build=False, reason="brief produced on mac-mini-1, still fresh"
+    )
+    monkeypatch.setattr(dd.brief_fallback, "should_run", lambda **kw: mock_decision)
+
+    old_stdout = sys.stdout
+    sys.stdout = io.StringIO()
+    try:
+        dd.main()
+        output = sys.stdout.getvalue()
+    finally:
+        sys.stdout = old_stdout
+
+    # Verify skip message
+    assert "brief produced on mac-mini-1, still fresh" in output
+    # Verify file was not written
+    assert not out_file.exists()
+
+
+def test_main_records_built_by_after_successful_write(tmp_path, monkeypatch):
+    """main() calls record_built_by() after writing the digest file."""
+    digest_dir = tmp_path / ".claude" / "daily-digest"
+    digest_dir.mkdir(parents=True, exist_ok=True)
+    out_file = digest_dir / "2026-10-24.md"
+
+    monkeypatch.setattr(dd, "OUT_FILE", out_file)
+    monkeypatch.setattr(dd, "DIGEST_DIR", digest_dir)
+
+    # Mock should_run to return True
+    from lib import brief_fallback
+    mock_decision = brief_fallback.Decision(should_build=True, reason="must build")
+    monkeypatch.setattr(dd.brief_fallback, "should_run", lambda **kw: mock_decision)
+
+    # Mock all the context-gathering functions
+    monkeypatch.setattr(dd, "roadmap_summary", lambda: "# Roadmap")
+    monkeypatch.setattr(dd, "recent_handoffs_summary", lambda: "")
+    monkeypatch.setattr(dd, "qa_kb_summary", lambda: "")
+    monkeypatch.setattr(dd, "bench_summary", lambda: "")
+    monkeypatch.setattr(dd, "improvement_queue_summary", lambda: "")
+    monkeypatch.setattr(dd, "reviewer_health_summary", lambda: "## Health\nAll green.")
+    monkeypatch.setattr(dd, "call_claude", lambda p: "## Move\nTest improvement.")
+
+    # Track record_built_by calls
+    record_calls = []
+    original_record = dd.brief_fallback.record_built_by
+    def mock_record(path, machine, mode, now=None):
+        record_calls.append((path, machine, mode))
+        return original_record(path, machine, mode, now)
+    monkeypatch.setattr(dd.brief_fallback, "record_built_by", mock_record)
+
+    dd.main()
+
+    # Verify file was written
+    assert out_file.exists()
+    # Verify record_built_by was called with the right arguments
+    assert len(record_calls) > 0
+    assert record_calls[0][0] == out_file
+    assert record_calls[0][2] == "normal"  # mode
+
+    # Verify sidecar was created
+    sidecar = out_file.with_name(out_file.stem + ".built-by.json")
+    assert sidecar.exists()
+    import json
+    data = json.loads(sidecar.read_text())
+    assert data["mode"] == "normal"

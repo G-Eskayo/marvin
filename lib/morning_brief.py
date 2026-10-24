@@ -24,6 +24,8 @@ from pathlib import Path
 from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import brief_fallback  # noqa: E402
+import machine_profile  # noqa: E402
 
 CLAUDE = Path.home() / ".claude"
 BRIEFS = CLAUDE / "briefs"
@@ -307,9 +309,27 @@ def read_dates() -> list[datetime]:
     return _dates(".read")
 
 
+def build_cli(now=None) -> Path | None:
+    """Build the brief via the CLI path: gate check, write, record, return path."""
+    now = now or datetime.now(timezone.utc)
+    out_path = BRIEFS / f"{_day(now)}.md"
+    decision = brief_fallback.should_run(
+        local_path=out_path, usual_hour=9, usual_minute=45, grace_minutes=60, now=now
+    )
+    if not decision.should_build:
+        print(f"[skip] {decision.reason}")
+        return None
+    path = write(now)
+    machine = machine_profile.registry_id()
+    brief_fallback.record_built_by(path, machine, "normal", now=now)
+    print(path)
+    return path
+
+
 if __name__ == "__main__":
     if sys.argv[1:] == ["build"]:
-        print(write())
+        result = build_cli()
+        sys.exit(0 if result else 1)
     elif sys.argv[1:] == ["show"]:
         print(show_today() or "No brief for today yet.")
     else:

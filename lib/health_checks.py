@@ -408,6 +408,33 @@ def check_catalog_fresh(path: Path | None = None, now: datetime | None = None) -
     return _result(cid, label, sev, f"{n} projects, built {age_h:.1f}h ago", value=round(age_h, 1))
 
 
+def check_brief_built_by(path: Path | None = None, now: datetime | None = None) -> dict | None:
+    """Check if a brief's .built-by.json sidecar is current (marvin#458).
+    Returns None if the brief doesn't exist, green if it's recent, yellow/red if it's old.
+    """
+    cid, label = "brief:built-by", "Morning brief is current"
+    now = now or _now()
+    path = path or (HOME / ".claude" / "briefs" / f"{now.astimezone().strftime('%Y-%m-%d')}.md")
+
+    if not path.exists():
+        return None  # No brief built today yet (not an error)
+
+    sidecar = path.with_name(path.stem + ".built-by.json")
+    if not sidecar.exists():
+        return _result(cid, label, "yellow", "brief exists but .built-by.json sidecar is missing")
+
+    try:
+        data = json.loads(sidecar.read_text())
+        built_at = datetime.fromisoformat(data["built_at"].replace("Z", "+00:00"))
+    except (json.JSONDecodeError, KeyError, ValueError):
+        return _result(cid, label, "yellow", "brief sidecar is unreadable or malformed")
+
+    age_h = (now - built_at).total_seconds() / 3600
+    machine = data.get("built_on", "unknown")
+    sev = "green" if age_h <= 2 else "yellow" if age_h <= 24 else "red"
+    return _result(cid, label, sev, f"built {age_h:.1f}h ago on {machine}", value=round(age_h, 1))
+
+
 GH_CALLS_PATH = Path.home() / ".claude" / "logs" / "gh-calls.jsonl"
 GH_GATE_PATH = Path.home() / ".claude" / "logs" / "gh-gate.json"
 
@@ -990,7 +1017,9 @@ if [ -f "$LEDGER" ]; then echo "disk_ledger=$(tail -14 "$LEDGER" | /usr/bin/tr '
 # host only (ADR 0032, 0033), "laptop" = only where Gil sits. Edit here when a job is deliberately moved; a job that
 # is not listed is reported as unplaced so a new job cannot silently run on only one machine.
 JOB_PLACEMENT = {
-    "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "both", "research-colony": "both",
+    "code-sync-push": "both", "cross-machine-merge": "both",
+    "daily-digest": "mini", "daily-digest-fallback": "laptop",
+    "research-colony": "mini", "research-colony-fallback": "laptop",
     "desktoplive": "both", "dashboard-webhook": "both",  # webhook on both until #112 (ADR 0032)
     "ticket-pipeline": "both",  # mini scans; the laptop's copy is a standby that scans only if the mini goes quiet (scanner_role.py)
     "architecture-review": "mini", "auto-fix": "mini", "cron-health": "mini", "health-check": "mini",
@@ -999,7 +1028,7 @@ JOB_PLACEMENT = {
     "cleanup-sweep": "both",  # daily: each machine sweeps its own pipeline worktrees (lib/cleanup_sweep.py)
     "machine-resources": "both",  # 30s: samples disk/mem/swap/CPU/GPU for resources panel (#130)
     "dashboard-launch": "laptop",
-    "morning-brief": "laptop",  # one writer (the brief syncs to the mini via ~/.claude); after the digests (lib/morning_brief.py)
+    "morning-brief": "mini", "morning-brief-fallback": "laptop",  # one writer (the brief syncs to the laptop via ~/.claude); after the digests (lib/morning_brief.py)
     # the website map (#189): rebuilt nightly and after MARVIN changes on the mini, where the dev site runs; the nightly
     # job also publishes it to production (ADR 0057), so it must never run on the laptop
     "snapshot-deploy-nightly": "mini", "snapshot-deploy-reactive": "mini",
@@ -1479,6 +1508,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("profile:no-machines", "Projects with no machines", check_unrunnable_profiles, CHECK_BUDGET_S),
         ("triggers:missed", "Dashboard triggers cover every change", check_trigger_coverage, CHECK_BUDGET_S),
         ("catalog:fresh", "Project catalog is current", check_catalog_fresh, CHECK_BUDGET_S),
+        ("brief:built-by", "Morning brief is current", check_brief_built_by, CHECK_BUDGET_S),
         ("tickets:project-tags", "Tickets are on their project's board", check_project_tags, CHECK_BUDGET_S),
         ("tickets:hold-revisit", "Hold tickets have revisit dates", check_hold_revisit, CHECK_BUDGET_S),
         ("github:budget", "GitHub request budget", check_github_budget, CHECK_BUDGET_S),

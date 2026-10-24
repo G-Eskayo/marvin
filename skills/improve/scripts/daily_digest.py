@@ -23,6 +23,8 @@ HANDOFFS_DIR = CLAUDE_DIR / "handoffs"
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 from notify import notify  # noqa: E402
 import marvin_launcher  # noqa: E402
+import brief_fallback  # noqa: E402
+import machine_profile  # noqa: E402
 
 RESULTS_MD   = Path.home() / ".agents" / "bench" / "RESULTS.md"
 QA_SCRIPTS   = Path.home() / ".agents" / "skills" / "qa-agent" / "scripts"
@@ -272,6 +274,14 @@ def call_claude(prompt: str) -> str:
 def main() -> None:
     DIGEST_DIR.mkdir(parents=True, exist_ok=True)
 
+    now = datetime.now(timezone.utc)
+    decision = brief_fallback.should_run(
+        local_path=OUT_FILE, usual_hour=8, usual_minute=30, grace_minutes=60, now=now
+    )
+    if not decision.should_build:
+        print(f"[daily-digest] {decision.reason}", flush=True)
+        return
+
     if OUT_FILE.exists():
         print(f"[daily-digest] Today's digest already exists: {OUT_FILE}", flush=True)
         return
@@ -288,6 +298,15 @@ def main() -> None:
         queue=improvement_queue_summary(),
         reviewer_health=reviewer_health,
     )
+
+    # TOCTOU re-check: another process may have built the digest between our
+    # initial gate check and now. If so, skip to avoid duplicate work.
+    recheck_decision = brief_fallback.should_run(
+        local_path=OUT_FILE, usual_hour=8, usual_minute=30, grace_minutes=60, now=now
+    )
+    if not recheck_decision.should_build:
+        print(f"[daily-digest] {recheck_decision.reason} (recheck)", flush=True)
+        return
 
     print("[daily-digest] Calling claude...", flush=True)
     content = call_claude(prompt)
@@ -320,6 +339,9 @@ def main() -> None:
     health_section = f"## System Health\n\n{reviewer_health}\n\n---\n\n"
 
     OUT_FILE.write_text(header + health_section + content + "\n")
+    machine = machine_profile.registry_id()
+    if not already_failed:
+        brief_fallback.record_built_by(OUT_FILE, machine, "normal", now=now)
     print(f"[daily-digest] Written to {OUT_FILE}", flush=True)
 
 

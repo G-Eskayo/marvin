@@ -123,3 +123,60 @@ def test_open_prs_marks_waiting_from_one_graphql_read(monkeypatch):
     monkeypatch.setattr(od, "fetch", lambda repos, run=None: None)
     brief = mb.gather(NOW, {"open_prs": mb._open_prs})
     assert brief["open_prs"] is None and "open PRs" in brief["missing"][0]
+
+
+def test_build_cli_skips_when_should_run_returns_false(tmp_path, monkeypatch, capsys):
+    """Test 6: build_cli() returns None and skips when brief_fallback.should_run() returns False."""
+    import brief_fallback
+
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    today = datetime(2026, 10, 24, 9, 45, tzinfo=timezone.utc)
+
+    # Mock should_run to return False
+    mock_decision = brief_fallback.Decision(
+        should_build=False, reason="brief produced on mac-mini-1, still fresh"
+    )
+    monkeypatch.setattr(mb.brief_fallback, "should_run", lambda **kw: mock_decision)
+
+    # Call build_cli()
+    result = mb.build_cli(now=today)
+
+    # Verify it returned None (skipped)
+    assert result is None
+    # Verify nothing was written
+    assert not (tmp_path / "2026-10-24.md").exists()
+    # Verify the skip message was printed
+    captured = capsys.readouterr()
+    assert "[skip]" in captured.out
+
+
+def test_build_cli_builds_and_records(tmp_path, monkeypatch, capsys):
+    """Test 7: build_cli() builds the brief, records it, and returns the path."""
+    import brief_fallback
+
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    today = datetime(2026, 10, 24, 9, 45, tzinfo=timezone.utc)
+
+    # Mock should_run to return True
+    mock_decision = brief_fallback.Decision(should_build=True, reason="must build")
+    monkeypatch.setattr(mb.brief_fallback, "should_run", lambda **kw: mock_decision)
+
+    # Mock machine_profile
+    monkeypatch.setattr(mb.machine_profile, "registry_id", lambda: "mac-mini-1")
+
+    # Call build_cli()
+    result = mb.build_cli(now=today)
+
+    # Verify the brief was written
+    assert result is not None
+    assert result.name == "2026-10-24.md"
+    assert result.exists()
+
+    # Verify the sidecar was created
+    sidecar = result.with_name(result.stem + ".built-by.json")
+    assert sidecar.exists()
+    assert json.loads(sidecar.read_text())["built_on"] == "mac-mini-1"
+
+    # Verify the path was printed
+    captured = capsys.readouterr()
+    assert str(result) in captured.out

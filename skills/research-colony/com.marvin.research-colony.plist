@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Research colony (skills/research-colony/scripts/run_colony.py), runs at 09:00 on the Mini only.
+     The laptop runs its fallback at 10:00 if this hasn't produced a fresh digest (marvin#458).
+     Install: cp this to ~/Library/LaunchAgents/ and `launchctl bootstrap gui/$(id -u) <that file>`. -->
 <plist version="1.0">
 <dict>
     <key>Label</key>
