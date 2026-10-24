@@ -1,5 +1,7 @@
 # Changelog
 
+- About 40% of headless pipeline model runs exit non-zero; classify the causes and fix the top ones ([#598](https://github.com/G-Eskayo/marvin/pull/598))
+
 - Daily digest reads real inputs: the correct bench results path and a working reviewer-log split ([#601](https://github.com/G-Eskayo/marvin/pull/601))
 
 - Docs search: one ranked list with kind tags, freshen clean local clones, index PDF text ([#618](https://github.com/G-Eskayo/marvin/pull/618))
