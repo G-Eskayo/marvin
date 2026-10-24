@@ -990,7 +990,7 @@ if [ -f "$LEDGER" ]; then echo "disk_ledger=$(tail -14 "$LEDGER" | /usr/bin/tr '
 # host only (ADR 0032, 0033), "laptop" = only where Gil sits. Edit here when a job is deliberately moved; a job that
 # is not listed is reported as unplaced so a new job cannot silently run on only one machine.
 JOB_PLACEMENT = {
-    "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "both", "research-colony": "both",
+    "code-sync-push": "both", "cross-machine-merge": "both",
     "desktoplive": "both", "dashboard-webhook": "both",  # webhook on both until #112 (ADR 0032)
     "ticket-pipeline": "both",  # mini scans; the laptop's copy is a standby that scans only if the mini goes quiet (scanner_role.py)
     "architecture-review": "mini", "auto-fix": "mini", "cron-health": "mini", "health-check": "mini",
@@ -999,7 +999,14 @@ JOB_PLACEMENT = {
     "cleanup-sweep": "both",  # daily: each machine sweeps its own pipeline worktrees (lib/cleanup_sweep.py)
     "machine-resources": "both",  # 30s: samples disk/mem/swap/CPU/GPU for resources panel (#130)
     "dashboard-launch": "laptop",
-    "morning-brief": "laptop",  # one writer (the brief syncs to the mini via ~/.claude); after the digests (lib/morning_brief.py)
+    # Daily digests: mini is primary, laptop is fallback if mini goes quiet
+    "daily-digest": "mini",  # primary builder; laptop's fallback runs at 09:30
+    "daily-digest-fallback": "laptop",
+    "research-colony": "mini",  # primary builder; laptop's fallback runs at 10:00
+    "research-colony-fallback": "laptop",
+    # Morning brief: moved to mini, where it runs at 09:15 after digests complete
+    "morning-brief": "mini",  # one writer (the brief syncs to the laptop via ~/.claude); laptop fallback at 10:15
+    "morning-brief-fallback": "laptop",
     # the website map (#189): rebuilt nightly and after MARVIN changes on the mini, where the dev site runs; the nightly
     # job also publishes it to production (ADR 0057), so it must never run on the laptop
     "snapshot-deploy-nightly": "mini", "snapshot-deploy-reactive": "mini",
@@ -1462,6 +1469,26 @@ def _cron_job_logs() -> list[dict]:
     return out
 
 
+def check_brief_builder() -> dict:
+    """Did the morning brief get built today, and which machine built it?
+    Green: brief exists with builder info. Yellow: no brief built yet (may still be pending)."""
+    import morning_brief
+    cid, label = "brief:builder", "Morning brief builder"
+    now = _now()
+    day = now.astimezone().strftime("%Y-%m-%d")
+
+    builder_info = morning_brief.builder_of(day)
+    if builder_info:
+        return _result(cid, label, "green", f"Built by: {builder_info}")
+
+    brief_path = morning_brief.BRIEFS / f"{day}.md"
+    if brief_path.exists():
+        # Brief exists but no sidecar — shouldn't happen, but we can read it
+        return _result(cid, label, "green", "Brief exists (legacy, no builder info)")
+
+    return _result(cid, label, "yellow", "No brief built yet today")
+
+
 def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict] | None = None) -> list[tuple]:
     """Every check the sweep runs, in the order the Health tab shows them. `reach` maps machine:<id> -> severity from
     the reachability check, which runs first; `reach_results` are its rows, listed where they always appeared."""
@@ -1485,6 +1512,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("github:gate", "GitHub calls go through the gate", check_gh_gate, CHECK_BUDGET_S),
         ("main:green", "The main branch passes its tests", check_main_health, CHECK_BUDGET_S),
         ("seal:beta-ingest", "Seal Speak beta reports are picked up", check_seal_beta_ingest, CHECK_BUDGET_S),
+        ("brief:builder", "Morning brief builder", check_brief_builder, CHECK_BUDGET_S),
         ("cron", "Cron job logs", _cron_job_logs, CHECK_BUDGET_S),
         ("machine", "Machine reachability", lambda: list(reach_results or []), CHECK_BUDGET_S),
         ("repo:sync", "Repo sync", lambda: check_repo_sync_everywhere(reach), CROSS_MACHINE_BUDGET_S),
