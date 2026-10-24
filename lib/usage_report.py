@@ -127,7 +127,13 @@ def report(now: datetime | None = None, ssh=default_ssh) -> dict:
 
 def _cli() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "scan":
-        refresh_local()
+        try:
+            refresh_local()
+        except Exception as exc:  # noqa: BLE001  launchd keeps stderr in usage-scan-error.log; say so, and fail loudly
+            print(f"[usage-scan] failed: {exc}", file=sys.stderr)
+            raise SystemExit(1)
+        # A silent success left usage-scan.log at 0 bytes for two weeks, indistinguishable from "never ran" (#597).
+        print(f"[usage-scan] ok {datetime.now(timezone.utc).isoformat(timespec='seconds')}")
         return
     print(json.dumps(report()))
 
