@@ -616,10 +616,21 @@ lanes x hours, not by log length.
 - A storm on 2026-10-21 at 14:00: 9,407 calls in one hour from unlabelled callers.
 - 18 parts show red, some from stale one-off failures (see question 3).
 
-### Questions for Gil (answered in the PR's Decisions section)
+### v4 decisions (Gil, 2026-10-24, PR #577)
 
-1. **Network control:** an hour slider over the last 24 hours, or always "now"?
-2. **Tunnel:** does the red wedge help you spot a storm, or is the plain spike on the slider under it faster to read? If
-   the spike wins, the tunnel becomes a visual style rather than its own view.
-3. **Failures:** should a failure fade after a few hours, or stay red until something passes?
-4. **Cost:** should cost in dollars (the ROI question) get its own mode?
+1. **Network control: an hour slider over the last 24 hours.** Scrub back to see any hour; "now" is the slider's right
+   end.
+2. **Storms: the red wedge in the tunnel.** The tunnel stays its own view.
+3. **Failures stay red until something passes.** No time-based fade. Stale one-off failures need a real pass (or a
+   check being retired) to clear, so the check audit (§2) has to retire dead checks or they stay red for good.
+4. **Cost gets its own mode on the view switch.**
+5. **ROI is time and money in, time out (Gil):** "ROI while based in money i am trying to make less abstract and
+   return on investment as it stands. what are we investing in regards to time worked on it, money, etc. token usage,
+   how can we get the biggest out of if i spend 10 hours now how many hours will it save later?" So the cost mode
+   shows both sides per project or subsystem:
+   - **Invested:** Gil's hours, model tokens and their dollar cost, machine time.
+   - **Returned:** hours saved later (runs that replaced manual work, tickets merged without Gil), and lower paid-service
+     dependence.
+   - **The headline is a ratio Gil can read at a glance:** hours saved per hour invested, alongside cost per merged PR.
+   Gil's hours aren't measured anywhere yet; where they come from (session time, Activity, or his own estimate) is a
+   question for the build plan.
