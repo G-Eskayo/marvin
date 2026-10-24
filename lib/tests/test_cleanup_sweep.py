@@ -137,16 +137,40 @@ def test_open_pr_is_kept(tmp_path):
     assert action == "keep"
 
 
-def test_uncommitted_work_is_never_removed_even_when_merged(tmp_path):
+def test_uncommitted_work_is_backed_up_never_plainly_removed_even_when_merged(tmp_path):
+    # #629: "needs a look" was never looked at (43 worktrees, 11.8 GiB). Leftover edits go to a backup branch first.
     action, reason = cs.decide_worktree(_wt(tmp_path, dirty=True), pr_state="MERGED", claimed=False)
+    assert action == "backup"
+    assert "uncommitted" in reason
+
+
+def test_commits_without_a_pr_are_backed_up(tmp_path):
+    action, reason = cs.decide_worktree(_wt(tmp_path, ahead=2), pr_state=None, claimed=False)
+    assert action == "backup"
+    assert "no PR" in reason
+
+
+def test_recent_leftover_work_is_left_alone_for_now(tmp_path):
+    # A helper may still be working in it: only idle worktrees are backed up.
+    action, reason = cs.decide_worktree(_wt(tmp_path, dirty=True, age_hours=cs.BACKUP_MIN_AGE_HOURS - 1),
+                                        pr_state=None, claimed=False)
     assert action == "review"
     assert "uncommitted" in reason
 
 
-def test_commits_without_a_pr_are_kept_for_review(tmp_path):
-    action, reason = cs.decide_worktree(_wt(tmp_path, ahead=2), pr_state=None, claimed=False)
-    assert action == "review"
-    assert "no PR" in reason
+@pytest.mark.parametrize("why", ["claimed", "open_pr", "in_use"])
+def test_leftover_work_that_something_still_owns_is_never_touched(tmp_path, why):
+    wt = _wt(tmp_path, dirty=True, ahead=1, age_hours=500)
+    if why == "in_use":
+        wt["in_use"] = True
+    action, _ = cs.decide_worktree(wt, pr_state="OPEN" if why == "open_pr" else None, claimed=why == "claimed")
+    assert action in ("keep", "review")
+
+
+def test_a_process_inside_a_clean_merged_worktree_keeps_it(tmp_path):
+    wt = _wt(tmp_path, age_hours=500)
+    wt["in_use"] = True
+    assert cs.decide_worktree(wt, pr_state="MERGED", claimed=False)[0] == "keep"
 
 
 def test_empty_old_attempt_with_no_pr_is_removed(tmp_path):
@@ -195,7 +219,7 @@ def test_sweep_looks_up_each_worktree_in_its_own_repo(tmp_path):
 
 
 def test_sweep_reports_items_needing_review_and_failed_removals(tmp_path):
-    dirty = _wt(tmp_path, dirty=True)
+    dirty = _wt(tmp_path, dirty=True, age_hours=1)
     stuck = _wt(tmp_path, name="pipeline-g-eskayo-marvin-8", repo="G-Eskayo/marvin", branch="pipeline/g-eskayo/marvin#8")
     result = cs.sweep_worktrees(
         list_worktrees=lambda: [dirty, stuck],
@@ -253,7 +277,8 @@ def test_lists_real_worktrees_with_repo_and_state(tmp_path, monkeypatch):
     git("worktree", "add", "-q", "-b", "pipeline/g-eskayo/clarity-captions#13", str(root / "pipeline-g-eskayo-clarity-captions-13"))
     (root / "pipeline-g-eskayo-clarity-captions-13" / "new.txt").write_text("x")
     (root / "not-a-git-dir").mkdir()
-    monkeypatch.setattr(cs, "WORKTREES_ROOT", root)
+    monkeypatch.setattr(cs, "worktree_roots", lambda: [root])  # never the real ~/Developer
+    monkeypatch.setattr(cs, "_cwds_in_use", lambda: set())
 
     [wt] = cs._default_list_worktrees()
     assert wt["repo"] == "G-Eskayo/clarity-captions"
@@ -262,12 +287,13 @@ def test_lists_real_worktrees_with_repo_and_state(tmp_path, monkeypatch):
     assert wt["ahead"] == 0
     assert wt["dirty"] is True
     assert wt["age_hours"] < 1
+    assert wt["in_use"] is False
 
 
 # ── logging (visibility standard matching cron_health.py) ──────────────────
 
 def test_run_daily_sweep_writes_log(log_path, tmp_path):
-    wt = _wt(tmp_path, dirty=True)
+    wt = _wt(tmp_path, dirty=True, age_hours=1)
     cs.run_daily_sweep(
         list_claimed_open_issues=lambda: [_issue(7, ["claimed:mac-mini"], updated_hours_ago=48)],
         list_worktrees=lambda: [wt],
@@ -513,3 +539,183 @@ def test_a_second_sweep_while_one_is_running_skips_at_once(monkeypatch, tmp_path
         holder.wait()
     monkeypatch.setattr(cs, "run_daily_sweep", lambda: {"ok": 1})
     assert cs.main() == {"ok": 1}, "the lock outlived the process that held it"
+
+
+# ── #629: back up leftover edits to a branch, then remove (real git) ───────
+
+def _origin_clone_wt(tmp_path, branch="pipeline/g-eskayo/marvin#57", name="pipeline-g-eskayo-marvin-57"):
+    import subprocess
+    origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", "-q", str(origin), str(clone)], check=True, capture_output=True)
+    git = lambda *a, cwd=clone: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=cwd,
+                                               check=True, capture_output=True, text=True)
+    (clone / ".gitignore").write_text(".build/\n")
+    (clone / "f").write_text("1")
+    git("add", ".")
+    git("commit", "-qm", "i")
+    git("push", "-q", "origin", "main")
+    wt_path = tmp_path / "wts" / name
+    git("worktree", "add", "-q", "-b", branch, str(wt_path))
+    return origin, clone, wt_path, git
+
+
+def test_backup_pushes_every_leftover_edit_to_a_backup_branch_then_removal_succeeds(tmp_path):
+    origin, clone, wt_path, git = _origin_clone_wt(tmp_path)
+    (wt_path / "f").write_text("edited")
+    (wt_path / "new.py").write_text("print('only copy')")
+    (wt_path / ".build").mkdir()
+    (wt_path / ".build" / "big.o").write_text("x" * 100)
+    wt = {"path": wt_path, "branch": "pipeline/g-eskayo/marvin#57", "clone": clone}
+
+    ref = cs.backup_worktree(wt, today="20261024")
+    assert ref == "backup/pipeline/g-eskayo/marvin#57-20261024"
+    # the backup on origin holds both edits and not the ignored build output
+    show = lambda path: git("--git-dir", str(origin), "show", f"{ref}:{path}", cwd=tmp_path).stdout
+    assert show("f") == "edited"
+    assert show("new.py") == "print('only copy')"
+    listed = git("--git-dir", str(origin), "ls-tree", "-r", "--name-only", ref, cwd=tmp_path).stdout
+    assert ".build" not in listed
+    assert cs._default_remove_worktree(wt) is True
+    assert not wt_path.exists()
+
+
+def test_a_failed_push_means_no_backup_and_nothing_removed(tmp_path):
+    origin, clone, wt_path, git = _origin_clone_wt(tmp_path)
+    (wt_path / "new.py").write_text("only copy")
+    git("remote", "set-url", "origin", str(tmp_path / "gone.git"), cwd=clone)
+    wt = {"path": wt_path, "branch": "pipeline/g-eskayo/marvin#57", "clone": clone}
+    removed = []
+    result = cs.sweep_worktrees(
+        list_worktrees=lambda: [{**wt, "repo": "G-Eskayo/marvin", "ahead": 0, "dirty": True, "age_hours": 500}],
+        pr_state=lambda repo, branch: None,
+        is_claimed=lambda repo, n: False,
+        remove_worktree=lambda w: removed.append(w) or True,
+        backup=lambda w: cs.backup_worktree(w, today="20261024"),
+    )
+    assert removed == []
+    assert result["removed"] == []
+    assert "backup failed" in result["review"][0]["reason"]
+    assert (wt_path / "new.py").read_text() == "only copy"
+
+
+def test_backup_with_only_unpushed_commits_pushes_them(tmp_path):
+    origin, clone, wt_path, git = _origin_clone_wt(tmp_path)
+    (wt_path / "g").write_text("committed, never pushed")
+    git("add", ".", cwd=wt_path)
+    git("commit", "-qm", "work", cwd=wt_path)
+    wt = {"path": wt_path, "branch": "pipeline/g-eskayo/marvin#57", "clone": clone}
+    ref = cs.backup_worktree(wt, today="20261024")
+    assert git("--git-dir", str(origin), "show", f"{ref}:g", cwd=tmp_path).stdout == "committed, never pushed"
+
+
+def test_sweep_backs_up_then_removes_and_a_second_run_finds_nothing_left(tmp_path, monkeypatch):
+    origin, clone, wt_path, git = _origin_clone_wt(tmp_path)
+    git("update-ref", "refs/remotes/origin/main", "main", cwd=clone)
+    (wt_path / "new.py").write_text("only copy")
+    import os
+    old = 1_000_000_000
+    os.utime(wt_path, (old, old))
+    monkeypatch.setattr(cs, "worktree_roots", lambda: [tmp_path / "wts"])
+    monkeypatch.setattr(cs, "_cwds_in_use", lambda: set())
+    monkeypatch.setattr(cs, "GITHUB_REPO_RE", __import__("re").compile(r"(origin)\.git$"))
+    kw = dict(pr_state=lambda repo, branch: None, is_claimed=lambda repo, n: False,
+              backup=lambda w: cs.backup_worktree(w, today="20261024"))
+
+    first = cs.sweep_worktrees(**kw)
+    assert [r["path"] for r in first["removed"]] == [wt_path]
+    assert "backup/pipeline/g-eskayo/marvin#57-20261024" in first["removed"][0]["reason"]
+    assert not wt_path.exists()
+    second = cs.sweep_worktrees(**kw)
+    assert second == {"removed": [], "review": []}
+    assert git("--git-dir", str(origin), "show", "backup/pipeline/g-eskayo/marvin#57-20261024:new.py",
+               cwd=tmp_path).stdout == "only copy"
+
+
+def test_roots_cover_pipeline_worktrees_and_every_repos_helper_worktrees(tmp_path, monkeypatch):
+    monkeypatch.setattr(cs, "WORKTREES_ROOT", tmp_path / "pipeline")
+    monkeypatch.setattr(cs, "HOME", tmp_path)
+    (tmp_path / "pipeline").mkdir()
+    (tmp_path / "Developer" / "clarity-captions" / ".claude" / "worktrees").mkdir(parents=True)
+    (tmp_path / "Developer" / "no-helpers").mkdir(parents=True)
+    (tmp_path / ".agents" / ".claude" / "worktrees").mkdir(parents=True)
+    roots = cs.worktree_roots()
+    assert tmp_path / "pipeline" in roots
+    assert tmp_path / "Developer" / "clarity-captions" / ".claude" / "worktrees" in roots
+    assert tmp_path / ".agents" / ".claude" / "worktrees" in roots
+    assert not any("no-helpers" in str(r) for r in roots)
+
+
+def test_a_folder_with_no_git_record_is_listed_never_deleted(tmp_path, monkeypatch):
+    root = tmp_path / "wts"
+    broken = root / "pipeline-g-eskayo-marvin-283"
+    broken.mkdir(parents=True)
+    (broken / ".git").write_text("gitdir: /nowhere/.git/worktrees/x")
+    (broken / "work.py").write_text("maybe the only copy")
+    monkeypatch.setattr(cs, "worktree_roots", lambda: [root])
+    result = cs.sweep_worktrees(pr_state=lambda r, b: None, is_claimed=lambda r, n: False)
+    assert [r["path"] for r in result["review"]] == [broken]
+    assert "no git record" in result["review"][0]["reason"]
+    assert (broken / "work.py").exists()
+
+
+def test_cwds_in_use_marks_a_worktree_a_process_is_inside(tmp_path, monkeypatch):
+    inside = tmp_path / "wts" / "a"
+    (inside / "sub").mkdir(parents=True)
+    monkeypatch.setattr(cs, "_cwds_in_use", lambda: {str((inside / "sub").resolve())})
+    assert cs._in_use(inside, cs._cwds_in_use()) is True
+    assert cs._in_use(tmp_path / "wts" / "b", cs._cwds_in_use()) is False
+    assert cs._in_use(tmp_path / "wts" / "a-other", cs._cwds_in_use()) is False
+
+
+# ── aerial screen-saver cache (macOS re-downloads a video almost daily) ─────
+
+def test_trim_aerials_keeps_only_the_newest_video(tmp_path):
+    import os
+    d = tmp_path / "videos"
+    d.mkdir()
+    for i, name in enumerate(["old.mov", "mid.mov", "new.mov"]):
+        (d / name).write_bytes(b"x" * 10)
+        os.utime(d / name, (1000 + i, 1000 + i))
+    (d / "notes.txt").write_text("not a video")
+    freed = cs.trim_aerial_videos(d)
+    assert sorted(p.name for p in d.iterdir()) == ["new.mov", "notes.txt"]
+    assert freed == 20
+    assert cs.trim_aerial_videos(d) == 0
+
+
+def test_trim_aerials_with_no_folder_does_nothing(tmp_path):
+    assert cs.trim_aerial_videos(tmp_path / "missing") == 0
+
+
+def test_the_daily_run_trims_aerials_and_logs_it(log_path, monkeypatch):
+    import os
+    d = cs.HOME / cs.AERIAL_SUBPATH  # conftest's temp home, never ~/Library
+    d.mkdir(parents=True)
+    for i, name in enumerate(["a.mov", "b.mov"]):
+        (d / name).write_bytes(b"x" * (3 * 2**20))
+        os.utime(d / name, (1000 + i, 1000 + i))
+    cs.run_daily_sweep(list_claimed_open_issues=lambda: [], list_worktrees=lambda: [], now=NOW)
+    assert [p.name for p in d.iterdir()] == ["b.mov"]
+    assert "aerial" in log_path.read_text() and "3 MiB" in log_path.read_text()
+
+
+def test_the_suite_never_points_the_sweep_at_the_real_home():
+    import pathlib
+    assert cs.HOME != pathlib.Path.home()
+    assert not str(cs.WORKTREES_ROOT).startswith(str(pathlib.Path.home() / ".agents-pipeline-worktrees"))
+
+
+def test_a_huge_leftover_file_is_not_committed_and_the_edits_stay_as_they_were(tmp_path, monkeypatch):
+    origin, clone, wt_path, git = _origin_clone_wt(tmp_path)
+    monkeypatch.setattr(cs, "BACKUP_MAX_FILE_BYTES", 1000)
+    (wt_path / "model.bin").write_bytes(b"x" * 5000)
+    (wt_path / "small.py").write_text("y")
+    wt = {"path": wt_path, "branch": "pipeline/g-eskayo/marvin#57", "clone": clone}
+    before = git("rev-parse", "HEAD", cwd=wt_path).stdout
+    assert cs.backup_worktree(wt, today="20261024") is None
+    assert git("rev-parse", "HEAD", cwd=wt_path).stdout == before  # nothing committed
+    assert git("diff", "--cached", "--name-only", cwd=wt_path).stdout == ""  # nothing left staged
+    assert sorted(git("status", "--porcelain", cwd=wt_path).stdout.split()) == ["??", "??", "model.bin", "small.py"]
+    assert git("--git-dir", str(origin), "branch", "--list", "backup/*", cwd=tmp_path).stdout == ""

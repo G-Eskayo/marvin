@@ -155,6 +155,16 @@ def _isolate_outcome_check(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_sweep_home(tmp_path_factory, monkeypatch):
+    # #629: the sweep backs up and removes worktrees under ~/.agents-pipeline-worktrees and every
+    # ~/Developer/*/.claude/worktrees, and deletes old aerial videos under ~/Library. Never the real ones.
+    import cleanup_sweep
+    fake = tmp_path_factory.mktemp("sweep-home")
+    monkeypatch.setattr(cleanup_sweep, "HOME", fake)
+    monkeypatch.setattr(cleanup_sweep, "WORKTREES_ROOT", fake / ".agents-pipeline-worktrees")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_session_work_state(tmp_path_factory, monkeypatch):
     # code_sync now reads session_work's live-session list; a test must never touch the real
     # ~/.claude/logs/sessions-active.json (a real live session on this machine could change outcomes).
