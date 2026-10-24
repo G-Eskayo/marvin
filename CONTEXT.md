@@ -1433,6 +1433,8 @@ MARVIN-as-OS north star).
 - **MARVIN Surface**: Gil's planned touch display with a holographic look. It is a Surface in the existing sense
   (somewhere Gil interacts with MARVIN), with at least *show* and *touch*. A future **physical build**, after MARVIN
   gets good at CAD and engineering software; the design only has to leave room for it.
+  Research pass 2026-10-21: `docs/research/marvin-surface-display-2026-10-21.md` (Gil's concept: transparent LCD
+  in front of an edge-lit acrylic light guide on a gently curved sheet held by end legs; build ladder V1–V3).
 - **Mirror**: a show-only endpoint (a screen behind two-way glass). Also a future physical build.
 - **Content**: anything MARVIN can put on an endpoint when asked ("show or say X on Y"): the brief, one article, a
   ticket, a chart, the build status. The ability is general; the **brief is its first content**, and solid content
