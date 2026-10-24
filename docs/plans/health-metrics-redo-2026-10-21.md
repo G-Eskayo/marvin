@@ -454,9 +454,19 @@ Lesion colours avoid every region hue, and the brain map's reserved amber means 
 ## 13. Decisions recorded
 
 - **Tab name: Vitals** (Gil, 2026-10-21). Health and Metrics become the one **Vitals** tab.
-- **Overview:** Gil leans toward (c), the globe that opens into each machine's brain. v3 designs (c); whether to also keep
-  (a) is still open.
-- **UI direction:** Gil leads it (§14).
+- **Overview: keep both** (Gil, 2026-10-22): the globe (c) as the default, plus a whole-system brain (a) one tap away.
+  v4 (§16) then turns the globe and the brain into the visual *style*, not the layout.
+- **Glow: medium** (`--glow 0.6`, the boot's middle level for the M mark) (Gil, 2026-10-22).
+- **Boot flows into Vitals: yes**, the M constellation dissolves into the overview on every launch (Gil, 2026-10-22).
+- **Collaborate more, and go beyond lists** (Gil, 2026-10-22): "Do you think this is a good way to visualize this
+  system that is supposed to look alive in functionality? Is there better ways to do this that work in this theme or
+  style that isn't just lists but cool interactive ways to understand the data in a 3d space". Answered by v4 (§16):
+  quick prototypes on real data, talked through with Gil before any polish.
+- **Bring Activity's live picture in** (Gil, 2026-10-22): "it could totally incorporate aspects and live visuals of
+  what's happening in the activity tab or reporting that's happening there. I'm not saying that I want to change the
+  activity tab." Activity's job events (`job_events`, ADR 0049 map events) become the firing and the traffic in
+  Vitals. Tapping one shows its current activity and links to the Activity entry. The Activity tab itself is unchanged.
+- **UI direction:** Gil leads it (§14, §16).
 
 ## 14. v3: Vitals as an app in MARVIN OS on the Surface
 
@@ -549,5 +559,67 @@ freshness and confidence, a 72 px RUN CLEANUP SWEEP button and NOT USEFUL.
 
 ## 15. Decisions for Gil
 
-They're in the PR description: the overview (c, or keep both), the glow intensity, and whether the boot flows into
-Vitals. The tab name (Vitals) is recorded as answered.
+v3's questions (overview, glow, boot flow) are answered and recorded in §13. v4's open questions are in §16 and in the PR
+description.
+
+## 16. v4: three views where position means something (Gil, 2026-10-22)
+
+**Why v4.** v3's globe and brain were pictures with checks pinned on them. Gil asked for something that looks alive and
+isn't lists. v4 keeps v3's look (glass, hairlines, glow 0.6, the boot) and explores three views where *where a thing
+sits* carries meaning.
+
+**What monitoring has to answer (Gil):**
+1. Is the system healthy?
+2. If not, where is it broken, and how do we fix it?
+3. What is happening on each device?
+4. Are we actually optimizing (ROI) and becoming less dependent on paid services?
+
+**Everything adapts as MARVIN grows (Gil).** Nodes, lanes and planets come from live state: the registry, machine
+profiles, jobs, launchd and the logs. Nothing is a hard-coded list, so a new machine, service or project appears with no
+code change. The prototype's data builder found 3 machines, 82 parts and 135 links on its own. The 2012 Mini shows
+dashed as "not read".
+
+**How we work (Gil):** quick interactive prototypes on real data first, then a talk-through with Gil before any polish.
+Every view works under 900 px, tapping anything shows the plain numbers, and there is one control per drill-down level.
+
+### The three views
+
+**1. Living network (default).** MARVIN's real parts as nodes, linked by real dependencies. Pulses carry real traffic:
+GitHub calls, syncs, ssh, ticket runs and Activity's job events. Node size shows load and colour shows health. A red
+node lights up everything that depends on it.
+![Network](../screenshots/vitals-v4-network-1440.png)
+![Network: GitHub red and what it affects](../screenshots/vitals-v4-network-github-red-1440.png)
+![Network at 860 px: the webhook](../screenshots/vitals-v4-network-webhook-860.png)
+
+**2. Time tunnel.** One lane per subsystem, with time flowing toward you. Storms show as red walls and loops as rings.
+Scrub back to compare weeks.
+![Tunnel](../screenshots/vitals-v4-tunnel-1440.png)
+![Tunnel at 860 px](../screenshots/vitals-v4-tunnel-860.png)
+
+**3. Planets.** One planet per machine with its jobs in orbit, and arcs for work moving between machines.
+![Planets](../screenshots/vitals-v4-planets-1440.png)
+![Planets: Mac mini in focus](../screenshots/vitals-v4-planets-mini-focus-1440.png)
+![Planets at 860 px](../screenshots/vitals-v4-planets-860.png)
+
+**Prototype:** `docs/screenshots/vitals-v4/index.html` (a switcher for Network, Tunnel and Planets; it remembers the last
+view). It runs on a snapshot of live data in `data.js`, built by `build_data.py` from every Mac in the registry
+(`~/.agents/venv/bin/python build_data.py --days 14`). It keeps only aggregates, so the data size is bounded by
+lanes x hours, not by log length.
+
+**Still rough:** labels overlap in Network, and the colours need work. That's expected at this stage.
+
+### What the prototypes surfaced (not yet verified)
+
+- The MacBook's last health check is 7 days old, so its health sweep may not be running.
+- The Mini's `~/.agents` sync shows as stuck in both directions.
+- 4,887 failed GitHub calls on the MacBook in 24 hours, with GitHub's allowance down to 4%.
+- A storm on 2026-10-21 at 14:00: 9,407 calls in one hour from unlabelled callers.
+- 18 parts show red, some from stale one-off failures (see question 3).
+
+### Questions for Gil (answered in the PR's Decisions section)
+
+1. **Network control:** an hour slider over the last 24 hours, or always "now"?
+2. **Tunnel:** does the red wedge help you spot a storm, or is the plain spike on the slider under it faster to read? If
+   the spike wins, the tunnel becomes a visual style rather than its own view.
+3. **Failures:** should a failure fade after a few hours, or stay red until something passes?
+4. **Cost:** should cost in dollars (the ROI question) get its own mode?
