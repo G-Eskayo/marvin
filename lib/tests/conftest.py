@@ -270,3 +270,25 @@ def _isolate_github_usage(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(github_usage, "CALLS_PATH", d / "gh-calls.jsonl")
     monkeypatch.setattr(github_usage, "BUDGET_PATH", d / "gh-budget.jsonl")
     monkeypatch.setattr(github_usage, "HOURLY_PATH", d / "gh-usage-hourly.json")
+
+
+@pytest.fixture
+def utc_tz():
+    """Fixture that sets TZ=UTC and restores the original timezone afterward.
+
+    Unlike monkeypatch.setenv, this manually calls time.tzset() in the correct
+    order to ensure timezone conversions use UTC for the duration of the test.
+    """
+    import os
+    import time
+    original_tz = os.environ.get("TZ")
+    try:
+        os.environ["TZ"] = "UTC"
+        time.tzset()
+        yield
+    finally:
+        if original_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = original_tz
+        time.tzset()

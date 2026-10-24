@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Research colony orchestrator (skills/research-colony/scripts/run_colony.py, ADR 0067): Mini-only with laptop fallback.
+     Scheduled for 09:00 on the Mini; if the Mini misses its deadline, the laptop's
+     research-colony-fallback runs at 10:00 (gated by brief_fallback.should_run()). -->
 <plist version="1.0">
 <dict>
     <key>Label</key>

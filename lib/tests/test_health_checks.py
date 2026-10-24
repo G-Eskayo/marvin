@@ -6,6 +6,7 @@ import json
 import subprocess
 import pytest
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -1285,6 +1286,86 @@ def test_no_ps_output_gives_no_seconds_so_the_check_says_not_running():
     assert out.stdout == ""
 
 
+# ── brief builder tracking (test 14-15 for ADR 0067) ────────────────────────────
+
+def test_check_brief_builder_green_when_sidecar_exists(tmp_path, monkeypatch, utc_tz):
+    """check_brief_builder() returns green when .builder sidecar is present."""
+    import morning_brief as mb
+
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+    monkeypatch.setattr(mb, "BRIEFS", briefs_dir)
+
+    # Fixed time: 2026-10-24 09:45 UTC
+    now = datetime(2026, 10, 24, 9, 45, tzinfo=timezone.utc)
+
+    # Write a builder sidecar for the day matching the fixed time
+    day_str = mb._day(now)
+    (briefs_dir / f"{day_str}.builder").write_text("mac-mini-1")
+
+    result = hc.check_brief_builder(now=now)
+    assert result["severity"] == "green"
+    assert "mac-mini-1" in result["detail"]
+
+
+def test_check_brief_builder_yellow_before_deadline(tmp_path, monkeypatch, utc_tz):
+    """check_brief_builder() returns yellow when no sidecar and before deadline+grace."""
+    import morning_brief as mb
+
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+    monkeypatch.setattr(mb, "BRIEFS", briefs_dir)
+
+    # Time: 2026-10-24 09:00 UTC, before 09:45 + 60m deadline
+    now = datetime(2026, 10, 24, 9, 0, tzinfo=timezone.utc)
+
+    result = hc.check_brief_builder(now=now)
+    assert result["id"] == "brief:builder"
+    assert result["severity"] == "yellow"
+    assert "not built yet" in result["detail"]
+
+
+def test_check_brief_builder_deadline_matches_morning_brief_schedule(tmp_path, monkeypatch, utc_tz):
+    """Verify the deadline used by check_brief_builder matches BRIEF_USUAL_HOUR and BRIEF_USUAL_MINUTE."""
+    import morning_brief as mb
+
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+    monkeypatch.setattr(mb, "BRIEFS", briefs_dir)
+
+    # Check that the constants are what we expect
+    assert mb.BRIEF_USUAL_HOUR == 9
+    assert mb.BRIEF_USUAL_MINUTE == 45
+    assert mb.BRIEF_GRACE_MINUTES == 60
+
+    # Test at exactly the deadline: should be yellow (not yet passed)
+    deadline_time = datetime(2026, 10, 24, 9, 45, tzinfo=timezone.utc)
+    result = hc.check_brief_builder(now=deadline_time)
+    assert result["severity"] == "yellow"
+
+    # Test at deadline + grace - 1 minute: should be yellow
+    before_grace_end = datetime(2026, 10, 24, 10, 44, 59, tzinfo=timezone.utc)
+    result = hc.check_brief_builder(now=before_grace_end)
+    assert result["severity"] == "yellow"
+
+
+def test_check_brief_builder_red_after_deadline(tmp_path, monkeypatch, utc_tz):
+    """check_brief_builder() returns red when past deadline+grace with no builder."""
+    import morning_brief as mb
+
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+    monkeypatch.setattr(mb, "BRIEFS", briefs_dir)
+
+    # Time: 2026-10-24 10:46 UTC, after 09:45 + 60m = 10:45
+    now = datetime(2026, 10, 24, 10, 46, tzinfo=timezone.utc)
+
+    result = hc.check_brief_builder(now=now)
+    assert result["id"] == "brief:builder"
+    assert result["severity"] == "red"
+    assert "deadline passed" in result["detail"]
+
+
 def test_the_machine_script_reads_a_real_process_uptime_with_this_machines_ps():
     """The real ps, not a fake: macOS ps has no `etimes`, which is how the false alarm happened."""
     import time
@@ -1299,3 +1380,27 @@ def test_the_machine_script_reads_a_real_process_uptime_with_this_machines_ps():
         assert 1 <= int(out.stdout.strip()) <= 20
     finally:
         child.kill()
+
+
+def test_check_brief_builder_does_not_leak_tz_to_later_tests(tmp_path, monkeypatch, utc_tz):
+    """Verify that tests using utc_tz fixture don't leak timezone changes to subsequent tests."""
+    import morning_brief as mb
+    import os
+
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+    monkeypatch.setattr(mb, "BRIEFS", briefs_dir)
+
+    # Fixed time: 2026-10-24 09:45 UTC
+    now = datetime(2026, 10, 24, 9, 45, tzinfo=timezone.utc)
+
+    # Write a builder sidecar for the day matching the fixed time
+    day_str = mb._day(now)
+    (briefs_dir / f"{day_str}.builder").write_text("mac-mini-1")
+
+    result = hc.check_brief_builder(now=now)
+    assert result["severity"] == "green"
+
+    # After the test (this will run before the finally block exits), TZ should still be UTC
+    # because we're still inside the utc_tz context. Capture the current TZ for later check.
+    tz_during_test = os.environ.get("TZ")

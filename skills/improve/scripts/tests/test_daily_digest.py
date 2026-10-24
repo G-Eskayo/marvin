@@ -12,6 +12,11 @@ sys.path.insert(0, str(SCRIPTS))
 
 import daily_digest as dd  # noqa: E402
 
+# Add lib to path for brief_fallback
+LIB = Path(__file__).resolve().parents[3] / "lib"
+sys.path.insert(0, str(LIB))
+import brief_fallback  # noqa: E402
+
 
 # ── bench_summary tests ────────────────────────────────────────────────────────
 
@@ -295,6 +300,11 @@ def test_main_short_circuits_when_out_file_exists(tmp_path, monkeypatch):
     monkeypatch.setattr(dd, "OUT_FILE", out_file)
     monkeypatch.setattr(dd, "DIGEST_DIR", digest_dir)
 
+    # Mock brief_fallback.should_run to return a positive decision
+    def mock_should_run(*args, **kwargs):
+        return brief_fallback.Decision(True, "primary")
+    monkeypatch.setattr(brief_fallback, "should_run", mock_should_run)
+
     # Patch functions with raise-on-call sentinels: if any of these are called,
     # it means the short-circuit didn't work
     def raise_roadmap():
@@ -328,6 +338,114 @@ def test_main_short_circuits_when_out_file_exists(tmp_path, monkeypatch):
 
     # Verify content is unchanged
     assert out_file.read_text() == original_content
+
+
+def test_main_gates_on_should_run_decision(tmp_path, monkeypatch):
+    """main() returns early if brief_fallback.should_run() says not to build."""
+    out_file = tmp_path / "2026-10-22.md"
+    digest_dir = tmp_path
+    monkeypatch.setattr(dd, "OUT_FILE", out_file)
+    monkeypatch.setattr(dd, "DIGEST_DIR", digest_dir)
+
+    # Mock brief_fallback.should_run to return a negative decision
+    def mock_should_run(*args, **kwargs):
+        return brief_fallback.Decision(False, "standby: before deadline")
+    monkeypatch.setattr(brief_fallback, "should_run", mock_should_run)
+
+    # Patch functions with raise-on-call sentinels
+    def raise_roadmap():
+        raise AssertionError("roadmap_summary should not be called when should_run returns False")
+
+    monkeypatch.setattr(dd, "roadmap_summary", raise_roadmap)
+
+    # Capture stdout
+    import io
+    old_stdout = sys.stdout
+    sys.stdout = io.StringIO()
+
+    try:
+        dd.main()
+        output = sys.stdout.getvalue()
+    finally:
+        sys.stdout = old_stdout
+
+    # Verify the gate message was printed
+    assert "not building" in output
+    assert "standby: before deadline" in output
+
+    # Verify file was not created
+    assert not out_file.exists()
+
+
+def test_main_toctou_recheck_before_write(tmp_path, monkeypatch):
+    """main() rechecks that the output hasn't been produced before writing (test 4, TOCTOU)."""
+    out_file = tmp_path / "2026-10-22.md"
+    digest_dir = tmp_path
+    monkeypatch.setattr(dd, "OUT_FILE", out_file)
+    monkeypatch.setattr(dd, "DIGEST_DIR", digest_dir)
+
+    # Mock brief_fallback.should_run to return True
+    def mock_should_run(*args, **kwargs):
+        return brief_fallback.Decision(True, "primary")
+    monkeypatch.setattr(brief_fallback, "should_run", mock_should_run)
+
+    # First produced() check: file doesn't exist
+    # Then after call_claude, simulate another builder creating the file
+    # Then the TOCTOU recheck should find it
+    produced_call_count = [0]
+
+    original_produced = brief_fallback.produced
+    def mock_produced(path, *args, **kwargs):
+        produced_call_count[0] += 1
+        if produced_call_count[0] == 1:
+            # First check: file doesn't exist
+            return False
+        else:
+            # After call_claude, file now exists (created by another builder)
+            return True
+
+    monkeypatch.setattr(brief_fallback, "produced", mock_produced)
+
+    # Mock other functions
+    def mock_roadmap():
+        return "roadmap content"
+    def mock_handoffs():
+        return "handoffs content"
+    def mock_qa_kb():
+        return "qa_kb content"
+    def mock_bench():
+        return "bench content"
+    def mock_queue():
+        return "queue content"
+    def mock_health():
+        return "health content"
+    def mock_claude(prompt: str):
+        return "claude output"
+
+    monkeypatch.setattr(dd, "roadmap_summary", mock_roadmap)
+    monkeypatch.setattr(dd, "recent_handoffs_summary", mock_handoffs)
+    monkeypatch.setattr(dd, "qa_kb_summary", mock_qa_kb)
+    monkeypatch.setattr(dd, "bench_summary", mock_bench)
+    monkeypatch.setattr(dd, "improvement_queue_summary", mock_queue)
+    monkeypatch.setattr(dd, "reviewer_health_summary", mock_health)
+    monkeypatch.setattr(dd, "call_claude", mock_claude)
+
+    # Capture stdout
+    import io
+    old_stdout = sys.stdout
+    sys.stdout = io.StringIO()
+
+    try:
+        dd.main()
+        output = sys.stdout.getvalue()
+    finally:
+        sys.stdout = old_stdout
+
+    # Verify that we detected the TOCTOU and returned early
+    assert "Another builder beat us to it" in output
+
+    # Verify file was not written by us
+    assert not out_file.exists()
 
 
 # ── missing helper test ────────────────────────────────────────────────────────

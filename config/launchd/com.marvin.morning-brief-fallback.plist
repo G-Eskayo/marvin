@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Fallback morning brief (ADR 0067): laptop-only, runs 60 minutes after the primary (10:45).
+     The script's own brief_fallback.should_run() gate decides whether to build. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.marvin.morning-brief-fallback</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/gileskayo/.agents/venv/bin/python</string>
+        <string>/Users/gileskayo/.agents/lib/morning_brief.py</string>
+        <string>build</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>10</integer>
+        <key>Minute</key>
+        <integer>45</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/gileskayo/.claude/logs/morning-brief.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/gileskayo/.claude/logs/morning-brief-error.log</string>
+</dict>
+</plist>

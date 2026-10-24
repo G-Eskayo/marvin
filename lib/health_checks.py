@@ -747,6 +747,30 @@ def check_output_contracts() -> list[dict]:
     return output_contracts.health_findings()
 
 
+def check_brief_builder(now: datetime | None = None) -> dict:
+    """Which machine built today's brief? Green with the machine name when set;
+    yellow "not built yet" before deadline+grace; red after deadline with nothing built."""
+    from datetime import timedelta
+    import morning_brief as mb
+
+    cid, label = "brief:builder", "Which machine built today's brief"
+    now = now or _now()
+
+    builder = mb.builder_of(now=now)
+    if builder:
+        return _result(cid, label, "green", f"built by {builder}")
+
+    # Check if we're past the deadline
+    local_now = now.astimezone()
+    deadline = local_now.replace(hour=mb.BRIEF_USUAL_HOUR, minute=mb.BRIEF_USUAL_MINUTE, second=0, microsecond=0)
+    deadline_with_grace = deadline + timedelta(minutes=mb.BRIEF_GRACE_MINUTES)
+
+    if local_now < deadline_with_grace:
+        return _result(cid, label, "yellow", f"not built yet (deadline {deadline.strftime('%H:%M')} + {mb.BRIEF_GRACE_MINUTES}m grace)")
+
+    return _result(cid, label, "red", f"deadline passed ({deadline_with_grace.strftime('%H:%M')}) with no builder recorded")
+
+
 def check_parallel_dispatch() -> dict:
 	"""Check if parallel dispatch is keeping up with the queue."""
 	cid, label = "dispatch:parallel", "Parallel dispatch keeping up"
@@ -990,7 +1014,7 @@ if [ -f "$LEDGER" ]; then echo "disk_ledger=$(tail -14 "$LEDGER" | /usr/bin/tr '
 # host only (ADR 0032, 0033), "laptop" = only where Gil sits. Edit here when a job is deliberately moved; a job that
 # is not listed is reported as unplaced so a new job cannot silently run on only one machine.
 JOB_PLACEMENT = {
-    "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "both", "research-colony": "both",
+    "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "mini", "research-colony": "mini",
     "desktoplive": "both", "dashboard-webhook": "both",  # webhook on both until #112 (ADR 0032)
     "ticket-pipeline": "both",  # mini scans; the laptop's copy is a standby that scans only if the mini goes quiet (scanner_role.py)
     "architecture-review": "mini", "auto-fix": "mini", "cron-health": "mini", "health-check": "mini",
@@ -999,10 +1023,12 @@ JOB_PLACEMENT = {
     "cleanup-sweep": "both",  # daily: each machine sweeps its own pipeline worktrees (lib/cleanup_sweep.py)
     "machine-resources": "both",  # 30s: samples disk/mem/swap/CPU/GPU for resources panel (#130)
     "dashboard-launch": "laptop",
-    "morning-brief": "laptop",  # one writer (the brief syncs to the mini via ~/.claude); after the digests (lib/morning_brief.py)
+    "morning-brief": "mini",  # primary: mini builds. fallback: laptop fills in if mini misses deadline (lib/morning_brief.py, brief_fallback.py)
     # the website map (#189): rebuilt nightly and after MARVIN changes on the mini, where the dev site runs; the nightly
     # job also publishes it to production (ADR 0057), so it must never run on the laptop
     "snapshot-deploy-nightly": "mini", "snapshot-deploy-reactive": "mini",
+    # fallback jobs (ADR 0067): run on laptop only if primary misses deadline
+    "daily-digest-fallback": "laptop", "research-colony-fallback": "laptop", "morning-brief-fallback": "laptop",
 }
 
 
@@ -1475,6 +1501,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("dispatch:parallel", "Parallel dispatch keeping up", check_parallel_dispatch, CHECK_BUDGET_S),
         ("purpose:missed", "Purpose metrics", check_missed_purposes, CHECK_BUDGET_S),
         ("contract", "Output contracts", check_output_contracts, CHECK_BUDGET_S),
+        ("brief:builder", "Which machine built today's brief", check_brief_builder, CHECK_BUDGET_S),
         ("profile:missing", "Projects without an execution profile", check_missing_profiles, CHECK_BUDGET_S),
         ("profile:no-machines", "Projects with no machines", check_unrunnable_profiles, CHECK_BUDGET_S),
         ("triggers:missed", "Dashboard triggers cover every change", check_trigger_coverage, CHECK_BUDGET_S),

@@ -1,8 +1,11 @@
 """The morning brief (marvin#306): one short start-of-day brief, built from what MARVIN already knows, no model run."""
 import json
 from datetime import datetime, timezone
+from pathlib import Path
+from unittest.mock import MagicMock
 
 import morning_brief as mb
+import brief_fallback
 
 NOW = datetime(2026, 10, 9, 9, 45, tzinfo=timezone.utc)
 
@@ -123,3 +126,123 @@ def test_open_prs_marks_waiting_from_one_graphql_read(monkeypatch):
     monkeypatch.setattr(od, "fetch", lambda repos, run=None: None)
     brief = mb.gather(NOW, {"open_prs": mb._open_prs})
     assert brief["open_prs"] is None and "open PRs" in brief["missing"][0]
+
+
+def test_build_idempotency_with_fallback_gate(tmp_path, monkeypatch, utc_tz):
+    """build() is idempotent: calling it twice on the same day produces the same result (test 16)."""
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+    monkeypatch.setattr(mb, "BRIEFS", briefs_dir)
+
+    # Mock brief_fallback.should_run and brief_fallback.produced
+    def mock_should_run(*args, **kwargs):
+        return brief_fallback.Decision(True, "primary")
+    monkeypatch.setattr(brief_fallback, "should_run", mock_should_run)
+
+    # Mock produced() to check locally only (no remote check)
+    local_produced_call_count = [0]
+    original_produced = brief_fallback.produced
+    def mock_produced(local_path, remote_path=None, host=None, run=None):
+        local_produced_call_count[0] += 1
+        if local_path.exists():
+            try:
+                content = local_path.read_text()
+                if content and content.strip():
+                    return True
+            except Exception:
+                pass
+        return False
+    monkeypatch.setattr(brief_fallback, "produced", mock_produced)
+
+    # Mock sources
+    def mock_sources(**over):
+        return {
+            "open_prs": lambda: [],
+            "red_checks": lambda: [],
+            "human_tickets": lambda: [],
+            "launches": lambda: [],
+            "merged": lambda: [],
+            "deadlines": lambda: [],
+            "top_tickets": lambda: [],
+            **over
+        }
+
+    # First build
+    result1 = mb.build(NOW, builder_reason="test-builder-1", sources=mock_sources())
+    assert result1 is not None
+    content1 = result1.read_text()
+
+    # Second build should return early and not overwrite
+    result2 = mb.build(NOW, builder_reason="test-builder-2", sources=mock_sources())
+    assert result2 is not None
+    content2 = result2.read_text()
+
+    # Content should be identical (no overwrite happened)
+    assert content1 == content2
+    # Verify produced() was called at least once
+    assert local_produced_call_count[0] > 0
+
+
+def test_builder_of_reads_sidecar(tmp_path, monkeypatch):
+    """builder_of() reads the .builder sidecar file (round-trip test)."""
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+    monkeypatch.setattr(mb, "BRIEFS", briefs_dir)
+
+    day = "2026-10-24"
+    builder_label = "macbook-pro-1"
+
+    # Write a sidecar
+    sidecar = briefs_dir / f"{day}.builder"
+    sidecar.write_text(builder_label)
+
+    # Read it back
+    result = mb.builder_of(day)
+    assert result == builder_label
+
+
+def test_builder_of_returns_none_for_missing(tmp_path, monkeypatch):
+    """builder_of() returns None when sidecar doesn't exist."""
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+    monkeypatch.setattr(mb, "BRIEFS", briefs_dir)
+
+    result = mb.builder_of("2026-10-24")
+    assert result is None
+
+
+def test_builder_of_default_day_uses_injected_now_not_wall_clock(tmp_path, monkeypatch, utc_tz):
+    """builder_of(now=...) with no day arg uses the injected datetime, not wall clock."""
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+    monkeypatch.setattr(mb, "BRIEFS", briefs_dir)
+
+    # Use a fixed time: 2026-10-24 09:45 UTC
+    injected_now = datetime(2026, 10, 24, 9, 45, tzinfo=timezone.utc)
+
+    # Write a sidecar for that specific day
+    day_str = mb._day(injected_now)
+    assert day_str == "2026-10-24"
+    (briefs_dir / f"{day_str}.builder").write_text("test-builder")
+
+    # Call with the injected time, no explicit day
+    result = mb.builder_of(now=injected_now)
+    assert result == "test-builder"
+
+
+def test_builder_of_default_matches_build_local_date(tmp_path, monkeypatch, utc_tz):
+    """builder_of() with no day uses the same day as build() would use for the same now."""
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+    monkeypatch.setattr(mb, "BRIEFS", briefs_dir)
+
+    # Use a fixed time
+    fixed_now = datetime(2026, 10, 24, 15, 30, tzinfo=timezone.utc)
+
+    # The day should match what _day() returns
+    expected_day = mb._day(fixed_now)
+    (briefs_dir / f"{expected_day}.builder").write_text("matching-builder")
+
+    # builder_of with the same injected time should find it
+    result = mb.builder_of(now=fixed_now)
+    assert result == "matching-builder"

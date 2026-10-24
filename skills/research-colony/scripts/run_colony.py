@@ -11,8 +11,21 @@ import source_monitor
 import correlate
 import research_digest
 
+# Add lib to path for brief_fallback
+sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+import brief_fallback  # noqa: E402
+
 
 def main() -> int:
+    # Gate: should this machine build?
+    from datetime import date
+    today = date.today().isoformat()
+    out_path = Path.home() / ".claude" / "research-digest" / f"{today}.md"
+    decision = brief_fallback.should_run(local_path=out_path, usual_hour=9, usual_minute=0, grace_minutes=60)
+    if not decision.should_build:
+        print(f"[colony] {decision.reason} — not building", file=sys.stderr)
+        return 0
+
     print("[colony] === source monitor ===", file=sys.stderr)
     source_monitor.main()
 

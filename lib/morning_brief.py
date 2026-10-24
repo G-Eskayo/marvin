@@ -24,6 +24,12 @@ from pathlib import Path
 from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import brief_fallback  # noqa: E402
+import machine_profile  # noqa: E402
+
+BRIEF_USUAL_HOUR = 9
+BRIEF_USUAL_MINUTE = 45
+BRIEF_GRACE_MINUTES = 60
 
 CLAUDE = Path.home() / ".claude"
 BRIEFS = CLAUDE / "briefs"
@@ -277,6 +283,46 @@ def _day(now: datetime) -> str:
     return now.astimezone().strftime("%Y-%m-%d")
 
 
+def build(now: datetime | None = None, builder_reason: str | None = None, sources: dict[str, Callable] | None = None) -> Path | None:
+    """Build today's brief with fallback gate and builder tracking.
+
+    Returns the path on success, or None if the gate says not to build.
+    Writes a {day}.builder sidecar tracking which machine built the brief.
+    """
+    now = now or datetime.now(timezone.utc)
+    day = _day(now)
+    path = BRIEFS / f"{day}.md"
+
+    # Gate: should this machine build?
+    decision = brief_fallback.should_run(local_path=path, usual_hour=BRIEF_USUAL_HOUR, usual_minute=BRIEF_USUAL_MINUTE, grace_minutes=BRIEF_GRACE_MINUTES)
+    if not decision.should_build:
+        print(f"[morning-brief] {decision.reason} — not building", flush=True)
+        return None
+
+    # Already produced locally or on remote?
+    if brief_fallback.produced(path):
+        print(f"[morning-brief] Today's brief already exists: {path}", flush=True)
+        return path
+
+    # Do the actual build
+    BRIEFS.mkdir(parents=True, exist_ok=True)
+    content = render(gather(now, sources), now)
+
+    # TOCTOU: recheck that nothing else built in the meantime
+    if brief_fallback.produced(path):
+        print(f"[morning-brief] Another builder beat us to it: {path}", flush=True)
+        return path
+
+    path.write_text(content)
+
+    # Write builder sidecar
+    builder = builder_reason or machine_profile.machine_label()
+    (BRIEFS / f"{day}.builder").write_text(builder)
+
+    print(f"[morning-brief] Written to {path} (built by {builder})", flush=True)
+    return path
+
+
 def write(now: datetime | None = None, sources: dict[str, Callable] | None = None) -> Path:
     now = now or datetime.now(timezone.utc)
     BRIEFS.mkdir(parents=True, exist_ok=True)
@@ -307,9 +353,32 @@ def read_dates() -> list[datetime]:
     return _dates(".read")
 
 
+def builder_of(day: str | None = None, now: datetime | None = None) -> str | None:
+    """Read which machine built a given day's brief.
+
+    Args:
+        day: ISO date string (defaults to computed from now)
+        now: datetime to compute the day from (defaults to now UTC)
+
+    Returns the machine label string, or None if not recorded.
+    """
+    if day is None:
+        day = _day(now or datetime.now(timezone.utc))
+
+    sidecar = BRIEFS / f"{day}.builder"
+    if sidecar.exists():
+        try:
+            return sidecar.read_text().strip()
+        except Exception:
+            return None
+    return None
+
+
 if __name__ == "__main__":
     if sys.argv[1:] == ["build"]:
-        print(write())
+        result = build()
+        if result:
+            print(result)
     elif sys.argv[1:] == ["show"]:
         print(show_today() or "No brief for today yet.")
     else:
