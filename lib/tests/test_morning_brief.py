@@ -123,3 +123,174 @@ def test_open_prs_marks_waiting_from_one_graphql_read(monkeypatch):
     monkeypatch.setattr(od, "fetch", lambda repos, run=None: None)
     brief = mb.gather(NOW, {"open_prs": mb._open_prs})
     assert brief["open_prs"] is None and "open PRs" in brief["missing"][0]
+
+
+def test_write_is_idempotent_against_an_existing_file(tmp_path, monkeypatch):
+    """write() returns the path without rewriting if it already exists and has no gaps."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    import machine_profile
+    monkeypatch.setattr(machine_profile, "machine_label", lambda: "mac-mini-1")
+    now = NOW
+
+    path = mb.write(now, _sources())
+    first_content = path.read_text()
+    first_mtime = path.stat().st_mtime
+
+    import time
+    time.sleep(0.01)
+
+    path2 = mb.write(now, _sources(open_prs=lambda: []))
+    assert path2 == path
+    assert path2.read_text() == first_content
+    assert path2.stat().st_mtime == first_mtime
+
+
+def test_write_records_who_built_it(tmp_path, monkeypatch):
+    """write() creates a .built-by sidecar with machine label and reason."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    import machine_profile
+    monkeypatch.setattr(machine_profile, "machine_label", lambda: "mac-mini-1")
+
+    path = mb.write(NOW, _sources(), builder_reason="fallback")
+    sidecar = tmp_path / "2026-10-09.built-by"
+
+    assert sidecar.exists()
+    assert sidecar.read_text() == "mac-mini-1: fallback"
+
+
+def test_builder_of_reads_the_sidecar(tmp_path, monkeypatch):
+    """builder_of() reads and returns the .built-by sidecar content."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+
+    sidecar = tmp_path / "2026-10-09.built-by"
+    sidecar.write_text("macbook-pro: fallback")
+
+    result = mb.builder_of(NOW)
+    assert result == "macbook-pro: fallback"
+
+
+def test_builder_of_returns_none_when_sidecar_missing(tmp_path, monkeypatch):
+    """builder_of() returns None if .built-by doesn't exist."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    result = mb.builder_of(NOW)
+    assert result is None
+
+
+def test_build_checks_fallback_gate(tmp_path, monkeypatch):
+    """build() calls brief_fallback.should_run() before writing."""
+    import brief_fallback
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+
+    gate_called = []
+
+    def mock_should_run(**kwargs):
+        gate_called.append(kwargs)
+        return brief_fallback.Decision(False, "test: skipped")
+
+    monkeypatch.setattr(brief_fallback, "should_run", mock_should_run)
+
+    result = mb.build(NOW, _sources())
+
+    assert result is None
+    assert len(gate_called) == 1
+    assert gate_called[0]["usual_hour"] == 9
+    assert gate_called[0]["usual_minute"] == 45
+
+
+def test_build_called_with_explicit_parameters(tmp_path, monkeypatch):
+    """build() accepts custom usual_hour/minute parameters."""
+    import brief_fallback
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    import machine_profile
+    monkeypatch.setattr(machine_profile, "machine_label", lambda: "mini")
+
+    gate_called = []
+
+    def mock_should_run(**kwargs):
+        gate_called.append(kwargs)
+        return brief_fallback.Decision(True, "test: should build")
+
+    monkeypatch.setattr(brief_fallback, "should_run", mock_should_run)
+
+    result = mb.build(NOW, _sources(), usual_hour=10, usual_minute=30)
+
+    assert result is not None
+    assert gate_called[0]["usual_hour"] == 10
+    assert gate_called[0]["usual_minute"] == 30
+
+
+def test_build_default_matches_the_mini_schedule(tmp_path, monkeypatch):
+    """build() defaults to the Mini's schedule: 09:45."""
+    import inspect
+    sig = inspect.signature(mb.build)
+    assert sig.parameters["usual_hour"].default == 9
+    assert sig.parameters["usual_minute"].default == 45
+
+
+def test_write_rebuilds_when_a_feed_was_missing_and_now_exists(tmp_path, monkeypatch):
+    """write() rebuilds if file exists but contains a gap string (feed that was missing is now ready)."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    import machine_profile
+    monkeypatch.setattr(machine_profile, "machine_label", lambda: "mac-mini-1")
+    now = NOW
+
+    # First write with a missing digest feed
+    path = mb.write(now, _sources(digest_idea=lambda: (_ for _ in ()).throw(OSError("no file"))))
+    content1 = path.read_text()
+    assert "couldn't read the daily digest" in content1
+
+    import time
+    time.sleep(0.01)
+
+    # Second write with digest feed now available
+    path2 = mb.write(now, _sources())
+    content2 = path2.read_text()
+
+    assert path2 == path
+    assert content2 != content1  # file was rewritten
+    assert "couldn't read the daily digest" not in content2
+    assert path2.stat().st_mtime > path.stat().st_mtime or content1 != content2
+
+
+def test_write_stays_put_when_feed_is_still_missing(tmp_path, monkeypatch):
+    """write() does not rebuild if file exists and gaps are still there."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    import machine_profile
+    monkeypatch.setattr(machine_profile, "machine_label", lambda: "mac-mini-1")
+    now = NOW
+
+    # First write with a missing digest feed
+    path = mb.write(now, _sources(digest_idea=lambda: (_ for _ in ()).throw(OSError("no file"))))
+    content1 = path.read_text()
+    first_mtime = path.stat().st_mtime
+
+    import time
+    time.sleep(0.01)
+
+    # Second write with digest feed still missing
+    path2 = mb.write(now, _sources(digest_idea=lambda: (_ for _ in ()).throw(OSError("no file"))))
+    content2 = path2.read_text()
+
+    assert path2 == path
+    assert content2 == content1  # file was not rewritten
+    assert path2.stat().st_mtime == first_mtime
+
+
+def test_digest_idea_raises_when_no_digest_file_exists_yet():
+    """_digest_idea() raises OSError when no digest file exists, not returns None."""
+    now = NOW
+    try:
+        mb._digest_idea(now)
+        assert False, "Expected OSError"
+    except OSError as e:
+        assert "no digest file found" in str(e)
+
+
+def test_research_idea_raises_when_no_research_file_exists_yet():
+    """_research_idea() raises OSError when no research file exists, not returns None."""
+    now = NOW
+    try:
+        mb._research_idea(now)
+        assert False, "Expected OSError"
+    except OSError as e:
+        assert "no research file found" in str(e)

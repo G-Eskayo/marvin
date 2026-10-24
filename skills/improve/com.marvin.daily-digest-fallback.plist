@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Daily digest fallback (skills/improve/scripts/daily_digest.py, marvin#458 AC1): runs on the MacBook
+     if the Mini hasn't produced a digest by 09:30. Scheduled one hour after the primary's usual 08:30 time.
+     Install: cp this to ~/Library/LaunchAgents/ and `launchctl bootstrap gui/$(id -u) <that file>`. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.marvin.daily-digest-fallback</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>cd ~/.agents && ~/.agents/venv/bin/python ~/.agents/skills/improve/scripts/daily_digest.py >> ~/.claude/logs/daily-digest.log 2>> ~/.claude/logs/daily-digest-error.log</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>9</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+</dict>
+</plist>

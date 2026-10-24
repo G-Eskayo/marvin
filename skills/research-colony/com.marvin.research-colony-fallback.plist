@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Research colony fallback (skills/research-colony/scripts/run_colony.py, marvin#458 AC1): runs on the MacBook
+     if the Mini hasn't produced a research digest by 10:00. Scheduled one hour after the primary's usual 09:00 time.
+     Install: cp this to ~/Library/LaunchAgents/ and `launchctl bootstrap gui/$(id -u) <that file>`. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.marvin.research-colony-fallback</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>~/.agents/venv/bin/python ~/.agents/skills/research-colony/scripts/run_colony.py >> ~/.claude/logs/research-colony.log 2>> ~/.claude/logs/research-colony-error.log</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>10</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+</dict>
+</plist>

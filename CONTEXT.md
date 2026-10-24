@@ -1463,9 +1463,14 @@ MARVIN-as-OS north star).
   opens it in the MARVIN app), at **session start on whichever Mac Gil starts on**, and by **email**, and MARVIN keeps
   trying new ways. Which channels Gil actually opens is measured the same way as item ranking, so channels nobody uses
   get dropped. This is a start to something meant to grow much bigger.
-- **Brief owner** (decided 2026-10-15): the **Mac Mini** gathers the feeds and builds the brief before Gil wakes. The
-  MacBook builds it only if the Mini hasn't by an hour after its usual time. The research colony and daily digest no
-  longer run on both Macs (see ADR 0067).
+- **Brief owner** (decided 2026-10-15, AC1 2026-10-24): the **Mac Mini** gathers the feeds and builds the brief before Gil
+  wakes. The MacBook builds it only if the Mini hasn't by one hour after the Mini's usual time. Schedule: **daily digest**
+  Mini 08:30 / MacBook fallback 09:30; **research colony** Mini 09:00 / MacBook fallback 10:00; **morning brief** Mini
+  09:45 / MacBook fallback 10:45. Runs after the digest and colony finish and trigger an event-driven merge of their output.
+  The gate checks local wall-clock plus the primary's actual output file read live over SSH (no assumption of clock sync).
+  Event-driven merge fires after whichever machine's digest/colony run finishes last, merges digest and research output only
+  (not the brief itself), and the actual Mini/MacBook launchctl bootstrap swap (AC1 step 18b) is a manual step on each
+  physical device.
 - **Item layers** (decided 2026-10-15): every brief item carries three layers, all prepared when the brief is built:
   (1) **the line** (one sentence, what the brief shows or says), (2) **the summary** (what happened, why it matters to
   Gil, what he could do), (3) **the source** (the original article or paper, plus links to related tickets and

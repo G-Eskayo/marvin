@@ -1299,3 +1299,58 @@ def test_the_machine_script_reads_a_real_process_uptime_with_this_machines_ps():
         assert 1 <= int(out.stdout.strip()) <= 20
     finally:
         child.kill()
+
+
+# ── brief builder ────────────────────────────────────────────────────────
+
+def test_check_brief_builder_reports_the_machine(tmp_path, monkeypatch):
+    """check_brief_builder() reads the sidecar and reports green with the builder."""
+    import morning_brief
+    monkeypatch.setattr(morning_brief, "BRIEFS", tmp_path)
+
+    now = datetime.now(timezone.utc)
+    day = now.astimezone().strftime("%Y-%m-%d")
+    sidecar = tmp_path / f"{day}.built-by"
+    sidecar.write_text("mac-mini-1: primary")
+
+    result = hc.check_brief_builder()
+    assert result["severity"] == "green"
+    assert "mac-mini-1: primary" in result["detail"]
+
+
+def test_check_brief_builder_yellow_when_nothing_built_yet(tmp_path, monkeypatch):
+    """check_brief_builder() returns yellow when no sidecar exists and deadline has passed."""
+    import morning_brief
+    monkeypatch.setattr(morning_brief, "BRIEFS", tmp_path)
+
+    # Time is well after the deadline (09:45 + 60 min grace = 10:45)
+    # Use 22:00 UTC which is definitely after 10:45 in any timezone
+    now = datetime(2026, 10, 9, 22, 0, tzinfo=timezone.utc)
+
+    result = hc.check_brief_builder(now)
+    assert result["severity"] == "yellow"
+    assert "No brief built yet today" in result["detail"] and "past deadline" in result["detail"]
+
+
+def test_check_brief_builder_green_not_due_yet_before_deadline(tmp_path, monkeypatch):
+    """check_brief_builder() returns green with 'Not due yet' when no sidecar exists but deadline hasn't passed."""
+    import morning_brief
+    monkeypatch.setattr(morning_brief, "BRIEFS", tmp_path)
+
+    # Time is well before the deadline (09:45)
+    # Use 08:00 UTC which is safely before the deadline in any timezone
+    now = datetime(2026, 10, 9, 8, 0, tzinfo=timezone.utc)
+
+    result = hc.check_brief_builder(now)
+    assert result["severity"] == "green"
+    assert "Not due yet" in result["detail"]
+
+
+def test_job_placement_reflects_the_new_ownership():
+    """JOB_PLACEMENT correctly has daily/research digests on mini, briefs on both with fallback on laptop."""
+    assert hc.JOB_PLACEMENT["daily-digest"] == "mini"
+    assert hc.JOB_PLACEMENT["research-colony"] == "mini"
+    assert hc.JOB_PLACEMENT["morning-brief"] == "mini"
+    assert hc.JOB_PLACEMENT["daily-digest-fallback"] == "laptop"
+    assert hc.JOB_PLACEMENT["research-colony-fallback"] == "laptop"
+    assert hc.JOB_PLACEMENT["morning-brief-fallback"] == "laptop"

@@ -124,8 +124,6 @@ def _top_tickets() -> list[dict]:
 
 
 def _first_paragraph(path: Path, heading: str | None) -> str | None:
-    if not path.exists():
-        return None
     text = path.read_text()
     if heading:
         m = re.search(rf"^## {re.escape(heading)}\s*$\n+(.+?)(?:\n\n|\n##|\Z)", text, re.M | re.S)
@@ -138,15 +136,20 @@ def _first_paragraph(path: Path, heading: str | None) -> str | None:
 def _digest_idea(now: datetime) -> str | None:
     day = now.astimezone().strftime("%Y-%m-%d")
     for name in (f"{day}-merged.md", f"{day}.md"):
-        idea = _first_paragraph(CLAUDE / "daily-digest" / name, "Compounding Move")
-        if idea:
-            return idea
-    return None
+        path = CLAUDE / "daily-digest" / name
+        if path.exists():
+            idea = _first_paragraph(path, "Compounding Move")
+            if idea:
+                return idea
+    raise OSError(f"no digest file found ({day}-merged.md or {day}.md)")
 
 
 def _research_idea(now: datetime) -> str | None:
     day = now.astimezone().strftime("%Y-%m-%d")
-    return _first_paragraph(CLAUDE / "research-digest" / f"{day}.md", None)
+    path = CLAUDE / "research-digest" / f"{day}.md"
+    if not path.exists():
+        raise OSError(f"no research file found ({day}.md)")
+    return _first_paragraph(path, None)
 
 
 def _late_night(now: datetime) -> str | None:
@@ -277,11 +280,33 @@ def _day(now: datetime) -> str:
     return now.astimezone().strftime("%Y-%m-%d")
 
 
-def write(now: datetime | None = None, sources: dict[str, Callable] | None = None) -> Path:
+def write(now: datetime | None = None, sources: dict[str, Callable] | None = None,
+          builder_reason: str = "primary") -> Path:
     now = now or datetime.now(timezone.utc)
     BRIEFS.mkdir(parents=True, exist_ok=True)
     path = BRIEFS / f"{_day(now)}.md"
-    path.write_text(render(gather(now, sources), now))
+
+    import machine_profile
+
+    rendered = render(gather(now, sources), now)
+
+    if path.exists():
+        existing_content = path.read_text()
+        has_gap = "couldn't read the daily digest" in existing_content or "couldn't read the research digest" in existing_content
+        # If file exists without gaps, don't rewrite (brief is final once written without gaps)
+        if not has_gap:
+            return path
+        # File has gaps; only rewrite if they're resolved
+        new_has_gap = "couldn't read the daily digest" in rendered or "couldn't read the research digest" in rendered
+        if new_has_gap:
+            # Gaps still exist, don't rewrite
+            return path
+
+    path.write_text(rendered)
+
+    sidecar_path = BRIEFS / f"{_day(now)}.built-by"
+    sidecar_path.write_text(f"{machine_profile.machine_label()}: {builder_reason}")
+
     return path
 
 
@@ -292,6 +317,27 @@ def show_today(now: datetime | None = None) -> str | None:
         return None
     (BRIEFS / f"{_day(now)}.read").write_text(now.isoformat())
     return path.read_text()
+
+
+def builder_of(day: datetime) -> str | None:
+    sidecar_path = BRIEFS / f"{_day(day)}.built-by"
+    if not sidecar_path.exists():
+        return None
+    return sidecar_path.read_text().strip()
+
+
+def build(now: datetime | None = None, sources: dict[str, Callable] | None = None,
+          builder_reason: str = "primary", usual_hour: int = 9, usual_minute: int = 45) -> Path | None:
+    import brief_fallback
+
+    now = now or datetime.now(timezone.utc)
+    path = BRIEFS / f"{_day(now)}.md"
+
+    decision = brief_fallback.should_run(local_path=path, now=now, usual_hour=usual_hour, usual_minute=usual_minute)
+    if not decision.should_build:
+        return None
+
+    return write(now, sources, builder_reason=builder_reason)
 
 
 def _dates(suffix: str) -> list[datetime]:
@@ -309,7 +355,8 @@ def read_dates() -> list[datetime]:
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["build"]:
-        print(write())
+        result = build()
+        print(result or "(skipped by fallback gate)")
     elif sys.argv[1:] == ["show"]:
         print(show_today() or "No brief for today yet.")
     else:

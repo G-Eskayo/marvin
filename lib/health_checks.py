@@ -986,11 +986,10 @@ if [ -f "$LEDGER" ]; then echo "disk_ledger=$(tail -14 "$LEDGER" | /usr/bin/tr '
 '''.replace("__ETIME_AWK__", _ETIME_AWK)
 
 
-# Which machine is meant to run each com.marvin.* launchd job. "both" = both machines, "mini" = the primary automation
 # host only (ADR 0032, 0033), "laptop" = only where Gil sits. Edit here when a job is deliberately moved; a job that
 # is not listed is reported as unplaced so a new job cannot silently run on only one machine.
 JOB_PLACEMENT = {
-    "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "both", "research-colony": "both",
+    "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "mini", "research-colony": "mini",
     "desktoplive": "both", "dashboard-webhook": "both",  # webhook on both until #112 (ADR 0032)
     "ticket-pipeline": "both",  # mini scans; the laptop's copy is a standby that scans only if the mini goes quiet (scanner_role.py)
     "architecture-review": "mini", "auto-fix": "mini", "cron-health": "mini", "health-check": "mini",
@@ -999,11 +998,31 @@ JOB_PLACEMENT = {
     "cleanup-sweep": "both",  # daily: each machine sweeps its own pipeline worktrees (lib/cleanup_sweep.py)
     "machine-resources": "both",  # 30s: samples disk/mem/swap/CPU/GPU for resources panel (#130)
     "dashboard-launch": "laptop",
-    "morning-brief": "laptop",  # one writer (the brief syncs to the mini via ~/.claude); after the digests (lib/morning_brief.py)
+    "morning-brief": "mini",  # primary writer on mini, fallback on laptop (lib/morning_brief.py, marvin#458 AC1)
+    "daily-digest-fallback": "laptop",  # fallback when daily-digest hasn't produced
+    "research-colony-fallback": "laptop",  # fallback when research-colony hasn't produced
+    "morning-brief-fallback": "laptop",  # fallback when morning-brief hasn't produced
     # the website map (#189): rebuilt nightly and after MARVIN changes on the mini, where the dev site runs; the nightly
     # job also publishes it to production (ADR 0057), so it must never run on the laptop
     "snapshot-deploy-nightly": "mini", "snapshot-deploy-reactive": "mini",
 }
+
+
+def check_brief_builder(now: datetime | None = None) -> dict:
+    """Is the brief built? Green with builder, yellow if not yet built or if deadline passed."""
+    import morning_brief
+    import brief_fallback
+    cid, label = "brief:builder", "Morning brief builder"
+    now = now or datetime.now(timezone.utc)
+    sidecar_path = morning_brief.BRIEFS / f"{morning_brief._day(now)}.built-by"
+
+    if not sidecar_path.exists():
+        if brief_fallback.past_deadline(now, usual_hour=9, usual_minute=45, grace_minutes=60):
+            return _result(cid, label, "yellow", "No brief built yet today (past deadline)")
+        return _result(cid, label, "green", "Not due yet")
+
+    builder = sidecar_path.read_text().strip()
+    return _result(cid, label, "green", builder)
 
 
 def evaluate_job_placement(jobs: list[str], role: str) -> tuple[str, str]:
@@ -1485,6 +1504,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("github:gate", "GitHub calls go through the gate", check_gh_gate, CHECK_BUDGET_S),
         ("main:green", "The main branch passes its tests", check_main_health, CHECK_BUDGET_S),
         ("seal:beta-ingest", "Seal Speak beta reports are picked up", check_seal_beta_ingest, CHECK_BUDGET_S),
+        ("brief:builder", "Morning brief builder", check_brief_builder, CHECK_BUDGET_S),
         ("cron", "Cron job logs", _cron_job_logs, CHECK_BUDGET_S),
         ("machine", "Machine reachability", lambda: list(reach_results or []), CHECK_BUDGET_S),
         ("repo:sync", "Repo sync", lambda: check_repo_sync_everywhere(reach), CROSS_MACHINE_BUDGET_S),

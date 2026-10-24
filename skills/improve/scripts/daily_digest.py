@@ -23,6 +23,7 @@ HANDOFFS_DIR = CLAUDE_DIR / "handoffs"
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 from notify import notify  # noqa: E402
 import marvin_launcher  # noqa: E402
+import brief_fallback  # noqa: E402
 
 RESULTS_MD   = Path.home() / ".agents" / "bench" / "RESULTS.md"
 QA_SCRIPTS   = Path.home() / ".agents" / "skills" / "qa-agent" / "scripts"
@@ -272,7 +273,12 @@ def call_claude(prompt: str) -> str:
 def main() -> None:
     DIGEST_DIR.mkdir(parents=True, exist_ok=True)
 
-    if OUT_FILE.exists():
+    decision = brief_fallback.should_run(local_path=OUT_FILE, usual_hour=8, usual_minute=30)
+    if not decision.should_build:
+        print(f"[daily-digest] Skipped: {decision.reason}", flush=True)
+        return
+
+    if brief_fallback.produced(OUT_FILE):
         print(f"[daily-digest] Today's digest already exists: {OUT_FILE}", flush=True)
         return
 
@@ -318,6 +324,11 @@ def main() -> None:
     # part of the digest that actually answers "how would I know if it
     # failed," since these hooks are built to fail silently on purpose.
     health_section = f"## System Health\n\n{reviewer_health}\n\n---\n\n"
+
+    # TOCTOU recheck: another builder may have written the digest between our earlier check and now
+    if brief_fallback.produced(OUT_FILE):
+        print(f"[daily-digest] Another builder wrote the digest while we were running: {OUT_FILE}", flush=True)
+        return
 
     OUT_FILE.write_text(header + health_section + content + "\n")
     print(f"[daily-digest] Written to {OUT_FILE}", flush=True)

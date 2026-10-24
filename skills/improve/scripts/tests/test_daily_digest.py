@@ -337,3 +337,69 @@ def test_missing_helper_format():
     result = dd._missing("test message")
     assert "❌ **Missing input:**" in result
     assert "test message" in result
+
+
+# ── daily digest gate tests ────────────────────────────────────────────────────
+
+class TestDailyDigestGate:
+    """Tests for brief_fallback gating in daily_digest.main()."""
+
+    def test_gate_off_skips_without_writing(self, tmp_path, monkeypatch):
+        """main() skips when brief_fallback.should_run() returns False."""
+        import brief_fallback
+        monkeypatch.setattr(dd, "DIGEST_DIR", tmp_path)
+        monkeypatch.setattr(dd, "OUT_FILE", tmp_path / "test.md")
+
+        def mock_should_run(**kwargs):
+            return brief_fallback.Decision(False, "test: skipped")
+        monkeypatch.setattr(brief_fallback, "should_run", mock_should_run)
+
+        dd.main()
+
+        assert not (tmp_path / "test.md").exists()
+
+    def test_toctou_recheck_uses_produced_not_exists(self, tmp_path, monkeypatch):
+        """main() uses brief_fallback.produced() for the TOCTOU recheck, not exists()."""
+        import brief_fallback
+        monkeypatch.setattr(dd, "DIGEST_DIR", tmp_path)
+        monkeypatch.setattr(dd, "OUT_FILE", tmp_path / "test.md")
+        monkeypatch.setattr(dd, "TODAY", "2026-10-24")
+
+        def mock_should_run(**kwargs):
+            return brief_fallback.Decision(True, "test: should build")
+        monkeypatch.setattr(brief_fallback, "should_run", mock_should_run)
+
+        # Mock produced to return True after content assembly but before write
+        call_count = []
+        def mock_produced(local_path, **kwargs):
+            call_count.append(1)
+            return len(call_count) > 1  # First call: False, second call: True (TOCTOU)
+        monkeypatch.setattr(brief_fallback, "produced", mock_produced)
+
+        def mock_call_claude(prompt):
+            return "# Test content"
+        monkeypatch.setattr(dd, "call_claude", mock_call_claude)
+
+        dd.main()
+
+        # Should have called produced twice (initial gate + TOCTOU recheck)
+        assert len(call_count) == 2
+        assert not (tmp_path / "test.md").exists()
+
+    def test_should_run_called_with_explicit_parameters(self, tmp_path, monkeypatch):
+        """main() calls brief_fallback.should_run with the expected parameters."""
+        import brief_fallback
+        monkeypatch.setattr(dd, "DIGEST_DIR", tmp_path)
+        monkeypatch.setattr(dd, "OUT_FILE", tmp_path / "test.md")
+
+        captured = []
+        def mock_should_run(**kwargs):
+            captured.append(kwargs)
+            return brief_fallback.Decision(False, "test: skipped")
+        monkeypatch.setattr(brief_fallback, "should_run", mock_should_run)
+
+        dd.main()
+
+        assert len(captured) == 1
+        assert captured[0]["usual_hour"] == 8
+        assert captured[0]["usual_minute"] == 30
