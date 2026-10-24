@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vitals Living Network</title>
+<link rel="stylesheet" href="fonts.css"><link rel="stylesheet" href="common.css">
+</head><body>
+<canvas class="stage" id="cv"></canvas>
+<div class="hud"><div class="eyebrow">Vitals · living network</div><div class="big" id="big"></div><div class="sub" id="sub"></div></div>
+<div class="legend">size = traffic this hour<br><b style="color:var(--green)">●</b> healthy <b style="color:var(--amber)">●</b> warning <b style="color:var(--red)">●</b> failing <b style="color:var(--dim)">●</b> no data<br>dots = real calls, from caller to what it uses<br>drag to turn · tap anything for numbers</div>
+<div id="ctl"></div>
+<script src="data.js"></script><script src="common.js"></script>
+<script>
+const { D, RM, COL, byId, mById, downstream, showNode, scrubber, camera, fitCanvas, glow, narrow, nodeLabel } = V4;
+// ── layout: position means something. Machines on a ring, shared outside services (GitHub, models) on the axis,
+//    each machine's parts in a shell around it, tickets on the outside of the machine that ran them.
+const P = {};
+const machines = D.machines.map(m => m.id);
+machines.forEach((id, i) => { const a = 2 * Math.PI * i / machines.length; P[id] = [Math.cos(a) * 300, 0, Math.sin(a) * 300]; });
+const ext = D.nodes.filter(n => n.type === 'external');
+const gh = ext.filter(n => n.id === 'github'), models = ext.filter(n => n.id !== 'github');
+gh.forEach(n => P[n.id] = [0, -260, 0]);
+models.forEach((n, i) => P[n.id] = [(i - (models.length - 1) / 2) * 110, 260, 0]);
+const kids = {};
+D.nodes.forEach(n => { if (n.machine && n.type !== 'machine') (kids[n.machine] = kids[n.machine] || []).push(n); });
+Object.entries(kids).forEach(([mid, arr]) => {
+  arr.sort((a, b) => (a.type + a.id).localeCompare(b.type + b.id));
+  const c = P[mid], N = arr.length, out = Math.atan2(c[2], c[0]);
+  arr.forEach((n, k) => {                                   // golden-spiral shell, biased away from the centre
+    const y = 1 - 2 * (k + .5) / N, r = Math.sqrt(1 - y * y), th = k * 2.39996 + out;
+    const R = 130;
+    P[n.id] = [c[0] + Math.cos(th) * r * R + Math.cos(out) * 40, c[1] + y * R, c[2] + Math.sin(th) * r * R + Math.sin(out) * 40];
+  });
+});
+const tks = D.nodes.filter(n => n.type === 'ticket').sort((a, b) => b.load24 - a.load24);
+tks.forEach((n, k) => { const a = 2 * Math.PI * k / tks.length; P[n.id] = [Math.cos(a) * 95, 30 + (k % 2) * 26, Math.sin(a) * 95]; });  // work in flight: the middle
+const nodes = D.nodes.filter(n => P[n.id]);
+const edges = D.edges.filter(e => P[e.from] && P[e.to]);
+
+// ── the one control: hour of the last 24 ─────────────────────────────────
+let hour = 23;
+const series = Array.from({ length: 24 }, (_, i) => edges.reduce((s, e) => s + (e.kind === 'runs-on' ? 0 : e.hours24[i]), 0));
+const day0 = D.window.end + 1 - 86400;
+const marks = D.events.filter(e => e.t >= day0).map(e => ({ i: Math.floor((e.t - day0) / 3600), kind: e.kind }));
+let hourLoad = {};
+function setHour(i) {
+  hour = i; hourLoad = {};
+  edges.forEach(e => { if (e.kind === 'runs-on') return; const v = e.hours24[i]; hourLoad[e.from] = (hourLoad[e.from] || 0) + v; hourLoad[e.to] = (hourLoad[e.to] || 0) + v; });
+}
+scrubber(document.getElementById('ctl'), series, marks, day0, setHour, 'Hour', V4.idxOf(day0, 24));
+
+// ── HUD ─────────────────────────────────────────────────────────────────
+const reds = nodes.filter(n => n.health === 'red'), yel = nodes.filter(n => n.health === 'yellow');
+document.getElementById('big').innerHTML = `<span class=r>${reds.length} failing</span> <span class=y>${yel.length} warning</span>`;
+document.getElementById('sub').textContent = `${D.machines.filter(m => m.read).length} of ${D.machines.length} machines read · ${nodes.length} parts · ${edges.filter(e => e.kind !== 'runs-on').length} links · built ${V4.fmtT(Date.parse(D.generated_at) / 1000)}`;
+
+// ── draw ────────────────────────────────────────────────────────────────
+const cv = document.getElementById('cv');
+let sel = null, lit = new Set();
+const cam = camera(cv, { yaw: 0.6, pitch: 0.38, dist: 1100, onTap: tap });
+let proj = {};
+function tap(x, y) {
+  let best = null, bd = 26;
+  nodes.forEach(n => { const p = proj[n.id]; if (!p) return; const d = Math.hypot(p.x - x, p.y - y); if (d < bd) { bd = d; best = n; } });
+  sel = best; lit = best ? downstream(best.id) : new Set();
+  if (best) showNode(best, { 'traffic this hour': hourLoad[best.id] || 0 }); else V4.panel.hidden = true;
+}
+addEventListener('vitals:close', () => { sel = null; lit = new Set(); });
+const radius = n => n.type === 'machine' ? 11 : n.type === 'external' ? 9 : 2.5 + 2.2 * Math.log1p(hourLoad[n.id] || 0);
+let last = performance.now(), T = 0;
+function frame(now) {
+  const dt = Math.min(50, now - last); last = now; T += dt; cam.tick(dt);
+  const { c, W, H } = fitCanvas(cv);
+  c.clearRect(0, 0, W, H);
+  proj = {}; nodes.forEach(n => { const p = P[n.id]; proj[n.id] = cam.project(p[0], p[1], p[2], W, H); });
+  const focus = sel ? new Set([sel.id, ...lit]) : null;
+  // machine rings (where a machine's parts live)
+  machines.forEach(id => {
+    const p = P[id]; c.beginPath();
+    for (let k = 0; k <= 48; k++) { const a = k / 48 * 2 * Math.PI, q = cam.project(p[0] + Math.cos(a) * 150, p[1], p[2] + Math.sin(a) * 150, W, H); k ? c.lineTo(q.x, q.y) : c.moveTo(q.x, q.y); }
+    c.strokeStyle = COL.line + '66'; c.lineWidth = 1; c.stroke();
+  });
+  // edges + pulses
+  edges.forEach(e => {
+    const a = proj[e.from], b = proj[e.to]; const v = e.kind === 'runs-on' ? 0 : e.hours24[hour];
+    const on = focus ? focus.has(e.from) && focus.has(e.to) : true;
+    const failing = (e.numbers && e.numbers['non-zero exit']) || 0;
+    c.globalAlpha = on ? (e.kind === 'runs-on' ? .18 : v ? .55 : .14) : .04;
+    c.strokeStyle = focus && on && lit.has(e.from) ? COL.red : COL.line; c.lineWidth = e.kind === 'runs-on' ? .6 : 0.6 + Math.log1p(v) * .35;
+    c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke();
+    if (v && on) {
+      const k = Math.min(14, Math.ceil(Math.log2(1 + v))), speed = 0.00018 * (1 + Math.log10(1 + v));
+      c.fillStyle = failing ? COL.red : COL.amber; glow(c, c.fillStyle, .6);
+      for (let j = 0; j < k; j++) { const u = RM ? (j + .5) / k : ((T * speed) + j / k) % 1; c.beginPath(); c.arc(a.x + (b.x - a.x) * u, a.y + (b.y - a.y) * u, 1.6, 0, 7); c.fill(); }
+      c.shadowBlur = 0;
+    }
+  });
+  c.globalAlpha = 1;
+  // nodes, back to front
+  const order = nodes.slice().sort((x, y) => proj[y.id].z - proj[x.id].z);
+  const loudest = new Set(nodes.filter(n => n.type !== 'machine' && n.type !== 'external').sort((x, y) => (hourLoad[y.id] || 0) - (hourLoad[x.id] || 0)).slice(0, narrow() ? 2 : 6).filter(n => hourLoad[n.id]).map(n => n.id));
+  order.forEach(n => {
+    const p = proj[n.id], r = radius(n) * p.f, col = COL[n.health] || COL.grey;
+    const on = focus ? focus.has(n.id) : true;
+    c.globalAlpha = on ? 1 : .15;
+    glow(c, col, n.health === 'red' ? 1.4 : .8);
+    c.fillStyle = n.type === 'machine' || n.type === 'external' ? 'transparent' : col; c.strokeStyle = col; c.lineWidth = 1.5;
+    c.beginPath();
+    if (n.type === 'machine' || n.type === 'external') { c.moveTo(p.x, p.y - r); c.lineTo(p.x + r, p.y); c.lineTo(p.x, p.y + r); c.lineTo(p.x - r, p.y); c.closePath(); c.stroke(); if (n.type === 'machine' && !mById[n.id].read) c.setLineDash([3, 3]); }
+    else if (n.type === 'ticket') { c.arc(p.x, p.y, r + 2, 0, 7); c.stroke(); }
+    else { c.arc(p.x, p.y, r, 0, 7); c.fill(); }
+    c.setLineDash([]); c.shadowBlur = 0;
+    if (focus && lit.has(n.id)) { c.strokeStyle = COL.red; c.beginPath(); c.arc(p.x, p.y, r + 5, 0, 7); c.stroke(); }
+    if (sel === n) { c.strokeStyle = COL.amber; c.beginPath(); c.arc(p.x, p.y, r + 9, 0, 7); c.stroke(); }
+    const label = n.type === 'machine' || n.type === 'external' || (n.health === 'red' && !narrow()) || n.type === 'ticket' && n.health !== 'green' || loudest.has(n.id) || sel === n;
+    if (label && on) {
+      c.font = n.type === 'machine' ? "600 15px 'Saira Condensed'" : "11px 'Share Tech Mono'";
+      c.fillStyle = n.type === 'machine' ? COL.amber : col; c.textAlign = 'center';
+      const txt = (n.type === 'machine' ? n.label.toUpperCase() : n.label) + (loudest.has(n.id) ? ` ${hourLoad[n.id]}` : '');
+      c.fillText(txt, p.x, p.y - r - 7);
+    }
+  });
+  c.globalAlpha = 1;
+  if (!RM || cam.dragging) requestAnimationFrame(frame); else setTimeout(() => requestAnimationFrame(frame), 120);
+}
+requestAnimationFrame(frame);
+if (V4.hash.sel && byId[V4.hash.sel]) setTimeout(() => { sel = byId[V4.hash.sel]; lit = downstream(sel.id); showNode(sel, { 'traffic this hour': hourLoad[sel.id] || 0 }); }, 50);
+</script>
+</body></html>
