@@ -1,5 +1,7 @@
 # Changelog
 
+- Daily digest reads real inputs: the correct bench results path and a working reviewer-log split ([#601](https://github.com/G-Eskayo/marvin/pull/601))
+
 - Docs search: one ranked list with kind tags, freshen clean local clones, index PDF text ([#618](https://github.com/G-Eskayo/marvin/pull/618))
 
 - Docs search: a doc's own name doesn't find it, and long sections outrank it ([#610](https://github.com/G-Eskayo/marvin/pull/610))
