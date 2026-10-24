@@ -28,6 +28,7 @@ RESULTS_MD   = Path.home() / ".agents" / "bench" / "RESULTS.md"
 QA_SCRIPTS   = Path.home() / ".agents" / "skills" / "qa-agent" / "scripts"
 SAFETY_MONITOR_SCRIPTS = Path.home() / ".agents" / "skills" / "safety-monitor" / "scripts"
 
+
 sys.path.insert(0, str(QA_SCRIPTS))
 sys.path.insert(0, str(SAFETY_MONITOR_SCRIPTS))
 try:
@@ -272,8 +273,16 @@ def call_claude(prompt: str) -> str:
 def main() -> None:
     DIGEST_DIR.mkdir(parents=True, exist_ok=True)
 
-    if OUT_FILE.exists():
-        print(f"[daily-digest] Today's digest already exists: {OUT_FILE}", flush=True)
+    # Fallback builder check (ADR 0067): check if primary produced today's digest
+    import brief_fallback
+    if brief_fallback.produced(TODAY, str(OUT_FILE)):
+        print(f"[daily-digest] primary builder already produced today's digest — skipping", flush=True)
+        return
+
+    # Check if we should build (are we the fallback, and should we act?)
+    should_build_it, reason = brief_fallback.should_build(TODAY, str(OUT_FILE))
+    if not should_build_it:
+        print(f"[daily-digest] skipping (not our job: {reason})", flush=True)
         return
 
     print("[daily-digest] Assembling context...", flush=True)
@@ -320,6 +329,7 @@ def main() -> None:
     health_section = f"## System Health\n\n{reviewer_health}\n\n---\n\n"
 
     OUT_FILE.write_text(header + health_section + content + "\n")
+    brief_fallback.mark_built(str(DIGEST_DIR), TODAY, reason)
     print(f"[daily-digest] Written to {OUT_FILE}", flush=True)
 
 

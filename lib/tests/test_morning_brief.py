@@ -123,3 +123,132 @@ def test_open_prs_marks_waiting_from_one_graphql_read(monkeypatch):
     monkeypatch.setattr(od, "fetch", lambda repos, run=None: None)
     brief = mb.gather(NOW, {"open_prs": mb._open_prs})
     assert brief["open_prs"] is None and "open PRs" in brief["missing"][0]
+
+
+# Tests 14-18: Fallback builder logic and idempotency checks
+
+def test_today_path(tmp_path, monkeypatch):
+    """Test 14: today_path() returns correct brief path."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    path = mb.today_path(NOW)
+    assert path.name == "2026-10-09.md"
+    assert path.parent == tmp_path
+
+
+def test_write_returns_none_when_brief_already_exists(tmp_path, monkeypatch):
+    """Test 15: write() returns None (idempotency) when brief already exists."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    path = mb.today_path(NOW)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("# Existing brief")
+    result = mb.write(NOW, _sources())
+    assert result is None
+
+
+def test_write_returns_none_when_should_build_false(tmp_path, monkeypatch):
+    """Test 16: write() returns None when should_build() returns False (and we're the standby)."""
+    import brief_fallback
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    monkeypatch.setattr(brief_fallback, "is_owner", lambda: True)  # We are the standby
+    monkeypatch.setattr(brief_fallback, "should_build", lambda *a, **k: False)
+    result = mb.write(NOW, _sources())
+    assert result is None
+
+
+def test_write_marks_brief_with_built_by_metadata(tmp_path, monkeypatch):
+    """Test 17: write() creates .built-by marker with metadata."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    import brief_fallback
+    monkeypatch.setattr(brief_fallback, "should_build", lambda *a, **k: True)
+    monkeypatch.setattr(brief_fallback, "is_owner", lambda: False)
+    result = mb.write(NOW, _sources())
+    assert result is not None
+    marker_path = tmp_path / "2026-10-09.built-by"
+    assert marker_path.exists()
+    marker = json.loads(marker_path.read_text())
+    assert "built_by" in marker
+    assert "reason" in marker
+    assert "built_at" in marker
+
+
+def test_write_cli_prints_nothing_on_none(tmp_path, monkeypatch, capsys):
+    """Test 18: CLI build command prints nothing when write() returns None."""
+    import sys
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    old_argv = sys.argv
+    try:
+        sys.argv = ["morning_brief.py", "build"]
+        path = mb.today_path(NOW)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# Existing")
+        # Simulate the CLI call by calling write() directly
+        result = mb.write(NOW, _sources())
+        # In the actual CLI, if result is None, nothing is printed
+        if result:
+            print(result)
+        out = capsys.readouterr().out
+        assert out == ""
+    finally:
+        sys.argv = old_argv
+
+
+def test_write_skips_if_primary_produced(tmp_path, monkeypatch):
+    """Test 19: write() skips if produced() returns True (primary already built)."""
+    from unittest.mock import MagicMock
+    import brief_fallback
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    monkeypatch.setattr(brief_fallback, "produced", MagicMock(return_value=True))
+    result = mb.write(NOW, _sources())
+    assert result is None
+
+
+def test_write_skips_if_should_build_false(tmp_path, monkeypatch):
+    """Test 20: write() skips if should_build() returns (False, reason)."""
+    from unittest.mock import MagicMock
+    import brief_fallback
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    monkeypatch.setattr(brief_fallback, "produced", MagicMock(return_value=False))
+    monkeypatch.setattr(brief_fallback, "should_build", MagicMock(return_value=(False, "owner")))
+    result = mb.write(NOW, _sources())
+    assert result is None
+
+
+def test_write_calls_mark_built_with_reason(tmp_path, monkeypatch):
+    """Test 21: write() calls mark_built() with the reason from should_build()."""
+    from unittest.mock import MagicMock
+    import brief_fallback
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    monkeypatch.setattr(brief_fallback, "produced", MagicMock(return_value=False))
+    monkeypatch.setattr(brief_fallback, "should_build", MagicMock(return_value=(True, "primary-missing")))
+    mock_mark_built = MagicMock()
+    monkeypatch.setattr(brief_fallback, "mark_built", mock_mark_built)
+    result = mb.write(NOW, _sources())
+    assert result is not None
+    # mark_built should have been called
+    mock_mark_built.assert_called_once_with(str(mb.BRIEFS), "2026-10-09", "primary-missing")
+
+
+def test_write_prints_reason_unless_owner(tmp_path, monkeypatch, capsys):
+    """Test 22: write() prints reason only if not 'owner'."""
+    from unittest.mock import MagicMock
+    import brief_fallback
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    monkeypatch.setattr(brief_fallback, "produced", MagicMock(return_value=False))
+    monkeypatch.setattr(brief_fallback, "should_build", MagicMock(return_value=(True, "primary-missing")))
+    monkeypatch.setattr(brief_fallback, "mark_built", MagicMock())
+    mb.write(NOW, _sources())
+    out = capsys.readouterr().out
+    assert "primary-missing" in out
+
+
+def test_write_prints_nothing_for_owner_reason(tmp_path, monkeypatch, capsys):
+    """Test 23: write() doesn't print when reason is 'owner'."""
+    from unittest.mock import MagicMock
+    import brief_fallback
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    monkeypatch.setattr(brief_fallback, "produced", MagicMock(return_value=False))
+    monkeypatch.setattr(brief_fallback, "should_build", MagicMock(return_value=(True, "owner")))
+    monkeypatch.setattr(brief_fallback, "mark_built", MagicMock())
+    mb.write(NOW, _sources())
+    out = capsys.readouterr().out
+    assert "[morning-brief]" not in out

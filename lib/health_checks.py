@@ -22,6 +22,7 @@ import shlex
 import subprocess
 import sys
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -497,6 +498,93 @@ def check_hold_revisit(path: Path | None = None, now: datetime | None = None) ->
     if len(without) > 5:
         detail += f" (+ {len(without) - 5} more)"
     return _result(cid, label, "yellow", detail, value=len(without))
+
+
+BRIEFS_PATH = Path.home() / ".claude" / "briefs"
+DIGEST_PATH = Path.home() / ".claude" / "daily-digest"
+RESEARCH_DIGEST_PATH = Path.home() / ".claude" / "research-digest"
+def _read_built_at(marker_path: Path) -> datetime | None:
+    """Read the 'built_at' timestamp from a .built-by marker file, or None if not found."""
+    if not marker_path.exists():
+        return None
+    try:
+        data = json.loads(marker_path.read_text())
+        ts_str = data.get("built_at")
+        return datetime.fromisoformat(ts_str) if ts_str else None
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+
+def _deadline_for_brief(now: datetime) -> datetime:
+    """The deadline for the morning brief to be built (considers the 1-hour fallback window).
+    Primary: 08:30 UTC. Fallback window: 09:30 UTC. By 10:00 UTC, both builders should be done."""
+    local = now.astimezone()
+    deadline = local.replace(hour=10, minute=0, second=0, microsecond=0)
+    if local.time() > deadline.time():
+        # We're past today's deadline; deadline is tomorrow
+        deadline += timedelta(days=1)
+    return deadline.astimezone(timezone.utc)
+
+
+def _deadline_for_digest(now: datetime) -> datetime:
+    """The deadline for daily digest to be built. Primary: 08:30 UTC. Fallback: 09:30 UTC. By 10:00 UTC done."""
+    return _deadline_for_brief(now)  # Same as brief
+
+
+def _deadline_for_research(now: datetime) -> datetime:
+    """The deadline for research digest to be built. Primary: 10:00 UTC. Fallback: 11:00 UTC. By 12:00 UTC done."""
+    local = now.astimezone()
+    deadline = local.replace(hour=12, minute=0, second=0, microsecond=0)
+    if local.time() > deadline.time():
+        # We're past today's deadline; deadline is tomorrow
+        deadline += timedelta(days=1)
+    return deadline.astimezone(timezone.utc)
+
+
+def check_brief_builder(now: datetime | None = None) -> dict:
+    """Morning brief, daily digest, and research digest should be built fresh daily (ADR 0067).
+    Checks whether today's outputs exist and were built by their deadline."""
+    cid, label = "builder:brief", "Brief and digest builders are working"
+    now = now or _now()
+    today_str = now.astimezone().strftime("%Y-%m-%d")
+
+    issues = []
+
+    # Check morning brief
+    brief_path = BRIEFS_PATH / f"{today_str}.md"
+    if not brief_path.exists():
+        issues.append("morning brief missing")
+    else:
+        built_at = _read_built_at(BRIEFS_PATH / f"{today_str}.built-by")
+        deadline = _deadline_for_brief(now)
+        if built_at is None or built_at > deadline:
+            issues.append(f"morning brief not built by deadline ({deadline.isoformat()})")
+
+    # Check daily digest
+    digest_path = DIGEST_PATH / f"{today_str}.md"
+    if not digest_path.exists():
+        issues.append("daily digest missing")
+    else:
+        built_at = _read_built_at(DIGEST_PATH / f"{today_str}.built-by")
+        deadline = _deadline_for_digest(now)
+        if built_at is None or built_at > deadline:
+            issues.append(f"daily digest not built by deadline ({deadline.isoformat()})")
+
+    # Check research digest
+    research_path = RESEARCH_DIGEST_PATH / f"{today_str}.md"
+    if not research_path.exists():
+        issues.append("research digest missing")
+    else:
+        built_at = _read_built_at(RESEARCH_DIGEST_PATH / f"{today_str}.built-by")
+        deadline = _deadline_for_research(now)
+        if built_at is None or built_at > deadline:
+            issues.append(f"research digest not built by deadline ({deadline.isoformat()})")
+
+    if not issues:
+        return _result(cid, label, "green", f"all three builders on schedule: brief, digest, research — {today_str}")
+    if len(issues) == 1:
+        return _result(cid, label, "yellow", issues[0])
+    return _result(cid, label, "red", "; ".join(issues))
 
 
 MAIN_HEALTH_PATH = Path.home() / ".claude" / "logs" / "main-health.json"
@@ -990,7 +1078,7 @@ if [ -f "$LEDGER" ]; then echo "disk_ledger=$(tail -14 "$LEDGER" | /usr/bin/tr '
 # host only (ADR 0032, 0033), "laptop" = only where Gil sits. Edit here when a job is deliberately moved; a job that
 # is not listed is reported as unplaced so a new job cannot silently run on only one machine.
 JOB_PLACEMENT = {
-    "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "both", "research-colony": "both",
+    "code-sync-push": "both", "cross-machine-merge": "both",
     "desktoplive": "both", "dashboard-webhook": "both",  # webhook on both until #112 (ADR 0032)
     "ticket-pipeline": "both",  # mini scans; the laptop's copy is a standby that scans only if the mini goes quiet (scanner_role.py)
     "architecture-review": "mini", "auto-fix": "mini", "cron-health": "mini", "health-check": "mini",
@@ -999,7 +1087,10 @@ JOB_PLACEMENT = {
     "cleanup-sweep": "both",  # daily: each machine sweeps its own pipeline worktrees (lib/cleanup_sweep.py)
     "machine-resources": "both",  # 30s: samples disk/mem/swap/CPU/GPU for resources panel (#130)
     "dashboard-launch": "laptop",
-    "morning-brief": "laptop",  # one writer (the brief syncs to the mini via ~/.claude); after the digests (lib/morning_brief.py)
+    # Morning brief, daily digest, research colony: primary builders on mini (ADR 0067); fallback builders on laptop.
+    "morning-brief": "mini", "morning-brief-fallback": "laptop",
+    "daily-digest": "mini", "daily-digest-fallback": "laptop",
+    "research-colony": "mini", "research-colony-fallback": "laptop",
     # the website map (#189): rebuilt nightly and after MARVIN changes on the mini, where the dev site runs; the nightly
     # job also publishes it to production (ADR 0057), so it must never run on the laptop
     "snapshot-deploy-nightly": "mini", "snapshot-deploy-reactive": "mini",
@@ -1481,6 +1572,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("catalog:fresh", "Project catalog is current", check_catalog_fresh, CHECK_BUDGET_S),
         ("tickets:project-tags", "Tickets are on their project's board", check_project_tags, CHECK_BUDGET_S),
         ("tickets:hold-revisit", "Hold tickets have revisit dates", check_hold_revisit, CHECK_BUDGET_S),
+        ("builder:brief", "Brief and digest builders are working", check_brief_builder, CHECK_BUDGET_S),
         ("github:budget", "GitHub request budget", check_github_budget, CHECK_BUDGET_S),
         ("github:gate", "GitHub calls go through the gate", check_gh_gate, CHECK_BUDGET_S),
         ("main:green", "The main branch passes its tests", check_main_health, CHECK_BUDGET_S),

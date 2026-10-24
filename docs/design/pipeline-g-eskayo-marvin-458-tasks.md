@@ -1,0 +1,14 @@
+1. Rewrite `lib/brief_fallback.py`: fix `is_owner()` to `scanner_role.is_primary(machine_profile.registry_id())`; change `should_build()` to return `(bool, reason)`; make `produced()` always check local content first (placeholder-aware, injectable `read_remote_fn=read_remote`) before any SSH; narrow `FAILURE_MARKERS` to the two real substrings; rewrite `read_remote(..., run=subprocess.run)` with `shlex.quote` on everything except a leading `$HOME/`, dropping `|| echo ""` so failure yields `None`; add `mark_built(output_dir, day, reason)`.
+2. Rewrite `lib/tests/test_brief_fallback.py` per tests 1–18; confirm each fails against the current buggy code first, passes after.
+3. In `lib/morning_brief.py`: extract `__main__` into `main(argv)`; rework `write()` around `produced()` + `should_build()`, print only the non-`"owner"` reason, call `mark_built()` on the correct branch.
+4. Add tests 19–23 to `lib/tests/test_morning_brief.py`.
+5. In `daily_digest.py`: delete dead `FAILURE_MARKERS`; swap `.exists()` for `produced()`; swap the unconditional `should_build()` call for the fixed tuple form; call `mark_built()` after a successful write.
+6. Rewrite tests 24–28 in `test_daily_digest.py`.
+7. In `run_colony.py`: same `produced()`-then-`should_build()` pair; call `mark_built()` after `research_digest.generate()` returns a path. Verify `import brief_fallback` resolves to this worktree's copy under tests (confirmed by reasoning: the real `~/.agents/lib` has no `brief_fallback.py` yet, so resolution falls through to the worktree copy regardless of insertion order) — re-confirm with the new tests in place rather than leaving it as an assumption.
+8. In `research_digest.py`: delete dead `FAILURE_MARKERS`; leave `generate()`'s own idempotency and `today_path()` untouched.
+9. Add tests 29–32 (new `test_run_colony.py`; extend `test_research_digest_fallback.py`).
+10. In `lib/health_checks.py`: add `time` to the `datetime` import; replace `check_brief_builder()`'s mtime-staleness logic with the deadline-aware, marker-reading version; remove the now-unused `BRIEF_BUILDER_STALE_HOURS`. No `JOB_PLACEMENT` change needed (already correct).
+11. Rewrite tests 33–39 in `test_health_checks.py`.
+12. Move `config/launchd/com.marvin.daily-digest-fallback.plist` to `skills/improve/com.marvin.daily-digest-fallback.plist` (matching its primary's colocation, and `research-colony-fallback.plist`'s already-correct placement) and fix its comment ("09:30 primary" is wrong — the primary runs at 08:30; 09:30 is `cross-machine-merge`'s slot). The other two fallback plists are already correctly placed and commented.
+13. Run the full affected suites and confirm every new/changed test fails pre-fix, passes post-fix, on its own step.
+14. In the PR description: the three flagged Decisions-section items (manual `launchctl` step; `cross_machine_merge.py` left untouched and why; independent per-job fallback windows).

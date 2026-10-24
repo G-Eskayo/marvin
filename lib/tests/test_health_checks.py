@@ -1299,3 +1299,136 @@ def test_the_machine_script_reads_a_real_process_uptime_with_this_machines_ps():
         assert 1 <= int(out.stdout.strip()) <= 20
     finally:
         child.kill()
+
+
+# Tests 33-39: Brief builder check with deadline-aware markers (ADR 0067)
+
+def test_check_brief_builder_green_when_all_built_by_deadline(tmp_path, monkeypatch):
+    """Test 33: check_brief_builder returns green when all three are built before their deadlines."""
+    # Use 08:00 UTC (well before 10:00 brief deadline, 12:00 research deadline)
+    now = datetime(2026, 10, 24, 8, 0, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(hc, "BRIEFS_PATH", tmp_path / "briefs")
+    monkeypatch.setattr(hc, "DIGEST_PATH", tmp_path / "daily-digest")
+    monkeypatch.setattr(hc, "RESEARCH_DIGEST_PATH", tmp_path / "research-digest")
+    for subdir in ["briefs", "daily-digest", "research-digest"]:
+        (tmp_path / subdir).mkdir(parents=True, exist_ok=True)
+
+    today_str = now.astimezone().strftime("%Y-%m-%d")
+    (tmp_path / "briefs" / f"{today_str}.md").write_text("# Brief")
+    (tmp_path / "briefs" / f"{today_str}.built-by").write_text(json.dumps({
+        "built_by": "mac-mini", "reason": "owner", "built_at": now.isoformat()
+    }))
+    (tmp_path / "daily-digest" / f"{today_str}.md").write_text("# Digest")
+    (tmp_path / "daily-digest" / f"{today_str}.built-by").write_text(json.dumps({
+        "built_by": "mac-mini", "reason": "owner", "built_at": now.isoformat()
+    }))
+    (tmp_path / "research-digest" / f"{today_str}.md").write_text("# Research")
+    (tmp_path / "research-digest" / f"{today_str}.built-by").write_text(json.dumps({
+        "built_by": "mac-mini", "reason": "owner", "built_at": now.isoformat()
+    }))
+
+    result = hc.check_brief_builder(now)
+    assert result["severity"] == "green"
+    assert "all three builders on schedule" in result["detail"]
+
+
+def test_check_brief_builder_yellow_when_missing(tmp_path, monkeypatch):
+    """Test 34: check_brief_builder returns yellow when any output is missing."""
+    now = datetime(2026, 10, 24, 8, 0, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(hc, "BRIEFS_PATH", tmp_path / "briefs")
+    monkeypatch.setattr(hc, "DIGEST_PATH", tmp_path / "daily-digest")
+    monkeypatch.setattr(hc, "RESEARCH_DIGEST_PATH", tmp_path / "research-digest")
+    for subdir in ["briefs", "daily-digest", "research-digest"]:
+        (tmp_path / subdir).mkdir(parents=True, exist_ok=True)
+
+    today_str = now.astimezone().strftime("%Y-%m-%d")
+    (tmp_path / "briefs" / f"{today_str}.md").write_text("# Brief")
+    (tmp_path / "briefs" / f"{today_str}.built-by").write_text(json.dumps({
+        "built_by": "mac-mini", "reason": "owner", "built_at": now.isoformat()
+    }))
+    # Missing digest and research
+
+    result = hc.check_brief_builder(now)
+    assert result["severity"] == "yellow"
+    assert "missing" in result["detail"]
+    assert "daily digest missing" in result["detail"]
+
+
+def test_check_brief_builder_yellow_when_built_after_deadline(tmp_path, monkeypatch):
+    """Test 35: check_brief_builder returns yellow when built after its deadline."""
+    # Use 11:00 UTC (after 10:00 brief/digest deadline)
+    now = datetime(2026, 10, 24, 11, 0, 0, tzinfo=timezone.utc)
+    # But say files were built at 11:30 (30 minutes late)
+    late_time = datetime(2026, 10, 24, 11, 30, 0, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(hc, "BRIEFS_PATH", tmp_path / "briefs")
+    monkeypatch.setattr(hc, "DIGEST_PATH", tmp_path / "daily-digest")
+    monkeypatch.setattr(hc, "RESEARCH_DIGEST_PATH", tmp_path / "research-digest")
+    for subdir in ["briefs", "daily-digest", "research-digest"]:
+        (tmp_path / subdir).mkdir(parents=True, exist_ok=True)
+
+    today_str = now.astimezone().strftime("%Y-%m-%d")
+    (tmp_path / "briefs" / f"{today_str}.md").write_text("# Brief")
+    (tmp_path / "briefs" / f"{today_str}.built-by").write_text(json.dumps({
+        "built_by": "mac-mini", "reason": "owner", "built_at": late_time.isoformat()
+    }))
+    (tmp_path / "daily-digest" / f"{today_str}.md").write_text("# Digest")
+    (tmp_path / "daily-digest" / f"{today_str}.built-by").write_text(json.dumps({
+        "built_by": "mac-mini", "reason": "owner", "built_at": late_time.isoformat()
+    }))
+    (tmp_path / "research-digest" / f"{today_str}.md").write_text("# Research")
+    (tmp_path / "research-digest" / f"{today_str}.built-by").write_text(json.dumps({
+        "built_by": "mac-mini", "reason": "owner", "built_at": now.isoformat()
+    }))
+
+    result = hc.check_brief_builder(now)
+    assert result["severity"] == "yellow"
+    assert "not built by deadline" in result["detail"]
+
+
+def test_check_brief_builder_red_when_multiple_issues(tmp_path, monkeypatch):
+    """Test 36: check_brief_builder returns red when both missing and deadline-missed occur."""
+    now = datetime(2026, 10, 24, 11, 0, 0, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(hc, "BRIEFS_PATH", tmp_path / "briefs")
+    monkeypatch.setattr(hc, "DIGEST_PATH", tmp_path / "daily-digest")
+    monkeypatch.setattr(hc, "RESEARCH_DIGEST_PATH", tmp_path / "research-digest")
+    for subdir in ["briefs", "daily-digest", "research-digest"]:
+        (tmp_path / subdir).mkdir(parents=True, exist_ok=True)
+
+    today_str = now.astimezone().strftime("%Y-%m-%d")
+    (tmp_path / "briefs" / f"{today_str}.md").write_text("# Brief")
+    (tmp_path / "briefs" / f"{today_str}.built-by").write_text(json.dumps({
+        "built_by": "mac-mini", "reason": "owner", "built_at": now.isoformat()
+    }))
+    # Digest missing, research missing
+
+    result = hc.check_brief_builder(now)
+    assert result["severity"] == "red"
+    assert "daily digest missing" in result["detail"]
+    assert "research digest missing" in result["detail"]
+
+
+def test_read_built_at_returns_timestamp_from_marker(tmp_path):
+    """Test 37: _read_built_at correctly parses the built_at field from a marker file."""
+    marker_path = tmp_path / "test.built-by"
+    ts = datetime(2026, 10, 24, 8, 30, 0, tzinfo=timezone.utc)
+    marker_path.write_text(json.dumps({
+        "built_by": "mac-mini", "reason": "owner", "built_at": ts.isoformat()
+    }))
+    result = hc._read_built_at(marker_path)
+    assert result == ts
+
+
+def test_read_built_at_returns_none_when_missing(tmp_path):
+    """Test 38: _read_built_at returns None when marker file doesn't exist."""
+    result = hc._read_built_at(tmp_path / "nonexistent.built-by")
+    assert result is None
+
+
+def test_read_built_at_returns_none_when_corrupted(tmp_path):
+    """Test 39: _read_built_at returns None when marker file is corrupted JSON."""
+    marker_path = tmp_path / "test.built-by"
+    marker_path.write_text("not valid json {}")
+    result = hc._read_built_at(marker_path)
+    assert result is None

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Research colony fallback builder (skills/research-colony/scripts/run_colony.py, ADR 0067). Falls back only if
+     the primary builder (mac-mini) fails to produce the digest by this time. One hour after the primary's scheduled
+     run (09:00 primary → 10:00 fallback), so the primary has time to catch any transient failures.
+     MacBook only: install on the MacBook via:
+       cp this to ~/Library/LaunchAgents/ and `launchctl bootstrap gui/$(id -u) <that file>`
+     Do NOT install on the Mac Mini where the primary builder runs.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.marvin.research-colony-fallback</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/gileskayo/.agents/venv/bin/python</string>
+        <string>/Users/gileskayo/.agents/skills/research-colony/scripts/run_colony.py</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>10</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/gileskayo/.claude/logs/research-colony-fallback.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/gileskayo/.claude/logs/research-colony-fallback-error.log</string>
+</dict>
+</plist>

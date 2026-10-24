@@ -95,9 +95,15 @@ def _fmt_item(item: dict) -> str:
     return f"  [{item.get('source', '?')}] {item.get('title', '')[:80]} <{item.get('url', '')}>"
 
 
+def today_path() -> Path:
+    """Path for today's research digest: ~/.claude/research-digest/YYYY-MM-DD.md"""
+    today = date.today().isoformat()
+    return DIGEST_DIR / f"{today}.md"
+
+
 def generate() -> Path | None:
     today = date.today().isoformat()
-    out_path = DIGEST_DIR / f"{today}.md"
+    out_path = today_path()
 
     if out_path.exists():
         print(f"[colony] research digest already exists for {today}", file=sys.stderr)
@@ -151,6 +157,7 @@ def generate() -> Path | None:
         )
 
     DIGEST_DIR.mkdir(parents=True, exist_ok=True)
+    today = date.today().isoformat()
     out_path.write_text(
         f"# Research Digest — {today}\n\n"
         f"*{len(all_items)} items fetched · {len(correlated)} correlated*\n\n"

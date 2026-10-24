@@ -277,11 +277,37 @@ def _day(now: datetime) -> str:
     return now.astimezone().strftime("%Y-%m-%d")
 
 
-def write(now: datetime | None = None, sources: dict[str, Callable] | None = None) -> Path:
+def today_path(now: datetime | None = None) -> Path:
+    """Path for today's morning brief: ~/.claude/briefs/YYYY-MM-DD.md"""
+    now = now or datetime.now(timezone.utc)
+    return BRIEFS / f"{_day(now)}.md"
+
+
+def write(now: datetime | None = None, sources: dict[str, Callable] | None = None) -> Path | None:
     now = now or datetime.now(timezone.utc)
     BRIEFS.mkdir(parents=True, exist_ok=True)
-    path = BRIEFS / f"{_day(now)}.md"
-    path.write_text(render(gather(now, sources), now))
+    path = today_path(now)
+
+    # Idempotency: if brief already exists, skip rebuild
+    if path.exists():
+        return None
+
+    # Fallback builder check (ADR 0067): check if primary produced the brief
+    import brief_fallback
+    if brief_fallback.produced(_day(now), str(path)):
+        return None
+
+    # Check if we should build (are we the fallback, and should we act?)
+    should_build_it, reason = brief_fallback.should_build(_day(now), str(path))
+    if not should_build_it:
+        return None
+
+    content = render(gather(now, sources), now)
+    path.write_text(content)
+    brief_fallback.mark_built(str(BRIEFS), _day(now), reason)
+
+    if reason != "owner":
+        print(f"[morning-brief] {_day(now)}: {reason}", flush=True)
     return path
 
 
@@ -307,10 +333,16 @@ def read_dates() -> list[datetime]:
     return _dates(".read")
 
 
-if __name__ == "__main__":
-    if sys.argv[1:] == ["build"]:
-        print(write())
-    elif sys.argv[1:] == ["show"]:
+def main(argv):
+    if argv == ["build"]:
+        result = write()
+        if result:
+            print(result)
+    elif argv == ["show"]:
         print(show_today() or "No brief for today yet.")
     else:
         sys.exit("usage: morning_brief.py build | show")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

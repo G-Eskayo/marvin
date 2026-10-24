@@ -337,3 +337,186 @@ def test_missing_helper_format():
     result = dd._missing("test message")
     assert "❌ **Missing input:**" in result
     assert "test message" in result
+
+
+# Tests 24-28: Fallback builder logic for daily_digest
+
+def test_main_short_circuits_when_produced(tmp_path, monkeypatch):
+    """Test 24: main() short-circuits when produced() returns True."""
+    from unittest.mock import MagicMock
+    import brief_fallback
+    out_file = tmp_path / f"{dd.TODAY}.md"
+    digest_dir = tmp_path
+
+    # Mock OUT_FILE and DIGEST_DIR
+    monkeypatch.setattr(dd, "OUT_FILE", out_file)
+    monkeypatch.setattr(dd, "DIGEST_DIR", digest_dir)
+
+    # Mock produced to return True (primary already produced)
+    monkeypatch.setattr(brief_fallback, "produced", MagicMock(return_value=True))
+
+    # Patch context assembly functions to raise if called
+    def raise_context():
+        raise AssertionError("should not be called when primary produced")
+
+    monkeypatch.setattr(dd, "roadmap_summary", raise_context)
+
+    # Capture output to verify short-circuit message
+    import io
+    old_stdout = sys.stdout
+    sys.stdout = io.StringIO()
+
+    try:
+        dd.main()
+        output = sys.stdout.getvalue()
+    finally:
+        sys.stdout = old_stdout
+
+    # Verify short-circuit message was printed
+    assert "primary builder already produced" in output
+    # Verify no digest file was created
+    assert not out_file.exists()
+
+
+def test_main_short_circuits_when_should_build_false(tmp_path, monkeypatch):
+    """Test 25: main() short-circuits when should_build() returns (False, reason)."""
+    from unittest.mock import MagicMock
+    import brief_fallback
+    out_file = tmp_path / f"{dd.TODAY}.md"
+    digest_dir = tmp_path
+
+    # Mock OUT_FILE and DIGEST_DIR
+    monkeypatch.setattr(dd, "OUT_FILE", out_file)
+    monkeypatch.setattr(dd, "DIGEST_DIR", digest_dir)
+
+    # Mock produced to return False
+    monkeypatch.setattr(brief_fallback, "produced", MagicMock(return_value=False))
+
+    # Mock should_build to return (False, "owner")
+    monkeypatch.setattr(brief_fallback, "should_build", MagicMock(return_value=(False, "owner")))
+
+    # Patch context assembly functions to raise if called
+    def raise_context():
+        raise AssertionError("should not be called when should_build is False")
+
+    monkeypatch.setattr(dd, "roadmap_summary", raise_context)
+
+    # Capture output to verify short-circuit message
+    import io
+    old_stdout = sys.stdout
+    sys.stdout = io.StringIO()
+
+    try:
+        dd.main()
+        output = sys.stdout.getvalue()
+    finally:
+        sys.stdout = old_stdout
+
+    # Verify short-circuit message was printed
+    assert "not our job" in output
+    # Verify no digest file was created
+    assert not out_file.exists()
+
+
+def test_main_calls_mark_built_after_write(tmp_path, monkeypatch):
+    """Test 26: main() calls mark_built() after writing the digest."""
+    from unittest.mock import MagicMock
+    import brief_fallback
+    out_file = tmp_path / f"{dd.TODAY}.md"
+    digest_dir = tmp_path
+
+    # Mock OUT_FILE and DIGEST_DIR
+    monkeypatch.setattr(dd, "OUT_FILE", out_file)
+    monkeypatch.setattr(dd, "DIGEST_DIR", digest_dir)
+
+    # Mock produced and should_build to proceed
+    monkeypatch.setattr(brief_fallback, "produced", MagicMock(return_value=False))
+    monkeypatch.setattr(brief_fallback, "should_build", MagicMock(return_value=(True, "primary-missing")))
+
+    # Mock all context assembly functions to return dummy data
+    monkeypatch.setattr(dd, "roadmap_summary", lambda: "Roadmap")
+    monkeypatch.setattr(dd, "bench_summary", lambda: "Bench")
+    monkeypatch.setattr(dd, "recent_handoffs_summary", lambda: "Handoffs")
+    monkeypatch.setattr(dd, "qa_kb_summary", lambda: "QA KB")
+    monkeypatch.setattr(dd, "improvement_queue_summary", lambda: "Queue")
+    monkeypatch.setattr(dd, "reviewer_health_summary", lambda: "Health")
+
+    # Mock call_claude to return a valid digest
+    def mock_call_claude(prompt: str):
+        return "## Compounding Move\nTest"
+
+    monkeypatch.setattr(dd, "call_claude", mock_call_claude)
+
+    # Mock safety-monitor if available
+    if dd._SAFETY_MONITOR_AVAILABLE:
+        import verify
+        monkeypatch.setattr(verify, "pass_or_quarantine", return_value=True)
+
+    # Track whether mark_built was called
+    mark_built_calls = []
+    def mock_mark_built(output_dir, day, reason):
+        mark_built_calls.append((output_dir, day, reason))
+
+    monkeypatch.setattr(brief_fallback, "mark_built", mock_mark_built)
+
+    # Run main
+    dd.main()
+
+    # Verify mark_built was called
+    assert len(mark_built_calls) == 1
+    assert mark_built_calls[0][2] == "primary-missing"  # reason should be from should_build
+
+
+def test_main_proceeds_when_should_build_true(tmp_path, monkeypatch):
+    """Test 27: main() proceeds with context assembly when should_build() returns True."""
+    from unittest.mock import MagicMock
+    import brief_fallback
+    out_file = tmp_path / f"{dd.TODAY}.md"
+    digest_dir = tmp_path
+
+    # Mock OUT_FILE and DIGEST_DIR
+    monkeypatch.setattr(dd, "OUT_FILE", out_file)
+    monkeypatch.setattr(dd, "DIGEST_DIR", digest_dir)
+
+    # Mock produced and should_build
+    monkeypatch.setattr(brief_fallback, "produced", MagicMock(return_value=False))
+    monkeypatch.setattr(brief_fallback, "should_build", MagicMock(return_value=(True, "owner")))
+
+    # Mock all context assembly functions to return dummy data
+    monkeypatch.setattr(dd, "roadmap_summary", lambda: "Roadmap section")
+    monkeypatch.setattr(dd, "bench_summary", lambda: "Bench section")
+    monkeypatch.setattr(dd, "recent_handoffs_summary", lambda: "Handoffs")
+    monkeypatch.setattr(dd, "qa_kb_summary", lambda: "QA KB")
+    monkeypatch.setattr(dd, "improvement_queue_summary", lambda: "Queue")
+    monkeypatch.setattr(dd, "reviewer_health_summary", lambda: "Reviewer: 0 runs")
+
+    # Mock call_claude to return a valid digest
+    def mock_call_claude(prompt: str):
+        return "## Compounding Move\nTest move\n\n## Feature Combinations\nTest combo\n\n## Trim Candidates\nTest trim\n\n## Wild Idea\nTest idea\n\n## Quick Win\nTest win"
+
+    monkeypatch.setattr(dd, "call_claude", mock_call_claude)
+
+    # Mock mark_built
+    from unittest.mock import MagicMock
+    monkeypatch.setattr(brief_fallback, "mark_built", MagicMock())
+
+    # If safety-monitor is available, mock pass_or_quarantine
+    if dd._SAFETY_MONITOR_AVAILABLE:
+        import verify
+        monkeypatch.setattr(verify, "pass_or_quarantine", lambda *a, **k: True)
+
+    # Run main — it should proceed and create the digest file
+    dd.main()
+
+    # Verify the digest file was created
+    assert out_file.exists()
+    content = out_file.read_text()
+    assert "MARVIN Daily Digest" in content
+    assert "System Health" in content
+
+
+def test_main_failure_markers_removed():
+    """Test 28: FAILURE_MARKERS no longer exists in daily_digest (moved to brief_fallback)."""
+    # The markers are now defined and used only in brief_fallback.py
+    # daily_digest should not have its own copy
+    assert not hasattr(dd, "FAILURE_MARKERS"), "FAILURE_MARKERS should be removed from daily_digest (use brief_fallback.produced() instead)"
