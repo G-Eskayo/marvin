@@ -137,9 +137,12 @@ export function transitiveUnblocks(number, repo, graph, tickets) {
 }
 
 // Extract priority label (p0-p3) from ticket labels (array of strings)
+// Matches both "priority:p0" and bare "p0" labels
 function getPriority(labelNames) {
-  const priorityLabel = (labelNames || []).find((name) => /^p[0-3]$/.test(name))
-  return priorityLabel || null
+  const match = (labelNames || []).find((name) => /^(?:priority:)?(p[0-3])$/.test(name))
+  if (!match) return null
+  const result = match.match(/^(?:priority:)?(p[0-3])$/)
+  return result ? result[1] : null
 }
 
 // A follow-up ticket filed by the hourly scan when owner decisions on a PR went unanswered (lib/owner_decisions.py,
@@ -260,7 +263,7 @@ export function rankNeedsYou(tickets, { now = Date.now() } = {}) {
     const aPri = a.priority ? parseInt(a.priority[1]) : 99
     const bPri = b.priority ? parseInt(b.priority[1]) : 99
     if (aPri !== bPri) return aPri - bPri
-    return b.ageDays - a.ageDays // oldest first (higher ageDays = older = comes first)
+    return b.ageDays - a.ageDays
   })
 
   return [...needsMarvinRows(tickets, { now }), ...rows]
