@@ -11,6 +11,7 @@ ALLOWED = {
     "brain-map/tests/test_deploy_snapshot.py",
     "brain-map/scripts/test_export_snapshot.py",
     "lib/tests/test_no_hardcoded_home.py",
+    "docs/screenshots/vitals-v4/data.js",
 }
 
 

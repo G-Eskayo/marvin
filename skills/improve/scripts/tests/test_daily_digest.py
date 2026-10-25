@@ -9,8 +9,10 @@ from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
 
 import daily_digest as dd  # noqa: E402
+import brief_fallback  # noqa: E402
 
 
 # ── bench_summary tests ────────────────────────────────────────────────────────
@@ -337,3 +339,106 @@ def test_missing_helper_format():
     result = dd._missing("test message")
     assert "❌ **Missing input:**" in result
     assert "test message" in result
+
+
+class TestDailyDigestGate:
+    """Test that the fallback gate skips the digest build when appropriate."""
+
+    def test_gate_off_skips_without_writing(self, tmp_path, monkeypatch):
+        """If should_run() returns False, main() should not call claude or write."""
+        # Import after monkeypatching to get the mocked module
+        import daily_digest
+
+        # Mock the output file path
+        digest_dir = tmp_path / "daily-digest"
+        out_file = digest_dir / "2026-10-22.md"
+        monkeypatch.setattr("daily_digest.DIGEST_DIR", digest_dir)
+        monkeypatch.setattr("daily_digest.OUT_FILE", out_file)
+
+        # Mock should_run to return False
+        def mock_should_run(*args, **kwargs):
+            return brief_fallback.Decision(False, "fallback: skipping")
+        monkeypatch.setattr("brief_fallback.should_run", mock_should_run)
+
+        # Mock call_claude so it fails if called
+        def mock_call_claude(*args, **kwargs):
+            raise AssertionError("call_claude should not be invoked")
+        monkeypatch.setattr("daily_digest.call_claude", mock_call_claude)
+
+        # Run main
+        daily_digest.main()
+
+        # Assert OUT_FILE was not created
+        assert not out_file.exists()
+
+    def test_toctou_recheck_uses_produced_not_exists(self, tmp_path, monkeypatch):
+        """If OUT_FILE has valid content (even after gate check), don't rebuild."""
+        import daily_digest
+
+        digest_dir = tmp_path / "daily-digest"
+        out_file = digest_dir / "2026-10-22.md"
+        monkeypatch.setattr("daily_digest.DIGEST_DIR", digest_dir)
+        monkeypatch.setattr("daily_digest.OUT_FILE", out_file)
+
+        # Mock should_run to return True
+        def mock_should_run(*args, **kwargs):
+            return brief_fallback.Decision(True, "primary")
+        monkeypatch.setattr("brief_fallback.should_run", mock_should_run)
+
+        # Pre-create the file with valid content to simulate a race condition
+        digest_dir.mkdir(parents=True)
+        existing_content = "# Existing digest from another process\n\nRace condition test."
+        out_file.write_text(existing_content)
+
+        # Mock call_claude to return some content
+        def mock_call_claude(*args, **kwargs):
+            return "# New digest\n\nThis should not overwrite existing content."
+        monkeypatch.setattr("daily_digest.call_claude", mock_call_claude)
+
+        # Run main
+        daily_digest.main()
+
+        # Assert the original content was NOT overwritten
+        assert out_file.read_text() == existing_content
+
+    def test_should_run_called_with_explicit_parameters(self, tmp_path, monkeypatch):
+        """should_run() is called with usual_hour=8, usual_minute=30."""
+        import daily_digest
+
+        digest_dir = tmp_path / "daily-digest"
+        out_file = digest_dir / "2026-10-22.md"
+        monkeypatch.setattr("daily_digest.DIGEST_DIR", digest_dir)
+        monkeypatch.setattr("daily_digest.OUT_FILE", out_file)
+
+        # Track calls to should_run
+        calls = []
+
+        def mock_should_run(*args, **kwargs):
+            calls.append(kwargs)
+            return brief_fallback.Decision(False, "test: skipping")
+        monkeypatch.setattr("brief_fallback.should_run", mock_should_run)
+
+        # Run main
+        daily_digest.main()
+
+        # Verify should_run was called with the right parameters
+        assert len(calls) == 1
+        assert calls[0].get("usual_hour") == 8
+        assert calls[0].get("usual_minute") == 30
+
+    def test_lib_path_resolves_to_this_checkout_not_home(self):
+        """sys.path for lib uses Path(__file__).resolve().parents[3], resolving to repo root lib."""
+        # This test verifies the fix for the cross-machine sys.path defect.
+        # The path should be computed relative to the script location (daily_digest.py), not Path.home().
+        import daily_digest
+
+        # daily_digest.py is at skills/improve/scripts/daily_digest.py
+        # parents[3] from there is the repo root, so parents[3] / "lib" is correct
+        scripts_dir = Path(__file__).resolve().parents[1]  # scripts dir
+        daily_digest_file = scripts_dir / "daily_digest.py"
+        lib_path = daily_digest_file.resolve().parents[3] / "lib"
+
+        # Verify it exists (sanity check)
+        assert lib_path.exists() and lib_path.is_dir(), f"lib path {lib_path} does not exist"
+        # And verify it's in sys.path (added by daily_digest.py when imported)
+        assert str(lib_path) in sys.path, f"lib path {lib_path} not found in sys.path"

@@ -1299,3 +1299,71 @@ def test_the_machine_script_reads_a_real_process_uptime_with_this_machines_ps():
         assert 1 <= int(out.stdout.strip()) <= 20
     finally:
         child.kill()
+
+
+# ---- brief builder check ----
+
+def test_check_brief_builder_reports_the_machine(tmp_path, monkeypatch):
+    """check_brief_builder() reports green with machine and role when sidecar exists."""
+    import morning_brief
+
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+    monkeypatch.setattr(morning_brief, "BRIEFS", briefs_dir)
+    monkeypatch.setattr(morning_brief, "builder_of", lambda day: "mac-mini: primary")
+
+    result = hc.check_brief_builder()
+    assert result["severity"] == "green"
+    assert "mac-mini: primary" in result["detail"]
+
+
+def test_check_brief_builder_yellow_when_nothing_built_yet(tmp_path, monkeypatch):
+    """check_brief_builder() reports yellow when no brief for today and before deadline."""
+    import morning_brief
+
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+    monkeypatch.setattr(morning_brief, "BRIEFS", briefs_dir)
+    monkeypatch.setattr(morning_brief, "builder_of", lambda day: None)
+
+    # Mock time to be before the deadline (9:15 AM + 1h grace = 10:15 AM)
+    # Use 7 AM to be safely before it
+    local_tz = datetime.now().astimezone().tzinfo
+    now = datetime(2026, 10, 22, 7, 0, 0, tzinfo=local_tz).astimezone(timezone.utc)
+    monkeypatch.setattr(hc, "_now", lambda: now)
+
+    result = hc.check_brief_builder()
+    assert result["severity"] == "yellow"
+    assert "No brief built yet" in result["detail"]
+
+
+def test_check_brief_builder_escalates_once_overdue(tmp_path, monkeypatch):
+    """check_brief_builder() reports red when past deadline+grace with nothing built."""
+    import morning_brief
+
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+    monkeypatch.setattr(morning_brief, "BRIEFS", briefs_dir)
+    monkeypatch.setattr(morning_brief, "builder_of", lambda day: None)
+
+    # Mock time to be well past the deadline+grace (9:15 AM + 1h grace = 10:15 AM)
+    # Use 2 PM to be safely past it
+    local_tz = datetime.now().astimezone().tzinfo
+    now = datetime(2026, 10, 22, 14, 0, 0, tzinfo=local_tz).astimezone(timezone.utc)
+    original_now = hc._now
+    monkeypatch.setattr(hc, "_now", lambda: now)
+
+    result = hc.check_brief_builder()
+    assert result["severity"] == "red"
+    assert "past deadline" in result["detail"].lower()
+
+
+def test_job_placement_reflects_the_new_ownership(monkeypatch):
+    """JOB_PLACEMENT has the new ownership: mini for primary jobs, laptop for fallbacks."""
+    # Check that the new assignments exist
+    assert hc.JOB_PLACEMENT.get("daily-digest") == "mini"
+    assert hc.JOB_PLACEMENT.get("daily-digest-fallback") == "laptop"
+    assert hc.JOB_PLACEMENT.get("research-colony") == "mini"
+    assert hc.JOB_PLACEMENT.get("research-colony-fallback") == "laptop"
+    assert hc.JOB_PLACEMENT.get("morning-brief") == "mini"
+    assert hc.JOB_PLACEMENT.get("morning-brief-fallback") == "laptop"
