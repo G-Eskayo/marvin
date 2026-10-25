@@ -59,6 +59,15 @@ def test_safety_and_telemetry_hooks_run_everywhere_and_session_upkeep_only_inter
         assert by_script[upkeep].kinds == {"interactive"}, upkeep
 
 
+def test_the_session_report_still_runs_when_an_upkeep_step_fails():
+    # 2026-10-25: check_remote_session.py crashed, and with every step joined by && the report never printed, so
+    # the session started without the banner or the docs-placement reminders.
+    chain = mh.session_start_chain(["false", "/bin/sh -c 'exit 3'"], "echo REPORT")
+    out = subprocess.run(["/bin/sh", "-c", chain], capture_output=True, text=True)
+    assert "REPORT" in out.stdout
+    assert mh._SESSION_START.endswith(f"{mh.AGENTS}/lib/session_start_report.py")
+
+
 def _write(path, settings):
     path.write_text(json.dumps(settings, indent=2))
 

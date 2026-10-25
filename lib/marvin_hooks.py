@@ -53,12 +53,16 @@ def _py(script: str) -> tuple[str, ...]:
     return (PY, str(AGENTS / script))
 
 
-_SESSION_START = " && ".join([
+def session_start_chain(upkeep: list[str], report: str) -> str:
+    """Upkeep in order, then the report whatever upkeep did: a failed step must not hide the report (2026-10-25)."""
+    return "; ".join([*upkeep, report])
+
+
+_SESSION_START = session_start_chain([
     f"{PY} {AGENTS}/lib/code_sync.py pull {AGENTS}",
     f"{PY} {AGENTS}/lib/code_sync.py pull {HOME}/.claude",
     f"{PY} {AGENTS}/skills/handoff/scripts/check_remote_session.py",
-    f"{PY} {AGENTS}/lib/session_start_report.py",
-])
+], f"{PY} {AGENTS}/lib/session_start_report.py")
 _ALL, _INTERACTIVE = frozenset({"all"}), frozenset({"interactive"})
 _EDITS = "Write|Edit|MultiEdit|NotebookEdit"
 
