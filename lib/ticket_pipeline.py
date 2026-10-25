@@ -32,9 +32,12 @@ before merge regardless (the MR-review tab's whole reason to exist).
 Run standalone: ~/.agents/venv/bin/python ticket_pipeline.py [--dry-run]
 """
 from __future__ import annotations
+import fcntl
 import json
+import os
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -56,6 +59,9 @@ RUN_TICKET_SCRIPT = str(Path.home() / ".agents" / "lib" / "run_ticket.py")
 
 REPO = "G-Eskayo/marvin"
 LOG_PREFIX = "[ticket-pipeline]"
+
+DEBOUNCE_LOCK_PATH = Path.home() / ".claude" / "dispatch" / "scan-debounce.lock"
+DEBOUNCE_SECONDS = 5
 
 
 def _label_for_device(device_id: str) -> str:
@@ -482,6 +488,47 @@ def _select_for_profile(profile: dict, settings: dict | None = None, taken: dict
     return min(viable, key=lambda v: v[0])[1] if viable else None   # min keeps the profile's order on ties
 
 
+def _debounced_scan(delay: float, lock_path: Path | None = None, sleep=None, scan=None) -> bool:
+    """Acquire an exclusive lock on the scan-debounce file. If already held by another process,
+    return False immediately (another scan is pending/running). Otherwise sleep for `delay`
+    seconds, run the scan, release the lock, and return True.
+
+    lock_path, sleep, and scan are injected for testing."""
+    lock_path = lock_path or DEBOUNCE_LOCK_PATH
+    sleep = sleep or time.sleep
+    scan = scan or main
+
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_WRONLY, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # non-blocking exclusive lock
+        except BlockingIOError:
+            os.close(fd)
+            return False  # another process holds the lock
+        try:
+            sleep(delay)
+            scan()
+            return True
+        finally:
+            os.close(fd)
+    except Exception as e:  # noqa: BLE001
+        print(f"{LOG_PREFIX} debounce scan failed: {e}", file=sys.stderr)
+        return False
+
+
+def request_scan(delay: float = DEBOUNCE_SECONDS) -> None:
+    """Fire-and-forget: spawn a subprocess to run a debounced scan after `delay` seconds."""
+    try:
+        subprocess.Popen(
+            [sys.executable, __file__, "--debounced-scan", str(delay)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"{LOG_PREFIX} request_scan spawn failed: {e}", file=sys.stderr)
+
+
 def main() -> None:
     dry_run = "--dry-run" in sys.argv
     if dry_run:  # a preview records nothing
@@ -643,4 +690,8 @@ def _dispatch_one(repo, ticket, ready_total, step, summary, fail, dry_run, setti
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) >= 2 and sys.argv[1] == "--debounced-scan":
+        delay = float(sys.argv[2]) if len(sys.argv) > 2 else DEBOUNCE_SECONDS
+        _debounced_scan(delay)
+    else:
+        main()

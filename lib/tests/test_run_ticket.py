@@ -233,20 +233,17 @@ def test_run_triggers_redispatch_even_when_not_raised(monkeypatch):
     assert calls == [True]
 
 
-def test_trigger_redispatch_spawns_ticket_pipeline_detached(monkeypatch):
+def test_trigger_redispatch_calls_request_scan(monkeypatch):
     calls = []
 
-    class FakePopen:
-        def __init__(self, cmd, **kwargs):
-            calls.append((cmd, kwargs))
+    def fake_request_scan(delay=None):
+        calls.append(delay)
 
-    monkeypatch.setattr(rt.subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(rt, "request_scan", fake_request_scan)
     rt._trigger_redispatch()
 
-    cmd, kwargs = calls[0]
-    assert cmd[0] == rt.sys.executable
-    assert cmd[1].endswith("ticket_pipeline.py")
-    assert kwargs.get("start_new_session") is True
+    assert len(calls) == 1
+    assert calls[0] is None  # called with no arguments
 
 
 def test_run_recovers_when_execute_ticket_raises_unexpectedly(monkeypatch):

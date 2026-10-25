@@ -24,7 +24,7 @@ from evidence_capture import capture_dev_evidence, capture_test_results, ticket_
 from mr_raiser import raise_mr  # noqa: E402
 from sandbox_orchestration import execute_ticket, _default_executor  # noqa: E402
 from cleanup_sweep import drop_build_output  # noqa: E402
-from ticket_pipeline import _label_for_device, _release  # noqa: E402
+from ticket_pipeline import _label_for_device, _release, request_scan  # noqa: E402
 import failure_breaker  # noqa: E402
 import ticket_stages as ts  # noqa: E402
 
@@ -121,12 +121,7 @@ def _trigger_redispatch() -> None:
     nothing's unclaimed or no machine is free, so nothing here needs to
     check first, and a failed scan shouldn't affect this ticket's own
     already-decided outcome."""
-    script = Path(__file__).resolve().parent / "ticket_pipeline.py"
-    subprocess.Popen(
-        [sys.executable, str(script)],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    request_scan()
 
 
 def _load_catalog() -> dict:

@@ -3,6 +3,7 @@
 """
 from __future__ import annotations
 import json
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -764,3 +765,92 @@ def test_in_flight_counts_nothing_when_the_process_tables_cannot_be_read(monkeyp
     import running_tickets
     monkeypatch.setattr(running_tickets, "current", lambda: (_ for _ in ()).throw(OSError("boom")))
     assert tp._inflight_by_repo([tp.REPO]) == {tp.REPO: 0}
+
+
+def test_debounced_scan_acquires_lock_sleeps_and_calls_scan(tmp_path, monkeypatch):
+    """Lock-free: _debounced_scan acquires the lock, sleeps, calls scan, and returns True."""
+    lock_file = tmp_path / "scan-debounce.lock"
+    scan_calls = []
+    sleep_calls = []
+
+    def fake_scan():
+        scan_calls.append(True)
+
+    def fake_sleep(delay):
+        sleep_calls.append(delay)
+
+    result = tp._debounced_scan(2.5, lock_path=lock_file, sleep=fake_sleep, scan=fake_scan)
+
+    assert result is True
+    assert scan_calls == [True]
+    assert sleep_calls == [2.5]
+    assert lock_file.exists()
+
+
+def test_debounced_scan_returns_false_when_lock_is_held(tmp_path, monkeypatch):
+    """Another process holds the lock: _debounced_scan returns False immediately without calling scan."""
+    lock_file = tmp_path / "scan-debounce.lock"
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+
+    scan_calls = []
+    sleep_calls = []
+
+    def fake_scan():
+        scan_calls.append(True)
+
+    def fake_sleep(delay):
+        sleep_calls.append(delay)
+
+    # Simulate another process holding the lock
+    import fcntl
+    fd = os.open(str(lock_file), os.O_CREAT | os.O_WRONLY, 0o644)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    try:
+        result = tp._debounced_scan(2.5, lock_path=lock_file, sleep=fake_sleep, scan=fake_scan)
+
+        assert result is False
+        assert scan_calls == []  # scan was never called
+        assert sleep_calls == []  # sleep was never called
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def test_debounced_scan_releases_lock_after_scan(tmp_path, monkeypatch):
+    """After _debounced_scan finishes, the lock is released and can be acquired by another caller."""
+    import fcntl
+    lock_file = tmp_path / "scan-debounce.lock"
+
+    def fake_scan():
+        pass
+
+    def fake_sleep(delay):
+        pass
+
+    # First call: acquire and release the lock
+    result1 = tp._debounced_scan(0.1, lock_path=lock_file, sleep=fake_sleep, scan=fake_scan)
+    assert result1 is True
+
+    # Second call: should be able to acquire it again
+    result2 = tp._debounced_scan(0.1, lock_path=lock_file, sleep=fake_sleep, scan=fake_scan)
+    assert result2 is True
+
+
+def test_request_scan_spawns_debounced_scan_subprocess(monkeypatch):
+    """request_scan spawns ticket_pipeline.py with --debounced-scan argument."""
+    calls = []
+
+    class FakePopen:
+        def __init__(self, cmd, **kwargs):
+            calls.append((cmd, kwargs))
+
+    monkeypatch.setattr(tp.subprocess, "Popen", FakePopen)
+    tp.request_scan(3.5)
+
+    assert len(calls) == 1
+    cmd, kwargs = calls[0]
+    assert cmd[0] == tp.sys.executable
+    assert cmd[1].endswith("ticket_pipeline.py")
+    assert cmd[2] == "--debounced-scan"
+    assert cmd[3] == "3.5"
+    assert kwargs.get("start_new_session") is True
