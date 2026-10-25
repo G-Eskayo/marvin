@@ -7,11 +7,14 @@ import { whois, loadAllowlist, isAllowed } from './device_gate.js'
 import { createDashboardApiRouter } from './dashboard_api.js'
 import { createChatApiRouter } from './chat_api.js'
 import { createThreadStore } from './thread_store.js'
+import { createPermissionBridge } from './permission_bridge.js'
+import { createPermissionApiRouter } from './permission_api.js'
 
 const execFileP = promisify(execFile)
 
 const TAILSCALE_BIN = '/Applications/Tailscale.app/Contents/MacOS/Tailscale'
 const PORT = process.env.PORT || 7880
+const PERMISSION_RELAY_PORT = process.env.PERMISSION_RELAY_PORT || 7881
 const ALLOWLIST_PATH = path.join(homedir(), '.claude', 'mobile-allowlist.json')
 
 // Resolve this machine's Tailscale IPv4 address. Fails loud and exits non-zero if unresolvable.
@@ -39,7 +42,9 @@ function getUptimeSeconds() {
 
 const dashboardApiRouter = createDashboardApiRouter()
 const threadStore = createThreadStore()
-const chatApiRouter = createChatApiRouter({ threadStore })
+const permissionBridge = createPermissionBridge()
+const permissionApiRouter = createPermissionApiRouter(permissionBridge)
+const chatApiRouter = createChatApiRouter({ threadStore, permissionBridge })
 
 const server = createServer(async (req, res) => {
   // Device gate: check allowlist
@@ -57,6 +62,10 @@ const server = createServer(async (req, res) => {
 
   // Route through dashboard API
   let handled = await dashboardApiRouter(req, res)
+  if (handled) return
+
+  // Route through permission API
+  handled = await permissionApiRouter(req, res)
   if (handled) return
 
   // Route through chat API
@@ -80,8 +89,49 @@ const server = createServer(async (req, res) => {
   res.writeHead(404).end()
 })
 
+// Loopback-only relay server for permission bridge.
+// The PreToolUse hook subprocess contacts this to request tool permission.
+const relayServer = createServer(async (req, res) => {
+  const url = new URL(req.url, `http://${req.headers.host}`)
+  const pathname = url.pathname
+
+  try {
+    if (req.method === 'POST' && pathname === '/permission-relay') {
+      let body = ''
+      for await (const chunk of req) {
+        body += chunk.toString()
+      }
+
+      const { tool_name: toolName, tool_input: toolInput } = JSON.parse(body)
+      const { id, behavior, promise } = permissionBridge.requestPermission(toolName, toolInput)
+
+      if (behavior === 'allow') {
+        res.writeHead(200, { 'Content-Type': 'application/json' }).end(
+          JSON.stringify({ decision: true, reason: 'auto-allow' })
+        )
+      } else {
+        // Pending: wait for the promise to settle, then respond
+        const decision = await promise
+        res.writeHead(200, { 'Content-Type': 'application/json' }).end(
+          JSON.stringify({ decision, reason: decision ? 'approved' : 'denied/timeout' })
+        )
+      }
+    } else {
+      res.writeHead(404).end()
+    }
+  } catch (err) {
+    res.writeHead(500, { 'Content-Type': 'application/json' }).end(
+      JSON.stringify({ decision: false, reason: `error: ${err.message}` })
+    )
+  }
+})
+
 // Resolve Tailscale IP and start listening
 const tailscaleIp = await resolveTailscaleIp()
 server.listen(PORT, tailscaleIp, () => {
   console.log(`Mobile backend listening on http://${tailscaleIp}:${PORT}/status`)
+})
+
+relayServer.listen(PERMISSION_RELAY_PORT, '127.0.0.1', () => {
+  console.log(`Permission relay listening on http://127.0.0.1:${PERMISSION_RELAY_PORT}/`)
 })

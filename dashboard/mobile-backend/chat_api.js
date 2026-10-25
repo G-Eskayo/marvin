@@ -4,6 +4,7 @@ import { shouldRotate, summarize } from './rotation_policy.js'
 export function createChatApiRouter(opts = {}) {
   const runSessionFn = opts.runSession || runSession
   const threadStore = opts.threadStore
+  const permissionBridge = opts.permissionBridge
 
   // Handler for chat API routes
   return async (req, res) => {
@@ -64,7 +65,7 @@ export function createChatApiRouter(opts = {}) {
           let resultSessionId = null
           let assistantText = ''
 
-          for await (const event of runSessionFn({ message: outgoingMessage, sessionId: currentSessionId })) {
+          for await (const event of runSessionFn({ message: outgoingMessage, sessionId: currentSessionId, bridge: permissionBridge })) {
             // Capture the final sessionId from result events
             if (event.type === 'result' && event.sessionId) {
               resultSessionId = event.sessionId

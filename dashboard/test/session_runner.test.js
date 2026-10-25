@@ -209,5 +209,40 @@ describe('session_runner', () => {
       expect(events[0].type).toBe('error')
       expect(events[0].message).toContain('exited with code 1')
     })
+
+    it('includes --settings with hook when bridge is provided', async () => {
+      let capturedArgs = null
+      const mockSpawn = (bin, args) => {
+        capturedArgs = args
+        return createMockChildProcess(loadFixture('plain-reply.ndjson'))
+      }
+
+      const mockBridge = {}
+      for await (const _ of runSession({ message: 'test', spawnFn: mockSpawn, bridge: mockBridge })) {
+        // consume events
+      }
+
+      expect(capturedArgs).toContain('--settings')
+      const settingsIndex = capturedArgs.indexOf('--settings')
+      const settingsJson = JSON.parse(capturedArgs[settingsIndex + 1])
+      expect(settingsJson).toHaveProperty('hooks.PreToolUse')
+      expect(settingsJson.hooks.PreToolUse[0].matcher).toBe('*')
+      expect(settingsJson.hooks.PreToolUse[0].hooks[0].type).toBe('command')
+      expect(settingsJson.hooks.PreToolUse[0].hooks[0].command).toContain('permission_hook.js')
+    })
+
+    it('omits --settings when bridge is not provided', async () => {
+      let capturedArgs = null
+      const mockSpawn = (bin, args) => {
+        capturedArgs = args
+        return createMockChildProcess(loadFixture('plain-reply.ndjson'))
+      }
+
+      for await (const _ of runSession({ message: 'test', spawnFn: mockSpawn })) {
+        // consume events
+      }
+
+      expect(capturedArgs).not.toContain('--settings')
+    })
   })
 })

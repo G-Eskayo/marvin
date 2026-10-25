@@ -3,6 +3,7 @@ import { createInterface } from 'readline'
 import { homedir } from 'os'
 import { existsSync } from 'fs'
 import path from 'path'
+import { fileURLToPath } from 'url'
 
 // Resolve the claude binary. Check ~/.local/bin/claude first, then fall back to PATH lookup.
 function resolveClaudeBinary() {
@@ -79,7 +80,7 @@ export function normaliseEvent(rawEvent) {
 
 // Async generator that streams normalised events from a claude CLI session.
 // Spawns the CLI with --output-format stream-json and reads stdout line-by-line.
-export async function* runSession({ message, sessionId, spawnFn, cwd } = {}) {
+export async function* runSession({ message, sessionId, spawnFn, cwd, bridge } = {}) {
   const claudeBin = resolveClaudeBinary()
   const actualSpawnFn = spawnFn || spawn
   const actualCwd = cwd || homedir()
@@ -96,6 +97,28 @@ export async function* runSession({ message, sessionId, spawnFn, cwd } = {}) {
   // Add --resume if sessionId is provided
   if (sessionId) {
     args.push('--resume', sessionId)
+  }
+
+  // Add --settings with permission hook if bridge is provided
+  if (bridge) {
+    const __dirname = path.dirname(fileURLToPath(import.meta.url))
+    const hookPath = path.join(__dirname, 'permission_hook.js')
+    const hookSettings = {
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: '*',
+            hooks: [
+              {
+                type: 'command',
+                command: `node ${hookPath}`
+              }
+            ]
+          }
+        ]
+      }
+    }
+    args.push('--settings', JSON.stringify(hookSettings))
   }
 
   let child

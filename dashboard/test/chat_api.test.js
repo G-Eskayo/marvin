@@ -204,6 +204,29 @@ describe('chat_api', () => {
       expect(capturedSessionId).toBe('existing-sess-123')
     })
 
+    it('forwards permissionBridge to runSessionFn', async () => {
+      const mockBridge = {}
+      let capturedBridge = null
+
+      const customMockRunSession = async function* (opts) {
+        capturedBridge = opts.bridge
+        yield* createMockRunSession()(opts)
+      }
+
+      const router = createChatApiRouter({
+        threadStore,
+        runSession: customMockRunSession,
+        permissionBridge: mockBridge
+      })
+
+      const req = new MockRequest('POST', '/chat', JSON.stringify({ message: 'test' }))
+      const res = new MockResponse()
+
+      await router(req, res)
+
+      expect(capturedBridge).toBe(mockBridge)
+    })
+
     it('prepends pending summary to message text sent to runSession', async () => {
       const router = createChatApiRouter({
         threadStore,

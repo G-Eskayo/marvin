@@ -34,5 +34,6 @@ Gil's own Claude Code login, and translates its stream into whatever the app spe
 - Extra plumbing: the backend parses the CLI's JSON stream instead of calling a typed library,
   and is exposed to CLI output-format changes across Claude Code updates.
 - [[0005]]'s confirm-before-execute guardrail must be implemented through the CLI's permission
-  mechanisms (permission-prompt tool / hooks) rather than an SDK callback — design still open.
+  mechanisms (permission-prompt tool / hooks) rather than an SDK callback — design closed by [[0044]]
+  (PreToolUse hook approach).
 - Usage counts against Gil's normal plan limits, shared with the pipeline and interactive sessions.
