@@ -23,6 +23,7 @@ HANDOFFS_DIR = CLAUDE_DIR / "handoffs"
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 from notify import notify  # noqa: E402
 import marvin_launcher  # noqa: E402
+import brief_fallback  # noqa: E402
 
 RESULTS_MD   = Path.home() / ".agents" / "bench" / "RESULTS.md"
 QA_SCRIPTS   = Path.home() / ".agents" / "skills" / "qa-agent" / "scripts"
@@ -272,7 +273,13 @@ def call_claude(prompt: str) -> str:
 def main() -> None:
     DIGEST_DIR.mkdir(parents=True, exist_ok=True)
 
-    if OUT_FILE.exists():
+    # Fallback gate: primary (mini) always builds; laptop only builds if primary is silent
+    decision = brief_fallback.should_run(local_path=OUT_FILE, usual_hour=8, usual_minute=30)
+    if not decision.should_build:
+        print(f"[daily-digest] Skipping: {decision.reason}", flush=True)
+        return
+
+    if brief_fallback.produced(OUT_FILE):
         print(f"[daily-digest] Today's digest already exists: {OUT_FILE}", flush=True)
         return
 
@@ -292,12 +299,17 @@ def main() -> None:
     print("[daily-digest] Calling claude...", flush=True)
     content = call_claude(prompt)
 
+    # Early return if the call already failed — don't quarantine or rewrite a failure
+    already_failed = content.startswith("(claude call failed:")
+    if already_failed:
+        print("[daily-digest] Claude call failed — not writing failure", file=sys.stderr, flush=True)
+        return
+
     # Score the brainstormed content before it ships — a confident, specific
     # sounding claim about a file/skill/metric that doesn't exist is the
     # actual failure mode this guards, not factual disagreement. Skip
     # verifying a known call_claude() failure string — nothing to catch there.
-    already_failed = content.startswith("(claude call failed:")
-    if _SAFETY_MONITOR_AVAILABLE and not already_failed and not pass_or_quarantine(content, loop_name="daily_digest", source_context=prompt):
+    if _SAFETY_MONITOR_AVAILABLE and not pass_or_quarantine(content, loop_name="daily_digest", source_context=prompt):
         print("[daily-digest] content quarantined by safety-monitor — see ~/.claude/quarantine.md", flush=True)
         notify("MARVIN daily-digest quarantined", "Today's digest was flagged for review — check ~/.claude/quarantine.md",
                open_target=str(Path.home() / ".claude" / "quarantine.md"))
@@ -318,6 +330,11 @@ def main() -> None:
     # part of the digest that actually answers "how would I know if it
     # failed," since these hooks are built to fail silently on purpose.
     health_section = f"## System Health\n\n{reviewer_health}\n\n---\n\n"
+
+    # Pre-write TOCTOU recheck: ensure nothing else has written since we checked
+    if brief_fallback.produced(OUT_FILE):
+        print(f"[daily-digest] Another process beat us to it; skipping write", flush=True)
+        return
 
     OUT_FILE.write_text(header + health_section + content + "\n")
     print(f"[daily-digest] Written to {OUT_FILE}", flush=True)

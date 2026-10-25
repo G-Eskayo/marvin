@@ -1299,3 +1299,141 @@ def test_the_machine_script_reads_a_real_process_uptime_with_this_machines_ps():
         assert 1 <= int(out.stdout.strip()) <= 20
     finally:
         child.kill()
+
+
+# ── brief builder check ────────────────────────────────────────────────────
+
+def test_check_brief_builder_all_green_when_recent_production(tmp_path, monkeypatch):
+    """check_brief_builder() returns all green when both primary and fallback have recent files."""
+    morning_brief = tmp_path / ".claude" / "outbox" / "morning-brief.md"
+    daily_digest = tmp_path / ".claude" / "outbox" / "daily-digest.md"
+    research_digest = tmp_path / ".claude" / "outbox" / "research-digest.md"
+
+    morning_brief.parent.mkdir(parents=True, exist_ok=True)
+    daily_digest.parent.mkdir(parents=True, exist_ok=True)
+    research_digest.parent.mkdir(parents=True, exist_ok=True)
+
+    now = datetime.now(timezone.utc)
+    recent_time = now - timedelta(minutes=5)
+
+    morning_brief.write_text("Brief content")
+    daily_digest.write_text("Digest content")
+    research_digest.write_text("Research content")
+
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+    monkeypatch.setattr(hc, "_now", lambda: now)
+
+    results = {r["id"]: r for r in hc.check_brief_builder()}
+    assert all(r["severity"] == "green" for r in results.values())
+
+
+def test_check_brief_builder_red_when_no_file_past_deadline(tmp_path, monkeypatch):
+    """check_brief_builder() returns red on laptop when past deadline with no file."""
+    morning_brief = tmp_path / ".claude" / "outbox" / "morning-brief.md"
+    daily_digest = tmp_path / ".claude" / "outbox" / "daily-digest.md"
+    research_digest = tmp_path / ".claude" / "outbox" / "research-digest.md"
+
+    morning_brief.parent.mkdir(parents=True, exist_ok=True)
+    # Leave files missing to trigger red status
+
+    # Current time is 10:30 local time (past the 10:15 fallback deadline)
+    local_tz = datetime.now(timezone.utc).astimezone().tzinfo
+    now = datetime(2026, 10, 25, 10, 30, 0, tzinfo=local_tz)
+
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+    monkeypatch.setattr(hc, "_now", lambda: now)
+    monkeypatch.setattr(hc, "is_primary", lambda device_id: False)
+
+    results = [r for r in hc.check_brief_builder()]
+    # Should have red results for the missing files when past deadline
+    red_results = [r for r in results if r["severity"] == "red"]
+    assert len(red_results) > 0, f"Expected red results but got: {results}"
+
+
+def test_check_brief_builder_reads_the_real_daily_digest_path(tmp_path, monkeypatch):
+    """check_brief_builder() reads daily-digest from ~/.claude/daily-digest/{utc-date}.md."""
+    from datetime import date
+    now = datetime.now(timezone.utc)
+    utc_date = now.strftime("%Y-%m-%d")
+
+    # Create the file at the correct real path
+    daily_digest_dir = tmp_path / ".claude" / "daily-digest"
+    daily_digest_dir.mkdir(parents=True, exist_ok=True)
+    daily_digest_path = daily_digest_dir / f"{utc_date}.md"
+    daily_digest_path.write_text("# Daily Digest\nContent here")
+
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+    monkeypatch.setattr(hc, "_now", lambda: now)
+
+    results = {r["id"]: r for r in hc.check_brief_builder()}
+
+    # The daily-digest check should be green
+    assert results.get("brief:daily-digest", {}).get("severity") == "green"
+    assert "produced" in results.get("brief:daily-digest", {}).get("detail", "").lower()
+
+
+def test_check_brief_builder_reads_the_real_research_digest_path(tmp_path, monkeypatch):
+    """check_brief_builder() reads research-colony from ~/.claude/research-digest/{local-date}.md."""
+    from datetime import date
+    now = datetime.now(timezone.utc)
+    local_date = now.astimezone().strftime("%Y-%m-%d")
+
+    # Create the file at the correct real path
+    research_digest_dir = tmp_path / ".claude" / "research-digest"
+    research_digest_dir.mkdir(parents=True, exist_ok=True)
+    research_digest_path = research_digest_dir / f"{local_date}.md"
+    research_digest_path.write_text("# Research Digest\nContent here")
+
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+    monkeypatch.setattr(hc, "_now", lambda: now)
+
+    results = {r["id"]: r for r in hc.check_brief_builder()}
+
+    # The research-colony check should be green
+    assert results.get("brief:research-colony", {}).get("severity") == "green"
+    assert "produced" in results.get("brief:research-colony", {}).get("detail", "").lower()
+
+
+def test_check_brief_builder_reads_the_real_morning_brief_path(tmp_path, monkeypatch):
+    """check_brief_builder() reads morning-brief from ~/.claude/briefs/{local-date}.md."""
+    from datetime import date
+    now = datetime.now(timezone.utc)
+    local_date = now.astimezone().strftime("%Y-%m-%d")
+
+    # Create the file at the correct real path
+    briefs_dir = tmp_path / ".claude" / "briefs"
+    briefs_dir.mkdir(parents=True, exist_ok=True)
+    brief_path = briefs_dir / f"{local_date}.md"
+    brief_path.write_text("# Morning Brief\nContent here")
+
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+    monkeypatch.setattr(hc, "_now", lambda: now)
+
+    results = {r["id"]: r for r in hc.check_brief_builder()}
+
+    # The morning-brief check should be green
+    assert results.get("brief:morning-brief", {}).get("severity") == "green"
+    assert "produced" in results.get("brief:morning-brief", {}).get("detail", "").lower()
+
+
+def test_check_brief_builder_escalates_to_red_on_the_primary_too(tmp_path, monkeypatch):
+    """check_brief_builder() escalates to red on the Mini too, past its own deadline with no file."""
+    now = datetime.now(timezone.utc)
+    # Current time is 10:30 local time (past the 10:15 fallback deadline for morning-brief)
+    local_tz = now.astimezone().tzinfo
+    now = datetime(2026, 10, 25, 10, 30, 0, tzinfo=local_tz)
+
+    # No files created — all missing
+    briefs_dir = tmp_path / ".claude" / "briefs"
+    briefs_dir.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+    monkeypatch.setattr(hc, "_now", lambda: now)
+
+    results = {r["id"]: r for r in hc.check_brief_builder()}
+
+    # All checks should be red since we're past the deadline with no files
+    # This applies equally to both primary and fallback
+    for check_id in ["brief:morning-brief", "brief:daily-digest", "brief:research-colony"]:
+        assert results.get(check_id, {}).get("severity") == "red", \
+            f"{check_id} should be red past deadline with no file"

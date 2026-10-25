@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Research colony fallback (skills/research-colony/scripts/run_colony.py): MacBook-only fallback if the Mini
+     falls silent (unreachable or running late). Runs at 10:00, after the primary's usual time (09:00) plus grace period.
+     Install: cp this to ~/Library/LaunchAgents/ and `launchctl bootstrap gui/$(id -u) <that file>`. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.marvin.research-colony-fallback</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/gileskayo/.agents/venv/bin/python</string>
+        <string>/Users/gileskayo/.agents/skills/research-colony/scripts/run_colony.py</string>
+    </array>
+
+    <!-- Run every day at 10:00 local time (fallback deadline) -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>10</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/gileskayo/.claude/logs/research-colony-fallback.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/gileskayo/.claude/logs/research-colony-fallback-error.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/gileskayo</string>
+        <key>PATH</key>
+        <string>/Users/gileskayo/.local/bin:/usr/local/bin:/usr/bin:/bin:/Users/gileskayo/.agents/venv/bin</string>
+    </dict>
+
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>

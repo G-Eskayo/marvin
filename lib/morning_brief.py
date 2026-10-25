@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import brief_fallback
 
 CLAUDE = Path.home() / ".claude"
 BRIEFS = CLAUDE / "briefs"
@@ -277,12 +278,43 @@ def _day(now: datetime) -> str:
     return now.astimezone().strftime("%Y-%m-%d")
 
 
-def write(now: datetime | None = None, sources: dict[str, Callable] | None = None) -> Path:
+def write(now: datetime | None = None, sources: dict[str, Callable] | None = None,
+          builder_reason: str | None = None, run=subprocess.run) -> Path:
     now = now or datetime.now(timezone.utc)
     BRIEFS.mkdir(parents=True, exist_ok=True)
     path = BRIEFS / f"{_day(now)}.md"
+    # Idempotency guard: don't rewrite if the brief was already produced
+    if brief_fallback.produced(path, run=run):
+        return path
     path.write_text(render(gather(now, sources), now))
+    # Write .built-by sidecar if builder_reason is provided
+    if builder_reason:
+        (path.parent / f"{path.stem}.built-by").write_text(builder_reason)
     return path
+
+
+def builder_of(path: Path | None = None, now: datetime | None = None) -> str | None:
+    """Who built today's brief? Returns the content of the .built-by sidecar, or None."""
+    now = now or datetime.now(timezone.utc)
+    path = path or BRIEFS / f"{_day(now)}.md"
+    sidecar = path.parent / f"{path.stem}.built-by"
+    if sidecar.exists():
+        try:
+            return sidecar.read_text().strip()
+        except Exception:
+            return None
+    return None
+
+
+def build(now: datetime | None = None, sources: dict[str, Callable] | None = None) -> Path | None:
+    """Build today's brief if this machine should (primary or fallback after deadline).
+    Returns the path if built, None if skipped (standby, primary already building)."""
+    now = now or datetime.now(timezone.utc)
+    path = BRIEFS / f"{_day(now)}.md"
+    decision = brief_fallback.should_run(local_path=path, usual_hour=9, usual_minute=15)
+    if not decision.should_build:
+        return None
+    return write(now=now, sources=sources, builder_reason=decision.reason, run=subprocess.run)
 
 
 def show_today(now: datetime | None = None) -> str | None:
@@ -309,7 +341,9 @@ def read_dates() -> list[datetime]:
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["build"]:
-        print(write())
+        path = build()
+        if path:
+            print(path)
     elif sys.argv[1:] == ["show"]:
         print(show_today() or "No brief for today yet.")
     else:

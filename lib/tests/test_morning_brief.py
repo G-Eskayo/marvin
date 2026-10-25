@@ -60,6 +60,24 @@ def test_a_failing_source_is_named_not_hidden():
 
 def test_writing_and_reading_mark_consumption(tmp_path, monkeypatch):
     monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+
+    # Inject a run= that asserts no live SSH call is attempted
+    def mock_run_no_ssh(*args, **kwargs):
+        cmd = args[0] if args else []
+        if isinstance(cmd, list) and len(cmd) > 0 and cmd[0] == "ssh":
+            raise AssertionError(f"Attempted live SSH call in test: {cmd}")
+        # For non-SSH calls, return a mock result
+        import subprocess
+        class MockResult:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+        return MockResult()
+
+    # Patch brief_fallback.read_remote to use the mock
+    import brief_fallback
+    monkeypatch.setattr(brief_fallback, "read_remote", lambda *args, **kwargs: None)
+
     path = mb.write(NOW, _sources())
     assert path.name == "2026-10-09.md" and path.read_text().startswith("# Morning brief")
     assert mb.read_dates() == []
@@ -123,3 +141,38 @@ def test_open_prs_marks_waiting_from_one_graphql_read(monkeypatch):
     monkeypatch.setattr(od, "fetch", lambda repos, run=None: None)
     brief = mb.gather(NOW, {"open_prs": mb._open_prs})
     assert brief["open_prs"] is None and "open PRs" in brief["missing"][0]
+
+
+def test_build_function_calls_should_run_and_write(tmp_path, monkeypatch):
+    """build() calls should_run(), and if True, calls write()."""
+    import brief_fallback
+    from unittest.mock import MagicMock
+
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+
+    # Mock should_run to return True (primary or fallback should build)
+    mock_decision = brief_fallback.Decision(should_build=True, reason="primary")
+    monkeypatch.setattr(brief_fallback, "should_run", lambda **kwargs: mock_decision)
+
+    path = mb.build(NOW, _sources())
+    assert path and path.exists()
+    assert path.read_text().startswith("# Morning brief")
+
+
+def test_build_function_skips_write_when_fallback_says_no(tmp_path, monkeypatch):
+    """build() skips write() when should_run() returns False (standby, primary already building)."""
+    import brief_fallback
+    from unittest.mock import MagicMock
+
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+
+    # Mock should_run to return False (standby, don't build)
+    mock_decision = brief_fallback.Decision(should_build=False, reason="standby: primary already produced")
+    monkeypatch.setattr(brief_fallback, "should_run", lambda **kwargs: mock_decision)
+
+    # write() should not be called, so no file should be created
+    monkeypatch.setattr(mb, "write", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("write should not be called")))
+
+    # build() should return without error
+    path = mb.build(NOW, _sources())
+    assert path is None or not path.exists()

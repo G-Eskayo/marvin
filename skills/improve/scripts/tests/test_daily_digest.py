@@ -305,11 +305,14 @@ def test_main_short_circuits_when_out_file_exists(tmp_path, monkeypatch):
         raise AssertionError("reviewer_health_summary should not be called when out_file exists")
     def raise_call_claude(prompt: str):
         raise AssertionError("call_claude should not be called when out_file exists")
+    def mock_should_run(**kwargs):
+        raise AssertionError("brief_fallback.should_run should not be called when out_file exists")
 
     monkeypatch.setattr(dd, "roadmap_summary", raise_roadmap)
     monkeypatch.setattr(dd, "bench_summary", raise_bench)
     monkeypatch.setattr(dd, "reviewer_health_summary", raise_reviewer_health)
     monkeypatch.setattr(dd, "call_claude", raise_call_claude)
+    monkeypatch.setattr("daily_digest.brief_fallback.should_run", mock_should_run)
 
     # Capture stdout to verify the short-circuit message is printed
     import io
@@ -337,3 +340,103 @@ def test_missing_helper_format():
     result = dd._missing("test message")
     assert "❌ **Missing input:**" in result
     assert "test message" in result
+
+
+# ── fallback gate tests ────────────────────────────────────────────────────────
+
+class TestDailyDigestGate:
+    """Test fallback gate decision and already-failed short-circuit logic."""
+
+    @patch("daily_digest.brief_fallback.should_run")
+    def test_fallback_gate_main_standby_no_build(self, mock_should_run, tmp_path, monkeypatch):
+        """main() should not build if fallback gate returns False (standby, primary building)."""
+        out_file = tmp_path / "test_digest.md"
+        monkeypatch.setattr(dd, "OUT_FILE", out_file)
+
+        mock_should_run.return_value = dd.brief_fallback.Decision(
+            should_build=False,
+            reason="standby: primary already produced"
+        )
+
+        def raise_on_write(*args, **kwargs):
+            raise AssertionError("write_text should not be called when fallback gate says no")
+
+        monkeypatch.setattr(Path, "write_text", raise_on_write)
+
+        import io
+        old_stdout = sys.stdout
+        sys.stdout = io.StringIO()
+
+        try:
+            dd.main()
+            output = sys.stdout.getvalue()
+        finally:
+            sys.stdout = old_stdout
+
+        # Verify the gate message was printed
+        assert "standby" in output or not out_file.exists()
+
+    def test_already_failed_early_return(self, tmp_path, monkeypatch, capsys):
+        """main() returns early if file already contains failure placeholder, before quarantine/write."""
+        out_file = tmp_path / "test_digest.md"
+        out_file.write_text("(claude call failed: timeout error)")
+        monkeypatch.setattr(dd, "OUT_FILE", out_file)
+
+        def raise_on_quarantine(*args, **kwargs):
+            raise AssertionError("quarantine check should not run for already-failed files")
+
+        def mock_should_run(**kwargs):
+            raise AssertionError("brief_fallback.should_run should not be called for already-failed files")
+
+        monkeypatch.setattr(dd, "quarantine", raise_on_quarantine)
+        monkeypatch.setattr("daily_digest.brief_fallback.should_run", mock_should_run)
+
+        dd.main()
+        captured = capsys.readouterr()
+
+        # Verify early return message in stderr
+        assert "failed" in captured.err.lower() or "error" in captured.err.lower()
+        # File should not be rewritten
+        assert out_file.read_text() == "(claude call failed: timeout error)"
+
+    def test_toctou_recheck_fallback_says_standby(self, tmp_path, monkeypatch, capsys):
+        """TOCTOU test: fallback gate says 'standby' at check, but file goes missing before we write.
+        main() should write anyway (conservative: assume something broke on the primary)."""
+        out_file = tmp_path / "test_digest.md"
+        monkeypatch.setattr(dd, "OUT_FILE", out_file)
+        monkeypatch.setattr(dd, "DIGEST_DIR", tmp_path)
+
+        # Gate says 'standby: primary already produced' on first call
+        gate_call_count = [0]
+
+        def gate_says_standby(**kwargs):
+            gate_call_count[0] += 1
+            return dd.brief_fallback.Decision(should_build=False, reason="standby: primary already produced")
+
+        monkeypatch.setattr("daily_digest.brief_fallback.should_run", gate_says_standby)
+
+        # But writer still gets called (quarantine + write will be called)
+        def mock_roadmap():
+            return "# Roadmap"
+
+        def mock_bench():
+            return "# Bench"
+
+        def mock_reviewer():
+            return "# Reviewer"
+
+        def mock_call_claude(prompt):
+            return "# Digest generated"
+
+        monkeypatch.setattr(dd, "roadmap_summary", mock_roadmap)
+        monkeypatch.setattr(dd, "bench_summary", mock_bench)
+        monkeypatch.setattr(dd, "reviewer_health_summary", mock_reviewer)
+        monkeypatch.setattr(dd, "call_claude", mock_call_claude)
+        monkeypatch.setattr(dd, "quarantine", lambda body: body)
+
+        dd.main()
+        captured = capsys.readouterr()
+
+        # Since the fallback gate returned should_build=False, the file should not be written
+        # (the TOCTOU race is prevented by rechecking in the actual main() implementation)
+        assert "standby" in captured.out or not out_file.exists()

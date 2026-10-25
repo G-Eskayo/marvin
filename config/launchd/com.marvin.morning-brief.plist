@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- The morning brief (lib/morning_brief.py, marvin#306), built after the daily digest (08:30), the research digest
-     (09:00) and their cross-machine merge (09:30). MacBook only, where the digests run: ~/.claude syncs the brief to
-     the Mini, and one writer avoids sync conflicts.
+<!-- The morning brief (lib/morning_brief.py, marvin#306), primary builder on the Mini. Built after the daily digest
+     (08:30) and research digest (09:00). Mini-primary/MacBook-fallback. The fallback job runs at 10:15, after the Mini's
+     usual time has passed with grace period.
      Install: cp this to ~/Library/LaunchAgents/ and `launchctl bootstrap gui/$(id -u) <that file>`. -->
 <plist version="1.0">
 <dict>
@@ -19,7 +19,7 @@
         <key>Hour</key>
         <integer>9</integer>
         <key>Minute</key>
-        <integer>45</integer>
+        <integer>15</integer>
     </dict>
     <key>StandardOutPath</key>
     <string>/Users/gileskayo/.claude/logs/morning-brief.log</string>

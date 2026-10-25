@@ -31,6 +31,7 @@ import cron_health as ch  # noqa: E402
 import machine_profile  # noqa: E402
 from machine_profile import machine_label  # noqa: E402
 from task_dispatch import TAILSCALE_BIN, TAILSCALE_ENV  # noqa: E402  (absolute path -- launchd's PATH omits the shell's additions)
+from scanner_role import is_primary  # noqa: E402
 
 HOME = Path.home()
 STATUS_PATH = HOME / ".claude" / "logs" / "health-status.json"
@@ -986,11 +987,74 @@ if [ -f "$LEDGER" ]; then echo "disk_ledger=$(tail -14 "$LEDGER" | /usr/bin/tr '
 '''.replace("__ETIME_AWK__", _ETIME_AWK)
 
 
+def check_brief_builder() -> list[dict]:
+    """Monitor the three brief builders (morning-brief, daily-digest, research-colony) on both machines:
+    Mini produces the primary versions; laptop produces fallback versions if the Mini falls silent.
+    Green: all three files exist and contain recent content. Yellow: file exists but is stale.
+    Red: past the fallback deadline with no file.
+    Each builder has a .built-by sidecar showing who produced it."""
+    import brief_fallback
+
+    results = []
+    now = _now()
+
+    # Define the outputs: (name, dir_path, date_format, primary_hour, primary_minute, fallback_deadline_hour, fallback_deadline_minute)
+    # date_format: "local" for local date, "utc" for UTC date
+    outputs = [
+        ("morning-brief", HOME / ".claude" / "briefs", "local", 9, 15, 10, 15),
+        ("daily-digest", HOME / ".claude" / "daily-digest", "utc", 8, 30, 9, 30),
+        ("research-colony", HOME / ".claude" / "research-digest", "local", 9, 0, 10, 0),
+    ]
+
+    for name, dir_path, date_fmt, prim_h, prim_m, fallback_h, fallback_m in outputs:
+        cid = f"brief:{name}"
+        label = f"Brief: {name}"
+
+        # Compute the date string based on format
+        if date_fmt == "utc":
+            today_str = now.strftime("%Y-%m-%d")
+        else:
+            today_str = now.astimezone().strftime("%Y-%m-%d")
+
+        path = dir_path / f"{today_str}.md"
+
+        if not path.exists():
+            # Unified red-escalation: past the deadline with no file
+            if brief_fallback.past_deadline(now, usual_hour=fallback_h, usual_minute=fallback_m, grace_minutes=0):
+                results.append(_result(cid, label, "red", f"fallback deadline passed ({fallback_h:02d}:{fallback_m:02d}), no {path.name}"))
+            else:
+                results.append(_result(cid, label, "yellow", f"{path.name} not yet produced"))
+        else:
+            try:
+                content = path.read_text().strip()
+                if not content:
+                    results.append(_result(cid, label, "yellow", f"{path.name} is empty"))
+                elif content.startswith("(claude call failed:"):
+                    results.append(_result(cid, label, "yellow", f"{path.name} contains an error"))
+                else:
+                    builder = None
+                    sidecar = path.parent / f"{path.stem}.built-by"
+                    if sidecar.exists():
+                        try:
+                            builder = sidecar.read_text().strip()
+                        except Exception:
+                            pass
+                    detail = f"{path.name} produced"
+                    if builder:
+                        detail += f" ({builder})"
+                    results.append(_result(cid, label, "green", detail))
+            except Exception as e:
+                results.append(_result(cid, label, "yellow", f"could not read {path.name}: {str(e)[:80]}"))
+
+    return results
+
+
 # Which machine is meant to run each com.marvin.* launchd job. "both" = both machines, "mini" = the primary automation
 # host only (ADR 0032, 0033), "laptop" = only where Gil sits. Edit here when a job is deliberately moved; a job that
 # is not listed is reported as unplaced so a new job cannot silently run on only one machine.
 JOB_PLACEMENT = {
-    "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "both", "research-colony": "both",
+    "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "mini", "research-colony": "mini",
+    "daily-digest-fallback": "laptop", "research-colony-fallback": "laptop", "morning-brief-fallback": "laptop",
     "desktoplive": "both", "dashboard-webhook": "both",  # webhook on both until #112 (ADR 0032)
     "ticket-pipeline": "both",  # mini scans; the laptop's copy is a standby that scans only if the mini goes quiet (scanner_role.py)
     "architecture-review": "mini", "auto-fix": "mini", "cron-health": "mini", "health-check": "mini",
@@ -999,7 +1063,7 @@ JOB_PLACEMENT = {
     "cleanup-sweep": "both",  # daily: each machine sweeps its own pipeline worktrees (lib/cleanup_sweep.py)
     "machine-resources": "both",  # 30s: samples disk/mem/swap/CPU/GPU for resources panel (#130)
     "dashboard-launch": "laptop",
-    "morning-brief": "laptop",  # one writer (the brief syncs to the mini via ~/.claude); after the digests (lib/morning_brief.py)
+    "morning-brief": "mini",  # primary builder (fallback on laptop); syncs to both via ~/.claude (lib/morning_brief.py)
     # the website map (#189): rebuilt nightly and after MARVIN changes on the mini, where the dev site runs; the nightly
     # job also publishes it to production (ADR 0057), so it must never run on the laptop
     "snapshot-deploy-nightly": "mini", "snapshot-deploy-reactive": "mini",
@@ -1485,6 +1549,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("github:gate", "GitHub calls go through the gate", check_gh_gate, CHECK_BUDGET_S),
         ("main:green", "The main branch passes its tests", check_main_health, CHECK_BUDGET_S),
         ("seal:beta-ingest", "Seal Speak beta reports are picked up", check_seal_beta_ingest, CHECK_BUDGET_S),
+        ("brief:builder", "Brief builders (morning-brief, daily-digest, research-colony)", check_brief_builder, CHECK_BUDGET_S),
         ("cron", "Cron job logs", _cron_job_logs, CHECK_BUDGET_S),
         ("machine", "Machine reachability", lambda: list(reach_results or []), CHECK_BUDGET_S),
         ("repo:sync", "Repo sync", lambda: check_repo_sync_everywhere(reach), CROSS_MACHINE_BUDGET_S),
