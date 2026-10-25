@@ -8,6 +8,7 @@ import pytest
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 LIB = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(LIB))
@@ -1299,3 +1300,65 @@ def test_the_machine_script_reads_a_real_process_uptime_with_this_machines_ps():
         assert 1 <= int(out.stdout.strip()) <= 20
     finally:
         child.kill()
+
+
+# ── brief_builder gate checks ──────────────────────────────────────────────────
+
+def test_check_brief_builder_returns_green_when_file_produced(tmp_path, monkeypatch):
+    """check_brief_builder returns green (OK) when the brief file has been produced."""
+    brief_path = tmp_path / "morning.txt"
+    brief_path.write_text("morning brief content")
+    monkeypatch.setattr(hc, "_BRIEF_PATH", brief_path)
+
+    with patch("health_checks.brief_fallback") as mock_bf:
+        mock_bf.produced.return_value = True
+
+        result = hc.check_brief_builder()
+
+        assert result["severity"] == "green"
+        assert "brief" in result["detail"].lower()
+        mock_bf.produced.assert_called_once()
+
+
+def test_check_brief_builder_returns_yellow_during_fallback_window(tmp_path, monkeypatch):
+    """check_brief_builder returns yellow (WARN) while inside the fallback deadline+grace window."""
+    brief_path = tmp_path / "morning.txt"
+    monkeypatch.setattr(hc, "_BRIEF_PATH", brief_path)
+
+    from datetime import datetime, timezone
+
+    # Mock time as 09:20 (within the fallback window from 09:15 to 10:15)
+    now = datetime(2026, 10, 24, 9, 20, 0, tzinfo=timezone.utc)
+
+    with patch("health_checks.brief_fallback") as mock_bf, \
+         patch("health_checks.datetime") as mock_dt:
+        mock_bf.produced.return_value = False
+        mock_bf.past_deadline.return_value = False  # Within fallback window
+        mock_dt.now.return_value = now
+
+        result = hc.check_brief_builder()
+
+        assert result["severity"] == "yellow"
+        assert "fallback" in result["detail"].lower()
+
+
+def test_check_brief_builder_returns_red_when_deadline_and_grace_passed(tmp_path, monkeypatch):
+    """check_brief_builder returns red (FAIL) when fallback deadline+grace has passed without a build."""
+    brief_path = tmp_path / "morning.txt"
+    monkeypatch.setattr(hc, "_BRIEF_PATH", brief_path)
+
+    from datetime import datetime, timezone
+
+    # Mock time as 10:30 (past the fallback window from 09:15 to 10:15)
+    now = datetime(2026, 10, 24, 10, 30, 0, tzinfo=timezone.utc)
+
+    with patch("health_checks.brief_fallback") as mock_bf, \
+         patch("health_checks.datetime") as mock_dt:
+        mock_bf.produced.return_value = False
+        mock_bf.past_deadline.return_value = True  # Past deadline+grace
+        mock_dt.now.return_value = now
+
+        result = hc.check_brief_builder()
+
+        assert result["severity"] == "red"
+        assert "overdue" in result["detail"].lower() or "deadline" in result["detail"].lower()

@@ -26,6 +26,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import brief_fallback  # noqa: E402
 import code_sync  # noqa: E402
 import cron_health as ch  # noqa: E402
 import machine_profile  # noqa: E402
@@ -986,11 +987,42 @@ if [ -f "$LEDGER" ]; then echo "disk_ledger=$(tail -14 "$LEDGER" | /usr/bin/tr '
 '''.replace("__ETIME_AWK__", _ETIME_AWK)
 
 
+_BRIEF_PATH = Path.home() / ".claude" / "briefs" / datetime.now(timezone.utc).strftime("%Y-%m-%d.md")
+
+
+def check_brief_builder() -> dict:
+    """Gate for the morning brief fallback builder. Green if primary has built, yellow during the fallback window,
+    red if the fallback deadline+grace has also passed without a build."""
+    result = RESULT_TEMPLATE.copy()
+    result["id"] = "brief:builder"
+    result["label"] = "Morning brief builder gate"
+
+    now = datetime.now(timezone.utc)
+
+    # Green: already produced (by either builder)
+    if brief_fallback.produced(_BRIEF_PATH):
+        result["severity"] = "green"
+        result["detail"] = "Brief produced"
+        return result
+
+    # Yellow: inside the fallback deadline+grace window but not yet built
+    # Fallback window: 09:15 + 60 min = 10:15
+    if not brief_fallback.past_deadline(now, usual_hour=9, usual_minute=15, grace_minutes=60):
+        result["severity"] = "yellow"
+        result["detail"] = f"Fallback builder window active, not yet produced"
+        return result
+
+    # Red: past the fallback deadline+grace and still no build
+    result["severity"] = "red"
+    result["detail"] = "Brief overdue (past fallback deadline+grace, none produced)"
+    return result
+
+
 # Which machine is meant to run each com.marvin.* launchd job. "both" = both machines, "mini" = the primary automation
 # host only (ADR 0032, 0033), "laptop" = only where Gil sits. Edit here when a job is deliberately moved; a job that
 # is not listed is reported as unplaced so a new job cannot silently run on only one machine.
 JOB_PLACEMENT = {
-    "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "both", "research-colony": "both",
+    "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "mini", "research-colony": "mini",
     "desktoplive": "both", "dashboard-webhook": "both",  # webhook on both until #112 (ADR 0032)
     "ticket-pipeline": "both",  # mini scans; the laptop's copy is a standby that scans only if the mini goes quiet (scanner_role.py)
     "architecture-review": "mini", "auto-fix": "mini", "cron-health": "mini", "health-check": "mini",
@@ -999,7 +1031,10 @@ JOB_PLACEMENT = {
     "cleanup-sweep": "both",  # daily: each machine sweeps its own pipeline worktrees (lib/cleanup_sweep.py)
     "machine-resources": "both",  # 30s: samples disk/mem/swap/CPU/GPU for resources panel (#130)
     "dashboard-launch": "laptop",
-    "morning-brief": "laptop",  # one writer (the brief syncs to the mini via ~/.claude); after the digests (lib/morning_brief.py)
+    "morning-brief": "mini",  # primary: mini builder; brief syncs to laptop via ~/.claude; after the digests (lib/morning_brief.py)
+    "morning-brief-fallback": "laptop",  # fallback builder (runs if mini is silent past 10:15)
+    "daily-digest-fallback": "laptop",  # fallback builder (runs if mini is silent past 09:30)
+    "research-colony-fallback": "laptop",  # fallback builder (runs if mini is silent past 10:00)
     # the website map (#189): rebuilt nightly and after MARVIN changes on the mini, where the dev site runs; the nightly
     # job also publishes it to production (ADR 0057), so it must never run on the laptop
     "snapshot-deploy-nightly": "mini", "snapshot-deploy-reactive": "mini",
@@ -1475,6 +1510,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("dispatch:parallel", "Parallel dispatch keeping up", check_parallel_dispatch, CHECK_BUDGET_S),
         ("purpose:missed", "Purpose metrics", check_missed_purposes, CHECK_BUDGET_S),
         ("contract", "Output contracts", check_output_contracts, CHECK_BUDGET_S),
+        ("brief:builder", "Morning brief builder gate", check_brief_builder, CHECK_BUDGET_S),
         ("profile:missing", "Projects without an execution profile", check_missing_profiles, CHECK_BUDGET_S),
         ("profile:no-machines", "Projects with no machines", check_unrunnable_profiles, CHECK_BUDGET_S),
         ("triggers:missed", "Dashboard triggers cover every change", check_trigger_coverage, CHECK_BUDGET_S),

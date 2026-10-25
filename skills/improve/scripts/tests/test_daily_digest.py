@@ -337,3 +337,84 @@ def test_missing_helper_format():
     result = dd._missing("test message")
     assert "❌ **Missing input:**" in result
     assert "test message" in result
+
+
+# ── brief_fallback gate tests ────────────────────────────────────────────────────
+
+class TestDailyDigestGate:
+    """Tests for gating daily_digest.main() via brief_fallback.should_run()."""
+
+    def test_should_run_gate_skips_build_if_not_primary_and_before_deadline(self, tmp_path, monkeypatch):
+        """main() should skip if brief_fallback.should_run() returns False (standby before deadline)."""
+        out_file = tmp_path / "digest.txt"
+        monkeypatch.setattr(dd, "OUT_FILE", out_file)
+
+        # Mock brief_fallback.should_run to return False (standby before deadline)
+        with patch("daily_digest.brief_fallback") as mock_bf:
+            mock_bf.should_run.return_value = mock_bf.Decision(False, "standby: before deadline")
+
+            # Run main
+            dd.main()
+
+            # File should not be created
+            assert not out_file.exists()
+
+            # Verify should_run was called with correct parameters
+            mock_bf.should_run.assert_called_once()
+            call_kwargs = mock_bf.should_run.call_args.kwargs
+            assert call_kwargs["usual_hour"] == 8
+            assert call_kwargs["usual_minute"] == 30
+
+    def test_should_run_gate_builds_if_primary_or_fallback(self, tmp_path, monkeypatch):
+        """main() should build if brief_fallback.should_run() returns True."""
+        out_file = tmp_path / "digest.txt"
+        monkeypatch.setattr(dd, "OUT_FILE", out_file)
+
+        # Mock brief_fallback and call_claude
+        import brief_fallback
+        with patch("daily_digest.brief_fallback") as mock_bf, \
+             patch("daily_digest.call_claude") as mock_claude:
+            mock_bf.should_run.return_value = brief_fallback.Decision(True, "primary")
+            mock_bf.produced.return_value = False
+            mock_claude.return_value = "test digest content"
+
+            # Run main
+            dd.main()
+
+            # File should be created
+            assert out_file.exists()
+
+    def test_should_run_gate_respects_produced_check(self, tmp_path, monkeypatch):
+        """main() should skip build if brief_fallback.produced() returns True."""
+        out_file = tmp_path / "digest.txt"
+        out_file.write_text("existing digest")
+        monkeypatch.setattr(dd, "OUT_FILE", out_file)
+
+        # Mock brief_fallback.should_run to return True, but produced to return True
+        import brief_fallback
+        with patch("daily_digest.brief_fallback") as mock_bf:
+            mock_bf.should_run.return_value = brief_fallback.Decision(True, "primary")
+            mock_bf.produced.return_value = True
+
+            # Run main
+            dd.main()
+
+            # File should not be modified
+            assert out_file.read_text() == "existing digest"
+
+    def test_should_run_gate_passes_correct_parameters(self, tmp_path, monkeypatch):
+        """main() should pass OUT_FILE and correct schedule times to should_run()."""
+        out_file = tmp_path / "digest.txt"
+        monkeypatch.setattr(dd, "OUT_FILE", out_file)
+
+        with patch("daily_digest.brief_fallback") as mock_bf:
+            mock_bf.should_run.return_value = mock_bf.Decision(False, "standby")
+            mock_bf.produced.return_value = False
+
+            dd.main()
+
+            # Verify should_run was called with the correct local_path and schedule times
+            call_args = mock_bf.should_run.call_args
+            assert call_args.kwargs.get("local_path") == out_file
+            assert call_args.kwargs.get("usual_hour") == 8
+            assert call_args.kwargs.get("usual_minute") == 30

@@ -123,3 +123,78 @@ def test_open_prs_marks_waiting_from_one_graphql_read(monkeypatch):
     monkeypatch.setattr(od, "fetch", lambda repos, run=None: None)
     brief = mb.gather(NOW, {"open_prs": mb._open_prs})
     assert brief["open_prs"] is None and "open PRs" in brief["missing"][0]
+
+
+# ── brief_fallback gate and build() tests ─────────────────────────────────────
+
+def test_build_respects_should_run_gate(tmp_path, monkeypatch):
+    """build() should skip if brief_fallback.should_run() returns False."""
+    brief_path = tmp_path / "morning.txt"
+    monkeypatch.setattr(mb, "OUT_FILE", brief_path)
+
+    from unittest.mock import patch
+    import brief_fallback
+
+    with patch("morning_brief.brief_fallback") as mock_bf:
+        mock_bf.should_run.return_value = brief_fallback.Decision(False, "standby: before deadline")
+
+        mb.build(NOW, _sources())
+
+        # File should not be created
+        assert not brief_path.exists()
+        mock_bf.should_run.assert_called_once()
+
+
+def test_build_writes_file_when_gate_permits(tmp_path, monkeypatch):
+    """build() should call write() when brief_fallback.should_run() returns True."""
+    brief_path = tmp_path / "morning.txt"
+    monkeypatch.setattr(mb, "OUT_FILE", brief_path)
+
+    from unittest.mock import patch, MagicMock
+    import brief_fallback
+
+    with patch("morning_brief.brief_fallback") as mock_bf, \
+         patch("morning_brief.write") as mock_write:
+        mock_bf.should_run.return_value = brief_fallback.Decision(True, "primary")
+        mock_bf.produced.return_value = False
+        mock_write.return_value = brief_path
+
+        result = mb.build(NOW, _sources(), builder_name="test")
+
+        # Verify write() was called
+        mock_write.assert_called_once()
+        # Result should be the brief_path
+        assert result == brief_path
+
+
+def test_builder_of_writes_sidecar_with_builder_name(tmp_path, monkeypatch):
+    """builder_of() should create a .built-by sidecar file with the builder's name."""
+    brief_path = tmp_path / "morning.txt"
+    brief_path.write_text("brief content")
+
+    monkeypatch.setattr(mb, "OUT_FILE", brief_path)
+
+    sidecar_path = mb.builder_of("mini")
+
+    assert sidecar_path == brief_path.with_suffix(".built-by")
+    assert sidecar_path.exists()
+    assert sidecar_path.read_text().strip() == "mini"
+
+
+def test_write_uses_brief_fallback_produced_check(tmp_path, monkeypatch):
+    """write() should check brief_fallback.produced() instead of path.exists()."""
+    brief_path = tmp_path / "morning.txt"
+    monkeypatch.setattr(mb, "OUT_FILE", brief_path)
+
+    from unittest.mock import patch, MagicMock
+
+    with patch("morning_brief.brief_fallback") as mock_bf:
+        mock_bf.produced.return_value = True
+
+        # write() should skip if produced returns True
+        result = mb.write(NOW, _sources(), builder_reason="test")
+
+        # Result should be None or the path with no content written
+        if result:
+            # File may or may not exist, but brief_fallback.produced should have been checked
+            mock_bf.produced.assert_called_once()

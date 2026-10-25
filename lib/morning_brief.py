@@ -25,6 +25,8 @@ from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import brief_fallback  # noqa: E402
+
 CLAUDE = Path.home() / ".claude"
 BRIEFS = CLAUDE / "briefs"
 HEALTH_STATUS = CLAUDE / "logs" / "health-status.json"
@@ -32,6 +34,9 @@ OVERRIDES = CLAUDE / "catalog" / "overrides.json"
 REPOS = ("G-Eskayo/marvin", "G-Eskayo/clarity-captions", "G-Eskayo/marvin-mobile")
 DEADLINE_HORIZON_DAYS = 45
 LATE_HOUR = 23  # local time; a session still active after this counts as a late night
+
+TODAY = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+OUT_FILE = BRIEFS / f"{TODAY}.md"
 
 
 # ── sources (each is a small reader; gather() tolerates any of them failing) ──────────────────────────────────
@@ -277,12 +282,46 @@ def _day(now: datetime) -> str:
     return now.astimezone().strftime("%Y-%m-%d")
 
 
-def write(now: datetime | None = None, sources: dict[str, Callable] | None = None) -> Path:
+def write(now: datetime | None = None, sources: dict[str, Callable] | None = None, builder_reason: str | None = None) -> Path | None:
     now = now or datetime.now(timezone.utc)
     BRIEFS.mkdir(parents=True, exist_ok=True)
     path = BRIEFS / f"{_day(now)}.md"
+
+    # Idempotency: skip if already produced (even if empty or from another builder)
+    if brief_fallback.produced(path):
+        return None
+
     path.write_text(render(gather(now, sources), now))
+
+    # Record which machine/builder produced this
+    if builder_reason:
+        builder_of(builder_reason)
+
     return path
+
+
+def builder_of(builder_name: str) -> Path:
+    """Record which machine built today's brief. Returns the path to the .built-by sidecar."""
+    BRIEFS.mkdir(parents=True, exist_ok=True)
+    sidecar = OUT_FILE.with_suffix(".built-by")
+    sidecar.write_text(f"{builder_name}\n")
+    return sidecar
+
+
+def build(now: datetime | None = None, sources: dict[str, Callable] | None = None, builder_name: str = "unknown") -> Path | None:
+    """Build today's brief if this machine should (checks brief_fallback.should_run()).
+    Returns the brief path on success, None if skipped."""
+    now = now or datetime.now(timezone.utc)
+    decision = brief_fallback.should_run(local_path=OUT_FILE, usual_hour=9, usual_minute=15)
+
+    if not decision.should_build:
+        return None
+
+    # Recheck produced before writing (TOCTOU race with another builder)
+    if brief_fallback.produced(OUT_FILE):
+        return None
+
+    return write(now, sources, builder_reason=builder_name)
 
 
 def show_today(now: datetime | None = None) -> str | None:
@@ -309,7 +348,9 @@ def read_dates() -> list[datetime]:
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["build"]:
-        print(write())
+        result = build(builder_name="cli")
+        if result:
+            print(result)
     elif sys.argv[1:] == ["show"]:
         print(show_today() or "No brief for today yet.")
     else:
