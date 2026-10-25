@@ -162,6 +162,7 @@
     { "a": "daily-digest", "b": "qa-knowledge", "label": "reads qa-knowledge as part of its assembled context", "type": "hook" },
     { "a": "research-colony", "b": "qa-knowledge", "label": "correlate.py cross-refs today's finds against qa-knowledge", "type": "hook" },
     { "a": "research-colony", "b": "research-feed", "label": "source_monitor.py writes here, correlate.py reads it back", "type": "hook" },
+    { "a": "research", "b": "research-feed", "label": "check_research_feed.py pre-checks today's correlated items before fetching fresh (ADR 0070)", "type": "undeclared" },
     { "a": "paper-dive", "b": "paper-knowledge", "label": "paper_graph.py's /paper-graph mode writes and reads here — added 2026-07-08, previously missing from this graph entirely (same gap class as qa-agent above)", "type": "hook" },
     { "a": "cross-machine-merge", "b": "task-dispatch", "label": "migrated to task-dispatch's fan-out/merge primitive, event-driven instead of purely cron-timed", "type": "hook" },
     { "a": "cross-machine-merge", "b": "Cross-Machine Network", "label": "syncs qa-knowledge/research-feed across every device registered here", "type": "hook" }

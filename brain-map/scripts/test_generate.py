@@ -579,3 +579,43 @@ def test_code_layer_live_regression_guard_no_vendor_in_borrowing():
     assert "external_func" in borrowed_ids
     # vendor_motion should NOT be borrowed, despite being called
     assert "vendor_motion" not in borrowed_ids
+
+
+# ── enrichment.json extra_synapses ──────────────────────────────────────
+
+def test_extra_synapses_resolve_to_real_nodes_and_have_no_duplicates():
+    """Verify all extra_synapses in enrichment.json reference real skill/memory nodes and no duplicates exist."""
+    manifest = json.loads(generate.MANIFEST_PATH.read_text())
+    enrichment = json.loads(generate.ENRICHMENT_PATH.read_text())
+    tree_ids = ids(generate.build_tree(manifest, enrichment))
+
+    # Collect all node IDs that appear in enrichment.json structural definitions
+    structural_ids = {node["id"] for node in enrichment.get("structural", [])}
+
+    # Recursively collect all IDs from structural children
+    def collect_structural_ids(node_list):
+        collected = set()
+        for node in node_list:
+            collected.add(node["id"])
+            if "children" in node:
+                collected.update(collect_structural_ids(node["children"]))
+        return collected
+
+    enrichment_ids = collect_structural_ids(enrichment.get("structural", []))
+    # Combine with live tree IDs (skills, agents, etc.)
+    all_valid_ids = enrichment_ids | tree_ids
+
+    # Test 1: Every synapse endpoint resolves to a real node
+    synapses = enrichment.get("extra_synapses", [])
+    for synapse in synapses:
+        a_id = synapse.get("a")
+        b_id = synapse.get("b")
+        assert a_id in all_valid_ids, f"Synapse endpoint '{a_id}' not found in tree or enrichment"
+        assert b_id in all_valid_ids, f"Synapse endpoint '{b_id}' not found in tree or enrichment"
+
+    # Test 2: No duplicate (a, b) pairs exist in extra_synapses
+    seen_pairs = set()
+    for synapse in synapses:
+        pair = (synapse.get("a"), synapse.get("b"))
+        assert pair not in seen_pairs, f"Duplicate synapse pair found: {pair}"
+        seen_pairs.add(pair)
