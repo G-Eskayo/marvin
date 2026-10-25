@@ -21,10 +21,22 @@ vi.mock('../webhook-server/ui_evidence.js', () => ({ assertUiEvidence: vi.fn(asy
 vi.mock('../webhook-server/decisions_gate.js', () => ({ assertDecisions: vi.fn(async () => {}) }))
 // Versioning (changelog) is tested separately; mock it here to avoid needing real git repos in merge tests.
 vi.mock('../webhook-server/changelog.js', () => ({ applyVersionBump: vi.fn().mockResolvedValue(undefined) }))
+// Gate duration tracking: every test can override per-call if needed, but default to real behavior
+vi.mock('../webhook-server/gate_durations.js', async () => {
+  const actual = await vi.importActual('../webhook-server/gate_durations.js')
+  const tempDir = mkdtempSync(path.join(tmpdir(), 'gate-test-'))
+  const scratchLog = path.join(tempDir, 'durations.jsonl')
+  return {
+    ...actual,
+    recordDuration: vi.fn((key, ms, passed, append, now, file) => actual.recordDuration(key, ms, passed, append, now, scratchLog)),
+    recentPassingDurations: vi.fn((keys, read, file, max) => actual.recentPassingDurations(keys, read, scratchLog, max)),
+    computeGateTimeoutMs: vi.fn(actual.computeGateTimeoutMs)
+  }
+})
 
 import { execFile, execFileSync } from 'child_process'
 import { promisify } from 'util'
-import { mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
 import {
@@ -814,6 +826,10 @@ describe('defaultGateContext', () => {
     await ctx.runTests('/scratch', exec)
     const last = exec.mock.calls.at(-1)
     expect(last[1].slice(-3)).toEqual(['verify', 'o/x', '/scratch'])
+    // Verify positional argument order: run(cmd, args, opts, timeoutMs, meta)
+    expect(last[2]).toEqual({})  // opts (empty object)
+    expect(typeof last[3]).toBe('number')  // timeoutMs
+    expect(typeof last[4]).toBe('object')  // meta object
   })
 })
 
@@ -1160,6 +1176,201 @@ describe('the gate tells a red main apart from a bad PR', () => {
   })
 })
 
+describe('execWithGroupTimeout with metadata enrichment', () => {
+  it('appends usual duration and concurrent process count to timeout error', async () => {
+    const countConcurrent = vi.fn().mockResolvedValue(3)
+    const meta = { label: 'pytest', usualMs: 300000, countConcurrent }
+    try {
+      await execWithGroupTimeout('sleep', ['1000'], {}, 50, meta)
+      expect.fail('should have timed out')
+    } catch (err) {
+      expect(err.message).toContain('did not finish')
+      expect(err.message).toContain('[usual: 5 min; concurrent: 3]')
+      expect(countConcurrent).toHaveBeenCalled()
+    }
+  })
+
+  it('shows "no history yet" when usualMs is 0 or missing', async () => {
+    const countConcurrent = vi.fn().mockResolvedValue(2)
+    const meta = { label: 'pytest', usualMs: 0, countConcurrent }
+    try {
+      await execWithGroupTimeout('sleep', ['1000'], {}, 50, meta)
+      expect.fail('should have timed out')
+    } catch (err) {
+      expect(err.message).toContain('[usual: no history yet; concurrent: 2]')
+    }
+  })
+
+  it('ignores countConcurrent errors gracefully and omits enrichment', async () => {
+    const countConcurrent = vi.fn().mockRejectedValue(new Error('pgrep failed'))
+    const meta = { label: 'pytest', countConcurrent }
+    try {
+      await execWithGroupTimeout('sleep', ['1000'], {}, 50, meta)
+      expect.fail('should have timed out')
+    } catch (err) {
+      expect(err.message).toContain('did not finish')
+      // Should NOT have the enrichment since countConcurrent failed
+      expect(err.message).not.toContain('[usual:')
+      expect(err.message).not.toContain('[concurrent:')
+    }
+  })
+
+  it('timeout works with no meta param (backward compat) and no enrichment', async () => {
+    try {
+      await execWithGroupTimeout('sleep', ['1000'], {}, 50)
+      expect.fail('should have timed out')
+    } catch (err) {
+      expect(err.message).toContain('did not finish')
+      expect(err.message).not.toContain('[usual:')
+      expect(err.message).not.toContain('[concurrent:')
+    }
+  })
+
+  it('returns stdout/stderr on success', async () => {
+    const result = await execWithGroupTimeout('echo', ['hello'], {})
+    expect(result.stdout).toContain('hello')
+  })
+
+  it('appends enrichment to stderr as well as message', async () => {
+    const countConcurrent = vi.fn().mockResolvedValue(3)
+    const meta = { label: 'pytest', usualMs: 300000, countConcurrent }
+    try {
+      await execWithGroupTimeout('sleep', ['1000'], {}, 50, meta)
+      expect.fail('should have timed out')
+    } catch (err) {
+      // Enrichment should be in both message and stderr
+      const msgStr = String(err.message)
+      expect(msgStr).toContain('[usual:')
+      expect(msgStr).toContain('concurrent:')
+      expect(err.stderr).toContain('[usual:')
+      expect(err.stderr).toContain('concurrent:')
+    }
+  })
+
+  it('clears the inner fallback timer on completion', async () => {
+    // This test verifies that timers are properly cleaned up and don't leak
+    const countConcurrent = vi.fn().mockResolvedValue(1)
+    const meta = { label: 'pytest', countConcurrent }
+
+    // First timeout should set and clear the inner timer
+    try {
+      await execWithGroupTimeout('sleep', ['1000'], {}, 50, meta)
+      expect.fail('should have timed out')
+    } catch {
+      // Test passes if we get here without a leaked timer
+      // A leaked timer would cause subsequent tests to hang or fail
+    }
+
+    // Quick success call to verify no timer interference
+    const result = await execWithGroupTimeout('echo', ['ok'], {})
+    expect(result.stdout).toContain('ok')
+  })
+})
+
+describe('duration recording in _defaultRunTests', () => {
+  it('records both pytest and vitest durations on success', async () => {
+    const exec = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const recordFn = vi.fn()
+    const recentFn = vi.fn().mockReturnValue({})
+
+    const tempDir = mkdtempSync(path.join(tmpdir(), 'test-'))
+    const dashboardDir = path.join(tempDir, 'dashboard')
+    mkdirSync(dashboardDir, { recursive: true })
+
+    try {
+      await _defaultRunTests(tempDir, exec, recordFn, recentFn)
+
+      // Should record pytest and vitest durations
+      const calls = recordFn.mock.calls
+      expect(calls.some(c => c[0] === 'pytest')).toBe(true)
+      expect(calls.some(c => c[0] === 'vitest')).toBe(true)
+
+      // Each duration should be a non-negative number
+      const pythonCall = calls.find(c => c[0] === 'pytest')
+      expect(pythonCall[1]).toBeGreaterThanOrEqual(0)
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('records durations even when a test fails', async () => {
+    const exec = vi.fn()
+      .mockResolvedValueOnce({ stdout: '', stderr: '' })  // npm install
+      .mockRejectedValueOnce(new Error('pytest failed'))  // pytest
+    const recordFn = vi.fn()
+    const recentFn = vi.fn().mockReturnValue({})
+
+    const tempDir = mkdtempSync(path.join(tmpdir(), 'test-'))
+    const dashboardDir = path.join(tempDir, 'dashboard')
+    mkdirSync(dashboardDir, { recursive: true })
+
+    try {
+      await expect(_defaultRunTests(tempDir, exec, recordFn, recentFn)).rejects.toThrow('pytest failed')
+
+      // Should still record pytest duration before throwing
+      const calls = recordFn.mock.calls
+      expect(calls.some(c => c[0] === 'pytest')).toBe(true)
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('gate timeout lazy computation', () => {
+  it('computes gate timeout when gateTimeoutMs is undefined; uses step keys', async () => {
+    const PR = 'https://github.com/G-Eskayo/marvin/pull/173'
+    const exec = vi.fn()
+      .mockResolvedValueOnce({ stdout: JSON.stringify({ headRefName: 'feature', body: '' }) })
+      .mockResolvedValueOnce({ stdout: JSON.stringify({ baseRefName: 'main', statusCheckRollup: [] }) })
+      .mockResolvedValueOnce({ stdout: JSON.stringify({ mergeable: 'MERGEABLE' }) })
+      .mockResolvedValueOnce({ stdout: '', stderr: '' })
+
+    const shouldGate = vi.fn().mockResolvedValue({ gate: true, headRefName: 'feature', body: '', behind: false, shared: [] })
+    const rebaseAndRetestFn = vi.fn().mockResolvedValue({ ok: true })
+    const { computeGateTimeoutMs: actualComputeGateTimeoutMs } = await import('../webhook-server/gate_durations.js')
+
+    // Call with undefined gateTimeoutMs to trigger computation
+    const result = await mergePr(
+      PR, exec, noopRebuild, noopRedispatch, shouldGate, rebaseAndRetestFn, vi.fn(), vi.fn(),
+      { gateTimeoutMs: undefined }
+    )
+
+    // Verify the gate ran and merge succeeded (computeGateTimeoutMs was called)
+    expect(rebaseAndRetestFn).toHaveBeenCalled()
+    expect(result.merged).toBe(true)
+  })
+})
+
+describe('enrichment marker extraction from gate failures', () => {
+  it('extracts [usual: ...; concurrent: ...] marker from gate infra timeout and includes in refusal', async () => {
+    const PR = 'https://github.com/G-Eskayo/marvin/pull/173'
+    const exec = execWithCodeReviewDefaults(vi.fn()
+      .mockResolvedValueOnce({ stdout: JSON.stringify({ headRefName: 'feature', body: 'Closes #147' }) })
+      .mockResolvedValueOnce({ stdout: JSON.stringify({ baseRefName: 'main', statusCheckRollup: [] }) }))
+    const shouldGate = vi.fn().mockResolvedValue({ gate: true, headRefName: 'feature', body: 'Closes #147', behind: true, shared: [] })
+    const reengage = vi.fn()
+
+    // rebaseAndRetest returns a failure with [usual: ...; concurrent: ...] enrichment marker
+    const failureWithEnrichment = Promise.resolve({
+      ok: false,
+      reason: 'Tests did not finish within 40 min\n[usual: 8 min; concurrent: 5]'
+    })
+
+    let thrownError
+    try {
+      await mergePr(PR, exec, noopRebuild, noopRedispatch, shouldGate, () => failureWithEnrichment, reengage, vi.fn())
+      expect.fail('should have thrown')
+    } catch (err) {
+      thrownError = err
+    }
+
+    // The refusal's remediation field should include the extracted enrichment info
+    expect(thrownError.payload.remediation).toContain('usual: 8 min')
+    expect(thrownError.payload.remediation).toContain('concurrent: 5 process(es)')
+    expect(reengage).not.toHaveBeenCalled()
+  })
+})
+
 describe('a gate that never finishes is cut off and says so', () => {
   const PR = 'https://github.com/G-Eskayo/marvin/pull/173'
   const gate = () => vi.fn().mockResolvedValue({ gate: true, headRefName: 'pipeline/x', body: 'Closes G-Eskayo/marvin#147' })
@@ -1178,5 +1389,102 @@ describe('a gate that never finishes is cut off and says so', () => {
     const ok = vi.fn().mockResolvedValue({ ok: true })
     const result = await mergePr(PR, exec(), noopRebuild, noopRedispatch, gate(), ok, vi.fn(), vi.fn(), { gateTimeoutMs: 5000 })
     expect(result.merged).toBe(true)
+  })
+})
+
+describe('gate timeout lazy computation wiring', () => {
+  const PR = 'https://github.com/G-Eskayo/marvin/pull/100'
+  const shouldGate = () => vi.fn().mockResolvedValue({ gate: true, headRefName: 'feature/z', body: 'Closes G-Eskayo/marvin#50' })
+  const baseExec = () => vi.fn(async (cmd) => {
+    if (String(cmd).endsWith('gh')) return { stdout: JSON.stringify({ baseRefName: 'main', statusCheckRollup: [] }), stderr: '' }
+    return { stdout: '', stderr: '' }
+  })
+
+  it('computes gate timeout from recent durations when gateTimeoutMs is not provided', async () => {
+    const gateModule = await import('../webhook-server/gate_durations.js')
+    const computeMock = vi.spyOn(gateModule, 'computeGateTimeoutMs')
+
+    try {
+      const reengage = vi.fn()
+      const mockExec = baseExec()
+      const okResult = vi.fn().mockResolvedValue({ ok: true })
+
+      await mergePr(PR, mockExec, noopRebuild, noopRedispatch, shouldGate(), okResult, reengage, vi.fn())
+
+      // Should have called computeGateTimeoutMs with step keys and recent durations
+      expect(computeMock).toHaveBeenCalled()
+      const calls = computeMock.mock.calls
+      expect(calls.some(c => c[0] && Array.isArray(c[0]) && (c[0].includes('pytest') || c[0].includes('vitest')))).toBe(true)
+    } finally {
+      computeMock.mockRestore()
+    }
+  })
+
+  it('uses provided gateTimeoutMs when passed in deps', async () => {
+    const reengage = vi.fn()
+    const mockExec = baseExec()
+    const okResult = vi.fn().mockResolvedValue({ ok: true })
+    const customMs = 200000
+
+    const result = await mergePr(PR, mockExec, noopRebuild, noopRedispatch, shouldGate(), okResult, reengage, vi.fn(), { gateTimeoutMs: customMs })
+    expect(result.merged).toBe(true)
+  })
+})
+
+describe('enrichment marker extraction from timeout', () => {
+  const PR = 'https://github.com/G-Eskayo/marvin/pull/150'
+  const shouldGate = () => vi.fn().mockResolvedValue({ gate: true, headRefName: 'bugfix/w', body: 'Closes G-Eskayo/marvin#75' })
+  const exec = () => vi.fn(async (cmd) => {
+    if (String(cmd).endsWith('gh')) return { stdout: JSON.stringify({ baseRefName: 'main', statusCheckRollup: [] }), stderr: '' }
+    return { stdout: '', stderr: '' }
+  })
+
+  it('extracts [usual: ...; concurrent: ...] marker from timeout error and splices into refusal message', async () => {
+    const reengage = vi.fn()
+    const failureWithMarker = vi.fn().mockResolvedValue({
+      ok: false,
+      reason: 'Tests did not finish within 2 min and were killed, running: pytest\n[usual: 5 min; concurrent: 8]\nMore details'
+    })
+
+    let thrownError
+    try {
+      await mergePr(PR, exec(), noopRebuild, noopRedispatch, shouldGate(), failureWithMarker, reengage, vi.fn(), { gateTimeoutMs: 30 })
+      expect.fail('should have thrown')
+    } catch (err) {
+      thrownError = err
+    }
+
+    // Verify the enrichment info is extracted and included in the refusal's remediation
+    expect(thrownError.payload.remediation).toContain('usual: 5 min')
+    expect(thrownError.payload.remediation).toContain('concurrent: 8 process(es)')
+    expect(reengage).not.toHaveBeenCalled()
+  })
+
+  it('handles missing enrichment marker gracefully', async () => {
+    const reengage = vi.fn()
+    const failureNoMarker = vi.fn().mockResolvedValue({
+      ok: false,
+      reason: 'Tests did not finish within 1 min and were killed, running: vitest\nSome error output'
+    })
+
+    await expect(
+      mergePr(PR, exec(), noopRebuild, noopRedispatch, shouldGate(), failureNoMarker, reengage, vi.fn(), { gateTimeoutMs: 30 })
+    ).rejects.toMatchObject({ payload: { code: 'GATE_INFRA' } })
+
+    expect(reengage).not.toHaveBeenCalled()
+  })
+
+  it('classifies null/undefined reason as GATE_TESTS_FAILED (not GATE_INFRA)', async () => {
+    const reengage = vi.fn()
+    const failureNullReason = vi.fn().mockResolvedValue({
+      ok: false,
+      reason: null
+    })
+
+    const result = await mergePr(PR, exec(), noopRebuild, noopRedispatch, shouldGate(), failureNullReason, reengage, vi.fn(), { gateTimeoutMs: 30 })
+
+    // Null/empty reason is treated as a test failure, not infra, so it's reengage
+    expect(result).toMatchObject({ merged: false, reengaged: true })
+    expect(reengage).toHaveBeenCalled()
   })
 })

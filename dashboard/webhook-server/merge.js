@@ -15,6 +15,7 @@ import { recordStage } from './ticket_stages.js'
 import { assertChecksGreen } from './ci_status.js'
 import { checkOpenPrs } from './post_merge_rebase.js'
 import { applyVersionBump } from './changelog.js'
+import { DEFAULT_TEST_TIMEOUT_MS, recordDuration, recentPassingDurations, median, sizedTimeoutMs, computeGateTimeoutMs, countConcurrentPytest } from './gate_durations.js'
 
 const execFileAsync = promisify(execFile)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -24,9 +25,8 @@ const TICKET_PIPELINE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'ticke
 const VENV_PYTHON = path.resolve(__dirname, '..', '..', 'venv', 'bin', 'python')
 const PROFILE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'project_profile.py')
 const GENERATED_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'generated_paths.py')
-const DEFAULT_TEST_TIMEOUT_MS = 1200_000
 
-export async function execWithGroupTimeout(cmd, args, opts, timeoutMs = DEFAULT_TEST_TIMEOUT_MS) {
+export async function execWithGroupTimeout(cmd, args, opts, timeoutMs = DEFAULT_TEST_TIMEOUT_MS, meta) {
   const child = spawn(cmd, args, { ...opts, detached: true })
   let stdout = '', stderr = ''
   if (child.stdout) child.stdout.on('data', (d) => { stdout += d })
@@ -39,18 +39,36 @@ export async function execWithGroupTimeout(cmd, args, opts, timeoutMs = DEFAULT_
     })
   })
   let timer
+  let innerTimer
   return Promise.race([
     promise,
     new Promise((resolve, reject) => {
-      timer = setTimeout(() => {
+      timer = setTimeout(async () => {
         try {
           process.kill(-child.pid, 'SIGKILL')
         } catch { /* process may have already exited */ }
         const mins = Math.max(1, Math.round(timeoutMs / 60000))
-        reject(Object.assign(new Error(`Tests did not finish within ${mins} min and were killed, running: ${cmd}`), { stdout, stderr }))
+        let enrichment = ''
+        if (meta?.label && meta?.countConcurrent) {
+          try {
+            const count = await Promise.race([
+              meta.countConcurrent(),
+              new Promise((resolve) => {
+                innerTimer = setTimeout(() => resolve(0), 2000)
+              })
+            ])
+            const usual = meta.usualMs ? `${Math.max(1, Math.round(meta.usualMs / 60000))} min` : 'no history yet'
+            enrichment = `\n[usual: ${usual}; concurrent: ${count}]`
+          } catch { /* fail-soft */ }
+        }
+        const msg = `Tests did not finish within ${mins} min and were killed, running: ${cmd}${enrichment}`
+        reject(Object.assign(new Error(msg), { stdout, stderr: stderr + enrichment }))
       }, timeoutMs)
     })
-  ]).finally(() => clearTimeout(timer))
+  ]).finally(() => {
+    clearTimeout(timer)
+    clearTimeout(innerTimer)
+  })
 }
 
 // The overlap rule (Gil 2026-10-09): a PR behind main is retested only when main changed a file the PR also changes
@@ -96,10 +114,26 @@ export async function isBehindMain(headRef, exec = execFileAsync, repoPath = REP
   }
 }
 
-export async function _defaultRunTests(cwd, exec) {
+export async function _defaultRunTests(cwd, exec, recordDurationFn = recordDuration, recentDurationsFn = recentPassingDurations) {
+  // Get recent durations once and compute sized timeouts
+  const recent = recentDurationsFn(['pytest', 'vitest'])
+
   // MARVIN_MERGE_GATE: tests that read ANOTHER repo's data (the portfolio figures) stay out of a PR's gate; they run in the
   // main-branch health check instead (lib/main_health.py).
-  await exec(VENV_PYTHON, ['-m', 'pytest', '-q'], { cwd, env: { ...process.env, MARVIN_MERGE_GATE: '1' } })
+  const start1 = Date.now()
+  try {
+    const pytestTimeoutMs = sizedTimeoutMs('pytest', recent)
+    await exec(VENV_PYTHON, ['-m', 'pytest', '-q'], { cwd, env: { ...process.env, MARVIN_MERGE_GATE: '1' } }, pytestTimeoutMs, {
+      label: 'pytest',
+      usualMs: median(recent['pytest'] || []),
+      countConcurrent: () => countConcurrentPytest(exec)
+    })
+    recordDurationFn('pytest', Date.now() - start1, true)
+  } catch (err) {
+    recordDurationFn('pytest', Date.now() - start1, false)
+    throw err
+  }
+
   // Found live 2026-10-01 (PR #119's merge attempt): a `git worktree add`
   // scratch checkout has no dashboard/node_modules at all -- `npx vitest
   // run` hard-fails with a dependency-resolution error wall that has
@@ -111,7 +145,20 @@ export async function _defaultRunTests(cwd, exec) {
   // avoid.
   const dashboardDir = path.join(cwd, 'dashboard')
   await exec('npm', ['install'], { cwd: dashboardDir })
-  await exec('npx', ['vitest', 'run'], { cwd: dashboardDir })
+
+  const start2 = Date.now()
+  try {
+    const vitestTimeoutMs = sizedTimeoutMs('vitest', recent)
+    await exec('npx', ['vitest', 'run'], { cwd: dashboardDir }, vitestTimeoutMs, {
+      label: 'vitest',
+      usualMs: median(recent['vitest'] || []),
+      countConcurrent: () => countConcurrentPytest(exec)
+    })
+    recordDurationFn('vitest', Date.now() - start2, true)
+  } catch (err) {
+    recordDurationFn('vitest', Date.now() - start2, false)
+    throw err
+  }
 }
 
 // Rebases headRef onto origin/main inside a throwaway scratch worktree --
@@ -242,7 +289,20 @@ export async function defaultGateContext(repo, exec = execFileAsync) {
     base: info.base_branch,
     // The same measuring code the pipeline uses, so "passes the gate" means what "passes verification" means.
     runTests: async (cwd, run) => {
-      await run(VENV_PYTHON, [PROFILE_SCRIPT, 'verify', repo, cwd])
+      const recent = recentPassingDurations([`verify:${repo}`])
+      const timeoutMs = sizedTimeoutMs(`verify:${repo}`, recent)
+      const start = Date.now()
+      try {
+        await run(VENV_PYTHON, [PROFILE_SCRIPT, 'verify', repo, cwd], {}, timeoutMs, {
+          label: `verify:${repo}`,
+          usualMs: median(recent[`verify:${repo}`] || []),
+          countConcurrent: () => countConcurrentPytest(run)
+        })
+        recordDuration(`verify:${repo}`, Date.now() - start, true)
+      } catch (err) {
+        recordDuration(`verify:${repo}`, Date.now() - start, false)
+        throw err
+      }
     },
     resolveConflicts: generatedResolver(repo, exec),
     // The project's own UI paths, added to ui_evidence.js's defaults (marvin #374).
@@ -383,8 +443,7 @@ export async function mergeableNow(prUrl, exec, sleep = (ms) => new Promise((r) 
 // The longest a gate (rebase + the project's whole check, including an app build) may take. Nothing used to bound it: a
 // test run that blocked reading an iCloud-managed folder under launchd sat forever, and three approvals of marvin #147
 // vanished with no result (2026-10-06). Past the limit the gate is abandoned and reported as the machine's problem,
-// not the PR's.
-export const GATE_TIMEOUT_MS = 40 * 60_000
+// not the PR's. Now computed lazily based on historical durations (gate_durations.js).
 
 function withGateTimeout(promise, ms) {
   let timer
@@ -405,7 +464,7 @@ async function mergePrUnqueued(
   recordStageFn = recordStage,
   deps = {}
 ) {
-  const { sleep, recordFailureFn = recordFailure, gateContext = defaultGateContext, baselineFails = null, gateTimeoutMs = GATE_TIMEOUT_MS, rebaseOpen = checkOpenPrs, uiEvidence = assertUiEvidence, decisions = assertDecisions } = deps
+  const { sleep, recordFailureFn = recordFailure, gateContext = defaultGateContext, baselineFails = null, gateTimeoutMs = null, rebaseOpen = checkOpenPrs, uiEvidence = assertUiEvidence, decisions = assertDecisions } = deps
   if (typeof prUrl !== 'string' || !prUrl.startsWith('https://github.com/')) {
     throw new MergeFailure(classifyFailure({ stage: 'request', error: new Error(`Not a GitHub PR URL: ${prUrl}`) }))
   }
@@ -455,11 +514,15 @@ async function mergePrUnqueued(
   }
   if (gate) {
     stage('gate', 'started', `rebasing onto ${ctx ? ctx.base : 'main'} + retesting (${ctx ? ctx.base : 'main'} changed files this PR also changes)`)
+    // Compute gate timeout lazily: resolve when we know the steps that will run
+    const stepKeys = ctx ? [`verify:${repo}`] : ['pytest', 'vitest']
+    const recentForGate = recentPassingDurations(stepKeys)
+    const resolvedGateTimeoutMs = gateTimeoutMs ?? computeGateTimeoutMs(stepKeys, recentForGate)
     const result = await withGateTimeout(
       Promise.resolve(ctx
         ? rebaseAndRetestFn(headRefName, exec, ctx.clone, ctx.runTests, ctx.base, ctx.resolveConflicts)
         : rebaseAndRetestFn(headRefName, exec, REPO_PATH, _defaultRunTests, 'main', generatedResolver(MARVIN_REPO, exec))),
-      gateTimeoutMs)
+      resolvedGateTimeoutMs)
     if (!result.ok) {
       // Structured, concise feedback (code header, failing test names, capped tail)
       // instead of a raw output wall: this comment is what the ticket's executor reads
@@ -469,10 +532,13 @@ async function mergePrUnqueued(
         // The machine failed, not the PR: leave the ticket and PR alone so it can simply be approved again.
         stage('gate', 'failed', 'GATE_INFRA: the build machine or test setup failed, not the code')
         const timedOut = /did not finish within \d+ min/.test(summary.comment)
+        // Extract enrichment marker if present: [usual: ...; concurrent: ...]
+        const enrichmentMatch = String(result.reason ?? '').match(/\[usual: ([^;]+); concurrent: ([^\]]+)\]/)
+        const enrichmentInfo = enrichmentMatch ? ` (usual: ${enrichmentMatch[1]}, concurrent: ${enrichmentMatch[2]} process(es))` : ''
         throw new MergeFailure(refusal('GATE_INFRA', 'gate', timedOut
           ? 'the check on this PR did not finish in time and was cut off. That points at the machine or its setup, not at the PR\'s code'
           : 'the build machine or the project\'s test setup failed while checking this PR, not the PR\'s code',
-          `Approve it again. The PR was not sent back for rework. What failed: ${summary.comment.slice(0, 300)}`))
+          `Approve it again. The PR was not sent back for rework. What failed: ${summary.comment.slice(0, 300)}${enrichmentInfo}`))
       }
       if (summary.code === 'GATE_TESTS_FAILED' && summary.failingTests.length && baselineFails) {
         // Did the PR break these, or was the base branch already red? Only a test that passes on the base is the PR's fault.

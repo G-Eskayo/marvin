@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createMergeOps } from '../electron/main/merge_ops.js'
+import { GATE_TIMEOUT_CEILING_MS } from '../webhook-server/gate_durations.js'
 
 const URL = 'https://github.com/o/r/pull/5'
 
@@ -56,5 +57,32 @@ describe('a merge that never reports back does not stay "merging" forever', () =
     const ops = createMergeOps({ maxMergingMs: 1000 })
     ops.start(URL)
     expect(ops.start(URL, Date.now() + 5000)).toBe(true)
+  })
+})
+
+describe('maxMergingMs defaults to gate-ceiling-derived value', () => {
+  it('defaults to more than GATE_TIMEOUT_CEILING_MS (comfortably above)', () => {
+    const ops = createMergeOps()
+    // The default should be at least as long as the gate, plus some headroom
+    // When maxMergingMs is used, now - o.since > maxMergingMs triggers expiry,
+    // so the ceiling must be below the merging limit or merges will timeout
+    const defaultExpires = createMergeOps({})
+    const ceiling = createMergeOps({ maxMergingMs: GATE_TIMEOUT_CEILING_MS })
+
+    // Start a merge, check expiry at ceiling time + 1: default should NOT expire,
+    // ceiling limit SHOULD expire (must be strictly > for expiry)
+    const url1 = 'https://github.com/o/r/pull/1'
+    const url2 = 'https://github.com/o/r/pull/2'
+    const t0 = Date.now()
+
+    defaultExpires.start(url1)
+    ceiling.start(url2)
+
+    const atCeiling = t0 + GATE_TIMEOUT_CEILING_MS + 1
+    const resultDefault = defaultExpires.get(url1, atCeiling)
+    const resultCeiling = ceiling.get(url2, atCeiling)
+
+    expect(resultDefault.state).toBe('merging')
+    expect(resultCeiling.state).toBe('error')
   })
 })
