@@ -47,6 +47,27 @@ def test_evidence_kinds_are_recognised_from_the_markup():
     assert pc.evidence_in("<p>Words only, one number: 3.</p>") == set()
 
 
+def test_evidence_in_detects_callout_from_class_longform_callout():
+    # Test 16: callout detected from class="longform-callout"
+    html = '<div class="longform-callout"><p>Evidence here</p></div>'
+    kinds = pc.evidence_in(html)
+    assert "callout" in kinds
+
+
+def test_evidence_in_detects_callout_with_multiple_classes():
+    # Test 16b: callout detected even with other classes
+    html = '<div class="container longform-callout extra-class"><p>Evidence</p></div>'
+    kinds = pc.evidence_in(html)
+    assert "callout" in kinds
+
+
+def test_evidence_in_does_not_report_callout_without_the_div():
+    # Test 17: callout not reported if div is absent
+    html = '<div class="other-class"><p>No callout here</p></div>'
+    kinds = pc.evidence_in(html)
+    assert "callout" not in kinds
+
+
 # ── copy that reads as AI-written ──
 
 def test_ai_writing_phrases_and_em_dashes_are_flagged_with_the_phrase():

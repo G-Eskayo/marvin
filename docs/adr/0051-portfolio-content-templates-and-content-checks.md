@@ -15,7 +15,8 @@ applied to more pages.
 
 1. **Content templates**, one per page type, in the portfolio repo at `templates/content/<type>.json`: `skill-tool`,
    `app-product`, `system`, `ml-study`. Each lists the lead's job and the sections in order, each with a `role` id, its purpose,
-   whether it is required, and the evidence it needs (`real-output`, `screenshot`, `diagram`, `chart`, `numbers`, `link`).
+   whether it is required, and the evidence it needs (`real-output`, `screenshot`, `diagram`, `chart`, `numbers`, `link`, `callout`).
+   The `research` role is optional on all templates and shows verified claims from an evidence log using `callout`-class divs.
    Diagram sections name a starter diagram (`setup`, `run`, `marvin`).
 2. **Content files carry roles.** Each long-form page's source (`content/longform/<slug>.json`) gains `content_type`, and each
    section a `role` matching its template. Coverage (which required roles and evidence a page has) is computed from these
