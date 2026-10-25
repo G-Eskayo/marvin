@@ -986,20 +986,64 @@ if [ -f "$LEDGER" ]; then echo "disk_ledger=$(tail -14 "$LEDGER" | /usr/bin/tr '
 '''.replace("__ETIME_AWK__", _ETIME_AWK)
 
 
+# ── brief builders (morning-brief, daily-digest, research-colony) ──────────
+
+BRIEFS = Path.home() / ".claude" / "briefs"
+
+
+def check_brief_builder(now: datetime | None = None) -> dict:
+    """Check if the morning brief was built with proper builder attribution.
+
+    Green: has .built-by sidecar with builder info
+    Yellow: within the fallback's own deadline+grace window (still possible to succeed)
+    Red: past the fallback's deadline+grace with nothing built
+    """
+    cid = "brief:builder"
+    label = "Morning brief builder"
+    now = now or _now()
+
+    # Check if brief exists and was produced
+    try:
+        import morning_brief
+        import brief_fallback
+        day = morning_brief._day(now)
+        brief_path = BRIEFS / f"{day}.md"
+
+        # Check for .built-by sidecar
+        built_by_path = BRIEFS / f"{day}.built-by"
+        if built_by_path.exists():
+            return _result(cid, label, "green", "brief built with builder attribution")
+
+        if brief_path.exists():
+            # Brief exists but no builder info — legacy case
+            return _result(cid, label, "yellow", "brief exists but has no builder info (legacy)")
+
+        # Check if we're in the fallback's grace window (09:45 + 60 min grace = 10:45) or yellow window (70 min)
+        if not brief_fallback.past_deadline(now, usual_hour=9, usual_minute=45, grace_minutes=70):
+            return _result(cid, label, "yellow", "within extended grace window, fallback may still build")
+
+        # Past extended deadline+grace and no brief built
+        return _result(cid, label, "red", "past deadline+grace window with no brief built")
+    except Exception as exc:
+        return _unknown(cid, label, f"error checking brief: {exc}")
+
+
 # Which machine is meant to run each com.marvin.* launchd job. "both" = both machines, "mini" = the primary automation
 # host only (ADR 0032, 0033), "laptop" = only where Gil sits. Edit here when a job is deliberately moved; a job that
 # is not listed is reported as unplaced so a new job cannot silently run on only one machine.
 JOB_PLACEMENT = {
-    "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "both", "research-colony": "both",
+    "code-sync-push": "both", "cross-machine-merge": "both",
     "desktoplive": "both", "dashboard-webhook": "both",  # webhook on both until #112 (ADR 0032)
     "ticket-pipeline": "both",  # mini scans; the laptop's copy is a standby that scans only if the mini goes quiet (scanner_role.py)
     "architecture-review": "mini", "auto-fix": "mini", "cron-health": "mini", "health-check": "mini",
+    "daily-digest": "mini", "daily-digest-fallback": "laptop",  # primary builder on mini; fallback on laptop after grace period
+    "research-colony": "mini", "research-colony-fallback": "laptop",  # same fallback pattern
+    "morning-brief": "mini", "morning-brief-fallback": "laptop",  # primary builder on mini; fallback on laptop
     "process-quarantine-reviews": "mini", "verify-digest-fix": "mini",
     "usage-scan": "both",  # hourly: each machine scans its own transcripts for the Metrics tab (lib/usage_report.py)
     "cleanup-sweep": "both",  # daily: each machine sweeps its own pipeline worktrees (lib/cleanup_sweep.py)
     "machine-resources": "both",  # 30s: samples disk/mem/swap/CPU/GPU for resources panel (#130)
     "dashboard-launch": "laptop",
-    "morning-brief": "laptop",  # one writer (the brief syncs to the mini via ~/.claude); after the digests (lib/morning_brief.py)
     # the website map (#189): rebuilt nightly and after MARVIN changes on the mini, where the dev site runs; the nightly
     # job also publishes it to production (ADR 0057), so it must never run on the laptop
     "snapshot-deploy-nightly": "mini", "snapshot-deploy-reactive": "mini",
@@ -1470,6 +1514,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("token", "Auth tokens", check_token_files, CHECK_BUDGET_S),
         ("route:intent-routing-collection", "route.py embedding classifier (ChromaDB)", check_intent_routing_collection, CHECK_BUDGET_S),
         ("dispatch:lock-age", "Local dispatch lock", check_dispatch_lock, CHECK_BUDGET_S),
+        ("brief:builder", "Morning brief builder", check_brief_builder, CHECK_BUDGET_S),
         ("pipeline:breaker", "Ticket pipeline circuit breaker", lambda: check_pipeline_breaker(reach), CROSS_MACHINE_BUDGET_S),
         ("sync:stuck", "Code sync", lambda: check_sync_stuck(reach), CROSS_MACHINE_BUDGET_S),
         ("dispatch:parallel", "Parallel dispatch keeping up", check_parallel_dispatch, CHECK_BUDGET_S),

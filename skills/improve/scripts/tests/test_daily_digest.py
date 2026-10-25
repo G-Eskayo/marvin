@@ -337,3 +337,114 @@ def test_missing_helper_format():
     result = dd._missing("test message")
     assert "❌ **Missing input:**" in result
     assert "test message" in result
+
+
+# ── fallback gate tests ────────────────────────────────────────────────────
+
+class TestDailyDigestGate:
+    """Test daily_digest.main() gate: checks should_run() before building."""
+
+    def test_main_gates_on_should_run_false(self, tmp_path, monkeypatch):
+        """When brief_fallback.should_run() returns False, main() does not build."""
+        out_file = tmp_path / "2026-10-24.md"
+        monkeypatch.setattr(dd, "DIGEST_DIR", tmp_path)
+        monkeypatch.setattr(dd, "OUT_FILE", out_file)
+
+        import brief_fallback
+        with patch.object(brief_fallback, "should_run", return_value=(False, "test: should not run")):
+            def raise_on_call(prompt: str):
+                raise AssertionError("call_claude should not be called when should_run returns False")
+            monkeypatch.setattr(dd, "call_claude", raise_on_call)
+
+            # main() should return early without calling call_claude
+            dd.main()
+
+            # Verify the digest file was not created
+            assert not out_file.exists()
+
+    def test_main_builds_when_should_run_true(self, tmp_path, monkeypatch):
+        """When brief_fallback.should_run() returns True, main() proceeds with building."""
+        out_file = tmp_path / "2026-10-24.md"
+        monkeypatch.setattr(dd, "DIGEST_DIR", tmp_path)
+        monkeypatch.setattr(dd, "OUT_FILE", out_file)
+
+        import brief_fallback
+        with patch.object(brief_fallback, "should_run", return_value=(True, "test: should run")):
+            def mock_call_claude(prompt: str):
+                return "## Compounding Move\nTest content"
+            monkeypatch.setattr(dd, "call_claude", mock_call_claude)
+            monkeypatch.setattr(dd, "reviewer_health_summary", lambda: "All good")
+            # Mock pass_or_quarantine to always approve content
+            monkeypatch.setattr(dd, "pass_or_quarantine", lambda content, loop_name, source_context: True)
+
+            # main() should call call_claude and write the file
+            dd.main()
+
+            # Verify the digest file was created
+            assert out_file.exists()
+            content = out_file.read_text()
+            assert "Test content" in content
+
+    def test_main_idempotency_via_produced(self, tmp_path, monkeypatch):
+        """main() does not rebuild if digest was already produced (idempotent via brief_fallback.produced)."""
+        out_file = tmp_path / "2026-10-24.md"
+        out_file.write_text("# Already built\n\nThis is pre-existing content.")
+        monkeypatch.setattr(dd, "DIGEST_DIR", tmp_path)
+        monkeypatch.setattr(dd, "OUT_FILE", out_file)
+
+        import brief_fallback
+        with patch.object(brief_fallback, "produced", return_value=True):
+            def raise_if_called(prompt: str):
+                raise AssertionError("call_claude should not be called when produced() returns True")
+            monkeypatch.setattr(dd, "call_claude", raise_if_called)
+
+            # Capture stdout
+            import io
+            old_stdout = sys.stdout
+            sys.stdout = io.StringIO()
+
+            try:
+                dd.main()
+                output = sys.stdout.getvalue()
+            finally:
+                sys.stdout = old_stdout
+
+            # Verify no rebuild happened
+            assert out_file.read_text() == "# Already built\n\nThis is pre-existing content."
+            # Should have printed short-circuit message or nothing
+
+    def test_main_toctou_recheck_regression(self, tmp_path, monkeypatch):
+        """TOCTOU regression: should_run() passes (returns True), but produced() then finds file exists."""
+        out_file = tmp_path / "2026-10-24.md"
+        out_file.write_text("# Built by primary\n\nPrimary output.")
+        monkeypatch.setattr(dd, "DIGEST_DIR", tmp_path)
+        monkeypatch.setattr(dd, "OUT_FILE", out_file)
+
+        import brief_fallback
+        # should_run() sees the file doesn't exist (time-of-check)
+        # but then it appears before produced() is called (time-of-use)
+        check_sequence = {"produced_call_count": 0}
+
+        def mock_should_run(path, usual_hour=8, usual_minute=30, grace_minutes=60, now=None):
+            # First call returns True (fallback should run)
+            return (True, "test: should run")
+
+        def mock_produced(path):
+            check_sequence["produced_call_count"] += 1
+            # But produced() later sees the file does exist
+            return path.exists()
+
+        with patch.object(brief_fallback, "should_run", side_effect=mock_should_run):
+            with patch.object(brief_fallback, "produced", side_effect=mock_produced):
+                def raise_if_called(prompt: str):
+                    raise AssertionError("call_claude should not be called (file already produced)")
+                monkeypatch.setattr(dd, "call_claude", raise_if_called)
+
+                # main() should check should_run() then produced() and skip building
+                dd.main()
+
+                # Verify produced() was called to double-check
+                assert check_sequence["produced_call_count"] >= 1
+                # And the file unchanged
+                assert out_file.read_text() == "# Built by primary\n\nPrimary output."
+

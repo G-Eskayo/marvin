@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.marvin.daily-digest-fallback</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/gileskayo/.agents/venv/bin/python</string>
+        <string>/Users/gileskayo/.agents/skills/improve/scripts/daily_digest.py</string>
+    </array>
+
+    <!-- Fallback builder: runs on MacBook only (laptop) if primary (mini) misses its deadline+grace window.
+         Primary runs at 08:30 + 60min grace = 09:30, so fallback starts at 09:35 to avoid overlap. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>9</integer>
+        <key>Minute</key>
+        <integer>35</integer>
+    </dict>
+
+    <!-- Pin cwd: call_claude() runs a real agentic session that reads repo
+         files to ground the digest, so an unpinned/default cwd changes what
+         it finds and how long that takes. -->
+    <key>WorkingDirectory</key>
+    <string>/Users/gileskayo/marvin</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/gileskayo/.claude/logs/daily-digest-fallback.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/gileskayo/.claude/logs/daily-digest-fallback-error.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/gileskayo</string>
+        <key>PATH</key>
+        <string>/Users/gileskayo/.local/bin:/usr/local/bin:/usr/bin:/bin:/Users/gileskayo/.agents/venv/bin</string>
+    </dict>
+
+    <!-- Restart if the job crashes -->
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>

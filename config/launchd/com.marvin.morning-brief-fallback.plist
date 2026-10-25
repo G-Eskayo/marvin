@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.marvin.morning-brief-fallback</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/gileskayo/.agents/venv/bin/python</string>
+        <string>/Users/gileskayo/.agents/lib/morning_brief.py</string>
+        <string>build</string>
+    </array>
+
+    <!-- Fallback builder: runs on MacBook only (laptop) if primary (mini) misses its deadline+grace window.
+         Primary runs at 09:45 + 60min grace = 10:45, so fallback starts at 10:50 to avoid overlap. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>10</integer>
+        <key>Minute</key>
+        <integer>50</integer>
+    </dict>
+
+    <!-- Pin cwd: brief() reads sources like GitHub PRs and health logs, so cwd affects what it finds. -->
+    <key>WorkingDirectory</key>
+    <string>/Users/gileskayo/marvin</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/gileskayo/.claude/logs/morning-brief-fallback.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/gileskayo/.claude/logs/morning-brief-fallback-error.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/gileskayo</string>
+        <key>PATH</key>
+        <string>/Users/gileskayo/.local/bin:/usr/local/bin:/usr/bin:/bin:/Users/gileskayo/.agents/venv/bin</string>
+    </dict>
+
+    <!-- Restart if the job crashes -->
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>

@@ -281,6 +281,9 @@ def write(now: datetime | None = None, sources: dict[str, Callable] | None = Non
     now = now or datetime.now(timezone.utc)
     BRIEFS.mkdir(parents=True, exist_ok=True)
     path = BRIEFS / f"{_day(now)}.md"
+    import brief_fallback
+    if brief_fallback.produced(path):
+        return path
     path.write_text(render(gather(now, sources), now))
     return path
 
@@ -307,9 +310,61 @@ def read_dates() -> list[datetime]:
     return _dates(".read")
 
 
+def builder_of(now: datetime | None = None) -> str | None:
+    """Read the builder ID from the .built-by sidecar file for today's brief."""
+    now = now or datetime.now(timezone.utc)
+    built_by_path = BRIEFS / f"{_day(now)}.built-by"
+    if not built_by_path.exists():
+        return None
+    try:
+        import json
+        data = json.loads(built_by_path.read_text())
+        return data.get("builder")
+    except Exception:
+        return None
+
+
+def build(now: datetime | None = None, sources: dict[str, Callable] | None = None) -> Path:
+    """Build the morning brief with fallback logic. Writes brief via write(), then .built-by sidecar.
+
+    Returns the path to the brief file. The .built-by sidecar is written second, so a
+    mid-write read degrades gracefully to the "no builder info" case rather than a wrong
+    attribution. Fully idempotent: repeated invocations with the same now do not re-write
+    either file if they already exist with builder info.
+    """
+    import brief_fallback
+
+    now = now or datetime.now(timezone.utc)
+    BRIEFS.mkdir(parents=True, exist_ok=True)
+    path = BRIEFS / f"{_day(now)}.md"
+
+    # Check if we should run (fallback logic)
+    should_run, reason = brief_fallback.should_run(path, usual_hour=9, usual_minute=45, now=now)
+    if not should_run:
+        # Don't rebuild — either primary already built or too early
+        return path
+
+    # Write the brief (write() is itself idempotent: checks if file was already produced)
+    write(now, sources)
+
+    # Write the .built-by sidecar with builder info, but only if it doesn't already exist
+    # (preserving idempotency: repeated primary invocations don't re-write it)
+    built_by_path = BRIEFS / f"{_day(now)}.built-by"
+    if not built_by_path.exists():
+        builder_id = brief_fallback.safe_registry_id()
+        builder_data = {
+            "builder": builder_id,
+            "at": datetime.now(timezone.utc).isoformat(),
+            "reason": reason,
+        }
+        built_by_path.write_text(json.dumps(builder_data))
+
+    return path
+
+
 if __name__ == "__main__":
     if sys.argv[1:] == ["build"]:
-        print(write())
+        print(build())
     elif sys.argv[1:] == ["show"]:
         print(show_today() or "No brief for today yet.")
     else:

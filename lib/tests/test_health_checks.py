@@ -1299,3 +1299,61 @@ def test_the_machine_script_reads_a_real_process_uptime_with_this_machines_ps():
         assert 1 <= int(out.stdout.strip()) <= 20
     finally:
         child.kill()
+
+
+# ── brief builder status tests ─────────────────────────────────────────────
+
+def test_check_brief_builder_green_with_builder_info(tmp_path, monkeypatch):
+    """check_brief_builder returns green when brief has builder info."""
+    from datetime import datetime, timezone
+    # Create a .built-by file with builder info
+    brief_dir = tmp_path / ".claude" / "briefs"
+    brief_dir.mkdir(parents=True, exist_ok=True)
+
+    brief_file = brief_dir / "2026-10-24.md"
+    brief_file.write_text("# Brief\n\nContent")
+
+    built_by_file = brief_dir / "2026-10-24.built-by"
+    built_by_data = {"builder": "mini", "at": "2026-10-24T08:00:00+00:00"}
+    built_by_file.write_text(json.dumps(built_by_data))
+
+    monkeypatch.setattr(hc, "BRIEFS", brief_dir)
+    now = datetime(2026, 10, 24, 9, 0, tzinfo=timezone.utc)
+    result = hc.check_brief_builder(now=now)
+    assert result["severity"] == "green"
+    assert "built-by" in result["detail"].lower() or "builder" in result["detail"].lower()
+
+
+def test_check_brief_builder_yellow_within_grace(tmp_path, monkeypatch):
+    """check_brief_builder returns yellow within the grace window."""
+    from datetime import datetime, timezone
+    brief_dir = tmp_path / ".claude" / "briefs"
+    brief_dir.mkdir(parents=True, exist_ok=True)
+
+    brief_file = brief_dir / "2026-10-24.md"
+    brief_file.write_text("# Brief\n\nContent")
+    # No .built-by file
+
+    monkeypatch.setattr(hc, "BRIEFS", brief_dir)
+    # At 10:30, which is within 09:45 + 60 min grace = 10:45
+    now = datetime(2026, 10, 24, 10, 30, tzinfo=timezone.utc)
+    result = hc.check_brief_builder(now=now)
+    assert result["severity"] == "yellow"
+    assert "grace" in result["detail"].lower() or "legacy" in result["detail"].lower()
+
+
+def test_check_brief_builder_red_past_extended_grace(tmp_path, monkeypatch):
+    """check_brief_builder returns red past extended deadline+grace (70 min)."""
+    from datetime import datetime, timezone
+    brief_dir = tmp_path / ".claude" / "briefs"
+    brief_dir.mkdir(parents=True, exist_ok=True)
+
+    # No brief file and no .built-by file
+
+    monkeypatch.setattr(hc, "BRIEFS", brief_dir)
+    # Create a local time 11:00 which is past 09:45 + 70 min grace = 10:55
+    now_local = datetime.now(timezone.utc).astimezone()
+    now = now_local.replace(hour=11, minute=0, second=0, microsecond=0)
+    result = hc.check_brief_builder(now=now)
+    assert result["severity"] == "red"
+    assert "past deadline" in result["detail"].lower()

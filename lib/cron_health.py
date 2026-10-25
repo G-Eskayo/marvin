@@ -65,6 +65,10 @@ ORGANIZE_TRACKED_FILES = (
 
 # name -> (scheduled HH:MM, [log paths to scan])
 JOBS = {
+    "morning-brief": (
+        "09:45",
+        [".claude/logs/morning-brief.log", ".claude/logs/morning-brief-error.log"],
+    ),
     "daily-digest": (
         "08:30",
         [".claude/logs/daily-digest.log", ".claude/logs/daily-digest-error.log"],

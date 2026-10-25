@@ -123,3 +123,108 @@ def test_open_prs_marks_waiting_from_one_graphql_read(monkeypatch):
     monkeypatch.setattr(od, "fetch", lambda repos, run=None: None)
     brief = mb.gather(NOW, {"open_prs": mb._open_prs})
     assert brief["open_prs"] is None and "open PRs" in brief["missing"][0]
+
+
+# ── fallback builder tests ─────────────────────────────────────────────────
+
+def test_morning_brief_builder_of(tmp_path, monkeypatch):
+    """builder_of() returns the builder ID from the .built-by sidecar file."""
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+
+    # Use the same day as NOW to ensure the file path matches
+    day = mb._day(NOW)
+    built_by_file = briefs_dir / f"{day}.built-by"
+    import json
+    built_by_file.write_text(json.dumps({"builder": "mini", "at": NOW.isoformat()}))
+
+    monkeypatch.setattr(mb, "BRIEFS", briefs_dir)
+    builder = mb.builder_of(NOW)
+    assert builder == "mini"
+
+
+def test_morning_brief_write_with_builder_info(tmp_path, monkeypatch):
+    """build() is idempotent: two calls with the same now produce identical .built-by without re-writing."""
+    from unittest.mock import patch
+    briefs_dir = tmp_path / "briefs"
+    monkeypatch.setattr(mb, "BRIEFS", briefs_dir)
+
+    import brief_fallback
+    with patch.object(brief_fallback, "should_run", return_value=(True, "test: should run")):
+        # Mock safe_registry_id to return the actual builder ID
+        with patch.object(brief_fallback, "safe_registry_id", return_value="mac-mini-primary"):
+            # Mock the gather/render chain
+            with patch.object(mb, "gather", return_value={"test": "data"}):
+                with patch.object(mb, "render", return_value="# Mock brief"):
+                    # Call build() first time
+                    path1 = mb.build(NOW)
+                    assert path1.exists() and "Mock brief" in path1.read_text()
+
+                    # Record the .built-by sidecar's mtime
+                    built_by_path = briefs_dir / f"{mb._day(NOW)}.built-by"
+                    assert built_by_path.exists()
+                    first_content = built_by_path.read_text()
+                    assert "mac-mini-primary" in first_content
+                    import time
+                    first_mtime = built_by_path.stat().st_mtime
+                    time.sleep(0.01)  # Small delay to ensure mtime would differ if file was re-written
+
+                    # Call build() second time with same now
+                    path2 = mb.build(NOW)
+                    assert path2 == path1
+
+                    # Verify .built-by was NOT re-written (mtime unchanged, content identical)
+                    second_content = built_by_path.read_text()
+                    assert second_content == first_content
+                    assert built_by_path.stat().st_mtime == first_mtime
+
+
+def test_morning_brief_sidecar_json_format(tmp_path, monkeypatch):
+    """The .built-by sidecar is valid JSON with builder, at, and reason fields."""
+    from unittest.mock import patch
+    briefs_dir = tmp_path / "briefs"
+    monkeypatch.setattr(mb, "BRIEFS", briefs_dir)
+
+    import brief_fallback
+    with patch.object(brief_fallback, "should_run", return_value=(True, "fallback: primary missed deadline")):
+        with patch.object(brief_fallback, "safe_registry_id", return_value="mac-mini-primary"):
+            with patch.object(mb, "gather", return_value={"test": "data"}):
+                with patch.object(mb, "render", return_value="# Mock brief"):
+                    mb.build(NOW)
+
+                    built_by_path = briefs_dir / f"{mb._day(NOW)}.built-by"
+                    content = json.loads(built_by_path.read_text())
+                    assert content["builder"] == "mac-mini-primary"
+                    assert "at" in content
+                    assert content["reason"] == "fallback: primary missed deadline"
+
+
+def test_morning_brief_fallback_recheck_on_next_cycle(tmp_path, monkeypatch):
+    """On the next day cycle, build() re-evaluates should_run independently."""
+    from unittest.mock import patch
+    from datetime import timedelta
+
+    briefs_dir = tmp_path / "briefs"
+    monkeypatch.setattr(mb, "BRIEFS", briefs_dir)
+
+    import brief_fallback
+
+    # First day: should_run returns True
+    with patch.object(brief_fallback, "should_run", return_value=(True, "day1: should run")) as mock_should_run:
+        with patch.object(brief_fallback, "safe_registry_id", return_value="mini"):
+            with patch.object(mb, "gather", return_value={}):
+                with patch.object(mb, "render", return_value="# Brief"):
+                    today = datetime(2026, 10, 9, 9, 45, tzinfo=timezone.utc)
+                    mb.build(today)
+                    assert mock_should_run.call_count == 1
+
+    # Next day: should_run is called again independently
+    with patch.object(brief_fallback, "should_run", return_value=(False, "day2: already done")) as mock_should_run:
+        with patch.object(brief_fallback, "safe_registry_id", return_value="mini"):
+            with patch.object(mb, "gather", return_value={}):
+                with patch.object(mb, "render", return_value="# Brief"):
+                    tomorrow = datetime(2026, 10, 10, 9, 45, tzinfo=timezone.utc)
+                    mb.build(tomorrow)
+                    # Verify should_run was called for the new day
+                    assert mock_should_run.call_count == 1
+                    assert mock_should_run.call_args[0][0].name.startswith("2026-10-10")

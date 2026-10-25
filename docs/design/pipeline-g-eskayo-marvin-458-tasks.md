@@ -1,0 +1,13 @@
+1. Delete `docs/design/pipeline-g-eskayo-marvin-458.md` and `docs/design/pipeline-g-eskayo-marvin-458-tasks.md` (leftover scratch artifacts, not a deliverable).
+2. Edit `lib/brief_fallback.py`: add `import shlex`; rewrite `_quote_remote_path()` to use `shlex.quote()` instead of `subprocess.list2cmdline()`; add an optional `now: datetime | None = None` parameter to `should_run()`, threaded only into the deadline check (default preserves current behavior at all call sites).
+3. Edit `lib/tests/test_brief_fallback.py`: tighten the two `_quote_remote_path` tests; add the shell-injection test, the `$HOME`-expansion test, the clock-skew regression guard, the concurrency test, and `test_fallback_builds_once_then_stays_idle`.
+4. Edit `lib/morning_brief.py::build()`: replace the direct `path.write_text(render(...))` with a call to `write(now, sources)`; only write the `.built-by` sidecar if it doesn't already exist, so repeated primary invocations stay fully idempotent.
+5. Edit `lib/tests/test_morning_brief.py`: rewrite `test_morning_brief_write_with_builder_info` to assert idempotency across two `build()` calls; add the recheck test and the sidecar-JSON test.
+6. Edit `skills/improve/scripts/tests/test_daily_digest.py::TestDailyDigestGate`: add the TOCTOU-recheck regression test.
+7. Write `skills/research-colony/scripts/tests/test_research_digest.py` (new file): the TOCTOU-recheck regression test for `generate()`.
+8. Edit `lib/health_checks.py::check_brief_builder()`: split the single `past_deadline(grace_minutes=70)` call into three tiers (green "not yet due" before +60, yellow between +60 and +70, red after +70).
+9. Edit `lib/tests/test_health_checks.py`: replace `test_check_brief_builder_yellow_within_grace`'s +45min assertion with green; add the new +65min yellow case; leave the green-with-builder-info and red-past-+70 tests as-is (still correct).
+10. Edit `config/launchd/com.marvin.morning-brief.plist`: fix the line-5 comment ("60min after primary deadline+grace window" → accurate, ~5 min after).
+11. Run the scoped verify command above against current `HEAD` (confirm every new/rewritten test fails), then after each edit (confirm green).
+12. Carry the `retire-cross-machine-merge` Decision into the PR description, unanswered.
+13. State plainly in the PR description, and to Gil directly: (a) the physical `launchctl bootstrap`/`bootout` swap on each Mac is a manual step this diff cannot perform — AC1 isn't live on real machines until that's done; (b) `docs/screenshots/vitals-v4/data.js` (unrelated, pre-existing, committed on `main`) still hard-codes `/Users/gileskayo` and will keep failing `test_no_hardcoded_home.py`'s merge gate on this and every other PR until it's fixed separately.
