@@ -1266,4 +1266,28 @@ Design lives in clarity-captions (ADR 0023 sending, ADR 0024 receiving, `docs/be
 - **Health** `seal:beta-ingest` (only where the plist is installed): red when Messages can't be read. Full Disk Access
   for the venv's real `python3.11` is reset by every Homebrew Python upgrade, so this fails loudly, never as "0
   reports".
-- Next: #408 dashboard view (needs-info), #409 numbers-only public tickets, #410 TestFlight feed.
+
+## Seal Speak beta alert filing (built 2026-10-14, #409)
+
+Reads the summary from seal_beta_ingest, detects metric breaches (via ADR 0024 thresholds), and files/updates
+GitHub tickets on clarity-captions unprompted.
+
+- **`lib/seal_beta_tickets.py`**, launchd `com.marvin.seal-beta-tickets` (every 10 min, **Mac Mini only**). It loads
+  `~/.claude/seal-beta/summary.json`, detects breaches against three thresholds, and files one ticket per breach
+  (device + problem pair). Stateless by design — dedup authority is GitHub itself (a fresh `gh issue list --search`
+  every run), never a local cache file.
+- **Thresholds** (ADR 0024):
+  - High latency: `lag_p95` > 2.0 seconds
+  - Poor rating: `median_rating` ≤ 4 (on 1–10 scale), from ≥ 2 reports
+  - Stuck endings: any literal `stuck` ending
+- **Ticket marker**: each issue carries a HTML comment marker `<!-- marvin:seal-beta:<device>:<problem> -->` at
+  creation time. On subsequent runs, a fresh search finds and updates the existing issue rather than creating a
+  duplicate.
+- **Mode** (from `~/.agents/config/seal_beta_tickets.json`): defaults to `"propose"` (safe — logs what *would* happen,
+  never touches GitHub). The executor switches it to `"act"` once authorized.
+- **Decisions open (owner to answer on the PR)**:
+  - `label`: whether filed tickets carry `ready-for-human` (reuses the existing label) or a new dedicated label
+    (e.g. `beta-alert`, created on first use, excluded from triage logic) or no label at all
+  - `resolve`: whether a ticket stays open when metrics no longer breach (`A: nothing`), stays open with an update
+    comment (`B: comment`), or gets auto-closed (`C: close`).
+- Next: #408 dashboard view (needs-info), #410 TestFlight feed.

@@ -1,5 +1,7 @@
 # Changelog
 
+- Seal Speak beta alert filing on clarity-captions: auto-file tickets for high lag / poor rating / stuck endings ([#409](https://github.com/G-Eskayo/marvin/pull/409))
+
 - Seal Speak beta report ingest job on the Mini, summarised by device and build ([#413](https://github.com/G-Eskayo/marvin/pull/413))
 
 - MR Review: Open | Merged toggle with full merged history and refused approvals (read-only detail) ([#420](https://github.com/G-Eskayo/marvin/pull/420))

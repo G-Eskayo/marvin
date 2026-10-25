@@ -252,6 +252,7 @@ def _stats(recs: list[dict]) -> dict:
     for r in recs:
         endings[r.get("ending") or "unknown"] = endings.get(r.get("ending") or "unknown", 0) + 1
     thermals = [r["max_thermal"] for r in recs if r.get("max_thermal") in THERMAL_ORDER]
+    os_versions = sorted({r.get("os") for r in recs if r.get("os")})
     return {
         "conversations": len(recs),
         "reports": len({(r.get("device_model"), r.get("build"), r.get("sent_at")) for r in recs}),
@@ -268,6 +269,7 @@ def _stats(recs: list[dict]) -> dict:
         "max_thermal": max(thermals, key=THERMAL_ORDER.index) if thermals else None,
         "endings": endings,
         "minutes_total": round(sum(r.get("minutes") or 0 for r in recs), 1),
+        "os_versions": os_versions,
     }
 
 

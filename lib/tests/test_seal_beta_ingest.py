@@ -397,3 +397,37 @@ def test_minutes_total_adds_every_conversation_including_short_ones(paths):
     drop(paths[0], report([conv("A", minutes=20.25), conv("B", minutes=0.2, samples=5), conv("C", minutes=None)]))
     run(paths)
     assert summary(paths)["by_device"][0]["minutes_total"] == 20.4
+
+
+def test_summary_lists_os_versions_seen(paths):
+    c1 = conv("A")
+    c2 = conv("B")
+    r1 = copy.deepcopy(REAL)
+    r1["device"]["os"] = "iOS 27.0"
+    r1["conversations"] = [c1]
+    r2 = copy.deepcopy(REAL)
+    r2["device"]["os"] = "iOS 27.1"
+    r2["conversations"] = [c2]
+    drop(paths[0], r1, sub="a/a/1")
+    drop(paths[0], r2, sub="b/b/2")
+    run(paths)
+    dev = summary(paths)["by_device"][0]
+    assert sorted(dev["os_versions"]) == ["iOS 27.0", "iOS 27.1"]
+    assert sorted(dev["builds"][0]["os_versions"]) == ["iOS 27.0", "iOS 27.1"] or \
+           all(dev["builds"][i]["os_versions"] == ["iOS 27.0" if i == 0 else "iOS 27.1"] for i in range(len(dev["builds"])))
+
+
+def test_os_versions_ignores_null_values(paths):
+    c1 = conv("A")
+    c2 = conv("B")
+    r1 = copy.deepcopy(REAL)
+    r1["device"]["os"] = "iOS 27.0"
+    r1["conversations"] = [c1]
+    r2 = copy.deepcopy(REAL)
+    r2["device"]["os"] = None
+    r2["conversations"] = [c2]
+    drop(paths[0], r1, sub="a/a/1")
+    drop(paths[0], r2, sub="b/b/2")
+    run(paths)
+    dev = summary(paths)["by_device"][0]
+    assert dev["os_versions"] == ["iOS 27.0"]

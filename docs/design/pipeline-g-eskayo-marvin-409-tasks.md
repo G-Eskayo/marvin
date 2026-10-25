@@ -1,0 +1,8 @@
+1. `lib/seal_beta_tickets.py:35` — change `THRESHOLDS["median_rating"]` from `5.0` to `4`.
+2. `lib/seal_beta_tickets.py:129` — change the comparator from `median_rating < THRESHOLDS["median_rating"]` to `median_rating <= THRESHOLDS["median_rating"]`.
+3. `lib/seal_beta_tickets.py:10` — fix the module docstring's threshold line to read "Poor rating: `median_rating` ≤ 4 (on 1-10 scale), AND ≥ 2 reports".
+4. `lib/seal_beta_tickets.py:178` — fix the rendered issue-body threshold text from `(threshold: <{THRESHOLDS['median_rating']}, min {MIN_REPORTS_FOR_RATING} reports)` to read `≤{THRESHOLDS['median_rating']}`.
+5. `CONTEXT.md:1281-1282` — fix "Poor rating: `median_rating` < 5.0 (on 1–10 scale)" to "≤ 4 (on 1–10 scale), from ≥ 2 reports", and fix "Stuck endings: > 30% of conversations end abnormally (not `userStop`)" to "any literal `stuck` ending" so the doc matches the already-correct code.
+6. `lib/tests/test_seal_beta_tickets.py` — add test 1 (`test_median_rating_at_half_point_does_not_breach_ADR_threshold`, with the 4.0/4.5/4.9 trio), test 2 (`test_note_with_name_and_phone_number_never_reaches_rendered_ticket`, built off real `sbi.flatten`/`sbi.summarize`), and test 3 (`test_gate_refusal_on_one_breach_leaves_batch_and_proposals_consistent`, at the `run()` batch level with patched `PROPOSALS_PATH`).
+7. Run `~/.agents/venv/bin/python -m pytest lib/tests/test_seal_beta_tickets.py lib/tests/test_seal_beta_ingest.py -v`; confirm test 1 fails before step 1-2 land and passes after, and tests 2-3 pass outright (they're proving an existing invariant, not driving a new fix).
+8. Leave the two `Decisions` blocks in `docs/design/pipeline-g-eskayo-marvin-409.md` unresolved for the PR; don't touch `render_body()`'s label/resolve `TODO`s until Gil answers them.
