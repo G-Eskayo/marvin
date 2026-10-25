@@ -387,3 +387,82 @@ def test_write_facts_failure_writes_nothing_and_does_not_block_the_map(tmp_path)
         raise RuntimeError("github down")
     assert write_facts(tmp_path, gather=boom) == []
     assert not (tmp_path / "facts.json").exists()
+
+
+# ── use-case cards (layer 2) ──────────────────────────────────────────
+
+def test_write_use_cases_collects_from_tree_and_merges_planned_tools(tmp_path):
+    """use-cases.json writes both tree-derived cards and planned_tools entries."""
+    from export_snapshot import write_use_cases
+    tree = {
+        "id": "MARVIN",
+        "use_case": {"use_case": "Main brain", "example": {"label": "daily", "url": "..."}, "status": "live"},
+        "children": [
+            {
+                "id": "tdd",
+                "use_case": {"use_case": "Test first", "example": {"label": "#1", "url": "..."}, "status": "live"},
+                "children": []
+            },
+            {
+                "id": "Projects",
+                "children": [
+                    {"id": "finance-os", "children": []}  # no use_case
+                ]
+            }
+        ]
+    }
+    enrichment = {
+        "planned_tools": {
+            "MARVIN Mobile": {"use_case": "iPhone app", "example": {"label": "PRD #152", "url": "..."}, "status": "planned"},
+        }
+    }
+    leaks = write_use_cases(tmp_path, tree, enrichment)
+    assert leaks == []
+    import json as _json
+    data = _json.loads((tmp_path / "use-cases.json").read_text())
+    assert data["tdd"]["use_case"] == "Test first"
+    assert data["MARVIN Mobile"]["status"] == "planned"
+
+
+def test_write_use_cases_scans_for_leaks():
+    """Privacy scan applies to use-cases.json, same as facts.json."""
+    from export_snapshot import write_use_cases
+    tree = {
+        "id": "root",
+        "use_case": {"use_case": "Found at /Users/gileskayo/project", "example": {}, "status": "live"},
+        "children": []
+    }
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp_path:
+        tmp_path = __import__("pathlib").Path(tmp_path)
+        leaks = write_use_cases(tmp_path, tree, {})
+        assert any("/Users/" in leak for leak in leaks)
+        assert not (tmp_path / "use-cases.json").exists()
+
+
+def test_write_use_cases_failure_writes_nothing_and_does_not_block_the_map(tmp_path):
+    from export_snapshot import write_use_cases
+    tree = {"id": "root", "children": []}
+    enrichment = {"planned_tools": {"X": "invalid"}}  # missing required keys
+    leaks = write_use_cases(tmp_path, tree, enrichment)
+    # This should succeed even with partial data and write the file
+    assert (tmp_path / "use-cases.json").exists()
+
+
+def test_enrichment_use_cases_entries_have_required_fields():
+    """Every use_case entry must have non-empty use_case, example, status."""
+    import json
+    enrichment = json.loads(export_snapshot.ENRICHMENT_PATH.read_text())
+    use_cases = enrichment.get("use_cases", {})
+    planned = enrichment.get("planned_tools", {})
+
+    def validate_card(card, tool_id):
+        assert isinstance(card, dict), f"{tool_id}: not a dict"
+        assert card.get("use_case"), f"{tool_id}: missing/empty use_case"
+        assert card.get("example"), f"{tool_id}: missing/empty example"
+        assert card.get("status") in ("live", "being built", "planned"), f"{tool_id}: invalid status {card.get('status')}"
+
+    for tool_id, card in use_cases.items():
+        validate_card(card, tool_id)
+    for tool_id, card in planned.items():
+        validate_card(card, tool_id)

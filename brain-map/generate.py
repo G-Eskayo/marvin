@@ -452,6 +452,36 @@ def attach_plain(tree: dict, plain: dict) -> list[str]:
     return missing
 
 
+def functional_tool_ids(manifest: dict) -> set[str]:
+    """Every currently discoverable tool that deserves a use-case card:
+    skills (manifest), recurring agents, dashboard tabs, and devices.
+    Projects are excluded — they're not tools."""
+    return ({e["name"] for e in manifest["index"]}
+            | {a["id"] for a in discover_recurring_agents()}
+            | {t["id"] for t in discover_dashboard_tabs()}
+            | {d["id"] for d in discover_devices()})
+
+
+def attach_use_cases(tree: dict, tool_ids: set[str], use_cases: dict) -> list[str]:
+    """Give each functional tool its use-case card (enrichment.json `use_cases`). Returns the ids that have none,
+    so a new tool can't quietly appear without one (same pattern as attach_plain)."""
+    missing = []
+    seen: set = set()
+
+    def walk(node):
+        if node["id"] in tool_ids:
+            seen.add(node["id"])
+            if node["id"] in use_cases:
+                node["use_case"] = use_cases[node["id"]]
+            else:
+                missing.append(node["id"])
+        for c in node.get("children", []):
+            walk(c)
+    walk(tree)
+    missing.extend(sorted(tool_ids - seen))
+    return missing
+
+
 def build_tree(manifest: dict, enrichment: dict) -> dict:
     skills = {e["name"]: e for e in manifest["index"]}
 
@@ -533,6 +563,10 @@ def build_tree(manifest: dict, enrichment: dict) -> dict:
     missing = attach_plain(root, enrichment.get("plain", {}))
     if missing:
         print(f"WARNING: {len(missing)} node(s) have no plain hover line in enrichment.json: {missing}", file=sys.stderr)
+    tool_ids = functional_tool_ids(manifest)
+    missing_use_cases = attach_use_cases(root, tool_ids, enrichment.get("use_cases", {}))
+    if missing_use_cases:
+        print(f"WARNING: {len(missing_use_cases)} tool(s) have no use-case card in enrichment.json: {missing_use_cases}", file=sys.stderr)
     return root
 
 

@@ -242,6 +242,63 @@ def test_openable_nodes_all_have_path():
     walk(tree)
 
 
+# ── use-case cards (layer 2) ──────────────────────────────────────────
+
+def test_functional_tool_ids_returns_union_of_all_discoverable_tools():
+    manifest = json.loads(generate.MANIFEST_PATH.read_text())
+    tool_ids = generate.functional_tool_ids(manifest)
+
+    # Should include skills
+    assert "tdd" in tool_ids
+
+    # Should include agents, tabs, devices (if any exist)
+    agents = {a["id"] for a in generate.discover_recurring_agents()}
+    tabs = {t["id"] for t in generate.discover_dashboard_tabs()}
+    devices = {d["id"] for d in generate.discover_devices()}
+
+    assert agents <= tool_ids
+    assert tabs <= tool_ids
+    assert devices <= tool_ids
+
+    # Should not include projects
+    project_names = {p["id"] for p in generate.discover_projects()}
+    assert not (project_names & tool_ids), "functional_tool_ids should not include projects"
+
+
+def test_attach_use_cases_sets_it_and_names_every_tool_without_one():
+    tree = {"id": "MARVIN", "children": [
+        {"id": "tdd", "cat": "quality", "children": []},
+        {"id": "daily-digest", "cat": "agents", "children": []},
+        {"id": "Health tab", "cat": "dashboard", "children": []},
+    ]}
+    tool_ids = {"tdd", "daily-digest", "Health tab", "missing-tool"}
+    cards = {
+        "tdd": {"use_case": "Write tests first.", "example": {"label": "PR #123", "url": "..."}, "status": "live"},
+        "daily-digest": {"use_case": "Morning brief.", "example": {"label": "2026-10-08", "url": "..."}, "status": "live"},
+    }
+    missing = generate.attach_use_cases(tree, tool_ids, cards)
+
+    assert tree["children"][0]["use_case"]["use_case"] == "Write tests first."
+    assert tree["children"][1]["use_case"]["use_case"] == "Morning brief."
+    assert sorted(missing) == ["Health tab", "missing-tool"]
+
+
+def test_live_tree_every_functional_tool_has_use_case_entry():
+    """Guard test: every live tool must have a use-case card in enrichment.json to stay on the map."""
+    manifest = json.loads(generate.MANIFEST_PATH.read_text())
+    enrichment = json.loads(generate.ENRICHMENT_PATH.read_text())
+
+    tree = generate.build_tree(manifest, enrichment)
+    tree_ids = ids(tree)
+
+    tool_ids = generate.functional_tool_ids(manifest)
+    use_cases = enrichment.get("use_cases", {})
+
+    # Every tool should have a use_case card
+    missing = tool_ids - set(use_cases.keys())
+    assert not missing, f"Missing use-case cards for: {sorted(missing)}"
+
+
 def test_code_layers_are_attached_to_openable_nodes():
     manifest = json.loads(generate.MANIFEST_PATH.read_text())
     enrichment = json.loads(generate.ENRICHMENT_PATH.read_text())

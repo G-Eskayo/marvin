@@ -289,6 +289,32 @@ def write_facts(out_dir: Path, gather=None) -> list[str]:
     return leaks
 
 
+def write_use_cases(out_dir: Path, tree: dict, enrichment: dict) -> list[str]:
+    """use-cases.json for the MARVIN page (living page, layer 2; issue #268). Returns leak findings, if any.
+    Collects use_case cards from the tree (already attached during build_tree), merges in planned_tools
+    (which have no tree node), and exports as a single JSON file. A privacy scan failure writes nothing."""
+    use_cases_data = {}
+
+    def collect_from_tree(node):
+        if "use_case" in node:
+            use_cases_data[node["id"]] = node["use_case"]
+        for c in node.get("children", []):
+            collect_from_tree(c)
+
+    collect_from_tree(tree)
+
+    # Merge in planned tools
+    planned = enrichment.get("planned_tools", {})
+    for tool_id, card_data in planned.items():
+        use_cases_data[tool_id] = card_data
+
+    text = json.dumps(use_cases_data, indent=2, ensure_ascii=False)
+    leaks = scan_for_leaks(text)
+    if not leaks:
+        (Path(out_dir) / "use-cases.json").write_text(text + "\n", encoding="utf-8")
+    return leaks
+
+
 def export_snapshot(commit: str = "HEAD", out_dir: str | Path = SNAPSHOT_DIR) -> bool:
     """Generate privacy-filtered snapshot.
 
@@ -374,6 +400,10 @@ def export_snapshot(commit: str = "HEAD", out_dir: str | Path = SNAPSHOT_DIR) ->
     fact_leaks = write_facts(out_dir)
     if fact_leaks:
         print(f"Privacy scan failed on facts.json — refusing to export: {fact_leaks}", file=sys.stderr)
+        return False
+    use_case_leaks = write_use_cases(out_dir, tree, enrichment)
+    if use_case_leaks:
+        print(f"Privacy scan failed on use-cases.json — refusing to export: {use_case_leaks}", file=sys.stderr)
         return False
     missing = copy_local_assets(template, TEMPLATE_PATH.parent, out_dir)
     if missing:
