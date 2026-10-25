@@ -2,7 +2,9 @@
 """History store (ADR 0066, marvin#449): one SQLite record of what MARVIN did on both Macs.
 
 Jobs keep appending to their JSONL logs, which are now *outboxes*. This module moves new outbox lines into
-`~/.claude/history.db` on the Mini, the laptop's over ssh whenever it's reachable. The database is the record.
+`~/.agents/var/history.db` on the Mini, the laptop's over ssh whenever it's reachable. The database is the record.
+
+On first run, migrates from the old `~/.claude/history.db` if it exists (using sqlite3.Connection.backup for atomicity).
 
 Complexity (north star #1):
 - load: O(new lines x log n). A cursor per outbox (device, path) remembers the byte offset and inode, so a run reads
@@ -16,7 +18,7 @@ Complexity (north star #1):
 A line's identity is a hash of (device, stream, line): the same line twice from one Mac is one record, from two Macs
 two. A line that isn't valid JSON is still stored (ts NULL): once outboxes are trimmed the database is the only copy.
 
-Usage: history_store.py [stream ...]   (default: gh-calls gh-budget; run every 5 min on the Mini by launchd)
+Usage: history_store.py [stream ...]   (default: gh-calls gh-budget launches; run every 5 min on the Mini by launchd)
        history_store.py --replica-max | --apply < rows | --digest ID   (run over ssh against another Mac's copy)
 
 The laptop's copy (G3): after each load the Mini ships the rows the copy doesn't have yet (id > the copy's max, at
@@ -39,13 +41,14 @@ from typing import Callable, Iterable
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 HOME = Path.home()
-DB_PATH = HOME / ".claude" / "history.db"
+OLD_DB_PATH = HOME / ".claude" / "history.db"
+DB_PATH = HOME / ".agents" / "var" / "history.db"
 LOGS_REL = "~/.claude/logs"
 FINGERPRINT_BYTES = 64
 HOME_DEVICE = "mac-mini-1"  # the database's home: the only Mac that loads outboxes (ADR 0066)
 SHIP_LIMIT = 50_000  # rows per run to the laptop's copy, so a long absence catches up in bounded steps
 VERIFY_EVERY_S = 7 * 86400
-DEFAULT_STREAMS = ["gh-calls", "gh-budget"]  # gh-budget: the allowance readings the GitHub usage chart draws (G4)
+DEFAULT_STREAMS = ["gh-calls", "gh-budget", "launches"]  # gh-budget: GitHub usage (G4); launches: PR cost metrics (G4)
 SSH_OPTS = ["-o", "ConnectTimeout=5", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"]
 
 SCHEMA = """
@@ -67,11 +70,138 @@ CREATE TABLE IF NOT EXISTS cursors(
     fingerprint BLOB NOT NULL,
     PRIMARY KEY(device, path)
 );
+DROP VIEW IF EXISTS runs;
+CREATE VIEW runs AS
+    SELECT id, ts, data, json_extract(data, '$.ticket') as ticket, json_extract(data, '$.cost_usd') as cost_usd,
+           json_extract(data, '$.model') as model, json_extract(data, '$.input_tokens') as input_tokens,
+           json_extract(data, '$.output_tokens') as output_tokens, json_extract(data, '$.cache_read_tokens') as cache_read_tokens,
+           json_extract(data, '$.cache_write_tokens') as cache_write_tokens, json_extract(data, '$.kind') as kind,
+           json_extract(data, '$.exit_code') as exit_code
+    FROM events WHERE stream = 'launches' AND json_valid(data);
+CREATE INDEX IF NOT EXISTS launches_ticket ON events(json_extract(data, '$.ticket'))
+    WHERE stream = 'launches' AND json_valid(data);
 """
 
 
 class Unreachable(Exception):
     """The other Mac couldn't be read (asleep, away, ssh refused). Its outbox waits; nothing is lost."""
+
+
+def _already_migrated(src: Path | str) -> bool:
+    """Check whether src has already been migrated. Returns True if migrated_to marker exists."""
+    src = Path(src)
+    try:
+        conn = sqlite3.connect(src, timeout=5, isolation_level=None)
+        try:
+            marker = conn.execute("SELECT value FROM meta WHERE key = 'migrated_to'").fetchone()
+            return marker is not None
+        finally:
+            conn.close()
+    except (sqlite3.Error, OSError):
+        return False
+
+
+def migrate_from_old(src: Path | str | None = None, dst: Path | str | None = None) -> bool:
+    """Migrate from ~/.claude/history.db to ~/.agents/var/history.db on first run.
+    Uses sqlite3.Connection.backup() for atomicity; verifies via digest; atomic os.replace().
+    Returns True if migration happened, False if old path didn't exist (and new path is now ready).
+    Resolves src/dst from module globals at call time (not bound defaults).
+    After a verified migration, writes a migrated_to marker into meta table of src.
+    On a later call with dst missing but marker present, raises loudly (prevents re-migration).
+    """
+    import tempfile
+    import time
+
+    src = Path(src or OLD_DB_PATH)
+    dst = Path(dst or DB_PATH)
+
+    if not src.exists():
+        return False
+    if dst.exists():
+        return False  # new path already has data; don't clobber it
+
+    # Check if already migrated: if src has the marker but dst doesn't exist, raise
+    if _already_migrated(src):
+        raise RuntimeError(f"migration marker found in {src}, but {dst} is missing. "
+                          f"Either restore {dst} from backup, or remove the {src} migration marker if you're resetting.")
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = dst.with_suffix(".lock")
+    tmp = None
+    src_conn = None
+    dst_conn = None
+    try:
+        with open(lock_path, "a") as lock:
+            import fcntl
+            fcntl.flock(lock, fcntl.LOCK_EX)
+
+            # Double-check under lock
+            if dst.exists():
+                return False
+            if _already_migrated(src):
+                raise RuntimeError(f"migration marker found in {src}, but {dst} is missing.")
+
+            try:
+                src_conn = sqlite3.connect(src, timeout=30, isolation_level=None)
+
+                src_max_id = src_conn.execute("SELECT MAX(id) FROM events").fetchone()[0] or 0
+                src_count = src_conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+                src_hash = digest(src_conn, src_max_id)
+
+                tmp = dst.with_name(f".{dst.name}.{os.getpid()}.{time.time():.0f}.tmp")
+                dst_conn = sqlite3.connect(tmp, timeout=30, isolation_level=None)
+
+                src_conn.backup(dst_conn)
+
+                # Run WAL setup and schema on destination after backup
+                _enable_wal(dst_conn)
+                dst_conn.executescript(SCHEMA)
+
+                # Verify: compare up to dst's own max id (race-free against concurrent src writes)
+                dst_max_id = dst_conn.execute("SELECT MAX(id) FROM events").fetchone()[0] or 0
+                verify_upto = min(src_max_id, dst_max_id)
+                dst_count_verify = dst_conn.execute("SELECT COUNT(*) FROM events WHERE id <= ?", (verify_upto,)).fetchone()[0]
+                src_count_verify = src_conn.execute("SELECT COUNT(*) FROM events WHERE id <= ?", (verify_upto,)).fetchone()[0]
+                dst_hash = digest(dst_conn, verify_upto)
+
+                if src_count_verify != dst_count_verify or src_hash != dst_hash:
+                    raise RuntimeError(f"migration verify failed: counts {src_count_verify} vs {dst_count_verify}, hashes differ")
+
+                dst_conn.close()
+                dst_conn = None
+                src_conn.close()
+                src_conn = None
+
+                # Move tmp to final destination atomically
+                os.replace(tmp, dst)
+                tmp = None
+
+                # Write migration marker to src's meta table AFTER successful os.replace()
+                src_conn = sqlite3.connect(src, timeout=30, isolation_level=None)
+                src_conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", ("migrated_to", str(dst)))
+                src_conn.close()
+                src_conn = None
+
+                return True
+            except Exception as exc:
+                raise RuntimeError(f"migration failed: {exc}") from exc
+    finally:
+        if src_conn is not None:
+            try:
+                src_conn.close()
+            except Exception:
+                pass
+        if dst_conn is not None:
+            try:
+                dst_conn.close()
+            except Exception:
+                pass
+        if tmp is not None:
+            for suffix in ("", "-wal", "-shm"):
+                try:
+                    Path(str(tmp) + suffix).unlink()
+                except OSError:
+                    pass
 
 
 def _enable_wal(conn: sqlite3.Connection, wait_s: float = 30.0) -> None:
@@ -93,6 +223,9 @@ def _enable_wal(conn: sqlite3.Connection, wait_s: float = 30.0) -> None:
 
 
 def connect(path: Path | str | None = None) -> sqlite3.Connection:
+    # When no explicit path given, call migrate_from_old() first (fixes must-fix #2)
+    if path is None:
+        migrate_from_old()
     path = Path(path or DB_PATH)
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, timeout=30, isolation_level=None)  # transactions are explicit (BEGIN IMMEDIATE)
@@ -422,11 +555,11 @@ def main(streams: list[str] | None = None) -> dict:
     @job_events.reported("history-load", "History store load")
     def _run():
         require_home()
-        results = run(streams)
+        results = run(streams)  # run() calls connect() which auto-migrates
         for stream, devices in results.items():
             job_events.step(stream, "; ".join(f"{d}: {r.get('skipped') or str(r.get('added', 0)) + ' new'}"
                                               for d, r in devices.items()))
-        conn = connect()
+        conn = connect()  # auto-migrates if needed
         try:
             # Copies go to the Macs only: mac-mini-2012 holds untrusted code and must never hold MARVIN's history.
             for device, info in machine_profile.remote_macs().items():
@@ -447,7 +580,7 @@ def main(streams: list[str] | None = None) -> dict:
 
 def _replica_cli(args: list[str]) -> None:
     """What the Mini runs on another Mac over ssh, against that Mac's copy."""
-    conn = connect()
+    conn = connect()  # auto-migrates if needed
     try:
         if args[0] == "--replica-max":
             top, h = tip(conn)

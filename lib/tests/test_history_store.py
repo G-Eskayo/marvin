@@ -346,7 +346,8 @@ def test_the_copy_reports_its_tip_as_id_and_hash_through_the_real_cli(tmp_path):
     env = {**os.environ, "HOME": str(tmp_path)}
     cli = [sys.executable, str(Path(hs.__file__)), "--replica-max"]
     assert subprocess.run(cli, env=env, capture_output=True, text=True).stdout.strip() == "0"
-    conn = hs.connect(tmp_path / ".claude" / "history.db")
+    # The new DB_PATH is ~/.agents/var/history.db; create it there
+    conn = hs.connect(tmp_path / ".agents" / "var" / "history.db")
     hs.load(conn, "s", "d", [_line(1)])
     conn.close()
     top, h = subprocess.run(cli, env=env, capture_output=True, text=True).stdout.split()
@@ -375,3 +376,358 @@ def test_the_remote_read_command_works_with_gnu_stat_as_well_as_bsd():
     # The Macs read mac-mini-2012's logs over ssh; Linux's stat -f means "filesystem", not BSD's format flag.
     cmd = hs.remote_read_command("~/.claude/logs/x.jsonl", 0)
     assert "stat -c '%i %s'" in cmd and "stat -f '%i %z'" in cmd
+
+
+# ── migration from old path (marvin#449) ─────────────────────────────────────
+
+def test_migration_copies_the_old_database_atomically(tmp_path):
+    old = tmp_path / "old_history.db"
+    new = tmp_path / "new_history.db"
+
+    # Populate the old database
+    old_conn = hs.connect(old)
+    hs.load(old_conn, "gh-calls", "mac-mini-1", [_line(i) for i in range(50)])
+    old_count = hs.max_id(old_conn)
+    old_hash = hs.digest(old_conn, old_count)
+    old_conn.close()
+
+    # Migrate
+    assert hs.migrate_from_old(old, new) is True
+    assert new.exists()
+
+    # Verify the copy is identical
+    new_conn = hs.connect(new)
+    assert hs.max_id(new_conn) == old_count
+    assert hs.digest(new_conn, old_count) == old_hash
+    assert _count(new_conn) == 50
+    new_conn.close()
+
+
+def test_migration_is_idempotent_when_new_path_exists(tmp_path):
+    old = tmp_path / "old_history.db"
+    new = tmp_path / "new_history.db"
+
+    old_conn = hs.connect(old)
+    hs.load(old_conn, "s", "d", [_line(1)])
+    old_conn.close()
+
+    new_conn = hs.connect(new)
+    hs.load(new_conn, "s", "d", [_line(2)])
+    new_count_before = _count(new_conn)
+    new_conn.close()
+
+    # Migrate when new path already has data: should not clobber it
+    assert hs.migrate_from_old(old, new) is False
+
+    new_conn = hs.connect(new)
+    assert _count(new_conn) == new_count_before  # unchanged
+    new_conn.close()
+
+
+def test_migration_returns_false_when_old_path_does_not_exist(tmp_path):
+    old = tmp_path / "nonexistent.db"
+    new = tmp_path / "new_history.db"
+
+    assert hs.migrate_from_old(old, new) is False
+
+
+def test_migration_writes_marker_to_old_database(tmp_path):
+    """After a verified migration, a migrated_to marker is written to src's meta table."""
+    old = tmp_path / "old_history.db"
+    new = tmp_path / "new_history.db"
+
+    # Populate the old database
+    old_conn = hs.connect(old)
+    hs.load(old_conn, "gh-calls", "mac-mini-1", [_line(i) for i in range(10)])
+    old_conn.close()
+
+    # Migrate
+    assert hs.migrate_from_old(old, new) is True
+
+    # Verify marker was written to old database
+    old_conn = sqlite3.connect(old)
+    marker = old_conn.execute("SELECT value FROM meta WHERE key = 'migrated_to'").fetchone()
+    assert marker is not None
+    assert str(new) in marker[0]
+    old_conn.close()
+
+
+def test_a_verify_failure_leaves_no_tmp_file_and_no_half_written_destination(tmp_path, monkeypatch):
+    """If verify fails during migration, tmp and dst are cleaned up and marker is not written."""
+    old = tmp_path / "old_history.db"
+    new = tmp_path / "new_history.db"
+
+    # Populate the old database
+    old_conn = hs.connect(old)
+    hs.load(old_conn, "gh-calls", "mac-mini-1", [_line(i) for i in range(10)])
+    old_conn.close()
+
+    # Monkeypatch digest to force a mismatch on the second call (which is the dst verify)
+    original_digest = hs.digest
+    call_count = [0]
+    def fake_digest(conn, upto):
+        call_count[0] += 1
+        if call_count[0] == 2:  # The second call is for dst verification
+            return b"fake_hash_mismatch"
+        return original_digest(conn, upto)
+    monkeypatch.setattr(hs, "digest", fake_digest)
+
+    # Attempt migration; should fail
+    with pytest.raises(RuntimeError, match="migration verify failed"):
+        hs.migrate_from_old(old, new)
+
+    # Verify dst doesn't exist and no tmp files remain
+    assert not new.exists()
+    for f in tmp_path.glob(f".{new.name}*"):
+        assert False, f"Leftover temp file: {f}"
+
+
+def test_a_writer_appending_during_the_backup_still_ends_up_consistent(tmp_path, monkeypatch):
+    """A background thread inserts into src while migrate_from_old() runs; dst matches src up to dst's max id."""
+    old = tmp_path / "old_history.db"
+    new = tmp_path / "new_history.db"
+
+    # Populate the old database with initial data
+    old_conn = hs.connect(old)
+    hs.load(old_conn, "gh-calls", "mac-mini-1", [_line(i) for i in range(10)])
+    old_conn.close()
+
+    # Insert more data in a background thread during migration
+    inserted = []
+    original_migrate = hs.migrate_from_old
+    def migrate_with_writer(src, dst):
+        import time
+        import threading
+        def writer():
+            time.sleep(0.1)  # Let migration start
+            w_conn = hs.connect(src)
+            hs.load(w_conn, "gh-calls", "mac-mini-1", [_line(i) for i in range(10, 15)])
+            w_conn.close()
+            inserted.append(True)
+        t = threading.Thread(target=writer)
+        t.start()
+        try:
+            return original_migrate(src, dst)
+        finally:
+            t.join()
+    monkeypatch.setattr(hs, "migrate_from_old", migrate_with_writer)
+
+    # Run migration with background writer
+    result = hs.migrate_from_old(old, new)
+    assert result is True
+    assert inserted  # writer did insert
+
+    # Verify dst matches src up to dst's own max id (race-free)
+    new_conn = hs.connect(new)
+    new_max = hs.max_id(new_conn)
+    new_digest = hs.digest(new_conn, new_max)
+    new_conn.close()
+
+    old_conn = hs.connect(old)
+    old_digest = hs.digest(old_conn, new_max)
+    old_conn.close()
+
+    assert new_digest == old_digest
+
+
+def test_two_concurrent_migrations_serialize_to_one_successful_result(tmp_path):
+    """Two threads calling migrate_from_old() at once; one returns True, one returns False."""
+    old = tmp_path / "old_history.db"
+    new = tmp_path / "new_history.db"
+
+    # Populate the old database
+    old_conn = hs.connect(old)
+    hs.load(old_conn, "gh-calls", "mac-mini-1", [_line(i) for i in range(10)])
+    old_conn.close()
+
+    results = []
+    def migrate():
+        try:
+            results.append(("result", hs.migrate_from_old(old, new)))
+        except Exception as exc:
+            results.append(("error", exc))
+
+    t1 = threading.Thread(target=migrate)
+    t2 = threading.Thread(target=migrate)
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    assert len(results) == 2
+    assert new.exists()
+    result_vals = [r[1] for r in results if r[0] == "result"]
+    assert sorted(result_vals) == [False, True]
+
+
+def test_a_garbage_old_file_fails_loudly_and_never_creates_the_new_database(tmp_path):
+    """Non-SQLite bytes at src; should raise and never create dst."""
+    old = tmp_path / "old_history.db"
+    new = tmp_path / "new_history.db"
+
+    old.write_bytes(b"not a sqlite database\x00\x00")
+
+    with pytest.raises(RuntimeError, match="migration failed"):
+        hs.migrate_from_old(old, new)
+
+    assert not new.exists()
+
+
+def test_migration_raises_when_marker_exists_but_new_db_missing(tmp_path):
+    """If src has migrated_to marker but dst doesn't exist, raises RuntimeError (ADR 0065)."""
+    old = tmp_path / "old_history.db"
+    new = tmp_path / "new_history.db"
+
+    # Populate and migrate once
+    old_conn = hs.connect(old)
+    hs.load(old_conn, "gh-calls", "mac-mini-1", [_line(i) for i in range(5)])
+    old_conn.close()
+
+    assert hs.migrate_from_old(old, new) is True
+    assert new.exists()
+
+    # Add a row to new to confirm it existed
+    new_conn = hs.connect(new)
+    hs.load(new_conn, "gh-calls", "mac-mini-1", [_line(100)])
+    new_conn.close()
+
+    # Delete new
+    new.unlink()
+
+    # Try to migrate again; should raise
+    with pytest.raises(RuntimeError, match="migration marker found"):
+        hs.migrate_from_old(old, new)
+
+    # Verify dst was not recreated
+    assert not new.exists()
+
+
+def test_isolation_fixture_points_db_path_away_from_the_real_machine(db, tmp_path):
+    """The isolation fixture ensures hs.DB_PATH and hs.OLD_DB_PATH are never the real defaults."""
+    # This is a check on the fixture itself; just confirm they're not the real paths
+    assert hs.DB_PATH != Path.home() / ".agents" / "var" / "history.db"
+    assert hs.OLD_DB_PATH != Path.home() / ".claude" / "history.db"
+
+
+def test_a_malformed_launches_line_does_not_break_loading_or_the_typed_view(db):
+    """A malformed JSON launches line must not break INSERT or the runs view."""
+    # Load both malformed and valid launches lines
+    hs.load(db, "launches", "d", [
+        "{not json",
+        json.dumps({"t": 1791498937.0, "ticket": "G-Eskayo/marvin#123", "cost_usd": 0.01, "model": "claude-opus-5-5"}),
+    ])
+
+    # INSERT should succeed (no exception)
+    assert _count(db, "launches") == 2
+
+    # The runs view should not raise and should skip the malformed row
+    rows = db.execute("SELECT * FROM runs").fetchall()
+    assert len(rows) == 1  # Only the valid row
+    assert rows[0][3] == "G-Eskayo/marvin#123"  # ticket field
+
+
+def test_migration_resolves_paths_from_module_globals_at_call_time(tmp_path, monkeypatch):
+    """migrate_from_old() should resolve src/dst from module globals, not bound defaults."""
+    old = tmp_path / "old_history.db"
+    new = tmp_path / "new_history.db"
+
+    # Populate the old database
+    old_conn = hs.connect(old)
+    hs.load(old_conn, "gh-calls", "mac-mini-1", [_line(1)])
+    old_conn.close()
+
+    # Monkeypatch module globals and call with no args
+    monkeypatch.setattr(hs, "OLD_DB_PATH", old)
+    monkeypatch.setattr(hs, "DB_PATH", new)
+
+    # Should work with no arguments
+    assert hs.migrate_from_old() is True
+    assert new.exists()
+
+
+def test_launches_stream_is_in_defaults():
+    assert "launches" in hs.DEFAULT_STREAMS
+
+
+def test_launches_schema_includes_runs_view_with_all_fields(db):
+    # Create a launches event with all the new fields
+    hs.load(db, "launches", "d", [
+        json.dumps({
+            "t": 1791498937.0, "ticket": "G-Eskayo/marvin#123", "cost_usd": 0.045,
+            "model": "claude-opus-5-5", "input_tokens": 100, "output_tokens": 50,
+            "cache_read_tokens": 10, "cache_write_tokens": 5, "kind": "agent", "exit_code": 0
+        }),
+    ])
+
+    # Query the runs view
+    rows = db.execute(
+        "SELECT id, ts, data, ticket, cost_usd, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, kind, exit_code FROM runs"
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0][3] == "G-Eskayo/marvin#123"  # ticket
+    assert rows[0][4] == pytest.approx(0.045)  # cost_usd
+    assert rows[0][5] == "claude-opus-5-5"  # model
+    assert rows[0][6] == 100  # input_tokens
+    assert rows[0][7] == 50  # output_tokens
+    assert rows[0][8] == 10  # cache_read_tokens
+    assert rows[0][9] == 5  # cache_write_tokens
+    assert rows[0][10] == "agent"  # kind
+    assert rows[0][11] == 0  # exit_code
+
+
+def test_the_runs_view_upgrades_in_place_when_an_older_schema_already_exists(tmp_path):
+    """When an older DB with a narrower runs view is opened, the view is upgraded in place."""
+    db_path = tmp_path / "history.db"
+
+    # Create a DB with an older narrow runs view
+    old_conn = sqlite3.connect(db_path, isolation_level=None)
+    old_conn.execute("CREATE TABLE events(id INTEGER PRIMARY KEY, stream TEXT, device TEXT, ts REAL, hash BLOB UNIQUE, data TEXT)")
+    old_conn.execute("CREATE VIEW runs AS SELECT id, ts, data FROM events WHERE stream = 'launches'")
+    old_conn.close()
+
+    # Load a launches row with the new fields
+    conn = hs.connect(db_path)
+    hs.load(conn, "launches", "d", [json.dumps({
+        "t": 1791498937.0, "ticket": "G-Eskayo/marvin#100", "cost_usd": 0.05,
+        "model": "claude-opus-5-5", "input_tokens": 200, "output_tokens": 100
+    })])
+
+    # Query the view and check it has the new columns
+    rows = conn.execute(
+        "SELECT ticket, cost_usd, model, input_tokens, output_tokens FROM runs"
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0][0] == "G-Eskayo/marvin#100"
+    assert rows[0][1] == pytest.approx(0.05)
+    assert rows[0][2] == "claude-opus-5-5"
+    conn.close()
+
+
+def test_launches_ticket_index_actually_exists(db):
+    """Verify the launches_ticket index exists via sqlite_master."""
+    rows = db.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name='launches_ticket'"
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0][0] == "launches_ticket"
+
+
+def test_connect_calls_migrate_from_old_automatically(tmp_path, monkeypatch):
+    """connect() with no explicit path should call migrate_from_old() first."""
+    old = tmp_path / "old_history.db"
+    new = tmp_path / "new_history.db"
+
+    # Populate the old database
+    old_conn = hs.connect(old)
+    hs.load(old_conn, "gh-calls", "mac-mini-1", [_line(1)])
+    old_conn.close()
+
+    # Monkeypatch module globals
+    monkeypatch.setattr(hs, "OLD_DB_PATH", old)
+    monkeypatch.setattr(hs, "DB_PATH", new)
+
+    # connect() with no args should auto-migrate
+    conn = hs.connect()
+    assert new.exists()
+    assert _count(conn) == 1
+    conn.close()

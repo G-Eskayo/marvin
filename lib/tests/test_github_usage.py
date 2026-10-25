@@ -324,3 +324,32 @@ def test_tail_since_ignores_a_half_written_last_line_and_handles_empty_and_missi
     assert hs.tail_since(log, 0) == []
     log.write_text(json.dumps(row(1, "a")) + "\n" + '{"t": 1')
     assert len(hs.tail_since(log, 0)) == 1
+
+
+def test_update_cache_db_ignores_the_launches_stream(tmp_path):
+    """update_cache_db hardcodes streams IN ('gh-calls', 'gh-budget') and ignores launches."""
+    db_path = tmp_path / "history.db"
+    cache_path = tmp_path / "usage-cache.json"
+
+    conn = hs.connect(db_path)
+
+    # Load some gh-calls and gh-budget events
+    hs.load(conn, "gh-calls", "mac-mini-1", [json.dumps(row(5, "ticket_pipeline.py")), json.dumps(row(10, "zsh", rc=1, refused="burst"))])
+    hs.load(conn, "gh-budget", "mac-mini-1", [json.dumps({"at": T - 300, "graphql": 4700})])
+
+    # Load launches stream (for PR cost metrics) — should be ignored by update_cache_db
+    hs.load(conn, "launches", "mac-mini-1", [
+        json.dumps({"t": T - 200, "ticket": "G-Eskayo/marvin#123", "cost_usd": 0.045, "model": "claude-opus-5-5"}),
+    ])
+
+    # Update cache from the history store; launches should not affect it
+    cache = gu.update_cache_db(NOW, conn, "mac-mini-1", cache_path)
+
+    # Verify it aggregates only gh-calls and gh-budget, ignoring launches
+    assert cache["hours"]
+    hour_key = gu._hour_key(T - 300)
+    assert hour_key in cache["hours"]
+    assert cache["hours"][hour_key]["total"] == 2
+    assert cache["hours"][hour_key]["refused"] == 1
+
+    conn.close()
