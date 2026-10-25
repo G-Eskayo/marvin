@@ -196,6 +196,29 @@ def remote_macs() -> dict:
     return {k: v for k, v in remote_devices().items() if v.get("os", "macos") == "macos"}
 
 
+def is_stationary() -> bool:
+    """Check if this machine is the stationary (always-on) device. Wraps
+    load_or_build().get("mobility_class") == "stationary", matching cross_machine_merge.py's idiom."""
+    return load_or_build().get("mobility_class") == "stationary"
+
+
+def ssh_cat(host: str, remote_path: str, timeout: int = 10) -> str | None:
+    """Read a file from a remote machine over SSH. Returns the file contents on
+    success, None on any failure (unreachable, non-zero exit, timeout).
+    Shared SSH helper replacing duplicate SSH_OPTS definitions."""
+    try:
+        proc = subprocess.run(
+            ["ssh", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
+             "-o", "StrictHostKeyChecking=accept-new", host, f"cat {remote_path}"],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        if proc.returncode != 0:
+            return None
+        return proc.stdout
+    except Exception:
+        return None
+
+
 if __name__ == "__main__":
     profile = build_profile()
     PROFILE_PATH.parent.mkdir(parents=True, exist_ok=True)

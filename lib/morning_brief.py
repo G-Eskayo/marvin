@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import job_ownership  # noqa: E402
 
 CLAUDE = Path.home() / ".claude"
 BRIEFS = CLAUDE / "briefs"
@@ -277,11 +278,25 @@ def _day(now: datetime) -> str:
     return now.astimezone().strftime("%Y-%m-%d")
 
 
-def write(now: datetime | None = None, sources: dict[str, Callable] | None = None) -> Path:
+def write(now: datetime | None = None, sources: dict[str, Callable] | None = None, role: str | None = None) -> Path:
     now = now or datetime.now(timezone.utc)
     BRIEFS.mkdir(parents=True, exist_ok=True)
     path = BRIEFS / f"{_day(now)}.md"
+
+    # Idempotency guard: don't overwrite if it already exists (parity with daily_digest, research_digest)
+    if path.exists():
+        return path
+
     path.write_text(render(gather(now, sources), now))
+
+    # Stamp the build metadata if role is provided (for tracking which machine built it)
+    if role:
+        built_by_path = BRIEFS / f"{_day(now)}.built-by.json"
+        import machine_profile
+        label = machine_profile.machine_label()
+        metadata = {"machine": label, "role": role, "at": now.isoformat()}
+        built_by_path.write_text(json.dumps(metadata))
+
     return path
 
 
@@ -307,9 +322,44 @@ def read_dates() -> list[datetime]:
     return _dates(".read")
 
 
+def cli_build() -> Path:
+    """Build the morning brief with ADR 0067 job ownership checks (Mini primary, MacBook fallback).
+    Used by the build CLI branch."""
+    now = datetime.now(timezone.utc)
+    is_primary = job_ownership.is_primary()
+    past_deadline = job_ownership.past_deadline(9, 45, now)  # usual time 09:45
+
+    if is_primary:
+        return write(now, role="primary")
+
+    if not past_deadline:
+        print("not primary machine and before deadline — skipping", file=sys.stderr)
+        path = BRIEFS / f"{_day(now)}.md"
+        return path if path.exists() else Path()
+
+    # Fallback: check if Mini has real output
+    mini_out = job_ownership.mini_output(f"briefs/{_day(now)}.md")
+    if mini_out:
+        print("primary machine has real output — skipping fallback build", file=sys.stderr)
+        path = BRIEFS / f"{_day(now)}.md"
+        return path if path.exists() else Path()
+
+    # Late re-check: verify Mini still hasn't built output after we started
+    mini_out = job_ownership.mini_output(f"briefs/{_day(now)}.md")
+    if mini_out:
+        print("primary machine has real output — skipping fallback build (late check)", file=sys.stderr)
+        path = BRIEFS / f"{_day(now)}.md"
+        return path if path.exists() else Path()
+
+    # Build fallback
+    path = write(now, role="fallback")
+    print(f"fallback brief built at {path}", file=sys.stderr)
+    return path
+
+
 if __name__ == "__main__":
     if sys.argv[1:] == ["build"]:
-        print(write())
+        print(cli_build())
     elif sys.argv[1:] == ["show"]:
         print(show_today() or "No brief for today yet.")
     else:

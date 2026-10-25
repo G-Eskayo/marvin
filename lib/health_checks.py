@@ -408,6 +408,46 @@ def check_catalog_fresh(path: Path | None = None, now: datetime | None = None) -
     return _result(cid, label, sev, f"{n} projects, built {age_h:.1f}h ago", value=round(age_h, 1))
 
 
+def check_brief_owner(now: datetime | None = None) -> dict:
+    """Morning brief ownership (ADR 0067): Mini is primary, MacBook is fallback.
+    Grades on presence and who built it."""
+    import morning_brief
+    cid, label = "brief:owner", "Morning brief builder is correct"
+    now = now or _now()
+
+    # Build the filename using morning_brief.BRIEFS
+    day_str = now.astimezone().strftime("%Y-%m-%d")
+    brief_path = morning_brief.BRIEFS / f"{day_str}.md"
+    metadata_path = morning_brief.BRIEFS / f"{day_str}.built-by.json"
+
+    if not brief_path.exists():
+        # Brief not built yet — check if we're past deadline
+        past_deadline = job_ownership.past_deadline(9, 45, now)  # usual time 09:45
+        if past_deadline:
+            return _result(cid, label, "red", "no brief built yet, past 10:45 deadline")
+        else:
+            return _result(cid, label, "yellow", "no brief built yet")
+
+    # Brief exists — check who built it
+    if not metadata_path.exists():
+        return _result(cid, label, "yellow", "brief exists but no metadata (unknown builder)")
+
+    try:
+        metadata = json.loads(metadata_path.read_text())
+        if not isinstance(metadata, dict):
+            return _result(cid, label, "yellow", "brief metadata corrupted (not a JSON object)")
+    except (json.JSONDecodeError, OSError):
+        return _result(cid, label, "yellow", "brief metadata corrupted or unreadable")
+
+    role = metadata.get("role", "unknown")
+    if role == "primary":
+        return _result(cid, label, "green", "brief built by primary machine")
+    elif role == "fallback":
+        return _result(cid, label, "yellow", "brief built by fallback machine")
+    else:
+        return _result(cid, label, "yellow", f"brief built by {role}")
+
+
 GH_CALLS_PATH = Path.home() / ".claude" / "logs" / "gh-calls.jsonl"
 GH_GATE_PATH = Path.home() / ".claude" / "logs" / "gh-gate.json"
 
@@ -999,7 +1039,7 @@ JOB_PLACEMENT = {
     "cleanup-sweep": "both",  # daily: each machine sweeps its own pipeline worktrees (lib/cleanup_sweep.py)
     "machine-resources": "both",  # 30s: samples disk/mem/swap/CPU/GPU for resources panel (#130)
     "dashboard-launch": "laptop",
-    "morning-brief": "laptop",  # one writer (the brief syncs to the mini via ~/.claude); after the digests (lib/morning_brief.py)
+    "morning-brief": "both",  # Mini primary, MacBook fallback (ADR 0067); after the digests (lib/morning_brief.py)
     # the website map (#189): rebuilt nightly and after MARVIN changes on the mini, where the dev site runs; the nightly
     # job also publishes it to production (ADR 0057), so it must never run on the laptop
     "snapshot-deploy-nightly": "mini", "snapshot-deploy-reactive": "mini",
@@ -1479,6 +1519,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("profile:no-machines", "Projects with no machines", check_unrunnable_profiles, CHECK_BUDGET_S),
         ("triggers:missed", "Dashboard triggers cover every change", check_trigger_coverage, CHECK_BUDGET_S),
         ("catalog:fresh", "Project catalog is current", check_catalog_fresh, CHECK_BUDGET_S),
+        ("brief:owner", "Morning brief builder is correct", check_brief_owner, CHECK_BUDGET_S),
         ("tickets:project-tags", "Tickets are on their project's board", check_project_tags, CHECK_BUDGET_S),
         ("tickets:hold-revisit", "Hold tickets have revisit dates", check_hold_revisit, CHECK_BUDGET_S),
         ("github:budget", "GitHub request budget", check_github_budget, CHECK_BUDGET_S),

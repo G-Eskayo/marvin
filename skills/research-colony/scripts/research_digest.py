@@ -3,10 +3,18 @@
 import json
 import subprocess
 import sys
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 DIGEST_DIR = Path.home() / ".claude" / "research-digest"
+
+
+def digest_path(now: datetime | None = None) -> Path:
+    """Get the digest file path for a given datetime."""
+    if now is None:
+        now = datetime.now(timezone.utc)
+    today = now.astimezone().strftime("%Y-%m-%d")
+    return DIGEST_DIR / f"{today}.md"
 CACHE_DIR = Path.home() / ".claude" / "research-feed"
 CHROMA_PATH = Path.home() / ".claude" / "chroma"
 SAFETY_MONITOR_SCRIPTS = Path.home() / ".agents" / "skills" / "safety-monitor" / "scripts"
@@ -14,6 +22,7 @@ SAFETY_MONITOR_SCRIPTS = Path.home() / ".agents" / "skills" / "safety-monitor" /
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 from notify import notify  # noqa: E402
 import marvin_launcher  # noqa: E402
+import job_ownership  # noqa: E402
 
 sys.path.insert(0, str(SAFETY_MONITOR_SCRIPTS))
 try:
@@ -96,8 +105,8 @@ def _fmt_item(item: dict) -> str:
 
 
 def generate() -> Path | None:
-    today = date.today().isoformat()
-    out_path = DIGEST_DIR / f"{today}.md"
+    now = datetime.now(timezone.utc)
+    out_path = digest_path(now)
 
     if out_path.exists():
         print(f"[colony] research digest already exists for {today}", file=sys.stderr)
@@ -149,6 +158,14 @@ def generate() -> Path | None:
             "against the research_colony rubric. See `~/.claude/quarantine.md` "
             "for the full text and to approve/modify/deny._"
         )
+
+    # Late re-check (ADR 0067): if this is not the primary machine, verify the
+    # Mini hasn't already built real output since we started. If it has, skip.
+    if not job_ownership.is_primary():
+        mini_out = job_ownership.mini_output(f"research-digest/{now.astimezone().strftime('%Y-%m-%d')}.md")
+        if mini_out:
+            print(f"[colony] primary machine wrote output while we were building — using that instead", file=sys.stderr)
+            return out_path  # Don't write; file already exists from Mini
 
     DIGEST_DIR.mkdir(parents=True, exist_ok=True)
     out_path.write_text(

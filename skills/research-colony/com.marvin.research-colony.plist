@@ -11,14 +11,22 @@
         <string>/Users/gileskayo/.agents/skills/research-colony/scripts/run_colony.py</string>
     </array>
 
-    <!-- Run every day at 09:00 (after daily-digest at 08:30) -->
+    <!-- Run every day at 09:00 and 10:00 (primary at 09:00, fallback at 10:00 per ADR 0067) -->
     <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>9</integer>
-        <key>Minute</key>
-        <integer>0</integer>
-    </dict>
+    <array>
+        <dict>
+            <key>Hour</key>
+            <integer>9</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <dict>
+            <key>Hour</key>
+            <integer>10</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+    </array>
 
     <key>StandardOutPath</key>
     <string>/Users/gileskayo/.claude/logs/research-colony.log</string>

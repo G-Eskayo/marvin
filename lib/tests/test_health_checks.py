@@ -1299,3 +1299,140 @@ def test_the_machine_script_reads_a_real_process_uptime_with_this_machines_ps():
         assert 1 <= int(out.stdout.strip()) <= 20
     finally:
         child.kill()
+
+
+# ── morning brief ownership ──────────────────────────────────────────────────
+
+def test_check_brief_owner_yellow_when_not_built_yet(tmp_path, monkeypatch):
+    import zoneinfo
+    monkeypatch.setattr(hc, "job_ownership")  # Mock so we don't need real machine info
+    with monkeypatch.context() as m:
+        # Before deadline
+        tz = zoneinfo.ZoneInfo('America/Los_Angeles')
+        now = datetime(2026, 10, 25, 9, 0, 0, tzinfo=tz)
+        briefs_path = tmp_path / "briefs"
+        briefs_path.mkdir()
+
+        # Mock morning_brief module
+        import sys
+        morning_brief_mock = type('obj', (object,), {'BRIEFS': briefs_path})()
+        sys.modules['morning_brief'] = morning_brief_mock
+
+        result = hc.check_brief_owner(now=now)
+        assert result["severity"] == "yellow"
+        assert "no brief built yet" in result["detail"]
+
+
+def test_check_brief_owner_red_when_past_deadline(tmp_path, monkeypatch):
+    import zoneinfo
+    with monkeypatch.context() as m:
+        # After deadline (10:45)
+        tz = zoneinfo.ZoneInfo('America/Los_Angeles')
+        now = datetime(2026, 10, 25, 11, 0, 0, tzinfo=tz)
+        briefs_path = tmp_path / "briefs"
+        briefs_path.mkdir()
+
+        # Mock morning_brief module
+        import sys
+        morning_brief_mock = type('obj', (object,), {'BRIEFS': briefs_path})()
+        sys.modules['morning_brief'] = morning_brief_mock
+
+        result = hc.check_brief_owner(now=now)
+        assert result["severity"] == "red"
+        assert "past 10:45 deadline" in result["detail"]
+
+
+def test_check_brief_owner_green_when_primary_built_it(tmp_path, monkeypatch):
+    import zoneinfo
+    with monkeypatch.context() as m:
+        tz = zoneinfo.ZoneInfo('America/Los_Angeles')
+        now = datetime(2026, 10, 25, 10, 0, 0, tzinfo=tz)
+        briefs_path = tmp_path / "briefs"
+        briefs_path.mkdir()
+
+        # Create brief and metadata
+        day = "2026-10-25"
+        (briefs_path / f"{day}.md").write_text("# Brief")
+        (briefs_path / f"{day}.built-by.json").write_text(
+            json.dumps({"role": "primary", "at": now.isoformat()})
+        )
+
+        # Mock morning_brief module
+        import sys
+        morning_brief_mock = type('obj', (object,), {'BRIEFS': briefs_path})()
+        sys.modules['morning_brief'] = morning_brief_mock
+
+        result = hc.check_brief_owner(now=now)
+        assert result["severity"] == "green"
+        assert "primary machine" in result["detail"]
+
+
+def test_check_brief_owner_yellow_when_fallback_built_it(tmp_path, monkeypatch):
+    import zoneinfo
+    with monkeypatch.context() as m:
+        tz = zoneinfo.ZoneInfo('America/Los_Angeles')
+        now = datetime(2026, 10, 25, 10, 0, 0, tzinfo=tz)
+        briefs_path = tmp_path / "briefs"
+        briefs_path.mkdir()
+
+        # Create brief and metadata
+        day = "2026-10-25"
+        (briefs_path / f"{day}.md").write_text("# Brief")
+        (briefs_path / f"{day}.built-by.json").write_text(
+            json.dumps({"role": "fallback", "at": now.isoformat()})
+        )
+
+        # Mock morning_brief module
+        import sys
+        morning_brief_mock = type('obj', (object,), {'BRIEFS': briefs_path})()
+        sys.modules['morning_brief'] = morning_brief_mock
+
+        result = hc.check_brief_owner(now=now)
+        assert result["severity"] == "yellow"
+        assert "fallback machine" in result["detail"]
+
+
+def test_check_brief_owner_yellow_when_metadata_corrupted(tmp_path, monkeypatch):
+    import zoneinfo
+    with monkeypatch.context() as m:
+        tz = zoneinfo.ZoneInfo('America/Los_Angeles')
+        now = datetime(2026, 10, 25, 10, 0, 0, tzinfo=tz)
+        briefs_path = tmp_path / "briefs"
+        briefs_path.mkdir()
+
+        # Create brief with corrupted metadata
+        day = "2026-10-25"
+        (briefs_path / f"{day}.md").write_text("# Brief")
+        (briefs_path / f"{day}.built-by.json").write_text("not valid json")
+
+        # Mock morning_brief module
+        import sys
+        morning_brief_mock = type('obj', (object,), {'BRIEFS': briefs_path})()
+        sys.modules['morning_brief'] = morning_brief_mock
+
+        result = hc.check_brief_owner(now=now)
+        assert result["severity"] == "yellow"
+        assert "corrupted" in result["detail"]
+
+
+def test_check_brief_owner_yellow_when_metadata_is_not_dict(tmp_path, monkeypatch):
+    import zoneinfo
+    with monkeypatch.context() as m:
+        tz = zoneinfo.ZoneInfo('America/Los_Angeles')
+        now = datetime(2026, 10, 25, 10, 0, 0, tzinfo=tz)
+        briefs_path = tmp_path / "briefs"
+        briefs_path.mkdir()
+
+        # Create brief with non-dict metadata
+        day = "2026-10-25"
+        (briefs_path / f"{day}.md").write_text("# Brief")
+        (briefs_path / f"{day}.built-by.json").write_text(json.dumps(["not", "a", "dict"]))
+
+        # Mock morning_brief module
+        import sys
+        morning_brief_mock = type('obj', (object,), {'BRIEFS': briefs_path})()
+        sys.modules['morning_brief'] = morning_brief_mock
+
+        result = hc.check_brief_owner(now=now)
+        assert result["severity"] == "yellow"
+        assert "not a JSON object" in result["detail"]

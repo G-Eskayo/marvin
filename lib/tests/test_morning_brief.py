@@ -123,3 +123,56 @@ def test_open_prs_marks_waiting_from_one_graphql_read(monkeypatch):
     monkeypatch.setattr(od, "fetch", lambda repos, run=None: None)
     brief = mb.gather(NOW, {"open_prs": mb._open_prs})
     assert brief["open_prs"] is None and "open PRs" in brief["missing"][0]
+
+
+def test_write_uses_json_dumps_for_metadata(tmp_path, monkeypatch):
+    """The metadata can contain quotes without breaking the JSON."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    monkeypatch.setattr(mb, "machine_label", lambda: "mac-mini")
+
+    path = mb.write(NOW, _sources(), role="primary")
+    metadata_path = tmp_path / "2026-10-09.built-by.json"
+    assert metadata_path.exists()
+
+    metadata = json.loads(metadata_path.read_text())
+    assert metadata["role"] == "primary"
+    assert metadata["machine"] == "mac-mini"
+    assert metadata["at"] == NOW.isoformat()
+
+
+def test_cli_build_does_late_recheck_before_fallback(tmp_path, monkeypatch):
+    """The late re-check prevents the Mini's second firing from building fallback."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+
+    # Mock job_ownership to simulate fallback path triggering
+    call_count = [0]
+    def mock_mini_output(path):
+        call_count[0] += 1
+        # First call: no output (triggers fallback build)
+        # Late re-check call: now has output (skips fallback build)
+        return None if call_count[0] == 1 else "# Research Digest\n\nContent"
+
+    import sys
+    sys.modules['job_ownership'].is_primary = lambda: False
+    sys.modules['job_ownership'].past_deadline = lambda h, m, n: True
+    sys.modules['job_ownership'].mini_output = mock_mini_output
+
+    result = mb.cli_build()
+    # Late re-check should have been called twice total
+    assert call_count[0] == 2
+    # Result should not be a built path (it's the empty Path() sentinel)
+    assert result == mb.Path()
+
+
+def test_cli_build_returns_empty_path_not_nonexistent_file(tmp_path, monkeypatch):
+    """Skip paths return empty Path(), not BRIEFS / 'no-brief'."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+
+    import sys
+    sys.modules['job_ownership'].is_primary = lambda: False
+    sys.modules['job_ownership'].past_deadline = lambda h, m, n: False
+
+    result = mb.cli_build()
+    assert result == mb.Path()
+    # Should not have created a "no-brief" file
+    assert not (tmp_path / "no-brief").exists()

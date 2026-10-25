@@ -337,3 +337,113 @@ def test_missing_helper_format():
     result = dd._missing("test message")
     assert "❌ **Missing input:**" in result
     assert "test message" in result
+
+
+# ── ADR 0067 job ownership gating tests ────────────────────────────────────────
+
+def test_main_skips_when_not_primary_and_before_deadline(tmp_path, monkeypatch):
+    """main() skips when not primary machine and before deadline."""
+    import zoneinfo
+    tz = zoneinfo.ZoneInfo('America/Los_Angeles')
+    now = datetime(2026, 10, 25, 8, 0, 0, tzinfo=tz)
+
+    out_file = tmp_path / "2026-10-25.md"
+    monkeypatch.setattr(dd, "OUT_FILE", out_file)
+
+    # Mock job_ownership
+    mock_job_ownership = type('obj', (object,), {})()
+    mock_job_ownership.is_primary = lambda: False
+    mock_job_ownership.past_deadline = lambda h, m, n: False
+    monkeypatch.setattr(dd, "job_ownership", mock_job_ownership)
+
+    # Mock everything that would be called
+    def raise_if_called():
+        raise AssertionError("Should not be called when skipping")
+
+    monkeypatch.setattr(dd, "roadmap_summary", raise_if_called)
+
+    # Run with monkeypatched now
+    with patch('daily_digest.datetime') as dt_mock:
+        dt_mock.now.return_value = now
+        dt_mock.strftime = lambda self, fmt: self.strftime(fmt) if hasattr(self, 'strftime') else now.strftime(fmt)
+        dt_mock.side_effect = lambda *args, **kw: datetime(*args, **kw)
+
+        dd.main()
+
+    # File should not be created
+    assert not out_file.exists()
+
+
+def test_main_checks_mini_output_when_past_deadline(tmp_path, monkeypatch):
+    """main() checks Mini output when past deadline and not primary."""
+    import zoneinfo
+    tz = zoneinfo.ZoneInfo('America/Los_Angeles')
+    now = datetime(2026, 10, 25, 11, 0, 0, tzinfo=tz)
+
+    out_file = tmp_path / "2026-10-25.md"
+    monkeypatch.setattr(dd, "OUT_FILE", out_file)
+
+    # Mock job_ownership
+    mock_job_ownership = type('obj', (object,), {})()
+    mock_job_ownership.is_primary = lambda: False
+    mock_job_ownership.past_deadline = lambda h, m, n: True
+    mini_output_called = [False]
+
+    def mock_mini_output(path):
+        mini_output_called[0] = True
+        return "# Digest from Mini"
+
+    mock_job_ownership.mini_output = mock_mini_output
+    monkeypatch.setattr(dd, "job_ownership", mock_job_ownership)
+
+    # Mock time to avoid needing all the other summaries
+    def raise_if_called():
+        raise AssertionError("Should not generate when Mini has output")
+    monkeypatch.setattr(dd, "roadmap_summary", raise_if_called)
+
+    dd.main()
+
+    # Mini output check should have been called
+    assert mini_output_called[0]
+    # File should not be created
+    assert not out_file.exists()
+
+
+def test_main_generates_when_primary(tmp_path, monkeypatch):
+    """main() generates digest when primary machine."""
+    import zoneinfo
+    tz = zoneinfo.ZoneInfo('America/Los_Angeles')
+    now = datetime(2026, 10, 25, 9, 0, 0, tzinfo=tz)
+
+    out_file = tmp_path / "2026-10-25.md"
+    monkeypatch.setattr(dd, "OUT_FILE", out_file)
+
+    # Mock job_ownership
+    mock_job_ownership = type('obj', (object,), {})()
+    mock_job_ownership.is_primary = lambda: True
+    monkeypatch.setattr(dd, "job_ownership", mock_job_ownership)
+
+    # Mock summaries and Claude
+    def mock_roadmap():
+        return "## Roadmap section"
+
+    def mock_claude(prompt):
+        return "# Daily Digest\n\nContent"
+
+    monkeypatch.setattr(dd, "roadmap_summary", mock_roadmap)
+    monkeypatch.setattr(dd, "bench_summary", lambda: "Bench data")
+    monkeypatch.setattr(dd, "reviewer_health_summary", lambda: "Reviewer health")
+    monkeypatch.setattr(dd, "recent_handoffs_summary", lambda: "Handoffs")
+    monkeypatch.setattr(dd, "qa_kb_summary", lambda: "QA KB")
+    monkeypatch.setattr(dd, "improvement_queue_summary", lambda: "Queue")
+    monkeypatch.setattr(dd, "call_claude", mock_claude)
+
+    # Mock datetime
+    with patch('daily_digest.datetime') as dt_mock:
+        dt_mock.now.return_value = now
+        dt_mock.side_effect = lambda *args, **kw: datetime(*args, **kw)
+
+        dd.main()
+
+    # File should be created since we're primary
+    assert out_file.exists()
