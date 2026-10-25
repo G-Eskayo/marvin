@@ -1,6 +1,7 @@
 """The morning brief (marvin#306): one short start-of-day brief, built from what MARVIN already knows, no model run."""
 import json
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 import morning_brief as mb
 
@@ -123,3 +124,91 @@ def test_open_prs_marks_waiting_from_one_graphql_read(monkeypatch):
     monkeypatch.setattr(od, "fetch", lambda repos, run=None: None)
     brief = mb.gather(NOW, {"open_prs": mb._open_prs})
     assert brief["open_prs"] is None and "open PRs" in brief["missing"][0]
+
+
+# ── fallback gate tests (ADR 0067) ──────────────────────────────────────────────
+
+def test_25_build_returns_none_when_should_run_returns_false(tmp_path, monkeypatch):
+    """Test 25: build() returns None when fallback gate blocks it."""
+    from unittest.mock import patch
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+
+    with patch("morning_brief.brief_fallback") as mock_bf:
+        with patch("morning_brief.machine_profile") as mock_mp:
+            mock_mp.registry_id.return_value = "macbook"
+            mock_bf.should_run.return_value = False
+
+            result = mb.build(device_id="macbook")
+            assert result is None
+
+
+def test_26_build_writes_builder_sidecar_with_metadata(tmp_path, monkeypatch):
+    """Test 26: build() writes {day}.builder.json sidecar with machine/reason/at."""
+    import json as json_lib
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+
+    with patch("morning_brief.brief_fallback") as mock_bf:
+        with patch("morning_brief.machine_profile") as mock_mp:
+            with patch("morning_brief.scanner_role") as mock_sr:
+                mock_mp.registry_id.return_value = "mac-mini"
+                mock_bf.should_run.return_value = True
+                mock_sr.is_primary.return_value = True
+
+                now = datetime(2026, 10, 24, 9, 15, 0, tzinfo=timezone.utc)
+                result = mb.build(now=now, device_id="mac-mini")
+
+                assert result is not None
+                day = now.astimezone().strftime("%Y-%m-%d")
+                sidecar = tmp_path / f"{day}.builder.json"
+                assert sidecar.exists()
+
+                data = json_lib.loads(sidecar.read_text())
+                assert data["machine"] == "mac-mini"
+                assert data["reason"] == "primary"
+                assert data["at"] == now.isoformat()
+
+
+def test_27_build_marks_fallback_in_sidecar(tmp_path, monkeypatch):
+    """Test 27: build() marks reason as 'fallback' when running as secondary."""
+    import json as json_lib
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+
+    with patch("morning_brief.brief_fallback") as mock_bf:
+        with patch("morning_brief.machine_profile") as mock_mp:
+            with patch("morning_brief.scanner_role") as mock_sr:
+                mock_mp.registry_id.return_value = "macbook"
+                mock_bf.should_run.return_value = True
+                mock_sr.is_primary.return_value = False
+
+                now = datetime(2026, 10, 24, 10, 15, 0, tzinfo=timezone.utc)
+                result = mb.build(now=now, device_id="macbook")
+
+                assert result is not None
+                day = now.astimezone().strftime("%Y-%m-%d")
+                sidecar = tmp_path / f"{day}.builder.json"
+
+                data = json_lib.loads(sidecar.read_text())
+                assert data["reason"] == "fallback"
+
+
+def test_28_builder_of_reads_sidecar(tmp_path, monkeypatch):
+    """Test 28: builder_of() reads and returns the builder sidecar."""
+    import json as json_lib
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+
+    day = "2026-10-24"
+    sidecar = tmp_path / f"{day}.builder.json"
+    sidecar.write_text(json_lib.dumps({"machine": "mac-mini", "reason": "primary", "at": "2026-10-24T09:15:00+00:00"}))
+
+    result = mb.builder_of(day)
+    assert result is not None
+    assert result["machine"] == "mac-mini"
+    assert result["reason"] == "primary"
+
+
+def test_29_builder_of_returns_none_if_sidecar_missing(tmp_path, monkeypatch):
+    """Test 29: builder_of() returns None if sidecar doesn't exist."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+
+    result = mb.builder_of("2026-10-24")
+    assert result is None

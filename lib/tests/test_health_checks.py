@@ -8,6 +8,7 @@ import pytest
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 LIB = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(LIB))
@@ -1299,3 +1300,47 @@ def test_the_machine_script_reads_a_real_process_uptime_with_this_machines_ps():
         assert 1 <= int(out.stdout.strip()) <= 20
     finally:
         child.kill()
+
+
+# ─── brief builder check tests (ADR 0067) ────────────────────────────────────
+
+def test_30_check_brief_builder_returns_green_when_builder_sidecar_exists(tmp_path, monkeypatch):
+    """Test 30: check_brief_builder returns green when builder sidecar exists."""
+    import json
+
+    # Create a fake builder sidecar
+    briefs_dir = tmp_path / ".claude" / "briefs"
+    briefs_dir.mkdir(parents=True)
+    builder_file = briefs_dir / "2026-10-24.builder.json"
+    builder_file.write_text(json.dumps({"machine": "mac-mini", "reason": "primary"}))
+
+    with patch("health_checks.morning_brief.builder_of") as mock_builder_of:
+        mock_builder_of.return_value = {"machine": "mac-mini", "reason": "primary"}
+
+        result = hc.check_brief_builder()
+
+        assert result["severity"] == "green"
+        assert "mac-mini" in result["detail"]
+        assert "primary" in result["detail"]
+
+
+def test_31_check_brief_builder_returns_yellow_when_no_sidecar(tmp_path, monkeypatch):
+    """Test 31: check_brief_builder returns yellow when no builder sidecar."""
+    with patch("health_checks.morning_brief.builder_of") as mock_builder_of:
+        mock_builder_of.return_value = None
+
+        result = hc.check_brief_builder()
+
+        assert result["severity"] == "yellow"
+        assert "sidecar" in result["detail"].lower()
+
+
+def test_32_check_brief_builder_returns_unknown_on_exception(tmp_path, monkeypatch):
+    """Test 32: check_brief_builder returns unknown when import/read fails."""
+    with patch("health_checks.morning_brief.builder_of") as mock_builder_of:
+        mock_builder_of.side_effect = Exception("test error")
+
+        result = hc.check_brief_builder()
+
+        assert result["severity"] == "unknown"
+        assert "couldn't measure" in result["detail"]

@@ -337,3 +337,140 @@ def test_missing_helper_format():
     result = dd._missing("test message")
     assert "❌ **Missing input:**" in result
     assert "test message" in result
+
+
+# ── fallback gate tests (ADR 0067) ──────────────────────────────────────────────
+
+def test_18_main_skips_when_fallback_gate_returns_false(tmp_path, monkeypatch):
+    """Test 18: main() returns early when should_run gate returns False (primary should build)."""
+    import io
+    monkeypatch.setattr(dd, "DIGEST_DIR", tmp_path)
+    monkeypatch.setattr(dd, "OUT_FILE", tmp_path / f"{dd.TODAY}.md")
+
+    # Mock brief_fallback to return False (meaning secondary shouldn't run)
+    def mock_should_run(job_name, scheduled, out_path, device_id=None):
+        return False
+
+    old_stdout = sys.stdout
+    sys.stdout = io.StringIO()
+
+    try:
+        with patch("daily_digest.brief_fallback") as mock_bf:
+            mock_bf.should_run = mock_should_run
+            dd.main()
+            output = sys.stdout.getvalue()
+    finally:
+        sys.stdout = old_stdout
+
+    assert "Skipped: primary machine should build this digest" in output
+    assert not (tmp_path / f"{dd.TODAY}.md").exists()
+
+
+def test_19_main_prints_fallback_notice_when_running_as_fallback(tmp_path, monkeypatch):
+    """Test 19: main() prints notice when running as fallback."""
+    import io
+    monkeypatch.setattr(dd, "DIGEST_DIR", tmp_path)
+    out_file = tmp_path / f"{dd.TODAY}.md"
+    monkeypatch.setattr(dd, "OUT_FILE", out_file)
+
+    old_stdout = sys.stdout
+    sys.stdout = io.StringIO()
+
+    try:
+        with patch("daily_digest.brief_fallback") as mock_bf:
+            with patch("daily_digest.scanner_role") as mock_sr:
+                with patch("daily_digest.machine_profile") as mock_mp:
+                    with patch("daily_digest.marvin_launcher") as mock_ml:
+                        # Make should_run return True
+                        mock_bf.should_run.return_value = True
+                        # Make is_primary return False (so we're running as fallback)
+                        mock_sr.is_primary.return_value = False
+                        mock_mp.registry_id.return_value = "macbook"
+                        # Mock the claude call to avoid running expensive operations
+                        mock_ml.launch.return_value.exit_code = 0
+                        mock_ml.launch.return_value.text = "# Test digest\n\nCompounding Move\n\nTest content."
+
+                        monkeypatch.setattr(dd, "_SAFETY_MONITOR_AVAILABLE", False)
+
+                        dd.main()
+                        output = sys.stdout.getvalue()
+    finally:
+        sys.stdout = old_stdout
+
+    assert "Running as fallback" in output
+
+
+def test_20_main_discards_fallback_if_primary_produced_during_build(tmp_path, monkeypatch):
+    """Test 20: main() discards fallback output if primary produced file during build."""
+    import io
+    monkeypatch.setattr(dd, "DIGEST_DIR", tmp_path)
+    out_file = tmp_path / f"{dd.TODAY}.md"
+    monkeypatch.setattr(dd, "OUT_FILE", out_file)
+
+    old_stdout = sys.stdout
+    sys.stdout = io.StringIO()
+
+    try:
+        with patch("daily_digest.brief_fallback") as mock_bf:
+            with patch("daily_digest.scanner_role") as mock_sr:
+                with patch("daily_digest.machine_profile") as mock_mp:
+                    with patch("daily_digest.marvin_launcher") as mock_ml:
+                        # Make should_run return True
+                        mock_bf.should_run.return_value = True
+                        # Make is_primary return False (so we're running as fallback)
+                        mock_sr.is_primary.return_value = False
+                        mock_mp.registry_id.return_value = "macbook"
+                        # Mock the claude call
+                        mock_ml.launch.return_value.exit_code = 0
+                        mock_ml.launch.return_value.text = "# Test digest\n\nCompounding Move\n\nTest content."
+
+                        # Make produced() return True on second call (primary created it during our build)
+                        mock_bf.produced.return_value = True
+                        mock_bf.primary_host.return_value = "mac-mini"
+
+                        monkeypatch.setattr(dd, "_SAFETY_MONITOR_AVAILABLE", False)
+
+                        dd.main()
+                        output = sys.stdout.getvalue()
+    finally:
+        sys.stdout = old_stdout
+
+    assert "Primary produced digest while we were building; discarding fallback" in output
+    assert not out_file.exists()
+
+
+def test_21_main_proceeds_when_running_as_primary(tmp_path, monkeypatch):
+    """Test 21: main() proceeds normally when device is primary."""
+    import io
+    monkeypatch.setattr(dd, "DIGEST_DIR", tmp_path)
+    out_file = tmp_path / f"{dd.TODAY}.md"
+    monkeypatch.setattr(dd, "OUT_FILE", out_file)
+
+    old_stdout = sys.stdout
+    sys.stdout = io.StringIO()
+
+    try:
+        with patch("daily_digest.brief_fallback") as mock_bf:
+            with patch("daily_digest.scanner_role") as mock_sr:
+                with patch("daily_digest.machine_profile") as mock_mp:
+                    with patch("daily_digest.marvin_launcher") as mock_ml:
+                        # Make should_run return True
+                        mock_bf.should_run.return_value = True
+                        # Make is_primary return True (we're the primary)
+                        mock_sr.is_primary.return_value = True
+                        mock_mp.registry_id.return_value = "mac-mini"
+                        # Mock the claude call
+                        mock_ml.launch.return_value.exit_code = 0
+                        mock_ml.launch.return_value.text = "# Test digest\n\nCompounding Move\n\nTest content."
+
+                        monkeypatch.setattr(dd, "_SAFETY_MONITOR_AVAILABLE", False)
+
+                        dd.main()
+                        output = sys.stdout.getvalue()
+    finally:
+        sys.stdout = old_stdout
+
+    # Should not print fallback notice
+    assert "Running as fallback" not in output
+    # Should write the file
+    assert out_file.exists()

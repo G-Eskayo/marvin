@@ -6,13 +6,30 @@ from pathlib import Path
 # Ensure the scripts dir is importable regardless of cwd
 _SCRIPTS = Path(__file__).parent
 sys.path.insert(0, str(_SCRIPTS))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "lib"))
 
 import source_monitor
 import correlate
 import research_digest
+import brief_fallback  # noqa: E402
+import machine_profile  # noqa: E402
 
 
 def main() -> int:
+    from datetime import date
+
+    device_id = machine_profile.registry_id()
+    today = date.today().isoformat()
+    out_path = Path.home() / ".claude" / "research-digest" / f"{today}.md"
+
+    if brief_fallback.produced(out_path):
+        print("[colony] Skipped: today's digest already produced", file=sys.stderr)
+        return 0
+
+    if not brief_fallback.should_run("research-colony", "09:00", out_path, device_id=device_id):
+        print("[colony] Skipped: primary machine should build this digest", file=sys.stderr)
+        return 0
+
     print("[colony] === source monitor ===", file=sys.stderr)
     source_monitor.main()
 

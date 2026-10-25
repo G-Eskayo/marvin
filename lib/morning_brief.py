@@ -25,6 +25,10 @@ from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import brief_fallback  # noqa: E402
+import machine_profile  # noqa: E402
+import scanner_role  # noqa: E402
+
 CLAUDE = Path.home() / ".claude"
 BRIEFS = CLAUDE / "briefs"
 HEALTH_STATUS = CLAUDE / "logs" / "health-status.json"
@@ -285,6 +289,50 @@ def write(now: datetime | None = None, sources: dict[str, Callable] | None = Non
     return path
 
 
+def build(now: datetime | None = None, device_id: str | None = None, sources: dict[str, Callable] | None = None) -> Path | None:
+    """Build the morning brief with fallback gate (ADR 0067).
+
+    Returns the path if built, None if skipped by fallback gate.
+    Also writes {day}.builder.json sidecar with builder metadata.
+    """
+    now = now or datetime.now(timezone.utc)
+    device_id = device_id or machine_profile.registry_id()
+    day = _day(now)
+    out_path = BRIEFS / f"{day}.md"
+
+    if not brief_fallback.should_run("morning-brief", "09:15", out_path, device_id=device_id):
+        return None
+
+    # Proceed with build
+    path = write(now, sources)
+
+    # Write builder sidecar
+    builder_sidecar = BRIEFS / f"{day}.builder.json"
+    builder_sidecar.write_text(json.dumps({
+        "machine": device_id,
+        "reason": "primary" if scanner_role.is_primary(device_id) else "fallback",
+        "at": now.isoformat(),
+    }))
+
+    return path
+
+
+def builder_of(day: str | None = None) -> dict | None:
+    """Read the builder sidecar for a given day (default: today)."""
+    if day is None:
+        now = datetime.now(timezone.utc)
+        day = _day(now)
+
+    sidecar = BRIEFS / f"{day}.builder.json"
+    if not sidecar.exists():
+        return None
+
+    try:
+        return json.loads(sidecar.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
 def show_today(now: datetime | None = None) -> str | None:
     now = now or datetime.now(timezone.utc)
     path = BRIEFS / f"{_day(now)}.md"
@@ -309,7 +357,11 @@ def read_dates() -> list[datetime]:
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["build"]:
-        print(write())
+        result = build()
+        if result:
+            print(result)
+        else:
+            print("Brief not built (primary machine should build this digest)")
     elif sys.argv[1:] == ["show"]:
         print(show_today() or "No brief for today yet.")
     else:

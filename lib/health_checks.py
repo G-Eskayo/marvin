@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import code_sync  # noqa: E402
 import cron_health as ch  # noqa: E402
 import machine_profile  # noqa: E402
+import morning_brief  # noqa: E402
 from machine_profile import machine_label  # noqa: E402
 from task_dispatch import TAILSCALE_BIN, TAILSCALE_ENV  # noqa: E402  (absolute path -- launchd's PATH omits the shell's additions)
 
@@ -990,7 +991,7 @@ if [ -f "$LEDGER" ]; then echo "disk_ledger=$(tail -14 "$LEDGER" | /usr/bin/tr '
 # host only (ADR 0032, 0033), "laptop" = only where Gil sits. Edit here when a job is deliberately moved; a job that
 # is not listed is reported as unplaced so a new job cannot silently run on only one machine.
 JOB_PLACEMENT = {
-    "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "both", "research-colony": "both",
+    "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "mini", "research-colony": "mini",
     "desktoplive": "both", "dashboard-webhook": "both",  # webhook on both until #112 (ADR 0032)
     "ticket-pipeline": "both",  # mini scans; the laptop's copy is a standby that scans only if the mini goes quiet (scanner_role.py)
     "architecture-review": "mini", "auto-fix": "mini", "cron-health": "mini", "health-check": "mini",
@@ -999,7 +1000,11 @@ JOB_PLACEMENT = {
     "cleanup-sweep": "both",  # daily: each machine sweeps its own pipeline worktrees (lib/cleanup_sweep.py)
     "machine-resources": "both",  # 30s: samples disk/mem/swap/CPU/GPU for resources panel (#130)
     "dashboard-launch": "laptop",
-    "morning-brief": "laptop",  # one writer (the brief syncs to the mini via ~/.claude); after the digests (lib/morning_brief.py)
+    "morning-brief": "mini",  # primary writer (ADR 0067); fallback on laptop if mini hasn't produced by grace period
+    # fallback jobs (ADR 0067): secondary machines build digests only if primary hasn't by the grace deadline
+    "daily-digest-fallback": "laptop",
+    "research-colony-fallback": "laptop",
+    "morning-brief-fallback": "laptop",
     # the website map (#189): rebuilt nightly and after MARVIN changes on the mini, where the dev site runs; the nightly
     # job also publishes it to production (ADR 0057), so it must never run on the laptop
     "snapshot-deploy-nightly": "mini", "snapshot-deploy-reactive": "mini",
@@ -1022,6 +1027,27 @@ def evaluate_job_placement(jobs: list[str], role: str) -> tuple[str, str]:
     if not parts:
         return "green", f"all {len([j for j, w in JOB_PLACEMENT.items() if w in ('both', role)])} jobs meant for this machine are loaded, none stray"
     return "yellow", "; ".join(parts)
+
+
+def check_brief_builder() -> dict:
+    """Check who built today's morning brief (ADR 0067).
+
+    The brief should be built by the primary (mini) unless it was late,
+    in which case the secondary (laptop) may have built it as fallback.
+    """
+    cid = "brief:builder"
+    label = "Brief builder"
+
+    try:
+        builder = morning_brief.builder_of()
+        if not builder:
+            return _result(cid, label, "yellow", "no builder sidecar found (check may run before brief is built)")
+
+        machine = builder.get("machine", "unknown")
+        reason = builder.get("reason", "unknown")
+        return _result(cid, label, "green", f"built by {machine} ({reason})")
+    except Exception as exc:
+        return _unknown(cid, label, str(exc))
 
 
 def parse_machine_state(text: str) -> dict:
@@ -1489,6 +1515,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("machine", "Machine reachability", lambda: list(reach_results or []), CHECK_BUDGET_S),
         ("repo:sync", "Repo sync", lambda: check_repo_sync_everywhere(reach), CROSS_MACHINE_BUDGET_S),
         ("machine-state", "Machine state", lambda: check_machine_state_everywhere(reach), CROSS_MACHINE_BUDGET_S),
+        ("brief:builder", "Brief builder", check_brief_builder, CHECK_BUDGET_S),
     ]
 
 

@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Daily digest primary (Mini only, with fallback on MacBook if primary hasn't produced by grace deadline, ADR 0067) -->
 <plist version="1.0">
 <dict>
     <key>Label</key>

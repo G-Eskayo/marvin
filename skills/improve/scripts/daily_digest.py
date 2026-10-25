@@ -20,9 +20,12 @@ DIGEST_DIR   = CLAUDE_DIR / "daily-digest"
 ROADMAP      = CLAUDE_DIR / "marvin-roadmap.md"
 HANDOFFS_DIR = CLAUDE_DIR / "handoffs"
 
-sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
 from notify import notify  # noqa: E402
 import marvin_launcher  # noqa: E402
+import brief_fallback  # noqa: E402
+import machine_profile  # noqa: E402
+import scanner_role  # noqa: E402
 
 RESULTS_MD   = Path.home() / ".agents" / "bench" / "RESULTS.md"
 QA_SCRIPTS   = Path.home() / ".agents" / "skills" / "qa-agent" / "scripts"
@@ -272,6 +275,16 @@ def call_claude(prompt: str) -> str:
 def main() -> None:
     DIGEST_DIR.mkdir(parents=True, exist_ok=True)
 
+    device_id = machine_profile.registry_id()
+    should = brief_fallback.should_run("daily-digest", "08:30", OUT_FILE, device_id=device_id)
+    if not should:
+        print(f"[daily-digest] Skipped: primary machine should build this digest", flush=True)
+        return
+
+    is_fallback = not scanner_role.is_primary(device_id)
+    if is_fallback:
+        print(f"[daily-digest] Running as fallback: primary hasn't produced digest within grace period", flush=True)
+
     if OUT_FILE.exists():
         print(f"[daily-digest] Today's digest already exists: {OUT_FILE}", flush=True)
         return
@@ -318,6 +331,12 @@ def main() -> None:
     # part of the digest that actually answers "how would I know if it
     # failed," since these hooks are built to fail silently on purpose.
     health_section = f"## System Health\n\n{reviewer_health}\n\n---\n\n"
+
+    # TOCTOU recheck: if fallback, verify primary hasn't since produced the digest
+    if is_fallback:
+        if brief_fallback.produced(OUT_FILE, host=brief_fallback.primary_host()):
+            print(f"[daily-digest] Primary produced digest while we were building; discarding fallback", flush=True)
+            return
 
     OUT_FILE.write_text(header + health_section + content + "\n")
     print(f"[daily-digest] Written to {OUT_FILE}", flush=True)
