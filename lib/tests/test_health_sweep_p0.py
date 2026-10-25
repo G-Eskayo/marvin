@@ -191,8 +191,10 @@ def test_the_health_history_files_are_ignored_in_this_repo():
     for name in ("health-monitor.mac-mini.json", "health-monitor.macbook-pro.md", "health-monitor.json", "health-monitor.md"):
         ignored = subprocess.run(["git", "check-ignore", "--no-index", "-q", f"bench/metrics/{name}"], cwd=REPO)
         assert ignored.returncode == 0, name
-    kept = subprocess.run(["git", "check-ignore", "--no-index", "-q", "bench/metrics/clarity-captions-ticket-10.json"], cwd=REPO)
-    assert kept.returncode == 1  # ticket metrics are still committed by the pipeline
+    # ADR 0071: all of bench/metrics is ignored in the public engine now; ticket metrics are committed to the private
+    # instance (~/.agents/instance/bench/metrics/) instead.
+    moved = subprocess.run(["git", "check-ignore", "--no-index", "-q", "bench/metrics/clarity-captions-ticket-10.json"], cwd=REPO)
+    assert moved.returncode == 0
 
 
 def test_nothing_in_lib_writes_the_health_history_any_more():

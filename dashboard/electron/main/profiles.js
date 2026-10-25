@@ -1,10 +1,10 @@
 import { readdirSync, readFileSync, writeFileSync } from 'fs'
-import { homedir } from 'os'
+import { instancePath } from './instance.js'
 import path from 'path'
 
 // Per-project execution profiles (lib/project_profile.py, config/projects/*.json). The dashboard only
 // needs to know which projects opted in to having their PRs approved or denied from MR Review.
-export const PROFILES_DIR = path.join(homedir(), '.agents', 'config', 'projects')
+export const PROFILES_DIR = instancePath('config', 'projects') // private instance (ADR 0071)
 
 export function readMergeableRepos(dir = PROFILES_DIR) {
   const repos = new Set()

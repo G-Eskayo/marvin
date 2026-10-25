@@ -727,8 +727,18 @@ def main() -> None:
         print("usage: code_sync.py {push|pull|mirror} [repo-path]", file=sys.stderr)
         sys.exit(1)
     repo = Path(sys.argv[2]).expanduser() if len(sys.argv) == 3 else DEFAULT_REPO
-    job_events.step(f"{sys.argv[1]} {repo}")
-    {"push": push, "pull": pull, "mirror": mirror}[sys.argv[1]](repo)
+    action = {"push": push, "pull": pull, "mirror": mirror}[sys.argv[1]]
+    # ADR 0071: the owner's private instance is its own repo nested at <engine>/instance/; it syncs with the engine,
+    # so every existing caller (launchd job, handoff hook) covers it with no config. No instance (a fresh install,
+    # the Kali node by design) syncs exactly as before. try/finally: a failing engine step never strands it.
+    nested = repo / "instance"
+    try:
+        job_events.step(f"{sys.argv[1]} {repo}")
+        action(repo)
+    finally:
+        if (nested / ".git").exists():
+            job_events.step(f"{sys.argv[1]} {nested}")
+            action(nested)
 
 
 if __name__ == "__main__":

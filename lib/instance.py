@@ -30,7 +30,9 @@ _GITHUB = re.compile(r"github\.com[:/]+([A-Za-z0-9-]+)/([A-Za-z0-9_.-]+?)(?:\.gi
 
 
 def instance_dir() -> Path:
-    return Path(os.environ.get("MARVIN_INSTANCE_DIR") or ENGINE_DIR / "instance")
+    # ~/.agents/instance, not ENGINE_DIR/instance: code run from a worktree (tests, the ticket pipeline) must find the
+    # one real instance, not an empty folder inside the worktree. Resolved per call, so a test's temp HOME is honoured.
+    return Path(os.environ.get("MARVIN_INSTANCE_DIR") or Path.home() / ".agents" / "instance")
 
 
 def path(*parts: str) -> Path:

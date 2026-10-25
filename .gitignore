@@ -92,3 +92,9 @@ logs/
 
 # ADR 0071: this person's private instance (its own repo, private remote). Never part of the public engine.
 /instance/
+# ADR 0071: the owner's state moved to the private instance. Ignored here so a stale writer on any machine can't
+# republish it. (docs/screenshots and docs/evidence stay committable: ticket PRs still put evidence images there.)
+/bench/metrics/
+/docs/plans/
+/config/projects/
+/retrospective-log.md
