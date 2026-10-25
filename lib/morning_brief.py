@@ -25,6 +25,9 @@ from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import brief_fallback  # noqa: E402
+import machine_profile  # noqa: E402
+
 CLAUDE = Path.home() / ".claude"
 BRIEFS = CLAUDE / "briefs"
 HEALTH_STATUS = CLAUDE / "logs" / "health-status.json"
@@ -277,11 +280,26 @@ def _day(now: datetime) -> str:
     return now.astimezone().strftime("%Y-%m-%d")
 
 
-def write(now: datetime | None = None, sources: dict[str, Callable] | None = None) -> Path:
+def write(now: datetime | None = None, sources: dict[str, Callable] | None = None, builder_reason: str | None = None) -> Path:
     now = now or datetime.now(timezone.utc)
+    day = _day(now)
     BRIEFS.mkdir(parents=True, exist_ok=True)
-    path = BRIEFS / f"{_day(now)}.md"
+    path = BRIEFS / f"{day}.md"
+
+    # Idempotent: return early if today's brief already exists
+    if path.exists():
+        return path
+
     path.write_text(render(gather(now, sources), now))
+
+    # Write a sidecar with the builder's machine label and reason
+    builder = machine_profile.machine_label()
+    sidecar_path = BRIEFS / f"{day}.built-by"
+    sidecar_content = f"{builder}\n"
+    if builder_reason:
+        sidecar_content += f"{builder_reason}\n"
+    sidecar_path.write_text(sidecar_content)
+
     return path
 
 
@@ -307,9 +325,39 @@ def read_dates() -> list[datetime]:
     return _dates(".read")
 
 
+def builder_of(day: str) -> str | None:
+    """Return the builder's machine label for a given day (YYYY-MM-DD), if available."""
+    sidecar = BRIEFS / f"{day}.built-by"
+    if not sidecar.exists():
+        return None
+    try:
+        lines = sidecar.read_text().splitlines()
+        return lines[0] if lines else None
+    except Exception:
+        return None
+
+
+def build(now: datetime | None = None, sources: dict[str, Callable] | None = None) -> Path | None:
+    """Build today's brief, gating with should_run() fallback logic.
+
+    Returns the path if the brief was written, or None if gated out (standby waiting).
+    """
+    now = now or datetime.now(timezone.utc)
+    path = BRIEFS / f"{_day(now)}.md"
+
+    decision = brief_fallback.should_run(path, usual_hour=9, usual_minute=15)
+    print(f"[morning-brief] {decision.reason}", flush=True)
+
+    if not decision.should_proceed:
+        return None
+
+    return write(now, sources, builder_reason=decision.reason)
+
+
 if __name__ == "__main__":
     if sys.argv[1:] == ["build"]:
-        print(write())
+        result = build()
+        print(result or "Build gated (standby waiting)")
     elif sys.argv[1:] == ["show"]:
         print(show_today() or "No brief for today yet.")
     else:

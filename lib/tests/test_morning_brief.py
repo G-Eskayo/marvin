@@ -123,3 +123,58 @@ def test_open_prs_marks_waiting_from_one_graphql_read(monkeypatch):
     monkeypatch.setattr(od, "fetch", lambda repos, run=None: None)
     brief = mb.gather(NOW, {"open_prs": mb._open_prs})
     assert brief["open_prs"] is None and "open PRs" in brief["missing"][0]
+
+
+def test_write_idempotent_returns_existing_path(tmp_path, monkeypatch):
+    """Test 18: write() is idempotent — second call returns existing path without rewriting."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    path1 = mb.write(NOW, _sources())
+    original_content = path1.read_text()
+
+    # Call write again with different sources
+    path2 = mb.write(NOW, _sources(human_tickets=lambda: []))
+    assert path1 == path2
+    assert path2.read_text() == original_content  # Content unchanged
+
+
+def test_write_creates_sidecar_with_builder_label(tmp_path, monkeypatch):
+    """Test 19: write() writes a .built-by sidecar with machine label."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    monkeypatch.setattr(mb.machine_profile, "machine_label", lambda: "mac-mini")
+
+    path = mb.write(NOW, _sources(), builder_reason="primary: always runs")
+    sidecar = tmp_path / f"{path.stem}.built-by"
+
+    assert sidecar.exists()
+    content = sidecar.read_text()
+    assert "mac-mini" in content
+    assert "primary: always runs" in content
+
+
+def test_builder_of_returns_machine_label(tmp_path, monkeypatch):
+    """Test 20: builder_of() reads the sidecar and returns the machine label."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    tmp_path.mkdir(exist_ok=True)
+
+    day = "2026-10-09"
+    sidecar = tmp_path / f"{day}.built-by"
+    sidecar.write_text("macbook-pro\nstandby: past 10:15\n")
+
+    builder = mb.builder_of(day)
+    assert builder == "macbook-pro"
+
+
+def test_build_gates_with_should_run(tmp_path, monkeypatch):
+    """Test 21: build() gates with brief_fallback.should_run()."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    import brief_fallback
+
+    # Mock should_run to return False (standby waiting)
+    monkeypatch.setattr(
+        brief_fallback,
+        "should_run",
+        lambda *args, **kwargs: brief_fallback.Decision(False, "standby: waiting until 09:15"),
+    )
+
+    result = mb.build(NOW, _sources())
+    assert result is None  # Build was gated out

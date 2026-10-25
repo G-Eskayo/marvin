@@ -522,6 +522,25 @@ def check_main_health(path: Path | None = None, now: datetime | None = None) -> 
     return _result(cid, label, "green", f"main @ {d.get('sha', '?')}: {d.get('summary', 'passing')}")
 
 
+def check_brief_builder(now: datetime | None = None) -> dict:
+    """Which machine built today's morning brief? Green if the brief exists and says who built it.
+    Yellow if it hasn't run yet, red if the sidecar is missing (brief exists but builder unknown)."""
+    import morning_brief
+    cid, label = "brief:builder", "Morning brief builder"
+    now = now or _now()
+    day = now.astimezone().strftime("%Y-%m-%d")
+
+    builder = morning_brief.builder_of(day)
+    if builder:
+        return _result(cid, label, "green", f"built by {builder}", value=builder)
+
+    brief_path = morning_brief.BRIEFS / f"{day}.md"
+    if brief_path.exists():
+        return _result(cid, label, "red", f"brief exists but builder unknown (missing {day}.built-by sidecar)")
+
+    return _result(cid, label, "yellow", f"today's brief has not been built yet")
+
+
 SEAL_BETA_STATUS_PATH = Path.home() / ".claude" / "seal-beta" / "status.json"
 SEAL_BETA_PLIST = "com.marvin.seal-beta-ingest.plist"
 SEAL_BETA_STALE_MINUTES = 60      # the job runs every 10 minutes
@@ -990,7 +1009,8 @@ if [ -f "$LEDGER" ]; then echo "disk_ledger=$(tail -14 "$LEDGER" | /usr/bin/tr '
 # host only (ADR 0032, 0033), "laptop" = only where Gil sits. Edit here when a job is deliberately moved; a job that
 # is not listed is reported as unplaced so a new job cannot silently run on only one machine.
 JOB_PLACEMENT = {
-    "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "both", "research-colony": "both",
+    "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "mini", "research-colony": "mini",
+    "daily-digest-fallback": "laptop", "research-colony-fallback": "laptop",
     "desktoplive": "both", "dashboard-webhook": "both",  # webhook on both until #112 (ADR 0032)
     "ticket-pipeline": "both",  # mini scans; the laptop's copy is a standby that scans only if the mini goes quiet (scanner_role.py)
     "architecture-review": "mini", "auto-fix": "mini", "cron-health": "mini", "health-check": "mini",
@@ -999,7 +1019,7 @@ JOB_PLACEMENT = {
     "cleanup-sweep": "both",  # daily: each machine sweeps its own pipeline worktrees (lib/cleanup_sweep.py)
     "machine-resources": "both",  # 30s: samples disk/mem/swap/CPU/GPU for resources panel (#130)
     "dashboard-launch": "laptop",
-    "morning-brief": "laptop",  # one writer (the brief syncs to the mini via ~/.claude); after the digests (lib/morning_brief.py)
+    "morning-brief": "mini", "morning-brief-fallback": "laptop",  # mini primary at 09:15, laptop fallback at 10:15
     # the website map (#189): rebuilt nightly and after MARVIN changes on the mini, where the dev site runs; the nightly
     # job also publishes it to production (ADR 0057), so it must never run on the laptop
     "snapshot-deploy-nightly": "mini", "snapshot-deploy-reactive": "mini",
@@ -1484,6 +1504,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("github:budget", "GitHub request budget", check_github_budget, CHECK_BUDGET_S),
         ("github:gate", "GitHub calls go through the gate", check_gh_gate, CHECK_BUDGET_S),
         ("main:green", "The main branch passes its tests", check_main_health, CHECK_BUDGET_S),
+        ("brief:builder", "Morning brief builder", check_brief_builder, CHECK_BUDGET_S),
         ("seal:beta-ingest", "Seal Speak beta reports are picked up", check_seal_beta_ingest, CHECK_BUDGET_S),
         ("cron", "Cron job logs", _cron_job_logs, CHECK_BUDGET_S),
         ("machine", "Machine reachability", lambda: list(reach_results or []), CHECK_BUDGET_S),

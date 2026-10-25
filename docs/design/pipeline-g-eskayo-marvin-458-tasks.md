@@ -1,0 +1,12 @@
+1. **`lib/brief_fallback.py`** — fix the four must-fix defects in place (no new files):
+   - `_infer_remote_path(local_path) -> tuple[str, bool]`: return `(str(rel), True)` when under `Path.home()`, else `(path.name, False)` — unquoted; quoting moves to the caller.
+   - `read_remote()`: build the command as `f'cat "$HOME"/{shlex.quote(rel)}'` when `under_home`, else `f'cat {shlex.quote(rel)}'` — `$HOME` literal and double-quoted (expands), the variable part separately `shlex.quote()`-d (immune to injection).
+   - Add `_is_valid_content(content: str | None) -> bool`: `False` for `None`/empty/whitespace-only, `False` when `"(claude call failed:"` appears anywhere in it, `True` otherwise (covers the quarantine-placeholder case, which doesn't contain that string).
+   - `produced(local_path)`: delegate to `_is_valid_content()` on the file's text (still never raises).
+   - `should_run()`: for the standby branch, check `past_deadline()` **first**, before any `_primary_device()`/`read_remote()` call; only after the deadline has passed, check `produced(local_path)` then `_is_valid_content(read_remote(...))`, in that order (local check is free, SSH only if needed).
+   - Guard `me = device_id or machine_profile.registry_id()` against `registry_id()` raising (catch and treat as unknown/non-primary) so `should_run()` keeps its "never raises" guarantee.
+2. **`lib/tests/test_brief_fallback.py`** — replace the 5 `_infer_remote_path` tests and the 4 `should_run` tests per items 1-10 above (red against current code, green after step 1); add placeholder tests 11-14.
+3. **`skills/improve/scripts/daily_digest.py:282`** — change `if OUT_FILE.exists():` to `if brief_fallback.produced(OUT_FILE):`, so a failure-placeholder digest gets rebuilt rather than silently kept.
+4. **`skills/improve/scripts/tests/test_daily_digest.py`** — add test 15.
+5. **Full-suite run**: `~/.agents/venv/bin/python -m pytest lib/tests/ skills/improve/scripts/tests/ skills/research-colony/scripts/tests/ -q`; confirm every new/rewritten test fails against the pre-step-1 tree and passes after; re-confirm `lib/tests/test_no_hardcoded_home.py`'s one pre-existing failure (`docs/screenshots/vitals-v4/data.js`) is still unrelated and unchanged by this diff.
+6. **PR description**: note this supersedes PR #600 on the same branch; carry forward the `retire-cross-machine-merge` Decision; call out the four specific must-fix defects fixed and which test catches each, so the next review can check directly rather than re-deriving them.

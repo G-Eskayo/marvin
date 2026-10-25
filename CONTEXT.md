@@ -1463,9 +1463,14 @@ MARVIN-as-OS north star).
   opens it in the MARVIN app), at **session start on whichever Mac Gil starts on**, and by **email**, and MARVIN keeps
   trying new ways. Which channels Gil actually opens is measured the same way as item ranking, so channels nobody uses
   get dropped. This is a start to something meant to grow much bigger.
-- **Brief owner** (decided 2026-10-15): the **Mac Mini** gathers the feeds and builds the brief before Gil wakes. The
-  MacBook builds it only if the Mini hasn't by an hour after its usual time. The research colony and daily digest no
-  longer run on both Macs (see ADR 0067).
+- **Brief owner** (decided 2026-10-15; fallback system 2026-10-24): three daily jobs (morning-brief, daily-digest,
+  research-colony) run on the **Mac Mini** as primary at fixed times (09:15, 08:30, 09:00 respectively). The MacBook
+  runs fallback versions at later times (10:15, 09:30, 10:00) gated by `brief_fallback.should_run()`, which polls
+  the Mini over SSH to check if the primary run finished and produces a file. No file found + deadline passed = the
+  standby runs. Each successful build writes a `.built-by` sidecar naming the builder's machine label. Health
+  monitor checks which machine built today's brief via `check_brief_builder()`. Launchd installation is a manual
+  migration step (these plists move between machines based on which is primary). ADR 0067 covers the non-both
+  placement logic.
 - **Item layers** (decided 2026-10-15): every brief item carries three layers, all prepared when the brief is built:
   (1) **the line** (one sentence, what the brief shows or says), (2) **the summary** (what happened, why it matters to
   Gil, what he could do), (3) **the source** (the original article or paper, plus links to related tickets and

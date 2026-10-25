@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The daily digest (skills/improve/scripts/daily_digest.py): Mini primary at 08:30.
+     MacBook fallback at 09:30 if the Mini didn't finish. Gated via brief_fallback.should_run(). -->
 <plist version="1.0">
 <dict>
     <key>Label</key>
@@ -11,7 +13,7 @@
         <string>/Users/gileskayo/.agents/skills/improve/scripts/daily_digest.py</string>
     </array>
 
-    <!-- Run every day at 08:30 local time -->
+    <!-- Run every day at 08:30 local time (Mini primary) -->
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>

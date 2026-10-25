@@ -1299,3 +1299,51 @@ def test_the_machine_script_reads_a_real_process_uptime_with_this_machines_ps():
         assert 1 <= int(out.stdout.strip()) <= 20
     finally:
         child.kill()
+
+
+def test_check_brief_builder_green_when_sidecar_exists(tmp_path, monkeypatch):
+    """Test 26: check_brief_builder is green when the sidecar exists with builder info."""
+    import morning_brief
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 10, 24, 10, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(morning_brief, "BRIEFS", tmp_path)
+
+    day = "2026-10-24"
+    sidecar = tmp_path / f"{day}.built-by"
+    sidecar.write_text("mac-mini\nprimary: always runs\n")
+
+    result = hc.check_brief_builder(now)
+    assert result["severity"] == "green"
+    assert "mac-mini" in result["detail"]
+
+
+def test_check_brief_builder_yellow_when_not_built_yet(tmp_path, monkeypatch):
+    """Test 27: check_brief_builder is yellow when today's brief hasn't been built."""
+    import morning_brief
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 10, 24, 10, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(morning_brief, "BRIEFS", tmp_path)
+
+    result = hc.check_brief_builder(now)
+    assert result["severity"] == "yellow"
+    assert "not been built yet" in result["detail"]
+
+
+def test_check_brief_builder_red_when_sidecar_missing(tmp_path, monkeypatch):
+    """Test 28: check_brief_builder is red when brief exists but sidecar is missing."""
+    import morning_brief
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 10, 24, 10, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(morning_brief, "BRIEFS", tmp_path)
+
+    day = "2026-10-24"
+    brief_path = tmp_path / f"{day}.md"
+    brief_path.write_text("# Brief\n\nContent")
+    # No sidecar written
+
+    result = hc.check_brief_builder(now)
+    assert result["severity"] == "red"
+    assert "builder unknown" in result["detail"]

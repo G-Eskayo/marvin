@@ -284,10 +284,10 @@ def test_reviewer_health_log_invalid_timestamp_skipped(tmp_path, monkeypatch):
     assert "1 succeeded" in result
 
 
-def test_main_short_circuits_when_out_file_exists(tmp_path, monkeypatch):
-    """main() returns early if today's digest already exists."""
+def test_main_short_circuits_when_out_file_produced(tmp_path, monkeypatch):
+    """main() returns early if today's digest already exists and is valid."""
     out_file = tmp_path / "2026-10-22.md"
-    original_content = "# Already exists"
+    original_content = "# Already exists\n\nValid content"
     out_file.write_text(original_content)
 
     # Mock OUT_FILE and DIGEST_DIR
@@ -295,16 +295,20 @@ def test_main_short_circuits_when_out_file_exists(tmp_path, monkeypatch):
     monkeypatch.setattr(dd, "OUT_FILE", out_file)
     monkeypatch.setattr(dd, "DIGEST_DIR", digest_dir)
 
+    # Mock should_run to return True (allowed to proceed)
+    import brief_fallback
+    monkeypatch.setattr(brief_fallback, "should_run", lambda *args, **kwargs: brief_fallback.Decision(True, "test"))
+
     # Patch functions with raise-on-call sentinels: if any of these are called,
     # it means the short-circuit didn't work
     def raise_roadmap():
-        raise AssertionError("roadmap_summary should not be called when out_file exists")
+        raise AssertionError("roadmap_summary should not be called when out_file produced")
     def raise_bench():
-        raise AssertionError("bench_summary should not be called when out_file exists")
+        raise AssertionError("bench_summary should not be called when out_file produced")
     def raise_reviewer_health():
-        raise AssertionError("reviewer_health_summary should not be called when out_file exists")
+        raise AssertionError("reviewer_health_summary should not be called when out_file produced")
     def raise_call_claude(prompt: str):
-        raise AssertionError("call_claude should not be called when out_file exists")
+        raise AssertionError("call_claude should not be called when out_file produced")
 
     monkeypatch.setattr(dd, "roadmap_summary", raise_roadmap)
     monkeypatch.setattr(dd, "bench_summary", raise_bench)

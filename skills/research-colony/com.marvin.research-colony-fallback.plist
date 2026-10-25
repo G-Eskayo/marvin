@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The research colony fallback (skills/research-colony/scripts/run_colony.py): MacBook only, runs at 10:00 as a safety net
+     if the Mini's 09:00 run didn't finish. Gated via brief_fallback.should_run(). -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.marvin.research-colony-fallback</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/gileskayo/.agents/venv/bin/python</string>
+        <string>/Users/gileskayo/.agents/skills/research-colony/scripts/run_colony.py</string>
+    </array>
+
+    <!-- Run every day at 10:00 local time (MacBook fallback) -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>10</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/gileskayo/.claude/logs/research-colony-fallback.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/gileskayo/.claude/logs/research-colony-fallback-error.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/gileskayo</string>
+        <key>PATH</key>
+        <string>/Users/gileskayo/.local/bin:/usr/local/bin:/usr/bin:/bin:/Users/gileskayo/.agents/venv/bin</string>
+    </dict>
+
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>
