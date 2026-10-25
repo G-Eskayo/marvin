@@ -1364,7 +1364,7 @@ def test_exec_prompt_reads_task_list_from_disk_not_plan_variable(monkeypatch, tm
                 stdout = "## North-star fit\nPlan\n## Task List\n1. Original task"
                 returncode = 0
         else:
-            # On second call (execution), just return something
+            # On second call (execution), return something
             class R:
                 stdout = "Executed"
                 returncode = 0
@@ -1407,7 +1407,7 @@ def test_exec_reads_task_list_file_not_plan_string_directly(monkeypatch, tmp_pat
     assert design_doc.exists()
     assert task_list.exists()
 
-    # Verify exec prompt came from the file (not just any version of the plan)
+    # Verify exec prompt came from the file (not an arbitrary version of the plan)
     exec_call = prompts[1]  # second call is executor
     exec_prompt = exec_call[exec_call.index("-p") + 1]
     assert "1. From planner" in exec_prompt

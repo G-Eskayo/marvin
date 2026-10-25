@@ -780,7 +780,7 @@ def _scan(run, dry_run: bool) -> None:
 
     # Cross-ticket circuit breaker, per project: the same failure across different tickets of one
     # project means ITS environment is broken, not the tickets -- stop feeding that project more
-    # (each would just burn its own strikes) until a success or a manual clear. The others carry on.
+    # (each would burn its own strikes) until a success or a manual clear. The others carry on.
     step("Circuit breaker")
     trips = failure_breaker.tripped()
     if trips:
