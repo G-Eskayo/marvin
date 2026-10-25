@@ -486,3 +486,30 @@ def test_in_propose_mode_nothing_is_released_or_notified(tmp_path, monkeypatch):
                  {"mode": "propose", "agents": {}}, NOW, audit_path=tmp_path / "a.jsonl", proposals_path=tmp_path / "p.json",
                  project_rules={"projects": {}}, running=lambda repo: set())
     assert calls == [] and sent == [] and res["by_agent"]["stale_claims"]["planned"] == 2
+
+
+def test_held_tickets_are_detected_via_failure_breaker_streak(tmp_path, monkeypatch):
+    """Held tickets with a failure streak in the log are flagged as held_by_retry_storm."""
+    import failure_breaker
+    from datetime import datetime, timezone, timedelta
+
+    # Set up failure_breaker log
+    fb_log = tmp_path / "failures.jsonl"
+    monkeypatch.setattr(failure_breaker, "LOG_PATH", fb_log)
+    now = datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc)
+
+    # Record failures for a held ticket
+    for i in range(2):
+        failure_breaker.record_failure(42, "test failure", now=now - timedelta(minutes=3 - i), project=R)
+
+    # Held ticket with failures
+    held_ticket = {"number": 42, "title": "Test ticket", "labels": [{"name": "hold"}], "comments": []}
+
+    # Run revisit agent
+    hold_comments = {42: []}
+    snapshot = {R: {"issues": [held_ticket], "prs": []}}
+    res = ta.run(snapshot, lambda args: "", {"mode": "act", "agents": {"revisit": "off", "triage": "off", "prioritize": "off", "stale_claims": "off", "refeed": "off", "project_tag": "off"}}, now,
+                 audit_path=tmp_path / "a.jsonl", proposals_path=tmp_path / "p.json", project_rules={"projects": {}}, running=lambda repo: set())
+
+    # The held ticket should be detected as having a retry-storm streak
+    assert any(h["number"] == 42 for h in res.get("held_by_retry_storm", []))

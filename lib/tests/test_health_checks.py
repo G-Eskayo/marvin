@@ -1299,3 +1299,38 @@ def test_the_machine_script_reads_a_real_process_uptime_with_this_machines_ps():
         assert 1 <= int(out.stdout.strip()) <= 20
     finally:
         child.kill()
+
+
+def test_check_held_by_retry_storm_reports_tickets_on_hold(tmp_path):
+    """Health check for tickets held due to retry-storm threshold."""
+    now = datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc)
+    hold_revisit_data = {
+        "generated_at": now.isoformat(),
+        "held_by_retry_storm": [
+            {"repo": "G-Eskayo/clarity-captions", "number": 42, "title": "Build fails on every run"},
+            {"repo": "G-Eskayo/other-repo", "number": 99, "title": "Test timeout"}
+        ]
+    }
+    path = tmp_path / "hold-revisit.json"
+    path.write_text(json.dumps(hold_revisit_data))
+
+    result = hc.check_held_by_retry_storm(path=path, now=now)
+    assert result["status"] == "yellow"
+    assert result["value"] == 2
+    assert "clarity-captions#42" in result["detail"]
+    assert "other-repo#99" in result["detail"]
+
+
+def test_check_held_by_retry_storm_reports_none_when_empty(tmp_path):
+    """Health check reports green when no tickets are held by retry-storm."""
+    now = datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc)
+    hold_revisit_data = {
+        "generated_at": now.isoformat(),
+        "held_by_retry_storm": []
+    }
+    path = tmp_path / "hold-revisit.json"
+    path.write_text(json.dumps(hold_revisit_data))
+
+    result = hc.check_held_by_retry_storm(path=path, now=now)
+    assert result["status"] == "green"
+    assert result["value"] == 0

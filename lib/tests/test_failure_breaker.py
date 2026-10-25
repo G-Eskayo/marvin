@@ -193,3 +193,93 @@ def test_merge_refusals_never_trip_the_breaker(tmp_path, monkeypatch):
         for ticket in (208, 209, 210):
             f.write(json.dumps({"t": now.isoformat(), "kind": "refusal", "ticket": ticket, "sig": "merge:OUT_OF_ORDER"}) + "\n")
     assert fb.tripped(now=now) == []
+
+
+# ── ticket_streak: single-ticket failure counting ──────────────────────────
+
+def test_ticket_streak_returns_zero_when_ticket_has_no_failures():
+    count, sig = fb.ticket_streak(99, now=NOW)
+    assert count == 0 and sig == ""
+
+
+def test_ticket_streak_counts_consecutive_failures_with_same_signature():
+    _fail(42, VITEST, minutes_ago=10)
+    _fail(42, VITEST, minutes_ago=8)
+    _fail(42, VITEST, minutes_ago=6)
+    count, sig = fb.ticket_streak(42, now=NOW)
+    assert count == 3
+    assert sig == "measure:vitest-no-summary"
+
+
+def test_ticket_streak_stops_at_first_different_signature():
+    _fail(42, VITEST, minutes_ago=10)
+    _fail(42, "Did not reach a passing comparison ... Final verdict: unchanged.", minutes_ago=8)
+    _fail(42, VITEST, minutes_ago=6)
+    count, sig = fb.ticket_streak(42, now=NOW)
+    assert count == 1  # only the most recent one (6 min ago)
+    assert sig == "measure:vitest-no-summary"
+
+
+def test_ticket_streak_ignores_successes():
+    _fail(42, VITEST, minutes_ago=10)
+    fb.record_success(42, now=NOW - timedelta(minutes=8))
+    _fail(42, VITEST, minutes_ago=6)
+    count, sig = fb.ticket_streak(42, now=NOW)
+    assert count == 1  # success doesn't reset, but we still count from most recent
+
+
+def test_ticket_streak_respects_project_boundary():
+    _fail(42, VITEST, minutes_ago=10)
+    fb.record_failure(42, VITEST, now=NOW - timedelta(minutes=8), project="G-Eskayo/other-repo")
+    count, sig = fb.ticket_streak(42, now=NOW, project="G-Eskayo/marvin")
+    assert count == 1
+
+
+# ── should_hold: retry-storm threshold logic ──────────────────────────────
+
+def test_should_hold_returns_false_when_no_profile():
+    assert fb.should_hold(42, profile=None) is False
+
+
+def test_should_hold_returns_false_when_profile_has_no_threshold():
+    profile = {"repo": "G-Eskayo/marvin", "verify": []}
+    assert fb.should_hold(42, profile=profile) is False
+
+
+def test_should_hold_returns_false_when_threshold_is_zero_or_negative():
+    profile = {"repo": "test", "failure_threshold": 0}
+    assert fb.should_hold(42, profile=profile) is False
+    profile = {"repo": "test", "failure_threshold": -1}
+    assert fb.should_hold(42, profile=profile) is False
+
+
+def test_should_hold_returns_false_when_streak_below_threshold():
+    profile = {"repo": "test", "failure_threshold": 3}
+    _fail(42, VITEST, minutes_ago=10)
+    _fail(42, VITEST, minutes_ago=8)
+    # streak is 2, threshold is 3
+    assert fb.should_hold(42, profile=profile, now=NOW) is False
+
+
+def test_should_hold_returns_true_when_streak_meets_threshold():
+    profile = {"repo": "test", "failure_threshold": 2}
+    _fail(42, VITEST, minutes_ago=10)
+    _fail(42, VITEST, minutes_ago=8)
+    # streak is 2, threshold is 2
+    assert fb.should_hold(42, profile=profile, now=NOW) is True
+
+
+def test_should_hold_returns_true_when_streak_exceeds_threshold():
+    profile = {"repo": "test", "failure_threshold": 2}
+    _fail(42, VITEST, minutes_ago=15)
+    _fail(42, VITEST, minutes_ago=10)
+    _fail(42, VITEST, minutes_ago=5)
+    # streak is 3, threshold is 2
+    assert fb.should_hold(42, profile=profile, now=NOW) is True
+
+
+def test_should_hold_accepts_override_streak_count():
+    profile = {"repo": "test", "failure_threshold": 5}
+    # No failures in log, but we override with streak_count=5
+    assert fb.should_hold(42, profile=profile, streak_count=5) is True
+    assert fb.should_hold(42, profile=profile, streak_count=4) is False

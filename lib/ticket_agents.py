@@ -307,8 +307,9 @@ def collect_hold_comments(repo: str, held_numbers: set[int], gh) -> dict[int, li
     return result
 
 
-def write_revisit_state(tickets_without_revisit: list[dict], path: Path, now: datetime) -> None:
-    """Write {generated_at, without_revisit: []} atomically via tmp-then-rename.
+def write_revisit_state(tickets_without_revisit: list[dict], path: Path, now: datetime,
+                       held_by_retry_storm: list[dict] | None = None) -> None:
+    """Write {generated_at, without_revisit: [], held_by_retry_storm: []} atomically via tmp-then-rename.
     Mirrors project_tagger.write_state pattern."""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -318,6 +319,9 @@ def write_revisit_state(tickets_without_revisit: list[dict], path: Path, now: da
             "without_revisit": [{"repo": t["repo"], "number": t["number"], "title": t.get("title", "")}
                                for t in tickets_without_revisit[:50]]  # truncate at 50 like project_tags
         }
+        if held_by_retry_storm:
+            data["held_by_retry_storm"] = [{"repo": t["repo"], "number": t["number"], "title": t.get("title", "")}
+                                          for t in held_by_retry_storm[:50]]
         tmp.write_text(json.dumps(data) + "\n")
         tmp.replace(path)
     except OSError:
@@ -370,6 +374,7 @@ def run(snapshot, gh, cfg, now, audit_path=AUDIT_PATH, proposals_path=PROPOSALS_
     removed = project_tagger.removed_by_people(_read_audit(audit_path), labels_now)
     unclear: list[dict] = []
     without_revisit: list[dict] = []
+    held_by_retry_storm: list[dict] = []
     executable = set(executable) if executable else {"G-Eskayo/marvin"}  # projects the executor can run
     modes = {a: effective_mode(cfg, a, now) for a in AGENTS}
     planned: list[dict] = []
@@ -401,8 +406,14 @@ def run(snapshot, gh, cfg, now, audit_path=AUDIT_PATH, proposals_path=PROPOSALS_
                 planned += plan_revisit(repo, issues, hold_comments, ref_states, now)
                 for t in issues:
                     if "hold" in pol.label_names(t) and "pinned" not in pol.label_names(t):
-                        if not pol.latest_revisit(hold_comments.get(t["number"], [])):
+                        comments = hold_comments.get(t["number"], [])
+                        if not pol.latest_revisit(comments):
                             without_revisit.append({"repo": repo, "number": t["number"], "title": t.get("title", "")})
+                        # Check if held by retry-storm (has a streak in the failure_breaker log)
+                        import failure_breaker
+                        count, _ = failure_breaker.ticket_streak(t["number"], now=now, project=repo)
+                        if count > 0:
+                            held_by_retry_storm.append({"repo": repo, "number": t["number"], "title": t.get("title", "")})
         if modes["project_tag"] != "off":
             tags, unsure = project_tagger.plan(repo, issues, rules, removed)
             planned += tags
@@ -442,7 +453,7 @@ def run(snapshot, gh, cfg, now, audit_path=AUDIT_PATH, proposals_path=PROPOSALS_
         pending = sum(1 for p in proposals if p["agent"] == "project_tag")
         project_tagger.write_state(unclear, pending, tags_state_path, ts)
     if revisit_state_path is not None:
-        write_revisit_state(without_revisit, revisit_state_path, now)
+        write_revisit_state(without_revisit, revisit_state_path, now, held_by_retry_storm=held_by_retry_storm if held_by_retry_storm else None)
     _write(audit_path, rows)
     _write(proposals_path, [{
         "generated_at": ts, "mode": cfg.get("mode"), "act_after": cfg.get("act_after"),

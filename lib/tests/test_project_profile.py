@@ -554,3 +554,21 @@ def test_a_profile_with_dispatch_on_but_no_machines_is_not_runnable(tmp_path):
     assert pp.runnable_repos(directory=d2) == ["G-Eskayo/proj"] and pp.unrunnable_repos(directory=d2) == []
     d3 = write_profile(tmp_path, dispatch="off", machines=[])
     assert pp.runnable_repos(directory=d3) == [] and pp.unrunnable_repos(directory=d3) == []
+
+
+def test_failure_threshold_rejects_bool_values(tmp_path):
+    """bool is a subtype of int in Python, so int(True) == 1. We must reject bools explicitly."""
+    profile = {"repo": "G-Eskayo/test", "verify": [], "failure_threshold": True}
+    with pytest.raises(ValueError, match="must be an integer, not a boolean"):
+        pp._validate(profile, "test.json")
+    profile["failure_threshold"] = False
+    with pytest.raises(ValueError, match="must be an integer, not a boolean"):
+        pp._validate(profile, "test.json")
+
+
+def test_failure_threshold_accepts_positive_integers(tmp_path):
+    """Valid failure_threshold values should be accepted and remain as integers."""
+    profile = {"repo": "G-Eskayo/test", "verify": [], "failure_threshold": 3}
+    validated = pp._validate(profile, "test.json")
+    assert validated["failure_threshold"] == 3
+    assert isinstance(validated["failure_threshold"], int)

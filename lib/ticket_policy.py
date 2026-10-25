@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 STALE_CLAIM_HOURS = 48
 PRIORITY_LABELS = ("priority:p0", "priority:p1", "priority:p2", "priority:p3")
-STATE_LABELS = {"ready-for-agent", "ready-for-human", "needs-info", "needs-reengagement", "wontfix"}
+STATE_LABELS = {"ready-for-agent", "ready-for-human", "needs-info", "needs-reengagement", "wontfix", "hold"}
 SKIP_LABELS = {"pinned"}  # a person has taken the wheel: no agent touches it
 
 
@@ -313,6 +313,14 @@ def latest_revisit(comments: list) -> dict | None:
     if not best:
         return None
     return {"date": best["date"], "condition": best["condition"]}
+
+
+def format_revisit(date: str, condition: str | None = None) -> str:
+    """Format a revisit comment: 'Revisit by: YYYY-MM-DD [— condition]'."""
+    line = f"Revisit by: {date}"
+    if condition:
+        line += f" — {condition}"
+    return line
 
 
 def is_revisit_due(revisit: dict | None, now: datetime, ref_issue_state: dict | None = None) -> bool:

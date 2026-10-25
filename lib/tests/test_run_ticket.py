@@ -1040,3 +1040,33 @@ def test_a_broken_notifier_never_stops_the_park(monkeypatch):
     monkeypatch.setattr(rt.subprocess, "run", thread)
     rt._park_stuck_ticket(28, 3, reason="unchanged")
     assert len(thread.posted) == 1 and len(thread.edits) == 2
+
+
+# ── retry-storm threshold logic (project-level failure gates) ──────────────
+
+def test_retry_storm_threshold_holds_ticket_when_exceeded(monkeypatch, tmp_path):
+    """A ticket that exceeds its project's failure_threshold is held, not parked."""
+    import failure_breaker
+    monkeypatch.setattr(failure_breaker, "LOG_PATH", tmp_path / "failures.jsonl")
+    now = datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc)
+    profile = {"repo": "test-proj", "failure_threshold": 3, "verify": []}
+    # Record 3 consecutive failures
+    for i in range(3):
+        failure_breaker.record_failure(99, "test failure", now=now - timedelta(minutes=5 - i), project="test-proj")
+
+    # should_hold returns True when threshold is met
+    assert failure_breaker.should_hold(99, profile=profile, now=now, project="test-proj") is True
+
+
+def test_retry_storm_threshold_not_triggered_below_limit(monkeypatch, tmp_path):
+    """A ticket below its project's failure_threshold is not held."""
+    import failure_breaker
+    monkeypatch.setattr(failure_breaker, "LOG_PATH", tmp_path / "failures.jsonl")
+    now = datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc)
+    profile = {"repo": "test-proj", "failure_threshold": 5, "verify": []}
+    # Record 2 consecutive failures
+    for i in range(2):
+        failure_breaker.record_failure(99, "test failure", now=now - timedelta(minutes=5 - i), project="test-proj")
+
+    # should_hold returns False when below threshold
+    assert failure_breaker.should_hold(99, profile=profile, now=now, project="test-proj") is False

@@ -217,6 +217,24 @@ def test_is_revisit_due_ref_without_state():
     assert pol.is_revisit_due(revisit, now, ref_state) is False
 
 
+def test_format_revisit_roundtrip_date_only():
+    """format_revisit + parse -> format roundtrips correctly."""
+    date = "2026-10-25"
+    formatted = pol.format_revisit(date)
+    comment = {"body": formatted}
+    parsed = pol.parse_revisit_comment(formatted)
+    assert parsed["date"] == date and parsed["condition"] is None
+
+
+def test_format_revisit_roundtrip_with_condition():
+    """format_revisit + parse -> format roundtrips correctly with a condition."""
+    date = "2026-10-25"
+    condition = "#412 merges"
+    formatted = pol.format_revisit(date, condition)
+    parsed = pol.parse_revisit_comment(formatted)
+    assert parsed["date"] == date and parsed["condition"] == condition
+
+
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))

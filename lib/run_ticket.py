@@ -138,42 +138,72 @@ MAX_PARK_FINDINGS = 15
 
 
 def _park_stuck_ticket(issue_number: int, streak: int, repo: str = REPO, reason: str = "",
-                       findings: list[str] | tuple = (), headline: str | None = None) -> None:
+                       findings: list[str] | tuple = (), headline: str | None = None,
+                       revisit_condition: str | None = None, signatures: list[str] | None = None) -> None:
     """Stop re-dispatching a ticket that keeps failing, and hand it to a person WITH the cause.
 
     needs-info is added before ready-for-agent comes off, so the ticket is never stateless: the triage agent treats
     a ticket with no state label as new, and would put a well-written one straight back to ready-for-agent (another
     round of builds; this comment resets the failure streak) or bury the cause under a template complaint (#133,
-    2026-10-09). Triage only re-checks needs-info it set itself, so this one stays until a person acts."""
+    2026-10-09). Triage only re-checks needs-info it set itself, so this one stays until a person acts.
+
+    If revisit_condition is set, the ticket is held (not sent to needs-info) instead, with a revisit date."""
     label = _label_for_device(machine_profile.registry_id())
-    subprocess.run(
-        ["gh", "issue", "edit", str(issue_number), "--repo", repo, "--add-label", "needs-info"],
-        capture_output=True, text=True, timeout=15, check=False,
-    )
-    subprocess.run(
-        ["gh", "issue", "edit", str(issue_number), "--repo", repo,
-         "--remove-label", "ready-for-agent",
-         "--remove-label", f"claimed:{label}"],
-        capture_output=True, text=True, timeout=15, check=False,
-    )
-    # The claim is dropped too, not only ready-for-agent: ticket_pipeline only
-    # dispatches ready-for-agent tickets with no claimed:* label, so a parked
-    # ticket that kept its claim could never be revived by re-adding the label.
-    shown = list(findings)[:MAX_PARK_FINDINGS]
-    more = len(findings) - len(shown)
-    lines = [headline or f"**{PARKED_MARKER}** ({streak} in a row), so it stops being re-dispatched.", "",
-             f"**Why it's stuck:** {(reason or 'no reason was recorded')[:500]}"]
-    if shown:
-        lines += ["", "**Must-fix findings the builder could not clear:**", *[f"- {f}" for f in shown]]
-        if more:
-            lines.append(f"- ... and {more} more")
-    lines += ["", "**What it needs:** re-scope or split it, answer what's unclear, or build it by hand. "
-              "To send it back to the pipeline, remove `needs-info` and add `ready-for-agent`."]
+
+    if revisit_condition:
+        # Hold the ticket with a revisit condition
+        subprocess.run(
+            ["gh", "issue", "edit", str(issue_number), "--repo", repo, "--add-label", "hold"],
+            capture_output=True, text=True, timeout=15, check=False,
+        )
+        subprocess.run(
+            ["gh", "issue", "edit", str(issue_number), "--repo", repo,
+             "--remove-label", "ready-for-agent",
+             "--remove-label", f"claimed:{label}"],
+            capture_output=True, text=True, timeout=15, check=False,
+        )
+        shown = list(findings)[:MAX_PARK_FINDINGS]
+        more = len(findings) - len(shown)
+        sig_line = ""
+        if signatures:
+            sig_line = f"\n\n**Failure signatures:** {'; '.join(signatures[:3])}"
+            if len(signatures) > 3:
+                sig_line += f" (+ {len(signatures) - 3} more)"
+        lines = [headline or f"**Held by retry storm** ({streak} {signatures[0] if signatures else 'identical'} failure{'s' if streak != 1 else ''} in a row).{sig_line}", "",
+                 f"**Why it's stuck:** {(reason or 'no reason was recorded')[:500]}"]
+        if shown:
+            lines += ["", "**Must-fix findings the builder could not clear:**", *[f"- {f}" for f in shown]]
+            if more:
+                lines.append(f"- ... and {more} more")
+        lines += ["", f"**Revisit:** {revisit_condition}"]
+    else:
+        # Park for needs-info (original behavior)
+        subprocess.run(
+            ["gh", "issue", "edit", str(issue_number), "--repo", repo, "--add-label", "needs-info"],
+            capture_output=True, text=True, timeout=15, check=False,
+        )
+        subprocess.run(
+            ["gh", "issue", "edit", str(issue_number), "--repo", repo,
+             "--remove-label", "ready-for-agent",
+             "--remove-label", f"claimed:{label}"],
+            capture_output=True, text=True, timeout=15, check=False,
+        )
+        shown = list(findings)[:MAX_PARK_FINDINGS]
+        more = len(findings) - len(shown)
+        lines = [headline or f"**{PARKED_MARKER}** ({streak} in a row), so it stops being re-dispatched.", "",
+                 f"**Why it's stuck:** {(reason or 'no reason was recorded')[:500]}"]
+        if shown:
+            lines += ["", "**Must-fix findings the builder could not clear:**", *[f"- {f}" for f in shown]]
+            if more:
+                lines.append(f"- ... and {more} more")
+        lines += ["", "**What it needs:** re-scope or split it, answer what's unclear, or build it by hand. "
+                  "To send it back to the pipeline, remove `needs-info` and add `ready-for-agent`."]
+
     subprocess.run(
         ["gh", "issue", "comment", str(issue_number), "--repo", repo, "--body", "\n".join(lines)],
         capture_output=True, text=True, timeout=15, check=False,
     )
-    # It is in the dashboard's Needs you now (needs-info); say so where Gil will see it, not only on the ticket.
+    # It is in the dashboard's Needs you now (needs-info) or on hold; say so where Gil will see it, not only on the ticket.
     try:
         import mr_notification
         mr_notification.notify_needs_you(f"{repo.split('/')[-1]}#{issue_number}", reason or "parked",
@@ -363,6 +393,20 @@ def run(issue_number: int, repo: str = REPO) -> dict:
             return outcome
         prior_streak = _consecutive_failure_streak(issue_number, **kw)
         parking = prior_streak + 1 >= MAX_CONSECUTIVE_FAILURES
+        held_by_retry_storm = False
+        retry_storm_condition = None
+
+        # Check if ticket should be held (not parked) by retry storm logic
+        # Pass the comment-based streak count so we're checking against the same count as the global threshold
+        if profile is not None and failure_breaker.should_hold(issue_number, profile,
+                                                               project=repo if other else failure_breaker.MARVIN,
+                                                               streak_count=prior_streak + 1):
+            held_by_retry_storm = True
+            # Hold ticket with a revisit date (default: 1 day from now)
+            revisit_date = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%d")
+            retry_storm_condition = f"Revisit by: {revisit_date} — environment stabilizes (ticket held by retry-storm threshold)"
+            parking = True  # Don't retry immediately
+
         _comment_failure(issue_number, outcome["reason"], **kw, **({} if parking else {"retry": _retry_line(prior_streak + 1)}))
         # Feed the cross-ticket breaker (failure_breaker.py): the SAME failure across
         # different tickets means the system is broken, not the tickets.
@@ -370,6 +414,11 @@ def run(issue_number: int, repo: str = REPO) -> dict:
         if prior_streak + 1 >= MAX_CONSECUTIVE_FAILURES:
             _park_stuck_ticket(issue_number, prior_streak + 1, **kw, reason=outcome["reason"], findings=findings)
             ts.record_stage(issue_number, "done", "failed", f"parked after {prior_streak + 1} consecutive failures", **kw)
+        elif held_by_retry_storm:
+            sig = failure_breaker.signature(outcome["reason"])
+            _park_stuck_ticket(issue_number, prior_streak + 1, **kw, reason=outcome["reason"], findings=findings,
+                             revisit_condition=retry_storm_condition, signatures=[sig] if sig else [])
+            ts.record_stage(issue_number, "done", "failed", f"held by retry-storm threshold ({prior_streak + 1} failures)", **kw)
         else:
             _release_claim(issue_number, **kw, run_id=run_id)
             ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)

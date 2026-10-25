@@ -129,6 +129,49 @@ def tripped(now: datetime | None = None, project: str | None = None) -> list[dic
     return result
 
 
+def ticket_streak(ticket: int, now: datetime | None = None, project: str = MARVIN) -> tuple[int, str]:
+    """(count, sig) of consecutive identical-signature failures on one ticket, most recent first,
+    stopping at the first non-matching entry. Returns (0, "") if no failures found.
+    Mirrors run_ticket._consecutive_failure_streak's logic but reads from the cross-ticket log."""
+    now = now or _now()
+    horizon = now - timedelta(hours=WINDOW_HOURS)
+    records = [r for r in _read() if r["_t"] >= horizon and r.get("project", MARVIN) == project]
+
+    ticket_records = [r for r in records if r.get("ticket") == ticket]
+    failures = [r for r in ticket_records if r.get("kind") == "failure"]
+    if not failures:
+        return 0, ""
+
+    # Most recent first
+    failures.sort(key=lambda r: r["_t"], reverse=True)
+    sig = failures[0].get("sig", "")
+    count = 0
+    for f in failures:
+        if f.get("sig") == sig:
+            count += 1
+        else:
+            break
+    return count, sig
+
+
+def should_hold(ticket: int, profile: dict | None = None, now: datetime | None = None, project: str = MARVIN,
+               streak_count: int | None = None) -> bool:
+    """Should a ticket be held (not re-dispatched) due to a retry storm?
+    True if the ticket's current streak of identical failures is >= its project's failure_threshold.
+    profile: the project's execution profile (if None, defaults to MARVIN profile which has no threshold)
+    streak_count: override the streak count (e.g., from comment-based counting). If None, reads from failure log."""
+    if profile is None or not isinstance(profile, dict):
+        return False
+    threshold = profile.get("failure_threshold")
+    if threshold is None or threshold <= 0:
+        return False
+    if streak_count is None:
+        count, _ = ticket_streak(ticket, now or _now(), project)
+    else:
+        count = streak_count
+    return count >= threshold
+
+
 def main() -> None:
     cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
     if cmd == "clear":

@@ -217,6 +217,40 @@ then) — a real, current fragility, not a hypothetical one.
   triggering) and only acts if it hasn't, proceeding with whatever's available, same graceful-
   degradation behavior `cross_machine_merge.py` already has for a genuinely unreachable machine.
 
+## Retry-storm detection (P6 feature, built 2026-10-22)
+
+When a single ticket keeps failing with identical signatures, or a project's tickets fail repeatedly,
+retrying indefinitely can waste compute and tokens. Retry-storm detection holds a stuck ticket once it
+exceeds a threshold, pausing re-dispatch while the environment stabilizes or the cause is fixed.
+
+- **Retry-storm**: a ticket repeatedly failing with the same error signature (e.g., "vitest produced no
+  test summary" across 10 attempts), or failing at a project's configured `failure_threshold` within
+  the `WINDOW_HOURS` window.
+- **Ticket streak**: the count of consecutive identical-signature failures on ONE ticket, kept in the
+  cross-ticket failure log (`~/.claude/logs/pipeline-failures.jsonl`) so both machines agree on the
+  count without new state files — mirrors the retry-backoff log that already stores "not before" times
+  in ticket comments.
+- **Per-project threshold**: each project's profile (`config/projects/<name>.json`) optionally sets
+  `failure_threshold: N` (a positive integer). When a ticket's streak reaches N, it is held (labeled
+  `hold`) with a revisit date instead of being re-dispatched immediately. No threshold (the default)
+  means no per-project hold — the global `MAX_CONSECUTIVE_FAILURES` (3 in run_ticket.py) still parks
+  for `needs-info`, but per-project thresholds allow projects with higher variance (build environments,
+  simulators, network jitter) to hold at a higher count.
+- **Hold, not park**: held tickets stay on the `hold` label (revisited by the ticket_agents' revisit
+  loop daily or when a condition (e.g., "#N closed") is met), vs. `needs-info` (parked until a person
+  explicitly re-adds `ready-for-agent`). The distinction: hold is automatic, revisit-based patience; 
+  needs-info is manual, person-required intervention.
+- **Per-machine-log limitation**: the cross-ticket log is per-machine (`~/.claude/logs/pipeline-failures.jsonl`),
+  so when a ticket is claimed by one machine but fails on both, each machine counts the failures *it ran*.
+  For most tickets, one machine claims it via ticket_pipeline's dispatch, so this is transparent. For
+  tickets left unclaimed or actively claimed *differently* across machines (race condition; should not
+  happen, but defended), each Mac's streak is independent. The retry-backoff marker in ticket comments
+  (commented failures are counted by both machines) is the cross-machine consensus mechanism for
+  deciding when to skip retrying — the hold label is machine-local state.
+- **Health monitoring**: `check_held_by_retry_storm()` in health_checks.py reads the ticket_agents'
+  output (`hold-revisit.json`'s `held_by_retry_storm` list) and surfaces held tickets as yellow
+  (expected, temporary state) rather than red, so a retry-storm pause is visible but not alarming.
+
 ## MR pipeline (in design, 2026-08-19)
 
 - **MR pipeline**: the mechanism by which MARVIN's own autonomous/background-initiated work (self-

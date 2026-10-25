@@ -1,0 +1,9 @@
+1. `git checkout -- CONTEXT.md lib/failure_breaker.py lib/health_checks.py lib/project_profile.py lib/run_ticket.py lib/ticket_agents.py lib/ticket_policy.py` — discard the current 209-line, zero-test diff; it has the AC3 bug and the profile-gating bug above, and redoing cleanly is less risk than patching forward. `docs/design/pipeline-g-eskayo-marvin-218*.md` are left alone (not part of this diff).
+2. `lib/failure_breaker.py`: add `ticket_streak()` and `should_hold()` per the design above. Tests 1–7. Run `pytest lib/tests/test_failure_breaker.py -q`.
+3. `lib/project_profile.py`: add the `bool`-exclusion fix. Test 8. Run `pytest lib/tests/test_project_profile.py -q`.
+4. `lib/ticket_policy.py`: confirm `STATE_LABELS`/`format_revisit` already correct (no edit expected); add test 9 (and 10 only if `format_revisit` has no round-trip test yet). Run `pytest lib/tests/test_ticket_policy.py -q`.
+5. `lib/run_ticket.py`: rewrite `_consecutive_failure_streak`; rewire `run()`'s failure branch onto `should_hold`; wire `format_revisit` into `_park_stuck_ticket`. Tests 11–12. Run `pytest lib/tests/test_run_ticket.py -q`.
+6. `lib/health_checks.py`: confirm `check_held_by_retry_storm` already correct (no edit expected); add test 13. Run `pytest lib/tests/test_health_checks.py -q`.
+7. `lib/ticket_agents.py`: swap the comment-string-matching detection for `ticket_streak(...)["count"] > 0`. Test 14. Run `pytest lib/tests/test_ticket_agents.py -q`.
+8. `CONTEXT.md`: rewrite the retry-storm section per the corrected design.
+9. Final check: `pytest lib/tests/test_failure_breaker.py lib/tests/test_project_profile.py lib/tests/test_ticket_policy.py lib/tests/test_run_ticket.py lib/tests/test_health_checks.py lib/tests/test_ticket_agents.py -q` — targeted files only, not the full suite.

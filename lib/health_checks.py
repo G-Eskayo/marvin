@@ -499,6 +499,29 @@ def check_hold_revisit(path: Path | None = None, now: datetime | None = None) ->
     return _result(cid, label, "yellow", detail, value=len(without))
 
 
+def check_held_by_retry_storm(path: Path | None = None, now: datetime | None = None) -> dict:
+    """Tickets held due to exceeding their project's failure_threshold (retry-storm detection). Written hourly by the
+    revisit agent. These are paused to avoid endless retries while the environment is unstable."""
+    cid, label = "tickets:held-retry-storm", "Tickets held by retry-storm detection"
+    now = now or _now()
+    try:
+        d = json.loads(Path(path or HOLD_REVISIT_PATH).read_text())
+        at = datetime.fromisoformat(d["generated_at"])
+    except (OSError, ValueError, KeyError):
+        return _result(cid, label, "yellow", "the revisit agent has not run on this machine yet")
+    age_h = (now - at).total_seconds() / 3600
+    if age_h > HOLD_REVISIT_STALE_HOURS:
+        return _result(cid, label, "yellow", f"the revisit agent last ran {age_h:.0f} hours ago (it runs hourly with the ticket agents)")
+    held = d.get("held_by_retry_storm") or []
+    if not held:
+        return _result(cid, label, "green", "no tickets held by retry-storm threshold", value=0)
+    parts = [f"{h['repo'].split('/')[-1]}#{h['number']} {h.get('title', '')}" for h in held[:5]]
+    detail = f"{len(held)} on hold: " + "; ".join(parts)
+    if len(held) > 5:
+        detail += f" (+ {len(held) - 5} more)"
+    return _result(cid, label, "yellow", detail, value=len(held))
+
+
 MAIN_HEALTH_PATH = Path.home() / ".claude" / "logs" / "main-health.json"
 MAIN_HEALTH_STALE_HOURS = 24
 
@@ -1481,6 +1504,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("catalog:fresh", "Project catalog is current", check_catalog_fresh, CHECK_BUDGET_S),
         ("tickets:project-tags", "Tickets are on their project's board", check_project_tags, CHECK_BUDGET_S),
         ("tickets:hold-revisit", "Hold tickets have revisit dates", check_hold_revisit, CHECK_BUDGET_S),
+        ("tickets:held-retry-storm", "Tickets held by retry-storm detection", check_held_by_retry_storm, CHECK_BUDGET_S),
         ("github:budget", "GitHub request budget", check_github_budget, CHECK_BUDGET_S),
         ("github:gate", "GitHub calls go through the gate", check_gh_gate, CHECK_BUDGET_S),
         ("main:green", "The main branch passes its tests", check_main_health, CHECK_BUDGET_S),
