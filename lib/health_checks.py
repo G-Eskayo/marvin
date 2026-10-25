@@ -990,7 +990,7 @@ if [ -f "$LEDGER" ]; then echo "disk_ledger=$(tail -14 "$LEDGER" | /usr/bin/tr '
 # host only (ADR 0032, 0033), "laptop" = only where Gil sits. Edit here when a job is deliberately moved; a job that
 # is not listed is reported as unplaced so a new job cannot silently run on only one machine.
 JOB_PLACEMENT = {
-    "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "both", "research-colony": "both",
+    "code-sync-push": "both", "cross-machine-merge": "both",
     "desktoplive": "both", "dashboard-webhook": "both",  # webhook on both until #112 (ADR 0032)
     "ticket-pipeline": "both",  # mini scans; the laptop's copy is a standby that scans only if the mini goes quiet (scanner_role.py)
     "architecture-review": "mini", "auto-fix": "mini", "cron-health": "mini", "health-check": "mini",
@@ -999,7 +999,9 @@ JOB_PLACEMENT = {
     "cleanup-sweep": "both",  # daily: each machine sweeps its own pipeline worktrees (lib/cleanup_sweep.py)
     "machine-resources": "both",  # 30s: samples disk/mem/swap/CPU/GPU for resources panel (#130)
     "dashboard-launch": "laptop",
-    "morning-brief": "laptop",  # one writer (the brief syncs to the mini via ~/.claude); after the digests (lib/morning_brief.py)
+    "daily-digest": "mini", "daily-digest-fallback": "laptop",
+    "research-colony": "mini", "research-colony-fallback": "laptop",
+    "morning-brief": "mini", "morning-brief-fallback": "laptop",  # ADR 0067: primary on mini, fallback on laptop (lib/brief_fallback.py)
     # the website map (#189): rebuilt nightly and after MARVIN changes on the mini, where the dev site runs; the nightly
     # job also publishes it to production (ADR 0057), so it must never run on the laptop
     "snapshot-deploy-nightly": "mini", "snapshot-deploy-reactive": "mini",
@@ -1462,6 +1464,49 @@ def _cron_job_logs() -> list[dict]:
     return out
 
 
+def check_brief_builder(now: datetime | None = None) -> dict:
+    """Health check: which machine built today's brief? (AC4)
+
+    Green if sidecar exists (primary built successfully) or brief exists without sidecar (legacy).
+    Yellow if brief hasn't been built yet.
+    Yellow if no sidecar but not yet GRACE_MINUTES past usual time.
+    Red if no sidecar and badly overdue (>GRACE_MINUTES past usual time).
+    """
+    import morning_brief
+    now = now or datetime.now(timezone.utc)
+    day = now.astimezone().strftime("%Y-%m-%d")
+
+    # Check if sidecar exists (primary built with new method)
+    sidecar_path = HOME / ".claude" / "briefs" / f"{day}.built-by"
+    if sidecar_path.exists():
+        try:
+            builder_info = sidecar_path.read_text().strip()
+            return _result("brief:builder", "Morning brief builder", "green",
+                          f"Built: {builder_info}")
+        except Exception:
+            pass
+
+    # Check if brief exists without sidecar (legacy, but still built)
+    brief_path = HOME / ".claude" / "briefs" / f"{day}.md"
+    if brief_path.exists():
+        return _result("brief:builder", "Morning brief builder", "green",
+                      "Built (legacy, no sidecar file)")
+
+    # No brief at all yet. Check how overdue we are.
+    # Usual time is 09:35 (primary) + GRACE_MINUTES = 10:05
+    usual_hour, usual_minute = 9, 35
+    grace_deadline = now.astimezone().replace(hour=usual_hour, minute=usual_minute, second=0, microsecond=0) + timedelta(minutes=ch.GRACE_MINUTES)
+
+    if now.astimezone() >= grace_deadline:
+        # Badly overdue: red
+        return _result("brief:builder", "Morning brief builder", "red",
+                      f"No brief built yet, >{ch.GRACE_MINUTES}min overdue (expected ~{usual_hour}:{usual_minute:02d})")
+
+    # Not yet overdue: yellow
+    return _result("brief:builder", "Morning brief builder", "yellow",
+                  "No brief built yet today")
+
+
 def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict] | None = None) -> list[tuple]:
     """Every check the sweep runs, in the order the Health tab shows them. `reach` maps machine:<id> -> severity from
     the reachability check, which runs first; `reach_results` are its rows, listed where they always appeared."""
@@ -1486,6 +1531,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("main:green", "The main branch passes its tests", check_main_health, CHECK_BUDGET_S),
         ("seal:beta-ingest", "Seal Speak beta reports are picked up", check_seal_beta_ingest, CHECK_BUDGET_S),
         ("cron", "Cron job logs", _cron_job_logs, CHECK_BUDGET_S),
+        ("brief:builder", "Morning brief builder", check_brief_builder, CHECK_BUDGET_S),
         ("machine", "Machine reachability", lambda: list(reach_results or []), CHECK_BUDGET_S),
         ("repo:sync", "Repo sync", lambda: check_repo_sync_everywhere(reach), CROSS_MACHINE_BUDGET_S),
         ("machine-state", "Machine state", lambda: check_machine_state_everywhere(reach), CROSS_MACHINE_BUDGET_S),

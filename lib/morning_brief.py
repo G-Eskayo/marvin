@@ -25,6 +25,8 @@ from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import machine_profile  # noqa: E402
+
 CLAUDE = Path.home() / ".claude"
 BRIEFS = CLAUDE / "briefs"
 HEALTH_STATUS = CLAUDE / "logs" / "health-status.json"
@@ -277,11 +279,30 @@ def _day(now: datetime) -> str:
     return now.astimezone().strftime("%Y-%m-%d")
 
 
-def write(now: datetime | None = None, sources: dict[str, Callable] | None = None) -> Path:
+def write(now: datetime | None = None, sources: dict[str, Callable] | None = None, builder_reason: str = "primary") -> Path:
+    import brief_fallback
+    import tempfile
+
     now = now or datetime.now(timezone.utc)
     BRIEFS.mkdir(parents=True, exist_ok=True)
     path = BRIEFS / f"{_day(now)}.md"
-    path.write_text(render(gather(now, sources), now))
+    day = _day(now)
+    sidecar_path = BRIEFS / f"{day}.built-by"
+
+    # Idempotent: if already written and produced, return the existing path without overwriting
+    if brief_fallback.produced(path):
+        return path
+
+    # Write brief to temp, then atomic rename
+    brief_tmp = path.with_suffix(path.suffix + ".tmp")
+    brief_tmp.write_text(render(gather(now, sources), now))
+    brief_tmp.rename(path)
+
+    # Write sidecar to temp, then atomic rename
+    sidecar_tmp = sidecar_path.with_suffix(".tmp")
+    sidecar_tmp.write_text(f"{machine_profile.machine_label()}: {builder_reason}\n")
+    sidecar_tmp.rename(sidecar_path)
+
     return path
 
 
@@ -307,9 +328,49 @@ def read_dates() -> list[datetime]:
     return _dates(".read")
 
 
+def builder_of(day: str) -> str | None:
+    """Read the sidecar file recording which machine built the brief for this day.
+
+    day: ISO date string, e.g. "2026-10-25"
+    Returns: the contents of the sidecar (e.g. "mac-mini: primary\n"), or None if not found.
+    """
+    sidecar_path = BRIEFS / f"{day}.built-by"
+    if not sidecar_path.exists():
+        return None
+    try:
+        return sidecar_path.read_text().strip()
+    except Exception:
+        return None
+
+
+def build(now: datetime | None = None, sources: dict[str, Callable] | None = None) -> Path | None:
+    """Build the brief, checking the fallback gate first.
+
+    If this is the primary, always build. If this is the standby, check the deadline
+    and whether the primary has already produced. Logs to stderr if skipping.
+
+    Returns the path to the built brief, or None if skipped due to the gate.
+    """
+    import brief_fallback
+
+    now = now or datetime.now(timezone.utc)
+    day = _day(now)
+    brief_path = BRIEFS / f"{day}.md"
+
+    decision = brief_fallback.should_run(brief_path, usual_hour=9, usual_minute=35)
+
+    if not decision.should_build:
+        print(f"[morning-brief] Skipped: {decision.reason}", file=sys.__stderr__)
+        return None
+
+    return write(now, sources, builder_reason=decision.reason)
+
+
 if __name__ == "__main__":
     if sys.argv[1:] == ["build"]:
-        print(write())
+        result = build()
+        if result:
+            print(result)
     elif sys.argv[1:] == ["show"]:
         print(show_today() or "No brief for today yet.")
     else:

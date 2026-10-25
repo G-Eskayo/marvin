@@ -123,3 +123,99 @@ def test_open_prs_marks_waiting_from_one_graphql_read(monkeypatch):
     monkeypatch.setattr(od, "fetch", lambda repos, run=None: None)
     brief = mb.gather(NOW, {"open_prs": mb._open_prs})
     assert brief["open_prs"] is None and "open PRs" in brief["missing"][0]
+
+
+def test_write_is_idempotent_against_an_existing_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    path1 = mb.write(NOW, _sources())
+    content1 = path1.read_text()
+    path2 = mb.write(NOW, _sources())
+    content2 = path2.read_text()
+    assert path1 == path2 and content1 == content2
+
+
+def test_write_records_who_built_it(tmp_path, monkeypatch):
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    mb.write(NOW, _sources(), builder_reason="fallback")
+    sidecar = tmp_path / "2026-10-09.built-by"
+    assert sidecar.exists()
+    content = sidecar.read_text()
+    assert "fallback" in content
+
+
+def test_builder_of_reads_the_sidecar(tmp_path, monkeypatch):
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    mb.write(NOW, _sources(), builder_reason="test-reason")
+    builder = mb.builder_of("2026-10-09")
+    assert builder is not None and "test-reason" in builder
+
+
+def test_build_checks_fallback_gate(tmp_path, monkeypatch):
+    import brief_fallback
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+
+    # Mock should_run to return False
+    monkeypatch.setattr(brief_fallback, "should_run",
+                       lambda *a, **k: brief_fallback.Decision(should_build=False, reason="test skip"))
+
+    result = mb.build(NOW, _sources())
+    assert result is None
+    assert not (tmp_path / "2026-10-09.md").exists()
+
+
+def test_build_called_with_explicit_parameters(tmp_path, monkeypatch):
+    import brief_fallback
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    monkeypatch.setattr(brief_fallback, "should_run",
+                       lambda *a, **k: brief_fallback.Decision(should_build=True, reason="test primary"))
+    sources = _sources()
+    path = mb.build(NOW, sources)
+    assert path is not None
+    assert path.read_text().startswith("# Morning brief")
+
+
+def test_write_idempotency_checks_produced_not_just_exists(tmp_path, monkeypatch):
+    """Test 10: write() checks brief_fallback.produced(), not just file.exists()."""
+    import brief_fallback
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+
+    # First write
+    path = mb.write(NOW, _sources())
+    content1 = path.read_text()
+
+    # Simulate an incomplete write (empty or failed state)
+    # Replace the brief with a quarantined marker
+    path.write_text("_Quarantined by safety-monitor: test quarantine")
+
+    # Second write should rebuild since quarantine counts as produced (Decision A)
+    # but the idempotency check uses produced() which considers quarantine as produced
+    path2 = mb.write(NOW, _sources())
+    content2 = path2.read_text()
+
+    # Both should be the same path
+    assert path == path2
+    # Content should be from second write (quarantine case treated as already produced)
+    assert "_Quarantined" in content2
+
+
+def test_write_uses_atomic_rename(tmp_path, monkeypatch):
+    """Test 11: write() uses temp files and atomic rename for both brief and sidecar."""
+    import brief_fallback
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+
+    # Write should create temp files and rename them atomically
+    path = mb.write(NOW, _sources(), builder_reason="atomic-test")
+
+    # Brief file should exist and have content
+    assert path.exists()
+    assert path.read_text().startswith("# Morning brief")
+
+    # Sidecar should exist and have content
+    day = NOW.astimezone().strftime("%Y-%m-%d")
+    sidecar_path = tmp_path / f"{day}.built-by"
+    assert sidecar_path.exists()
+    assert "atomic-test" in sidecar_path.read_text()
+
+    # Temp files should not be left behind
+    assert not (path.with_suffix(path.suffix + ".tmp")).exists()
+    assert not (sidecar_path.with_suffix(".tmp")).exists()

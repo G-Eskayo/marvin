@@ -1,0 +1,82 @@
+## North-star fit
+
+**Reuses before adding anything new, verified by reading the actual files just now (not the prior attempt's claims):**
+- `lib/scanner_role.py:23,27-28` (`PRIMARY_PREFIX`, `is_primary()`) and `lib/task_dispatch.py`'s `SSH_OPTS` — already composed correctly into `lib/brief_fallback.py`, which is a direct structural mirror of `scanner_role.should_scan()`.
+- `lib/health_checks.py:47-49` (`_result(id_, label, severity, detail, value=None)`) — the **existing check-result constructor every other check in the file uses** (`check_dispatch_lock`, `check_token_files`, etc.). The uncommitted `check_brief_builder()` sitting in this worktree right now builds a bare `{"severity":..., "detail":...}` dict by hand instead, **omitting the required `"id"` key** — `guarded()` (`lib/health_checks.py:1446`) rejects any check result missing `"id"`/`"severity"` and silently replaces it with `_unknown(...)`. This is a real, previously-undetected correctness bug (AC4 would never actually show green on the real Health tab), found by reading `guarded()`'s contract, not by any existing test. Fix: build the dict with `_result()`, matching `check_dispatch_lock`'s pattern exactly.
+- `lib/cron_health.py:98,129` (`GRACE_MINUTES`, `check_job()`'s `overdue` calc) — reused for `check_brief_builder`'s missing red-escalation (see Decisions-adjacent fix below), instead of inventing a second overdue concept.
+- `lib/machine_profile.py:192-196` (`remote_macs()`, already written specifically for "Mac-only checks (launchd, dashboard)... mac-mini-2012 runs Linux") — this is the exact fix for a real bug a prior reviewed version of this PR flagged: `brief_fallback.py`'s primary-device lookup currently walks `machine_profile.remote_devices()`, which also matches `mac-mini-2012` (Kali; `is_primary()` is a bare `startswith("mac-mini")`). Swapping to `remote_macs()` closes that, with zero new code.
+
+**Why this is not a from-scratch design, and why that matters:** this worktree already contains an **uncommitted, 90%-correct implementation** of this ticket — `lib/brief_fallback.py`, its ~544-line test file, the three new fallback `.plist`s, the `JOB_PLACEMENT`/`JOBS`/`check_brief_builder` wiring, and the `CONTEXT.md`/ADR 0067 updates are all already sitting in `git status` as `M`/`??`. A **different, better** version of essentially the same diff was reviewed on the open PR #600 with `pytest_failed 0→0` and only non-blocking review notes (fetched via `gh pr view 600`) before it went stale on a rebase conflict with `#601`. Every attempt since has evidently **rewritten from scratch** rather than starting from either of these, which is almost certainly why the regression count keeps moving around (34 improved / 9 regressed last time) instead of converging. The simplest sufficient plan here is explicitly **not** a rewrite: start from the current worktree content, and apply the specific, concrete fixes below — most of which come directly from Gil's own review comments on PR #600, which this attempt never saw applied.
+
+**Where it spends/saves tokens:** this is ADR 0067's token-halving ticket; implementation cost here is one more bounded, targeted-fix pass instead of a 14th full rewrite.
+
+**More capable or more passive:** more capable — Health gets a real (not silently-broken) answer to "who built today's brief," and a truly-stuck brief chain escalates to red instead of sitting yellow forever.
+
+**Concrete defects found by reading the code (all become either a fix or a test below), not inherited from the prior design doc's analysis:**
+1. `lib/health_checks.py`'s uncommitted `check_brief_builder()` is missing the `"id"` key `guarded()` requires — real bug, not caught by any existing test since the new tests call `hc.check_brief_builder()` directly, bypassing `guarded()`.
+2. `skills/improve/scripts/tests/test_daily_digest.py::test_main_short_circuits_when_out_file_exists` (**pre-existing test, not written by this ticket**) and `lib/tests/test_morning_brief.py::test_build_called_with_explicit_parameters` (new) both call `dd.main()` / `mb.build()` end-to-end **without mocking `brief_fallback.should_run`**, so they fall through to the real `machine_profile.registry_id()` — real `sysctl`/`ioreg`/`scutil` subprocess calls and a read of the real `~/.claude/marvin-network.json`. This is a direct violation of the ticket's own "test against real job output files in a temp HOME, never the real ~/.claude" line, and is almost certainly the actual source of the "9 regressed" failures (environment-dependent: passes only on a machine whose identity happens to resolve as primary at the moment the gate check runs, fails/flakes everywhere else).
+3. `WorkingDirectory` is `/Users/gileskayo/marvin` (doesn't exist) in the new `skills/improve/com.marvin.daily-digest-fallback.plist`, copied forward from the same pre-existing bug in `skills/improve/com.marvin.daily-digest.plist` and `config/launchd/com.marvin.morning-brief.plist` — exactly what Gil's PR #600 review comment flagged ("MARVIN lives in ~/.agents").
+4. From Gil's own review notes on the better, earlier PR #600 (`gh pr view 600`), not yet applied anywhere in this worktree's current state: morning-brief's 09:15 slot leaves only 15 minutes after research-colony starts at 09:00 while `write()` is now idempotent (so a brief built before the digest lands is *never* rebuilt with it); `write()`'s idempotency check uses bare `.exists()` while `produced()` treats an empty/placeholder file as not-produced (mismatch — a half-written brief can get stuck forever); the two-file (brief + `.built-by` sidecar) write is non-atomic; `check_brief_builder` never escalates past yellow even when both the primary and fallback deadlines have long passed.
+
+## Decisions
+
+```markdown
+## Decisions
+<!-- marvin:decisions -->
+### quarantine-counts-as-produced: Does a quarantined (but not failed) digest count as "the Mini produced it"?
+The code currently implements option A as its default. Confirm or override.
+- [ ] A: Quarantined counts as produced — the Mini did its job; a held-back item is a safety-check outcome, not an outage. The laptop never rebuilds just because content got quarantined.
+- [ ] B: Quarantined counts as not produced — if the brief chain got nothing usable, the laptop should still try, in case its own run clears the safety check.
+
+### retire-cross-machine-merge: Remove `cross_machine_merge.py`'s LLM digest/research-digest merge step now, or leave it in place?
+- [ ] A: Remove `run_merge_authority`'s daily-digest/research-digest loop now — ADR 0067 says this step "becomes unnecessary for these jobs," and leaving it risks a stray LLM merge call plus a third `{day}-merged.md` write-back on the rare day the fallback actually fires.
+- [ ] B: Leave it in place for now (on a normal day it already runs zero LLM calls, since the laptop-side file won't exist) and remove it in a separate follow-up ticket.
+```
+
+## Tests to write first
+
+Against the real collaborator pattern this codebase already uses: `monkeypatch` for module functions and `tmp_path`/`BRIEFS`/`DIGEST_DIR` substitution for the filesystem, an injected `run=` callable for SSH, and a real local `sh -c` for the two shell-injection tests. **Critically, every test that exercises `main()`/`build()`/`generate()` end-to-end must explicitly `monkeypatch.setattr(brief_fallback, "should_run", ...)` — never let it fall through to the real `machine_profile.registry_id()`.** That rule is itself new, written in direct response to the regression.
+
+**Per ticket's "How we'll try to break it" (most already exist in the worktree's uncommitted test files — verified correct by reading them, kept as-is):**
+1. Mini down all morning → standby builds once, not twice (`test_mini_down_all_morning_laptop_builds_once`, already present).
+2. Mini late but finishes after the MacBook started (TOCTOU) → one write wins (`test_toctou_recheck_uses_produced_not_exists`, `test_produce_recheck_uses_produced_not_exists`, `test_write_is_idempotent_against_an_existing_file`, already present).
+3. Mini's output is a failure placeholder → not produced (`_is_produced_content` tests, already present).
+4. Clock skew / MacBook asleep through the deadline → pure local-clock `past_deadline()`, already present; **add** a boundary-exact test (`test_past_deadline_boundary_exact_minute`) since mutation testing on the earlier PR flagged the hour/minute constants as untested at the exact boundary.
+5. Both Macs run the fallback check at the same moment → primary branch is I/O-free, verified by reading, already covered as a documented-not-tested case.
+6. Real job output files in a temp HOME, never real `~/.claude` → **new, required fix**: audit every test that reaches `main()`/`build()`/`generate()` and add the missing `brief_fallback.should_run` mock to the two offenders found:
+   - `test_main_short_circuits_when_out_file_exists` (pre-existing, `skills/improve/scripts/tests/test_daily_digest.py`) — add `monkeypatch.setattr(brief_fallback, "should_run", lambda *a, **k: brief_fallback.Decision(True, "test"))` so it exercises the `produced()`-based short-circuit it's actually meant to test, deterministically.
+   - `test_build_called_with_explicit_parameters` (`lib/tests/test_morning_brief.py`) — same fix.
+
+**Fixes to the found defects, each needs its own new test:**
+7. `test_check_brief_builder_result_has_required_id_field` — `hc.check_brief_builder()`'s return dict has `"id" == "brief:builder"` and passes `guarded("brief:builder", "Morning brief builder", hc.check_brief_builder, hc.CHECK_BUDGET_S)` without falling into the `_unknown(...)` branch.
+8. `test_check_brief_builder_green_for_legacy_brief_with_no_sidecar` — brief `.md` exists, no `.built-by` sidecar (pre-feature or a crash mid-write) → green "Brief exists (legacy, no builder info)", not yellow.
+9. `test_check_brief_builder_red_when_badly_overdue` — reusing `cron_health.GRACE_MINUTES`: no builder info and now is well past the fallback's own deadline (10:35 + grace) → red, not yellow forever.
+10. `test_write_does_not_treat_an_empty_or_placeholder_file_as_already_written` — pre-seed `path` with `""` or `"(claude call failed: x)"`, call `write()`, assert it overwrites with real content (fixes the `.exists()` vs `produced()` mismatch).
+11. `test_write_is_atomic_against_a_concurrent_reader` — monkeypatch `Path.write_text`/use a temp-file+rename implementation and assert no partial content is ever visible at the final path (a reader sees either the old file or the fully-written new one, never a truncated write).
+12. `test_find_primary_device_id_skips_non_mac_devices` — registry has both `mac-mini` (macOS) and `mac-mini-2012` (Linux, `os: "linux"`); `_find_primary_device_id()` / `read_remote()`'s device lookup must resolve to the real Mac, never the Kali box, by using `machine_profile.remote_macs()` not `remote_devices()`.
+13. `test_should_run_fails_open_when_identity_lookup_raises` — `machine_profile.registry_id()` raising (corrupt `marvin-network.json`, `ioreg` missing) is caught inside `should_run()` and returns `Decision(True, ...)` ("building to be safe") instead of crashing the job outright.
+14. `test_morning_brief_schedule_leaves_room_for_the_research_digest` — not a runtime test but a documented check: confirm (by reading the final diff) that `build()`'s `should_run(..., usual_hour=9, usual_minute=35)` call site, `config/launchd/com.marvin.morning-brief.plist`'s `StartCalendarInterval` (09:35), and `lib/cron_health.py`'s `JOBS["morning-brief"]` scheduled time (09:35) all agree with each other and with the fallback's implied 10:35.
+
+**Misuse the ticket didn't name but the standing TDD bar requires (carried forward from the prior attempt's list, already present in the worktree and re-verified correct by reading them):** registry-lookup failure inside `read_remote()` fails closed to `None`; shell-injection and `$HOME`-expansion-vs-quoting tests via a real `sh -c`; `_infer_remote_path` subdirectory-preserving and outside-`$HOME` fallback tests; same-day idempotent-across-repeated-calls; unreadable local file falls through to remote; gate-off skips without writing at all three call sites.
+
+**Verify fails when code changes without a test changing:** run the **full** `lib/tests/` and `skills/` pytest suite before calling this done — not a scoped subset. The prior attempt's "run only the targeted files" strategy is exactly why the unmocked-`should_run` regression went undetected until the real comparison harness (which runs the full suite) caught it. Confirm every new/changed test fails against the current `HEAD` state before its corresponding fix lands, and passes after.
+
+## Task List
+
+1. Confirm the current worktree's uncommitted state (`lib/brief_fallback.py`, its test file, the three new fallback `.plist`s, `JOB_PLACEMENT`/`JOBS`/`check_brief_builder`, `CONTEXT.md`, ADR 0067 — already exist per `git status`) as the base. Do **not** rewrite any of these files from scratch; apply only the targeted edits below.
+2. `Edit lib/health_checks.py::check_brief_builder()`: rebuild its return using `_result("brief:builder", "Morning brief builder", severity, detail)`; add the legacy-brief-no-sidecar green branch; add the `cron_health.GRACE_MINUTES`-based red-escalation when badly overdue (import `GRACE_MINUTES` from `cron_health`).
+3. `Write`/extend `lib/tests/test_health_checks.py` with tests 7, 8, 9 above.
+4. `Edit lib/brief_fallback.py`: wrap the `machine_profile.registry_id()` call in `should_run()` in `try/except`, returning `Decision(True, "identity lookup failed — building to be safe")` on failure; change `_find_primary_device_id()` and `read_remote()`'s device-table lookup from `machine_profile.remote_devices()` to `machine_profile.remote_macs()`.
+5. `Edit lib/tests/test_brief_fallback.py` with tests 4 (boundary-exact), 12, 13 above.
+6. `Edit lib/morning_brief.py::write()`: change the idempotency guard from `if path.exists(): return path` to `if brief_fallback.produced(path): return path`; change both the brief and sidecar writes to write-to-temp-then-`rename()` for atomicity, brief first then sidecar.
+7. `Edit lib/tests/test_morning_brief.py`: add tests 10, 11 above; fix `test_build_called_with_explicit_parameters` to mock `brief_fallback.should_run`.
+8. `Edit skills/improve/scripts/tests/test_daily_digest.py::test_main_short_circuits_when_out_file_exists`: add the missing `brief_fallback.should_run` mock.
+9. `Edit config/launchd/com.marvin.morning-brief.plist` and the as-yet-unwritten/uncommitted `config/launchd/com.marvin.morning-brief-fallback.plist`: move `StartCalendarInterval` to 09:35 / 10:35 respectively; fix `WorkingDirectory` to `/Users/gileskayo/.agents` in both; fix the `~/. claude/briefs` comment typo.
+10. `Edit skills/improve/com.marvin.daily-digest.plist` and `skills/improve/com.marvin.daily-digest-fallback.plist`: fix `WorkingDirectory` to `/Users/gileskayo/.agents` in both (same bug, same fix).
+11. `Edit lib/cron_health.py::JOBS["morning-brief"]`: update the scheduled time from `"09:15"` to `"09:35"` to match.
+12. `Edit lib/morning_brief.py::build()`: update the `should_run(brief_path, usual_hour=9, usual_minute=15)` call to `usual_minute=35`.
+13. `Edit CONTEXT.md`'s "Brief owner" bullet: update morning-brief's times to 09:35 Mini / 10:35 MacBook; rename the "pending Decision B" reference to the actual decision id, `retire-cross-machine-merge`, for traceability.
+14. Delete `docs/design/pipeline-g-eskayo-marvin-458-tasks.md` if it still duplicates this doc's task list word-for-word once this plan is written as the design doc — keep exactly one design doc, not two that can drift (per the prior PR's own review note).
+15. Add the Decisions block above to the PR description, unanswered.
+16. Run the **full** `lib/tests/` and `skills/` pytest suite (not a scoped subset) and confirm zero regressions against the pre-change baseline; confirm each new/changed test fails before its fix and passes after.
+17. State plainly in the PR description, as a direct note to Gil (not doc-only): (a) `cross_machine_merge.py` is untouched pending the `retire-cross-machine-merge` Decision; (b) the actual Mini/MacBook launchd install-location swap is a manual `launchctl bootout`/`bootstrap` step on each physical machine this diff cannot perform — AC1 isn't actually in effect until that runs on both Macs, even after this PR merges.

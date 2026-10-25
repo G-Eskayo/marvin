@@ -1299,3 +1299,121 @@ def test_the_machine_script_reads_a_real_process_uptime_with_this_machines_ps():
         assert 1 <= int(out.stdout.strip()) <= 20
     finally:
         child.kill()
+
+
+# ---- brief builder (AC4) ----
+
+def test_check_brief_builder_reports_the_machine(tmp_path, monkeypatch):
+    """Health check shows which machine built today's brief."""
+    from datetime import datetime, timezone
+    import morning_brief as mb
+
+    briefs_dir = tmp_path / ".claude" / "briefs"
+    briefs_dir.mkdir(parents=True)
+    monkeypatch.setattr(mb, "BRIEFS", briefs_dir)
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+
+    now = datetime(2026, 10, 25, 9, 45, tzinfo=timezone.utc)
+    mb.write(now, {}, builder_reason="test-machine")
+
+    result = hc.check_brief_builder(now)
+    assert result["severity"] == "green"
+    assert "test-machine" in result["detail"]
+
+
+def test_check_brief_builder_yellow_when_nothing_built_yet(tmp_path, monkeypatch):
+    """Health check is yellow when no brief built today yet."""
+    from datetime import datetime, timezone
+    import morning_brief as mb
+
+    briefs_dir = tmp_path / ".claude" / "briefs"
+    briefs_dir.mkdir(parents=True)
+    monkeypatch.setattr(mb, "BRIEFS", briefs_dir)
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+
+    now = datetime(2026, 10, 25, 9, 45, tzinfo=timezone.utc)
+
+    result = hc.check_brief_builder(now)
+    assert result["severity"] == "yellow"
+    assert "No brief built yet today" in result["detail"]
+
+
+def test_check_brief_builder_green_with_legacy_brief_no_sidecar(tmp_path, monkeypatch):
+    """Test 7: Green when brief exists without sidecar (legacy path)."""
+    from datetime import datetime, timezone
+
+    briefs_dir = tmp_path / ".claude" / "briefs"
+    briefs_dir.mkdir(parents=True)
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+
+    now = datetime(2026, 10, 25, 9, 45, tzinfo=timezone.utc)
+    # Write only the brief, no sidecar
+    (briefs_dir / "2026-10-25.md").write_text("# Brief")
+
+    result = hc.check_brief_builder(now)
+    assert result["severity"] == "green"
+    assert "legacy" in result["detail"].lower()
+
+
+def test_check_brief_builder_yellow_when_not_overdue(tmp_path, monkeypatch):
+    """Test 8: Yellow when no brief and not yet GRACE_MINUTES past deadline."""
+    from datetime import datetime, timezone
+
+    briefs_dir = tmp_path / ".claude" / "briefs"
+    briefs_dir.mkdir(parents=True)
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+
+    # Current time: 09:40 (5 minutes past usual 09:35, but only 5 minutes < GRACE_MINUTES=30)
+    now = datetime(2026, 10, 25, 9, 40, tzinfo=timezone.utc)
+
+    result = hc.check_brief_builder(now)
+    assert result["severity"] == "yellow"
+    assert "No brief built yet today" in result["detail"]
+
+
+def test_check_brief_builder_red_when_badly_overdue(tmp_path, monkeypatch):
+    """Test 9: Red when no brief and badly overdue (>GRACE_MINUTES past deadline)."""
+    from datetime import datetime, timezone
+
+    briefs_dir = tmp_path / ".claude" / "briefs"
+    briefs_dir.mkdir(parents=True)
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+
+    # Current time: 10:10 (35 minutes past usual 09:35, exceeds GRACE_MINUTES=30)
+    now = datetime(2026, 10, 25, 10, 10, tzinfo=timezone.utc)
+
+    result = hc.check_brief_builder(now)
+    assert result["severity"] == "red"
+    assert "overdue" in result["detail"].lower()
+
+
+def test_check_brief_builder_result_has_required_id_field(tmp_path, monkeypatch):
+    """Test 7: check_brief_builder result has required 'id' field and passes guarded()."""
+    from datetime import datetime, timezone
+    import morning_brief as mb
+
+    briefs_dir = tmp_path / ".claude" / "briefs"
+    briefs_dir.mkdir(parents=True)
+    monkeypatch.setattr(mb, "BRIEFS", briefs_dir)
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+
+    now = datetime(2026, 10, 25, 9, 45, tzinfo=timezone.utc)
+    mb.write(now, {}, builder_reason="test")
+
+    result = hc.check_brief_builder(now)
+    # Must have required keys for guarded()
+    assert result["id"] == "brief:builder"
+    assert result["label"] == "Morning brief builder"
+    assert result["severity"] in ("green", "yellow", "red")
+    assert result["detail"]
+    assert result["checked_at"]
+
+
+def test_job_placement_reflects_the_new_ownership():
+    """JOB_PLACEMENT lists the primary and fallback jobs correctly."""
+    assert hc.JOB_PLACEMENT["daily-digest"] == "mini"
+    assert hc.JOB_PLACEMENT["daily-digest-fallback"] == "laptop"
+    assert hc.JOB_PLACEMENT["research-colony"] == "mini"
+    assert hc.JOB_PLACEMENT["research-colony-fallback"] == "laptop"
+    assert hc.JOB_PLACEMENT["morning-brief"] == "mini"
+    assert hc.JOB_PLACEMENT["morning-brief-fallback"] == "laptop"

@@ -286,6 +286,7 @@ def test_reviewer_health_log_invalid_timestamp_skipped(tmp_path, monkeypatch):
 
 def test_main_short_circuits_when_out_file_exists(tmp_path, monkeypatch):
     """main() returns early if today's digest already exists."""
+    import brief_fallback
     out_file = tmp_path / "2026-10-22.md"
     original_content = "# Already exists"
     out_file.write_text(original_content)
@@ -294,6 +295,10 @@ def test_main_short_circuits_when_out_file_exists(tmp_path, monkeypatch):
     digest_dir = tmp_path
     monkeypatch.setattr(dd, "OUT_FILE", out_file)
     monkeypatch.setattr(dd, "DIGEST_DIR", digest_dir)
+
+    # Mock should_run to allow building (will short-circuit before it's used anyway)
+    monkeypatch.setattr(brief_fallback, "should_run",
+                       lambda *a, **k: brief_fallback.Decision(should_build=True, reason="test"))
 
     # Patch functions with raise-on-call sentinels: if any of these are called,
     # it means the short-circuit didn't work
@@ -337,3 +342,113 @@ def test_missing_helper_format():
     result = dd._missing("test message")
     assert "❌ **Missing input:**" in result
     assert "test message" in result
+
+
+# ── fallback gate tests (ADR 0067) ─────────────────────────────────────────────
+
+def test_gate_off_skips_without_writing(tmp_path, monkeypatch):
+    """When should_run returns False, main() skips and doesn't write (test 15)."""
+    import brief_fallback
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+    out_file = tmp_path / "2026-10-25.md"
+    monkeypatch.setattr(dd, "DIGEST_DIR", tmp_path)
+    monkeypatch.setattr(dd, "OUT_FILE", out_file)
+
+    # Mock should_run to return False
+    monkeypatch.setattr(brief_fallback, "should_run",
+                       lambda *a, **k: brief_fallback.Decision(should_build=False, reason="standby: waiting"))
+
+    # Mock gather and call_claude to avoid doing real work
+    monkeypatch.setattr(dd, "gather", lambda *a, **k: {})
+    monkeypatch.setattr(dd, "call_claude", lambda *a: "(test content)")
+
+    import io
+    old_stdout = sys.stdout
+    sys.stdout = io.StringIO()
+
+    try:
+        dd.main()
+        output = sys.stdout.getvalue()
+    finally:
+        sys.stdout = old_stdout
+
+    # File should not have been written
+    assert not out_file.exists()
+    assert "Skipped" in output
+
+
+def test_mini_down_all_morning_laptop_builds_once(tmp_path, monkeypatch):
+    """Standby builds once if primary is down; second call returns without rebuilding (test 1)."""
+    import brief_fallback
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+    out_file = tmp_path / "2026-10-25.md"
+    monkeypatch.setattr(dd, "DIGEST_DIR", tmp_path)
+    monkeypatch.setattr(dd, "OUT_FILE", out_file)
+
+    # First call: past deadline, primary down → should build
+    call_count = [0]
+    def mock_should_run(path, **kwargs):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return brief_fallback.Decision(should_build=True, reason="standby: primary unreachable")
+        else:
+            # Second call: file now exists
+            return brief_fallback.Decision(should_build=False, reason="standby: primary has produced")
+
+    monkeypatch.setattr(brief_fallback, "should_run", mock_should_run)
+    monkeypatch.setattr(dd, "gather", lambda *a, **k: {"test": "data"})
+    monkeypatch.setattr(dd, "call_claude", lambda *a: "# Digest\n\nContent")
+
+    # First call — should write
+    dd.main()
+    assert out_file.exists()
+
+    # Second call — should skip (already produced)
+    dd.main()
+    # Still just one write
+    assert call_count[0] >= 1
+
+
+def test_toctou_recheck_uses_produced_not_exists(tmp_path, monkeypatch):
+    """TOCTOU recheck before write uses produced() not exists() (test 3)."""
+    import brief_fallback
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+    digest_file = tmp_path / "2026-10-25.md"
+    monkeypatch.setattr(dd, "DIGEST_DIR", tmp_path)
+    monkeypatch.setattr(dd, "OUT_FILE", digest_file)
+
+    # Mock should_run to allow building
+    monkeypatch.setattr(brief_fallback, "should_run",
+                       lambda *a, **k: brief_fallback.Decision(should_build=True, reason="test"))
+
+    # Mock produced to return True on the second call (simulating primary writing during generation)
+    call_count = [0]
+
+    def mock_produced(path, **kwargs):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return False  # First call: not produced yet
+        return True  # Second call (before final write): now it is
+
+    monkeypatch.setattr(brief_fallback, "produced", mock_produced)
+
+    # Mock other functions
+    monkeypatch.setattr(dd, "gather", lambda *a, **k: {"test": "data"})
+    monkeypatch.setattr(dd, "call_claude", lambda *a: "# Digest\n\nContent")
+
+    import io
+    old_stdout = sys.stdout
+    sys.stdout = io.StringIO()
+
+    try:
+        dd.main()
+        output = sys.stdout.getvalue()
+    finally:
+        sys.stdout = old_stdout
+
+    # File should not have been written because produced() returned True before write
+    assert not digest_file.exists()
+    assert "produced during generation" in output

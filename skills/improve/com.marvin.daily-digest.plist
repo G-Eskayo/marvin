@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Daily digest primary job on Mac Mini only (ADR 0067). Fallback runs on MacBook at 09:30. -->
 <plist version="1.0">
 <dict>
     <key>Label</key>
@@ -11,7 +12,7 @@
         <string>/Users/gileskayo/.agents/skills/improve/scripts/daily_digest.py</string>
     </array>
 
-    <!-- Run every day at 08:30 local time -->
+    <!-- Run every day at 08:30 local time (primary on mini) -->
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
@@ -24,7 +25,7 @@
          files to ground the digest, so an unpinned/default cwd changes what
          it finds and how long that takes. -->
     <key>WorkingDirectory</key>
-    <string>/Users/gileskayo/marvin</string>
+    <string>/Users/gileskayo/.agents</string>
 
     <key>StandardOutPath</key>
     <string>/Users/gileskayo/.claude/logs/daily-digest.log</string>
