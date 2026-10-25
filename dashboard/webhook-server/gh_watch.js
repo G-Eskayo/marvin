@@ -13,6 +13,11 @@ export function issuesEndpoint(repo) {
   return `https://api.github.com/repos/${repo}/issues?state=all&sort=updated&direction=desc&per_page=1`
 }
 
+// Repository endpoint for HEAD commit probing (docs cache refresh detection)
+export function repoEndpoint(repo) {
+  return `https://api.github.com/repos/${repo}`
+}
+
 export function createChangeDetector({ probe, onChange }) {
   const etags = new Map()
 
@@ -37,6 +42,28 @@ export function createChangeDetector({ probe, onChange }) {
   return { tick }
 }
 
+// One-repo-per-call version of createChangeDetector: capture previous etag, store new, fire onChange only when
+// a previous value existed and differs. Ignore non-200 and missing-etag responses without clobbering the stored value.
+export function createRepoOpenChecker({ probe, onChange }) {
+  const etags = new Map()
+
+  async function check(rec) {
+    if (!rec || !rec.repo) return
+    let res
+    try {
+      res = await probe(rec.repo, etags.get(rec.id))
+    } catch {
+      return // offline: keep the last etag, try next check
+    }
+    if (res.status !== 200 || !res.etag) return // 304 = unchanged; anything else = ignore
+    const previous = etags.get(rec.id)
+    etags.set(rec.id, res.etag)
+    if (previous !== undefined && previous !== res.etag) onChange(rec)
+  }
+
+  return { check }
+}
+
 // Real probe: authenticated conditional GET using the shared pipeline token (gh_auth.js).
 export function createGithubProbe(env = process.env, doFetch = fetch) {
   return async (repo, etag) => {
@@ -44,6 +71,17 @@ export function createGithubProbe(env = process.env, doFetch = fetch) {
     if (env.GH_TOKEN) headers.Authorization = `Bearer ${env.GH_TOKEN}`
     if (etag) headers['If-None-Match'] = etag
     const res = await doFetch(issuesEndpoint(repo), { headers })
+    return { status: res.status, etag: res.headers.get('etag') || undefined }
+  }
+}
+
+// Repo HEAD probe: check if a repository's default branch has changed (for docs cache refresh)
+export function createRepoHeadProbe(env = process.env, doFetch = fetch) {
+  return async (repo, etag) => {
+    const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'marvin-dashboard-watch' }
+    if (env.GH_TOKEN) headers.Authorization = `Bearer ${env.GH_TOKEN}`
+    if (etag) headers['If-None-Match'] = etag
+    const res = await doFetch(repoEndpoint(repo), { headers })
     return { status: res.status, etag: res.headers.get('etag') || undefined }
   }
 }

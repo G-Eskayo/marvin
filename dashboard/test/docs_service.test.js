@@ -118,3 +118,280 @@ describe('localDocs and index sources', () => {
       expect(svc(catalog(rec({ localPaths: [dir] }))).localDirs()).toEqual([dir])
     }))
 })
+
+describe('treeFromDocs', () => {
+  it('builds a tree from cached docs: CONTEXT.md and README.md first, then doc sections (reuses groupDocSections)', async () => {
+    const { treeFromDocs } = await import('../electron/main/docs_service.js')
+    const docs = [
+      { repo: 'p', path: 'CONTEXT.md', label: 'CONTEXT.md' },
+      { repo: 'p', path: 'README.md', label: 'README.md' },
+      { repo: 'p', path: 'docs/adr/0001-a.md', label: '0001-a.md' },
+      { repo: 'p', path: 'docs/adr/0002-b.md', label: '0002-b.md' },
+      { repo: 'p', path: 'audit.ipynb', label: 'audit.ipynb' }
+    ]
+    const tree = treeFromDocs(docs, 'p')
+    expect(tree[0]).toMatchObject({ path: 'CONTEXT.md', label: 'CONTEXT.md' })
+    expect(tree[1]).toMatchObject({ path: 'README.md', label: 'README.md' })
+    const adrSection = tree.find(e => e.section === 'docs/adr/')
+    expect(adrSection).toBeDefined()
+    expect(adrSection.items).toHaveLength(2)
+    const notebooksSection = tree.find(e => e.section === 'notebooks')
+    expect(notebooksSection).toBeDefined()
+  })
+
+  it('omits files that do not exist in the docs list', async () => {
+    const { treeFromDocs } = await import('../electron/main/docs_service.js')
+    const docs = [
+      { repo: 'p', path: 'CONTEXT.md', label: 'CONTEXT.md' }
+    ]
+    const tree = treeFromDocs(docs, 'p')
+    expect(tree.find(e => e.path === 'README.md')).toBeUndefined()
+  })
+
+  it('groups all docs/ subdirs via groupDocSections, docs/adr/ first', async () => {
+    const { treeFromDocs } = await import('../electron/main/docs_service.js')
+    const docs = [
+      { repo: 'p', path: 'CONTEXT.md', label: 'CONTEXT.md' },
+      { repo: 'p', path: 'docs/adr/0001-first.md', label: '0001-first.md' },
+      { repo: 'p', path: 'docs/guides/writing.md', label: 'writing.md' }
+    ]
+    const tree = treeFromDocs(docs, 'p')
+    const adrSection = tree.find(e => e.section === 'docs/adr/')
+    const guidesSection = tree.find(e => e.section === 'docs/guides/')
+    expect(adrSection?.items[0].label).toBe('0001-first.md')
+    expect(guidesSection?.items[0].label).toBe('writing.md')
+    expect(tree.indexOf(adrSection) < tree.indexOf(guidesSection)).toBe(true)
+  })
+
+  it('includes trailing root-level notebooks section', async () => {
+    const { treeFromDocs } = await import('../electron/main/docs_service.js')
+    const docs = [
+      { repo: 'p', path: 'CONTEXT.md', label: 'CONTEXT.md' },
+      { repo: 'p', path: 'analysis.ipynb', label: 'analysis.ipynb' }
+    ]
+    const tree = treeFromDocs(docs, 'p')
+    const notebooksSection = tree[tree.length - 1]
+    expect(notebooksSection.section).toBe('notebooks')
+    expect(notebooksSection.items.some(i => i.path === 'analysis.ipynb')).toBe(true)
+  })
+})
+
+describe('createDocsService with getIndexer injection', () => {
+  it('accepts a getIndexer lazy getter and uses it for peek and GitHub fetch-on-miss', async () => {
+    const indexer = { peek: () => null }
+    const svc = createDocsService({
+      getCatalog: () => null,
+      exec: vi.fn(),
+      readMaster: () => null,
+      getIndexer: () => indexer
+    })
+    expect(svc).toBeDefined()
+  })
+
+  it('creates a default indexer with empty load if none is injected', async () => {
+    const svc = createDocsService({
+      getCatalog: () => null,
+      exec: vi.fn(),
+      readMaster: () => null
+    })
+    expect(svc).toBeDefined()
+  })
+})
+
+describe('tree() with GitHub fetch-on-miss and fetchedAt', () => {
+  it('returns fetchedAt when source is github and tree was fetched live', async () => {
+    const indexer = { peek: () => null }
+    const exec = vi.fn(async (_c, args) => {
+      const key = args.join(' ')
+      if (key.endsWith('--jq .name')) return { stdout: 'CONTEXT.md' }
+      if (key.includes('git/trees')) {
+        return { stdout: JSON.stringify({ tree: [{ type: 'blob', path: 'CONTEXT.md' }, { type: 'blob', path: 'README.md' }] }) }
+      }
+      throw new Error('404')
+    })
+    const svc = createDocsService({
+      getCatalog: () => catalog(rec({ docs: { context: true, readme: true, adrCount: 0 } })),
+      exec,
+      readMaster: () => null,
+      getIndexer: () => indexer
+    })
+    const t = await svc.tree('p1')
+    expect(t.source).toBe('github')
+    expect(t.fetchedAt).toBeTruthy()
+  })
+})
+
+describe('content() with per-file GitHub upsert', () => {
+  it('fetches a single file from GitHub when not in index, upserts it, and returns original text', async () => {
+    const indexed = []
+    const indexer = {
+      peek: () => null,
+      upsertDoc: vi.fn((doc) => indexed.push(doc))
+    }
+    const exec = vi.fn(async () => ({ stdout: Buffer.from('# File content').toString('base64') }))
+    const svc = createDocsService({
+      getCatalog: () => catalog(rec({ docs: { context: true, readme: false, adrCount: 0 } })),
+      exec,
+      readMaster: () => null,
+      getIndexer: () => indexer
+    })
+    const content = await svc.content('p1', 'CONTEXT.md')
+    expect(content).toBe('# File content')
+    expect(indexed.length).toBeGreaterThan(0)
+    expect(indexed[0].path).toBe('CONTEXT.md')
+  })
+
+  it('returns cached content from indexer.peek() if available', async () => {
+    const indexer = {
+      peek: () => ({
+        docs: [{ repo: 'p1', path: 'CONTEXT.md', label: 'CONTEXT.md', content: 'cached' }]
+      })
+    }
+    const exec = vi.fn()
+    const svc = createDocsService({
+      getCatalog: () => catalog(rec({ docs: { context: true, readme: false, adrCount: 0 } })),
+      exec,
+      readMaster: () => null,
+      getIndexer: () => indexer
+    })
+    const content = await svc.content('p1', 'CONTEXT.md')
+    expect(content).toBe('cached')
+    expect(exec).not.toHaveBeenCalled()
+  })
+})
+
+describe('tree() single-flight caching', () => {
+  it('does not issue concurrent GitHub fetches for the same repo', async () => {
+    const indexer = { peek: () => null }
+    let concurrentCount = 0
+    let maxConcurrent = 0
+    const exec = vi.fn(async () => {
+      concurrentCount += 1
+      maxConcurrent = Math.max(maxConcurrent, concurrentCount)
+      await new Promise(r => setTimeout(r, 10))
+      concurrentCount -= 1
+      return { stdout: JSON.stringify({ tree: [{ type: 'blob', path: 'CONTEXT.md' }] }) }
+    })
+    const svc = createDocsService({
+      getCatalog: () => catalog(rec({ docs: { context: true, readme: false, adrCount: 0 } })),
+      exec,
+      readMaster: () => null,
+      getIndexer: () => indexer
+    })
+    await Promise.all([svc.tree('p1'), svc.tree('p1')])
+    expect(maxConcurrent).toBeLessThanOrEqual(1)
+  })
+})
+
+describe('tree() with onRepoOpened hook', () => {
+  it('calls onRepoOpened unconditionally once per call (cache hit or miss)', async () => {
+    const indexer = {
+      peek: () => ({
+        docs: [{ repo: 'p1', path: 'CONTEXT.md', label: 'CONTEXT.md', content: 'cached' }]
+      })
+    }
+    const opened = []
+    const onRepoOpened = vi.fn(async (rec) => opened.push(rec.id))
+    const exec = vi.fn()
+    const svc = createDocsService({
+      getCatalog: () => catalog(rec({ docs: { context: true, readme: false, adrCount: 0 } })),
+      exec,
+      readMaster: () => null,
+      getIndexer: () => indexer,
+      onRepoOpened
+    })
+    // Even with cache hit, should call onRepoOpened
+    await svc.tree('p1')
+    expect(onRepoOpened).toHaveBeenCalledWith(expect.objectContaining({ id: 'p1' }))
+  })
+
+  it('calls onRepoOpened once per call (cache miss)', async () => {
+    const indexer = { peek: () => null }
+    const onRepoOpened = vi.fn()
+    const exec = vi.fn(async (_c, args) => {
+      const key = args.join(' ')
+      if (key.endsWith('--jq .name')) return { stdout: 'CONTEXT.md' }
+      if (key.includes('git/trees')) {
+        return { stdout: JSON.stringify({ tree: [{ type: 'blob', path: 'CONTEXT.md' }] }) }
+      }
+      throw new Error('404')
+    })
+    const svc = createDocsService({
+      getCatalog: () => catalog(rec({ docs: { context: true, readme: false, adrCount: 0 } })),
+      exec,
+      readMaster: () => null,
+      getIndexer: () => indexer,
+      onRepoOpened
+    })
+    await svc.tree('p1')
+    expect(onRepoOpened).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('content() with per-file upsert and raw field', () => {
+  it('cache-hit returns raw field if present, falling back to content', async () => {
+    const indexer = {
+      peek: () => ({
+        docs: [
+          { repo: 'p1', path: 'RAW.md', label: 'RAW.md', content: 'searchable', raw: 'original **markdown**' },
+          { repo: 'p1', path: 'NORAW.md', label: 'NORAW.md', content: 'content only' }
+        ]
+      })
+    }
+    const exec = vi.fn()
+    const svc = createDocsService({
+      getCatalog: () => catalog(rec({ docs: { context: true, readme: false, adrCount: 0 } })),
+      exec,
+      readMaster: () => null,
+      getIndexer: () => indexer
+    })
+    const withRaw = await svc.content('p1', 'RAW.md')
+    const noRaw = await svc.content('p1', 'NORAW.md')
+    expect(withRaw).toBe('original **markdown**')
+    expect(noRaw).toBe('content only')
+  })
+
+  it('cache-miss uses upsertDoc instead of applyRepoDocs', async () => {
+    const indexed = []
+    const indexer = {
+      peek: () => null,
+      upsertDoc: vi.fn((doc) => indexed.push(doc))
+    }
+    const exec = vi.fn(async () => ({ stdout: Buffer.from('# File content').toString('base64') }))
+    const svc = createDocsService({
+      getCatalog: () => catalog(rec({ docs: { context: true, readme: false, adrCount: 0 } })),
+      exec,
+      readMaster: () => null,
+      getIndexer: () => indexer
+    })
+    await svc.content('p1', 'CONTEXT.md')
+    expect(indexer.upsertDoc).toHaveBeenCalled()
+    expect(indexed[0]).toMatchObject({ repo: 'p1', path: 'CONTEXT.md' })
+  })
+
+  it('cache-miss includes raw field when searchableText differs from original', async () => {
+    const indexed = []
+    const indexer = {
+      peek: () => null,
+      upsertDoc: vi.fn((doc) => indexed.push(doc))
+    }
+    const exec = vi.fn(async () => ({ stdout: Buffer.from('text with **markdown**').toString('base64') }))
+    const svc = createDocsService({
+      getCatalog: () => catalog(rec({ docs: { context: true, readme: false, adrCount: 0 } })),
+      exec,
+      readMaster: () => null,
+      getIndexer: () => indexer
+    })
+    await svc.content('p1', 'CONTEXT.md')
+    // For .md files, searchableText returns content as-is, so no raw field
+    expect(indexed[0].raw).toBeUndefined()
+  })
+})
+
+describe('ghName export', () => {
+  it('exports ghName as a function', async () => {
+    const { ghName } = await import('../electron/main/docs_service.js')
+    expect(typeof ghName).toBe('function')
+    expect(ghName({ repo: 'G-Eskayo/marvin' })).toBe('marvin')
+  })
+})

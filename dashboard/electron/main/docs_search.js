@@ -9,7 +9,21 @@ import { splitSections } from '../../src/lib/docs_text.js'
 // the background when stale; search itself is a pure function over it.
 export const INDEX_PATH = path.join(homedir(), '.claude', 'logs', 'docs-search-index.json')
 export const MAX_AGE_MS = 30 * 60 * 1000
-const EMPTY = { generated_at: null, docs: [] }
+const EMPTY = { generated_at: null, docs: [], repos: {} }
+
+export function persistIndex(index, indexPath = INDEX_PATH) {
+  mkdirSync(path.dirname(indexPath), { recursive: true })
+  writeFileSync(indexPath, JSON.stringify(index))
+}
+
+// Pure helpers: get docs or metadata for a specific repo from the index
+export function docsForRepo(index, repoId) {
+  return index.docs ? index.docs.filter((d) => d.repo === repoId) : []
+}
+
+export function fetchedAtFor(index, repoId) {
+  return index.repos && index.repos[repoId] ? index.repos[repoId].fetchedAt : null
+}
 
 function flatten(tree) {
   return tree.flatMap((e) => (e.section ? e.items : [e]))
@@ -17,6 +31,7 @@ function flatten(tree) {
 
 export async function buildDocsIndex(execFileAsync, repos, indexPath = INDEX_PATH) {
   const docs = []
+  const reposMap = {}
   for (const repo of repos) {
     let files = []
     try {
@@ -27,17 +42,22 @@ export async function buildDocsIndex(execFileAsync, repos, indexPath = INDEX_PAT
     const fetched = await Promise.all(
       files.map(async (f) => {
         try {
-          return { repo: repo.id || repo.name, path: f.path, label: f.label, content: searchableText(f.path, await fetchFileContent(execFileAsync, repo.name, f.path)) }
+          const text = await fetchFileContent(execFileAsync, repo.name, f.path)
+          const content = searchableText(f.path, text)
+          const doc = { repo: repo.id || repo.name, path: f.path, label: f.label, content }
+          if (content !== text) doc.raw = text
+          return doc
         } catch {
           return null // one unreadable file must not sink the index
         }
       })
     )
+    const repoId = repo.id || repo.name
     docs.push(...fetched.filter(Boolean))
+    reposMap[repoId] = { fetchedAt: new Date().toISOString() }
   }
-  const index = { generated_at: new Date().toISOString(), docs }
-  mkdirSync(path.dirname(indexPath), { recursive: true })
-  writeFileSync(indexPath, JSON.stringify(index))
+  const index = { generated_at: new Date().toISOString(), docs, repos: reposMap }
+  persistIndex(index, indexPath)
   return index
 }
 
@@ -45,7 +65,8 @@ export function loadIndex(indexPath = INDEX_PATH) {
   if (!existsSync(indexPath)) return EMPTY
   try {
     const data = JSON.parse(readFileSync(indexPath, 'utf-8'))
-    return Array.isArray(data.docs) ? data : EMPTY
+    if (!Array.isArray(data.docs)) return EMPTY
+    return { ...data, repos: data.repos || {} }
   } catch {
     return EMPTY
   }
@@ -54,6 +75,25 @@ export function loadIndex(indexPath = INDEX_PATH) {
 export function isStale(index, maxAgeMs = MAX_AGE_MS) {
   if (!index.generated_at) return true
   return Date.now() - Date.parse(index.generated_at) > maxAgeMs
+}
+
+// Fetch all docs for a single repository and return them with a timestamp
+export async function refreshRepoIndex(execFileAsync, repo, indexPath = INDEX_PATH) {
+  const files = flatten(await listRepoDocTree(execFileAsync, repo.name))
+  const fetched = await Promise.all(
+    files.map(async (f) => {
+      try {
+        const text = await fetchFileContent(execFileAsync, repo.name, f.path)
+        const content = searchableText(f.path, text)
+        const doc = { repo: repo.id || repo.name, path: f.path, label: f.label, content }
+        if (content !== text) doc.raw = text
+        return doc
+      } catch {
+        return null
+      }
+    })
+  )
+  return { docs: fetched.filter(Boolean), fetchedAt: new Date().toISOString() }
 }
 
 function snippetAround(text, terms) {
@@ -110,7 +150,7 @@ export function searchDocs(index, query, { repo = null, limit = 50 } = {}) {
 
 // Keeps the index fresh without ever blocking a search on a rebuild unless
 // there is nothing to search yet. `build` and `load` are injected for tests.
-export function createIndexer({ build, load = loadIndex, maxAgeMs = MAX_AGE_MS, getLocal = async () => ({ repos: new Set(), docs: [] }) }) {
+export function createIndexer({ build, load = loadIndex, maxAgeMs = MAX_AGE_MS, getLocal = async () => ({ repos: new Set(), docs: [] }), persist }) {
   let current = null
   let inflight = null
   // Local clones' docs, read once and kept: re-reading every project's docs from disk on every keystroke made a search
@@ -146,10 +186,45 @@ export function createIndexer({ build, load = loadIndex, maxAgeMs = MAX_AGE_MS, 
     return inflight
   }
 
+  // Private: update current and persist (assign current = next, fire-and-forget persist)
+  function commit(next) {
+    current = next
+    if (persist) {
+      try {
+        Promise.resolve(persist(next)).catch(() => {})
+      } catch {
+      }
+    }
+  }
+
   return {
     reindex: rebuild,
     localChanged() {
       localDirty = true
+    },
+    peek() {
+      return current || load()
+    },
+    applyRepoDocs(repoId, docs, fetchedAt) {
+      if (!current) current = load()
+      const next = {
+        generated_at: current.generated_at || new Date().toISOString(),
+        docs: [...current.docs.filter((d) => d.repo !== repoId), ...docs],
+        repos: {
+          ...current.repos,
+          [repoId]: { fetchedAt }
+        }
+      }
+      commit(next)
+    },
+    upsertDoc(doc) {
+      if (!current) current = load()
+      const next = {
+        generated_at: current.generated_at,
+        docs: [...current.docs.filter((d) => !(d.repo === doc.repo && d.path === doc.path)), doc],
+        repos: current.repos
+      }
+      commit(next)
     },
     async search(query, opts) {
       let idx = current || load()

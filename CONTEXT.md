@@ -570,7 +570,8 @@ unbounded: any chat, either machine, raw `gh`, the GitHub UI). Polling stays onl
   unless it is a UI clock (callback only calls useState setters) or allowlisted with a count and a one-line reason.
   Delegated design/fix prompts open with `lib/north_stars.py preamble`: read this file's decisions, name the pattern reused.
 - **Not built, deliberately**: a rebuild-on-pull trigger (the sync cycle already rebuilds right after it
-  pulls; only the cycle gap + 15-min settle remain) and a Docs-tab trigger (Docs still refreshes by hand).
+  pulls; only the cycle gap + 15-min settle remain).
+- **Docs-tab trigger** (built 2026-10-21): one conditional request per GitHub-sourced project *open* (cache hit or miss), with etag caching via `createRepoOpenChecker` in `gh_watch.js`. Every tree() call unconditionally fires the onRepoOpened hook once, which checks the repo HEAD etag; no extra cost when nothing changed (304). On a real change, refreshes that repo's docs index and emits a docs trigger for the renderer to redraw.
 
 ## Project catalog and the master "Where things are" doc (decided 2026-10-05)
 

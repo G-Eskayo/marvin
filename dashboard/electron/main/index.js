@@ -10,7 +10,7 @@ import { promisify } from 'util'
 import { listSubsystems, readHistory, buildIndex } from './metrics.js'
 import { getReworkStatus, clearReworkCache } from './rework.js'
 import { createGithubState, repoOfSource, gateCooldownUntil } from './github_state.js'
-import { startCheckWatch, createCheckProbe } from '../../webhook-server/gh_watch.js'
+import { startCheckWatch, createCheckProbe, createRepoHeadProbe, createRepoOpenChecker } from '../../webhook-server/gh_watch.js'
 import { createStackRetarget } from './stack_retarget.js'
 import { prsForOrderCheck, listPipelinePrs, approveMr, denyMr, fetchTicketContext, sentBackKeys, clearSentBackLabel } from './mr_review.js'
 import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
@@ -39,8 +39,8 @@ import { createTriggerHub, createReconciler, refetchesGithub } from './triggers.
 import { createMrHistory, mergedPrArgs } from './mr_history.js'
 import { appendError } from './error_log.js'
 import { listOpenPrsAcrossRepos, prListArgs, normalizeSeen, canMergeFromDashboard, repoFromPrUrl, MARVIN_REPO, pendingCheckHeads } from './mr_repos.js'
-import { createIndexer, buildDocsIndex, loadIndex } from './docs_search.js'
-import { createDocsService, MASTER_ID } from './docs_service.js'
+import { createIndexer, buildDocsIndex, loadIndex, refreshRepoIndex, persistIndex } from './docs_search.js'
+import { createDocsService, MASTER_ID, ghName } from './docs_service.js'
 import { readMergeableRepos, readUiPaths, listProfiles, setDispatch, setMergeFromDashboard } from './profiles.js'
 import { searchFiles, isRevealable, isLinkable, linkAction } from './files_search.js'
 import { listOutboxTree, readOutboxFile } from './outbox.js'
@@ -411,11 +411,31 @@ const FIND_FILE_SCRIPT = join(homedir(), '.claude', 'organize', 'find_file.py') 
 function registerDocsHandlers() {
   // The Docs tab is driven by the project catalog (lib/project_catalog.py): every project gets a
   // card, docs come from a local clone when there is one (so uncommitted edits show), else GitHub.
+
+  // Placeholder for docsIndexer, set after creation below
+  let docsIndexer = null
+
+  // Watch for repo HEAD changes: one conditional request per project open (cache hit or miss)
+  const repoOpenChecker = createRepoOpenChecker({
+    probe: createRepoHeadProbe(),
+    onChange: async (rec) => {
+      try {
+        const refreshed = await refreshRepoIndex(execFileAsync, { id: rec.id, name: ghName(rec) })
+        docsIndexer.applyRepoDocs(rec.id, refreshed.docs, refreshed.fetchedAt)
+        triggerHub.emit('docs', 'github:' + rec.repo)
+      } catch {
+        // network error, etc: silent, the next open will retry
+      }
+    }
+  })
+
   const docsService = createDocsService({
     getCatalog: () => readCatalog({ deviceId: deviceId() }),
     exec: execFileAsync,
     readMaster: () => readMasterDoc(),
-    fallbackRepos: () => readCachedRepos().repos
+    fallbackRepos: () => readCachedRepos().repos,
+    getIndexer: () => docsIndexer,
+    onRepoOpened: (rec) => repoOpenChecker.check(rec)
   })
 
   // Relationships between tickets, PRs and docs, derived from their text (relations.js). Docs come from
@@ -489,9 +509,10 @@ function registerDocsHandlers() {
   ipcMain.handle('docs:repos', () => docsService.repos())
   // Full-text search over every card, master and browsable doc; the GitHub part of the index
   // rebuilds in the background when stale, local docs are read live.
-  const docsIndexer = createIndexer({
+  docsIndexer = createIndexer({
     build: () => buildDocsIndex(execFileAsync, docsService.githubIndexRepos()),
-    getLocal: () => docsService.localDocs()
+    getLocal: () => docsService.localDocs(),
+    persist: persistIndex
   })
   // A docs change refreshes the search's in-memory copy of local docs in the background (docs_search.js).
   triggerHub.onTrigger((t) => { if (t.topic === 'docs') docsIndexer.localChanged() })

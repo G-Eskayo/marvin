@@ -4,6 +4,7 @@ import Related, { useRelated } from './Related.jsx'
 import { extractOutline } from '../lib/docs_text.js'
 import { isNotebookPath, notebookToMarkdown } from '../lib/ipynb.js'
 import { docsCacheFrom } from '../lib/docs_cache.js'
+import { ago } from '../lib/pr_fetch_status.js'
 
 function formatTimestamp(iso) {
   if (!iso) return 'never'
@@ -445,7 +446,7 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
       .tree(repoName)
       .then((r) => {
         setTree(r.tree)
-        setSource({ source: r.source, dir: r.dir })
+        setSource({ source: r.source, dir: r.dir, fetchedAt: r.fetchedAt })
       })
       .catch((err) => setError(String(err)))
   }
@@ -514,7 +515,7 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
             <>
               {source && selectedRepo && (
                 <p className="border-b border-neutral-900 px-6 py-1 text-[11px] text-neutral-600">
-                  {source.source === 'local' ? `Reading local clone · ${source.dir.replace(/^\/Users\/[^/]+/, '~')}` : source.source === 'github' ? 'Reading GitHub · no clone of this project on this machine' : source.source === 'master' ? 'Generated daily by the tidy agent from the project catalog' : 'Generated from the project catalog (no docs of its own yet)'}
+                  {source.source === 'local' ? `Reading local clone · ${source.dir.replace(/^\/Users\/[^/]+/, '~')}` : source.source === 'github' ? `Reading GitHub${source.fetchedAt ? ` · ${ago(Date.now() - Date.parse(source.fetchedAt))}` : ' · no clone of this project on this machine'}` : source.source === 'master' ? 'Generated daily by the tidy agent from the project catalog' : 'Generated from the project catalog (no docs of its own yet)'}
                 </p>
               )}
               {boardSummary && (

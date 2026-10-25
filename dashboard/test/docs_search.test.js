@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
 import { extractOutline, splitSections } from '../src/lib/docs_text.js'
-import { searchDocs, buildDocsIndex, loadIndex, isStale } from '../electron/main/docs_search.js'
+import { searchDocs, buildDocsIndex, loadIndex, isStale, refreshRepoIndex } from '../electron/main/docs_search.js'
 
 const MD = `# Title
 
@@ -136,7 +136,7 @@ describe('buildDocsIndex / loadIndex', () => {
   })
 
   it('loadIndex returns an empty index for a missing or corrupt file', () => {
-    expect(loadIndex('/nonexistent/x.json')).toEqual({ generated_at: null, docs: [] })
+    expect(loadIndex('/nonexistent/x.json')).toEqual({ generated_at: null, docs: [], repos: {} })
   })
 
   it('isStale is true when missing or older than the max age', () => {
@@ -178,6 +178,43 @@ describe('createIndexer', () => {
     const ix = createIndexer({ build, load: () => ({ generated_at: new Date().toISOString(), docs: [] }) })
     await ix.reindex()
     expect(build).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('docsForRepo', () => {
+  it('returns docs filtered to a specific repo', async () => {
+    const { docsForRepo } = await import('../electron/main/docs_search.js')
+    const index = {
+      docs: [
+        { repo: 'o/r', path: 'CONTEXT.md', label: 'CONTEXT.md', content: 'a' },
+        { repo: 'o/r', path: 'README.md', label: 'README.md', content: 'b' },
+        { repo: 'o/s', path: 'CONTEXT.md', label: 'CONTEXT.md', content: 'c' }
+      ]
+    }
+    expect(docsForRepo(index, 'o/r')).toHaveLength(2)
+    expect(docsForRepo(index, 'o/s')).toHaveLength(1)
+  })
+
+  it('returns empty array when repo not in index', async () => {
+    const { docsForRepo } = await import('../electron/main/docs_search.js')
+    const index = { docs: [] }
+    expect(docsForRepo(index, 'o/r')).toEqual([])
+  })
+})
+
+describe('fetchedAtFor', () => {
+  it('returns the fetchedAt timestamp for a repo', async () => {
+    const { fetchedAtFor } = await import('../electron/main/docs_search.js')
+    const index = {
+      repos: { 'o/r': { fetchedAt: '2026-10-21T12:00:00Z' } }
+    }
+    expect(fetchedAtFor(index, 'o/r')).toBe('2026-10-21T12:00:00Z')
+  })
+
+  it('returns null when repo not in repos metadata', async () => {
+    const { fetchedAtFor } = await import('../electron/main/docs_search.js')
+    const index = { repos: {} }
+    expect(fetchedAtFor(index, 'o/r')).toBeNull()
   })
 })
 
@@ -232,5 +269,173 @@ describe('createIndexer: local docs are read once, not on every keystroke (2026-
     await ix.search('beta')            // served from memory while the refresh runs
     await new Promise((r) => setTimeout(r, 0))
     expect((await ix.search('gamma')).results.length).toBe(1)
+  })
+})
+
+describe('createIndexer.peek and applyRepoDocs', () => {
+  it('peek() returns the current index synchronously without network', () => {
+    const ix = createIndexer({ build: async () => ({ generated_at: new Date().toISOString(), docs: [] }), load: () => ({ generated_at: null, docs: [] }) })
+    ix.applyRepoDocs('o/r', [{ repo: 'o/r', path: 'CONTEXT.md', label: 'CONTEXT.md', content: 'text' }], '2026-10-21T12:00:00Z')
+    const peeked = ix.peek()
+    expect(peeked.docs).toHaveLength(1)
+    expect(peeked.repos['o/r'].fetchedAt).toBe('2026-10-21T12:00:00Z')
+  })
+
+  it('applyRepoDocs updates the current index and persists changes', async () => {
+    const written = []
+    const persist = vi.fn(async (data) => written.push(data))
+    const ix = createIndexer({ build: async () => ({ generated_at: new Date().toISOString(), docs: [] }), load: () => ({ generated_at: null, docs: [], repos: {} }), persist })
+    ix.applyRepoDocs('o/r', [{ repo: 'o/r', path: 'CONTEXT.md', label: 'CONTEXT.md', content: 'text' }], '2026-10-21T12:00:00Z')
+    expect(written).toHaveLength(1)
+    expect(written[0].repos['o/r']).toBeDefined()
+  })
+
+  it('applyRepoDocs always preserves docs from other repos (no {merge} option)', async () => {
+    const written = []
+    const persist = vi.fn(async (data) => written.push(data))
+    const ix = createIndexer({
+      build: async () => ({ generated_at: new Date().toISOString(), docs: [] }),
+      load: () => ({ generated_at: null, docs: [], repos: {} }),
+      persist
+    })
+    ix.applyRepoDocs('o/r', [{ repo: 'o/r', path: 'CONTEXT.md', label: 'CONTEXT.md', content: 'r' }], '2026-10-21T12:00:00Z')
+    ix.applyRepoDocs('o/s', [{ repo: 'o/s', path: 'README.md', label: 'README.md', content: 's' }], '2026-10-21T13:00:00Z')
+    expect(written[1].repos).toHaveProperty('o/r')
+    expect(written[1].repos).toHaveProperty('o/s')
+    expect(written[1].docs).toHaveLength(2)
+  })
+})
+
+describe('createIndexer: async error handling', () => {
+  it('mergeAndWrite does not propagate persist errors as unhandled rejections', async () => {
+    const persist = vi.fn(async () => { throw new Error('persist failed') })
+    const ix = createIndexer({
+      build: async () => ({ generated_at: new Date().toISOString(), docs: [] }),
+      load: () => ({ generated_at: null, docs: [], repos: {} }),
+      persist
+    })
+    expect(() => {
+      ix.applyRepoDocs('o/r', [{ repo: 'o/r', path: 'CONTEXT.md', label: 'CONTEXT.md', content: 'text' }], '2026-10-21T12:00:00Z')
+    }).not.toThrow()
+    const peeked = ix.peek()
+    expect(peeked.docs).toHaveLength(1)
+  })
+
+  it('current is updated before persist is called', async () => {
+    let persistedWhen = null
+    const persist = vi.fn(async () => { persistedWhen = ix.peek() })
+    const ix = createIndexer({
+      build: async () => ({ generated_at: new Date().toISOString(), docs: [] }),
+      load: () => ({ generated_at: null, docs: [], repos: {} }),
+      persist
+    })
+    ix.applyRepoDocs('o/r', [{ repo: 'o/r', path: 'CONTEXT.md', label: 'CONTEXT.md', content: 'text' }], '2026-10-21T12:00:00Z')
+    expect(persistedWhen?.docs).toHaveLength(1)
+  })
+})
+
+describe('refreshRepoIndex: error handling', () => {
+  it('returns shape with docs array and fetchedAt timestamp', async () => {
+    const exec = vi.fn(async (_c, args) => {
+      const key = args.join(' ')
+      if (key.endsWith('--jq .name') && key.includes('CONTEXT.md')) return { stdout: 'CONTEXT.md' }
+      if (key.includes('git/trees')) {
+        return { stdout: JSON.stringify({ tree: [{ type: 'blob', path: 'CONTEXT.md' }, { type: 'blob', path: 'README.md' }] }) }
+      }
+      throw new Error('404')
+    })
+    const result = await refreshRepoIndex(exec, { id: 'p', name: 'project' })
+    expect(result).toHaveProperty('docs')
+    expect(result).toHaveProperty('fetchedAt')
+    expect(Array.isArray(result.docs)).toBe(true)
+    expect(typeof result.fetchedAt).toBe('string')
+  })
+})
+
+describe('persistIndex', () => {
+  it('exports persistIndex as a function that writes the index to disk', async () => {
+    const { persistIndex } = await import('../electron/main/docs_search.js')
+    const dir = mkdtempSync(path.join(tmpdir(), 'docsidx-'))
+    try {
+      const file = path.join(dir, 'idx.json')
+      const index = { generated_at: new Date().toISOString(), docs: [], repos: {} }
+      await persistIndex(index, file)
+      expect(loadIndex(file)).toEqual(index)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('creates directories as needed', async () => {
+    const { persistIndex } = await import('../electron/main/docs_search.js')
+    const dir = mkdtempSync(path.join(tmpdir(), 'docsidx-'))
+    try {
+      const file = path.join(dir, 'nested', 'deep', 'idx.json')
+      const index = { generated_at: new Date().toISOString(), docs: [], repos: {} }
+      await persistIndex(index, file)
+      expect(loadIndex(file)).toEqual(index)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('createIndexer.upsertDoc', () => {
+  it('exports upsertDoc as a public method that merges a single doc by (repo, path)', async () => {
+    const written = []
+    const persist = vi.fn(async (data) => written.push(data))
+    const ix = createIndexer({
+      build: async () => ({ generated_at: new Date().toISOString(), docs: [] }),
+      load: () => ({ generated_at: new Date().toISOString(), docs: [], repos: {} }),
+      persist
+    })
+    // Upsert first doc
+    ix.upsertDoc({ repo: 'o/r', path: 'CONTEXT.md', label: 'CONTEXT.md', content: 'first' })
+    expect(written[0].docs).toHaveLength(1)
+    // Upsert same path again - should replace
+    ix.upsertDoc({ repo: 'o/r', path: 'CONTEXT.md', label: 'CONTEXT.md', content: 'updated' })
+    expect(written[1].docs).toHaveLength(1)
+    expect(written[1].docs[0].content).toBe('updated')
+    // Upsert different path - should add
+    ix.upsertDoc({ repo: 'o/r', path: 'README.md', label: 'README.md', content: 'readme' })
+    expect(written[2].docs).toHaveLength(2)
+  })
+
+  it('leaves repos and generated_at untouched', async () => {
+    const persist = vi.fn()
+    const ix = createIndexer({
+      build: async () => ({ generated_at: new Date().toISOString(), docs: [] }),
+      load: () => ({ generated_at: '2026-10-20T00:00:00Z', docs: [], repos: { 'o/r': { fetchedAt: '2026-10-20T12:00:00Z' } } }),
+      persist
+    })
+    ix.upsertDoc({ repo: 'o/r', path: 'CONTEXT.md', label: 'CONTEXT.md', content: 'text' })
+    expect(persist.mock.calls[0][0].generated_at).toBe('2026-10-20T00:00:00Z')
+    expect(persist.mock.calls[0][0].repos['o/r'].fetchedAt).toBe('2026-10-20T12:00:00Z')
+  })
+})
+
+describe('doc construction with searchableText and raw field', () => {
+  it('buildDocsIndex includes content and optional raw field', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'docsidx-'))
+    try {
+      const exec = vi.fn(async (_c, args) => {
+        const key = args.join(' ')
+        if (key.includes('CONTEXT.md') && key.endsWith('.content')) {
+          return { stdout: Buffer.from('# heading\n\ntext').toString('base64') }
+        }
+        if (key.includes('CONTEXT.md') && key.endsWith('.name')) return { stdout: 'CONTEXT.md' }
+        throw new Error('404')
+      })
+      const file = path.join(dir, 'idx.json')
+      const built = await buildDocsIndex(exec, [{ name: 'p' }], file)
+      const doc = built.docs[0]
+      expect(doc).toHaveProperty('content')
+      expect(doc.content).toBe('# heading\n\ntext')
+      // raw field is only added when content differs from searchableText result
+      // For a .md file, searchableText returns content as-is, so no raw field
+      expect(doc.raw).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

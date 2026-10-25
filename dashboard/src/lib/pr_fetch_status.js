@@ -8,7 +8,7 @@ const CAUSES = [
 ]
 export const plainCause = (msg) => (CAUSES.find(([re]) => re.test(msg || '')) || [null, String(msg || 'unknown error').split('\n')[0].slice(0, 120)])[1]
 
-function ago(ms) {
+export function ago(ms) {
   const m = Math.round(ms / 60_000)
   return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago`
 }
