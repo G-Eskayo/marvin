@@ -147,7 +147,54 @@ def test_run_releases_the_claim_when_not_raised(monkeypatch):
     assert released == [20]
 
 
-def test_run_does_not_release_a_claim_on_a_successful_raise(monkeypatch):
+def _patch_stages_for_owns_claim(monkeypatch, run_id_for_ticket=None):
+    """Helper to record a claim with a specific run_id for testing _owns_claim."""
+    if run_id_for_ticket is not None:
+        for ticket_num, run_id_val in run_id_for_ticket.items():
+            ts.record_stage(ticket_num, "claimed", "started", run_id=run_id_val)
+
+
+def test_owns_claim_returns_true_when_run_id_is_none(monkeypatch):
+    """Legacy invocation (no run_id) always owns the claim."""
+    _patch_stages_for_owns_claim(monkeypatch, {20: "some-run-id"})
+    assert rt._owns_claim(20, None) is True
+
+
+def test_owns_claim_returns_true_when_recorded_run_id_matches(monkeypatch):
+    _patch_stages_for_owns_claim(monkeypatch, {20: "run-abc123"})
+    assert rt._owns_claim(20, "run-abc123") is True
+
+
+def test_owns_claim_returns_false_when_recorded_run_id_differs(monkeypatch):
+    _patch_stages_for_owns_claim(monkeypatch, {20: "run-abc123"})
+    assert rt._owns_claim(20, "run-xyz789") is False
+
+
+def test_owns_claim_returns_true_when_no_claim_was_recorded_yet(monkeypatch):
+    """New ticket; nothing claimed yet."""
+    assert rt._owns_claim(20, "run-abc123") is True
+
+
+def test_run_does_not_release_claim_when_run_id_does_not_match(monkeypatch):
+    """A run whose ID doesn't match the recorded claim owner skips _release_claim."""
+    monkeypatch.setattr(rt, "execute_ticket", lambda *a: _failing_result())
+    monkeypatch.setattr(rt, "raise_mr", lambda *a, **kw: {"raised": False, "pr_url": None, "reason": "nope"})
+    monkeypatch.setattr(rt, "_comment_failure", lambda *a: None)
+    monkeypatch.setattr(rt, "_trigger_redispatch", lambda: None)
+    monkeypatch.setattr(rt, "_consecutive_failure_streak", lambda *a: 0)
+    released = []
+    monkeypatch.setattr(rt, "_release_claim", lambda issue_number: released.append(issue_number))
+
+    # Record a claim with run_id "original-run"
+    ts.record_stage(20, "claimed", "started", run_id="original-run")
+
+    # Run with a different run_id
+    rt.run(20, run_id="different-run")
+
+    assert released == []  # _release_claim was NOT called
+
+
+def test_run_does_not_release_claim_on_a_successful_raise(monkeypatch):
     monkeypatch.setattr(rt, "execute_ticket", lambda *a: _passing_result())
     monkeypatch.setattr(rt, "test_command_for", lambda wt: ["pytest", "-q"])
     monkeypatch.setattr(rt, "capture_test_results", lambda wt, cmd: {})

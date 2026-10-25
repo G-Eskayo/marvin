@@ -24,17 +24,20 @@ still-running ticket keeps its machine "busy" (dispatch-state.json), so
 the next scan naturally skips it or picks the other machine instead.
 
 Claiming (adding claimed:<machine> label) happens right before dispatch,
-not earlier -- a small TOCTOU race against a concurrent scan on the other
-machine is possible but low-stakes for a 2-machine personal setup: worst
-case is a wasted duplicate PR, and every PR still needs human approval
-before merge regardless (the MR-review tab's whole reason to exist).
+not earlier. Two scans on the same machine are serialized with an fcntl-based
+lock (_scan_lock), and runs are tagged with unique IDs so a claim release only
+happens if the run that made it is actually done (#255). This eliminates the
+TOCTOU race and claim stranding that were found live 2026-10-07..08.
 
 Run standalone: ~/.agents/venv/bin/python ticket_pipeline.py [--dry-run]
 """
 from __future__ import annotations
+import contextlib
+import fcntl
 import json
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -56,6 +59,32 @@ RUN_TICKET_SCRIPT = str(Path.home() / ".agents" / "lib" / "run_ticket.py")
 
 REPO = "G-Eskayo/marvin"
 LOG_PREFIX = "[ticket-pipeline]"
+
+SCAN_LOCK_PATH = Path.home() / ".claude" / "logs" / "ticket-pipeline.scan.lock"
+SCAN_LOCK_TIMEOUT_S = 300
+
+
+@contextlib.contextmanager
+def _scan_lock(timeout_s: float = SCAN_LOCK_TIMEOUT_S):
+    """Acquire a per-machine scan lock using fcntl.flock, with timeout."""
+    SCAN_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    f = open(SCAN_LOCK_PATH, "w")
+    try:
+        deadline = time.time() + timeout_s
+        while True:
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.time() >= deadline:
+                    raise TimeoutError(f"Could not acquire scan lock within {timeout_s}s")
+                time.sleep(0.05)
+        try:
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+    finally:
+        f.close()
 
 
 def _label_for_device(device_id: str) -> str:
@@ -312,7 +341,7 @@ def _ensure_board(repo: str = REPO) -> None:
         print(f"{LOG_PREFIX} board registry: {e}", file=sys.stderr)
 
 
-def _claim(issue_number: int, label: str, title: str = "", repo: str = REPO) -> bool:
+def _claim(issue_number: int, label: str, title: str = "", repo: str = REPO, run_id: str | None = None) -> bool:
     cmd = ["gh", "issue", "edit", str(issue_number), "--repo", repo, "--add-label", f"claimed:{label}"]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
     if proc.returncode != 0 and "not found" in (proc.stderr or "").lower():
@@ -328,8 +357,10 @@ def _claim(issue_number: int, label: str, title: str = "", repo: str = REPO) -> 
     # title threaded through from main()'s own GitHub fetch -- the one
     # place in this flow that already has it, so the Activity tab never
     # has to show a bare number (feedback, 2026-10-01).
-    ts.record_stage(issue_number, "claimed", "started", f"claimed:{label}", title=title or None,
-                    **({"repo": repo} if repo != REPO else {}))
+    kw = {"repo": repo} if repo != REPO else {}
+    if run_id is not None:
+        kw["run_id"] = run_id
+    ts.record_stage(issue_number, "claimed", "started", f"claimed:{label}", title=title or None, **kw)
     _ensure_board(repo)
     return True
 
@@ -341,20 +372,21 @@ def _release(issue_number: int, label: str, repo: str = REPO) -> None:
     )
 
 
-def _build_wrapper_command(issue_number: int, repo: str = REPO) -> str:
+def _build_wrapper_command(issue_number: int, repo: str = REPO, run_id: str | None = None) -> str:
     """run_ticket.py handles worktree creation (from origin/main, not
     whatever ~/.agents happens to be checked out to) internally via
     execute_ticket -- no git checkout/branch dance needed here, unlike
     the pre-#95 raw-prompt dispatch this replaced. Another project's ticket is named
     `owner/repo#n` and gets its own log file."""
+    run_id_arg = f" --run-id {run_id}" if run_id else ""
     if repo == REPO:
         return (
-            f"{VENV_PYTHON} {RUN_TICKET_SCRIPT} {issue_number} "
+            f"{VENV_PYTHON} {RUN_TICKET_SCRIPT} {issue_number}{run_id_arg} "
             f"> ~/dispatch_issue{issue_number}.log 2>&1"
         )
     slug = repo.split("/")[-1].lower()
     return (
-        f"{VENV_PYTHON} {RUN_TICKET_SCRIPT} {repo}#{issue_number} "
+        f"{VENV_PYTHON} {RUN_TICKET_SCRIPT} {repo}#{issue_number}{run_id_arg} "
         f"> ~/dispatch_{slug}_issue{issue_number}.log 2>&1"
     )
 
@@ -503,19 +535,27 @@ def _select_for_profile(profile: dict, settings: dict | None = None, taken: dict
 def main() -> None:
     dry_run = "--dry-run" in sys.argv
     if dry_run:  # a preview records nothing
-        _scan(lambda *a, **k: None, dry_run=True)
+        try:
+            with _scan_lock():
+                _scan(lambda *a, **k: None, dry_run=True)
+        except TimeoutError:
+            print(f"{LOG_PREFIX} scan already running (dry-run), skipped this tick", file=sys.stderr)
         return
     import job_events
     import machine_profile
     import scanner_role
-    go, why = scanner_role.should_scan()   # primary/standby: the standby only scans when the primary has gone quiet
-    if not go:
-        print(f"{LOG_PREFIX} not scanning ({why})", file=sys.stderr)
-        return
-    print(f"{LOG_PREFIX} scanning ({why})", file=sys.stderr)
-    with job_events.job_run("ticket-pipeline", "Ticket pipeline (hourly scan)") as run:
-        _scan(run, dry_run=False)
-    scanner_role.write_heartbeat(machine_profile.registry_id())
+    try:
+        with _scan_lock():
+            go, why = scanner_role.should_scan()   # primary/standby: the standby only scans when the primary has gone quiet
+            if not go:
+                print(f"{LOG_PREFIX} not scanning ({why})", file=sys.stderr)
+                return
+            print(f"{LOG_PREFIX} scanning ({why})", file=sys.stderr)
+            with job_events.job_run("ticket-pipeline", "Ticket pipeline (hourly scan)") as run:
+                _scan(run, dry_run=False)
+            scanner_role.write_heartbeat(machine_profile.registry_id())
+    except TimeoutError:
+        print(f"{LOG_PREFIX} scan already running, skipped this tick", file=sys.stderr)
 
 
 def _scan(run, dry_run: bool) -> None:
@@ -620,6 +660,7 @@ def _scan(run, dry_run: bool) -> None:
 
 def _dispatch_one(repo, ticket, ready_total, step, summary, fail, dry_run, settings, taken, local_base, refusals) -> str:
     """Claim one ticket and dispatch it. Returns "started", "no-machine" or "failed"."""
+    import uuid
     other = repo != REPO
     issue_number = ticket["number"]
     where = f"{repo.split('/')[-1]} " if other else ""
@@ -644,13 +685,15 @@ def _dispatch_one(repo, ticket, ready_total, step, summary, fail, dry_run, setti
               f"and dispatch to {device_id} as claimed:{claim_label}", file=sys.stderr)
         return "started"
 
+    run_id = uuid.uuid4().hex[:12]
     step("Claiming ticket", f"{where}#{issue_number} {ticket['title']}")
-    claimed = _claim(issue_number, claim_label, title=ticket["title"], **({"repo": repo} if other else {}))
+    kw = {"repo": repo, "run_id": run_id} if other else {"run_id": run_id}
+    claimed = _claim(issue_number, claim_label, title=ticket["title"], **kw)
     if not claimed:
         fail(f"could not claim {where}#{issue_number}")
         return "failed"
 
-    command = _build_wrapper_command(issue_number, repo) if other else _build_wrapper_command(issue_number)
+    command = _build_wrapper_command(issue_number, repo, run_id) if other else _build_wrapper_command(issue_number, run_id=run_id)
 
     step("Dispatching", f"to {device_id}")
     label = f"ticket {repo}#{issue_number}: {ticket['title'][:40]}" if other else f"ticket #{issue_number}: {ticket['title'][:40]}"

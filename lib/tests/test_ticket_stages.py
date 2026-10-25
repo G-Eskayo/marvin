@@ -146,6 +146,25 @@ def test_writing_a_marvin_ticket_moves_its_old_bare_file_to_the_new_key(tmp_path
     assert [e["detail"] for e in ts.read_stages(158)] == ["old", "new"]
 
 
+def test_current_claim_run_id_returns_the_latest_claimed_event_run_id(tmp_path, monkeypatch):
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path)
+    ts.record_stage(42, "claimed", "started", run_id="first-run-id")
+    ts.record_stage(42, "planning", "started")
+    ts.record_stage(42, "claimed", "started", run_id="second-run-id")
+    assert ts.current_claim_run_id(42) == "second-run-id"
+
+
+def test_current_claim_run_id_returns_none_when_no_claim_recorded(tmp_path, monkeypatch):
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path)
+    ts.record_stage(42, "planning", "started")
+    assert ts.current_claim_run_id(42) is None
+
+
+def test_current_claim_run_id_returns_none_for_untracked_ticket(tmp_path, monkeypatch):
+    monkeypatch.setattr(ts, "STAGES_DIR", tmp_path)
+    assert ts.current_claim_run_id(999) is None
+
+
 def test_listing_tracked_tickets_is_per_project_and_includes_marvins_old_files(tmp_path, monkeypatch):
     monkeypatch.setattr(ts, "STAGES_DIR", tmp_path)
     (tmp_path / "2.json").write_text("[]")

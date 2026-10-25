@@ -114,6 +114,16 @@ def _release_claim(issue_number: int, repo: str = REPO) -> None:
     _release(issue_number, label) if repo == REPO else _release(issue_number, label, repo)
 
 
+def _owns_claim(issue_number: int, run_id: str | None, repo: str = REPO) -> bool:
+    """Check if this run owns the current claim on the ticket.
+    Returns True if run_id is None (legacy/manual invocation) or if the
+    recorded claim owner matches this run_id (or nothing was recorded yet)."""
+    if run_id is None:
+        return True
+    recorded_run_id = ts.current_claim_run_id(issue_number, repo if repo != REPO else None)
+    return recorded_run_id is None or recorded_run_id == run_id
+
+
 def _trigger_redispatch() -> None:
     """This machine has been free since execute_ticket returned above --
     win or lose, rather than sit idle until the next hourly
@@ -159,7 +169,7 @@ def _drop_build_output(worktree_path, profile: dict | None) -> None:
         print(f"[run_ticket] could not drop build output in {worktree_path}: {exc}", file=sys.stderr)
 
 
-def run(issue_number: int, repo: str = REPO) -> dict:
+def run(issue_number: int, repo: str = REPO, run_id: str | None = None) -> dict:
     ticket_ref = f"{repo}#{issue_number}"
     other = repo != REPO
     # marvin's path is called exactly as it always was; another project's calls carry its repo so its
@@ -225,12 +235,14 @@ def run(issue_number: int, repo: str = REPO) -> dict:
 
     if not outcome["raised"]:
         if outcome.get("env_missing"):
-            _release_claim(issue_number, **kw)
+            if _owns_claim(issue_number, run_id, repo):
+                _release_claim(issue_number, **kw)
             ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
             _trigger_redispatch()
             return outcome
         if outcome.get("timed_out"):
-            _release_claim(issue_number, **kw)
+            if _owns_claim(issue_number, run_id, repo):
+                _release_claim(issue_number, **kw)
             subprocess.run(
                 ["gh", "issue", "comment", str(issue_number), "--repo", repo, "--body",
                  f"{TIMEOUT_MARKER}: {outcome['reason']}"],
@@ -249,7 +261,8 @@ def run(issue_number: int, repo: str = REPO) -> dict:
             _park_stuck_ticket(issue_number, prior_streak + 1, **kw)
             ts.record_stage(issue_number, "done", "failed", f"parked after {prior_streak + 1} consecutive failures", **kw)
         else:
-            _release_claim(issue_number, **kw)
+            if _owns_claim(issue_number, run_id, repo):
+                _release_claim(issue_number, **kw)
             ts.record_stage(issue_number, "done", "failed", outcome["reason"][:300], **kw)
     else:
         ts.record_stage(issue_number, "done", "passed", f"PR raised: {outcome['pr_url']}", **kw)
@@ -261,15 +274,22 @@ def run(issue_number: int, repo: str = REPO) -> dict:
 
 
 def main() -> None:
-    if len(sys.argv) != 2:
-        print("usage: run_ticket.py <issue_number | owner/repo#issue_number>", file=sys.stderr)
+    argv = list(sys.argv[1:])
+    run_id = None
+    if "--run-id" in argv:
+        idx = argv.index("--run-id")
+        if idx + 1 < len(argv):
+            run_id = argv.pop(idx + 1)
+            argv.pop(idx)
+    if len(argv) != 1:
+        print("usage: run_ticket.py <issue_number | owner/repo#issue_number> [--run-id <id>]", file=sys.stderr)
         sys.exit(1)
     try:
-        repo, number = parse_ticket_arg(sys.argv[1])
+        repo, number = parse_ticket_arg(argv[0])
     except ValueError as e:
         print(e, file=sys.stderr)
         sys.exit(1)
-    outcome = run(number, repo) if repo != REPO else run(number)
+    outcome = run(number, repo, run_id) if repo != REPO else run(number, run_id=run_id)
     print(outcome)
     sys.exit(0 if outcome["raised"] else 1)
 

@@ -73,7 +73,7 @@ def _legacy_file(ticket_number: int, repo: str | None) -> Path | None:
 def record_stage(
     ticket_number: int, stage: str, status: str, detail: str = "",
     machine: str | None = None, cost_usd: float | None = None, title: str | None = None,
-    repo: str | None = None,
+    repo: str | None = None, run_id: str | None = None,
 ) -> dict:
     if stage not in VALID_STAGES:
         raise ValueError(f"unknown stage: {stage!r} (expected one of {sorted(VALID_STAGES)})")
@@ -100,6 +100,9 @@ def record_stage(
         # GitHub) -- readers take it from whichever event in a ticket's
         # timeline has it, not every event.
         "title": title,
+        # run_id tags which dispatch run claimed this ticket, so we can
+        # verify a release attempt is from the right run (#255).
+        "run_id": run_id,
     }
     path = _stage_file(ticket_number, repo)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -122,6 +125,15 @@ def read_stages(ticket_number: int, repo: str | None = None) -> list[dict]:
         return json.loads(path.read_text())
     except (json.JSONDecodeError, OSError):
         return []
+
+
+def current_claim_run_id(ticket_number: int, repo: str | None = None) -> str | None:
+    """Return the run_id of the most recent 'claimed' stage event, or None if no claim exists."""
+    stages = read_stages(ticket_number, repo)
+    for event in reversed(stages):
+        if event.get("stage") == "claimed":
+            return event.get("run_id")
+    return None
 
 
 def list_tracked_tickets(repo: str | None = None) -> list[int]:

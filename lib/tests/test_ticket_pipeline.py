@@ -25,6 +25,12 @@ def _isolate_ticket_stages(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_scan_lock(tmp_path, monkeypatch):
+    # The scan lock uses fcntl; tests should not contend with a real lock.
+    monkeypatch.setattr(tp, "SCAN_LOCK_PATH", tmp_path / "scan.lock")
+
+
+@pytest.fixture(autouse=True)
 def _scan_as_the_primary(monkeypatch):
     """main() asks scanner_role whether this machine should scan. On the macbook (the standby, with the mac-mini's heartbeat fresh)
     the answer is no, which made 13 of these tests fail there and not on the mac-mini. The tests are about what a scan does, so
@@ -866,3 +872,90 @@ def test_scan_summary_reports_breaker_even_when_dispatchable_project_has_no_read
 
     # Check that the summary mentions the breaker, not just "no ready tickets".
     assert any("circuit breaker" in s.lower() for s in summaries)
+
+
+# ── scan lock: serialization against concurrent scans on one machine (#255) ──
+
+def test_scan_lock_blocks_concurrent_acquirer_and_raises_timeout(monkeypatch, tmp_path):
+    import threading
+    import time
+    lock_path = tmp_path / "test.lock"
+    results = []
+
+    def holder():
+        try:
+            with tp._scan_lock(timeout_s=0.2):
+                results.append("holder acquired")
+                time.sleep(0.3)  # hold it long enough for the waiter to time out
+        except Exception as e:
+            results.append(f"holder error: {e}")
+
+    def waiter():
+        try:
+            with tp._scan_lock(timeout_s=0.1):
+                results.append("waiter acquired")
+        except TimeoutError:
+            results.append("waiter timeout")
+        except Exception as e:
+            results.append(f"waiter error: {e}")
+
+    monkeypatch.setattr(tp, "SCAN_LOCK_PATH", lock_path)
+    holder_thread = threading.Thread(target=holder)
+    waiter_thread = threading.Thread(target=waiter)
+    holder_thread.start()
+    time.sleep(0.05)  # let holder acquire first
+    waiter_thread.start()
+    holder_thread.join()
+    waiter_thread.join()
+    assert "holder acquired" in results
+    assert "waiter timeout" in results
+
+
+def test_main_logs_and_does_nothing_when_scan_lock_cannot_be_acquired(monkeypatch, capsys):
+    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda: [{"number": 20, "title": "x", "createdAt": "2026-01-01T00:00:00Z", "labels": []}])
+    claim_calls = []
+    monkeypatch.setattr(tp, "_claim", lambda n, l, **kw: claim_calls.append((n, l)) or True)
+    dispatch_calls = []
+    monkeypatch.setattr(tp, "dispatch", lambda *a, **kw: dispatch_calls.append((a, kw)))
+
+    # Simulate lock being already held by monkeypatching _scan_lock to always raise
+    original_lock = tp._scan_lock
+    def locked_lock(*a, **k):
+        raise TimeoutError("scan already running")
+    monkeypatch.setattr(tp, "_scan_lock", locked_lock)
+
+    monkeypatch.setattr(sys, "argv", ["ticket_pipeline.py"])
+    tp.main()
+
+    assert claim_calls == []
+    assert dispatch_calls == []
+    assert "scan already running" in capsys.readouterr().err
+
+
+# ── build_wrapper_command includes run_id when given ───────────────────────
+
+def test_build_wrapper_command_includes_run_id_when_provided():
+    command = tp._build_wrapper_command(20, run_id="abc123def456")
+    assert "--run-id abc123def456" in command
+    assert f"{tp.RUN_TICKET_SCRIPT} 20 --run-id abc123def456" in command
+
+
+def test_build_wrapper_command_omits_run_id_when_none():
+    command = tp._build_wrapper_command(20, run_id=None)
+    assert "--run-id" not in command
+
+
+# ── _claim records the run_id on the stage event ───────────────────────────
+
+def test_claim_records_run_id_on_the_claimed_stage_event(monkeypatch):
+    monkeypatch.setattr(tp.subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=0, stdout="", stderr=""))
+    tp._claim(20, "mac-mini", title="Test ticket", run_id="xyz789")
+    events = ts.read_stages(20)
+    assert events[0]["run_id"] == "xyz789"
+
+
+def test_claim_records_none_for_run_id_when_not_provided(monkeypatch):
+    monkeypatch.setattr(tp.subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=0, stdout="", stderr=""))
+    tp._claim(20, "mac-mini", title="Test ticket")
+    events = ts.read_stages(20)
+    assert events[0]["run_id"] is None
