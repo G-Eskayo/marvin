@@ -4,6 +4,7 @@
 from __future__ import annotations
 import json
 import pytest
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1230,3 +1231,286 @@ def test_output_contracts_reach_health(monkeypatch):
     import output_contracts
     monkeypatch.setattr(output_contracts, "health_findings", lambda: [{"id": "contract:x", "severity": "red"}])
     assert hc.check_output_contracts() == [{"id": "contract:x", "severity": "red"}]
+
+
+# ── scan_merged_prs ──────────────────────────────────────────────────────
+
+def test_scan_merged_prs_returns_none_on_gh_failure():
+    def fake_run(*args, **kw):
+        import subprocess
+        raise subprocess.TimeoutExpired("gh", 10)
+    result = hc.scan_merged_prs("G-Eskayo/marvin", run=fake_run)
+    assert result is None
+
+
+def test_scan_merged_prs_handles_json_decode_error():
+    class FakeProc:
+        returncode = 0
+        stdout = "invalid json"
+    def fake_run(*args, **kw):
+        return FakeProc()
+    result = hc.scan_merged_prs("G-Eskayo/marvin", run=fake_run)
+    assert result is None
+
+
+def test_scan_merged_prs_scores_and_detects_core():
+    class FakeProc:
+        returncode = 0
+        stdout = json.dumps([
+            {
+                "number": 123,
+                "mergedAt": "2026-10-11T10:00:00Z",
+                "body": "mutation score: 85%",
+                "files": [{"path": "lib/health_checks.py"}, {"path": "config/auto_merge.json"}]
+            },
+            {
+                "number": 122,
+                "mergedAt": "2026-10-10T10:00:00Z",
+                "body": "no score",
+                "files": [{"path": "README.md"}]
+            }
+        ])
+    def fake_run(*args, **kw):
+        return FakeProc()
+    result = hc.scan_merged_prs("G-Eskayo/marvin", run=fake_run)
+    assert len(result) == 2
+    assert result[0]["number"] == 123
+    assert result[0]["score"] == 85
+    assert result[0]["touches_core"] is True
+    assert result[1]["number"] == 122
+    assert result[1]["score"] is None
+    assert result[1]["touches_core"] is False
+
+
+# ── check_mutation_score_trend ──────────────────────────────────────────
+
+def test_mutation_score_trend_green_no_data_yet():
+    result = hc.check_mutation_score_trend(merged=[])
+    assert result["severity"] == "green"
+    assert "no data yet" in result["detail"]
+    assert result["value"] is None
+
+
+def test_mutation_score_trend_shows_latest_score():
+    merged = [
+        {"number": 100, "score": 85, "touches_core": False},
+        {"number": 99, "score": 92, "touches_core": False},
+    ]
+    result = hc.check_mutation_score_trend(merged=merged)
+    assert result["value"] == 85
+    assert "85%" in result["detail"]
+
+
+def test_mutation_score_trend_yellow_when_score_below_80():
+    merged = [{"number": 100, "score": 79, "touches_core": False}]
+    result = hc.check_mutation_score_trend(merged=merged)
+    assert result["severity"] == "yellow"
+    assert "79%" in result["detail"]
+
+
+# ── check_merge_quality ──────────────────────────────────────────────────
+
+def test_merge_quality_red_when_core_below_80():
+    merged = [
+        {"number": 100, "score": 78, "touches_core": True},
+    ]
+    result = hc.check_merge_quality(merged=merged)
+    assert result["severity"] == "red"
+    assert "#100" in result["detail"]
+
+
+def test_merge_quality_red_when_core_has_no_score():
+    merged = [
+        {"number": 100, "score": None, "touches_core": True},
+    ]
+    result = hc.check_merge_quality(merged=merged)
+    assert result["severity"] == "red"
+    assert "#100" in result["detail"]
+
+
+def test_merge_quality_yellow_when_non_core_below_80():
+    merged = [
+        {"number": 100, "score": 78, "touches_core": False},
+    ]
+    result = hc.check_merge_quality(merged=merged)
+    assert result["severity"] == "yellow"
+    assert "#100" in result["detail"]
+
+
+def test_merge_quality_green_when_all_good():
+    merged = [
+        {"number": 100, "score": 85, "touches_core": False},
+        {"number": 99, "score": 92, "touches_core": True},
+    ]
+    result = hc.check_merge_quality(merged=merged)
+    assert result["severity"] == "green"
+
+
+# ── check_test_skip_trend ────────────────────────────────────────────────
+
+def test_test_skip_trend_green_missing_file():
+    result = hc.check_test_skip_trend(log_path=Path("/nonexistent/file"))
+    assert result["severity"] == "green"
+    assert "no data yet" in result["detail"]
+    assert result["value"] == 0
+
+
+def test_test_skip_trend_counts_trailing_7_days(tmp_path):
+    log_file = tmp_path / "test-skips.jsonl"
+    now = datetime(2026, 10, 11, 12, 0, tzinfo=timezone.utc)
+    cutoff = now - timedelta(days=7)
+
+    log_file.write_text(json.dumps({"kind": "reason", "at": (now - timedelta(days=1)).timestamp()}) + "\n" +
+                        json.dumps({"kind": "reason", "at": (now - timedelta(days=2)).timestamp()}) + "\n" +
+                        json.dumps({"kind": "auto-sync", "at": (now - timedelta(days=3)).timestamp()}) + "\n" +
+                        json.dumps({"kind": "reason", "at": (cutoff - timedelta(hours=1)).timestamp()}) + "\n")
+
+    result = hc.check_test_skip_trend(log_path=log_file, now=now)
+    assert result["value"] == 2  # Only the 2 "reason" entries in the last 7 days
+
+
+def test_test_skip_trend_yellow_on_burst(tmp_path):
+    log_file = tmp_path / "test_skip_burst.jsonl"
+    now = datetime(2026, 10, 11, 12, 0, tzinfo=timezone.utc)
+
+    # Write 4 entries on the same day (burst)
+    entries = [
+        json.dumps({"kind": "reason", "at": (now - timedelta(hours=i)).timestamp()})
+        for i in range(4)
+    ]
+    log_file.write_text("\n".join(entries) + "\n")
+
+    result = hc.check_test_skip_trend(log_path=log_file, now=now)
+    assert result["severity"] == "yellow"
+    assert "burst" in result["detail"]
+
+
+# ── repo growth helpers ──────────────────────────────────────────────────
+
+def test_top_level_dirs_returns_lowercase(tmp_path):
+    # Create a simple git repo
+    import subprocess as sp
+    sp.run(["git", "init"], cwd=tmp_path, capture_output=True)
+    sp.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, capture_output=True)
+    sp.run(["git", "config", "user.name", "Test"], cwd=tmp_path, capture_output=True)
+
+    # Create some directories
+    (tmp_path / "MyDir").mkdir()
+    (tmp_path / "MyDir" / "file.txt").write_text("content")
+    (tmp_path / "OtherDir").mkdir()
+    (tmp_path / "OtherDir" / "file.txt").write_text("content")
+
+    sp.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+    sp.run(["git", "commit", "-m", "initial"], cwd=tmp_path, capture_output=True)
+
+    dirs = hc._top_level_dirs(tmp_path)
+    assert dirs is not None
+    assert "mydir" in dirs
+    assert "otherdir" in dirs
+
+
+def test_top_level_dirs_timeout_returns_none(tmp_path):
+    def fake_run(*args, **kw):
+        raise subprocess.TimeoutExpired("git", 10)
+    result = hc._top_level_dirs(tmp_path, run=fake_run)
+    assert result is None
+
+
+def test_new_top_level_this_week_handles_no_old_commit(tmp_path):
+    # On a brand-new repo, there's no commit from 7 days ago, so the function returns None
+    import subprocess as sp
+    sp.run(["git", "init"], cwd=tmp_path, capture_output=True)
+    sp.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, capture_output=True)
+    sp.run(["git", "config", "user.name", "Test"], cwd=tmp_path, capture_output=True)
+
+    (tmp_path / "OldDir").mkdir()
+    (tmp_path / "OldDir" / "file.txt").write_text("old")
+    sp.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+    sp.run(["git", "commit", "-m", "old"], cwd=tmp_path, capture_output=True)
+
+    now = datetime.now(timezone.utc)
+    result = hc.new_top_level_this_week(tmp_path, now=now)
+    # On a fresh repo with only recent commits, result should be None
+    assert result is None
+
+
+# ── check_repo_growth ────────────────────────────────────────────────────
+
+def test_repo_growth_returns_four_results(tmp_path):
+    import subprocess as sp
+    sp.run(["git", "init"], cwd=tmp_path, capture_output=True)
+    sp.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, capture_output=True)
+    sp.run(["git", "config", "user.name", "Test"], cwd=tmp_path, capture_output=True)
+
+    (tmp_path / "file1.txt").write_text("content")
+    (tmp_path / "dir").mkdir()
+    (tmp_path / "dir" / "file2.txt").write_text("content")
+    sp.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+    sp.run(["git", "commit", "-m", "initial"], cwd=tmp_path, capture_output=True)
+
+    results = hc.check_repo_growth(repo_path=tmp_path)
+    assert len(results) == 4
+    assert results[0]["id"] == "repo-growth:files"
+    assert results[1]["id"] == "repo-growth:folders"
+    assert results[2]["id"] == "repo-growth:size-mb"
+    assert results[3]["id"] == "repo-growth:new-top-level-weekly"
+
+
+def test_repo_growth_counts_files_and_folders(tmp_path):
+    import subprocess as sp
+    sp.run(["git", "init"], cwd=tmp_path, capture_output=True)
+    sp.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, capture_output=True)
+    sp.run(["git", "config", "user.name", "Test"], cwd=tmp_path, capture_output=True)
+
+    (tmp_path / "file1.txt").write_text("a" * 100)
+    (tmp_path / "dir1").mkdir()
+    (tmp_path / "dir1" / "file2.txt").write_text("b" * 200)
+    (tmp_path / "dir1" / "subdir").mkdir()
+    (tmp_path / "dir1" / "subdir" / "file3.txt").write_text("c" * 300)
+    sp.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+    sp.run(["git", "commit", "-m", "initial"], cwd=tmp_path, capture_output=True)
+
+    results = {r["id"]: r for r in hc.check_repo_growth(repo_path=tmp_path)}
+
+    assert results["repo-growth:files"]["value"] == 3
+    assert results["repo-growth:folders"]["value"] == 2  # dir1, dir1/subdir
+    assert results["repo-growth:size-mb"]["value"] >= 0  # May be very small, rounds to 0
+
+
+def test_repo_growth_yellow_on_exceed_new_top_level_limit(tmp_path):
+    # Create a repo with a commit from 7+ days ago, then add new dirs to test limit
+    import subprocess as sp
+    from datetime import datetime, timezone
+
+    sp.run(["git", "init"], cwd=tmp_path, capture_output=True)
+    sp.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, capture_output=True)
+    sp.run(["git", "config", "user.name", "Test"], cwd=tmp_path, capture_output=True)
+
+    # Create initial commit
+    (tmp_path / "initial.txt").write_text("x")
+    sp.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+    sp.run(["git", "commit", "-m", "initial"], cwd=tmp_path, capture_output=True)
+
+    # Backdate the commit by 8 days
+    import os
+    env = os.environ.copy()
+    env["GIT_COMMITTER_DATE"] = "8 days ago"
+    env["GIT_AUTHOR_DATE"] = "8 days ago"
+
+    # Reset to make a dated commit
+    sp.run(["git", "reset", "--soft", "HEAD~1"], cwd=tmp_path, capture_output=True)
+    sp.run(["git", "commit", "-m", "initial", "--date", "8 days ago"], cwd=tmp_path, capture_output=True, env=env)
+
+    # Add multiple new top-level dirs (after the dated commit)
+    for i in range(5):
+        (tmp_path / f"new{i}").mkdir(exist_ok=True)
+        (tmp_path / f"new{i}" / "file.txt").write_text("x")
+    sp.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+    sp.run(["git", "commit", "-m", "add dirs"], cwd=tmp_path, capture_output=True)
+
+    now = datetime.now(timezone.utc)
+    results = {r["id"]: r for r in hc.check_repo_growth(repo_path=tmp_path, rules={"new_top_level_per_week": 2}, now=now)}
+    result = results["repo-growth:new-top-level-weekly"]
+    # With 5 new dirs and limit of 2, should be yellow (>=) or red (>)
+    assert result["severity"] in ("yellow", "red")
+    assert result["value"] == 5

@@ -29,6 +29,9 @@ import cron_health as ch  # noqa: E402
 import machine_profile  # noqa: E402
 from task_dispatch import TAILSCALE_BIN, TAILSCALE_ENV  # noqa: E402  (absolute path -- launchd's PATH omits the shell's additions)
 import metrics_registry as mr  # noqa: E402
+import auto_merge_policy  # noqa: E402
+import auto_merge_shadow  # noqa: E402
+import project_catalog  # noqa: E402
 
 HOME = Path.home()
 STATUS_PATH = HOME / ".claude" / "logs" / "health-status.json"
@@ -583,34 +586,34 @@ def check_github_budget(query=None) -> dict:
 
 
 def check_missing_profiles(snapshot: dict | None = None, repos: list[str] | None = None, gh=None, profiles_dir: Path | None = None) -> list[dict]:
-	"""Projects with ready-for-agent tickets but no execution profile will never dispatch.
-	This check surfaces those projects so profiles can be created and dispatch turned on.
-	Uses `ticket_agents.ready_elsewhere()` to find projects with unclaimed, unblocked,
-	non-pinned ready-for-agent tickets, then checks if each has a profile."""
-	if snapshot is None:
-		import ticket_agents
-		repos = repos or ticket_agents.board_repos()
-		if not repos:
-			return []
-		gh = gh or ticket_agents._gh
-		snapshot = ticket_agents.collect(repos, gh=gh)
+    """Projects with ready-for-agent tickets but no execution profile will never dispatch.
+    This check surfaces those projects so profiles can be created and dispatch turned on.
+    Uses `ticket_agents.ready_elsewhere()` to find projects with unclaimed, unblocked,
+    non-pinned ready-for-agent tickets, then checks if each has a profile."""
+    if snapshot is None:
+        import ticket_agents
+        repos = repos or ticket_agents.board_repos()
+        if not repos:
+            return []
+        gh = gh or ticket_agents._gh
+        snapshot = ticket_agents.collect(repos, gh=gh)
 
-	import ticket_agents
-	import project_profile
+    import ticket_agents
+    import project_profile
 
-	ready = ticket_agents.ready_elsewhere(snapshot)  # {repo: count}
-	results = []
-	for repo, count in sorted(ready.items()):
-		profile = project_profile.load_profile(repo, directory=profiles_dir)
-		if profile is not None:
-			continue  # profile exists, nothing to report
+    ready = ticket_agents.ready_elsewhere(snapshot)  # {repo: count}
+    results = []
+    for repo, count in sorted(ready.items()):
+        profile = project_profile.load_profile(repo, directory=profiles_dir)
+        if profile is not None:
+            continue  # profile exists, nothing to report
 
-		cid = f"profile:missing:{repo}"
-		label = repo
-		detail = f"{count} ready-for-agent ticket(s) waiting to dispatch; no execution profile in config/projects/ — pipeline will not attempt these tickets until the profile is created and dispatch is switched on"
-		results.append(_result(cid, label, "red", detail, value=count))
+        cid = f"profile:missing:{repo}"
+        label = repo
+        detail = f"{count} ready-for-agent ticket(s) waiting to dispatch; no execution profile in config/projects/ — pipeline will not attempt these tickets until the profile is created and dispatch is switched on"
+        results.append(_result(cid, label, "red", detail, value=count))
 
-	return results
+    return results
 
 
 # ── parallel dispatch: keeping up with the queue ───────────────────────────
@@ -619,75 +622,75 @@ _GUARD_MARKERS = ("disk ", "GitHub request budget", "circuit breaker tripped", "
 
 
 def _classify_stall_reason(refusals: list[str]) -> str:
-	"""Classify why a ticket cannot be dispatched based on refusal reasons from the guards."""
-	if any(any(m in r for m in _GUARD_MARKERS) for r in refusals):
-		return "guard refusal"
-	if not refusals or any(" is full:" in r for r in refusals):
-		return "no suitable machine"
-	return "nothing eligible"
+    """Classify why a ticket cannot be dispatched based on refusal reasons from the guards."""
+    if any(any(m in r for m in _GUARD_MARKERS) for r in refusals):
+        return "guard refusal"
+    if not refusals or any(" is full:" in r for r in refusals):
+        return "no suitable machine"
+    return "nothing eligible"
 
 
 def evaluate_parallel_dispatch(settings: dict, pools: dict[str, list], inflight: dict[str, int],
                                local_base: int, select_for_profile) -> tuple[str, str]:
-	"""(severity, detail) for the parallel dispatch queue. Evaluation order:
-	1. Parallel dispatch is off -> green
-	2. All slots are in use -> green
-	3. Nothing waiting -> green
-	4. Repos at their per-project limit -> yellow
-	5. No suitable machine available -> yellow
-	6. Ready ticket and idle slot -> green
-	Pools maps repo -> list of ready tickets. Inflight maps repo -> count of running tickets.
-	select_for_profile(profile, settings, taken, local_base, refusals) -> machine or None."""
-	cid, label = "dispatch:parallel", "Parallel dispatch keeping up"
+    """(severity, detail) for the parallel dispatch queue. Evaluation order:
+    1. Parallel dispatch is off -> green
+    2. All slots are in use -> green
+    3. Nothing waiting -> green
+    4. Repos at their per-project limit -> yellow
+    5. No suitable machine available -> yellow
+    6. Ready ticket and idle slot -> green
+    Pools maps repo -> list of ready tickets. Inflight maps repo -> count of running tickets.
+    select_for_profile(profile, settings, taken, local_base, refusals) -> machine or None."""
+    cid, label = "dispatch:parallel", "Parallel dispatch keeping up"
 
-	if not settings.get("parallel"):
-		return "green", "parallel dispatch is off"
+    if not settings.get("parallel"):
+        return "green", "parallel dispatch is off"
 
-	total_inflight = sum(inflight.values())
-	max_total = settings.get("max_total", 2)
-	if total_inflight >= max_total:
-		return "green", f"{total_inflight} of {max_total} slots in use"
+    total_inflight = sum(inflight.values())
+    max_total = settings.get("max_total", 2)
+    if total_inflight >= max_total:
+        return "green", f"{total_inflight} of {max_total} slots in use"
 
-	if not any(pools.values()):
-		return "green", "nothing waiting"
+    if not any(pools.values()):
+        return "green", "nothing waiting"
 
-	waiting_repos = sorted([r for r in pools if pools[r]])
-	max_per_project = settings.get("max_per_project", 1)
+    waiting_repos = sorted([r for r in pools if pools[r]])
+    max_per_project = settings.get("max_per_project", 1)
 
-	at_limit = []
-	eligible = []
-	for repo in waiting_repos:
-		if inflight.get(repo, 0) >= max_per_project:
-			at_limit.append(repo)
-		else:
-			eligible.append(repo)
+    at_limit = []
+    eligible = []
+    for repo in waiting_repos:
+        if inflight.get(repo, 0) >= max_per_project:
+            at_limit.append(repo)
+        else:
+            eligible.append(repo)
 
-	if at_limit and not eligible:
-		detail = "project at its limit: " + "; ".join(f"{r} ({inflight[r]} of {max_per_project})" for r in at_limit)
-		return "yellow", detail
+    if at_limit and not eligible:
+        detail = "project at its limit: " + "; ".join(f"{r} ({inflight[r]} of {max_per_project})" for r in at_limit)
+        return "yellow", detail
 
-	if not eligible:
-		return "green", "idle slot and ready ticket, awaiting the next scan"
+    if not eligible:
+        return "green", "idle slot and ready ticket, awaiting the next scan"
 
-	for repo in eligible:
-		profile = {"machines": []}
-		try:
-			import project_profile
-			prof = project_profile.load_profile(repo)
-			if prof:
-				profile = prof
-		except Exception:  # noqa: BLE001
-			pass
+    for repo in eligible:
+        profile = {"machines": []}
+        try:
+            import project_profile
+            prof = project_profile.load_profile(repo)
+            if prof:
+                profile = prof
+        except Exception:  # noqa: BLE001
+            pass
 
-		refusals = []
-		machine = select_for_profile(profile, settings, taken={}, local_base=local_base, refusals=refusals)
-		if machine is not None:
-			return "green", "idle slot and ready ticket, awaiting the next scan"
+        refusals = []
+        machine = select_for_profile(profile, settings, taken={}, local_base=local_base, refusals=refusals)
+        if machine is not None:
+            return "green", "idle slot and ready ticket, awaiting the next scan"
 
-		reason = _classify_stall_reason(refusals)
-		return "yellow", reason
+        reason = _classify_stall_reason(refusals)
+        return "yellow", reason
 
-	return "green", "idle slot and ready ticket, awaiting the next scan"
+    return "green", "idle slot and ready ticket, awaiting the next scan"
 
 
 def check_missed_purposes(list_missed=None) -> list[dict]:
@@ -708,33 +711,33 @@ def check_output_contracts() -> list[dict]:
 
 
 def check_parallel_dispatch() -> dict:
-	"""Check if parallel dispatch is keeping up with the queue."""
-	cid, label = "dispatch:parallel", "Parallel dispatch keeping up"
+    """Check if parallel dispatch is keeping up with the queue."""
+    cid, label = "dispatch:parallel", "Parallel dispatch keeping up"
 
-	import dispatch_concurrency
-	import project_profile as pp
+    import dispatch_concurrency
+    import project_profile as pp
 
-	settings = dispatch_concurrency.load()
-	if not settings.get("parallel"):
-		return _result(cid, label, "green", "parallel dispatch is off")
+    settings = dispatch_concurrency.load()
+    if not settings.get("parallel"):
+        return _result(cid, label, "green", "parallel dispatch is off")
 
-	import ticket_pipeline as tp
-	import failure_breaker
+    import ticket_pipeline as tp
+    import failure_breaker
 
-	repos = [tp.REPO, *pp.dispatchable_repos()]
-	breaker_trips = failure_breaker.tripped()
-	repos = [r for r in repos if r not in {t.get("project", tp.REPO) for t in breaker_trips}]
+    repos = [tp.REPO, *pp.dispatchable_repos()]
+    breaker_trips = failure_breaker.tripped()
+    repos = [r for r in repos if r not in {t.get("project", tp.REPO) for t in breaker_trips}]
 
-	pools = {r: tp._unclaimed_ready_tickets(repo=r) for r in repos}
-	inflight = tp._inflight_by_repo(repos)
-	local_base = tp._local_slots_used()
+    pools = {r: tp._unclaimed_ready_tickets(repo=r) for r in repos}
+    inflight = tp._inflight_by_repo(repos)
+    local_base = tp._local_slots_used()
 
-	def select_for_profile_impl(profile, settings, taken=None, local_base=0, refusals=None):
-		return tp._select_for_profile(profile if profile else {"machines": list(tp.MARVIN_MACHINES)},
-		                               settings, taken=taken, local_base=local_base, refusals=refusals)
+    def select_for_profile_impl(profile, settings, taken=None, local_base=0, refusals=None):
+        return tp._select_for_profile(profile if profile else {"machines": list(tp.MARVIN_MACHINES)},
+                                       settings, taken=taken, local_base=local_base, refusals=refusals)
 
-	severity, detail = evaluate_parallel_dispatch(settings, pools, inflight, local_base, select_for_profile_impl)
-	return _result(cid, label, severity, detail)
+    severity, detail = evaluate_parallel_dispatch(settings, pools, inflight, local_base, select_for_profile_impl)
+    return _result(cid, label, severity, detail)
 
 
 TRIGGER_MISS_LOG = Path.home() / ".claude" / "logs" / "trigger-misses.jsonl"
@@ -1395,13 +1398,314 @@ def coverage(results: list[dict]) -> dict:
     }
 
 
+# ── merged PR quality tracking ──────────────────────────────────────────
+
+def scan_merged_prs(repo: str, limit: int = 20, rules: dict | None = None, run=subprocess.run) -> list[dict] | None:
+    """Scan merged PRs and score them. Returns [{"number": int, "score": int|None,
+    "touches_core": bool}, ...] in reverse chronological order.
+    Returns None on FileNotFoundError/OSError/TimeoutExpired/json.JSONDecodeError/non-list JSON,
+    [] on genuine empty result. Best-effort: never raises."""
+    try:
+        proc = run(["gh", "pr", "list", "--repo", repo, "--state", "merged",
+                    "--limit", str(limit), "--json", "number,mergedAt,body,files"],
+                   capture_output=True, text=True, timeout=30, env=project_catalog.run_env())
+        if proc.returncode != 0:
+            return None
+        prs = json.loads(proc.stdout)
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError, OSError):
+        return None
+
+    if not isinstance(prs, list):
+        return None
+
+    rules = rules or auto_merge_policy.load_rules()
+    results = []
+    try:
+        for pr in prs:
+            if not isinstance(pr, dict):
+                continue
+            number = pr.get("number")
+            if not number:
+                continue
+            score = auto_merge_shadow.mutation_score(pr.get("body", ""))
+            touches_core = False
+            for f in pr.get("files", []) or []:
+                if not isinstance(f, dict):
+                    continue
+                path = f.get("path", "")
+                if auto_merge_policy.area(path, rules, set()) == "core":
+                    touches_core = True
+                    break
+            results.append({"number": number, "mergedAt": pr.get("mergedAt"), "score": score, "touches_core": touches_core})
+    except (TypeError, ValueError, KeyError):
+        pass
+    return results
+
+
+def check_mutation_score_trend(repo: str = "G-Eskayo/marvin", merged=None, now=None) -> dict:
+    """Latest scored merged PR's score as value. Yellow if that score <80 or if can't read merged PRs."""
+    cid, label = f"mutation-score:{project_catalog.slug(repo)}", "Mutation score trend"
+    now = now or _now()
+
+    if merged is None:
+        merged = scan_merged_prs(repo)
+        if merged is None:
+            return _result(cid, label, "yellow", "couldn't read merged PRs", value=None)
+
+    # Find latest PR with a score
+    latest_score = None
+    for pr in merged:
+        if pr.get("score") is not None:
+            latest_score = pr["score"]
+            break
+
+    if latest_score is None:
+        return _result(cid, label, "green", "no data yet", value=None)
+
+    sev = "yellow" if latest_score < 80 else "green"
+    return _result(cid, label, sev, f"latest score: {latest_score}%", value=latest_score)
+
+
+def check_merge_quality(repo: str = "G-Eskayo/marvin", merged=None, now: datetime | None = None) -> dict:
+    """Red when any merged PR touched core with score None/<80 in last 7 days.
+    Yellow when a non-core PR is <80 in last 7 days.
+    Yellow when can't read merged PRs. Green otherwise."""
+    cid, label = f"merge:quality:{project_catalog.slug(repo)}", "Merged PR code quality"
+    now = now or _now()
+    cutoff = now - timedelta(days=7)
+
+    if merged is None:
+        merged = scan_merged_prs(repo)
+        if merged is None:
+            return _result(cid, label, "yellow", "couldn't read merged PRs", value=None)
+
+    below_bar = []
+    for pr in merged:
+        number = pr.get("number")
+        score = pr.get("score")
+        touches_core = pr.get("touches_core", False)
+        merged_at_str = pr.get("mergedAt", "")
+
+        # Filter to 7-day window (skip only if we can parse it and it's older)
+        if merged_at_str:
+            try:
+                merged_at = datetime.fromisoformat(merged_at_str.replace("Z", "+00:00"))
+                if merged_at < cutoff:
+                    continue
+            except (ValueError, AttributeError):
+                pass  # If we can't parse, assume it's within the window
+
+        if score is None:
+            if touches_core:
+                below_bar.append((number, "core", "no score yet"))
+        elif score < 80:
+            if touches_core:
+                below_bar.append((number, "core", f"{score}%"))
+            else:
+                below_bar.append((number, "non-core", f"{score}%"))
+
+    core_issues = [b for b in below_bar if b[1] == "core"]
+    if core_issues:
+        detail_parts = [f"#{number} {area} {score}" for number, area, score in core_issues[:3]]
+        detail = "merged to core with low scores: " + ", ".join(detail_parts)
+        if len(core_issues) > 3:
+            detail += f" (+ {len(core_issues) - 3} more)"
+        return _result(cid, label, "red", detail, value=len(below_bar))
+
+    non_core_issues = [b for b in below_bar if b[1] == "non-core"]
+    if non_core_issues:
+        detail_parts = [f"#{number} {score}" for number, _, score in non_core_issues[:3]]
+        detail = "non-core PR(s) merged below 80%: " + ", ".join(detail_parts)
+        if len(non_core_issues) > 3:
+            detail += f" (+ {len(non_core_issues) - 3} more)"
+        return _result(cid, label, "yellow", detail, value=len(below_bar))
+
+    return _result(cid, label, "green", "all merged PRs meet quality thresholds", value=0)
+
+
+def check_test_skip_trend(log_path: Path | None = None, now: datetime | None = None) -> dict:
+    """Reads test-skip log, trailing-7-day count as value.
+    Yellow if any single day hit burst threshold (3+).
+    Green for no data/missing file."""
+    cid, label = "tests:skip-trend", "Test skip frequency"
+    log_path = log_path or (HOME / ".claude" / "logs" / "test-skips.jsonl")
+    now = now or _now()
+    cutoff = now - timedelta(days=7)
+
+    try:
+        lines = log_path.read_text().splitlines()
+    except OSError:
+        return _result(cid, label, "green", "no data yet", value=0)
+
+    daily_counts = {}
+    total = 0
+    for line in lines:
+        try:
+            entry = json.loads(line)
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("kind") != "reason":
+                continue
+            at = entry.get("at")
+            if not at:
+                continue
+            ts = datetime.fromtimestamp(float(at), tz=timezone.utc)
+            if ts > now:
+                continue
+            if ts < cutoff:
+                continue
+            date_key = ts.date()
+            daily_counts[date_key] = daily_counts.get(date_key, 0) + 1
+            total += 1
+        except (TypeError, ValueError, OverflowError, OSError, KeyError, json.JSONDecodeError):
+            continue
+
+    if total == 0:
+        return _result(cid, label, "green", "no skips in the trailing week", value=0)
+
+    burst_days = [d for d, count in daily_counts.items() if count >= 3]
+    if burst_days:
+        return _result(cid, label, "yellow",
+                      f"{total} test skips in the last 7 days, with burst(s) on {len(burst_days)} day(s)",
+                      value=total)
+
+    return _result(cid, label, "green", f"{total} test skips in the last 7 days (normal)", value=total)
+
+
+# ── repo growth tracking ────────────────────────────────────────────────────
+
+def _top_level_dirs(repo_path: Path, ref: str = "HEAD", run=subprocess.run) -> list[str] | None:
+    """List top-level directories in a git tree. Returns lowercased names or
+    None on timeout/failure."""
+    try:
+        proc = run(["git", "-C", str(repo_path), "-c", "core.quotePath=false", "ls-tree", "-d", "--name-only", ref],
+                   capture_output=True, text=True, timeout=10)
+        if proc.returncode != 0:
+            return None
+        return [d.lower() for d in proc.stdout.splitlines() if d.strip()]
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return None
+
+
+def new_top_level_this_week(repo_path: Path, run=subprocess.run, now: datetime | None = None) -> set[str] | None:
+    """New top-level directories added in the last week. Returns lowercased names
+    or None if we cannot find a commit from 7 days ago."""
+    now = now or _now()
+    cutoff = now - timedelta(days=7)
+    cutoff_ts = cutoff.isoformat()
+
+    try:
+        # Find the commit from ~7 days ago
+        proc = run(["git", "-C", str(repo_path), "rev-list", "-1",
+                   f"--before={cutoff_ts}", "HEAD"],
+                   capture_output=True, text=True, timeout=10)
+        if proc.returncode != 0 or not proc.stdout.strip():
+            return None
+        old_commit = proc.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return None
+
+    old_dirs = _top_level_dirs(repo_path, old_commit, run)
+    new_dirs = _top_level_dirs(repo_path, "HEAD", run)
+    if old_dirs is None or new_dirs is None:
+        return None
+
+    return set(new_dirs) - set(old_dirs)
+
+
+def check_repo_growth(repo_path: Path | None = None, rules: dict | None = None,
+                     run=subprocess.run, now: datetime | None = None) -> list[dict]:
+    """Returns list of 4 results: repo-growth:files, repo-growth:folders,
+    repo-growth:size-mb, repo-growth:new-top-level-weekly."""
+    repo_path = repo_path or HOME / ".agents"
+    rules = rules or {}
+    now = now or _now()
+    results = []
+
+    # Share one ls-tree call for both files and folders
+    try:
+        proc = run(["git", "-C", str(repo_path), "-c", "core.quotePath=false", "ls-tree", "-r",
+                                   "--name-only", "HEAD"],
+                                  capture_output=True, text=True, timeout=10)
+        if proc.returncode == 0:
+            files = proc.stdout.splitlines()
+            n_files = len([f for f in files if f.strip()])
+            results.append(_result("repo-growth:files", "Tracked files", "green",
+                                   f"{n_files} tracked files in HEAD", value=n_files))
+            # Count folders (unique directory prefixes of all files)
+            dirs = set()
+            for line in files:
+                parts = line.split("/")
+                for i in range(1, len(parts)):
+                    dirs.add("/".join(parts[:i]))
+            n_dirs = len(dirs)
+            results.append(_result("repo-growth:folders", "Directories", "green",
+                                   f"{n_dirs} unique directory paths in HEAD", value=n_dirs))
+        else:
+            results.append(_result("repo-growth:files", "Tracked files", "yellow",
+                                   "could not count files", value=None))
+            results.append(_result("repo-growth:folders", "Directories", "yellow",
+                                   "could not count directories", value=None))
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        results.append(_result("repo-growth:files", "Tracked files", "yellow",
+                               "unmeasured (timeout)", value=None))
+        results.append(_result("repo-growth:folders", "Directories", "yellow",
+                               "unmeasured (timeout)", value=None))
+
+    # Calculate size in MB
+    try:
+        proc = run(["git", "-C", str(repo_path), "-c", "core.quotePath=false", "ls-tree", "-r", "-l", "HEAD"],
+                                  capture_output=True, text=True, timeout=10)
+        if proc.returncode == 0:
+            total_bytes = 0
+            for line in proc.stdout.splitlines():
+                parts = line.split()
+                if len(parts) >= 5:
+                    try:
+                        size = int(parts[3])
+                        total_bytes += size
+                    except ValueError:
+                        pass
+            size_mb = total_bytes / (1024 * 1024)
+            results.append(_result("repo-growth:size-mb", "Repository size", "green",
+                                   f"{size_mb:.1f} MB", value=round(size_mb, 1)))
+        else:
+            results.append(_result("repo-growth:size-mb", "Repository size", "yellow",
+                                   "could not measure size", value=None))
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        results.append(_result("repo-growth:size-mb", "Repository size", "yellow",
+                               "unmeasured (timeout)", value=None))
+
+    # Check for new top-level folders this week
+    new_top = new_top_level_this_week(repo_path, run=run, now=now)
+    if new_top is None:
+        results.append(_result("repo-growth:new-top-level-weekly", "New top-level folders",
+                               "green", "not enough history yet", value=None))
+    else:
+        max_new = rules.get("new_top_level_per_week") if isinstance(rules, dict) else None
+        if max_new is None:
+            results.append(_result("repo-growth:new-top-level-weekly", "New top-level folders",
+                                   "yellow", "could not read the weekly limit from config", value=None))
+        else:
+            count = len(new_top)
+            sev = "red" if count > max_new else "yellow" if count >= max_new else "green"
+            detail = f"{count} new top-level folder(s) this week" + (f" (limit: {max_new})" if sev != "green" else "")
+            results.append(_result("repo-growth:new-top-level-weekly", "New top-level folders",
+                                   sev, detail, value=count))
+
+    return results
+
+
 # ── numeric anomaly tracking (tier 2, reuses metrics_registry.py) ───────
 
 # Metrics where a bigger number is the healthier direction -- everything
 # else recorded (lock age, failure streaks, cron failure-hit counts) is
 # "lower is better" by default, since every other numeric check here
 # counts something bad.
-HIGHER_IS_BETTER = {"route:intent-routing-collection"}
+HIGHER_IS_BETTER = {
+    "route:intent-routing-collection",
+    f"mutation-score:{project_catalog.slug('G-Eskayo/marvin')}",  # latest score
+}
 
 
 def record_anomaly_metrics(results: list[dict]) -> dict | None:
@@ -1445,6 +1749,17 @@ def run_all() -> dict:
     results.append(check_github_budget())
     results.append(check_gh_gate())
     results.append(check_main_health())
+
+    # Merged PR quality checks (single scan, two checks)
+    merged = scan_merged_prs("G-Eskayo/marvin")
+    results.append(check_mutation_score_trend(merged=merged))
+    results.append(check_merge_quality(merged=merged))
+    results.append(check_test_skip_trend())
+
+    # Load rules once for check_repo_growth
+    rules = auto_merge_policy.load_rules()
+    results += check_repo_growth(HOME / ".agents", rules=rules)
+
     cron_state = ch._load_state()
     cron_now = datetime.now().astimezone()
     for job in discover_launchd_jobs():
