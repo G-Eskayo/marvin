@@ -1,0 +1,27 @@
+#!/bin/bash
+# build-instance <engine-dir> <instance-dir> — copy the owner's state out of an engine checkout into a new private
+# instance, same relative layout (ADR 0071 step 2). Copies, never moves: the engine checkout is left untouched, so the
+# old files stay until the engine PR that untracks them is pulled. Idempotent: an existing instance is refused.
+set -euo pipefail
+src=${1:?engine dir}; dest=${2:?instance dir}
+PATHS="bench/metrics docs/plans docs/screenshots docs/evidence config/projects retrospective-log.md"
+
+[ -e "$dest/.git" ] && { echo "build-instance: $dest is already an instance repo; refusing to overwrite" >&2; exit 1; }
+mkdir -p "$dest"
+for p in $PATHS; do
+  [ -e "$src/$p" ] || continue
+  mkdir -p "$dest/$(dirname "$p")"
+  # -a keeps times and modes; untracked local files (e.g. a profile kept out of the public repo) come along too
+  rsync -a --checksum "$src/$p" "$dest/$(dirname "$p")/"
+done
+cat > "$dest/.gitignore" <<'EOF'
+.DS_Store
+__pycache__/
+# per-machine health history: high churn, never useful to sync (same rule the engine had)
+bench/metrics/health-monitor.*
+EOF
+[ -f "$dest/instance.json" ] || printf '{\n  "features": {}\n}\n' > "$dest/instance.json"
+git -C "$dest" init -q -b main
+git -C "$dest" add -A
+git -C "$dest" -c user.name=MARVIN -c user.email=marvin@marvin.dev commit -q -m "Instance created from the engine checkout (ADR 0071 step 2)"
+echo "build-instance: $(git -C "$dest" ls-files | wc -l | tr -d ' ') files in $dest"

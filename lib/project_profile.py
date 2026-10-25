@@ -23,8 +23,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from evidence_capture import TestTimedOut  # noqa: E402
+import instance  # noqa: E402
 
-PROFILES_DIR = Path.home() / ".agents" / "config" / "projects"
+PROFILES_DIR = instance.path("config", "projects")  # the owner's projects: private instance (ADR 0071)
 # MARVIN's own repo: ticket_pipeline dispatches it on every machine whatever its profile lists, so an empty `machines`
 # is not "can never run" here, and listing a machine would narrow it.
 HOME_REPO = "G-Eskayo/marvin"

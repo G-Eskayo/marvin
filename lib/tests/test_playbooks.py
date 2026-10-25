@@ -16,7 +16,9 @@ sys.path.insert(0, str(LIB))
 import project_profile as pp  # noqa: E402
 
 REAL_PLAYBOOKS = REPO / "config" / "playbooks"
-REAL_PROFILES = REPO / "config" / "projects"
+import instance  # noqa: E402
+REAL_PROFILES = instance.path("config", "projects")  # the owner's real profiles live in the private instance (ADR 0071)
+needs_instance = pytest.mark.skipif(not REAL_PROFILES.is_dir(), reason="needs the owner's instance; runs on the owner's machines")
 
 
 @pytest.fixture(autouse=True)
@@ -190,6 +192,7 @@ def test_profile_problems_is_quiet_for_dispatch_off_or_listed_machines():
     assert pp.profile_problems(_base(dispatch="on", machines=[]))
 
 
+@needs_instance
 def test_the_home_repo_is_never_called_unrunnable_because_the_pipeline_runs_it_on_every_machine(tmp_path):
     # ticket_pipeline dispatches G-Eskayo/marvin whatever its profile lists; listing a machine would narrow it
     assert pp.profile_problems(_base(repo=pp.HOME_REPO, dispatch="on", machines=[])) == []
@@ -213,17 +216,20 @@ def test_selftest_reports_an_unknown_playbook_as_a_profile_error_not_a_crash(tmp
 APP_PROFILES = ["G-Eskayo/clarity-captions", "G-Eskayo/marvin-mobile", "G-Eskayo/nourished", "G-Eskayo/killer-sudoku"]
 
 
+@needs_instance
 def test_every_real_profile_still_validates_so_none_is_silently_dropped():
     profiles = pp.all_profiles(directory=REAL_PROFILES)
     assert len(profiles) == len(list(REAL_PROFILES.glob("*.json")))
 
 
+@needs_instance
 @pytest.mark.parametrize("repo", APP_PROFILES)
 def test_no_app_profile_can_never_run(repo):
     p = pp.load_profile(repo, directory=REAL_PROFILES)
     assert pp.profile_problems(p) == [] and repo not in pp.unrunnable_repos(directory=REAL_PROFILES)
 
 
+@needs_instance
 @pytest.mark.parametrize("repo,variant", [
     ("G-Eskayo/clarity-captions", None), ("G-Eskayo/marvin-mobile", None),
     ("G-Eskayo/nourished", None), ("G-Eskayo/killer-sudoku", "macos")])
@@ -232,12 +238,14 @@ def test_the_four_app_profiles_name_the_ios_playbook(repo, variant):
     assert p["playbook"] == "ios-app" and p.get("playbook_variant") == variant
 
 
+@needs_instance
 def test_clarity_captions_notes_no_longer_say_the_app_cannot_be_built():
     p = pp.load_profile("G-Eskayo/clarity-captions", directory=REAL_PROFILES)
     assert "cannot build" not in pp.executor_notes(p)
     assert any(t["id"] == "spike-app" and t["required"] for t in p["verify"])
 
 
+@needs_instance
 def test_nourished_stays_off_and_has_a_real_verify_step():
     p = pp.load_profile("G-Eskayo/nourished", directory=REAL_PROFILES)
     assert p["dispatch"] == "off" and p["verify"] and any(t["required"] for t in p["verify"])

@@ -102,3 +102,15 @@ describe('instance', () => {
     expect(inst.instanceDir()).toBe(path.join('/x/engine', 'instance'))
   })
 })
+
+describe('dashboard readers point at the instance (ADR 0071 step 2)', () => {
+  it('reads run results and project profiles from the private instance, not the public engine', async () => {
+    process.env.MARVIN_INSTANCE_DIR = path.join(root, 'inst')
+    const { vi } = await import('vitest')
+    vi.resetModules()
+    const metrics = await import('../electron/main/metrics.js')
+    const profiles = await import('../electron/main/profiles.js')
+    expect(metrics.DEFAULT_METRICS_DIR).toBe(path.join(root, 'inst', 'bench', 'metrics'))
+    expect(profiles.PROFILES_DIR).toBe(path.join(root, 'inst', 'config', 'projects'))
+  })
+})

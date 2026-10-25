@@ -23,6 +23,13 @@ from pathlib import Path
 FILE_REL_PATH = "retrospective-log.md"
 
 
+def default_repo() -> Path:
+    """The private instance repo holds the log since ADR 0071 (it is learned from the owner's sessions)."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
+    import instance
+    return instance.instance_dir()
+
+
 def run_git(repo: Path, *args: str) -> str:
     result = subprocess.run(
         ["git", "-C", str(repo), *args],
@@ -57,19 +64,7 @@ def is_append_only_extension(older: list[str], newer: list[str]) -> tuple[bool, 
 
 
 def main() -> int:
-    if len(sys.argv) > 1:
-        repo = Path(sys.argv[1]).expanduser()
-    else:
-        # On a machine where ~/.agents is a deployed copy rather than the
-        # repo itself, retrospective-log.md there is a symlink into the
-        # real clone (see setup.sh's deploy_retrospective_log) — follow it
-        # to the actual repo root instead of failing.
-        default = Path.home() / ".agents"
-        target_file = default / FILE_REL_PATH
-        if target_file.is_symlink():
-            repo = target_file.resolve().parent
-        else:
-            repo = default
+    repo = Path(sys.argv[1]).expanduser() if len(sys.argv) > 1 else default_repo()
     if not (repo / ".git").exists():
         print(f"error: {repo} is not a git repo root", file=sys.stderr)
         return 2

@@ -23,6 +23,9 @@ from datetime import date
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
+import sys  # noqa: E402
+sys.path.insert(0, str(REPO / "lib"))
+import instance  # noqa: E402
 
 
 def compute_facts(*, manifest: dict, test_runs: list[list[dict]], merged_prs: int | None, placement: dict,
@@ -77,7 +80,7 @@ def gather(today: str | None = None) -> dict:
         except (OSError, ValueError):
             return default
 
-    runs = [load(f, []) for f in sorted((REPO / "bench" / "metrics").glob("ticket-*.json"))]
+    runs = [load(f, []) for f in sorted(instance.path("bench", "metrics").glob("ticket-*.json"))]
     return compute_facts(
         manifest=load(Path.home() / ".claude" / "manifest.json", {}),
         test_runs=[r for r in runs if isinstance(r, list)],

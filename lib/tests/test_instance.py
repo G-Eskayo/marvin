@@ -134,10 +134,12 @@ def test_instance_path_joins_under_the_instance_dir(at):
     assert instance.path("plans", "x.md") == d / "plans" / "x.md"
 
 
-def test_the_default_instance_dir_is_inside_the_engine_checkout(monkeypatch):
+def test_the_default_instance_dir_is_home_agents_instance_even_from_a_worktree(monkeypatch, tmp_path):
+    """The pipeline runs engine code from worktrees; they must all find the one real instance."""
     monkeypatch.delenv("MARVIN_INSTANCE_DIR", raising=False)
-    instance.reset()
-    assert instance.instance_dir() == instance.ENGINE_DIR / "instance"
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(instance, "ENGINE_DIR", tmp_path / "some-worktree")
+    assert instance.instance_dir() == tmp_path / ".agents" / "instance"
 
 
 def test_the_config_file_is_read_once_per_process(at, monkeypatch):

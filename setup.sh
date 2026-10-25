@@ -299,16 +299,18 @@ deploy_brain_map() {
 # repo) — the reviewer would keep appending to a file that never made it
 # back into git at all.
 deploy_retrospective_log() {
-    local dest="$AGENTS_DIR/retrospective-log.md"
-    if [[ -f "$dest" || -L "$dest" ]]; then
-        log "retrospective-log.md already present — skipping"
+    # ADR 0071: the log is learned from this person's sessions, so it lives in their private instance, never the
+    # public engine. Created empty with its header; installer --new / --join (ADR 0071 step 3) make it a repo.
+    local dest="$AGENTS_DIR/instance/retrospective-log.md"
+    if [[ -f "$dest" ]]; then
+        log "retrospective-log.md already present in the instance — skipping"
         return
     fi
-    if [[ "$MARVIN_DIR" == "$AGENTS_DIR" ]]; then
-        return  # same directory — nothing to deploy, it's already the tracked file
-    fi
-    ln -s "$MARVIN_DIR/retrospective-log.md" "$dest"
-    log "Symlinked retrospective-log.md -> $MARVIN_DIR/retrospective-log.md"
+    mkdir -p "$AGENTS_DIR/instance"
+    printf '%s\n' "# Retrospective Log" "" \
+        "Cross-skill pattern index. One line per self-improve run. Written by the self-improve skill." "" \
+        "| Date | Skill | Type | Summary |" "|------|-------|------|---------|" > "$dest"
+    log "Created $dest"
 }
 
 # =============================================================

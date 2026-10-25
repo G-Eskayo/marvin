@@ -37,6 +37,8 @@ from pathlib import Path
 # Import data_flow for feeds threads
 sys.path.insert(0, str(Path(__file__).parent / "scripts"))
 import connections  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+import instance  # noqa: E402
 import data_flow  # noqa: E402
 sys.path.append(str(Path(__file__).resolve().parent.parent / "lib"))  # appended: brain-map's own modules win
 import marvin_hooks  # noqa: E402
@@ -62,7 +64,7 @@ ONBOARDING_DIR = Path.home() / ".claude" / "onboarding"
 REPO_DIR = HERE.parent  # the checkout this script runs from (a worktree in development)
 LIB_DIR = REPO_DIR / "lib"
 DASHBOARD_MAIN_DIR = REPO_DIR / "dashboard" / "electron" / "main"  # where the tabs' data readers live
-PROJECT_PROFILES_DIR = REPO_DIR / "config" / "projects"
+PROJECT_PROFILES_DIR = instance.path("config", "projects")  # private instance (ADR 0071)
 
 
 def first_sentence(desc: str) -> str:
