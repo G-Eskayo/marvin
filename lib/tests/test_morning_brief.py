@@ -60,7 +60,7 @@ def test_a_failing_source_is_named_not_hidden():
 
 def test_writing_and_reading_mark_consumption(tmp_path, monkeypatch):
     monkeypatch.setattr(mb, "BRIEFS", tmp_path)
-    path = mb.write(NOW, _sources())
+    path = mb.write(NOW, _sources(), run=lambda *a, **k: None)
     assert path.name == "2026-10-09.md" and path.read_text().startswith("# Morning brief")
     assert mb.read_dates() == []
     shown = mb.show_today(NOW)
@@ -123,3 +123,79 @@ def test_open_prs_marks_waiting_from_one_graphql_read(monkeypatch):
     monkeypatch.setattr(od, "fetch", lambda repos, run=None: None)
     brief = mb.gather(NOW, {"open_prs": mb._open_prs})
     assert brief["open_prs"] is None and "open PRs" in brief["missing"][0]
+
+
+# ── fallback gate tests ────────────────────────────────────────────────────────
+
+def test_build_checks_fallback_gate(tmp_path, monkeypatch):
+    """build() checks the fallback gate before building."""
+    import brief_fallback
+    import machine_profile
+
+    briefs_dir = tmp_path / "briefs"
+    monkeypatch.setattr("morning_brief.BRIEFS", briefs_dir)
+    monkeypatch.setattr(machine_profile, "machine_label", lambda: "mac-mini-1")
+
+    # Mock should_run to return False
+    def mock_should_run(*args, **kwargs):
+        return brief_fallback.Decision(False, "standby: primary already produced")
+    monkeypatch.setattr("brief_fallback.should_run", mock_should_run)
+
+    # Call build
+    result = mb.build(NOW, _sources())
+
+    # Brief should not have been created
+    assert not (briefs_dir / "2026-10-09.md").exists()
+
+
+def test_build_called_with_explicit_parameters(tmp_path, monkeypatch):
+    """build() calls should_run() with usual_hour=9, usual_minute=15."""
+    import brief_fallback
+    import machine_profile
+
+    briefs_dir = tmp_path / "briefs"
+    monkeypatch.setattr("morning_brief.BRIEFS", briefs_dir)
+    monkeypatch.setattr(machine_profile, "machine_label", lambda: "mac-mini-1")
+
+    # Track calls to should_run
+    calls = []
+
+    def mock_should_run(*args, **kwargs):
+        calls.append(kwargs)
+        return brief_fallback.Decision(False, "test: skipping")
+    monkeypatch.setattr("brief_fallback.should_run", mock_should_run)
+
+    # Call build
+    mb.build(NOW, _sources())
+
+    # Verify should_run was called with the right parameters
+    assert len(calls) == 1
+    assert calls[0].get("usual_hour") == 9
+    assert calls[0].get("usual_minute") == 15
+
+
+def test_write_forwards_run_to_produced_never_touching_the_real_network(tmp_path, monkeypatch):
+    """write() passes run to produced(), so tests can stub it without touching network."""
+    import brief_fallback
+
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+
+    # Track calls to produced
+    calls = []
+    original_produced = brief_fallback.produced
+
+    def mock_produced(path, remote_path=None, host=None, run=None):
+        calls.append({"run": run})
+        return original_produced(path, remote_path, host, run=run)
+
+    monkeypatch.setattr("brief_fallback.produced", mock_produced)
+
+    # Stub run to avoid any subprocess calls
+    stub_run = lambda *a, **k: None
+
+    # Call write
+    mb.write(NOW, _sources(), run=stub_run)
+
+    # Verify produced was called with our stub
+    assert len(calls) == 1
+    assert calls[0]["run"] is stub_run

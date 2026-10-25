@@ -11,6 +11,7 @@
         <string>/Users/gileskayo/.agents/skills/improve/scripts/daily_digest.py</string>
     </array>
 
+    <!-- Mini only: primary builder. MacBook fallback runs at 09:30 if this hasn't produced anything. -->
     <!-- Run every day at 08:30 local time -->
     <key>StartCalendarInterval</key>
     <dict>

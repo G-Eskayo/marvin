@@ -990,7 +990,7 @@ if [ -f "$LEDGER" ]; then echo "disk_ledger=$(tail -14 "$LEDGER" | /usr/bin/tr '
 # host only (ADR 0032, 0033), "laptop" = only where Gil sits. Edit here when a job is deliberately moved; a job that
 # is not listed is reported as unplaced so a new job cannot silently run on only one machine.
 JOB_PLACEMENT = {
-    "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "both", "research-colony": "both",
+    "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "mini", "research-colony": "mini",
     "desktoplive": "both", "dashboard-webhook": "both",  # webhook on both until #112 (ADR 0032)
     "ticket-pipeline": "both",  # mini scans; the laptop's copy is a standby that scans only if the mini goes quiet (scanner_role.py)
     "architecture-review": "mini", "auto-fix": "mini", "cron-health": "mini", "health-check": "mini",
@@ -999,7 +999,10 @@ JOB_PLACEMENT = {
     "cleanup-sweep": "both",  # daily: each machine sweeps its own pipeline worktrees (lib/cleanup_sweep.py)
     "machine-resources": "both",  # 30s: samples disk/mem/swap/CPU/GPU for resources panel (#130)
     "dashboard-launch": "laptop",
-    "morning-brief": "laptop",  # one writer (the brief syncs to the mini via ~/.claude); after the digests (lib/morning_brief.py)
+    "morning-brief": "mini",  # primary builder on mini (ADR 0067); fallback on laptop if primary goes quiet
+    "daily-digest-fallback": "laptop",
+    "research-colony-fallback": "laptop",
+    "morning-brief-fallback": "laptop",
     # the website map (#189): rebuilt nightly and after MARVIN changes on the mini, where the dev site runs; the nightly
     # job also publishes it to production (ADR 0057), so it must never run on the laptop
     "snapshot-deploy-nightly": "mini", "snapshot-deploy-reactive": "mini",
@@ -1462,6 +1465,47 @@ def _cron_job_logs() -> list[dict]:
     return out
 
 
+def check_brief_builder(now: datetime | None = None) -> dict:
+    """Check the morning brief builder status. Green if built today; yellow if not yet; red if both deadlines
+    have passed with nothing produced (primary + fallback both failed)."""
+    import morning_brief
+    import brief_fallback
+
+    now = now or datetime.now(timezone.utc)
+    today = now.astimezone().date().isoformat()
+    builder_info = morning_brief.builder_of(today)
+
+    if builder_info:
+        return {
+            "id": "brief:builder",
+            "severity": "green",
+            "detail": f"Brief built by {builder_info}",
+        }
+
+    # Not built yet. Check if we're past the deadline.
+    if not brief_fallback.past_deadline(now, usual_hour=9, usual_minute=15, grace_minutes=0):
+        return {
+            "id": "brief:builder",
+            "severity": "green",
+            "detail": "Scheduled time has not passed yet (waiting for primary builder)",
+        }
+
+    # Primary deadline passed but not built. Check if we're past fallback deadline.
+    if not brief_fallback.past_deadline(now, usual_hour=10, usual_minute=15, grace_minutes=0):
+        return {
+            "id": "brief:builder",
+            "severity": "yellow",
+            "detail": "Primary deadline passed, waiting for fallback builder",
+        }
+
+    # Both deadlines have fully passed
+    return {
+        "id": "brief:builder",
+        "severity": "red",
+        "detail": "Both primary (9:15) and fallback (10:15) deadlines passed with no brief built",
+    }
+
+
 def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict] | None = None) -> list[tuple]:
     """Every check the sweep runs, in the order the Health tab shows them. `reach` maps machine:<id> -> severity from
     the reachability check, which runs first; `reach_results` are its rows, listed where they always appeared."""
@@ -1485,6 +1529,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("github:gate", "GitHub calls go through the gate", check_gh_gate, CHECK_BUDGET_S),
         ("main:green", "The main branch passes its tests", check_main_health, CHECK_BUDGET_S),
         ("seal:beta-ingest", "Seal Speak beta reports are picked up", check_seal_beta_ingest, CHECK_BUDGET_S),
+        ("brief:builder", "Morning brief builder", check_brief_builder, CHECK_BUDGET_S),
         ("cron", "Cron job logs", _cron_job_logs, CHECK_BUDGET_S),
         ("machine", "Machine reachability", lambda: list(reach_results or []), CHECK_BUDGET_S),
         ("repo:sync", "Repo sync", lambda: check_repo_sync_everywhere(reach), CROSS_MACHINE_BUDGET_S),

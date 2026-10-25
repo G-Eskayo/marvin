@@ -1299,3 +1299,81 @@ def test_the_machine_script_reads_a_real_process_uptime_with_this_machines_ps():
         assert 1 <= int(out.stdout.strip()) <= 20
     finally:
         child.kill()
+
+
+# ---- brief builder check ----
+
+def test_check_brief_builder_reports_the_machine(tmp_path, monkeypatch):
+    """check_brief_builder() reports green with machine and role when sidecar exists."""
+    import morning_brief
+
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+    monkeypatch.setattr(morning_brief, "BRIEFS", briefs_dir)
+    monkeypatch.setattr(morning_brief, "builder_of", lambda day: "mac-mini: primary")
+
+    result = hc.check_brief_builder()
+    assert result["severity"] == "green"
+    assert "mac-mini: primary" in result["detail"]
+
+
+def test_check_brief_builder_yellow_when_nothing_built_yet(tmp_path, monkeypatch):
+    """check_brief_builder() reports yellow when primary deadline passed but not built."""
+    import morning_brief
+
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+    monkeypatch.setattr(morning_brief, "BRIEFS", briefs_dir)
+    monkeypatch.setattr(morning_brief, "builder_of", lambda day: None)
+
+    # 9:30 local time: past primary deadline (9:15) but before fallback (10:15)
+    local_tz = datetime.now().astimezone().tzinfo
+    yellow_window = datetime(2026, 10, 2, 9, 30, 0, tzinfo=local_tz).astimezone(timezone.utc)
+    result = hc.check_brief_builder(now=yellow_window)
+    assert result["severity"] == "yellow"
+    assert "Primary deadline passed" in result["detail"]
+
+
+def test_check_brief_builder_green_before_scheduled_time(tmp_path, monkeypatch):
+    """check_brief_builder() reports green before the scheduled time."""
+    import morning_brief
+
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+    monkeypatch.setattr(morning_brief, "BRIEFS", briefs_dir)
+    monkeypatch.setattr(morning_brief, "builder_of", lambda day: None)
+
+    # 9:00 local time: before primary deadline (9:15)
+    local_tz = datetime.now().astimezone().tzinfo
+    early = datetime(2026, 10, 2, 9, 0, 0, tzinfo=local_tz).astimezone(timezone.utc)
+    result = hc.check_brief_builder(now=early)
+    assert result["severity"] == "green"
+    assert "has not passed yet" in result["detail"]
+
+
+def test_check_brief_builder_red_after_both_deadlines_have_passed(tmp_path, monkeypatch):
+    """check_brief_builder() reports red when both primary and fallback deadlines passed."""
+    import morning_brief
+
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+    monkeypatch.setattr(morning_brief, "BRIEFS", briefs_dir)
+    monkeypatch.setattr(morning_brief, "builder_of", lambda day: None)
+
+    # 10:30 local time: past both primary (9:15) and fallback (10:15) deadlines
+    local_tz = datetime.now().astimezone().tzinfo
+    late = datetime(2026, 10, 2, 10, 30, 0, tzinfo=local_tz).astimezone(timezone.utc)
+    result = hc.check_brief_builder(now=late)
+    assert result["severity"] == "red"
+    assert "Both primary" in result["detail"] and "fallback" in result["detail"]
+
+
+def test_job_placement_reflects_the_new_ownership(monkeypatch):
+    """JOB_PLACEMENT has the new ownership: mini for primary jobs, laptop for fallbacks."""
+    # Check that the new assignments exist
+    assert hc.JOB_PLACEMENT.get("daily-digest") == "mini"
+    assert hc.JOB_PLACEMENT.get("daily-digest-fallback") == "laptop"
+    assert hc.JOB_PLACEMENT.get("research-colony") == "mini"
+    assert hc.JOB_PLACEMENT.get("research-colony-fallback") == "laptop"
+    assert hc.JOB_PLACEMENT.get("morning-brief") == "mini"
+    assert hc.JOB_PLACEMENT.get("morning-brief-fallback") == "laptop"
