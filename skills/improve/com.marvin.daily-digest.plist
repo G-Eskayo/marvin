@@ -11,7 +11,8 @@
         <string>/Users/gileskayo/.agents/skills/improve/scripts/daily_digest.py</string>
     </array>
 
-    <!-- Run every day at 08:30 local time -->
+    <!-- Mini only; primary builder at 08:30 local time.
+         Fallback plist (com.marvin.daily-digest-fallback) runs on the MacBook at 09:30 if the primary fails. -->
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
@@ -24,7 +25,7 @@
          files to ground the digest, so an unpinned/default cwd changes what
          it finds and how long that takes. -->
     <key>WorkingDirectory</key>
-    <string>/Users/gileskayo/marvin</string>
+    <string>/Users/gileskayo/.agents</string>
 
     <key>StandardOutPath</key>
     <string>/Users/gileskayo/.claude/logs/daily-digest.log</string>

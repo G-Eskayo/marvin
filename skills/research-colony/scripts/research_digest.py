@@ -14,6 +14,8 @@ SAFETY_MONITOR_SCRIPTS = Path.home() / ".agents" / "skills" / "safety-monitor" /
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 from notify import notify  # noqa: E402
 import marvin_launcher  # noqa: E402
+import brief_fallback  # noqa: E402
+import machine_profile  # noqa: E402
 
 sys.path.insert(0, str(SAFETY_MONITOR_SCRIPTS))
 try:
@@ -99,7 +101,7 @@ def generate() -> Path | None:
     today = date.today().isoformat()
     out_path = DIGEST_DIR / f"{today}.md"
 
-    if out_path.exists():
+    if out_path.exists() and brief_fallback.produced(out_path):
         print(f"[colony] research digest already exists for {today}", file=sys.stderr)
         return out_path
 
@@ -151,6 +153,10 @@ def generate() -> Path | None:
         )
 
     DIGEST_DIR.mkdir(parents=True, exist_ok=True)
+    # Pre-write recheck: if the file was written by another machine while we were generating, don't overwrite
+    if brief_fallback.produced(out_path):
+        print(f"[colony] File already produced by another builder, skipping write", file=sys.stderr)
+        return out_path
     out_path.write_text(
         f"# Research Digest — {today}\n\n"
         f"*{len(all_items)} items fetched · {len(correlated)} correlated*\n\n"

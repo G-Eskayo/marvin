@@ -390,6 +390,42 @@ def check_pipeline_breaker(reachability: dict[str, str] | None = None, remote=No
 CATALOG_YELLOW_AFTER_HOURS = 3
 CATALOG_RED_AFTER_HOURS = 24
 
+BRIEF_BUILDER_JOBS = {
+    "daily-digest": ("08:30", ".claude/daily-digest"),
+    "research-colony": ("09:00", ".claude/research-digest"),
+    "morning-brief": ("09:45", ".claude/briefs"),
+}
+
+
+def check_brief_builder() -> dict:
+    """Did the morning brief get built today, and which machine built it?
+    Green: brief exists with builder info. Yellow: no brief built yet (may still be pending).
+    Red: both primary and fallback deadlines have passed without output (hardening fix #5)."""
+    import brief_fallback
+    import morning_brief
+    cid, label = "brief:builder", "Morning brief builder"
+    now = _now()
+    day = now.astimezone().strftime("%Y-%m-%d")
+
+    builder_info = morning_brief.builder_of(day)
+    if builder_info:
+        return _result(cid, label, "green", f"Built by: {builder_info}")
+
+    brief_path = morning_brief.BRIEFS / f"{day}.md"
+    if brief_path.exists():
+        # Brief exists but no sidecar — shouldn't happen, but we can read it
+        return _result(cid, label, "green", "Brief exists (legacy, no builder info)")
+
+    # No brief yet. Check if both deadlines have passed (hardening fix #5: red condition)
+    # Primary deadline: 09:45, fallback deadline: 09:45 + 60 grace = 10:45
+    primary_past = brief_fallback.past_deadline(now, usual_hour=9, usual_minute=45, grace_minutes=60)
+    fallback_past = brief_fallback.past_deadline(now, usual_hour=10, usual_minute=45, grace_minutes=60)
+
+    if primary_past and fallback_past:
+        return _result(cid, label, "red", "Both primary (09:45) and fallback (10:45) deadlines have passed — no brief built")
+
+    return _result(cid, label, "yellow", "No brief built yet today")
+
 
 def check_catalog_fresh(path: Path | None = None, now: datetime | None = None) -> dict:
     """The project catalog (and so the master 'Where things are' doc) must keep refreshing on its own;
@@ -990,7 +1026,13 @@ if [ -f "$LEDGER" ]; then echo "disk_ledger=$(tail -14 "$LEDGER" | /usr/bin/tr '
 # host only (ADR 0032, 0033), "laptop" = only where Gil sits. Edit here when a job is deliberately moved; a job that
 # is not listed is reported as unplaced so a new job cannot silently run on only one machine.
 JOB_PLACEMENT = {
-    "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "both", "research-colony": "both",
+    "code-sync-push": "both", "cross-machine-merge": "both",
+    "daily-digest": "mini",  # primary builder (08:30); fallback plist runs on laptop after 1h (ADR 0065)
+    "daily-digest-fallback": "laptop",
+    "research-colony": "mini",  # primary builder (09:00); fallback plist runs on laptop after 1h (ADR 0065)
+    "research-colony-fallback": "laptop",
+    "morning-brief": "mini",  # primary builder (09:45, after digests); fallback plist runs on laptop after 1h (ADR 0065)
+    "morning-brief-fallback": "laptop",
     "desktoplive": "both", "dashboard-webhook": "both",  # webhook on both until #112 (ADR 0032)
     "ticket-pipeline": "both",  # mini scans; the laptop's copy is a standby that scans only if the mini goes quiet (scanner_role.py)
     "architecture-review": "mini", "auto-fix": "mini", "cron-health": "mini", "health-check": "mini",
@@ -999,7 +1041,6 @@ JOB_PLACEMENT = {
     "cleanup-sweep": "both",  # daily: each machine sweeps its own pipeline worktrees (lib/cleanup_sweep.py)
     "machine-resources": "both",  # 30s: samples disk/mem/swap/CPU/GPU for resources panel (#130)
     "dashboard-launch": "laptop",
-    "morning-brief": "laptop",  # one writer (the brief syncs to the mini via ~/.claude); after the digests (lib/morning_brief.py)
     # the website map (#189): rebuilt nightly and after MARVIN changes on the mini, where the dev site runs; the nightly
     # job also publishes it to production (ADR 0057), so it must never run on the laptop
     "snapshot-deploy-nightly": "mini", "snapshot-deploy-reactive": "mini",
@@ -1479,6 +1520,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("profile:no-machines", "Projects with no machines", check_unrunnable_profiles, CHECK_BUDGET_S),
         ("triggers:missed", "Dashboard triggers cover every change", check_trigger_coverage, CHECK_BUDGET_S),
         ("catalog:fresh", "Project catalog is current", check_catalog_fresh, CHECK_BUDGET_S),
+        ("brief:builder", "Digest/brief builders are current", check_brief_builder, CHECK_BUDGET_S),
         ("tickets:project-tags", "Tickets are on their project's board", check_project_tags, CHECK_BUDGET_S),
         ("tickets:hold-revisit", "Hold tickets have revisit dates", check_hold_revisit, CHECK_BUDGET_S),
         ("github:budget", "GitHub request budget", check_github_budget, CHECK_BUDGET_S),

@@ -11,7 +11,8 @@
         <string>/Users/gileskayo/.agents/skills/research-colony/scripts/run_colony.py</string>
     </array>
 
-    <!-- Run every day at 09:00 (after daily-digest at 08:30) -->
+    <!-- Mini only; primary builder at 09:00 (after daily-digest at 08:30).
+         Fallback plist (com.marvin.research-colony-fallback) runs on the MacBook at 10:00 if the primary fails. -->
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>

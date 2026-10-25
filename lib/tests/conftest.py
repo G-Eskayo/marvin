@@ -270,3 +270,13 @@ def _isolate_github_usage(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(github_usage, "CALLS_PATH", d / "gh-calls.jsonl")
     monkeypatch.setattr(github_usage, "BUDGET_PATH", d / "gh-budget.jsonl")
     monkeypatch.setattr(github_usage, "HOURLY_PATH", d / "gh-usage-hourly.json")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_machine_role(monkeypatch):
+    # brief_fallback.should_run() resolves this machine's role via machine_profile.registry_id(),
+    # which reads the real ~/.claude registry and, off the primary, can SSH a real peer.
+    # Default every test to primary (the old, gate-less behavior); a test opts into the
+    # standby path by overriding this or by passing device_id explicitly.
+    import machine_profile
+    monkeypatch.setattr(machine_profile, "registry_id", lambda: "mac-mini-test")

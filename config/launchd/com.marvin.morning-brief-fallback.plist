@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The morning brief fallback (lib/morning_brief.py), laptop-only. Runs at 10:45 local time (1 hour after the primary at 09:45).
+     brief_fallback.should_run() checks if the primary has already produced output and no-ops if so.
+     Install: cp this to ~/Library/LaunchAgents/ and `launchctl bootstrap gui/$(id -u) <that file>`. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.marvin.morning-brief-fallback</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/gileskayo/.agents/venv/bin/python</string>
+        <string>/Users/gileskayo/.agents/lib/morning_brief.py</string>
+        <string>build</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>10</integer>
+        <key>Minute</key>
+        <integer>45</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/gileskayo/.claude/logs/morning-brief-fallback.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/gileskayo/.claude/logs/morning-brief-fallback-error.log</string>
+</dict>
+</plist>
