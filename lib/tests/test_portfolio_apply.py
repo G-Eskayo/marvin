@@ -64,8 +64,11 @@ def test_apply_updates_the_repo_manifest_and_the_dev_copy(tmp_path):
     (project / "deploy/other-projects").mkdir(parents=True)
     (project / "deploy/other-projects/manifest.json").write_text(MANIFEST)
     _png(images / "mancala.png")
-    out = pa.apply(project, html, images, regenerate=False)
-    assert out == {"images": 1, "manifest_changed": 1, "pages": []}
+    fake_runner = _runner()
+    out = pa.apply(project, html, images, fake_runner, regenerate=False)
+    assert out["images"] == 1
+    assert out["manifest_changed"] == 1
+    assert out["pages"] == []
     repo = json.loads((project / "deploy/other-projects/manifest.json").read_text())
     dev = json.loads((html / "wp-content/other-projects/manifest.json").read_text())
     assert repo[0]["thumbnail"] == dev[0]["thumbnail"] == "/wp-content/uploads/generated/mancala-600w.jpg"
@@ -78,7 +81,7 @@ def _runner(fail_on=None):
         calls.append(cmd)
         joined = " ".join(map(str, cmd))
         if "post list" in joined:
-            out = json.dumps([{"ID": 1, "post_name": n} for n in ("ai-projects", "cybersecurity-projects", "software-engineering", "all-projects")])
+            out = json.dumps([{"ID": 1, "post_name": n, "post_parent": 0} for n in ("ai-projects", "cybersecurity-projects", "software-engineering", "all-projects")])
         elif "user list" in joined:
             out = "admin\n"
         elif "application-password create" in joined:
@@ -155,3 +158,195 @@ def test_no_portfolio_tool_builds_its_own_wp_cli_command():
             if f.name == "portfolio_apply.py" and re.search(r'(?:"docker"|DOCKER),\s*"exec"', line) and "return" not in line:
                 offenders.append(f"{f.name}:{n}")
     assert offenders == [], f"use portfolio_apply.wp_base() instead: {offenders}"
+
+
+# ── hero sync ────────────────────────────────────────────────────────────────────
+
+def test_page_hero_extracts_hero_src_from_fusion_code_block():
+    import base64
+    html = '<div class="col-xs-12"><img src="/old-hero.jpg" alt="x"/></div>'
+    wrapped = f"[fusion_code]{base64.b64encode(html.encode()).decode()}[/fusion_code]"
+    src = pa.page_hero(wrapped)
+    assert src == "/old-hero.jpg"
+
+
+def test_page_hero_returns_none_when_no_hero_image_found():
+    html = '<div>no image here</div>'
+    import base64
+    wrapped = f"[fusion_code]{base64.b64encode(html.encode()).decode()}[/fusion_code]"
+    src = pa.page_hero(wrapped)
+    assert src is None
+
+
+def test_page_hero_uses_col_xs_12_selector_first_then_img_responsive_then_any_img():
+    import base64
+    # Prioritize .col-xs-12 > img
+    html1 = '<div class="col-xs-12"><img src="/preferred.jpg"/></div><img src="/fallback.jpg"/>'
+    wrapped1 = f"[fusion_code]{base64.b64encode(html1.encode()).decode()}[/fusion_code]"
+    assert pa.page_hero(wrapped1) == "/preferred.jpg"
+    # Fallback to .img-responsive
+    html2 = '<img class="img-responsive" src="/responsive.jpg"/><img src="/fallback.jpg"/>'
+    wrapped2 = f"[fusion_code]{base64.b64encode(html2.encode()).decode()}[/fusion_code]"
+    assert pa.page_hero(wrapped2) == "/responsive.jpg"
+    # Fallback to first img
+    html3 = '<img src="/first.jpg"/><img src="/second.jpg"/>'
+    wrapped3 = f"[fusion_code]{base64.b64encode(html3.encode()).decode()}[/fusion_code]"
+    assert pa.page_hero(wrapped3) == "/first.jpg"
+
+
+def test_set_page_hero_rewrites_only_the_hero_src_and_reports_if_changed():
+    import base64
+    import re
+    html = '<div class="col-xs-12"><img src="/old.jpg" alt="hero" title="x"/></div><p>body text</p>'
+    wrapped = f"[fusion_code]{base64.b64encode(html.encode()).decode()}[/fusion_code]\nMore content"
+    new_content, changed = pa.set_page_hero(wrapped, "/new-hero.jpg")
+    assert changed is True
+    assert "/new-hero.jpg" in new_content
+    assert "/old.jpg" not in new_content
+    # Verify body text is still in the base64-encoded fusion_code block
+    m = re.search(r"\[fusion_code\]([^\[]+)\[/fusion_code\]", new_content)
+    assert m
+    decoded_html = base64.b64decode(m.group(1)).decode()
+    assert "body text</p>" in decoded_html
+    assert "More content" in new_content
+
+
+def test_set_page_hero_is_idempotent():
+    import base64
+    html = '<div class="col-xs-12"><img src="/hero.jpg"/></div>'
+    wrapped = f"[fusion_code]{base64.b64encode(html.encode()).decode()}[/fusion_code]"
+    new_content1, changed1 = pa.set_page_hero(wrapped, "/hero.jpg")
+    assert changed1 is False
+    new_content2, changed2 = pa.set_page_hero(new_content1, "/hero.jpg")
+    assert changed2 is False
+    assert new_content1 == new_content2
+
+
+def test_set_page_hero_returns_none_when_no_hero_found():
+    import base64
+    html = '<div>no image</div>'
+    wrapped = f"[fusion_code]{base64.b64encode(html.encode()).decode()}[/fusion_code]"
+    new_content, changed = pa.set_page_hero(wrapped, "/new-hero.jpg")
+    assert changed is False
+    assert new_content == wrapped  # unchanged when no hero found
+
+
+def test_sync_hero_finds_page_and_updates_it():
+    def fake_runner(cmd, **kw):
+        joined = " ".join(map(str, cmd))
+        if "post list" in joined:
+            out = json.dumps([
+                {"ID": 10, "post_name": "ai-projects", "post_parent": 0},
+                {"ID": 123, "post_name": "marvin", "post_parent": 10}
+            ])
+        elif "post get" in joined and "123" in joined:
+            import base64
+            html = '<div class="col-xs-12"><img src="/old-hero.jpg"/></div>'
+            wrapped = f"[fusion_code]{base64.b64encode(html.encode()).decode()}[/fusion_code]"
+            out = wrapped
+        else:
+            out = "ok"
+        return SimpleNamespace(returncode=0, stdout=out, stderr="")
+    result = pa.sync_hero("marvin", "/ai-projects/marvin/", fake_runner)
+    assert result["slug"] == "marvin"
+    assert "page_hero_changed" in result
+
+
+def test_sync_hero_warns_when_page_not_found():
+    def fake_runner(cmd, **kw):
+        joined = " ".join(map(str, cmd))
+        if "post list" in joined:
+            out = json.dumps([{"ID": 123, "post_name": "other", "post_parent": 0}])
+        else:
+            out = ""
+        return SimpleNamespace(returncode=0, stdout=out, stderr="")
+    result = pa.sync_hero("marvin", "/ai-projects/marvin/", fake_runner)
+    assert "warning" in result
+    assert result["slug"] == "marvin"
+
+
+def test_sync_hero_does_not_update_when_hero_already_matches():
+    call_count = {"post_update": 0}
+    def fake_runner(cmd, **kw):
+        joined = " ".join(map(str, cmd))
+        if "post list" in joined:
+            out = json.dumps([
+                {"ID": 10, "post_name": "ai-projects", "post_parent": 0},
+                {"ID": 123, "post_name": "marvin", "post_parent": 10}
+            ])
+        elif "post get" in joined:
+            import base64
+            html = '<div class="col-xs-12"><img src="/wp-content/uploads/generated/marvin-hero.jpg"/></div>'
+            wrapped = f"[fusion_code]{base64.b64encode(html.encode()).decode()}[/fusion_code]"
+            out = wrapped
+        elif "post update" in joined:
+            call_count["post_update"] += 1
+            out = "ok"
+        else:
+            out = "ok"
+        return SimpleNamespace(returncode=0, stdout=out, stderr="")
+    result = pa.sync_hero("marvin", "/ai-projects/marvin/", fake_runner)
+    assert result["page_hero_changed"] is False
+    assert call_count["post_update"] == 0  # no update call when already matching
+
+
+def test_apply_now_includes_hero_sync():
+    call_log = []
+    def fake_runner(cmd, **kw):
+        joined = " ".join(map(str, cmd))
+        call_log.append(joined)
+        if "post list" in joined:
+            out = json.dumps([
+                {"ID": 1, "post_name": "ai-projects", "post_parent": 0},
+                {"ID": 2, "post_name": "mancala", "post_parent": 1},
+                {"ID": 3, "post_name": "other", "post_parent": 1},
+                {"ID": 4, "post_name": "cybersecurity-projects", "post_parent": 0},
+                {"ID": 5, "post_name": "software-engineering", "post_parent": 0},
+                {"ID": 6, "post_name": "all-projects", "post_parent": 0}
+            ])
+        elif "post get" in joined:
+            import base64
+            html = '<div class="col-xs-12"><img src="/old.jpg"/></div>'
+            wrapped = f"[fusion_code]{base64.b64encode(html.encode()).decode()}[/fusion_code]"
+            out = wrapped
+        elif "user list" in joined:
+            out = "admin\n"
+        elif "application-password create" in joined:
+            out = "SECRET-PW\n"
+        else:
+            out = "ok"
+        return SimpleNamespace(returncode=0, stdout=out, stderr="")
+
+    project, html, images = Path("/tmp/proj"), Path("/tmp/html"), Path("/tmp/images")
+    (project / "deploy/other-projects").mkdir(parents=True, exist_ok=True)
+    (project / "deploy/other-projects/manifest.json").write_text(MANIFEST)
+    _png(images / "mancala.png")
+
+    out = pa.apply(project, html, images, fake_runner, regenerate=False)
+    assert "hero_changed" in out
+    assert out["images"] == 1
+
+
+def test_hero_status_reports_matches_and_mismatches():
+    def fake_runner(cmd, **kw):
+        joined = " ".join(map(str, cmd))
+        if "post list" in joined:
+            out = json.dumps([
+                {"ID": 1, "post_name": "ai-projects", "post_parent": 0},
+                {"ID": 123, "post_name": "mancala", "post_parent": 1}
+            ])
+        elif "post get" in joined:
+            import base64
+            html = '<div class="col-xs-12"><img src="/wp-content/uploads/generated/mancala-hero.jpg"/></div>'
+            wrapped = f"[fusion_code]{base64.b64encode(html.encode()).decode()}[/fusion_code]"
+            out = wrapped
+        else:
+            out = "ok"
+        return SimpleNamespace(returncode=0, stdout=out, stderr="")
+
+    manifest = json.loads(MANIFEST)
+    result = pa.hero_status(manifest, fake_runner)
+    # mancala has no generated image, so it won't appear in the result
+    assert "mancala" not in result
+    # other has no generated image either
+    assert "other" not in result

@@ -14,6 +14,7 @@ is created and revoked in the same run.
 """
 from __future__ import annotations
 
+import base64
 import json
 import re
 import shutil
@@ -21,6 +22,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from bs4 import BeautifulSoup
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -92,6 +94,10 @@ def publish_images(manifest: list[dict], images_dir: Path, html_dir: Path, deplo
     return urls
 
 
+def _run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=180, **kw)
+
+
 def update_manifest_text(text: str, urls: dict[str, str]) -> tuple[str, int]:
     """Point each project's "thumbnail" at its generated image, editing only those values so the file's formatting
     (and so the git diff) stays exactly as it was."""
@@ -108,8 +114,119 @@ def update_manifest_text(text: str, urls: dict[str, str]) -> tuple[str, int]:
     return "".join(out), changed
 
 
-def _run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=180, **kw)
+def page_hero(raw_content: str) -> str | None:
+    """Extract the hero image src from a page's [fusion_code] block. Returns None if no hero img found."""
+    m = re.search(r"\[fusion_code\]([^\[]+)\[/fusion_code\]", raw_content)
+    if not m:
+        return None
+    try:
+        html = base64.b64decode(m.group(1)).decode()
+    except Exception:
+        return None
+    soup = BeautifulSoup(html, "html.parser")
+    img = soup.select_one(".col-xs-12 > img") or soup.select_one("img.img-responsive") or soup.select_one("img")
+    return img.get("src") if img else None
+
+
+def set_page_hero(raw_content: str, hero_url: str) -> tuple[str, bool]:
+    """Rewrite a page's hero image src in [fusion_code] block. Returns (new_content, changed)."""
+    m = re.search(r"\[fusion_code\]([^\[]+)\[/fusion_code\]", raw_content)
+    if not m:
+        return raw_content, False
+    try:
+        html = base64.b64decode(m.group(1)).decode()
+    except Exception:
+        return raw_content, False
+    soup = BeautifulSoup(html, "html.parser")
+    img = soup.select_one(".col-xs-12 > img") or soup.select_one("img.img-responsive") or soup.select_one("img")
+    if not img or img.get("src") == hero_url:
+        return raw_content, False
+    img["src"] = hero_url
+    new_html = str(soup)
+    new_b64 = base64.b64encode(new_html.encode()).decode()
+    new_content = raw_content[:m.start(1)] + new_b64 + raw_content[m.end(1):]
+    return new_content, True
+
+
+def find_page(url: str, runner=_run) -> dict | None:
+    """Resolve a manifest URL to a page ID on the dev site. Returns page dict or None."""
+    def _wp(*args, input=None):
+        return runner([*wp_base(interactive=True), *args], input=input)
+
+    r = _wp("post", "list", "--post_type=page", "--post_status=publish", "--fields=ID,post_name,post_parent", "--format=json")
+    if r.returncode != 0:
+        return None
+    try:
+        pages = json.loads(r.stdout)
+    except Exception:
+        return None
+    by_id = {str(p["ID"]): p for p in pages}
+    for p in pages:
+        parts, cur = [p["post_name"]], p
+        while str(cur["post_parent"]) != "0" and str(cur["post_parent"]) in by_id:
+            cur = by_id[str(cur["post_parent"])]
+            parts.append(cur["post_name"])
+        if "/" + "/".join(reversed(parts)) + "/" == url:
+            return p
+    return None
+
+
+def sync_hero(slug: str, url: str, runner=_run) -> dict:
+    """Sync a project's page hero image to match the generated hero. Returns {slug, page_hero_changed, ...} or {slug, warning}."""
+    def _wp(*args, input=None):
+        return runner([*wp_base(interactive=True), *args], input=input)
+
+    page = find_page(url, runner)
+    if not page:
+        return {"slug": slug, "warning": f"no page found at {url}"}
+
+    page_id = str(page["ID"])
+    r = _wp("post", "get", page_id, "--field=post_content")
+    if r.returncode != 0:
+        return {"slug": slug, "warning": f"could not read page {page_id}"}
+
+    raw_content = r.stdout
+    hero_url = f"/wp-content/uploads/generated/{slug}-hero.jpg"
+    new_content, changed = set_page_hero(raw_content, hero_url)
+
+    if changed:
+        r = _wp("post", "update", page_id, "-", input=new_content)
+        if r.returncode != 0:
+            return {"slug": slug, "warning": f"could not update page {page_id}"}
+
+    return {"slug": slug, "page_hero_changed": changed}
+
+
+def hero_status(manifest: list[dict], runner=_run) -> dict[str, dict]:
+    """Report hero image status for projects with generated images. Returns {slug: {card, hero, matches}}."""
+    def _wp(*args, input=None):
+        return runner([*wp_base(interactive=True), *args], input=input)
+
+    status = {}
+    for entry in manifest:
+        slug = slug_of(entry["url"])
+        card_url = entry.get("thumbnail", "")
+        if not card_url or "generated" not in card_url:
+            continue  # only projects with generated cards
+
+        page = find_page(entry["url"], runner)
+        if not page:
+            continue
+
+        page_id = str(page["ID"])
+        r = _wp("post", "get", page_id, "--field=post_content")
+        if r.returncode != 0:
+            continue
+
+        hero_src = page_hero(r.stdout)
+        hero_url = f"/wp-content/uploads/generated/{slug}-hero.jpg"
+        status[slug] = {
+            "card": card_url,
+            "hero": hero_src or "",
+            "matches": hero_src == hero_url
+        }
+
+    return status
 
 
 def regenerate_pages(project: Path = PROJECT, runner=_run) -> list[str]:
@@ -143,19 +260,51 @@ def regenerate_pages(project: Path = PROJECT, runner=_run) -> list[str]:
 def apply(project: Path = PROJECT, html_dir: Path = DEV_HTML, images_dir: Path = IMAGES_DIR, runner=_run, regenerate: bool = True) -> dict:
     manifest_file = Path(project) / "deploy" / "other-projects" / "manifest.json"
     text = manifest_file.read_text()
-    urls = publish_images(json.loads(text), images_dir, html_dir, Path(project) / "deploy")
+    manifest = json.loads(text)
+    urls = publish_images(manifest, images_dir, html_dir, Path(project) / "deploy")
     new_text, changed = update_manifest_text(text, urls)
     if changed:
         manifest_file.write_text(new_text)
     dev_copy = Path(html_dir) / "wp-content" / "other-projects" / "manifest.json"
     dev_copy.parent.mkdir(parents=True, exist_ok=True)
     dev_copy.write_text(new_text)
+
+    hero_changes = []
+    hero_warnings = []
+    for slug, _ in urls.items():
+        for entry in manifest:
+            if slug_of(entry["url"]) == slug:
+                result = sync_hero(slug, entry["url"], runner)
+                if "warning" in result:
+                    hero_warnings.append(result["warning"])
+                else:
+                    hero_changes.append(result["page_hero_changed"])
+                break
+
     log = regenerate_pages(project, runner) if regenerate else []
-    return {"images": len(urls), "manifest_changed": changed, "pages": log}
+    return {
+        "images": len(urls),
+        "manifest_changed": changed,
+        "pages": log,
+        "hero_changed": sum(hero_changes),
+        "hero_warnings": hero_warnings
+    }
 
 
 def main() -> None:
-    print(json.dumps(apply()))
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--status", action="store_true", help="Report hero image status for projects with generated images")
+    args = parser.parse_args()
+
+    if args.status:
+        manifest_file = PROJECT / "deploy" / "other-projects" / "manifest.json"
+        manifest = json.loads(manifest_file.read_text())
+        result = hero_status(manifest)
+    else:
+        result = apply()
+
+    print(json.dumps(result))
 
 
 if __name__ == "__main__":

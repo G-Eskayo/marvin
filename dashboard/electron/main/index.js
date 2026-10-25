@@ -497,6 +497,7 @@ function registerDocsHandlers() {
   ipcMain.handle('portfolio:project:plan', (_e, data) => portfolio.planProject(data))
   ipcMain.handle('portfolio:reference', () => portfolio.listReference())
   ipcMain.handle('portfolio:reference:markup', (_e, slug) => portfolio.referenceMarkup(slug))
+  ipcMain.handle('portfolio:hero:status', () => portfolio.heroStatus())
 }
 
 function postJson(webhookUrl, body) {

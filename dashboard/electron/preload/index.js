@@ -110,7 +110,8 @@ contextBridge.exposeInMainWorld('api', {
     renderTemplate: (id, data, options) => ipcRenderer.invoke('portfolio:template:render', id, data, options),
     planProject: (data) => ipcRenderer.invoke('portfolio:project:plan', data),
     reference: () => ipcRenderer.invoke('portfolio:reference'),
-    referenceMarkup: (slug) => ipcRenderer.invoke('portfolio:reference:markup', slug)
+    referenceMarkup: (slug) => ipcRenderer.invoke('portfolio:reference:markup', slug),
+    heroStatus: () => ipcRenderer.invoke('portfolio:hero:status')
   },
   activity: {
     list: () => ipcRenderer.invoke('activity:list'),

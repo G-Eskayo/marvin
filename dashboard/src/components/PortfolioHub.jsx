@@ -968,7 +968,7 @@ function VariantTile({ slug, v, onChoose, onDelete, onZoom, busy }) {
   )
 }
 
-function ImageCard({ item, motifs, onGenerate }) {
+function ImageCard({ item, motifs, onGenerate, heroMismatch }) {
   const [preview, setPreview] = useState(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
@@ -1035,6 +1035,11 @@ function ImageCard({ item, motifs, onGenerate }) {
       {zoom && <Lightbox src={zoom.src} caption={zoom.caption} onClose={closeZoom} />}
       <div className="flex items-center gap-2">
         <h3 className="truncate text-sm font-medium text-white">{item.title}</h3>
+        {heroMismatch && (
+          <span title="Hero image on page differs from the generated card; click Apply to sync" className="shrink-0 rounded bg-red-950 px-1.5 py-0.5 text-[10px] text-red-300">
+            hero ≠ card
+          </span>
+        )}
         {item.sharedWith.length > 0 && (
           <span title={`Also used by: ${item.sharedWith.join(', ')}`} className="shrink-0 rounded bg-amber-950 px-1.5 py-0.5 text-[10px] text-amber-300">
             shared ×{item.sharedWith.length + 1}
@@ -1086,7 +1091,17 @@ function Images() {
   const [motifs, setMotifs] = useState([])
   const [applying, setApplying] = useState(false)
   const [applied, setApplied] = useState(null)
-  const load = useCallback(() => window.api.portfolio.images().then(setItems).catch((e) => setError(errText(e))), [])
+  const [heroStatus, setHeroStatus] = useState({})
+  const load = useCallback(async () => {
+    try {
+      const imgs = await window.api.portfolio.images()
+      setItems(imgs)
+      const status = await window.api.portfolio.heroStatus()
+      setHeroStatus(status)
+    } catch (e) {
+      setError(errText(e))
+    }
+  }, [])
   useEffect(() => {
     load()
     window.api.portfolio.imageMotifs().then(setMotifs).catch(() => {})
@@ -1095,13 +1110,15 @@ function Images() {
   if (error) return <p className="text-sm text-red-400">{error}</p>
   if (!items) return <p className="text-sm text-neutral-500">Loading images…</p>
   const shared = items.filter((i) => i.sharedWith.length > 0).length
+  const heroMismatches = Object.keys(heroStatus).filter((slug) => !heroStatus[slug].matches).length
 
   async function applyAll() {
     setApplying(true)
     setApplied(null)
     try {
       const r = await window.api.portfolio.applyImages()
-      setApplied({ message: `Applied ${r.images} images to the dev site; ${r.manifest_changed} manifest thumbnail${r.manifest_changed === 1 ? '' : 's'} changed (review deploy/other-projects/manifest.json in the repo — nothing was pushed).` })
+      const heroMsg = r.hero_changed > 0 ? `; hero images updated for ${r.hero_changed} project${r.hero_changed === 1 ? '' : 's'}` : ''
+      setApplied({ message: `Applied ${r.images} images to the dev site; ${r.manifest_changed} manifest thumbnail${r.manifest_changed === 1 ? '' : 's'} changed${heroMsg} (review deploy/other-projects/manifest.json in the repo — nothing was pushed).` })
       await load()
     } catch (e) {
       setApplied({ error: errText(e) })
@@ -1115,14 +1132,14 @@ function Images() {
       <div className="flex items-center gap-3">
         <h2 className="text-lg font-medium text-white">Images</h2>
         <span className="text-xs text-neutral-500">
-          {items.length} projects · {shared} sharing a thumbnail · generated art is unique per project and keyed to its slug
+          {items.length} projects · {shared} sharing a thumbnail {heroMismatches > 0 && `· ${heroMismatches} hero mismatch${heroMismatches === 1 ? '' : 'es'}`}
         </span>
         <button onClick={applyAll} disabled={applying} className={`${primary} ml-auto`}>{applying ? 'Applying to the dev site (about a minute)…' : 'Apply chosen images to the dev site'}</button>
       </div>
       <Status state={applied} />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {items.map((it) => (
-          <ImageCard key={it.slug} item={it} motifs={motifs} onGenerate={load} />
+          <ImageCard key={it.slug} item={it} motifs={motifs} onGenerate={load} heroMismatch={heroStatus[it.slug] && !heroStatus[it.slug].matches} />
         ))}
       </div>
     </div>
