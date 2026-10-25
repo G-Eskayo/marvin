@@ -548,6 +548,78 @@ def check_main_health(path: Path | None = None, now: datetime | None = None) -> 
     return _result(cid, label, "green", f"main @ {d.get('sha', '?')}: {d.get('summary', 'passing')}")
 
 
+SEAL_BETA_YELLOW_AFTER_HOURS = 3
+SEAL_BETA_RED_AFTER_HOURS = 24
+
+
+def check_seal_beta_ingest(now: datetime | None = None) -> dict:
+    """Seal beta feedback ingestion pipeline: track job pass/fail status and content freshness.
+    Reads job_events run log for execution status and summary.json for last_report_seen_at timestamp."""
+    cid, label = "seal:beta-ingest", "Seal beta feedback ingest"
+    now = now or _now()
+
+    # Check job_events run log.
+    job_events_file = HOME / ".claude" / "logs" / "jobs" / "seal-beta-ingest.json"
+    if not job_events_file.exists():
+        return _result(cid, label, "yellow", "job has never run")
+
+    try:
+        job_doc = json.loads(job_events_file.read_text())
+    except (json.JSONDecodeError, OSError) as exc:
+        return _result(cid, label, "yellow", f"job_events file unreadable: {exc}")
+
+    runs = job_doc.get("runs") or []
+    if not runs:
+        return _result(cid, label, "yellow", "job has never run")
+
+    last_run = runs[-1]
+    status = last_run.get("status")
+
+    # Check for explicit failure.
+    if status == "failed":
+        error_msg = last_run.get("error", "unknown error")
+        return _result(cid, label, "red", f"last run failed: {error_msg}")
+
+    # Check for stale run (still running after crash threshold).
+    if status == "running":
+        try:
+            started = datetime.fromisoformat(last_run.get("started_at", ""))
+            age_s = (now - started).total_seconds()
+            if age_s > 30 * 60:  # 30 minutes
+                return _result(cid, label, "red", f"job stuck running for {age_s / 60:.0f} minutes")
+        except ValueError:
+            pass
+
+    # Check content freshness via summary.json.
+    summary_file = HOME / ".claude" / "seal-beta" / "summary.json"
+    if not summary_file.exists():
+        return _result(cid, label, "yellow", "no summary generated yet")
+
+    try:
+        summary = json.loads(summary_file.read_text())
+    except (json.JSONDecodeError, OSError) as exc:
+        return _result(cid, label, "yellow", f"summary.json unreadable: {exc}")
+
+    last_report_at = summary.get("last_report_seen_at")
+    if not last_report_at:
+        return _result(cid, label, "yellow", "no reports received yet")
+
+    try:
+        report_time = datetime.fromisoformat(last_report_at)
+    except ValueError:
+        return _result(cid, label, "yellow", f"last_report_seen_at unparseable: {last_report_at}")
+
+    age_h = (now - report_time).total_seconds() / 3600
+    if age_h <= SEAL_BETA_YELLOW_AFTER_HOURS:
+        sev = "green"
+    elif age_h <= SEAL_BETA_RED_AFTER_HOURS:
+        sev = "yellow"
+    else:
+        sev = "red"
+
+    return _result(cid, label, sev, f"last report {age_h:.1f}h ago", value=round(age_h, 1))
+
+
 GITHUB_BUDGET_YELLOW_BELOW = 0.20   # fraction of the hourly allowance
 GITHUB_BUDGET_RED_BELOW = 0.05
 
@@ -1025,7 +1097,7 @@ JOB_PLACEMENT = {
     "desktoplive": "both", "dashboard-webhook": "both",  # webhook on both until #112 (ADR 0032)
     "ticket-pipeline": "both",  # mini scans; the laptop's copy is a standby that scans only if the mini goes quiet (scanner_role.py)
     "architecture-review": "mini", "auto-fix": "mini", "cron-health": "mini", "health-check": "mini",
-    "process-quarantine-reviews": "mini", "verify-digest-fix": "mini",
+    "process-quarantine-reviews": "mini", "verify-digest-fix": "mini", "seal-beta-ingest": "mini",
     "usage-scan": "both",  # hourly: each machine scans its own transcripts for the Metrics tab (lib/usage_report.py)
     "cleanup-sweep": "both",  # daily: each machine sweeps its own pipeline worktrees (lib/cleanup_sweep.py)
     "machine-resources": "both",  # 30s: samples disk/mem/swap/CPU/GPU for resources panel (#130)
@@ -1440,6 +1512,7 @@ def run_all() -> dict:
     results += check_missing_profiles()
     results.append(check_trigger_coverage())
     results.append(check_catalog_fresh())
+    results.append(check_seal_beta_ingest())
     results.append(check_project_tags())
     results.append(check_hold_revisit())
     results.append(check_github_budget())

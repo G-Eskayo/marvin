@@ -1230,3 +1230,119 @@ def test_output_contracts_reach_health(monkeypatch):
     import output_contracts
     monkeypatch.setattr(output_contracts, "health_findings", lambda: [{"id": "contract:x", "severity": "red"}])
     assert hc.check_output_contracts() == [{"id": "contract:x", "severity": "red"}]
+
+
+# ── seal beta ingest ─────────────────────────────────────────────────────
+
+def test_check_seal_beta_ingest_green_when_fresh_report(tmp_path, monkeypatch):
+    """Green when job passed and last report is recent (case 25)."""
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+    now = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
+    recent = (now - timedelta(hours=1)).isoformat()
+
+    # Create job_events file with passed status.
+    jobs_dir = tmp_path / ".claude" / "logs" / "jobs"
+    jobs_dir.mkdir(parents=True, exist_ok=True)
+    job_file = jobs_dir / "seal-beta-ingest.json"
+    job_file.write_text(json.dumps({
+        "job": "seal-beta-ingest",
+        "label": "Seal beta feedback ingest",
+        "runs": [{
+            "id": "abc123",
+            "status": "passed",
+            "started_at": recent,
+            "finished_at": now.isoformat(),
+            "steps": [],
+            "summary": "",
+            "error": ""
+        }]
+    }))
+
+    # Create summary.json with fresh report timestamp.
+    seal_dir = tmp_path / ".claude" / "seal-beta"
+    seal_dir.mkdir(parents=True, exist_ok=True)
+    (seal_dir / "summary.json").write_text(json.dumps({
+        "by_device": {},
+        "by_build": {},
+        "last_report_seen_at": recent,
+        "generated_at": now.isoformat()
+    }))
+
+    result = hc.check_seal_beta_ingest(now=now)
+    assert result["severity"] == "green"
+    assert result["value"] == 1.0
+
+
+def test_check_seal_beta_ingest_red_when_job_failed(tmp_path, monkeypatch):
+    """Red when job last run failed (case 26)."""
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+    now = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
+
+    jobs_dir = tmp_path / ".claude" / "logs" / "jobs"
+    jobs_dir.mkdir(parents=True, exist_ok=True)
+    job_file = jobs_dir / "seal-beta-ingest.json"
+    job_file.write_text(json.dumps({
+        "job": "seal-beta-ingest",
+        "label": "Seal beta feedback ingest",
+        "runs": [{
+            "id": "abc123",
+            "status": "failed",
+            "started_at": now.isoformat(),
+            "finished_at": now.isoformat(),
+            "steps": [],
+            "summary": "",
+            "error": "permission denied"
+        }]
+    }))
+
+    result = hc.check_seal_beta_ingest(now=now)
+    assert result["severity"] == "red"
+    assert "failed" in result["detail"]
+
+
+def test_check_seal_beta_ingest_yellow_when_stale_report(tmp_path, monkeypatch):
+    """Yellow when reports are stale (case 27)."""
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+    now = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
+    stale = (now - timedelta(hours=6)).isoformat()
+
+    jobs_dir = tmp_path / ".claude" / "logs" / "jobs"
+    jobs_dir.mkdir(parents=True, exist_ok=True)
+    job_file = jobs_dir / "seal-beta-ingest.json"
+    job_file.write_text(json.dumps({
+        "job": "seal-beta-ingest",
+        "label": "Seal beta feedback ingest",
+        "runs": [{
+            "id": "abc123",
+            "status": "passed",
+            "started_at": stale,
+            "finished_at": stale,
+            "steps": [],
+            "summary": "",
+            "error": ""
+        }]
+    }))
+
+    seal_dir = tmp_path / ".claude" / "seal-beta"
+    seal_dir.mkdir(parents=True, exist_ok=True)
+    (seal_dir / "summary.json").write_text(json.dumps({
+        "by_device": {},
+        "by_build": {},
+        "last_report_seen_at": stale,
+        "generated_at": stale
+    }))
+
+    result = hc.check_seal_beta_ingest(now=now)
+    assert result["severity"] == "yellow"
+    assert result["value"] == 6.0
+
+
+def test_check_seal_beta_ingest_yellow_when_never_run(tmp_path, monkeypatch):
+    """Yellow when job has never run (case 28)."""
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+    now = datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc)
+
+    # No job_events file at all
+    result = hc.check_seal_beta_ingest(now=now)
+    assert result["severity"] == "yellow"
+    assert "never run" in result["detail"]

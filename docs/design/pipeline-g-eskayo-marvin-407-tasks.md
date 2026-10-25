@@ -1,0 +1,8 @@
+1. Fix `validate_conversation` in `lib/seal_beta_ingest.py`: require `battery.maxThermalState` to be a non-empty string (not numeric 0–3); add a `THERMAL_RANK = {"nominal": 0, "fair": 1, "serious": 2, "critical": 3}` table.
+2. Fix `aggregate()`'s `worst_thermal_state`: rank via `THERMAL_RANK`, ignore unmapped strings when picking the max, return the string label (not a number).
+3. Fix `is_low_sample()`: `minutes = conv.get("minutes", 0); samples = conv.get("lag", {}).get("samples", 0); return minutes < 1.0 or samples < 30`.
+4. Fix `DEVICE_MODEL_NAMES["iPhone18,1"]` to `"iPhone 17"` (remove the incorrect `"iPhone 18"` entry).
+5. Fix `ingest_file`'s row construction: build `enriched` from an explicit allowlist (`id, rating, ratingSkipped, lag, rewriteRate, speakers, ending, battery, minutes, device_model, app_build`) instead of `{**conv, ...}`, so `note`/`startedAt`/other raw passthrough fields never reach `reports.jsonl`.
+6. Update `lib/tests/test_seal_beta_ingest.py`: rewrite the two tests that currently assert the bugs (`test_is_low_sample_exactly_10`, `test_device_plain_name_known_model`) to the corrected behavior, and add tests 1–10 (regression) and 11–23 (gap-fill) from the list above.
+7. No changes needed to `lib/health_checks.py`, its tests, `JOB_PLACEMENT`, or the launchd plist — all already correct and already covered.
+8. Run `lib/tests/test_seal_beta_ingest.py` and `lib/tests/test_health_checks.py` standalone, then the full `lib/tests/` suite once; confirm the only failure (if any) is the pre-existing `test_portfolio_flux.py` disk-space flake, and note it explicitly in the PR description so it isn't mistaken for a seal-beta regression again.

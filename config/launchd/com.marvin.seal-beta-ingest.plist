@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Seal beta feedback ingestion (lib/seal_beta_ingest.py): hourly scan of ~/Library/Messages/Attachments/
+     for seal-feedback-*.json files, ingest valid conversations, and build summary.
+     MINI ONLY — needs Full Disk Access granted to ~/.agents/venv/bin/python once.
+     Install on the mini: cp this to ~/Library/LaunchAgents/ and `launchctl bootstrap gui/$(id -u) <that file>`. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.marvin.seal-beta-ingest</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/gileskayo/.agents/venv/bin/python</string>
+        <string>/Users/gileskayo/.agents/lib/seal_beta_ingest.py</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StartInterval</key>
+    <integer>3600</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/gileskayo/.claude/logs/seal-beta-ingest.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/gileskayo/.claude/logs/seal-beta-ingest-error.log</string>
+</dict>
+</plist>
