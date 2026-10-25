@@ -1271,6 +1271,250 @@ def test_a_profile_that_can_never_run_is_one_yellow_line(tmp_path):
     assert hc.check_unrunnable_profiles(profiles_dir=tmp_path / "empty") == []
 
 
+# ── autonomous usage share ──────────────────────────────────────────
+
+def test_check_autonomous_share_green_when_at_50_percent(tmp_path):
+    """Test 1: check_autonomous_share should return green when autonomous share is ≤50%."""
+    (tmp_path / ".claude" / "logs").mkdir(parents=True)
+    import json
+    usage_data = {
+        "generated_at": "2026-10-22T12:00:00+00:00",
+        "rows": [
+            {"day": "2026-10-22", "kind": "headless", "model": "sonnet", "output": 500, "input": 100, "cache_write": 0, "cache_read": 0, "messages": 5},
+            {"day": "2026-10-22", "kind": "interactive", "model": "sonnet", "output": 500, "input": 100, "cache_write": 0, "cache_read": 0, "messages": 5}
+        ]
+    }
+    usage_path = tmp_path / ".claude" / "logs" / "token-usage.json"
+    usage_path.write_text(json.dumps(usage_data))
+    result = hc.check_autonomous_share(path=usage_path, now=datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc))
+    assert result["severity"] == "green"
+    assert "50%" in result["detail"]
+    assert "healthy share" in result["detail"]
+
+
+def test_check_autonomous_share_yellow_when_above_50_percent(tmp_path):
+    """Test 2: check_autonomous_share should return yellow when autonomous share exceeds 50%."""
+    (tmp_path / ".claude" / "logs").mkdir(parents=True)
+    import json
+    usage_data = {
+        "generated_at": "2026-10-22T12:00:00+00:00",
+        "rows": [
+            {"day": "2026-10-22", "kind": "headless", "model": "sonnet", "output": 600, "input": 100, "cache_write": 0, "cache_read": 0, "messages": 6},
+            {"day": "2026-10-22", "kind": "interactive", "model": "sonnet", "output": 400, "input": 100, "cache_write": 0, "cache_read": 0, "messages": 4}
+        ]
+    }
+    usage_path = tmp_path / ".claude" / "logs" / "token-usage.json"
+    usage_path.write_text(json.dumps(usage_data))
+    result = hc.check_autonomous_share(path=usage_path, now=datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc))
+    assert result["severity"] == "yellow"
+    assert "60%" in result["detail"] and "autonomous work dominating" in result["detail"]
+
+
+def test_check_autonomous_share_uses_latest_day_only(tmp_path):
+    """Test 3: check_autonomous_share should use only today's data, not all history."""
+    (tmp_path / ".claude" / "logs").mkdir(parents=True)
+    import json
+    usage_data = {
+        "generated_at": "2026-10-22T12:00:00+00:00",
+        "rows": [
+            {"day": "2026-10-20", "kind": "headless", "model": "sonnet", "output": 900, "input": 100, "cache_write": 0, "cache_read": 0, "messages": 9},
+            {"day": "2026-10-20", "kind": "interactive", "model": "sonnet", "output": 100, "input": 100, "cache_write": 0, "cache_read": 0, "messages": 1},
+            {"day": "2026-10-22", "kind": "interactive", "model": "sonnet", "output": 800, "input": 100, "cache_write": 0, "cache_read": 0, "messages": 8},
+            {"day": "2026-10-22", "kind": "headless", "model": "sonnet", "output": 200, "input": 100, "cache_write": 0, "cache_read": 0, "messages": 2}
+        ]
+    }
+    usage_path = tmp_path / ".claude" / "logs" / "token-usage.json"
+    usage_path.write_text(json.dumps(usage_data))
+    result = hc.check_autonomous_share(path=usage_path, now=datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc))
+    assert "2026-10-22" in result["detail"]
+    assert "20%" in result["detail"]  # Only today: 200/(200+800) = 20%
+    assert result["severity"] == "green"
+
+
+def test_check_autonomous_share_includes_subagent_in_autonomous(tmp_path):
+    """Test 4: check_autonomous_share should count both headless and subagent as autonomous."""
+    (tmp_path / ".claude" / "logs").mkdir(parents=True)
+    import json
+    usage_data = {
+        "generated_at": "2026-10-22T12:00:00+00:00",
+        "rows": [
+            {"day": "2026-10-22", "kind": "headless", "model": "sonnet", "output": 300, "input": 100, "cache_write": 0, "cache_read": 0, "messages": 3},
+            {"day": "2026-10-22", "kind": "subagent", "model": "sonnet", "output": 300, "input": 100, "cache_write": 0, "cache_read": 0, "messages": 3},
+            {"day": "2026-10-22", "kind": "interactive", "model": "sonnet", "output": 400, "input": 100, "cache_write": 0, "cache_read": 0, "messages": 4}
+        ]
+    }
+    usage_path = tmp_path / ".claude" / "logs" / "token-usage.json"
+    usage_path.write_text(json.dumps(usage_data))
+    result = hc.check_autonomous_share(path=usage_path, now=datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc))
+    assert "60%" in result["detail"]
+
+
+def test_check_autonomous_share_unknown_when_no_file(tmp_path):
+    """Test 5: check_autonomous_share should return unknown when token usage file doesn't exist."""
+    result = hc.check_autonomous_share(path=tmp_path / "nonexistent.json")
+    assert result["severity"] == "unknown"
+    assert "couldn't measure" in result["detail"]
+
+
+def test_check_autonomous_share_unknown_when_invalid_json(tmp_path):
+    """Test 6: check_autonomous_share should return unknown when JSON is invalid."""
+    (tmp_path / ".claude" / "logs").mkdir(parents=True)
+    usage_path = tmp_path / ".claude" / "logs" / "token-usage.json"
+    usage_path.write_text("not valid json")
+    result = hc.check_autonomous_share(path=usage_path)
+    assert result["severity"] == "unknown"
+
+
+def test_check_autonomous_share_green_with_no_rows(tmp_path):
+    """Test 7: check_autonomous_share should return green when rows list is empty."""
+    (tmp_path / ".claude" / "logs").mkdir(parents=True)
+    import json
+    usage_data = {"generated_at": "2026-10-22T12:00:00+00:00", "rows": []}
+    usage_path = tmp_path / ".claude" / "logs" / "token-usage.json"
+    usage_path.write_text(json.dumps(usage_data))
+    result = hc.check_autonomous_share(path=usage_path)
+    assert result["severity"] == "green"
+    assert "no usage data yet" in result["detail"]
+
+
+def test_check_autonomous_share_stale_data_indicator(tmp_path):
+    """Test 8: check_autonomous_share should indicate when data is stale (from a previous day)."""
+    (tmp_path / ".claude" / "logs").mkdir(parents=True)
+    import json
+    usage_data = {
+        "generated_at": "2026-10-22T12:00:00+00:00",
+        "rows": [
+            {"day": "2026-10-21", "kind": "headless", "model": "sonnet", "output": 100, "input": 100, "cache_write": 0, "cache_read": 0, "messages": 1}
+        ]
+    }
+    usage_path = tmp_path / ".claude" / "logs" / "token-usage.json"
+    usage_path.write_text(json.dumps(usage_data))
+    result = hc.check_autonomous_share(path=usage_path, now=datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc))
+    assert result["severity"] == "yellow"  # 100% autonomous > 50%
+    assert "stale" in result["detail"]
+    assert "2026-10-21" in result["detail"]
+
+
+def test_check_autonomous_share_uses_local_machine_only(tmp_path, monkeypatch):
+    """Test 3: check_autonomous_share should never call subprocess (local read-only operation)."""
+    (tmp_path / ".claude" / "logs").mkdir(parents=True)
+    import json
+    usage_data = {
+        "generated_at": "2026-10-22T12:00:00+00:00",
+        "rows": [
+            {"day": "2026-10-22", "kind": "headless", "model": "sonnet", "output": 700, "input": 100, "cache_write": 0, "cache_read": 0, "messages": 7},
+            {"day": "2026-10-22", "kind": "interactive", "model": "sonnet", "output": 300, "input": 100, "cache_write": 0, "cache_read": 0, "messages": 3}
+        ]
+    }
+    usage_path = tmp_path / ".claude" / "logs" / "token-usage.json"
+    usage_path.write_text(json.dumps(usage_data))
+
+    # Ensure subprocess is never called
+    subprocess_called = []
+    original_run = subprocess.run
+    def mock_subprocess_run(*args, **kwargs):
+        subprocess_called.append((args, kwargs))
+        return original_run(*args, **kwargs)
+    monkeypatch.setattr(subprocess, "run", mock_subprocess_run)
+
+    result = hc.check_autonomous_share(path=usage_path, now=datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc))
+    assert result is not None
+    assert "70%" in result["detail"]
+    assert len(subprocess_called) == 0, "check_autonomous_share should not call subprocess"
+
+
+def test_check_autonomous_share_groups_by_day_not_by_kind(tmp_path):
+    """Test 10: check_autonomous_share should aggregate all kinds for a given day."""
+    (tmp_path / ".claude" / "logs").mkdir(parents=True)
+    import json
+    usage_data = {
+        "generated_at": "2026-10-22T12:00:00+00:00",
+        "rows": [
+            {"day": "2026-10-22", "kind": "headless", "model": "sonnet", "output": 100, "input": 10, "cache_write": 0, "cache_read": 0, "messages": 1},
+            {"day": "2026-10-22", "kind": "headless", "model": "opus", "output": 150, "input": 20, "cache_write": 0, "cache_read": 0, "messages": 2},
+            {"day": "2026-10-22", "kind": "interactive", "model": "sonnet", "output": 250, "input": 30, "cache_write": 0, "cache_read": 0, "messages": 3}
+        ]
+    }
+    usage_path = tmp_path / ".claude" / "logs" / "token-usage.json"
+    usage_path.write_text(json.dumps(usage_data))
+    result = hc.check_autonomous_share(path=usage_path, now=datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc))
+    assert "50%" in result["detail"]  # (100+150)/500 = 50%
+    assert result["severity"] == "green"
+
+
+def test_check_autonomous_share_100_percent_autonomous(tmp_path):
+    """Test 11: check_autonomous_share should handle 100% autonomous (no interactive)."""
+    (tmp_path / ".claude" / "logs").mkdir(parents=True)
+    import json
+    usage_data = {
+        "generated_at": "2026-10-22T12:00:00+00:00",
+        "rows": [
+            {"day": "2026-10-22", "kind": "headless", "model": "sonnet", "output": 500, "input": 100, "cache_write": 0, "cache_read": 0, "messages": 5}
+        ]
+    }
+    usage_path = tmp_path / ".claude" / "logs" / "token-usage.json"
+    usage_path.write_text(json.dumps(usage_data))
+    result = hc.check_autonomous_share(path=usage_path, now=datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc))
+    assert "100%" in result["detail"]
+    assert result["severity"] == "yellow"
+
+
+def test_check_autonomous_share_0_percent_autonomous(tmp_path):
+    """Test 12: check_autonomous_share should handle 0% autonomous (all interactive)."""
+    (tmp_path / ".claude" / "logs").mkdir(parents=True)
+    import json
+    usage_data = {
+        "generated_at": "2026-10-22T12:00:00+00:00",
+        "rows": [
+            {"day": "2026-10-22", "kind": "interactive", "model": "sonnet", "output": 500, "input": 100, "cache_write": 0, "cache_read": 0, "messages": 5}
+        ]
+    }
+    usage_path = tmp_path / ".claude" / "logs" / "token-usage.json"
+    usage_path.write_text(json.dumps(usage_data))
+    result = hc.check_autonomous_share(path=usage_path, now=datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc))
+    assert "0%" in result["detail"]
+    assert result["severity"] == "green"
+
+
+def test_check_autonomous_share_distinguishes_days(tmp_path):
+    """Test 13: check_autonomous_share should pick the latest day when multiple days present."""
+    (tmp_path / ".claude" / "logs").mkdir(parents=True)
+    import json
+    usage_data = {
+        "generated_at": "2026-10-23T12:00:00+00:00",
+        "rows": [
+            {"day": "2026-10-20", "kind": "headless", "model": "sonnet", "output": 900, "input": 100, "cache_write": 0, "cache_read": 0, "messages": 9},
+            {"day": "2026-10-21", "kind": "interactive", "model": "sonnet", "output": 950, "input": 100, "cache_write": 0, "cache_read": 0, "messages": 10},
+            {"day": "2026-10-23", "kind": "headless", "model": "sonnet", "output": 100, "input": 100, "cache_write": 0, "cache_read": 0, "messages": 1},
+            {"day": "2026-10-23", "kind": "interactive", "model": "sonnet", "output": 100, "input": 100, "cache_write": 0, "cache_read": 0, "messages": 1}
+        ]
+    }
+    usage_path = tmp_path / ".claude" / "logs" / "token-usage.json"
+    usage_path.write_text(json.dumps(usage_data))
+    result = hc.check_autonomous_share(path=usage_path, now=datetime(2026, 10, 23, 12, 0, tzinfo=timezone.utc))
+    assert "2026-10-23" in result["detail"]
+    assert "50%" in result["detail"]
+    assert result["severity"] == "green"
+
+
+def test_check_autonomous_share_reports_value_as_percentage(tmp_path):
+    """Test 14: check_autonomous_share should include a numeric value field."""
+    (tmp_path / ".claude" / "logs").mkdir(parents=True)
+    import json
+    usage_data = {
+        "generated_at": "2026-10-22T12:00:00+00:00",
+        "rows": [
+            {"day": "2026-10-22", "kind": "headless", "model": "sonnet", "output": 750, "input": 100, "cache_write": 0, "cache_read": 0, "messages": 7},
+            {"day": "2026-10-22", "kind": "interactive", "model": "sonnet", "output": 250, "input": 100, "cache_write": 0, "cache_read": 0, "messages": 3}
+        ]
+    }
+    usage_path = tmp_path / ".claude" / "logs" / "token-usage.json"
+    usage_path.write_text(json.dumps(usage_data))
+    result = hc.check_autonomous_share(path=usage_path, now=datetime(2026, 10, 22, 12, 0, tzinfo=timezone.utc))
+    assert result["value"] == 75
+    assert "75%" in result["detail"]
+
+
 # ---- webhook-server uptime (pipeline review 2026-10-21, F14: "not running" while it served, on both Macs) ----
 
 @pytest.mark.parametrize("etime,secs", [("00:07", 7), ("05:07", 307), ("01:09:48", 4188), ("3-02:00:00", 3 * 86400 + 7200),

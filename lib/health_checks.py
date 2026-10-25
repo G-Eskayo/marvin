@@ -148,6 +148,54 @@ def check_dispatch_lock(state_path: Path | None = None) -> dict:
     return _result(cid, label, "green", f"busy {age_min:.0f}min on '{task}' — normal range", value=age_min)
 
 
+# ── autonomous usage share ──────────────────────────────────────────
+
+def check_autonomous_share(path: Path | None = None, now: datetime | None = None) -> dict:
+    """Local machine only -- check whether the share of autonomous (headless + subagent)
+    token usage for today is healthy. Yellow when autonomous share exceeds 50% on a day,
+    meaning autonomous work may be dominating the system. Information only, nothing paused."""
+    import session_usage
+    cid = "usage:autonomous-share"
+    label = "Autonomous usage share"
+    usage_path = path or session_usage.OUT_PATH
+    now = now or _now()
+    today = now.date().isoformat()
+    if not usage_path.exists():
+        return _unknown(cid, label, f"{usage_path} not found")
+    try:
+        data = json.loads(usage_path.read_text())
+    except (json.JSONDecodeError, OSError) as exc:
+        return _unknown(cid, label, str(exc))
+    rows = data.get("rows", [])
+    if not rows:
+        return _result(cid, label, "green", "no usage data yet (new machine or zero tokens)")
+    latest_day = None
+    for row in rows:
+        day = row.get("day")
+        if day and (latest_day is None or day > latest_day):
+            latest_day = day
+    if not latest_day:
+        return _result(cid, label, "green", "no usage data yet (new machine or zero tokens)")
+    stale_indicator = "" if latest_day == today else f" (from {latest_day}, stale)"
+    total_autonomous, total_output = 0, 0
+    for row in rows:
+        if row.get("day") != latest_day:
+            continue
+        output = row.get("output", 0)
+        kind = row.get("kind")
+        total_output += output
+        if kind in ("headless", "subagent"):
+            total_autonomous += output
+    if total_output == 0:
+        return _result(cid, label, "green", f"{latest_day}: no output tokens{stale_indicator}")
+    share = total_autonomous / total_output
+    pct = int(share * 100)
+    if share <= 0.50:
+        return _result(cid, label, "green", f"{latest_day}: {pct}% autonomous (headless+subagent) — healthy share{stale_indicator}", value=pct)
+    else:
+        return _result(cid, label, "yellow", f"{latest_day}: {pct}% autonomous — autonomous work dominating{stale_indicator}", value=pct)
+
+
 # ── cron jobs (absorbed from cron_health.py -- literally the same
 # check_job() + persistent offset-tracking state, not a reimplementation,
 # per ADR 0033. Reimplementing the log-scan naively (whole-tail regex, no
@@ -1470,6 +1518,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("token", "Auth tokens", check_token_files, CHECK_BUDGET_S),
         ("route:intent-routing-collection", "route.py embedding classifier (ChromaDB)", check_intent_routing_collection, CHECK_BUDGET_S),
         ("dispatch:lock-age", "Local dispatch lock", check_dispatch_lock, CHECK_BUDGET_S),
+        ("usage:autonomous-share", "Autonomous usage share", check_autonomous_share, CHECK_BUDGET_S),
         ("pipeline:breaker", "Ticket pipeline circuit breaker", lambda: check_pipeline_breaker(reach), CROSS_MACHINE_BUDGET_S),
         ("sync:stuck", "Code sync", lambda: check_sync_stuck(reach), CROSS_MACHINE_BUDGET_S),
         ("dispatch:parallel", "Parallel dispatch keeping up", check_parallel_dispatch, CHECK_BUDGET_S),

@@ -105,12 +105,83 @@ export function ticketTable(machines, which = 'all') {
   for (const m of pick(machines, which)) {
     for (const t of m.tokens?.by_ticket || []) {
       const key = `${t.project}#${t.ticket}`
-      const cur = byKey.get(key) || { project: t.project, ticket: t.ticket, input: 0, output: 0, cache_write: 0, cache_read: 0, messages: 0 }
+      const cur = byKey.get(key) || { project: t.project, ticket: t.ticket, input: 0, output: 0, cache_write: 0, cache_read: 0, messages: 0, by_kind: {} }
       for (const f of ['input', 'output', 'cache_write', 'cache_read', 'messages']) cur[f] += t[f]
+      cur.by_kind = addCounts(cur.by_kind, t.by_kind)
       byKey.set(key, cur)
     }
   }
   return [...byKey.values()].sort((a, b) => b.output - a.output)
+}
+
+function weekList(weeks, end) {
+  const last = new Date(`${end}T00:00:00Z`)
+  const weeks_array = []
+  for (let i = 0; i < weeks; i++) {
+    const d = new Date(last)
+    d.setUTCDate(d.getUTCDate() - 7 * (weeks - 1 - i))
+    weeks_array.push(d.toISOString().slice(0, 10))
+  }
+  return weeks_array
+}
+
+function getWeekFor(dateStr, weekEnds) {
+  const rDate = new Date(`${dateStr}T00:00:00Z`)
+  for (const wEnd of weekEnds) {
+    const wEndDate = new Date(`${wEnd}T00:00:00Z`)
+    const wStartDate = new Date(wEndDate)
+    wStartDate.setUTCDate(wEndDate.getUTCDate() - 6)
+    if (rDate >= wStartDate && rDate <= wEndDate) return wEnd
+  }
+  return null
+}
+
+export function weeklySeries(rows, { weeks = 4, end, metric = 'output' } = {}) {
+  const weekEnds = weekList(weeks, end || new Date().toISOString().slice(0, 10))
+  const idx = new Map(weekEnds.map((w) => [w, { week: w, day: w, interactive: 0, headless: 0, subagent: 0, total: 0 }]))
+  for (const r of rows) {
+    const weekEnd = getWeekFor(r.day, weekEnds)
+    if (!weekEnd) continue
+    const cell = idx.get(weekEnd)
+    const v = valueOf(r, metric)
+    cell[r.kind] = (cell[r.kind] || 0) + v
+    cell.total += v
+  }
+  return weekEnds.map((w) => idx.get(w))
+}
+
+export function autonomousShare(rows, { days = 30, end } = {}) {
+  const wanted = new Set(dayList(days, end || new Date().toISOString().slice(0, 10)))
+  let autonomous = 0, total = 0
+  for (const r of rows) {
+    if (!wanted.has(r.day)) continue
+    const v = r.output
+    if (r.kind === 'headless' || r.kind === 'subagent') autonomous += v
+    total += v
+  }
+  return total === 0 ? 0 : autonomous / total
+}
+
+export function topAutonomousSpenders(machines, which = 'all', limit = 10) {
+  const byKey = new Map()
+  for (const m of pick(machines, which)) {
+    for (const t of m.tokens?.by_ticket || []) {
+      const key = `${t.project}#${t.ticket}`
+      const cur = byKey.get(key) || { project: t.project, ticket: t.ticket, input: 0, output: 0, cache_write: 0, cache_read: 0, messages: 0, by_kind: {} }
+      for (const f of ['input', 'output', 'cache_write', 'cache_read', 'messages']) cur[f] += t[f]
+      cur.by_kind = addCounts(cur.by_kind, t.by_kind)
+      byKey.set(key, cur)
+    }
+  }
+  const tickets = [...byKey.values()]
+  return tickets.filter((t) => {
+    const autonomous = (t.by_kind?.headless || 0) + (t.by_kind?.subagent || 0)
+    return autonomous > 0
+  }).sort((a, b) => {
+    const aAuto = (a.by_kind?.headless || 0) + (a.by_kind?.subagent || 0)
+    const bAuto = (b.by_kind?.headless || 0) + (b.by_kind?.subagent || 0)
+    return bAuto - aAuto
+  }).slice(0, limit)
 }
 
 const agoText = (ms) => {

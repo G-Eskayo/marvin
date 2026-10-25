@@ -765,6 +765,14 @@ nothing connected them. "Where things are" was only the tidy agent's file-filing
   **Not measured:** whether the *right* skill fired for a request (that needs intent classification against the
   routing table; candidate next step using `route.py`'s classifier).
 
+- **Usage** (Metrics tab, session token accounting): `lib/session_usage.py` reads the same Claude Code transcripts
+  to track output token consumption by kind (interactive / headless / subagent) and by project and ticket. The **Autonomous
+  share** stat shows the percentage of output tokens from automated runs (headless ticket pipelines + subagent workers),
+  distinct from interactive chat. Week/day toggle lets you zoom in or out on patterns. The **Top autonomous spenders**
+  table shows which tickets drove the most autonomous token consumption (useful for identifying retry storms or expensive
+  automation). A health check (`check_autonomous_share()`) flags yellow when autonomous share passes 50% for a day,
+  meaning autonomous work is dominating the system. Information only; nothing is paused.
+
 ### Ticket agents and the completed record (decided 2026-10-05)
 
 - **Completed work is reference, not clutter (Gil: "how will we know where we are going if we don't remember

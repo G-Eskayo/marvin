@@ -88,6 +88,65 @@ def test_lines_that_are_not_assistant_usage_are_ignored(tmp_path):
     assert tu.aggregate([f], now=NOW)["totals"]["messages"] == 1
 
 
+def test_by_ticket_includes_by_kind_split(tmp_path):
+    """Test 1: by_ticket entries should have by_kind field like by_project does."""
+    wt = "/Users/g/.agents-pipeline-worktrees/pipeline-g-eskayo-marvin-5"
+    f = write(tmp_path, "a.jsonl", [line("a", cwd=wt, out=100, entry="sdk-cli"), line("b", cwd=wt, out=50, entry="cli")])
+    r = tu.aggregate([f], now=NOW)
+    ticket = next(t for t in r["by_ticket"] if t["ticket"] == 5)
+    assert "by_kind" in ticket
+    assert ticket["by_kind"]["headless"] == 100  # sdk-cli is headless
+    assert ticket["by_kind"]["interactive"] == 50  # cli is interactive
+
+
+def test_by_ticket_merges_by_kind_across_machines(tmp_path):
+    """Test 2: by_kind should merge output tokens per kind for the same ticket."""
+    wt = "/Users/g/.agents-pipeline-worktrees/pipeline-g-eskayo-clarity-captions-12"
+    # Simulating two lines with different kinds for same ticket
+    f = write(tmp_path, "a.jsonl", [line("a", cwd=wt, out=200, entry="sdk-cli"), line("b", cwd=wt, out=300, entry="cli")])
+    r = tu.aggregate([f], now=NOW)
+    ticket = next(t for t in r["by_ticket"] if t["project"] == "clarity-captions" and t["ticket"] == 12)
+    assert ticket["by_kind"]["headless"] == 200
+    assert ticket["by_kind"]["interactive"] == 300
+
+
+def test_by_ticket_tracks_subagent_runs(tmp_path):
+    """Test 3: by_kind should properly track subagent runs (isSidechain=true)."""
+    wt = "/Users/g/.agents-pipeline-worktrees/pipeline-g-eskayo-nourished-7"
+    # subagent runs have isSidechain=True
+    f = write(tmp_path, "a.jsonl", [line("a", cwd=wt, out=150, entry="cli", side=True)])
+    r = tu.aggregate([f], now=NOW)
+    ticket = next(t for t in r["by_ticket"] if t["ticket"] == 7)
+    assert ticket["by_kind"]["subagent"] == 150
+    assert ticket["by_kind"]["headless"] == 0
+    assert ticket["by_kind"]["interactive"] == 0
+
+
+def test_by_ticket_all_kinds_initialized_even_if_empty(tmp_path):
+    """Test 4: by_kind should have all three kinds (interactive, headless, subagent) even if some are 0."""
+    wt = "/Users/g/.agents-pipeline-worktrees/pipeline-g-eskayo-finance-os-3"
+    # Only interactive runs for this ticket
+    f = write(tmp_path, "a.jsonl", [line("a", cwd=wt, out=75, entry="cli")])
+    r = tu.aggregate([f], now=NOW)
+    ticket = next(t for t in r["by_ticket"] if t["ticket"] == 3)
+    assert set(ticket["by_kind"].keys()) == {"interactive", "headless", "subagent"}
+    assert ticket["by_kind"]["interactive"] == 75
+    assert ticket["by_kind"]["headless"] == 0
+    assert ticket["by_kind"]["subagent"] == 0
+
+
+def test_aggregate_multi_file_loop_merges_same_ticket_across_files(tmp_path):
+    """Test 15: aggregate() should correctly merge data for the same ticket from multiple files."""
+    wt = "/Users/g/.agents-pipeline-worktrees/pipeline-g-eskayo-marvin-8"
+    f1 = write(tmp_path, "file1.jsonl", [line("m1", cwd=wt, out=100, entry="sdk-cli")])
+    f2 = write(tmp_path, "file2.jsonl", [line("m2", cwd=wt, out=200, entry="sdk-cli")])
+    r = tu.aggregate([f1, f2], now=NOW)
+    ticket = next(t for t in r["by_ticket"] if t["ticket"] == 8)
+    assert ticket["output"] == 300, "aggregate() should sum output across files"
+    assert ticket["messages"] == 2, "aggregate() should count messages from both files"
+    assert ticket["by_kind"]["headless"] == 300, "aggregate() should merge by_kind across files"
+
+
 def test_refresh_writes_the_result_with_the_machine_name(tmp_path, monkeypatch):
     root = tmp_path / "projects"
     root.mkdir()

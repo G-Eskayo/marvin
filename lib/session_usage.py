@@ -124,12 +124,14 @@ def aggregate(files, now: datetime | None = None, window_days: int = WINDOW_DAYS
                 "usage": {"input": u.get("input_tokens", 0) or 0, "output": u.get("output_tokens", 0) or 0,
                           "cache_write": u.get("cache_creation_input_tokens", 0) or 0, "cache_read": u.get("cache_read_input_tokens", 0) or 0}}
     totals, rows, projects, tickets = _blank(), defaultdict(_blank), defaultdict(_blank), defaultdict(_blank)
+    tickets_by_kind: dict = defaultdict(lambda: {"interactive": 0, "headless": 0, "subagent": 0})
     for m in messages.values():
         _add(totals, m["usage"])
         _add(rows[(m["day"], m["kind"], m["model"])], m["usage"])
         _add(projects[(m["project"], m["kind"])], m["usage"])
         if m["ticket"] is not None:
             _add(tickets[(m["project"], m["ticket"])], m["usage"])
+            tickets_by_kind[(m["project"], m["ticket"])][m["kind"]] += m["usage"]["output"]
     by_project: dict = {}
     for (project, kind), rec in projects.items():
         p = by_project.setdefault(project, {"project": project, **_blank(), "by_kind": {}})
@@ -141,7 +143,7 @@ def aggregate(files, now: datetime | None = None, window_days: int = WINDOW_DAYS
         "totals": totals,
         "rows": [{"day": d, "kind": k, "model": mo, **rec} for (d, k, mo), rec in sorted(rows.items())],
         "by_project": sorted(by_project.values(), key=lambda p: -p["output"]),
-        "by_ticket": sorted(({"project": p, "ticket": t, **rec} for (p, t), rec in tickets.items()), key=lambda x: -x["output"])[:TOP_TICKETS],
+        "by_ticket": sorted(({"project": p, "ticket": t, **rec, "by_kind": tickets_by_kind[(p, t)]} for (p, t), rec in tickets.items()), key=lambda x: -x["output"])[:TOP_TICKETS],
     }
 
 
