@@ -1463,9 +1463,12 @@ MARVIN-as-OS north star).
   opens it in the MARVIN app), at **session start on whichever Mac Gil starts on**, and by **email**, and MARVIN keeps
   trying new ways. Which channels Gil actually opens is measured the same way as item ranking, so channels nobody uses
   get dropped. This is a start to something meant to grow much bigger.
-- **Brief owner** (decided 2026-10-15): the **Mac Mini** gathers the feeds and builds the brief before Gil wakes. The
-  MacBook builds it only if the Mini hasn't by an hour after its usual time. The research colony and daily digest no
-  longer run on both Macs (see ADR 0067).
+- **Brief owner** (decided 2026-10-15, updated ADR 0066): the **Mac Mini** is the primary builder for the morning
+  brief, daily digest, and research colony. Real schedule pairs (primary → fallback): brief (09:45 → 10:45), digest
+  (08:30 → 09:30), colony (09:00 → 10:00). The fallback (MacBook) gates on `brief_fallback.should_run()` to skip
+  silently when the primary already produced. Cross-machine merge (09:30) combines them and runs the zero-LLM consumption
+  step; `cross_machine_merge.py`'s merge operation is wired but runs zero model calls on a normal day (pending the open
+  "retire-cross-machine-merge" Decision).
 - **Item layers** (decided 2026-10-15): every brief item carries three layers, all prepared when the brief is built:
   (1) **the line** (one sentence, what the brief shows or says), (2) **the summary** (what happened, why it matters to
   Gil, what he could do), (3) **the source** (the original article or paper, plus links to related tickets and

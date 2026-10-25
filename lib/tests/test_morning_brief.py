@@ -1,8 +1,12 @@
 """The morning brief (marvin#306): one short start-of-day brief, built from what MARVIN already knows, no model run."""
 import json
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
+from unittest.mock import patch
 
 import morning_brief as mb
+import brief_fallback
 
 NOW = datetime(2026, 10, 9, 9, 45, tzinfo=timezone.utc)
 
@@ -123,3 +127,112 @@ def test_open_prs_marks_waiting_from_one_graphql_read(monkeypatch):
     monkeypatch.setattr(od, "fetch", lambda repos, run=None: None)
     brief = mb.gather(NOW, {"open_prs": mb._open_prs})
     assert brief["open_prs"] is None and "open PRs" in brief["missing"][0]
+
+
+def test_build_gates_on_should_run(tmp_path, monkeypatch):
+    """Test 3: build() skips when should_run() returns False (standby, not yet time)."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    path = tmp_path / "2026-10-09.md"
+
+    # Mock should_run to return False (we're standby and it's not fallback time yet).
+    monkeypatch.setattr("morning_brief.brief_fallback.should_run", lambda *a, **k: False)
+
+    # Mock gather to raise if called (it shouldn't be).
+    def raise_on_gather(*a, **k):
+        raise AssertionError("gather should not be called when should_run returns False")
+    monkeypatch.setattr(mb, "gather", raise_on_gather)
+
+    result = mb.build(NOW, _sources())
+    # Should return the path without building.
+    assert result == path
+    # File should not be created.
+    assert not path.exists()
+
+
+def test_build_writes_sidecar_before_brief(tmp_path, monkeypatch):
+    """Test 4: build() writes the .built-by sidecar before the brief body."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    monkeypatch.setattr("morning_brief.machine_profile.registry_id", lambda: "macbook-pro")
+    monkeypatch.setattr("morning_brief.brief_fallback.should_run", lambda *a, **k: True)
+    path = mb.build(NOW, _sources())
+
+    # Sidecar should exist and contain this machine's ID.
+    sidecar = tmp_path / "2026-10-09.md.built-by"
+    assert sidecar.exists()
+    assert sidecar.read_text() == "macbook-pro"
+
+    # Brief should exist and be valid.
+    assert path.exists()
+    assert "# Morning brief" in path.read_text()
+
+
+def test_build_skips_when_already_produced(tmp_path, monkeypatch):
+    """Test 5: build() skips (returns path) when output is already produced by another machine."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    monkeypatch.setattr("morning_brief.machine_profile.registry_id", lambda: "macbook-pro")
+    monkeypatch.setattr("morning_brief.brief_fallback.should_run", lambda *a, **k: True)
+
+    # Simulate brief already produced by mac-mini.
+    path = tmp_path / "2026-10-09.md"
+    path.write_text("# Existing brief from mac-mini")
+    sidecar = tmp_path / "2026-10-09.md.built-by"
+    sidecar.write_text("mac-mini")
+
+    # Try to build: should skip.
+    result = mb.build(NOW, _sources())
+    assert result == path
+    # The existing brief should not change.
+    assert "Existing brief from mac-mini" in path.read_text()
+
+
+def test_builder_of_returns_machine_id_from_sidecar(tmp_path):
+    """Test 17: builder_of() returns the machine ID from the .built-by sidecar."""
+    path = tmp_path / "brief.md"
+    path.write_text("# Brief")
+    sidecar = tmp_path / "brief.md.built-by"
+    sidecar.write_text("mac-mini")
+
+    assert brief_fallback.builder_of(path) == "mac-mini"
+
+
+def test_builder_of_returns_none_for_missing_sidecar(tmp_path):
+    """builder_of() returns None if sidecar doesn't exist."""
+    path = tmp_path / "brief.md"
+    path.write_text("# Brief")
+    assert brief_fallback.builder_of(path) is None
+
+
+def test_build_brief_leg_skip_when_already_produced(tmp_path, monkeypatch):
+    """Test 4 (brief leg): build() skips writing if brief already produced by another machine.
+    Tests the recheck before writing (the second gate before path.write_text).
+    """
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir(parents=True)
+    brief_path = briefs_dir / "2026-10-09.md"
+
+    # Pre-create the brief file as if produced by another machine.
+    brief_path.write_text("# Brief from primary")
+    sidecar = briefs_dir / "2026-10-09.md.built-by"
+    sidecar.write_text("mac-mini")
+
+    # Mock machine_profile to recognize the file as produced by another machine.
+    monkeypatch.setattr("brief_fallback.machine_profile.registry_id", lambda: "macbook-pro")
+    monkeypatch.setattr("brief_fallback.machine_profile.remote_macs", lambda: {})
+
+    # Mock should_run and produced.
+    monkeypatch.setattr("brief_fallback.should_run", lambda *a, **k: True)
+    monkeypatch.setattr("brief_fallback.produced", lambda path: path == brief_path)
+
+    # Patch BRIEFS to use tmp_path.
+    monkeypatch.setattr(mb, "BRIEFS", briefs_dir)
+
+    # Mock gather and render.
+    monkeypatch.setattr(mb, "gather", lambda *a, **k: {})
+    monkeypatch.setattr(mb, "render", lambda *a, **k: "# New brief content")
+
+    original_content = brief_path.read_text()
+    result = mb.build(NOW, _sources())
+
+    # File should not have been modified.
+    assert brief_path.read_text() == original_content
+    assert result == brief_path

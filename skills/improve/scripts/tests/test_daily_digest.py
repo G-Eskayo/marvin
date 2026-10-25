@@ -295,6 +295,10 @@ def test_main_short_circuits_when_out_file_exists(tmp_path, monkeypatch):
     monkeypatch.setattr(dd, "OUT_FILE", out_file)
     monkeypatch.setattr(dd, "DIGEST_DIR", digest_dir)
 
+    # Mock should_run to return True (so we pass that gate) but produced to return True.
+    monkeypatch.setattr("daily_digest.brief_fallback.should_run", lambda *a, **k: True)
+    monkeypatch.setattr("daily_digest.brief_fallback.produced", lambda *a, **k: True)
+
     # Patch functions with raise-on-call sentinels: if any of these are called,
     # it means the short-circuit didn't work
     def raise_roadmap():
@@ -324,7 +328,7 @@ def test_main_short_circuits_when_out_file_exists(tmp_path, monkeypatch):
         sys.stdout = old_stdout
 
     # Verify the short-circuit message was printed
-    assert "Today's digest already exists" in output
+    assert "already exists" in output
 
     # Verify content is unchanged
     assert out_file.read_text() == original_content
@@ -337,3 +341,169 @@ def test_missing_helper_format():
     result = dd._missing("test message")
     assert "❌ **Missing input:**" in result
     assert "test message" in result
+
+
+# ── fallback gating tests (tests 4-5, daily-digest leg) ──────────────────────
+
+def test_daily_digest_skips_when_not_responsible(tmp_path, monkeypatch):
+    """Test 4: main() skips when should_run() returns False (standby, not yet time)."""
+    digest_dir = tmp_path / "daily-digest"
+    digest_dir.mkdir()
+    out_file = digest_dir / "2026-10-25.md"
+
+    monkeypatch.setattr(dd, "DIGEST_DIR", digest_dir)
+    monkeypatch.setattr(dd, "OUT_FILE", out_file)
+
+    # Mock should_run to return False (e.g., we're standby and it's not yet fallback time).
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent / "lib"))
+    import brief_fallback
+    monkeypatch.setattr("daily_digest.brief_fallback.should_run", lambda *a, **k: False)
+
+    # Ensure call_claude is not called.
+    def raise_call_claude(prompt: str):
+        raise AssertionError("call_claude should not be called when should_run is False")
+    monkeypatch.setattr(dd, "call_claude", raise_call_claude)
+
+    # Run main() — should skip due to should_run gate.
+    dd.main()
+
+    # File should not be created.
+    assert not out_file.exists()
+
+
+def test_daily_digest_skips_when_already_produced(tmp_path, monkeypatch):
+    """Test 5: main() skips when produced() returns True (another machine already built it)."""
+    digest_dir = tmp_path / "daily-digest"
+    digest_dir.mkdir()
+    out_file = digest_dir / "2026-10-25.md"
+
+    # Create a digest that was built by another machine.
+    out_file.write_text("# Digest from mac-mini")
+    sidecar = digest_dir / "2026-10-25.md.built-by"
+    sidecar.write_text("mac-mini")
+
+    monkeypatch.setattr(dd, "DIGEST_DIR", digest_dir)
+    monkeypatch.setattr(dd, "OUT_FILE", out_file)
+    monkeypatch.setattr("daily_digest.brief_fallback.should_run", lambda *a, **k: True)
+    monkeypatch.setattr("daily_digest.brief_fallback.machine_profile.registry_id", lambda: "macbook-pro")
+
+    # Ensure call_claude is not called.
+    def raise_call_claude(prompt: str):
+        raise AssertionError("call_claude should not be called when produced() is True")
+    monkeypatch.setattr(dd, "call_claude", raise_call_claude)
+
+    # Run main() — should skip due to produced gate.
+    dd.main()
+
+    # File content should be unchanged.
+    assert out_file.read_text() == "# Digest from mac-mini"
+
+
+def test_daily_digest_skips_when_claude_call_fails(tmp_path, monkeypatch):
+    """Test 3: main() skips without writing if call_claude() returns a failure string."""
+    digest_dir = tmp_path / "daily-digest"
+    digest_dir.mkdir()
+    out_file = digest_dir / "2026-10-25.md"
+
+    monkeypatch.setattr(dd, "DIGEST_DIR", digest_dir)
+    monkeypatch.setattr(dd, "OUT_FILE", out_file)
+    monkeypatch.setattr("daily_digest.brief_fallback.should_run", lambda *a, **k: True)
+    monkeypatch.setattr("daily_digest.brief_fallback.produced", lambda *a, **k: False)
+
+    # Mock call_claude to return a failure string.
+    monkeypatch.setattr(dd, "call_claude", lambda prompt: "(claude call failed: timeout)")
+
+    # Run main() — should return early without writing.
+    dd.main()
+
+    # File should not be created.
+    assert not out_file.exists()
+    # Sidecar should not be created either.
+    sidecar = digest_dir / "2026-10-25.md.built-by"
+    assert not sidecar.exists()
+
+
+def test_main_digest_leg_skip_when_already_produced(tmp_path, monkeypatch):
+    """Test 4 (digest leg): main() skips writing if digest already produced by another machine.
+    Tests the recheck before writing (line 334 in daily_digest.py).
+    """
+    digest_dir = tmp_path / "daily-digest"
+    digest_dir.mkdir(parents=True)
+    out_file = digest_dir / "2026-10-25.md"
+
+    # Pre-create the digest file as if produced by another machine.
+    out_file.write_text("# Digest from primary")
+    sidecar = digest_dir / "2026-10-25.md.built-by"
+    sidecar.write_text("mac-mini")
+
+    monkeypatch.setattr(dd, "TODAY", "2026-10-25")
+    monkeypatch.setattr(dd, "DIGEST_DIR", digest_dir)
+    monkeypatch.setattr(dd, "OUT_FILE", out_file)
+
+    # Mock this machine as the standby.
+    monkeypatch.setattr("daily_digest.brief_fallback.machine_profile.registry_id", lambda: "macbook-pro")
+    monkeypatch.setattr("daily_digest.brief_fallback.produced", lambda path: path == out_file)
+    monkeypatch.setattr("daily_digest.brief_fallback.mark_built", lambda *a, **k: None)
+    monkeypatch.setattr("daily_digest.brief_fallback.should_run", lambda *a, **k: True)
+
+    # Mock roadmap and other inputs to avoid errors.
+    monkeypatch.setattr(dd, "ROADMAP", tmp_path / "roadmap.md")
+    (tmp_path / "roadmap.md").write_text("# Roadmap")
+    monkeypatch.setattr(dd, "HANDOFFS_DIR", tmp_path / "handoffs")
+    (tmp_path / "handoffs").mkdir()
+    monkeypatch.setattr(dd, "REVIEWER_LOG", tmp_path / "review.log")
+    (tmp_path / "review.log").write_text("")
+    monkeypatch.setattr(dd, "RESULTS_MD", tmp_path / "results.md")
+    (tmp_path / "results.md").write_text("")
+
+    # Mock call_claude to avoid actual Claude call.
+    monkeypatch.setattr(dd, "call_claude", lambda prompt: "# Digest content")
+
+    original_content = out_file.read_text()
+    dd.main()
+
+    # File should not have been modified (should still have the original content).
+    assert out_file.read_text() == original_content
+
+
+def test_main_digest_race_condition_resilience(tmp_path, monkeypatch):
+    """Test 12 (digest leg): main() handles race condition where file is produced between checks.
+    Verifies that the recheck before writing prevents duplicates even if primary runs concurrently.
+    """
+    digest_dir = tmp_path / "daily-digest"
+    digest_dir.mkdir(parents=True)
+    out_file = digest_dir / "2026-10-25.md"
+
+    monkeypatch.setattr(dd, "TODAY", "2026-10-25")
+    monkeypatch.setattr(dd, "DIGEST_DIR", digest_dir)
+    monkeypatch.setattr(dd, "OUT_FILE", out_file)
+
+    # Mock should_run to return True (should run).
+    monkeypatch.setattr("daily_digest.brief_fallback.should_run", lambda *a, **k: True)
+
+    # Mock produced: first call returns False (before render), second call returns True (after render).
+    produced_calls = [False, True]
+    call_count = [0]
+    def mock_produced(path):
+        result = produced_calls[call_count[0]]
+        call_count[0] = min(call_count[0] + 1, len(produced_calls) - 1)
+        return result
+
+    monkeypatch.setattr("daily_digest.brief_fallback.produced", mock_produced)
+    monkeypatch.setattr("daily_digest.brief_fallback.mark_built", lambda *a, **k: None)
+
+    # Mock other inputs.
+    monkeypatch.setattr(dd, "ROADMAP", tmp_path / "roadmap.md")
+    (tmp_path / "roadmap.md").write_text("# Roadmap")
+    monkeypatch.setattr(dd, "HANDOFFS_DIR", tmp_path / "handoffs")
+    (tmp_path / "handoffs").mkdir()
+    monkeypatch.setattr(dd, "REVIEWER_LOG", tmp_path / "review.log")
+    (tmp_path / "review.log").write_text("")
+    monkeypatch.setattr(dd, "RESULTS_MD", tmp_path / "results.md")
+    (tmp_path / "results.md").write_text("")
+    monkeypatch.setattr(dd, "call_claude", lambda prompt: "# New digest content")
+
+    dd.main()
+
+    # File should not have been written (recheck caught the race).
+    assert not out_file.exists()

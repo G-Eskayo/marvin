@@ -1299,3 +1299,40 @@ def test_the_machine_script_reads_a_real_process_uptime_with_this_machines_ps():
         assert 1 <= int(out.stdout.strip()) <= 20
     finally:
         child.kill()
+
+
+# ---- brief builder resilience health check (ADR 0066, brief_fallback.py) ----
+
+def test_brief_builder_green_when_all_produced(tmp_path, monkeypatch):
+    """Test 15: check_brief_builder returns green when brief, digest, and colony are all produced."""
+    from datetime import datetime, timezone
+    now = datetime(2026, 10, 25, 14, 0, tzinfo=timezone.utc)  # 14:00 UTC
+
+    # Create all three output files with .built-by sidecars.
+    claude_dir = tmp_path / ".claude"
+    claude_dir.mkdir()
+    briefs_dir = claude_dir / "briefs"
+    digest_dir = claude_dir / "daily-digest"
+    colony_dir = claude_dir / "research-digest"
+    briefs_dir.mkdir()
+    digest_dir.mkdir()
+    colony_dir.mkdir()
+
+    (briefs_dir / "2026-10-25.md").write_text("# Brief")
+    (briefs_dir / "2026-10-25.md.built-by").write_text("mac-mini")
+    (digest_dir / "2026-10-25.md").write_text("# Digest")
+    (digest_dir / "2026-10-25.md.built-by").write_text("mac-mini")
+    (colony_dir / "2026-10-25.md").write_text("# Colony")
+    (colony_dir / "2026-10-25.md.built-by").write_text("mac-mini")
+
+    monkeypatch.setattr(hc, "HOME", tmp_path)
+    # Mock machine_profile.registry_id() to return a different machine ID
+    # so that produced() recognizes files built by other machines
+    import machine_profile
+    monkeypatch.setattr(machine_profile, "registry_id", lambda: "macbook-pro")
+    result = hc.check_brief_builder(now=now)
+
+    assert result["severity"] == "green"
+    assert "produced" in result["detail"].lower()
+
+

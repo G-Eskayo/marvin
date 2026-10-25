@@ -25,6 +25,9 @@ from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import brief_fallback  # noqa: E402
+import machine_profile  # noqa: E402
+
 CLAUDE = Path.home() / ".claude"
 BRIEFS = CLAUDE / "briefs"
 HEALTH_STATUS = CLAUDE / "logs" / "health-status.json"
@@ -277,12 +280,36 @@ def _day(now: datetime) -> str:
     return now.astimezone().strftime("%Y-%m-%d")
 
 
-def write(now: datetime | None = None, sources: dict[str, Callable] | None = None) -> Path:
+def build(now: datetime | None = None, sources: dict[str, Callable] | None = None) -> Path:
+    """Build today's brief: gate on fallback logic, write brief + sidecar, return path."""
     now = now or datetime.now(timezone.utc)
     BRIEFS.mkdir(parents=True, exist_ok=True)
     path = BRIEFS / f"{_day(now)}.md"
-    path.write_text(render(gather(now, sources), now))
+
+    # Gate 1: if not responsible (fallback and too early), skip.
+    if not brief_fallback.should_run(path, usual_hour=9, usual_minute=45):
+        return path
+
+    # Gate 2: recheck that output wasn't just produced by another machine.
+    if brief_fallback.produced(path):
+        return path
+
+    content = render(gather(now, sources), now)
+
+    # Gate 3: recheck immediately before writing (cheap insurance; render() cost is near-zero).
+    if brief_fallback.produced(path):
+        return path
+
+    # Write sidecar first (identifies the builder for fallback gating).
+    brief_fallback.mark_built(path)
+    # Then write the brief body.
+    path.write_text(content)
     return path
+
+
+def write(now: datetime | None = None, sources: dict[str, Callable] | None = None) -> Path:
+    """Legacy entry point; calls build()."""
+    return build(now, sources)
 
 
 def show_today(now: datetime | None = None) -> str | None:
@@ -309,7 +336,7 @@ def read_dates() -> list[datetime]:
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["build"]:
-        print(write())
+        print(build())
     elif sys.argv[1:] == ["show"]:
         print(show_today() or "No brief for today yet.")
     else:

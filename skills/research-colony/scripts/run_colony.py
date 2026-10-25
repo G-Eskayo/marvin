@@ -1,18 +1,28 @@
 #!/usr/bin/env python3
 """Orchestrate the research colony: fetch → correlate → digest."""
 import sys
+from datetime import date
 from pathlib import Path
 
 # Ensure the scripts dir is importable regardless of cwd
 _SCRIPTS = Path(__file__).parent
 sys.path.insert(0, str(_SCRIPTS))
+sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 
 import source_monitor
 import correlate
 import research_digest
+import brief_fallback  # noqa: E402
 
 
 def main() -> int:
+    # Gate on fallback resilience: skip if not responsible (e.g., standby before fallback time).
+    today = date.today().isoformat()
+    digest_path = Path.home() / ".claude" / "research-digest" / f"{today}.md"
+    if not brief_fallback.should_run(digest_path, usual_hour=9, usual_minute=0):
+        print("[colony] Skipping: another machine is responsible or already produced", file=sys.stderr)
+        return 0
+
     print("[colony] === source monitor ===", file=sys.stderr)
     source_monitor.main()
 

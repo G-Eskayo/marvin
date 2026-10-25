@@ -990,7 +990,8 @@ if [ -f "$LEDGER" ]; then echo "disk_ledger=$(tail -14 "$LEDGER" | /usr/bin/tr '
 # host only (ADR 0032, 0033), "laptop" = only where Gil sits. Edit here when a job is deliberately moved; a job that
 # is not listed is reported as unplaced so a new job cannot silently run on only one machine.
 JOB_PLACEMENT = {
-    "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "both", "research-colony": "both",
+    "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "mini", "daily-digest-fallback": "laptop",
+    "research-colony": "mini", "research-colony-fallback": "laptop",
     "desktoplive": "both", "dashboard-webhook": "both",  # webhook on both until #112 (ADR 0032)
     "ticket-pipeline": "both",  # mini scans; the laptop's copy is a standby that scans only if the mini goes quiet (scanner_role.py)
     "architecture-review": "mini", "auto-fix": "mini", "cron-health": "mini", "health-check": "mini",
@@ -999,7 +1000,7 @@ JOB_PLACEMENT = {
     "cleanup-sweep": "both",  # daily: each machine sweeps its own pipeline worktrees (lib/cleanup_sweep.py)
     "machine-resources": "both",  # 30s: samples disk/mem/swap/CPU/GPU for resources panel (#130)
     "dashboard-launch": "laptop",
-    "morning-brief": "laptop",  # one writer (the brief syncs to the mini via ~/.claude); after the digests (lib/morning_brief.py)
+    "morning-brief": "mini", "morning-brief-fallback": "laptop",  # primary on mini (09:45), fallback on laptop (10:45) (ADR 0066, brief_fallback.py)
     # the website map (#189): rebuilt nightly and after MARVIN changes on the mini, where the dev site runs; the nightly
     # job also publishes it to production (ADR 0057), so it must never run on the laptop
     "snapshot-deploy-nightly": "mini", "snapshot-deploy-reactive": "mini",
@@ -1446,6 +1447,52 @@ def guarded(check_id: str, label: str, fn, budget_s: float = CHECK_BUDGET_S) -> 
     return [_unknown(check_id, label, f"the check returned something that isn't a result ({type(value).__name__})")]
 
 
+def check_brief_builder(now: datetime | None = None) -> dict:
+    """Health check for the brief, daily-digest, and research-colony resilience (ADR 0066, brief_fallback.py).
+    Each job has a primary and fallback schedule; the check reports green if produced by either, yellow if soft
+    deadline passed, red if hard deadline passed."""
+    import brief_fallback
+    now = now or _now()
+    day_str = now.astimezone().strftime("%Y-%m-%d")
+
+    brief_path = HOME / ".claude" / "briefs" / f"{day_str}.md"
+    digest_path = HOME / ".claude" / "daily-digest" / f"{day_str}.md"
+    colony_path = HOME / ".claude" / "research-digest" / f"{day_str}.md"
+
+    cid, label = "brief:builder", "Brief, digest, research-colony produced"
+
+    findings = []
+    # Check brief: primary 09:45, fallback 10:45, soft 13:45 (4h), hard 21:45 (12h).
+    brief_sev = brief_fallback.health_severity(brief_path, 9, 45, 4, 12, now)
+    brief_detail = "produced" if brief_sev == "green" and brief_fallback.produced(brief_path) else \
+                   "on track (soft deadline 13:45)" if brief_sev == "green" else \
+                   "not produced, soft deadline (4h) passed" if brief_sev == "yellow" else \
+                   "not produced, hard deadline (12h) passed"
+    findings.append(("brief", brief_sev, brief_detail))
+
+    # Check digest: primary 08:30, fallback 09:30, soft 12:30 (4h), hard 20:30 (12h).
+    digest_sev = brief_fallback.health_severity(digest_path, 8, 30, 4, 12, now)
+    digest_detail = "produced" if digest_sev == "green" and brief_fallback.produced(digest_path) else \
+                    "on track (soft deadline 12:30)" if digest_sev == "green" else \
+                    "not produced, soft deadline (4h) passed" if digest_sev == "yellow" else \
+                    "not produced, hard deadline (12h) passed"
+    findings.append(("digest", digest_sev, digest_detail))
+
+    # Check colony: primary 09:00, fallback 10:00, soft 13:00 (4h), hard 21:00 (12h).
+    colony_sev = brief_fallback.health_severity(colony_path, 9, 0, 4, 12, now)
+    colony_detail = "produced" if colony_sev == "green" and brief_fallback.produced(colony_path) else \
+                    "on track (soft deadline 13:00)" if colony_sev == "green" else \
+                    "not produced, soft deadline (4h) passed" if colony_sev == "yellow" else \
+                    "not produced, hard deadline (12h) passed"
+    findings.append(("colony", colony_sev, colony_detail))
+
+    # Overall severity: red > yellow > green.
+    severities = [sev for _, sev, _ in findings]
+    overall = "red" if "red" in severities else "yellow" if "yellow" in severities else "green"
+    details = "; ".join(f"{name}: {detail}" for name, _, detail in findings)
+    return _result(cid, label, overall, details)
+
+
 def run_checks(specs) -> list[dict]:
     """specs: [(id, label, fn, budget_s)], run in order, each guarded."""
     results: list[dict] = []
@@ -1470,6 +1517,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("token", "Auth tokens", check_token_files, CHECK_BUDGET_S),
         ("route:intent-routing-collection", "route.py embedding classifier (ChromaDB)", check_intent_routing_collection, CHECK_BUDGET_S),
         ("dispatch:lock-age", "Local dispatch lock", check_dispatch_lock, CHECK_BUDGET_S),
+        ("brief:builder", "Brief, digest, research-colony produced", check_brief_builder, CHECK_BUDGET_S),
         ("pipeline:breaker", "Ticket pipeline circuit breaker", lambda: check_pipeline_breaker(reach), CROSS_MACHINE_BUDGET_S),
         ("sync:stuck", "Code sync", lambda: check_sync_stuck(reach), CROSS_MACHINE_BUDGET_S),
         ("dispatch:parallel", "Parallel dispatch keeping up", check_parallel_dispatch, CHECK_BUDGET_S),
