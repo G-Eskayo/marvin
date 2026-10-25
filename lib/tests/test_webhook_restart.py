@@ -64,3 +64,35 @@ def test_only_webhook_and_electron_main_changes_count():
     paths = " ".join(wr.WEBHOOK_SOURCE_PATHS)
     assert "dashboard/webhook-server" in paths and "dashboard/electron/main" in paths
     assert "dashboard/electron/preload" not in paths and "dashboard/src" not in paths
+
+
+# --- settle_seconds parameter (on-merge fast path vs. cron default path) ---
+
+
+def d_with_settle(**kw):
+    """Helper that accepts settle_seconds and wraps decide()."""
+    settle = kw.pop('settle_seconds', None)
+    base = dict(server_start_ts=NOW - 10 * H, webhook_commit_ts=NOW - 6 * H,
+                last_attempt_ts=None, now=NOW)
+    base.update(kw)
+    if settle is not None:
+        return wr.decide(settle_seconds=settle, **base)
+    return wr.decide(**base)
+
+
+def test_settle_seconds_parameter_shortens_default_settle_time():
+    # With settle_seconds=120 (2 min), a 90s-old commit should skip but 150s should restart.
+    assert d_with_settle(webhook_commit_ts=NOW - 90, settle_seconds=120)[0] == "skip"
+    assert d_with_settle(webhook_commit_ts=NOW - 150, settle_seconds=120)[0] == "restart"
+
+
+def test_settle_seconds_none_uses_default_constant():
+    # With settle_seconds=None (or omitted), should use the default 60s logic.
+    result = d_with_settle(webhook_commit_ts=NOW - 30, settle_seconds=None)
+    assert result[0] == "skip"  # 30s is less than default 60s
+
+
+def test_settle_seconds_zero_does_not_crash():
+    # Edge case: settle_seconds=0 should restart immediately without negative-sleep errors.
+    result = d_with_settle(server_start_ts=NOW - 10 * H, webhook_commit_ts=NOW - 1, settle_seconds=0)
+    assert result[0] == "restart"

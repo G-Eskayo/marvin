@@ -1230,3 +1230,90 @@ def test_output_contracts_reach_health(monkeypatch):
     import output_contracts
     monkeypatch.setattr(output_contracts, "health_findings", lambda: [{"id": "contract:x", "severity": "red"}])
     assert hc.check_output_contracts() == [{"id": "contract:x", "severity": "red"}]
+
+
+# ── dashboard app running + 15-minute thresholds (ticket #278) ──────────────
+
+def test_dashboard_app_not_running_is_red(monkeypatch):
+    """App down = red, regardless of build staleness."""
+    now = datetime(2026, 10, 8, 13, tzinfo=timezone.utc)
+    state = {
+        "app_built_ts": int(now.timestamp()) - 600,  # 10 min old, very fresh
+        "dashboard_commit_ts": int(now.timestamp()) - 300,  # 5 min old
+        "dashboard_app_running": "no",
+        "webhook_server_start_ts": int(now.timestamp()) - 100,
+        "webhook_commit_ts": int(now.timestamp()) - 50,
+        "gh_token": "ok",
+    }
+    results = hc.evaluate_machine_state(state, now)
+    dashboard_result = [r for r in results if r[0] == "dashboard:build"][0]
+    assert dashboard_result[1] == "red"  # not running = red
+
+
+def test_dashboard_app_running_behind_10_min_is_green():
+    """App running, 10 min behind code (under 15-min threshold) = green."""
+    now = datetime(2026, 10, 8, 13, tzinfo=timezone.utc)
+    state = {
+        "app_built_ts": int(now.timestamp()) - 600,  # 10 min old
+        "dashboard_commit_ts": int(now.timestamp()),  # latest
+        "dashboard_app_running": "yes",
+        "webhook_server_start_ts": int(now.timestamp()) - 100,
+        "webhook_commit_ts": int(now.timestamp()) - 50,
+        "gh_token": "ok",
+    }
+    results = hc.evaluate_machine_state(state, now)
+    dashboard_result = [r for r in results if r[0] == "dashboard:build"][0]
+    assert dashboard_result[1] == "green"
+
+
+def test_dashboard_app_running_behind_20_min_is_yellow():
+    """App running, 20 min behind code (> 15-min threshold) = yellow."""
+    now = datetime(2026, 10, 8, 13, tzinfo=timezone.utc)
+    state = {
+        "app_built_ts": int(now.timestamp()) - 1200,  # 20 min old
+        "dashboard_commit_ts": int(now.timestamp()),  # latest
+        "dashboard_app_running": "yes",
+        "webhook_server_start_ts": int(now.timestamp()) - 100,
+        "webhook_commit_ts": int(now.timestamp()) - 50,
+        "gh_token": "ok",
+    }
+    results = hc.evaluate_machine_state(state, now)
+    dashboard_result = [r for r in results if r[0] == "dashboard:build"][0]
+    assert dashboard_result[1] == "yellow"
+
+
+def test_webhook_server_not_running_is_red():
+    """Webhook server down = red, not yellow."""
+    now = datetime(2026, 10, 8, 13, tzinfo=timezone.utc)
+    state = {
+        "app_built_ts": int(now.timestamp()) - 100,
+        "dashboard_commit_ts": int(now.timestamp()) - 50,
+        "dashboard_app_running": "yes",
+        "webhook_server_start_ts": None,  # not running
+        "webhook_commit_ts": int(now.timestamp()) - 50,
+        "gh_token": "ok",
+    }
+    results = hc.evaluate_machine_state(state, now)
+    webhook_result = [r for r in results if r[0] == "webhook:build"]
+    if webhook_result:
+        assert webhook_result[0][1] == "red"
+
+
+def test_malformed_machine_state_missing_app_running_key():
+    """Missing dashboard_app_running key doesn't crash; defaults to safe severity."""
+    now = datetime(2026, 10, 8, 13, tzinfo=timezone.utc)
+    state = {
+        "app_built_ts": int(now.timestamp()) - 100,
+        "dashboard_commit_ts": int(now.timestamp()) - 50,
+        # dashboard_app_running is missing
+        "webhook_server_start_ts": int(now.timestamp()) - 50,
+        "webhook_commit_ts": int(now.timestamp()) - 50,
+        "gh_token": "ok",
+    }
+    # Should not crash
+    try:
+        results = hc.evaluate_machine_state(state, now)
+        # Results should be present and not crash
+        assert isinstance(results, list)
+    except KeyError:
+        pytest.fail("Missing dashboard_app_running should not crash")

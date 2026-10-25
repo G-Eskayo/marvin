@@ -31,8 +31,9 @@ SETTLE_SECONDS = 60              # let a fresh change settle before restarting
 BACKOFF_SECONDS = 6 * 3600       # minimum gap between attempts
 
 
-def decide(*, server_start_ts, webhook_commit_ts, last_attempt_ts, now) -> tuple[str, str]:
-    """('restart' | 'skip', reason)."""
+def decide(*, server_start_ts, webhook_commit_ts, last_attempt_ts, now, settle_seconds=None) -> tuple[str, str]:
+    """('restart' | 'skip', reason). settle_seconds overrides SETTLE_SECONDS when provided."""
+    settle = settle_seconds if settle_seconds is not None else SETTLE_SECONDS
     if webhook_commit_ts is None:
         return "skip", "no webhook commit to compare against"
     if last_attempt_ts is not None and now - last_attempt_ts < BACKOFF_SECONDS:
@@ -41,7 +42,7 @@ def decide(*, server_start_ts, webhook_commit_ts, last_attempt_ts, now) -> tuple
         return "restart", "webhook server is not running"
     if server_start_ts >= webhook_commit_ts:
         return "skip", "server is current"
-    if now - webhook_commit_ts < SETTLE_SECONDS:
+    if now - webhook_commit_ts < settle:
         return "skip", "latest webhook change is too fresh -- letting it settle"
     behind = now - server_start_ts
     return "restart", f"server started {behind / 3600:.0f}h ago, {(webhook_commit_ts - server_start_ts) / 3600:.0f}h behind the latest code change"
@@ -54,7 +55,7 @@ def _mtime(path: Path):
         return None
 
 
-def _facts(now: int) -> dict:
+def _facts(now: int, settle_seconds: int | None = None) -> dict:
     # Get newest commit touching webhook paths
     newest = subprocess.run(["git", "-C", str(HOME / ".agents"), "log", "-1", "--format=%ct", "--", *WEBHOOK_SOURCE_PATHS],
                             capture_output=True, text=True).stdout.strip()
@@ -78,16 +79,25 @@ def _facts(now: int) -> dict:
     except (subprocess.SubprocessError, ValueError, OSError):
         pass
 
-    return dict(server_start_ts=server_start_ts, webhook_commit_ts=int(newest) if newest.isdigit() else None,
-                last_attempt_ts=_mtime(ATTEMPT_FILE), now=now)
+    result = dict(server_start_ts=server_start_ts, webhook_commit_ts=int(newest) if newest.isdigit() else None,
+                  last_attempt_ts=_mtime(ATTEMPT_FILE), now=now)
+    if settle_seconds is not None:
+        result['settle_seconds'] = settle_seconds
+    return result
 
 
-def main() -> None:
+def main(settle_seconds: int | None = None) -> None:
+    import argparse
     import job_events
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--settle", type=int, default=None, help="seconds to let a change settle before restarting (overrides default)")
+    args = ap.parse_args()
+    settle = args.settle if args.settle is not None else settle_seconds
+
     with job_events.job_run("webhook-restart", "Webhook server restart check") as run:
         now = int(time.time())
         run.step("Checking", "is the webhook server behind the code?")
-        action, reason = decide(**_facts(now))
+        action, reason = decide(**_facts(now, settle_seconds=settle))
         print(f"[webhook-restart] {action}: {reason}", file=sys.stderr)
         run.step("Decision", f"{action}: {reason}")
         run.summary(f"{action}: {reason}")

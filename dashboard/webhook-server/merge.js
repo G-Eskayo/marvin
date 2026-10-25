@@ -513,6 +513,12 @@ async function mergePrUnqueued(
     stage('rebuilding', 'started', 'triggered if the PR touched dashboard/')
     await rebuild(prUrl, exec)
   }
+
+  // Cross-Mac deploy on merge (ticket #278): trigger on every merge, not just dashboard ones.
+  // Unconditional so remote machines catch up within 2 min instead of waiting 30 min for cron.
+  triggerRemoteDeploy()
+  triggerLocalWebhookRestart()
+
   // #225 (overlap rule, 2026-10-09): move stacked PRs onto the base and conflict-check the other open PRs (queued
   // behind this merge, so the response does not wait; no tests, no pushes), then run the pipeline scan.
   const integrateRepo = repo || MARVIN_REPO
@@ -557,4 +563,31 @@ export async function triggerRebuildIfDashboardChanged(prUrl, exec = execFileAsy
 // touched, it's about a machine having freed up.
 export function triggerTicketPipeline(spawnFn = spawn) {
   spawnFn(VENV_PYTHON, [TICKET_PIPELINE_SCRIPT], { detached: true, stdio: 'ignore' }).unref()
+}
+
+// Trigger cross-Mac deploy on merge (ticket #278): sync code + restart services
+// on remote machines within 2 minutes instead of waiting for the 30-min cron.
+// Fire-and-forget for each remote device; same reasoning as rebuild and redispatch.
+export async function triggerRemoteDeploy(spawnFn = spawn) {
+  let remoteDevices = []
+  try {
+    const devicesJson = await execFileAsync(VENV_PYTHON, ['-c',
+      'from lib.machine_profile import remote_devices; import json; print(json.dumps(list(remote_devices().keys())))'
+    ], { cwd: REPO_PATH })
+    remoteDevices = JSON.parse(devicesJson.stdout)
+  } catch {
+    return  // remote_devices lookup failed; don't crash the merge
+  }
+
+  for (const deviceId of remoteDevices) {
+    spawnFn(VENV_PYTHON, [path.resolve(__dirname, '..', '..', 'lib', 'deploy_on_merge.py'), deviceId],
+            { detached: true, stdio: 'ignore' }).unref()
+  }
+}
+
+// Restart the webhook-server on the *local* machine too (fast path with --settle 120).
+export async function triggerLocalWebhookRestart(spawnFn = spawn) {
+  const WEBHOOK_RESTART_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'webhook_restart.py')
+  spawnFn(VENV_PYTHON, [WEBHOOK_RESTART_SCRIPT, '--settle', '120'],
+          { detached: true, stdio: 'ignore' }).unref()
 }

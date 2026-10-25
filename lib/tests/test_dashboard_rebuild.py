@@ -72,3 +72,35 @@ def test_only_files_that_go_into_the_app_count_as_a_dashboard_change():
     paths = " ".join(dr.APP_SOURCE_PATHS)
     assert "dashboard/src" in paths and "dashboard/electron" in paths and "package.json" in paths
     assert "webhook-server" not in paths and "dashboard/test" not in paths
+
+
+# --- settle_seconds parameter (on-merge fast path vs. cron default path) ---
+
+
+def d_with_settle(**kw):
+    """Helper that accepts settle_seconds and wraps decide()."""
+    settle = kw.pop('settle_seconds', None)
+    base = dict(app_built_ts=NOW - 10 * H, dashboard_commit_ts=NOW - 6 * H, app_running=False,
+                last_attempt_ts=None, now=NOW)
+    base.update(kw)
+    if settle is not None:
+        return dr.decide(settle_seconds=settle, **base)
+    return dr.decide(**base)
+
+
+def test_settle_seconds_parameter_shortens_default_settle_time():
+    # With settle_seconds=120 (2 min), a 90s-old commit should skip but 150s should rebuild.
+    assert d_with_settle(dashboard_commit_ts=NOW - 90, settle_seconds=120)[0] == "skip"
+    assert d_with_settle(dashboard_commit_ts=NOW - 150, settle_seconds=120)[0] == "rebuild"
+
+
+def test_settle_seconds_none_uses_default_constant():
+    # With settle_seconds=None (or omitted), should use the default 15*60 logic.
+    result = d_with_settle(dashboard_commit_ts=NOW - 5 * 60, settle_seconds=None)
+    assert result[0] == "skip"  # 5 min is less than default 15 min
+
+
+def test_settle_seconds_zero_does_not_crash():
+    # Edge case: settle_seconds=0 should rebuild immediately without negative-sleep errors.
+    result = d_with_settle(app_built_ts=NOW - 10 * H, dashboard_commit_ts=NOW - 1, settle_seconds=0)
+    assert result[0] == "rebuild"

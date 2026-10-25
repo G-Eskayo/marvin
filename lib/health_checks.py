@@ -887,6 +887,7 @@ def check_repo_sync_everywhere(reachability: dict[str, str], runner=_run_repo_st
 _MACHINE_STATE_SCRIPT = r'''
 APP="/Applications/MARVIN Metrics.app/Contents/Resources/app.asar"
 if [ -f "$APP" ]; then echo "app_built_ts=$(stat -f %m "$APP")"; else echo "app_built_ts="; fi
+if /usr/bin/pgrep -f "MARVIN Metrics.app/Contents/MacOS" >/dev/null 2>&1; then echo "dashboard_app_running=yes"; else echo "dashboard_app_running=no"; fi
 git -C "$HOME/.agents" fetch -q origin >/dev/null 2>&1
 echo "dashboard_commit_ts=$(git -C "$HOME/.agents" log -1 --format=%ct origin/main -- dashboard/src dashboard/electron dashboard/index.html dashboard/package.json dashboard/package-lock.json dashboard/electron.vite.config.js dashboard/tailwind.config.js dashboard/postcss.config.js 2>/dev/null)"
 echo "webhook_commit_ts=$(git -C "$HOME/.agents" log -1 --format=%ct origin/main -- dashboard/webhook-server dashboard/electron/main 2>/dev/null)"
@@ -1047,6 +1048,7 @@ def parse_machine_state(text: str) -> dict:
                     pass
 
     return {"app_built_ts": num("app_built_ts"), "dashboard_commit_ts": num("dashboard_commit_ts"),
+            "dashboard_app_running": raw.get("dashboard_app_running", "").strip(),
             "webhook_server_start_ts": num("webhook_server_start_ts"), "webhook_commit_ts": num("webhook_commit_ts"),
             "gh_token": raw.get("gh_token", "").strip(), "docs_access": raw.get("docs_access", "").strip(),
             "desktoplive": raw.get("desktoplive", "").strip(), "brain_data_ts": num("brain_data_ts"),
@@ -1151,28 +1153,32 @@ def evaluate_machine_state(state: dict, now: datetime) -> list[tuple[str, str, s
     and a GitHub credential can expire without anything noticing."""
     out = []
     built, newest = state["app_built_ts"], state["dashboard_commit_ts"]
-    if built is None:
+    app_running = state.get("dashboard_app_running", "").strip()
+
+    if app_running == "no":
+        out.append(("dashboard:build", "red", "dashboard app is not running"))
+    elif built is None:
         out.append(("dashboard:build", "yellow", "dashboard app is not installed"))
     elif newest is None or built >= newest:
         out.append(("dashboard:build", "green", "installed app is at least as new as the latest dashboard change"))
     else:
-        behind_h = (newest - built) / 3600
+        behind_s = newest - built
+        sev = "red" if behind_s >= 15 * 3600 else "yellow" if behind_s >= 15 * 60 else "green"
         age = (now - datetime.fromtimestamp(built, tz=timezone.utc)).total_seconds() / 86400
-        sev = "red" if behind_h >= SYNC_RED_AFTER_HOURS else "yellow" if behind_h >= SYNC_YELLOW_AFTER_HOURS else "green"
-        detail = f"installed app built {age:.0f}d ago, {behind_h:.0f}h older than the latest dashboard change -- run dashboard/scripts/rebuild_and_install.sh"
+        detail = f"installed app built {age:.0f}d ago, {behind_s / 3600:.0f}h older than the latest dashboard change -- run dashboard/scripts/rebuild_and_install.sh"
         out.append(("dashboard:build", sev, detail if sev != "green" else "installed app is current"))
     server_start, webhook_newest = state["webhook_server_start_ts"], state["webhook_commit_ts"]
     if webhook_newest is None:
         pass  # no webhook commits, no check
     elif server_start is None:
-        out.append(("webhook:build", "yellow", "webhook-server is not running"))
+        out.append(("webhook:build", "red", "webhook-server is not running"))
     elif server_start >= webhook_newest:
         out.append(("webhook:build", "green", "webhook-server is at least as new as the latest webhook code change"))
     else:
-        behind_h = (webhook_newest - server_start) / 3600
+        behind_s = webhook_newest - server_start
+        sev = "red" if behind_s >= 15 * 3600 else "yellow" if behind_s >= 15 * 60 else "green"
         age = (now - datetime.fromtimestamp(server_start, tz=timezone.utc)).total_seconds() / 86400
-        sev = "red" if behind_h >= SYNC_RED_AFTER_HOURS else "yellow" if behind_h >= SYNC_YELLOW_AFTER_HOURS else "green"
-        detail = f"webhook-server started {age:.0f}d ago, {behind_h:.0f}h older than the latest webhook code change -- run launchctl kickstart -k gui/$(id -u)/com.marvin.dashboard-webhook"
+        detail = f"webhook-server started {age:.0f}d ago, {behind_s / 3600:.0f}h older than the latest webhook code change -- run launchctl kickstart -k gui/$(id -u)/com.marvin.dashboard-webhook"
         out.append(("webhook:build", sev, detail if sev != "green" else "webhook-server is current"))
     tok = state["gh_token"]
     if tok == "ok":
