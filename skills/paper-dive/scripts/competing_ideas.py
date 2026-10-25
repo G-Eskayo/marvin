@@ -26,10 +26,15 @@ import sys
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
+import model_registry
+import machine_profile
+import model_queue
+
 CHROMA_PATH = Path.home() / ".claude" / "chroma"
 COLLECTION_NAME = "paper-knowledge"
 OLLAMA_URL = "http://localhost:11434/api/chat"
-STANCE_MODEL = "qwen2.5:7b"
+STANCE_MODEL = model_registry.resolve_capability("local-stance-medium")
 
 STANCES = {"supports", "refutes", "mixed", "unrelated"}
 
@@ -98,9 +103,16 @@ RATIONALE: <one sentence explaining how the paper relates to the hypothesis>"""
 def classify_stance(hypothesis: str, title: str, abstract: str, chat_fn=None) -> dict[str, str]:
     """Classifies a paper's stance toward the hypothesis.
     Returns {"stance": one of STANCES, "rationale": str}."""
-    chat_fn = chat_fn or (lambda messages: ollama_chat(STANCE_MODEL, messages))
-    prompt = STANCE_PROMPT.format(hypothesis=hypothesis, title=title, abstract=abstract)
-    response = chat_fn([{"role": "user", "content": prompt}])
+    if chat_fn is None:
+        with model_queue.acquire(STANCE_MODEL, machine_profile.machine_label(), "paper-dive"):
+            reg = model_registry.ModelRegistry()
+            reg.touch_last_used(STANCE_MODEL)
+            chat_fn = lambda messages: ollama_chat(STANCE_MODEL, messages)
+            prompt = STANCE_PROMPT.format(hypothesis=hypothesis, title=title, abstract=abstract)
+            response = chat_fn([{"role": "user", "content": prompt}])
+    else:
+        prompt = STANCE_PROMPT.format(hypothesis=hypothesis, title=title, abstract=abstract)
+        response = chat_fn([{"role": "user", "content": prompt}])
     return _parse_stance_result(response)
 
 

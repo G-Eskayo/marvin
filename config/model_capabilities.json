@@ -1,0 +1,9 @@
+{
+  "local-classify-medium": "qwen2.5:14b",
+  "local-claim-extract": "qwen2.5:3b",
+  "local-extract-small": "qwen2.5:3b",
+  "local-infer-large": "qwen2.5:14b",
+  "local-judge-large": "qwen2.5:14b",
+  "local-judge-medium": "qwen2.5:7b",
+  "local-stance-medium": "qwen2.5:7b"
+}

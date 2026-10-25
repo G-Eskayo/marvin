@@ -33,10 +33,15 @@ import sys
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
+import model_registry
+import machine_profile
+import model_queue
+
 CHROMA_PATH = Path.home() / ".claude" / "chroma"
 COLLECTION_NAME = "paper-knowledge"
 OLLAMA_URL = "http://localhost:11434/api/chat"
-CLAIM_MODEL = "qwen2.5:3b"
+CLAIM_MODEL = model_registry.resolve_capability("local-claim-extract")
 OPENALEX_WORKS_BASE = "https://api.openalex.org/works"
 
 
@@ -58,9 +63,16 @@ Core claim (one sentence):"""
 
 
 def extract_core_claim(title: str, abstract: str, chat_fn=None) -> str:
-    chat_fn = chat_fn or (lambda messages: ollama_chat(CLAIM_MODEL, messages))
-    prompt = CLAIM_PROMPT.format(title=title, abstract=abstract)
-    response = chat_fn([{"role": "user", "content": prompt}])
+    if chat_fn is None:
+        with model_queue.acquire(CLAIM_MODEL, machine_profile.machine_label(), "paper-dive"):
+            reg = model_registry.ModelRegistry()
+            reg.touch_last_used(CLAIM_MODEL)
+            chat_fn = lambda messages: ollama_chat(CLAIM_MODEL, messages)
+            prompt = CLAIM_PROMPT.format(title=title, abstract=abstract)
+            response = chat_fn([{"role": "user", "content": prompt}])
+    else:
+        prompt = CLAIM_PROMPT.format(title=title, abstract=abstract)
+        response = chat_fn([{"role": "user", "content": prompt}])
     return response.strip().strip('"')
 
 

@@ -23,6 +23,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 import intent_classify  # noqa: E402
+import model_registry  # noqa: E402
 import model_scope  # noqa: E402
 
 # ── routing table ─────────────────────────────────────────────────────────────
@@ -299,6 +300,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         choices=["haiku", "sonnet", "opus"],
         help="model tier for skill checking (use with --check-skill)",
     )
+    ap.add_argument(
+        "--local-capability",
+        metavar="CAPABILITY",
+        help="resolve a local model capability to its installed model name (e.g., local-classify-medium)",
+    )
     # explicit intent overrides
     for intent in INTENTS:
         ap.add_argument(f"--{intent}", action="store_true", help=f"force {intent} routing")
@@ -320,6 +326,22 @@ def main() -> None:
     if args.aliases:
         print_aliases()
         return
+
+    if args.local_capability:
+        try:
+            model = model_registry.resolve_capability(args.local_capability)
+            print(json.dumps({
+                "capability": args.local_capability,
+                "model": model,
+                "installed": model in model_registry.ModelRegistry().installed_models(),
+            }, indent=2))
+            sys.exit(0)
+        except KeyError as e:
+            print(json.dumps({
+                "error": str(e),
+                "capability": args.local_capability,
+            }, indent=2), file=sys.stderr)
+            sys.exit(1)
 
     if args.check_skill:
         if not args.model:

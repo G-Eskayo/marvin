@@ -13,6 +13,7 @@ import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
 import { readDispatchStatus } from './dispatch_status.js'
 import { readHealthStatus, runHealthCheckNow } from './health.js'
 import { readOnboardingPlans } from './onboarding.js'
+import { listModels, currentQueue } from './models.js'
 import { readCachedRepos } from './docs.js'
 import { createPortfolio } from './portfolio.js'
 import { createPortfolioProxy, portfolioHost } from './portfolio_remote.js'
@@ -186,6 +187,11 @@ function registerDispatchHandlers() {
   ipcMain.handle('dispatch:scanNow', () => scanNow())
   // The header indicator: dispatched task + every background agent that is mid-run, on this machine.
   ipcMain.handle('working:now', () => buildWorkingNow({ dispatch: readDispatchStatus(), jobs: listJobs() }))
+}
+
+function registerModelHandlers() {
+  ipcMain.handle('models:list', () => listModels())
+  ipcMain.handle('models:queue', (_event, machine) => currentQueue(machine))
 }
 
 function registerHealthHandlers() {
@@ -643,6 +649,7 @@ app.whenReady().then(() => {
   registerMetricsHandlers()
   registerMrReviewHandlers()
   registerDispatchHandlers()
+  registerModelHandlers()
   registerHealthHandlers()
   registerDocsHandlers()
   registerActivityHandlers()

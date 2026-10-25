@@ -22,7 +22,14 @@ fits every stage.
 from __future__ import annotations
 import json
 import re
+import sys
 import urllib.request
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
+import model_registry
+import machine_profile
+import model_queue
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
 # Validated 2026-07-13 against all 15 real seed abstracts: 3b (even with a prompt refined to
@@ -31,7 +38,7 @@ OLLAMA_URL = "http://localhost:11434/api/chat"
 # rates. 7b was WORSE, not better -- overcorrected to "empirical" broadly and broke two
 # previously-correct survey/benchmark classifications (sok-trust-authorization-mismatch,
 # sorry-bench). 14b fixed both stubborn cases with zero regressions on the rest.
-CLASSIFY_MODEL = "qwen2.5:14b"
+CLASSIFY_MODEL = model_registry.resolve_capability("local-classify-medium")
 
 PAPER_TYPES = {"empirical", "survey", "benchmark", "conceptual"}
 
@@ -71,9 +78,16 @@ def classify_paper_type(title: str, abstract: str, chat_fn=None) -> str:
     parsed into exactly one of them -- deliberately not guessing/defaulting
     silently, since a wrong type routes the paper to the wrong evaluation
     method downstream."""
-    chat_fn = chat_fn or (lambda messages: ollama_chat(CLASSIFY_MODEL, messages))
-    prompt = CLASSIFY_PROMPT.format(title=title, abstract=abstract)
-    response = chat_fn([{"role": "user", "content": prompt}]).strip().lower()
+    if chat_fn is None:
+        with model_queue.acquire(CLASSIFY_MODEL, machine_profile.machine_label(), "paper-dive"):
+            reg = model_registry.ModelRegistry()
+            reg.touch_last_used(CLASSIFY_MODEL)
+            chat_fn = lambda messages: ollama_chat(CLASSIFY_MODEL, messages)
+            prompt = CLASSIFY_PROMPT.format(title=title, abstract=abstract)
+            response = chat_fn([{"role": "user", "content": prompt}]).strip().lower()
+    else:
+        prompt = CLASSIFY_PROMPT.format(title=title, abstract=abstract)
+        response = chat_fn([{"role": "user", "content": prompt}]).strip().lower()
 
     found = [t for t in PAPER_TYPES if t in response]
     if len(found) == 1:
@@ -93,7 +107,7 @@ def classify_all(papers: dict[str, tuple[str, str]], chat_fn=None) -> dict[str, 
 # Model: qwen2.5:3b, validated in the design's spot-check (task 11) -- clean,
 # accurate Toulmin extraction on real abstracts, no hallucinated content.
 
-EXTRACTION_MODEL = "qwen2.5:3b"
+EXTRACTION_MODEL = model_registry.resolve_capability("local-extract-small")
 
 # Field names per paper type, per docs/logic-auditor-design.md's table.
 # Order matters -- it's both the prompt's requested response order and
@@ -189,9 +203,16 @@ def extract_structure(title: str, abstract: str, paper_type: str, chat_fn=None) 
     if paper_type not in _EXTRACTION_PROMPTS:
         raise ValueError(f"unknown paper_type {paper_type!r} -- expected one of {PAPER_TYPES}")
 
-    chat_fn = chat_fn or (lambda messages: ollama_chat(EXTRACTION_MODEL, messages))
-    prompt = _EXTRACTION_PROMPTS[paper_type].format(title=title, abstract=abstract)
-    response = chat_fn([{"role": "user", "content": prompt}])
+    if chat_fn is None:
+        with model_queue.acquire(EXTRACTION_MODEL, machine_profile.machine_label(), "paper-dive"):
+            reg = model_registry.ModelRegistry()
+            reg.touch_last_used(EXTRACTION_MODEL)
+            chat_fn = lambda messages: ollama_chat(EXTRACTION_MODEL, messages)
+            prompt = _EXTRACTION_PROMPTS[paper_type].format(title=title, abstract=abstract)
+            response = chat_fn([{"role": "user", "content": prompt}])
+    else:
+        prompt = _EXTRACTION_PROMPTS[paper_type].format(title=title, abstract=abstract)
+        response = chat_fn([{"role": "user", "content": prompt}])
     return _parse_fields(response, EXTRACTION_FIELDS[paper_type])
 
 
@@ -215,7 +236,7 @@ def extract_all(papers: dict[str, tuple[str, str, str]], chat_fn=None) -> dict[s
 # "(no findings)" on papers with genuinely strong support. Notably the
 # mirror image of the classifier result (7b was a regression there) --
 # reinforces that model size must be validated per-task, not assumed.
-JUDGMENT_MODEL = "qwen2.5:7b"
+JUDGMENT_MODEL = model_registry.resolve_capability("local-judge-medium")
 
 # benchmark judgment specifically needs 14b, not the 7b default -- found
 # 2026-07-13 reviewing flagged results (task 19): 7b called StrongREJECT's
@@ -230,7 +251,7 @@ JUDGMENT_MODEL = "qwen2.5:7b"
 # since their own evidence genuinely has no comparison at all). The other
 # 3 paper types stay on 7b -- no evidence of a problem there, no reason to
 # pay for a bigger model where the cheaper one already works.
-JUDGMENT_MODEL_OVERRIDES = {"benchmark": "qwen2.5:14b"}
+JUDGMENT_MODEL_OVERRIDES = {"benchmark": model_registry.resolve_capability("local-judge-large")}
 
 _GENERAL_FALLACY_CHECKLIST = (
     "hasty generalization, circular reasoning, false dichotomy, unfalsifiable claims, "
@@ -338,17 +359,23 @@ def judge_extraction(extraction: dict[str, str], paper_type: str, chat_fn=None) 
 
     if chat_fn is None:
         model = JUDGMENT_MODEL_OVERRIDES.get(paper_type, JUDGMENT_MODEL)
-        chat_fn = lambda messages: ollama_chat(model, messages)
-    # extract_structure can legitimately omit a field the model never returned
-    # (see its docstring) -- fill any gap so .format() doesn't KeyError on a
-    # missing extraction rather than surfacing it as a finding-worthy gap.
-    # extraction's own keys are already lowercase (what _parse_fields produces).
-    fields = {
-        name.lower(): extraction.get(name.lower(), "(not extracted)")
-        for name in EXTRACTION_FIELDS[paper_type]
-    }
-    prompt = _JUDGMENT_PROMPTS[paper_type].format(fallacies=_GENERAL_FALLACY_CHECKLIST, **fields)
-    response = chat_fn([{"role": "user", "content": prompt}])
+        with model_queue.acquire(model, machine_profile.machine_label(), "paper-dive"):
+            reg = model_registry.ModelRegistry()
+            reg.touch_last_used(model)
+            chat_fn = lambda messages: ollama_chat(model, messages)
+            fields = {
+                name.lower(): extraction.get(name.lower(), "(not extracted)")
+                for name in EXTRACTION_FIELDS[paper_type]
+            }
+            prompt = _JUDGMENT_PROMPTS[paper_type].format(fallacies=_GENERAL_FALLACY_CHECKLIST, **fields)
+            response = chat_fn([{"role": "user", "content": prompt}])
+    else:
+        fields = {
+            name.lower(): extraction.get(name.lower(), "(not extracted)")
+            for name in EXTRACTION_FIELDS[paper_type]
+        }
+        prompt = _JUDGMENT_PROMPTS[paper_type].format(fallacies=_GENERAL_FALLACY_CHECKLIST, **fields)
+        response = chat_fn([{"role": "user", "content": prompt}])
     return _parse_findings(response)
 
 
@@ -371,7 +398,7 @@ def judge_all(papers: dict[str, tuple[dict, str]], chat_fn=None) -> dict[str, li
 # inferential move being checked here is a different, universal question
 # ("does the conclusion follow from the premises") independent of what kind
 # of argument the paper makes.
-INFERENCE_MODEL = "qwen2.5:14b"
+INFERENCE_MODEL = model_registry.resolve_capability("local-infer-large")
 
 INFERENCE_FIELDS = ["P", "Q", "REASONING_TYPE", "ARGUMENT_FORM", "VALIDITY"]
 
@@ -410,9 +437,16 @@ def check_inference_validity(title: str, abstract: str, chat_fn=None) -> dict[st
     paper type -- real qwen2.5:14b output varies casing ("Inductive",
     "INDUCTIVE", "inductive"), and task 16's rollup needs to branch on this
     value reliably, not match free text."""
-    chat_fn = chat_fn or (lambda messages: ollama_chat(INFERENCE_MODEL, messages))
-    prompt = INFERENCE_PROMPT.format(title=title, abstract=abstract)
-    response = chat_fn([{"role": "user", "content": prompt}])
+    if chat_fn is None:
+        with model_queue.acquire(INFERENCE_MODEL, machine_profile.machine_label(), "paper-dive"):
+            reg = model_registry.ModelRegistry()
+            reg.touch_last_used(INFERENCE_MODEL)
+            chat_fn = lambda messages: ollama_chat(INFERENCE_MODEL, messages)
+            prompt = INFERENCE_PROMPT.format(title=title, abstract=abstract)
+            response = chat_fn([{"role": "user", "content": prompt}])
+    else:
+        prompt = INFERENCE_PROMPT.format(title=title, abstract=abstract)
+        response = chat_fn([{"role": "user", "content": prompt}])
     result = _parse_fields(response, INFERENCE_FIELDS)
 
     raw_type = result.get("reasoning_type", "").strip().lower()

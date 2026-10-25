@@ -12,7 +12,6 @@ CLI: portfolio_flux.py SLUG --prompt "..." [--seed N]
 from __future__ import annotations
 
 import argparse
-import fcntl
 import json
 import os
 import sys
@@ -22,6 +21,8 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import job_events
+import machine_profile
+import model_queue
 import model_registry
 import portfolio_imagegen
 import portfolio_rules
@@ -30,8 +31,6 @@ import task_dispatch
 HOME = Path.home()
 IMAGES_DIR = HOME / ".claude" / "portfolio" / "images"
 REGISTRY_PATH = Path(__file__).resolve().parents[1] / "portfolio" / "image-registry.json"
-LOCK_DIR = HOME / ".claude" / "dispatch" / "locks"
-FLUX_LOCK_FILE = LOCK_DIR / "flux-generate.lock"
 
 MASTER_SIZE = (1920, 960)
 MIN_DISTANCE = portfolio_rules.load_rules()["images"]["min_distance"]
@@ -213,19 +212,16 @@ class QueuedJobResult:
 
 def queued_generate(slug: str, prompt: str, seed: Optional[int] = None, target: str = "mac-mini",
                     images_dir: Path = IMAGES_DIR, registry_path: Path = REGISTRY_PATH) -> QueuedJobResult:
-    """Generate an image with single-flight lock (one at a time, queued).
+    """Generate an image with per-machine queue coordination (one heavy model at a time).
 
     Returns (ok, slug, seed, card_path, hero_path) or (ok=False, error).
     """
-    LOCK_DIR.mkdir(parents=True, exist_ok=True)
-
     with job_events.job_run("flux-generate", label=f"flux-generate-{slug}") as run:
-        run.step("queue-lock", f"acquiring lock for {slug}")
+        run.step("queue-lock", f"acquiring queue slot for {slug}")
 
-        with open(FLUX_LOCK_FILE, "w") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
-
-            try:
+        try:
+            with model_queue.acquire("FLUX.1-schnell-4bit", machine_profile.machine_label(),
+                                     "portfolio-flux", task_id=f"flux-{slug}") as task:
                 run.step("disk-check", "verifying free space")
                 min_disk_gb = get_min_disk_guard()
                 check = check_disk_headroom(min_disk_gb, 8)
@@ -275,12 +271,10 @@ def queued_generate(slug: str, prompt: str, seed: Optional[int] = None, target: 
                     hero_path=hero_path,
                 )
 
-            except Exception as e:
-                error = f"generation failed: {e}"
-                run.fail(error)
-                return QueuedJobResult(ok=False, slug=slug, seed=seed or 0, error=error)
-            finally:
-                fcntl.flock(lock, fcntl.LOCK_UN)
+        except Exception as e:
+            error = f"generation failed: {e}"
+            run.fail(error)
+            return QueuedJobResult(ok=False, slug=slug, seed=seed or 0, error=error)
 
 
 def main() -> None:
