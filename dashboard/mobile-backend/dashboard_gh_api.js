@@ -2,6 +2,8 @@ import { homedir } from 'os'
 import path from 'path'
 import { promisify } from 'util'
 import { execFile } from 'child_process'
+import { createReadStream, stat } from 'fs'
+import * as stream from 'stream'
 import { createGithubState } from '../electron/main/github_state.js'
 import { loadBoard, fetchBoardData, getEvidence, readRegistry, REGISTRY_PATH } from '../electron/main/boards.js'
 import { listOpenPrsAcrossRepos, prListArgs, canMergeFromDashboard, MARVIN_REPO, normalizeSeen } from '../electron/main/mr_repos.js'
@@ -13,8 +15,10 @@ import { getQueue } from '../electron/main/queue.js'
 import { getTicketTimeline } from '../electron/main/activity.js'
 import { createRelationsService } from '../electron/main/relations_service.js'
 import { loadIndex } from '../electron/main/docs_search.js'
+import { parsePrImages, createImageLoader, mediaFileFor } from '../electron/main/pr_images.js'
 
 const execFileP = promisify(execFile)
+const statP = promisify(stat)
 
 const MOBILE_SEEN_PATH = path.join(homedir(), '.claude', 'mobile-mr-seen.json')
 
@@ -29,9 +33,16 @@ export function createDashboardGhApiRouter(opts = {}) {
   const masterDocPath = opts.masterDocPath ?? path.join(homedir(), '.agents', 'config', 'docs', 'MASTER.md')
   const reworkRun = opts.rework?.run
   const queueRun = opts.queue?.run
+  const fetchFn = opts.fetchFn ?? globalThis.fetch
 
-  // Module-level singleton for GitHub state (one copy per process)
+  // Module-level singletons
   const githubState = createGithubState()
+  const mediaCacheDir = opts.mediaCacheDir ?? path.join(homedir(), '.claude', 'mobile-pr-media-cache')
+  const imageLoader = createImageLoader({
+    fetchFn,
+    cacheDir: mediaCacheDir,
+    mediaUrl: (id) => id // return bare id, not prmedia:// URL
+  })
 
   // Helper to get board data (fetched data or cached)
   const getBoardData = async (repo, gh) => {
@@ -357,6 +368,178 @@ export function createDashboardGhApiRouter(opts = {}) {
           JSON.stringify({ ok: true, data })
         )
         return true
+      }
+
+      // GET /mr/:owner/:name/:number - Get PR details with images
+      const mrPrMatch = pathname.match(/^\/mr\/([^/]+)\/([^/]+)\/(\d+)$/)
+      if (req.method === 'GET' && mrPrMatch) {
+        const [, owner, name, number] = mrPrMatch
+        const repo = `${owner}/${name}`
+
+        // Verify repo is registered (or is MARVIN_REPO)
+        if (repo !== MARVIN_REPO) {
+          const registry = readRegistryData()
+          if (!registry.some(b => b.repo === repo)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' }).end(
+              JSON.stringify({ ok: false, error: `Repo ${repo} not registered` })
+            )
+            return true
+          }
+        }
+
+        try {
+          const { stdout } = await exec('gh', [
+            'pr', 'view', number, '--repo', repo,
+            '--json', 'number,title,body,headRefName'
+          ])
+          const prData = JSON.parse(stdout)
+          const images = parsePrImages(prData.body || '', { repo, headRef: prData.headRefName })
+
+          res.writeHead(200, { 'Content-Type': 'application/json' }).end(
+            JSON.stringify({ ok: true, data: { repo, number: prData.number, title: prData.title, headRef: prData.headRefName, images } })
+          )
+        } catch (err) {
+          res.writeHead(200, { 'Content-Type': 'application/json' }).end(
+            JSON.stringify({ ok: false, reason: err.message })
+          )
+        }
+        return true
+      }
+
+      // GET /mr/media - Load and cache media (images as raw bytes, videos as metadata)
+      if (req.method === 'GET' && pathname === '/mr/media') {
+        const url = searchParams.get('url')
+        const kind = searchParams.get('kind')
+
+        if (!url) {
+          res.writeHead(400, { 'Content-Type': 'application/json' }).end(
+            JSON.stringify({ ok: false, error: 'Missing url parameter' })
+          )
+          return true
+        }
+
+        try {
+          const result = await imageLoader.load(url, kind)
+
+          if (!result.ok) {
+            res.writeHead(200, { 'Content-Type': 'application/json' }).end(
+              JSON.stringify({ ok: false, reason: result.reason })
+            )
+            return true
+          }
+
+          // For images, return raw bytes with appropriate Content-Type
+          if (result.kind === 'image') {
+            const base64 = result.dataUrl.split(',')[1]
+            if (!base64) {
+              res.writeHead(500, { 'Content-Type': 'application/json' }).end(
+                JSON.stringify({ ok: false, reason: 'Invalid data URL' })
+              )
+              return true
+            }
+            const bytes = Buffer.from(base64, 'base64')
+            res.writeHead(200, { 'Content-Type': result.mime || 'application/octet-stream' }).end(bytes)
+            return true
+          }
+
+          // For videos, return metadata with media ID
+          if (result.kind === 'video') {
+            res.writeHead(200, { 'Content-Type': 'application/json' }).end(
+              JSON.stringify({ ok: true, kind: 'video', mime: result.mime, mediaId: result.src })
+            )
+            return true
+          }
+
+          res.writeHead(500, { 'Content-Type': 'application/json' }).end(
+            JSON.stringify({ ok: false, reason: 'Unknown media kind' })
+          )
+        } catch (err) {
+          res.writeHead(200, { 'Content-Type': 'application/json' }).end(
+            JSON.stringify({ ok: false, reason: err.message })
+          )
+        }
+        return true
+      }
+
+      // GET /mr/media/stream/:id - Stream cached media with byte-range support
+      const streamMatch = pathname.match(/^\/mr\/media\/stream\/([0-9a-f]{64})$/)
+      if (req.method === 'GET' && streamMatch) {
+        const [, id] = streamMatch
+
+        try {
+          const mediaInfo = mediaFileFor(mediaCacheDir, id)
+
+          if (!mediaInfo) {
+            res.writeHead(404, { 'Content-Type': 'application/json' }).end(
+              JSON.stringify({ ok: false, reason: 'Media not found' })
+            )
+            return true
+          }
+
+          const file = mediaInfo.file
+          const { size } = await statP(file)
+
+          const rangeHeader = req.headers.range
+
+          if (rangeHeader) {
+            // Match: bytes=123-456, bytes=123-, or bytes=-789 (suffix range)
+            const match = rangeHeader.match(/^bytes=(\d*)-(\d*)$/)
+            if (!match || (match[1] === '' && match[2] === '')) {
+              // Malformed range: fallback to full file
+              res.writeHead(200, { 'Accept-Ranges': 'bytes', 'Content-Type': mediaInfo.mime, 'Content-Length': size })
+              const readStream = createReadStream(file)
+              stream.pipeline(readStream, res, () => {})
+              return true
+            }
+
+            let start, end
+            if (match[1] === '') {
+              // Suffix range: bytes=-789 means last 789 bytes
+              const suffixLength = parseInt(match[2], 10)
+              start = Math.max(0, size - suffixLength)
+              end = size - 1
+            } else {
+              // Normal range: bytes=123- or bytes=123-456
+              start = parseInt(match[1], 10)
+              end = match[2] !== '' ? parseInt(match[2], 10) : size - 1
+            }
+
+            // Clamp end to size - 1
+            end = Math.min(end, size - 1)
+
+            if (start > size - 1 || start < 0 || end < start) {
+              res.writeHead(416, {
+                'Content-Range': `bytes */${size}`,
+                'Accept-Ranges': 'bytes'
+              }).end()
+              return true
+            }
+
+            res.writeHead(206, {
+              'Content-Range': `bytes ${start}-${end}/${size}`,
+              'Content-Length': end - start + 1,
+              'Content-Type': mediaInfo.mime,
+              'Accept-Ranges': 'bytes'
+            })
+            const readStream = createReadStream(file, { start, end })
+            stream.pipeline(readStream, res, () => {})
+            return true
+          } else {
+            res.writeHead(200, {
+              'Content-Length': size,
+              'Content-Type': mediaInfo.mime,
+              'Accept-Ranges': 'bytes'
+            })
+            const readStream = createReadStream(file)
+            stream.pipeline(readStream, res, () => {})
+            return true
+          }
+        } catch (err) {
+          res.writeHead(500, { 'Content-Type': 'application/json' }).end(
+            JSON.stringify({ ok: false, reason: err.message })
+          )
+          return true
+        }
       }
 
       // No route matched

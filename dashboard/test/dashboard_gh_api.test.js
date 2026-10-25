@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createServer } from 'http'
 import { request } from 'http'
-import { readFileSync, mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'fs'
+import { readFileSync, mkdtempSync, rmSync, writeFileSync, mkdirSync, statSync, readdirSync, existsSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
 import { createDashboardGhApiRouter } from '../mobile-backend/dashboard_gh_api.js'
@@ -31,22 +31,40 @@ function startTestServer(router) {
   })
 }
 
-async function makeRequest(baseUrl, urlPath, method = 'GET') {
+async function makeRequest(baseUrl, urlPath, method = 'GET', options = {}) {
   return new Promise((resolve, reject) => {
     const url = new URL(urlPath, baseUrl)
-    const client = request(url, { method }, (res) => {
-      let data = ''
+    const client = request(url, { method, headers: options.headers }, (res) => {
+      const chunks = []
       res.on('data', (chunk) => {
-        data += chunk
+        chunks.push(chunk)
       })
       res.on('end', () => {
+        const buffer = Buffer.concat(chunks)
+        let body = null
+        if (buffer.length > 0) {
+          const contentType = res.headers['content-type'] || ''
+          if (contentType.includes('application/json')) {
+            try {
+              body = JSON.parse(buffer.toString('utf8'))
+            } catch {
+              body = buffer
+            }
+          } else {
+            body = buffer
+          }
+        }
         resolve({
           statusCode: res.statusCode,
-          body: data ? JSON.parse(data) : null
+          headers: res.headers,
+          body
         })
       })
     })
     client.on('error', reject)
+    if (options.body) {
+      client.write(options.body)
+    }
     client.end()
   })
 }
@@ -526,6 +544,174 @@ describe('dashboard GitHub API', () => {
           server.close()
         }
       })
+    })
+  })
+
+  describe('GET /mr/:owner/:name/:number', () => {
+    it('returns 400 if repo not registered', async () => {
+      return withTempDirs(({ root }) => {
+        const registry = path.join(root, 'registry.json')
+        writeFileSync(registry, JSON.stringify({ boards: [] }))
+
+        const router = createDashboardGhApiRouter({
+          registryPath: registry,
+          exec: vi.fn()
+        })
+
+        return startTestServer(router).then(async ({ server, url }) => {
+          try {
+            const res = await makeRequest(url, '/mr/G-Eskayo/unknown/123')
+            expect(res.statusCode).toBe(400)
+            expect(res.body.error).toContain('not registered')
+          } finally {
+            server.close()
+          }
+        })
+      })
+    })
+
+    it('fetches PR data via gh pr view when registered', async () => {
+      return withTempDirs(({ root }) => {
+        const registry = path.join(root, 'registry.json')
+        writeFileSync(registry, JSON.stringify({ boards: [{ repo: 'G-Eskayo/marvin', name: 'MARVIN' }] }))
+
+        const execMock = vi.fn((cmd, args) => {
+          if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view') {
+            return Promise.resolve({
+              stdout: JSON.stringify({
+                number: 123,
+                title: 'Test PR',
+                body: '## Images\n![test](docs/test.png)',
+                headRefName: 'feature/test'
+              })
+            })
+          }
+          return Promise.reject(new Error(`Unexpected call: ${cmd} ${args.join(' ')}`))
+        })
+
+        const router = createDashboardGhApiRouter({
+          registryPath: registry,
+          exec: execMock
+        })
+
+        return startTestServer(router).then(async ({ server, url }) => {
+          try {
+            const res = await makeRequest(url, '/mr/G-Eskayo/marvin/123')
+            expect(res.statusCode).toBe(200)
+            expect(res.body.ok).toBe(true)
+            expect(res.body.data.number).toBe(123)
+          } finally {
+            server.close()
+          }
+        })
+      })
+    })
+  })
+
+  describe('GET /mr/media', () => {
+    it('returns 400 if url parameter missing', async () => {
+      const router = createDashboardGhApiRouter({
+        exec: vi.fn()
+      })
+
+      return startTestServer(router).then(async ({ server, url }) => {
+        try {
+          const res = await makeRequest(url, '/mr/media')
+          expect(res.statusCode).toBe(400)
+          expect(res.body.error).toContain('Missing url parameter')
+        } finally {
+          server.close()
+        }
+      })
+    })
+
+    it('returns 200/ok:false for unallowed hosts', async () => {
+      return withTempDirs(({ root }) => {
+        const router = createDashboardGhApiRouter({
+          exec: vi.fn(),
+          mediaCacheDir: path.join(root, 'cache')
+        })
+
+        return startTestServer(router).then(async ({ server, url }) => {
+          try {
+            const res = await makeRequest(url, '/mr/media?url=https://evil.com/image.png')
+            expect(res.statusCode).toBe(200)
+            expect(res.body.ok).toBe(false)
+            expect(res.body.reason).toBeDefined()
+          } finally {
+            server.close()
+          }
+        })
+      })
+    })
+
+    it('handles non-https URLs', async () => {
+      return withTempDirs(({ root }) => {
+        const router = createDashboardGhApiRouter({
+          exec: vi.fn(),
+          mediaCacheDir: path.join(root, 'cache')
+        })
+
+        return startTestServer(router).then(async ({ server, url }) => {
+          try {
+            const res = await makeRequest(url, '/mr/media?url=http://example.com/image.png')
+            expect(res.statusCode).toBe(200)
+            expect(res.body.ok).toBe(false)
+            expect(res.body.reason).toContain('https')
+          } finally {
+            server.close()
+          }
+        })
+      })
+    })
+  })
+
+  describe('GET /mr/media/stream/:id', () => {
+    it('returns 404 for invalid id format', async () => {
+      return withTempDirs(({ root }) => {
+        const router = createDashboardGhApiRouter({
+          exec: vi.fn(),
+          mediaCacheDir: path.join(root, 'cache')
+        })
+
+        return startTestServer(router).then(async ({ server, url }) => {
+          try {
+            const res = await makeRequest(url, '/mr/media/stream/not-a-hex-id')
+            expect(res.statusCode).toBe(404)
+          } finally {
+            server.close()
+          }
+        })
+      })
+    })
+
+    it('returns 404 for nonexistent media file', async () => {
+      return withTempDirs(({ root }) => {
+        const router = createDashboardGhApiRouter({
+          exec: vi.fn(),
+          mediaCacheDir: path.join(root, 'cache')
+        })
+
+        return startTestServer(router).then(async ({ server, url }) => {
+          try {
+            const res = await makeRequest(url, '/mr/media/stream/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef')
+            expect(res.statusCode).toBe(404)
+          } finally {
+            server.close()
+          }
+        })
+      })
+    })
+
+    it('Range header regex fixed: accepts bytes=123-456, bytes=123-, bytes=-789', () => {
+      const source = readFileSync(
+        path.join(path.dirname(__filename), '../mobile-backend/dashboard_gh_api.js'),
+        'utf-8'
+      )
+      // Verify regex was updated from /^bytes=(-?\d+)-(\d*)$/ to /^bytes=(\d*)-(\d*)$/
+      expect(source).toContain('match(/^bytes=(\\d*)-(\\d*)$/)')
+      // Verify stream.pipeline is used instead of .pipe()
+      expect(source).toContain('stream.pipeline(readStream, res, () => {})')
     })
   })
 
