@@ -1024,7 +1024,7 @@ JOB_PLACEMENT = {
     "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "both", "research-colony": "both",
     "desktoplive": "both", "dashboard-webhook": "both",  # webhook on both until #112 (ADR 0032)
     "ticket-pipeline": "both",  # mini scans; the laptop's copy is a standby that scans only if the mini goes quiet (scanner_role.py)
-    "architecture-review": "mini", "auto-fix": "mini", "cron-health": "mini", "health-check": "mini",
+    "architecture-review": "mini", "auto-fix": "mini", "claims-ledger-nightly": "mini", "cron-health": "mini", "health-check": "mini",
     "process-quarantine-reviews": "mini", "verify-digest-fix": "mini",
     "usage-scan": "both",  # hourly: each machine scans its own transcripts for the Metrics tab (lib/usage_report.py)
     "cleanup-sweep": "both",  # daily: each machine sweeps its own pipeline worktrees (lib/cleanup_sweep.py)

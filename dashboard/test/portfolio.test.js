@@ -129,6 +129,77 @@ describe('evaluation', () => {
   })
 })
 
+describe('claims ledger', () => {
+  it('returns null when the claims ledger does not exist', async () => {
+    expect(await p.claimsReport()).toBeNull()
+  })
+
+  it('returns the claims report when it is recent (within 25 hours)', async () => {
+    const now = Date.now()
+    const recent = { timestamp: new Date(now).toISOString(), claims: [{ name: 'test', pass: true }] }
+    mkdirSync(path.join(home, '.claude/logs'), { recursive: true })
+    writeFileSync(path.join(home, '.claude/logs/claims-ledger.json'), JSON.stringify(recent))
+    const report = await p.claimsReport()
+    expect(report).toEqual(recent)
+  })
+
+  it('returns null when the claims report is stale (>25 hours old)', async () => {
+    const stale = new Date(Date.now() - 26 * 60 * 60 * 1000) // 26 hours ago
+    const report = { timestamp: stale.toISOString(), claims: [] }
+    mkdirSync(path.join(home, '.claude/logs'), { recursive: true })
+    writeFileSync(path.join(home, '.claude/logs/claims-ledger.json'), JSON.stringify(report))
+    expect(await p.claimsReport()).toBeNull()
+  })
+
+  it('returns null when the claims report has no timestamp', async () => {
+    const invalid = { claims: [] } // missing timestamp
+    mkdirSync(path.join(home, '.claude/logs'), { recursive: true })
+    writeFileSync(path.join(home, '.claude/logs/claims-ledger.json'), JSON.stringify(invalid))
+    expect(await p.claimsReport()).toBeNull()
+  })
+
+  it('returns null when the claims report file is corrupt JSON', async () => {
+    mkdirSync(path.join(home, '.claude/logs'), { recursive: true })
+    writeFileSync(path.join(home, '.claude/logs/claims-ledger.json'), '{not valid json')
+    expect(await p.claimsReport()).toBeNull()
+  })
+
+  it('returns null when the claims report has an invalid timestamp', async () => {
+    const invalid = { timestamp: 'not-a-date', claims: [] }
+    mkdirSync(path.join(home, '.claude/logs'), { recursive: true })
+    writeFileSync(path.join(home, '.claude/logs/claims-ledger.json'), JSON.stringify(invalid))
+    expect(await p.claimsReport()).toBeNull()
+  })
+
+  it('returns null when the claims report has a future timestamp', async () => {
+    const future = new Date(Date.now() + 1 * 60 * 60 * 1000) // 1 hour in the future
+    const report = { timestamp: future.toISOString(), claims: [] }
+    mkdirSync(path.join(home, '.claude/logs'), { recursive: true })
+    writeFileSync(path.join(home, '.claude/logs/claims-ledger.json'), JSON.stringify(report))
+    expect(await p.claimsReport()).toBeNull()
+  })
+
+  it('reads the claims ledger from ~/.claude/logs/claims-ledger.json and returns parsed JSON', async () => {
+    const now = Date.now()
+    const ledgerData = {
+      timestamp: new Date(now).toISOString(),
+      claims: [
+        { name: 'portfolio-marvin-link', gather_key: 'portfolio_content', pass: true, detail: '3 pages built with MARVIN, all link back', timestamp: new Date(now).toISOString() },
+        { name: 'daily-digest-health', gather_key: 'job_events', pass: true, detail: 'last run passed: 5 projects scanned', timestamp: new Date(now).toISOString() }
+      ],
+      unregistered: ['marvin-97']
+    }
+    const ledgerPath = path.join(home, '.claude', 'logs')
+    mkdirSync(ledgerPath, { recursive: true })
+    writeFileSync(path.join(ledgerPath, 'claims-ledger.json'), JSON.stringify(ledgerData))
+    const report = await p.claimsReport()
+    expect(report).toEqual(ledgerData)
+    expect(report.claims).toHaveLength(2)
+    expect(report.claims[0].pass).toBe(true)
+    expect(report.unregistered).toContain('marvin-97')
+  })
+})
+
 describe('images', () => {
   const manifest = [
     { title: 'Algorithms', url: '/ai-projects/algorithms/', thumbnail: '/u/work001-01.jpg' },
@@ -562,3 +633,4 @@ describe('content templates and the content report (ADR 0051)', () => {
     expect(args).toContain('--json')
   })
 })
+

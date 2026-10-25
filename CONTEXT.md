@@ -994,6 +994,32 @@ row, Other Projects footer) plus a stack of **sections** after the title card.
   card looked right in one place and stale in another. The version is now the file's mtime, and the dashboard never caches
   dev-site responses.
 
+## Dashboard app — Claims ledger (built 2026-10-10, #281)
+
+Portfolio facts are verifiable against evidence (ADR 0065): "clarity-captions links to MARVIN" (portfolio content), "daily-digest
+ran successfully" (job_events), "ticket #281 reached done" (ticket_stages). These live as verifiable checks, not marketing prose.
+
+**Collection:** `brain-map/scripts/claims.py --nightly` runs at 02:30 local time daily on mini via launchd; collects all claims
+(portfolio content, job events, ticket stages); writes a timestamped JSON report to `~/.claude/logs/claims-ledger.json`; records
+the run in job_events for dashboard visibility. Also scans portfolio pages for bare ticket numbers (#NNN) not yet in CLAIMS and
+includes them in the report's `unregistered` field (word-boundary matched, excludes ADR/PR refs).
+
+**Dashboard integration:** The Portfolio tab's **Claims ledger** section (Content tab) loads the report via `portfolio.js::claimsReport()`;
+shows each claim with ✓/✗ badge, detail, and timestamp; surfaces any unregistered claims found. If the file is missing, unparsable, in the future timestamp, or stale (>25h), the section stays blank and shows an error (never silent failure). If loading fails, the error is visible, not swallowed.
+
+**Philosophy:** claims are data, not marketing. A failed claim (stale job, missing link, wrong stage) is reported as-is. Claims
+ledger failures are not MARVIN failures — they surface where the facts diverged from what was claimed.
+
+**Lexicon:**
+- **Claim**: a structured fact about the system, verifiable against one evidence source (portfolio content, job events, or
+  ticket stages). Each claim has a name, a check function (returns true/false + optional detail), and a gather_key identifying
+  where its evidence comes from.
+- **Claims ledger**: the timestamped JSON file (`~/.claude/logs/claims-ledger.json`) recording the result of all claims at
+  nightly-run time. One result per claim, including pass/fail, detail, and check timestamp. May also include `unregistered` field
+  listing bare ticket numbers found in portfolio but not in CLAIMS.
+- **Unregistered claim**: a bare ticket reference (#NNN) found in portfolio content (via `scan_for_unchecked_claims()`) but not
+  yet registered as a claim in CLAIMS list. Detected and reported to surface potential facts-to-verify that are mentioned but unchecked.
+
 ## Citation-graph knowledge base (in design, not yet built)
 
 - **Seed paper**: the paper a citation-graph traversal starts from — all relevance scoring is

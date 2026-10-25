@@ -516,6 +516,26 @@ export function createPortfolio({
     return JSON.parse(stdout)
   }
 
+  async function claimsReport() {
+    try {
+      const file = path.join(homeDir, '.claude', 'logs', 'claims-ledger.json')
+      const report = await readJson(file, null)
+      if (!report) return null
+
+      // Check timestamp validity and staleness: reject if missing, unparsable, stale (>25h), or future
+      const timestamp = report.timestamp ? new Date(report.timestamp).getTime() : null
+      const now = Date.now()
+      const ageHours = (now - (timestamp || NaN)) / (1000 * 60 * 60)
+
+      // Reject if timestamp is missing, unparsable, stale, or in the future
+      if (!Number.isFinite(ageHours) || ageHours > 25 || ageHours < 0) return null
+
+      return report
+    } catch {
+      return null
+    }
+  }
+
   // ── FLUX variants: AI art generation with style + mood selection ──
   async function imageStyleCatalog() {
     const { stdout } = await exec(python, [fluxScript, 'dummy', '--styles'], { maxBuffer: 1024 * 1024, timeout: 5000 })
@@ -571,5 +591,5 @@ export function createPortfolio({
     }
   }
 
-  return { contentTemplates, contentReport, chrome, inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, templateSource, specimen, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage, imageMotifs, imageVariants, newImageVariant, chooseImageVariant, applyImages, addProject, listElements, verifyElement, pipelineStatus, runPipeline, deleteImageVariant, variantPreview, imageStyleCatalog, fluxVariants, generateFluxVariant, chooseFluxVariant, deleteFluxVariant, fluxVariantPreview }
+  return { contentTemplates, contentReport, claimsReport, chrome, inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, templateSource, specimen, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage, imageMotifs, imageVariants, newImageVariant, chooseImageVariant, applyImages, addProject, listElements, verifyElement, pipelineStatus, runPipeline, deleteImageVariant, variantPreview, imageStyleCatalog, fluxVariants, generateFluxVariant, chooseFluxVariant, deleteFluxVariant, fluxVariantPreview }
 }

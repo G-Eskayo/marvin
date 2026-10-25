@@ -760,17 +760,25 @@ function GuideAndRules() {
 function Content() {
   const [templates, setTemplates] = useState([])
   const [report, setReport] = useState(null)
+  const [claims, setClaims] = useState(null)
   const [error, setError] = useState(null)
+  const [claimsError, setClaimsError] = useState(null)
   const [open, setOpen] = useState(null)
 
   async function load() {
     setError(null)
+    setClaimsError(null)
     try {
-      const [t, r] = await Promise.all([window.api.portfolio.contentTemplates(), window.api.portfolio.contentReport()])
+      const [t, r, c] = await Promise.all([window.api.portfolio.contentTemplates(), window.api.portfolio.contentReport(), window.api.portfolio.claimsReport()])
       setTemplates(t)
       setReport(r)
+      setClaims(c)
+      if (c === null) {
+        setClaimsError('Claims ledger not available (file missing or stale)')
+      }
     } catch (err) {
       setError(errText(err))
+      setClaimsError(errText(err))
     }
   }
   useEffect(() => { load() }, [])
@@ -843,6 +851,43 @@ function Content() {
                 )}
               </div>
             ))}
+          </div>
+        )}
+      </section>
+
+      <section>
+        <h3 className="mb-2 text-xs uppercase tracking-wide text-neutral-500">Claims ledger (ADR 0065)</h3>
+        <p className="mb-3 max-w-3xl text-xs text-neutral-400">
+          Portfolio facts verified against job events, ticket stages, and content. If a claim is false, it's reported here.
+          If the ledger is stale (older than 25 hours), the section stays blank: the nightly job may have failed or been skipped.
+        </p>
+        {claimsError && <p className="mb-3 text-sm text-red-400">{claimsError}</p>}
+        {claims && (
+          <div className="space-y-3">
+            {claims.claims && claims.claims.length > 0 && (
+              <div className="divide-y divide-neutral-800 rounded-lg border border-neutral-800">
+                {claims.claims.map((claim) => (
+                  <div key={claim.name} className="p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className={claim.pass ? 'text-emerald-400' : 'text-red-400'}>
+                            {claim.pass ? '✓' : '✗'}
+                          </span>
+                          <span className="rounded bg-neutral-800 px-1.5 py-0.5 font-mono text-xs text-neutral-200">{claimStatusLabel(claim.pass)}</span>
+                          <span className="font-mono text-xs text-neutral-300">{claim.name}</span>
+                          <span className="text-xs text-neutral-500">{claim.gather_key}</span>
+                        </div>
+                        {claim.detail && <p className="mt-1 text-xs text-neutral-400">{claim.detail}</p>}
+                        <p className="mt-1 text-xs text-neutral-600">Checked: {formatClaimTimestamp(claim.timestamp)}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <UnregisteredClaims items={claims.unregistered} />
+            <p className="text-xs text-neutral-600">Last ledger update: {formatClaimTimestamp(claims.timestamp)}</p>
           </div>
         )}
       </section>
@@ -1245,6 +1290,37 @@ function Images() {
           <ImageCard key={it.slug} item={it} motifs={motifs} onGenerate={load} />
         ))}
       </div>
+    </div>
+  )
+}
+
+// ── Claims ledger: status badge, timestamp formatting, unregistered claims list ──
+
+export function claimStatusLabel(pass) {
+  return pass ? 'pass' : 'fail'
+}
+
+export function formatClaimTimestamp(timestamp) {
+  if (!timestamp) return '(missing)'
+  try {
+    const date = new Date(timestamp)
+    if (!Number.isFinite(date.getTime())) return '(invalid)'
+    return date.toLocaleString()
+  } catch {
+    return '(unparsable)'
+  }
+}
+
+export function UnregisteredClaims({ items }) {
+  if (!items || items.length === 0) return null
+  return (
+    <div className="mt-3 rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+      <h4 className="mb-2 text-xs font-medium text-neutral-400">Unregistered claims found in portfolio text</h4>
+      <ul className="flex flex-col gap-1">
+        {items.map((id) => (
+          <li key={id} className="text-xs text-neutral-500">{id}</li>
+        ))}
+      </ul>
     </div>
   )
 }
