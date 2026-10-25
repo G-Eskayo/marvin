@@ -318,6 +318,82 @@ export function createPortfolio({
     }
   }
 
+  // ── FLUX image generation (AI art variants) ──
+  const STYLE_MOOD_RE = /^[a-z][a-z-]{0,30}$/
+  const fluxImageScript = path.join(agentsDir, 'lib', 'portfolio_flux_images.py')
+
+  async function runFluxImages(args) {
+    const { stdout } = await exec(python, [fluxImageScript, ...args], { maxBuffer: 1024 * 1024, timeout: 15 * 60 * 1000 })
+    return JSON.parse(stdout)
+  }
+
+  async function imageStyleCatalog() {
+    return runFluxImages(['catalog'])
+  }
+
+  async function draftImageSubject(slug) {
+    await knownProject(slug)
+    const result = await runFluxImages(['subject', slug])
+    if (!result.ok) throw new Error(result.error)
+    return result.subject
+  }
+
+  async function queueFluxVariant(slug, style, mood, subject) {
+    await knownProject(slug)
+    if (typeof style !== 'string' || !STYLE_MOOD_RE.test(style)) throw new Error(`Invalid style: ${JSON.stringify(style)}`)
+    if (typeof mood !== 'string' || !STYLE_MOOD_RE.test(mood)) throw new Error(`Invalid mood: ${JSON.stringify(mood)}`)
+    if (typeof subject !== 'string' || !subject.trim() || subject.length > 300) throw new Error('Subject must be 1-300 chars')
+    try {
+      return await runFluxImages(['queue', slug, '--style', style, '--mood', mood, '--subject', subject])
+    } catch (err) {
+      let reason = null
+      try { reason = JSON.parse(err.stdout || '{}').error } catch { /* not JSON */ }
+      throw new Error(reason || err.message)
+    }
+  }
+
+  async function fluxVariants(slug) {
+    await knownProject(slug)
+    const result = await runFluxImages(['list', slug])
+    return result.variants || []
+  }
+
+  async function chooseFluxVariant(slug, seed) {
+    await knownProject(slug)
+    if (!Number.isInteger(seed) || seed < 0 || seed > 2147483647) throw new Error(`Invalid seed: ${JSON.stringify(seed)}`)
+    try {
+      return await runFluxImages(['choose', slug, '--seed', String(seed)])
+    } catch (err) {
+      let reason = null
+      try { reason = JSON.parse(err.stdout || '{}').error } catch { /* not JSON */ }
+      throw new Error(reason || err.message)
+    }
+  }
+
+  async function deleteFluxVariant(slug, seed) {
+    await knownProject(slug)
+    if (!Number.isInteger(seed) || seed < 0 || seed > 2147483647) throw new Error(`Invalid seed: ${JSON.stringify(seed)}`)
+    try {
+      return await runFluxImages(['delete', slug, '--seed', String(seed)])
+    } catch (err) {
+      let reason = null
+      try { reason = JSON.parse(err.stdout || '{}').error } catch { /* not JSON */ }
+      throw new Error(reason || err.message)
+    }
+  }
+
+  async function fluxVariantPreview(slug, seed, kind) {
+    await knownProject(slug)
+    if (!Number.isInteger(seed) || seed < 0 || seed > 2147483647) throw new Error(`Invalid seed: ${JSON.stringify(seed)}`)
+    if (kind !== 'card' && kind !== 'hero') throw new Error(`Kind must be 'card' or 'hero', got ${JSON.stringify(kind)}`)
+    try {
+      const filename = kind === 'card' ? `flux-card-${seed}.jpg` : `flux-hero-${seed}.jpg`
+      return 'data:image/jpeg;base64,' + (await fsp.readFile(path.join(imagesDir, slug, filename))).toString('base64')
+    } catch {
+      return null
+    }
+  }
+
   // A generated image as a data URL, for the gallery. Same slug validation as generateImage.
   async function imagePreview(slug) {
     const manifest = await readJson(manifestFile, [])
@@ -467,5 +543,5 @@ export function createPortfolio({
     return JSON.parse(stdout)
   }
 
-  return { contentTemplates, contentReport, chrome, inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, templateSource, specimen, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage, imageMotifs, imageVariants, newImageVariant, chooseImageVariant, applyImages, addProject, listElements, verifyElement, pipelineStatus, runPipeline, deleteImageVariant, variantPreview }
+  return { contentTemplates, contentReport, chrome, inventory, inventoryImage, pageMarkup, refreshInventory, listTemplates, templateSource, specimen, renderTemplate, planProject, listReference, referenceMarkup, imagePreview, previewHead, listComponents, saveComponent, createComponent, getRules, saveRules, getGuide, saveGuide, latestEval, runEval, listImages, generateImage, imageMotifs, imageVariants, newImageVariant, chooseImageVariant, applyImages, addProject, listElements, verifyElement, pipelineStatus, runPipeline, deleteImageVariant, variantPreview, imageStyleCatalog, draftImageSubject, queueFluxVariant, fluxVariants, chooseFluxVariant, deleteFluxVariant, fluxVariantPreview }
 }

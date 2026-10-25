@@ -434,6 +434,125 @@ describe('applying images to the dev site', () => {
   })
 })
 
+describe('FLUX image generation (AI art variants)', () => {
+  beforeEach(() => {
+    write('deploy/other-projects/manifest.json', JSON.stringify([{ title: 'Mancala', url: '/ai-projects/mancala/', thumbnail: '/wp-content/uploads/m.jpg' }]))
+    exec.mockResolvedValue({ stdout: JSON.stringify({ ok: true }), stderr: '' })
+  })
+
+  it('returns the styles and moods catalog from the backend', async () => {
+    exec.mockResolvedValue({ stdout: JSON.stringify({ styles: { blueprint: 'desc1' }, moods: { calm: 'desc2' } }), stderr: '' })
+    const r = await p.imageStyleCatalog()
+    expect(r).toEqual({ styles: { blueprint: 'desc1' }, moods: { calm: 'desc2' } })
+    expect(exec.mock.calls[0][1]).toContain('catalog')
+  })
+
+  it('drafts a subject (description) for a project slug', async () => {
+    exec.mockResolvedValue({ stdout: JSON.stringify({ ok: true, subject: 'A puzzle game' }), stderr: '' })
+    const r = await p.draftImageSubject('mancala')
+    expect(r).toBe('A puzzle game')
+    expect(exec.mock.calls[0][1]).toEqual(expect.arrayContaining(['subject', 'mancala']))
+  })
+
+  it('rejects unknown project when drafting subject', async () => {
+    await expect(p.draftImageSubject('nope')).rejects.toThrow(/unknown project/i)
+  })
+
+  it('queues a FLUX variant with validated style, mood, and subject', async () => {
+    await p.queueFluxVariant('mancala', 'blueprint', 'calm', 'a puzzle game')
+    const args = exec.mock.calls[0][1]
+    expect(args).toEqual(expect.arrayContaining(['queue', 'mancala', '--style', 'blueprint', '--mood', 'calm', '--subject', 'a puzzle game']))
+    expect(args[0]).toMatch(/portfolio_flux_images\.py$/)
+  })
+
+  it('rejects invalid style or mood in queueFluxVariant', async () => {
+    await expect(p.queueFluxVariant('mancala', '../x', 'calm', 'test')).rejects.toThrow(/invalid style/i)
+    await expect(p.queueFluxVariant('mancala', 'blueprint', '../x', 'test')).rejects.toThrow(/invalid mood/i)
+  })
+
+  it('rejects empty or too-long subject in queueFluxVariant', async () => {
+    await expect(p.queueFluxVariant('mancala', 'blueprint', 'calm', '')).rejects.toThrow(/subject must be 1-300 chars/i)
+    await expect(p.queueFluxVariant('mancala', 'blueprint', 'calm', 'a'.repeat(301))).rejects.toThrow(/subject must be 1-300 chars/i)
+  })
+
+  it('surfaces the backend error when queuing fails', async () => {
+    exec.mockRejectedValue(Object.assign(new Error('Command failed'), { stdout: JSON.stringify({ ok: false, error: 'insufficient disk space' }) }))
+    await expect(p.queueFluxVariant('mancala', 'blueprint', 'calm', 'test')).rejects.toThrow(/insufficient disk space/)
+  })
+
+  it('lists FLUX variants from the backend', async () => {
+    exec.mockResolvedValue({ stdout: JSON.stringify({ variants: [{ seed: 42, style: 'blueprint', mood: 'calm' }] }), stderr: '' })
+    const r = await p.fluxVariants('mancala')
+    expect(r).toEqual([{ seed: 42, style: 'blueprint', mood: 'calm' }])
+    expect(exec.mock.calls[0][1]).toEqual(expect.arrayContaining(['list', 'mancala']))
+  })
+
+  it('rejects unknown project when listing variants', async () => {
+    await expect(p.fluxVariants('nope')).rejects.toThrow(/unknown project/i)
+  })
+
+  it('chooses a FLUX variant by seed with validation', async () => {
+    await p.chooseFluxVariant('mancala', 42)
+    const args = exec.mock.calls[0][1]
+    expect(args).toEqual(expect.arrayContaining(['choose', 'mancala', '--seed', '42']))
+  })
+
+  it('rejects invalid seed in chooseFluxVariant', async () => {
+    await expect(p.chooseFluxVariant('mancala', -1)).rejects.toThrow(/invalid seed/i)
+    await expect(p.chooseFluxVariant('mancala', 1.5)).rejects.toThrow(/invalid seed/i)
+    await expect(p.chooseFluxVariant('mancala', 'not-a-number')).rejects.toThrow(/invalid seed/i)
+    await expect(p.chooseFluxVariant('mancala', 2147483648)).rejects.toThrow(/invalid seed/i)
+  })
+
+  it('surfaces the backend error when choosing fails', async () => {
+    exec.mockRejectedValue(Object.assign(new Error('Command failed'), { stdout: JSON.stringify({ ok: false, error: 'variant not found' }) }))
+    await expect(p.chooseFluxVariant('mancala', 999)).rejects.toThrow(/variant not found/)
+  })
+
+  it('deletes a FLUX variant by seed with validation', async () => {
+    await p.deleteFluxVariant('mancala', 42)
+    const args = exec.mock.calls[0][1]
+    expect(args).toEqual(expect.arrayContaining(['delete', 'mancala', '--seed', '42']))
+  })
+
+  it('rejects invalid seed in deleteFluxVariant', async () => {
+    await expect(p.deleteFluxVariant('mancala', -1)).rejects.toThrow(/invalid seed/i)
+    await expect(p.deleteFluxVariant('mancala', 2147483648)).rejects.toThrow(/invalid seed/i)
+  })
+
+  it('surfaces the backend error when deletion fails (e.g., chosen variant)', async () => {
+    exec.mockRejectedValue(Object.assign(new Error('Command failed'), { stdout: JSON.stringify({ ok: false, error: 'cannot delete chosen variant' }) }))
+    await expect(p.deleteFluxVariant('mancala', 42)).rejects.toThrow(/cannot delete chosen/)
+  })
+
+  it('previews a FLUX variant image as a data URL (card or hero)', async () => {
+    const d = path.join(home, '.claude/portfolio/images/mancala')
+    mkdirSync(d, { recursive: true })
+    writeFileSync(path.join(d, 'flux-card-42.jpg'), Buffer.from([255, 216]))
+    writeFileSync(path.join(d, 'flux-hero-42.jpg'), Buffer.from([137, 80]))
+
+    const card = await p.fluxVariantPreview('mancala', 42, 'card')
+    expect(card).toBe('data:image/jpeg;base64,' + Buffer.from([255, 216]).toString('base64'))
+
+    const hero = await p.fluxVariantPreview('mancala', 42, 'hero')
+    expect(hero).toBe('data:image/jpeg;base64,' + Buffer.from([137, 80]).toString('base64'))
+  })
+
+  it('returns null when variant image does not exist', async () => {
+    expect(await p.fluxVariantPreview('mancala', 999, 'card')).toBeNull()
+    expect(await p.fluxVariantPreview('mancala', 999, 'hero')).toBeNull()
+  })
+
+  it('rejects invalid seed or kind in fluxVariantPreview', async () => {
+    await expect(p.fluxVariantPreview('mancala', -1, 'card')).rejects.toThrow(/invalid seed/i)
+    await expect(p.fluxVariantPreview('mancala', 42, 'invalid')).rejects.toThrow(/card.*hero/i)
+  })
+
+  it('rejects unknown project in fluxVariantPreview', async () => {
+    await expect(p.fluxVariantPreview('nope', 42, 'card')).rejects.toThrow(/unknown project/i)
+  })
+})
+
 describe('previewHead takes the union of stylesheets across representative pages', () => {
   it('includes a stylesheet that only the card pages link (Avada generates one per page)', async () => {
     const pages = {

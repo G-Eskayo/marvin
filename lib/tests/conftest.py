@@ -73,6 +73,13 @@ def _isolate_job_events(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_model_registry(tmp_path_factory, monkeypatch):
+    # Tests must never write to the real config/models.json.
+    import model_registry
+    monkeypatch.setattr(model_registry, "REGISTRY_PATH", tmp_path_factory.mktemp("registry") / "models.json")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_project_profiles(tmp_path_factory, monkeypatch):
     # A real config/projects/*.json with dispatch "on" must never change what a test dispatches.
     import project_profile

@@ -968,6 +968,35 @@ function VariantTile({ slug, v, onChoose, onDelete, onZoom, busy }) {
   )
 }
 
+function FluxVariantTile({ slug, v, onChoose, onDelete, onZoom, busy }) {
+  const [cardSrc, setCardSrc] = useState(null)
+  const [heroSrc, setHeroSrc] = useState(null)
+  useEffect(() => {
+    let live = true
+    window.api.portfolio.fluxVariantPreview(slug, v.seed, 'card').then((d) => live && setCardSrc(d)).catch(() => {})
+    window.api.portfolio.fluxVariantPreview(slug, v.seed, 'hero').then((d) => live && setHeroSrc(d)).catch(() => {})
+    return () => { live = false }
+  }, [slug, v.seed])
+  const caption = `${v.style || '?'} / ${v.mood || '?'} #${v.seed}`
+  return (
+    <div className={`flex flex-col gap-1 rounded border p-1 ${v.chosen ? 'border-emerald-600' : 'border-neutral-800'}`}>
+      <div className="flex gap-1">
+        {cardSrc ? <img src={cardSrc} alt="" onClick={() => onZoom(cardSrc, `${caption} (card)`)} className="h-14 w-1/3 cursor-zoom-in rounded object-cover" /> : <div className="h-14 w-1/3 rounded bg-neutral-900" />}
+        {heroSrc ? <img src={heroSrc} alt="" onClick={() => onZoom(heroSrc, `${caption} (hero)`)} className="h-14 w-2/3 cursor-zoom-in rounded object-cover" /> : <div className="h-14 w-2/3 rounded bg-neutral-900" />}
+      </div>
+      <div className="flex items-center gap-1">
+        <span className="truncate text-[10px] text-neutral-400">{caption}</span>
+        {v.chosen
+          ? <span className="ml-auto rounded bg-emerald-950 px-1.5 py-0.5 text-[10px] text-emerald-300">in use</span>
+          : <>
+              <button disabled={busy} onClick={() => onChoose(v.seed)} className="ml-auto text-[10px] text-blue-400 hover:text-blue-300 disabled:opacity-50">use this</button>
+              <button disabled={busy} onClick={() => onDelete(v.seed)} title="Delete this image" className="text-[10px] text-neutral-500 hover:text-red-400 disabled:opacity-50">delete</button>
+            </>}
+      </div>
+    </div>
+  )
+}
+
 function ImageCard({ item, motifs, onGenerate }) {
   const [preview, setPreview] = useState(null)
   const [busy, setBusy] = useState(false)
@@ -977,8 +1006,16 @@ function ImageCard({ item, motifs, onGenerate }) {
   const [variants, setVariants] = useState(null)
   const [theme, setTheme] = useState('default')
   const [zoom, setZoom] = useState(null)
+  const [useFlux, setUseFlux] = useState(false)
+  const [fluxCatalog, setFluxCatalog] = useState(null)
+  const [fluxVariants, setFluxVariants] = useState(null)
+  const [fluxStyle, setFluxStyle] = useState('')
+  const [fluxMood, setFluxMood] = useState('')
+  const [fluxSubject, setFluxSubject] = useState('')
+  const [fluxSubjectDrafted, setFluxSubjectDrafted] = useState(false)
 
   const loadVariants = useCallback(() => window.api.portfolio.imageVariants(item.slug).then(setVariants).catch((e) => setErr(errText(e))), [item.slug])
+  const loadFluxVariants = useCallback(() => window.api.portfolio.fluxVariants(item.slug).then(setFluxVariants).catch((e) => setErr(errText(e))), [item.slug])
 
   useEffect(() => {
     let live = true
@@ -989,6 +1026,19 @@ function ImageCard({ item, motifs, onGenerate }) {
   }, [item.slug, item.generated.exists])
 
   useEffect(() => { if (open) loadVariants() }, [open, loadVariants])
+
+  useEffect(() => {
+    if (useFlux && open && !fluxCatalog) {
+      window.api.portfolio.imageStyleCatalog().then(setFluxCatalog).catch((e) => setErr(errText(e)))
+      loadFluxVariants()
+    }
+  }, [useFlux, open, fluxCatalog, loadFluxVariants])
+
+  useEffect(() => {
+    if (useFlux && open && !fluxSubjectDrafted) {
+      window.api.portfolio.draftImageSubject(item.slug).then((s) => { setFluxSubject(s); setFluxSubjectDrafted(true) }).catch((e) => setErr(errText(e)))
+    }
+  }, [useFlux, open, fluxSubjectDrafted, item.slug])
 
   async function run(fn) {
     setBusy(true)
@@ -1028,6 +1078,24 @@ function ImageCard({ item, motifs, onGenerate }) {
     await loadVariants()
   })
 
+  const queueFlux = () => run(async () => {
+    await window.api.portfolio.queueFluxVariant(item.slug, fluxStyle, fluxMood, fluxSubject)
+    await loadFluxVariants()
+  })
+
+  const chooseFlux = (seed) => run(async () => {
+    const r = await window.api.portfolio.chooseFluxVariant(item.slug, seed)
+    if (r.warning) setNote(r.warning)
+    await onGenerate()
+    setPreview(await window.api.portfolio.imagePreview(item.slug))
+    await loadFluxVariants()
+  })
+
+  const removeFlux = (seed) => run(async () => {
+    await window.api.portfolio.deleteFluxVariant(item.slug, seed)
+    await loadFluxVariants()
+  })
+
   const closeZoom = useCallback(() => setZoom(null), [])
 
   return (
@@ -1047,17 +1115,21 @@ function ImageCard({ item, motifs, onGenerate }) {
           <img src={`${DEV_SITE}${item.thumbnail}`} alt="" onClick={() => setZoom({ src: `${DEV_SITE}${item.thumbnail}`, caption: `${item.title} · on the site now` })} className="h-20 w-full cursor-zoom-in rounded border border-neutral-800 object-cover" />
         </div>
         <div>
-          <p className="mb-1 text-[10px] uppercase tracking-wide text-neutral-500">Chosen{item.generated.style ? ` · ${item.generated.style}` : ''}</p>
+          <p className="mb-1 text-[10px] uppercase tracking-wide text-neutral-500">Chosen{item.generated.kind === 'flux' && item.generated.style ? ` · ${item.generated.style} / ${item.generated.mood}` : item.generated.style ? ` · ${item.generated.style}` : ''}</p>
           {preview ? <img src={preview} alt="" onClick={() => setZoom({ src: preview, caption: `${item.title} · chosen` })} className="h-20 w-full cursor-zoom-in rounded border border-neutral-800 object-cover" /> : <div className="flex h-20 items-center justify-center rounded border border-dashed border-neutral-800 text-[10px] text-neutral-600">not generated</div>}
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         {!item.generated.exists && <button onClick={generate} disabled={busy} className={button}>{busy ? 'Generating…' : 'Generate'}</button>}
-        <button onClick={() => setOpen((v) => !v)} className={button}>{open ? 'Hide choices' : 'Choose image…'}</button>
+        <div className="flex items-center gap-1 rounded-md border border-neutral-700 p-0.5">
+          <button onClick={() => { setUseFlux(false); setOpen(true) }} disabled={busy} className={`${useFlux ? button : 'rounded bg-neutral-700 px-2 py-1 text-xs text-neutral-300'} transition-colors`}>Abstract pattern (instant)</button>
+          <button onClick={() => { setUseFlux(true); setOpen(true) }} disabled={busy} className={`${!useFlux ? button : 'rounded bg-neutral-700 px-2 py-1 text-xs text-neutral-300'} transition-colors`}>AI art (FLUX, ~1 min)</button>
+        </div>
+        <button onClick={() => setOpen((v) => !v)} className={button}>{open ? 'Hide choices' : 'Show choices'}</button>
         {err && <span className="text-xs text-red-400">{err}</span>}
         {note && <span className="text-xs text-amber-400">{note}</span>}
       </div>
-      {open && (
+      {open && !useFlux && (
         <div className="flex flex-col gap-2 rounded-md border border-neutral-800 bg-neutral-950 p-2">
           <div className="flex flex-wrap items-center gap-2">
             <select value={theme} onChange={(e) => setTheme(e.target.value)} className="rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs text-neutral-200">
@@ -1074,6 +1146,36 @@ function ImageCard({ item, motifs, onGenerate }) {
             </div>
           )}
           <p className="text-[10px] text-neutral-600">Every image you generate is kept. Pick any as the one in use; the choice stays until you pick another.</p>
+        </div>
+      )}
+      {open && useFlux && (
+        <div className="flex flex-col gap-2 rounded-md border border-neutral-800 bg-neutral-950 p-2">
+          <div className="flex flex-col gap-2">
+            <div className="flex gap-2">
+              {fluxCatalog && (
+                <>
+                  <select value={fluxStyle} onChange={(e) => setFluxStyle(e.target.value)} className="flex-1 rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs text-neutral-200">
+                    <option value="">Style…</option>
+                    {Object.keys(fluxCatalog.styles || {}).map((s) => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                  <select value={fluxMood} onChange={(e) => setFluxMood(e.target.value)} className="flex-1 rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs text-neutral-200">
+                    <option value="">Mood…</option>
+                    {Object.keys(fluxCatalog.moods || {}).map((m) => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </>
+              )}
+            </div>
+            <textarea value={fluxSubject} onChange={(e) => setFluxSubject(e.target.value.slice(0, 300))} placeholder="Subject for generation…" rows={2} className="rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs text-neutral-200" spellCheck={false} />
+            <button onClick={queueFlux} disabled={busy || !fluxStyle || !fluxMood || !fluxSubject.trim()} className={button}>{busy ? 'Generating with FLUX (about a minute, queued on the mini)…' : 'Queue variant'}</button>
+          </div>
+          {fluxVariants === null ? <p className="text-xs text-neutral-500">Loading…</p> : fluxVariants.length === 0 ? (
+            <p className="text-xs text-neutral-500">No FLUX variants yet.</p>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              {fluxVariants.map((v) => <FluxVariantTile key={v.seed} slug={item.slug} v={v} onChoose={chooseFlux} onDelete={removeFlux} onZoom={(src, caption) => setZoom({ src, caption: `${item.title} · ${caption}` })} busy={busy} />)}
+            </div>
+          )}
+          <p className="text-[10px] text-neutral-600">FLUX variants take about 1 minute each and are queued on the mac-mini. Every variant is kept; pick any as the one in use.</p>
         </div>
       )}
     </div>
