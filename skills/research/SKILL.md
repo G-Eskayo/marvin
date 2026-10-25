@@ -2,6 +2,7 @@
 name: research
 description: Deep research with epistemic rigor — triangulates sources, tiers confidence levels, separates facts from interpretations, and steelmans competing views. Use when user asks to research a topic, investigate a claim, compare approaches, evaluate a technology or theory, or needs a thorough evidence-based analysis.
 tags: [intent:research, intent:investigate, intent:evaluate, intent:learn, type:skill]
+calls: [research-colony]
 ---
 
 # Research
@@ -33,6 +34,10 @@ Two different question types need two different source ladders — don't apply t
 Always surface which tier/source answered. Don't present a general web result as authoritative when a higher tier covers the topic.
 
 ## Process
+
+### 0. Check research-feed for cached findings
+
+Run `~/.agents/venv/bin/python ~/.agents/skills/research-colony/scripts/query_research_feed.py "<question>" --json` to check if recent cached findings exist in the research-feed collection. If hits are returned, surface them as an informational note ("Found X cached findings from [dates] on this topic"). **Soft-merge, not hard-skip** — cached items can be stale; continue with fresh search in step 1 alongside the cached results. This surfaces known recent work without blocking novel research.
 
 ### 1. Frame the question precisely
 

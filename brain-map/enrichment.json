@@ -142,6 +142,7 @@
     "improve-codebase-architecture->zoom-out": "calls zoom-out for the initial map before finding deepening opportunities",
     "index->self-improve": "runs self-improve's retrieve.py + rebuild-manifest.py under the hood",
     "qa-agent->self-improve": "calls self-improve to turn QA-observed patterns into new/updated skills",
+    "research->research-colony": "checks research-feed for cached findings before fetching fresh",
     "self-improve->lexicon": "calls lexicon — step 1 of its own process",
     "self-improve->write-a-skill": "calls write-a-skill's process when authoring a brand-new skill",
     "tdd->diagnose": "calls diagnose when a red test needs root-causing, not just a fix",
