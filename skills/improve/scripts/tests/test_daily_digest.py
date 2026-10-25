@@ -337,3 +337,89 @@ def test_missing_helper_format():
     result = dd._missing("test message")
     assert "❌ **Missing input:**" in result
     assert "test message" in result
+
+
+# ── should_run() fallback gate tests ──────────────────────────────────────
+
+def test_main_skips_when_should_run_gate_returns_false(tmp_path, monkeypatch):
+    """main() respects the should_run() fallback gate — skips if before deadline."""
+    out_file = tmp_path / "2026-10-22.md"
+    monkeypatch.setattr(dd, "OUT_FILE", out_file)
+    monkeypatch.setattr(dd, "DIGEST_DIR", tmp_path)
+
+    # Mock brief_fallback.should_run to return False (before deadline)
+    from unittest.mock import MagicMock
+    mock_decision = MagicMock()
+    mock_decision.should_build = False
+    mock_decision.reason = "standby: before deadline"
+
+    with patch("daily_digest.brief_fallback") as mock_bf:
+        mock_bf.should_run.return_value = mock_decision
+
+        import io
+        old_stdout = sys.stdout
+        sys.stdout = io.StringIO()
+        try:
+            dd.main()
+            output = sys.stdout.getvalue()
+        finally:
+            sys.stdout = old_stdout
+
+    # Should have printed the skip reason
+    assert "standby: before deadline" in output
+    assert "skipping" in output
+    # Should not have created the output file
+    assert not out_file.exists()
+
+
+def test_main_has_prewrite_recheck(tmp_path, monkeypatch):
+    """main() has a pre-write recheck: ensures primary hasn't produced since we started."""
+    out_file = tmp_path / "2026-10-22.md"
+    monkeypatch.setattr(dd, "OUT_FILE", out_file)
+    monkeypatch.setattr(dd, "DIGEST_DIR", tmp_path)
+    monkeypatch.setattr(dd, "RESULTS_MD", tmp_path / "RESULTS.md")
+    monkeypatch.setattr(dd, "REVIEWER_LOG", tmp_path / "reviewer.log")
+    monkeypatch.setattr(dd, "ROADMAP", tmp_path / "roadmap.md")
+
+    # Create minimal required files
+    (tmp_path / "RESULTS.md").write_text("# Results\nSome results")
+    (tmp_path / "reviewer.log").write_text("=== run 2026-10-22T12:00:00 ===\n=== end (exit 0) ===\n")
+    (tmp_path / "roadmap.md").write_text("# Roadmap\n")
+
+    # Mock brief_fallback.should_run: first call passes, second call (recheck) fails
+    call_count = [0]
+    from unittest.mock import MagicMock
+
+    def should_run_side_effect(*args, **kwargs):
+        call_count[0] += 1
+        mock_decision = MagicMock()
+        if call_count[0] == 1:
+            # Initial gate check
+            mock_decision.should_build = True
+        else:
+            # Pre-write recheck
+            mock_decision.should_build = False
+            mock_decision.reason = "standby: primary already produced"
+        return mock_decision
+
+    with patch("daily_digest.brief_fallback") as mock_bf:
+        mock_bf.should_run.side_effect = should_run_side_effect
+
+        with patch("daily_digest.call_claude", return_value="## Compounding Move\nTest content"):
+            with patch("daily_digest.pass_or_quarantine", return_value=True):
+                import io
+                old_stdout = sys.stdout
+                sys.stdout = io.StringIO()
+                try:
+                    dd.main()
+                    output = sys.stdout.getvalue()
+                finally:
+                    sys.stdout = old_stdout
+
+    # Should have printed the recheck skip reason
+    assert "pre-write recheck" in output
+    assert "skipping" in output
+    # Should not have created the output file (recheck prevented it)
+    assert not out_file.exists()
+    # should_run should have been called twice
+    assert call_count[0] == 2

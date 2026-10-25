@@ -23,6 +23,7 @@ HANDOFFS_DIR = CLAUDE_DIR / "handoffs"
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 from notify import notify  # noqa: E402
 import marvin_launcher  # noqa: E402
+import brief_fallback  # noqa: E402
 
 RESULTS_MD   = Path.home() / ".agents" / "bench" / "RESULTS.md"
 QA_SCRIPTS   = Path.home() / ".agents" / "skills" / "qa-agent" / "scripts"
@@ -167,6 +168,9 @@ def reviewer_health_summary() -> str:
             continue
         try:
             ts = datetime.fromisoformat(m.group(1))
+            # If no tzinfo, assume UTC (log timestamps are always UTC)
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
         except ValueError:
             continue
         if ts < cutoff:
@@ -272,8 +276,15 @@ def call_claude(prompt: str) -> str:
 def main() -> None:
     DIGEST_DIR.mkdir(parents=True, exist_ok=True)
 
+    # Short-circuit if today's digest already exists
     if OUT_FILE.exists():
-        print(f"[daily-digest] Today's digest already exists: {OUT_FILE}", flush=True)
+        print(f"[daily-digest] Today's digest already exists — skipping", flush=True)
+        return
+
+    # Fallback gate: check if we should build
+    decision = brief_fallback.should_run(local_path=OUT_FILE, usual_hour=8, usual_minute=30)
+    if not decision.should_build:
+        print(f"[daily-digest] {decision.reason} — skipping", flush=True)
         return
 
     print("[daily-digest] Assembling context...", flush=True)
@@ -318,6 +329,12 @@ def main() -> None:
     # part of the digest that actually answers "how would I know if it
     # failed," since these hooks are built to fail silently on purpose.
     health_section = f"## System Health\n\n{reviewer_health}\n\n---\n\n"
+
+    # Pre-write recheck: ensure primary hasn't produced since we started
+    decision_recheck = brief_fallback.should_run(local_path=OUT_FILE, usual_hour=8, usual_minute=30)
+    if not decision_recheck.should_build:
+        print(f"[daily-digest] {decision_recheck.reason} (pre-write recheck) — skipping", flush=True)
+        return
 
     OUT_FILE.write_text(header + health_section + content + "\n")
     print(f"[daily-digest] Written to {OUT_FILE}", flush=True)

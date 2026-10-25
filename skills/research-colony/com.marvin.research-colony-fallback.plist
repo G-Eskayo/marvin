@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.marvin.research-colony-fallback</string>
+	<key>Program</key>
+	<string>/Users/gileskayo/.agents/venv/bin/python</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/gileskayo/.agents/venv/bin/python</string>
+		<string>/Users/gileskayo/.agents/skills/research-colony/scripts/run_colony.py</string>
+	</array>
+	<key>StandardOutPath</key>
+	<string>/Users/gileskayo/.claude/logs/research-colony-fallback.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/gileskayo/.claude/logs/research-colony-fallback-error.log</string>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>10</integer>
+		<key>Minute</key>
+		<integer>0</integer>
+	</dict>
+	<key>Nice</key>
+	<integer>5</integer>
+	<key>TimeOut</key>
+	<integer>3600</integer>
+</dict>
+</plist>

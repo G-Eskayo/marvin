@@ -123,3 +123,105 @@ def test_open_prs_marks_waiting_from_one_graphql_read(monkeypatch):
     monkeypatch.setattr(od, "fetch", lambda repos, run=None: None)
     brief = mb.gather(NOW, {"open_prs": mb._open_prs})
     assert brief["open_prs"] is None and "open PRs" in brief["missing"][0]
+
+
+def test_write_is_idempotent_against_an_existing_file(tmp_path, monkeypatch):
+    """write() called twice for the same day must not overwrite a pre-existing file."""
+    import machine_profile
+    now = datetime(2026, 10, 22, 9, 45, tzinfo=timezone.utc)
+    briefs_dir = tmp_path / "briefs"
+    monkeypatch.setattr("morning_brief.BRIEFS", briefs_dir)
+    monkeypatch.setattr(machine_profile, "machine_label", lambda: "mac-mini")
+
+    # First write
+    brief_path = mb.write(now, _sources())
+    original_content = brief_path.read_text()
+
+    # Second write with different sources — should not overwrite
+    different_sources = _sources(open_prs=lambda: [])
+    result_path = mb.write(now, different_sources)
+
+    # Content should be unchanged
+    assert brief_path.read_text() == original_content
+    assert result_path == brief_path
+
+
+def test_write_records_who_built_it(tmp_path, monkeypatch):
+    """After write(), a .built-by sidecar exists with machine label and reason."""
+    import machine_profile
+    now = datetime(2026, 10, 22, 9, 45, tzinfo=timezone.utc)
+    briefs_dir = tmp_path / "briefs"
+    monkeypatch.setattr("morning_brief.BRIEFS", briefs_dir)
+    monkeypatch.setattr(machine_profile, "machine_label", lambda: "mac-mini-1")
+
+    # Write with a reason
+    brief_path = mb.write(now, _sources(), builder_reason="fallback: covering for the laptop")
+
+    # Check sidecar
+    sidecar_path = briefs_dir / f"2026-10-22.built-by"
+    assert sidecar_path.exists()
+    assert sidecar_path.read_text() == "mac-mini-1: fallback: covering for the laptop\n"
+
+
+def test_builder_of_reads_the_sidecar(tmp_path, monkeypatch):
+    """builder_of() reads the .built-by sidecar."""
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+    monkeypatch.setattr("morning_brief.BRIEFS", briefs_dir)
+
+    # Create a sidecar
+    sidecar_path = briefs_dir / "2026-10-22.built-by"
+    sidecar_path.write_text("macbook-pro-1: primary\n")
+
+    # Read it back
+    result = mb.builder_of("2026-10-22")
+    assert result == "macbook-pro-1: primary"
+
+    # Non-existent day
+    assert mb.builder_of("2026-10-20") is None
+
+
+def test_build_checks_fallback_gate(tmp_path, monkeypatch):
+    """build() checks the fallback gate before building."""
+    import brief_fallback
+    import machine_profile
+
+    briefs_dir = tmp_path / "briefs"
+    monkeypatch.setattr("morning_brief.BRIEFS", briefs_dir)
+    monkeypatch.setattr(machine_profile, "machine_label", lambda: "mac-mini-1")
+
+    # Mock should_run to return False
+    def mock_should_run(*args, **kwargs):
+        return brief_fallback.Decision(False, "standby: primary already produced")
+    monkeypatch.setattr("brief_fallback.should_run", mock_should_run)
+
+    # Call build
+    result = mb.build(NOW, _sources())
+
+    # Brief should not have been created
+    assert not (briefs_dir / "2026-10-09.md").exists()
+
+def test_build_called_with_explicit_parameters(tmp_path, monkeypatch):
+    """build() calls should_run() with usual_hour=9, usual_minute=45."""
+    import brief_fallback
+    import machine_profile
+
+    briefs_dir = tmp_path / "briefs"
+    monkeypatch.setattr("morning_brief.BRIEFS", briefs_dir)
+    monkeypatch.setattr(machine_profile, "machine_label", lambda: "mac-mini-1")
+
+    # Track calls to should_run
+    calls = []
+
+    def mock_should_run(*args, **kwargs):
+        calls.append(kwargs)
+        return brief_fallback.Decision(False, "test: skipping")
+    monkeypatch.setattr("brief_fallback.should_run", mock_should_run)
+
+    # Call build
+    mb.build(NOW, _sources())
+
+    # Verify should_run was called with the right parameters
+    assert len(calls) == 1
+    assert calls[0].get("usual_hour") == 9
+    assert calls[0].get("usual_minute") == 45

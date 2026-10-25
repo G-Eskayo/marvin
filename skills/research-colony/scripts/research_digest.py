@@ -14,6 +14,7 @@ SAFETY_MONITOR_SCRIPTS = Path.home() / ".agents" / "skills" / "safety-monitor" /
 sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 from notify import notify  # noqa: E402
 import marvin_launcher  # noqa: E402
+import brief_fallback  # noqa: E402
 
 sys.path.insert(0, str(SAFETY_MONITOR_SCRIPTS))
 try:
@@ -99,9 +100,15 @@ def generate() -> Path | None:
     today = date.today().isoformat()
     out_path = DIGEST_DIR / f"{today}.md"
 
-    if out_path.exists():
+    if brief_fallback.produced(out_path):
         print(f"[colony] research digest already exists for {today}", file=sys.stderr)
         return out_path
+
+    # Fallback gate: check if we should build
+    decision = brief_fallback.should_run(local_path=out_path, usual_hour=9, usual_minute=0)
+    if not decision.should_build:
+        print(f"[colony] {decision.reason} — skipping", file=sys.stderr)
+        return None
 
     all_items = load_today_cache()
     if not all_items:
@@ -114,6 +121,12 @@ def generate() -> Path | None:
     all_text = "\n".join(_fmt_item(i) for i in all_items[:30])
 
     prompt = DIGEST_PROMPT.format(correlated=correlated_text, all_items=all_text)
+
+    # Pre-launch recheck: ensure primary hasn't produced since we started
+    decision_recheck = brief_fallback.should_run(local_path=out_path, usual_hour=9, usual_minute=0)
+    if not decision_recheck.should_build:
+        print(f"[colony] {decision_recheck.reason} (pre-launch recheck) — skipping", file=sys.stderr)
+        return None
 
     try:
         result = marvin_launcher.launch("background-analyst", prompt,

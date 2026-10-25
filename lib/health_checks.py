@@ -990,7 +990,9 @@ if [ -f "$LEDGER" ]; then echo "disk_ledger=$(tail -14 "$LEDGER" | /usr/bin/tr '
 # host only (ADR 0032, 0033), "laptop" = only where Gil sits. Edit here when a job is deliberately moved; a job that
 # is not listed is reported as unplaced so a new job cannot silently run on only one machine.
 JOB_PLACEMENT = {
-    "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "both", "research-colony": "both",
+    "code-sync-push": "both", "cross-machine-merge": "both",
+    "daily-digest": "mini", "daily-digest-fallback": "laptop",  # ADR 0067: mini is primary, laptop covers if mini is down
+    "research-colony": "mini", "research-colony-fallback": "laptop",  # ADR 0067: mini is primary, laptop covers if mini is down
     "desktoplive": "both", "dashboard-webhook": "both",  # webhook on both until #112 (ADR 0032)
     "ticket-pipeline": "both",  # mini scans; the laptop's copy is a standby that scans only if the mini goes quiet (scanner_role.py)
     "architecture-review": "mini", "auto-fix": "mini", "cron-health": "mini", "health-check": "mini",
@@ -999,7 +1001,7 @@ JOB_PLACEMENT = {
     "cleanup-sweep": "both",  # daily: each machine sweeps its own pipeline worktrees (lib/cleanup_sweep.py)
     "machine-resources": "both",  # 30s: samples disk/mem/swap/CPU/GPU for resources panel (#130)
     "dashboard-launch": "laptop",
-    "morning-brief": "laptop",  # one writer (the brief syncs to the mini via ~/.claude); after the digests (lib/morning_brief.py)
+    "morning-brief": "mini", "morning-brief-fallback": "laptop",  # ADR 0067: mini is primary, laptop covers if mini is down
     # the website map (#189): rebuilt nightly and after MARVIN changes on the mini, where the dev site runs; the nightly
     # job also publishes it to production (ADR 0057), so it must never run on the laptop
     "snapshot-deploy-nightly": "mini", "snapshot-deploy-reactive": "mini",
@@ -1462,6 +1464,19 @@ def _cron_job_logs() -> list[dict]:
     return out
 
 
+def check_brief_builder() -> dict:
+    """The morning brief is built by the Mini; the Laptop only builds as a fallback.
+    This check reports green when a brief was built today (and who built it), yellow if not yet."""
+    import morning_brief
+    cid, label = "brief:builder", "Morning brief: who built it"
+    now = datetime.now(timezone.utc)
+    day = now.astimezone().strftime("%Y-%m-%d")
+    builder = morning_brief.builder_of(day)
+    if builder:
+        return _result(cid, label, "green", f"brief built today by {builder}")
+    return _result(cid, label, "yellow", "no brief built yet today")
+
+
 def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict] | None = None) -> list[tuple]:
     """Every check the sweep runs, in the order the Health tab shows them. `reach` maps machine:<id> -> severity from
     the reachability check, which runs first; `reach_results` are its rows, listed where they always appeared."""
@@ -1470,6 +1485,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("token", "Auth tokens", check_token_files, CHECK_BUDGET_S),
         ("route:intent-routing-collection", "route.py embedding classifier (ChromaDB)", check_intent_routing_collection, CHECK_BUDGET_S),
         ("dispatch:lock-age", "Local dispatch lock", check_dispatch_lock, CHECK_BUDGET_S),
+        ("brief:builder", "Morning brief: who built it", check_brief_builder, CHECK_BUDGET_S),
         ("pipeline:breaker", "Ticket pipeline circuit breaker", lambda: check_pipeline_breaker(reach), CROSS_MACHINE_BUDGET_S),
         ("sync:stuck", "Code sync", lambda: check_sync_stuck(reach), CROSS_MACHINE_BUDGET_S),
         ("dispatch:parallel", "Parallel dispatch keeping up", check_parallel_dispatch, CHECK_BUDGET_S),
