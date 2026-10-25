@@ -4,6 +4,7 @@
 <dict>
     <key>Label</key>
     <string>com.marvin.research-colony</string>
+    <!-- Mini only, primary builder: runs at 09:00 -->
 
     <key>ProgramArguments</key>
     <array>

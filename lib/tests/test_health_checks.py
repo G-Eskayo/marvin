@@ -696,6 +696,71 @@ def test_github_budget_is_yellow_not_red_when_it_simply_cannot_be_read():
     assert r["severity"] == "yellow"
 
 
+# ── morning brief builder (primary on mini, fallback on laptop) ──────────────
+
+def test_check_brief_builder_green_with_builder_info(tmp_path, monkeypatch):
+    """check_brief_builder is green when .built-by sidecar exists."""
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+    day_file = briefs_dir / "2026-10-25.md"
+    day_file.write_text("# Morning brief")
+    (briefs_dir / "2026-10-25.built-by").write_text('{"builder": "mac-mini-1"}')
+
+    monkeypatch.setattr(hc, "BRIEFS", briefs_dir)
+    now = datetime(2026, 10, 25, 12, 0, tzinfo=timezone.utc)
+    r = hc.check_brief_builder(now)
+    assert r["severity"] == "green"
+    assert "builder attribution" in r["detail"].lower()
+
+
+def test_check_brief_builder_green_before_deadline_plus_60(tmp_path, monkeypatch):
+    """check_brief_builder is green when not yet past deadline+60min (primary still has time)."""
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+
+    monkeypatch.setattr(hc, "BRIEFS", briefs_dir)
+    # 09:45 local time: not yet deadline (9:45) + 60 min = 10:45
+    now = datetime(2026, 10, 25, 14, 0, tzinfo=timezone.utc)  # 10:00 local (assume UTC+4, e.g. IST)
+    # For this test to work predictably, use local time directly
+    now_local = now.astimezone()
+    # Set to 09:50 local time (just after deadline, but before deadline+60)
+    test_time = now_local.replace(hour=9, minute=50, second=0, microsecond=0)
+
+    r = hc.check_brief_builder(test_time)
+    assert r["severity"] == "green"
+    assert "primary deadline not yet past" in r["detail"].lower()
+
+
+def test_check_brief_builder_yellow_in_fallback_window(tmp_path, monkeypatch):
+    """check_brief_builder is yellow when between deadline+60min and deadline+70min (fallback's window)."""
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+
+    monkeypatch.setattr(hc, "BRIEFS", briefs_dir)
+    now_local = datetime.now(timezone.utc).astimezone()
+    # 09:45 deadline + 65 minutes = 10:50
+    test_time = now_local.replace(hour=10, minute=50, second=0, microsecond=0)
+
+    r = hc.check_brief_builder(test_time)
+    assert r["severity"] == "yellow"
+    assert "fallback window" in r["detail"].lower()
+
+
+def test_check_brief_builder_red_past_deadline_plus_70(tmp_path, monkeypatch):
+    """check_brief_builder is red when past deadline+70min with no brief built."""
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+
+    monkeypatch.setattr(hc, "BRIEFS", briefs_dir)
+    now_local = datetime.now(timezone.utc).astimezone()
+    # 09:45 deadline + 71 minutes = 10:56
+    test_time = now_local.replace(hour=10, minute=56, second=0, microsecond=0)
+
+    r = hc.check_brief_builder(test_time)
+    assert r["severity"] == "red"
+    assert "past deadline" in r["detail"].lower()
+
+
 # ── disk space: found 2026-10-06 the mac-mini at 94% full (13 GiB free) with nothing
 # watching -- leaked pipeline worktrees, and iCloud then evicting the files jobs read.
 
@@ -1299,3 +1364,70 @@ def test_the_machine_script_reads_a_real_process_uptime_with_this_machines_ps():
         assert 1 <= int(out.stdout.strip()) <= 20
     finally:
         child.kill()
+
+
+# ── brief builder tests ────────────────────────────────────────────────────
+
+def test_check_brief_builder_green_when_sidecar_exists(tmp_path, monkeypatch):
+    """check_brief_builder is green when .built-by sidecar exists."""
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+    (briefs_dir / "2026-10-25.built-by").write_text("fallback: primary missed")
+    monkeypatch.setattr(hc, "BRIEFS", briefs_dir)
+
+    now = datetime(2026, 10, 25, 10, 0, tzinfo=timezone.utc)
+    result = hc.check_brief_builder(now=now)
+
+    assert result["severity"] == "green"
+    assert "builder attribution" in result["detail"]
+
+
+def test_check_brief_builder_green_when_deadline_not_reached(tmp_path, monkeypatch):
+    """check_brief_builder is green when deadline hasn't passed yet."""
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+    monkeypatch.setattr(hc, "BRIEFS", briefs_dir)
+
+    # Before deadline (09:45) in local time
+    from zoneinfo import ZoneInfo
+    local_tz = ZoneInfo("America/Denver")
+    now_local = datetime(2026, 10, 25, 8, 0, tzinfo=local_tz)
+    now = now_local.astimezone(timezone.utc)
+    result = hc.check_brief_builder(now=now)
+
+    assert result["severity"] == "green"
+    assert "not yet past" in result["detail"]
+
+
+def test_check_brief_builder_yellow_within_fallback_window(tmp_path, monkeypatch):
+    """check_brief_builder is yellow when within fallback window (60-70 min after deadline)."""
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+    monkeypatch.setattr(hc, "BRIEFS", briefs_dir)
+
+    # 65 minutes after deadline (09:45 + 65 min = 10:50) in local time
+    from zoneinfo import ZoneInfo
+    local_tz = ZoneInfo("America/Denver")
+    now_local = datetime(2026, 10, 25, 10, 50, tzinfo=local_tz)
+    now = now_local.astimezone(timezone.utc)
+    result = hc.check_brief_builder(now=now)
+
+    assert result["severity"] == "yellow"
+    assert "fallback window" in result["detail"]
+
+
+def test_check_brief_builder_red_past_grace_window(tmp_path, monkeypatch):
+    """check_brief_builder is red when past deadline+grace (70 min) with no brief."""
+    from zoneinfo import ZoneInfo
+    briefs_dir = tmp_path / "briefs"
+    briefs_dir.mkdir()
+    monkeypatch.setattr(hc, "BRIEFS", briefs_dir)
+
+    # 75 minutes after deadline (09:45 + 75 min = 11:00) in local time
+    local_tz = ZoneInfo("America/Denver")
+    now_local = datetime(2026, 10, 25, 11, 0, tzinfo=local_tz)
+    now = now_local.astimezone(timezone.utc)
+    result = hc.check_brief_builder(now=now)
+
+    assert result["severity"] == "red"
+    assert "deadline+grace" in result["detail"]

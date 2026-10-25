@@ -285,46 +285,34 @@ def test_reviewer_health_log_invalid_timestamp_skipped(tmp_path, monkeypatch):
 
 
 def test_main_short_circuits_when_out_file_exists(tmp_path, monkeypatch):
-    """main() returns early if today's digest already exists."""
+    """main() returns early if today's digest already exists (brief_fallback.should_run returns False)."""
     out_file = tmp_path / "2026-10-22.md"
     original_content = "# Already exists"
     out_file.write_text(original_content)
 
-    # Mock OUT_FILE and DIGEST_DIR
-    digest_dir = tmp_path
     monkeypatch.setattr(dd, "OUT_FILE", out_file)
-    monkeypatch.setattr(dd, "DIGEST_DIR", digest_dir)
+    monkeypatch.setattr(dd, "DIGEST_DIR", tmp_path)
 
-    # Patch functions with raise-on-call sentinels: if any of these are called,
-    # it means the short-circuit didn't work
-    def raise_roadmap():
-        raise AssertionError("roadmap_summary should not be called when out_file exists")
-    def raise_bench():
-        raise AssertionError("bench_summary should not be called when out_file exists")
-    def raise_reviewer_health():
-        raise AssertionError("reviewer_health_summary should not be called when out_file exists")
-    def raise_call_claude(prompt: str):
-        raise AssertionError("call_claude should not be called when out_file exists")
+    # Patch brief_fallback as a mock module to control should_run behavior
+    with patch("daily_digest.brief_fallback") as mock_bf:
+        mock_bf.should_run.return_value = (False, "output already produced (2026-10-22.md)")
 
-    monkeypatch.setattr(dd, "roadmap_summary", raise_roadmap)
-    monkeypatch.setattr(dd, "bench_summary", raise_bench)
-    monkeypatch.setattr(dd, "reviewer_health_summary", raise_reviewer_health)
-    monkeypatch.setattr(dd, "call_claude", raise_call_claude)
-
-    # Capture stdout to verify the short-circuit message is printed
-    import io
-    old_stdout = sys.stdout
-    sys.stdout = io.StringIO()
-
-    try:
-        # Run main — should return immediately without calling any of the above
-        dd.main()
-        output = sys.stdout.getvalue()
-    finally:
-        sys.stdout = old_stdout
+        # Patch helper functions with raise-on-call sentinels
+        with patch("daily_digest.roadmap_summary", side_effect=AssertionError("roadmap_summary should not be called")):
+            with patch("daily_digest.bench_summary", side_effect=AssertionError("bench_summary should not be called")):
+                with patch("daily_digest.reviewer_health_summary", side_effect=AssertionError("reviewer_health_summary should not be called")):
+                    with patch("daily_digest.call_claude", side_effect=AssertionError("call_claude should not be called")):
+                        import io
+                        old_stdout = sys.stdout
+                        sys.stdout = io.StringIO()
+                        try:
+                            dd.main()
+                            output = sys.stdout.getvalue()
+                        finally:
+                            sys.stdout = old_stdout
 
     # Verify the short-circuit message was printed
-    assert "Today's digest already exists" in output
+    assert "[daily-digest] Skipping: output already produced" in output
 
     # Verify content is unchanged
     assert out_file.read_text() == original_content
@@ -337,3 +325,37 @@ def test_missing_helper_format():
     result = dd._missing("test message")
     assert "❌ **Missing input:**" in result
     assert "test message" in result
+
+
+# ── daily-digest gate tests ────────────────────────────────────────────────────
+
+class TestDailyDigestGate:
+    """Test the should_run() gate in main() — fallback only runs if primary didn't."""
+
+    def test_gate_allows_run_when_not_produced(self, tmp_path, monkeypatch):
+        """should_run gate returns (True, reason) when digest not yet produced -> main() proceeds."""
+        out_file = tmp_path / "2026-10-25.md"
+        monkeypatch.setattr(dd, "OUT_FILE", out_file)
+
+        with patch("daily_digest.brief_fallback") as mock_bf:
+            mock_bf.should_run.return_value = (True, "fallback: primary missed")
+            with patch("daily_digest.call_claude") as mock_claude:
+                mock_claude.return_value = "# Digest\n\nContent"
+                dd.main()
+
+        # main() should have proceeded to call_claude
+        assert mock_claude.called
+
+    def test_gate_blocks_run_when_produced(self, tmp_path, monkeypatch):
+        """should_run gate returns (False, reason) when digest already produced -> main() short-circuits."""
+        out_file = tmp_path / "2026-10-25.md"
+        out_file.write_text("existing digest")
+        monkeypatch.setattr(dd, "OUT_FILE", out_file)
+
+        with patch("daily_digest.brief_fallback") as mock_bf:
+            mock_bf.should_run.return_value = (False, "already produced")
+            with patch("daily_digest.call_claude") as mock_claude:
+                dd.main()
+
+        # call_claude should NOT have been called
+        assert not mock_claude.called

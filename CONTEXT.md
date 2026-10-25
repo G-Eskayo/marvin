@@ -1465,7 +1465,9 @@ MARVIN-as-OS north star).
   get dropped. This is a start to something meant to grow much bigger.
 - **Brief owner** (decided 2026-10-15): the **Mac Mini** gathers the feeds and builds the brief before Gil wakes. The
   MacBook builds it only if the Mini hasn't by an hour after its usual time. The research colony and daily digest no
-  longer run on both Macs (see ADR 0067).
+  longer run on both Macs (see ADR 0067). **Schedule**: daily-digest 08:30 (mini) / 09:35 fallback (laptop), research-colony
+  09:00 (mini) / 10:05 fallback (laptop), morning-brief 09:45 (mini) / 10:50 fallback (laptop). `cross_machine_merge.py`'s
+  merge step (09:30) is wired but runs zero LLM calls on a normal day, pending the `retire-cross-machine-merge` Decision.
 - **Item layers** (decided 2026-10-15): every brief item carries three layers, all prepared when the brief is built:
   (1) **the line** (one sentence, what the brief shows or says), (2) **the summary** (what happened, why it matters to
   Gil, what he could do), (3) **the source** (the original article or paper, plus links to related tickets and

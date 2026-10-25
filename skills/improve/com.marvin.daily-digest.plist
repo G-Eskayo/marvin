@@ -4,6 +4,7 @@
 <dict>
     <key>Label</key>
     <string>com.marvin.daily-digest</string>
+    <!-- Mini only, primary builder: runs at 08:30 -->
 
     <key>ProgramArguments</key>
     <array>

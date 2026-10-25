@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- The morning brief (lib/morning_brief.py, marvin#306), built after the daily digest (08:30), the research digest
-     (09:00) and their cross-machine merge (09:30). MacBook only, where the digests run: ~/.claude syncs the brief to
-     the Mini, and one writer avoids sync conflicts.
-     Install: cp this to ~/Library/LaunchAgents/ and `launchctl bootstrap gui/$(id -u) <that file>`. -->
+<!-- The morning brief (lib/morning_brief.py, marvin#306), primary builder on Mini only, runs at 09:45.
+     Scheduled after the daily digest (08:30 mini), the research digest (09:00 mini), and their cross-machine merge (09:30).
+     Fallback builder on MacBook runs ~5 min after primary deadline+grace window (primary 09:45 + 60min = 10:45, fallback 10:50).
+     Install: cp this to ~/Library/LaunchAgents/ and `launchctl bootstrap gui/$(id -u) <that file>` on mini. -->
 <plist version="1.0">
 <dict>
     <key>Label</key>

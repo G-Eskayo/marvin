@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Orchestrate the research colony: fetch → correlate → digest."""
 import sys
+from datetime import date
 from pathlib import Path
 
 # Ensure the scripts dir is importable regardless of cwd
@@ -11,8 +12,18 @@ import source_monitor
 import correlate
 import research_digest
 
+_LIB = Path(__file__).resolve().parents[3] / "lib"
+sys.path.insert(0, str(_LIB))
+import brief_fallback  # noqa: E402
+
 
 def main() -> int:
+    digest_path = Path.home() / ".claude" / "research-digest" / f"{date.today().isoformat()}.md"
+    should_run, reason = brief_fallback.should_run(digest_path, usual_hour=9, usual_minute=0)
+    if not should_run:
+        print(f"[colony] Skipping: {reason}", file=sys.stderr)
+        return 0
+
     print("[colony] === source monitor ===", file=sys.stderr)
     source_monitor.main()
 

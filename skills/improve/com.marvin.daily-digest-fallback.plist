@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Daily digest fallback builder, runs on MacBook if primary builder on mini misses.
+     Primary builder runs at 08:30 on mini. Fallback runs ~09:30 (deadline+grace = 08:30 + 60 min).
+     Install: cp this to ~/Library/LaunchAgents/ and `launchctl bootstrap gui/$(id -u) <that file>` on laptop. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.marvin.daily-digest-fallback</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/gileskayo/.agents/venv/bin/python</string>
+        <string>/Users/gileskayo/.agents/skills/improve/scripts/daily_digest.py</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>9</integer>
+        <key>Minute</key>
+        <integer>35</integer>
+    </dict>
+    <key>WorkingDirectory</key>
+    <string>/Users/gileskayo/marvin</string>
+    <key>StandardOutPath</key>
+    <string>/Users/gileskayo/.claude/logs/daily-digest-fallback.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/gileskayo/.claude/logs/daily-digest-fallback-error.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/gileskayo</string>
+        <key>PATH</key>
+        <string>/Users/gileskayo/.local/bin:/usr/local/bin:/usr/bin:/bin:/Users/gileskayo/.agents/venv/bin</string>
+    </dict>
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>

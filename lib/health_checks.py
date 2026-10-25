@@ -575,6 +575,52 @@ def check_seal_beta_ingest(status_path: Path | None = None, installed: bool | No
     return _result(cid, label, "green", base)
 
 
+# ── brief builders (morning-brief, daily-digest, research-colony) ──────────
+
+BRIEFS = Path.home() / ".claude" / "briefs"
+
+
+def check_brief_builder(now: datetime | None = None) -> dict:
+    """Check if the morning brief was built with proper builder attribution.
+
+    Green: has .built-by sidecar with builder info OR not yet past deadline+60min
+    Yellow: within the fallback window (past deadline+60min but before deadline+70min)
+    Red: past the fallback's deadline+grace (70min) with nothing built
+    """
+    cid = "brief:builder"
+    label = "Morning brief builder"
+    now = now or _now()
+
+    # Check if brief exists and was produced
+    try:
+        import morning_brief
+        import brief_fallback
+        day = morning_brief._day(now)
+        brief_path = BRIEFS / f"{day}.md"
+
+        # Check for .built-by sidecar
+        built_by_path = BRIEFS / f"{day}.built-by"
+        if built_by_path.exists():
+            return _result(cid, label, "green", "brief built with builder attribution")
+
+        if brief_path.exists():
+            # Brief exists but no builder info — legacy case
+            return _result(cid, label, "yellow", "brief exists but has no builder info (legacy)")
+
+        # Check if we're past deadline+60min (primary grace window)
+        if not brief_fallback.past_deadline(now, usual_hour=9, usual_minute=45, grace_minutes=60):
+            return _result(cid, label, "green", "primary deadline not yet past, brief may still build")
+
+        # Check if we're between deadline+60min and deadline+70min (fallback window)
+        if not brief_fallback.past_deadline(now, usual_hour=9, usual_minute=45, grace_minutes=70):
+            return _result(cid, label, "yellow", "within fallback window (deadline+60 to +70min), fallback may still build")
+
+        # Past extended deadline+grace (70min) and no brief built
+        return _result(cid, label, "red", "past deadline+grace window with no brief built")
+    except Exception as exc:
+        return _unknown(cid, label, f"error checking brief: {exc}")
+
+
 GITHUB_BUDGET_YELLOW_BELOW = 0.20   # fraction of the hourly allowance
 GITHUB_BUDGET_RED_BELOW = 0.05
 
@@ -990,7 +1036,7 @@ if [ -f "$LEDGER" ]; then echo "disk_ledger=$(tail -14 "$LEDGER" | /usr/bin/tr '
 # host only (ADR 0032, 0033), "laptop" = only where Gil sits. Edit here when a job is deliberately moved; a job that
 # is not listed is reported as unplaced so a new job cannot silently run on only one machine.
 JOB_PLACEMENT = {
-    "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "both", "research-colony": "both",
+    "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "mini", "research-colony": "mini",
     "desktoplive": "both", "dashboard-webhook": "both",  # webhook on both until #112 (ADR 0032)
     "ticket-pipeline": "both",  # mini scans; the laptop's copy is a standby that scans only if the mini goes quiet (scanner_role.py)
     "architecture-review": "mini", "auto-fix": "mini", "cron-health": "mini", "health-check": "mini",
@@ -999,7 +1045,9 @@ JOB_PLACEMENT = {
     "cleanup-sweep": "both",  # daily: each machine sweeps its own pipeline worktrees (lib/cleanup_sweep.py)
     "machine-resources": "both",  # 30s: samples disk/mem/swap/CPU/GPU for resources panel (#130)
     "dashboard-launch": "laptop",
-    "morning-brief": "laptop",  # one writer (the brief syncs to the mini via ~/.claude); after the digests (lib/morning_brief.py)
+    "daily-digest-fallback": "laptop", "research-colony-fallback": "laptop",
+    "morning-brief": "mini",  # primary builder on mini, syncs to laptop via ~/.claude; after the digests
+    "morning-brief-fallback": "laptop",  # fallback builder ~10:50 if primary deadline+grace passed
     # the website map (#189): rebuilt nightly and after MARVIN changes on the mini, where the dev site runs; the nightly
     # job also publishes it to production (ADR 0057), so it must never run on the laptop
     "snapshot-deploy-nightly": "mini", "snapshot-deploy-reactive": "mini",
@@ -1481,6 +1529,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("catalog:fresh", "Project catalog is current", check_catalog_fresh, CHECK_BUDGET_S),
         ("tickets:project-tags", "Tickets are on their project's board", check_project_tags, CHECK_BUDGET_S),
         ("tickets:hold-revisit", "Hold tickets have revisit dates", check_hold_revisit, CHECK_BUDGET_S),
+        ("brief:builder", "Morning brief builder", check_brief_builder, CHECK_BUDGET_S),
         ("github:budget", "GitHub request budget", check_github_budget, CHECK_BUDGET_S),
         ("github:gate", "GitHub calls go through the gate", check_gh_gate, CHECK_BUDGET_S),
         ("main:green", "The main branch passes its tests", check_main_health, CHECK_BUDGET_S),

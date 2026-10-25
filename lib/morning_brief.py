@@ -281,7 +281,35 @@ def write(now: datetime | None = None, sources: dict[str, Callable] | None = Non
     now = now or datetime.now(timezone.utc)
     BRIEFS.mkdir(parents=True, exist_ok=True)
     path = BRIEFS / f"{_day(now)}.md"
-    path.write_text(render(gather(now, sources), now))
+    if not path.exists():
+        path.write_text(render(gather(now, sources), now))
+    return path
+
+
+def build(now: datetime | None = None, sources: dict[str, Callable] | None = None) -> Path | None:
+    """Build the brief only if the primary deadline has passed and nothing was produced.
+
+    Returns the brief path if built, None if skipped (already produced or deadline not reached).
+    Writes a .built-by sidecar with builder info if the fallback builds it.
+    """
+    now = now or datetime.now(timezone.utc)
+    import brief_fallback
+    BRIEFS.mkdir(parents=True, exist_ok=True)
+    path = BRIEFS / f"{_day(now)}.md"
+
+    should_run, reason = brief_fallback.should_run(path, usual_hour=9, usual_minute=45, grace_minutes=60, now=now)
+    if not should_run:
+        return None
+
+    content = render(gather(now, sources), now)
+
+    # Pre-write TOCTOU recheck: if another process wrote the file while we were building, don't overwrite
+    if brief_fallback.produced(path):
+        return None
+
+    path.write_text(content)
+    sidecar = BRIEFS / f"{_day(now)}.built-by"
+    sidecar.write_text(reason)
     return path
 
 
@@ -309,7 +337,8 @@ def read_dates() -> list[datetime]:
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["build"]:
-        print(write())
+        result = build()
+        print(result or "Brief already built or deadline not reached")
     elif sys.argv[1:] == ["show"]:
         print(show_today() or "No brief for today yet.")
     else:

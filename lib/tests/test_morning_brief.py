@@ -123,3 +123,90 @@ def test_open_prs_marks_waiting_from_one_graphql_read(monkeypatch):
     monkeypatch.setattr(od, "fetch", lambda repos, run=None: None)
     brief = mb.gather(NOW, {"open_prs": mb._open_prs})
     assert brief["open_prs"] is None and "open PRs" in brief["missing"][0]
+
+
+def test_morning_brief_gate_fallback(monkeypatch, tmp_path):
+    """should_run gate: fallback only runs if primary didn't produce the brief."""
+    import brief_fallback
+    brief_path = tmp_path / "2026-10-25.md"
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+
+    # Brief doesn't exist yet; deadline has passed (in local time)
+    from zoneinfo import ZoneInfo
+    local_tz = ZoneInfo("America/Denver")
+    now_local = datetime(2026, 10, 25, 10, 50, tzinfo=local_tz)
+    now = now_local.astimezone(timezone.utc)
+    should_run, reason = brief_fallback.should_run(brief_path, usual_hour=9, usual_minute=45, grace_minutes=60, now=now)
+    assert should_run
+    assert "fallback" in reason
+
+
+def test_build_succeeds_when_deadline_passed_and_not_produced(monkeypatch, tmp_path):
+    """build() produces the brief when deadline has passed and nothing was produced."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    from zoneinfo import ZoneInfo
+    local_tz = ZoneInfo("America/Denver")
+    now_local = datetime(2026, 10, 25, 10, 50, tzinfo=local_tz)  # After 09:45 + 60 min
+    now = now_local.astimezone(timezone.utc)
+
+    result = mb.build(now, _sources())
+    assert result is not None
+    assert result.name == "2026-10-25.md"
+    assert "Needs you" in result.read_text()
+    assert (tmp_path / "2026-10-25.built-by").exists()
+
+
+def test_build_skips_when_deadline_not_reached(monkeypatch, tmp_path):
+    """build() skips when deadline hasn't been reached yet."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    from zoneinfo import ZoneInfo
+    local_tz = ZoneInfo("America/Denver")
+    now_local = datetime(2026, 10, 25, 10, 0, tzinfo=local_tz)  # Before 09:45 + 60 min
+    now = now_local.astimezone(timezone.utc)
+
+    result = mb.build(now, _sources())
+    assert result is None
+    assert not (tmp_path / "2026-10-25.md").exists()
+
+
+def test_build_skips_when_primary_already_produced(monkeypatch, tmp_path):
+    """build() skips when the primary builder already produced the brief."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    brief_path = tmp_path / "2026-10-25.md"
+    brief_path.write_text("# Already produced by primary")
+
+    from zoneinfo import ZoneInfo
+    local_tz = ZoneInfo("America/Denver")
+    now_local = datetime(2026, 10, 25, 10, 50, tzinfo=local_tz)
+    now = now_local.astimezone(timezone.utc)
+
+    result = mb.build(now, _sources())
+    assert result is None
+
+
+def test_build_toctou_recheck_skips_if_produced_while_building(monkeypatch, tmp_path):
+    """build() skips if another process produces the file while we're building."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+
+    from zoneinfo import ZoneInfo
+    local_tz = ZoneInfo("America/Denver")
+    now_local = datetime(2026, 10, 25, 10, 50, tzinfo=local_tz)
+    now = now_local.astimezone(timezone.utc)
+
+    # Save the original gather function
+    original_gather = mb.gather
+
+    # Mock gather() to simulate another process writing the file while we're building
+    def mock_gather(now, sources=None):
+        # Another process writes the file while we're gathering
+        (tmp_path / "2026-10-25.md").write_text("# Written by primary during fallback build")
+        return original_gather(now, sources or _sources())
+
+    monkeypatch.setattr(mb, "gather", mock_gather)
+
+    result = mb.build(now, _sources())
+    assert result is None
+    # File should exist (written by "primary") but build() should have skipped
+    assert (tmp_path / "2026-10-25.md").read_text() == "# Written by primary during fallback build"
+
+

@@ -77,6 +77,10 @@ JOBS = {
         "09:30",
         [".claude/logs/cross-machine-merge.log", ".claude/logs/cross-machine-merge-error.log"],
     ),
+    "morning-brief": (
+        "09:45",
+        [".claude/logs/morning-brief.log", ".claude/logs/morning-brief-error.log"],
+    ),
     "tidy-agent": (
         "03:00",
         [".claude/organize/agent.out.log", ".claude/organize/agent.err.log"],
