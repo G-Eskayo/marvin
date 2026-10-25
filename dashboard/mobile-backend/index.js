@@ -15,6 +15,7 @@ import { createPermissionApiRouter } from './permission_api.js'
 import { createLiveChannel } from './live_channel.js'
 import { createLiveApiRouter } from './live_api.js'
 import { createActionsApiRouter } from './actions_api.js'
+import { createBenchApiRouter } from './bench_api.js'
 import { postJson } from './post_json.js'
 import { postTicketInput } from '../electron/main/ticket_input.js'
 import { approveMr, denyMr } from '../electron/main/mr_review.js'
@@ -63,6 +64,7 @@ const pendingActionStore = createPendingActionsStore()
 const permissionApiRouter = createPermissionApiRouter({ pendingActionStore })
 const liveChannel = createLiveChannel()
 const liveApiRouter = createLiveApiRouter(liveChannel)
+const benchApiRouter = createBenchApiRouter()
 
 // Actions API: confirmed-gated write operations (ticket reply, MR approve/deny)
 const actionsApiRouter = createActionsApiRouter({
@@ -86,8 +88,15 @@ const server = createServer(async (req, res) => {
     return
   }
 
+  // Attach peer info for downstream routers
+  req.gatePeer = peer
+
   // Route through permission API
   let handled = await permissionApiRouter(req, res)
+  if (handled) return
+
+  // Route through bench API
+  handled = await benchApiRouter(req, res)
   if (handled) return
 
   // Route through actions API (ticket reply, MR approve/deny)

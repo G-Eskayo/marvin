@@ -1,0 +1,99 @@
+## North-star fit
+
+**Reuses before adding anything new:**
+- `dashboard/mobile-backend/index.js:92-100` — gate-then-mount wiring (`req.gatePeer` set once, `benchApiRouter` mounted right after `permissionApiRouter`) is correct and already in place. No change.
+- `dashboard/mobile-backend/bench_limits.js` — `createTokenBucket`, `createBoundedMap`, `clampChunks`, `clampBytes`, `MAX_ECHO_BODY_BYTES`, `DEFAULT_TIMEOUT_MS` already exist and are already wired into `bench_api.js`/`http_tailscale.js`. No change.
+- `dashboard/mobile-backend/bench_report.js`'s `renderStatusMarkdown` already exists as a pure function. Reused as-is to regenerate BENCH.md/ADR numbers from a real results file — not rewritten.
+- `dashboard/test/mobile_backend_post_json.test.js:7-14`'s `listen(handler)` helper (real `http.createServer` on `127.0.0.1:0`, closed in `afterEach`) is the established pattern in this repo for testing HTTP client code against real sockets (also used by `live_api.test.js`, `dashboard_gh_api.test.js`). This is reused verbatim for the rewritten `http_tailscale` tests and the new `bench_api` integration tests, in place of the lighter mock convention `mobile_backend_actions_api.test.js:14`'s `createRequestResponse` uses elsewhere — deliberately, because every must-fix defect in this review (timeout not re-armed, drain race, arrival-order vs. true-order) is exactly the kind of thing a hand-rolled mock hides. "Tests try to break it" requires testing against the real collaborator (real `http` sockets, real timers, real backpressure) wherever a mock could paper over the bug — which is precisely what happened last time (`res.write.mock.callCount`, `toBeDefined`-only assertions).
+
+**Why simplest sufficient:** every must-fix finding is a bug in code that already exists on this branch — arithmetic, a missing race, an unused RNG, a missing `return`, stale timers, honesty of hand-typed numbers, and broken tests asserting the wrong vitest API. None require new architecture. The one real protocol gap — `chunkSequence` recording arrival order instead of the server's actual chunk index — gets the smallest fix that's still *correct at the clamped scale* (0–1000 chunks): encode a 2-byte big-endian index in each 1024-byte chunk server-side, decode it client-side from a byte accumulator that doesn't assume TCP segments align to 1KB. A 1-byte mod-256 index (what the current code already writes) would silently misfire at the existing `clampChunks` ceiling of 1000, since the single-byte value wraps every 256 chunks and `detectReorders`' running-max logic would read every wrap as a bogus reorder — so 2 bytes is the minimum sufficient width, not a redesign.
+
+**Where it spends/saves tokens:** spends only on the two small, genuinely new pieces this review requires and the prior plan under-delivered on: an idle-timeout helper for stalled HTTP bodies (`http_tailscale.js`), and a close/error race on the stream handler's drain wait (`bench_api.js`). Saves everywhere else by editing in place and reusing `bench_report.js`/`listen()` rather than inventing new report or test infrastructure.
+
+**Phone-OS direction / more capable:** unchanged from the prior framing — this is the measurement that picks the transport MARVIN's phone link runs on. A benchmark that hangs on a stalled body, leaks a handler per aborted stream, or reports numbers it cannot actually produce is actively harmful to that decision, which is exactly what review caught. Fixing the races and the honesty of the doc is what makes Gil more informed, not less.
+
+**Scope boundary (reaffirmed, unchanged):** `marvin-mobile` (the phone client) stays out of scope; "repeatable from one command" means Mac-to-Mac or loopback. This sandbox has no second Tailscale peer reachable, so leg (a)'s real numbers will be recorded as loopback (127.0.0.1) and labeled exactly as that — never claimed as "Mac-to-Mac" — a factual-accuracy correction, not a product decision, so it carries no Decisions button.
+
+## What's already correct, left alone
+
+- `index.js` gate/mount wiring, `bench_limits.js`'s pure functions, `scripts/dev/with_network_impairment.sh`, the router-returns-`false`-when-unmatched contract, and `bench_report.js`'s `renderStatusMarkdown` — all correct as written, no change.
+- ADR 0070's Security & Privacy table already correctly states "WireGuard data-plane encryption only; no app-layer TLS" — the earlier finding about an uncoded TLS claim no longer applies to the current text; not touched further.
+- BENCH.md's iPhone section already correctly describes manual curl/Shortcuts (no invented Settings menu) — not touched further.
+
+Both of the last two are corrections to the *prior plan's own "what's wrong" list*, not to the code — stating this so this revision doesn't re-fix something already fixed.
+
+## Decisions
+
+Unchanged from the prior attempt and reaffirmed: these block legs (b)/(c) specifically, not leg (a)'s code quality, which is what this review's must-fix findings are about.
+
+<!-- marvin:decisions -->
+### quic-stack: Which QUIC/HTTP-3 implementation powers legs (b) and (c)? There is no existing QUIC code in this repo.
+- [ ] A: Caddy as a local HTTP/3 reverse-proxy in front of the existing Node server — a separate launchd service (same shape as ADR 0042), zero custom QUIC/TLS code
+- [ ] B: In-process Node WebTransport (e.g. `@fails-components/webtransport`) — one process, but adds a native module to the same long-lived service that also serves dashboard/chat/actions
+- [ ] C: Defer legs (b)/(c) to this ticket's next iteration — ship leg (a)'s real, honestly-labeled numbers and the full harness now, pick the stack once A vs B's setup cost is itself measured
+
+### direct-leg-auth: Leg (c) is "QUIC directly between devices, no Tailscale relay" — it has no Tailscale peer identity to check (`whois` only resolves on-tailnet traffic). How does it still admit only Gil's devices?
+- [ ] A: mTLS client certificates issued to Gil's devices — extends ADR 0043's identity-based model into TLS itself
+- [ ] B: A static pre-shared token — simpler, but contradicts ADR 0043's "no passwords or tokens to store, rotate or leak"
+- [ ] C: Redefine leg (c) as Tailscale's direct (non-DERP-relayed) peer path rather than literally bypassing Tailscale — keeps `whois` unchanged; measures routing overhead instead of a new crypto layer
+
+## Fixes mapped to every must-fix finding
+
+1. **`bench_api.js:133` drain hangs on client disconnect.** Build one `closePromise` from `req.once('close', ...)` before the write loop starts; each backpressure wait becomes `await Promise.race([new Promise(r => res.once('drain', r)), closePromise])`, and the loop re-checks `closed` immediately after. A disconnect while the buffer is full now resolves the wait and exits the loop instead of hanging; `res.end()` is skipped once `closed` is true (writing to an already-closing socket is pointless and can throw).
+2. **`http_tailscale.js:38,84` no timeout after headers.** Add a small idle-timeout helper (reset on every `data` event, cleared on `end`/`error`) used by both `ping()` and `stream()`. A body that stalls after headers now rejects at the configured timeout instead of hanging `runLeg` forever.
+3. **`http_tailscale.js:95` `chunkSequence` is arrival order, not server order.** Server (`bench_api.js`'s stream handler) encodes a 2-byte big-endian chunk index as the first 2 bytes of each 1024-byte chunk (`idx` instead of `i % 256` — 1 byte wraps at 256, well under the existing `clampChunks` ceiling of 1000, so 2 bytes is the minimum width that doesn't misfire). Client (`http_tailscale.js`'s `stream()`) accumulates raw bytes into a buffer and slices 1024-byte frames off the front regardless of how TCP happened to fragment them, decoding each frame's leading uint16 as its true index. `lossy_proxy`'s adjacent-swap then operates on genuine indices, and `detectReorders` can actually detect something real.
+4. **`lossy_proxy.js:45` `Math.random()` instead of the seeded RNG.** Replace with `seededRandom(rngState++)` scaled to a valid swap index, matching the pattern already used by `shouldDrop`/`shouldReorder`. Same seed now produces the same swap, every run.
+5. **`bench_cli.js:61` `exit(1)` falls through.** Add `return` immediately after the usage-error `exit(1)` call. With an injected (non-throwing) `exit`, the function now stops before building `host = null` → `http://null:7880`.
+6. **`bench_cli.js:30` `--out` ignored; injected `now` ignored for the timestamp.** `--out`, when given, overrides the output directory (`const outDir = opts.out || resultsDir`). The timestamp is built from `now()` (`new Date(now()).toISOString()...`), not the real wall clock. To close the "person's mistake" gap the prior plan didn't cover — two back-to-back runs under a frozen injected clock would otherwise collide on the same filename and silently overwrite — append a short random suffix (injectable `randomSuffix` function, default `crypto.randomBytes(3).toString('hex')`) to the filename so collisions can't happen regardless of clock resolution.
+7. **ADR 0070 / BENCH.md numbers are fabricated, mislabeled, and the fence is unclosed.**
+   - Run the real harness once in this sandbox (loopback — no second Tailscale peer is reachable here) at `--loss 0`, `--loss 1`, `--loss 5`; keep the resulting `bench-results/*.json`.
+   - Regenerate BENCH.md's "Current Status" section via the existing `renderStatusMarkdown(resultsJson)`, replacing the hand-typed ranges, and label it "loopback (127.0.0.1), <date>, N=10 pings / 5 streams per leg" — never "Mac-to-Mac" unless that's what actually ran.
+   - Fix the causal claim: `--loss` in `lossy_proxy.js` drops whole requests at the application layer before they're sent — it never touches packets — so the "TCP retransmit overhead" / "TCP handles transparently" / "0–2 reorders" language in both docs is corrected to describe application-layer request drops, and real OS-level packet loss (`with_network_impairment.sh`) is marked "not run in this sandbox" rather than assigned invented numbers.
+   - Close the dangling code fence in BENCH.md right before the "### Leg B" heading (currently swallows Leg B/C into a code block).
+8. **`mobile_backend_http_tailscale.test.js` tests nothing.** Rewritten using `mobile_backend_post_json.test.js:7-14`'s `listen(handler)` real-server pattern: a real server answers `/bench/ping` and `/bench/stream`, and tests assert actual `ttfbMs`, actual decoded `chunkSequence`, actual timeout behavior against a server that stalls, and actual error/drain handling against a server that errors mid-response.
+9. **`mobile_backend_bench_cli.test.js` doesn't call the CLI.** Rewritten to call `runBenchmark` against a real local server (via the same `listen()` helper) with injected `exit`/`resultsDir`/`now`/`randomSuffix`, asserting real written files, real exit codes, and no network call when `--host` is missing.
+10. **`mobile_backend_bench_api.test.js:212,236` `res.write.mock.callCount` doesn't exist.** Fixed to `res.write.mock.calls.length`; the URL-parse test is rewritten to assert the actual 400 response instead of `typeof router`.
+11. **`mobile_backend_bench_client.test.js:66` "retries on ping failure" passes by accident.** Rewritten with explicit per-call mock returns for every expected invocation (no implicit `undefined` fallthrough), asserting the retried call's result — not a side-effect `TypeError` — lands in `results.pings`.
+
+## Tests first
+
+All vitest, in `dashboard/test/`. Items marked **(real)** use `mobile_backend_post_json.test.js:7-14`'s `listen(handler)` pattern — a real `http.Server` on `127.0.0.1:0`, closed in `afterEach` — specifically because a mock already hid these exact bugs once.
+
+1. `throughputMbps(bytes, elapsedMs)` — exact value for a known pair; both `runLeg` and `http_tailscale.js` resolve throughput via this one function (no second formula to drift). *(regression guard, already passing — kept)*
+2. **(real)** `/bench/stream` under simulated backpressure: a response whose `write()` returns `false` and never fires `'drain'`, paired with the client socket closing mid-wait — the handler resolves and returns within one `close` tick, never hangs. Catches finding 1.
+3. **(real)** `ping()`/`stream()` against a server that sends headers, then writes nothing further (stalls mid-body) — both reject within the configured timeout, never hang. Catches finding 2.
+4. **(real)** `stream()` against a server that writes 1024-byte chunks whose payload is fragmented into odd-sized TCP `data` events (e.g. 300-byte pushes that don't align to 1024 boundaries) — the decoded `chunkSequence` still recovers the true server-assigned indices in order. Catches finding 3 (and proves the fix actually survives real fragmentation, not just aligned chunks).
+5. `createLossyProxy(transport, { reorderRate: 100, seed: 42 })` run twice with the same seed produces an identical swap index both times; a different seed produces a different swap (when the sequence is long enough for it to matter). Catches finding 4.
+6. `runBenchmark` with no `--host` and an injected non-throwing `exit`: `exit(1)` is called, and no further code runs — no `http.get` invocation, no file write. Catches finding 5.
+7. `runBenchmark` with `--out <tmpdir>` writes there, not to the injected/default `resultsDir`; two calls with the *same* injected `now` value produce two distinct files (no overwrite) via the injected random suffix. Catches finding 6.
+8. `renderStatusMarkdown(latestResultsFixture)`'s output, diffed against BENCH.md's actual "Current Status" block, matches exactly — drift between the doc and a real results file fails this test. Guards finding 7 going forward.
+9. **(real)** `mobile_backend_http_tailscale.test.js` rewritten: `ping()` returns a real `ttfbMs` from a real round trip; `stream()`'s `chunkSequence` matches the server's real indices; a `500` response with a large body causes prompt rejection and the server-side socket observably drains (`res.resume()` called, no hang). Catches finding 8.
+10. **(real)** `mobile_backend_bench_cli.test.js` rewritten: `runBenchmark` against a real local bench server with injected `resultsDir`/`now`/`randomSuffix` writes a JSON file with the correct shape and a predictable name; an unwritable `resultsDir` (stubbed `fs.mkdirSync` throwing `EACCES`) calls injected `exit(1)` with a clear message, never throws. Catches finding 9.
+11. `/bench/stream` backpressure test using `res.write.mock.calls.length` (not `.callCount`) actually exercises the branch: chunk N+1 is never written before `'drain'' fires for chunk N. Catches finding 10.
+12. `runLeg`'s ping-retry test gives every expected call an explicit mocked value (no implicit `undefined`); asserts the *retried* ping's resolved value — not an incidental `TypeError` — is what lands in `results.pings`, and `ping` was called exactly twice. Catches finding 11.
+13. `/bench/echo`: body exactly at `MAX_ECHO_BODY_BYTES` succeeds and echoes exact bytes; one byte over returns 413 and `req.destroy()` is called before any further chunk is processed. *(existing coverage, re-confirmed against the current code — no bug found, kept as regression guard.)*
+14. A UTF-8 multibyte character split exactly across two chunk boundaries round-trips correctly through `/bench/echo`. *(regression guard.)*
+15. Malformed `Host` header (`new URL` throws) → 400, not an unhandled rejection; a non-`/bench/*` path with `req.gatePeer` unset still returns `false` (passthrough), not a 400 that would break every other router. *(regression guard — current ordering already matches this; kept because it's exactly the kind of ordering a future edit could break silently.)*
+16. Flood/rate-limit: `createTokenBucket` driven past its burst with an injected clock; a different `gatePeer` is never throttled by another peer's flood. *(existing coverage, re-confirmed.)*
+17. Bounded map eviction under many distinct peers. *(existing coverage, re-confirmed.)*
+18. **(real)** Unauthorised device never reaches the bench router: `index.js`'s mount order means `/bench/ping` returns 403 for a non-allowlisted peer before bench-router code runs at all. *(existing coverage, re-confirmed — guards a future mounting-order regression.)*
+19. Replay is harmless: the same captured `/bench/echo` body replayed twice from the same allowlisted peer succeeds identically (stateless); replayed from a non-allowlisted peer is still 403 regardless of body contents.
+20. Nothing secret in logs: spy on `console.*` across a 403, a 413, a 429, and a normal `/bench/echo` round trip — no allowlist contents, peer hostnames, or echoed payload bytes appear in any logged string.
+21. Two concurrent `/bench/stream` requests on the same real server produce independent, correct `chunkSequence`/byte totals each — no shared mutable counter between requests.
+22. **(real)** Dependency failing: `runLeg` against a real closed port (`ECONNREFUSED`) records a clear error reason, never an uncaught rejection.
+
+## Task List
+
+1. `bench_api.js` — encode a 2-byte big-endian chunk index per 1024-byte stream chunk (replacing `i % 256`); race the drain wait against `req`'s `close` event via a `closePromise`; skip `res.end()` once closed. Tests: 2, 4, 13–15, 21.
+2. `transports/http_tailscale.js` — add the idle-timeout helper (reset on `data`, cleared on `end`/`error`) for both `ping()` and `stream()`; decode `chunkSequence` from an accumulating byte buffer sliced into 1024-byte frames (handles TCP fragmentation that doesn't align to 1024), reading each frame's leading uint16 as the true index. Tests: 3, 4, 9.
+3. `transports/lossy_proxy.js` — replace the `Math.random()` swap-index draw with `seededRandom(rngState++)`. Test: 5.
+4. `bench_cli.js` — add the missing `return` after the usage-error `exit(1)`; make `--out` override `resultsDir` when given; build the timestamp from injected `now()`; add an injectable random suffix to guarantee filename uniqueness under a frozen clock. Tests: 6, 7.
+5. `dashboard/test/mobile_backend_bench_api.test.js` — fix `res.write.mock.callCount` → `res.write.mock.calls.length`; rewrite the URL-parse test to assert the real 400 response. Test: 11.
+6. `dashboard/test/mobile_backend_bench_client.test.js` — rewrite the ping-retry test with explicit per-call mocks; no implicit `undefined` fallthrough. Test: 12.
+7. `dashboard/test/mobile_backend_http_tailscale.test.js` — full rewrite using the `listen()` real-server pattern. Tests: 3, 4, 9.
+8. `dashboard/test/mobile_backend_bench_cli.test.js` — full rewrite exercising `runBenchmark` against a real local server. Tests: 6, 7, 10.
+9. `dashboard/test/mobile_backend_lossy_proxy.test.js` — add the seeded-determinism test (same seed → same swap; different seed → different swap). Test: 5.
+10. Run the real harness in this sandbox (loopback — no second Tailscale peer reachable here) at `--loss 0`, `--loss 1`, `--loss 5`; keep the resulting `bench-results/*.json`.
+11. `BENCH.md` — regenerate "Current Status" via `renderStatusMarkdown` from task 10's real results, labeled "loopback, <date>, N=..."; correct the `--loss`-mechanism prose (application-layer request drop, not TCP retransmit); close the dangling code fence before "### Leg B". Test: 8.
+12. `docs/adr/0070-device-link-transport-choice.md` — regenerate Leg A's tables from the same task-10 results with the same loopback label and corrected `--loss` mechanism; leave Legs B/C "Blocked" and the Security & Privacy table unchanged (already correct).
+13. Leave `index.js`, `scripts/dev/with_network_impairment.sh`, `bench_limits.js`'s existing functions, `bench_report.js`, and the already-correct parts of ADR 0070/BENCH.md untouched.

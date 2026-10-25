@@ -1,0 +1,13 @@
+1. `bench_api.js` — encode a 2-byte big-endian chunk index per 1024-byte stream chunk (replacing `i % 256`); race the drain wait against `req`'s `close` event via a `closePromise`; skip `res.end()` once closed. Tests: 2, 4, 13–15, 21.
+2. `transports/http_tailscale.js` — add the idle-timeout helper (reset on `data`, cleared on `end`/`error`) for both `ping()` and `stream()`; decode `chunkSequence` from an accumulating byte buffer sliced into 1024-byte frames (handles TCP fragmentation that doesn't align to 1024), reading each frame's leading uint16 as the true index. Tests: 3, 4, 9.
+3. `transports/lossy_proxy.js` — replace the `Math.random()` swap-index draw with `seededRandom(rngState++)`. Test: 5.
+4. `bench_cli.js` — add the missing `return` after the usage-error `exit(1)`; make `--out` override `resultsDir` when given; build the timestamp from injected `now()`; add an injectable random suffix to guarantee filename uniqueness under a frozen clock. Tests: 6, 7.
+5. `dashboard/test/mobile_backend_bench_api.test.js` — fix `res.write.mock.callCount` → `res.write.mock.calls.length`; rewrite the URL-parse test to assert the real 400 response. Test: 11.
+6. `dashboard/test/mobile_backend_bench_client.test.js` — rewrite the ping-retry test with explicit per-call mocks; no implicit `undefined` fallthrough. Test: 12.
+7. `dashboard/test/mobile_backend_http_tailscale.test.js` — full rewrite using the `listen()` real-server pattern. Tests: 3, 4, 9.
+8. `dashboard/test/mobile_backend_bench_cli.test.js` — full rewrite exercising `runBenchmark` against a real local server. Tests: 6, 7, 10.
+9. `dashboard/test/mobile_backend_lossy_proxy.test.js` — add the seeded-determinism test (same seed → same swap; different seed → different swap). Test: 5.
+10. Run the real harness in this sandbox (loopback — no second Tailscale peer reachable here) at `--loss 0`, `--loss 1`, `--loss 5`; keep the resulting `bench-results/*.json`.
+11. `BENCH.md` — regenerate "Current Status" via `renderStatusMarkdown` from task 10's real results, labeled "loopback, <date>, N=..."; correct the `--loss`-mechanism prose (application-layer request drop, not TCP retransmit); close the dangling code fence before "### Leg B". Test: 8.
+12. `docs/adr/0070-device-link-transport-choice.md` — regenerate Leg A's tables from the same task-10 results with the same loopback label and corrected `--loss` mechanism; leave Legs B/C "Blocked" and the Security & Privacy table unchanged (already correct).
+13. Leave `index.js`, `scripts/dev/with_network_impairment.sh`, `bench_limits.js`'s existing functions, `bench_report.js`, and the already-correct parts of ADR 0070/BENCH.md untouched.
