@@ -92,11 +92,14 @@ def validate_snapshot_files() -> tuple[bool, str]:
     """Ensure snapshot files exist and are well-formed JSON/HTML."""
     html_file = SNAPSHOT_DIR / "index.html"
     json_file = SNAPSHOT_DIR / "tree-data.json"
+    use_cases_file = SNAPSHOT_DIR / "use-cases.json"
 
     if not html_file.exists():
         return False, "index.html not found"
     if not json_file.exists():
         return False, "tree-data.json not found"
+    if not use_cases_file.exists():
+        return False, "use-cases.json not found"
 
     # Validate HTML structure
     try:
@@ -200,7 +203,8 @@ def upload_to_portfolio(html_file: Path, json_file: Path, dry_run: bool = False)
         )
 
         # Copy files into the container using docker cp
-        for local, remote_name in [(html_file, "index.html"), (json_file, "tree-data.json")]:
+        use_cases_file = html_file.parent / "use-cases.json"
+        for local, remote_name in [(html_file, "index.html"), (json_file, "tree-data.json"), (use_cases_file, "use-cases.json")]:
             if not local.exists():
                 return False, f"{local.name} not found"
 

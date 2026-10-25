@@ -452,6 +452,29 @@ def attach_plain(tree: dict, plain: dict) -> list[str]:
     return missing
 
 
+def attach_use_case(tree: dict, enrichment: dict, eligible_ids: set[str]) -> list[str]:
+    """Attach use-case cards (enrichment.json `use_cases` dict) to eligible nodes.
+    Returns the ids of eligible nodes that have no use_case entry.
+    Eligible nodes: skills, top-level agents, dashboard tabs, and real machines."""
+    missing = []
+    use_cases = enrichment.get("use_cases", {})
+
+    def walk(node):
+        node_id = node["id"]
+        if node_id in eligible_ids:
+            if node_id in use_cases:
+                uc = use_cases[node_id]
+                node["use_case"] = uc.get("use_case", "")
+                node["example"] = uc.get("example", "")
+                node["status"] = uc.get("status", "")
+            else:
+                missing.append(node_id)
+        for c in node.get("children", []):
+            walk(c)
+    walk(tree)
+    return missing
+
+
 def build_tree(manifest: dict, enrichment: dict) -> dict:
     skills = {e["name"]: e for e in manifest["index"]}
 
@@ -533,6 +556,23 @@ def build_tree(manifest: dict, enrichment: dict) -> dict:
     missing = attach_plain(root, enrichment.get("plain", {}))
     if missing:
         print(f"WARNING: {len(missing)} node(s) have no plain hover line in enrichment.json: {missing}", file=sys.stderr)
+
+    # Collect eligible IDs for use-case cards: skills, top-level agents, dashboard tabs, real machines, extra tools
+    skill_ids = set(skills.keys())
+    agent_ids = {c["id"] for c in live_children_by_trunk_id["Autonomous Agents"] if not c["id"].startswith("reads: ") and not c["id"].startswith("writes: ")}
+    dashboard_tab_ids = {c["id"] for c in (next((n for n in root["children"] if n["id"] == "Dashboard"), {}).get("children", []))}
+    # Real machines: those with desc matching "kind — added YYYY-MM-DD" pattern (registered devices, not exo/task-dispatch)
+    machine_ids = set()
+    for device in live_children_by_trunk_id["Cross-Machine Network"]:
+        if re.search(r" — added \d{4}-\d{2}-\d{2}", device.get("desc", "")):
+            machine_ids.add(device["id"])
+    # Extra tools not in the tree (e.g., marvin-mobile)
+    extra_tool_ids = set(enrichment.get("use_case_extra_nodes", []))
+    eligible_ids = skill_ids | agent_ids | dashboard_tab_ids | machine_ids | extra_tool_ids
+    use_case_missing = attach_use_case(root, enrichment, eligible_ids)
+    if use_case_missing:
+        print(f"WARNING: {len(use_case_missing)} node(s) have no use_case card in enrichment.json: {use_case_missing}", file=sys.stderr)
+
     return root
 
 

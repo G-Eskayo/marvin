@@ -26,7 +26,7 @@ CHECKOUT = Path.home() / "Developer" / "portfolio-map-publisher"
 SNAPSHOT = Path(__file__).parent / "snapshot"
 ALLOWED_PREFIX = "deploy/marvin-map/"   # fixed: the only path ADR 0057 allows
 TARGET = "deploy/marvin-map"           # where the snapshot is copied
-REQUIRED = ("index.html", "tree-data.json")
+REQUIRED = ("index.html", "tree-data.json", "use-cases.json")
 PUSH_ATTEMPTS = 3
 
 

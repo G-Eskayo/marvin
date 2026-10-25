@@ -8,7 +8,7 @@ Builds a fresh tree from generate.py's functions, then applies privacy filters:
 - Filters code layers to git-tracked files only (allowlist-based)
 - Scans for leaked credentials, paths, IPs, emails
 
-Writes to brain-map/snapshot/{index.html, tree-data.json}.
+Writes to brain-map/snapshot/{index.html, tree-data.json, use-cases.json}.
 
 Usage:
     python export_snapshot.py [--commit HEAD] [--out brain-map/snapshot/]
@@ -19,6 +19,7 @@ import json
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -209,6 +210,53 @@ def scan_for_leaks(text: str) -> list[str]:
     return leaks
 
 
+def build_use_cases(tree: dict, enrichment: dict, locked_project_names: set[str]) -> list[dict]:
+    """Collect use-case cards from the tree. Each eligible node with a use_case field
+    becomes a card. Also includes use_case_extra items (tools not yet in the tree).
+
+    Asserts that no locked project names appear in any use_case text fields.
+    Returns list of {id, label, cat, use_case, example, status} dicts.
+    """
+    cards = []
+    leaked_projects = []
+
+    def walk(node):
+        if "use_case" in node:
+            card = {
+                "id": node["id"],
+                "label": node.get("name") or node["id"],
+                "cat": node.get("cat", ""),
+                "use_case": node["use_case"],
+                "example": node.get("example", ""),
+                "status": node.get("status", ""),
+            }
+            cards.append(card)
+            # Check for leaked project names
+            card_text = json.dumps(card)
+            for proj_name in locked_project_names:
+                if proj_name.lower() in card_text.lower():
+                    leaked_projects.append((node["id"], proj_name))
+        for c in node.get("children", []):
+            walk(c)
+
+    walk(tree)
+
+    # Add extra cards for tools not in the tree
+    extra = enrichment.get("use_case_extra", [])
+    cards.extend(extra)
+    for card in extra:
+        card_text = json.dumps(card)
+        for proj_name in locked_project_names:
+            if proj_name.lower() in card_text.lower():
+                leaked_projects.append((card.get("id", "?"), proj_name))
+
+    if leaked_projects:
+        print(f"ERROR: locked project names leaked into use-cases: {leaked_projects}", file=sys.stderr)
+        return None
+
+    return cards
+
+
 def scan_tree_for_leaks(tree: dict, allowlist: set[str]) -> list[str]:
     """Scan tree for structural privacy issues (source files not in allowlist)
     and textual leaks in rendered fields.
@@ -301,6 +349,17 @@ def export_snapshot(commit: str = "HEAD", out_dir: str | Path = SNAPSHOT_DIR) ->
 
     apply_allowlist(tree)
 
+    # Collect locked project names before locking them (for use-case privacy check)
+    locked_project_names = set()
+    def collect_locked_projects(node: dict) -> None:
+        if node.get("cat") == "projects" and node.get("visibility") != "PUBLIC":
+            locked_project_names.add(node["id"])
+            if name := node.get("name"):
+                locked_project_names.add(name)
+        for child in node.get("children", []):
+            collect_locked_projects(child)
+    collect_locked_projects(tree)
+
     # Lock private projects
     lock_private_projects(tree)
 
@@ -322,6 +381,19 @@ def export_snapshot(commit: str = "HEAD", out_dir: str | Path = SNAPSHOT_DIR) ->
     known_ids = set()
     generate.collect_ids(tree, known_ids)
     synapses = [s for s in synapses if s["a"] in known_ids and s["b"] in known_ids]
+
+    # Build and validate use-cases
+    use_cases = build_use_cases(tree, enrichment, locked_project_names)
+    if use_cases is None:
+        print("Use-case privacy check failed — refusing to export", file=sys.stderr)
+        return False
+    use_cases_redacted = redact_home_paths(use_cases)
+    leaks = scan_for_leaks(json.dumps(use_cases_redacted))
+    if leaks:
+        print("Privacy scan failed for use-cases — refusing to export:", file=sys.stderr)
+        for leak in leaks:
+            print(f"  - {leak}", file=sys.stderr)
+        return False
 
     # Render with SNAPSHOT flag set to true
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
@@ -352,6 +424,13 @@ def export_snapshot(commit: str = "HEAD", out_dir: str | Path = SNAPSHOT_DIR) ->
     (out_dir / "index.html").write_text(template, encoding="utf-8")
     (out_dir / "tree-data.json").write_text(
         json.dumps({"tree": tree, "synapses": synapses}, ensure_ascii=False), encoding="utf-8"
+    )
+    use_cases_output = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "cards": use_cases_redacted
+    }
+    (out_dir / "use-cases.json").write_text(
+        json.dumps(use_cases_output, ensure_ascii=False), encoding="utf-8"
     )
 
     missing = copy_local_assets(template, TEMPLATE_PATH.parent, out_dir)
