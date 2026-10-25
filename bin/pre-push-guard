@@ -7,6 +7,8 @@
 #
 # Patterns, one extended regex per line, '#' comments allowed:
 #   config/push-guard/patterns.txt         shared, committed: secret shapes and transcript shapes
+#   config/push-guard/paths.txt            shared, committed: file paths that may never be added (transcripts, and
+#                                          the owner's state that lives in the private instance)
 #   ~/.claude/private-push-patterns.txt    this person's own strings (phone, address...). Never committed: it
 #                                          holds the very strings it protects. Missing = refuse, never push blind.
 #
@@ -22,7 +24,9 @@ if [ ! -f "$private" ]; then
   exit 1
 fi
 regex=$(cat "$shared" "$private" 2>/dev/null | grep -vE '^[[:space:]]*(#|$)' | paste -sd'|' -)
-paths='(^|/)logs/.*\.jsonl$|\.transcript$'
+shared_paths="$top/config/push-guard/paths.txt"
+paths=$(grep -vE '^[[:space:]]*(#|$)' "$shared_paths" 2>/dev/null | paste -sd'|' -)
+paths=${paths:-'(^|/)logs/.*\.jsonl$|\.transcript$'}   # a repo without the file still refuses transcripts
 zero=0000000000000000000000000000000000000000
 fail=0
 
@@ -45,7 +49,7 @@ while read -r lref lsha rref rsha; do
   fi
   if [ -n "$bad_paths" ] || [ -n "$bad_lines" ]; then
     echo "pre-push guard: BLOCKED push of $lref" >&2
-    [ -n "$bad_paths" ] && echo "$bad_paths" | sed 's/^/  transcript or log file: /' >&2
+    [ -n "$bad_paths" ] && echo "$bad_paths" | sed 's/^/  path that may not be published here: /' >&2
     # commit:file only, never the matching line: printing it would leak it into terminals and logs
     [ -n "$bad_lines" ] && echo "$bad_lines" | sed 's/^/  matches a push-guard pattern: /' >&2
     fail=1

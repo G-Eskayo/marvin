@@ -59,6 +59,7 @@ def repo(tmp_path, env):
     (clone / "bin" / "pre-push-guard").symlink_to(GUARD)
     (clone / "config" / "push-guard").mkdir(parents=True)
     (clone / "config" / "push-guard" / "patterns.txt").write_text((ROOT / "config" / "push-guard" / "patterns.txt").read_text())
+    (clone / "config" / "push-guard" / "paths.txt").write_text((ROOT / "config" / "push-guard" / "paths.txt").read_text())
     (clone / "README.md").write_text("engine\n")
     _git(clone, "add", "-A", env=env)
     _git(clone, "commit", "-qm", "init", env=env)
@@ -111,6 +112,43 @@ def test_a_transcript_file_under_logs_is_blocked_whatever_its_content(repo, env)
     _commit(repo, env, "logs/session.jsonl", "{}\n")
     r = _push(repo, env)
     assert r.returncode != 0 and "logs/session.jsonl" in r.stderr
+
+
+@pytest.mark.parametrize("moved", ["bench/metrics/ticket-9.mac-mini.json", "docs/plans/plan-2026-10-25.md",
+                                   "config/projects/someapp.json", "retrospective-log.md"])
+def test_the_owners_state_that_moved_to_the_instance_cannot_come_back(repo, env, moved):
+    """ADR 0071: these live in the private instance now. A stale branch or old code adding one is refused."""
+    _commit(repo, env, moved, "x\n")
+    r = _push(repo, env)
+    assert r.returncode != 0 and moved in r.stderr
+
+
+def test_a_stale_branch_carrying_old_state_commits_is_refused(repo, env):
+    """After the history scrub, a branch cut before it still holds commits adding run results; pushing it would
+    republish them."""
+    _git(repo, "checkout", "-q", "-b", "pipeline/old-ticket", env=env)
+    _commit(repo, env, "bench/metrics/ticket-1.mac-mini.json", "{}\n", "old run")
+    _commit(repo, env, "lib/fix.py", "x = 1\n", "the actual fix")
+    assert _push(repo, env, "pipeline/old-ticket").returncode != 0
+
+
+@pytest.mark.parametrize("fine", ["docs/evidence/ticket-9.png", "docs/screenshots/ticket-9-after.png",
+                                  "lib/bench/metrics_util.py", "skills/x/docs/plans/how.md", "docs/adr/0072-x.md"])
+def test_lookalike_paths_and_pr_evidence_still_go_through(repo, env, fine):
+    _commit(repo, env, fine, "x\n")
+    assert _push(repo, env).returncode == 0
+
+
+def test_deleting_a_moved_file_is_allowed(repo, env):
+    """The engine PR that moved the state out deletes these files; that must not be blocked."""
+    _git(repo, "-c", "core.hooksPath=/dev/null", "commit", "-q", "--allow-empty", "-m", "x", env=env)
+    (repo / "retrospective-log.md").write_text("old\n")
+    _git(repo, "add", "-A", env=env)
+    _git(repo, "commit", "-qm", "old", env=env)
+    _run(repo, "git", "push", "--no-verify", "origin", "main", env=env)
+    _git(repo, "rm", "-q", "retrospective-log.md", env=env)
+    _git(repo, "commit", "-qm", "moved to instance", env=env)
+    assert _push(repo, env).returncode == 0
 
 
 def test_transcript_text_is_blocked_anywhere_in_the_tree(repo, env):
