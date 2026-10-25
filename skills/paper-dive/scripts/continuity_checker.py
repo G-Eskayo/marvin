@@ -23,10 +23,12 @@ import sys
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
+import model_registry  # noqa: E402
+
 CHROMA_PATH = Path.home() / ".claude" / "chroma"
 COLLECTION_NAME = "paper-knowledge"
 OLLAMA_URL = "http://localhost:11434/api/chat"
-CONTINUITY_MODEL = "qwen2.5:14b"
 
 CONTINUITY_VERDICTS = {"CONSISTENT", "GAP", "CONTRADICTS"}
 
@@ -50,7 +52,9 @@ Core claim (one sentence):"""
 
 
 def extract_core_claim(title: str, abstract: str, chat_fn=None) -> str:
-    chat_fn = chat_fn or (lambda messages: ollama_chat(CONTINUITY_MODEL, messages))
+    if chat_fn is None:
+        continuity_model = model_registry.resolve_or_raise("local-inference-large")
+        chat_fn = lambda messages: ollama_chat(continuity_model, messages)
     prompt = CLAIM_PROMPT.format(title=title, abstract=abstract)
     response = chat_fn([{"role": "user", "content": prompt}])
     return response.strip().strip('"')
@@ -76,7 +80,9 @@ RATIONALE: <one sentence explaining the verdict>"""
 def classify_continuity(earlier_claim: str, later_claim: str, chat_fn=None) -> dict[str, str]:
     """Classifies the continuity relationship between two claims.
     Returns {"verdict": one of CONTINUITY_VERDICTS, "rationale": str}."""
-    chat_fn = chat_fn or (lambda messages: ollama_chat(CONTINUITY_MODEL, messages))
+    if chat_fn is None:
+        continuity_model = model_registry.resolve_or_raise("local-inference-large")
+        chat_fn = lambda messages: ollama_chat(continuity_model, messages)
     prompt = CONTINUITY_PROMPT.format(earlier_claim=earlier_claim, later_claim=later_claim)
     response = chat_fn([{"role": "user", "content": prompt}])
     return _parse_continuity_result(response)

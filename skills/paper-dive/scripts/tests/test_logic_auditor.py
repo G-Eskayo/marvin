@@ -339,6 +339,15 @@ def test_judge_extraction_uses_14b_override_for_benchmark_when_no_chat_fn_given(
     # the other 2 benchmarks. Only "benchmark" gets the override; the other
     # 3 types have no evidence of a problem at 7b.
     import logic_auditor as la
+    import sys
+    import importlib
+
+    # Reload model_registry to ensure patch applies
+    if 'model_registry' in sys.modules:
+        import model_registry
+        del sys.modules['model_registry']
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
+    import model_registry
 
     captured = {}
 
@@ -346,7 +355,11 @@ def test_judge_extraction_uses_14b_override_for_benchmark_when_no_chat_fn_given(
         captured["model"] = model
         return "NONE"
 
+    def fake_check_ollama(model, base_url="http://localhost:11434"):
+        return (True, "")
+
     monkeypatch.setattr(la, "ollama_chat", fake_ollama_chat)
+    monkeypatch.setattr(la.model_registry, "check_ollama_pulled", fake_check_ollama)
 
     extraction = {"measures": "m", "construct_validity_evidence": "e", "scope": "s"}
     judge_extraction(extraction, "benchmark")  # no chat_fn -- exercises the real default path
@@ -355,6 +368,14 @@ def test_judge_extraction_uses_14b_override_for_benchmark_when_no_chat_fn_given(
 
 def test_judge_extraction_uses_default_7b_for_non_benchmark_types(monkeypatch):
     import logic_auditor as la
+    import sys
+
+    # Reload model_registry to ensure patch applies
+    if 'model_registry' in sys.modules:
+        import model_registry
+        del sys.modules['model_registry']
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
+    import model_registry
 
     captured = {}
 
@@ -362,7 +383,11 @@ def test_judge_extraction_uses_default_7b_for_non_benchmark_types(monkeypatch):
         captured["model"] = model
         return "NONE"
 
+    def fake_check_ollama(model, base_url="http://localhost:11434"):
+        return (True, "")
+
     monkeypatch.setattr(la, "ollama_chat", fake_ollama_chat)
+    monkeypatch.setattr(la.model_registry, "check_ollama_pulled", fake_check_ollama)
 
     extraction = {"claim": "c", "grounds": "g", "warrant": "w", "qualifier": "q"}
     judge_extraction(extraction, "empirical")

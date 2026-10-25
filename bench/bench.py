@@ -32,9 +32,11 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT.parent / "lib"))
 sys.path.insert(0, str(ROOT / "lib"))
 from score import parse_stream, score_correctness  # noqa: E402
 from memory_rag import query_memory  # noqa: E402
+import model_registry  # noqa: E402
 
 PROFILES = {
     "clean":  ROOT / "profiles" / "clean",           # base Claude Code (control)
@@ -116,18 +118,11 @@ def _check_quota() -> dict | None:
 
 
 def _ollama_available(model: str) -> tuple[bool, str]:
-    """Return (ok, error_message). Checks server is up and model is pulled."""
-    try:
-        with urllib.request.urlopen(f"{OLLAMA_BASE}/api/tags", timeout=5) as resp:
-            data = json.loads(resp.read())
-    except Exception as exc:
-        return False, f"Ollama server not responding ({exc}). Start with: ollama serve"
-    available = [m["name"] for m in data.get("models", [])]
-    # accept exact match or prefix (e.g. "qwen2.5:7b" matches "qwen2.5:7b-instruct-q4_K_M")
-    if not any(a == model or a.startswith(model.split(":")[0]) for a in available):
-        return False, (f"Model '{model}' not found. Available: {available}\n"
-                       f"Pull with: ollama pull {model}")
-    return True, ""
+    """Return (ok, error_message). Checks server is up and model is pulled.
+
+    Delegates to model_registry.check_ollama_pulled for reusability.
+    """
+    return model_registry.check_ollama_pulled(model, base_url=OLLAMA_BASE)
 
 
 def run_once_ollama(task: dict, profile: str, ollama_model: str,
