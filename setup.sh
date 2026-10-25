@@ -12,7 +12,7 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BLUE='\033[0;34m'; BOLD='\033[1m'; NC='\033[0m'
 
 # ── Paths ─────────────────────────────────────────────────────
-MARVIN_DIR="$(cd "$(dirname "$0")" && pwd)"
+MARVIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENTS_DIR="$HOME/.agents"
 SKILLS_DIR="$AGENTS_DIR/skills"
 VENV_DIR="$AGENTS_DIR/venv"
@@ -364,6 +364,42 @@ configure_hook() {
 }
 
 # =============================================================
+# 7b. PUSH GUARD (ADR 0071)
+# =============================================================
+# Refuses any push whose new commits add a secret, a session transcript, or one of this
+# person's own strings. The engine repo is public; on 2026-10-25 auto-sync pushed a 2 MB
+# transcript to it, and a phone number had been public since July. Linked, not copied, so
+# a guard fix reaches every clone on the next pull. code_sync.py calls the same script.
+install_push_guard() {
+    local private="$CLAUDE_DIR/private-push-patterns.txt"
+    if [[ ! -f "$private" ]]; then
+        mkdir -p "$CLAUDE_DIR"
+        ( umask 077; cat > "$private" <<'PATTERNS'
+# Your own strings the push guard must never let reach a public repo: one extended regex per line.
+# Examples: your phone number, home address, a client's name. Private: never copy this file into a repo.
+# Secrets and transcripts are already covered by the shared list (config/push-guard/patterns.txt).
+PATTERNS
+        )
+        log "Created $private (add your phone, address, anything personal)"
+    fi
+    chmod 600 "$private"
+
+    local git_dir hook
+    git_dir=$(git -C "$MARVIN_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || {
+        warn "$MARVIN_DIR is not a git clone: push guard not installed"; return; }
+    hook="$git_dir/hooks/pre-push"
+    mkdir -p "$git_dir/hooks"
+    if [[ -e "$hook" && ! -L "$hook" ]] && ! grep -q 'pre-push-guard' "$hook"; then
+        warn "A different pre-push hook already exists at $hook; left it alone."
+        warn "  Call $MARVIN_DIR/bin/pre-push-guard from it, or the guard won't run on git push."
+        return
+    fi
+    chmod +x "$MARVIN_DIR/bin/pre-push-guard"
+    ln -sfn "$MARVIN_DIR/bin/pre-push-guard" "$hook"
+    log "Push guard installed: $hook"
+}
+
+# =============================================================
 # 8. INITIAL MANIFEST + EMBEDDINGS
 # =============================================================
 initial_setup() {
@@ -446,6 +482,7 @@ main() {
     deploy_brain_map
     deploy_retrospective_log
     configure_claude
+    install_push_guard
     initial_setup
     start_ollama
     pull_model
@@ -454,4 +491,5 @@ main() {
     print_summary
 }
 
-main "$@"
+# Sourcing (tests) defines the functions without installing anything.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then main "$@"; fi
