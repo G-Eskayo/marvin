@@ -25,10 +25,27 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path.home() / ".agents" / "skills" / "safety-monitor" / "scripts"))
 
 from hook_errors import log_hook_error  # noqa: E402
 import machine_profile  # noqa: E402
+
+_is_quarantine_placeholder = None
+
+
+def _load_quarantine_detector():
+    """Load the quarantine placeholder detector from verify.py, or None if unavailable."""
+    global _is_quarantine_placeholder
+    try:
+        safety_monitor_path = Path(__file__).resolve().parents[1] / "skills" / "safety-monitor" / "scripts"
+        sys.path.insert(0, str(safety_monitor_path))
+        from verify import is_quarantine_placeholder  # noqa: E402
+        _is_quarantine_placeholder = is_quarantine_placeholder
+        return True
+    except Exception:
+        return False
+
+
+_QUARANTINE_DETECT_AVAILABLE = _load_quarantine_detector()
 
 HOME = Path.home()
 CLAUDE_DIR = HOME / ".claude"
@@ -345,7 +362,12 @@ def _check_digest(label: str, dirpath: Path) -> str | None:
     f = dirpath / f"{today}.md"
     if not f.exists():
         return None
-    m = re.search(r"^\*(.+?)\*\s*$", f.read_text(), re.MULTILINE)
+    content = f.read_text(errors="ignore")
+
+    if _QUARANTINE_DETECT_AVAILABLE and _is_quarantine_placeholder and _is_quarantine_placeholder(content):
+        return f"{label} held back (quarantined) — see ~/.claude/quarantine.md"
+
+    m = re.search(r"^\*(.+?)\*\s*$", content, re.MULTILINE)
     extra = f" — {m.group(1)}" if m else ""
     return f"{label} ready ({f.name}){extra}"
 

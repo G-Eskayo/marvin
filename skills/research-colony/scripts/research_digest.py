@@ -17,7 +17,7 @@ import marvin_launcher  # noqa: E402
 
 sys.path.insert(0, str(SAFETY_MONITOR_SCRIPTS))
 try:
-    from verify import pass_or_quarantine
+    from verify import pass_or_quarantine, quarantine_placeholder_text
     _SAFETY_MONITOR_AVAILABLE = True
 except ImportError:
     _SAFETY_MONITOR_AVAILABLE = False
@@ -144,11 +144,7 @@ def generate() -> Path | None:
               file=sys.stderr)
         notify("MARVIN research-colony quarantined", "Today's research digest was flagged for review — check ~/.claude/quarantine.md",
                open_target=str(Path.home() / ".claude" / "quarantine.md"))
-        body = (
-            "_Quarantined by safety-monitor before shipping — flagged as risky "
-            "against the research_colony rubric. See `~/.claude/quarantine.md` "
-            "for the full text and to approve/modify/deny._"
-        )
+        body = quarantine_placeholder_text("research_colony")
 
     DIGEST_DIR.mkdir(parents=True, exist_ok=True)
     out_path.write_text(

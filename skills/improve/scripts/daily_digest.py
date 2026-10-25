@@ -31,7 +31,7 @@ SAFETY_MONITOR_SCRIPTS = Path.home() / ".agents" / "skills" / "safety-monitor" /
 sys.path.insert(0, str(QA_SCRIPTS))
 sys.path.insert(0, str(SAFETY_MONITOR_SCRIPTS))
 try:
-    from verify import pass_or_quarantine
+    from verify import pass_or_quarantine, quarantine_placeholder_text
     _SAFETY_MONITOR_AVAILABLE = True
 except ImportError:
     _SAFETY_MONITOR_AVAILABLE = False
@@ -281,11 +281,7 @@ def main() -> None:
         print("[daily-digest] content quarantined by safety-monitor — see ~/.claude/quarantine.md", flush=True)
         notify("MARVIN daily-digest quarantined", "Today's digest was flagged for review — check ~/.claude/quarantine.md",
                open_target=str(Path.home() / ".claude" / "quarantine.md"))
-        content = (
-            "_Quarantined by safety-monitor before shipping — flagged as risky "
-            "against the daily_digest rubric. See `~/.claude/quarantine.md` for "
-            "the full text and to approve/modify/deny._"
-        )
+        content = quarantine_placeholder_text("daily_digest")
 
     header = (
         f"# MARVIN Daily Digest — {TODAY}\n\n"

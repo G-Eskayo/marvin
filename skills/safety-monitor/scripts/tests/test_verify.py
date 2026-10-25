@@ -85,3 +85,23 @@ def test_quarantine_dedup_is_scoped_per_loop_not_global(tmp_path, monkeypatch):
     v.quarantine("same-shaped content", 0.6, "research_colony", 0.3)
 
     assert quarantine_file.read_text() != before
+
+
+def test_quarantine_placeholder_text_formats_correctly_with_loop_name():
+    text = v.quarantine_placeholder_text("research_colony")
+    assert "research_colony" in text
+    assert v.QUARANTINE_PLACEHOLDER_PREFIX in text
+    assert "~/.claude/quarantine.md" in text
+
+
+def test_is_quarantine_placeholder_detects_real_placeholders_and_rejects_others():
+    real = v.quarantine_placeholder_text("daily_digest")
+    assert v.is_quarantine_placeholder(real)
+    assert not v.is_quarantine_placeholder("This is real content")
+    assert not v.is_quarantine_placeholder("")
+
+
+def test_quarantine_placeholder_text_is_consistent_across_calls():
+    text1 = v.quarantine_placeholder_text("research_colony")
+    text2 = v.quarantine_placeholder_text("research_colony")
+    assert text1 == text2

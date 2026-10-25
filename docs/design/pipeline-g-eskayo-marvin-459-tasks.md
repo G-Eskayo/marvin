@@ -1,0 +1,5 @@
+1. `lib/morning_brief.py`: replace `_BOLD_LINE_RE`/`_LEADING_NOISE_RE` and the no-heading branch of `_first_paragraph` (lines 116-132) with the two-step parse above.
+2. `lib/session_start_report.py`: widen `_load_quarantine_detector`'s `except ImportError:` (line 44) to `except Exception:`.
+3. `lib/tests/test_morning_brief.py`: add tests 1-9, 11-12 (real fixture excerpts as literals); rewrite the corrupt-file test (test 10) to assert the exact extracted string.
+4. `lib/tests/test_session_start_digest.py`: add tests 13-15.
+5. Run `lib/tests/test_morning_brief.py`, `lib/tests/test_session_start_digest.py`, and `skills/safety-monitor/scripts/tests/test_verify.py` together; confirm all 14 pre-existing `test_morning_brief.py` tests still pass unchanged alongside the new ones, and that `ssr._QUARANTINE_DETECT_AVAILABLE` is `True` in the test environment (proves the detector loads, not just that the except-clause is wider).

@@ -113,16 +113,24 @@ def _top_tickets() -> list[dict]:
     return sorted(out, key=lambda t: t["priority"])[:6]
 
 
+_BOLD_LINE_RE = re.compile(r"^[ \t\-*0-9.]*\*\*(.+?)\*\*(.*)$", re.M)
+_LEADING_NOISE_RE = re.compile(r"^(?:\s*\*?\([^)]*\)\*?|\s*[:\-–—.])+")
+
+
 def _first_paragraph(path: Path, heading: str | None) -> str | None:
     if not path.exists():
         return None
-    text = path.read_text()
+    text = path.read_text(errors="ignore")
     if heading:
         m = re.search(rf"^## {re.escape(heading)}\s*$\n+(.+?)(?:\n\n|\n##|\Z)", text, re.M | re.S)
-    else:
-        m = re.search(r"^\*\*(.+?)\*\*:?\s*(.+?)(?:\n\n|\Z)", text, re.M | re.S)
-        return f"{m.group(1)}: {m.group(2).split('. ')[0].strip()}." if m else None
-    return m.group(1).strip() if m else None
+        return m.group(1).strip() if m else None
+    m = _BOLD_LINE_RE.search(text)
+    if not m:
+        return None
+    title = m.group(1).strip()
+    rest = _LEADING_NOISE_RE.sub("", m.group(2)).strip()
+    content = rest.split(". ")[0].strip().rstrip(".")
+    return f"{title}: {content}." if content else None
 
 
 def _digest_idea(now: datetime) -> str | None:
@@ -136,7 +144,11 @@ def _digest_idea(now: datetime) -> str | None:
 
 def _research_idea(now: datetime) -> str | None:
     day = now.astimezone().strftime("%Y-%m-%d")
-    return _first_paragraph(CLAUDE / "research-digest" / f"{day}.md", None)
+    for name in (f"{day}-merged.md", f"{day}.md"):
+        idea = _first_paragraph(CLAUDE / "research-digest" / name, None)
+        if idea:
+            return idea
+    return None
 
 
 def _late_night(now: datetime) -> str | None:

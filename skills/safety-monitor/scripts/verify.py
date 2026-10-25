@@ -91,6 +91,22 @@ def verify(artifact_text: str, loop_name: str, source_context: str = "") -> floa
         return 0.0
 
 
+QUARANTINE_PLACEHOLDER_PREFIX = "_Quarantined by safety-monitor before shipping — flagged as risky against the "
+
+
+def quarantine_placeholder_text(loop_name: str) -> str:
+    """Return the standard placeholder text for when an artifact is held back by the safety monitor."""
+    return (
+        f"{QUARANTINE_PLACEHOLDER_PREFIX}{loop_name} rubric. See `~/.claude/quarantine.md` "
+        f"for the full text and to approve/modify/deny._"
+    )
+
+
+def is_quarantine_placeholder(text: str) -> bool:
+    """Check whether text is a quarantine placeholder (not real content, held back by verify)."""
+    return QUARANTINE_PLACEHOLDER_PREFIX in text
+
+
 _QUARANTINE_HEADING_RE = re.compile(r"^## \d{4}-\d{2}-\d{2} — (.+) \[SAFETY, score [\d.]+, tau [\d.]+\]$")
 
 
