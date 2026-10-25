@@ -21,7 +21,7 @@ import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterator
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -32,6 +32,39 @@ OVERRIDES = CLAUDE / "catalog" / "overrides.json"
 REPOS = ("G-Eskayo/marvin", "G-Eskayo/clarity-captions", "G-Eskayo/marvin-mobile")
 DEADLINE_HORIZON_DAYS = 45
 LATE_HOUR = 23  # local time; a session still active after this counts as a late night
+_BOLD_ITEM = re.compile(r"^(?:[-•*]\s+|\d+\.\s+)?\*\*(.+?)\*\*:?\s*(.+)$", re.M)
+
+
+def _is_mini() -> bool:
+    """Check if this machine is the Mac Mini."""
+    try:
+        import machine_profile
+        return machine_profile.machine_label() == "mac-mini"
+    except Exception:
+        return False
+
+
+def _format_bold_item(text: str) -> str | None:
+    """Extract and format a bold-item marker from text: **Title**: description."""
+    m = _BOLD_ITEM.search(text)
+    if not m:
+        return None
+    title = m.group(1).strip()
+    rest = re.sub(r"^[\s:\-\u2013\u2014]+", "", m.group(2))
+    first = rest.split(". ", 1)[0].rstrip(".").strip()
+    return f"{title}: {first}." if first else f"{title}."
+
+
+def _ssh_cat(host: str, path: str) -> str | None:
+    """SSH to a host and read a file, returning its contents or None on failure."""
+    try:
+        out = subprocess.run(
+            ["ssh", "-o", "ConnectTimeout=3", "-o", "BatchMode=yes", host, "cat", path],
+            capture_output=True, text=True, timeout=5
+        )
+        return out.stdout if out.returncode == 0 else None
+    except Exception:
+        return None
 
 
 # ── sources (each is a small reader; gather() tolerates any of them failing) ──────────────────────────────────
@@ -113,16 +146,56 @@ def _top_tickets() -> list[dict]:
     return sorted(out, key=lambda t: t["priority"])[:6]
 
 
-def _first_paragraph(path: Path, heading: str | None) -> str | None:
+def _first_paragraph(path: Path, heading: str) -> str | None:
     if not path.exists():
         return None
     text = path.read_text()
-    if heading:
-        m = re.search(rf"^## {re.escape(heading)}\s*$\n+(.+?)(?:\n\n|\n##|\Z)", text, re.M | re.S)
-    else:
-        m = re.search(r"^\*\*(.+?)\*\*:?\s*(.+?)(?:\n\n|\Z)", text, re.M | re.S)
-        return f"{m.group(1)}: {m.group(2).split('. ')[0].strip()}." if m else None
+    m = re.search(rf"^## {re.escape(heading)}\s*$\n+(.+?)(?:\n\n|\n##|\Z)", text, re.M | re.S)
     return m.group(1).strip() if m else None
+
+
+def _first_bullet(text: str | None) -> str | None:
+    """Extract the first bullet point from text, tolerating both dash and number bullets."""
+    if not text:
+        return None
+    bold = _format_bold_item(text)
+    if bold:
+        return bold
+    m = re.search(r"^[-•*]\s+(.+?)$|^\d+\.\s+(.+?)$", text, re.MULTILINE)
+    if m:
+        return (m.group(1) or m.group(2)).strip()
+    return None
+
+
+def _digest_texts(now: datetime, kind: str = "research-digest") -> Iterator[str]:
+    """Yield candidate digest texts: merged, Mini's, then own, filtered for quarantine."""
+    day = now.astimezone().strftime("%Y-%m-%d")
+
+    # Try merged digest first
+    merged_path = CLAUDE / kind / f"{day}-merged.md"
+    try:
+        if merged_path.exists():
+            text = merged_path.read_text(errors="ignore")
+            if text.strip() and "Quarantined by safety-monitor" not in text:
+                yield text
+    except OSError:
+        pass
+
+    # Try Mini's digest if not on Mini
+    if not _is_mini():
+        mini_text = _ssh_cat("gils-mac-mini", f"~/.claude/{kind}/{day}.md")
+        if mini_text and mini_text.strip() and "Quarantined by safety-monitor" not in mini_text:
+            yield mini_text
+
+    # Try own digest
+    own_path = CLAUDE / kind / f"{day}.md"
+    try:
+        if own_path.exists():
+            text = own_path.read_text(errors="ignore")
+            if text.strip() and "Quarantined by safety-monitor" not in text:
+                yield text
+    except OSError:
+        pass
 
 
 def _digest_idea(now: datetime) -> str | None:
@@ -135,8 +208,12 @@ def _digest_idea(now: datetime) -> str | None:
 
 
 def _research_idea(now: datetime) -> str | None:
-    day = now.astimezone().strftime("%Y-%m-%d")
-    return _first_paragraph(CLAUDE / "research-digest" / f"{day}.md", None)
+    """Extract the first bullet from any available research digest."""
+    for text in _digest_texts(now, kind="research-digest"):
+        bullet = _first_bullet(text)
+        if bullet:
+            return bullet
+    return None
 
 
 def _late_night(now: datetime) -> str | None:

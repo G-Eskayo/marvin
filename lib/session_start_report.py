@@ -345,7 +345,15 @@ def _check_digest(label: str, dirpath: Path) -> str | None:
     f = dirpath / f"{today}.md"
     if not f.exists():
         return None
-    m = re.search(r"^\*(.+?)\*\s*$", f.read_text(), re.MULTILINE)
+    try:
+        text = f.read_text(errors="ignore")
+    except OSError:
+        return None
+    if not text.strip():
+        return None
+    if "Quarantined by safety-monitor" in text:
+        return f"{label} held back (quarantined, {f.name}; see ~/.claude/quarantine.md)"
+    m = re.search(r"^\*(.+?)\*\s*$", text, re.MULTILINE)
     extra = f" — {m.group(1)}" if m else ""
     return f"{label} ready ({f.name}){extra}"
 
