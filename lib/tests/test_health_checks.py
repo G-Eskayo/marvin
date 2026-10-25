@@ -1299,3 +1299,38 @@ def test_the_machine_script_reads_a_real_process_uptime_with_this_machines_ps():
         assert 1 <= int(out.stdout.strip()) <= 20
     finally:
         child.kill()
+
+
+# Test 19: check_brief_builder
+class TestBriefBuilder:
+    def test_brief_builder_green_when_built(self, tmp_path, monkeypatch):
+        """Test: check_brief_builder() is green when today's brief was built."""
+        import morning_brief
+        now = datetime.now(timezone.utc)
+        day_str = now.astimezone().strftime("%Y-%m-%d")
+        monkeypatch.setattr(morning_brief, "BRIEFS", tmp_path)
+        (tmp_path / f"{day_str}.built-by").write_text("primary@mac-mini\n")
+
+        result = hc.check_brief_builder(now)
+        assert result["severity"] == "green"
+        assert "primary@mac-mini" in result["detail"]
+
+    def test_brief_builder_yellow_when_not_built(self, monkeypatch):
+        """Test: check_brief_builder() is yellow when today's brief has not been built yet."""
+        import morning_brief
+        now = datetime.now(timezone.utc)
+        monkeypatch.setattr(morning_brief, "BRIEFS", Path("/nonexistent"))
+
+        result = hc.check_brief_builder(now)
+        assert result["severity"] == "yellow"
+        assert "yet" in result["detail"]
+
+
+def test_job_placement_reflects_the_new_mini_ownership():
+    """Test: JOB_PLACEMENT has daily-digest, research-colony, morning-brief on mini; fallbacks on laptop."""
+    assert hc.JOB_PLACEMENT["daily-digest"] == "mini"
+    assert hc.JOB_PLACEMENT["research-colony"] == "mini"
+    assert hc.JOB_PLACEMENT["morning-brief"] == "mini"
+    assert hc.JOB_PLACEMENT["daily-digest-fallback"] == "laptop"
+    assert hc.JOB_PLACEMENT["research-colony-fallback"] == "laptop"
+    assert hc.JOB_PLACEMENT["morning-brief-fallback"] == "laptop"

@@ -444,6 +444,18 @@ def check_gh_gate(log_path: Path | None = None, state_path: Path | None = None, 
     return _result(cid, label, "green", base, value=len(rows))
 
 
+def check_brief_builder(now: datetime | None = None) -> dict:
+    """Green with builder label if today's brief was built, yellow if not yet."""
+    import morning_brief
+    cid, label = "morning-brief:builder", "Brief builder"
+    now = now or _now()
+    day_str = now.astimezone().strftime("%Y-%m-%d")
+    builder = morning_brief.builder_of(day_str)
+    if builder:
+        return _result(cid, label, "green", f"today's brief built by {builder}", value=builder)
+    return _result(cid, label, "yellow", "No brief built yet today")
+
+
 PROJECT_TAGS_PATH = Path.home() / ".claude" / "logs" / "project-tags.json"
 PROJECT_TAGS_RED_AT = 5
 PROJECT_TAGS_STALE_HOURS = 3
@@ -990,16 +1002,17 @@ if [ -f "$LEDGER" ]; then echo "disk_ledger=$(tail -14 "$LEDGER" | /usr/bin/tr '
 # host only (ADR 0032, 0033), "laptop" = only where Gil sits. Edit here when a job is deliberately moved; a job that
 # is not listed is reported as unplaced so a new job cannot silently run on only one machine.
 JOB_PLACEMENT = {
-    "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "both", "research-colony": "both",
+    "code-sync-push": "both", "cross-machine-merge": "both",
     "desktoplive": "both", "dashboard-webhook": "both",  # webhook on both until #112 (ADR 0032)
     "ticket-pipeline": "both",  # mini scans; the laptop's copy is a standby that scans only if the mini goes quiet (scanner_role.py)
+    "daily-digest": "mini", "research-colony": "mini", "morning-brief": "mini",  # primary writers on mini (lib/brief_fallback.py)
+    "daily-digest-fallback": "laptop", "research-colony-fallback": "laptop", "morning-brief-fallback": "laptop",
     "architecture-review": "mini", "auto-fix": "mini", "cron-health": "mini", "health-check": "mini",
     "process-quarantine-reviews": "mini", "verify-digest-fix": "mini",
     "usage-scan": "both",  # hourly: each machine scans its own transcripts for the Metrics tab (lib/usage_report.py)
     "cleanup-sweep": "both",  # daily: each machine sweeps its own pipeline worktrees (lib/cleanup_sweep.py)
     "machine-resources": "both",  # 30s: samples disk/mem/swap/CPU/GPU for resources panel (#130)
     "dashboard-launch": "laptop",
-    "morning-brief": "laptop",  # one writer (the brief syncs to the mini via ~/.claude); after the digests (lib/morning_brief.py)
     # the website map (#189): rebuilt nightly and after MARVIN changes on the mini, where the dev site runs; the nightly
     # job also publishes it to production (ADR 0057), so it must never run on the laptop
     "snapshot-deploy-nightly": "mini", "snapshot-deploy-reactive": "mini",
@@ -1479,6 +1492,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("profile:no-machines", "Projects with no machines", check_unrunnable_profiles, CHECK_BUDGET_S),
         ("triggers:missed", "Dashboard triggers cover every change", check_trigger_coverage, CHECK_BUDGET_S),
         ("catalog:fresh", "Project catalog is current", check_catalog_fresh, CHECK_BUDGET_S),
+        ("morning-brief:builder", "Brief builder", check_brief_builder, CHECK_BUDGET_S),
         ("tickets:project-tags", "Tickets are on their project's board", check_project_tags, CHECK_BUDGET_S),
         ("tickets:hold-revisit", "Hold tickets have revisit dates", check_hold_revisit, CHECK_BUDGET_S),
         ("github:budget", "GitHub request budget", check_github_budget, CHECK_BUDGET_S),

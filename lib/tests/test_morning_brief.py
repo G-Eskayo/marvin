@@ -60,8 +60,11 @@ def test_a_failing_source_is_named_not_hidden():
 
 def test_writing_and_reading_mark_consumption(tmp_path, monkeypatch):
     monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    import machine_profile
+    monkeypatch.setattr(machine_profile, "machine_label", lambda: "mac-mini")
     path = mb.write(NOW, _sources())
     assert path.name == "2026-10-09.md" and path.read_text().startswith("# Morning brief")
+    assert (tmp_path / "2026-10-09.built-by").read_text().strip() == "primary@mac-mini"
     assert mb.read_dates() == []
     shown = mb.show_today(NOW)
     assert "Needs you" in shown
@@ -123,3 +126,167 @@ def test_open_prs_marks_waiting_from_one_graphql_read(monkeypatch):
     monkeypatch.setattr(od, "fetch", lambda repos, run=None: None)
     brief = mb.gather(NOW, {"open_prs": mb._open_prs})
     assert brief["open_prs"] is None and "open PRs" in brief["missing"][0]
+
+
+def test_builder_of_returns_builder_label_from_built_by_file(tmp_path, monkeypatch):
+    """Test 18: builder_of() reads and returns the .built-by file content."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    (tmp_path / "2026-10-09.built-by").write_text("primary@mac-mini\n")
+    assert mb.builder_of("2026-10-09") == "primary@mac-mini"
+    assert mb.builder_of("2026-10-10") is None
+
+
+def test_builder_of_different_day_still_none(tmp_path, monkeypatch):
+    """Test 17b: builder_of() for a different day returns None if no .built-by file exists."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    (tmp_path / "2026-10-09.built-by").write_text("primary@mac-mini\n")
+    # Different day, no file
+    assert mb.builder_of("2026-10-10") is None
+    assert mb.builder_of("2026-10-11") is None
+
+
+def test_build_threads_role_primary_to_builder_reason(tmp_path, monkeypatch):
+    """Test 1: build() threads Decision.role=primary to builder_reason=primary."""
+    import brief_fallback
+    from unittest import mock
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+
+    # Mock should_run to return a Decision with role="primary"
+    def mock_should_run(path, usual_hour, usual_minute, now=None):
+        return brief_fallback.Decision(True, "running on primary (mac-mini)", role="primary")
+
+    monkeypatch.setattr(brief_fallback, "should_run", mock_should_run)
+    mb.build(NOW, _sources())
+
+    # Verify the brief was written with builder_reason=primary
+    assert (tmp_path / "2026-10-09.built-by").exists()
+    assert "primary@" in (tmp_path / "2026-10-09.built-by").read_text()
+
+
+def test_build_threads_role_fallback_to_builder_reason(tmp_path, monkeypatch):
+    """Test 2: build() threads Decision.role=fallback to builder_reason=fallback."""
+    import brief_fallback
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+
+    # Mock should_run to return a Decision with role="fallback"
+    def mock_should_run(path, usual_hour, usual_minute, now=None):
+        return brief_fallback.Decision(True, "primary did not produce output", role="fallback")
+
+    monkeypatch.setattr(brief_fallback, "should_run", mock_should_run)
+    mb.build(NOW, _sources())
+
+    # Verify the brief was written with builder_reason=fallback
+    assert (tmp_path / "2026-10-09.built-by").exists()
+    assert "fallback@" in (tmp_path / "2026-10-09.built-by").read_text()
+
+
+def test_build_calls_write_with_fallback_reason_when_should_run(tmp_path, monkeypatch):
+    """Test 19: build() calls write with builder_reason='fallback' when fallback should run."""
+    import machine_profile
+    import brief_fallback
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    monkeypatch.setattr(machine_profile, "machine_label", lambda: "macbook-pro")
+
+    # Mock should_run to return True (fallback should run)
+    def mock_should_run(path, usual_hour, usual_minute, now=None):
+        return brief_fallback.Decision(True, "primary did not produce output")
+
+    monkeypatch.setattr(brief_fallback, "should_run", mock_should_run)
+    mb.build(NOW, _sources())
+
+    # Check that the brief was written with fallback builder
+    built_by = tmp_path / "2026-10-09.built-by"
+    assert built_by.exists()
+    assert "fallback@macbook-pro" in built_by.read_text()
+
+
+def test_build_skips_when_should_run_false(tmp_path, monkeypatch, capsys):
+    """Test 19b: build() skips write when should_run returns False."""
+    import brief_fallback
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+
+    # Mock should_run to return False (fallback should skip)
+    def mock_should_run(path, usual_hour, usual_minute, now=None):
+        return brief_fallback.Decision(False, "primary produced output (local)")
+
+    monkeypatch.setattr(brief_fallback, "should_run", mock_should_run)
+    mb.build(NOW, _sources())
+
+    # Check that no brief was written
+    assert not (tmp_path / "2026-10-09.md").exists()
+    captured = capsys.readouterr()
+    assert "Skipped brief build" in captured.out
+
+
+def test_write_repairs_a_stale_failure_placeholder_brief(tmp_path, monkeypatch):
+    """Test 5: write() overwrites a brief that contains the failure placeholder."""
+    import machine_profile
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    monkeypatch.setattr(machine_profile, "machine_label", lambda: "mac-mini")
+
+    # Pre-write a stale brief with the failure placeholder
+    path = tmp_path / "2026-10-09.md"
+    path.write_text("(claude call failed: timeout)\n# Morning brief")
+
+    # write() should recognize it as invalid and overwrite it
+    result = mb.write(NOW, _sources())
+    assert result == path
+    content = path.read_text()
+    assert "(claude call failed:" not in content
+    assert "# Morning brief" in content
+
+
+def test_write_repairs_an_empty_brief_file(tmp_path, monkeypatch):
+    """Test 6: write() overwrites an empty brief file."""
+    import machine_profile
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    monkeypatch.setattr(machine_profile, "machine_label", lambda: "mac-mini")
+
+    # Pre-write an empty brief
+    path = tmp_path / "2026-10-09.md"
+    path.write_text("")
+
+    # write() should recognize it as invalid and overwrite it
+    result = mb.write(NOW, _sources())
+    assert result == path
+    content = path.read_text()
+    assert len(content) > 0
+    assert "# Morning brief" in content
+
+
+def test_write_does_not_rewrite_a_valid_existing_brief(tmp_path, monkeypatch):
+    """Test 7: write() does not overwrite a valid existing brief (idempotent)."""
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+
+    # Pre-write a valid brief with a sentinel value
+    path = tmp_path / "2026-10-09.md"
+    original_content = "# Morning brief, Thursday 2026-10-09\n\nSentinel: original content\n"
+    path.write_text(original_content)
+
+    # write() should recognize it as valid and return without rewriting
+    result = mb.write(NOW, _sources())
+    assert result == path
+    content = path.read_text()
+    assert content == original_content  # Should be unchanged
+
+
+def test_write_does_not_clobber_a_file_that_appears_mid_gather(tmp_path, monkeypatch):
+    """Test 8: write() does not overwrite a file that appears while gather() is running."""
+    import machine_profile
+    monkeypatch.setattr(mb, "BRIEFS", tmp_path)
+    monkeypatch.setattr(machine_profile, "machine_label", lambda: "mac-mini")
+
+    # Mock gather to write a competing valid brief as a side effect
+    original_gather = mb.gather
+    competing_content = "# Morning brief, Thursday 2026-10-09\n\nCompeting brief from another machine\n"
+
+    def mock_gather(now, sources=None):
+        path = tmp_path / "2026-10-09.md"
+        path.write_text(competing_content)
+        return original_gather(now, sources)
+
+    monkeypatch.setattr(mb, "gather", mock_gather)
+
+    # write() should detect the competing file via the re-check and not overwrite it
+    result = mb.write(NOW, _sources())
+    assert result.read_text() == competing_content  # Should keep the competing content

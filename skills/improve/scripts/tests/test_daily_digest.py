@@ -337,3 +337,54 @@ def test_missing_helper_format():
     result = dd._missing("test message")
     assert "❌ **Missing input:**" in result
     assert "test message" in result
+
+
+# ── brief_fallback gate tests (test 16) ───────────────────────────────────────
+
+class TestDailyDigestGate:
+    def test_main_short_circuits_when_out_file_exists(self, tmp_path, monkeypatch, capsys):
+        """Test 16: main() skips building when the digest file was already produced."""
+        import brief_fallback
+        monkeypatch.setattr(dd, "DIGEST_DIR", tmp_path)
+        monkeypatch.setattr(dd, "OUT_FILE", tmp_path / "2026-10-24.md")
+
+        # Create the digest file
+        (tmp_path / "2026-10-24.md").write_text("# Existing digest\n")
+
+        # Mock should_run to return True (we're past deadline)
+        def mock_should_run(path, usual_hour, usual_minute, remote_host=None, now=None):
+            return brief_fallback.Decision(True, "primary did not produce output")
+
+        monkeypatch.setattr(brief_fallback, "should_run", mock_should_run)
+
+        # Mock call_claude and other sources to avoid network calls
+        monkeypatch.setattr(dd, "roadmap_summary", lambda: "roadmap")
+        monkeypatch.setattr(dd, "recent_handoffs_summary", lambda: "handoffs")
+        monkeypatch.setattr(dd, "qa_kb_summary", lambda: "qa")
+        monkeypatch.setattr(dd, "bench_summary", lambda: "bench")
+        monkeypatch.setattr(dd, "improvement_queue_summary", lambda: "queue")
+        monkeypatch.setattr(dd, "reviewer_health_summary", lambda: "health")
+
+        dd.main()
+
+        # Should print "already exists" message
+        captured = capsys.readouterr()
+        assert "already exists" in captured.out
+
+    def test_main_skips_before_deadline(self, tmp_path, monkeypatch, capsys):
+        """Test 16b: main() skips when fallback gate says to skip."""
+        import brief_fallback
+        monkeypatch.setattr(dd, "DIGEST_DIR", tmp_path)
+        monkeypatch.setattr(dd, "OUT_FILE", tmp_path / "2026-10-24.md")
+
+        # Mock should_run to return False (deadline not yet passed)
+        def mock_should_run(path, usual_hour, usual_minute, remote_host=None, now=None):
+            return brief_fallback.Decision(False, "deadline not yet passed")
+
+        monkeypatch.setattr(brief_fallback, "should_run", mock_should_run)
+
+        dd.main()
+
+        captured = capsys.readouterr()
+        assert "Skipping" in captured.out
+        assert "deadline not yet passed" in captured.out

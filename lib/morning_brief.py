@@ -277,12 +277,55 @@ def _day(now: datetime) -> str:
     return now.astimezone().strftime("%Y-%m-%d")
 
 
-def write(now: datetime | None = None, sources: dict[str, Callable] | None = None) -> Path:
+def write(now: datetime | None = None, sources: dict[str, Callable] | None = None, builder_reason: str = "primary") -> Path:
+    import brief_fallback
     now = now or datetime.now(timezone.utc)
     BRIEFS.mkdir(parents=True, exist_ok=True)
-    path = BRIEFS / f"{_day(now)}.md"
-    path.write_text(render(gather(now, sources), now))
+    day_str = _day(now)
+    path = BRIEFS / f"{day_str}.md"
+
+    # Early return if today's brief already exists and is valid (idempotent)
+    if brief_fallback.produced(path):
+        return path
+
+    rendered = render(gather(now, sources), now)
+
+    # Re-check before writing: if the brief was produced while we were building, don't overwrite
+    if brief_fallback.produced(path):
+        return path
+
+    path.write_text(rendered)
+
+    # Write builder metadata
+    import machine_profile
+    label = machine_profile.machine_label()
+    (BRIEFS / f"{day_str}.built-by").write_text(f"{builder_reason}@{label}\n")
+
     return path
+
+
+def build(now: datetime | None = None, sources: dict[str, Callable] | None = None) -> None:
+    """Build today's brief if it should run (fallback gate), otherwise skip and print why."""
+    import brief_fallback
+
+    now = now or datetime.now(timezone.utc)
+    local_path = BRIEFS / f"{_day(now)}.md"
+
+    decision = brief_fallback.should_run(local_path, usual_hour=9, usual_minute=45, now=now)
+
+    if decision.should_run:
+        write(now, sources, builder_reason=decision.role)
+        print(f"Built brief: {local_path}")
+    else:
+        print(f"Skipped brief build: {decision.reason}")
+
+
+def builder_of(day_str: str) -> str | None:
+    """Return the builder label from the .built-by file, or None if not found."""
+    path = BRIEFS / f"{day_str}.built-by"
+    if path.exists():
+        return path.read_text().strip()
+    return None
 
 
 def show_today(now: datetime | None = None) -> str | None:
@@ -309,7 +352,7 @@ def read_dates() -> list[datetime]:
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["build"]:
-        print(write())
+        build()
     elif sys.argv[1:] == ["show"]:
         print(show_today() or "No brief for today yet.")
     else:

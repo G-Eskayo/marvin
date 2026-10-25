@@ -73,9 +73,25 @@ JOBS = {
         "09:00",
         [".claude/logs/research-colony.log", ".claude/logs/research-colony-error.log"],
     ),
+    "morning-brief": (
+        "09:45",
+        [".claude/logs/morning-brief.log", ".claude/logs/morning-brief-error.log"],
+    ),
     "cross-machine-merge": (
         "09:30",
         [".claude/logs/cross-machine-merge.log", ".claude/logs/cross-machine-merge-error.log"],
+    ),
+    "daily-digest-fallback": (
+        "09:30",
+        [".claude/logs/daily-digest-fallback.log", ".claude/logs/daily-digest-fallback-error.log"],
+    ),
+    "research-colony-fallback": (
+        "10:00",
+        [".claude/logs/research-colony-fallback.log", ".claude/logs/research-colony-fallback-error.log"],
+    ),
+    "morning-brief-fallback": (
+        "10:45",
+        [".claude/logs/morning-brief-fallback.log", ".claude/logs/morning-brief-fallback-error.log"],
     ),
     "tidy-agent": (
         "03:00",

@@ -1463,9 +1463,13 @@ MARVIN-as-OS north star).
   opens it in the MARVIN app), at **session start on whichever Mac Gil starts on**, and by **email**, and MARVIN keeps
   trying new ways. Which channels Gil actually opens is measured the same way as item ranking, so channels nobody uses
   get dropped. This is a start to something meant to grow much bigger.
-- **Brief owner** (decided 2026-10-15): the **Mac Mini** gathers the feeds and builds the brief before Gil wakes. The
-  MacBook builds it only if the Mini hasn't by an hour after its usual time. The research colony and daily digest no
-  longer run on both Macs (see ADR 0067).
+- **Brief owner** (decided 2026-10-15, autonomous fallback 2026-10-24): the **Mac Mini** gathers the feeds and builds
+  the brief before Gil wakes via three primary jobs: daily-digest (08:30), research-colony (09:00), and morning-brief
+  (09:45). Each has a fallback on the MacBook at +60 minutes (09:30, 10:00, 10:45) that checks the primary's output
+  file before running. The fallback gate uses a day-stamped output path, checks for content validity (no
+  "(claude call failed:" placeholder), and reads the Mini's `$HOME`-relative file over Tailscale SSH when the
+  MacBook's fallback runs. If the primary is unreachable or offline, the fallback runs (fail-open). The research
+  colony and daily digest no longer run on both Macs (see ADR 0067).
 - **Item layers** (decided 2026-10-15): every brief item carries three layers, all prepared when the brief is built:
   (1) **the line** (one sentence, what the brief shows or says), (2) **the summary** (what happened, why it matters to
   Gil, what he could do), (3) **the source** (the original article or paper, plus links to related tickets and
