@@ -99,3 +99,191 @@ def test_a_broken_state_file_never_blocks_an_edit(tmp_path, monkeypatch):
     p.write_text("{not json")
     monkeypatch.setattr(sw, "STATE_PATH", p)
     assert sw.handle("pre", {"session_id": "B", "tool_input": {"file_path": "/x"}}, now=T) is None
+
+
+def test_load_state_reads_a_valid_state_file(tmp_path, monkeypatch):
+    """load_state() correctly reads a valid state file."""
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({"sessions": {"A": {"request": "test", "last": T, "files": {}}}}))
+    monkeypatch.setattr(sw, "STATE_PATH", p)
+    st = sw.load_state()
+    assert st["sessions"]["A"]["request"] == "test"
+
+
+def test_load_state_fails_open_on_missing_file(tmp_path, monkeypatch):
+    """load_state() returns empty dict when state file is missing."""
+    p = tmp_path / "s.json"
+    monkeypatch.setattr(sw, "STATE_PATH", p)
+    assert sw.load_state() == {}
+
+
+def test_load_state_fails_open_on_corrupt_file(tmp_path, monkeypatch):
+    """load_state() returns empty dict when state file is not valid JSON."""
+    p = tmp_path / "s.json"
+    p.write_text("{not json")
+    monkeypatch.setattr(sw, "STATE_PATH", p)
+    assert sw.load_state() == {}
+
+
+def test_load_state_rejects_non_dict_json(tmp_path, monkeypatch):
+    """load_state() returns empty dict when state file is valid JSON but not a dict."""
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps([1, 2, 3]))
+    monkeypatch.setattr(sw, "STATE_PATH", p)
+    assert sw.load_state() == {}
+
+
+def test_live_edits_for_returns_matching_edits_when_both_session_and_file_are_fresh(tmp_path, monkeypatch):
+    """live_edits_for() returns edits when both session last and file timestamp are within LIVE_S."""
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({
+        "sessions": {
+            "A": {
+                "request": "fix something",
+                "last": T + 30,
+                "files": {sw._k(("repo-id", "file.md")): T + 20}
+            }
+        }
+    }))
+    monkeypatch.setattr(sw, "STATE_PATH", p)
+    result = sw.live_edits_for("repo-id", ["file.md"], now=T + 100)
+    assert len(result) == 1
+    assert result[0]["session"] == "A"
+    assert result[0]["path"] == "file.md"
+    assert result[0]["request"] == "fix something"
+
+
+def test_live_edits_for_session_fresh_but_file_edit_stale_does_not_match(tmp_path, monkeypatch):
+    """live_edits_for() must-fix #1: session is still live (last within LIVE_S) but the file's
+    own edit is stale (older than LIVE_S) — the file should not hold the lease."""
+    p = tmp_path / "s.json"
+    stale_edit = T  # Very old edit
+    fresh_session = T + (sw.LIVE_S - 60)  # Session was active recently
+    p.write_text(json.dumps({
+        "sessions": {
+            "A": {
+                "request": "working on something else",
+                "last": fresh_session,
+                "files": {sw._k(("repo-id", "file.md")): stale_edit}
+            }
+        }
+    }))
+    monkeypatch.setattr(sw, "STATE_PATH", p)
+    result = sw.live_edits_for("repo-id", ["file.md"], now=T + (sw.LIVE_S + 60))
+    assert result == []
+
+
+def test_live_edits_for_malformed_session_value_is_skipped_not_raised(tmp_path, monkeypatch):
+    """live_edits_for() must-fix #2: a session value that isn't a dict is skipped.
+    A well-formed sibling session's real lease still comes through."""
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({
+        "sessions": {
+            "broken": "not a dict",
+            "good": {
+                "request": "working",
+                "last": T + 30,
+                "files": {sw._k(("repo-id", "file.md")): T + 20}
+            }
+        }
+    }))
+    monkeypatch.setattr(sw, "STATE_PATH", p)
+    result = sw.live_edits_for("repo-id", ["file.md"], now=T + 100)
+    assert len(result) == 1
+    assert result[0]["session"] == "good"
+
+
+def test_live_edits_for_null_request_is_skipped_not_raised(tmp_path, monkeypatch):
+    """live_edits_for() must-fix #2: a session with null request is skipped.
+    A well-formed sibling session's real lease still comes through."""
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({
+        "sessions": {
+            "broken": {
+                "request": None,
+                "last": T + 30,
+                "files": {sw._k(("repo-id", "file.md")): T + 20}
+            },
+            "good": {
+                "request": "working",
+                "last": T + 30,
+                "files": {sw._k(("repo-id", "file.md")): T + 20}
+            }
+        }
+    }))
+    monkeypatch.setattr(sw, "STATE_PATH", p)
+    result = sw.live_edits_for("repo-id", ["file.md"], now=T + 100)
+    assert len(result) == 1
+    assert result[0]["session"] == "good"
+
+
+def test_live_edits_for_non_numeric_last_is_skipped_not_raised(tmp_path, monkeypatch):
+    """live_edits_for() must-fix #2: a session with non-numeric last is skipped.
+    A well-formed sibling session's real lease still comes through."""
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({
+        "sessions": {
+            "broken": {
+                "request": "working",
+                "last": "not a number",
+                "files": {sw._k(("repo-id", "file.md")): T + 20}
+            },
+            "good": {
+                "request": "working",
+                "last": T + 30,
+                "files": {sw._k(("repo-id", "file.md")): T + 20}
+            }
+        }
+    }))
+    monkeypatch.setattr(sw, "STATE_PATH", p)
+    result = sw.live_edits_for("repo-id", ["file.md"], now=T + 100)
+    assert len(result) == 1
+    assert result[0]["session"] == "good"
+
+
+def test_live_edits_for_non_numeric_file_timestamp_is_skipped_not_raised(tmp_path, monkeypatch):
+    """live_edits_for() must-fix #2: a file with non-numeric timestamp is skipped.
+    A well-formed sibling session's real lease still comes through."""
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({
+        "sessions": {
+            "broken": {
+                "request": "working",
+                "last": T + 30,
+                "files": {sw._k(("repo-id", "file.md")): "not a number"}
+            },
+            "good": {
+                "request": "working",
+                "last": T + 30,
+                "files": {sw._k(("repo-id", "file.md")): T + 20}
+            }
+        }
+    }))
+    monkeypatch.setattr(sw, "STATE_PATH", p)
+    result = sw.live_edits_for("repo-id", ["file.md"], now=T + 100)
+    assert len(result) == 1
+    assert result[0]["session"] == "good"
+
+
+def test_live_edits_for_two_live_sessions_both_hold_the_lease(tmp_path, monkeypatch):
+    """live_edits_for() returns all matching sessions when two or more are live."""
+    p = tmp_path / "s.json"
+    p.write_text(json.dumps({
+        "sessions": {
+            "A": {
+                "request": "work A",
+                "last": T + 30,
+                "files": {sw._k(("repo-id", "file.md")): T + 20}
+            },
+            "B": {
+                "request": "work B",
+                "last": T + 25,
+                "files": {sw._k(("repo-id", "file.md")): T + 15}
+            }
+        }
+    }))
+    monkeypatch.setattr(sw, "STATE_PATH", p)
+    result = sw.live_edits_for("repo-id", ["file.md"], now=T + 100)
+    assert len(result) == 2
+    sessions = {r["session"] for r in result}
+    assert sessions == {"A", "B"}

@@ -189,6 +189,14 @@ def pytest_configure(config):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_session_work_state(tmp_path_factory, monkeypatch):
+    # push()/pull() tests that don't explicitly set up a lease must never read the real
+    # ~/.claude/logs/sessions-active.json; a stray real session could change their outcome.
+    import session_work
+    monkeypatch.setattr(session_work, "STATE_PATH", tmp_path_factory.mktemp("sessions") / "sessions-active.json")
+
+
+@pytest.fixture(autouse=True)
 def _no_real_github(tmp_path_factory, monkeypatch):
     # Tests must never reach real GitHub: a suite run was editing a real ticket's labels (marvin#20) and spending the
     # account's API budget (found 2026-10-08). A `gh` that refuses everything comes first on PATH; tests that need gh

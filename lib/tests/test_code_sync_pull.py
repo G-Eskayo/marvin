@@ -16,6 +16,7 @@ LIB = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(LIB))
 
 import code_sync as cs  # noqa: E402
+import session_work as sw  # noqa: E402
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -189,3 +190,48 @@ def test_metrics_collision_mixed_files_preserves_stash(tmp_path, monkeypatch):
 
     log = subprocess.run(["git", "log", "--oneline", "-3"], cwd=clone_a, capture_output=True, text=True).stdout
     assert "keep both machines" not in log, "should not partially resolve mixed collisions"
+
+
+def test_pull_on_another_machine_is_unaffected_while_push_elsewhere_is_deferred(tmp_path, monkeypatch):
+    """While push() on machine A is deferred by a live lease, pull() on machine B
+    should proceed normally without error — nothing reaches the remote to create a conflict."""
+    import time
+    import json
+
+    clone_a, clone_b = _make_origin_and_clones(tmp_path)
+    monkeypatch.setattr(cs, "LOG_PATH", tmp_path / "sync-log.md")
+    monkeypatch.setattr(cs, "notify", lambda *a, **kw: None)
+    monkeypatch.setattr(cs, "machine_label", lambda: "test-machine-a")
+    now = time.time()
+
+    # Set up a live lease on clone_a for file.md
+    repo_id_a, _ = sw.file_key(str(clone_a / "file.md"))
+    state_file = tmp_path / "sessions-active.json"
+    state_file.write_text(json.dumps({
+        "sessions": {
+            "session-A": {
+                "request": "testing push defer",
+                "last": now - 5,
+                "files": {
+                    f"{repo_id_a}|file.md": now - 5
+                }
+            }
+        }
+    }))
+    monkeypatch.setattr(cs.session_work, "STATE_PATH", state_file)
+
+    # Make clone_a dirty but don't push (it will be deferred by the lease)
+    before_head_a = subprocess.run(["git", "rev-parse", "HEAD"], cwd=clone_a, capture_output=True, text=True).stdout.strip()
+    (clone_a / "file.md").write_text("v2 on A\n")
+    cs.push(clone_a)
+    after_head_a = subprocess.run(["git", "rev-parse", "HEAD"], cwd=clone_a, capture_output=True, text=True).stdout.strip()
+
+    # Verify clone_a's HEAD didn't change (push deferred, no commit made)
+    assert before_head_a == after_head_a, "clone_a push should have been deferred"
+
+    # Now pull on clone_b should work normally without hitting any conflicts
+    cs.pull(clone_b)
+
+    # Verify clone_b pulled successfully (or already up-to-date)
+    status_b = subprocess.run(["git", "status", "--porcelain"], cwd=clone_b, capture_output=True, text=True).stdout
+    assert not status_b.strip(), "clone_b should have no dirty files after pull"

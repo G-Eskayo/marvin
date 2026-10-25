@@ -103,6 +103,32 @@ def pre_edit(st: dict, sid: str, key, now: float) -> str | None:
             "(this is asked once per file; ~/.agents/lib/session_work.py list shows every live session).")
 
 
+def live_edits_for(repo_id: str, paths: list[str], now: float | None = None) -> list[dict]:
+    """Live (<= LIVE_S) sessions with a recorded edit to repo_id+path, for any path in `paths`.
+    Fails open per session: a malformed entry is skipped, never raised — one broken session
+    must never hide a real lease held by another, and must never crash the caller."""
+    now = now if now is not None else time.time()
+    st = load_state()
+    out = []
+    for sid, s in (st.get("sessions") or {}).items():
+        try:
+            if now - s.get("last", 0) > LIVE_S:
+                continue
+            files = s.get("files") or {}
+            request = s.get("request")
+            if not isinstance(request, str):
+                continue
+            for p in paths:
+                ts = files.get(_k((repo_id, p)))
+                if ts is None or now - ts > LIVE_S:
+                    continue
+                out.append({"session": sid, "path": p, "edited_at": ts,
+                            "request": request.strip()})
+        except Exception:
+            continue
+    return out
+
+
 def prune(st: dict, now: float) -> None:
     st["sessions"] = {k: v for k, v in (st.get("sessions") or {}).items() if now - v.get("last", 0) <= KEEP_S}
     st["asked"] = {k: v for k, v in (st.get("asked") or {}).items() if now - v <= KEEP_S}
@@ -125,17 +151,24 @@ def claim_wanted(st: dict, sid: str, repo: str | None) -> int | None:
 
 # ── state file + hook entry points ──────────────────────────────────────────
 
+def load_state() -> dict:
+    """Load the live-session state file, failing open on missing or corrupt data.
+    Safe for lock-free reads; the state file is always written atomically via tmp.replace()."""
+    try:
+        st = json.loads(STATE_PATH.read_text())
+        if not isinstance(st, dict):
+            raise ValueError
+        return st
+    except (OSError, ValueError):
+        return {}
+
+
 class _Locked:
     def __enter__(self) -> dict:
         STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
         self.lock = open(STATE_PATH.with_suffix(".lock"), "a+")
         fcntl.flock(self.lock, fcntl.LOCK_EX)
-        try:
-            self.st = json.loads(STATE_PATH.read_text())
-            if not isinstance(self.st, dict):
-                raise ValueError
-        except (OSError, ValueError):
-            self.st = {}
+        self.st = load_state()
         return self.st
 
     def __exit__(self, exc_type, *_):

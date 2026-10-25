@@ -98,12 +98,14 @@ import re
 import os
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from machine_profile import machine_label  # noqa: E402
 from notify import notify  # noqa: E402
+import session_work  # noqa: E402
 
 DEFAULT_REPO = Path.home() / ".agents"
 LOG_PATH = Path.home() / ".claude" / "sync-log.md"
@@ -200,6 +202,33 @@ def _stash_file_names(repo: Path) -> list[str]:
 
     # Deduplicate and return
     return sorted(set(tracked + untracked))
+
+
+def _live_edit_lease(repo: Path, changed_files: list[str], now: float | None = None) -> str | None:
+    """Check if any live sessions are actively editing files in changed_files.
+    Returns a human-readable string describing the blocking lease, or None if push can proceed.
+    Scoped to files actually dirty in this repo (not repo-id alone) to avoid false matches
+    against sibling worktrees of the same repo-id."""
+    if not changed_files:
+        return None
+
+    now = now if now is not None else time.time()
+    try:
+        repo_id, _ = session_work.file_key(str(repo / changed_files[0]))
+    except Exception:
+        return None
+
+    if repo_id is None:
+        return None
+
+    edits = session_work.live_edits_for(repo_id, changed_files, now)
+    if not edits:
+        return None
+
+    e = edits[0]
+    minutes_ago = int((now - e["edited_at"]) / 60)
+    request_desc = f', working on: "{e["request"]}"' if e["request"] else ""
+    return f'file {e["path"]} edited {minutes_ago} min ago by session {e["session"][:8]}{request_desc}'
 
 
 def _is_bench_metrics_runlog(path: str) -> bool:
@@ -379,6 +408,11 @@ def push(repo: Path) -> None:
         else:
             _log(repo, "push", f"push failed even after merge retry:\n{retry_out}")
             notify("MARVIN code-sync FAILED", f"Push failed after retry [{repo.name}] — check sync-log.md", open_target=str(LOG_PATH))
+        return
+
+    lease = _live_edit_lease(repo, real_changes)
+    if lease:
+        _log(repo, "push", f"deferred — {lease}")
         return
 
     broken = _files_with_conflict_markers(repo, all_changed)

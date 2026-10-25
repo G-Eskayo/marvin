@@ -51,6 +51,12 @@ Domain terms only. No implementation details — see `docs/adr/` for decisions a
   without this check the *next* automated push — including an unattended daily cron — would
   commit and propagate that corruption with nobody watching. See [[0022]] for the real incident
   that motivated this.
+- **Edit lease (code-sync)**: before `push()` commits, it checks whether any live sessions
+  (active within the last 45 minutes per `session_work.py`'s tracking) are actively editing the
+  same files that are dirty in this repo's working tree. If so, `push()` defers (logs it, returns
+  early, no commit) — the lease is scoped to files known dirty in this specific checkout, not to
+  repo-id alone, so an unrelated pipeline worktree editing a same-named file in its own tree won't
+  block the main checkout's sync. See [[0065]] for rationale and tradeoffs.
 
 - **Intent-vs-reality audit**: comparing documented intent (docstrings, ADRs, roadmap `[decision]`/
   `[research]` markers, memory) against actual current system state to find gaps nobody's reported
