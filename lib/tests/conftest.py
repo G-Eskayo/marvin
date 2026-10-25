@@ -68,14 +68,21 @@ def _no_real_github(tmp_path_factory, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _no_real_disk_housekeeping(request, monkeypatch):
-    # cleanup_sweep.run_daily_sweep runs the real disk ledger and trim (dry_run=False) on whatever machine runs
-    # the tests; a test must never trim the real machine's caches. (disk_ledger/disk_trim's own tests test them.)
-    if request.module.__name__.rsplit(".", 1)[-1] in ("test_disk_ledger", "test_disk_trim"):
+    # cleanup_sweep.run_daily_sweep runs the real disk ledger, trim, and clone sweep (dry_run=False) on whatever
+    # machine runs the tests; a test must never perform real cleanup. (disk_ledger/disk_trim/clone_sweep's own tests
+    # test them.)
+    module_name = request.module.__name__.rsplit(".", 1)[-1]
+    if module_name in ("test_disk_ledger", "test_disk_trim", "test_clone_sweep"):
         return
     import disk_ledger
     import disk_trim
     monkeypatch.setattr(disk_ledger, "run_daily_ledger", lambda *a, **k: None)
     monkeypatch.setattr(disk_trim, "trim_with_logging", lambda *a, **k: {})
+    try:
+        import clone_sweep
+        monkeypatch.setattr(clone_sweep, "sweep_clones", lambda *a, **k: [])
+    except ImportError:
+        pass
 
 
 def pytest_terminal_summary(terminalreporter):

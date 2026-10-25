@@ -367,3 +367,44 @@ def test_drop_build_output_refuses_paths_outside_the_worktree(tmp_path):
     outside.mkdir()
     assert cs.drop_build_output(wt, ["../node_modules", str(outside)]) == []
     assert outside.is_dir()
+
+
+# ── clone sweep integration ────────────────────────────────────────────────
+
+def test_run_daily_sweep_includes_clones_removed_in_summary(log_path, monkeypatch):
+    """clone_removed is integrated into run_daily_sweep and appears in the summary."""
+    removed_clones = [
+        {"path": Path("/tmp/clone1"), "age_hours": 5, "size_kb": 1024},
+        {"path": Path("/tmp/clone2"), "age_hours": 10, "size_kb": 2048},
+    ]
+
+    def mock_sweep_clones(*a, **k):
+        return removed_clones
+
+    import clone_sweep
+    monkeypatch.setattr(clone_sweep, "sweep_clones", mock_sweep_clones)
+
+    result = cs.run_daily_sweep(
+        list_claimed_open_issues=lambda: [],
+        list_worktrees=lambda: [],
+        now=NOW,
+    )
+
+    assert result["clones_removed"] == 2
+    content = log_path.read_text()
+    assert "2 clone(s)" in content
+    assert "freed" in content
+
+
+def test_write_log_includes_clone_removal_summary(log_path):
+    """_write_log includes clone_removed summary in the logged output."""
+    clone_removed = [
+        {"path": Path("/tmp/clone1"), "age_hours": 5, "size_kb": 1024},
+        {"path": Path("/tmp/clone2"), "age_hours": 10, "size_kb": 2048},
+    ]
+
+    cs._write_log([], {"removed": [], "review": []}, clone_removed)
+    content = log_path.read_text()
+    assert "2 clone(s)" in content
+    # 3072 KB = 3 MiB
+    assert "3.0 MiB" in content
