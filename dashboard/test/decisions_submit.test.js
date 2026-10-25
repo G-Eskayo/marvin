@@ -92,6 +92,13 @@ describe('submitDecisions', () => {
     expect(state.labelEdits[0]).toEqual(expect.arrayContaining(['--remove-label', 'needs-info', '--add-label', 'ready-for-agent']))
   })
 
+  it('does not move a held ticket to ready-for-agent even when all decisions are answered', async () => {
+    const { exec, state } = fakeGh({ labels: ['needs-info', 'held'], pullRequest: false })
+    const r = await submitDecisions({ repo: 'o/r', number: 5, answers: { dance: { choices: ['A: Clap & wiggle'] }, handoff: { choices: ['Glide'] } } }, { exec })
+    expect(state.labelEdits).toHaveLength(0)
+    expect(r.labelError).toMatch(/on hold/)
+  })
+
   it('does not touch labels while required decisions remain, or on a PR', async () => {
     const t = fakeGh({ labels: ['needs-info'], pullRequest: false })
     await submitDecisions({ repo: 'o/r', number: 5, answers: { dance: { choices: ['A: Clap & wiggle'] } } }, { exec: t.exec })

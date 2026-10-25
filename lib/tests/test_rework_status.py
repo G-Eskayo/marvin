@@ -130,3 +130,19 @@ def test_collect_reads_each_projects_open_issues_once(monkeypatch):
     assert len(calls) == 2
     assert set(out) == {"G-Eskayo/marvin#5", "G-Eskayo/clarity-captions#5"}
     assert out["G-Eskayo/marvin#5"]["state"] in {"queued", "not-queued", "blocked", "paused", "running", "held", "needs-person", "parked"}
+
+
+def test_held_tickets_show_why_when_hold_info_is_available():
+    """When a ticket is held, the detail includes the reason if hold info is available."""
+    hold_info = {"since": NOW.isoformat(), "actor": "user", "reason": "waiting for feedback"}
+    s = rs.status_for(ticket(labels=("needs-reengagement", "held")), ctx(hold=hold_info))
+    assert s["state"] == "held"
+    assert "held" in s["detail"]
+    assert "feedback" in s["detail"]
+
+
+def test_held_without_hold_info_shows_generic_message():
+    """When hold info is not available, show a generic message."""
+    s = rs.status_for(ticket(labels=("needs-reengagement", "held")), ctx(hold=None))
+    assert s["state"] == "held"
+    assert "on hold" in s["detail"] and "person" in s["detail"]

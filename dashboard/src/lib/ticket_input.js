@@ -5,6 +5,8 @@
 // answer. What this adds is the missing second half: a ticket that was WAITING (needs-info, or parked after repeated
 // failures) is put back in the queue, otherwise nothing would ever look at the answer.
 
+import { isHeld } from './hold_labels.js'
+
 export const HUMAN_INPUT_MARKER = '<!-- marvin:human-input -->'
 
 const claims = (labels) => labels.filter((l) => l.startsWith('claimed:'))
@@ -13,6 +15,9 @@ export function planInput(labels, state = 'OPEN') {
   const none = { requeue: false, add: [], remove: [] }
   const has = (l) => labels.includes(l)
   if (state && state !== 'OPEN') return { ...none, effect: 'This ticket is closed: your comment is posted, nothing is queued.' }
+  if (isHeld(labels)) {
+    return { ...none, effect: 'This ticket is on hold: your comment is posted, but the pipeline will not touch it until the hold label is removed.' }
+  }
   if (has('needs-reengagement')) {
     return { ...none, effect: 'This ticket is already queued to be rebuilt; the agent will read your comment when it does.' }
   }

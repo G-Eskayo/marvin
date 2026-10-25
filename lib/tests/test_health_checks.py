@@ -1299,3 +1299,46 @@ def test_the_machine_script_reads_a_real_process_uptime_with_this_machines_ps():
         assert 1 <= int(out.stdout.strip()) <= 20
     finally:
         child.kill()
+
+
+# ── label conflicts ────────────────────────────────────────────────────────────
+
+def test_check_label_conflicts_green_when_no_conflicts(tmp_path):
+    """Label conflicts are green when none exist."""
+    now = datetime(2026, 10, 22, 14, 30, tzinfo=timezone.utc)
+    path = tmp_path / "conflicts.json"
+    path.write_text('{"generated_at": "2026-10-22T14:29:00+00:00", "conflicts": []}')
+    result = hc.check_label_conflicts(path=path, now=now)
+    assert result["severity"] == "green"
+    assert "no label conflicts" in result["detail"]
+
+
+def test_check_label_conflicts_red_when_conflicts_exist(tmp_path):
+    """Label conflicts are red when conflicts are found."""
+    now = datetime(2026, 10, 22, 14, 30, tzinfo=timezone.utc)
+    path = tmp_path / "conflicts.json"
+    path.write_text('{"generated_at": "2026-10-22T14:29:00+00:00", "conflicts": ['
+                    '{"repo": "G-Eskayo/marvin", "number": 1, "title": "Bad state", "conflict": "held + ready-for-agent"}'
+                    ']}')
+    result = hc.check_label_conflicts(path=path, now=now)
+    assert result["severity"] == "red"
+    assert "conflicting labels" in result["detail"]
+    assert "#1" in result["detail"]
+
+
+def test_check_label_conflicts_yellow_when_stale(tmp_path):
+    """Label conflicts check is yellow when the file is stale."""
+    path = tmp_path / "conflicts.json"
+    old_time = hc._now() - hc.timedelta(hours=4)
+    path.write_text(f'{{"generated_at": "{old_time.isoformat()}", "conflicts": []}}')
+    result = hc.check_label_conflicts(path=path, now=hc._now())
+    assert result["severity"] == "yellow"
+    assert "last ran" in result["detail"]
+
+
+def test_check_label_conflicts_yellow_when_not_run_yet(tmp_path):
+    """Label conflicts check is yellow when it hasn't been run yet."""
+    path = tmp_path / "never_written.json"
+    result = hc.check_label_conflicts(path=path, now=hc._now())
+    assert result["severity"] == "yellow"
+    assert "not checked yet" in result["detail"]

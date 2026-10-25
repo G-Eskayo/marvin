@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import project_catalog  # noqa: E402
+import ticket_policy  # noqa: E402
 
 
 def ordinal(n: int) -> str:
@@ -49,6 +51,77 @@ def _read_diagnosis(ticket_number: int, repo: str) -> dict | None:
     return None
 
 
+def _same_breath_comment(since: datetime | None, actor: str | None, comments: list[dict]) -> dict | None:
+    """Find a comment by `actor` within 10 minutes of `since`. Best-effort: returns None if not found."""
+    if since is None or not actor or not comments:
+        return None
+    for c in comments:
+        try:
+            c_time = datetime.fromisoformat(c.get("createdAt", "").replace("Z", "+00:00"))
+            c_actor = c.get("author", {}).get("login", "")
+            if c_actor == actor and abs((c_time - since).total_seconds()) <= 600:
+                return c
+        except (TypeError, ValueError, AttributeError, KeyError):
+            continue
+    return None
+
+
+def _hold_info(repo: str, number: int) -> dict | None:
+    """Fetch hold context: when and by whom. Tracks labeled/unlabeled events across the full event
+    stream to find the currently-active hold episode. Best-effort; returns None on error."""
+    try:
+        full_repo = repo if "/" in repo else f"G-Eskayo/{repo}"
+        env = project_catalog.run_env()
+
+        # Fetch all events with pagination to find the currently-active hold label
+        events_json = subprocess.run(
+            ["gh", "api", f"repos/{full_repo}/issues/{number}/events", "--paginate", "--jq", "."],
+            capture_output=True, text=True, timeout=30, check=True, env=env
+        ).stdout
+        events = json.loads(events_json) if events_json else []
+
+        # Track which hold labels are currently active (labeled but not unlabeled after)
+        hold_status = {}  # label_name -> {"added_at": dt, "actor": str, "event": event_dict}
+        for e in events:
+            event_type = e.get("event")
+            label_name = e.get("label", {}).get("name", "")
+            if label_name in ticket_policy.HOLD_LABELS:
+                if event_type == "labeled":
+                    hold_status[label_name] = {
+                        "added_at": datetime.fromisoformat(e.get("created_at", "").replace("Z", "+00:00")),
+                        "actor": e.get("actor", {}).get("login", ""),
+                        "event": e
+                    }
+                elif event_type == "unlabeled":
+                    hold_status.pop(label_name, None)
+
+        if not hold_status:
+            return None
+
+        # Find the most recent hold label event to use as "the" hold
+        current_hold_label = max(hold_status.items(), key=lambda x: x[1]["added_at"])[0]
+        hold_info = hold_status[current_hold_label]
+        created_at = hold_info["added_at"]
+        actor = hold_info["actor"]
+
+        # Fetch comments to find a comment in the same moment
+        comments_json = subprocess.run(
+            ["gh", "api", f"repos/{full_repo}/issues/{number}/comments", "--paginate", "--jq", "."],
+            capture_output=True, text=True, timeout=30, check=True, env=env
+        ).stdout
+        comments = json.loads(comments_json) if comments_json else []
+        comment = _same_breath_comment(created_at, actor, comments)
+
+        return {
+            "since": created_at.isoformat(),
+            "label": current_hold_label,
+            "actor": actor,
+            "reason": comment.get("body", "") if comment else None
+        }
+    except (subprocess.SubprocessError, json.JSONDecodeError, KeyError, TypeError, AttributeError, ValueError):
+        return None
+
+
 def status_for(ticket: dict, ctx: dict) -> dict:
     """One of: running, held, needs-person, paused, blocked, queued, not-queued. `ctx`: queue (identifiers, in dispatch
     order), key (this ticket's identifier, default its number), attempts (PRs already raised), max_attempts,
@@ -65,9 +138,15 @@ def status_for(ticket: dict, ctx: dict) -> dict:
     if claim:
         result = {"state": "running", "headline": "Being rebuilt right now",
                 "detail": f"Running on {claim} for {_minutes(ctx.get('claim_started'), now)} (attempt {attempts + 1} of {cap}). It updates this same PR when it finishes."}
-    elif names & {"held", "pinned"}:
-        result = {"state": "held", "headline": "On hold",
-                "detail": "A person asked the pipeline not to touch this ticket (held or pinned), so it will not be rebuilt until that label is removed."}
+    elif names & ticket_policy.HOLD_LABELS:
+        hold_label = sorted(names & ticket_policy.HOLD_LABELS)[0] if (names & ticket_policy.HOLD_LABELS) else "held"
+        hold = ctx.get("hold")
+        detail = f"A person put this on hold with the '{hold_label}' label, so the pipeline will not rebuild it until that label is removed."
+        if hold and hold.get("reason"):
+            detail += f" They said: {hold['reason'][:100]}"
+        elif hold and hold.get("since"):
+            detail += f" (held since {hold['since']})"
+        result = {"state": "held", "headline": "On hold", "detail": detail}
     elif attempts >= cap:
         result = {"state": "needs-person", "headline": "Needs you",
                 "detail": f"It has been rebuilt {attempts} times and still does not pass, so the pipeline stopped. Look at the denial comments on its ticket."}
@@ -139,10 +218,13 @@ def collect(repos: list[str] | None = None) -> dict:
             stages = ts.read_stages(n, None if r == tp.REPO else r)
             starts = [e["timestamp"] for e in stages if e.get("stage") == "claimed" and e.get("status") == "started"]
             started = datetime.fromisoformat(starts[-1].replace("Z", "+00:00")) if starts else None
+            hold = None
+            if _names(t) & ticket_policy.HOLD_LABELS:
+                hold = _hold_info(r, n)
             out[f"{r}#{n}"] = status_for(t, dict(
                 queue=queue, key=f"{r}#{n}", attempts=tp._attempts(r, n), max_attempts=tp.MAX_REENGAGE_ATTEMPTS,
                 claim_started=started, paused=tripped.get(r), blockers=ticket_policy.open_blockers(t, open_numbers),
-                running=running, project=r.split("/")[-1], now=now))
+                running=running, project=r.split("/")[-1], now=now, hold=hold))
     return out
 
 

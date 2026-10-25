@@ -110,7 +110,7 @@ def _label_for_device(device_id: str) -> str:
     return "mac-mini" if device_id.startswith("mac-mini") else "macbook-pro"
 
 
-HOLD_LABELS = frozenset({"pinned", "hold", "held"})  # a person's hands off: never dispatched, never sent back (#387)
+HOLD_LABELS = ticket_policy.HOLD_LABELS  # a person's hands off: never dispatched, never sent back (#387)
 UNSCORED_RANK = 2  # a ticket the prioritizer hasn't scored yet counts as middle priority
 
 
@@ -476,6 +476,7 @@ def _run_ticket_agents(step, summary) -> None:
                                 in_flight=lambda repo: ticket_agents.in_flight_numbers(repo, snap),
                                 due_for=ticket_agents.due_for_repo, executable=executable,
                                 tags_state_path=ticket_agents.project_tagger.STATE_PATH,
+                                conflicts_state_path=ticket_agents.LABEL_CONFLICTS_PATH,
                                 report=lambda agent, detail: step(f"Ticket agents · {agent}", detail),
                                 running=lambda repo: None if live is None else {n for r, n in live if r == repo})
         step("Ticket agents", f"{res['applied']} applied, {res['proposed']} proposed, {res['failed']} failed")

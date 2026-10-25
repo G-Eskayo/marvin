@@ -137,6 +137,14 @@ def test_after_two_re_queues_it_goes_to_a_person_instead_of_looping():
     assert "ready-for-agent" not in {a["arg"] for a in ops(acts, op="add_label")}
 
 
+def test_refeed_does_not_touch_held_tickets_with_needs_reengagement():
+    """A ticket with hold+needs-reengagement should not be requeued or changed."""
+    acts = ta.plan_refeed(REPO, [issue(21, labels=["hold", "needs-reengagement"])], counts={})
+    assert ops(acts, op="remove_label") == []
+    assert ops(acts, op="add_label") == []
+    assert ops(acts, op="comment") == []
+
+
 # ── running ─────────────────────────────────────────────────────────────────
 
 class FakeGh:
@@ -486,3 +494,70 @@ def test_in_propose_mode_nothing_is_released_or_notified(tmp_path, monkeypatch):
                  {"mode": "propose", "agents": {}}, NOW, audit_path=tmp_path / "a.jsonl", proposals_path=tmp_path / "p.json",
                  project_rules={"projects": {}}, running=lambda repo: set())
     assert calls == [] and sent == [] and res["by_agent"]["stale_claims"]["planned"] == 2
+
+
+# ── label conflicts ────────────────────────────────────────────────────────────
+
+def test_label_conflicts_detects_held_with_ready_for_agent():
+    """held + ready-for-agent is a conflict."""
+    conflicts = ta._label_conflicts(REPO, [issue(1, labels=["held", "ready-for-agent"], title="Bad state")])
+    assert len(conflicts) == 1
+    assert conflicts[0]["conflict"] == "held + ready-for-agent"
+
+
+def test_label_conflicts_detects_hold_with_needs_reengagement():
+    """hold + needs-reengagement is a conflict."""
+    conflicts = ta._label_conflicts(REPO, [issue(2, labels=["hold", "needs-reengagement"], title="Sent back while held")])
+    assert len(conflicts) == 1
+    assert conflicts[0]["conflict"] == "hold + needs-reengagement (sent back)"
+
+
+def test_label_conflicts_produces_two_entries_for_all_three_labels():
+    """A ticket with held + ready-for-agent + needs-reengagement produces two conflict entries."""
+    conflicts = ta._label_conflicts(REPO, [issue(3, labels=["held", "ready-for-agent", "needs-reengagement"], title="Triple conflict")])
+    assert len(conflicts) == 2
+    conflicts_set = {c["conflict"] for c in conflicts}
+    assert "held + ready-for-agent" in conflicts_set
+    assert "held + needs-reengagement (sent back)" in conflicts_set
+
+
+def test_label_conflicts_ignores_tickets_without_hold_labels():
+    """A ticket with only ready-for-agent (no hold label) produces no conflict."""
+    conflicts = ta._label_conflicts(REPO, [issue(4, labels=["ready-for-agent"], title="No hold")])
+    assert len(conflicts) == 0
+
+
+def test_label_conflicts_detects_pinned_with_needs_reengagement():
+    """pinned + needs-reengagement is also a conflict (pinned is a HOLD_LABEL)."""
+    conflicts = ta._label_conflicts(REPO, [issue(5, labels=["pinned", "needs-reengagement"], title="Pinned conflict")])
+    assert len(conflicts) == 1
+    assert conflicts[0]["conflict"] == "pinned + needs-reengagement (sent back)"
+
+
+def test_label_conflicts_are_written_with_metadata(tmp_path):
+    """Label conflicts are written to a JSON file with generated_at and conflicts array."""
+    conflicts = [
+        {"repo": REPO, "number": 1, "title": "Bad state", "conflict": "held + ready-for-agent"},
+    ]
+    path = tmp_path / "conflicts.json"
+    ta.write_label_conflicts(conflicts, path, NOW)
+    data = json.loads(path.read_text())
+    assert data["generated_at"] == NOW.isoformat()
+    assert len(data["conflicts"]) == 1
+    assert data["conflicts"][0]["number"] == 1
+
+
+def test_write_label_conflicts_truncates_at_50(tmp_path):
+    """Label conflicts are truncated at 50 entries, like revisit state."""
+    conflicts = [{"repo": REPO, "number": i, "title": f"Ticket {i}", "conflict": "test"} for i in range(60)]
+    path = tmp_path / "conflicts.json"
+    ta.write_label_conflicts(conflicts, path, NOW)
+    data = json.loads(path.read_text())
+    assert len(data["conflicts"]) == 50
+
+
+def test_write_label_conflicts_to_unwritable_path_silently_noop():
+    """Writing to an unwritable path should not raise, just silently skip."""
+    conflicts = [{"repo": REPO, "number": 1, "title": "Test", "conflict": "test"}]
+    path = Path("/nonexistent/path/that/cannot/be/written")
+    ta.write_label_conflicts(conflicts, path, NOW)  # should not raise

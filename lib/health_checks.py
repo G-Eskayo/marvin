@@ -475,6 +475,8 @@ def check_project_tags(path: Path | None = None, now: datetime | None = None) ->
 
 HOLD_REVISIT_PATH = Path.home() / ".claude" / "logs" / "hold-revisit.json"
 HOLD_REVISIT_STALE_HOURS = 3
+LABEL_CONFLICTS_PATH = Path.home() / ".claude" / "logs" / "label-conflicts.json"
+LABEL_CONFLICTS_STALE_HOURS = 3
 
 
 def check_hold_revisit(path: Path | None = None, now: datetime | None = None) -> dict:
@@ -497,6 +499,28 @@ def check_hold_revisit(path: Path | None = None, now: datetime | None = None) ->
     if len(without) > 5:
         detail += f" (+ {len(without) - 5} more)"
     return _result(cid, label, "yellow", detail, value=len(without))
+
+
+def check_label_conflicts(path: Path | None = None, now: datetime | None = None) -> dict:
+    """Tickets with conflicting labels (e.g., both ready-for-agent and ready-for-human). Written hourly by ticket agents."""
+    cid, label = "tickets:label-conflicts", "Tickets have consistent labels"
+    now = now or _now()
+    try:
+        d = json.loads(Path(path or LABEL_CONFLICTS_PATH).read_text())
+        at = datetime.fromisoformat(d["generated_at"])
+        age_h = (now - at).total_seconds() / 3600
+        if age_h > LABEL_CONFLICTS_STALE_HOURS:
+            return _result(cid, label, "yellow", f"the ticket agents last ran {age_h:.0f} hours ago (they run hourly)")
+        conflicts = d.get("conflicts") or []
+        if not conflicts:
+            return _result(cid, label, "green", "no label conflicts detected", value=0)
+        parts = [f"{c['repo'].split('/')[-1]}#{c['number']} ({c.get('conflict', 'unknown')})" for c in conflicts[:5]]
+        detail = f"{len(conflicts)} with conflicting labels: " + "; ".join(parts)
+        if len(conflicts) > 5:
+            detail += f" (+ {len(conflicts) - 5} more)"
+        return _result(cid, label, "red", detail, value=len(conflicts))
+    except Exception:
+        return _result(cid, label, "yellow", "the ticket agents have not checked yet")
 
 
 MAIN_HEALTH_PATH = Path.home() / ".claude" / "logs" / "main-health.json"
@@ -1481,6 +1505,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("catalog:fresh", "Project catalog is current", check_catalog_fresh, CHECK_BUDGET_S),
         ("tickets:project-tags", "Tickets are on their project's board", check_project_tags, CHECK_BUDGET_S),
         ("tickets:hold-revisit", "Hold tickets have revisit dates", check_hold_revisit, CHECK_BUDGET_S),
+        ("tickets:label-conflicts", "Tickets have consistent labels", check_label_conflicts, CHECK_BUDGET_S),
         ("github:budget", "GitHub request budget", check_github_budget, CHECK_BUDGET_S),
         ("github:gate", "GitHub calls go through the gate", check_gh_gate, CHECK_BUDGET_S),
         ("main:green", "The main branch passes its tests", check_main_health, CHECK_BUDGET_S),

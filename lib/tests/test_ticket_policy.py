@@ -127,6 +127,12 @@ def test_triage_leaves_parent_prds_and_claimed_tickets_alone():
     assert tp.triage_verdict(issue(labels=["claimed:mac-mini"], body="thin")) is None
 
 
+def test_hold_labels_protect_tickets_from_triage():
+    """Tickets with pinned, hold, or held labels are never triaged."""
+    for label in tp.HOLD_LABELS:
+        assert tp.triage_verdict(issue(labels=[label], body=GOOD)) is None
+
+
 # ── tickets marked for a person must say exactly what to do ─────────────────
 
 GOOD_TASK = """## What to build

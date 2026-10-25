@@ -179,7 +179,7 @@ def plan_refeed(repo, issues, counts):
     out = []
     for t in issues:
         names = set(pol.label_names(t))
-        if "needs-reengagement" not in names or names & pol.SKIP_LABELS or "held" in names:
+        if "needs-reengagement" not in names or names & pol.HOLD_LABELS:
             continue
         n = counts.get(t["number"], 0)
         out.append(_act("refeed", repo, t, "remove_label", "needs-reengagement", "denied or failed the merge gate"))
@@ -285,6 +285,49 @@ def refeed_counts(path: Path, repo: str) -> dict[int, int]:
 
 
 HOLD_REVISIT_PATH = HOME / ".claude" / "logs" / "hold-revisit.json"
+LABEL_CONFLICTS_PATH = HOME / ".claude" / "logs" / "label-conflicts.json"
+
+
+def _label_conflicts(repo: str, issues: list[dict]) -> list[dict]:
+    """Find labels that cannot coexist on the same ticket: held/hold/pinned with ready-for-agent
+    or needs-reengagement. Returns list of conflict dicts, one per matching pair (a triple-labeled
+    ticket generates two entries)."""
+    conflicts = []
+    for t in issues:
+        names = set(pol.label_names(t))
+        n = t["number"]
+        title = t.get("title", "")
+        hold_labels = names & pol.HOLD_LABELS
+
+        for hold_label in sorted(hold_labels):
+            if "ready-for-agent" in names:
+                conflicts.append({
+                    "repo": repo, "number": n, "title": title,
+                    "conflict": f"{hold_label} + ready-for-agent"
+                })
+            if "needs-reengagement" in names:
+                conflicts.append({
+                    "repo": repo, "number": n, "title": title,
+                    "conflict": f"{hold_label} + needs-reengagement (sent back)"
+                })
+
+    return conflicts
+
+
+def write_label_conflicts(conflicts: list[dict], path: Path, now: datetime) -> None:
+    """Write {generated_at, conflicts: []} atomically via tmp-then-rename.
+    Mirrors write_revisit_state pattern."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_stem(path.stem + ".tmp")
+        data = {
+            "generated_at": now.isoformat(),
+            "conflicts": conflicts[:50]  # truncate at 50 like project_tags
+        }
+        tmp.write_text(json.dumps(data) + "\n")
+        tmp.replace(path)
+    except OSError:
+        pass  # never stop the run
 
 
 def collect_hold_comments(repo: str, held_numbers: set[int], gh) -> dict[int, list]:
@@ -360,16 +403,18 @@ def _write(path: Path, rows: list[dict], mode="a") -> None:
 
 def run(snapshot, gh, cfg, now, audit_path=AUDIT_PATH, proposals_path=PROPOSALS_PATH, in_flight=lambda repo: set(),
         due_for=lambda repo: None, report=None, executable=None, project_rules=None, tags_state_path=None, revisit_state_path=None,
-        running=lambda repo: None) -> dict:
+        running=lambda repo: None, conflicts_state_path=None) -> dict:
     """One pass over every repo in `snapshot` ({repo: {"issues": [...], "prs": [...]}}).
     `tags_state_path`: where the project tagger's unclear list goes (the real run passes project_tagger.STATE_PATH).
-    `revisit_state_path`: where the revisit agent's "without revisit" list goes."""
+    `revisit_state_path`: where the revisit agent's "without revisit" list goes.
+    `conflicts_state_path`: where label conflicts are written."""
     report = report or (lambda *a, **k: None)
     rules = project_rules if project_rules is not None else project_tagger.load_rules()
     labels_now = {(r, t["number"]): pol.label_names(t) for r, d in snapshot.items() for t in d["issues"]}
     removed = project_tagger.removed_by_people(_read_audit(audit_path), labels_now)
     unclear: list[dict] = []
     without_revisit: list[dict] = []
+    all_conflicts: list[dict] = []
     executable = set(executable) if executable else {"G-Eskayo/marvin"}  # projects the executor can run
     modes = {a: effective_mode(cfg, a, now) for a in AGENTS}
     planned: list[dict] = []
@@ -408,6 +453,9 @@ def run(snapshot, gh, cfg, now, audit_path=AUDIT_PATH, proposals_path=PROPOSALS_
             planned += tags
             unclear += unsure
 
+        # Check for label conflicts on every repo
+        all_conflicts.extend(_label_conflicts(repo, issues))
+
     # Unfreezing the queue goes first: claims, re-queues and lifted holds before labels. With a backlog (12 days of
     # crashed passes left 100+ label changes) the per-pass budget would otherwise hold claim releases back for hours.
     planned.sort(key=lambda a: APPLY_ORDER.index(a["agent"]) if a["agent"] in APPLY_ORDER else len(APPLY_ORDER))
@@ -443,6 +491,8 @@ def run(snapshot, gh, cfg, now, audit_path=AUDIT_PATH, proposals_path=PROPOSALS_
         project_tagger.write_state(unclear, pending, tags_state_path, ts)
     if revisit_state_path is not None:
         write_revisit_state(without_revisit, revisit_state_path, now)
+    if conflicts_state_path is not None:
+        write_label_conflicts(all_conflicts, conflicts_state_path, now)
     _write(audit_path, rows)
     _write(proposals_path, [{
         "generated_at": ts, "mode": cfg.get("mode"), "act_after": cfg.get("act_after"),
@@ -549,7 +599,7 @@ def main() -> int:
         cfg = {**cfg, "mode": a.mode, "agents": {}}
     snap = collect(board_repos())
     res = run(snap, _gh, cfg, datetime.now(timezone.utc), in_flight=lambda repo: in_flight_numbers(repo, snap), due_for=due_for_repo,
-              tags_state_path=project_tagger.STATE_PATH, revisit_state_path=HOLD_REVISIT_PATH)
+              tags_state_path=project_tagger.STATE_PATH, revisit_state_path=HOLD_REVISIT_PATH, conflicts_state_path=LABEL_CONFLICTS_PATH)
     print(json.dumps({k: v for k, v in res.items() if k != "by_agent"}), {k: v["mode"] for k, v in res["by_agent"].items()})
     return 0
 

@@ -30,6 +30,16 @@ describe('planInput: what leaving a comment does to a ticket', () => {
       expect(p.effect.length).toBeGreaterThan(10)
     }
   })
+
+  it('comment on a held ticket is posted but requeue is blocked', () => {
+    for (const holdLabel of ['held', 'pinned', 'hold']) {
+      const p = planInput([holdLabel, 'needs-info'], 'OPEN')
+      expect(p.requeue).toBe(false)
+      expect(p.add).toEqual([])
+      expect(p.remove).toEqual([])
+      expect(p.effect).toMatch(/on hold/i)
+    }
+  })
 })
 
 const fakeGh = (labels, state = 'OPEN', failOn = null) => {

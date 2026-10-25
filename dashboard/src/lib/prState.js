@@ -38,8 +38,11 @@ export function describePrState(pr, { status = 'idle', errorMessage = null, prog
   }
 
   if (pr.sentBack) {
+    const detail = pr.rework?.state === 'held'
+      ? "This PR's ticket was rejected and is now on hold, waiting for feedback from a person. There is nothing to approve until the hold is cleared."
+      : "This PR's ticket was rejected, and a reworked version will update this same PR, so there is nothing to approve."
     return base('sent-back', 'blocked', 'Sent back for rework',
-      "This PR's ticket was rejected, and a reworked version will update this same PR, so there is nothing to approve.",
+      detail,
       'hidden', 'hidden',
       { rework: pr.rework || null, actions: [{ id: 'clearSentBack', label: 'The rework is already in? Clear the sent-back label' }] })
   }

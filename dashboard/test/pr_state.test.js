@@ -24,6 +24,14 @@ describe('describePrState: one headline, only the buttons that make sense', () =
     expect(s.actions.map((a) => a.id)).toContain('clearSentBack') // the way out when the label is wrong
   })
 
+  it('when sent back and on hold, the detail says feedback waits for a person', () => {
+    const s = state({ sentBack: true, rework: { state: 'held' } })
+    expect(s.kind).toBe('sent-back')
+    expect(s.headline).toBe('Sent back for rework')
+    expect(s.detail).toMatch(/on hold/)
+    expect(s.detail).toMatch(/waiting for feedback from a person/i)
+  })
+
   it('a refusal left over from an earlier click is never shown on top of the state that caused it', () => {
     const s = state({ sentBack: true }, { status: 'error', errorMessage: 'SENT_BACK at request: this PR was sent back' })
     expect(s.kind).toBe('sent-back')
