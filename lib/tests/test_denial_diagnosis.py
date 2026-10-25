@@ -205,7 +205,7 @@ class TestTally:
 
         result = dd.tally()
 
-        assert len(result) == 0
+        assert not result
 
     def test_tally_exactly_three_repeats_crosses_threshold(self):
         """tally() DOES return groups with exactly 3 repeats."""
@@ -331,7 +331,7 @@ class TestIntegrationWithPlanRefeed:
     def test_plan_refeed_calls_classify_for_each_requeued_ticket(self):
         """plan_refeed() calls classify() once per ticket with needs-reengagement."""
         # This test is more about the integration point. We mock classify and verify it's called.
-        # The actual integration is in ticket_agents.py; here we just verify the contract.
+        # The actual integration is in ticket_agents.py; here we verify the contract.
         pass  # Implemented in test_ticket_agents.py
 
 

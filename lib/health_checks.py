@@ -177,7 +177,7 @@ def check_ticket_failure_streaks(repo: str = "G-Eskayo/marvin", run=subprocess.r
     return results
 
 
-# ── cron jobs (absorbed from cron_health.py -- literally the same
+# ── cron jobs (absorbed from cron_health.py -- the same
 # check_job() + persistent offset-tracking state, not a reimplementation,
 # per ADR 0033. Reimplementing the log-scan naively (whole-tail regex, no
 # offset tracking) was tried first and rejected: it re-flagged every
