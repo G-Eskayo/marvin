@@ -236,7 +236,7 @@ def test_day_boundary_timezone_comparison(tmp_path):
     # Using UTC for simplicity; the logic should handle timezone awareness
     due_today = ol.due_for_resurfacing(NOW, store_path=store)
     # Should be due for resurfacing today or tomorrow depending on interval
-    # This test just ensures no crash on boundary
+    # This test ensures no crash on boundary
     assert isinstance(due_today, list)
 
 
@@ -250,7 +250,7 @@ def test_dropped_loops_never_resurface_again(tmp_path):
     # Check far in the future
     future = NOW + timedelta(days=365)
     due = ol.due_for_resurfacing(future, store_path=store)
-    assert len(due) == 0
+    assert not due
 
 
 def test_done_loops_never_resurface_again(tmp_path):
@@ -263,7 +263,7 @@ def test_done_loops_never_resurface_again(tmp_path):
     # Check far in the future
     future = NOW + timedelta(days=365)
     due = ol.due_for_resurfacing(future, store_path=store)
-    assert len(due) == 0
+    assert not due
 
 
 def test_done_vs_dropped_distinguishable_in_list_loops(tmp_path):

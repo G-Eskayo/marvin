@@ -263,27 +263,27 @@ def run_mutation_check(
             "survived": survived, "unmeasured": unmeasured, "killed_lines": killed_lines, "reason": None}
 
 
-def render_section(result: dict) -> str:
+def render_section(check_result: dict) -> str:
     """The PR-body section, in the one format every reader parses: the MR Review card ("NN% (k/n)") and auto-merge's
     shadow mode ("**Score:** NN%"). A score is only ever written when one was measured."""
     head = "## Mutation Score\n\n"
-    if result.get("status") != "ok" or result.get("score") is None:
-        why = result.get("reason") or "nothing could be scored"
+    if check_result.get("status") != "ok" or check_result.get("score") is None:
+        why = check_result.get("reason") or "nothing could be scored"
         lines = [f"Score: unknown ({why}). Auto-merge waits for a measured score."]
-        for u in (result.get("unmeasured") or [])[:5]:
+        for u in (check_result.get("unmeasured") or [])[:5]:
             lines.append(f"- not measured: `{u.get('file')}` line {u.get('line')}: {u.get('snippet', '')}")
         return head + "\n".join(lines) + "\n"
-    if not result.get("mutants_total"):
+    if not check_result.get("mutants_total"):
         return head + "**Score:** 100% (0/0): no mutable lines (docs, config or tests only).\n"
-    killed, total = result["killed"], result["killed"] + len(result.get("survived") or [])
-    pct = round(result["score"] * 100)
+    killed, total = check_result["killed"], check_result["killed"] + len(check_result.get("survived") or [])
+    pct = round(check_result["score"] * 100)
     md = head + f"**Score:** {pct}% ({killed}/{total}) of planted bugs caught by this PR's tests.\n"
-    if result.get("survived"):
+    if check_result.get("survived"):
         md += "\n### Planted bugs the tests missed\n\n"
-        for s in result["survived"][:10]:
+        for s in check_result["survived"][:10]:
             md += f"- `{s['file']}` line {s['line']} ({s['operator']}): `{s.get('snippet', '')}`\n"
-    if result.get("unmeasured"):
-        md += f"\n{len(result['unmeasured'])} change(s) couldn't be measured.\n"
+    if check_result.get("unmeasured"):
+        md += f"\n{len(check_result['unmeasured'])} change(s) couldn't be measured.\n"
     return md
 
 
