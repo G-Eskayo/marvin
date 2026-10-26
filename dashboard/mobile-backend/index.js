@@ -8,6 +8,7 @@ import { whois, loadAllowlist, isAllowed } from './device_gate.js'
 import { createDashboardApiRouter } from './dashboard_api.js'
 import { createDashboardGhApiRouter } from './dashboard_gh_api.js'
 import { createChatApiRouter } from './chat_api.js'
+import { createVoiceApiRouter } from './voice_api.js'
 import { createOfflineBatchApiRouter } from './offline_batch_api.js'
 import { createThreadStore } from './thread_store.js'
 import { createPendingActionsStore } from './pending_actions.js'
@@ -54,10 +55,36 @@ function getUptimeSeconds() {
   return Math.floor((Date.now() - startTime) / 1000)
 }
 
+// Defect 1: Create route classifier that calls route.py --json
+async function createRouteClassifier() {
+  const routePyPath = path.join(homedir(), '.agents', 'skills', 'route', 'scripts', 'route.py')
+  return async function classifyIntent(text) {
+    try {
+      const { stdout } = await execFileP(routePyPath, [text, '--json'])
+      const result = JSON.parse(stdout)
+      return result.intent || 'architecture'
+    } catch (err) {
+      console.error(`Route classifier error: ${err.message}; defaulting to architecture`)
+      return 'architecture'
+    }
+  }
+}
+
+// Defect 1: Create a canned response generator for fallback
+async function* createCannedResponse() {
+  yield { type: 'text', text: 'I encountered an error processing your request. Please try again.' }
+}
+
 const dashboardApiRouter = createDashboardApiRouter()
 const dashboardGhApiRouter = createDashboardGhApiRouter({ mrWebhookUrl: MR_WEBHOOK_URL, watchChecks: true })
 const threadStore = createThreadStore()
 const chatApiRouter = createChatApiRouter({ threadStore })
+const voiceApiRouter = createVoiceApiRouter({
+  threadStore,
+  routeClassify: await createRouteClassifier(),
+  fastBrain: null,  // Defect 1: fastBrain not yet implemented; voice falls back to deep brain
+  cannedResponse: createCannedResponse
+})
 const offlineBatchApiRouter = createOfflineBatchApiRouter({ threadStore })
 const pendingActionStore = createPendingActionsStore()
 const permissionApiRouter = createPermissionApiRouter({ pendingActionStore })
@@ -104,6 +131,10 @@ const server = createServer(async (req, res) => {
 
   // Route through chat API
   handled = await chatApiRouter(req, res)
+  if (handled) return
+
+  // Route through voice API
+  handled = await voiceApiRouter(req, res)
   if (handled) return
 
   // Route through offline batch API

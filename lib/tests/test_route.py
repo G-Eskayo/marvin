@@ -120,3 +120,37 @@ def test_check_skill_cli_flag_is_registered():
     args = ap.parse_args(["--check-skill", "grill-with-docs", "--model", "haiku"])
     assert args.check_skill == "grill-with-docs"
     assert args.model == "haiku"
+
+
+# ── --json flag for machine-readable routing output ─────────────────────────────
+
+def test_json_flag_is_registered():
+    ap = route._build_arg_parser()
+    args = ap.parse_args(["fix the bug", "--json"])
+    assert args.json is True
+
+    args = ap.parse_args(["fix the bug"])
+    assert args.json is False
+
+
+def test_json_output_structure(capsys, monkeypatch):
+    """Verify --json actually outputs {intent, method, score_or_hits} via main()."""
+    import json
+
+    # Defect 8: Mock sys.argv to simulate --json flag and call main()
+    monkeypatch.setattr(sys, 'argv', ['route.py', 'fix the bug', '--json'])
+
+    # Call main() which should print JSON
+    route.main()
+
+    # Capture printed output
+    captured = capsys.readouterr()
+    output = captured.out.strip()
+
+    # Parse the JSON output
+    parsed = json.loads(output)
+    assert "intent" in parsed
+    assert "method" in parsed
+    assert "score_or_hits" in parsed
+    assert isinstance(parsed["score_or_hits"], int)
+    assert parsed["intent"] == "coding"  # "fix the bug" should route to coding

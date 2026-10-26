@@ -97,7 +97,9 @@ one job, starting with the history store.
   to `suggestions.md` for review, unimplemented — no new dedicated findings file, reusing the
   queue that already exists for exactly this purpose.
 
-## MARVIN Mobile (in design, not yet built)
+## MARVIN Mobile (Voice surface built; Chat/Dashboard in progress)
+
+**Voice surface built (ADR 0075)**: `dashboard/mobile-backend/voice_api.js` (`POST /voice`): text-in, text-out (speech conversion is the phone's responsibility, not the backend). Intent→brain routing via `route.py --json` classifier (research/recall → fast Ollama, others → deep Claude). Replies pass through `toSpeakable()` (strip markdown, enforce 500-char cap). Both turns appended to thread with `source: 'voice'`. Fallback: on brain error, canned response recovers gracefully. Timing hooks stubbed for future latency tracking (received/routed/first-token/first-sentence/complete). Tests: input validation, routing, brain selection, thread appending, fallback, speakable text processing.
 
 - **MARVIN Mobile**: the project and naming-convention name for MARVIN's native iPhone app — used
   for the repo, docs, tickets and code identifiers. Not what the user sees: the installed app's

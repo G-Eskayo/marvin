@@ -305,6 +305,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         metavar="NAME",
         help="look up a local capability in the model registry and report installed models as JSON",
     )
+    ap.add_argument(
+        "--json",
+        action="store_true",
+        help="output routing decision as machine-readable JSON: {intent, method, score_or_hits}",
+    )
     # explicit intent overrides
     for intent in INTENTS:
         ap.add_argument(f"--{intent}", action="store_true", help=f"force {intent} routing")
@@ -370,7 +375,14 @@ def main() -> None:
         print_table_proper()
         return
 
-    print_routing(intent, args.task, hits, method)
+    if args.json:
+        print(json.dumps({
+            "intent": intent,
+            "method": method,
+            "score_or_hits": hits
+        }))
+    else:
+        print_routing(intent, args.task, hits, method)
 
     if args.launch:
         launch(intent)

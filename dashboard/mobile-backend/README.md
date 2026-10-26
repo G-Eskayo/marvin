@@ -182,6 +182,30 @@ The service defaults to port 7880; override with `PORT` env var if needed (edit 
 
 The internal refresh listener (receives pings from the webhook-server when changes occur) defaults to port 7881; override with `MARVIN_MOBILE_REFRESH_PORT` env var if needed.
 
+### `POST /chat`
+
+Send a text message to MARVIN in the thread (Chat surface).
+
+**Request body**: `{ "message": "<message-text>" }`
+
+**Response**: `200 application/x-ndjson` (streamed NDJSON events)
+- `{ "type": "session", "sessionId": "<id>" }` — session init
+- `{ "type": "text", "text": "<text>" }` — assistant text chunk
+- `{ "type": "result", "text": "<full-text>", "sessionId": "<id>", "costUsd": <n>, "durationMs": <n>, "isError": <bool> }` — final result
+- `{ "type": "error", "message": "<error>" }` — error occurred
+
+### `POST /voice`
+
+Send a text message to MARVIN in the thread (Voice surface). Input is routed via intent classifier; `research`/`recall` intents use fast brain (Ollama), others use deep brain (Claude). Streamed replies are processed through `toSpeakable()` (strip markdown, enforce length cap). Both turns appended to thread with `source: "voice"`. Fallback: on brain failure, canned response replaces the error (doesn't break the flow).
+
+**Request body**: `{ "text": "<message-text>" }`
+
+**Response**: `200 application/x-ndjson` (streamed NDJSON events, same format as `/chat`)
+
+**Error handling**:
+- `400 { "ok": false, "error": "Missing or invalid text field" }` — validation failed
+- `200` with error events in stream — brain failure, recovers with canned response
+
 ### `GET /thread?limit=<n>&before=<id>`
 
 Fetch thread history with optional pagination.
