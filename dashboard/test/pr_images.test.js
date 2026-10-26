@@ -100,6 +100,16 @@ describe('parsePrImages: every image in a PR description, in order', () => {
     expect(resolvePrImageUrl('data:image/png;base64,AA', CTX)).toBe('data:image/png;base64,AA')
     expect(resolvePrImageUrl('https://example.com/x.png', CTX)).toBe('https://example.com/x.png')
   })
+
+  it('a GitHub blob link is read from raw.githubusercontent.com, where a token reaches a private repo', () => {
+    // github.com/<o>/<r>/blob/... answers 404 to a token for a private repo; the raw host answers 200 (#662).
+    expect(resolvePrImageUrl('https://github.com/o/private/blob/abc123/docs/a%20b.png?raw=true', CTX))
+      .toBe('https://raw.githubusercontent.com/o/private/abc123/docs/a%20b.png')
+    expect(resolvePrImageUrl('https://github.com/o/r/raw/main/x.png', CTX)).toBe('https://raw.githubusercontent.com/o/r/main/x.png')
+    // anything else on github.com is left alone
+    expect(resolvePrImageUrl('https://github.com/user-attachments/assets/0f0e-1', CTX)).toBe('https://github.com/user-attachments/assets/0f0e-1')
+    expect(resolvePrImageUrl('https://github.com/o/r/blob/main/../../x.png', CTX)).toBe('https://github.com/o/r/blob/main/../../x.png')
+  })
 })
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3])

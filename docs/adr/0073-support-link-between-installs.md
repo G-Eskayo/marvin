@@ -62,3 +62,54 @@ A second person now runs their own MARVIN install. When something breaks they ne
 - **GitHub webhooks:** they need a public URL, and the only static tunnel domain belongs to another service.
 - **Self-hosted Actions runners:** they need one runner per repo per Mac, and they run whatever the workflow file says. That's too much power for a support channel.
 - **SSH into the helped Mac:** it was removed after the first install on purpose, and the helped person can't audit it.
+
+## Amendment, 2026-10-26: fixes live on the helped Mac, and are proven there
+
+The helper's side only solves. The fix is carried out and checked on the helped person's Mac, and both sides can see that.
+
+- **Every answer names a check.** A check is a command that succeeds once the problem is fixed, such as `gh auth status`.
+  - The helper's MARVIN must give one, or its answer isn't valid and the request goes to the person.
+  - The helper in person can add one when replying. If neither did, the helped MARVIN proposes one and shows it before running it.
+- **Verified, not claimed.** On the helped Mac, `support.py verify --phase before` runs the check, then the fix is applied with the person's yes, then `--phase after` runs the check again.
+  - The engine posts the before and after results itself, with output scrubbed, as a verification comment.
+  - A passing after-check is the only way a request reaches the new state `support:verified` (closed).
+  - A failing after-check sends it back to `support:helper-trying`, with the failed result attached.
+  - `solved-here` is kept only so older requests still read. Nothing new sets it.
+- **Both sides see the conversation.** The helped install gets its own **Support** tab, the same thread view with sections Replies waiting, In progress and Done.
+  - An answered request offers **Apply with MARVIN**, which opens a session that runs the verify steps.
+  - **Ask a follow-up** sends the request back to the helper's MARVIN.
+  - The IT button stays as the quick way in, and clicking a request opens its thread.
+- **Notifications:** the helped person gets a macOS notification when an answer arrives, and the helper gets one when a request reaches `needs-you`.
+  - They show the title only. Clicking one opens that thread.
+  - A notice fires only on a change seen while the dashboard runs, never for old state found at startup.
+- **The helper's Handled list** shows the outcome for each request: verified on their Mac (with the check and its before and after results), answered but not applied yet, or fix failed and back to MARVIN.
+
+## Amendment, 2026-10-26: ideas
+
+The helped person can also send **ideas**: features, skills and better prompts. The IT panel has two modes, *Something's wrong* and *I have an idea*.
+- **What an idea is:** an issue labelled `support:idea-new`, with no diagnostics. It's never escalated, has no check, and never counts towards *Needs you*.
+- **How it becomes a proposal:** on a helper install, a sync turns each new idea into a **Proposal** (`lib/proposals.py`, MR Review → Proposals; ADR 0068) and moves it to `support:idea-proposal`.
+  - The proposal is written by a headless run with no tools. If that run fails, or its output isn't a valid proposal, the idea's own words become a plain proposal, so no idea is lost.
+  - A file lock means two triggers make one proposal.
+- **The decision stays in Proposals,** and the idea follows it. Each sync derives the outcome from the proposal and tells the helped side once:
+  - *ticketed* → `idea-ticket`, with the ticket number
+  - the ticket closed as completed → `idea-shipped` (closed)
+  - *dismissed*, or the ticket closed as not planned → `idea-dismissed` (closed)
+  - The helper's dismiss reason is never sent.
+- **No names in public.** A ticket made from a proposal is public, so:
+  - a proposal's source reads "a support idea", never a person or account
+  - the support repo's owner, the requester's login, and an optional `support.redact` list in the private instance are replaced with "a user"
+  - the link from proposal back to idea is kept only on the helper's Mac, in `~/.claude/support/ideas.json`
+- **On screen:** both Support tabs get an *Ideas* section. The helped person is notified when an idea becomes a ticket and when it's built.
+
+## Amendment, 2026-10-26: written for the person being helped
+
+The helped person may be new to this. The helper's private instance can describe them with `support.audience`, either one text for every repo or one per repo (for example, "a business student who knows some AI basics but is new to using it hands-on").
+- **The helper's MARVIN writes for that reader.** Every answer also carries `check_says`: what its check means in a few plain words. It's scrubbed and capped at 120 characters, and stored in the check marker.
+- **The helper's own replies:** **Preview for them** rewrites the reply for that reader, with no tools. Every command, path and code block must come back exactly, none dropped and none added. If anything differs, the rewrite is refused and the helper's own words stay. The helper edits or sends the rewrite (**Send this**), or sends the original (**Send as I wrote it**). Nothing goes out unseen.
+- **The helped side's screens use plain words:**
+  - The check is shown as "How we'll know it's fixed: …", with the command under it.
+  - Results read working / not working, with exit codes and output under *Details*.
+  - The fix button is **Fix it with MARVIN**, and diagnostics are labelled "Technical details (sent automatically, no passwords)".
+  - Authors show as You, Your helper, or Your helper's MARVIN (automatic).
+  - Nobody is told to type commands: their MARVIN explains each step and asks before running it.

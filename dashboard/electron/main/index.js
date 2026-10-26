@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, session, shell, protocol, net, nativeImage } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, session, shell, protocol, net, nativeImage, Notification } from 'electron'
 import { pathToFileURL } from 'url'
 import { instrumentIpc } from './timing.js'
 import { installDevSiteCors } from './dev_site_cors.js'
@@ -10,7 +10,7 @@ import { promisify } from 'util'
 import { listSubsystems, readHistory, buildIndex } from './metrics.js'
 import { getReworkStatus, clearReworkCache } from './rework.js'
 import { createGithubState, repoOfSource, gateCooldownUntil } from './github_state.js'
-import { startCheckWatch, createCheckProbe, createTreeProbe } from '../../webhook-server/gh_watch.js'
+import { startCheckWatch, createCheckProbe, createTreeProbe, startChangeWatch, createGithubProbe } from '../../webhook-server/gh_watch.js'
 import { createStackRetarget } from './stack_retarget.js'
 import { prsForOrderCheck, listPipelinePrs, denyMr, fetchTicketContext, sentBackKeys, clearSentBackLabel } from './mr_review.js'
 import { approveMrStream } from './approve_stream.js'
@@ -72,6 +72,9 @@ import { DISPATCH_STATE_PATH } from './dispatch_status.js'
 import { createHash } from 'crypto'
 import { JOBS_DIR } from './jobs.js'
 import { openMarvinSession } from './marvin_session.js'
+import * as instance from './instance.js'
+import { readSupportState, badgeCount, runSupport, ensureSupportDir, SUPPORT_DIR, supportNotices } from './support.js'
+import { supportWatcher, startAppSupportWatch } from '../../webhook-server/support_sync.js'
 import { createProposals } from './proposals.js'
 const proposalsStore = createProposals()
 import { openDevSite } from './dev_site_chrome.js'
@@ -282,6 +285,14 @@ function registerDispatchHandlers() {
 function registerSessionHandlers() {
   // The MARVIN button (marvin#228): a ready MARVIN session in WezTerm on this Mac.
   ipcMain.handle('marvin:openSession', (_event, request) => openMarvinSession(request))
+  // Support link (ADR 0073). Every action is checked against this install's own support repos in support.js.
+  ipcMain.handle('support:config', () => instance.support())
+  ipcMain.handle('support:state', () => {
+    const { role } = instance.support()
+    const state = readSupportState()
+    return { role, ...state, badge: badgeCount(role, state) }
+  })
+  ipcMain.handle('support:act', (_event, cmd, request) => runSupport(cmd, request, { repos: instance.support().repos }))
   // MR Review → Proposals (#102, ADR 0068): read and act through lib/proposals.py only.
   ipcMain.handle('proposals:list', () => proposalsStore.list())
   ipcMain.handle('proposals:act', (_event, id, action, args) => proposalsStore.act(id, action, args))
@@ -1063,6 +1074,32 @@ app.whenReady().then(() => {
     { dir: dirname(REGISTRY_PATH), match: (n) => n === 'registry.json' }
   ])
   // Agents report through run logs; a step landing in that folder refreshes the Health tab's agent list.
+  // The support cache (ADR 0073): written by support.py after every sync, so the tab and IT button refresh the moment it does.
+  ensureSupportDir()
+  triggerHub.watchFiles('support', [{ dir: SUPPORT_DIR, match: (n) => n === 'state.json' }])
+  // Notices (ADR 0073 amendment): only a change seen while the app runs; the first read is the baseline.
+  let supportSeen = readSupportState()
+  triggerHub.onTrigger((t) => {
+    if (t.topic !== 'support') return
+    const next = readSupportState()
+    const notices = supportNotices(supportSeen, next, instance.support().role)
+    supportSeen = next
+    if (!Notification.isSupported()) return
+    for (const n of notices) {
+      const note = new Notification({ title: n.title, body: n.body })
+      note.on('click', () => {
+        mainWindow?.show()
+        mainWindow?.webContents.send('support:focus', { repo: n.repo, number: n.number })
+      })
+      note.show()
+    }
+  })
+  if (supportWatcher(instance.support().role) === 'app') {
+    execFileAsync('gh', ['auth', 'token'])
+      .then(({ stdout }) => String(stdout).trim())
+      .catch(() => '')
+      .then((token) => startAppSupportWatch({ repos: () => instance.support().repos, token, startChangeWatch, createGithubProbe }))
+  }
   triggerHub.watchFiles('agents', [{ dir: JOBS_DIR, match: (n) => n.endsWith('.json') && !n.startsWith('.') }])
   triggerHub.onTrigger((t) => mainWindow?.webContents.send('trigger', t))
 
