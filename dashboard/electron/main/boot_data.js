@@ -2,6 +2,7 @@ import { readFileSync, readdirSync, existsSync, statSync } from 'fs'
 import { homedir } from 'os'
 import path from 'path'
 import { HEALTH_STATUS_PATH } from './health.js'
+import { engineRepo, owner, ticketsRepo, NotConfigured } from './instance.js'
 
 // The boot sequence's data (#431, design in docs/design/celestial-navigation on #428). Every status the boot
 // shows comes from here, built from files that already exist -- nothing is decorative. The verdict banner says
@@ -20,7 +21,7 @@ const onCheck = (c) => (c?.id ? { tab: 'health', check: c.id } : HEALTH)
 
 export const DEFAULT_BOOT_PATHS = {
   healthPath: HEALTH_STATUS_PATH,
-  memoryDir: path.join(homedir(), '.claude', 'projects', '-Users-gileskayo', 'memory'),
+  memoryDir: path.join(homedir(), '.claude', 'projects', homedir().replace(/\//g, '-'), 'memory'),
   skillsDir: path.join(homedir(), '.agents', 'skills'),
   handoffsDir: path.join(homedir(), '.claude', 'handoffs')
 }
@@ -113,9 +114,24 @@ function verdictOf(health, counts, ageMin) {
   return { nominal: true, tone: 'nominal', text: 'ALL SYSTEMS NOMINAL' }
 }
 
+export function verifyConfigured() {
+  // Check if the instance is configured by trying to access the critical getters.
+  // If any raise NotConfigured, propagate the error.
+  try {
+    engineRepo()
+    owner()
+    ticketsRepo()
+    return true
+  } catch (e) {
+    if (e instanceof NotConfigured) throw e
+    throw new Error(`Failed to verify instance configuration: ${e.message}`)
+  }
+}
+
 export function buildBootData(opts = {}) {
   const p = { ...DEFAULT_BOOT_PATHS, ...opts }
   const now = opts.now ?? new Date()
+  verifyConfigured() // Throw NotConfigured if not set up
   const health = readHealth(p.healthPath)
   const checks = health?.checks ?? []
   const ageMin = health?.generatedAt && !isNaN(health.generatedAt) ? Math.floor((now - health.generatedAt) / 60_000) : null

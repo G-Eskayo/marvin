@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import instance  # noqa: E402
 import generated_paths as gp  # noqa: E402
 
 
@@ -180,7 +181,7 @@ def run_mutation_check(
     max_mutants_per_file: int = 8,
     per_mutant_timeout_sec: int = 60,
     wall_clock_budget_sec: int = 600,
-    repo: str = "G-Eskayo/marvin"
+    repo: str | None = None
 ) -> dict:
     """Plant bugs in the PR's changed Python lines (cwd is a checkout of the PR head) and count how many its tests catch.
 
@@ -189,6 +190,7 @@ def run_mutation_check(
     """
     start = time.time()
     cwd = str(cwd)
+    repo = repo or instance.tickets_repo()
     if not base_sha:
         r = _git(cwd, "merge-base", base_ref, "HEAD", check=False)
         if r.returncode != 0:

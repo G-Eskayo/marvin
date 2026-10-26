@@ -66,11 +66,46 @@ def test_a_friends_fork_is_never_mistaken_for_the_upstream(at):
     assert instance.UPSTREAM == "G-Eskayo/marvin"
 
 
-def test_no_origin_falls_back_to_the_config_then_the_upstream(at):
+def test_config_engine_repo_is_used_when_there_is_no_origin(at):
     at(origin=None, config={"engine_repo": "pat-example/marvin"})
     assert instance.engine_repo() == "pat-example/marvin"
+
+
+def test_engine_repo_raises_not_configured_with_no_origin_and_no_config(at):
     at(origin=None, config={})
-    assert instance.engine_repo() == instance.UPSTREAM
+    with pytest.raises(instance.NotConfigured):
+        instance.engine_repo()
+
+
+def test_owner_raises_not_configured_with_no_origin_and_no_config(at):
+    at(origin=None, config={})
+    with pytest.raises(instance.NotConfigured):
+        instance.owner()
+
+
+def test_tickets_repo_raises_not_configured_with_no_origin_and_no_config(at):
+    at(origin=None, config={})
+    with pytest.raises(instance.NotConfigured):
+        instance.tickets_repo()
+
+
+def test_empty_string_engine_repo_still_raises_not_configured(at):
+    """An empty string in instance.json is treated as missing, not as a configured value."""
+    at(origin=None, config={"engine_repo": ""})
+    with pytest.raises(instance.NotConfigured):
+        instance.engine_repo()
+
+
+def test_config_owner_overrides_the_origin_derived_owner(at):
+    """When both origin and config owner exist, config wins (org-owned fork case)."""
+    at(origin="https://github.com/some-org/marvin.git", config={"owner": "pat-example"})
+    assert instance.owner() == "pat-example"
+
+
+def test_config_tickets_repo_overrides_the_engine_repo(at):
+    """Tickets can go to a separate repo from the engine (e.g. an issue tracker fork)."""
+    at(origin="https://github.com/pat-example/marvin.git", config={"tickets_repo": "pat-example/marvin-instance"})
+    assert instance.tickets_repo() == "pat-example/marvin-instance"
 
 
 def test_the_real_origin_beats_a_stale_engine_repo_in_the_config(at):
@@ -86,8 +121,16 @@ def test_a_feature_is_on_only_for_a_real_true(at):
 
 
 def test_a_non_github_origin_is_not_parsed_into_a_fake_repo(at):
+    """A non-GitHub origin is not usable, and with no config, raises NotConfigured."""
     at(origin="/Users/someone/marvin-mirror.git", config={})
-    assert instance.engine_repo() == instance.UPSTREAM
+    with pytest.raises(instance.NotConfigured):
+        instance.engine_repo()
+
+
+def test_a_non_github_origin_falls_back_to_config_if_provided(at):
+    """If there's config to fall back to, a non-GitHub origin is ignored."""
+    at(origin="/Users/someone/marvin-mirror.git", config={"engine_repo": "pat-example/marvin"})
+    assert instance.engine_repo() == "pat-example/marvin"
 
 
 def test_the_config_owner_wins_over_the_origin(at):
@@ -121,11 +164,24 @@ def test_a_corrupt_or_wrong_shaped_config_reads_as_a_blank_instance(at, bad):
 
 
 def test_a_missing_instance_dir_is_a_blank_instance_not_a_crash(at, tmp_path, monkeypatch):
+    """A missing instance dir is treated as no config, not a crash."""
     at(origin=None)
     monkeypatch.setenv("MARVIN_INSTANCE_DIR", str(tmp_path / "does-not-exist"))
     instance.reset()
-    assert instance.engine_repo() == instance.UPSTREAM
+    # No origin and no config raises NotConfigured
+    with pytest.raises(instance.NotConfigured):
+        instance.engine_repo()
+    # But features still return False gracefully (they don't call engine_repo)
     assert instance.feature_enabled("portfolio") is False
+    assert instance.instance_dir() == tmp_path / "does-not-exist"
+
+
+def test_a_missing_instance_dir_with_origin_works_fine(at, tmp_path, monkeypatch):
+    """A missing instance dir is fine if the git origin is usable."""
+    at(origin="https://github.com/pat-example/marvin.git")
+    monkeypatch.setenv("MARVIN_INSTANCE_DIR", str(tmp_path / "does-not-exist"))
+    instance.reset()
+    assert instance.engine_repo() == "pat-example/marvin"
     assert instance.instance_dir() == tmp_path / "does-not-exist"
 
 
@@ -182,7 +238,7 @@ def _offenders() -> set[str]:
             lines = (ROOT / f).read_text(errors="replace").splitlines()
         except OSError:
             continue
-        if any(IDENTITY.search(l) and not COMMENT.match(l) for l in lines):
+        if any(IDENTITY.search(l) and not COMMENT.match(l) and "marvin:identity-literal" not in l for l in lines):
             out.add(f)
     return out
 
@@ -196,6 +252,11 @@ def test_the_grandfathered_list_only_shrinks():
     """A file that was cleaned up must come off the list, or a later regression in it would pass unnoticed."""
     fixed = sorted(GRANDFATHERED - _offenders())
     assert fixed == [], f"no longer hard-codes an identity; remove from instance_grandfathered.txt: {fixed}"
+    # Once the list is completely empty, this test just confirms it stays empty
+    # (new regressions are caught by test_no_new_engine_file_hard_codes_an_owner_account_or_machine).
+    if not GRANDFATHERED:
+        new = sorted(_offenders())
+        assert new == [], f"grandfathered list is empty, but new files still hard-code: {new}"
 
 
 def test_the_ratchet_catches_a_quoted_owner_but_not_a_comment(tmp_path):

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Ticket pipeline: scans G-Eskayo/marvin for `ready-for-agent` issues with
+"""Ticket pipeline: scans the engine repo for `ready-for-agent` issues with
 no existing claim, and dispatches the oldest one to an available machine,
 which runs it through run_ticket.py's execute_ticket -> raise_mr flow
-(G-Eskayo/marvin#95). Each ticket gets a real isolated git worktree
+(#95). Each ticket gets a real isolated git worktree
 (sandbox_orchestration._create_worktree), not the shared ~/.agents
 checkout -- eliminates the collision risk between a dispatched ticket and
 whatever an interactive session happens to be doing in that same checkout
@@ -48,6 +48,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from task_dispatch import select_machine, dispatch  # noqa: E402
 import failure_breaker  # noqa: E402
+import instance  # noqa: E402
 import ticket_stages as ts  # noqa: E402
 import board_registry  # noqa: E402
 import ticket_policy  # noqa: E402
@@ -61,7 +62,6 @@ import dispatch_concurrency  # noqa: E402
 VENV_PYTHON = str(Path.home() / ".agents" / "venv" / "bin" / "python")
 RUN_TICKET_SCRIPT = str(Path.home() / ".agents" / "lib" / "run_ticket.py")
 
-REPO = "G-Eskayo/marvin"
 LOG_PREFIX = "[ticket-pipeline]"
 
 SCAN_LOCK_PATH = Path.home() / ".claude" / "dispatch" / "scan.lock"
@@ -114,8 +114,9 @@ HOLD_LABELS = frozenset({"pinned", "hold", "held"})  # a person's hands off: nev
 UNSCORED_RANK = 2  # a ticket the prioritizer hasn't scored yet counts as middle priority
 
 
-def _open_issues(repo: str = REPO) -> list[dict] | None:
+def _open_issues(repo: str | None = None) -> list[dict] | None:
     """Every open ticket in `repo`, in one call (None when GitHub can't be read)."""
+    repo = repo or instance.tickets_repo()
     proc = subprocess.run(
         ["gh", "issue", "list", "--repo", repo, "--state", "open", "--limit", "1000",
          "--json", "number,title,labels,createdAt,updatedAt,body"],
@@ -127,11 +128,12 @@ def _open_issues(repo: str = REPO) -> list[dict] | None:
     return json.loads(proc.stdout)
 
 
-def _unclaimed_ready_tickets(repo: str = REPO, issues: list[dict] | None = None) -> list[dict]:
+def _unclaimed_ready_tickets(repo: str | None = None, issues: list[dict] | None = None) -> list[dict]:
     """What this machine may dispatch next, in order: ready-for-agent, unclaimed, not held, not with a person, and with
     no open blocker, highest priority first and oldest first among equals. One call fetches every open
     ticket because whether a blocker is still open depends on the others; a caller that already has that
     list passes it in (#324)."""
+    repo = repo or instance.tickets_repo()
     if issues is None:
         issues = _open_issues(repo)
         if issues is None:
@@ -167,7 +169,7 @@ def _unclaimed_ready_tickets(repo: str = REPO, issues: list[dict] | None = None)
                       f"({ticket_evidence.verdict(ev)}: {ev[0]['ref']} {ev[0]['detail'][:60]})", file=sys.stderr)
         ready = kept
     ready.sort(key=_order_key)
-    # Research tickets (label `research`, Gil 2026-10-09): only when no build work is waiting, and one at a time.
+    # Research tickets (label `research`, requested 2026-10-09): only when no build work is waiting, and one at a time.
     def is_research(i):
         return "research" in ticket_policy.label_names(i)
     builds = [i for i in ready if not is_research(i)]
@@ -397,7 +399,8 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
 def _attempts(repo: str, number: int) -> int:
     """How many attempts at this ticket got as far as raising a PR. A claim that died earlier (a failed
     fetch, a missing tool) is not an attempt: those are the failure breaker's business, not this budget's."""
-    stages = ts.read_stages(number, None if repo == REPO else repo)
+    default_repo = instance.tickets_repo()
+    stages = ts.read_stages(number, None if repo == default_repo else repo)
     return sum(1 for e in stages if e.get("stage") == "done" and e.get("status") == "passed"
                and str(e.get("detail", "")).startswith("PR raised"))
 
@@ -405,7 +408,8 @@ def _attempts(repo: str, number: int) -> int:
 def _evidence_facts(repo: str):
     """Git/PR facts for the pre-dispatch guard (ticket_evidence), or None if unreadable."""
     try:
-        if repo == REPO:
+        default_repo = instance.tickets_repo()
+        if repo == default_repo:
             clone = str(Path.home() / ".agents")
         else:
             prof = pp.load_profile(repo)
@@ -481,7 +485,7 @@ def _run_ticket_agents(step, summary) -> None:
     try:
         cfg = ticket_agents.load_config()
         snap = ticket_agents.collect(ticket_agents.board_repos())
-        executable = {REPO, *pp.runnable_repos()}
+        executable = {instance.tickets_repo(), *pp.runnable_repos()}
         live = _live_runs()
         res = ticket_agents.run(snap, ticket_agents._gh, cfg, datetime.now(timezone.utc),
                                 in_flight=lambda repo: ticket_agents.in_flight_numbers(repo, snap),
@@ -523,7 +527,7 @@ def _live_runs() -> set[tuple[str, int]] | None:
 
 
 def _auto_merge_shadow(step) -> None:
-    """ADR 0064 (#341): what auto-merge would do with each open PR, recorded until Gil switches it on."""
+    """ADR 0064 (#341): what auto-merge would do with each open PR, recorded until the owner switches it on."""
     try:
         import auto_merge_shadow
         seen = auto_merge_shadow.run()
@@ -556,19 +560,21 @@ def _active_project_repos() -> list[str]:
 
 
 def _discover_boards() -> list[str]:
-    return board_registry.discover(REPO.split("/")[0], extra_repos=_active_project_repos())
+    return board_registry.discover(instance.tickets_repo().split("/")[0], extra_repos=_active_project_repos())
 
 
-def _ensure_board(repo: str = REPO) -> None:
+def _ensure_board(repo: str | None = None) -> None:
     # MARVIN starting work on a project creates its dashboard board. Best
     # effort: a registry problem must never block or undo a claim.
+    repo = repo or instance.tickets_repo()
     try:
         board_registry.ensure_board(repo)
     except Exception as e:  # noqa: BLE001
         print(f"{LOG_PREFIX} board registry: {e}", file=sys.stderr)
 
 
-def _claim(issue_number: int, label: str, title: str = "", repo: str = REPO, run_id: str | None = None) -> bool:
+def _claim(issue_number: int, label: str, title: str = "", repo: str | None = None, run_id: str | None = None) -> bool:
+    repo = repo or instance.tickets_repo()
     cmd = ["gh", "issue", "edit", str(issue_number), "--repo", repo, "--add-label", f"claimed:{label}"]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
     if proc.returncode != 0 and "not found" in (proc.stderr or "").lower():
@@ -584,15 +590,18 @@ def _claim(issue_number: int, label: str, title: str = "", repo: str = REPO, run
     # title threaded through from main()'s own GitHub fetch -- the one
     # place in this flow that already has it, so the Activity tab never
     # has to show a bare number (feedback, 2026-10-01).
+    default_repo = instance.tickets_repo()
     ts.record_stage(issue_number, "claimed", "started", f"claimed:{label}", title=title or None, run_id=run_id,
-                    **({"repo": repo} if repo != REPO else {}))
+                    **({"repo": repo} if repo != default_repo else {}))
     _ensure_board(repo)
     return True
 
 
-def _release(issue_number: int, label: str, repo: str = REPO, run_id: str | None = None) -> None:
+def _release(issue_number: int, label: str, repo: str | None = None, run_id: str | None = None) -> None:
+    repo = repo or instance.tickets_repo()
     if run_id is not None:
-        owner = ts.claim_owner(issue_number, None if repo == REPO else repo)
+        default_repo = instance.tickets_repo()
+        owner = ts.claim_owner(issue_number, None if repo == default_repo else repo)
         if owner is not None and owner != run_id:
             print(f"{LOG_PREFIX} skipping release of #{issue_number}: claim owned by {owner[:8]}, this run is {run_id[:8]}", file=sys.stderr)
             return
@@ -602,14 +611,15 @@ def _release(issue_number: int, label: str, repo: str = REPO, run_id: str | None
     )
 
 
-def _build_wrapper_command(issue_number: int, repo: str = REPO, run_id: str = "") -> str:
+def _build_wrapper_command(issue_number: int, repo: str | None = None, run_id: str = "") -> str:
     """run_ticket.py handles worktree creation (from origin/main, not
     whatever ~/.agents happens to be checked out to) internally via
     execute_ticket -- no git checkout/branch dance needed here, unlike
     the pre-#95 raw-prompt dispatch this replaced. Another project's ticket is named
     `owner/repo#n` and gets its own log file. run_id is threaded through
     the environment so run_ticket.py can check it on release."""
-    if repo == REPO:
+    repo = repo or instance.tickets_repo()
+    if repo == instance.tickets_repo():
         return (
             f"MARVIN_RUN_ID={run_id} {VENV_PYTHON} {RUN_TICKET_SCRIPT} {issue_number} "
             f"> ~/dispatch_issue{issue_number}.log 2>&1"
@@ -827,7 +837,7 @@ def _scan(run, dry_run: bool) -> None:
     if not dry_run:
         _background_checks()
         step("Conflicted PRs", "sending back PRs that no longer merge")
-        sent = _requeue_all([REPO, *pp.runnable_repos()])
+        sent = _requeue_all([instance.tickets_repo(), *pp.runnable_repos()])
         step("Conflicted PRs", ", ".join(sent) + " sent back" if sent else "none")
         step("Owner decisions", "PRs whose owner decisions went unanswered (#607)")
         step("Owner decisions", _owner_decisions())
@@ -837,18 +847,19 @@ def _scan(run, dry_run: bool) -> None:
     # (each would just burn its own strikes) until a success or a manual clear. The others carry on.
     step("Circuit breaker")
     trips = failure_breaker.tripped()
+    default_repo = instance.tickets_repo()
     if trips:
         for t in trips:
-            print(f"{LOG_PREFIX} dispatch PAUSED by circuit breaker ({t.get('project', REPO)}): {t['signature']} failed across "
+            print(f"{LOG_PREFIX} dispatch PAUSED by circuit breaker ({t.get('project', default_repo)}): {t['signature']} failed across "
                   f"tickets {t['tickets']} (since {t['first_seen']}); e.g. {t['example'][:140]}. "
                   f"Fix the cause, then `failure_breaker.py clear`.", file=sys.stderr)
-        step("Circuit breaker", "TRIPPED: " + "; ".join(f"{t.get('project', REPO).split('/')[-1]} {t['signature']}" for t in trips))
+        step("Circuit breaker", "TRIPPED: " + "; ".join(f"{t.get('project', default_repo).split('/')[-1]} {t['signature']}" for t in trips))
     else:
         step("Circuit breaker", "clear")
-    paused = {t.get("project", REPO) for t in trips}
+    paused = {t.get("project", default_repo) for t in trips}
     # A profile with dispatch on but no machines can never run: Health says so once (profile:no-machines), instead of
     # this scan logging "no suitable machine" for each of its tickets every hour (132 times each by 10-21).
-    repos = [r for r in [REPO, *pp.runnable_repos()] if r not in paused]
+    repos = [r for r in [default_repo, *pp.runnable_repos()] if r not in paused]
     breaker_tripped = bool(trips)
 
     settings = dispatch_concurrency.load()
@@ -856,7 +867,7 @@ def _scan(run, dry_run: bool) -> None:
     step("Scanning tickets", ", ".join(r.split("/")[-1] for r in repos) + ": ready-for-agent, unclaimed, unblocked")
     pools: dict[str, list] = {}
     for r in repos:
-        ready = _unclaimed_ready_tickets() if r == REPO else _unclaimed_ready_tickets(repo=r)
+        ready = _unclaimed_ready_tickets() if r == default_repo else _unclaimed_ready_tickets(repo=r)
         if ready:
             pools[r] = list(ready)
 
@@ -912,7 +923,8 @@ def _scan(run, dry_run: bool) -> None:
 
 def _dispatch_one(repo, ticket, ready_total, step, summary, fail, dry_run, settings, taken, local_base, refusals) -> str:
     """Claim one ticket and dispatch it. Returns "started", "backoff", "no-machine" or "failed"."""
-    other = repo != REPO
+    default_repo = instance.tickets_repo()
+    other = repo != default_repo
     issue_number = ticket["number"]
     where = f"{repo.split('/')[-1]} " if other else ""
     not_before = _retry_not_before(repo, ticket)
@@ -947,19 +959,19 @@ def _dispatch_one(repo, ticket, ready_total, step, summary, fail, dry_run, setti
         fail(f"could not claim {where}#{issue_number}")
         return "failed"
 
-    command = _build_wrapper_command(issue_number, repo, run_id) if other else _build_wrapper_command(issue_number, repo=REPO, run_id=run_id)
+    command = _build_wrapper_command(issue_number, repo, run_id) if other else _build_wrapper_command(issue_number, repo=default_repo, run_id=run_id)
 
     step("Dispatching", f"to {device_id}")
     label = f"ticket {repo}#{issue_number}: {ticket['title'][:40]}" if other else f"ticket #{issue_number}: {ticket['title'][:40]}"
     result = dispatch(command, target=device_id, mode="async", task_label=label,
-                     ticket=str(issue_number), repo=repo if other else REPO)
+                     ticket=str(issue_number), repo=repo if other else default_repo)
     if result.ok:
         taken[device_id] = taken.get(device_id, 0) + 1
         print(f"{LOG_PREFIX} dispatched {where}#{issue_number} to {device_id}", file=sys.stderr)
         summary(f"dispatched {where}#{issue_number} {ticket['title']} to {device_id}")
         return "started"
     print(f"{LOG_PREFIX} dispatch failed for {where}#{issue_number}: {result.error} -- releasing claim", file=sys.stderr)
-    _release(issue_number, claim_label, repo, run_id) if other else _release(issue_number, claim_label, REPO, run_id)
+    _release(issue_number, claim_label, repo, run_id) if other else _release(issue_number, claim_label, default_repo, run_id)
     fail(f"dispatch of {where}#{issue_number} to {device_id} failed: {result.error}")
     return "failed"
 

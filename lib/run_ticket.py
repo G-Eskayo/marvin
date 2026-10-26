@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Drives one ticket through execute_ticket -> raise_mr end to end
-(G-Eskayo/marvin#95). This is the actual shell command ticket_pipeline.py
+(#95). This is the actual shell command ticket_pipeline.py
 hands to task_dispatch -- split into its own script rather than inlined
 into ticket_pipeline.py's dispatch command, since task_dispatch runs an
 arbitrary shell command (potentially over SSH on a remote machine), not a
@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import functools  # noqa: E402
+import instance  # noqa: E402
 import machine_profile  # noqa: E402
 import project_profile as pp  # noqa: E402
 from build_type_measure import measure, test_command_for  # noqa: E402
@@ -32,7 +33,6 @@ import redispatch_trigger  # noqa: E402
 import ticket_policy  # noqa: E402
 from datetime import datetime, timedelta, timezone  # noqa: E402
 
-REPO = "G-Eskayo/marvin"
 FAILURE_MARKER = "Automated implementation did not pass verification"
 TIMEOUT_MARKER = "Automated verification timed out"
 MODEL_MARKER = "The model service was unavailable"
@@ -58,7 +58,8 @@ def _retry_line(attempt: int) -> tuple[str, str]:
     return when, ticket_policy.retry_marker(at)
 
 
-def _comment_failure(issue_number: int, reason: str, repo: str = REPO, retry: tuple[str, str] | None = None) -> None:
+def _comment_failure(issue_number: int, reason: str, repo: str | None = None, retry: tuple[str, str] | None = None) -> None:
+    repo = repo or instance.tickets_repo()
     tail = f"\n\nIt goes back to the queue, not before {retry[0]}.\n{retry[1]}" if retry else ""
     subprocess.run(
         ["gh", "issue", "comment", str(issue_number), "--repo", repo, "--body",
@@ -67,7 +68,8 @@ def _comment_failure(issue_number: int, reason: str, repo: str = REPO, retry: tu
     )
 
 
-def _issue_comments(issue_number: int, repo: str = REPO) -> list | None:
+def _issue_comments(issue_number: int, repo: str | None = None) -> list | None:
+    repo = repo or instance.tickets_repo()
     """The ticket's comments, or None when they can't be read (no gh, offline, garbage): callers then count nothing."""
     try:
         proc = subprocess.run(
@@ -82,7 +84,8 @@ def _issue_comments(issue_number: int, repo: str = REPO) -> list | None:
     return comments if isinstance(comments, list) else None
 
 
-def _trailing_model_failures(issue_number: int, repo: str = REPO) -> int:
+def _trailing_model_failures(issue_number: int, repo: str | None = None) -> int:
+    repo = repo or instance.tickets_repo()
     """How many model-unavailable releases in a row this ticket has had (most recent first), for its backoff."""
     n = 0
     for c in reversed(_issue_comments(issue_number, repo) or []):
@@ -93,7 +96,8 @@ def _trailing_model_failures(issue_number: int, repo: str = REPO) -> int:
     return n
 
 
-def _consecutive_failure_streak(issue_number: int, repo: str = REPO) -> int:
+def _consecutive_failure_streak(issue_number: int, repo: str | None = None) -> int:
+    repo = repo or instance.tickets_repo()
     """Count trailing automated-failure comments on this issue, most-recent
     first, stopping at the first non-matching comment (a human reply, a
     passing run, anything else). This is the cross-dispatch retry counter --
@@ -113,7 +117,8 @@ def _consecutive_failure_streak(issue_number: int, repo: str = REPO) -> int:
     return _trailing_streaks(issue_number, repo)[0]
 
 
-def _trailing_streaks(issue_number: int, repo: str = REPO) -> tuple[int, int]:
+def _trailing_streaks(issue_number: int, repo: str | None = None) -> tuple[int, int]:
+    repo = repo or instance.tickets_repo()
     """(failures, verify timeouts) in the trailing run of automated comments, most recent first, up to the first
     comment from a person. Timeouts used to be free and to reset the failure count, so a ticket whose verify
     always times out was retried for ever (#563: three runs in 46 minutes on a loaded M4); now they have their own
@@ -143,8 +148,9 @@ PARKED_MARKER = "Parked after repeated failed builds"
 MAX_PARK_FINDINGS = 15
 
 
-def _park_stuck_ticket(issue_number: int, streak: int, repo: str = REPO, reason: str = "",
+def _park_stuck_ticket(issue_number: int, streak: int, repo: str | None = None, reason: str = "",
                        findings: list[str] | tuple = (), headline: str | None = None) -> None:
+    repo = repo or instance.tickets_repo()
     """Stop re-dispatching a ticket that keeps failing, and hand it to a person WITH the cause.
 
     needs-info is added before ready-for-agent comes off, so the ticket is never stateless: the triage agent treats
@@ -188,7 +194,8 @@ def _park_stuck_ticket(issue_number: int, streak: int, repo: str = REPO, reason:
         print(f"[run_ticket] needs-you notification failed: {exc}", file=sys.stderr)
 
 
-def _release_claim(issue_number: int, repo: str = REPO, run_id: str | None = None) -> None:
+def _release_claim(issue_number: int, repo: str | None = None, run_id: str | None = None) -> None:
+    repo = repo or instance.tickets_repo()
     """A ticket that didn't raise a PR -- rate-limited, a worktree-creation
     failure, or genuinely never reached a passing comparison -- leaves this
     machine free again, but ticket_pipeline.py's claim happens before
@@ -199,7 +206,8 @@ def _release_claim(issue_number: int, repo: str = REPO, run_id: str | None = Non
     Claude usage-limit window left 28 tickets claimed with zero real work
     done, none of them ever eligible for retry again."""
     label = _label_for_device(machine_profile.registry_id())
-    _release(issue_number, label, run_id=run_id) if repo == REPO else _release(issue_number, label, repo, run_id=run_id)
+    default_repo = instance.tickets_repo()
+    _release(issue_number, label, run_id=run_id) if repo == default_repo else _release(issue_number, label, repo, run_id=run_id)
 
 
 def _trigger_redispatch() -> None:
@@ -227,7 +235,7 @@ def parse_ticket_arg(arg: str) -> tuple[str, int]:
     if m:
         return m.group(1), int(m.group(2))
     if arg.strip().isdigit():
-        return REPO, int(arg)
+        return instance.tickets_repo(), int(arg)
     raise ValueError(f"expected a ticket number or owner/repo#number, got {arg!r}")
 
 
@@ -247,9 +255,11 @@ def _drop_build_output(worktree_path, profile: dict | None) -> None:
         print(f"[run_ticket] could not drop build output in {worktree_path}: {exc}", file=sys.stderr)
 
 
-def run(issue_number: int, repo: str = REPO) -> dict:
+def run(issue_number: int, repo: str | None = None) -> dict:
+    repo = repo or instance.tickets_repo()
     ticket_ref = f"{repo}#{issue_number}"
-    other = repo != REPO
+    default_repo = instance.tickets_repo()
+    other = repo != default_repo
     # marvin's path is called exactly as it always was; another project's calls carry its repo so its
     # stage records, claim label, comments and breaker entries stay its own.
     kw = {"repo": repo} if other else {}
@@ -397,7 +407,8 @@ def main() -> None:
     except ValueError as e:
         print(e, file=sys.stderr)
         sys.exit(1)
-    outcome = run(number, repo) if repo != REPO else run(number)
+    default_repo = instance.tickets_repo()
+    outcome = run(number, repo) if repo != default_repo else run(number)
     print(outcome)
     sys.exit(0 if outcome["raised"] else 1)
 

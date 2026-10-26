@@ -24,6 +24,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import instance  # noqa: E402
 
 
 def is_generated(path: str, rules: list[dict]) -> bool:
@@ -199,9 +200,8 @@ def resolve_rebase(worktree, rules: list[dict], max_steps: int = 100, abort_on_r
     return {"ok": False, "reason": "gave up resolving generated-file conflicts after too many steps"}
 
 
-# marvin has no project profile; these are the files its own tools rewrite (health monitor, metrics, the graph), which
+# The engine repo has no project profile; these are the files its own tools rewrite (health monitor, metrics, the graph), which
 # conflicted on every post-merge rebase (#225) and in code_sync.
-MARVIN = "G-Eskayo/marvin"
 MARVIN_GENERATED = [{"path": "bench/metrics"}, {"path": "graphify-out"}]
 
 
@@ -210,7 +210,7 @@ def rules_for(repo: str) -> list[dict]:
     profile = pp.load_profile(repo)
     if profile is not None:
         return profile.get("generated", [])
-    return MARVIN_GENERATED if repo.lower() == MARVIN.lower() else []
+    return MARVIN_GENERATED if repo.lower() == instance.engine_repo().lower() else []
 
 
 def main() -> None:  # python generated_paths.py resolve-rebase <owner/repo> <worktree>   (exit 0 = resolved)

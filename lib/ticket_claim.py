@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Single-machine ticket claim for the MR pipeline (G-Eskayo/marvin#7).
+"""Single-machine ticket claim for the MR pipeline (#7).
 
 Connects ticket_promotion's (#6) output to sandbox_orchestration's (#3)
 input: on a cron trigger, claims the highest-priority unclaimed
@@ -32,11 +32,11 @@ from pathlib import Path
 from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import instance  # noqa: E402
 from machine_profile import machine_label  # noqa: E402
 from sandbox_orchestration import execute_ticket as _default_execute  # noqa: E402
 
 MAX_QUEUE = 3
-REPO = "G-Eskayo/marvin"
 
 
 def _claim_label(machine_id: str) -> str:
@@ -45,7 +45,7 @@ def _claim_label(machine_id: str) -> str:
 
 def _default_list_claimed(machine_id: str) -> list[dict]:
     result = subprocess.run(
-        ["gh", "issue", "list", "--repo", REPO, "--state", "open",
+        ["gh", "issue", "list", "--repo", instance.tickets_repo(), "--state", "open",
          "--label", _claim_label(machine_id), "--json", "number,labels"],
         capture_output=True, text=True, check=True,
     )
@@ -54,7 +54,7 @@ def _default_list_claimed(machine_id: str) -> list[dict]:
 
 def _default_list_unclaimed_ready() -> list[dict]:
     result = subprocess.run(
-        ["gh", "issue", "list", "--repo", REPO, "--state", "open",
+        ["gh", "issue", "list", "--repo", instance.tickets_repo(), "--state", "open",
          "--label", "ready-for-agent", "--json", "number,labels,body"],
         capture_output=True, text=True, check=True,
     )
@@ -72,14 +72,15 @@ def _default_list_unclaimed_ready() -> list[dict]:
 
 def _default_add_claim_label(issue_number: int, machine_id: str) -> None:
     label = _claim_label(machine_id)
+    repo = instance.tickets_repo()
     result = subprocess.run(
-        ["gh", "issue", "edit", str(issue_number), "--repo", REPO, "--add-label", label],
+        ["gh", "issue", "edit", str(issue_number), "--repo", repo, "--add-label", label],
         capture_output=True, text=True,
     )
     if result.returncode != 0 and "not found" in (result.stderr or "").lower():
-        subprocess.run(["gh", "label", "create", label, "--repo", REPO], capture_output=True, check=True)
+        subprocess.run(["gh", "label", "create", label, "--repo", repo], capture_output=True, check=True)
         subprocess.run(
-            ["gh", "issue", "edit", str(issue_number), "--repo", REPO, "--add-label", label],
+            ["gh", "issue", "edit", str(issue_number), "--repo", repo, "--add-label", label],
             capture_output=True, check=True,
         )
     elif result.returncode != 0:
@@ -88,7 +89,7 @@ def _default_add_claim_label(issue_number: int, machine_id: str) -> None:
 
 def _default_remove_claim_label(issue_number: int, machine_id: str) -> None:
     subprocess.run(
-        ["gh", "issue", "edit", str(issue_number), "--repo", REPO,
+        ["gh", "issue", "edit", str(issue_number), "--repo", instance.tickets_repo(),
          "--remove-label", _claim_label(machine_id)],
         capture_output=True, check=True,
     )

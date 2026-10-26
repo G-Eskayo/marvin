@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Per-ticket pipeline stage events (G-Eskayo/marvin#113-117's Activity tab
-scope, extended per Gil's 2026-10-01 ask: record *history*, not just live
+"""Per-ticket pipeline stage events (#113-117's Activity tab
+scope, extended to record *history*, not just live
 status, so stage failures become queryable data for self-improvement
 instead of something that has to be forensically re-traced by hand each
 time -- exactly what finding PR #119's real failure point required before
@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import instance  # noqa: E402
 import machine_profile  # noqa: E402
 
 STAGES_DIR = Path.home() / ".claude" / "logs" / "ticket-stages"
@@ -33,32 +34,34 @@ VALID_STAGES = {"claimed", "planning", "executing", "verifying", "gate", "mutati
 VALID_STATUSES = {"started", "passed", "failed"}
 
 
-MARVIN_REPO = "G-Eskayo/marvin"
 # Keys are lowercased, so the owner's real spelling is restored from here when a key is read back.
-KNOWN_OWNERS = {"g-eskayo": "G-Eskayo"}
+KNOWN_OWNERS = {"g-eskayo": "G-Eskayo"}  # marvin:identity-literal historical data (stage event filenames written before dynamic owner support)
 
 
 def stage_key(repo: str | None, ticket_number: int) -> str:
     """`<owner>__<repo>-<n>`, lowercased (#216): #7 in clarity-captions is not #7 in marvin, and `__` keeps the key
     readable back even though the owner itself contains a hyphen. repo None means marvin."""
-    owner, name = (repo or MARVIN_REPO).lower().split("/")
+    default_repo = instance.tickets_repo()
+    owner, name = (repo or default_repo).lower().split("/")
     return f"{owner}__{name}-{ticket_number}"
 
 
 def parse_stage_key(stem: str) -> tuple[str, int] | None:
     """The inverse of stage_key, plus marvin's old bare-number files. None for anything else."""
+    default_repo = instance.tickets_repo()
     if stem.isdigit():
-        return MARVIN_REPO, int(stem)
+        return default_repo, int(stem)
     owner, sep, rest = stem.partition("__")
     name, dash, number = rest.rpartition("-")
     if not (sep and dash and number.isdigit()):
         return None
     repo = f"{KNOWN_OWNERS.get(owner, owner)}/{name}"
-    return (MARVIN_REPO if repo.lower() == MARVIN_REPO.lower() else repo), int(number)
+    return (default_repo if repo.lower() == default_repo.lower() else repo), int(number)
 
 
 def _is_marvin(repo: str | None) -> bool:
-    return repo is None or repo.lower() == MARVIN_REPO.lower()
+    default_repo = instance.tickets_repo()
+    return repo is None or repo.lower() == default_repo.lower()
 
 
 def _stage_file(ticket_number: int, repo: str | None = None) -> Path:
@@ -131,7 +134,8 @@ def read_stages(ticket_number: int, repo: str | None = None) -> list[dict]:
 def list_tracked_tickets(repo: str | None = None) -> list[int]:
     if not STAGES_DIR.exists():
         return []
-    want = MARVIN_REPO if _is_marvin(repo) else repo
+    default_repo = instance.tickets_repo()
+    want = default_repo if _is_marvin(repo) else repo
     numbers = set()
     for p in STAGES_DIR.glob("*.json"):
         parsed = parse_stage_key(p.stem)

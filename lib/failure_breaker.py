@@ -27,6 +27,9 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import instance  # noqa: E402
+
 LOG_PATH = Path.home() / ".claude" / "logs" / "pipeline-failures.jsonl"
 WINDOW_HOURS = 2
 MIN_DISTINCT_TICKETS = 3
@@ -67,15 +70,14 @@ def _append(record: dict) -> None:
         fh.write(json.dumps(record) + "\n")
 
 
-MARVIN = "G-Eskayo/marvin"
-
-
-def record_failure(ticket: int, reason: str, now: datetime | None = None, project: str = MARVIN) -> None:
+def record_failure(ticket: int, reason: str, now: datetime | None = None, project: str | None = None) -> None:
+    project = project or instance.tickets_repo()
     _append({"t": (now or _now()).isoformat(), "kind": "failure", "ticket": ticket, "project": project,
              "sig": signature(reason), "reason": (reason or "")[:300]})
 
 
-def record_success(ticket: int, now: datetime | None = None, project: str = MARVIN) -> None:
+def record_success(ticket: int, now: datetime | None = None, project: str | None = None) -> None:
+    project = project or instance.tickets_repo()
     _append({"t": (now or _now()).isoformat(), "kind": "success", "ticket": ticket, "project": project})
 
 
@@ -105,8 +107,9 @@ def tripped(now: datetime | None = None, project: str | None = None) -> list[dic
     now = now or _now()
     horizon = now - timedelta(hours=WINDOW_HOURS)
     records = [r for r in _read() if r["_t"] >= horizon]
+    default_project = instance.tickets_repo()
     for r in records:
-        r.setdefault("project", MARVIN)
+        r.setdefault("project", default_project)
     result = []
     for proj in sorted({r["project"] for r in records}):
         if project is not None and proj != project:

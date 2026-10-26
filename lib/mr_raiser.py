@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""MR raiser for the MR pipeline (G-Eskayo/marvin#4).
+"""MR raiser for the MR pipeline (#4).
 
-Runs only after sandbox_orchestration.execute_ticket (G-Eskayo/marvin#3)
+Runs only after sandbox_orchestration.execute_ticket (#3)
 returns a passing result. Commits and pushes the worktree's branch, opens a
 pull request referencing the originating ticket with the machine device,
 metrics comparison, test results, and dev-environment evidence attached
-(the fixed PR evidence schema -- G-Eskayo/marvin#72, ADR 0024), and posts a
+(the fixed PR evidence schema -- #72, ADR 0024), and posts a
 summary comment back onto the ticket.
 
 Deliberately does not know sandbox_orchestration's branch-naming convention
@@ -27,11 +27,26 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mr_notification import notify_mr_ready as _default_notify_mr_ready  # noqa: E402
 import machine_profile  # noqa: E402
 
-# Gil authors every pipeline commit and MARVIN co-authors it: the ideas and direction are his, so the history
-# should read as Gil guiding MARVIN, even where MARVIN wrote the code (2026-10-14). Pinned here rather than read
-# from git config, which differs per machine and per repo and left the pipeline's history half one, half the other.
-AUTHOR = "Gil Eskayo <145878126+G-Eskayo@users.noreply.github.com>"
 CO_AUTHOR = "Co-Authored-By: MARVIN <marvin@marvin.dev>"
+
+
+def _get_author(worktree_path: Path) -> str:
+    """Author read from git config of the worktree at commit time, ensuring it's always the instance's configured author."""
+    result = subprocess.run(
+        ["git", "config", "user.name"],
+        cwd=worktree_path, capture_output=True, text=True, timeout=5,
+    )
+    if result.returncode != 0:
+        raise RuntimeError("git config user.name not set in worktree; cannot author commits")
+    name = result.stdout.strip()
+    result = subprocess.run(
+        ["git", "config", "user.email"],
+        cwd=worktree_path, capture_output=True, text=True, timeout=5,
+    )
+    if result.returncode != 0:
+        raise RuntimeError("git config user.email not set in worktree; cannot author commits")
+    email = result.stdout.strip()
+    return f"{name} <{email}>"
 
 
 def _current_branch(worktree_path: Path) -> str:
@@ -69,7 +84,7 @@ def _ticket_title(ticket_ref: str) -> str | None:
 
 
 def _subject(ticket_ref: str) -> str:
-    """Says what the change does, in the repo's "<what> (#n)" form. A bare "Implement G-Eskayo/marvin#422" told
+    """Says what the change does, in the repo's "<what> (#n)" form. A bare "Implement repo#422" told
     nobody anything: an outside index quoted it back verbatim (2026-10-14). Falls back to that form, which
     ticket_evidence also recognises, when the title can't be read: an unreadable title never blocks the PR."""
     title = " ".join((_ticket_title(ticket_ref) or "").split())
@@ -84,8 +99,9 @@ def _commit_and_push(worktree_path: Path, ticket_ref: str) -> str:
         ["git", "status", "--porcelain"], cwd=worktree_path, check=True, capture_output=True, text=True,
     ).stdout
     if status.strip():
+        author = _get_author(worktree_path)
         subprocess.run(
-            ["git", "commit", f"--author={AUTHOR}", "-m", _subject(ticket_ref), "-m", CO_AUTHOR],
+            ["git", "commit", f"--author={author}", "-m", _subject(ticket_ref), "-m", CO_AUTHOR],
             cwd=worktree_path, check=True, capture_output=True,
         )
     # A ticket sent back and re-dispatched is rebuilt from the current main under the SAME branch name, while
@@ -169,7 +185,7 @@ def _format_device() -> str:
 
 
 def _repo_of(ticket_ref: str) -> str | None:
-    """'G-Eskayo/clarity-captions#7' -> 'G-Eskayo/clarity-captions'. gh must be told which repo: the
+    """'owner/project#7' -> 'owner/project'. gh must be told which repo: the
     process's own directory is not a reliable stand-in once more than one project is in play."""
     return ticket_ref.rsplit("#", 1)[0] if "/" in ticket_ref and "#" in ticket_ref else None
 

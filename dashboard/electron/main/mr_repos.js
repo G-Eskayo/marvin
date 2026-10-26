@@ -1,19 +1,20 @@
 // MR Review across projects. The list spans every registered board repo; the
-// merge gate (webhook-server/merge.js) is built in for marvin and profile-driven for other projects:
+// merge gate (webhook-server/merge.js) is built in for the engine repo and profile-driven for other projects:
 // they get Approve/Deny only when their profile opts in (merge_from_dashboard).
 import { ciState } from '../../webhook-server/ci_status.js'
 import { checksDigest, statusesDigest } from '../../webhook-server/gh_watch.js'
+import { engineRepo } from './instance.js'
 
-export const MARVIN_REPO = 'G-Eskayo/marvin'
+export const MARVIN_REPO = engineRepo()
 
 export const prKey = (repo, number) => `${repo}#${number}`
-// marvin always (its gate is built in); another project only when its profile opted in (profiles.js).
+// Engine repo always (its gate is built in); another project only when its profile opted in (profiles.js).
 export const canMergeFromDashboard = (repo, mergeable = new Set()) => repo === MARVIN_REPO || mergeable.has(repo)
 
-// Seen-tracking used to store bare PR numbers (marvin only). Keep reading them, as marvin's.
+// Seen-tracking used to store bare PR numbers (engine repo only). Keep reading them, as engine repo's.
 export const normalizeSeen = (seen) => seen.map((x) => (typeof x === 'number' ? prKey(MARVIN_REPO, x) : x))
 
-// listedAt(repo): when that repo's list was last read from GitHub (ms), for MR Review's "Last checked" (marvin#555).
+// listedAt(repo): when that repo's list was last read from GitHub (ms), for MR Review's "Last checked".
 export async function listOpenPrsAcrossRepos(repos, ghList, { listedAt = null } = {}) {
   const all = [MARVIN_REPO, ...repos.filter((r) => r !== MARVIN_REPO)]
   const prs = []

@@ -14,6 +14,10 @@ Stored in instance/instance.json, because nothing can derive them:
 A missing, corrupt or wrong-shaped instance.json reads as a blank instance, never a crash. Each value is computed once
 per process (O(1) after the first call; engine code calls these in loops). MARVIN_INSTANCE_DIR overrides the
 instance location (tests, a second checkout).
+
+Raises NotConfigured when there is no git origin and no instance.json config — this is a configuration error (the
+MARVIN instance is not set up), not a runtime error. Callers either let it propagate to a top-level handler (fail
+loudly, show "not set up" UI) or catch it locally and handle gracefully (e.g. CLI tool with a helpful message).
 """
 from __future__ import annotations
 
@@ -27,6 +31,16 @@ from pathlib import Path
 ENGINE_DIR = Path(__file__).resolve().parents[1]
 UPSTREAM = "G-Eskayo/marvin"
 _GITHUB = re.compile(r"github\.com[:/]+([A-Za-z0-9-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$")
+
+
+class NotConfigured(Exception):
+    """Raised when engine_repo(), owner(), or tickets_repo() cannot be determined.
+
+    This indicates the MARVIN instance is not properly configured: no git origin, and no
+    instance.json providing the necessary config. Callers should fail loudly (e.g. show UI)
+    rather than silently falling back to a default, which would leak tickets into the wrong repo.
+    """
+    pass
 
 
 def instance_dir() -> Path:
@@ -65,15 +79,30 @@ def _origin_repo() -> str | None:
 
 
 def engine_repo() -> str:
-    return _origin_repo() or _str("engine_repo") or UPSTREAM
+    origin = _origin_repo()
+    if origin:
+        return origin
+    configured = _str("engine_repo")
+    if configured:
+        return configured
+    raise NotConfigured(
+        "No git origin found, and no engine_repo in instance.json. "
+        "Is MARVIN_INSTANCE_DIR set correctly? Are you in a git clone with origin?"
+    )
 
 
 def owner() -> str:
-    return _str("owner") or engine_repo().split("/")[0]
+    configured = _str("owner")
+    if configured:
+        return configured
+    return engine_repo().split("/")[0]
 
 
 def tickets_repo() -> str:
-    return _str("tickets_repo") or engine_repo()
+    configured = _str("tickets_repo")
+    if configured:
+        return configured
+    return engine_repo()
 
 
 def feature_enabled(name: str) -> bool:

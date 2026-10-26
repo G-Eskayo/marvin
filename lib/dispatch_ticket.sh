@@ -34,7 +34,8 @@ fi
 ISSUE_NUMBER="$1"
 TARGET_HOST="$2"
 BRANCH_NAME="$3"
-REPO="G-Eskayo/marvin"
+# Allow MARVIN_REPO env var to override the default; fall back to G-Eskayo/marvin
+REPO="${MARVIN_REPO:-G-Eskayo/marvin}"
 
 PROMPT_FILE=$(mktemp)
 # marvin#556: the standard delegation preamble (required reading + the reused pattern), from its one source.

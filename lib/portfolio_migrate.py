@@ -24,11 +24,12 @@ from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import portfolio_apply as pa  # noqa: E402
 import portfolio_templates as pt  # noqa: E402
+import instance  # noqa: E402
 
 OUTBOX = Path.home() / ".claude" / "outbox" / "migrations"
 WRAPPER = re.compile(r"<!-- hub-sidebar:wrapper -->.*?<!-- hub-sidebar:content-start -->(.*?)<!-- hub-sidebar:content-end -->.*?<!-- /hub-sidebar:wrapper -->", re.S)
 WP_CODE = re.compile(r'\[wp_code id="(\d+)"\]')
-GITHUB = re.compile(r'github\.com/G-Eskayo/', re.I)
+GITHUB = re.compile(rf'github\.com/{instance.owner()}/', re.I)
 
 
 class MigrationError(Exception):

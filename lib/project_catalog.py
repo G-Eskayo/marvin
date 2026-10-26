@@ -26,7 +26,6 @@ import instance  # noqa: E402  (instance_dir: the owner's private state, ADR 007
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-OWNER = "G-Eskayo"
 HOME = Path.home()
 CATALOG_DIR = HOME / ".claude" / "catalog"
 OVERRIDES_PATH = CATALOG_DIR / "overrides.json"
@@ -194,7 +193,7 @@ def build_catalog(github: list[dict], locals_: list[dict], manifest: list[dict],
 
     for r in github:
         rec = blank(slug(r["name"]), r["name"], "repo")
-        rec.update(repo=f"{OWNER}/{r['name']}", visibility=r.get("visibility"), description=r.get("description") or "",
+        rec.update(repo=f"{instance.owner()}/{r['name']}", visibility=r.get("visibility"), description=r.get("description") or "",
                    lastActivity=r.get("pushedAt"), _archived=bool(r.get("isArchived")), _topics=_topics(r),
                    _lang=(r.get("primaryLanguage") or {}).get("name"))
         recs[rec["id"]] = rec
@@ -432,17 +431,17 @@ def _run(args: list[str], cwd: Path | None = None, timeout: int = 60) -> str:
 
 
 def discover_github() -> list[dict]:
-    out = _run(["gh", "repo", "list", OWNER, "--limit", "200", "--json",
+    out = _run(["gh", "repo", "list", instance.owner(), "--limit", "200", "--json",
                 "name,description,visibility,isArchived,pushedAt,primaryLanguage,repositoryTopics"])
     return json.loads(out)
 
 
 def github_docs_probe(repo_name: str) -> dict:
-    names = {e["name"] for e in json.loads(_run(["gh", "api", f"repos/{OWNER}/{repo_name}/contents"]))}
+    names = {e["name"] for e in json.loads(_run(["gh", "api", f"repos/{instance.owner()}/{repo_name}/contents"]))}
     adr = 0
     if "docs" in names:
         try:
-            adr = sum(1 for e in json.loads(_run(["gh", "api", f"repos/{OWNER}/{repo_name}/contents/docs/adr"])) if e["name"].endswith(".md"))
+            adr = sum(1 for e in json.loads(_run(["gh", "api", f"repos/{instance.owner()}/{repo_name}/contents/docs/adr"])) if e["name"].endswith(".md"))
         except Exception:  # noqa: BLE001
             pass
     return {"context": "CONTEXT.md" in names, "readme": "README.md" in names, "adrCount": adr}
@@ -454,7 +453,7 @@ def _local_record(p: Path) -> dict:
     if (p / ".git").exists():
         try:
             url = _run(["git", "-C", str(p), "remote", "get-url", "origin"]).strip()
-            m = re.search(rf"{OWNER}/([^/]+?)(?:\.git)?$", url)
+            m = re.search(rf"{instance.owner()}/([^/]+?)(?:\.git)?$", url)
             origin = m.group(1) if m else None
             last = _run(["git", "-C", str(p), "log", "-1", "--format=%cI"]).strip() or None
         except Exception:  # noqa: BLE001

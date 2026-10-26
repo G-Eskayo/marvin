@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Sandbox orchestration for the MR pipeline (G-Eskayo/marvin#3).
+"""Sandbox orchestration for the MR pipeline (#3).
 
 Given a ticket, enters an isolated git worktree and drives it through a
-tune-and-compare loop against metrics_registry (G-Eskayo/marvin#2) until the
+tune-and-compare loop against metrics_registry (#2) until the
 comparison is favorable or max_iterations is exhausted. Stops short of
-raising an MR -- that's G-Eskayo/marvin#4's job, which is why this module
+raising an MR -- that's #4's job, which is why this module
 deliberately never removes the worktree itself on success: the MR raiser
 needs the worktree's branch/commits to still be there.
 
@@ -553,9 +553,9 @@ def _test_rules(ticket_ref: str) -> dict:
 
 
 def _ticket_repo(ticket_ref: str) -> str | None:
-    """'G-Eskayo/clarity-captions#7' -> the repo, but None for marvin's (their records keep the plain number)."""
+    """'owner/project#7' -> the repo, but None for the engine repo (its records keep the plain number)."""
     repo = ticket_ref.rsplit("#", 1)[0] if "/" in ticket_ref and "#" in ticket_ref else None
-    return None if repo in (None, "G-Eskayo/marvin") else repo
+    return None if repo in (None, instance.engine_repo()) else repo
 
 
 def _stage(ticket_ref: str, stage: str, status: str, detail: str = "", **kw) -> None:

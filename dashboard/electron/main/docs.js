@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { homedir } from 'os'
 import path from 'path'
 import { groupDocSections } from './doc_paths.js'
+import { owner } from './instance.js'
 
 // Cross-project documentation browser. Deliberately GitHub-API-backed, not
 // local-filesystem-backed, unlike dispatch_status.js/health.js -- these are
@@ -13,7 +14,6 @@ import { groupDocSections } from './doc_paths.js'
 // be running on -- same "runs identically on both machines" bar #89's own
 // acceptance criteria already set, just met a different way since the
 // underlying data isn't local-only here.
-const GH_OWNER = 'G-Eskayo'
 const CACHE_PATH = path.join(homedir(), '.claude', 'logs', 'doc-repos-cache.json')
 
 function run(execFileAsync, args) {
@@ -22,7 +22,7 @@ function run(execFileAsync, args) {
 
 async function fileExists(execFileAsync, repo, filePath) {
   try {
-    await run(execFileAsync, ['api', `repos/${GH_OWNER}/${repo}/contents/${filePath}`, '--jq', '.name'])
+    await run(execFileAsync, ['api', `repos/${owner()}/${repo}/contents/${filePath}`, '--jq', '.name'])
     return true
   } catch {
     return false
@@ -34,7 +34,7 @@ async function fileExists(execFileAsync, repo, filePath) {
 // not by being added to a list someone has to remember to update.
 export async function discoverDocFirstRepos(execFileAsync, cachePath = CACHE_PATH) {
   const { stdout } = await run(execFileAsync, [
-    'repo', 'list', GH_OWNER, '--limit', '200',
+    'repo', 'list', owner(), '--limit', '200',
     '--json', 'name,description,pushedAt,isArchived'
   ])
   const repos = JSON.parse(stdout).filter((r) => !r.isArchived)
@@ -66,7 +66,7 @@ export async function listRepoDocTree(execFileAsync, repo) {
   // One recursive tree call gives every doc under docs/ and the root notebooks; if it fails, fall back to listing
   // docs/adr/ and the root directly, as before.
   try {
-    const { stdout } = await run(execFileAsync, ['api', `repos/${GH_OWNER}/${repo}/git/trees/HEAD?recursive=1`])
+    const { stdout } = await run(execFileAsync, ['api', `repos/${owner()}/${repo}/git/trees/HEAD?recursive=1`])
     const paths = (JSON.parse(stdout).tree || []).filter((e) => e.type === 'blob').map((e) => e.path)
     tree.push(...groupDocSections(paths))
     const books = paths.filter((p) => !p.includes('/') && p.endsWith('.ipynb')).sort((a, b) => a.localeCompare(b)).map((p) => ({ path: p, label: p }))
@@ -76,7 +76,7 @@ export async function listRepoDocTree(execFileAsync, repo) {
     // fall through to the two direct listings
   }
   try {
-    const { stdout } = await run(execFileAsync, ['api', `repos/${GH_OWNER}/${repo}/contents/docs/adr`])
+    const { stdout } = await run(execFileAsync, ['api', `repos/${owner()}/${repo}/contents/docs/adr`])
     const entries = JSON.parse(stdout)
     const adrs = entries
       .filter((e) => e.type === 'file' && e.name.endsWith('.md'))
@@ -87,7 +87,7 @@ export async function listRepoDocTree(execFileAsync, repo) {
     // no docs/adr/ yet -- fine, not every repo has ADRs
   }
   try {
-    const { stdout } = await run(execFileAsync, ['api', `repos/${GH_OWNER}/${repo}/contents`])
+    const { stdout } = await run(execFileAsync, ['api', `repos/${owner()}/${repo}/contents`])
     const books = JSON.parse(stdout)
       .filter((e) => e.type === 'file' && e.name.endsWith('.ipynb'))
       .sort((a, b) => a.name.localeCompare(b.name))
@@ -105,9 +105,9 @@ export function searchableText(filePath, content) {
   return filePath.endsWith('.ipynb') ? notebookToMarkdown(content, { images: false }) : content
 }
 
-// `repo` is a name under G-Eskayo, or a full "owner/name" (the saved copy, docs_saved.js, keys by the full name).
+// `repo` is a name under the current owner, or a full "owner/name" (the saved copy, docs_saved.js, keys by the full name).
 export async function fetchFileContent(execFileAsync, repo, filePath) {
-  const full = String(repo).includes('/') ? repo : `${GH_OWNER}/${repo}`
+  const full = String(repo).includes('/') ? repo : `${owner()}/${repo}`
   if (filePath.endsWith('.ipynb')) {
     // Notebooks carry their images inline and easily pass the contents API's 1 MB base64 limit: ask for the raw bytes.
     const { stdout } = await execFileAsync(

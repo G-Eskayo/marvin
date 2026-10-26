@@ -26,9 +26,6 @@ from evidence_capture import TestTimedOut  # noqa: E402
 import instance  # noqa: E402
 
 PROFILES_DIR = instance.path("config", "projects")  # the owner's projects: private instance (ADR 0071)
-# MARVIN's own repo: ticket_pipeline dispatches it on every machine whatever its profile lists, so an empty `machines`
-# is not "can never run" here, and listing a machine would narrow it.
-HOME_REPO = "G-Eskayo/marvin"
 PLAYBOOKS_DIR = Path(__file__).resolve().parent.parent / "config" / "playbooks"  # versioned with the code that reads it
 PIPELINE_CLONES = Path.home() / ".agents-pipeline-clones"  # dedicated clones: not a working copy, not in iCloud
 _NO_TESTS_MARKERS = ("no tests ran", "no test files found")
@@ -269,7 +266,8 @@ def playbook_notes(profile: dict) -> str:
 def profile_problems(profile: dict) -> list[str]:
     """Things that make a profile unable to do its job, said by selftest before it touches any clone."""
     out = []
-    if profile.get("dispatch") == "on" and not profile.get("machines") and profile.get("repo") != HOME_REPO:
+    home_repo = instance.tickets_repo()
+    if profile.get("dispatch") == "on" and not profile.get("machines") and profile.get("repo") != home_repo:
         out.append("dispatch is on but machines is empty, so the pipeline can never run this project's tickets: "
                    "list the machines that can build it, or switch dispatch off")
     return out
@@ -314,7 +312,8 @@ def runnable_repos(directory: Path | None = None) -> list[str]:
 
 def unrunnable_repos(directory: Path | None = None) -> list[str]:
     """Dispatch on but no machines listed: no ticket of theirs can ever run. Said once, in Health, not every scan."""
-    return [p["repo"] for p in all_profiles(directory) if p["dispatch"] == "on" and not p.get("machines") and p["repo"] != HOME_REPO]
+    home_repo = instance.tickets_repo()
+    return [p["repo"] for p in all_profiles(directory) if p["dispatch"] == "on" and not p.get("machines") and p["repo"] != home_repo]
 
 
 def _token_env() -> dict:

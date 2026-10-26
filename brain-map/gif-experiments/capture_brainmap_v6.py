@@ -13,10 +13,11 @@ Still never touches the mouse, so autoRotate + real camera-easing stay live.
 import json
 import math
 import time
+import tempfile
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 
-FRAMES_DIR = Path("/private/tmp/claude-501/-Users-gileskayo/be77c549-8390-4112-9f3a-f7e8c41c333b/scratchpad/brain_map_frames_v6")
+FRAMES_DIR = Path(tempfile.gettempdir()) / "brain_map_frames_v6"
 META_PATH = FRAMES_DIR.parent / "capture_v6_meta.json"
 URL = "http://127.0.0.1:8791/index.html?wallpaper=1"
 VIEWPORT = {"width": 1100, "height": 850}

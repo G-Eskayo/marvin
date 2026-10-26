@@ -22,20 +22,20 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import instance  # noqa: E402
 from hook_errors import log_hook_error  # noqa: E402
-
-ALLOWED_REPO = "G-Eskayo/marvin"
 
 _MERGE_RE = re.compile(r"^\s*gh\s+pr\s+merge\b")
 _REPO_FLAG_RE = re.compile(r"(?:-R|--repo)(?:=|\s+)([^\s]+)")
 
 
 def _allow_decision() -> dict:
+    allowed_repo = instance.tickets_repo()
     return {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": "allow",
-            "permissionDecisionReason": f"gh pr merge targeting {ALLOWED_REPO} (gh_merge_guard.py)",
+            "permissionDecisionReason": f"gh pr merge targeting {allowed_repo} (gh_merge_guard.py)",
         }
     }
 
@@ -44,7 +44,8 @@ def check(command: str) -> dict | None:
     if not _MERGE_RE.match(command):
         return None
     match = _REPO_FLAG_RE.search(command)
-    if not match or match.group(1) != ALLOWED_REPO:
+    allowed_repo = instance.tickets_repo()
+    if not match or match.group(1) != allowed_repo:
         return None
     return _allow_decision()
 

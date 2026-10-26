@@ -25,6 +25,7 @@ from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import project_catalog  # noqa: E402
+import instance  # noqa: E402
 
 HOME = Path.home()
 PROJECT = project_catalog.portfolio_repo_path()
@@ -70,7 +71,7 @@ ELEMENTS = {
     "button-github": {
         "name": "GitHub button", "template": "button-github",
         "description": "The project's own repository. First button in a project page's action row.",
-        "selector": 'main a.btn[href*="github.com/G-Eskayo"]', "parts": {"button": ""},
+        "selector": f'main a.btn[href*="github.com/{instance.owner()}"]', "parts": {"button": ""},
         "rules": [{"attr": "href", "value": "{{REPO_URL}}"}, {"text": "{{LABEL}}"}],
         "sample_pages": ["/ai-projects/marvin/"],
         "fields": [{"name": "REPO_URL", "label": "Repository URL", "type": "url"}, {"name": "LABEL", "label": "Label", "type": "text"}],

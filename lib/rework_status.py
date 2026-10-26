@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import instance  # noqa: E402
 
 
 def ordinal(n: int) -> str:
@@ -39,7 +40,9 @@ def _read_diagnosis(ticket_number: int, repo: str) -> dict | None:
     try:
         import denial_diagnosis as dd
         # repo can be either "marvin" or "G-Eskayo/marvin"; match both
-        full_repo = repo if "/" in repo else f"G-Eskayo/{repo}"
+        default_repo = instance.tickets_repo()
+        owner = default_repo.split("/")[0]
+        full_repo = repo if "/" in repo else f"{owner}/{repo}"
         recs = [r for r in dd._read() if r.get("ticket") == ticket_number and r.get("project") == full_repo]
         if recs:
             latest = max(recs, key=lambda r: r.get("_t", datetime.min(timezone.utc)))

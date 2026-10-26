@@ -18,6 +18,7 @@ import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
 import { readDispatchStatus } from './dispatch_status.js'
 import { readHealthStatus, runHealthCheckNow } from './health.js'
 import { buildBootData, createBootGate } from './boot_data.js'
+import { NotConfigured } from './instance.js'
 import { readOnboardingPlans } from './onboarding.js'
 import { readCachedRepos } from './docs.js'
 import { createPortfolio } from './portfolio.js'
@@ -294,7 +295,17 @@ function registerSessionHandlers() {
 const bootGate = createBootGate()
 
 function registerHealthHandlers() {
-  ipcMain.handle('boot:data', () => (bootGate() ? { show: true, data: buildBootData() } : { show: false }))
+  ipcMain.handle('boot:data', () => {
+    if (!bootGate()) return { show: false }
+    try {
+      return { show: true, data: buildBootData() }
+    } catch (e) {
+      if (e instanceof NotConfigured) {
+        return { show: true, configured: false, error: e.message }
+      }
+      throw e
+    }
+  })
   ipcMain.handle('health:status', () => readHealthStatus())
   ipcMain.handle('health:agents', () => listAgents())
   // Execution profiles (lib/project_profile.py): which projects the pipeline may work on by itself.

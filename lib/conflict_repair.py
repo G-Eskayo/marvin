@@ -27,11 +27,11 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import instance  # noqa: E402
 import generated_paths as gp  # noqa: E402
 import marvin_launcher  # noqa: E402
 
 HOME = Path.home()
-MARVIN = "G-Eskayo/marvin"
 STATE_PATH = HOME / ".claude" / "logs" / "conflict-repair.json"
 VENV_PYTHON = str(HOME / ".agents" / "venv" / "bin" / "python")
 MAX_PER_SCAN = 2
@@ -44,7 +44,8 @@ def _git(cwd, *args, check=True, timeout=300):
 
 def where(repo: str) -> tuple[str | None, str]:
     """(clone on this machine, base branch) for a project, the same answer the merge gate uses."""
-    if repo.lower() == MARVIN.lower():
+    default_repo = instance.tickets_repo()
+    if repo.lower() == default_repo.lower():
         return str(HOME / ".agents"), "main"
     try:
         import project_profile as pp
@@ -110,9 +111,9 @@ def _other_pr(wt: str, base: str, path: str, hunk_start: int, hunk_end: int) -> 
 
 
 def default_tests(repo: str, cwd: str, changed: list[str]) -> tuple[bool, str]:
-    """The merge gate's tests: marvin = pytest (+ vitest when the PR touches dashboard/); others = their profile's verify."""
+    """The merge gate's tests: engine repo = pytest (+ vitest when the PR touches dashboard/); others = their profile's verify."""
     try:
-        if repo.lower() == MARVIN.lower():
+        if repo.lower() == instance.engine_repo().lower():
             env = {**os.environ, "MARVIN_MERGE_GATE": "1"}
             p = subprocess.run([VENV_PYTHON, "-m", "pytest", "-q", "-p", "no:cacheprovider"], cwd=cwd, env=env,
                                capture_output=True, text=True, timeout=TEST_TIMEOUT_S)

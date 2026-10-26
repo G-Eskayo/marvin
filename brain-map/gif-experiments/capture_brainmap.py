@@ -4,10 +4,11 @@ scripted activity pulses + a synthetic node grow/shrink, as a PNG frame
 sequence for later ffmpeg -> GIF conversion. Nothing real touched (same
 guarantee as demo.py) — this only calls the page's own exposed demo hooks."""
 import time
+import tempfile
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 
-FRAMES_DIR = Path("/private/tmp/claude-501/-Users-gileskayo/be77c549-8390-4112-9f3a-f7e8c41c333b/scratchpad/brain_map_frames")
+FRAMES_DIR = Path(tempfile.gettempdir()) / "brain_map_frames"
 URL = "http://127.0.0.1:8791/index.html?wallpaper=1"
 TOTAL_DURATION = 136.0  # > one full 360 rotation at yaw += 0.0008 rad/frame (~131s)
 FRAME_INTERVAL = 0.12

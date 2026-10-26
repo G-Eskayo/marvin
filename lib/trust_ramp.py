@@ -19,9 +19,12 @@ import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import instance  # noqa: E402
+
 STATE_PATH = Path.home() / ".claude" / "logs" / "trust-ramp.json"
 NEEDED = 5
-STARTS_OPEN = {"g-eskayo/marvin"}
+STARTS_OPEN = {instance.tickets_repo()}
 COUNTS = {"approved-merge"}
 RESETS = {"deny", "revert", "break"}
 IGNORED = {"manual-merge"}
@@ -100,8 +103,9 @@ def status(path: Path = STATE_PATH) -> dict:
         return {}
     out = {v.get("name", k): {"streak": v["streak"], "open": v["streak"] >= NEEDED, "last_reset": v.get("last_reset")}
            for k, v in data["repos"].items()}
-    if "g-eskayo/marvin" not in data["repos"]:
-        out["G-Eskayo/marvin"] = {"streak": NEEDED, "open": True, "last_reset": None}
+    default_repo = instance.tickets_repo()
+    if default_repo.lower() not in data["repos"]:
+        out[default_repo] = {"streak": NEEDED, "open": True, "last_reset": None}
     return out
 
 

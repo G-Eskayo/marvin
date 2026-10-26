@@ -31,13 +31,15 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Callable
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import instance  # noqa: E402
+
 ID_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,79}")
 MAX_FILE_BYTES = 256 * 1024
 NORTH_STARS = {1: "Minimise resources", 2: "Phone OS", 3: "Raise the human experience", 4: "Best tool for making tools"}
 SIZES = ("Small", "Medium", "Large")
 LIMITS = {"title": 140, "problem": 600, "fix": 600, "why": 600, "area": 40, "source": 60, "technical": 5000}
 REQUIRED = ("title", "problem", "fix", "why")
-REPO = "G-Eskayo/marvin"
 GH = Path.home() / ".agents" / "bin" / "gh"
 
 
@@ -204,7 +206,7 @@ def run_gh(args: list[str], body: str) -> tuple[int, str, str]:
 
 
 def _create_issue(gh: Callable, title: str, body: str) -> int:
-    args = ["issue", "create", "-R", REPO, "--title", title[:120], "--label", "needs-triage", "--label", "project:marvin"]
+    args = ["issue", "create", "-R", instance.tickets_repo(), "--title", title[:120], "--label", "needs-triage", "--label", "project:marvin"]
     rc, out, err = gh(args, body)
     if rc != 0:
         raise ProposalError(f"gh couldn't create the ticket: {(err or out).strip()[:200]}")

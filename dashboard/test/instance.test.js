@@ -48,11 +48,19 @@ describe('instance', () => {
     expect(inst.engineRepo()).toBe('pat-example/marvin')
   })
 
-  it('falls back to the config, then the upstream, with no usable origin', () => {
+  it('uses config when there is no usable origin', () => {
     at({ origin: '/srv/mirror/marvin.git', config: { engine_repo: 'pat-example/marvin' } })
     expect(inst.engineRepo()).toBe('pat-example/marvin')
+  })
+
+  it('raises NotConfigured when there is no origin and no config', () => {
     at({ config: {} })
-    expect(inst.engineRepo()).toBe(inst.UPSTREAM)
+    expect(() => inst.engineRepo()).toThrow(inst.NotConfigured)
+  })
+
+  it('raises NotConfigured with empty string engine_repo', () => {
+    at({ config: { engine_repo: '' } })
+    expect(() => inst.engineRepo()).toThrow(inst.NotConfigured)
   })
 
   it('takes the person from the config when the fork is org-owned', () => {

@@ -21,6 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import project_catalog  # noqa: E402
+import instance  # noqa: E402
 
 PROJECT = project_catalog.portfolio_repo_path()
 RULES_PATH = PROJECT / "templates" / "design-rules.json"
@@ -38,7 +39,7 @@ DEFAULT_RULES = {
     # one card design everywhere: the photo frame height and how far the card overlays the photo (px); used only until
     # the project-card element has been captured, after which the element is the reference
     "card": {"image_height": 240, "overlap": 56},
-    "github_button": {"text": "View on GitHub", "classes": ["btn", "btn-default"], "owner": "G-Eskayo"},
+    "github_button": {"text": "View on GitHub", "classes": ["btn", "btn-default"], "owner": instance.owner()},
     "viewports": [1440, 1100, 390],
     "hub_pages": ["/ai-projects/", "/cybersecurity-projects/", "/software-engineering/", "/all-projects/"],
 }

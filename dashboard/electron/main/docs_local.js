@@ -4,13 +4,13 @@ import path from 'path'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { groupDocSections, isDocMarkdown } from './doc_paths.js'
+import { owner } from './instance.js'
 
 // Local-first reading for the Docs tab. The tab used to read only GitHub's
 // default branch, so uncommitted or unpushed doc edits were invisible. For any
 // repo with a clone on this machine we read the working tree instead and say
 // which files differ from GitHub; repos with no clone here fall back to GitHub.
 const execFileP = promisify(execFile)
-const GH_OWNER = 'G-Eskayo'
 const DOC_PATHS = ['CONTEXT.md', 'README.md', 'docs', ':(glob)*.ipynb']
 
 async function git(dir, args) {
@@ -33,7 +33,7 @@ export function defaultCandidateDirs() {
 // The working copy that is actually moving wins when several clones exist
 // (found 2026-10-05: clarity-captions is cloned in two places, one 2 days stale).
 export async function resolveLocalClone(repoName, { candidateDirs = defaultCandidateDirs() } = {}) {
-  const originRe = new RegExp(`[:/]${GH_OWNER}/${repoName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\.git)?$`)
+  const originRe = new RegExp(`[:/]${owner()}/${repoName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\.git)?$`)
   let best = null
   for (const dir of candidateDirs) {
     if (!existsSync(path.join(dir, '.git'))) continue
