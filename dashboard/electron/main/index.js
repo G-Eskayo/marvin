@@ -62,6 +62,7 @@ import { createSavedDocs } from './docs_saved.js'
 import { readMergeableRepos, readUiPaths, listProfiles, setDispatch, setMergeFromDashboard } from './profiles.js'
 import { searchFiles, isRevealable, isLinkable, linkAction } from './files_search.js'
 import { safeExternalUrl } from '../../src/lib/pdf_nav.js'
+import { openLink, windowOpenHandler } from './external_links.js'
 import { readOutboxFile, readOutboxImage, outboxRevealPath, outboxOpenPath, outboxRoot, listOutboxDir, summarizeOutbox, outboxPreview } from './outbox.js'
 import { createDeliverables } from './deliverables.js'
 import { createThumbs } from './thumbs.js'
@@ -252,6 +253,8 @@ function createWindow() {
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
   })
+  // Links that would open a new window go to Chrome, where Gil is signed in (external_links.js).
+  mainWindow.webContents.setWindowOpenHandler(windowOpenHandler((url) => openLink(url, { openExternal: shell.openExternal })))
 
   const devUrl = process.env['ELECTRON_RENDERER_URL']
   if (devUrl) {
