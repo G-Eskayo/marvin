@@ -17,7 +17,7 @@
 set -uo pipefail
 
 top=$(git rev-parse --show-toplevel) || exit 1
-shared="$top/config/push-guard/patterns.txt"
+shared="${PUSH_GUARD_SHARED:-$top/config/push-guard/patterns.txt}"   # the cleanup sweep points other repos at MARVIN's
 private="$HOME/.claude/private-push-patterns.txt"
 if [ ! -f "$private" ]; then
   echo "pre-push guard: $private is missing; refusing to push blind (setup.sh creates it)" >&2
