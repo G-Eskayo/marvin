@@ -28,11 +28,12 @@ from pathlib import Path
 from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import instance  # noqa: E402
 
 LABEL = "purpose-metric"
 MISSED_LABEL = "missed-purpose"
 OUTCOME_HEADING = "## Outcome check"
-REPOS = ("G-Eskayo/marvin",)
+REPOS = (instance.tickets_repo(),)
 SSH_OPTS = ["-o", "ConnectTimeout=5", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"]
 
 
@@ -243,6 +244,7 @@ def health_findings(missed: list[dict]) -> list[dict]:
 
 
 if __name__ == "__main__":
+    instance.require_configured()
     args = sys.argv[1:]
     if args[:1] == ["measure"] and len(args) >= 2:
         print(measure_here(args[1]) if "--local" in args else json.dumps(measure_everywhere(args[1])))

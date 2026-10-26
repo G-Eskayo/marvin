@@ -570,6 +570,8 @@ def main() -> dict:
     """launchd entry point, single flight (#586, the #457 main-health pattern): a sweep still running (say, stuck in a
     size walk) makes the next one return {"busy": True} at once instead of queueing. The flock dies with its process,
     so it can never go stale."""
+    import instance
+    instance.require_configured()
     import fcntl
     LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(LOCK_PATH, "a") as lock:

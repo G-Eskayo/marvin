@@ -25,6 +25,7 @@ from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mr_notification import notify_mr_ready as _default_notify_mr_ready  # noqa: E402
+import instance  # noqa: E402
 import machine_profile  # noqa: E402
 
 # Gil authors every pipeline commit and MARVIN co-authors it: the ideas and direction are his, so the history

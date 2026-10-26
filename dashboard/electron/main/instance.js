@@ -53,6 +53,28 @@ export function featureEnabled(name) {
   return !!f && typeof f === 'object' && !Array.isArray(f) && f[name] === true
 }
 
+export function isConfigured() {
+  const c = load()
+  return !!c.origin || !!str('engine_repo') || !!str('owner') || !!str('tickets_repo')
+}
+
+export class NotConfiguredError extends Error {
+  constructor() {
+    super(
+      'MARVIN is not yet configured for this instance.\n' +
+      'Run the installer (install.sh) or manually set ~/.agents/instance/instance.json with:\n' +
+      '  {"engine_repo": "owner/repo", "owner": "username", "tickets_repo": "owner/tickets-repo"}'
+    )
+    this.name = 'NotConfiguredError'
+  }
+}
+
+export function requireConfigured() {
+  if (!isConfigured()) {
+    throw new NotConfiguredError()
+  }
+}
+
 export function reset() {
   cache = null
 }

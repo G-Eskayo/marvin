@@ -14,7 +14,7 @@ if (!process.env.MARVIN_TEST_HOME) {
 export default {
   esbuild: { jsx: 'automatic' },
   test: {
-    setupFiles: ['./test/support/assert_temp_home.js'],
+    setupFiles: ['./test/support/assert_temp_home.js', './test/support/setup_instance.js'],
     // A hung test fails fast, by name (pipeline review 2026-10-21, F3). Vitest's own defaults, stated so nobody
     // raises them without seeing this: 5 s per test (a test that needs longer says so itself), 10 s per hook.
     testTimeout: 5_000,

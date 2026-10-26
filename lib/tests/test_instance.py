@@ -206,3 +206,48 @@ def test_the_ratchet_catches_a_quoted_owner_but_not_a_comment(tmp_path):
     assert COMMENT.match("    # see G-Eskayo/marvin#21")
     assert COMMENT.match("  // G-Eskayo/marvin")
     assert not IDENTITY.search('msg = "Gilbert and Gilda"')
+
+
+# ── configuration check: is_configured() and require_configured() ────────────────────────────────────────────
+
+def test_is_configured_true_when_origin_is_a_real_github_url(at):
+    at(origin="https://github.com/pat-example/marvin.git")
+    assert instance.is_configured() is True
+
+
+def test_is_configured_true_when_engine_repo_is_in_config(at):
+    at(origin=None, config={"engine_repo": "pat-example/marvin"})
+    assert instance.is_configured() is True
+
+
+def test_is_configured_true_when_owner_is_in_config(at):
+    at(origin=None, config={"owner": "pat-example"})
+    assert instance.is_configured() is True
+
+
+def test_is_configured_true_when_tickets_repo_is_in_config(at):
+    at(origin=None, config={"tickets_repo": "pat-example/tickets"})
+    assert instance.is_configured() is True
+
+
+def test_is_configured_false_when_nothing_is_set(at):
+    at(origin=None, config={})
+    assert instance.is_configured() is False
+
+
+def test_is_configured_false_when_instance_is_missing(at, tmp_path, monkeypatch):
+    at(origin=None)
+    monkeypatch.setenv("MARVIN_INSTANCE_DIR", str(tmp_path / "does-not-exist"))
+    instance.reset()
+    assert instance.is_configured() is False
+
+
+def test_require_configured_raises_when_not_configured(at):
+    at(origin=None, config={})
+    with pytest.raises(instance.NotConfiguredError):
+        instance.require_configured()
+
+
+def test_require_configured_does_not_raise_when_configured(at):
+    at(origin="https://github.com/pat-example/marvin.git")
+    instance.require_configured()  # should not raise

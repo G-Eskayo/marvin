@@ -48,6 +48,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from task_dispatch import select_machine, dispatch  # noqa: E402
 import failure_breaker  # noqa: E402
+import instance  # noqa: E402
 import ticket_stages as ts  # noqa: E402
 import board_registry  # noqa: E402
 import ticket_policy  # noqa: E402
@@ -61,7 +62,7 @@ import dispatch_concurrency  # noqa: E402
 VENV_PYTHON = str(Path.home() / ".agents" / "venv" / "bin" / "python")
 RUN_TICKET_SCRIPT = str(Path.home() / ".agents" / "lib" / "run_ticket.py")
 
-REPO = "G-Eskayo/marvin"
+REPO = instance.tickets_repo()
 LOG_PREFIX = "[ticket-pipeline]"
 
 SCAN_LOCK_PATH = Path.home() / ".claude" / "dispatch" / "scan.lock"
@@ -782,6 +783,7 @@ def _select_for_profile(profile: dict, settings: dict | None = None, taken: dict
 
 
 def main() -> None:
+    instance.require_configured()
     dry_run = "--dry-run" in sys.argv
     if dry_run:  # a preview records nothing
         _scan(lambda *a, **k: None, dry_run=True)

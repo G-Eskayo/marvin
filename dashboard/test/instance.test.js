@@ -101,6 +101,50 @@ describe('instance', () => {
     process.env.MARVIN_ENGINE_DIR = '/x/engine'
     expect(inst.instanceDir()).toBe(path.join('/x/engine', 'instance'))
   })
+
+  describe('configuration check: isConfigured()', () => {
+    it('returns true when origin is a real GitHub URL', () => {
+      at({ origin: 'https://github.com/pat-example/marvin.git' })
+      expect(inst.isConfigured()).toBe(true)
+    })
+
+    it('returns true when engine_repo is in config', () => {
+      at({ config: { engine_repo: 'pat-example/marvin' } })
+      expect(inst.isConfigured()).toBe(true)
+    })
+
+    it('returns true when owner is in config', () => {
+      at({ config: { owner: 'pat-example' } })
+      expect(inst.isConfigured()).toBe(true)
+    })
+
+    it('returns true when tickets_repo is in config', () => {
+      at({ config: { tickets_repo: 'pat-example/tickets' } })
+      expect(inst.isConfigured()).toBe(true)
+    })
+
+    it('returns false when nothing is configured', () => {
+      at({ config: {} })
+      expect(inst.isConfigured()).toBe(false)
+    })
+
+    it('returns false when instance dir is missing', () => {
+      at({})
+      process.env.MARVIN_INSTANCE_DIR = path.join(root, 'does-not-exist')
+      inst.reset()
+      expect(inst.isConfigured()).toBe(false)
+    })
+
+    it('throws NotConfiguredError when requireConfigured() is called and not configured', () => {
+      at({ config: {} })
+      expect(() => inst.requireConfigured()).toThrow(inst.NotConfiguredError)
+    })
+
+    it('does not throw when requireConfigured() is called and configured', () => {
+      at({ origin: 'https://github.com/pat-example/marvin.git' })
+      expect(() => inst.requireConfigured()).not.toThrow()
+    })
+  })
 })
 
 describe('dashboard readers point at the instance (ADR 0071 step 2)', () => {

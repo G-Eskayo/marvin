@@ -32,11 +32,12 @@ from pathlib import Path
 from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import instance  # noqa: E402
 from machine_profile import machine_label  # noqa: E402
 from sandbox_orchestration import execute_ticket as _default_execute  # noqa: E402
 
 MAX_QUEUE = 3
-REPO = "G-Eskayo/marvin"
+REPO = instance.tickets_repo()
 
 
 def _claim_label(machine_id: str) -> str:

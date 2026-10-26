@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import instance  # noqa: E402
 import machine_profile  # noqa: E402
 
 STAGES_DIR = Path.home() / ".claude" / "logs" / "ticket-stages"
@@ -33,7 +34,7 @@ VALID_STAGES = {"claimed", "planning", "executing", "verifying", "gate", "mutati
 VALID_STATUSES = {"started", "passed", "failed"}
 
 
-MARVIN_REPO = "G-Eskayo/marvin"
+MARVIN_REPO = instance.tickets_repo()
 # Keys are lowercased, so the owner's real spelling is restored from here when a key is read back.
 KNOWN_OWNERS = {"g-eskayo": "G-Eskayo"}
 

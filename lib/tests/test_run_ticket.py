@@ -1120,3 +1120,17 @@ def test_the_park_comment_is_marked_as_a_hand_off(monkeypatch):
         body = [c for c in calls if c[:3] == ["gh", "issue", "comment"]][0][-1]
         assert rt.ticket_policy.automated_comment(body) == "handoff"
         assert rt.ticket_policy.HANDOFF_MARKER in body
+
+
+# ── conftest fixture: library functions work without configuring instance in tests ──────
+
+def test_run_works_with_conftest_configured_instance(monkeypatch):
+    """Tests that library functions can be called in tests without instance.require_configured()
+    raising and reading the real system config (ADR 0071 fix: conftest provides a default
+    configured instance; require_configured() moved to CLI main() functions)."""
+    _profile_run_setup(monkeypatch)
+    monkeypatch.setattr(rt, "execute_ticket", lambda *a, **k: {"passing": False, "explanation": "test"})
+    monkeypatch.setattr(rt, "_release_claim", lambda *a, **k: None)
+    # This should not raise NotConfiguredError because conftest.py sets up a default configured instance.
+    result = rt.run(1)
+    assert result["raised"] is False

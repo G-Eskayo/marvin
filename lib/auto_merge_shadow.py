@@ -26,6 +26,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import instance  # noqa: E402
 import auto_merge_policy as amp  # noqa: E402
 
 STATE_PATH = Path.home() / ".claude" / "logs" / "auto-merge-shadow.json"
@@ -227,7 +228,7 @@ def _score_one(prs: list[dict], repo: str, path: Path) -> None:
         subprocess.run(["git", "worktree", "remove", "--force", str(scratch)], cwd=clone, capture_output=True, timeout=60)
 
 
-def run(repo: str = "G-Eskayo/marvin", path: Path = STATE_PATH) -> list[dict]:
+def run(repo: str = instance.tickets_repo(), path: Path = STATE_PATH) -> list[dict]:
     """Verdicts for every open PR in `repo`, and the outcome of PRs that closed since. Best effort."""
     import subprocess
     import trust_ramp

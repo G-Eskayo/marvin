@@ -93,3 +93,16 @@ def test_a_rate_across_macs_comes_from_summed_counts(monkeypatch):
     real = pm.measure_everywhere
     monkeypatch.setattr(pm, "measure_everywhere", lambda name: counts[name] if name in counts else real(name))
     assert real("headless-refusal-rate") == (5.0, {"a": 1.0, "b": 9.0})
+
+
+# ── conftest fixture: library functions work without configuring instance in tests ──────
+
+def test_run_works_with_conftest_configured_instance(monkeypatch):
+    """Tests that library functions can be called in tests without instance.require_configured()
+    raising and reading the real system config (ADR 0071 fix: conftest provides a default
+    configured instance; require_configured() moved to CLI main() functions)."""
+    # This test verifies that purpose_metrics.run() can be called without instance.require_configured()
+    # reading the real ~/.agents/instance. The conftest fixture sets up a temp configured instance.
+    monkeypatch.setattr(pm, "labelled_issues", lambda repo, name: [])
+    result = pm.run()
+    assert isinstance(result, list)

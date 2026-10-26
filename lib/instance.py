@@ -81,6 +81,25 @@ def feature_enabled(name: str) -> bool:
     return isinstance(features, dict) and features.get(name) is True
 
 
+def is_configured() -> bool:
+    """True iff a real git origin resolves, or instance.json explicitly sets engine_repo/owner/tickets_repo."""
+    return bool(_origin_repo() or _str("engine_repo") or _str("owner") or _str("tickets_repo"))
+
+
+class NotConfiguredError(RuntimeError):
+    """MARVIN is not yet configured for this instance. Run `install.sh` or set instance.json."""
+
+
+def require_configured() -> None:
+    """Raise NotConfiguredError if the instance is not configured."""
+    if not is_configured():
+        raise NotConfiguredError(
+            "MARVIN is not yet configured for this instance.\n"
+            "Run the installer (install.sh) or manually set ~/.agents/instance/instance.json with:\n"
+            '  {"engine_repo": "owner/repo", "owner": "username", "tickets_repo": "owner/tickets-repo"}'
+        )
+
+
 def reset() -> None:
     """Forget cached values (tests; a long-running process after the instance changes)."""
     _config.cache_clear()

@@ -38,7 +38,6 @@ dashboard/webhook-server/rebuild_check.js
 dashboard/webhook-server/ticket_stages.js
 lib/auto_merge_policy.py
 lib/auto_merge_shadow.py
-lib/board_registry.py
 lib/cleanup_sweep.py
 lib/conflict_repair.py
 lib/deliverable_location_guard.py
@@ -64,13 +63,10 @@ lib/project_catalog.py
 lib/project_profile.py
 lib/project_tagger.py
 lib/proposals.py
-lib/purpose_metrics.py
 lib/rework_status.py
-lib/run_ticket.py
 lib/sandbox_orchestration.py
 lib/session_start_report.py
 lib/ticket_agents.py
-lib/ticket_claim.py
 lib/ticket_pipeline.py
 lib/ticket_promotion.py
 lib/ticket_stages.py

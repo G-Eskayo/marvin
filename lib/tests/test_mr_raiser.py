@@ -715,3 +715,17 @@ def test_ticket_title_is_none_when_gh_fails(monkeypatch):
         returncode, stdout, stderr = 1, "", "boom"
     monkeypatch.setattr(mrr.subprocess, "run", lambda *a, **k: R())
     assert mrr._ticket_title("G-Eskayo/marvin#1") is None
+
+
+# ── conftest fixture: library functions work without configuring instance in tests ──────
+
+def test_raise_mr_works_with_conftest_configured_instance(monkeypatch):
+    """Tests that library functions can be called in tests without instance.require_configured()
+    raising and reading the real system config (ADR 0071 fix: conftest provides a default
+    configured instance; require_configured() moved to CLI main() functions)."""
+    # This test verifies that raise_mr() can be called without instance.require_configured()
+    # reading the real ~/.agents/instance. The conftest fixture sets up a temp configured instance.
+    execution_result = {"passing": False, "explanation": "test"}
+    result = mrr.raise_mr("G-Eskayo/marvin#1", execution_result, {}, None, None)
+    assert result["raised"] is False
+    assert result["pr_url"] is None

@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import functools  # noqa: E402
+import instance  # noqa: E402
 import machine_profile  # noqa: E402
 import project_profile as pp  # noqa: E402
 from build_type_measure import measure, test_command_for  # noqa: E402
@@ -32,7 +33,7 @@ import redispatch_trigger  # noqa: E402
 import ticket_policy  # noqa: E402
 from datetime import datetime, timedelta, timezone  # noqa: E402
 
-REPO = "G-Eskayo/marvin"
+REPO = instance.tickets_repo()
 FAILURE_MARKER = "Automated implementation did not pass verification"
 TIMEOUT_MARKER = "Automated verification timed out"
 MODEL_MARKER = "The model service was unavailable"
@@ -389,6 +390,7 @@ def run(issue_number: int, repo: str = REPO) -> dict:
 
 
 def main() -> None:
+    instance.require_configured()
     if len(sys.argv) != 2:
         print("usage: run_ticket.py <issue_number | owner/repo#issue_number>", file=sys.stderr)
         sys.exit(1)

@@ -234,3 +234,20 @@ def test_run_claim_cycle_does_nothing_when_nothing_claimed():
     assert execute_calls == []
     assert result["claimed"] is None
     assert result["execution_result"] is None
+
+
+# ── conftest fixture: library functions work without configuring instance in tests ──────
+
+def test_claim_next_ticket_works_with_conftest_configured_instance():
+    """Tests that library functions can inject fakes without instance.require_configured()
+    raising in tests (ADR 0071 fix: conftest provides a default configured instance)."""
+    # The conftest fixture automatically configures instance.py with a fake GitHub origin.
+    # This test verifies that claim_next_ticket can be called with fakes without
+    # instance.require_configured() running and breaking the fakes.
+    result = tc.claim_next_ticket(
+        "test-machine",
+        list_claimed=lambda machine: [],
+        list_unclaimed_ready=lambda: [{"number": 1, "labels": [], "body": "## Parent\n#1"}],
+        add_claim_label=lambda n, m: None,
+    )
+    assert result == 1

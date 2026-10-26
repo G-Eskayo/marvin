@@ -26,6 +26,9 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import instance  # noqa: E402
+
 REGISTRY_PATH = Path.home() / ".claude" / "boards" / "registry.json"
 _REPO_RE = re.compile(r"^[\w.-]+/[\w.-]+$")
 
@@ -283,7 +286,7 @@ def main() -> int:
     sm = sub.add_parser("similar")
     sm.add_argument("text")
     d = sub.add_parser("discover")
-    d.add_argument("owner", nargs="?", default="G-Eskayo")
+    d.add_argument("owner", nargs="?", default=instance.owner())
     a = p.parse_args()
     try:
         if a.cmd == "similar":

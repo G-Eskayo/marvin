@@ -24,12 +24,13 @@ from pathlib import Path
 from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import instance  # noqa: E402
 
 CLAUDE = Path.home() / ".claude"
 BRIEFS = CLAUDE / "briefs"
 HEALTH_STATUS = CLAUDE / "logs" / "health-status.json"
 OVERRIDES = CLAUDE / "catalog" / "overrides.json"
-REPOS = ("G-Eskayo/marvin", "G-Eskayo/clarity-captions", "G-Eskayo/marvin-mobile")
+REPOS = (instance.tickets_repo(), "G-Eskayo/clarity-captions", "G-Eskayo/marvin-mobile")
 DEADLINE_HORIZON_DAYS = 45
 LATE_HOUR = 23  # local time; a session still active after this counts as a late night
 
@@ -183,7 +184,7 @@ def _revisited(now: datetime) -> list[dict]:
             rec = json.loads(line)
             if (rec.get("agent") == "revisit" and rec.get("op") == "remove_label" and rec.get("arg") == "hold" and
                 rec.get("status") == "applied" and datetime.fromisoformat(rec["at"]) >= since):
-                out.append({"number": rec["number"], "title": rec.get("title", ""), "repo": rec.get("repo", "G-Eskayo/marvin")})
+                out.append({"number": rec["number"], "title": rec.get("title", ""), "repo": rec.get("repo", instance.tickets_repo())})
         except (json.JSONDecodeError, KeyError, ValueError):
             continue
     return out

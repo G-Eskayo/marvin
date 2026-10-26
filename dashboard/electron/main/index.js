@@ -54,6 +54,7 @@ import { createTriggerHub, createReconciler, refetchesGithub } from './triggers.
 import { createMrHistory, mergedPrArgs } from './mr_history.js'
 import { appendError } from './error_log.js'
 import { listOpenPrsAcrossRepos, prListArgs, normalizeSeen, canMergeFromDashboard, repoFromPrUrl, MARVIN_REPO, pendingCheckHeads } from './mr_repos.js'
+import * as inst from './instance.js'
 import { createIndexer, buildDocsIndex, loadIndex } from './docs_search.js'
 import { createDocsService, MASTER_ID } from './docs_service.js'
 import { createCloneFreshener } from './clone_freshen.js'
@@ -914,6 +915,7 @@ function registerMrReviewHandlers() {
   ipcMain.handle('mr:image', (_event, url, kind) => prImages.load(String(url || ''), kind || null))
 
   ipcMain.handle('mr:ticketContext', (_event, ticketRef, repo = MARVIN_REPO) => {
+    inst.requireConfigured()
     if (repo !== MARVIN_REPO && !readRegistry().some((b) => b.repo === repo)) throw new Error(`No board registered for ${repo}`)
     return fetchTicketContext(ticketRef, (n) => ghIssueView(n, repo))
   })
@@ -987,10 +989,14 @@ function registerMrReviewHandlers() {
   // recorded as a comment. See decisions_submit.js.
   // Returns as soon as GitHub accepted the edit, with the PR card as it now stands (Approve unlocks from it); the record
   // comment follows as 'decisions:recorded'.
-  ipcMain.handle('decisions:submit', (_event, { repo, number, answers }) => mrActions.submitDecisions({ repo, number, answers }))
+  ipcMain.handle('decisions:submit', (_event, { repo, number, answers }) => {
+    inst.requireConfigured()
+    return mrActions.submitDecisions({ repo, number, answers })
+  })
 
   // "Too vague: needs options": ask the author to restate the questions as a Decisions section.
   ipcMain.handle('mr:sendBackForOptions', async (_event, { url, ticketNumber, reasons }) => {
+    inst.requireConfigured()
     assertMergeable(url)
     const result = await sendBackForOptions({ prUrl: url, ticketNumber, reasons }, {
       exec: execFileAsync,

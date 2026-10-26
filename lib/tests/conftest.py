@@ -5,6 +5,8 @@ to the REAL pipeline-failures.jsonl and could trip the live circuit breaker (the
 pollution pattern hit repeatedly on 2026-10-01 with ticket stage files). Redirect by
 default so a new call to a side-effecting module can never touch real state.
 """
+import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -13,6 +15,38 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import readable_guard  # noqa: E402
+import instance  # noqa: E402
+
+@pytest.fixture(autouse=True)
+def _default_configured_instance(tmp_path_factory, monkeypatch):
+    """All tests run against a default configured instance with a fake GitHub origin.
+
+    Tests that call instance.require_configured() need a configured instance.py, not the real ~/.agents/instance.
+    This fixture sets ENGINE_DIR to a temp git repo with origin github.com/test-owner/marvin, and
+    MARVIN_INSTANCE_DIR to a temp dir, so all instance.py calls resolve correctly.
+
+    Individual tests can call instance.reset() and use monkeypatch to override MARVIN_INSTANCE_DIR
+    or set a custom instance.json for test-specific configuration needs.
+    """
+    # Create a temp git repo with a GitHub origin (any parsed GitHub URL works; test-owner/marvin is arbitrary).
+    engine_dir = tmp_path_factory.mktemp("engine")
+    subprocess.run(["git", "init", "-q", str(engine_dir)], check=True)
+    subprocess.run(
+        ["git", "-C", str(engine_dir), "remote", "add", "origin",
+         "https://github.com/test-owner/marvin.git"],
+        check=True
+    )
+
+    # Create a temp instance dir (instance.json is optional; the git origin is enough to pass is_configured()).
+    instance_dir = tmp_path_factory.mktemp("instance")
+
+    # Patch instance.py to use the temp dirs.
+    monkeypatch.setattr(instance, "ENGINE_DIR", engine_dir)
+    monkeypatch.setenv("MARVIN_INSTANCE_DIR", str(instance_dir))
+    instance.reset()
+    yield
+    instance.reset()
+
 
 # Tests that read the portfolio repo are left out where that repo can't be read from this process
 # (and, always, inside the merge gate, MARVIN_MERGE_GATE=1: a PR must not be judged on another repo's data).
