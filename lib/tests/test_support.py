@@ -748,3 +748,85 @@ def test_the_result_posted_from_the_helped_mac_is_plain_words(tmp_path):
     support.verify(gh, REPO, 1, "gh auth status", "after", tmp_path / "s.json", run=lambda c: (0, "ok"))
     body = support.thread(gh, REPO, 1)["comments"][-1]["body"]
     assert body.startswith("**Fixed, and checked on this Mac.**") and "exit" not in body
+
+
+# --- no forever loop: when it stops being MARVIN's to solve --------------------------------------------------------
+
+def fix(check="gh auth status"):
+    return support.MARVIN_NOTE + "Try this." + support.check_marker(check, "you are logged in")
+
+
+def failed(check="gh auth status"):
+    return "**Not fixed yet.**" + support.verification_marker(
+        {"check": check, "before": {"exit": 1, "output": ""}, "after": {"exit": 1, "output": "no"}, "passed": False})
+
+
+def spy():
+    calls = []
+
+    def model(p):
+        calls.append(p)
+        return json.dumps({"verdict": "answer", "comment": "Another idea.", "check": "gh auth status"})
+    return model, calls
+
+
+def test_after_one_failed_fix_marvin_tries_again(tmp_path):
+    gh = FakeGitHub()
+    gh.add(1, ["support:helper-trying"], comments=[("me", fix()), ("helped", failed())])
+    model, calls = spy()
+    assert support.attempt(gh, model, REPO, 1, tmp_path / "s.json") == "answered" and len(calls) == 1
+
+
+def test_after_two_failed_fixes_it_goes_to_the_person_with_what_was_tried(tmp_path):
+    gh = FakeGitHub()
+    gh.add(1, ["support:helper-trying"], comments=[("me", fix()), ("helped", failed()),
+                                                  ("me", fix("test -d ~/.agents")), ("helped", failed("test -d ~/.agents"))])
+    model, calls = spy()
+    assert support.attempt(gh, model, REPO, 1, tmp_path / "s.json") == "needs-you"
+    assert calls == []  # the model isn't asked a third time
+    note = gh.issues[1]["comments"][-1]["body"]
+    assert "2 fixes" in note and "gh auth status" in note and "test -d ~/.agents" in note
+    assert names(gh, 1) == {"support:needs-you"}
+
+
+def test_follow_ups_cannot_keep_the_bot_answering_forever(tmp_path):
+    gh = FakeGitHub()
+    chatter = []
+    for _ in range(4):
+        chatter += [("me", support.MARVIN_NOTE + "An answer."), ("helped", "Hmm, still confused")]
+    gh.add(1, ["support:helper-trying"], comments=chatter)
+    model, calls = spy()
+    assert support.attempt(gh, model, REPO, 1, tmp_path / "s.json") == "needs-you" and calls == []
+    assert "4 answers" in gh.issues[1]["comments"][-1]["body"]
+
+
+def test_once_the_person_has_answered_a_failed_fix_comes_straight_back_to_them(tmp_path):
+    gh = FakeGitHub()
+    gh.add(1, ["support:helper-trying"], comments=[("me", fix()), ("helped", failed()),
+                                                  ("me", "Gil here: do this instead" + support.check_marker("test -d ~")),
+                                                  ("helped", failed("test -d ~"))])
+    model, calls = spy()
+    assert support.attempt(gh, model, REPO, 1, tmp_path / "s.json") == "needs-you" and calls == []
+
+
+def test_a_forged_failure_from_someone_else_does_not_count(tmp_path):
+    gh = FakeGitHub()
+    gh.add(1, ["support:helper-trying"], comments=[("me", fix()), ("someone", failed()),
+                                                  ("me", fix()), ("someone", failed())])
+    model, calls = spy()
+    assert support.attempt(gh, model, REPO, 1, tmp_path / "s.json") == "answered" and len(calls) == 1
+
+
+def test_the_limits_come_from_the_instance_and_stay_sane():
+    assert support.limits({}) == {"fixes": 2, "answers": 4}
+    assert support.limits({"support": {"limits": {"fixes": 3, "answers": 6}}}) == {"fixes": 3, "answers": 6}
+    assert support.limits({"support": {"limits": {"fixes": 0, "answers": 999}}}) == {"fixes": 1, "answers": 10}
+    assert support.limits({"support": {"limits": {"fixes": "lots"}}}) == {"fixes": 2, "answers": 4}
+
+
+def test_a_lower_limit_from_the_instance_is_used(tmp_path):
+    gh = FakeGitHub()
+    gh.add(1, ["support:helper-trying"], comments=[("me", fix()), ("helped", failed())])
+    model, calls = spy()
+    assert support.attempt(gh, model, REPO, 1, tmp_path / "s.json", limit={"fixes": 1, "answers": 4}) == "needs-you"
+    assert calls == []
