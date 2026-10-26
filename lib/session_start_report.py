@@ -110,6 +110,16 @@ def check_suggestions() -> str | None:
     return f"{n} architecture suggestion(s) pending in suggestions.md"
 
 
+def check_stale_decisions() -> str | None:
+    f = CLAUDE_DIR / "stale-decisions.md"
+    if not f.exists():
+        return None
+    n = len(re.findall(r"^\*\*Status\*\*:\s*pending", f.read_text(), re.MULTILINE))
+    if n == 0:
+        return None
+    return f"{n} stale claim(s) flagged in stale-decisions.md"
+
+
 def load_lexicon() -> str | None:
     f = CLAUDE_DIR / "lexicon.md"
     if not f.exists():
@@ -377,6 +387,7 @@ def main() -> None:
 
     notes = [n for n in (
         _safe(check_suggestions),
+        _safe(check_stale_decisions),
         _safe(check_improvement_queue),
         _safe(process_and_check_quarantine),
         _safe(check_hook_errors),

@@ -23,6 +23,7 @@ already reported).
 | 0 | Identity banner | `machine_profile.machine_label()` + live `git rev-parse --short HEAD` on `~/.agents` and `~/.claude` + count of `~/.claude/commands/*.md` | Single verifiable line — `MARVIN active — <machine> · agents@<hash> · claude@<hash> · <N> skills wired` — always the first line of stdout. Added 2026-07-14 so a session can be confirmed as genuinely running MARVIN's infra by checking real, checkable state, not just a static greeting. CLAUDE.md instructs Claude to open the first reply of every session with this line verbatim. |
 | 1 | Handoff | `~/.claude/handoffs/*.md` | Full text of the most recent handoff, if ≤7 days old |
 | 2 | Suggestions | `~/.claude/suggestions.md` | Count of `**Status**: pending` entries |
+| 2.5 | Stale decisions | `~/.claude/stale-decisions.md` | Count of `**Status**: pending` stale claims flagged by `stale-decision-check` (new in marvin#652) |
 | 3 | Lexicon | `~/.claude/lexicon.md` | Full contents, always loaded |
 | 4 | Improvement queue | `~/.claude/improvement-queue.md` | Count of queued `- **[...]**` items |
 | 5 | Quarantine | `~/.claude/quarantine.md` | Runs `process_quarantine_reviews.process()` first (feeds checked approve/deny/modify boxes into calibration), then counts remaining unresolved entries |

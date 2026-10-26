@@ -29,6 +29,7 @@ QUEUE = CLAUDE / "improvement-queue.md"
 QUARANTINE = CLAUDE / "quarantine.md"
 CALIBRATION = CLAUDE / "safety-monitor" / "calibration.jsonl"
 AUTO_FIX_LOG = CLAUDE / "auto-fix-log.md"
+STALE_DECISIONS = CLAUDE / "stale-decisions.md"
 CUT_AFTER_DAYS = 30
 PROMOTE_PER_DAY = 2
 
@@ -117,6 +118,8 @@ CONTRACTS: list[Contract] = [
     Contract("architecture-review", "~/.claude/suggestions.md",
              f"ticket promotion (daily, top {PROMOTE_PER_DAY}, as needs-triage tickets) or Gil", 14, _suggestions),
     Contract("improvement-sweep", "~/.claude/improvement-queue.md", "auto-fix (naming/verbosity) or Gil", 14, _queue),
+    Contract("stale-decision-check", "~/.claude/stale-decisions.md",
+             "handoff/self-improve session-start review or Gil", 1, lambda: suggestions_state(_read(STALE_DECISIONS))),
     Contract("safety-monitor", "~/.claude/quarantine.md", "Gil's approve/deny review", 7, _quarantine),
     Contract("daily-digest", "~/.claude/daily-digest/<day>.md", "the morning brief", 1, _digest("daily-digest")),
     Contract("research-digest", "~/.claude/research-digest/<day>.md", "the morning brief", 1, _digest("research-digest")),

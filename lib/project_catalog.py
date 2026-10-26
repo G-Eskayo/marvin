@@ -530,7 +530,11 @@ def discover_memory(directory: Path = MEMORY_DIR) -> list[dict]:
     try:
         for f in sorted(directory.glob("*.md")):
             if f.name != "MEMORY.md":
-                out.append({"file": f.name, "text": f.read_text()[:1500]})
+                try:
+                    text = f.read_text(errors="ignore")[:1500]
+                    out.append({"file": f.name, "text": text})
+                except OSError:
+                    pass
     except OSError:
         pass
     return out
