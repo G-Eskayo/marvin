@@ -50,6 +50,37 @@ def preview_html(element_id: str, project: Path) -> str:
 FRAME_WIDTH = 1100          # the preview iframe is page-wide in the dashboard, so the theme's desktop styles apply
 
 
+DRIFT_DIRS = ("other-projects",)    # the card's template, stylesheet and script: what every card preview depends on
+
+
+def _fetch(url: str) -> bytes | None:
+    import urllib.request
+    try:
+        with urllib.request.urlopen(url, timeout=5) as r:
+            return r.read()
+    except OSError:
+        return None
+
+
+def dev_site_drift(dev_html: Path, base: str = pe.BASE, fetch=_fetch) -> list[str]:
+    """Files the pipeline synced to the dev site's folder that the site does NOT serve as synced (empty = in step).
+
+    The dev WordPress container must be mounted on that folder (~/portfolio-dev/wordpress/html via compose.local.yml).
+    Started without the override it serves the repo's own stale wordpress/html, every sync lands where nobody reads it,
+    and parity fails on a dozen properties with no hint why (marvin#585). Cost: one GET per file in DRIFT_DIRS."""
+    drift = []
+    for d in DRIFT_DIRS:
+        folder = Path(dev_html) / "wp-content" / d
+        if not folder.is_dir():
+            continue
+        for f in sorted(p for p in folder.iterdir() if p.is_file()):
+            rel = f"wp-content/{d}/{f.name}"
+            if fetch(f"{base.rstrip('/')}/{rel}") != f.read_bytes():
+                drift.append(f"the dev site does not serve {rel} as synced to {dev_html}: its WordPress container is mounted on "
+                             f"another folder (restart it with the portfolio repo's bin/dev-up.sh)")
+    return drift
+
+
 def compare(element: dict, instance: dict) -> list[str]:
     """Differences between the captured element and a measured preview (empty = they match)."""
     diffs = []
@@ -119,6 +150,9 @@ def verify(element_id: str = "project-card", base: str = pe.BASE, project: Path 
     if geos and not all(pe.geometry_matches({k: v for k, v in geos[0].items() if k != 'photoWidth'}, g) for g in geos):
         diffs.append(f"samples differ in size from each other: {geos}")
     diffs += font_diffs
+    if diffs:      # say WHY first when the site itself is serving stale files
+        import portfolio_apply as pa
+        diffs = dev_site_drift(pa.DEV_HTML, base) + diffs
     return {"ok": not diffs, "element": element_id, "differences": diffs}
 
 

@@ -28,6 +28,13 @@ Two independent sweeps:
   touched; anything the sweep can't tie to a ticket is listed for a person.
   Found 2026-10-14: Seal-118 ran for four days after its PR merged.
 
+- **Leftover edits** (#629): a worktree with uncommitted edits or unpushed commits used to be kept as "needs a
+  look" forever; nobody looked, and on 2026-10-24 all 43 pipeline worktrees (11.8 GiB) were in that state, with
+  9.5 GiB more of helper worktrees under `<repo>/.claude/worktrees` that the sweep didn't know about. Gil's rule:
+  back up, then remove. Once idle BACKUP_MIN_AGE_HOURS, with no claim, no open PR and no process inside, every edit
+  is committed and pushed to `backup/<branch>-<date>` on origin; only when the remote ref matches is the folder
+  removed. A folder with no git record is listed, never deleted.
+
 Removal is lossless by construction: plain `git worktree remove` (never
 --force, so git refuses if anything uncommitted or untracked is there) and the
 branch is kept, so every commit stays reachable. Ignored build output
@@ -49,8 +56,14 @@ import ticket_claim  # noqa: E402
 from sandbox_orchestration import WORKTREES_ROOT  # noqa: E402
 
 OUTPUT_PATH = Path.home() / ".claude" / "logs" / "mr-pipeline-sweep.md"
+LOCK_PATH = Path.home() / ".claude" / "logs" / "cleanup-sweep.lock"
 STALE_THRESHOLD_HOURS = 24
 EMPTY_MIN_AGE_HOURS = 24
+BACKUP_MIN_AGE_HOURS = 48  # leftover edits untouched this long are backed up and removed (#629)
+BACKUP_MAX_FILE_BYTES = 50 * 2**20    # bigger leftovers (a model, a recording) are not committed: they'd grow the
+BACKUP_MAX_TOTAL_BYTES = 200 * 2**20  # clone's .git and fail GitHub's 100 MB limit; kept for a person instead
+HOME = Path.home()  # one seam: tests point it (and WORKTREES_ROOT) at a temp dir (conftest)
+AERIAL_SUBPATH = Path("Library") / "Application Support" / "com.apple.wallpaper" / "aerials" / "videos"
 ISSUE_NUMBER_RE = re.compile(r"#(\d+)$|^ticket/(\d+)(?:-|$)")  # pipeline/…#N, or ticket/<n>-<slug> (#226)
 GITHUB_REPO_RE = re.compile(r"github\.com[:/]([^/]+/[^/]+?)(?:\.git)?/?$")
 
@@ -72,19 +85,58 @@ def _git(path: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=path, capture_output=True, text=True)
 
 
+def worktree_roots() -> list[Path]:
+    """Where worktrees live: the pipeline's root plus every repo's helper worktrees (`.claude/worktrees` under
+    ~/Developer/* and ~/.agents), found on disk so a new repo is covered with no code change (#629)."""
+    home = HOME
+    roots = [WORKTREES_ROOT, home / ".agents" / ".claude" / "worktrees"]
+    dev = home / "Developer"
+    if dev.is_dir():
+        roots += sorted(d / ".claude" / "worktrees" for d in dev.iterdir() if d.is_dir())
+    return [r for r in roots if r.is_dir()]
+
+
+def _cwds_in_use() -> set[str]:
+    """Working directories of every running process (one lsof call), so a worktree a session is inside is left
+    alone. lsof missing or failing returns an empty set; the 48 h idle rule still guards live work."""
+    try:
+        out = subprocess.run(["/usr/sbin/lsof", "-n", "-d", "cwd", "-Fn"], capture_output=True, text=True,
+                             timeout=60).stdout
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    return {line[1:] for line in out.splitlines() if line.startswith("n/")}
+
+
+def _in_use(path: Path, cwds: set[str]) -> bool:
+    p = str(Path(path).resolve())
+    return any(c == p or c.startswith(p + "/") for c in cwds)
+
+
 def _default_list_worktrees() -> list[dict]:
-    """One dict per git worktree under WORKTREES_ROOT: path, branch, the clone
+    """One dict per git worktree under worktree_roots(): path, branch, the clone
     it belongs to, that clone's GitHub repo (None if not on GitHub), commits
-    ahead of origin/main, whether anything is uncommitted, and age in hours."""
-    if not WORKTREES_ROOT.exists():
-        return []
+    ahead of origin/main, whether anything is uncommitted, age in hours, and
+    whether a process is inside it. A folder git doesn't recognize comes back
+    with "broken": True."""
     out = []
-    for entry in sorted(WORKTREES_ROOT.iterdir()):
+    cwds = _cwds_in_use()
+    for root in worktree_roots():
+        out += _list_root(root, cwds)
+    return out
+
+
+def _list_root(root: Path, cwds: set[str]) -> list[dict]:
+    out = []
+    for entry in sorted(root.iterdir()):
         if not entry.is_dir():
             continue
         branch = _git(entry, "branch", "--show-current")
         common = _git(entry, "rev-parse", "--path-format=absolute", "--git-common-dir")
-        if branch.returncode != 0 or not branch.stdout.strip() or common.returncode != 0:
+        if common.returncode != 0:
+            if (entry / ".git").exists():
+                out.append({"path": entry, "broken": True})
+            continue
+        if branch.returncode != 0 or not branch.stdout.strip():
             continue
         clone = Path(common.stdout.strip()).parent
         url = _git(clone, "remote", "get-url", "origin").stdout.strip()
@@ -98,6 +150,7 @@ def _default_list_worktrees() -> list[dict]:
             "ahead": int(ahead) if ahead.isdigit() else None,
             "dirty": bool(_git(entry, "status", "--porcelain").stdout.strip()),
             "age_hours": (time.time() - entry.stat().st_mtime) / 3600,
+            "in_use": _in_use(entry, cwds),
         })
     return out
 
@@ -125,6 +178,48 @@ def _default_is_claimed(repo: str, number: int) -> bool:
 def _default_remove_worktree(wt: dict) -> bool:
     """Lossless removal; False when git refuses (something uncommitted or untracked is there)."""
     return _git(Path(wt["clone"]), "worktree", "remove", str(wt["path"])).returncode == 0
+
+
+def backup_worktree(wt: dict, today: str | None = None) -> str | None:
+    """Commit every leftover edit (ignored build output stays out) and push the worktree's HEAD to
+    `backup/<branch>-<today>` on origin. Returns the ref only when origin's copy matches HEAD; None on any failure,
+    so the caller keeps the folder. Hooks are skipped (--no-verify): this saves work, it doesn't ship it."""
+    path = Path(wt["path"])
+    today = today or datetime.now(timezone.utc).strftime("%Y%m%d")
+    ref = f"backup/{wt['branch']}-{today}"
+    if _git(path, "add", "-A").returncode != 0:
+        return None
+    staged = _git(path, "diff", "--cached", "--name-only", "-z").stdout.split("\0")
+    sizes = [(path / f).stat().st_size for f in staged if f and (path / f).is_file()]
+    if sizes and (max(sizes) > BACKUP_MAX_FILE_BYTES or sum(sizes) > BACKUP_MAX_TOTAL_BYTES):
+        _git(path, "reset", "-q")  # leave the edits exactly as they were
+        return None
+    if _git(path, "diff", "--cached", "--quiet").returncode != 0:
+        msg = f"WIP backup by the cleanup sweep (#629): leftover edits from {path.name}"
+        commit = _git(path, "-c", "user.name=MARVIN cleanup sweep", "-c", "user.email=marvin@localhost",
+                      "commit", "-q", "--no-verify", "-m", msg)
+        if commit.returncode != 0:
+            return None
+    head = _git(path, "rev-parse", "HEAD").stdout.strip()
+    if _git(path, "push", "-q", "origin", f"HEAD:refs/heads/{ref}").returncode != 0:
+        return None
+    remote = _git(path, "ls-remote", "origin", f"refs/heads/{ref}").stdout.split()
+    return ref if head and remote and remote[0] == head else None
+
+
+def trim_aerial_videos(folder: Path | None = None) -> int:
+    """macOS's aerial screen saver downloads a new 250-620 MB video almost daily and never deletes old ones (12 GiB
+    on the Mini, 2026-10-24). Keep only the newest (the one showing); return bytes freed. Disposable (ADR 0065):
+    Apple re-downloads any it needs."""
+    folder = folder or HOME / AERIAL_SUBPATH
+    if not folder.is_dir():
+        return 0
+    videos = sorted(folder.glob("*.mov"), key=lambda p: p.stat().st_mtime, reverse=True)
+    freed = 0
+    for old in videos[1:]:
+        freed += old.stat().st_size
+        old.unlink()
+    return freed
 
 
 def drop_build_output(worktree: Path, rel_paths: list[str]) -> list[str]:
@@ -196,20 +291,27 @@ def sweep_stale_claims(
 
 
 def decide_worktree(wt: dict, pr_state: str | None, claimed: bool) -> tuple[str, str]:
-    """("remove" | "keep" | "review", reason). "review" = kept, and listed in the
-    log for a person, because it holds work nothing else has."""
+    """("remove" | "backup" | "keep" | "review", reason). "backup" = push its
+    leftover work to a backup branch, then remove (#629). "review" = kept for
+    now and listed in the log (recent leftover work, or an open PR's)."""
     if wt.get("repo") is None:
         return "keep", "not a GitHub clone the sweep knows how to check"
-    if wt.get("dirty"):
-        return "review", "has uncommitted work"
+    if wt.get("in_use"):
+        return "keep", "a process is working inside it"
     if claimed:
         return "keep", "its ticket is claimed (running)"
+    if wt.get("dirty"):
+        if pr_state == "OPEN" or wt.get("age_hours", 0) < BACKUP_MIN_AGE_HOURS:
+            return "review", "has uncommitted work"
+        return "backup", "has uncommitted work"
     if pr_state in ("MERGED", "CLOSED"):
         return "remove", f"PR {pr_state.lower()}"
     if pr_state == "OPEN":
         return "keep", "PR open"
     if wt.get("ahead"):
-        return "review", f"{wt['ahead']} commit(s) with no PR"
+        if wt.get("age_hours", 0) < BACKUP_MIN_AGE_HOURS:
+            return "review", f"{wt['ahead']} commit(s) with no PR"
+        return "backup", f"{wt['ahead']} commit(s) with no PR"
     if wt.get("age_hours", 0) < EMPTY_MIN_AGE_HOURS:
         return "keep", "new, may be a ticket starting"
     return "remove", "empty attempt (no PR, no commits, no changes)"
@@ -220,14 +322,19 @@ def sweep_worktrees(
     pr_state: Callable[[str, str], str | None] | None = None,
     is_claimed: Callable[[str, int], bool] | None = None,
     remove_worktree: Callable[[dict], bool] | None = None,
+    backup: Callable[[dict], str | None] | None = None,
 ) -> dict:
     list_worktrees = list_worktrees or _default_list_worktrees
     pr_state = pr_state or _default_pr_state
     is_claimed = is_claimed or _default_is_claimed
     remove_worktree = remove_worktree or _default_remove_worktree
+    backup = backup or backup_worktree
 
     removed, review = [], []
     for wt in list_worktrees():
+        if wt.get("broken"):
+            review.append({**wt, "reason": "folder has no git record (its worktree metadata is gone); not deleted"})
+            continue
         repo, number = wt.get("repo"), _extract_issue_number(wt["branch"])
         try:
             state = pr_state(repo, wt["branch"]) if repo else None
@@ -236,7 +343,15 @@ def sweep_worktrees(
             review.append({**wt, "reason": f"could not check GitHub: {str(exc)[:120]}"})
             continue
         action, reason = decide_worktree(wt, state, claimed)
-        if action == "remove":
+        if action == "backup":
+            ref = backup(wt)
+            if not ref:
+                review.append({**wt, "reason": f"{reason}; backup failed, kept"})
+            elif remove_worktree(wt):
+                removed.append({**wt, "reason": f"{reason}, backed up to {ref}"})
+            else:
+                review.append({**wt, "reason": f"{reason}, backed up to {ref}, but git refused to remove it"})
+        elif action == "remove":
             if remove_worktree(wt):
                 removed.append({**wt, "reason": reason})
             else:
@@ -356,7 +471,7 @@ def _default_compress_transcripts() -> dict | None:
 
 
 def _write_log(stale: list[dict], worktrees: dict, simulators: dict | None = None,
-               compressed: dict | None = None) -> None:
+               compressed: dict | None = None, aerials_freed: int = 0) -> None:
     timestamp = datetime.now(timezone.utc).isoformat()
     lines = [
         f"- Released stale claim: issue #{e['issue_number']} held by `{e['machine_id']}`, "
@@ -374,6 +489,8 @@ def _write_log(stale: list[dict], worktrees: dict, simulators: dict | None = Non
         lines.append(f"- Compressed {len(compressed['compressed'])} cold transcript(s), "
                      f"{compressed['saved_kb'] // 1024} MiB saved (same files, same paths)")
     lines += [f"- Transcript not compressed ({f['reason']}): `{f['path']}`" for f in (compressed or {}).get("failed", [])]
+    if aerials_freed:
+        lines.append(f"- Removed old aerial screen-saver videos: {aerials_freed // 2**20} MiB (kept the newest)")
     body = "\n".join(lines) + "\n" if lines else "Nothing to clean up: no stale claims, no resolved worktrees.\n"
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     existing = OUTPUT_PATH.read_text() if OUTPUT_PATH.exists() else "# MR pipeline cleanup sweep\n\n"
@@ -439,11 +556,30 @@ def run_daily_sweep(
 
     compressed = _default_compress_transcripts()
 
-    _write_log(stale, worktrees, simulators, compressed)
+    try:
+        aerials_freed = trim_aerial_videos()
+    except OSError:
+        aerials_freed = 0
+
+    _write_log(stale, worktrees, simulators, compressed, aerials_freed)
     return {"stale_claims_released": len(stale), "worktrees_removed": len(worktrees["removed"]),
             "worktrees_for_review": len(worktrees["review"]), "simulators_removed": len(simulators["removed"])}
 
 
+def main() -> dict:
+    """launchd entry point, single flight (#586, the #457 main-health pattern): a sweep still running (say, stuck in a
+    size walk) makes the next one return {"busy": True} at once instead of queueing. The flock dies with its process,
+    so it can never go stale."""
+    import fcntl
+    LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(LOCK_PATH, "a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            print("[cleanup-sweep] another sweep is still running; skipped", file=sys.stderr)
+            return {"busy": True}
+        return run_daily_sweep()
+
+
 if __name__ == "__main__":
-    summary = run_daily_sweep()
-    print(json.dumps(summary))
+    print(json.dumps(main()))

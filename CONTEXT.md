@@ -571,7 +571,9 @@ unbounded: any chat, either machine, raw `gh`, the GitHub UI). Polling stays onl
 - **GitHub state** (issues, labels, PRs, comments): the webhook-server's change-detector
   (`webhook-server/gh_watch.js`) sends one conditional request per registered board repo every ~20s
   against its most-recently-updated issue (304 = free against the rate limit) and, on change, pings the
-  app's `/refresh` port with topics. Real GitHub webhooks were rejected: they need a public URL and the
+  app's `/refresh` port with topics. "Change" is the newest issue's number + `updated_at` from a 200's body,
+  never the ETag alone (marvin#603: GitHub sent a new ETag on every 200 for four hours on 2026-10-22 and every
+  repo "changed" every tick, ~150 gh calls a minute). Real GitHub webhooks were rejected: they need a public URL and the
   one static ngrok domain belongs to Marlin. The events feed was rejected: it lags by minutes.
 - **GitHub checks** (marvin#555, 2026-10-21; replaces #554's 90 s re-read of the whole PR list): checks
   starting or finishing are not issue updates, so the change-detector never sees them. The **check watch**
@@ -601,6 +603,12 @@ unbounded: any chat, either machine, raw `gh`, the GitHub UI). Polling stays onl
   pulls; only the cycle gap + 15-min settle remain). The Docs tab has its triggers since 2026-10-21: local clones'
   docs and refs (`docs`), the outbox (`outbox`, #570), and one conditional request when a GitHub-only project is
   opened (#565).
+
+- **Owner decisions waiting on MARVIN** (marvin#607, 2026-10-22): "nothing happened for N hours" needs a clock, and
+  the hourly ticket scan already is one, so there is no new loop. One GraphQL search per scan reads every registered
+  repo's open PRs (last commit, last 30 comments) and the follow-up tickets (2 points). An unanswered owner Decisions
+  comment becomes one `ready-for-agent` follow-up ticket after 4 h; the dashboard ranks it first from the issue list it
+  already caches. Rules in `docs/agents/decisions-format.md`.
 
 ### Dashboard actions render their true result locally at once, and confirm in the background (decided 2026-10-21)
 
@@ -941,6 +949,7 @@ untouched (it is the "legacy profile"); only repos with a profile file use the p
   refuses a project with no profile (`NO_MERGE_PROFILE`) and lets an opted-in one through to the merge step.
   Not exercised: a real approve of a real PR (it would merge it). clarity-captions is opted in
   (`merge_from_dashboard: true`) independently of `dispatch`, which is still off.
+- **Playbooks (#613, 2026-10-22; design `docs/plans/project-playbooks-2026-10-22.md`)**: one way of working per project type, written once so new work inherits it instead of rediscovering it. `config/playbooks/<type>.md` is for people and agents, `<type>.json` for code: stages, proof per stage, owner gates, the machine per stage, ship checklist, known traps and `variants`. A profile names one (`"playbook": "ios-app"`, optionally `"playbook_variant": "macos"`, which drops the device check, TestFlight and after-ship stages); `project_profile._validate` refuses an unknown playbook or variant, so a broken one drops out of dispatch and `selftest` says why. The executor's notes are the project's own notes followed by a section generated from the playbook (`executor_notes`, idempotent: a pasted copy is replaced, never doubled), so the profile's free text can't contradict it; anything the playbook doesn't fit is overridden in the profile. `selftest` also refuses dispatch on with `machines: []`. Onboarding sets the playbook from the detected stack (`profile_fragment` in `xcodegen-app` = ios-app, `swift-package` = ios-app/macos). First users: clarity-captions, marvin-mobile (now runs on mac-mini-1), nourished (dispatch off; no tests yet) and killer-sudoku (macos). The pipeline still runs a whole ticket on one machine: a stage's machine is guidance, not routing.
 
 ## Dashboard app — Portfolio tab (2026-10-02/03)
 
@@ -1131,6 +1140,21 @@ row, Other Projects footer) plus a stack of **sections** after the title card.
 ## Device columns on Activity (2026-10-05)
 
 `lib/device_status.py` gives one row per device in `marvin-network.json`: idle / busy (task) / unreachable. It reuses task_dispatch's readers, but a failed SSH read is *unreachable*, not idle (task_dispatch's own reader treats failure as idle, which is right for picking a machine and wrong for a status view). The dashboard shows them above the boards (`DeviceColumns.jsx`, cached 8s); this machine's column embeds `DispatchStatusBadge`. Closes #115 and #117.
+
+## Chat helpers in Activity (2026-10-22, #612)
+
+Helpers a person's chat starts with the Agent tool showed nowhere ("where is the investigation running?"). Now each one is a
+run log in the jobs folder (`lib/chat_helpers.py`, `~/.claude/logs/jobs/helper-<agent id>.json`, the `job_events` format plus
+a `helper` block: chat request, session, machine, transcript, links). The writers are Claude Code hooks (interactive sessions only,
+in `marvin_hooks.HOOKS`, 5 s cap there and 3 s inside the script): SubagentStart creates it, PostToolUse `Agent` names it
+(`description`), PreToolUse `SubagentHandback` holds the report, SubagentStop ends it (done with a one-line summary and the
+tickets/PRs its report names, derived from the text; failed if there is no result). Hooks are used, not transcript scans: they are
+the event. No per-tool heartbeat (it would cost a process on every tool call in every chat): a helper killed mid-run is
+"stopped unexpectedly" once its own transcript has been quiet 15 min, decided when the log is read. Newest 30 kept per Mac
+(~2 KB each); a running one is never pruned. Activity lists them under the device columns with Health's agent card, unchanged
+except a "Done" state and the ticket chip Markdown uses; they are not counted among Health's agents. The other Mac's come from
+its webhook server's `GET /helpers` (the `/sessions` channel, #331), read through a 10 s cache with a 30 s backstop, since that
+Mac has no push channel. Gil applies the hooks on each Mac with `marvin_hooks.py install`.
 
 ## Merge order and the sent-back loop (2026-10-05)
 
@@ -1409,6 +1433,8 @@ MARVIN-as-OS north star).
 - **MARVIN Surface**: Gil's planned touch display with a holographic look. It is a Surface in the existing sense
   (somewhere Gil interacts with MARVIN), with at least *show* and *touch*. A future **physical build**, after MARVIN
   gets good at CAD and engineering software; the design only has to leave room for it.
+  Research pass 2026-10-21: `docs/research/marvin-surface-display-2026-10-21.md` (Gil's concept: transparent LCD
+  in front of an edge-lit acrylic light guide on a gently curved sheet held by end legs; build ladder V1–V3).
 - **Mirror**: a show-only endpoint (a screen behind two-way glass). Also a future physical build.
 - **Content**: anything MARVIN can put on an endpoint when asked ("show or say X on Y"): the brief, one article, a
   ticket, a chart, the build status. The ability is general; the **brief is its first content**, and solid content
@@ -1489,3 +1515,24 @@ MARVIN-as-OS north star).
 - **Bot PRs** (built 2026-10-16): PRs by MARVIN-bot-gil always wait for Gil, which is stricter than the 5-PR ramp.
   A per-author streak can replace that later.
 - **Open in this design** (as of 2026-10-16): the box's GitHub identity; sudo scope; Claude Code sign-in on Linux.
+
+## One "needs a person" state, bot comments don't reset strikes, one plan per run (2026-10-22, #605)
+
+On 2026-10-22 #81, #218, #455, #459 and #563 were each planned 6-13 times (about $95 API-equivalent) with nothing landing.
+- **Needs a person:** `ready-for-human` or `needs-info` (`ticket_policy.NEEDS_PERSON_LABELS`, `needs_person()`), whatever else the ticket still carries. The dispatcher, the auto send-back (no label, no comment, no paid repair) and refeed all skip it. Refeed at its cap adds `ready-for-human` and takes `ready-for-agent` and every claim off (it used to leave `ready-for-agent`, so #218 ran every ~15 min); a sent-back flag on a ticket already with a person is dropped quietly, so "It needs a person" is posted once. A person sends it back by swapping the label to `ready-for-agent`. Cost: an O(labels) set check per ticket on lists each scan already holds; no new calls.
+- **Failure streak:** `run_ticket._trailing_streaks` skips every MARVIN comment (`ticket_policy.automated_comment`: the ticket agents' prefix, triage's disclaimer, the send-back and repair lines) as it already skipped model-unavailable ones. A person's comment, a passing run (`Verification passed`) or a hand-off to a person (a park or a loop guard, marked `<!-- marvin:handed-to-person -->` from now on; old texts still recognised) ends it. #81 failed 5 times before parking because the conflict lines reset it. Cost: O(comments x body length) over the one thread fetch the run already makes.
+- **One plan per run:** in `_default_executor`, rounds 2-3 of one `execute_ticket` reuse round 1's design doc and task list (on disk in the worktree) and the executor gets the verdict, the metrics that did not improve and the must-fix findings; only a missing or empty task list plans again. Round 1 always plans, so a design doc merged into main is never taken for this run's. Saves up to two flagship planning calls (~$1.20 each) per failed run.
+
+## Engine, instance and the default build (ADR 0071, decided 2026-10-25)
+
+### Language
+
+- **Engine**: the public MARVIN code anyone can download (`G-Eskayo/marvin`). It holds no person's or machine's
+  names, data or state.
+- **Instance**: one owner's private state for an engine: their plans, screenshots, tickets repo, accounts and
+  feature choices. Gil's is `G-Eskayo/marvin-instance`. One engine, many instances.
+- **Default build**: what a stranger gets from a fresh download of the engine with no help from Gil or MARVIN:
+  the engine plus a new, empty instance, reaching what Noah's Mac has (dashboard, the MARVIN button, their own
+  private repo, accounts connected). "Done" means a clean-install test passes in a fresh virtual machine.
+- **Add-on**: a feature that ships in the engine but is off in the default build until the owner turns it on
+  (portfolio, resume-tailor, Seal ingest). A possible paid feature. Shows a "not set up" state when off.

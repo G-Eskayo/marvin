@@ -56,6 +56,8 @@ import { appendError } from './error_log.js'
 import { listOpenPrsAcrossRepos, prListArgs, normalizeSeen, canMergeFromDashboard, repoFromPrUrl, MARVIN_REPO, pendingCheckHeads } from './mr_repos.js'
 import { createIndexer, buildDocsIndex, loadIndex } from './docs_search.js'
 import { createDocsService, MASTER_ID } from './docs_service.js'
+import { createCloneFreshener } from './clone_freshen.js'
+import { createPdfText } from './pdf_text.js'
 import { createSavedDocs } from './docs_saved.js'
 import { readMergeableRepos, readUiPaths, listProfiles, setDispatch, setMergeFromDashboard } from './profiles.js'
 import { searchFiles, isRevealable, isLinkable, linkAction } from './files_search.js'
@@ -83,7 +85,8 @@ import { isEvidenceCapture, installCaptureGuard } from './capture_mode.js'
 import { adoptLoginShellPath, adoptSharedGhToken, useGhGate } from './path.js'
 import { postTicketInput } from './ticket_input.js'
 import { createImageLoader, mediaFileFor } from './pr_images.js'
-import { resolveServiceDefaults, resolveDeviceId } from './device_identity.js'
+import { resolveServiceDefaults, resolveDeviceId, peerHosts } from './device_identity.js'
+import { createHelpersReader } from './chat_helpers.js'
 
 // The pipeline's screenshot copy runs unattended beside the real dashboard: log, never show a modal (#384).
 if (isEvidenceCapture(process.env)) installCaptureGuard(process)
@@ -393,6 +396,10 @@ function registerHealthHandlers() {
 
 function registerActivityHandlers() {
   ipcMain.handle('activity:list', () => listTicketActivity())
+  // Chat helpers, this Mac's and the other's (#612). This Mac's arrive by the 'agents' trigger (same jobs folder).
+  let peers = null // the registry changes rarely and the app is relaunched on every rebuild
+  const readHelpers = createHelpersReader({ peers: () => (peers ||= peerHosts()) })
+  ipcMain.handle('activity:helpers', () => readHelpers())
   ipcMain.handle('activity:timeline', (_event, number, repo) => getTicketTimeline(number, undefined, repo || null))
 
   // Project boards: only repos in the registry are fetchable, so the renderer
@@ -456,14 +463,28 @@ function registerDocsHandlers() {
   // once; the outbox trigger re-matches only what changed. Its context reads only what is local or already in memory:
   // the catalog, overrides, each project's docs (local clone or saved copy) and the board numbers github_state holds.
   let docsTextCache = null
+  // #611: text inside PDF deliverables, read once per PDF by pdf.js in the background and cached by content hash
+  // (pdf_text.js); when new text lands, the search re-reads the deliverables' text once.
+  const pdfText = createPdfText({
+    autoDrain: true,
+    onReady: () => {
+      deliverables.invalidateSearch()
+      docsIndexer.localChanged()
+    }
+  })
   const deliverables = createDeliverables({
+    pdfText,
     getContext: () => {
       const projects = readCatalog({ deviceId: deviceId() })?.projects || []
       docsTextCache = docsTextCache || docsTextFor(projects, { saved: savedDocs })
       return { projects, overrides: readOverrides(), maxNumber: maxNumbers(githubState.peek('board')), docsText: docsTextCache }
     }
   })
+  // #611: clean local clones are fast-forwarded in the background so the search sees what is on GitHub; a clone with
+  // work in it is left alone and searched from its saved GitHub copy (clone_freshen.js, docs_service.js localDocs).
+  const freshener = createCloneFreshener({ exec: execFileAsync })
   const docsService = createDocsService({
+    midWork: (dir) => freshener.midWork(dir),
     getCatalog: () => readCatalog({ deviceId: deviceId() }),
     exec: execFileAsync,
     readMaster: () => readMasterDoc(),
@@ -595,6 +616,26 @@ function registerDocsHandlers() {
   }
   // A docs change refreshes the search's in-memory copy of local docs in the background (docs_search.js).
   triggerHub.onTrigger((t) => { if (t.topic === 'docs' || t.topic === 'outbox') docsIndexer.localChanged() })
+  // #611: freshen clean clones when the Docs tab opens (docs:freshen) and on the docs change watch. No polling loop:
+  // the freshener itself runs each project at most once per 30 min. A clone left alone with work in it gets one
+  // conditional request for its saved GitHub copy (#565), which its search then reads.
+  async function freshenClones() {
+    try {
+      const { updated, midWork } = await freshener.freshen(docsService.freshenTargets())
+      const projects = readCatalog({ deviceId: deviceId() })?.projects || []
+      for (const id of midWork) {
+        const rec = projects.find((p) => p.id === id)
+        if (rec?.repo) await savedDocs.revalidate(rec.repo).catch(() => null)
+      }
+      if (updated.length || midWork.length) docsIndexer.localChanged()
+      return { updated, midWork }
+    } catch (err) {
+      console.error('[docs] could not freshen clones:', err)
+      return { updated: [], midWork: [] }
+    }
+  }
+  triggerHub.onTrigger((t) => { if (t.topic === 'docs') freshenClones() })
+  ipcMain.handle('docs:freshen', () => freshenClones())
   ipcMain.handle('docs:refresh', async () => {
     await refreshCatalog()
     docsIndexer.reindex(() => buildIndex(true))

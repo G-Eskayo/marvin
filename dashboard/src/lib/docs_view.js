@@ -67,6 +67,17 @@ export function searchGroups(results, chips) {
   return { groups, hidden, shown, total: (results || []).length }
 }
 
+// One list ranked by match, best first whatever its kind, each result tagged Doc / Decision / Deliverable (#611, Gil
+// 2026-10-22). The chip row still filters it. Stable: equal scores keep the order the search returned.
+export function rankedResults(results, chips) {
+  const show = new Set(visibleKinds(chips))
+  return (results || [])
+    .map((r, i) => ({ r, i, kind: resultKind(r) }))
+    .filter((x) => show.has(x.kind))
+    .sort((a, b) => (b.r.score ?? 0) - (a.r.score ?? 0) || a.i - b.i)
+    .map(({ r, kind }) => ({ ...r, tag: NOUN[kind][0] }))
+}
+
 // "2 Docs and 1 Decision hidden"
 export function hiddenNote(hidden) {
   const parts = KINDS.filter((k) => hidden?.[k]).map((k) => `${hidden[k]} ${hidden[k] === 1 ? NOUN[k][0] : NOUN[k][1]}`)

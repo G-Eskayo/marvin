@@ -3,7 +3,7 @@
 facts.py — the MARVIN page's numbers, computed from the system so they can't go stale
 (docs/plans/living-marvin-page-2026-10-08.md, layer 1; published with the map under ADR 0057's extension).
 
-  skills       entries in the skill index (~/.claude/manifest.json)
+  skills       entries in the skill index (~/.claude/manifest.json) whose file is a SKILL.md, not the memories it also holds
   tests        tests_passed in the newest pipeline run (bench/metrics/ticket-*.json): what runs on every change
   prs_merged   merged pull requests the pipeline wrote ("Implement G-Eskayo/<repo>#N"), from GitHub search
   agents       background jobs MARVIN schedules (lib/health_checks.py JOB_PLACEMENT)
@@ -23,13 +23,18 @@ from datetime import date
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
+import sys  # noqa: E402
+sys.path.insert(0, str(REPO / "lib"))
+import instance  # noqa: E402
 
 
 def compute_facts(*, manifest: dict, test_runs: list[list[dict]], merged_prs: int | None, placement: dict,
                   adr_names: list[str], network: dict, today: str) -> dict:
     out: dict = {}
-    if manifest.get("index"):
-        out["skills"] = len(manifest["index"])
+    # The index also holds memories; a skill is an entry whose file is a SKILL.md (type tags vary: agent, library...).
+    skills = [e for e in manifest.get("index") or [] if isinstance(e, dict) and str(e.get("path", "")).endswith("/SKILL.md")]
+    if skills:
+        out["skills"] = len(skills)
     entries = [e for run in test_runs for e in run if isinstance(e, dict) and "tests_passed" in e.get("metrics", {})]
     if entries:
         newest = max(entries, key=lambda e: e.get("timestamp", ""))
@@ -75,7 +80,7 @@ def gather(today: str | None = None) -> dict:
         except (OSError, ValueError):
             return default
 
-    runs = [load(f, []) for f in sorted((REPO / "bench" / "metrics").glob("ticket-*.json"))]
+    runs = [load(f, []) for f in sorted(instance.path("bench", "metrics").glob("ticket-*.json"))]
     return compute_facts(
         manifest=load(Path.home() / ".claude" / "manifest.json", {}),
         test_runs=[r for r in runs if isinstance(r, list)],

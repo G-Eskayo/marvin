@@ -193,3 +193,16 @@ def test_merge_refusals_never_trip_the_breaker(tmp_path, monkeypatch):
         for ticket in (208, 209, 210):
             f.write(json.dumps({"t": now.isoformat(), "kind": "refusal", "ticket": ticket, "sig": "merge:OUT_OF_ORDER"}) + "\n")
     assert fb.tripped(now=now) == []
+
+
+# --- #597: the real claude path is absolute, so the old `'claude'` match never fired; a worktree-add crash was also unmatched ---
+@pytest.mark.parametrize("reason,sig", [
+    ("Unhandled exception: Command '['/Users/x/.local/bin/claude', '-p', '=== Work rules'...]' timed out after 900 seconds", "claude-timeout"),
+    ("Unhandled exception: Command '['/opt/homebrew/bin/claude', '-p', 'x']' timed out after 300 seconds", "claude-timeout"),
+    ("Unhandled exception: git worktree add failed in /Users/x/.agents (exit 255): could not lock config file", "git-worktree-add-failed"),
+    ("Unhandled exception: Command '['/usr/bin/git', 'status']' timed out after 5 seconds", None),
+])
+def test_signature_recognises_absolute_claude_timeouts_and_worktree_failures(reason, sig):
+    import failure_breaker as fb
+    got = fb.signature(reason)
+    assert (got == sig) if sig else got.startswith("other:")

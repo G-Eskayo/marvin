@@ -57,7 +57,8 @@ export function listJobs({ dir = JOBS_DIR, now = Date.now() } = {}) {
   for (const n of names) {
     try {
       const doc = JSON.parse(readFileSync(path.join(dir, n), 'utf-8'))
-      if (doc && doc.job) jobs.push(describe(doc, now))
+      // a chat's helper (#612) is shown in Activity, not as one of this machine's agents
+      if (doc && doc.job && doc.kind !== 'helper') jobs.push(describe(doc, now))
     } catch {
       // a half-written or corrupt log is skipped, not fatal
     }

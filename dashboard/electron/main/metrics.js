@@ -1,6 +1,6 @@
 import { readFileSync, existsSync, readdirSync } from 'fs'
 import { join } from 'path'
-import { homedir } from 'os'
+import { instancePath } from './instance.js'
 
 // Mirrors metrics_registry.py's per-machine storage format (G-Eskayo/marvin#2):
 // per-machine JSON files ({subsystem}.{machine}.json), legacy bare files
@@ -8,7 +8,7 @@ import { homedir } from 'os'
 // maps name -> {value, higher_is_better}. This module is read-only -- it never
 // writes (that's the Python registry's job), matching the "no cloud round-trip,
 // read local data directly" requirement.
-export const DEFAULT_METRICS_DIR = join(homedir(), '.agents', 'bench', 'metrics')
+export const DEFAULT_METRICS_DIR = instancePath('bench', 'metrics') // the owner's run results live in the private instance (ADR 0071)
 
 export function listSubsystems(metricsDir = DEFAULT_METRICS_DIR) {
   if (!existsSync(metricsDir)) return []

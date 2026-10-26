@@ -28,13 +28,14 @@ sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 from hook_errors import log_hook_error  # noqa: E402
 from claude_bin import resolve_claude_bin as _resolve_claude_bin  # noqa: E402
 import marvin_launcher  # noqa: E402
+import instance  # noqa: E402
 
 HANDOFF_DIR = Path.home() / ".claude" / "handoffs"
 AGENTS_DIR = Path.home() / ".agents"
 SELF_IMPROVE_DIR = AGENTS_DIR / "skills" / "self-improve"
 LOCK_FILE = SELF_IMPROVE_DIR / ".background_review.lock"
 LOG_FILE = SELF_IMPROVE_DIR / ".background_review.log"
-RETRO_LOG = AGENTS_DIR / "retrospective-log.md"
+RETRO_LOG = instance.path("retrospective-log.md")  # learned from the owner's sessions: private (ADR 0071)
 SAFETY_MONITOR_SCRIPTS = AGENTS_DIR / "skills" / "safety-monitor" / "scripts"
 
 sys.path.insert(0, str(SAFETY_MONITOR_SCRIPTS))

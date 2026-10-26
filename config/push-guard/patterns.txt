@@ -1,0 +1,14 @@
+# Shared push-guard patterns (ADR 0071): extended regexes, one per line. A push whose new commits ADD a line
+# matching any of these is refused by bin/pre-push-guard. Personal strings never go here: this file is public.
+# They go in ~/.claude/private-push-patterns.txt, which setup.sh creates.
+
+# Claude session transcripts (a 2 MB one reached the public repo on 2026-10-25)
+"role":"(user|assistant)","content"
+
+# Credential shapes, long enough that short test fakes (sk-ant-abc123) don't trip them
+sk-ant-[A-Za-z0-9_-]{30,}
+gh[pousr]_[A-Za-z0-9]{36}
+github_pat_[A-Za-z0-9_]{40,}
+AKIA[0-9A-Z]{16}
+-----BEGIN [A-Z ]*PRIVATE KEY-----
+xox[bpars]-[0-9A-Za-z-]{20,}

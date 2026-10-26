@@ -3,6 +3,7 @@ import ProjectBoard from './ProjectBoard.jsx'
 import DashboardHome from './DashboardHome.jsx'
 import ActivityBanner from './ActivityBanner.jsx'
 import DeviceColumns from './DeviceColumns.jsx'
+import ChatHelpers from './ChatHelpers.jsx'
 import NextUpQueue from './NextUpQueue.jsx'
 import ParallelToggle from './ParallelToggle.jsx'
 
@@ -22,6 +23,7 @@ export default function ActivityBoard({ onOpenMr, onOpenDocs, onOpenTicket, onOp
     <>
       <ActivityBanner />
       <DeviceColumns />
+      <ChatHelpers onOpenTicket={onOpenTicket} onOpenMr={onOpenMr} />
       <ParallelToggle />
       <NextUpQueue onOpenTicket={onOpenTicket} />
       {view === 'home' ? (

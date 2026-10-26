@@ -17,6 +17,7 @@ import { appendMerge, readMergeHistory } from './merge_history.js'
 import { appendError } from '../electron/main/error_log.js'
 import { readRebaseStatus } from './rebase_status.js'
 import { readLiveSessions } from './sessions.js'
+import { listHelpers } from './chat_helpers.js'
 import { startChangeWatch, createGithubProbe } from './gh_watch.js'
 import { readRegistry } from '../electron/main/boards.js'
 import { execFile } from 'child_process'
@@ -140,6 +141,12 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'GET' && req.url === '/sessions') {
     res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ sessions: readLiveSessions() }))
+    return
+  }
+
+  // Chat helpers on this Mac (#612), for the other Mac's Activity tab. Read-only, like /sessions.
+  if (req.method === 'GET' && req.url === '/helpers') {
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ helpers: listHelpers() }))
     return
   }
 

@@ -21,9 +21,9 @@ _TEMP_ROOTS = ("/tmp/", "/private/tmp/", "/var/folders/", "/private/var/folders/
 
 REASON = (
     "That file is in a throwaway temp/scratchpad dir that Gil can't find later. Move it first: "
-    "docs Gil reviews (plans, mock-ups, proposals) go to ~/.agents/docs/plans/<topic>-YYYY-MM-DD.md, "
-    "with images in ~/.agents/docs/screenshots/<ticket>-*.png, committed and pushed to main so the "
-    "dashboard Docs tab shows them (and the mock-ups go on the ticket); other deliverables go to "
+    "docs Gil reviews (plans, mock-ups, proposals) go to ~/.agents/instance/docs/plans/<topic>-YYYY-MM-DD.md, "
+    "with images in ~/.agents/instance/docs/screenshots/<ticket>-*.png, committed and pushed to the private "
+    "instance repo (never the public engine, ADR 0071) so the dashboard Docs tab shows them (and the mock-ups go on the ticket); other deliverables go to "
     "~/.claude/outbox/<topic>/. (deliverable_location_guard.py)"
 )
 

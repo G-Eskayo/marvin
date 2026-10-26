@@ -108,3 +108,19 @@ def test_chrome_catalogue_covers_every_part_that_wraps_a_page():
     assert ids == ["site-header", "page-title-bar", "hub-sidebar", "other-projects", "site-footer"]
     for c in inv.CHROME:
         assert c["selector"] and c["source"], c["id"]      # each says where it comes from, so nobody rebuilds it per page
+
+
+# ── a crawl that could not reach WordPress must not replace a good inventory (marvin#585) ──
+# Found 2026-10-21: on 2026-10-16 the dev site's wp-cli listing failed, the crawl carried on with only the "/" fallback,
+# wrote a 1-page inventory over the real one, and the reference index was then rewritten as [] from it.
+
+def test_collect_refuses_to_crawl_when_wordpress_cannot_list_its_pages(tmp_path, monkeypatch):
+    import pytest
+    out = tmp_path / "inventory"; out.mkdir()
+    (out / "inventory.json").write_text('{"pages": ["the good one"]}')
+    manifest = tmp_path / "manifest.json"; manifest.write_text("[]")
+    for listing in (None, "", "[]"):                       # wp-cli failed, printed nothing, or listed no pages
+        monkeypatch.setattr(inv, "_wpcli", lambda args, _l=listing: _l)
+        with pytest.raises(RuntimeError, match="could not list"):
+            inv.collect(out_dir=out, manifest_path=manifest)
+        assert (out / "inventory.json").read_text() == '{"pages": ["the good one"]}'

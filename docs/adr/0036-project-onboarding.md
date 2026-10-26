@@ -68,6 +68,9 @@ Four stages. Each prints a plan and changes nothing until told to apply.
 v1 stacks: `swift-package`, `xcodegen-app`, `node-electron`, `python`. A new stack is a new folder. Templates encode the lessons
 above: per-run build folders, generated-path rules for tracked lockfiles, `macos-26` only for public repos (macOS
 minutes are 10x on private ones), a pinned Node version.
+*Amended 2026-10-22 (#613):* a stack's profile fragment also names the project's **playbook**
+(`config/playbooks/`): `xcodegen-app` sets `"playbook": "ios-app"`, `swift-package` sets `ios-app` with the `macos`
+variant. The ADR 0058 apply step merges it like any other fragment field; dispatch still starts off.
 
 **Detection of generated files** is a *proposal*: tracked lockfiles and obvious generated directories are listed with
 their `generated` rule, marked "confirm", never applied silently (some are deliberately tracked).
