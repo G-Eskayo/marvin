@@ -32,10 +32,12 @@ fail=0
 
 while read -r lref lsha rref rsha; do
   [ -z "${lsha:-}" ] || [ "$lsha" = "$zero" ] && continue          # branch deletion publishes nothing
+  # Judge only what no remote has. rsha..lsha alone counted main's already-public commits whenever a PR branch was
+  # merged with or rebased onto main (PR #600, 2026-10-26: 378 old bench/metrics paths). --remotes covers every
+  # fetched remote branch; an unfetched remote makes the range bigger, never smaller, so it fails closed.
+  range=("$lsha" --not --remotes)
   if [ "$rsha" != "$zero" ] && git cat-file -e "$rsha^{commit}" 2>/dev/null; then
-    range=("$rsha..$lsha")
-  else
-    range=("$lsha" --not --remotes)                                # new branch, or remote tip not fetched
+    range+=("$rsha")
   fi
   # --no-renames: a moved file shows its whole content as added. --cc: a merge shows lines in neither parent.
   bad_paths=$(git log --format= --name-only --no-renames --cc --diff-filter=AM "${range[@]}" | grep -E "$paths" | sort -u)

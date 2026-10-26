@@ -132,6 +132,50 @@ def test_a_stale_branch_carrying_old_state_commits_is_refused(repo, env):
     assert _push(repo, env, "pipeline/old-ticket").returncode != 0
 
 
+def _published_pr_behind_a_main_that_once_held_owner_state(repo, env):
+    """A PR branch pushed before the split, then main moves on: it once added owner state (before ADR 0071, so it is
+    already public), then removed it. Returns the branch name. Mirrors pipeline/g-eskayo/marvin#458 (PR #600)."""
+    _git(repo, "checkout", "-q", "-b", "pipeline/ticket-7", env=env)
+    _commit(repo, env, "lib/feature.py", "x = 1\n", "the PR's work")
+    assert _push(repo, env, "pipeline/ticket-7").returncode == 0
+    _git(repo, "checkout", "-q", "main", env=env)
+    _commit(repo, env, "bench/metrics/ticket-5.mac-mini.json", "{}\n", "pre-split run result")
+    assert _run(repo, "git", "push", "--no-verify", "origin", "main", env=env).returncode == 0  # public before the guard
+    _git(repo, "rm", "-q", "bench/metrics/ticket-5.mac-mini.json", env=env)
+    _git(repo, "commit", "-qm", "ADR 0071: move owner state to the instance", env=env)
+    assert _push(repo, env).returncode == 0
+    _git(repo, "checkout", "-q", "pipeline/ticket-7", env=env)
+    return "pipeline/ticket-7"
+
+
+def test_merging_main_into_a_published_pr_branch_is_not_blocked_by_mains_public_history(repo, env):
+    """2026-10-26: updating PR #600 with main was refused for 378 bench/metrics paths that only main's already-public
+    history ever added. Only commits no remote has may be judged."""
+    branch = _published_pr_behind_a_main_that_once_held_owner_state(repo, env)
+    _git(repo, "merge", "-q", "--no-edit", "main", env=env)
+    r = _push(repo, env, branch)
+    assert r.returncode == 0, r.stderr
+
+
+def test_rebasing_a_published_pr_branch_onto_main_is_not_blocked_by_mains_public_history(repo, env):
+    """The merge gate rebases a PR onto main and force-pushes it; main's public commits come along."""
+    branch = _published_pr_behind_a_main_that_once_held_owner_state(repo, env)
+    _git(repo, "rebase", "-q", "main", env=env)
+    r = _run(repo, "git", "push", "-f", "origin", branch, env=env)
+    assert r.returncode == 0, r.stderr
+
+
+def test_a_merge_that_brings_unpublished_owner_state_is_still_refused(repo, env):
+    """The fix must not open a hole: local-only commits adding owner state are judged even when they arrive by merge."""
+    branch = _published_pr_behind_a_main_that_once_held_owner_state(repo, env)
+    _git(repo, "checkout", "-q", "-b", "local-only", "main", env=env)
+    _commit(repo, env, "bench/metrics/ticket-9.mac-mini.json", "{}\n", "never pushed")
+    _git(repo, "checkout", "-q", branch, env=env)
+    _git(repo, "merge", "-q", "--no-edit", "local-only", env=env)
+    r = _push(repo, env, branch)
+    assert r.returncode != 0 and "bench/metrics/ticket-9.mac-mini.json" in r.stderr
+
+
 @pytest.mark.parametrize("fine", ["docs/evidence/ticket-9.png", "docs/screenshots/ticket-9-after.png",
                                   "lib/bench/metrics_util.py", "skills/x/docs/plans/how.md", "docs/adr/0072-x.md"])
 def test_lookalike_paths_and_pr_evidence_still_go_through(repo, env, fine):
