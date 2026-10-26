@@ -227,9 +227,9 @@ def _completed_comments(followups) -> set[int]:
     return out
 
 
-def statuses(data: dict, now: datetime, grace: float) -> list[dict]:
-    done = _completed_comments(data.get("followups"))
-    return [s for s in (pr_status(p, now, grace, done) for p in data.get("prs") or []) if s]
+def statuses(fetched: dict, now: datetime, grace: float) -> list[dict]:
+    done = _completed_comments(fetched.get("followups"))
+    return [s for s in (pr_status(p, now, grace, done) for p in fetched.get("prs") or []) if s]
 
 
 def waiting(repos, now: datetime | None = None, run=subprocess.run) -> list[dict] | None:
@@ -361,12 +361,12 @@ def sync(repos, now: datetime | None = None, run=subprocess.run, dry_run: bool =
     return {"ok": True, "filed": filed, "closed": closed, "waiting": [s for s in sts if not s["addressed_by"]]}
 
 
-def summary_line(result: dict) -> str:
-    if not result.get("ok"):
-        return result.get("note", "could not read GitHub")
-    parts = [f"{len(result['waiting'])} PR(s) waiting on MARVIN"]
-    parts += [f"{f['repo'].split('/')[-1]} PR #{f['pr']}: {f['result']}" for f in result["filed"]]
-    parts += [f"closed #{c['number']} ({c['why']})" for c in result["closed"]]
+def summary_line(sync_result: dict) -> str:
+    if not sync_result.get("ok"):
+        return sync_result.get("note", "could not read GitHub")
+    parts = [f"{len(sync_result['waiting'])} PR(s) waiting on MARVIN"]
+    parts += [f"{f['repo'].split('/')[-1]} PR #{f['pr']}: {f['result']}" for f in sync_result["filed"]]
+    parts += [f"closed #{c['number']} ({c['why']})" for c in sync_result["closed"]]
     return "; ".join(parts)
 
 

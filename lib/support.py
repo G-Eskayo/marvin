@@ -389,11 +389,11 @@ def _request(repo: str, issue: dict) -> dict:
             "open": issue.get("state") == "open", "updatedAt": issue.get("updated_at"), "url": issue.get("html_url")}
 
 
-def _write_atomic(path: Path, data: dict) -> None:
+def _write_atomic(path: Path, state: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".state-")
     with os.fdopen(fd, "w") as f:
-        json.dump(data, f, indent=1)
+        json.dump(state, f, indent=1)
     os.replace(tmp, path)  # the dashboard watches this file: it must never see half of it
 
 
