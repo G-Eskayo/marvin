@@ -23,7 +23,7 @@ const withDir = async (fn) => {
   try {
     return await fn(dir)
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
   }
 }
 const svc = (cat, extra = {}) =>
@@ -204,10 +204,30 @@ describe('local badges come after the tree (#570)', () => {
       const s = svc(catalog(rec({ localPaths: [dir], docs: { context: true, readme: false, adrCount: 0 } })), { onStatesChanged: (id) => changed.push(id) })
       const first = await s.tree('p1')
       expect(first.tree.find((e) => e.path === 'CONTEXT.md').state).toBeNull()
-      for (let i = 0; i < 50 && !changed.length; i++) await new Promise((r) => setImmediate(r)) || (await new Promise((r) => setTimeout(r, 20)))
+      await s.idle()
       expect(changed).toEqual(['p1'])
       const second = await s.tree('p1')
       expect(second.tree.find((e) => e.path === 'CONTEXT.md').state).toBe('uncommitted')
+      // The second tree starts another background git status; it must be awaited before the folder is removed.
+      // On a slow CI runner it was still writing .git when withDir deleted it: ENOTEMPTY (PR #638, 2026-10-25).
+      await s.idle()
+    }))
+
+  it('idle() waits for every in-flight git status, and is instant when none is running', async () =>
+    withDir(async (dir) => {
+      const { execFileSync } = await import('child_process')
+      execFileSync('git', ['init', '-q', dir])
+      writeFileSync(path.join(dir, 'CONTEXT.md'), '# ctx\n')
+      const changed = []
+      const s = svc(catalog(rec({ localPaths: [dir], docs: { context: true, readme: false, adrCount: 0 } })), { onStatesChanged: (id) => changed.push(id) })
+      await s.idle() // nothing in flight yet
+      await s.tree('p1')
+      expect(changed).toEqual([]) // the read runs in the background, after the tree
+      await s.idle()
+      expect(changed).toEqual(['p1'])
+      await Promise.all([s.tree('p1'), s.tree('p1'), s.tree('p1')]) // concurrent opens share one read
+      await s.idle()
+      expect(changed).toEqual(['p1']) // same states: not announced again
     }))
 })
 

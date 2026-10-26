@@ -635,6 +635,32 @@ written. Approve spent 10.4 s re-listing every repo for its order check, and the
   `test/mr_actions.test.js`, which also counts GitHub calls over a boot and a session of clicks).
 - New dashboard actions follow this rule, and the polling guard's header points here.
 
+## Pipeline visibility — stage strip (built 2026-10-09, ADR 0073, ticket #217)
+
+Gil's problem 2026-10-09: debugging "where is this PR stuck?" required SSH + log archaeology into
+`~/.claude/logs/ticket-stages/`. Pipeline stage events exist, the dashboard reads them, but only in
+a vertical drill-down list. No high-level "where now?" at a glance on ticket/PR cards, and patterns
+like "most PRs stall at the gate" couldn't be spotted.
+
+- **Horizontal stage strip** renders above the existing vertical history on ticket and PR cards. One
+  pill per canonical stage in order (`claimed → planning → executing → verifying → gate → merging →
+  versioning → rebuilding → done`), with a symbol and color for the *latest* status of that stage:
+  ◌ pending / ✓ passed / ✕ failed / ◐ running / ⏱ stalled / ⟳ needs-rebase / ∅ skipped.
+- **Stall detection**: a `status: "started"` event older than its per-stage threshold (10 min default,
+  35 min for gate) renders stalled. Detection never uses `isLiveNow === false` as proof (could be
+  running elsewhere); only `isLiveNow === true` positively overrides a stale timestamp.
+- **Remediation lookup**: failed stages show the error code and human-readable remediation on hover,
+  extracted tolerantly from `"CODE: message"` format — missing codes degrade to raw detail, never throw.
+- **Draft → ready**: when `readyIfDraft` marks a draft PR ready, a new `merging: passed` stage event
+  records the milestone for visibility.
+- **Pure derivation + presentational component** — `dashboard/src/lib/stage_strip.js` (pure function,
+  no React) + `StageStrip.jsx` (React component); reused by both dashboard now and future MARVIN
+  Mobile renderer. Tests: 21 unit tests for status, stall, code extraction, remediation, state
+  combinatorics.
+- **Cross-project correctness**: every `repo` param is threaded through (`window.api.activity.timeline`,
+  `recordStage`, draft→ready write) so the strip works identically for clarity-captions, portfolio,
+  mobile, or any onboarded project.
+
 ## Project catalog and the master "Where things are" doc (decided 2026-10-05)
 
 Problem found 2026-10-05: the Docs tab listed 4 projects because it only counted GitHub repos with a
@@ -915,8 +941,10 @@ untouched (it is the "legacy profile"); only repos with a profile file use the p
   conflict-checks every other open PR with `git merge-tree` (no checkout, tests or pushes); results go to
   `~/.claude/logs/pr-rebase-status.json` (`GET /rebase-status`, MR Review on either machine) and a conflict onto the
   ticket's stage log. At Approve, a PR behind main is rebased and retested only when main changed a file the PR also
-  changes (`sharedFiles`); otherwise it merges directly, and main-health (which re-runs the suite on every main move and
-  refuses merges while main is red) catches the rare cross-file break. Unknown overlap = retest. MR Review's refresh is
+  changes (`sharedFiles`), **or when main changed a rule since the split** (a test or guard file, `RULE_FILE`; Gil
+  2026-10-26, after PR #572 merged directly past a test the split added and turned main red); otherwise it merges
+  directly, and main-health (which re-runs the suite on every main move and refuses merges while main is red) catches
+  the rare cross-file break. Unknown overlap = retest. MR Review's refresh is
   the safety net for a missed stack move (`stack_retarget.js`). The pipeline scan still runs after the checks.
 - **A conflict gets the cheap fix before any rebuild (2026-10-09, #314)**: the hourly scan used to send every
   conflicting PR's ticket back for a full agent rebuild. Now `conflict_repair.py` first rebases it in a scratch worktree,
@@ -1523,16 +1551,23 @@ On 2026-10-22 #81, #218, #455, #459 and #563 were each planned 6-13 times (about
 - **Failure streak:** `run_ticket._trailing_streaks` skips every MARVIN comment (`ticket_policy.automated_comment`: the ticket agents' prefix, triage's disclaimer, the send-back and repair lines) as it already skipped model-unavailable ones. A person's comment, a passing run (`Verification passed`) or a hand-off to a person (a park or a loop guard, marked `<!-- marvin:handed-to-person -->` from now on; old texts still recognised) ends it. #81 failed 5 times before parking because the conflict lines reset it. Cost: O(comments x body length) over the one thread fetch the run already makes.
 - **One plan per run:** in `_default_executor`, rounds 2-3 of one `execute_ticket` reuse round 1's design doc and task list (on disk in the worktree) and the executor gets the verdict, the metrics that did not improve and the must-fix findings; only a missing or empty task list plans again. Round 1 always plans, so a design doc merged into main is never taken for this run's. Saves up to two flagship planning calls (~$1.20 each) per failed run.
 
-## Engine, instance and the default build (ADR 0071, decided 2026-10-25)
+## Engine, instance, the default build and add-ons (ADR 0071, ADR 0072, decided 2026-10-25)
 
 ### Language
 
 - **Engine**: the public MARVIN code anyone can download (`G-Eskayo/marvin`). It holds no person's or machine's
   names, data or state.
 - **Instance**: one owner's private state for an engine: their plans, screenshots, tickets repo, accounts and
-  feature choices. Gil's is `G-Eskayo/marvin-instance`. One engine, many instances.
+  feature choices. One engine, many instances.
 - **Default build**: what a stranger gets from a fresh download of the engine with no help from Gil or MARVIN:
-  the engine plus a new, empty instance, reaching what Noah's Mac has (dashboard, the MARVIN button, their own
+  the engine plus a new, empty instance, reaching a working MARVIN (dashboard, the MARVIN button, their own
   private repo, accounts connected). "Done" means a clean-install test passes in a fresh virtual machine.
-- **Add-on**: a feature that ships in the engine but is off in the default build until the owner turns it on
-  (portfolio, resume-tailor, Seal ingest). A possible paid feature. Shows a "not set up" state when off.
+- **Add-on**: a feature that is off in the default build until the owner turns it on, and then adds its own tab
+  and setup walkthrough. Shows a "not set up" state when off. Two kinds (ADR 0072):
+  - **Free add-on**: ships inside the public engine (for example paper-dive, Seal ingest).
+  - **Paid add-on**: lives in its own private repo, never in the engine. Buying it gives the owner access, and the
+    installer pulls it into their MARVIN (for example the portfolio). Some are one-time purchases, some are
+    subscriptions.
+- **Marketplace** (later): other people publish their own add-ons for MARVIN, free or paid. Not built.
+_Avoid_: "plugin", "extension", "skill" for an add-on. A skill is one capability inside MARVIN; an add-on is what an
+owner turns on or buys, and may hold several skills.

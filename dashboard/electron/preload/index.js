@@ -83,6 +83,18 @@ contextBridge.exposeInMainWorld('api', {
   working: {
     now: () => ipcRenderer.invoke('working:now')
   },
+  support: {
+    // ADR 0073: the IT button (helped install) and the Support tab (helper install). state() reads the saved cache only.
+    config: () => ipcRenderer.invoke('support:config'),
+    state: () => ipcRenderer.invoke('support:state'),
+    act: (cmd, request) => ipcRenderer.invoke('support:act', cmd, request),
+    // A notice was clicked: { repo, number } of the request to open.
+    onFocus: (callback) => {
+      const listener = (_event, target) => callback(target)
+      ipcRenderer.on('support:focus', listener)
+      return () => ipcRenderer.removeListener('support:focus', listener)
+    }
+  },
   marvin: {
     // Opens a MARVIN session in WezTerm on this Mac: { ticket } for its worktree, or no ticket for home.
     openSession: (request) => ipcRenderer.invoke('marvin:openSession', request)
