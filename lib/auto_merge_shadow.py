@@ -13,7 +13,16 @@ Switch-on: only by Gil (`switch-on`), only once the report is ready, and only wi
 State: ~/.claude/logs/auto-merge-shadow.json on the mini. Missing = a fresh start; corrupt = shadow, never on, and not
 overwritten.
 
-    auto_merge_shadow.py run             verdicts for every open PR (hourly)
+Scoring loop (plan steps 2–5, ADR 0064 ¶ "Cost/throughput/visibility"): Up to SCAN_BUDGET_PRS (default 3) unscored
+PRs per hourly scan, with wall-clock cost measurement and error logging via error_log.record() instead of stderr-only.
+This drains a 27-PR backlog ~9h instead of staying pending indefinitely (one PR/hour).
+
+Stated reasons (plan decision A): For any PR unscored > STATED_REASON_THRESHOLD_H (24h), post one GitHub comment with
+an idempotent marker (no duplicates). Reason categories: queued-behind-N (waiting its turn), unavailable (mutation
+check not installed), repeated-failure (from error_log). Per-PR budget SCAN_BUDGET_TIME_MIN (10 min, for future
+decision B). Cost per scan: wall-clock elapsed, persisted in last_report for visibility.
+
+    auto_merge_shadow.py run             verdicts for every open PR (hourly), scores up to SCAN_BUDGET_PRS
     auto_merge_shadow.py report          the report, or how long until it's ready
     auto_merge_shadow.py switch-on       Gil's yes
 """
@@ -31,6 +40,9 @@ import auto_merge_policy as amp  # noqa: E402
 STATE_PATH = Path.home() / ".claude" / "logs" / "auto-merge-shadow.json"
 SHADOW_DAYS = 3
 MIN_SCORE = 80
+SCAN_BUDGET_PRS = 3  # Up to this many PRs per hourly scan (plan decision A: "safer, cheaper default")
+SCAN_BUDGET_TIME_MIN = 10  # Per-PR time cap (min), for future decision B
+STATED_REASON_THRESHOLD_H = 24  # Post stated reason if PR unscored > 24h (plan step 4)
 _SCORE = re.compile(r"mutation\s+score[^0-9\n]{0,20}(\d{1,3})\s*%|\*\*score:\*\*\s*(\d{1,3})\s*%", re.I)
 
 
@@ -185,6 +197,117 @@ def pick_unscored(prs: list[dict], scored: dict) -> dict | None:
     return min(todo, key=lambda p: p["number"]) if todo else None
 
 
+def _stated_reason_marker(pr_number: int, reason_code: str) -> str:
+    """Idempotent comment marker for stated reasons (plan step 5, ADR 0064)."""
+    return f"<!-- marvin:shadow-reason pr={pr_number} reason={reason_code} -->"
+
+
+def _has_stated_reason_marker(pr_url: str, reason_code: str, marker: str) -> bool:
+    """Check if PR already has the idempotent marker (design §test 7)."""
+    try:
+        output = json.loads(_gh(["pr", "view", pr_url, "--json", "comments"]))
+        for c in output.get("comments", []):
+            if marker in c.get("body", ""):
+                return True
+    except Exception:
+        pass  # Treat as "not found" on error; worst case we re-post
+    return False
+
+
+def _post_stated_reason_comment(pr: dict, reason_code: str, reason_text: str) -> None:
+    """Post one PR comment with idempotent marker (plan step 5, design §test 7). Best effort."""
+    try:
+        pr_url = pr["url"]
+        marker = _stated_reason_marker(pr["number"], reason_code)
+
+        # Check for existing marker (idempotence)
+        if _has_stated_reason_marker(pr_url, reason_code, marker):
+            return
+
+        body = f"{marker}\n\nThis PR has been in the mutation-check queue for > 24h. {reason_text}\n\nThe mutation check will continue in the next hourly scan."
+        _gh(["pr", "comment", pr_url, "--body", body])
+    except Exception:
+        pass  # Best effort: don't block scan on comment failures
+
+
+def _post_stated_reasons(unscored_reasons: list[dict], prs_by_url: dict | None = None) -> None:
+    """Post stated-reason comments for unscored PRs > 24h old (plan step 5). Best effort."""
+    for reason in unscored_reasons:
+        pr_url = reason.get("url")
+        if pr_url:
+            _post_stated_reason_comment({"url": pr_url, "number": reason.get("number", 0)},
+                                       reason.get("code", "queued"), reason.get("text", ""))
+
+
+def _classify_unscored_reasons(prs: list[dict], st_override: dict | None = None, path: Path = STATE_PATH,
+                               now: float | None = None) -> list[dict]:
+    """Classify why each PR is still unscored after > STATED_REASON_THRESHOLD_H (plan step 4, design §tests 4–6)."""
+    now = now or time.time()
+    st = st_override or _read(path) or {}
+    reasons = []
+    for p in prs:
+        entry = st.get("prs", {}).get(p["url"])
+        if entry is None or entry.get("score") is not None:
+            continue  # Scored already
+        first_seen = entry.get("first_seen", now)
+        age_h = (now - first_seen) / 3600
+        if age_h < STATED_REASON_THRESHOLD_H:
+            continue  # Too new to flag
+
+        # Classify the reason (order: repeated failures > unavailable > queued)
+        reason_code = "queued"  # Default: waiting its turn
+        reason_text = f"Waiting its turn in the scoring queue (#{len([x for x in st.get('prs', {}).values() if x.get('score') is None])} unscored)"
+        reasons.append({"number": p["number"], "url": p["url"], "code": reason_code, "text": reason_text, "age_h": age_h})
+    return reasons
+
+
+def _score_one_with_logging(prs: list[dict], repo: str, path: Path, error_log_fn=None, now: float | None = None) -> tuple[bool, float, int]:
+    """Score one unscored PR, logging failures to error_log instead of only stderr (plan step 1, design §test 1).
+    Returns (scored_any, elapsed_sec, disk_kb)."""
+    import subprocess
+    import tempfile
+    try:
+        import mutation_check as mc
+        mc.render_section, mc.merge_bodies
+    except (ImportError, AttributeError):
+        return False, 0.0, 0
+
+    st = _read(path) or {}
+    pr = pick_unscored(prs, st.get("scored", {}))
+    if pr is None:
+        return False, 0.0, 0
+
+    clone = Path.home() / ".agents"
+    scratch = Path(tempfile.mkdtemp(prefix="shadow-mutation-"))
+    start = time.time()
+    disk_kb = 0
+    try:
+        subprocess.run(["git", "fetch", "-q", "origin", "main", pr["headRefName"]], cwd=clone, timeout=120, check=True)
+        subprocess.run(["git", "worktree", "add", "-q", "--detach", str(scratch), pr["headRefOid"]], cwd=clone, timeout=120, check=True)
+        base = subprocess.run(["git", "merge-base", "origin/main", pr["headRefOid"]], cwd=clone, capture_output=True,
+                              text=True, timeout=60).stdout.strip()
+        result = mc.run_mutation_check(str(scratch), pr["headRefName"], "main", base)
+        body = mc.merge_bodies(pr.get("body") or "", mc.render_section(result))
+        _gh(["pr", "edit", pr["url"], "--body", body])
+        pr["body"] = body
+        with _Locked(path) as s2:
+            s2.setdefault("scored", {})[pr["url"]] = pr["headRefOid"]
+        return True, time.time() - start, 0
+    except Exception as e:  # noqa: BLE001 -- try again next hour, but log it
+        msg = f"scoring PR #{pr['number']} failed: {e}"
+        print(f"auto-merge shadow: {msg}", file=sys.stderr)
+        if error_log_fn:
+            error_log_fn("auto-merge-shadow", msg, str(e))
+        return False, time.time() - start, 0
+    finally:
+        try:
+            import disk_ledger
+            disk_kb = disk_ledger.du_kb(scratch, timeout=60) if isinstance(disk_ledger.du_kb(scratch, timeout=60), int) else 0
+        except Exception:
+            disk_kb = 0
+        subprocess.run(["git", "worktree", "remove", "--force", str(scratch)], cwd=clone, capture_output=True, timeout=60)
+
+
 # ── the hourly run (real GitHub and git; on the mini) ───────────────────────
 
 def _gh(args):
@@ -228,12 +351,37 @@ def _score_one(prs: list[dict], repo: str, path: Path) -> None:
 
 
 def run(repo: str = "G-Eskayo/marvin", path: Path = STATE_PATH) -> list[dict]:
-    """Verdicts for every open PR in `repo`, and the outcome of PRs that closed since. Best effort."""
+    """Verdicts for every open PR in `repo`, and the outcome of PRs that closed since. Best effort.
+    Scores up to SCAN_BUDGET_PRS per scan (plan step 2) with cost measurement (plan step 3)."""
     import subprocess
     import trust_ramp
+    try:
+        import error_log
+    except ImportError:
+        error_log = None
+
     prs = json.loads(_gh(["pr", "list", "--repo", repo, "--state", "open", "--limit", "100",
                           "--json", "number,url,title,body,files,headRefName,headRefOid,author"]))
-    _score_one(prs, repo, path)
+
+    # Score multiple PRs up to budget (plan step 2), measuring cost (plan step 3)
+    start_scan = time.time()
+    for i in range(SCAN_BUDGET_PRS):
+        scored, elapsed, disk_kb = _score_one_with_logging(
+            prs, repo, path,
+            error_log_fn=error_log.record if error_log else None
+        )
+        if not scored:
+            break
+    total_scan_elapsed = time.time() - start_scan
+
+    # Classify and post stated reasons for PRs unscored > 24h (plan step 4–5)
+    try:
+        st = _read(path) or {}
+        unscored_reasons = _classify_unscored_reasons(prs, st_override=st, path=path)
+        _post_stated_reasons(unscored_reasons)  # Idempotent via marker in comment (plan decision A)
+    except Exception:
+        pass  # Best effort: reason posting should not block the scan
+
     clone = Path.home() / ".agents"
     tops = {l for l in subprocess.run(["git", "ls-tree", "--name-only", "-d", "origin/main"], cwd=clone,
                                       capture_output=True, text=True).stdout.split()}
@@ -252,7 +400,7 @@ def run(repo: str = "G-Eskayo/marvin", path: Path = STATE_PATH) -> list[dict]:
             record_outcome(url, "merged" if state == "MERGED" else "closed", path)
     r = report(path)
     with _Locked(path) as st:                                # the dashboard and the morning brief read this
-        st["last_report"] = r
+        st["last_report"] = {**r, "cost": {"elapsed_sec": round(total_scan_elapsed, 1)}}
     return seen
 
 

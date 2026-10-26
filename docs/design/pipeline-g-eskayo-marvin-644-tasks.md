@@ -1,0 +1,9 @@
+1. Add `error_log.record(...)` wiring into the scoring orchestration's exception handler in `lib/auto_merge_shadow.py`, replacing the bare `stderr` print (keep the print too, for interactive visibility).
+2. Refactor the single-PR `_score_one` call in `run()` into a bounded loop that scores multiple unscored PRs up to the chosen scan-level time budget (Decision `scan_budget`), still oldest-first via the existing `pick_unscored`.
+3. Measure and report real cost per scan: wall-clock elapsed via `time.time()`, disk via `disk_ledger.du_kb(scratch, timeout=...)` on the scratch worktree right before it's removed; include both in the `step(...)` line `ticket_pipeline._auto_merge_shadow` already emits and in the persisted `last_report`.
+4. Add a reason-classifier for "why is this PR still unscored" (queued-behind-N, mutation check unavailable, repeated failure from `error_log`), used only once a PR has been open > 24h without any score section.
+5. Add the idempotent stated-reason action (Decision `stated_reason_channel`): post one PR comment (or set one shadow-state flag, per the decision), guarded so it never repeats for the same PR/cause.
+6. Write the tests above first (`lib/tests/test_auto_merge_shadow.py`), confirm they fail against current code, then make them pass with steps 1–5.
+7. Run the real stated-reason pass once against the live backlog (the 21 currently-pending PRs on `G-Eskayo/marvin`) so AC1's "write the cause into the PR" is satisfied for the existing backlog, not just future PRs.
+8. Document the measured space/time cost per scan in `lib/auto_merge_shadow.py`'s module docstring and in `CONTEXT.md`'s Auto-merge section (§ designed 2026-10-09, ADR 0064), replacing the vague "each check can take 10 minutes" line with the concrete, decided budget.
+9. Full test suite + the new tests green; confirm `graphify update .` after the code changes.

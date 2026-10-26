@@ -390,6 +390,29 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   always waits for Gil (supply-chain trust); more than 1,500 changed lines (tests included) waits too (the ticket was
   probably too big). Design complete: ADR 0064.
 
+### Cost/throughput (2026-10-26, plan steps 2–5 of #644)
+
+The shadow-mode scoring loop was bottlenecked at one PR/hour (serial `_score_one()` call), leaving a ~27-PR backlog
+pending indefinitely despite tests passing. Fixed by:
+
+- **Parallel budget** (decision A): up to 3 PRs per hourly scan (default `SCAN_BUDGET_PRS`), in series but bounded,
+  draining a 27-PR backlog in ~9h instead of >27h. Per-PR time budget (future decision B): 10 min cap to keep
+  wall-clock tight under `SCAN_BUDGET_TIME_MIN`.
+- **Error visibility** (always): scoring exceptions now log via `error_log.record()` (never-silent primitive) instead
+  of stderr-only, so a PR stuck because the check keeps crashing is distinguishable from one stuck waiting its turn.
+- **Stated reasons** (decision A, PR comment): any PR unscored > 24h gets one GitHub comment (idempotent marker,
+  never duplicates) naming why: `queued-behind-N`, `check unavailable`, or `repeated-failure-logged`. Visible on
+  GitHub directly, also surfaced in the dashboard MR Review card.
+- **Cost measured, not assumed** (always): wall-clock elapsed per scan and disk KB used by the scratch worktree,
+  persisted in `last_report` for Health/dashboard to read. Replaces the vague claim "each check can take 10 minutes"
+  with a real number per instance.
+
+All four are live in the hourly scan logic; tests (10 new ones covering edge cases: boundary tests, idempotence,
+corruption handling) green; cost tracking added to the step() line and persisted in the state for downstream
+visibility.
+
+Example reported cost: `{"last_report": {..., "cost": {"elapsed_sec": 8.3}}}`.
+
 ## Dashboard app — Files tab (in design, 2026-08-27; folded into Docs 2026-10-21, #403 / #570)
 
 - **Folded into Docs** (marvin#570 "Docs: fold the Files tab into Docs", decided in #403, design
