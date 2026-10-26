@@ -113,3 +113,12 @@ The helped person may be new to this. The helper's private instance can describe
   - The fix button is **Fix it with MARVIN**, and diagnostics are labelled "Technical details (sent automatically, no passwords)".
   - Authors show as You, Your helper, or Your helper's MARVIN (automatic).
   - Nobody is told to type commands: their MARVIN explains each step and asks before running it.
+
+## Amendment, 2026-10-26: no forever loop
+
+A failed fix goes back to the helper's MARVIN, but not forever. Before the helper's MARVIN answers, `rounds()` counts what has been tried from the thread itself: its answers, and the fixes whose check then failed on the helped Mac (only the requester's own verifications count). The request goes to `needs-you` without asking the model when:
+- **the limit of failed fixes is reached** (default 2). The note lists each check that still failed, so the helper starts with the full picture.
+- **the limit of automatic answers is reached** (default 4, follow-ups included), so a chat with the bot can't run on forever.
+- **the helper's own fix fails.** Once a person has answered, a failure comes back to that person, not to the bot.
+
+Both limits are in the helper's private instance (`support.limits`), clamped to 1–10. The helped MARVIN tries at most 2 fixes on its own Mac before it escalates.
