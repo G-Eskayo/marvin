@@ -1,0 +1,10 @@
+1. Add regression test (list items 1-3) to `lib/tests/test_auto_merge_shadow.py` reproducing the stale-report bug against real-shaped data.
+2. Fix `report()` in `lib/auto_merge_shadow.py` to compute `would`/`disagreements` from `e["current"]["verdict"]` instead of the frozen `e["verdict"]`.
+3. Add failure-bookkeeping tests (list items 4, 5, 9, 10) for `_score_one`/`pick_unscored`.
+4. Extend the shadow state shape with a `score_failures` map (url → `{count, sha, reason, at}`), written/read through the existing `_Locked` pattern; update `pick_unscored` to deprioritize (not permanently exclude) a PR with failures at its current sha, so the next-oldest clean PR scores first.
+5. Add test for item 6 (stated reason after `MAX_CONSECUTIVE_FAILURES`) and implement: once the threshold is hit, write a "Score: unknown (scoring failed repeatedly: …)" section into the PR body via `mutation_check.render_section`/`merge_bodies`, and reset the counter on a new push (new `headRefOid`).
+6. Add test for item 7 (PR closed mid-scoring) and confirm/adjust `_score_one`'s exception handling covers this path without crashing the pipeline step.
+7. Add test for item 8 (no wasted repeats) — should already pass given `pick_unscored`'s existing sha check; keep as a locked-in regression.
+8. Add test for item 11 and surface the per-scan cost: log/record the measured wall-clock duration of `_score_one` against `wall_clock_budget_sec`, and write the real measured numbers (scratch-worktree size, time-boxed budget, drain rate given current open-PR count) into the PR description and a short addendum near CONTEXT.md's existing "five gates" mutation-check paragraph (~line 363).
+9. Run the full `lib/tests/test_auto_merge_shadow.py` and `lib/tests/test_mutation_check.py` suites; verify no existing test (including the "first verdict stays" one) regresses.
+10. In the PR body, write the actual root-cause finding (stale frozen field vs. real backlog of 2 PRs today) per AC #1 — this is itself one of the acceptance criteria, not just documentation.

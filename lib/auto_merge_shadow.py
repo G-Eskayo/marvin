@@ -31,6 +31,7 @@ import auto_merge_policy as amp  # noqa: E402
 STATE_PATH = Path.home() / ".claude" / "logs" / "auto-merge-shadow.json"
 SHADOW_DAYS = 3
 MIN_SCORE = 80
+MAX_CONSECUTIVE_FAILURES = 3
 _SCORE = re.compile(r"mutation\s+score[^0-9\n]{0,20}(\d{1,3})\s*%|\*\*score:\*\*\s*(\d{1,3})\s*%", re.I)
 
 
@@ -91,7 +92,7 @@ def _read(path: Path) -> dict | None:
     try:
         text = Path(path).read_text()
     except FileNotFoundError:
-        return {"mode": "shadow", "started_at": None, "prs": {}}
+        return {"mode": "shadow", "started_at": None, "prs": {}, "score_failures": {}}
     except OSError:
         return None
     try:
@@ -100,6 +101,7 @@ def _read(path: Path) -> dict | None:
         return None
     if not isinstance(data, dict) or not isinstance(data.get("prs"), dict) or data.get("mode") not in ("shadow", "on"):
         return None
+    data.setdefault("score_failures", {})
     return data
 
 
@@ -146,9 +148,9 @@ def report(path: Path = STATE_PATH, now: float | None = None) -> dict:
         left = SHADOW_DAYS * 86400 - (now - started) if started else SHADOW_DAYS * 86400
         return {"ready": False, "mode": st["mode"], "line": f"auto-merge shadow report in {left / 3600:.0f} h"}
     prs = list(st["prs"].values())
-    would = [e for e in prs if e["verdict"] == "auto"]
+    would = [e for e in prs if e.get("current", {}).get("verdict") == "auto"]
     disagreements = [{"number": e["number"], "repo": e["repo"], "title": e["title"], "outcome": e["outcome"]}
-                     for e in would if e.get("outcome") in ("closed", "reverted")]
+                     for e in prs if e.get("current", {}).get("verdict") == "auto" and e.get("outcome") in ("closed", "reverted")]
     if not prs:
         line = "Auto-merge shadow report: no PRs in the window yet, so it keeps shadowing."
     elif disagreements:
@@ -178,11 +180,20 @@ def switch_on(by: str, path: Path = STATE_PATH, now: float | None = None) -> str
     return "on"
 
 
-def pick_unscored(prs: list[dict], scored: dict) -> dict | None:
-    """The oldest open PR whose current commit hasn't been scored yet (a new push means a new score)."""
+def pick_unscored(prs: list[dict], scored: dict, score_failures: dict | None = None) -> dict | None:
+    """The oldest open PR whose current commit hasn't been scored yet (a new push means a new score).
+    Deprioritizes PRs with recent failures at their current commit, but doesn't block them forever."""
+    score_failures = score_failures or {}
     todo = [p for p in prs if scored.get(p["url"]) != p.get("headRefOid")
             and (mutation_score(p.get("body", "")) is None or p["url"] in scored)]
-    return min(todo, key=lambda p: p["number"]) if todo else None
+    if not todo:
+        return None
+    # Prefer PRs without recent failures at their current sha
+    clean = [p for p in todo if not (p["url"] in score_failures and
+             score_failures[p["url"]].get("sha") == p.get("headRefOid") and
+             score_failures[p["url"]].get("count", 0) >= MAX_CONSECUTIVE_FAILURES)]
+    candidates = clean if clean else todo
+    return min(candidates, key=lambda p: p["number"])
 
 
 # ── the hourly run (real GitHub and git; on the mini) ───────────────────────
@@ -196,7 +207,8 @@ def _gh(args):
 
 def _score_one(prs: list[dict], repo: str, path: Path) -> None:
     """Score one unscored PR with the mutation check (#339) in a scratch worktree, and write the section into its body
-    (one per hourly run: each check can take 10 minutes). Best effort; no check installed = nothing scored."""
+    (one per hourly run: each check can take 10 minutes). Best effort; no check installed = nothing scored.
+    Tracks consecutive failures per (url, sha) and stops retrying after MAX_CONSECUTIVE_FAILURES."""
     import subprocess
     import tempfile
     try:
@@ -205,11 +217,13 @@ def _score_one(prs: list[dict], repo: str, path: Path) -> None:
     except (ImportError, AttributeError):
         return
     st = _read(path) or {}
-    pr = pick_unscored(prs, st.get("scored", {}))
+    pr = pick_unscored(prs, st.get("scored", {}), st.get("score_failures", {}))
     if pr is None:
         return
     clone = Path.home() / ".agents"
     scratch = Path(tempfile.mkdtemp(prefix="shadow-mutation-"))
+    sha = pr.get("headRefOid")
+    start_time = time.time()
     try:
         subprocess.run(["git", "fetch", "-q", "origin", "main", pr["headRefName"]], cwd=clone, timeout=120, check=True)
         subprocess.run(["git", "worktree", "add", "-q", "--detach", str(scratch), pr["headRefOid"]], cwd=clone, timeout=120, check=True)
@@ -219,9 +233,34 @@ def _score_one(prs: list[dict], repo: str, path: Path) -> None:
         body = mc.merge_bodies(pr.get("body") or "", mc.render_section(result))
         _gh(["pr", "edit", pr["url"], "--body", body])
         pr["body"] = body
+        duration = time.time() - start_time
         with _Locked(path) as s2:
             s2.setdefault("scored", {})[pr["url"]] = pr["headRefOid"]
-    except Exception as e:  # noqa: BLE001 -- try again next hour
+            s2.setdefault("score_failures", {})[pr["url"]] = {"count": 0, "sha": sha, "at": time.time()}
+            s2.setdefault("durations", {})[pr["url"]] = duration
+        print(f"auto-merge shadow: scored PR #{pr['number']} in {duration:.1f}s ({len(prs)} open PRs)", file=sys.stderr)
+    except Exception as e:  # noqa: BLE001 -- try again next hour, but track failures
+        url = pr["url"]
+        with _Locked(path) as s2:
+            failures = s2.setdefault("score_failures", {})
+            entry = failures.get(url, {"count": 0, "sha": sha, "reason": "", "at": time.time(), "body_edited": False})
+            # Reset counter on new push; increment on same sha
+            if entry.get("sha") != sha:
+                entry = {"count": 0, "sha": sha, "reason": "", "at": time.time(), "body_edited": False}
+            entry["count"] = entry.get("count", 0) + 1
+            entry["reason"] = str(e)[:200]
+            entry["at"] = time.time()
+            failures[url] = entry
+            # If we hit the failure threshold, write a stated reason into the PR body (once)
+            if entry["count"] >= MAX_CONSECUTIVE_FAILURES and not entry.get("body_edited"):
+                try:
+                    current_body = pr.get("body") or ""
+                    reason_md = f"## Mutation Score\n\nScore: unknown (scoring failed {entry['count']} times: {entry['reason']}). Auto-merge waits.\n"
+                    body = mc.merge_bodies(current_body, reason_md)
+                    _gh(["pr", "edit", url, "--body", body])
+                    entry["body_edited"] = True
+                except Exception:  # noqa: BLE001 -- best effort
+                    pass
         print(f"auto-merge shadow: scoring PR #{pr['number']} failed: {e}", file=sys.stderr)
     finally:
         subprocess.run(["git", "worktree", "remove", "--force", str(scratch)], cwd=clone, capture_output=True, timeout=60)
