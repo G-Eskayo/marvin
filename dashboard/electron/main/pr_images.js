@@ -22,11 +22,17 @@ const attr = (tag, name) => {
 const MAX_BODY = 200_000
 const MAX_ITEMS = 60
 
+// A github.com file page (blob/... or raw/...) answers 404 to a token when the repo is private; the same file on the raw
+// host answers with the token, so images kept in a private repo (an instance's screenshots) still load (#662).
+const GITHUB_BLOB = /^https:\/\/github\.com\/([A-Za-z0-9-]+)\/([A-Za-z0-9_.-]+)\/(?:blob|raw)\/([^/?#]+)\/([^?#]+)(?:\?raw=true)?$/
+
 // A repo-relative path points at the PR's own branch, where its images were committed.
 export function resolvePrImageUrl(src, { repo, headRef } = {}) {
   const url = String(src || '').trim()
   if (!url) return null
   if (/^data:image\//i.test(url)) return url
+  const blob = GITHUB_BLOB.exec(url)
+  if (blob && !blob[4].split('/').includes('..')) return `https://raw.githubusercontent.com/${blob[1]}/${blob[2]}/${blob[3]}/${blob[4]}`
   if (/^https?:\/\//i.test(url)) return url
   if (/^[a-z][a-z0-9+.-]*:/i.test(url) || url.startsWith('//')) return null // javascript:, file:, protocol-relative
   if (!repo || !headRef) return null

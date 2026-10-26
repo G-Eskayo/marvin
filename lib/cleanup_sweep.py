@@ -42,6 +42,7 @@ branch is kept, so every commit stays reachable. Ignored build output
 """
 from __future__ import annotations
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -62,6 +63,9 @@ EMPTY_MIN_AGE_HOURS = 24
 BACKUP_MIN_AGE_HOURS = 48  # leftover edits untouched this long are backed up and removed (#629)
 BACKUP_MAX_FILE_BYTES = 50 * 2**20    # bigger leftovers (a model, a recording) are not committed: they'd grow the
 BACKUP_MAX_TOTAL_BYTES = 200 * 2**20  # clone's .git and fail GitHub's 100 MB limit; kept for a person instead
+MARVIN_ROOT = Path(__file__).resolve().parent.parent
+PUSH_GUARD = MARVIN_ROOT / "bin" / "pre-push-guard"
+PUSH_GUARD_SHARED = MARVIN_ROOT / "config" / "push-guard" / "patterns.txt"
 HOME = Path.home()  # one seam: tests point it (and WORKTREES_ROOT) at a temp dir (conftest)
 AERIAL_SUBPATH = Path("Library") / "Application Support" / "com.apple.wallpaper" / "aerials" / "videos"
 ISSUE_NUMBER_RE = re.compile(r"#(\d+)$|^ticket/(\d+)(?:-|$)")  # pipeline/…#N, or ticket/<n>-<slug> (#226)
@@ -180,10 +184,23 @@ def _default_remove_worktree(wt: dict) -> bool:
     return _git(Path(wt["clone"]), "worktree", "remove", str(wt["path"])).returncode == 0
 
 
-def backup_worktree(wt: dict, today: str | None = None) -> str | None:
+def _push_guard_allows(path: Path, head: str, ref: str) -> bool:
+    """ADR 0071 guard on exactly what the backup push would publish, run directly so a repo without the hook
+    (clarity-captions) is still checked, always with MARVIN's shared patterns. Missing guard = refuse."""
+    if not PUSH_GUARD.exists():
+        return False
+    env = {**os.environ, "PUSH_GUARD_SHARED": str(PUSH_GUARD_SHARED)}
+    r = subprocess.run([str(PUSH_GUARD), "origin"], cwd=path, capture_output=True, text=True, env=env,
+                       input=f"HEAD {head} refs/heads/{ref} {'0' * 40}\n")
+    return r.returncode == 0
+
+
+def backup_worktree(wt: dict, today: str | None = None,
+                    guard: Callable[[Path, str, str], bool] | None = None) -> str | None:
     """Commit every leftover edit (ignored build output stays out) and push the worktree's HEAD to
     `backup/<branch>-<today>` on origin. Returns the ref only when origin's copy matches HEAD; None on any failure,
-    so the caller keeps the folder. Hooks are skipped (--no-verify): this saves work, it doesn't ship it."""
+    so the caller keeps the folder. The push guard runs first (it is the check that matters here); git hooks
+    are then skipped (--no-verify), since the guard already ran and the commit hooks are for shipping, not saving."""
     path = Path(wt["path"])
     today = today or datetime.now(timezone.utc).strftime("%Y%m%d")
     ref = f"backup/{wt['branch']}-{today}"
@@ -201,7 +218,9 @@ def backup_worktree(wt: dict, today: str | None = None) -> str | None:
         if commit.returncode != 0:
             return None
     head = _git(path, "rev-parse", "HEAD").stdout.strip()
-    if _git(path, "push", "-q", "origin", f"HEAD:refs/heads/{ref}").returncode != 0:
+    if not (guard or _push_guard_allows)(path, head, ref):
+        return None  # personal data, a secret or a transcript: the commit stays local, nothing is published
+    if _git(path, "push", "-q", "--no-verify", "origin", f"HEAD:refs/heads/{ref}").returncode != 0:
         return None
     remote = _git(path, "ls-remote", "origin", f"refs/heads/{ref}").stdout.split()
     return ref if head and remote and remote[0] == head else None

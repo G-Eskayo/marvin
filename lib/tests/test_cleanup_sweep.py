@@ -569,7 +569,7 @@ def test_backup_pushes_every_leftover_edit_to_a_backup_branch_then_removal_succe
     (wt_path / ".build" / "big.o").write_text("x" * 100)
     wt = {"path": wt_path, "branch": "pipeline/g-eskayo/marvin#57", "clone": clone}
 
-    ref = cs.backup_worktree(wt, today="20261024")
+    ref = cs.backup_worktree(wt, today="20261024", guard=lambda *a: True)
     assert ref == "backup/pipeline/g-eskayo/marvin#57-20261024"
     # the backup on origin holds both edits and not the ignored build output
     show = lambda path: git("--git-dir", str(origin), "show", f"{ref}:{path}", cwd=tmp_path).stdout
@@ -592,7 +592,7 @@ def test_a_failed_push_means_no_backup_and_nothing_removed(tmp_path):
         pr_state=lambda repo, branch: None,
         is_claimed=lambda repo, n: False,
         remove_worktree=lambda w: removed.append(w) or True,
-        backup=lambda w: cs.backup_worktree(w, today="20261024"),
+        backup=lambda w: cs.backup_worktree(w, today="20261024", guard=lambda *a: True),
     )
     assert removed == []
     assert result["removed"] == []
@@ -606,7 +606,7 @@ def test_backup_with_only_unpushed_commits_pushes_them(tmp_path):
     git("add", ".", cwd=wt_path)
     git("commit", "-qm", "work", cwd=wt_path)
     wt = {"path": wt_path, "branch": "pipeline/g-eskayo/marvin#57", "clone": clone}
-    ref = cs.backup_worktree(wt, today="20261024")
+    ref = cs.backup_worktree(wt, today="20261024", guard=lambda *a: True)
     assert git("--git-dir", str(origin), "show", f"{ref}:g", cwd=tmp_path).stdout == "committed, never pushed"
 
 
@@ -621,7 +621,7 @@ def test_sweep_backs_up_then_removes_and_a_second_run_finds_nothing_left(tmp_pat
     monkeypatch.setattr(cs, "_cwds_in_use", lambda: set())
     monkeypatch.setattr(cs, "GITHUB_REPO_RE", __import__("re").compile(r"(origin)\.git$"))
     kw = dict(pr_state=lambda repo, branch: None, is_claimed=lambda repo, n: False,
-              backup=lambda w: cs.backup_worktree(w, today="20261024"))
+              backup=lambda w: cs.backup_worktree(w, today="20261024", guard=lambda *a: True))
 
     first = cs.sweep_worktrees(**kw)
     assert [r["path"] for r in first["removed"]] == [wt_path]
@@ -714,8 +714,59 @@ def test_a_huge_leftover_file_is_not_committed_and_the_edits_stay_as_they_were(t
     (wt_path / "small.py").write_text("y")
     wt = {"path": wt_path, "branch": "pipeline/g-eskayo/marvin#57", "clone": clone}
     before = git("rev-parse", "HEAD", cwd=wt_path).stdout
-    assert cs.backup_worktree(wt, today="20261024") is None
+    assert cs.backup_worktree(wt, today="20261024", guard=lambda *a: True) is None
     assert git("rev-parse", "HEAD", cwd=wt_path).stdout == before  # nothing committed
     assert git("diff", "--cached", "--name-only", cwd=wt_path).stdout == ""  # nothing left staged
     assert sorted(git("status", "--porcelain", cwd=wt_path).stdout.split()) == ["??", "??", "model.bin", "small.py"]
     assert git("--git-dir", str(origin), "branch", "--list", "backup/*", cwd=tmp_path).stdout == ""
+
+
+# ── backups pass the ADR 0071 push guard in every repo, hook or not ────────
+# Found 2026-10-25: clarity-captions (public) has no pre-push hook, so its backups went out unchecked (they were
+# clean). marvin's hook refused 11; the sweep must never depend on a repo having it.
+
+def test_a_refused_backup_pushes_nothing(tmp_path):
+    origin, clone, wt_path, git = _origin_clone_wt(tmp_path)
+    (wt_path / "new.py").write_text("work")
+    wt = {"path": wt_path, "branch": "pipeline/g-eskayo/marvin#57", "clone": clone}
+    asked = []
+    ref = cs.backup_worktree(wt, today="20261024", guard=lambda *a: asked.append(a) or False)
+    assert ref is None
+    assert asked and asked[0][0] == wt_path
+    assert git("--git-dir", str(origin), "branch", "--list", "backup/*", cwd=tmp_path).stdout == ""
+
+
+def test_the_real_guard_blocks_a_private_string_in_a_repo_without_the_hook(tmp_path, monkeypatch):
+    origin, clone, wt_path, git = _origin_clone_wt(tmp_path)
+    assert not (clone / ".git" / "hooks" / "pre-push").exists()  # like clarity-captions
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude" / "private-push-patterns.txt").write_text("555-0142\n")
+    monkeypatch.setenv("HOME", str(home))
+    (wt_path / "notes.md").write_text("call me at 555-0142")
+    wt = {"path": wt_path, "branch": "pipeline/g-eskayo/marvin#57", "clone": clone}
+    assert cs.backup_worktree(wt, today="20261024") is None
+    assert git("--git-dir", str(origin), "branch", "--list", "backup/*", cwd=tmp_path).stdout == ""
+
+
+def test_the_real_guard_lets_clean_work_through(tmp_path, monkeypatch):
+    origin, clone, wt_path, git = _origin_clone_wt(tmp_path)
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude" / "private-push-patterns.txt").write_text("555-0142\n")
+    monkeypatch.setenv("HOME", str(home))
+    (wt_path / "code.py").write_text("x = 1")
+    wt = {"path": wt_path, "branch": "pipeline/g-eskayo/marvin#57", "clone": clone}
+    assert cs.backup_worktree(wt, today="20261024") == "backup/pipeline/g-eskayo/marvin#57-20261024"
+
+
+def test_the_guard_always_uses_marvins_shared_patterns_even_in_another_repo(tmp_path, monkeypatch):
+    origin, clone, wt_path, git = _origin_clone_wt(tmp_path)
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude" / "private-push-patterns.txt").write_text("# none\n")
+    monkeypatch.setenv("HOME", str(home))
+    key = "AKIA" + "ABCDEFGHIJKLMNOP"  # an AWS access-key shape, from the shared patterns
+    (wt_path / "cfg.py").write_text(f"KEY = '{key}'")
+    wt = {"path": wt_path, "branch": "pipeline/g-eskayo/marvin#57", "clone": clone}
+    assert cs.backup_worktree(wt, today="20261024") is None

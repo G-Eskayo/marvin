@@ -37,6 +37,9 @@ export function createDocsService({ getCatalog, exec, readMaster, fallbackRepos 
     statesInflight.set(dir, p)
     return p
   }
+  // Resolves once every background git status that is running now has finished (for tests and a clean shutdown:
+  // removing a folder while git still writes in its .git fails). O(open repos); never rejects.
+  const idle = () => Promise.all([...statesInflight.values()]).then(() => undefined)
   const outbox = () => deliverables?.view() || { byProject: {}, unsorted: { whole: [], leftovers: [] }, count: 0 }
   const unsortedEntry = () => (deliverables ? [{ id: UNSORTED_ID, name: 'Unsorted deliverables', kind: 'unsorted', status: 'active', local: null, count: outbox().count }] : [])
   const catalog = () => getCatalog()
@@ -196,5 +199,5 @@ export function createDocsService({ getCatalog, exec, readMaster, fallbackRepos 
 
   const localDirs = () => (catalog()?.projects || []).map(dirOf).filter(Boolean)
 
-  return { repos, tree, content, headings, revalidate, localDocs, githubIndexRepos, localDirs, freshenTargets }
+  return { repos, tree, content, headings, revalidate, localDocs, githubIndexRepos, localDirs, freshenTargets, idle }
 }

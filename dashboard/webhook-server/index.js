@@ -26,6 +26,7 @@ import { createPortfolio } from '../electron/main/portfolio.js'
 import { handlePortfolioRequest } from '../electron/main/portfolio_remote.js'
 import { resolveServiceDefaults } from '../electron/main/device_identity.js'
 import { createRebuildCheckTrigger } from './rebuild_check.js'
+import { supportRepos, createSupportSync } from './support_sync.js'
 
 // Authenticate gh/git children from the pipeline's shared credential file (see gh_auth.js).
 const ghTokenSource = loadGhToken()
@@ -261,10 +262,19 @@ server.listen(PORT, () => {
 
   // Trigger source for GitHub-side changes to any board repo: tell an open dashboard on this
   // machine what changed the moment it does (best-effort, like /mr-ready).
+  // Support repos (ADR 0073) ride the same detector: a change re-syncs the support cache, and on a helper install the
+  // helper's MARVIN takes each request that has just been escalated to it. Once now, so the cache exists at startup.
+  const supportSync = createSupportSync()
+  if (supportRepos().length) supportSync('startup')
   startChangeWatch({
-    getRepos: () => readRegistry().map((b) => b.repo),
+    getRepos: () => [...new Set([...readRegistry().map((b) => b.repo), ...supportRepos()])],
     probe: createGithubProbe(),
     ping: (repo) => {
+      if (supportRepos().includes(repo)) {
+        console.log(`[gh-watch] support change on ${repo} at ${new Date().toISOString()}`)
+        supportSync(repo)
+        return
+      }
       console.log(`[gh-watch] change detected on ${repo} at ${new Date().toISOString()}`)
       if (rebuildCheck(repo)) console.log(`[rebuild-check] started for ${repo}`) // #443: any merge path updates the app
       forwardRefreshPing(DASHBOARD_REFRESH_URL, (url) => postJson(url, { topics: ['activity', 'mr'], source: `github:${repo}` }))

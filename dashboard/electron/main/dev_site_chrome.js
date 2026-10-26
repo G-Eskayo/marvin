@@ -7,8 +7,8 @@ import path from 'path'
 // tab he already has open instead of piling up new ones. Desktop only, same shape as marvin_session.js: the
 // renderer asks over IPC, this does the work and answers { ok, action } or { ok: false, error }.
 export const DEV_SITE_URL = 'http://localhost:8080'
-const CHROME = 'Google Chrome'
-const CHROME_PATHS = [
+export const CHROME = 'Google Chrome'
+export const CHROME_PATHS = [
   path.join('/Applications', `${CHROME}.app`),
   path.join(homedir(), 'Applications', `${CHROME}.app`)
 ]
