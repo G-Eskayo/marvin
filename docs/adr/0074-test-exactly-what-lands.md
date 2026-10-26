@@ -1,4 +1,4 @@
-# ADR 0070: Test exactly what lands, land only what was tested; a red main queues
+# ADR 0074: Test exactly what lands, land only what was tested; a red main queues
 
 **Status:** Proposed (draft, 2026-10-21). Gil approved the direction on 2026-10-21; this ADR becomes Accepted when Gil
 approves the design in `docs/plans/merge-system-2026-10-21.md`. **Amends ADR 0061**: replaces its at-Approve overlap
