@@ -14,7 +14,9 @@ describe('support role from the instance (ADR 0073)', () => {
   })
 
   it('a helped install has its one repo; a helper watches several and drops bad entries', () => {
-    expect(supportRole({ support: { repo: REPO, helper: 'someone' } })).toEqual({ role: 'helped', repos: [REPO] })
+    expect(supportRole({ support: { repo: REPO, helper: 'someone' } })).toEqual({ role: 'helped', repos: [REPO], autoApply: false })
+    expect(supportRole({ support: { repo: REPO, auto_apply: true } }).autoApply).toBe(true)
+    expect(supportRole({ support: { repo: REPO, auto_apply: 'yes' } }).autoApply).toBe(false) // only a real true turns it on
     expect(supportRole({ support: { watch: [REPO, 'a/b', 'nope', 3] } })).toEqual({ role: 'helper', repos: [REPO, 'a/b'] })
   })
 })
@@ -171,5 +173,19 @@ describe('rewriting a reply for its reader', () => {
   it('adapt is text through a file, for this install’s own repo only', () => {
     expect(supportArgs('adapt', { repo: REPO, number: 3, file: '/f' }, [REPO]).slice(1)).toEqual(['adapt', REPO, '3', '--body-file', '/f'])
     expect(() => supportArgs('adapt', { repo: 'x/y', number: 3, file: '/f' }, [REPO])).toThrow()
+  })
+})
+
+describe('headless on the helped Mac', () => {
+  const r = (number, state, open = true) => ({ repo: REPO, number, state, open, title: `R ${number}` })
+  it('the helped person hears when MARVIN fixed something for them', () => {
+    expect(supportNotices({ requests: [r(1, 'answered')] }, { requests: [r(1, 'verified', false)] }, 'helped').map((n) => n.title))
+      .toEqual(['MARVIN fixed it for you'])
+  })
+  it('the switch and "got it" are plain, checked calls', () => {
+    expect(supportArgs('auto-apply', { on: true }).slice(1)).toEqual(['auto-apply', 'on'])
+    expect(supportArgs('auto-apply', { on: 'yes' }).slice(1)).toEqual(['auto-apply', 'off'])
+    expect(supportArgs('got-it', { repo: REPO, number: 2 }, [REPO]).slice(1)).toEqual(['got-it', REPO, '2'])
+    expect(() => supportArgs('got-it', { repo: 'x/y', number: 2 }, [REPO])).toThrow()
   })
 })

@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { stateLabel } from './SupportTab.jsx'
 
-// The IT button (ADR 0073), on a helped install: say what's wrong, and MARVIN opens a session on this Mac to try to
-// fix it (showing every command first). What it can't fix goes to the helper's MARVIN, then to the helper in person.
+// The IT button (ADR 0073), on a helped install: say what's wrong and it goes to the helper's MARVIN, headless: no
+// window opens here. What that can't solve goes to the helper in person.
 // The dot means a reply is waiting; a request opens its conversation in the Support tab. Renders from the saved cache; a change to it re-reads it.
 export default function ItButton({ api = window.api.support, triggers = window.api.triggers, initial = null, initialOpen = false, onOpen = () => {} }) {
   const [state, setState] = useState(initial)
@@ -30,11 +30,8 @@ export default function ItButton({ api = window.api.support, triggers = window.a
     const filed = await api.act('file', { text })
     if (!filed?.ok) return setStatus({ busy: false, message: filed?.error || 'Could not file it', error: true })
     setText('')
-    setStatus({ busy: true, message: 'Opening MARVIN to try on this Mac…', error: false })
-    const opened = await api.act('open', { repo: filed.repo, number: filed.number })
-    setStatus(opened?.ok
-      ? { busy: false, message: 'MARVIN is working on it in the window that just opened. Follow it in the Support tab.', error: false }
-      : { busy: false, message: `Filed, but MARVIN didn't open: ${opened?.error || 'unknown error'}`, error: true })
+    // Headless (Gil, 2026-10-26): nothing opens here. The helper's MARVIN takes it; the answer arrives as a notice.
+    setStatus({ busy: false, message: "Sent. Your helper's MARVIN is on it, and you'll get a notification when there's an answer.", error: false })
   }
 
   // A request opens its conversation in the Support tab, where the answer and the check results are.

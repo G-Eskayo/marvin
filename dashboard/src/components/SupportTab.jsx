@@ -44,6 +44,7 @@ export function outcome(role, r) {
   }
   const v = r.verification
   if (r.state === 'verified' || (!r.open && v?.passed)) return { text: helper ? '✓ Verified on their Mac' : '✓ Fixed and verified', tone: 'good' }
+  if (!r.open && r.kind === 'explain') return { text: helper ? 'Explained' : '✓ Answered', tone: 'good' }
   if (!r.open) return { text: 'Closed, not verified', tone: 'muted' }
   if (r.state === 'helper-trying' && v && v.passed === false) return { text: helper ? '↺ Fix failed, back to MARVIN' : '↺ Not fixed yet, trying again', tone: 'warn' }
   const open = {
@@ -148,6 +149,31 @@ export function authorLabel(role, c) {
   return { requester: c.author, helper: 'You', 'helper-marvin': 'Your MARVIN (automatic)' }[c.by] || c.author
 }
 
+// What a fix will do: the helped person reads their own steps plainly; the commands MARVIN runs stay under a toggle.
+export function PlanNote({ c, role }) {
+  return (
+    <>
+      {c.you_steps?.length > 0 && (
+        <div className="mt-2 text-sm text-neutral-200">
+          <p className="text-xs font-semibold text-neutral-400">{role === 'helped' ? 'What you need to do' : 'Steps for them'}</p>
+          <ol className="ml-5 list-decimal">{c.you_steps.map((s, i) => <li key={i}>{s}</li>)}</ol>
+        </div>
+      )}
+      {c.steps?.length > 0 && (role === 'helped' ? (
+        <details className="mt-2 text-xs text-neutral-400">
+          <summary className="cursor-pointer">What MARVIN will run</summary>
+          <ol className="ml-5 mt-1 list-decimal">{c.steps.map((s, i) => <li key={i}><code>{s}</code></li>)}</ol>
+        </details>
+      ) : (
+        <div className="mt-2 text-xs text-neutral-400">
+          <p>Steps (run on their Mac by itself if they've allowed it):</p>
+          <ol className="ml-5 list-decimal">{c.steps.map((s, i) => <li key={i}><code>{s}</code></li>)}</ol>
+        </div>
+      ))}
+    </>
+  )
+}
+
 export function CheckNote({ c, role }) {
   if (!c.check) return null
   if (role === 'helped') {
@@ -161,10 +187,18 @@ export function CheckNote({ c, role }) {
   return <p className="mt-2 text-xs text-neutral-400">Check: <code>{c.check}</code>{c.check_says ? ` (${c.check_says})` : ''}</p>
 }
 
+// The latest answer from the helper's side decides what the helped person is offered.
+export function latestAnswer(comments = []) {
+  return [...comments].reverse().find((c) => c.by === 'helper' || c.by === 'helper-marvin') || null
+}
+
 export function Thread({ thread, role, busy, draft, setDraft, check, setCheck, onDraft, onSend, onResolve, onApply, onFollowup, message,
-  preview = false, onPreview, onSendOriginal, onBack }) {
+  preview = false, onPreview, onSendOriginal, onBack, autoApply = false, onGotIt }) {
   const { text, diagnostics } = splitDiagnostics(thread.request.body)
   const open = thread.request.open
+  const answer = latestAnswer(thread.comments)
+  const explained = answer?.kind === 'explain'
+  const automatic = autoApply && answer?.steps?.length > 0 && !answer?.you_steps?.length && thread.request.state === 'answered'
   return (
     <div className="space-y-4">
       <div>
@@ -187,6 +221,7 @@ export function Thread({ thread, role, busy, draft, setDraft, check, setCheck, o
         <div key={i} className="rounded-md border border-neutral-800 p-3">
           <p className="mb-1 text-xs text-neutral-500">{authorLabel(role, c)}</p>
           <Markdown content={c.body} />
+          <PlanNote c={c} role={role} />
           <CheckNote c={c} role={role} />
           {c.verification && <Verification v={c.verification} role={role} />}
         </div>
@@ -222,10 +257,21 @@ export function Thread({ thread, role, busy, draft, setDraft, check, setCheck, o
       )}
       {role === 'helped' && open && !isIdea(thread.request) && (
         <>
-          <button onClick={onApply} disabled={busy} className="rounded-md bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-500 disabled:opacity-40">
-            {thread.request.state === 'answered' ? 'Fix it with MARVIN' : 'Work on it with MARVIN'}
-          </button>
-          <p className="text-xs text-neutral-500">MARVIN shows you each step and asks before doing anything. It only marks this fixed once it has checked the problem is really gone.</p>
+          {explained && thread.request.state === 'answered' && (
+            <button onClick={onGotIt} disabled={busy} className="rounded-md bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-500 disabled:opacity-40">Got it, thanks</button>
+          )}
+          {automatic && (
+            <p className="rounded-md border border-blue-900 bg-blue-950/40 p-2 text-sm text-blue-200">
+              MARVIN will fix this by itself within a couple of minutes, then check it worked. You don't need to do anything.
+            </p>
+          )}
+          {!explained && !automatic && thread.request.state === 'answered' && (
+            <>
+              <button onClick={onApply} disabled={busy} className="rounded-md bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-500 disabled:opacity-40">Fix it with MARVIN</button>
+              <p className="text-xs text-neutral-500">MARVIN shows you each step and asks before doing anything. It only marks this fixed once it has checked the problem is really gone.</p>
+            </>
+          )}
+          {thread.request.state !== 'answered' && <p className="text-xs text-neutral-500">Your helper's MARVIN is working on this. You'll get a notification when there's an answer.</p>}
           <textarea value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Ask a follow-up…" rows={3}
             className="w-full rounded-md border border-neutral-700 bg-neutral-950 p-2 text-sm text-neutral-100" />
           <button onClick={onFollowup} disabled={busy || !draft.trim()} className="rounded-md border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-800 disabled:opacity-40">Send follow-up</button>
@@ -233,6 +279,22 @@ export function Thread({ thread, role, busy, draft, setDraft, check, setCheck, o
       )}
       {message && <p className={`text-xs ${message.error ? 'text-red-400' : 'text-neutral-500'}`}>{message.text}</p>}
     </div>
+  )
+}
+
+// The helped person's own switch: technical fixes from their helper run by themselves on this Mac (ADR 0073).
+export function AutoFixSwitch({ on, busy, onChange }) {
+  return (
+    <label className="flex items-start gap-2 rounded-md border border-neutral-800 p-3 text-sm text-neutral-200">
+      <input type="checkbox" checked={on} disabled={busy} onChange={(e) => onChange(e.target.checked)} className="mt-1" />
+      <span>
+        Let MARVIN fix technical problems for me automatically
+        <span className="block text-xs text-neutral-500">
+          Fixes from your helper run on this Mac by themselves, then MARVIN checks they worked. Only safe steps run:
+          nothing that deletes your files, needs your password or signs you in. You can switch this off any time.
+        </span>
+      </span>
+    </label>
   )
 }
 
@@ -246,10 +308,12 @@ export default function SupportTab({ api = window.api.support, triggers = window
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState(null)
   const [original, setOriginal] = useState(null) // the helper's own words while their rewrite is previewed
+  const [config, setConfig] = useState({ autoApply: false })
 
   useEffect(() => {
     const load = () => api.state().then(setState).catch(() => {})
     load()
+    api.config?.().then((c) => c && setConfig(c)).catch(() => {})
     return triggers.on((t) => {
       if (t.topic !== 'support') return
       load()
@@ -296,6 +360,15 @@ export default function SupportTab({ api = window.api.support, triggers = window
   return (
     <div className="grid h-full grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-6 p-6">
       <div className="space-y-4 overflow-auto">
+        {role === 'helped' && (
+          <AutoFixSwitch on={!!config.autoApply} busy={busy} onChange={async (on) => {
+            setBusy(true)
+            const r = await api.act('auto-apply', { on })
+            setBusy(false)
+            if (r?.ok) setConfig({ ...config, autoApply: on })
+            else setMessage({ error: true, text: r?.error || 'That didn’t work' })
+          }} />
+        )}
         {groups.map((g) => {
           const shown = g.collapsed ? !!expanded[g.id] : expanded[g.id] !== false
           return (
@@ -337,6 +410,8 @@ export default function SupportTab({ api = window.api.support, triggers = window
             onSend={() => act('reply', { text: draft, check }, () => { setDraft(''); setCheck(''); setOriginal(null); setMessage({ text: 'Sent.' }); loadThread(selected) })}
             onResolve={() => act('resolve', {}, () => setMessage({ text: 'Resolved.' }))}
             onApply={() => act('open', {}, () => setMessage({ text: 'MARVIN is open in a new window. It will walk you through it, and the result shows up here.' }))}
+            autoApply={!!config.autoApply}
+            onGotIt={() => act('got-it', {}, () => setMessage({ text: 'Marked as answered.' }))}
             onFollowup={() => act('followup', { text: draft }, () => { setDraft(''); setMessage({ text: "Sent to your helper's MARVIN." }); loadThread(selected) })}
           />
         )}

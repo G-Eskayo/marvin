@@ -122,3 +122,23 @@ A failed fix goes back to the helper's MARVIN, but not forever. Before the helpe
 - **the helper's own fix fails.** Once a person has answered, a failure comes back to that person, not to the bot.
 
 Both limits are in the helper's private instance (`support.limits`), clamped to 1–10. The helped MARVIN tries at most 2 fixes on its own Mac before it escalates.
+
+## Amendment, 2026-10-26: headless on the helped Mac
+
+The helped person uses IT because they don't know the answer. Technical work stays on the helper's side, and the helped Mac is asked for nothing unless it's really needed.
+- **Filing goes straight to the helper's MARVIN** (`helper-trying`). Nothing opens on the helped Mac. Working with MARVIN interactively stays available as a button, but it isn't the default.
+- **Three kinds of answer:**
+  - *explain*: plain words, nothing to run. The person taps **Got it, thanks**, and it closes as Answered.
+  - *answer*: a fix, with exact `steps`, a read-only check, and `you_steps` only for what truly needs the person (a password, signing in, a macOS permission).
+  - *needs-you*: a hand-over to the helper in person.
+- **Steps are an allowlist (`safe_step`).** Every `&&`-joined part must be one command from a short list with per-tool rules: brew install/upgrade/link, npm install/ci, the engine's own scripts, launchctl kickstart, git status/add/commit/pull on the engine, mkdir under the engine, open MARVIN.
+  - No sudo, deleting, pipes, redirects, ssh, keychain, signing in, pushing or outside scripts.
+  - One unsafe step drops them all, so the fix waits for the person.
+- **Automatic fixing (`autorun`) needs the person's opt-in**, `support.auto_apply`, set only on their Mac from their Support tab and switchable off any time. It runs:
+  - only the helper's own account's latest fix
+  - only once per answer, recorded before it runs
+  - only with no `you_steps`
+  - in order: the check, then the steps (stopping at the first failure), then the check again. `verify` posts the results.
+  - A failure counts toward the no-forever-loop limits.
+- **No AI runs on the helped Mac for this, and there's no daemon.** A launchd job (`com.marvin.support-autorun`) runs every 2 minutes and at login: one GitHub read, then it exits. It uses no tokens.
+- **Notices:** the helped person hears "MARVIN fixed it for you" when a fix is verified.

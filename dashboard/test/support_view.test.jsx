@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import SupportTab, { groupRequests, stateLabel, outcome, age, splitDiagnostics, Thread, RequestRow, authorLabel } from '../src/components/SupportTab.jsx'
+import SupportTab, { groupRequests, stateLabel, outcome, age, splitDiagnostics, Thread, RequestRow, authorLabel, AutoFixSwitch } from '../src/components/SupportTab.jsx'
 import ItButton from '../src/components/ItButton.jsx'
 import { visibleTabs } from '../src/lib/tabs.js'
 
@@ -209,5 +209,48 @@ describe('written for the person being helped (audience)', () => {
     const body = 'Blank\n\n<details><summary>Diagnostics (scrubbed)</summary>\n\n```json\n{}\n```\n</details>\n'
     const html = renderToStaticMarkup(<Thread thread={{ request: { ...R(1, 'needs-you'), body, author: 'helped' }, comments: [] }} role="helped" busy={false} draft="" setDraft={() => {}} check="" setCheck={() => {}} />)
     expect(html).toContain('Technical details (sent automatically, no passwords)')
+  })
+})
+
+describe('headless on the helped Mac (views)', () => {
+  const t = (comments, state = 'answered') => ({ request: { ...R(1, state), body: 'x', author: 'helped' }, comments })
+  const render = (thread, extra = {}) => renderToStaticMarkup(<Thread thread={thread} role="helped" busy={false} draft="" setDraft={() => {}} check="" setCheck={() => {}} {...extra} />)
+
+  it('an explanation is closed with "Got it, thanks", with nothing to fix', () => {
+    const html = render(t([{ by: 'helper-marvin', author: 'h', body: 'Here is what that means', kind: 'explain' }]))
+    expect(html).toContain('Got it, thanks')
+    expect(html).not.toContain('Fix it with MARVIN')
+  })
+
+  it('with automatic fixing on, a fix says MARVIN does it by itself and asks nothing', () => {
+    const fix = { by: 'helper-marvin', author: 'h', body: 'Node is missing', kind: 'fix', steps: ['brew install node@24'], check: 'node --version' }
+    const auto = render(t([fix]), { autoApply: true })
+    expect(auto).toContain('MARVIN will fix this by itself')
+    expect(auto).not.toContain('Fix it with MARVIN')
+    expect(auto).toContain('What MARVIN will run')
+    expect(render(t([fix]), { autoApply: false })).toContain('Fix it with MARVIN')
+  })
+
+  it('steps only the person can do are shown plainly, and then nothing runs by itself', () => {
+    const fix = { by: 'helper-marvin', author: 'h', body: 'Sign in again', kind: 'fix', steps: ['gh auth status'], you_steps: ['Sign in to GitHub in the browser window'], check: 'gh auth status' }
+    const html = render(t([fix]), { autoApply: true })
+    expect(html).toContain('What you need to do')
+    expect(html).toContain('Sign in to GitHub in the browser window')
+    expect(html).not.toContain('MARVIN will fix this by itself')
+  })
+
+  it('while the helper’s MARVIN works, the person is told they’ll hear back', () => {
+    expect(render(t([], 'helper-trying'))).toContain('You&#x27;ll get a notification')
+  })
+
+  it('an answered question reads as answered, on both sides', () => {
+    expect(outcome('helped', R(1, 'answered', false, { kind: 'explain' })).text).toBe('✓ Answered')
+    expect(outcome('helper', R(1, 'answered', false, { kind: 'explain' })).text).toBe('Explained')
+  })
+
+  it('the switch says plainly what it allows', () => {
+    const html = renderToStaticMarkup(<AutoFixSwitch on={false} busy={false} onChange={() => {}} />)
+    expect(html).toContain('Let MARVIN fix technical problems for me automatically')
+    expect(html).toContain('nothing that deletes your files, needs your password or signs you in')
   })
 })
