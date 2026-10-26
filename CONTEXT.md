@@ -941,8 +941,10 @@ untouched (it is the "legacy profile"); only repos with a profile file use the p
   conflict-checks every other open PR with `git merge-tree` (no checkout, tests or pushes); results go to
   `~/.claude/logs/pr-rebase-status.json` (`GET /rebase-status`, MR Review on either machine) and a conflict onto the
   ticket's stage log. At Approve, a PR behind main is rebased and retested only when main changed a file the PR also
-  changes (`sharedFiles`); otherwise it merges directly, and main-health (which re-runs the suite on every main move and
-  refuses merges while main is red) catches the rare cross-file break. Unknown overlap = retest. MR Review's refresh is
+  changes (`sharedFiles`), **or when main changed a rule since the split** (a test or guard file, `RULE_FILE`; Gil
+  2026-10-26, after PR #572 merged directly past a test the split added and turned main red); otherwise it merges
+  directly, and main-health (which re-runs the suite on every main move and refuses merges while main is red) catches
+  the rare cross-file break. Unknown overlap = retest. MR Review's refresh is
   the safety net for a missed stack move (`stack_retarget.js`). The pipeline scan still runs after the checks.
 - **A conflict gets the cheap fix before any rebuild (2026-10-09, #314)**: the hourly scan used to send every
   conflicting PR's ticket back for a full agent rebuild. Now `conflict_repair.py` first rebases it in a scratch worktree,

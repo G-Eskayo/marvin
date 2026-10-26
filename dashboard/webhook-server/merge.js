@@ -91,12 +91,27 @@ export function gateExec(exec, signal) {
 // since the two split. Different files cannot conflict in git; a cross-file break (one PR renames what another
 // calls) is rare and is caught minutes later by main-health, which re-runs the suite on every main move and refuses
 // merges while main is red. The same files are where conflicts and interactions concentrate, so those get the retest.
-export async function sharedFiles(headRef, exec = execFileAsync, repoPath = REPO_PATH, base = 'main') {
+//
+// Amended (Gil 2026-10-26): main also gets a say through its *rules*. A test or guard file main added or changed since
+// the split may judge files the PR adds, which the PR's own earlier run never saw (#572 was tested on 10-21, main then
+// gained test_instance_move.py, and its direct merge turned main red). So a PR is retested when main changed a rule.
+export const RULE_FILE = /(^|\/)tests?\/|(^|\/)test_[^/]*\.py$|\.test\.[cm]?[jt]sx?$|(^|\/)conftest\.py$|(^|\/)pytest\.ini$|^config\/push-guard\/|^\.gitignore$/
+
+// What main changed since the PR split: files the PR also changes, and rules (RULE_FILE). One fetch, one merge-base,
+// two name-only diffs: O(files changed on either side).
+export async function mainChanges(headRef, exec = execFileAsync, repoPath = REPO_PATH, base = 'main') {
   await exec('git', ['fetch', 'origin', base, headRef], { cwd: repoPath })
   const split = (await exec('git', ['merge-base', `origin/${base}`, `origin/${headRef}`], { cwd: repoPath })).stdout.trim()
   const changed = async (to) => new Set((await exec('git', ['diff', '--name-only', split, to], { cwd: repoPath })).stdout.split('\n').filter(Boolean))
   const [onBase, inPr] = await Promise.all([changed(`origin/${base}`), changed(`origin/${headRef}`)])
-  return [...inPr].filter((f) => onBase.has(f)).sort()
+  return {
+    shared: [...inPr].filter((f) => onBase.has(f)).sort(),
+    rules: [...onBase].filter((f) => RULE_FILE.test(f)).sort()
+  }
+}
+
+export async function sharedFiles(headRef, exec = execFileAsync, repoPath = REPO_PATH, base = 'main') {
+  return (await mainChanges(headRef, exec, repoPath, base)).shared
 }
 
 // Would the PR still merge onto main? Answered by git merge-tree: no checkout, no tests, no push, seconds. Exit 1 is
@@ -276,11 +291,12 @@ export async function defaultShouldGateMerge(prUrl, exec, ctx = null) {
     body = body || ''
     const behind = ctx ? await isBehindMain(headRefName, exec, ctx.clone, ctx.base) : await isBehindMain(headRefName, exec)
     if (!behind) return { gate: false, behind: false, shared: [], headRefName, body }
-    let shared = null
+    let changes = null
     try {
-      shared = ctx ? await sharedFiles(headRefName, exec, ctx.clone, ctx.base) : await sharedFiles(headRefName, exec)
+      changes = ctx ? await mainChanges(headRefName, exec, ctx.clone, ctx.base) : await mainChanges(headRefName, exec)
     } catch { /* unknown overlap: retest */ }
-    return { gate: shared === null || shared.length > 0, behind: true, shared: shared || [], headRefName, body }
+    const gate = changes === null || changes.shared.length > 0 || changes.rules.length > 0
+    return { gate, behind: true, shared: changes?.shared || [], rules: changes?.rules || [], headRefName, body }
   } catch {
     return { gate: false, behind: false, shared: [], headRefName, body }
   }
@@ -536,7 +552,7 @@ async function mergePrUnqueued(
   // A PR that asks the owner to choose merges only once he has answered, in its Decisions section (2026-10-09).
   await decisions(prUrl, exec)
 
-  const { gate, behind = false, headRefName, body } = ctx ? await shouldGateMerge(prUrl, exec, ctx) : await shouldGateMerge(prUrl, exec)
+  const { gate, behind = false, headRefName, body, shared = [], rules = [] } = ctx ? await shouldGateMerge(prUrl, exec, ctx) : await shouldGateMerge(prUrl, exec)
   const ticketNumber = parseTicketRef(body)
   // Every call below is a no-op (not an error) when ticketNumber is null
   // -- a manually-authored PR with no linked ticket has nothing to record
@@ -577,7 +593,11 @@ async function mergePrUnqueued(
     stage('gate', 'passed', `no retest needed: behind ${ctx ? ctx.base : 'main'}, but ${ctx ? ctx.base : 'main'} changed none of this PR's files, so it merges directly (main-health re-runs the suite after the merge)`)
   }
   if (gate) {
-    stage('gate', 'started', `rebasing onto ${ctx ? ctx.base : 'main'} + retesting (${ctx ? ctx.base : 'main'} changed files this PR also changes)`)
+    const baseName = ctx ? ctx.base : 'main'
+    const reason = shared.length ? `${baseName} changed files this PR also changes`
+      : rules.length ? `${baseName} has new or changed tests or guard rules since this PR was tested (${rules.slice(0, 3).join(', ')})`
+      : `${baseName} moved on and the overlap could not be read`
+    stage('gate', 'started', `rebasing onto ${baseName} + retesting (${reason})`)
     // One clock (pipeline review 2026-10-21, F3): the gate's limit, extended at most once under load. Its commands run
     // with no per-command limit of their own and are killed through this signal when it finally runs out.
     const gateAbort = new AbortController()
