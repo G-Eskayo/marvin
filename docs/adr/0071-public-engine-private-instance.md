@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-10-25)
+Proposed (2026-10-25). Amended by [[0072]]: only free add-ons ship inside the engine; paid add-ons live in private repos.
 
 ## Context
 

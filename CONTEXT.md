@@ -1549,16 +1549,23 @@ On 2026-10-22 #81, #218, #455, #459 and #563 were each planned 6-13 times (about
 - **Failure streak:** `run_ticket._trailing_streaks` skips every MARVIN comment (`ticket_policy.automated_comment`: the ticket agents' prefix, triage's disclaimer, the send-back and repair lines) as it already skipped model-unavailable ones. A person's comment, a passing run (`Verification passed`) or a hand-off to a person (a park or a loop guard, marked `<!-- marvin:handed-to-person -->` from now on; old texts still recognised) ends it. #81 failed 5 times before parking because the conflict lines reset it. Cost: O(comments x body length) over the one thread fetch the run already makes.
 - **One plan per run:** in `_default_executor`, rounds 2-3 of one `execute_ticket` reuse round 1's design doc and task list (on disk in the worktree) and the executor gets the verdict, the metrics that did not improve and the must-fix findings; only a missing or empty task list plans again. Round 1 always plans, so a design doc merged into main is never taken for this run's. Saves up to two flagship planning calls (~$1.20 each) per failed run.
 
-## Engine, instance and the default build (ADR 0071, decided 2026-10-25)
+## Engine, instance, the default build and add-ons (ADR 0071, ADR 0072, decided 2026-10-25)
 
 ### Language
 
 - **Engine**: the public MARVIN code anyone can download (`G-Eskayo/marvin`). It holds no person's or machine's
   names, data or state.
 - **Instance**: one owner's private state for an engine: their plans, screenshots, tickets repo, accounts and
-  feature choices. Gil's is `G-Eskayo/marvin-instance`. One engine, many instances.
+  feature choices. One engine, many instances.
 - **Default build**: what a stranger gets from a fresh download of the engine with no help from Gil or MARVIN:
-  the engine plus a new, empty instance, reaching what Noah's Mac has (dashboard, the MARVIN button, their own
+  the engine plus a new, empty instance, reaching a working MARVIN (dashboard, the MARVIN button, their own
   private repo, accounts connected). "Done" means a clean-install test passes in a fresh virtual machine.
-- **Add-on**: a feature that ships in the engine but is off in the default build until the owner turns it on
-  (portfolio, resume-tailor, Seal ingest). A possible paid feature. Shows a "not set up" state when off.
+- **Add-on**: a feature that is off in the default build until the owner turns it on, and then adds its own tab
+  and setup walkthrough. Shows a "not set up" state when off. Two kinds (ADR 0072):
+  - **Free add-on**: ships inside the public engine (for example paper-dive, Seal ingest).
+  - **Paid add-on**: lives in its own private repo, never in the engine. Buying it gives the owner access, and the
+    installer pulls it into their MARVIN (for example the portfolio). Some are one-time purchases, some are
+    subscriptions.
+- **Marketplace** (later): other people publish their own add-ons for MARVIN, free or paid. Not built.
+_Avoid_: "plugin", "extension", "skill" for an add-on. A skill is one capability inside MARVIN; an add-on is what an
+owner turns on or buys, and may hold several skills.
