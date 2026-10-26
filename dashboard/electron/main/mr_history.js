@@ -46,6 +46,11 @@ function loadCache(file) {
   }
 }
 
+// The merged PRs the Merged view last saved, as {url, at}: Activity's projects list reads these, never GitHub.
+export function readSavedMerged(file) {
+  return (loadCache(file)?.merged || []).map((p) => ({ url: p.url, at: p.mergedAt }))
+}
+
 function saveCache(file, cache) {
   try {
     mkdirSync(path.dirname(file), { recursive: true })

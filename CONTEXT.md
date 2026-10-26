@@ -1191,6 +1191,22 @@ except a "Done" state and the ticket chip Markdown uses; they are not counted am
 its webhook server's `GET /helpers` (the `/sessions` channel, #331), read through a 10 s cache with a 30 s backstop, since that
 Mac has no push channel. Gil applies the hooks on each Mac with `marvin_hooks.py install`.
 
+## Project goals on the boards and in Activity (2026-10-26, #625's progress strip)
+
+- Every project profile (`instance/config/projects/<repo>.json`, ADR 0071) carries `goal`, `signals` ([{name, better:
+  up|down}]), optional `status` (active | parked | done (handed off) | archived) and `goal_set`, set by Gil 2026-10-26.
+- **Board top**: "Goal: …" under the project name, then one chip per signal ("name ↑/↓  —"). No project goal → its
+  status (Parked / Done / Archived) instead. **Activity ▸ Projects**: one row per active project (name, first clause of
+  the goal with the full goal as tooltip, signals as "name —", and moving / stuck); parked, done and archived collapse
+  into "N parked or done". Tapping a row opens that board.
+- **Moving** = that repo's PRs merged in the last 7 days (the Merged view's saved list plus the merge server's own
+  record, deduped by URL). **Stuck** = open `hold` tickets + needs-you tickets (the boards' overview) + looping tickets
+  (planned 3+ times in 24 h, from the local stage logs); "held" when every stuck ticket is on hold. Signals are not
+  measured yet: every value is "—", "not measured yet".
+- Cost: profiles read once at load and again only on a profile file change (the `goals` file trigger), O(projects).
+  The rows are built from memory and local files only, no GitHub call (`electron/main/project_progress.js`).
+  A missing instance dir (public engine install) shows nothing.
+
 ## Merge order and the sent-back loop (2026-10-05)
 
 - **Order:** a PR waits on every OLDER open PR in its repo that shares a changed file (`dashboard/electron/main/pr_order.js`). Derived from the PRs' file lists each time; the MR list shows it, Approve & Merge is disabled with the reason, and `mr:approve` re-checks it in the main process so a stale screen cannot skip it. Deny stays available.

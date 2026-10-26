@@ -6,6 +6,7 @@ import DeviceColumns from './DeviceColumns.jsx'
 import ChatHelpers from './ChatHelpers.jsx'
 import NextUpQueue from './NextUpQueue.jsx'
 import ParallelToggle from './ParallelToggle.jsx'
+import ProjectsProgressView from './ProjectGoals.jsx'
 
 // The Activity tab is the project boards. What used to sit beside them lives where it belongs now:
 // a ticket's pipeline history is the drill-down you click into on its card (ProjectBoard.jsx), and
@@ -27,7 +28,10 @@ export default function ActivityBoard({ onOpenMr, onOpenDocs, onOpenTicket, onOp
       <ParallelToggle />
       <NextUpQueue onOpenTicket={onOpenTicket} />
       {view === 'home' ? (
-        <DashboardHome onOpenProject={onOpenProject} />
+        <>
+          <ProjectsProgressView onOpen={onOpenProject} />
+          <DashboardHome onOpenProject={onOpenProject} />
+        </>
       ) : (
         <>
           <button onClick={() => setView('home')} className="mb-4 ml-6 text-sm text-neutral-400 hover:text-neutral-200">
