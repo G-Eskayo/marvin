@@ -468,6 +468,29 @@ def _excluded_pathspecs() -> list[str]:
     return [f":(exclude,glob){pat}" for pat in NEVER_COMMIT]
 
 
+def _guard_refusal(repo: Path) -> str | None:
+    """ADR 0071: run the repo's own bin/pre-push-guard on what `push origin main` would publish.
+
+    Called directly rather than trusting the git hook, so a clone whose hook was never installed is still checked.
+    Repos without the script (~/.claude, whose remote is self-hosted) are not public and are skipped.
+    Returns the guard's report on refusal, None when the push may go.
+    """
+    guard = repo / "bin" / "pre-push-guard"
+    if not guard.exists():
+        return None
+    local = _git(repo, ["rev-parse", "HEAD"]).strip()
+    remote_ok, remote = _git_ok(repo, ["rev-parse", "--verify", "-q", "origin/main"])
+    remote = remote.strip() if remote_ok and remote.strip() else "0" * 40
+    r = subprocess.run([str(guard), "origin"], cwd=repo, capture_output=True, text=True,
+                       input=f"refs/heads/main {local} refs/heads/main {remote}\n")
+    return None if r.returncode == 0 else (r.stderr.strip() or "pre-push guard refused")
+
+
+def _refuse_push(repo: Path, report: str, files: list[str] | None = None) -> None:
+    _log(repo, "push", f"REFUSING to push — the push guard blocked it; committed locally, NOT pushed:\n{report}", files)
+    notify("MARVIN code-sync BLOCKED", f"Push guard refused a push [{repo.name}] — check sync-log.md", open_target=str(LOG_PATH))
+
+
 def push(repo: Path, now: float | None = None) -> None:
     label = machine_label()
     heal_stale_index_lock(repo)
@@ -502,6 +525,10 @@ def push(repo: Path, now: float | None = None) -> None:
             # (marvin#422) and a no-op push logs nothing, so a fixed push stayed "stuck" forever (marvin#438).
             if _last_own_push_failed(repo):
                 _log(repo, "push", "nothing to push — earlier failure cleared")
+            return
+        refused = _guard_refusal(repo)
+        if refused:
+            _refuse_push(repo, refused)
             return
         push_ok, push_out = _git_ok(repo, ["push", "origin", "main"])
         if push_ok:
@@ -547,6 +574,10 @@ def push(repo: Path, now: float | None = None) -> None:
         _log(repo, "push", f"commit failed:\n{commit_out}", changed_files)
         return
 
+    refused = _guard_refusal(repo)
+    if refused:
+        _refuse_push(repo, refused, changed_files)
+        return
     push_ok, push_out = _git_ok(repo, ["push", "origin", "main"])
     if push_ok:
         _log(repo, "push", f"committed + pushed {len(real_changes)} file(s)", real_changes)
@@ -696,8 +727,18 @@ def main() -> None:
         print("usage: code_sync.py {push|pull|mirror} [repo-path]", file=sys.stderr)
         sys.exit(1)
     repo = Path(sys.argv[2]).expanduser() if len(sys.argv) == 3 else DEFAULT_REPO
-    job_events.step(f"{sys.argv[1]} {repo}")
-    {"push": push, "pull": pull, "mirror": mirror}[sys.argv[1]](repo)
+    action = {"push": push, "pull": pull, "mirror": mirror}[sys.argv[1]]
+    # ADR 0071: the owner's private instance is its own repo nested at <engine>/instance/; it syncs with the engine,
+    # so every existing caller (launchd job, handoff hook) covers it with no config. No instance (a fresh install,
+    # the Kali node by design) syncs exactly as before. try/finally: a failing engine step never strands it.
+    nested = repo / "instance"
+    try:
+        job_events.step(f"{sys.argv[1]} {repo}")
+        action(repo)
+    finally:
+        if (nested / ".git").exists():
+            job_events.step(f"{sys.argv[1]} {nested}")
+            action(nested)
 
 
 if __name__ == "__main__":

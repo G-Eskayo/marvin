@@ -110,6 +110,7 @@ contextBridge.exposeInMainWorld('api', {
     tree: (repo) => ipcRenderer.invoke('docs:tree', repo),
     content: (repo, path) => ipcRenderer.invoke('docs:content', repo, path),
     revalidate: (repo) => ipcRenderer.invoke('docs:revalidate', repo),
+    freshen: () => ipcRenderer.invoke('docs:freshen'),
     headings: (repo, paths) => ipcRenderer.invoke('docs:headings', repo, paths),
     search: (query, opts) => ipcRenderer.invoke('docs:search', query, opts),
     files: (query) => ipcRenderer.invoke('docs:files', query),

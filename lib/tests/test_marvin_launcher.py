@@ -207,3 +207,77 @@ def test_a_judge_runs_in_an_empty_folder_of_its_own(memory, tmp_path):
 def test_a_reported_error_counts_as_a_failed_run(memory, tmp_path):
     fake = FakeRun(stdout=json.dumps({"result": "boom", "is_error": True}))
     assert ml.launch("utility-call", "x", log_path=tmp_path / "l.jsonl", runner=fake).exit_code == 1
+
+
+# --- #597: every launch records WHY it exited, so the non-zero rate can be broken down in Vitals ---
+
+class FakeRunErr(FakeRun):
+    def __init__(self, stdout, stderr="", returncode=1):
+        super().__init__(stdout=stdout, returncode=returncode)
+        self.stderr = stderr
+
+    def __call__(self, cmd, **kw):
+        return subprocess.CompletedProcess(cmd, self.returncode, self.stdout, self.stderr)
+
+
+def _cause(tmp_path, runner):
+    log = tmp_path / "c.jsonl"
+    try:
+        ml.launch("utility-call", "x", log_path=log, runner=runner)
+    except subprocess.TimeoutExpired:
+        pass
+    return json.loads(log.read_text().splitlines()[-1])
+
+
+def test_a_clean_run_records_cause_ok(memory, tmp_path):
+    assert _cause(tmp_path, FakeRun())["exit_cause"] == "ok"
+
+
+@pytest.mark.parametrize("text", [
+    "You've hit your session limit · resets 12:10am (America/Denver)",
+    "Claude AI usage limit reached|1760000000",
+    "You've hit your weekly limit",
+    "HTTP 429 rate limit exceeded",
+    "YOU'VE HIT YOUR SESSION LIMIT",
+])
+def test_usage_limit_text_is_classified_whatever_channel_carries_it(memory, tmp_path, text):
+    in_result = FakeRunErr(json.dumps({"result": text, "is_error": True}), returncode=1)
+    in_stderr = FakeRunErr("", stderr=text, returncode=1)
+    assert _cause(tmp_path, in_result)["exit_cause"] == "usage-limit"
+    assert _cause(tmp_path, in_stderr)["exit_cause"] == "usage-limit"
+
+
+def test_a_timeout_is_recorded_not_lost_and_still_raises(memory, tmp_path):
+    def boom(cmd, **kw):
+        raise subprocess.TimeoutExpired(cmd, 5)
+    log = tmp_path / "t.jsonl"
+    with pytest.raises(subprocess.TimeoutExpired):
+        ml.launch("ticket-planner", "x", timeout=5, log_path=log, runner=boom, ticket="G-Eskayo/marvin#1")
+    rec = json.loads(log.read_text())
+    assert rec["exit_cause"] == "timeout" and rec["exit_code"] != 0 and rec["ticket"] == "G-Eskayo/marvin#1"
+
+
+def test_overload_and_unknown_model_are_model_unavailable(memory, tmp_path):
+    assert _cause(tmp_path, FakeRunErr("", stderr="API Error: 529 overloaded_error"))["exit_cause"] == "model-unavailable"
+    assert _cause(tmp_path, FakeRunErr("", stderr="model: claude-x not_found_error"))["exit_cause"] == "model-unavailable"
+
+
+def test_empty_garbage_or_signal_death_is_a_crash(memory, tmp_path):
+    assert _cause(tmp_path, FakeRunErr("", stderr="", returncode=1))["exit_cause"] == "crash"
+    assert _cause(tmp_path, FakeRunErr("\x00\xff garbage", stderr="Traceback", returncode=1))["exit_cause"] == "crash"
+    assert _cause(tmp_path, FakeRunErr("", stderr="", returncode=-9))["exit_cause"] == "crash"
+
+
+def test_a_reported_error_that_is_not_a_limit_is_an_error_not_a_crash(memory, tmp_path):
+    rec = _cause(tmp_path, FakeRunErr(json.dumps({"result": "Reached max turns", "is_error": True}), returncode=0))
+    assert rec["exit_code"] == 1 and rec["exit_cause"] == "error"
+
+
+def test_a_successful_run_that_merely_mentions_a_limit_is_still_ok(memory, tmp_path):
+    ok = FakeRun(stdout=json.dumps({"result": "I added a usage limit check", "total_cost_usd": 0.1}))
+    assert _cause(tmp_path, ok)["exit_cause"] == "ok"
+
+
+def test_classify_survives_non_string_input():
+    assert ml.classify_exit(1, None, None) == "crash"
+    assert ml.classify_exit(0, None, None) == "ok"

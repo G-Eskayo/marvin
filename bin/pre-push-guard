@@ -1,0 +1,59 @@
+#!/bin/bash
+# pre-push-guard — refuse a push whose new commits add personal data, secrets or session transcripts (ADR 0071).
+#
+# Installed by setup.sh as .git/hooks/pre-push (a symlink, so updates here reach every clone), and called directly
+# by code_sync.py before it pushes, so a missing hook is not a missing check. Reads git's pre-push stdin:
+#   <local ref> <local sha> <remote ref> <remote sha>
+#
+# Patterns, one extended regex per line, '#' comments allowed:
+#   config/push-guard/patterns.txt         shared, committed: secret shapes and transcript shapes
+#   config/push-guard/paths.txt            shared, committed: file paths that may never be added (transcripts, and
+#                                          the owner's state that lives in the private instance)
+#   ~/.claude/private-push-patterns.txt    this person's own strings (phone, address...). Never committed: it
+#                                          holds the very strings it protects. Missing = refuse, never push blind.
+#
+# Only commits the remote doesn't have are scanned, so a pattern-matching line already public (a test fixture)
+# never blocks later pushes. Cost is O(size of the push), not of history.
+set -uo pipefail
+
+top=$(git rev-parse --show-toplevel) || exit 1
+shared="$top/config/push-guard/patterns.txt"
+private="$HOME/.claude/private-push-patterns.txt"
+if [ ! -f "$private" ]; then
+  echo "pre-push guard: $private is missing; refusing to push blind (setup.sh creates it)" >&2
+  exit 1
+fi
+regex=$(cat "$shared" "$private" 2>/dev/null | grep -vE '^[[:space:]]*(#|$)' | paste -sd'|' -)
+shared_paths="$top/config/push-guard/paths.txt"
+paths=$(grep -vE '^[[:space:]]*(#|$)' "$shared_paths" 2>/dev/null | paste -sd'|' -)
+paths=${paths:-'(^|/)logs/.*\.jsonl$|\.transcript$'}   # a repo without the file still refuses transcripts
+zero=0000000000000000000000000000000000000000
+fail=0
+
+while read -r lref lsha rref rsha; do
+  [ -z "${lsha:-}" ] || [ "$lsha" = "$zero" ] && continue          # branch deletion publishes nothing
+  if [ "$rsha" != "$zero" ] && git cat-file -e "$rsha^{commit}" 2>/dev/null; then
+    range=("$rsha..$lsha")
+  else
+    range=("$lsha" --not --remotes)                                # new branch, or remote tip not fetched
+  fi
+  # --no-renames: a moved file shows its whole content as added. --cc: a merge shows lines in neither parent.
+  bad_paths=$(git log --format= --name-only --no-renames --cc --diff-filter=AM "${range[@]}" | grep -E "$paths" | sort -u)
+  bad_lines=""
+  if [ -n "$regex" ]; then
+    bad_lines=$(git log -p --no-renames --cc --format='commit %h' "${range[@]}" | awk '
+      /^commit [0-9a-f]+$/       { c = $2; next }
+      /^diff --(git|cc) /        { f = $NF; sub(/^b\//, "", f); next }
+      /^\+\+\+ |^--- /           { next }
+      /^(\+\+?| \+)/             { print c ":" f "\t" $0 }' | grep -E $'\t'".*($regex)" | cut -f1 | sort -u)
+  fi
+  if [ -n "$bad_paths" ] || [ -n "$bad_lines" ]; then
+    echo "pre-push guard: BLOCKED push of $lref" >&2
+    [ -n "$bad_paths" ] && echo "$bad_paths" | sed 's/^/  path that may not be published here: /' >&2
+    # commit:file only, never the matching line: printing it would leak it into terminals and logs
+    [ -n "$bad_lines" ] && echo "$bad_lines" | sed 's/^/  matches a push-guard pattern: /' >&2
+    fail=1
+  fi
+done
+[ "$fail" = 0 ] || echo "  Remove it from those commits (amend or rebase), then push again." >&2
+exit $fail

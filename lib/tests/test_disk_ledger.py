@@ -280,11 +280,32 @@ def test_a_probe_that_blocks_on_a_privacy_prompt_counts_as_protected(monkeypatch
     assert _wait_dead(int(pidfile.read_text()), 2)
 
 
-def test_du_runs_at_low_priority(monkeypatch, tmp_path):
+NICE_CAP = 19  # the most a process can raise its own nice value on macOS and Linux (os.nice stops here)
+
+
+def _du_nice_under(monkeypatch, tmp_path, parent_nice: int) -> int:
+    """The nice value du runs at when the caller itself already runs at parent_nice. Forks so the suite's own
+    priority is untouched; main-health runs the whole suite niced (#457)."""
     out = tmp_path / "nice"
     monkeypatch.setattr(dl, "DU_CMD", [_script(tmp_path, "du", f'ps -o nice= -p $$ > {out}; printf "1\\t%s\\n" "$2"'), "-sk"])
-    assert dl._default_du_kb(tmp_path) == 1
-    assert int(out.read_text().strip()) >= os.nice(0) + 10
+    pid = os.fork()
+    if pid == 0:
+        try:
+            os.nice(max(0, parent_nice - os.nice(0)))
+            os._exit(0 if dl._default_du_kb(tmp_path) == 1 else 1)
+        except BaseException:
+            os._exit(2)
+    _, status = os.waitpid(pid, 0)
+    assert os.waitstatus_to_exitcode(status) == 0
+    return int(out.read_text().strip())
+
+
+@pytest.mark.parametrize("parent_nice", [0, 5, 9, 10, 15, 19])
+def test_du_runs_at_low_priority(monkeypatch, tmp_path, parent_nice):
+    # du goes 10 lower than its caller, or as low as the kernel allows. An already-niced caller (main-health) must
+    # not make this look red: the cap made main falsely red on 2026-10-26 (assert 19 >= 20).
+    start = max(parent_nice, os.nice(0))
+    assert _du_nice_under(monkeypatch, tmp_path, parent_nice) == min(start + 10, NICE_CAP)
 
 
 def test_garbage_du_output_is_not_measured_not_a_crash(monkeypatch, tmp_path):

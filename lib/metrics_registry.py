@@ -33,8 +33,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import machine_profile  # noqa: E402
+import instance  # noqa: E402
 
-METRICS_DIR = Path.home() / ".agents" / "bench" / "metrics"
+METRICS_DIR = instance.path("bench", "metrics")  # the owner's run results: private instance, not the engine (ADR 0071)
 
 # Deltas smaller than this fraction of the baseline value (or this absolute
 # value, for a baseline of 0) are "unchanged" -- floating-point/measurement
