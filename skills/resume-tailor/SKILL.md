@@ -32,6 +32,16 @@ tags: [intent:resume, intent:tailor, intent:document, type:skill]
 
 ---
 
+## [GATE] — Feature Enablement Check
+
+**Phase 0: All commands**
+
+1. Run `~/.agents/venv/bin/python ~/.agents/skills/resume-tailor/scripts/check_enabled.py`
+   - If it exits 0: continue to the chosen command handler below
+   - If it exits 1: stop and say "Resume Tailor is not enabled. Turn it on in the MARVIN dashboard or edit `~/.agents/instance/instance.json` to set `features.resume_tailor` to `true`."
+
+---
+
 ## [TAILOR] — Full Application Package
 
 ### Phase 1: Intake

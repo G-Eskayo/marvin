@@ -6,7 +6,7 @@ import BootSequence from '@components/BootSequence.jsx'
 import DocsExplorer from '@components/DocsExplorer.jsx'
 import { warmDocs } from '@components/docs_warm.jsx'
 import ActivityBoard from '@components/ActivityBoard.jsx'
-import PortfolioHub from '@components/PortfolioHub.jsx'
+import PortfolioHubGate from '@components/PortfolioHubGate.jsx'
 import DispatchStatusBadge from '@components/DispatchStatusBadge.jsx'
 import MarvinButton from '@components/MarvinButton.jsx'
 import ActivityHover from '@components/ActivityHover.jsx'
@@ -150,7 +150,7 @@ export default function App() {
         ) : activeTab === 'docs' ? (
           <DocsExplorer nav={nav} onOpenBoard={(repo) => navigate('activity', { repo })} onOpenTicket={(repo, number) => navigate('activity', { repo, ticketNumber: number })} onOpenPr={(repo, number) => navigate('mr-review', { prKey: `${repo}#${number}` })} />
         ) : activeTab === 'portfolio' ? (
-          <PortfolioHub />
+          <PortfolioHubGate />
         ) : (
           <ActivityBoard nav={nav} onOpenMr={(prKey) => navigate('mr-review', { prKey })} onOpenDocs={(projectId, path) => navigate('docs', { projectId, path })} onOpenTicket={(repo, number) => navigate('activity', { repo, ticketNumber: number })} onOpenProject={(repo) => navigate('activity', { repo })} />
         )}
