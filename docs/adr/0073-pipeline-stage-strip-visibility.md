@@ -1,4 +1,4 @@
-# ADR 0065: Pipeline Stage Strip Visibility
+# ADR 0073: Pipeline Stage Strip Visibility
 
 Date: 2026-10-09  
 Status: Accepted  

@@ -627,7 +627,7 @@ written. Approve spent 10.4 s re-listing every repo for its order check, and the
   `test/mr_actions.test.js`, which also counts GitHub calls over a boot and a session of clicks).
 - New dashboard actions follow this rule, and the polling guard's header points here.
 
-## Pipeline visibility — stage strip (built 2026-10-09, ADR 0065, ticket #217)
+## Pipeline visibility — stage strip (built 2026-10-09, ADR 0073, ticket #217)
 
 Gil's problem 2026-10-09: debugging "where is this PR stuck?" required SSH + log archaeology into
 `~/.claude/logs/ticket-stages/`. Pipeline stage events exist, the dashboard reads them, but only in
