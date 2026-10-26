@@ -2,6 +2,7 @@ import { readFileSync } from 'fs'
 import { execFileSync } from 'child_process'
 import { homedir } from 'os'
 import path from 'path'
+import { supportRole } from './support.js'
 
 // Whose MARVIN is this? The dashboard's twin of lib/instance.py (ADR 0071); same rules, same tests' shape.
 // The engine is public and shared; each person's state is a private instance at ~/.agents/instance/. Nothing here
@@ -52,6 +53,9 @@ export function featureEnabled(name) {
   const f = load().config.features
   return !!f && typeof f === 'object' && !Array.isArray(f) && f[name] === true
 }
+
+// The support link (ADR 0073): { role: 'helped' | 'helper' | null, repos } from instance.json's "support" block.
+export const support = () => supportRole(load().config)
 
 export function reset() {
   cache = null
