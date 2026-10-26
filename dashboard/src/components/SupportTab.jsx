@@ -145,6 +145,7 @@ export function Verification({ v, role = 'helper' }) {
 
 // Who wrote a comment, in the reader's words.
 export function authorLabel(role, c) {
+  if (c.guidance) return role === 'helped' ? "Your helper's note to MARVIN" : 'You, to your MARVIN'
   if (role === 'helped') return { requester: 'You', helper: 'Your helper', 'helper-marvin': "Your helper's MARVIN (automatic)" }[c.by] || c.author
   return { requester: c.author, helper: 'You', 'helper-marvin': 'Your MARVIN (automatic)' }[c.by] || c.author
 }
@@ -193,7 +194,7 @@ export function latestAnswer(comments = []) {
 }
 
 export function Thread({ thread, role, busy, draft, setDraft, check, setCheck, onDraft, onSend, onResolve, onApply, onFollowup, message,
-  preview = false, onPreview, onSendOriginal, onBack, autoApply = false, onGotIt }) {
+  preview = false, onPreview, onSendOriginal, onBack, autoApply = false, onGotIt, onGuide }) {
   const { text, diagnostics } = splitDiagnostics(thread.request.body)
   const open = thread.request.open
   const answer = latestAnswer(thread.comments)
@@ -233,7 +234,7 @@ export function Thread({ thread, role, busy, draft, setDraft, check, setCheck, o
       )}
       {role === 'helper' && open && !isIdea(thread.request) && (
         <>
-          <textarea value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Reply…" rows={5}
+          <textarea value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Write a reply for them, or a note for your MARVIN…" rows={5}
             className="w-full rounded-md border border-neutral-700 bg-neutral-950 p-2 text-sm text-neutral-100" />
           <input value={check} onChange={(e) => setCheck(e.target.value)} placeholder="Check: a command that succeeds once it's fixed (optional)"
             className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1 font-mono text-xs text-neutral-200" />
@@ -247,11 +248,20 @@ export function Thread({ thread, role, busy, draft, setDraft, check, setCheck, o
               </div>
             </>
           ) : (
-            <div className="flex gap-2">
-              <button onClick={onDraft} disabled={busy} className="rounded-md border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-800 disabled:opacity-40">Draft with MARVIN</button>
-              <button onClick={onPreview} disabled={busy || !draft.trim()} className="rounded-md bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-500 disabled:opacity-40">Preview for them</button>
-              <button onClick={onResolve} disabled={busy} className="rounded-md border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-800 disabled:opacity-40">Resolve</button>
-            </div>
+            <>
+              <div className="flex flex-wrap gap-2">
+                <button onClick={onSend} disabled={busy || !draft.trim()} className="rounded-md bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-500 disabled:opacity-40">Send to them</button>
+                <button onClick={onPreview} disabled={busy || !draft.trim()} className="rounded-md border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-800 disabled:opacity-40">Preview for them</button>
+                <button onClick={onGuide} disabled={busy || !draft.trim()} className="rounded-md border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-800 disabled:opacity-40">Have MARVIN fix it with this</button>
+                <button onClick={onDraft} disabled={busy} className="rounded-md border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-800 disabled:opacity-40">Draft with MARVIN</button>
+                <button onClick={onResolve} disabled={busy} className="rounded-md border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-800 disabled:opacity-40">Resolve</button>
+              </div>
+              <ul className="space-y-0.5 text-xs text-neutral-500">
+                <li><b className="text-neutral-400">Send to them:</b> posts your reply as you wrote it. They get a notification.</li>
+                <li><b className="text-neutral-400">Preview for them:</b> MARVIN rewrites it in plain words for you to check before it goes.</li>
+                <li><b className="text-neutral-400">Have MARVIN fix it with this:</b> your note guides your MARVIN, which tries again (up to 2 fixes on their Mac) and comes back to you if that doesn't work.</li>
+              </ul>
+            </>
           )}
         </>
       )}
@@ -412,6 +422,7 @@ export default function SupportTab({ api = window.api.support, triggers = window
             onApply={() => act('open', {}, () => setMessage({ text: 'MARVIN is open in a new window. It will walk you through it, and the result shows up here.' }))}
             autoApply={!!config.autoApply}
             onGotIt={() => act('got-it', {}, () => setMessage({ text: 'Marked as answered.' }))}
+            onGuide={() => act('guide', { text: draft }, () => { setDraft(''); setCheck(''); setMessage({ text: 'Sent to your MARVIN. It will try again with your note.' }); loadThread(selected) })}
             onFollowup={() => act('followup', { text: draft }, () => { setDraft(''); setMessage({ text: "Sent to your helper's MARVIN." }); loadThread(selected) })}
           />
         )}

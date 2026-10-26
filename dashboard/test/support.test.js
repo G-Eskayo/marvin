@@ -189,3 +189,12 @@ describe('headless on the helped Mac', () => {
     expect(() => supportArgs('got-it', { repo: 'x/y', number: 2 }, [REPO])).toThrow()
   })
 })
+
+describe('guidance to the helper’s MARVIN', () => {
+  it('is text through a file, for this install’s own repo only, and never empty', async () => {
+    expect(supportArgs('guide', { repo: REPO, number: 4, file: '/f' }, [REPO]).slice(1)).toEqual(['guide', REPO, '4', '--body-file', '/f'])
+    let ran = false
+    expect((await runSupport('guide', { repo: REPO, number: 4, text: ' ' }, { repos: [REPO], run: () => { ran = true } })).ok).toBe(false)
+    expect(ran).toBe(false)
+  })
+})
