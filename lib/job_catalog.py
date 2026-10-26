@@ -4,15 +4,19 @@
 Every launchd job declares five things:
     machine   where it runs: "both", "mini" (the primary automation host, ADR 0032), "laptop" (where Gil sits), or
               "none" (switched off on purpose)
-    goal      the north star or project goal it serves (GOALS); None means it serves nothing, a removal candidate
+    goal      the north star or project goal it serves (GOALS); None means no goal is recorded yet
     reporter  who records its result, ideally the job itself when it happens
     healthy   what passing means for it, so red always comes with a reason
     consumer  who reads its output (Watts check: output nobody consumes fails)
-and optionally `review`: why a person should look at whether it still earns its place.
+and optionally `review`: why a person should check whether its purpose is met.
+
+The sweep never calls a job irrelevant or says to remove it (Gil, 2026-10-26). "Unused" usually means its purpose
+is unmet, not gone. It asks the question; the answer comes from the job's origin (ticket, ADR, plan): either its purpose
+is met elsewhere, or it is falling short and needs work to reach it. Gil decides.
 
 health_checks.JOB_PLACEMENT is derived from this table, so placement is never kept in two places.
 
-    job_catalog.py waste     # jobs on this Mac that serve no goal, have no consumer, are flagged, or aren't catalogued
+    job_catalog.py waste     # jobs on this Mac whose purpose needs checking: no goal recorded, no reader, flagged, or not catalogued
 """
 from __future__ import annotations
 
@@ -56,12 +60,12 @@ JOBS: dict[str, dict] = {
                  "review": "only renames and trims wording (NAMING/VERBOSITY); is anyone acting on it?"},
     "cron-health": {"machine": "mini", "goal": "project:marvin", "reporter": "cron-health log",
                     "healthy": "last run exit 0", "consumer": "Health cron:*",
-                    "review": "ADR 0033 folds cron health into Health, and the Vitals plan drops the cron:* checks"},
+                    "review": "purpose (nothing breaks silently) is falling short: Health missed a 2-day frozen laptop view too. Reached by the Vitals peer heartbeat (P2); this job folds in then"},
     "health-check": {"machine": "mini", "goal": "project:marvin", "reporter": "health-status.json",
                      "healthy": "a sweep in the last 30 min", "consumer": "Vitals on every machine (once peer push lands)"},
     "process-quarantine-reviews": {"machine": "mini", "goal": "ns1", "reporter": "quarantine.md",
                                    "healthy": "last run exit 0", "consumer": "the session-start report",
-                                   "review": "Health contract:safety-monitor: 92 items waiting, never consumed"},
+                                   "review": "purpose (Gil's reviews teach the safety filter, ADR 0015) is falling short: 0 of 97 reviewed. Reached by a tap-to-review card (approved 2026-10-26)"},
     "verify-digest-fix": {"machine": "mini", "goal": "ns1", "reporter": "its launchd log",
                           "healthy": "last run exit 0", "consumer": None,
                           "review": "a check for one past digest fix; is it still needed?"},
@@ -104,11 +108,11 @@ def waste(jobs: dict | None = None, loaded: dict | None = None) -> list[dict]:
     rows = []
     for name, j in jobs.items():
         if j.get("goal") is None and j.get("machine") != "none":
-            rows.append({"job": name, "why": "no goal: it serves nothing we're aiming at", "review": j.get("review")})
+            rows.append({"job": name, "why": "no goal recorded: what was it built for?", "review": j.get("review")})
         elif j.get("consumer") is None and j.get("machine") != "none":
-            rows.append({"job": name, "why": "nobody reads its output", "review": j.get("review")})
+            rows.append({"job": name, "why": "nobody reads its output: is its purpose met elsewhere, or falling short?", "review": j.get("review")})
         elif j.get("review"):
-            rows.append({"job": name, "why": "flagged for review", "review": j["review"]})
+            rows.append({"job": name, "why": "check its purpose: met elsewhere, or falling short?", "review": j["review"]})
     for machine, names in (loaded or {}).items():
         if not isinstance(names, list):
             continue
@@ -120,8 +124,8 @@ def waste(jobs: dict | None = None, loaded: dict | None = None) -> list[dict]:
 
 def report(rows: list[dict]) -> str:
     if not rows:
-        return "Nothing to remove: every job serves a goal and has a reader."
-    lines = [f"{len(rows)} job(s) to look at:"]
+        return "Every job has a goal and a reader; no purpose needs checking."
+    lines = [f"{len(rows)} job(s) whose purpose needs checking (met elsewhere, or falling short?):"]
     for r in rows:
         lines.append(f"- {r['job']}: {r['why']}" + (f" ({r['review']})" if r.get("review") else ""))
     return "\n".join(lines)
