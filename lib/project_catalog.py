@@ -22,6 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import host_os  # noqa: E402  (memory_dir: the synced memory on every machine, ADR 0069)
+import instance  # noqa: E402  (instance_dir: the owner's private state, ADR 0071)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -30,7 +31,11 @@ HOME = Path.home()
 CATALOG_DIR = HOME / ".claude" / "catalog"
 OVERRIDES_PATH = CATALOG_DIR / "overrides.json"
 LOCAL_ROOTS = [HOME / "Documents" / "Projects", HOME / "Developer", HOME / "Documents" / "Money-and-Admin" / "budgeting"]
-EXTRA_LOCAL = [HOME / ".agents"]
+
+
+def extra_local() -> list[Path]:
+    """Repos outside the roots: the engine, and the private instance (ADR 0071), whose docs/plans the Docs tab shows."""
+    return [HOME / ".agents", instance.instance_dir()]
 MEMORY_DIR = host_os.memory_dir()
 
 PORTFOLIO_REPO_ID = "portfolio-website-updater"
@@ -504,7 +509,7 @@ def discover_local(roots=None, extra=None, previous=None) -> list[dict]:
             print(f"project catalog: can't read {root} ({e}); kept {len(kept)} project(s) from the last catalog",
                   file=sys.stderr)
             out.extend(kept)
-    for p in (EXTRA_LOCAL if extra is None else extra):
+    for p in (extra_local() if extra is None else extra):
         if p.is_dir():
             out.append(_local_record(p))
     return out

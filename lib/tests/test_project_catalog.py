@@ -364,3 +364,21 @@ def test_previous_local_records_come_from_the_last_catalog(tmp_path):
     assert recs == [{"path": "/x/Documents/Projects/beta", "name": "beta", "origin": "beta",
                      "last_activity": "2026-10-01T00:00:00+00:00", "worktree": False,
                      "docs": {"context": True, "readme": False, "adrCount": 2}}]
+
+
+def test_the_private_instance_is_a_local_clone_so_the_docs_tab_shows_its_plans(tmp_path, monkeypatch):
+    # 2026-10-25: ADR 0071 step 2 moved docs/plans into ~/.agents/instance, but discovery only knew ~/.agents, so the
+    # catalog had marvin-instance with no local path and the Docs tab showed none of its plans.
+    inst = tmp_path / "somewhere" / "instance"
+    (inst / "docs" / "plans").mkdir(parents=True)
+    monkeypatch.setenv("MARVIN_INSTANCE_DIR", str(inst))
+    monkeypatch.setattr(pc, "HOME", tmp_path)
+    assert inst in pc.extra_local()
+    paths = [r["path"] for r in pc.discover_local(roots=[], previous=[])]
+    assert str(inst) in paths
+
+
+def test_a_missing_instance_is_skipped_not_an_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("MARVIN_INSTANCE_DIR", str(tmp_path / "nope"))
+    monkeypatch.setattr(pc, "HOME", tmp_path)
+    assert pc.discover_local(roots=[], previous=[]) == []
