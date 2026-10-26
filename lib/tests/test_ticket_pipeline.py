@@ -16,6 +16,7 @@ sys.path.insert(0, str(LIB))
 
 import ticket_pipeline as tp  # noqa: E402
 import ticket_stages as ts  # noqa: E402
+REAL_RETRY_NOT_BEFORE = tp._retry_not_before   # conftest stubs it for every test; captured before that
 
 
 @pytest.fixture(autouse=True)
@@ -216,7 +217,7 @@ def test_a_scan_with_nothing_ready_leaves_a_run_log_saying_so(monkeypatch):
     run = json.loads((job_events.JOBS_DIR / "ticket-pipeline.json").read_text())["runs"][-1]
     assert run["status"] == "passed" and run["summary"] == "no ready tickets"
     steps = [s["step"] for s in run["steps"]]
-    assert steps == ["Board discovery", "Onboarding plans", "Project catalog", "Conflicted PRs", "Circuit breaker", "Scanning tickets"]
+    assert steps == ["Board discovery", "Onboarding plans", "Project catalog", "Conflicted PRs", "Owner decisions", "Circuit breaker", "Scanning tickets"]
 
 
 def test_a_tripped_breaker_is_visible_in_the_run_log(monkeypatch):
@@ -304,6 +305,7 @@ def _setup_projects(monkeypatch, marvin=(), cc=(), profile=CC_PROFILE, missing_h
     """marvin's tickets come from the zero-argument call exactly as before; another project's from repo=..."""
     monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda repo=tp.REPO: list(marvin) if repo == tp.REPO else (list(cc) if repo == CC else []))
     monkeypatch.setattr(tp.pp, "dispatchable_repos", lambda directory=None: [CC] if profile and profile["dispatch"] == "on" else [])
+    monkeypatch.setattr(tp.pp, "runnable_repos", lambda directory=None: [CC] if profile and profile["dispatch"] == "on" and profile.get("machines") else [])
     monkeypatch.setattr(tp.pp, "load_profile", lambda repo, directory=None: profile if repo == CC else None)
     monkeypatch.setattr(tp.pp, "missing_here", lambda p: list(missing_here))
     monkeypatch.setattr(tp.failure_breaker, "tripped", lambda now=None, project=None: [])
@@ -617,6 +619,69 @@ def test_a_ticket_on_hold_is_never_sent_back(monkeypatch):
         monkeypatch.setattr(tp.subprocess, "run", _requeue([_pr(358, "o/r#102")], [{"number": 102, "labels": [{"name": label}]}], calls))
         assert tp._requeue_conflicted_prs("o/r") == [], label
         assert not any("edit" in c or "comment" in c for c in calls), label
+
+
+# ── one needs-a-person state (#605) ──
+
+def test_a_ticket_with_a_person_is_never_sent_back_even_if_it_still_says_ready_for_agent(monkeypatch):
+    """#81 and #218 on 2026-10-22: PR #359/#400 kept conflicting, and every scan re-added needs-reengagement."""
+    for labels in (["ready-for-human"], ["needs-info"], ["ready-for-human", "ready-for-agent", "claimed:mac-mini"],
+                   ["needs-info", "ready-for-agent"]):
+        for already_sent_back in (False, True):
+            calls = []
+            seen = _repair(monkeypatch, {"outcome": "rebuild", "files": ["lib/health_checks.py"]})
+            names = labels + (["needs-reengagement"] if already_sent_back else [])
+            issues = [{"number": 81, "labels": [{"name": l} for l in names]}]
+            monkeypatch.setattr(tp.subprocess, "run", _requeue([_pr(359, "o/r#81")], issues, calls))
+            assert tp._requeue_conflicted_prs("o/r") == [], names
+            assert not any("edit" in c or "comment" in c for c in calls), names
+            assert seen == [], names     # no paid repair attempt on a person's ticket either
+
+
+def test_a_ticket_with_a_person_is_never_dispatched_whatever_else_it_carries():
+    issues = [_issue(218, "2026-01-01T00:00:00Z", labels=["ready-for-agent", "ready-for-human", "needs-reengagement"]),
+              _issue(455, "2026-01-02T00:00:00Z", labels=["ready-for-agent", "needs-info"]),
+              _issue(104, "2026-01-03T00:00:00Z", labels=["ready-for-agent"])]
+    assert [i["number"] for i in tp._unclaimed_ready_tickets(issues=issues)] == [104]
+
+
+def test_a_conflicting_pr_on_a_ticket_past_its_re_queues_hands_it_over_once_and_then_goes_quiet(monkeypatch):
+    """The 2026-10-22 loop end to end, with the real send-back, the real refeed planner and the real dispatcher filter:
+    labels and comments are applied to one in-memory ticket scan after scan while its PR keeps conflicting."""
+    import ticket_agents as ta
+    labels = {"ready-for-agent", "claimed:mac-mini"}
+    comments: list[str] = []
+    dispatched = []
+    _repair(monkeypatch, {"outcome": "rebuild", "files": ["lib/health_checks.py"]})
+    for scan in range(6):
+        calls = []
+        issues = [{"number": 81, "labels": [{"name": l} for l in sorted(labels)]}]
+        monkeypatch.setattr(tp.subprocess, "run", _requeue([_pr(359, "o/r#81")], issues, calls))
+        tp._requeue_conflicted_prs("o/r")
+        for c in calls:
+            if "edit" in c:
+                for i, a in enumerate(c):
+                    if a == "--add-label":
+                        labels.add(c[i + 1])
+                    elif a == "--remove-label":
+                        labels.discard(c[i + 1])
+            elif "comment" in c:
+                comments.append(c[c.index("--body") + 1])
+        t = {"number": 81, "title": "t", "body": "", "labels": [{"name": l} for l in labels]}
+        for a in ta.plan_refeed("o/r", [t], counts={81: 2}):    # already re-queued twice
+            if a["op"] == "add_label":
+                labels.add(a["arg"])
+            elif a["op"] == "remove_label":
+                labels.discard(a["arg"])
+            elif a["op"] == "comment":
+                comments.append(a["arg"])
+        ready = tp._unclaimed_ready_tickets(issues=[{**t, "labels": [{"name": l} for l in labels],
+                                                     "createdAt": "2026-01-01T00:00:00Z"}])
+        dispatched += [scan for _ in ready]
+    assert sum("It needs a person" in c for c in comments) == 1, comments
+    assert sum("Sent back automatically" in c for c in comments) == 1, comments
+    assert dispatched == []
+    assert labels == {"ready-for-human"}
 
 
 def test_sending_a_ticket_back_releases_its_claim_or_nothing_would_ever_rebuild_it(monkeypatch):
@@ -942,6 +1007,7 @@ def test_scan_summary_reports_breaker_even_when_dispatchable_project_has_no_read
 
     monkeypatch.setattr(tp, "REPO", "G-Eskayo/marvin")
     monkeypatch.setattr(tp.pp, "dispatchable_repos", lambda: ["owner/other-project"])
+    monkeypatch.setattr(tp.pp, "runnable_repos", lambda: ["owner/other-project"])
     monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda repo=None: [])
     monkeypatch.setattr(tp.dispatch_concurrency, "load", lambda path=None: {"parallel": False})
 
@@ -1239,9 +1305,15 @@ def test_two_concurrent_scans_dispatch_a_ticket_only_once(monkeypatch, tmp_path)
     # Run two scans concurrently: the lock should serialize them
     results = []
 
+    # The scan that waits must wait long enough for the other to finish, and must not scan without the lock (as
+    # main() does). With a 1 s wait and the scan run regardless, a busy machine (the suite in parallel, 2026-10-21)
+    # let the waiter time out and claim too: a timing flake in the test, not a race in the pipeline.
     def run_scan():
         try:
-            with tp._scan_lock(tmp_path / "scan.lock", 1):
+            with tp._scan_lock(tmp_path / "scan.lock", 30) as got:
+                if not got:
+                    results.append("lock busy")
+                    return
                 tp._scan(
                     SimpleNamespace(
                         step=lambda *a, **k: None,
@@ -1258,11 +1330,11 @@ def test_two_concurrent_scans_dispatch_a_ticket_only_once(monkeypatch, tmp_path)
     t2 = threading.Thread(target=run_scan)
     t1.start()
     t2.start()
-    t1.join(timeout=5)
-    t2.join(timeout=5)
+    t1.join(timeout=60)
+    t2.join(timeout=60)
 
-    # Both threads should have completed
-    assert len(results) == 2, f"Threads did not complete: {results}"
+    # Both threads should have completed: the second waited for the lock, then found the ticket already claimed
+    assert results == ["completed", "completed"], f"Threads did not complete: {results}"
 
     # The ticket should have been claimed exactly once (not twice)
     claims = [x for x in claim_order if x[0] == "claim"]
@@ -1354,3 +1426,89 @@ def test_concurrent_mains_run_one_scan_at_a_time(tmp_path, monkeypatch):
     threads = [threading.Thread(target=tp.main) for _ in range(4)]
     [t.start() for t in threads]; [t.join() for t in threads]
     assert peak[0] == 1
+
+
+# ── retry backoff at dispatch (P6, 2026-10-21) ─────────────────────────────
+from datetime import datetime as _dt, timedelta as _td, timezone as _tz  # noqa: E402
+import ticket_policy as _pol  # noqa: E402
+
+
+def test_a_ticket_waiting_out_its_retry_time_is_skipped_and_the_next_one_runs(monkeypatch):
+    later = _dt.now(_tz.utc) + _td(minutes=30)
+    _setup_projects(monkeypatch, marvin=[_ticket(563, "2026-01-01T00:00:00Z"), _ticket(570, "2026-01-02T00:00:00Z")])
+    monkeypatch.setattr(tp, "_retry_not_before", lambda repo, t, now=None: later if t["number"] == 563 else None)
+    got = _capture(monkeypatch)
+    tp.main()   # parallel off: still one ticket per scan, just not the one that is backing off
+    assert [c[0] for c in got["claims"]] == [570]
+
+
+def test_when_every_ticket_is_backing_off_nothing_is_claimed_and_the_scan_ends(monkeypatch):
+    later = _dt.now(_tz.utc) + _td(minutes=30)
+    _setup_projects(monkeypatch, marvin=[_ticket(n) for n in range(1, 40)])
+    monkeypatch.setattr(tp, "_retry_not_before", lambda repo, t, now=None: later)
+    got = _capture(monkeypatch)
+    tp.main()
+    assert got["claims"] == [] and got["dispatches"] == []
+
+
+def _gh_comments(monkeypatch, comments=None, rc=0, raw=None):
+    calls = []
+    def run(cmd, **kw):
+        calls.append(cmd)
+        out = raw if raw is not None else json.dumps({"comments": comments or []})
+        return SimpleNamespace(returncode=rc, stdout=out, stderr="")
+    monkeypatch.setattr(tp.subprocess, "run", run)
+    return calls
+
+
+def test_retry_time_is_read_from_the_tickets_own_failure_comment(monkeypatch):
+    now = _dt(2026, 10, 21, 20, 0, tzinfo=_tz.utc)
+    _gh_comments(monkeypatch, [{"body": "Automated verification timed out: x\n" + _pol.retry_marker(now + _td(minutes=20))}])
+    t = {"number": 563, "updatedAt": "2026-10-21T19:50:00Z"}
+    assert REAL_RETRY_NOT_BEFORE("G-Eskayo/marvin", t, now) == now + _td(minutes=20)
+    assert REAL_RETRY_NOT_BEFORE("G-Eskayo/marvin", t, now + _td(minutes=21)) is None   # its time has come
+
+
+def test_an_old_ticket_costs_no_github_call(monkeypatch):
+    calls = _gh_comments(monkeypatch, [])
+    now = _dt(2026, 10, 21, tzinfo=_tz.utc)
+    assert REAL_RETRY_NOT_BEFORE("G-Eskayo/marvin", {"number": 1, "updatedAt": "2026-10-01T00:00:00Z"}, now) is None
+    assert calls == []
+
+
+def test_unreadable_comments_never_block_a_dispatch(monkeypatch):
+    now = _dt(2026, 10, 21, tzinfo=_tz.utc)
+    t = {"number": 1, "updatedAt": "2026-10-21T00:00:00Z"}
+    for kwargs in ({"rc": 1}, {"raw": "not json"}, {"raw": json.dumps([1])}, {"raw": json.dumps({"comments": None})}):
+        _gh_comments(monkeypatch, **kwargs)
+        assert REAL_RETRY_NOT_BEFORE("G-Eskayo/marvin", t, now) is None, kwargs
+    def boom(cmd, **kw):
+        raise OSError("gh missing")
+    monkeypatch.setattr(tp.subprocess, "run", boom)
+    assert REAL_RETRY_NOT_BEFORE("G-Eskayo/marvin", t, now) is None
+    _gh_comments(monkeypatch, [])
+    assert REAL_RETRY_NOT_BEFORE("G-Eskayo/marvin", {"number": 1}, now) is None   # no updatedAt: checked, nothing found
+
+
+def test_a_project_with_no_machines_is_not_scanned_and_logs_nothing_per_ticket(monkeypatch, capsys):
+    no_machines = {**CC_PROFILE, "machines": []}
+    _setup_projects(monkeypatch, cc=[_ticket(2, title="Edit the home page")], profile=no_machines)
+    got = _capture(monkeypatch)
+    tp.main()
+    assert got["claims"] == []
+    assert "no suitable machine" not in capsys.readouterr().err
+
+
+def test_live_runs_is_none_when_any_machine_cannot_be_read(monkeypatch):
+    import running_tickets
+    def current(unreadable=None):
+        unreadable.append("macbook-pro-1")
+        return [{"machine": "mac-mini-1", "repo": tp.REPO, "number": 5}]
+    monkeypatch.setattr(running_tickets, "current", current)
+    assert tp._live_runs() is None
+    monkeypatch.setattr(running_tickets, "current", lambda unreadable=None: [{"machine": "m", "repo": tp.REPO, "number": 5}])
+    assert tp._live_runs() == {(tp.REPO, 5)}
+    def boom(unreadable=None):
+        raise RuntimeError("ps failed")
+    monkeypatch.setattr(running_tickets, "current", boom)
+    assert tp._live_runs() is None

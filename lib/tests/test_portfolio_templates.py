@@ -188,6 +188,18 @@ def test_export_reference_writes_one_file_per_page_and_an_index(tmp_path):
     assert json.loads((out / "reference" / "index.json").read_text())[0]["url"] == "/ai-projects/mancala/"
 
 
+def test_export_reference_keeps_the_existing_index_when_no_page_has_raw_markup(tmp_path):
+    # marvin#585: a crawl that reached no WordPress page produced an inventory with no raw markup, and the index of 36
+    # reference pages was overwritten with []. An empty result is a failed crawl, not an empty site.
+    inv = tmp_path / "inv"; inv.mkdir()
+    (inv / "inventory.json").write_text(json.dumps({"pages": [{"slug": "home", "url": "/", "title": "Home", "type": "home", "raw": None}]}))
+    ref = tmp_path / "templates" / "reference"; ref.mkdir(parents=True)
+    (ref / "index.json").write_text('[{"slug": "kept"}]')
+    with pytest.raises(RuntimeError, match="no page"):
+        pt.export_reference(inv, tmp_path / "templates")
+    assert (ref / "index.json").read_text() == '[{"slug": "kept"}]'
+
+
 # ── plug-and-play: a whole new project in one call ──────────────────────────
 
 def test_plan_new_project_returns_the_page_card_and_manifest_entry_from_one_data_set(tmp_path):

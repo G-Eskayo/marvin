@@ -35,6 +35,7 @@ Run standalone: ~/.agents/venv/bin/python ticket_pipeline.py [--dry-run]
 """
 from __future__ import annotations
 import fcntl
+import functools
 import json
 import subprocess
 import sys
@@ -117,7 +118,7 @@ def _open_issues(repo: str = REPO) -> list[dict] | None:
     """Every open ticket in `repo`, in one call (None when GitHub can't be read)."""
     proc = subprocess.run(
         ["gh", "issue", "list", "--repo", repo, "--state", "open", "--limit", "1000",
-         "--json", "number,title,labels,createdAt,body"],
+         "--json", "number,title,labels,createdAt,updatedAt,body"],
         capture_output=True, text=True, timeout=30,
     )
     if proc.returncode != 0:
@@ -127,7 +128,7 @@ def _open_issues(repo: str = REPO) -> list[dict] | None:
 
 
 def _unclaimed_ready_tickets(repo: str = REPO, issues: list[dict] | None = None) -> list[dict]:
-    """What this machine may dispatch next, in order: ready-for-agent, unclaimed, not pinned, and with
+    """What this machine may dispatch next, in order: ready-for-agent, unclaimed, not held, not with a person, and with
     no open blocker, highest priority first and oldest first among equals. One call fetches every open
     ticket because whether a blocker is still open depends on the others; a caller that already has that
     list passes it in (#324)."""
@@ -139,7 +140,7 @@ def _unclaimed_ready_tickets(repo: str = REPO, issues: list[dict] | None = None)
 
     def eligible(i):
         names = set(ticket_policy.label_names(i))
-        return ("ready-for-agent" in names and not names & HOLD_LABELS
+        return ("ready-for-agent" in names and not names & HOLD_LABELS and not ticket_policy.needs_person(names)
                 and not any(n.startswith("claimed:") for n in names)
                 and not ticket_policy.open_blockers(i, open_numbers))
 
@@ -198,6 +199,16 @@ def _background_checks() -> None:
     _refresh_main_health()
 
 
+def _owner_decisions() -> str:
+    """Owner decisions unanswered for N hours become a ready-for-agent follow-up ticket (marvin#607): one GraphQL
+    call for every registered repo. Never breaks the scan."""
+    try:
+        import owner_decisions
+        return owner_decisions.summary_line(owner_decisions.sync(owner_decisions._registered_repos()))
+    except Exception as exc:  # noqa: BLE001 -- a failed side step must not stop dispatch
+        return f"skipped ({str(exc)[:120]})"
+
+
 def _requeue_all(repos) -> list[str]:
     return [f"{r.split('/')[-1]}#{n}" for r in repos for n in _requeue_conflicted_prs(r)]
 
@@ -244,8 +255,12 @@ def _try_conflict_repair(repo: str, pr: dict) -> dict:
         def resolve_hunks(scratch_dir, prompt):
             return _resolve_hunks_with_model(scratch_dir, prompt)
 
+        # attempt() calls do_repair(repo, head, clone, base, pr=pr). A lambda without `pr` crashed every repair
+        # from 10-10 to 10-21 (523 times), so each conflict fell through to a full rebuild. The tests are looked
+        # up at call time so a test can swap them; bound as repair()'s default they never could be.
         return conflict_repair.attempt(repo, pr, _REPAIR_BUDGET,
-                                      do_repair=lambda r, h, c, b: conflict_repair.repair(r, h, c, b, pr=pr, resolve_hunks=resolve_hunks))
+                                      do_repair=functools.partial(conflict_repair.repair, resolve_hunks=resolve_hunks,
+                                                                  run_tests=conflict_repair.default_tests))
     except Exception as e:  # noqa: BLE001 -- a broken repair falls back to today's behaviour
         return {"outcome": "rebuild", "files": [], "reason": f"repair crashed: {e}", "cost_usd": 0.0}
 
@@ -290,7 +305,8 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
     """A PR that GitHub says CONFLICTS with its base can never be merged as it stands, and the first anyone
     learned was a human clicking Approve (finance-os #9, clarity #48). So the pipeline sends the ticket back
     by itself: label `needs-reengagement` + a comment saying why, and the existing sent-back loop rebuilds it
-    on the current main. Tickets already sent back, or protected by `pinned`/`held`, are left alone, and any
+    on the current main. Tickets already sent back, protected by `pinned`/`held`, or with a person
+    (ticket_policy.NEEDS_PERSON_LABELS) are left alone, and any
     gh failure just means 'try again next scan'."""
     def gh(*args):
         return subprocess.run(["gh", *args], capture_output=True, text=True, timeout=30)
@@ -312,8 +328,8 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
             continue
         n = int(m.group(1))
         names = labels_of.get(n)
-        if names is None or names & HOLD_LABELS:
-            continue
+        if names is None or names & HOLD_LABELS or ticket_policy.needs_person(names):
+            continue  # a person's: no send-back, no paid repair, no comment (#605: #81/#218 were re-sent every scan)
         if "needs-reengagement" in names:
             # Already sent back, but its PR still conflicts: the rebuild hasn't happened (#257 sat 12 hours, still
             # claimed). A repair makes the rebuild unnecessary; anything else stays the sent-back loop's business.
@@ -325,7 +341,7 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
                 if fix["outcome"] == "repaired":
                     gh("issue", "edit", str(n), "--repo", repo, "--remove-label", "needs-reengagement")
                     gh("issue", "comment", str(n), "--repo", repo, "--body",
-                       f"PR #{pr['number']}'s conflict with main was resolved automatically and pushed, so no rebuild is needed: "
+                       f"PR #{pr['number']}'s {ticket_policy.REPAIRED_MARKER} and pushed, so no rebuild is needed: "
                        f"the sent-back flag is cleared and the PR is ready for review.")
                     print(f"{LOG_PREFIX} {repo}#{n}: sent-back PR #{pr['number']} repaired instead of rebuilt", file=sys.stderr)
             continue
@@ -372,7 +388,7 @@ def _requeue_conflicted_prs(repo: str) -> list[int]:
            (f"PR #{pr['number']}'s GitHub checks failed: {', '.join(red)}. " if red else
             f"PR #{pr['number']} now conflicts with main{' in ' + ', '.join(files) if files else ''} (the same lines changed on both "
             f"sides, so it could not be resolved automatically). ") +
-           "Sent back automatically: the pipeline will rebuild it on the current main and update the same PR.")
+           f"{ticket_policy.SENT_BACK_MARKER} the pipeline will rebuild it on the current main and update the same PR.")
         print(f"{LOG_PREFIX} {repo}#{n}: PR #{pr['number']} {'failed its checks' if red else 'conflicts with main'}, sent back for rework", file=sys.stderr)
         sent.append(n)
     return sent
@@ -465,12 +481,14 @@ def _run_ticket_agents(step, summary) -> None:
     try:
         cfg = ticket_agents.load_config()
         snap = ticket_agents.collect(ticket_agents.board_repos())
-        executable = {REPO, *pp.dispatchable_repos()}
+        executable = {REPO, *pp.runnable_repos()}
+        live = _live_runs()
         res = ticket_agents.run(snap, ticket_agents._gh, cfg, datetime.now(timezone.utc),
                                 in_flight=lambda repo: ticket_agents.in_flight_numbers(repo, snap),
                                 due_for=ticket_agents.due_for_repo, executable=executable,
                                 tags_state_path=ticket_agents.project_tagger.STATE_PATH,
-                                report=lambda agent, detail: step(f"Ticket agents · {agent}", detail))
+                                report=lambda agent, detail: step(f"Ticket agents · {agent}", detail),
+                                running=lambda repo: None if live is None else {n for r, n in live if r == repo})
         step("Ticket agents", f"{res['applied']} applied, {res['proposed']} proposed, {res['failed']} failed")
         _update_board_lifecycle(snap, step)
         _auto_merge_shadow(step)
@@ -482,11 +500,26 @@ def _run_ticket_agents(step, summary) -> None:
                     prof = pp.load_profile(r)
                 except ValueError:
                     pass
+                if prof and prof.get("dispatch") == "on" and not prof.get("machines"):
+                    return "not set up for agents: no machines listed"
                 return "profile ready, dispatch is off" if prof else "no execution profile yet"
             step("Other projects", "ready for an agent but not dispatched: " + ", ".join(f"{r.split('/')[1]} {n} ({why(r)})" for r, n in elsewhere.items()))
     except Exception as e:  # noqa: BLE001
         print(f"{LOG_PREFIX} ticket agents: {e}", file=sys.stderr)
         step("Ticket agents", f"skipped: {e}")
+
+
+def _live_runs() -> set[tuple[str, int]] | None:
+    """(repo, number) of every ticket with a live run_ticket on any machine, or None when a machine couldn't be read:
+    the dead-claim rule must never release a claim on a guess (#453)."""
+    try:
+        import running_tickets
+        unreadable: list = []
+        runs = running_tickets.current(unreadable)
+        return None if unreadable else {(r["repo"], r["number"]) for r in runs}
+    except Exception as e:  # noqa: BLE001
+        print(f"{LOG_PREFIX} live runs unreadable: {e}", file=sys.stderr)
+        return None
 
 
 def _auto_merge_shadow(step) -> None:
@@ -621,6 +654,25 @@ def _order_key(ticket: dict) -> tuple:
         rank = ticket_policy.PRIORITY_LABELS.index(ticket_policy.priority_for(ticket["_score"])) if "_score" in ticket else UNSCORED_RANK
     is_bug = "bug" in ticket_policy.label_names(ticket)
     return (rank, not labelled, not is_bug, -ticket.get("_score", 0.0), ticket["createdAt"])
+
+
+def _retry_not_before(repo: str, ticket: dict, now: datetime | None = None) -> datetime | None:
+    """When a ticket whose last run failed may run again (the retry time its failure comment carries, ticket_policy),
+    or None. Only a ticket updated within the longest possible wait can carry one, so older tickets cost no call.
+    Unreadable comments never block a dispatch."""
+    now = now or datetime.now(timezone.utc)
+    updated = ticket_policy._parse(ticket.get("updatedAt"))
+    if updated is not None and (now - updated).total_seconds() > ticket_policy.RETRY_HORIZON_S:
+        return None
+    try:
+        proc = subprocess.run(["gh", "issue", "view", str(ticket["number"]), "--repo", repo, "--json", "comments"],
+                              capture_output=True, text=True, timeout=30)
+        if proc.returncode != 0:
+            return None
+        nb = ticket_policy.retry_not_before(json.loads(proc.stdout).get("comments"), now)
+    except Exception:  # noqa: BLE001
+        return None
+    return nb if nb is not None and nb > now else None
 
 
 def _flag_busy() -> bool:
@@ -775,8 +827,10 @@ def _scan(run, dry_run: bool) -> None:
     if not dry_run:
         _background_checks()
         step("Conflicted PRs", "sending back PRs that no longer merge")
-        sent = _requeue_all([REPO, *pp.dispatchable_repos()])
+        sent = _requeue_all([REPO, *pp.runnable_repos()])
         step("Conflicted PRs", ", ".join(sent) + " sent back" if sent else "none")
+        step("Owner decisions", "PRs whose owner decisions went unanswered (#607)")
+        step("Owner decisions", _owner_decisions())
 
     # Cross-ticket circuit breaker, per project: the same failure across different tickets of one
     # project means ITS environment is broken, not the tickets -- stop feeding that project more
@@ -792,7 +846,9 @@ def _scan(run, dry_run: bool) -> None:
     else:
         step("Circuit breaker", "clear")
     paused = {t.get("project", REPO) for t in trips}
-    repos = [r for r in [REPO, *pp.dispatchable_repos()] if r not in paused]
+    # A profile with dispatch on but no machines can never run: Health says so once (profile:no-machines), instead of
+    # this scan logging "no suitable machine" for each of its tickets every hour (132 times each by 10-21).
+    repos = [r for r in [REPO, *pp.runnable_repos()] if r not in paused]
     breaker_tripped = bool(trips)
 
     settings = dispatch_concurrency.load()
@@ -839,6 +895,9 @@ def _scan(run, dry_run: bool) -> None:
             break
         repo, ticket = min(candidates, key=lambda c: _order_key(c[1]))
         outcome = _dispatch_one(repo, ticket, ready_total, step, summary, fail, dry_run, settings, taken, local_base, refusals)
+        if outcome == "backoff":
+            pools[repo].pop(0)          # waiting out its retry time: the next ticket may still run, in any mode
+            continue
         if outcome == "started":
             started += 1
             started_by_repo[repo] = started_by_repo.get(repo, 0) + 1
@@ -852,10 +911,14 @@ def _scan(run, dry_run: bool) -> None:
 
 
 def _dispatch_one(repo, ticket, ready_total, step, summary, fail, dry_run, settings, taken, local_base, refusals) -> str:
-    """Claim one ticket and dispatch it. Returns "started", "no-machine" or "failed"."""
+    """Claim one ticket and dispatch it. Returns "started", "backoff", "no-machine" or "failed"."""
     other = repo != REPO
     issue_number = ticket["number"]
     where = f"{repo.split('/')[-1]} " if other else ""
+    not_before = _retry_not_before(repo, ticket)
+    if not_before is not None:
+        step("Scanning tickets", f"{where}#{issue_number} waits until {not_before.strftime('%H:%M UTC')} after a failed run")
+        return "backoff"
     step("Scanning tickets", f"{ready_total} ready; next is {where}#{issue_number} {ticket['title']}")
 
     profile = pp.load_profile(repo) if other else None

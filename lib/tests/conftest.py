@@ -78,6 +78,22 @@ def _no_real_disk_housekeeping(request, monkeypatch):
     monkeypatch.setattr(disk_trim, "trim_with_logging", lambda *a, **k: {})
 
 
+@pytest.fixture(autouse=True)
+def _no_du_on_the_real_home(monkeypatch):
+    # The hang behind the merge gate's 20-minute cuts (pipeline review 2026-10-21, F3): a test reached the real
+    # disk_ledger.du on ~/Documents, which blocks forever under launchd (iCloud/TCC). du runs only on temp folders in
+    # tests; anything else fails at once, naming the path. Tests that inject their own du are unaffected.
+    import disk_ledger
+    import real_home_guard
+    real_du = disk_ledger._default_du_kb
+
+    def du_temp_only(path):
+        if not real_home_guard.outside_real_home(path):
+            raise AssertionError(f"tests must not run du on the real home ({path}): pass du= or patch _default_du_kb")
+        return real_du(path)
+    monkeypatch.setattr(disk_ledger, "_default_du_kb", du_temp_only)
+
+
 def pytest_terminal_summary(terminalreporter):
     if _GH_BLOCK_DIR is not None and (_GH_BLOCK_DIR / "calls.log").exists():
         calls = [l.split("|")[0].split(" ")[0] for l in (_GH_BLOCK_DIR / "calls.log").read_text().splitlines()]
@@ -139,6 +155,16 @@ def _isolate_outcome_check(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_sweep_home(tmp_path_factory, monkeypatch):
+    # #629: the sweep backs up and removes worktrees under ~/.agents-pipeline-worktrees and every
+    # ~/Developer/*/.claude/worktrees, and deletes old aerial videos under ~/Library. Never the real ones.
+    import cleanup_sweep
+    fake = tmp_path_factory.mktemp("sweep-home")
+    monkeypatch.setattr(cleanup_sweep, "HOME", fake)
+    monkeypatch.setattr(cleanup_sweep, "WORKTREES_ROOT", fake / ".agents-pipeline-worktrees")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_session_work_state(tmp_path_factory, monkeypatch):
     # code_sync now reads session_work's live-session list; a test must never touch the real
     # ~/.claude/logs/sessions-active.json (a real live session on this machine could change outcomes).
@@ -192,6 +218,16 @@ def _isolate_ticket_evidence(monkeypatch):
     monkeypatch.setattr(ticket_pipeline, "_evidence_facts", lambda repo: None)
     monkeypatch.setattr(ticket_pipeline, "_requeue_all", lambda repos: [])
     monkeypatch.setattr(ticket_pipeline, "_background_checks", lambda: None)  # no background test runs from tests  # no real gh calls from the scan
+    monkeypatch.setattr(ticket_pipeline, "_retry_not_before", lambda repo, ticket, now=None: None)  # reads comments (gh)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_needs_you_notifications(request, monkeypatch):
+    # A parked ticket notifies Gil (desktop banner + a phone push through a model call); never from a test.
+    if request.module.__name__.rsplit(".", 1)[-1] == "test_mr_notification":
+        return
+    import mr_notification
+    monkeypatch.setattr(mr_notification, "notify_needs_you", lambda *a, **k: {})
 
 
 def pytest_configure(config):

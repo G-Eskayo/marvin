@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, session, shell, protocol, net } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, session, shell, protocol, net, nativeImage, Notification } from 'electron'
 import { pathToFileURL } from 'url'
 import { instrumentIpc } from './timing.js'
 import { installDevSiteCors } from './dev_site_cors.js'
@@ -10,7 +10,7 @@ import { promisify } from 'util'
 import { listSubsystems, readHistory, buildIndex } from './metrics.js'
 import { getReworkStatus, clearReworkCache } from './rework.js'
 import { createGithubState, repoOfSource, gateCooldownUntil } from './github_state.js'
-import { startCheckWatch, createCheckProbe } from '../../webhook-server/gh_watch.js'
+import { startCheckWatch, createCheckProbe, createTreeProbe, startChangeWatch, createGithubProbe } from '../../webhook-server/gh_watch.js'
 import { createStackRetarget } from './stack_retarget.js'
 import { prsForOrderCheck, listPipelinePrs, denyMr, fetchTicketContext, sentBackKeys, clearSentBackLabel } from './mr_review.js'
 import { approveMrStream } from './approve_stream.js'
@@ -30,7 +30,9 @@ import { createMergeOps } from './merge_ops.js'
 import { readPrefs } from './prefs.js'
 import { guardApprove } from './approve_guard.js'
 import { recordRefusal } from '../../webhook-server/refusal_log.js'
-import { submitDecisions, sendBackForOptions } from './decisions_submit.js'
+import { sendBackForOptions } from './decisions_submit.js'
+import { createLocalFirst, coalesce, createIssueReader, createRepoHeadCheck } from './local_first.js'
+import { createMrActions } from './mr_actions.js'
 
 const mergeOps = createMergeOps()
 // marvin#568: every change to a merge op is pushed to the renderer (the card subscribes; it reads once on mount).
@@ -54,16 +56,26 @@ import { appendError } from './error_log.js'
 import { listOpenPrsAcrossRepos, prListArgs, normalizeSeen, canMergeFromDashboard, repoFromPrUrl, MARVIN_REPO, pendingCheckHeads } from './mr_repos.js'
 import { createIndexer, buildDocsIndex, loadIndex } from './docs_search.js'
 import { createDocsService, MASTER_ID } from './docs_service.js'
+import { createCloneFreshener } from './clone_freshen.js'
+import { createPdfText } from './pdf_text.js'
+import { createSavedDocs } from './docs_saved.js'
 import { readMergeableRepos, readUiPaths, listProfiles, setDispatch, setMergeFromDashboard } from './profiles.js'
 import { searchFiles, isRevealable, isLinkable, linkAction } from './files_search.js'
 import { safeExternalUrl } from '../../src/lib/pdf_nav.js'
-import { listOutboxTree, readOutboxFile, readOutboxImage, outboxRevealPath, outboxOpenPath } from './outbox.js'
-import { readCatalog, readMasterDoc, CATALOG_DIR, MASTER_DOC_PATH } from './catalog.js'
+import { openLink, windowOpenHandler } from './external_links.js'
+import { readOutboxFile, readOutboxImage, outboxRevealPath, outboxOpenPath, outboxRoot, listOutboxDir, summarizeOutbox, outboxPreview } from './outbox.js'
+import { createDeliverables } from './deliverables.js'
+import { createThumbs } from './thumbs.js'
+import { docsTextFor, maxNumbers, docsClickHandlers } from './docs_handlers.js'
+import { readCatalog, readMasterDoc, readOverrides, CATALOG_DIR, MASTER_DOC_PATH } from './catalog.js'
 import { STAGES_DIR } from '../../webhook-server/ticket_stages.js'
 import { DISPATCH_STATE_PATH } from './dispatch_status.js'
 import { createHash } from 'crypto'
 import { JOBS_DIR } from './jobs.js'
 import { openMarvinSession } from './marvin_session.js'
+import * as instance from './instance.js'
+import { readSupportState, badgeCount, runSupport, ensureSupportDir, SUPPORT_DIR, supportNotices } from './support.js'
+import { supportWatcher, startAppSupportWatch } from '../../webhook-server/support_sync.js'
 import { createProposals } from './proposals.js'
 const proposalsStore = createProposals()
 import { openDevSite } from './dev_site_chrome.js'
@@ -77,7 +89,8 @@ import { isEvidenceCapture, installCaptureGuard } from './capture_mode.js'
 import { adoptLoginShellPath, adoptSharedGhToken, useGhGate } from './path.js'
 import { postTicketInput } from './ticket_input.js'
 import { createImageLoader, mediaFileFor } from './pr_images.js'
-import { resolveServiceDefaults, resolveDeviceId } from './device_identity.js'
+import { resolveServiceDefaults, resolveDeviceId, peerHosts } from './device_identity.js'
+import { createHelpersReader } from './chat_helpers.js'
 
 // The pipeline's screenshot copy runs unattended beside the real dashboard: log, never show a modal (#384).
 if (isEvidenceCapture(process.env)) installCaptureGuard(process)
@@ -240,6 +253,8 @@ function createWindow() {
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
   })
+  // Links that would open a new window go to Chrome, where Gil is signed in (external_links.js).
+  mainWindow.webContents.setWindowOpenHandler(windowOpenHandler((url) => openLink(url, { openExternal: shell.openExternal })))
 
   const devUrl = process.env['ELECTRON_RENDERER_URL']
   if (devUrl) {
@@ -273,6 +288,14 @@ function registerDispatchHandlers() {
 function registerSessionHandlers() {
   // The MARVIN button (marvin#228): a ready MARVIN session in WezTerm on this Mac.
   ipcMain.handle('marvin:openSession', (_event, request) => openMarvinSession(request))
+  // Support link (ADR 0073). Every action is checked against this install's own support repos in support.js.
+  ipcMain.handle('support:config', () => instance.support())
+  ipcMain.handle('support:state', () => {
+    const { role } = instance.support()
+    const state = readSupportState()
+    return { role, ...state, badge: badgeCount(role, state) }
+  })
+  ipcMain.handle('support:act', (_event, cmd, request) => runSupport(cmd, request, { repos: instance.support().repos }))
   // MR Review → Proposals (#102, ADR 0068): read and act through lib/proposals.py only.
   ipcMain.handle('proposals:list', () => proposalsStore.list())
   ipcMain.handle('proposals:act', (_event, id, action, args) => proposalsStore.act(id, action, args))
@@ -387,6 +410,10 @@ function registerHealthHandlers() {
 
 function registerActivityHandlers() {
   ipcMain.handle('activity:list', () => listTicketActivity())
+  // Chat helpers, this Mac's and the other's (#612). This Mac's arrive by the 'agents' trigger (same jobs folder).
+  let peers = null // the registry changes rarely and the app is relaunched on every rebuild
+  const readHelpers = createHelpersReader({ peers: () => (peers ||= peerHosts()) })
+  ipcMain.handle('activity:helpers', () => readHelpers())
   ipcMain.handle('activity:timeline', (_event, number, repo) => getTicketTimeline(number, undefined, repo || null))
 
   // Project boards: only repos in the registry are fetchable, so the renderer
@@ -432,11 +459,53 @@ const FIND_FILE_SCRIPT = join(homedir(), '.claude', 'organize', 'find_file.py') 
 function registerDocsHandlers() {
   // The Docs tab is driven by the project catalog (lib/project_catalog.py): every project gets a
   // card, docs come from a local clone when there is one (so uncommitted edits show), else GitHub.
+  // #565: GitHub-only projects read a saved copy on every click; opening one sends a single conditional request.
+  // The first copy is seeded from the search index's text (read once, only for a repo with no saved file yet).
+  let seedIndex = null
+  const savedDocs = createSavedDocs({
+    probe: createTreeProbe(),
+    exec: execFileAsync,
+    skip: () => Date.now() < gateCooldownUntil(),
+    seed: (repo) => {
+      const rec = (readCatalog({ deviceId: deviceId() })?.projects || []).find((p) => p.repo === repo)
+      if (!rec) return null
+      seedIndex = seedIndex || loadIndex()
+      return { at: seedIndex.generated_at, docs: seedIndex.docs.filter((d) => d.repo === rec.id) }
+    }
+  })
+  // #570: outbox items matched to projects from text (deliverables.js). The match map is saved, so the tab draws it at
+  // once; the outbox trigger re-matches only what changed. Its context reads only what is local or already in memory:
+  // the catalog, overrides, each project's docs (local clone or saved copy) and the board numbers github_state holds.
+  let docsTextCache = null
+  // #611: text inside PDF deliverables, read once per PDF by pdf.js in the background and cached by content hash
+  // (pdf_text.js); when new text lands, the search re-reads the deliverables' text once.
+  const pdfText = createPdfText({
+    autoDrain: true,
+    onReady: () => {
+      deliverables.invalidateSearch()
+      docsIndexer.localChanged()
+    }
+  })
+  const deliverables = createDeliverables({
+    pdfText,
+    getContext: () => {
+      const projects = readCatalog({ deviceId: deviceId() })?.projects || []
+      docsTextCache = docsTextCache || docsTextFor(projects, { saved: savedDocs })
+      return { projects, overrides: readOverrides(), maxNumber: maxNumbers(githubState.peek('board')), docsText: docsTextCache }
+    }
+  })
+  // #611: clean local clones are fast-forwarded in the background so the search sees what is on GitHub; a clone with
+  // work in it is left alone and searched from its saved GitHub copy (clone_freshen.js, docs_service.js localDocs).
+  const freshener = createCloneFreshener({ exec: execFileAsync })
   const docsService = createDocsService({
+    midWork: (dir) => freshener.midWork(dir),
     getCatalog: () => readCatalog({ deviceId: deviceId() }),
     exec: execFileAsync,
     readMaster: () => readMasterDoc(),
-    fallbackRepos: () => readCachedRepos().repos
+    fallbackRepos: () => readCachedRepos().repos,
+    saved: savedDocs,
+    deliverables,
+    onStatesChanged: () => triggerHub.emit('docs-states', 'git-status')
   })
 
   // Relationships between tickets, PRs and docs, derived from their text (relations.js). Docs come from
@@ -450,13 +519,15 @@ function registerDocsHandlers() {
       const local = await docsService.localDocs()
       const remote = (loadIndex().docs || []).filter((d) => !local.repos.has(d.repo))
       return [...local.docs, ...remote]
-        .filter((d) => d.path !== 'PROJECT.md' && d.repo !== MASTER_ID)
+        .filter((d) => d.path !== 'PROJECT.md' && d.repo !== MASTER_ID && d.kind !== 'deliverable') // outbox items are search-only (#570)
         .map((d) => ({ project: d.repo, path: d.path, label: d.label, content: d.content }))
     },
     getProjects: () => (readCatalog({ deviceId: deviceId() })?.projects || []).filter((p) => p.repo).map((p) => ({ id: p.id, repo: p.repo })),
     getStages: defaultStagesFor,
     getLive: defaultLiveNumbers,
-    recheck: (repos = []) => (repos.length ? repos.forEach((r) => githubChanged(`github:${r}`)) : githubChanged(null))
+    // Only the repos parity named. With none named there is nothing specific to re-read, and marking all 13 changed
+    // re-listed every repo (the fan-out local-first actions removed, 2026-10-21).
+    recheck: (repos = []) => repos.forEach((r) => githubChanged(`github:${r}`))
   })
   triggerHub.onTrigger((t) => {
     if (t.topic === 'activity' || t.topic === 'docs') {
@@ -507,22 +578,84 @@ function registerDocsHandlers() {
   watchSources()
   if (!readCatalog({ deviceId: deviceId() })) refreshCatalog().then(watchSources) // first run: build it now
 
-  ipcMain.handle('docs:repos', () => docsService.repos())
+  // The outbox trigger (#570): every changed path in a burst is collected, then only those top-level items re-match.
+  const outboxChanged = new Set()
+  triggerHub.watchFiles('outbox', [{ dir: outboxRoot(), recursive: true, match: (n) => (outboxChanged.add(n), true) }])
+  triggerHub.onTrigger((t) => {
+    if (t.topic === 'docs') docsTextCache = null // a doc changed: the docs-phrase tier re-reads, the map rebuilds in the background
+    // GitHub-side board changes can add ticket numbers (the number tier); a refresh with nothing new is a few stats.
+    const boards = t.topic === 'activity' && refetchesGithub(t)
+    if (t.topic !== 'outbox' && t.topic !== 'docs' && !boards) return
+    const names = t.topic === 'outbox' ? [...outboxChanged] : null
+    outboxChanged.clear()
+    setImmediate(() => {
+      try {
+        deliverables.refresh(names)
+      } catch (err) {
+        console.error('[docs] could not re-match the outbox:', err)
+      }
+    })
+  })
+  // Saved state first: the tab draws the saved map; this one background pass catches what changed while the app was closed.
+  setImmediate(() => {
+    try {
+      deliverables.refresh()
+      triggerHub.emit('outbox', 'startup')
+    } catch (err) {
+      console.error('[docs] could not match the outbox:', err)
+    }
+  })
+
   // Full-text search over every card, master and browsable doc; the GitHub part of the index
   // rebuilds in the background when stale, local docs are read live.
+  // The automatic build (empty or stale index) reads the saved copies only, so typing a search never reaches GitHub;
+  // the explicit Refresh (docs:refresh) is the online build: one conditional request per GitHub-only repo (#565).
+  const buildIndex = (online) => buildDocsIndex(execFileAsync, docsService.githubIndexRepos(), undefined, { saved: savedDocs, offline: !online })
   const docsIndexer = createIndexer({
-    build: () => buildDocsIndex(execFileAsync, docsService.githubIndexRepos()),
+    build: () => buildIndex(false),
     getLocal: () => docsService.localDocs()
   })
+  // Every Docs click, from one table (docs_handlers.js; test/docs_clicks_network.test.js counts their network calls).
+  // Card covers are downscaled once and cached (thumbs.js); Electron's own image code does the resize, nothing external.
+  const thumbs = createThumbs({
+    resize: (buf, width) => {
+      const img = nativeImage.createFromBuffer(buf)
+      if (img.isEmpty()) return null
+      return (img.getSize().width > width ? img.resize({ width, quality: 'good' }) : img).toJPEG(80)
+    }
+  })
+  const outboxReads = { list: listOutboxDir, summary: summarizeOutbox, preview: outboxPreview, content: readOutboxFile, image: readOutboxImage, thumb: thumbs.thumb }
+  for (const [channel, fn] of Object.entries(docsClickHandlers({ docsService, docsIndexer, outbox: outboxReads }))) {
+    ipcMain.handle(channel, (_event, ...args) => fn(...args))
+  }
   // A docs change refreshes the search's in-memory copy of local docs in the background (docs_search.js).
-  triggerHub.onTrigger((t) => { if (t.topic === 'docs') docsIndexer.localChanged() })
+  triggerHub.onTrigger((t) => { if (t.topic === 'docs' || t.topic === 'outbox') docsIndexer.localChanged() })
+  // #611: freshen clean clones when the Docs tab opens (docs:freshen) and on the docs change watch. No polling loop:
+  // the freshener itself runs each project at most once per 30 min. A clone left alone with work in it gets one
+  // conditional request for its saved GitHub copy (#565), which its search then reads.
+  async function freshenClones() {
+    try {
+      const { updated, midWork } = await freshener.freshen(docsService.freshenTargets())
+      const projects = readCatalog({ deviceId: deviceId() })?.projects || []
+      for (const id of midWork) {
+        const rec = projects.find((p) => p.id === id)
+        if (rec?.repo) await savedDocs.revalidate(rec.repo).catch(() => null)
+      }
+      if (updated.length || midWork.length) docsIndexer.localChanged()
+      return { updated, midWork }
+    } catch (err) {
+      console.error('[docs] could not freshen clones:', err)
+      return { updated: [], midWork: [] }
+    }
+  }
+  triggerHub.onTrigger((t) => { if (t.topic === 'docs') freshenClones() })
+  ipcMain.handle('docs:freshen', () => freshenClones())
   ipcMain.handle('docs:refresh', async () => {
     await refreshCatalog()
-    docsIndexer.reindex()
+    docsIndexer.reindex(() => buildIndex(true))
     watchSources()
     return docsService.repos()
   })
-  ipcMain.handle('docs:search', (_event, query, opts) => docsIndexer.search(String(query || ''), opts))
   // "Files on this Mac": the same Spotlight search as the `findit` command, attributed to projects.
   ipcMain.handle('docs:files', (_event, query) =>
     searchFiles(String(query || ''), {
@@ -542,14 +675,16 @@ function registerDocsHandlers() {
     const err = await shell.openPath(filePath)
     if (err) throw new Error(err)
   })
-  ipcMain.handle('docs:tree', (_event, id) => docsService.tree(id))
-  ipcMain.handle('docs:content', (_event, id, filePath) => docsService.content(id, filePath))
+  // Once per open of a GitHub-only project (#565): one conditional request; a 304 is free, a change comes back in place.
+  ipcMain.handle('docs:revalidate', async (_event, id) => {
+    const r = await docsService.revalidate(String(id))
+    if (r.status === 'changed') docsIndexer.reindex() // the search sees the new text (saved copies, no network)
+    return r
+  })
 
-  // Files tab (outbox): read-only local file viewer
-  ipcMain.handle('outbox:tree', () => listOutboxTree())
-  ipcMain.handle('outbox:content', (_event, relPath) => readOutboxFile(relPath))
+
+  // Deliverables (the outbox, shown inside Docs since #570): read-only, local, one folder at a time.
   // An image a markdown file embeds, resolved against that file's folder; read-only, never outside the outbox (#402).
-  ipcMain.handle('outbox:image', (_event, fromRel, src) => readOutboxImage(fromRel, src))
   ipcMain.handle('outbox:reveal', (_event, relPath) => shell.showItemInFolder(outboxRevealPath(relPath)))
   // A link clicked inside a PDF: only http/https/mailto go to the default browser or mail app (pdf_nav.js
   // safeExternalUrl, checked again here so a compromised page can't widen it). Never file:, javascript: or custom schemes.
@@ -718,9 +853,57 @@ function registerMrReviewHandlers() {
   // MARVIN_MR_FIXTURE=<file.json> (gh pr list JSON) shows a fixed PR list instead of GitHub's: used to screenshot card
   // states no open PR happens to be in (e.g. "Too vague: needs options") for the owner's image rule.
   const fixturePrs = process.env.MARVIN_MR_FIXTURE ? async () => JSON.parse(readFileSync(process.env.MARVIN_MR_FIXTURE, 'utf8')) : null
+  // Overlapping callers share one build of the list (2026-10-21: three ran at once after one Decisions submit, the
+  // longest 43 s). A caller after a local write or a change ping gets a new build, from memory, never an older answer.
+  const remembered = (kind) => githubState.peek(kind)
+  const keysFromBoards = (pick) => async (repos) => {
+    const want = new Set(repos)
+    const keys = new Set()
+    for (const { repo, value } of remembered('board')) if (want.has(repo)) for (const k of pick(repo, value?.issues || [])) keys.add(k)
+    return keys
+  }
+  async function pipelineCardFromMemory(url) {
+    const prs = remembered('prs').flatMap(({ repo, value }) => (Array.isArray(value) ? value.map((p) => ({ ...p, repo, listedAt: githubState.fetchedAt('prs', repo) })) : []))
+    if (!prs.some((p) => p.url === url)) return null
+    const rework = remembered('rework')[0]?.value
+    const cards = await listPipelinePrs(async () => prs, {
+      canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()),
+      sentBackTickets: keysFromBoards(sentBackKeys),
+      closedTickets: keysFromBoards((repo, issues) => issues.filter((i) => i.state === 'CLOSED').map((i) => `${repo}#${i.number}`)),
+      reworkStatus: rework ? async () => rework : null,
+      rebaseStatus: getRebaseStatus,
+      autoMergeShadow: getAutoMergeShadow,
+      uiPathsFor: (repo) => readUiPaths(repo)
+    })
+    return cards.find((p) => p.url === url) || null
+  }
+  const mrList = coalesce(
+    () => listPipelinePrs(fixturePrs || listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets, autoMergeShadow: getAutoMergeShadow, uiPathsFor: (repo) => readUiPaths(repo) }),
+    () => `${githubState.localSeq()}:${githubState._genOf(null)}`
+  )
   ipcMain.handle('mr:list', () => {
     if (!fixturePrs) listOpenPrs().then((prs) => stackRetarget.check(prs)).catch(() => {})
-    return listPipelinePrs(fixturePrs || listOpenPrs, { canMerge: (repo) => canMergeFromDashboard(repo, readMergeableRepos()), sentBackTickets, reworkStatus: reworkFromMemory, rebaseStatus: getRebaseStatus, closedTickets, autoMergeShadow: getAutoMergeShadow, uiPathsFor: (repo) => readUiPaths(repo) })
+    return mrList()
+  })
+
+  // Local-first actions (CONTEXT.md "Dashboard actions render their true result locally at once, and confirm in the
+  // background"): each action applies GitHub's answer to its own write to memory, asks GitHub about that one PR or
+  // ticket once in the background (a conditional request), and says so if GitHub disagrees. See mr_actions.js.
+  const notify = (channel, payload) => {
+    mainWindow?.webContents.send(channel, payload)
+    if (channel === 'mr:corrected') mainWindow?.webContents.send('mr:refresh') // redraw from memory, now GitHub's version
+  }
+  const localFirst = createLocalFirst({ state: githubState, readIssue: createIssueReader(), onCorrected: (c) => notify('mr:corrected', c) })
+  const mrActions = createMrActions({
+    state: githubState,
+    exec: execFileAsync,
+    localFirst,
+    listOpenPrs: () => listOpenPrs(),
+    // The PR as it now stands, built from memory only: the answer is what GitHub just returned, and anything else a
+    // repo needs re-reading for is the background's job, never the click's (a re-read here cost 1.3 s in the sandbox).
+    card: (url) => pipelineCardFromMemory(url),
+    headCheck: createRepoHeadCheck(),
+    notify
   })
 
   // Backs the MR Review tab's status dot -- red/blue/green computed from
@@ -765,9 +948,11 @@ function registerMrReviewHandlers() {
   ipcMain.handle('mr:approve', async (_event, { number, url, head = null }) => {
     // Checked here, not just greyed out in the UI, so a stale screen can't skip it. Sent-back PRs are marked the same way
     // the list marks them, or a newer PR waits forever on one that can't merge (marvin #209). A refusal is recorded (#215).
+    // P5: the order check runs on the remembered list after one conditional check of this repo's open PRs (heads,
+    // bases), not a fresh re-list of all 13 repos (10.4 s for PR #569). Stale re-reads that one repo.
     await guardApprove(url, {
       assertMergeable,
-      loadPrs: async () => prsForOrderCheck(await listOpenPrs({ fresh: true }), sentBackTickets),
+      loadPrs: async () => prsForOrderCheck(await mrActions.approvePrs(url), sentBackTickets),
       record: recordRefusal
     })
     if (!mergeOps.start(url, Date.now(), head)) return { merged: false, cancelled: true, alreadyMerging: true }
@@ -797,7 +982,9 @@ function registerMrReviewHandlers() {
         return { ...result, cancelled: false }
       }
       pushMergeOp(url, mergeOps.finish(url, result))
-      githubChanged(null)  // the list must not keep showing a PR that just merged
+      // The list must not keep showing a PR that just merged: it leaves at once, and GitHub confirms in the background.
+      if (result?.merged) mrActions.merged(url)
+      else mrActions.reengaged(url)
       clearReworkCache()
       return { ...result, cancelled: false }
     } catch (err) {
@@ -812,11 +999,9 @@ function registerMrReviewHandlers() {
 
   // The owner's answers to a Decisions section, on a PR or a ticket (2026-10-09): written into the description, then
   // recorded as a comment. See decisions_submit.js.
-  ipcMain.handle('decisions:submit', async (_event, { repo, number, answers }) => {
-    const result = await submitDecisions({ repo, number, answers }, { exec: execFileAsync })
-    githubChanged(null)
-    return result
-  })
+  // Returns as soon as GitHub accepted the edit, with the PR card as it now stands (Approve unlocks from it); the record
+  // comment follows as 'decisions:recorded'.
+  ipcMain.handle('decisions:submit', (_event, { repo, number, answers }) => mrActions.submitDecisions({ repo, number, answers }))
 
   // "Too vague: needs options": ask the author to restate the questions as a Decisions section.
   ipcMain.handle('mr:sendBackForOptions', async (_event, { url, ticketNumber, reasons }) => {
@@ -825,7 +1010,7 @@ function registerMrReviewHandlers() {
       exec: execFileAsync,
       deny: (payload) => denyMr(payload, MR_DENY_WEBHOOK_URL, postJson)
     })
-    githubChanged(null)
+    if (result.sentBack) mrActions.denied({ url, ticketNumber, action: 'feedback' })
     return result
   })
 
@@ -833,7 +1018,7 @@ function registerMrReviewHandlers() {
   ipcMain.handle('mr:clearSentBack', async (_event, url) => {
     assertMergeable(url)
     const result = await clearSentBackLabel(url, execFileAsync)
-    if (result.cleared) githubChanged(null)
+    if (result.cleared) mrActions.cleared({ url, ticket: result.ticket })
     return result
   })
 
@@ -857,7 +1042,7 @@ function registerMrReviewHandlers() {
       return { done: false, cancelled: true }
     }
     await denyMr({ prUrl: url, ticketNumber, action, reasons, comment }, MR_DENY_WEBHOOK_URL, postJson)
-    githubChanged(null)
+    mrActions.denied({ url, ticketNumber, action })
     return { done: true, cancelled: false }
   })
 }
@@ -892,6 +1077,32 @@ app.whenReady().then(() => {
     { dir: dirname(REGISTRY_PATH), match: (n) => n === 'registry.json' }
   ])
   // Agents report through run logs; a step landing in that folder refreshes the Health tab's agent list.
+  // The support cache (ADR 0073): written by support.py after every sync, so the tab and IT button refresh the moment it does.
+  ensureSupportDir()
+  triggerHub.watchFiles('support', [{ dir: SUPPORT_DIR, match: (n) => n === 'state.json' }])
+  // Notices (ADR 0073 amendment): only a change seen while the app runs; the first read is the baseline.
+  let supportSeen = readSupportState()
+  triggerHub.onTrigger((t) => {
+    if (t.topic !== 'support') return
+    const next = readSupportState()
+    const notices = supportNotices(supportSeen, next, instance.support().role)
+    supportSeen = next
+    if (!Notification.isSupported()) return
+    for (const n of notices) {
+      const note = new Notification({ title: n.title, body: n.body })
+      note.on('click', () => {
+        mainWindow?.show()
+        mainWindow?.webContents.send('support:focus', { repo: n.repo, number: n.number })
+      })
+      note.show()
+    }
+  })
+  if (supportWatcher(instance.support().role) === 'app') {
+    execFileAsync('gh', ['auth', 'token'])
+      .then(({ stdout }) => String(stdout).trim())
+      .catch(() => '')
+      .then((token) => startAppSupportWatch({ repos: () => instance.support().repos, token, startChangeWatch, createGithubProbe }))
+  }
   triggerHub.watchFiles('agents', [{ dir: JOBS_DIR, match: (n) => n.endsWith('.json') && !n.startsWith('.') }])
   triggerHub.onTrigger((t) => mainWindow?.webContents.send('trigger', t))
 

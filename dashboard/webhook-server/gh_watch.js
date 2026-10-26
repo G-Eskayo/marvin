@@ -6,45 +6,77 @@ import { checkRuns } from './ci_status.js'
 // One conditional request per repo against its most-recently-updated issue
 // (PRs are issues too, and labels/comments/state changes all bump it). An
 // unchanged answer is a 304, which GitHub does not count against the rate
-// limit, so polling every ~20s is effectively free. Chosen over real GitHub
+// limit, so polling every ~20s is effectively free. A 200 is a change only if
+// the newest issue itself differs (marvin#603, see newestIdentity). Chosen over real GitHub
 // webhooks (need a public URL; the only static ngrok domain is Marlin's) and
 // over the events feed (lags by minutes). See CONTEXT.md "Triggers over polling".
 export function issuesEndpoint(repo) {
   return `https://api.github.com/repos/${repo}/issues?state=all&sort=updated&direction=desc&per_page=1`
 }
 
+// What "changed" means: the newest issue's identity (number + updated_at), read from a 200's body. The ETag only buys
+// free 304s; it is never the verdict, because GitHub can hand back a new ETag for the same content (marvin#603: on
+// 2026-10-22 it did so on every 200 for four hours, and every repo "changed" on every tick). An empty list is its own
+// identity; a body that is not an issue list has none, and that answer is ignored.
+export function newestIdentity(body) {
+  if (!Array.isArray(body)) return undefined
+  if (body.length === 0) return 'empty'
+  const { number, updated_at: updatedAt } = body[0] || {}
+  return number === undefined || !updatedAt ? undefined : `${number}@${updatedAt}`
+}
+
 export function createChangeDetector({ probe, onChange }) {
-  const etags = new Map()
+  const seen = new Map() // repo -> { etag, identity }
 
   async function tick(repos) {
-    for (const known of [...etags.keys()]) {
-      if (!repos.includes(known)) etags.delete(known)
+    for (const known of [...seen.keys()]) {
+      if (!repos.includes(known)) seen.delete(known)
     }
     for (const repo of repos) {
+      const previous = seen.get(repo)
       let res
       try {
-        res = await probe(repo, etags.get(repo))
+        res = await probe(repo, previous?.etag)
       } catch {
-        continue // offline / rate-limited: keep the last etag, try next tick
+        continue // offline / rate-limited: keep the last state, try next tick
       }
-      if (res.status !== 200 || !res.etag) continue // 304 = unchanged; anything else = ignore
-      const previous = etags.get(repo)
-      etags.set(repo, res.etag)
-      if (previous !== undefined && previous !== res.etag) onChange(repo)
+      if (res.status !== 200) continue // 304 = unchanged; anything else = ignore
+      const identity = newestIdentity(res.body)
+      if (identity === undefined) continue // not an issue list: keep the last state
+      seen.set(repo, { etag: res.etag ?? previous?.etag, identity })
+      if (previous !== undefined && previous.identity !== identity) onChange(repo)
     }
   }
 
   return { tick }
 }
 
-// Real probe: authenticated conditional GET using the shared pipeline token (gh_auth.js).
+// Real probe: authenticated conditional GET using the shared pipeline token (gh_auth.js). A 200 carries its body.
 export function createGithubProbe(env = process.env, doFetch = fetch) {
   return async (repo, etag) => {
     const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'marvin-dashboard-watch' }
     if (env.GH_TOKEN) headers.Authorization = `Bearer ${env.GH_TOKEN}`
     if (etag) headers['If-None-Match'] = etag
     const res = await doFetch(issuesEndpoint(repo), { headers })
-    return { status: res.status, etag: res.headers.get('etag') || undefined }
+    const out = { status: res.status, etag: res.headers.get('etag') || undefined }
+    if (res.status === 200) out.body = await res.json() // one issue: the detector reads its number + updated_at
+    return out
+  }
+}
+
+// The Docs tab's saved copy of a GitHub-only project (#565, electron/main/docs_saved.js): the same conditional GET, on the
+// repo's recursive git tree. Sent once when the project is opened, never on a timer. A 304 is free; a 200's body is
+// the new tree, with each file's blob sha, so the caller downloads only the docs that changed.
+export const treeEndpoint = (repo) => `https://api.github.com/repos/${repo}/git/trees/HEAD?recursive=1`
+export function createTreeProbe(env = process.env, doFetch = fetch) {
+  return async (repo, etag) => {
+    const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'marvin-dashboard-watch' }
+    if (env.GH_TOKEN) headers.Authorization = `Bearer ${env.GH_TOKEN}`
+    if (etag) headers['If-None-Match'] = etag
+    const res = await doFetch(treeEndpoint(repo), { headers })
+    const out = { status: res.status, etag: res.headers.get('etag') || undefined }
+    if (res.status === 200) out.body = await res.json()
+    return out
   }
 }
 

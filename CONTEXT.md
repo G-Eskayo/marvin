@@ -390,7 +390,12 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   always waits for Gil (supply-chain trust); more than 1,500 changed lines (tests included) waits too (the ticket was
   probably too big). Design complete: ADR 0064.
 
-## Dashboard app — Files tab (in design, 2026-08-27)
+## Dashboard app — Files tab (in design, 2026-08-27; folded into Docs 2026-10-21, #403 / #570)
+
+- **Folded into Docs** (marvin#570 "Docs: fold the Files tab into Docs", decided in #403, design
+  `docs/plans/docs-files-merge.md` §0): there is no Files tab any more. Each outbox item shows in the Docs tab under
+  the project it is matched to, as a **Deliverable**; what no project claims is **Unsorted**. The history below is
+  kept for the reasoning; `outbox.js` and its guards are still the only way into `~/.claude/outbox`.
 
 - **Files tab**: a read-only viewer tab in the MARVIN dashboard (`~/.agents/dashboard`, alongside
   the already-shipped Metrics and MR Review tabs) for browsing files MARVIN produces as
@@ -566,7 +571,9 @@ unbounded: any chat, either machine, raw `gh`, the GitHub UI). Polling stays onl
 - **GitHub state** (issues, labels, PRs, comments): the webhook-server's change-detector
   (`webhook-server/gh_watch.js`) sends one conditional request per registered board repo every ~20s
   against its most-recently-updated issue (304 = free against the rate limit) and, on change, pings the
-  app's `/refresh` port with topics. Real GitHub webhooks were rejected: they need a public URL and the
+  app's `/refresh` port with topics. "Change" is the newest issue's number + `updated_at` from a 200's body,
+  never the ETag alone (marvin#603: GitHub sent a new ETag on every 200 for four hours on 2026-10-22 and every
+  repo "changed" every tick, ~150 gh calls a minute). Real GitHub webhooks were rejected: they need a public URL and the
   one static ngrok domain belongs to Marlin. The events feed was rejected: it lags by minutes.
 - **GitHub checks** (marvin#555, 2026-10-21; replaces #554's 90 s re-read of the whole PR list): checks
   starting or finishing are not issue updates, so the change-detector never sees them. The **check watch**
@@ -586,12 +593,73 @@ unbounded: any chat, either machine, raw `gh`, the GitHub UI). Polling stays onl
 - **Coverage guard**: the 60s backstop poll compares what it fetched with what it last showed; a change
   no trigger announced is appended to `~/.claude/logs/trigger-misses.jsonl` and surfaces as the
   `triggers:missed` Health check, so a gap identifies itself instead of waiting to be noticed.
+- **Actions confirm, they do not poll**: what an action wrote is shown at once and confirmed once (see "Dashboard actions
+  render their true result locally at once, and confirm in the background" below).
 - **Enforced, not remembered (marvin#556)**: `dashboard/test/polling_guard.test.js` fails on any new `setInterval`,
   recurring `setTimeout` (self-rescheduling, in a loop, a sleep awaited in a loop) or TTL name in the dashboard's source
   unless it is a UI clock (callback only calls useState setters) or allowlisted with a count and a one-line reason.
   Delegated design/fix prompts open with `lib/north_stars.py preamble`: read this file's decisions, name the pattern reused.
 - **Not built, deliberately**: a rebuild-on-pull trigger (the sync cycle already rebuilds right after it
-  pulls; only the cycle gap + 15-min settle remain) and a Docs-tab trigger (Docs still refreshes by hand).
+  pulls; only the cycle gap + 15-min settle remain). The Docs tab has its triggers since 2026-10-21: local clones'
+  docs and refs (`docs`), the outbox (`outbox`, #570), and one conditional request when a GitHub-only project is
+  opened (#565).
+
+- **Owner decisions waiting on MARVIN** (marvin#607, 2026-10-22): "nothing happened for N hours" needs a clock, and
+  the hourly ticket scan already is one, so there is no new loop. One GraphQL search per scan reads every registered
+  repo's open PRs (last commit, last 30 comments) and the follow-up tickets (2 points). An unanswered owner Decisions
+  comment becomes one `ready-for-agent` follow-up ticket after 4 h; the dashboard ranks it first from the issue list it
+  already caches. Rules in `docs/agents/decisions-format.md`.
+
+### Dashboard actions render their true result locally at once, and confirm in the background (decided 2026-10-21)
+
+Gil, 2026-10-21: "Clicks render the true result instantly and confirm in the background", and "I want that to be
+accurate, not just a show." Measured before (pipeline review, PR #572): answering Decisions on PR #569 took 46.7 s to
+unlock Approve, because the dashboard marked all 13 repos changed and re-listed them before showing what it had just
+written. Approve spent 10.4 s re-listing every repo for its order check, and the webhook read the PR 7 times in a row.
+
+- **Show GitHub's own answer to the write, at once.** A write's reply (the PATCH's body and ETag, the merge result, the
+  label the webhook set) is applied to the dashboard's memory of GitHub (`github_state.js` `patch`). The screen reads it
+  from there, so Approve unlocks the moment GitHub accepts the Decisions edit. Never a guess.
+- **Confirm that one PR or ticket, once, in the background**: a conditional request (the `gh_watch.js` ETag pattern; a
+  304 is free). No timer, and no retry loop. Later changes arrive the usual way (change watch).
+- **If GitHub disagrees, the view takes GitHub's version and says so** in plain words (MR Review's amber "GitHub
+  disagreed" note). No record comment claims answers GitHub did not store.
+- **Never re-list every repo after one action.** `githubChanged(null)` is not an action's follow-up. Overlapping
+  `mr:list` calls share one build. A slow read that left before a local write never overwrites it, and two clicks on
+  one PR write in order.
+- **Approve's preflight uses what the dashboard has**: the remembered list plus one conditional check of that repo's
+  open PRs (heads, bases). The webhook's checks share one PR read (`webhook-server/pr_snapshot.js`). The merge gate
+  still re-checks everything server-side, so a stale screen cannot merge what it should not.
+- Code: `dashboard/electron/main/local_first.js` and `mr_actions.js`. Tests try to break it: GitHub rejecting the write,
+  storing something else, changing after it, rapid clicks, a slow re-read and offline (`test/local_first.test.js`,
+  `test/mr_actions.test.js`, which also counts GitHub calls over a boot and a session of clicks).
+- New dashboard actions follow this rule, and the polling guard's header points here.
+
+## Pipeline visibility — stage strip (built 2026-10-09, ADR 0073, ticket #217)
+
+Gil's problem 2026-10-09: debugging "where is this PR stuck?" required SSH + log archaeology into
+`~/.claude/logs/ticket-stages/`. Pipeline stage events exist, the dashboard reads them, but only in
+a vertical drill-down list. No high-level "where now?" at a glance on ticket/PR cards, and patterns
+like "most PRs stall at the gate" couldn't be spotted.
+
+- **Horizontal stage strip** renders above the existing vertical history on ticket and PR cards. One
+  pill per canonical stage in order (`claimed → planning → executing → verifying → gate → merging →
+  versioning → rebuilding → done`), with a symbol and color for the *latest* status of that stage:
+  ◌ pending / ✓ passed / ✕ failed / ◐ running / ⏱ stalled / ⟳ needs-rebase / ∅ skipped.
+- **Stall detection**: a `status: "started"` event older than its per-stage threshold (10 min default,
+  35 min for gate) renders stalled. Detection never uses `isLiveNow === false` as proof (could be
+  running elsewhere); only `isLiveNow === true` positively overrides a stale timestamp.
+- **Remediation lookup**: failed stages show the error code and human-readable remediation on hover,
+  extracted tolerantly from `"CODE: message"` format — missing codes degrade to raw detail, never throw.
+- **Draft → ready**: when `readyIfDraft` marks a draft PR ready, a new `merging: passed` stage event
+  records the milestone for visibility.
+- **Pure derivation + presentational component** — `dashboard/src/lib/stage_strip.js` (pure function,
+  no React) + `StageStrip.jsx` (React component); reused by both dashboard now and future MARVIN
+  Mobile renderer. Tests: 21 unit tests for status, stall, code extraction, remediation, state
+  combinatorics.
+- **Cross-project correctness**: every `repo` param is threaded through (`window.api.activity.timeline`,
+  `recordStage`, draft→ready write) so the strip works identically for clarity-captions, portfolio,
+  mobile, or any onboarded project.
 
 ## Project catalog and the master "Where things are" doc (decided 2026-10-05)
 
@@ -647,6 +715,31 @@ nothing connected them. "Where things are" was only the tidy agent's file-filing
 - **Docs tab**: lists every catalog project, not just doc-first repos. Each gets a "Project card" page;
   projects with a `CONTEXT.md`/`README.md` show those too (local first, GitHub fallback). The master doc
   appears as its own entry. Cards and the master are searchable.
+- **Deliverables** (marvin#570, 2026-10-21): the Docs tab also shows `~/.claude/outbox`. Drill-down, one control per
+  level: Project (sidebar) → Kind (ONE chip row: Docs / Decisions / Deliverables, filtering the tree while browsing
+  and the results while searching) → Folder or file (tree, three collapsible groups) → Content (main pane). No page
+  tabs. A **Deliverable** is an outbox item matched to a project from text (`electron/main/deliverables.js`, a port
+  of the design's measurement script, tiers name / inside-name / number / content / docs phrase, each needing exactly
+  one winner); **Unsorted** holds what no project claims (with "left in mixed folders" for split folders). The match
+  map is saved (`~/.agents/var/outbox-matches.json`, MARVIN-owned), cached by (item name, mtime) and re-matched per changed item on
+  the `outbox` file trigger (a recursive watch). One search covers docs and deliverables (text of md/txt/json/csv/html
+  under 200 KB, every file by its path words). Every click is local: a test (`test/docs_clicks_network.test.js`)
+  drives every Docs click handler through counting fakes and requires zero gh, fetch and network-git calls.
+  Card covers are 360 px thumbnails made once by Electron's own image code and kept in `~/.agents/var/thumbs`
+  (pruned to the newest 2,000). pdf.js (with one shared worker) and the markdown renderer are warmed at idle after
+  boot (`docs_warm.jsx`), so the first open is not the slow one. Tree groups' open state is remembered per project.
+- **Saved copy** (marvin#565, 2026-10-21): a project with no local clone is read from its saved copy
+  (`electron/main/docs_saved.js`, one JSON per repo in `~/.agents/var/docs-github/`, MARVIN's own gitignored
+  per-machine state, never `~/.claude`), so a click never calls
+  GitHub. Opening the project sends **one conditional request** for its git tree (`If-None-Match`, the
+  `gh_watch.js` pattern): a 304 is free and ends there; a 200 downloads only the docs whose blob sha changed, and
+  the tree and open file update in place. The first copy is seeded from the docs search index, checked by git
+  blob sha. The source line shows the copy's age ("from GitHub, 2 h ago · checking…", then "· up to date").
+  The search index rebuild goes through the same copy: one conditional request per repo instead of every file.
+  The phone backend (`mobile-backend/dashboard_api.js`) serves the same copy: `/docs/tree` sends the open-time check
+  after answering, `/docs/revalidate` waits for it.
+- **MARVIN-owned state** (2026-10-21, self-reliance): per-machine state and caches live under `~/.agents/var/`
+  (`marvin_paths.js`, gitignored). Nothing new goes under `~/.claude`; an older copy there is moved over once.
 
 ### Cross-links by project, and Background work (decided 2026-10-05)
 
@@ -848,8 +941,10 @@ untouched (it is the "legacy profile"); only repos with a profile file use the p
   conflict-checks every other open PR with `git merge-tree` (no checkout, tests or pushes); results go to
   `~/.claude/logs/pr-rebase-status.json` (`GET /rebase-status`, MR Review on either machine) and a conflict onto the
   ticket's stage log. At Approve, a PR behind main is rebased and retested only when main changed a file the PR also
-  changes (`sharedFiles`); otherwise it merges directly, and main-health (which re-runs the suite on every main move and
-  refuses merges while main is red) catches the rare cross-file break. Unknown overlap = retest. MR Review's refresh is
+  changes (`sharedFiles`), **or when main changed a rule since the split** (a test or guard file, `RULE_FILE`; Gil
+  2026-10-26, after PR #572 merged directly past a test the split added and turned main red); otherwise it merges
+  directly, and main-health (which re-runs the suite on every main move and refuses merges while main is red) catches
+  the rare cross-file break. Unknown overlap = retest. MR Review's refresh is
   the safety net for a missed stack move (`stack_retarget.js`). The pipeline scan still runs after the checks.
 - **A conflict gets the cheap fix before any rebuild (2026-10-09, #314)**: the hourly scan used to send every
   conflicting PR's ticket back for a full agent rebuild. Now `conflict_repair.py` first rebases it in a scratch worktree,
@@ -882,6 +977,7 @@ untouched (it is the "legacy profile"); only repos with a profile file use the p
   refuses a project with no profile (`NO_MERGE_PROFILE`) and lets an opted-in one through to the merge step.
   Not exercised: a real approve of a real PR (it would merge it). clarity-captions is opted in
   (`merge_from_dashboard: true`) independently of `dispatch`, which is still off.
+- **Playbooks (#613, 2026-10-22; design `docs/plans/project-playbooks-2026-10-22.md`)**: one way of working per project type, written once so new work inherits it instead of rediscovering it. `config/playbooks/<type>.md` is for people and agents, `<type>.json` for code: stages, proof per stage, owner gates, the machine per stage, ship checklist, known traps and `variants`. A profile names one (`"playbook": "ios-app"`, optionally `"playbook_variant": "macos"`, which drops the device check, TestFlight and after-ship stages); `project_profile._validate` refuses an unknown playbook or variant, so a broken one drops out of dispatch and `selftest` says why. The executor's notes are the project's own notes followed by a section generated from the playbook (`executor_notes`, idempotent: a pasted copy is replaced, never doubled), so the profile's free text can't contradict it; anything the playbook doesn't fit is overridden in the profile. `selftest` also refuses dispatch on with `machines: []`. Onboarding sets the playbook from the detected stack (`profile_fragment` in `xcodegen-app` = ios-app, `swift-package` = ios-app/macos). First users: clarity-captions, marvin-mobile (now runs on mac-mini-1), nourished (dispatch off; no tests yet) and killer-sudoku (macos). The pipeline still runs a whole ticket on one machine: a stage's machine is guidance, not routing.
 
 ## Dashboard app — Portfolio tab (2026-10-02/03)
 
@@ -1072,6 +1168,21 @@ row, Other Projects footer) plus a stack of **sections** after the title card.
 ## Device columns on Activity (2026-10-05)
 
 `lib/device_status.py` gives one row per device in `marvin-network.json`: idle / busy (task) / unreachable. It reuses task_dispatch's readers, but a failed SSH read is *unreachable*, not idle (task_dispatch's own reader treats failure as idle, which is right for picking a machine and wrong for a status view). The dashboard shows them above the boards (`DeviceColumns.jsx`, cached 8s); this machine's column embeds `DispatchStatusBadge`. Closes #115 and #117.
+
+## Chat helpers in Activity (2026-10-22, #612)
+
+Helpers a person's chat starts with the Agent tool showed nowhere ("where is the investigation running?"). Now each one is a
+run log in the jobs folder (`lib/chat_helpers.py`, `~/.claude/logs/jobs/helper-<agent id>.json`, the `job_events` format plus
+a `helper` block: chat request, session, machine, transcript, links). The writers are Claude Code hooks (interactive sessions only,
+in `marvin_hooks.HOOKS`, 5 s cap there and 3 s inside the script): SubagentStart creates it, PostToolUse `Agent` names it
+(`description`), PreToolUse `SubagentHandback` holds the report, SubagentStop ends it (done with a one-line summary and the
+tickets/PRs its report names, derived from the text; failed if there is no result). Hooks are used, not transcript scans: they are
+the event. No per-tool heartbeat (it would cost a process on every tool call in every chat): a helper killed mid-run is
+"stopped unexpectedly" once its own transcript has been quiet 15 min, decided when the log is read. Newest 30 kept per Mac
+(~2 KB each); a running one is never pruned. Activity lists them under the device columns with Health's agent card, unchanged
+except a "Done" state and the ticket chip Markdown uses; they are not counted among Health's agents. The other Mac's come from
+its webhook server's `GET /helpers` (the `/sessions` channel, #331), read through a 10 s cache with a 30 s backstop, since that
+Mac has no push channel. Gil applies the hooks on each Mac with `marvin_hooks.py install`.
 
 ## Merge order and the sent-back loop (2026-10-05)
 
@@ -1350,6 +1461,8 @@ MARVIN-as-OS north star).
 - **MARVIN Surface**: Gil's planned touch display with a holographic look. It is a Surface in the existing sense
   (somewhere Gil interacts with MARVIN), with at least *show* and *touch*. A future **physical build**, after MARVIN
   gets good at CAD and engineering software; the design only has to leave room for it.
+  Research pass 2026-10-21: `docs/research/marvin-surface-display-2026-10-21.md` (Gil's concept: transparent LCD
+  in front of an edge-lit acrylic light guide on a gently curved sheet held by end legs; build ladder V1–V3).
 - **Mirror**: a show-only endpoint (a screen behind two-way glass). Also a future physical build.
 - **Content**: anything MARVIN can put on an endpoint when asked ("show or say X on Y"): the brief, one article, a
   ticket, a chart, the build status. The ability is general; the **brief is its first content**, and solid content
@@ -1430,3 +1543,31 @@ MARVIN-as-OS north star).
 - **Bot PRs** (built 2026-10-16): PRs by MARVIN-bot-gil always wait for Gil, which is stricter than the 5-PR ramp.
   A per-author streak can replace that later.
 - **Open in this design** (as of 2026-10-16): the box's GitHub identity; sudo scope; Claude Code sign-in on Linux.
+
+## One "needs a person" state, bot comments don't reset strikes, one plan per run (2026-10-22, #605)
+
+On 2026-10-22 #81, #218, #455, #459 and #563 were each planned 6-13 times (about $95 API-equivalent) with nothing landing.
+- **Needs a person:** `ready-for-human` or `needs-info` (`ticket_policy.NEEDS_PERSON_LABELS`, `needs_person()`), whatever else the ticket still carries. The dispatcher, the auto send-back (no label, no comment, no paid repair) and refeed all skip it. Refeed at its cap adds `ready-for-human` and takes `ready-for-agent` and every claim off (it used to leave `ready-for-agent`, so #218 ran every ~15 min); a sent-back flag on a ticket already with a person is dropped quietly, so "It needs a person" is posted once. A person sends it back by swapping the label to `ready-for-agent`. Cost: an O(labels) set check per ticket on lists each scan already holds; no new calls.
+- **Failure streak:** `run_ticket._trailing_streaks` skips every MARVIN comment (`ticket_policy.automated_comment`: the ticket agents' prefix, triage's disclaimer, the send-back and repair lines) as it already skipped model-unavailable ones. A person's comment, a passing run (`Verification passed`) or a hand-off to a person (a park or a loop guard, marked `<!-- marvin:handed-to-person -->` from now on; old texts still recognised) ends it. #81 failed 5 times before parking because the conflict lines reset it. Cost: O(comments x body length) over the one thread fetch the run already makes.
+- **One plan per run:** in `_default_executor`, rounds 2-3 of one `execute_ticket` reuse round 1's design doc and task list (on disk in the worktree) and the executor gets the verdict, the metrics that did not improve and the must-fix findings; only a missing or empty task list plans again. Round 1 always plans, so a design doc merged into main is never taken for this run's. Saves up to two flagship planning calls (~$1.20 each) per failed run.
+
+## Engine, instance, the default build and add-ons (ADR 0071, ADR 0072, decided 2026-10-25)
+
+### Language
+
+- **Engine**: the public MARVIN code anyone can download (`G-Eskayo/marvin`). It holds no person's or machine's
+  names, data or state.
+- **Instance**: one owner's private state for an engine: their plans, screenshots, tickets repo, accounts and
+  feature choices. One engine, many instances.
+- **Default build**: what a stranger gets from a fresh download of the engine with no help from Gil or MARVIN:
+  the engine plus a new, empty instance, reaching a working MARVIN (dashboard, the MARVIN button, their own
+  private repo, accounts connected). "Done" means a clean-install test passes in a fresh virtual machine.
+- **Add-on**: a feature that is off in the default build until the owner turns it on, and then adds its own tab
+  and setup walkthrough. Shows a "not set up" state when off. Two kinds (ADR 0072):
+  - **Free add-on**: ships inside the public engine (for example paper-dive, Seal ingest).
+  - **Paid add-on**: lives in its own private repo, never in the engine. Buying it gives the owner access, and the
+    installer pulls it into their MARVIN (for example the portfolio). Some are one-time purchases, some are
+    subscriptions.
+- **Marketplace** (later): other people publish their own add-ons for MARVIN, free or paid. Not built.
+_Avoid_: "plugin", "extension", "skill" for an add-on. A skill is one capability inside MARVIN; an add-on is what an
+owner turns on or buys, and may hold several skills.

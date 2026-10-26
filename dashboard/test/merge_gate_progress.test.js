@@ -11,7 +11,7 @@ vi.mock('../webhook-server/changelog.js', () => ({ applyVersionBump: vi.fn().moc
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
-import { mergePr, withGateTimeout, execWithGroupTimeout, _defaultRunTests, countTestFiles } from '../webhook-server/merge.js'
+import { mergePr, withGateTimeout, execWithGroupTimeout, gateExec, _defaultRunTests, countTestFiles, pytestParallelArgs } from '../webhook-server/merge.js'
 import {
   createMergeTracker, createInflightStore, takeInterruptedMerges, recordMergeDuration, estimateMergeMs,
   createCountParser, machineLoad, gateExtension, inflightPath, durationsPath, topProcess
@@ -92,7 +92,7 @@ describe('the gate reports each stage in order', () => {
     const cwd = path.join(home, 'scratch')
     mkdirSync(path.join(cwd, 'dashboard', 'test'), { recursive: true })
     for (const f of ['a.test.js', 'b.test.jsx']) writeFileSync(path.join(cwd, 'dashboard', 'test', f), '')
-    await _defaultRunTests(cwd, exec, progress)
+    await _defaultRunTests(cwd, exec, progress, async () => ['-n', 'auto'])
     expect(exec.mock.calls.map(([c, a]) => a[0] === 'install' ? 'npm install' : a.includes('pytest') ? 'pytest' : 'vitest')).toEqual(['npm install', 'pytest', 'vitest'])
     const counts = events.filter(([s, st]) => s === 'tests' && st === 'running').map((e) => e[2])
     expect(counts).toEqual(['Python', 'Python', 'Python', 'Dashboard', 'Dashboard', 'Dashboard'])
@@ -368,5 +368,134 @@ describe('nothing is written outside the temp HOME', () => {
     expect(inflightPath().startsWith(home)).toBe(true)
     expect(durationsPath().startsWith(home)).toBe(true)
     expect(existsSync(path.join(realHome, '.claude', 'logs', 'merge-inflight.json.' + process.pid + '.tmp'))).toBe(false)
+  })
+})
+
+// Pipeline review 2026-10-21, F3: the 20-minute per-command kill fired before the 40-minute gate limit, so #568's
+// load-aware extension could never apply. Inside the gate there is now one clock: the gate's.
+describe('one clock inside the gate', () => {
+  const alive = (pid) => { try { process.kill(pid, 0); return true } catch { return false } }
+  const waitFor = async (cond, ms = 3000) => { const end = Date.now() + ms; while (!cond() && Date.now() < end) await new Promise((r) => setTimeout(r, 20)); return cond() }
+
+  it('no per-command limit (Infinity) means none: it does not fire at once (setTimeout overflow) or at all', async () => {
+    const r = await execWithGroupTimeout('/bin/sh', ['-c', 'sleep 0.3; echo done'], {}, Infinity)
+    expect(r.stdout).toBe('done\n')
+    for (const t of [0, -1, NaN, null]) expect((await execWithGroupTimeout('/bin/sh', ['-c', 'echo ok'], {}, t)).stdout).toBe('ok\n')
+  })
+
+  it('aborting the signal kills the whole process group, grandchildren included, and says it was cut off', async () => {
+    const ac = new AbortController()
+    let out = ''
+    const run = execWithGroupTimeout('/bin/sh', ['-c', 'sleep 30 & echo $!; wait'], { signal: ac.signal, onOutput: (c) => { out += c } }, Infinity)
+    expect(await waitFor(() => /\d+/.test(out))).toBe(true)
+    const grandchild = Number(out.trim())
+    expect(alive(grandchild)).toBe(true)
+    ac.abort()
+    await expect(run).rejects.toThrow(/Cut off: the merge gate's time limit ran out/)
+    expect(await waitFor(() => !alive(grandchild))).toBe(true)
+  })
+
+  it('an already aborted signal never starts the command', async () => {
+    const ac = new AbortController()
+    ac.abort()
+    const marker = path.join(home, 'started')
+    await expect(execWithGroupTimeout('/usr/bin/touch', [marker], { signal: ac.signal })).rejects.toThrow(/before it started/)
+    expect(existsSync(marker)).toBe(false)
+  })
+
+  it('a signal that is never aborted leaves no listener behind once the command ends', async () => {
+    const ac = new AbortController()
+    for (let i = 0; i < 20; i++) await execWithGroupTimeout('/bin/sh', ['-c', 'true'], { signal: ac.signal }, Infinity)
+    // Node warns past 10 listeners on one signal; removing each keeps it at 0 (bounded across a whole gate run).
+    const { getEventListeners } = await import('events')
+    expect(getEventListeners(ac.signal, 'abort').length).toBe(0)
+  })
+
+  it('gateExec: while the gate runs, every command gets its signal and no limit of its own; after a cut, cleanup runs normally', async () => {
+    const inner = vi.fn(async () => ({ stdout: '', stderr: '' }))
+    const ac = new AbortController()
+    const run = gateExec(inner, ac.signal)
+    await run('git', ['fetch'], { cwd: '/x' })
+    expect(inner).toHaveBeenLastCalledWith('git', ['fetch'], { cwd: '/x', signal: ac.signal }, Infinity)
+    await run('pytest', [], {}, 5000) // an explicit limit is kept
+    expect(inner).toHaveBeenLastCalledWith('pytest', [], { signal: ac.signal }, 5000)
+    ac.abort()
+    await run('git', ['worktree', 'remove'], { cwd: '/x' })
+    expect(inner).toHaveBeenLastCalledWith('git', ['worktree', 'remove'], { cwd: '/x' }, undefined)
+  })
+
+  it('withGateTimeout calls onCut exactly once when it cuts, and never when the gate finishes (extended or not)', async () => {
+    const onCut = vi.fn()
+    await withGateTimeout(new Promise(() => {}), 10, () => ({ extendMs: 0, note: 'idle' }), noop, onCut)
+    expect(onCut).toHaveBeenCalledTimes(1)
+    const onCut2 = vi.fn()
+    await withGateTimeout(new Promise(() => {}), 10, () => ({ extendMs: 10, reason: 'busy' }), noop, onCut2)
+    expect(onCut2).toHaveBeenCalledTimes(1)
+    const onCut3 = vi.fn()
+    await withGateTimeout(new Promise((r) => setTimeout(() => r({ ok: true }), 15)), 10, () => ({ extendMs: 100, reason: 'busy' }), noop, onCut3)
+    expect(onCut3).not.toHaveBeenCalled()
+    const onCut4 = vi.fn()
+    expect(await withGateTimeout(Promise.resolve({ ok: true }), 10, noop, noop, onCut4)).toEqual({ ok: true })
+    expect(onCut4).not.toHaveBeenCalled()
+    expect((await withGateTimeout(new Promise(() => {}), 10, noop, noop, () => { throw new Error('boom') })).ok).toBe(false)
+  })
+
+  it('a cut-off gate kills its running command: the real tests do not keep running behind the next merge', async () => {
+    let pid = null
+    const retest = vi.fn(async (head, exec) => {
+      let out = ''
+      await exec('/bin/sh', ['-c', 'echo $$; sleep 30'], { onOutput: (c) => { out += c; pid = pid ?? Number(out.trim()) } })
+      return { ok: true }
+    })
+    const realExec = (cmd, args, opts, t) => (cmd === '/bin/sh' ? execWithGroupTimeout(cmd, args, opts, t) : gh()(cmd, args, opts))
+    await expect(mergePr(PR, realExec, noop, noop, gate(true), retest, vi.fn(), vi.fn(), { gateTimeoutMs: 300, loadNow: () => ({ busy: false, load: 0.5, cores: 10 }) }))
+      .rejects.toMatchObject({ payload: { code: 'GATE_INFRA' } })
+    expect(pid).toBeGreaterThan(0)
+    expect(await waitFor(() => !alive(pid))).toBe(true)
+  })
+
+  it('a test run longer than the old 20-minute per-command kill is bounded only by the gate (the kill is no longer passed)', async () => {
+    const seen = []
+    const retest = vi.fn(async (head, exec) => { await exec('pytest', ['-q'], {}); return { ok: true } })
+    const exec = vi.fn(async (cmd, args, opts, t) => { if (cmd === 'pytest') seen.push(t); return gh()(cmd, args, opts) })
+    const r = await mergePr(PR, exec, noop, noop, gate(true), retest, vi.fn(), vi.fn(), {})
+    expect(r.merged).toBe(true)
+    expect(seen).toEqual([Infinity])
+  })
+})
+
+// The Python suite in parallel (pytest-xdist): 327 s serial vs 47 s on the M4, 2026-10-21.
+describe('the gate runs the Python suite in parallel when it can', () => {
+  it('pytestParallelArgs: the plugin imports, so -n auto', async () => {
+    const run = vi.fn(async () => ({ stdout: '', stderr: '' }))
+    expect(await pytestParallelArgs('/venv/python', run, vi.fn())).toEqual(['-n', 'auto'])
+    expect(run).toHaveBeenCalledWith('/venv/python', ['-c', 'import xdist'])
+  })
+
+  it('no plugin: serial, with a log line that names the fix; a throwing logger changes nothing', async () => {
+    const log = vi.fn()
+    const missing = async () => { throw Object.assign(new Error('exit 1'), { stderr: 'No module named xdist' }) }
+    expect(await pytestParallelArgs('/venv/python', missing, log)).toEqual([])
+    expect(log.mock.calls[0][0]).toMatch(/pytest-xdist is not installed in \/venv\/python: running the Python suite serially.*pip install pytest-xdist/)
+    expect(await pytestParallelArgs('/venv/python', missing, () => { throw new Error('closed') })).toEqual([])
+  })
+
+  it('a real python that cannot import it, or no python at all, is serial, never a crash', async () => {
+    const fake = path.join(home, 'python')
+    writeFileSync(fake, '#!/bin/sh\nexit 1\n', { mode: 0o755 })
+    expect(await pytestParallelArgs(fake, undefined, vi.fn())).toEqual([])
+    expect(await pytestParallelArgs(path.join(home, 'nope'), undefined, vi.fn())).toEqual([])
+  })
+
+  it('_defaultRunTests passes the parallel args to pytest only, and says when it runs serially', async () => {
+    for (const [args, detail] of [[['-n', 'auto'], 'Python'], [[], 'Python (serial: pytest-xdist missing)']]) {
+      const calls = [], events = []
+      const exec = vi.fn(async (cmd, a) => { calls.push(a); return { stdout: '', stderr: '' } })
+      await _defaultRunTests(path.join(home, 'scratch'), exec, (s, st, e) => events.push([s, st, e?.detail]), async () => args)
+      const py = calls.find((a) => a.includes('pytest'))
+      expect(py).toEqual(['-m', 'pytest', '-q', ...args])
+      expect(calls.find((a) => a.includes('vitest'))).toEqual(['vitest', 'run'])
+      expect(events.some(([s, st, d]) => s === 'tests' && st === 'running' && d === detail)).toBe(true)
+    }
   })
 })

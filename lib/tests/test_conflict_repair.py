@@ -235,3 +235,87 @@ def test_cost_in_all_repair_outcomes(origin_and_clone):
     res2 = cr.repair("o/r", "pr2", str(clone), "main", run_tests=PASS)
     assert "cost_usd" in res2
     assert res2["cost_usd"] == 0.0
+
+
+# ── the scan's own entry point, end to end (P6, 2026-10-21) ────────────────
+# ticket_pipeline._try_conflict_repair handed attempt() a lambda that did not accept the `pr=` keyword attempt()
+# passes, so every repair crashed (523 times from 10-10 to 10-21) and fell through to a rebuild. The tests above
+# call repair() directly and never went through that wiring. These do, with real git.
+# conftest replaces _try_conflict_repair for every test; this module was imported first, so this is the real one.
+import ticket_pipeline as tp  # noqa: E402
+REAL_TRY_CONFLICT_REPAIR = tp._try_conflict_repair
+
+
+@pytest.fixture
+def scan_repair(origin_and_clone, tmp_path, monkeypatch):
+    """The scan's repair entry point pointed at a real temp origin/clone, with its state file and tests in temp."""
+    origin, clone = origin_and_clone
+    monkeypatch.setattr(cr, "where", lambda repo: (str(clone), "main"))
+    monkeypatch.setattr(cr, "STATE_PATH", tmp_path / "state" / "conflict-repair.json")
+    monkeypatch.setattr(tp, "_REPAIR_BUDGET", None)
+    seen = []
+    monkeypatch.setattr(cr, "default_tests", lambda repo, cwd, changed: (seen.append(changed) or True, ""))
+    monkeypatch.setenv("GIT_COMMITTER_NAME", "t"); monkeypatch.setenv("GIT_COMMITTER_EMAIL", "t@t")
+    return clone, seen
+
+
+def test_the_scans_repair_entry_point_repairs_a_real_conflict_and_pushes(scan_repair, tmp_path):
+    clone, seen = scan_repair
+    _branch(clone, "pipeline/pr", {"tests.py": "def test_a():\n    pass\n\ndef test_pr():\n    pass\n"})
+    _main_moves(clone, {"tests.py": "def test_a():\n    pass\n\ndef test_main():\n    pass\n"})
+    pr = {"number": 7, "title": "t", "body": "Closes #9", "headRefName": "pipeline/pr", "headRefOid": git(clone, "rev-parse", "origin/pipeline/pr")}
+    res = REAL_TRY_CONFLICT_REPAIR("o/r", pr)
+    assert res["outcome"] == "repaired", res
+    assert "repair crashed" not in res.get("reason", "")
+    git(clone, "fetch", "-q", "origin")
+    assert git(clone, "merge-base", "--is-ancestor", "origin/main", "origin/pipeline/pr") == ""
+    assert seen, "the project's tests must run before the push"
+
+
+def test_a_genuine_conflict_reaches_the_model_with_the_prs_own_context(scan_repair, monkeypatch):
+    clone, _ = scan_repair
+    (clone / "code.py").write_text("timeout = 30\n")
+    git(clone, "add", "-A"); git(clone, "commit", "-qm", "base"); git(clone, "push", "-q", "origin", "main")
+    _branch(clone, "pipeline/pr", {"code.py": "timeout = 60\n"})
+    _main_moves(clone, {"code.py": "timeout = 90\n"})
+    prompts = []
+
+    def fake_model(scratch, prompt):
+        prompts.append(prompt)
+        (Path(scratch) / "code.py").write_text("timeout = 75\n")
+        return {"cost_usd": 0.02, "text": "ok", "exit_code": 0}
+    monkeypatch.setattr(tp, "_resolve_hunks_with_model", fake_model)
+    pr = {"number": 7, "title": "Raise the timeout", "body": "Closes #9\n\n## Acceptance criteria\n- timeout is 60",
+          "headRefName": "pipeline/pr", "headRefOid": git(clone, "rev-parse", "origin/pipeline/pr")}
+    res = REAL_TRY_CONFLICT_REPAIR("o/r", pr)
+    assert res["outcome"] == "repaired" and res["cost_usd"] == 0.02, res
+    assert prompts and "Raise the timeout" in prompts[0] and "#9" in prompts[0]   # the real PR, not a placeholder
+
+
+def test_a_failed_repair_is_remembered_in_the_temp_state_not_the_real_one(scan_repair, tmp_path, monkeypatch):
+    clone, _ = scan_repair
+    (clone / "code.py").write_text("timeout = 30\n")
+    git(clone, "add", "-A"); git(clone, "commit", "-qm", "base"); git(clone, "push", "-q", "origin", "main")
+    _branch(clone, "pipeline/pr", {"code.py": "timeout = 60\n"})
+    _main_moves(clone, {"code.py": "timeout = 90\n"})
+    monkeypatch.setattr(tp, "_resolve_hunks_with_model", lambda scratch, prompt: {"cost_usd": 0.0, "text": "", "exit_code": 1})
+    pr = {"number": 7, "body": "Closes #9", "headRefName": "pipeline/pr", "headRefOid": git(clone, "rev-parse", "origin/pipeline/pr")}
+    res = REAL_TRY_CONFLICT_REPAIR("o/r", pr)
+    assert res["outcome"] == "rebuild" and res["files"] == ["code.py"] and "crashed" not in res["reason"]
+    state = (tmp_path / "state" / "conflict-repair.json")
+    assert state.exists() and "o/r#7" in state.read_text()
+    # the same commit is not retried on the next scan
+    monkeypatch.setattr(tp, "_REPAIR_BUDGET", None)
+    again = REAL_TRY_CONFLICT_REPAIR("o/r", pr)
+    assert again["outcome"] == "rebuild" and again["cost_usd"] == 0.0
+
+
+def test_a_crash_inside_repair_still_falls_back_to_a_rebuild(monkeypatch, tmp_path):
+    monkeypatch.setattr(cr, "where", lambda repo: ("/nonexistent-clone", "main"))
+    monkeypatch.setattr(cr, "STATE_PATH", tmp_path / "s.json")
+    monkeypatch.setattr(tp, "_REPAIR_BUDGET", None)
+    def boom(*a, **k):
+        raise ValueError("boom")
+    monkeypatch.setattr(cr, "repair", boom)
+    res = REAL_TRY_CONFLICT_REPAIR("o/r", {"number": 1, "headRefName": "h", "headRefOid": "s"})
+    assert res["outcome"] == "rebuild" and "boom" in res["reason"]

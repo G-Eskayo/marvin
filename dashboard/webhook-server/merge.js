@@ -26,17 +26,25 @@ const TICKET_PIPELINE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'ticke
 const VENV_PYTHON = path.resolve(__dirname, '..', '..', 'venv', 'bin', 'python')
 const PROFILE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'project_profile.py')
 const GENERATED_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'generated_paths.py')
+// The per-command limit for commands run OUTSIDE the merge gate (gh reads, post-merge checks). Inside the gate the gate
+// owns the clock (pipeline review 2026-10-21, F3): this 20-minute kill used to fire first, so #568's load-aware
+// extension of the 40-minute gate limit could never apply, and a hung test was a silent 20-minute GATE_INFRA. Now a
+// hung test fails in two minutes by name (pytest-timeout, pytest.ini), and the gate passes `signal` plus no limit here.
 const DEFAULT_TEST_TIMEOUT_MS = 1200_000
 
 // opts.onOutput(chunk), when given, sees the output as it arrives (marvin#568: live test counts, and the "still making
-// progress" signal the gate's time limit reads). It is not passed on to spawn.
+// progress" signal the gate's time limit reads). opts.signal (an AbortSignal), when given, kills the whole process
+// group on abort: that is how the gate's own limit stops a run. Neither is passed on to spawn. timeoutMs that is not a
+// positive finite number means no per-command limit (the caller's signal bounds it).
 export async function execWithGroupTimeout(cmd, args, opts = {}, timeoutMs = DEFAULT_TEST_TIMEOUT_MS) {
-  const { onOutput, ...spawnOpts } = opts || {}
+  const { onOutput, signal, ...spawnOpts } = opts || {}
+  if (signal?.aborted) throw Object.assign(new Error(`Cut off before it started (the merge gate's time limit ran out): ${cmd}`), { stdout: '', stderr: '' })
   const child = spawn(cmd, args, { ...spawnOpts, detached: true })
   let stdout = '', stderr = ''
   const seen = (d) => { if (onOutput) { try { onOutput(String(d)) } catch { /* a progress reader never breaks the run */ } } }
   if (child.stdout) child.stdout.on('data', (d) => { stdout += d; seen(d) })
   if (child.stderr) child.stderr.on('data', (d) => { stderr += d; seen(d) })
+  const killGroup = () => { try { process.kill(-child.pid, 'SIGKILL') } catch { /* process may have already exited */ } }
   const promise = new Promise((resolve, reject) => {
     child.on('error', reject)
     child.on('close', (code) => {
@@ -44,31 +52,66 @@ export async function execWithGroupTimeout(cmd, args, opts = {}, timeoutMs = DEF
       else reject(Object.assign(new Error(`Command failed with exit code ${code}`), { stdout, stderr, code }))
     })
   })
-  let timer
-  return Promise.race([
-    promise,
-    new Promise((resolve, reject) => {
+  let timer, onAbort
+  const limits = []
+  if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+    limits.push(new Promise((resolve, reject) => {
       timer = setTimeout(() => {
-        try {
-          process.kill(-child.pid, 'SIGKILL')
-        } catch { /* process may have already exited */ }
+        killGroup()
         const mins = Math.max(1, Math.round(timeoutMs / 60000))
         reject(Object.assign(new Error(`Tests did not finish within ${mins} min and were killed, running: ${cmd}`), { stdout, stderr }))
       }, timeoutMs)
-    })
-  ]).finally(() => clearTimeout(timer))
+    }))
+  }
+  if (signal) {
+    limits.push(new Promise((resolve, reject) => {
+      onAbort = () => {
+        killGroup()
+        reject(Object.assign(new Error(`Cut off: the merge gate's time limit ran out, running: ${cmd}`), { stdout, stderr }))
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
+    }))
+  }
+  return Promise.race([promise, ...limits]).finally(() => {
+    clearTimeout(timer)
+    if (onAbort) signal.removeEventListener('abort', onAbort)
+  })
+}
+
+// Inside the gate: every command gets the gate's abort signal and no per-command limit, so the gate's limit (with its
+// one load-aware extension) is the only clock. Once the gate has been cut off, cleanup commands (worktree remove) run
+// with the normal per-command limit instead of being killed on the spot. O(1) per command.
+export function gateExec(exec, signal) {
+  return (cmd, args, opts = {}, timeoutMs) => signal.aborted
+    ? exec(cmd, args, opts, timeoutMs)
+    : exec(cmd, args, { ...opts, signal }, timeoutMs ?? Infinity)
 }
 
 // The overlap rule (Gil 2026-10-09): a PR behind main is retested only when main changed a file the PR also changes
 // since the two split. Different files cannot conflict in git; a cross-file break (one PR renames what another
 // calls) is rare and is caught minutes later by main-health, which re-runs the suite on every main move and refuses
 // merges while main is red. The same files are where conflicts and interactions concentrate, so those get the retest.
-export async function sharedFiles(headRef, exec = execFileAsync, repoPath = REPO_PATH, base = 'main') {
+//
+// Amended (Gil 2026-10-26): main also gets a say through its *rules*. A test or guard file main added or changed since
+// the split may judge files the PR adds, which the PR's own earlier run never saw (#572 was tested on 10-21, main then
+// gained test_instance_move.py, and its direct merge turned main red). So a PR is retested when main changed a rule.
+export const RULE_FILE = /(^|\/)tests?\/|(^|\/)test_[^/]*\.py$|\.test\.[cm]?[jt]sx?$|(^|\/)conftest\.py$|(^|\/)pytest\.ini$|^config\/push-guard\/|^\.gitignore$/
+
+// What main changed since the PR split: files the PR also changes, and rules (RULE_FILE). One fetch, one merge-base,
+// two name-only diffs: O(files changed on either side).
+export async function mainChanges(headRef, exec = execFileAsync, repoPath = REPO_PATH, base = 'main') {
   await exec('git', ['fetch', 'origin', base, headRef], { cwd: repoPath })
   const split = (await exec('git', ['merge-base', `origin/${base}`, `origin/${headRef}`], { cwd: repoPath })).stdout.trim()
   const changed = async (to) => new Set((await exec('git', ['diff', '--name-only', split, to], { cwd: repoPath })).stdout.split('\n').filter(Boolean))
   const [onBase, inPr] = await Promise.all([changed(`origin/${base}`), changed(`origin/${headRef}`)])
-  return [...inPr].filter((f) => onBase.has(f)).sort()
+  return {
+    shared: [...inPr].filter((f) => onBase.has(f)).sort(),
+    rules: [...onBase].filter((f) => RULE_FILE.test(f)).sort()
+  }
+}
+
+export async function sharedFiles(headRef, exec = execFileAsync, repoPath = REPO_PATH, base = 'main') {
+  return (await mainChanges(headRef, exec, repoPath, base)).shared
 }
 
 // Would the PR still merge onto main? Answered by git merge-tree: no checkout, no tests, no push, seconds. Exit 1 is
@@ -113,7 +156,20 @@ export function countTestFiles(dir) {
 
 const noProgress = () => {}
 
-export async function _defaultRunTests(cwd, exec, progress = noProgress) {
+// The Python suite runs in parallel (pytest-xdist, `-n auto`): 327 s serial vs 47 s on the M4's 10 cores, same 2,685
+// tests, measured 2026-10-21. A machine without the plugin runs it serially and says so in the log, never fails on it.
+// One `python -c` per gate run (~0.1 s); not cached, so installing the plugin takes effect on the next run.
+export async function pytestParallelArgs(python = VENV_PYTHON, run = execFileAsync, log = console.warn) {
+  try {
+    await run(python, ['-c', 'import xdist'])
+    return ['-n', 'auto']
+  } catch {
+    try { log(`[merge-gate] pytest-xdist is not installed in ${python}: running the Python suite serially (slower). Fix: ${python} -m pip install pytest-xdist`) } catch { /* logging never breaks the gate */ }
+    return []
+  }
+}
+
+export async function _defaultRunTests(cwd, exec, progress = noProgress, parallelArgs = pytestParallelArgs) {
   const dashboardDir = path.join(cwd, 'dashboard')
   // Each output chunk is a heartbeat for the gate's time limit; the parsers turn the runners' own lines into counts.
   const watch = (runner, label, totalFiles = 0) => {
@@ -133,10 +189,11 @@ export async function _defaultRunTests(cwd, exec, progress = noProgress) {
   // avoid.
   await exec('npm', ['install'], { cwd: dashboardDir, onOutput: () => progress('installing', 'output') })
   progress('installing', 'done')
-  progress('tests', 'running', { detail: 'Python' })
+  const parallel = await parallelArgs()
+  progress('tests', 'running', { detail: parallel.length ? 'Python' : 'Python (serial: pytest-xdist missing)', logDetail: !parallel.length })
   // MARVIN_MERGE_GATE: tests that read ANOTHER repo's data (the portfolio figures) stay out of a PR's gate; they run in the
   // main-branch health check instead (lib/main_health.py).
-  await exec(VENV_PYTHON, ['-m', 'pytest', '-q'], { cwd, env: { ...process.env, MARVIN_MERGE_GATE: '1' }, onOutput: watch('pytest', 'Python') })
+  await exec(VENV_PYTHON, ['-m', 'pytest', '-q', ...parallel], { cwd, env: { ...process.env, MARVIN_MERGE_GATE: '1' }, onOutput: watch('pytest', 'Python') })
   progress('tests', 'running', { detail: 'Dashboard', logDetail: true })
   await exec('npx', ['vitest', 'run'], { cwd: dashboardDir, onOutput: watch('vitest', 'Dashboard', countTestFiles(path.join(dashboardDir, 'test'))) })
 }
@@ -234,11 +291,12 @@ export async function defaultShouldGateMerge(prUrl, exec, ctx = null) {
     body = body || ''
     const behind = ctx ? await isBehindMain(headRefName, exec, ctx.clone, ctx.base) : await isBehindMain(headRefName, exec)
     if (!behind) return { gate: false, behind: false, shared: [], headRefName, body }
-    let shared = null
+    let changes = null
     try {
-      shared = ctx ? await sharedFiles(headRefName, exec, ctx.clone, ctx.base) : await sharedFiles(headRefName, exec)
+      changes = ctx ? await mainChanges(headRefName, exec, ctx.clone, ctx.base) : await mainChanges(headRefName, exec)
     } catch { /* unknown overlap: retest */ }
-    return { gate: shared === null || shared.length > 0, behind: true, shared: shared || [], headRefName, body }
+    const gate = changes === null || changes.shared.length > 0 || changes.rules.length > 0
+    return { gate, behind: true, shared: changes?.shared || [], rules: changes?.rules || [], headRefName, body }
   } catch {
     return { gate: false, behind: false, shared: [], headRefName, body }
   }
@@ -439,18 +497,21 @@ function deadline(promise, ms) {
 }
 const cutOff = (ms, note) => ({ ok: false, reason: `Tests failed after rebasing onto main:\n\nThe check did not finish within ${Math.max(1, Math.round(ms / 60000))} min and was cut off.${note ? ` ${note}.` : ''}` })
 
-export async function withGateTimeout(promise, ms, decide = () => ({ extendMs: 0 }), onExtend = () => {}) {
+// onCut runs when the limit finally runs out, before the result is returned: the gate aborts its commands there, so a
+// cut-off run is killed, not left running behind the next merge.
+export async function withGateTimeout(promise, ms, decide = () => ({ extendMs: 0 }), onExtend = () => {}, onCut = () => {}) {
+  const cut = (result) => { try { onCut() } catch { /* stopping must not break the report */ } return result }
   const first = await deadline(promise, ms)
   if (first !== CUT) return first
   let d = { extendMs: 0 }
   try { d = decide() || d } catch { /* no extension */ }
-  if (!(d.extendMs > 0)) return cutOff(ms, d.note)
+  if (!(d.extendMs > 0)) return cut(cutOff(ms, d.note))
   try { onExtend(d.reason) } catch { /* reporting must not break the gate */ }
   const second = await deadline(promise, d.extendMs)
   if (second !== CUT) return second
   let after = { extendMs: 0 }
   try { after = decide() || after } catch { /* as above */ }
-  return cutOff(ms + d.extendMs, `It was extended once already (${d.reason})${after.note ? `; at the end ${after.note}` : ''}`)
+  return cut(cutOff(ms + d.extendMs, `It was extended once already (${d.reason})${after.note ? `; at the end ${after.note}` : ''}`))
 }
 
 async function mergePrUnqueued(
@@ -485,13 +546,13 @@ async function mergePrUnqueued(
 
   await assertTargetsBase(prUrl, exec, ctx ? ctx.base : 'main')
   await assertNotSentBack(prUrl, exec)
-  await readyIfDraft(prUrl, exec)
+  const draftWasMarkedReady = await readyIfDraft(prUrl, exec)
   // A UI change merges only with images the owner has seen (marvin #374). Before any gate work: refusing is cheap.
   await uiEvidence(prUrl, exec, ctx ? ctx.uiPaths : [])
   // A PR that asks the owner to choose merges only once he has answered, in its Decisions section (2026-10-09).
   await decisions(prUrl, exec)
 
-  const { gate, behind = false, headRefName, body } = ctx ? await shouldGateMerge(prUrl, exec, ctx) : await shouldGateMerge(prUrl, exec)
+  const { gate, behind = false, headRefName, body, shared = [], rules = [] } = ctx ? await shouldGateMerge(prUrl, exec, ctx) : await shouldGateMerge(prUrl, exec)
   const ticketNumber = parseTicketRef(body)
   // Every call below is a no-op (not an error) when ticketNumber is null
   // -- a manually-authored PR with no linked ticket has nothing to record
@@ -501,6 +562,11 @@ async function mergePrUnqueued(
     if (ticketNumber === null) return
     if (ctx) recordStageFn(ticketNumber, name, status, detail, { repo })
     else recordStageFn(ticketNumber, name, status, detail)
+  }
+
+  // Record the draft → ready step for pipeline visibility (#217).
+  if (draftWasMarkedReady) {
+    stage('merging', 'passed', 'marked ready for review (owner pressed Approve on this draft)')
   }
 
   // The repo's own CI (GitHub checks), when it has any: failing means the code is wrong and the PR goes back
@@ -527,14 +593,23 @@ async function mergePrUnqueued(
     stage('gate', 'passed', `no retest needed: behind ${ctx ? ctx.base : 'main'}, but ${ctx ? ctx.base : 'main'} changed none of this PR's files, so it merges directly (main-health re-runs the suite after the merge)`)
   }
   if (gate) {
-    stage('gate', 'started', `rebasing onto ${ctx ? ctx.base : 'main'} + retesting (${ctx ? ctx.base : 'main'} changed files this PR also changes)`)
+    const baseName = ctx ? ctx.base : 'main'
+    const reason = shared.length ? `${baseName} changed files this PR also changes`
+      : rules.length ? `${baseName} has new or changed tests or guard rules since this PR was tested (${rules.slice(0, 3).join(', ')})`
+      : `${baseName} moved on and the overlap could not be read`
+    stage('gate', 'started', `rebasing onto ${baseName} + retesting (${reason})`)
+    // One clock (pipeline review 2026-10-21, F3): the gate's limit, extended at most once under load. Its commands run
+    // with no per-command limit of their own and are killed through this signal when it finally runs out.
+    const gateAbort = new AbortController()
+    const run = gateExec(exec, gateAbort.signal)
     const result = await withGateTimeout(
       Promise.resolve(ctx
-        ? rebaseAndRetestFn(headRefName, exec, ctx.clone, ctx.runTests, ctx.base, ctx.resolveConflicts, sleep ?? null, progress)
-        : rebaseAndRetestFn(headRefName, exec, REPO_PATH, _defaultRunTests, 'main', generatedResolver(MARVIN_REPO, exec), sleep ?? null, progress)),
+        ? rebaseAndRetestFn(headRefName, run, ctx.clone, ctx.runTests, ctx.base, ctx.resolveConflicts, sleep ?? null, progress)
+        : rebaseAndRetestFn(headRefName, run, REPO_PATH, _defaultRunTests, 'main', generatedResolver(MARVIN_REPO, run), sleep ?? null, progress)),
       gateTimeoutMs,
       () => gateExtension({ baseMs: gateTimeoutMs, load: loadNow(), lastOutputAt, now: now() }),
-      (reason) => progress('tests', 'running', { detail: reason, logDetail: true }))
+      (reason) => progress('tests', 'running', { detail: reason, logDetail: true }),
+      () => gateAbort.abort())
     if (!result.ok) {
       // Structured, concise feedback (code header, failing test names, capped tail)
       // instead of a raw output wall: this comment is what the ticket's executor reads
@@ -634,7 +709,7 @@ async function mergePrUnqueued(
       await applyVersionBump({ ticketNumber, prUrl }, exec, REPO_PATH)
       stage('versioning', 'passed', '')
     } catch (e) {
-      stage('versioning', 'failed', String(e?.message || e).slice(0, 300))
+      stage('versioning', 'failed', `VERSION_BUMP_FAILED: ${String(e?.message || e).slice(0, 300)}`)
       recordFailureFn({ ticket: ticketNumber, code: 'VERSION_BUMP_FAILED', message: String(e?.message || e), project: repo, prUrl, stage: 'versioning' })
     }
   }

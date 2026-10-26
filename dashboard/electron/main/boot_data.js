@@ -21,7 +21,7 @@ const onCheck = (c) => (c?.id ? { tab: 'health', check: c.id } : HEALTH)
 export const DEFAULT_BOOT_PATHS = {
   healthPath: HEALTH_STATUS_PATH,
   memoryDir: path.join(homedir(), '.claude', 'projects', '-Users-gileskayo', 'memory'),
-  commandsDir: path.join(homedir(), '.claude', 'commands'),
+  skillsDir: path.join(homedir(), '.agents', 'skills'),
   handoffsDir: path.join(homedir(), '.claude', 'handoffs')
 }
 
@@ -48,9 +48,15 @@ function syncLine(checks) {
   return { chip: 'SYNC', level: lvl, text: 'MEMORY SYNC · MBP ⇄ MINI' + (bad ? ' · ' + up(bad.label) : ''), target: onCheck(bad ?? sync[0]) }
 }
 
-function memoryLine({ memoryDir, commandsDir }) {
+function memoryLine({ memoryDir, skillsDir }) {
+  // A skill is a folder holding a SKILL.md; ~/.claude/commands also holds third-party commands and dead links.
   let skills = 0
-  try { skills = readdirSync(commandsDir).filter((f) => f.endsWith('.md')).length } catch { /* no commands dir: 0 */ }
+  try {
+    skills = readdirSync(skillsDir, { withFileTypes: true })
+      // exact name: macOS paths ignore case, so stat('SKILL.md') would also find a stray skill.md
+      .filter((d) => d.isDirectory() && readdirSync(path.join(skillsDir, d.name), { withFileTypes: true })
+        .some((f) => f.name === 'SKILL.md' && f.isFile())).length
+  } catch { /* no skills dir: 0 */ }
   const indexPath = path.join(memoryDir, 'MEMORY.md')
   if (!existsSync(indexPath)) return { chip: 'WARN', level: 'yellow', text: `MEMORY INDEX MISSING · ${skills} SKILLS WIRED` }
   const links = [...readFileSync(indexPath, 'utf-8').matchAll(/\]\(([^)]+\.md)\)/g)].map((m) => m[1])

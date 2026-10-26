@@ -24,10 +24,12 @@ export function createTriggerHub({ debounceMs = 300, watch = fsWatch } = {}) {
     )
   }
 
+  // `recursive` (macOS FSEvents) reports a change anywhere below `dir`, named by its path relative to `dir`.
   function watchFiles(topic, targets) {
-    for (const { dir, match } of targets) {
+    for (const { dir, match, recursive = false } of targets) {
       try {
-        watchers.push(watch(dir, (_event, name) => name && match(String(name)) && emit(topic, `file:${name}`)))
+        const cb = (_event, name) => name && match(String(name)) && emit(topic, `file:${name}`)
+        watchers.push(recursive ? watch(dir, { recursive: true }, cb) : watch(dir, cb))
       } catch {
         // Directory doesn't exist yet or can't be watched: the backstop poll still covers it.
       }

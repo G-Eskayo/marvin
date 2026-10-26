@@ -12,7 +12,7 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BLUE='\033[0;34m'; BOLD='\033[1m'; NC='\033[0m'
 
 # ── Paths ─────────────────────────────────────────────────────
-MARVIN_DIR="$(cd "$(dirname "$0")" && pwd)"
+MARVIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENTS_DIR="$HOME/.agents"
 SKILLS_DIR="$AGENTS_DIR/skills"
 VENV_DIR="$AGENTS_DIR/venv"
@@ -209,6 +209,11 @@ install_deps() {
     "$VENV_PYTHON" -m pip install chromadb rank_bm25 requests --quiet
     log "chromadb, rank_bm25, requests installed"
 
+    # The test harness: a hung test fails in 2 min by name (pytest.ini `timeout`), and the suite can run in parallel.
+    # lib/tests/test_test_harness.py fails on a machine without them, so the merge gate never silently loses its limit.
+    "$VENV_PYTHON" -m pip install pytest pytest-timeout pytest-xdist --quiet
+    log "pytest, pytest-timeout, pytest-xdist installed (test harness)"
+
     # resume-tailor's deps — this was missing entirely until a fresh-machine
     # setup was actually attempted and it silently left the skill non-functional.
     if [[ "$OS" == "macos-arm" || "$OS" == "macos-x86" ]]; then
@@ -294,16 +299,18 @@ deploy_brain_map() {
 # repo) — the reviewer would keep appending to a file that never made it
 # back into git at all.
 deploy_retrospective_log() {
-    local dest="$AGENTS_DIR/retrospective-log.md"
-    if [[ -f "$dest" || -L "$dest" ]]; then
-        log "retrospective-log.md already present — skipping"
+    # ADR 0071: the log is learned from this person's sessions, so it lives in their private instance, never the
+    # public engine. Created empty with its header; installer --new / --join (ADR 0071 step 3) make it a repo.
+    local dest="$AGENTS_DIR/instance/retrospective-log.md"
+    if [[ -f "$dest" ]]; then
+        log "retrospective-log.md already present in the instance — skipping"
         return
     fi
-    if [[ "$MARVIN_DIR" == "$AGENTS_DIR" ]]; then
-        return  # same directory — nothing to deploy, it's already the tracked file
-    fi
-    ln -s "$MARVIN_DIR/retrospective-log.md" "$dest"
-    log "Symlinked retrospective-log.md -> $MARVIN_DIR/retrospective-log.md"
+    mkdir -p "$AGENTS_DIR/instance"
+    printf '%s\n' "# Retrospective Log" "" \
+        "Cross-skill pattern index. One line per self-improve run. Written by the self-improve skill." "" \
+        "| Date | Skill | Type | Summary |" "|------|-------|------|---------|" > "$dest"
+    log "Created $dest"
 }
 
 # =============================================================
@@ -356,6 +363,42 @@ configure_hook() {
             "$template" > "$settings"
         log "Installed settings.local.json with all $hook_count PostToolUse hooks"
     fi
+}
+
+# =============================================================
+# 7b. PUSH GUARD (ADR 0071)
+# =============================================================
+# Refuses any push whose new commits add a secret, a session transcript, or one of this
+# person's own strings. The engine repo is public; on 2026-10-25 auto-sync pushed a 2 MB
+# transcript to it, and a phone number had been public since July. Linked, not copied, so
+# a guard fix reaches every clone on the next pull. code_sync.py calls the same script.
+install_push_guard() {
+    local private="$CLAUDE_DIR/private-push-patterns.txt"
+    if [[ ! -f "$private" ]]; then
+        mkdir -p "$CLAUDE_DIR"
+        ( umask 077; cat > "$private" <<'PATTERNS'
+# Your own strings the push guard must never let reach a public repo: one extended regex per line.
+# Examples: your phone number, home address, a client's name. Private: never copy this file into a repo.
+# Secrets and transcripts are already covered by the shared list (config/push-guard/patterns.txt).
+PATTERNS
+        )
+        log "Created $private (add your phone, address, anything personal)"
+    fi
+    chmod 600 "$private"
+
+    local git_dir hook
+    git_dir=$(git -C "$MARVIN_DIR" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || {
+        warn "$MARVIN_DIR is not a git clone: push guard not installed"; return; }
+    hook="$git_dir/hooks/pre-push"
+    mkdir -p "$git_dir/hooks"
+    if [[ -e "$hook" && ! -L "$hook" ]] && ! grep -q 'pre-push-guard' "$hook"; then
+        warn "A different pre-push hook already exists at $hook; left it alone."
+        warn "  Call $MARVIN_DIR/bin/pre-push-guard from it, or the guard won't run on git push."
+        return
+    fi
+    chmod +x "$MARVIN_DIR/bin/pre-push-guard"
+    ln -sfn "$MARVIN_DIR/bin/pre-push-guard" "$hook"
+    log "Push guard installed: $hook"
 }
 
 # =============================================================
@@ -441,6 +484,7 @@ main() {
     deploy_brain_map
     deploy_retrospective_log
     configure_claude
+    install_push_guard
     initial_setup
     start_ollama
     pull_model
@@ -449,4 +493,5 @@ main() {
     print_summary
 }
 
-main "$@"
+# Sourcing (tests) defines the functions without installing anything.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then main "$@"; fi

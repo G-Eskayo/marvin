@@ -1,0 +1,14 @@
+# Shared push-guard path rules (ADR 0071): extended regexes matched against each file a push ADDS or MODIFIES, from
+# the repo root. A match refuses the push. Deleting a matching file is always allowed.
+
+# Session transcripts and raw logs (2026-10-25: one reached this public repo)
+(^|/)logs/.*\.jsonl$
+\.transcript$
+
+# The owner's state, which lives in the private instance (~/.agents/instance/) since ADR 0071 step 2. Refused here so
+# a stale branch or old code can't republish it after the history scrub. Not docs/screenshots or docs/evidence:
+# ticket PRs still commit their evidence images there until engine PRs use a demo instance.
+^bench/metrics/
+^docs/plans/
+^config/projects/
+^retrospective-log\.md$

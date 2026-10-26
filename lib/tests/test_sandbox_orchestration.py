@@ -1109,8 +1109,8 @@ def test_planning_prompt_instructs_to_read_current_file_state_before_writing_doc
     assert "before writing" in plan_prompt.lower() or "read" in plan_prompt.lower()
 
 
-def test_second_iteration_reads_prior_design_doc_and_includes_it_in_prompt(monkeypatch, tmp_path):
-    """AC4: when feedback exists and prior doc on disk, include prior doc + revision instruction."""
+def test_second_iteration_reuses_the_saved_plan_and_sends_the_executor_the_feedback(monkeypatch, tmp_path):
+    """#605 replaced AC4's re-plan with a prior doc: round 2 reuses round 1's plan, so there is no second planning call."""
     prompts_seen = []
 
     def fake_run(cmd, **kwargs):
@@ -1122,20 +1122,15 @@ def test_second_iteration_reads_prior_design_doc_and_includes_it_in_prompt(monke
 
     monkeypatch.setattr(so.subprocess, "run", fake_run)
 
-    # First call: no feedback, no prior doc
     so._default_executor(tmp_path, "TICKET-1", feedback=None)
     assert len(prompts_seen) == 2  # plan + exec
     first_plan_prompt = prompts_seen[0][prompts_seen[0].index("-p") + 1]
     assert "read the current contents" in first_plan_prompt.lower()
 
-    # Second call: with feedback and prior doc should exist now
     so._default_executor(tmp_path, "TICKET-1", feedback={"verdict": "regressed", "metrics": {}})
-    assert len(prompts_seen) == 4  # plan1, exec1, plan2, exec2
-    second_plan_prompt = prompts_seen[2][prompts_seen[2].index("-p") + 1]
-    # Should include the prior doc's content (from first iteration)
-    assert "prior attempt" in second_plan_prompt.lower()
-    # Should include revision instruction
-    assert "revised" in second_plan_prompt.lower() or "do not repeat" in second_plan_prompt.lower()
+    assert len(prompts_seen) == 3  # plan1, exec1, exec2: no second plan
+    second_exec_prompt = prompts_seen[2][prompts_seen[2].index("-p") + 1]
+    assert "1. Revised task" in second_exec_prompt and "regressed" in second_exec_prompt
 
 
 def test_first_iteration_does_not_fail_when_no_prior_design_doc_exists(monkeypatch, tmp_path):
@@ -1423,3 +1418,163 @@ def test_the_planner_gets_the_delegation_preamble(monkeypatch, tmp_path):
     so._default_executor(tmp_path, "G-Eskayo/marvin#9", None)
     plan = dict(prompts)["ticket-planner"]
     assert north_stars.delegation_preamble("G-Eskayo/marvin") in plan
+
+
+# ── a failed model run is not a plan (P6, 2026-10-21) ──────────────────────
+# Ten tickets were labelled "too vague" and kept their claims for up to 11 days because, in the weekly usage-limit
+# windows, every planner run exited 1 (most in under 2 s, $0) and _launch handed its error text on as the plan.
+import json as _json  # noqa: E402
+
+USAGE_LIMIT_STDOUT = _json.dumps({"type": "result", "subtype": "success", "is_error": True,
+                                  "result": "Claude AI usage limit reached|1760590800", "total_cost_usd": 0})
+
+
+def _cli(monkeypatch, returncode, stdout, stderr=""):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, returncode, stdout=stdout, stderr=stderr)
+    monkeypatch.setattr(so.subprocess, "run", fake_run)
+    return calls
+
+
+@pytest.mark.parametrize("returncode,stdout,stderr", [
+    (1, USAGE_LIMIT_STDOUT, ""),                      # the real shape of the 10-16 failures
+    (0, USAGE_LIMIT_STDOUT, ""),                      # exit 0 but is_error: still a failure
+    (1, "", "Error: Invalid API key"),                # nothing on stdout at all
+    (1, "not json at all", ""),                       # garbage on stdout
+    (137, _json.dumps({"result": "## Task List\n1. looks like a plan"}), ""),   # killed mid-run, plausible text
+])
+def test_a_failed_model_run_raises_instead_of_returning_its_text(monkeypatch, tmp_path, returncode, stdout, stderr):
+    _cli(monkeypatch, returncode, stdout, stderr)
+    with pytest.raises(so.ModelRunFailed) as e:
+        so._launch("ticket-planner", "plan it", ticket_ref="G-Eskayo/marvin#454", cwd=tmp_path)
+    assert e.value.kind == "ticket-planner" and e.value.exit_code != 0
+
+
+def test_a_usage_limit_is_named_as_one():
+    assert so.ModelRunFailed("ticket-planner", 1, "Claude AI usage limit reached|1760590800").usage_limit
+    assert not so.ModelRunFailed("ticket-planner", 1, "Invalid API key").usage_limit
+    assert "no output" in str(so.ModelRunFailed("ticket-planner", 1, ""))
+    assert len(str(so.ModelRunFailed("ticket-planner", 1, "x" * 100_000))) < 400   # a huge error stays readable
+
+
+def test_a_good_run_still_returns_its_text_and_cost(monkeypatch, tmp_path):
+    _cli(monkeypatch, 0, _json.dumps({"result": "fine", "total_cost_usd": 0.5}))
+    assert so._launch("ticket-planner", "x", ticket_ref="T-1", cwd=tmp_path) == ("fine", 0.5)
+
+
+def test_planning_through_a_usage_limit_stops_before_the_executor_and_says_why(monkeypatch, tmp_path):
+    calls = _cli(monkeypatch, 1, USAGE_LIMIT_STDOUT)
+    monkeypatch.setattr(so, "_preflight_worktree", lambda *a, **k: None)
+    with pytest.raises(so.ModelRunFailed) as e:
+        so._default_executor(tmp_path, "G-Eskayo/marvin#454", None)
+    assert e.value.usage_limit
+    assert len(calls) == 1                       # the executor never ran on an error message
+    assert not isinstance(e.value, so.TaskListTooVague)
+
+
+def test_only_the_planners_own_too_vague_verdict_asks_a_person(monkeypatch, tmp_path):
+    monkeypatch.setattr(so, "_preflight_worktree", lambda *a, **k: None)
+    _cli(monkeypatch, 0, _json.dumps({"result": "## Plan\nx\n## Task List\nTOO_VAGUE: which endpoint?", "total_cost_usd": 0}))
+    with pytest.raises(so.TaskListTooVague) as e:
+        so._default_executor(tmp_path, "T-1", None)
+    assert e.value.needs_person and "which endpoint?" in str(e.value)
+    _cli(monkeypatch, 0, _json.dumps({"result": "## Plan\nx\n## Task List\nTOO_VAGUE:", "total_cost_usd": 0}))
+    with pytest.raises(so.TaskListTooVague) as e:
+        so._default_executor(tmp_path, "T-1", None)
+    assert e.value.needs_person and "no reason given" in str(e.value)
+    _cli(monkeypatch, 0, _json.dumps({"result": "I looked around and here are my thoughts.", "total_cost_usd": 0}))
+    with pytest.raises(so.TaskListTooVague) as e:
+        so._default_executor(tmp_path, "T-1", None)
+    assert not e.value.needs_person
+
+
+# ── rounds 2-3 reuse round 1's plan (#605) ──────────────────────────────────
+# 2026-10-22: every review round re-planned from scratch (~$1.20 a plan), and most failed runs ended on "code review
+# found must-fix issues" three times. Written to break it: a whole 3-round run through the real execute_ticket and the
+# real _default_executor, a planner that fails in round 1, a plan file the executor deleted, a stale doc from main.
+
+def _launches(monkeypatch, plan="## Plan\nreal plan\n## Task List\n1. Do the thing", fail_plan=None):
+    seen = []
+
+    def fake(kind, prompt, *, ticket_ref, **kw):
+        seen.append((kind, prompt))
+        if kind == "ticket-planner" and fail_plan is not None:
+            raise fail_plan
+        return (plan if kind == "ticket-planner" else "done"), 0.0
+    monkeypatch.setattr(so, "_launch", fake)
+    return seen
+
+
+def _always_must_fix(worktree, base):
+    return {"clean": False, "findings": ["lib/a.py:3 crashes on None", "lib/b.py:9 wrong week"]}
+
+
+def test_a_three_round_run_plans_once_and_hands_the_findings_to_the_executor(git_repo, metrics_dir, monkeypatch):
+    seen = _launches(monkeypatch)
+    monkeypatch.setattr(so.test_change_rule, "check_worktree", lambda *a, **k: (True, ""))
+    values = iter([1, 2, 3, 4])
+    result = so.execute_ticket("G-Eskayo/marvin#605", "ticket-605", lambda wt: {"m": _metric(next(values))},
+                               repo_path=git_repo, reviewer=_always_must_fix)
+    assert result["passing"] is False and result["iterations"] == 3
+    kinds = [k for k, _ in seen]
+    assert kinds == ["ticket-planner", "ticket-executor", "ticket-executor", "ticket-executor"]
+    execs = [p for k, p in seen if k == "ticket-executor"]
+    assert "lib/a.py:3 crashes on None" not in execs[0]           # round 1 has no feedback to send
+    for p in execs[1:]:
+        assert "1. Do the thing" in p                                # the same task list, from disk
+        assert "lib/a.py:3 crashes on None" in p and "lib/b.py:9 wrong week" in p
+        assert "code review found must-fix issues" in p
+
+
+def test_a_planner_failure_in_round_one_still_fails_the_run_cleanly(git_repo, metrics_dir, monkeypatch):
+    stages = []
+    monkeypatch.setattr(so, "_stage", lambda ref, stage, status, detail="", **k: stages.append((stage, status, detail)))
+    for err in (so.ModelRunFailed("ticket-planner", 1, "You've hit your session limit"), RuntimeError("planner timed out")):
+        seen = _launches(monkeypatch, fail_plan=err)
+        with pytest.raises(type(err)):
+            so.execute_ticket("G-Eskayo/marvin#605", "ticket-605", lambda wt: {"m": _metric(1)},
+                              repo_path=git_repo, reviewer=_always_must_fix)
+        assert [k for k, _ in seen] == ["ticket-planner"]            # never an executor run on no plan
+        assert stages[-1][:2] == ("executing", "failed")
+
+
+def test_a_too_vague_plan_in_round_one_is_not_reused_later(git_repo, metrics_dir, monkeypatch):
+    seen = _launches(monkeypatch, plan="## Plan\nx\n## Task List\nTOO_VAGUE: which endpoint?")
+    with pytest.raises(so.TaskListTooVague):
+        so.execute_ticket("G-Eskayo/marvin#605", "ticket-605", lambda wt: {"m": _metric(1)}, repo_path=git_repo)
+    assert [k for k, _ in seen] == ["ticket-planner"]
+
+
+def test_a_round_whose_saved_task_list_is_gone_or_empty_plans_again(monkeypatch, tmp_path):
+    seen = _launches(monkeypatch)
+    so._default_executor(tmp_path, "T-1", None)
+    tasks = so._task_list_path(tmp_path, "T-1")
+    for spoil in (lambda: tasks.unlink(), lambda: tasks.write_text("   \n"), lambda: tasks.write_text("TOO_VAGUE: hm")):
+        spoil()
+        before = len(seen)
+        so._default_executor(tmp_path, "T-1", {"verdict": "unchanged", "fix_these": ["x"]})
+        assert [k for k, _ in seen[before:]] == ["ticket-planner", "ticket-executor"]
+
+
+def test_round_one_never_reuses_a_design_doc_that_came_in_with_main(monkeypatch, tmp_path):
+    seen = _launches(monkeypatch)
+    doc, tasks = so._design_doc_path(tmp_path, "T-1"), so._task_list_path(tmp_path, "T-1")
+    doc.parent.mkdir(parents=True)
+    doc.write_text("## Plan\nold merged plan\n## Task List\n1. Old task")
+    tasks.write_text("1. Old task")
+    so._default_executor(tmp_path, "T-1", None)
+    assert [k for k, _ in seen] == ["ticket-planner", "ticket-executor"]
+    assert "Old task" not in seen[1][1] and "1. Do the thing" in seen[1][1]
+
+
+def test_round_feedback_survives_odd_feedback_shapes():
+    assert "unknown" in so._round_feedback({})
+    assert "weird" in so._round_feedback("weird")
+    text = so._round_feedback({"verdict": "regressed", "tests": "no tests changed",
+                               "metrics": {"pass": {"baseline": 5, "current": 3, "direction": "regressed"},
+                                           "ok": {"baseline": 1, "current": 2, "direction": "improved"},
+                                           "junk": "not a dict"}})
+    assert "pass: 5 -> 3" in text and "ok:" not in text and "no tests changed" in text

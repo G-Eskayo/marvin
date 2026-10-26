@@ -1,6 +1,8 @@
 import { existsSync } from 'fs'
 import { listRepoDocTree, fetchFileContent, searchableText } from './docs.js'
 import { listLocalTree, readLocalFile, localFileStates } from './docs_local.js'
+import { UNSORTED_ID } from './deliverables.js'
+import { extractOutline } from '../../src/lib/docs_text.js'
 
 // Everything the Docs tab asks for, driven by the project catalog
 // (lib/project_catalog.py) instead of "GitHub repos with a CONTEXT.md": every
@@ -9,8 +11,37 @@ import { listLocalTree, readLocalFile, localFileStates } from './docs_local.js'
 export const MASTER_ID = '__master__'
 const CARD = { path: 'PROJECT.md', label: 'Project card' }
 const MASTER_FILE = { path: 'WHERE-THINGS-ARE.md', label: 'Where things are' }
+const copyAge = (copy) => ({ savedAt: copy?.savedAt ?? null, checkedAt: copy?.checkedAt ?? null })
 
-export function createDocsService({ getCatalog, exec, readMaster, fallbackRepos = () => [] }) {
+// `saved` (docs_saved.js, #565) holds the saved copy of GitHub-only projects: with it, tree and content never call
+// GitHub, and revalidate (sent once when a project is opened) is the only request.
+// `deliverables` (deliverables.js, #570) is the outbox match map: each project's tree also carries the outbox items
+// matched to it, and "Unsorted deliverables" lists what no project claims. Everything it returns is local or saved.
+export { UNSORTED_ID }
+// `onStatesChanged(id)`: the uncommitted/unpushed badges (local `git status`, 75-100 ms) are read after the tree is
+// drawn, from the last-known states; when they differ, this is called so the open view redraws them in place.
+export function createDocsService({ getCatalog, exec, readMaster, fallbackRepos = () => [], saved = null, deliverables = null, onStatesChanged = () => {}, midWork = () => false }) {
+  const lastStates = new Map() // dir -> { path: state }
+  const statesInflight = new Map()
+  function refreshStates(id, dir) {
+    if (statesInflight.has(dir)) return statesInflight.get(dir)
+    const p = localFileStates(dir)
+      .then((states) => {
+        const before = JSON.stringify(lastStates.get(dir) ?? null)
+        lastStates.set(dir, states)
+        if (before !== JSON.stringify(states)) onStatesChanged(id)
+        return states
+      })
+      .catch(() => lastStates.get(dir) || {})
+      .finally(() => statesInflight.delete(dir))
+    statesInflight.set(dir, p)
+    return p
+  }
+  // Resolves once every background git status that is running now has finished (for tests and a clean shutdown:
+  // removing a folder while git still writes in its .git fails). O(open repos); never rejects.
+  const idle = () => Promise.all([...statesInflight.values()]).then(() => undefined)
+  const outbox = () => deliverables?.view() || { byProject: {}, unsorted: { whole: [], leftovers: [] }, count: 0 }
+  const unsortedEntry = () => (deliverables ? [{ id: UNSORTED_ID, name: 'Unsorted deliverables', kind: 'unsorted', status: 'active', local: null, count: outbox().count }] : [])
   const catalog = () => getCatalog()
   const dirOf = (rec) => (rec?.localPaths || []).find((p) => existsSync(p)) || null
 
@@ -28,27 +59,46 @@ export function createDocsService({ getCatalog, exec, readMaster, fallbackRepos 
     const cat = catalog()
     const master = { id: MASTER_ID, name: 'Where things are', kind: 'master', status: 'active', local: null }
     if (!cat) {
-      return { generated_at: null, repos: [master, ...fallbackRepos().map((r) => ({ id: r.name, name: r.name, kind: 'repo', status: 'active', local: null }))] }
+      return { generated_at: null, repos: [master, ...unsortedEntry(), ...fallbackRepos().map((r) => ({ id: r.name, name: r.name, kind: 'repo', status: 'active', local: null }))] }
     }
     return {
       generated_at: cat.generated_at,
       repos: [
         master,
+        ...unsortedEntry(),
         ...cat.projects.map((p) => ({ id: p.id, name: p.name, kind: p.kind, status: p.status, local: dirOf(p), tags: p.tags, repo: p.repo, board: p.board }))
       ]
     }
   }
 
   async function tree(id) {
+    if (id === UNSORTED_ID) {
+      const u = outbox().unsorted
+      return { source: 'unsorted', dir: null, tree: [], deliverables: u.whole, leftovers: u.leftovers }
+    }
+    const t = await docTree(id)
+    return id === MASTER_ID ? t : { ...t, deliverables: outbox().byProject[id] || [] }
+  }
+
+  async function docTree(id) {
     if (id === MASTER_ID) return { source: 'master', dir: null, tree: [MASTER_FILE] }
     const rec = find(id)
     if (!rec) throw new Error(`Unknown project: ${id}`)
     const dir = dirOf(rec)
     if (dir) {
-      const states = await localFileStates(dir)
+      // Saved state first: the last-known badges now (none on the first open), the fresh ones in the background.
+      const states = lastStates.get(dir) || {}
+      refreshStates(id, dir)
       const annotate = (e) => ({ ...e, state: states[e.path] || null })
       const local = listLocalTree(dir).map((e) => (e.section ? { ...e, items: e.items.map(annotate) } : annotate(e)))
       return { source: 'local', dir, tree: [CARD, ...local] }
+    }
+    if (saved && rec.repo) {
+      const copy = saved.peek(rec.repo)
+      if (copy?.tree?.length) return { source: 'github', dir: null, tree: [CARD, ...copy.tree], copy: copyAge(copy) }
+      // No copy yet: what the catalog knows, at once; revalidate fills the copy and the view updates in place.
+      const known = [...(rec.docs.context ? [{ path: 'CONTEXT.md', label: 'CONTEXT.md' }] : []), ...(rec.docs.readme ? [{ path: 'README.md', label: 'README.md' }] : [])]
+      return { source: known.length ? 'github' : 'card', dir: null, tree: [CARD, ...known], copy: { savedAt: null, checkedAt: null } }
     }
     if (rec.repo && rec.docs.context) {
       try {
@@ -73,7 +123,32 @@ export function createDocsService({ getCatalog, exec, readMaster, fallbackRepos 
     const dir = dirOf(rec)
     if (dir) return readLocalFile(dir, filePath)
     if (!rec.repo) throw new Error(`${rec.name} has no readable copy of ${filePath}`)
+    if (saved) return saved.content(rec.repo, filePath)
     return fetchFileContent(exec, ghName(rec), filePath)
+  }
+
+  // The first heading of each doc, for the project overview's summary cards. Reads local files or the saved copy only.
+  async function headings(id, paths) {
+    const out = {}
+    for (const p of (Array.isArray(paths) ? paths : []).slice(0, 12)) {
+      try {
+        const text = await content(id, String(p))
+        out[p] = extractOutline(p.endsWith('.ipynb') ? '' : text)[0]?.text || null
+      } catch {
+        out[p] = null
+      }
+    }
+    return out
+  }
+
+  // Sent once when a GitHub-only project is opened: one conditional request (a 304 is free). On a change the saved
+  // copy is refreshed and the new tree comes back, so the open view can update in place.
+  async function revalidate(id) {
+    const rec = id === MASTER_ID ? null : find(id)
+    if (!saved || !rec?.repo || dirOf(rec) || !(rec.docs.context || rec.docs.readme)) return { status: 'not-github' }
+    const r = await saved.revalidate(rec.repo)
+    const copy = saved.peek(rec.repo)
+    return { ...r, tree: copy?.tree?.length ? [CARD, ...copy.tree] : undefined, copy: copyAge(copy) }
   }
 
   // Docs read live from disk (so uncommitted edits are searchable), plus every card and the master.
@@ -88,6 +163,16 @@ export function createDocsService({ getCatalog, exec, readMaster, fallbackRepos 
       const dir = dirOf(rec)
       if (!dir) continue
       reposWithLocal.add(rec.id)
+      // #611: a clone with work in it is not fast-forwarded (clone_freshen.js), so search its saved GitHub copy, which
+      // is current. With no saved copy yet, the local files are searched as before: nothing disappears.
+      const copy = midWork(dir) && saved && rec.repo ? saved.peek(rec.repo) : null
+      if (copy?.tree?.length && copy.files) {
+        for (const f of copy.tree.flatMap((e) => (e.section ? e.items : [e]))) {
+          const text = copy.files[f.path]
+          if (typeof text === 'string') docs.push({ repo: rec.id, path: f.path, label: f.label, content: searchableText(f.path, text) })
+        }
+        continue
+      }
       const states = await localFileStates(dir)
       for (const f of listLocalTree(dir).flatMap((e) => (e.section ? e.items : [e]))) {
         try {
@@ -97,16 +182,22 @@ export function createDocsService({ getCatalog, exec, readMaster, fallbackRepos 
         }
       }
     }
+    // Deliverables (#570): one search covers docs and deliverables. Cached per outbox item in deliverables.js.
+    if (deliverables) docs.push(...deliverables.searchDocs())
     return { repos: reposWithLocal, docs }
   }
 
   function githubIndexRepos() {
     const cat = catalog()
     if (!cat) return fallbackRepos().map((r) => ({ name: r.name, id: r.name }))
-    return cat.projects.filter((p) => p.repo && !dirOf(p) && (p.docs.context || p.docs.readme)).map((p) => ({ name: ghName(p), id: p.id }))
+    return cat.projects.filter((p) => p.repo && !dirOf(p) && (p.docs.context || p.docs.readme)).map((p) => ({ name: ghName(p), id: p.id, repo: p.repo }))
   }
+
+  // The projects whose local clone the freshener may fast-forward (#611): every catalog project with a GitHub repo.
+  // clone_freshen.js decides which of them are clean, and skips ~/.agents, worktrees and clones open in Xcode.
+  const freshenTargets = () => (catalog()?.projects || []).filter((p) => p.repo)
 
   const localDirs = () => (catalog()?.projects || []).map(dirOf).filter(Boolean)
 
-  return { repos, tree, content, localDocs, githubIndexRepos, localDirs }
+  return { repos, tree, content, headings, revalidate, localDocs, githubIndexRepos, localDirs, freshenTargets, idle }
 }

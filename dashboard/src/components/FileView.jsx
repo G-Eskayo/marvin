@@ -65,7 +65,8 @@ function prettyJson(content) {
   }
 }
 
-export default function FileView({ file, loadImage, onReveal, onOpenFile, onOpenLink, markdown = {} }) {
+// `fitImage`: show the whole image inside the pane (the Docs tab, mock-up ticket-403-f-1); a click opens it full size.
+export default function FileView({ file, loadImage, onReveal, onOpenFile, onOpenLink, markdown = {}, fitImage = false }) {
   const [viewer, setViewer] = useState(null)
   const [broken, setBroken] = useState(false)
   const open = ({ src, alt }) => setViewer({ src, alt, caption: alt || '' })
@@ -77,7 +78,7 @@ export default function FileView({ file, loadImage, onReveal, onOpenFile, onOpen
   if (kind === 'image') {
     body = broken
       ? card('This image is damaged or in a format that can\'t be drawn.')
-      : <img src={file.dataUrl} alt={file.name} onError={() => setBroken(true)} onClick={() => open({ src: file.dataUrl, alt: file.name })} className="h-auto max-w-full cursor-zoom-in rounded" />
+      : <img src={file.dataUrl} alt={file.name} onError={() => setBroken(true)} onClick={() => open({ src: file.dataUrl, alt: file.name })} className={`${fitImage ? 'max-h-[calc(100vh-15rem)] w-auto object-contain' : 'h-auto'} max-w-full cursor-zoom-in rounded`} />
   } else if (kind === 'markdown' || kind === 'notebook') {
     const text = kind === 'notebook' ? notebookToMarkdown(file.content) : file.content
     body = <Markdown content={text} loadImage={loadImage} onOpenImage={open} {...markdown} />

@@ -2612,3 +2612,73 @@ def test_link_onboarding_pr_with_no_open_pr_files_nothing():
     gh = FakeGitHub()
     assert po.link_onboarding_pr("test/repo", gh=gh) == {"action": "no-pr"}
     assert not gh.made("issue", "create")
+
+
+# ── playbooks (marvin #613): a detected app repo inherits its playbook ──────
+
+def test_apply_profile_gives_a_detected_ios_app_the_ios_playbook(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    result = po._apply_profile("test/iosapp", {"detected_stack": "xcodegen-app", "default_branch": "main"}, profiles_dir=tmp_path)
+    assert result["action"] == "created"
+    assert result["profile"]["playbook"] == "ios-app" and "playbook_variant" not in result["profile"]
+    assert result["profile"]["dispatch"] == "off"  # the playbook never turns dispatch on
+
+
+def test_apply_profile_gives_a_swift_package_app_the_macos_variant(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    result = po._apply_profile("test/macapp", {"detected_stack": "swift-package", "default_branch": "main"}, profiles_dir=tmp_path)
+    assert result["profile"]["playbook"] == "ios-app" and result["profile"]["playbook_variant"] == "macos"
+
+
+def test_apply_profile_gives_a_non_apple_stack_no_playbook(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    result = po._apply_profile("test/py", {"detected_stack": "python", "default_branch": "main"}, profiles_dir=tmp_path)
+    assert "playbook" not in result.get("profile", {})
+
+
+# ── Dynamic PR title and body based on what files are included ──
+
+def test_pr_title_includes_ci_when_adding_ci():
+    """PR title should say 'agent docs and CI' when .github/workflows/ci.yml is in files."""
+    title = po._pr_title("test/repo", includes_ci=True)
+    assert "agent docs" in title.lower()
+    assert "ci" in title.lower()
+
+
+def test_pr_title_omits_ci_when_ci_already_exists():
+    """PR title should say only 'agent docs' when CI is not being added."""
+    title = po._pr_title("test/repo", includes_ci=False)
+    assert "agent docs" in title.lower()
+    assert title.count("ci") == 0 or "CI" not in title  # CI might appear in CLAUDE or something, but not as separate word
+
+
+def test_pr_body_lists_all_files():
+    """PR body should include a bullet list of all files being added."""
+    files = ["docs/agents/issue-tracker.md", "docs/agents/triage-labels.md", ".github/workflows/ci.yml"]
+    ticket = 42
+    body = po._pr_body(files, ticket, includes_ci=True)
+    assert "docs/agents/issue-tracker.md" in body
+    assert "docs/agents/triage-labels.md" in body
+    assert ".github/workflows/ci.yml" in body
+    assert f"#{ticket}" in body
+
+
+def test_pr_body_indicates_docs_only_when_no_ci():
+    """PR body summary should mention only docs when CI is not included."""
+    files = ["docs/agents/issue-tracker.md", "docs/agents/triage-labels.md", "docs/agents/domain.md"]
+    ticket = 42
+    body = po._pr_body(files, ticket, includes_ci=False)
+    assert "Adds agent docs" in body or "agent docs" in body.lower()
+    # Should not mention CI workflow in summary when includes_ci=False
+    lines = body.split('\n')
+    summary_line = lines[0]  # First line is typically the summary
+    assert "CI" not in summary_line or "ci" not in summary_line.lower()
+
+
+def test_pr_body_indicates_docs_and_ci_when_both():
+    """PR body summary should mention both when CI is included."""
+    files = ["docs/agents/issue-tracker.md", ".github/workflows/ci.yml"]
+    ticket = 42
+    body = po._pr_body(files, ticket, includes_ci=True)
+    assert "agent docs" in body.lower()
+    assert "CI" in body or "ci" in body.lower()

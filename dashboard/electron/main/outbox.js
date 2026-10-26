@@ -2,7 +2,7 @@
 // form the renderer can show best: images as data: URLs read as bytes (the CSP allows img-src data:, same as
 // portfolio.js), PDFs as their bytes for the renderer's own pdf.js view (PdfView), text kinds as text, and anything else (or too large, or unreadable) as a card: name, kind, size, reason. Never raw
 // bytes decoded as UTF-8. Every path, including images a markdown file embeds, goes through resolveOutboxPath.
-import { readFileSync, readdirSync, lstatSync, existsSync, realpathSync } from 'fs'
+import { readFileSync, readdirSync, lstatSync, existsSync, realpathSync, openSync, readSync, closeSync } from 'fs'
 import { homedir } from 'os'
 import path from 'path'
 import { fileKind } from '../../src/lib/file_kinds.js'
@@ -34,31 +34,6 @@ export function resolveOutboxPath(relPath) {
   }
   if (!realFull.startsWith(realRoot + path.sep) && realFull !== realRoot) throw new Error('Path escapes outbox root')
   return fullPath
-}
-
-export function listOutboxTree(relPath = '', depth = 0) {
-  const currentPath = relPath ? path.join(outboxRoot(), relPath) : outboxRoot()
-  if (depth > MAX_DEPTH || !existsSync(currentPath)) return []
-  let entries
-  try {
-    entries = readdirSync(currentPath, { withFileTypes: true })
-  } catch {
-    return []
-  }
-  const dirs = []
-  const files = []
-  for (const entry of entries) {
-    const entryPath = relPath ? `${relPath}/${entry.name}` : entry.name
-    if (entry.isDirectory()) dirs.push({ path: entryPath, name: entry.name })
-    else if (entry.isFile()) files.push({ path: entryPath, name: entry.name })
-  }
-  dirs.sort((a, b) => a.name.localeCompare(b.name))
-  files.sort((a, b) => a.name.localeCompare(b.name))
-  return [
-    ...dirs.map((d) => ({ path: d.path, type: 'dir', children: listOutboxTree(d.path, depth + 1) })),
-    // The kind comes from the name alone: listing never opens a file.
-    ...files.map((f) => ({ path: f.path, type: 'file', ...fileKind(f.name) }))
-  ]
 }
 
 // The real file type from its bytes, for images: a text file named .png is not an image.
@@ -170,4 +145,102 @@ export function outboxRevealPath(relPath) {
 export function outboxOpenPath(relPath) {
   if (fileKind(relPath).kind !== 'pdf') throw new Error('Only PDFs open from here')
   return statFile(relPath).fullPath
+}
+
+// ── Deliverables in the Docs tab (#570) ─────────────────────────────────────────────────────────────────────────────
+// The Docs tab shows outbox items under the project they're matched to (deliverables.js). These read the outbox one
+// folder at a time, behind the same guard, never recursively on a click.
+
+export const DIR_LIMIT = 200 // a folder lists its first 200 entries, then "N more" (marvin-icon-proto has 5,659 files)
+const WALK_LIMIT = 10000
+
+// One folder's entries, folders first, each with its kind label; `more` counts what was left out. Dot files are hidden.
+export function listOutboxDir(relPath = '', limit = DIR_LIMIT) {
+  const full = relPath ? resolveOutboxPath(relPath) : outboxRoot()
+  let entries
+  try {
+    entries = readdirSync(full, { withFileTypes: true })
+  } catch {
+    return { entries: [], more: 0 }
+  }
+  const visible = entries.filter((e) => !e.name.startsWith('.') && (e.isDirectory() || e.isFile()))
+  visible.sort((a, b) => (a.isDirectory() === b.isDirectory() ? a.name.localeCompare(b.name) : a.isDirectory() ? -1 : 1))
+  const shown = visible.slice(0, Math.max(0, limit)).map((e) => {
+    const p = relPath ? `${relPath}/${e.name}` : e.name
+    return e.isDirectory() ? { path: p, name: e.name, type: 'dir' } : { path: p, name: e.name, type: 'file', ...fileKind(e.name) }
+  })
+  return { entries: shown, more: visible.length - shown.length }
+}
+
+// What a card needs about a file or folder, without reading file contents: file count, mtime, the first images
+// (covers), the kinds inside. Breadth-first and bounded (WALK_LIMIT entries), so a huge folder costs a bounded walk.
+export function summarizeOutbox(relPath) {
+  const full = resolveOutboxPath(relPath)
+  let st
+  try {
+    st = lstatSync(full)
+  } catch {
+    return null
+  }
+  if (st.isFile()) {
+    const k = fileKind(relPath)
+    return { isDir: false, count: 1, size: st.size, mtimeMs: st.mtimeMs, covers: k.kind === 'image' ? [relPath] : [], kinds: [k.label] }
+  }
+  if (!st.isDirectory()) return null
+  const covers = []
+  const kinds = new Set()
+  let count = 0
+  let walked = 0
+  const queue = [relPath]
+  while (queue.length && walked < WALK_LIMIT) {
+    const dir = queue.shift()
+    let entries
+    try {
+      entries = readdirSync(path.join(outboxRoot(), dir), { withFileTypes: true })
+    } catch {
+      continue
+    }
+    entries.sort((a, b) => a.name.localeCompare(b.name))
+    for (const e of entries) {
+      if (e.name.startsWith('.') || ++walked > WALK_LIMIT) continue
+      const p = `${dir}/${e.name}`
+      if (e.isDirectory()) queue.push(p)
+      else if (e.isFile()) {
+        count++
+        const k = fileKind(e.name)
+        if (kinds.size < 6) kinds.add(k.label)
+        if (k.kind === 'image' && covers.length < 8) covers.push(p)
+      }
+    }
+  }
+  return { isDir: true, count, truncated: walked > WALK_LIMIT, mtimeMs: st.mtimeMs, covers, kinds: [...kinds] }
+}
+
+// The first `n` bytes of a file as text (a large file is never read whole).
+export function readHead(fullPath, n) {
+  const fd = openSync(fullPath, 'r')
+  try {
+    const buf = Buffer.alloc(n)
+    const got = readSync(fd, buf, 0, n, 0)
+    return buf.subarray(0, got).toString('utf8')
+  } finally {
+    closeSync(fd)
+  }
+}
+
+// The first heading and opening text of a markdown or text file (its first 2 KB), for a card. Never throws.
+export function outboxPreview(relPath) {
+  try {
+    const { fullPath } = statFile(relPath)
+    const k = fileKind(relPath).kind
+    if (k !== 'markdown' && k !== 'text') return null
+    const head = readHead(fullPath, 2048)
+    const lines = head.split('\n').map((l) => l.trim()).filter(Boolean)
+    const h = lines.find((l) => /^#{1,6}\s/.test(l))
+    const title = h ? h.replace(/^#{1,6}\s+/, '') : null
+    const text = lines.filter((l) => l !== h && !/^#{1,6}\s/.test(l)).join(' ').slice(0, 280)
+    return { title, text }
+  } catch {
+    return null
+  }
 }

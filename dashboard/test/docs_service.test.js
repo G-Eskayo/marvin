@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
 import { createDocsService, MASTER_ID } from '../electron/main/docs_service.js'
+import { createSavedDocs, gitBlobSha } from '../electron/main/docs_saved.js'
 
 const rec = (over) => ({
   id: 'p1',
@@ -22,7 +23,7 @@ const withDir = async (fn) => {
   try {
     return await fn(dir)
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
   }
 }
 const svc = (cat, extra = {}) =>
@@ -110,11 +111,173 @@ describe('localDocs and index sources', () => {
 
   it('lists the GitHub-only repos worth indexing, with their ids', () => {
     const s = svc(catalog(rec({ docs: { context: true, readme: false, adrCount: 0 } }), rec({ id: 'p2', repo: 'G-Eskayo/Two', docs: { context: false, readme: false, adrCount: 0 } })))
-    expect(s.githubIndexRepos()).toEqual([{ name: 'P_One', id: 'p1' }])
+    expect(s.githubIndexRepos()).toEqual([{ name: 'P_One', id: 'p1', repo: 'G-Eskayo/P_One' }])
   })
 
   it('lists local folders to watch', async () =>
     withDir(async (dir) => {
       expect(svc(catalog(rec({ localPaths: [dir] }))).localDirs()).toEqual([dir])
     }))
+})
+
+// #565: a GitHub-only project reads its saved copy on every click; only opening it sends one conditional request.
+describe('GitHub-only projects read the saved copy (#565)', () => {
+  const ghFiles = { 'CONTEXT.md': '# ctx\n', 'README.md': '# readme\n', 'docs/adr/0001-a.md': '# A\n' }
+  function counting() {
+    const calls = { probe: 0, exec: 0 }
+    let etag = 'W/"1"'
+    const probe = async (_repo, known) => {
+      calls.probe++
+      if (known === etag) return { status: 304, etag }
+      return { status: 200, etag, body: { tree: Object.entries(ghFiles).map(([p, t]) => ({ path: p, type: 'blob', sha: gitBlobSha(t) })) } }
+    }
+    const exec = vi.fn(async (_cmd, args) => {
+      calls.exec++
+      const p = args.find((a) => a.startsWith('repos/')).split('/contents/')[1]
+      return { stdout: Buffer.from(ghFiles[p]).toString('base64') }
+    })
+    return { calls, probe, exec, bump: () => (etag = 'W/"2"') }
+  }
+  const ctxRec = () => rec({ docs: { context: true, readme: true, adrCount: 1 } })
+
+  it('tree and content cost zero calls on every click once the copy is saved', async () =>
+    withDir(async (dir) => {
+      const gh = counting()
+      const saved = createSavedDocs({ dir, probe: gh.probe, exec: gh.exec })
+      const s = svc(catalog(ctxRec()), { exec: gh.exec, saved })
+      const r = await s.revalidate('p1')
+      expect(r.status).toBe('changed')
+      expect(r.tree.map((e) => e.path || e.section)).toEqual(['PROJECT.md', 'CONTEXT.md', 'README.md', 'docs/adr/'])
+      const n = gh.calls.probe + gh.calls.exec
+      for (let i = 0; i < 10; i++) {
+        const t = await s.tree('p1')
+        expect(t.source).toBe('github')
+        expect(t.copy.checkedAt).toBeGreaterThan(0)
+        expect(await s.content('p1', 'docs/adr/0001-a.md')).toBe('# A\n')
+        expect(await s.content('p1', 'PROJECT.md')).toContain('card body')
+      }
+      expect(gh.calls.probe + gh.calls.exec).toBe(n)
+    }))
+
+  it('before any copy exists, tree answers from the catalog with no calls and says it has no copy yet', async () =>
+    withDir(async (dir) => {
+      const gh = counting()
+      const s = svc(catalog(ctxRec()), { exec: gh.exec, saved: createSavedDocs({ dir, probe: gh.probe, exec: gh.exec }) })
+      const t = await s.tree('p1')
+      expect(t.tree.map((e) => e.path)).toEqual(['PROJECT.md', 'CONTEXT.md', 'README.md'])
+      expect(t.copy).toEqual({ savedAt: null, checkedAt: null })
+      expect(gh.calls.probe + gh.calls.exec).toBe(0)
+    }))
+
+  it('revalidate is one conditional request per open; unchanged is a 304 with no downloads', async () =>
+    withDir(async (dir) => {
+      const gh = counting()
+      const s = svc(catalog(ctxRec()), { exec: gh.exec, saved: createSavedDocs({ dir, probe: gh.probe, exec: gh.exec }) })
+      await s.revalidate('p1')
+      const exec = gh.calls.exec
+      expect((await s.revalidate('p1')).status).toBe('unchanged')
+      expect(gh.calls.probe).toBe(2)
+      expect(gh.calls.exec).toBe(exec)
+    }))
+
+  it('local, master and card-only projects never revalidate', async () =>
+    withDir(async (dir) => {
+      const gh = counting()
+      const saved = createSavedDocs({ dir, probe: gh.probe, exec: gh.exec })
+      const s = svc(catalog(rec({ localPaths: [dir] }), rec({ id: 'p2', kind: 'local', repo: null })), { exec: gh.exec, saved })
+      expect((await s.revalidate('p1')).status).toBe('not-github')
+      expect((await s.revalidate('p2')).status).toBe('not-github')
+      expect((await s.revalidate(MASTER_ID)).status).toBe('not-github')
+      expect(gh.calls.probe).toBe(0)
+    }))
+})
+
+// #570 speed budget: a local clone's tree is drawn without waiting for `git status` (75-100 ms on a real repo); the
+// badges come from the last-known states, and a change is announced so the view redraws them in place.
+describe('local badges come after the tree (#570)', () => {
+  it('the first tree has no badges and does not wait for git; a later one has them, and the change is announced', async () =>
+    withDir(async (dir) => {
+      const { execFileSync } = await import('child_process')
+      execFileSync('git', ['init', '-q', dir])
+      writeFileSync(path.join(dir, 'CONTEXT.md'), '# ctx\n')
+      const changed = []
+      const s = svc(catalog(rec({ localPaths: [dir], docs: { context: true, readme: false, adrCount: 0 } })), { onStatesChanged: (id) => changed.push(id) })
+      const first = await s.tree('p1')
+      expect(first.tree.find((e) => e.path === 'CONTEXT.md').state).toBeNull()
+      await s.idle()
+      expect(changed).toEqual(['p1'])
+      const second = await s.tree('p1')
+      expect(second.tree.find((e) => e.path === 'CONTEXT.md').state).toBe('uncommitted')
+      // The second tree starts another background git status; it must be awaited before the folder is removed.
+      // On a slow CI runner it was still writing .git when withDir deleted it: ENOTEMPTY (PR #638, 2026-10-25).
+      await s.idle()
+    }))
+
+  it('idle() waits for every in-flight git status, and is instant when none is running', async () =>
+    withDir(async (dir) => {
+      const { execFileSync } = await import('child_process')
+      execFileSync('git', ['init', '-q', dir])
+      writeFileSync(path.join(dir, 'CONTEXT.md'), '# ctx\n')
+      const changed = []
+      const s = svc(catalog(rec({ localPaths: [dir], docs: { context: true, readme: false, adrCount: 0 } })), { onStatesChanged: (id) => changed.push(id) })
+      await s.idle() // nothing in flight yet
+      await s.tree('p1')
+      expect(changed).toEqual([]) // the read runs in the background, after the tree
+      await s.idle()
+      expect(changed).toEqual(['p1'])
+      await Promise.all([s.tree('p1'), s.tree('p1'), s.tree('p1')]) // concurrent opens share one read
+      await s.idle()
+      expect(changed).toEqual(['p1']) // same states: not announced again
+    }))
+})
+
+// #611: a clone that is mid-work (dirty, another branch, ahead, diverged, mid-rebase, open in Xcode) is not
+// fast-forwarded, so its search reads the GitHub saved copy instead; with no saved copy yet, its local files still count.
+describe('localDocs: a mid-work clone is searched from its saved GitHub copy (#611)', () => {
+  const copy = {
+    tree: [{ path: 'CONTEXT.md', label: 'CONTEXT.md' }, { section: 'docs/perf/', items: [{ path: 'docs/perf/engine.md', label: 'engine.md' }] }],
+    files: { 'CONTEXT.md': '# ctx from GitHub\n', 'docs/perf/engine.md': '# Engine\n\nParakeet beats Whisper here.\n' }
+  }
+  const saved = (c = copy) => ({ peek: (repo) => (repo === 'G-Eskayo/P_One' ? c : null) })
+
+  it('mid-work + a saved copy: the saved copy is searched, not the stale local files', async () =>
+    withDir(async (dir) => {
+      writeFileSync(path.join(dir, 'CONTEXT.md'), '# ctx local\n')
+      const s = svc(catalog(rec({ localPaths: [dir] })), { saved: saved(), midWork: (d) => d === dir })
+      const { repos, docs } = await s.localDocs()
+      expect([...repos]).toContain('p1') // the GitHub index copy of p1 must not be added a second time
+      const p1 = docs.filter((d) => d.repo === 'p1' && d.path !== 'PROJECT.md')
+      expect(p1.map((d) => d.path).sort()).toEqual(['CONTEXT.md', 'docs/perf/engine.md'])
+      expect(p1.find((d) => d.path === 'CONTEXT.md').content).toContain('from GitHub')
+      expect(p1.find((d) => d.path === 'docs/perf/engine.md').content).toContain('Parakeet')
+    }))
+
+  it('mid-work but no saved copy yet: the local files are still searched (nothing disappears)', async () =>
+    withDir(async (dir) => {
+      writeFileSync(path.join(dir, 'CONTEXT.md'), '# ctx local\n')
+      const s = svc(catalog(rec({ localPaths: [dir] })), { saved: saved(null), midWork: () => true })
+      const { docs } = await s.localDocs()
+      expect(docs.find((d) => d.repo === 'p1' && d.path === 'CONTEXT.md').content).toContain('local')
+    }))
+
+  it('a saved copy with an empty tree counts as no copy', async () =>
+    withDir(async (dir) => {
+      writeFileSync(path.join(dir, 'CONTEXT.md'), '# ctx local\n')
+      const s = svc(catalog(rec({ localPaths: [dir] })), { saved: saved({ tree: [], files: {} }), midWork: () => true })
+      const { docs } = await s.localDocs()
+      expect(docs.find((d) => d.repo === 'p1' && d.path === 'CONTEXT.md').content).toContain('local')
+    }))
+
+  it('a clean clone is still searched from disk', async () =>
+    withDir(async (dir) => {
+      writeFileSync(path.join(dir, 'CONTEXT.md'), '# ctx local\n')
+      const s = svc(catalog(rec({ localPaths: [dir] })), { saved: saved(), midWork: () => false })
+      const { docs } = await s.localDocs()
+      expect(docs.find((d) => d.repo === 'p1' && d.path === 'CONTEXT.md').content).toContain('local')
+    }))
+
+  it('the clones to freshen are the catalog projects with a repo', () => {
+    const s = svc(catalog(rec(), rec({ id: 'p2', repo: null })))
+    expect(s.freshenTargets().map((p) => p.id)).toEqual(['p1'])
+  })
 })

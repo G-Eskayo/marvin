@@ -5,10 +5,12 @@ import { useEffect, useRef, useState } from 'react'
 import ProposalsSection from './ProposalsSection.jsx'
 import { toggleLabel } from '../lib/proposals_view.js'
 import { describePrState } from '../lib/prState.js'
+import StageStrip from './StageStrip.jsx'
 import MrDetail from './MrDetail.jsx'
 import CheckProgress from './CheckProgress.jsx'
 import MergeProgress from './MergeProgress.jsx'
 import { opForHead } from '../lib/merge_progress.js'
+import { displayTitle } from '../lib/pr_title.js'
 
 const MR_LIST_REFRESH_MS = 120000
 
@@ -429,6 +431,14 @@ function ParitySummary({ parity }) {
 }
 
 function PrCard({ pr, parity, onOpenTicket, onApproved, onDenied, onSelect }) {
+  const [prEvents, setPrEvents] = useState([])
+
+  useEffect(() => {
+    if (pr.ticketNumber) {
+      window.api.activity.timeline(pr.ticketNumber, pr.repo).then(setPrEvents).catch(() => {})
+    }
+  }, [pr.ticketNumber, pr.repo])
+
   return (
     <div
       onClick={() => onSelect(pr)}
@@ -442,7 +452,7 @@ function PrCard({ pr, parity, onOpenTicket, onApproved, onDenied, onSelect }) {
       <div className="mb-2 flex items-center justify-between gap-3">
         <div>
           <p className="font-mono text-sm font-semibold text-white">
-            #{pr.number} — {pr.title}{' '}
+            #{pr.number} — {displayTitle(pr.title, parity?.ticket?.title)}{' '}
             {pr.repo !== 'G-Eskayo/marvin' && <span className="rounded bg-sky-950 px-1.5 py-0.5 font-sans text-[10px] font-normal text-sky-300">{pr.repo.split('/')[1]}</span>}
           </p>
           {pr.hasSchema ? (
@@ -462,6 +472,7 @@ function PrCard({ pr, parity, onOpenTicket, onApproved, onDenied, onSelect }) {
             <p className="text-xs text-amber-400">No structured evidence — needs a manual look</p>
           )}
           <TicketLine row={parity} onOpenTicket={onOpenTicket} />
+          {prEvents.length > 0 && <StageStrip events={prEvents} />}
         </div>
         {/* Approve/Deny live inside the same clickable card -- stop the
             click from also bubbling up to onSelect and opening the detail
@@ -542,6 +553,17 @@ export function FetchBanner({ status, now = Date.now() }) {
   )
 }
 
+// GitHub disagreed with an action the screen had already shown (local-first actions): the view now shows GitHub's
+// version, and this says what differed. Same amber box as the auto-merge banner above the list.
+export function CorrectionNotice({ notice, onDismiss = null }) {
+  return (
+    <div data-correction="1" role="status" className="rounded-lg border border-amber-700 bg-amber-950/40 px-4 py-3 text-sm text-amber-200">
+      <strong>GitHub disagreed{notice.number ? ` on #${notice.number}` : ''}.</strong> {notice.message}
+      {onDismiss && <button onClick={onDismiss} className="ml-2 text-amber-300 hover:underline">Dismiss</button>}
+    </div>
+  )
+}
+
 function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
   const [fetchStatus, setFetchStatus] = useState(null)
   const [prs, setPrs] = useState(null)
@@ -551,6 +573,10 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
   // Auto-merge's shadow report (ADR 0064, #341): a banner once it's ready, until Gil switches it on.
   const [amReport, setAmReport] = useState(null)
 
+  // GitHub disagreed with an action already shown (local-first): the view now has GitHub's version; say so plainly.
+  const [notice, setNotice] = useState(null)
+  useEffect(() => window.api.mr.onCorrected?.((c) => setNotice({ ...c, at: Date.now() })), [])
+
   function reload() {
     window.api.mr.parity().then(setParity).catch(() => setParity(null))
     window.api.mr.autoMergeReport?.().then(setAmReport).catch(() => setAmReport(null))
@@ -558,6 +584,8 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
       .list()
       .then((list) => {
         setPrs(list)
+        // An open detail view follows the list (a correction, finished checks); a PR gone from it keeps its last view.
+        setSelected((cur) => (cur ? list.find((p) => p.key === cur.key) || cur : cur))
         onCount?.(list.length)
         window.api.mr.listStatus?.().then((st) => {
           setFetchStatus(st)
@@ -607,8 +635,13 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
     reload()
   }
 
-  // Decisions were answered on the open PR: refresh it in place (its card state and Approve depend on them).
-  function reloadKeepSelected() {
+  // Decisions were answered on the open PR: the submit's answer already carries the PR as it now stands (local-first),
+  // so it is shown at once and Approve unlocks from it; the list is then re-read from memory to match.
+  function reloadKeepSelected(r) {
+    if (r?.pr?.key) {
+      setSelected((cur) => (cur && cur.key === r.pr.key ? r.pr : cur))
+      setPrs((list) => (list ? list.map((p) => (p.key === r.pr.key ? r.pr : p)) : list))
+    }
     window.api.mr
       .list()
       .then((list) => {
@@ -622,6 +655,7 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
     return (
       <MrDetail
         pr={selected}
+        notice={notice && notice.url === selected.url ? notice : null}
         onChanged={reloadKeepSelected}
         onOpenDocs={onOpenDocs}
         onOpenBoard={onOpenBoard}
@@ -656,6 +690,7 @@ function OpenPrs({ nav, onOpenDocs, onOpenBoard, onOpenTicket, onCount }) {
         </div>
       )}
       <FetchBanner status={fetchStatus} />
+      {notice && <CorrectionNotice notice={notice} onDismiss={() => setNotice(null)} />}
       <ParitySummary parity={parity} />
       {prs.map((pr) => (
         <PrCard

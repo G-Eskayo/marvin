@@ -45,8 +45,28 @@ WORKTREES_ROOT = Path.home() / ".agents-pipeline-worktrees"
 
 
 class TaskListTooVague(RuntimeError):
-    """Raised when the planning model cannot produce a concrete task list for a ticket."""
-    pass
+    """Raised when the planning model cannot produce a concrete task list for a ticket.
+
+    needs_person is True only when the planner itself said the ticket is too vague (the TOO_VAGUE sentinel): that is
+    a question for a person. A plan that merely lacks its Task List section is a bad run, retried like any failure."""
+    def __init__(self, message: str, needs_person: bool = False):
+        super().__init__(message)
+        self.needs_person = needs_person
+
+
+class ModelRunFailed(RuntimeError):
+    """A model run exited non-zero, so its text is an error, not a plan or an implementation.
+
+    Found 2026-10-21: in the weekly usage-limit windows of 10-10 and 10-16 every launch on both Macs exited 1, most in
+    under 2 s at zero cost. _launch dropped the exit code, the error text was searched for a Task List, and ten tickets
+    were labelled "too vague" and kept their claims for up to 11 days. This is about the model service, not the
+    ticket: run_ticket releases the claim with a backoff and no strike."""
+    def __init__(self, kind: str, exit_code: int, detail: str):
+        self.kind, self.exit_code, self.detail = kind, exit_code, (detail or "").strip()
+        self.usage_limit = bool(re.search(r"usage limit|limit reached|rate.?limit|hit your limit|resets? at|overloaded|quota",
+                                          self.detail, re.I))
+        super().__init__(f"the {kind} model run failed (exit {exit_code}"
+                         f"{', usage limit' if self.usage_limit else ''}): {self.detail[:200] or 'no output'}")
 
 
 FLAGSHIP_MODEL = "claude-sonnet-5"
@@ -93,6 +113,8 @@ def _launch(kind: str, prompt: str, *, ticket_ref: str, **kwargs) -> tuple[str, 
     adds the kind's layers of MARVIN context, resolves the claude binary, and records the run with its
     real cost and tokens. Returns (result_text, cost_usd) for ticket_stages' per-stage cost field."""
     result = marvin_launcher.launch(kind, prompt, ticket=ticket_ref, **kwargs)
+    if result.exit_code != 0:
+        raise ModelRunFailed(kind, result.exit_code, result.text or result.stderr)
     return result.text, result.cost_usd
 
 
@@ -167,50 +189,19 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
         f"followed by a single line starting with 'TOO_VAGUE:' and your reason."
     )
 
-    # Check if a prior design doc exists (true only on iteration ≥2 within one execute_ticket call)
+    # #605: rounds 2-3 of one execute_ticket reuse round 1's plan and send the executor only what went wrong. Every
+    # round used to re-plan from scratch (~30k output tokens, ~$1.20 a plan on the flagship model), and on 2026-10-22
+    # most failed runs ended on "code review found must-fix issues" three times: the findings are a fix-up list for the
+    # executor, not a reason for a new design. Round 1 always plans (feedback is None), so a design doc that came in
+    # with origin/main is never mistaken for this run's; a round whose plan or task list is gone or empty plans again.
     design_doc_path = _design_doc_path(worktree_path, ticket_ref)
-    prior_doc = None
-    if design_doc_path.exists():
-        prior_doc = design_doc_path.read_text()
-
-    if feedback is not None:
-        plan_prompt += (
-            f" A previous attempt's metrics comparison came back as: {feedback}. "
-            f"Adjust the plan to address this before trying again."
-        )
-        if isinstance(feedback, dict) and feedback.get("fix_these"):
-            plan_prompt += (
-                " Code review found these must-fix defects in the previous attempt; fix every one and add a test "
-                "that would have caught it:\n" + "\n".join(f"- {f}" for f in feedback["fix_these"])
-            )
-        if prior_doc is not None:
-            plan_prompt += (
-                f"\n\nHere is the prior attempt's design doc:\n\n{prior_doc}\n\n"
-                f"Write a genuinely revised design doc addressing the failure above — do not repeat the same plan unchanged."
-            )
-    ticket_number = _parse_ticket_number(ticket_ref)
-    plan, plan_cost = _launch(
-        "ticket-planner", plan_prompt, ticket_ref=ticket_ref, model=FLAGSHIP_MODEL,
-        allowed_tools=_PLAN_ALLOWED_TOOLS, cwd=worktree_path, timeout=PLAN_TIMEOUT_S, env=env,
-    )
-    _stage(ticket_ref, "executing", "started", "planning call", cost_usd=plan_cost)
-
-    # Write design doc to disk for persistence across iterations and inclusion in PR diff
-    design_doc_path.parent.mkdir(parents=True, exist_ok=True)
-    design_doc_path.write_text(plan)
-
-    # Split plan into design doc + task list, extracting the task list body
-    task_list_match = re.search(r"##\s*Task List\s*\n(.*)", plan, re.DOTALL)
-    task_list_body = task_list_match.group(1).strip() if task_list_match else ""
-
-    # Check for the "too vague" sentinel
-    if not task_list_body or task_list_body.startswith("TOO_VAGUE:"):
-        reason = task_list_body[len("TOO_VAGUE:"):].strip() if task_list_body.startswith("TOO_VAGUE:") else "(no task list section provided)"
-        raise TaskListTooVague(f"Planning model could not produce a concrete task list: {reason}")
-
-    # Write task list to disk
     task_list_path = _task_list_path(worktree_path, ticket_ref)
-    task_list_path.write_text(task_list_body)
+    reuse = feedback is not None and _saved_plan(design_doc_path, task_list_path) is not None
+    if reuse:
+        plan = design_doc_path.read_text()
+        _stage(ticket_ref, "executing", "started", "planning reused from round 1")
+    else:
+        plan = _plan(worktree_path, ticket_ref, plan_prompt, feedback, design_doc_path, task_list_path, env)
 
     if profile is None:
         import_advice = (
@@ -236,12 +227,81 @@ def _default_executor(worktree_path: Path, ticket_ref: str, feedback: dict | Non
         f"absolute path elsewhere. {import_advice}\n\n"
         f"Implement this plan in the current working tree:\n\n{task_list_content}"
     )
+    if reuse:
+        exec_prompt += _round_feedback(feedback)
     _, exec_cost = _launch(
         "ticket-executor", exec_prompt, ticket_ref=ticket_ref, model=HAIKU_MODEL, allowed_tools=allowed_tools,
         disallowed_tools=disallowed_tools or None, cwd=worktree_path, timeout=EXEC_TIMEOUT_S, env=env,
     )
     _stage(ticket_ref, "executing", "passed", "execution call", cost_usd=exec_cost)
     return plan
+
+
+
+def _saved_plan(design_doc_path: Path, task_list_path: Path) -> str | None:
+    """The task list an earlier round of this run wrote, or None when there is nothing usable to reuse."""
+    try:
+        if not design_doc_path.is_file():
+            return None
+        body = task_list_path.read_text().strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+    return body if body and not body.startswith("TOO_VAGUE:") else None
+
+
+def _plan(worktree_path: Path, ticket_ref: str, plan_prompt: str, feedback, design_doc_path: Path,
+          task_list_path: Path, env: dict | None) -> str:
+    """One planning call: writes the design doc and its task list into the worktree, or raises."""
+    if feedback is not None:
+        plan_prompt += (
+            f" A previous attempt's metrics comparison came back as: {feedback}. "
+            f"Adjust the plan to address this before trying again."
+        )
+        if isinstance(feedback, dict) and feedback.get("fix_these"):
+            plan_prompt += (
+                " Code review found these must-fix defects in the previous attempt; fix every one and add a test "
+                "that would have caught it:\n" + "\n".join(f"- {f}" for f in feedback["fix_these"])
+            )
+    plan, plan_cost = _launch(
+        "ticket-planner", plan_prompt, ticket_ref=ticket_ref, model=FLAGSHIP_MODEL,
+        allowed_tools=_PLAN_ALLOWED_TOOLS, cwd=worktree_path, timeout=PLAN_TIMEOUT_S, env=env,
+    )
+    _stage(ticket_ref, "executing", "started", "planning call", cost_usd=plan_cost)
+
+    # Write design doc to disk for persistence across iterations and inclusion in PR diff
+    design_doc_path.parent.mkdir(parents=True, exist_ok=True)
+    design_doc_path.write_text(plan)
+
+    # Split plan into design doc + task list, extracting the task list body
+    task_list_match = re.search(r"##\s*Task List\s*\n(.*)", plan, re.DOTALL)
+    task_list_body = task_list_match.group(1).strip() if task_list_match else ""
+
+    # Check for the "too vague" sentinel
+    if task_list_body.startswith("TOO_VAGUE:"):
+        reason = task_list_body[len("TOO_VAGUE:"):].strip() or "(no reason given)"
+        raise TaskListTooVague(f"Planning model could not produce a concrete task list: {reason}", needs_person=True)
+    if not task_list_body:
+        raise TaskListTooVague("The planning run's output had no task list section (a bad run, retried)")
+
+    task_list_path.write_text(task_list_body)
+    return plan
+
+
+def _round_feedback(feedback) -> str:
+    """What the last round got wrong, for an executor working on a reused plan (#605). O(findings + metrics)."""
+    fb = feedback if isinstance(feedback, dict) else {"verdict": str(feedback)}
+    lines = [f"\n\nThis plan was already implemented once in this tree and the result was not accepted "
+             f"(verdict: {fb.get('verdict', 'unknown')}). Work from the tree as it is now; do not start over."]
+    if fb.get("tests"):
+        lines.append(f"Tests: {fb['tests']}")
+    moved = [f"- {k}: {m.get('baseline')} -> {m.get('current')} ({m.get('direction')})"
+             for k, m in sorted((fb.get("metrics") or {}).items()) if isinstance(m, dict) and m.get("direction") != "improved"]
+    if moved:
+        lines += ["Metrics that did not improve:", *moved]
+    if fb.get("fix_these"):
+        lines += ["Code review found these must-fix defects; fix every one and add a test that would have caught it:",
+                  *[f"- {f}" for f in fb["fix_these"]]]
+    return "\n".join(lines)
 
 
 def _preserve_prior_attempt(repo_path: Path, worktree_path: "Path | list[Path]", branch: str, base_branch: str = "main") -> str | None:
@@ -414,7 +474,8 @@ def execute_ticket(
         # own two nested claude -p calls), so "executing" is the finest
         # grain available without changing that call shape too. Iteration
         # number lives in `detail` so a 3-retry ticket's timeline is still
-        # legible, not three indistinguishable "executing" rows.
+        # legible, not three indistinguishable "executing" rows. The default executor plans only in round 1;
+        # later rounds reuse that plan and get this round's feedback (#605).
         _stage(ticket_ref, "executing", "started", f"iteration {iteration}/{max_iterations}")
         try:
             executor(worktree_path, ticket_ref, feedback)

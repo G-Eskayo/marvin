@@ -26,7 +26,9 @@ export function loadPdfjs() {
       const pdfjs = await import('pdfjs-dist') // sets globalThis.pdfjsLib, which the viewer module reads
       const [viewer, worker] = await Promise.all([import('pdfjs-dist/web/pdf_viewer.mjs'), import('pdfjs-dist/build/pdf.worker.min.mjs?url')])
       pdfjs.GlobalWorkerOptions.workerSrc = worker.default
-      return { pdfjs, viewer }
+      // One worker for every PDF (#570 speed budget): booting a worker per document cost the first page ~100 ms.
+      // pdf.js leaves a worker it was handed alone when a document is destroyed.
+      return { pdfjs, viewer, sharedWorker: new pdfjs.PDFWorker({ name: 'marvin-pdf' }) }
     })().catch((err) => {
       pdfjsPromise = null
       throw err
@@ -75,7 +77,7 @@ export default function PdfView({ file, onOpenImage, onOpen, onOpenLink, card })
     let doc = null
     setState({ status: 'loading' })
     loadPdfjs()
-      .then(({ pdfjs, viewer }) => openPdf(pdfjs.getDocument, file.data).then((r) => ({ r, pdfjs, viewer })))
+      .then(({ pdfjs, viewer, sharedWorker }) => openPdf((opts) => pdfjs.getDocument({ ...opts, worker: sharedWorker }), file.data).then((r) => ({ r, pdfjs, viewer })))
       .then(({ r, pdfjs, viewer }) => {
         if (!live) return r.doc?.destroy()
         doc = r.doc || null

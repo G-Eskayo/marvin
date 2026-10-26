@@ -46,18 +46,23 @@ class Hook:
     command: tuple[str, ...]
     kinds: frozenset[str]
     matcher: str | None = None
+    timeout: int | None = None  # seconds Claude Code waits before giving up on it (its default is 60)
 
 
 def _py(script: str) -> tuple[str, ...]:
     return (PY, str(AGENTS / script))
 
 
-_SESSION_START = " && ".join([
+def session_start_chain(upkeep: list[str], report: str) -> str:
+    """Upkeep in order, then the report whatever upkeep did: a failed step must not hide the report (2026-10-25)."""
+    return "; ".join([*upkeep, report])
+
+
+_SESSION_START = session_start_chain([
     f"{PY} {AGENTS}/lib/code_sync.py pull {AGENTS}",
     f"{PY} {AGENTS}/lib/code_sync.py pull {HOME}/.claude",
     f"{PY} {AGENTS}/skills/handoff/scripts/check_remote_session.py",
-    f"{PY} {AGENTS}/lib/session_start_report.py",
-])
+], f"{PY} {AGENTS}/lib/session_start_report.py")
 _ALL, _INTERACTIVE = frozenset({"all"}), frozenset({"interactive"})
 _EDITS = "Write|Edit|MultiEdit|NotebookEdit"
 
@@ -79,6 +84,14 @@ HOOKS: list[Hook] = [
     Hook("UserPromptSubmit", (*_py("lib/session_work.py"), "hook", "prompt"), _ALL),
     Hook("PostToolUse", (*_py("lib/session_work.py"), "hook", "post"), _ALL, _EDITS),
     Hook("PreToolUse", (*_py("lib/session_work.py"), "hook", "pre"), _INTERACTIVE, _EDITS),
+    # Helpers a chat starts with the Agent tool get a run log the Activity tab shows (#612). A person's chats only:
+    # the pipeline's own subagents are already its run. Capped at 5 s here and 3 s inside the script.
+    *(Hook(event, (*_py("lib/chat_helpers.py"), "hook", step), _INTERACTIVE, matcher, 5) for event, matcher, step in (
+        ("SubagentStart", None, "start"),
+        ("PostToolUse", "Agent", "launched"),
+        ("PreToolUse", "SubagentHandback", "report"),
+        ("SubagentStop", None, "stop"),
+    )),
 ]
 
 
@@ -103,7 +116,7 @@ def settings_hooks() -> dict:
         if group is None:
             group = {"matcher": hook.matcher, "hooks": []} if hook.matcher else {"hooks": []}
             groups.append(group)
-        group["hooks"].append({"type": "command", "command": cmd})
+        group["hooks"].append({"type": "command", "command": cmd, **({"timeout": hook.timeout} if hook.timeout else {})})
     return out
 
 

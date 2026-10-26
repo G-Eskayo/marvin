@@ -80,3 +80,68 @@ describe('defaultShouldGateMerge: retest only a PR that is behind AND shares fil
     expect((await defaultShouldGateMerge('https://github.com/o/r/pull/3', exec, ctx())).gate).toBe(true)
   })
 })
+
+// 2026-10-26: PR #572 was tested on 10-21; main then gained test_instance_move.py (ADR 0071). Main changed none of
+// #572's files, so it merged without a retest and broke main. A new rule on main must judge older PRs before they land.
+import { mainChanges, RULE_FILE } from '../webhook-server/merge.js'
+
+describe('a rule main gained since the PR split forces a retest, even with no shared files', () => {
+  let rdir, rclone
+  const rcommit = (file, text, msg) => {
+    const p = path.join(rclone, file)
+    execFileSync('mkdir', ['-p', path.dirname(p)])
+    writeFileSync(p, text); git(rclone, 'add', file); git(rclone, 'commit', '-qm', msg)
+  }
+  const execFor = (head) => async (cmd, args, opts) => {
+    if (cmd === 'gh') return { stdout: JSON.stringify({ headRefName: head, body: '' }), stderr: '' }
+    return execWithGroupTimeout(cmd, args, opts)
+  }
+  beforeAll(() => {
+    rdir = mkdtempSync(path.join(tmpdir(), 'rules-'))
+    const origin = path.join(rdir, 'origin.git')
+    rclone = path.join(rdir, 'clone')
+    git(rdir, 'init', '-q', '--bare', '-b', 'main', origin)
+    git(rdir, 'clone', '-q', origin, rclone)
+    git(rclone, 'config', 'user.email', 't@t'); git(rclone, 'config', 'user.name', 't')
+    rcommit('app.py', 'x = 1\n', 'base'); git(rclone, 'push', '-q', 'origin', 'main')
+    for (const b of ['pr-doc', 'pr-code-only']) {
+      git(rclone, 'checkout', '-q', 'main'); git(rclone, 'checkout', '-qb', b); rcommit(`docs/${b}.md`, 'doc\n', b); git(rclone, 'push', '-q', 'origin', b)
+    }
+    git(rclone, 'checkout', '-q', 'main')
+    rcommit('lib/other.py', 'y = 2\n', 'main changes code only'); git(rclone, 'push', '-q', 'origin', 'main')
+    git(rclone, 'checkout', '-q', 'pr-code-only'); git(rclone, 'merge', '-q', '--no-edit', 'main'); git(rclone, 'push', '-q', 'origin', 'pr-code-only')
+    git(rclone, 'checkout', '-q', 'main')
+    rcommit('lib/other2.py', 'z = 3\n', 'more code'); git(rclone, 'push', '-q', 'origin', 'main')
+    git(rclone, 'checkout', '-q', 'main'); git(rclone, 'checkout', '-qb', 'main-rule')
+    rcommit('lib/tests/test_instance_move.py', 'def test_x(): pass\n', 'main gains a rule'); git(rclone, 'push', '-q', 'origin', 'main-rule:main')
+  })
+  afterAll(() => rmSync(rdir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }))
+
+  it('main added a test since the PR split: retest, and name the rule', async () => {
+    const d = await defaultShouldGateMerge('https://github.com/o/r/pull/9', execFor('pr-doc'), { clone: rclone, base: 'main' })
+    expect(d).toMatchObject({ gate: true, behind: true, shared: [], rules: ['lib/tests/test_instance_move.py'] })
+  })
+
+  it('only test and guard files count as rules: code main changed since the split does not', async () => {
+    // pr-code-only split after 'main changes code only'; since then main added lib/other2.py (code) and the rule
+    const m = await mainChanges('pr-code-only', execWithGroupTimeout, rclone, 'main')
+    expect(m).toEqual({ shared: [], rules: ['lib/tests/test_instance_move.py'] })
+  })
+
+  it('which paths count as rules, and lookalikes that do not', () => {
+    for (const p of ['lib/tests/test_x.py', 'test_top.py', 'skills/a/scripts/tests/test_b.py', 'dashboard/test/merge.test.js',
+      'src/x.test.jsx', 'conftest.py', 'lib/conftest.py', 'pytest.ini', 'config/push-guard/paths.txt', '.gitignore',
+      'dashboard/test/polling_guard.js']) expect([p, RULE_FILE.test(p)]).toEqual([p, true])
+    for (const p of ['latest.md', 'lib/contest.py', 'docs/testing.md', 'lib/attest.py', 'config/push-guard.md', 'src/protest.js',
+      'lib/test_helpers_notes.md']) expect([p, RULE_FILE.test(p)]).toEqual([p, false])
+  })
+
+  it('a git failure while reading main\'s changes: retest, to be safe', async () => {
+    const exec = async (cmd, args, opts) => {
+      if (cmd === 'gh') return { stdout: JSON.stringify({ headRefName: 'pr-doc', body: '' }), stderr: '' }
+      if (args[0] === 'diff') throw new Error('git diff broke')
+      return execWithGroupTimeout(cmd, args, opts)
+    }
+    expect((await defaultShouldGateMerge('https://github.com/o/r/pull/10', exec, { clone: rclone, base: 'main' })).gate).toBe(true)
+  })
+})

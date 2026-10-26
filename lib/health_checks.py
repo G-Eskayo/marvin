@@ -16,10 +16,12 @@ Run standalone: ~/.agents/venv/bin/python health_checks.py [--json]
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 import subprocess
 import sys
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -29,7 +31,6 @@ import cron_health as ch  # noqa: E402
 import machine_profile  # noqa: E402
 from machine_profile import machine_label  # noqa: E402
 from task_dispatch import TAILSCALE_BIN, TAILSCALE_ENV  # noqa: E402  (absolute path -- launchd's PATH omits the shell's additions)
-import metrics_registry as mr  # noqa: E402
 
 HOME = Path.home()
 STATUS_PATH = HOME / ".claude" / "logs" / "health-status.json"
@@ -46,6 +47,15 @@ def _now() -> datetime:
 def _result(id_, label, severity, detail, value=None) -> dict:
     return {"id": id_, "label": label, "severity": severity, "detail": detail,
             "checked_at": _now().isoformat(), "value": value}
+
+
+# A check that couldn't be measured this sweep (it raised, hung or returned nonsense). Never green, never old data shown
+# as current: the card says why. Overall reads it as degraded (yellow), since nothing could be verified.
+UNKNOWN = "unknown"
+
+
+def _unknown(id_, label, why) -> dict:
+    return {**_result(id_, label, UNKNOWN, f"couldn't measure: {why}"), "measured": False}
 
 
 # ── tokens ──────────────────────────────────────────────────────────────
@@ -138,46 +148,6 @@ def check_dispatch_lock(state_path: Path | None = None) -> dict:
     return _result(cid, label, "green", f"busy {age_min:.0f}min on '{task}' — normal range", value=age_min)
 
 
-# ── ticket failure streaks (early warning before the park fires) ────────
-
-def check_ticket_failure_streaks(repo: str = "G-Eskayo/marvin", run=subprocess.run) -> list[dict]:
-    """Early-warning layer in front of run_ticket.py's own 3-strike guard
-    (G-Eskayo/marvin, fixed 2026-10-01): a ticket sitting at streak 2 is
-    one more automated failure from being parked -- worth surfacing before
-    that happens, not just after."""
-    try:
-        proc = run(["gh", "issue", "list", "--repo", repo, "--label", "claimed:mac-mini,claimed:macbook-pro",
-                    "--state", "open", "--json", "number,title,labels"],
-                   capture_output=True, text=True, timeout=20)
-        claimed = json.loads(proc.stdout) if proc.returncode == 0 else []
-    except (subprocess.TimeoutExpired, json.JSONDecodeError):
-        claimed = []
-
-    results = []
-    for issue in claimed:
-        n = issue["number"]
-        try:
-            cproc = run(["gh", "issue", "view", str(n), "--repo", repo, "--json", "comments"],
-                        capture_output=True, text=True, timeout=20)
-            comments = json.loads(cproc.stdout)["comments"] if cproc.returncode == 0 else []
-        except (subprocess.TimeoutExpired, json.JSONDecodeError, KeyError):
-            continue
-        streak = 0
-        for c in reversed(comments):
-            if "did not pass verification" in c.get("body", ""):
-                streak += 1
-            else:
-                break
-        cid = f"ticket:streak:{n}"
-        label = f"#{n} {issue['title'][:40]}"
-        if streak >= 2:
-            results.append(_result(cid, label, "yellow",
-                                    f"{streak} consecutive automated failures — one more parks it", value=streak))
-        else:
-            results.append(_result(cid, label, "green", f"{streak} consecutive failure(s)", value=streak))
-    return results
-
-
 # ── cron jobs (absorbed from cron_health.py -- literally the same
 # check_job() + persistent offset-tracking state, not a reimplementation,
 # per ADR 0033. Reimplementing the log-scan naively (whole-tail regex, no
@@ -230,33 +200,6 @@ def check_cron_job_log(job_name: str, state: dict, now: datetime) -> dict | None
 
 CONFLICT_MARKER_RE = re.compile(r"^(<{7}|={7}|>{7})(?: |$)", re.MULTILINE)
 SYNCED_REPOS = {"~/.agents": ".agents", "~/.claude": ".claude"}
-
-
-def check_repo_integrity(display_name: str, rel_path: str) -> dict:
-    cid = f"repo:integrity:{display_name}"
-    label = f"{display_name} — stash/conflict integrity"
-    repo = HOME / rel_path
-    try:
-        stash = subprocess.run(["git", "-C", str(repo), "stash", "list"],
-                               capture_output=True, text=True, timeout=10)
-        n_stash = len([l for l in stash.stdout.splitlines() if l.strip()])
-    except subprocess.TimeoutExpired:
-        return _result(cid, label, "yellow", "git stash list timed out")
-    if n_stash:
-        files = code_sync._stash_file_names(repo)
-        if files:
-            files_str = ", ".join(files[:5])
-            if len(files) > 5:
-                files_str += f" + {len(files) - 5} more"
-            detail = f"{n_stash} stash(es) present — blocks code-sync until resolved. Affected files: {files_str}"
-        else:
-            detail = f"{n_stash} stash(es) present — blocks code-sync until resolved"
-        return _result(cid, label, "red", detail, value=n_stash)
-    status = subprocess.run(["git", "-C", str(repo), "status", "--short"],
-                            capture_output=True, text=True, timeout=10)
-    if re.search(r"^(UU|AA|DD) ", status.stdout, re.MULTILINE):
-        return _result(cid, label, "red", "unresolved merge conflict in working tree")
-    return _result(cid, label, "green", "clean, no stashes")
 
 
 # ── sync log stuck detection (cross-machine) ───────────────────────────────
@@ -345,8 +288,17 @@ def check_sync_stuck_from_text(text: str, now: datetime | None = None, dev: str 
     return results
 
 
-def check_sync_stuck() -> list[dict]:
-    """Cross-machine: this machine's sync-log plus each remote device's, read over SSH."""
+def _reachable(reachability: dict[str, str] | None, dev: str) -> bool:
+    """None = no reachability known (callers outside the sweep): try every device. Otherwise only devices the
+    reachability check found answering. An asleep or unreachable Mac already has its own machine:<id> card."""
+    return reachability is None or reachability.get(f"machine:{dev}") == "green"
+
+
+def check_sync_stuck(reachability: dict[str, str] | None = None, remote=None) -> list[dict]:
+    """Cross-machine: this machine's sync-log plus each reachable remote device's, read over SSH. A Mac that can't be
+    read is one "couldn't measure" row for that Mac, never a crash: one ssh timeout to the laptop used to kill the
+    whole sweep (3 of 20 runs on 2026-10-21)."""
+    remote = remote or _run_sync_log_remote
     results = []
     me = machine_profile.registry_id()
     devices = [(me, None)] + [(dev, info.get("tailscale_hostname")) for dev, info in machine_profile.remote_devices().items()]
@@ -355,7 +307,13 @@ def check_sync_stuck() -> list[dict]:
             p = HOME / ".claude" / "sync-log.md"
             text = p.read_text() if p.exists() else ""
         else:
-            text = _run_sync_log_remote(host)
+            if not _reachable(reachability, dev):
+                continue
+            try:
+                text = remote(host)
+            except (subprocess.SubprocessError, OSError) as exc:
+                results.append(_unknown(f"sync:stuck@{dev}", f"Code sync — {dev}", f"{dev}'s sync log: {type(exc).__name__}"))
+                continue
         # sync-log.md is itself synced, so each copy holds the other Mac's entries too, as of its last sync. Trust each
         # Mac's entries only from that Mac's own copy: a stale copy turned a working sync red (2026-10-14).
         own = {dev, _remote_machine_label(dev)} | ({machine_label()} if host is None else set())
@@ -383,7 +341,7 @@ def _run_failure_breaker_remote(host: str) -> list[dict]:
         return []
 
 
-def check_pipeline_breaker() -> dict:
+def check_pipeline_breaker(reachability: dict[str, str] | None = None, remote=None) -> dict:
     """Red while the cross-ticket breaker (failure_breaker.py) has paused dispatch:
     the same failure hit several different tickets, i.e. the environment is
     broken, not the tickets. Cross-machine: queries local machine + each
@@ -394,15 +352,21 @@ def check_pipeline_breaker() -> dict:
     # Local machine trips.
     all_trips = failure_breaker.tripped()
 
-    # Remote machine trips (if reachable).
+    # Remote machine trips (only Macs answering: an asleep laptop is skipped, not waited on).
+    remote = remote or _run_failure_breaker_remote
+    unread = []
     for device_id, info in machine_profile.remote_devices().items():
         host = info.get("tailscale_hostname")
-        if not host:
+        if not host or not _reachable(reachability, device_id):
             continue
-        remote_trips = _run_failure_breaker_remote(host)
-        all_trips.extend(remote_trips)
+        try:
+            all_trips.extend(remote(host))
+        except (subprocess.SubprocessError, OSError, ValueError) as exc:
+            unread.append(f"{device_id} ({type(exc).__name__})")
 
     if not all_trips:
+        if unread:
+            return _unknown(cid, label, "breaker state on " + ", ".join(unread) + "; not tripped on the rest")
         return _result(cid, label, "green", "not tripped")
 
     # Merge trips by (project, signature), keeping earliest first_seen for display.
@@ -676,6 +640,19 @@ def check_missing_profiles(snapshot: dict | None = None, repos: list[str] | None
 	return results
 
 
+def check_unrunnable_profiles(profiles_dir: Path | None = None) -> list[dict]:
+	"""Profiles with dispatch on but no machines listed: none of their tickets can ever run. One line each, here, instead
+	of the scan logging "no suitable machine" for every ticket every hour (P6, 2026-10-21)."""
+	import project_profile
+	out = []
+	for repo in project_profile.unrunnable_repos(directory=profiles_dir):
+		name = repo.split("/")[-1]
+		out.append(_result(f"profile:no-machines:{repo}", f"{name}: not set up for agents", "yellow",
+		                   f"dispatch is on but config/projects/{name}.json lists no machines, so the pipeline never runs this "
+		                   f"project's tickets. Add the machines that can build it, or switch dispatch off."))
+	return out
+
+
 # ── parallel dispatch: keeping up with the queue ───────────────────────────
 
 _GUARD_MARKERS = ("disk ", "GitHub request budget", "circuit breaker tripped", "lacks tools")
@@ -784,7 +761,7 @@ def check_parallel_dispatch() -> dict:
 	import ticket_pipeline as tp
 	import failure_breaker
 
-	repos = [tp.REPO, *pp.dispatchable_repos()]
+	repos = [tp.REPO, *pp.runnable_repos()]
 	breaker_trips = failure_breaker.tripped()
 	repos = [r for r in repos if r not in {t.get("project", tp.REPO) for t in breaker_trips}]
 
@@ -971,6 +948,11 @@ def check_repo_sync_everywhere(reachability: dict[str, str], runner=_run_repo_st
 
 # ── per-machine state that silently rots: dashboard build + GitHub credential ──
 
+# macOS ps has no `etimes` (seconds), so asking for it printed an error and nothing: Health said "webhook-server is not
+# running" on both Macs while it served (pipeline review 2026-10-21, F14). `etime` is [[dd-]hh:]mm:ss on every ps;
+# this turns it into seconds.
+_ETIME_AWK = r'''{s=$1; d=0; if (index(s, "-")) {split(s, a, "-"); d=a[1]; s=a[2]} n=split(s, t, ":"); e=0; for (i=1; i<=n; i++) e=e*60+t[i]; print d*86400+e}'''
+
 # One script, run locally or piped over ssh, so every machine is judged by the same
 # logic. Absolute paths throughout (launchd/ssh PATHs omit /opt/homebrew/bin).
 _MACHINE_STATE_SCRIPT = r'''
@@ -981,7 +963,7 @@ echo "dashboard_commit_ts=$(git -C "$HOME/.agents" log -1 --format=%ct origin/ma
 echo "webhook_commit_ts=$(git -C "$HOME/.agents" log -1 --format=%ct origin/main -- dashboard/webhook-server dashboard/electron/main 2>/dev/null)"
 WEBHOOK_PID=$(/bin/launchctl list 2>/dev/null | /usr/bin/awk '$3 ~ /com\.marvin\.dashboard-webhook/ {print $1}')
 if [ -n "$WEBHOOK_PID" ] && [ "$WEBHOOK_PID" != "-" ] && [ "$WEBHOOK_PID" -gt 0 ] 2>/dev/null; then
-  ELAPSED=$(/bin/ps -o etimes= -p "$WEBHOOK_PID" 2>/dev/null | /usr/bin/tr -d ' ')
+  ELAPSED=$(/bin/ps -o etime= -p "$WEBHOOK_PID" 2>/dev/null | /usr/bin/awk '__ETIME_AWK__')
   if [ -n "$ELAPSED" ] && [ "$ELAPSED" -gt 0 ] 2>/dev/null; then
     echo "webhook_server_start_ts=$(($(date +%s) - ELAPSED))"
   else echo "webhook_server_start_ts="
@@ -992,92 +974,16 @@ TOK="$HOME/.claude/.gh-token"
 if [ -s "$TOK" ]; then
   if GH_TOKEN="$(tr -d '[:space:]' < "$TOK")" /opt/homebrew/bin/gh api user --jq .login >/dev/null 2>&1; then echo "gh_token=ok"; else echo "gh_token=invalid"; fi
 else echo "gh_token=missing"; fi
-# What the dashboard Docs tab does: read a file from GitHub with the shared credential.
-if [ -s "$TOK" ] && GH_TOKEN="$(tr -d '[:space:]' < "$TOK")" /opt/homebrew/bin/gh api repos/G-Eskayo/marvin/contents/README.md --jq .name >/dev/null 2>&1; then echo "docs_access=ok"; else echo "docs_access=failed"; fi
 if /usr/bin/pgrep -x DesktopLive >/dev/null 2>&1; then echo "desktoplive=running"; else echo "desktoplive=stopped"; fi
 # label:pid:last-exit for every MARVIN job (com.giles.* is the tidy agent), so a job failing on a machine health-check doesn't run on is still seen
 echo "job_exits=$(/bin/launchctl list 2>/dev/null | /usr/bin/awk '$3 ~ /^com\.(marvin|giles)\./ {printf "%s:%s:%s,", $3, $1, $2}')"
 echo "jobs=$(/bin/launchctl list 2>/dev/null | /usr/bin/awk '{print $3}' | /usr/bin/grep '^com\.marvin\.' | /usr/bin/sed 's/^com\.marvin\.//' | /usr/bin/sort | /usr/bin/tr '\n' ',')"
-TREE="$HOME/.agents/brain-map/tree-data.json"
-if [ -f "$TREE" ]; then echo "brain_data_ts=$(stat -f %m "$TREE")"; else echo "brain_data_ts="; fi
 /bin/df -k "$HOME" | /usr/bin/awk 'NR==2 {print "disk_total_kb=" $2; print "disk_free_kb=" $4}'
 WT="$HOME/.agents-pipeline-worktrees"
 if [ -d "$WT" ]; then echo "worktrees_kb=$(/usr/bin/du -sk "$WT" 2>/dev/null | /usr/bin/cut -f1)"; echo "worktrees_n=$(/bin/ls -1 "$WT" | /usr/bin/wc -l | /usr/bin/tr -d ' ')"; fi
 LEDGER="$HOME/.claude/logs/disk-ledger.jsonl"
 if [ -f "$LEDGER" ]; then echo "disk_ledger=$(tail -14 "$LEDGER" | /usr/bin/tr '\n' '|')"; fi
-'''
-
-
-# Declared deployment steps (ADR 0033 acceptance #3): real incidents where plists were added but the
-# install script never ran. Check that each declared plist is installed and has produced at least one run.
-DECLARED_DEPLOY_STEPS = {
-    "snapshot-deploy": {"ticket": 188, "doc": "docs/adr/0050-snapshot-deploy.md",
-                         "plists": ["com.marvin.snapshot-deploy-nightly.plist", "com.marvin.snapshot-deploy-reactive.plist"],
-                         "job_events_name": "snapshot-deploy"},
-    "dashboard-rebuild": {"ticket": None, "doc": "lib/dashboard_rebuild.py",
-                           "plists": [], "job_events_name": "dashboard-rebuild"},
-}
-
-
-def check_deploy_steps() -> list[dict]:
-    """Red if any declared plist is missing from ~/Library/LaunchAgents.
-    Red if installed but ~/.claude/logs/jobs/{job_events_name}.json has never been written.
-    Cross-machine: local + each reachable remote device."""
-    results = []
-    me = machine_profile.registry_id()
-
-    # Collect plist + job-events state from this machine + each remote Mac (launchd plists; ADR 0069).
-    devices = [(me, None)] + [
-        (dev, info.get("tailscale_hostname"))
-        for dev, info in machine_profile.remote_macs().items()
-    ]
-
-    for dev, host in devices:
-        for name, spec in DECLARED_DEPLOY_STEPS.items():
-            plists = spec.get("plists", [])
-            job_events_name = spec.get("job_events_name", name)
-
-            cid = f"deploy:missing:{dev}:{name}"
-            label = f"Deployment: {dev} {name}"
-
-            # Check if plists are installed (locally only).
-            if dev == me and plists:
-                missing = [p for p in plists if not (LAUNCHAGENTS_DIR / p).exists()]
-                if missing:
-                    results.append(_result(cid, label, "red",
-                                          f"plist(s) not installed: {', '.join(missing)} — run brain-map/scripts/install-snapshot-jobs.sh"))
-                    continue
-            elif host and plists:
-                # Remote check: stat each plist on the remote machine via SSH script.
-                script = "; ".join([f"test -f \"$HOME/Library/LaunchAgents/{p}\" && echo 'ok' || echo 'missing'" for p in plists])
-                cmd = ["ssh", *SSH_OPTS, host, "bash -s"]
-                proc = subprocess.run(cmd, input=script, capture_output=True, text=True, timeout=10)
-                missing = [p for p, line in zip(plists, proc.stdout.splitlines()) if "missing" in line]
-                if missing:
-                    results.append(_result(cid, label, "red",
-                                          f"plist(s) not installed on {dev}: {', '.join(missing)} — run brain-map/scripts/install-snapshot-jobs.sh"))
-                    continue
-
-            # Check if the job has ever run (job_events file exists).
-            job_events_file = HOME / ".claude" / "logs" / "jobs" / f"{job_events_name}.json"
-            if dev == me:
-                if not job_events_file.exists():
-                    results.append(_result(cid, label, "red",
-                                          f"installed but has never actually run — job_events file {job_events_file} does not exist"))
-                    continue
-                results.append(_result(cid, label, "green", f"installed and has run"))
-            else:
-                # Remote check: test if job_events file exists.
-                script = f"test -f \"$HOME/.claude/logs/jobs/{job_events_name}.json\" && echo 'exists' || echo 'missing'"
-                cmd = ["ssh", *SSH_OPTS, host, "bash -s"]
-                proc = subprocess.run(cmd, input=script, capture_output=True, text=True, timeout=10)
-                if "missing" in proc.stdout:
-                    results.append(_result(cid, label, "red",
-                                          f"installed but has never actually run on {dev}"))
-                else:
-                    results.append(_result(cid, label, "green", f"installed and has run on {dev}"))
-
-    return results
+'''.replace("__ETIME_AWK__", _ETIME_AWK)
 
 
 # Which machine is meant to run each com.marvin.* launchd job. "both" = both machines, "mini" = the primary automation
@@ -1138,8 +1044,8 @@ def parse_machine_state(text: str) -> dict:
 
     return {"app_built_ts": num("app_built_ts"), "dashboard_commit_ts": num("dashboard_commit_ts"),
             "webhook_server_start_ts": num("webhook_server_start_ts"), "webhook_commit_ts": num("webhook_commit_ts"),
-            "gh_token": raw.get("gh_token", "").strip(), "docs_access": raw.get("docs_access", "").strip(),
-            "desktoplive": raw.get("desktoplive", "").strip(), "brain_data_ts": num("brain_data_ts"),
+            "gh_token": raw.get("gh_token", "").strip(),
+            "desktoplive": raw.get("desktoplive", "").strip(),
             "disk_free_kb": num("disk_free_kb"), "disk_total_kb": num("disk_total_kb"),
             "worktrees_kb": num("worktrees_kb"), "worktrees_n": num("worktrees_n"),
             "disk_ledger": disk_ledger,
@@ -1271,21 +1177,11 @@ def evaluate_machine_state(state: dict, now: datetime) -> list[tuple[str, str, s
         out.append(("auth:gh", "red", "shared GitHub token is INVALID -- dashboard merges and ticket-pipeline gh/git calls on this machine will fail"))
     else:
         out.append(("auth:gh", "yellow", "no ~/.claude/.gh-token on this machine"))
-    docs = state.get("docs_access")
-    if docs == "ok":
-        out.append(("docs:access", "green", "the Docs tab's GitHub read works (shared credential)"))
-    elif docs:
-        out.append(("docs:access", "red", "cannot read repo files from GitHub -- the dashboard Docs tab will be empty on this machine"))
     live = state.get("desktoplive")
     if live == "running":
         out.append(("desktoplive:running", "green", "the desktop brain-map background is running"))
     elif live:
         out.append(("desktoplive:running", "yellow", "the desktop brain-map background (DesktopLive) is not running"))
-    ts = state.get("brain_data_ts")
-    if ts is not None:
-        days = (now - datetime.fromtimestamp(ts, tz=timezone.utc)).total_seconds() / 86400
-        out.append(("brainmap:data", "yellow" if days >= 7 else "green",
-                    f"brain-map data last regenerated {days:.0f}d ago" + (" -- it is rebuilt by use on this machine, so an idle machine shows an old picture" if days >= 7 else "")))
     free, total = state.get("disk_free_kb"), state.get("disk_total_kb")
     if free is not None and total:
         pct = 100 * free / total
@@ -1382,8 +1278,8 @@ def check_machine_state_everywhere(reachability: dict[str, str], runner=_run_mac
         (dev, info.get("tailscale_hostname"), reachability.get(f"machine:{dev}", "yellow"))
         for dev, info in machine_profile.remote_macs().items()   # Mac-only state (dashboard, launchd); ADR 0069
     ]
-    labels = {"dashboard:build": "Dashboard app build", "webhook:build": "Webhook server build", "auth:gh": "GitHub credential", "docs:access": "Docs tab GitHub access",
-              "desktoplive:running": "Desktop brain-map background", "brainmap:data": "Brain-map data freshness", "jobs:placement": "Scheduled jobs vs. placement",
+    labels = {"dashboard:build": "Dashboard app build", "webhook:build": "Webhook server build", "auth:gh": "GitHub credential",
+              "desktoplive:running": "Desktop brain-map background", "jobs:placement": "Scheduled jobs vs. placement",
               "disk:space": "Disk space", "disk:headroom": "Disk headroom forecast", "jobs:exit": "Scheduled jobs' last run"}
     for dev, host, reach in devices:
         if reach == "asleep":
@@ -1465,8 +1361,9 @@ def classify_unreachable(kind: str, peer: dict | None, now: datetime) -> tuple[s
 
 
 def overall_severity(severities: list[str]) -> str:
-    """`asleep` is neutral: it never raises the overall status above green."""
-    return "red" if "red" in severities else "yellow" if "yellow" in severities else "green"
+    """`asleep` is neutral: it never raises the overall status above green. A check that couldn't be measured is
+    degraded (yellow): Health can't say it's fine."""
+    return "red" if "red" in severities else "yellow" if ("yellow" in severities or UNKNOWN in severities) else "green"
 
 
 def check_machine_reachability() -> list[dict]:
@@ -1511,106 +1408,127 @@ def coverage(results: list[dict]) -> dict:
     }
 
 
-# ── numeric anomaly tracking (tier 2, reuses metrics_registry.py) ───────
-
-# Metrics where a bigger number is the healthier direction -- everything
-# else recorded (lock age, failure streaks, cron failure-hit counts) is
-# "lower is better" by default, since every other numeric check here
-# counts something bad.
-HIGHER_IS_BETTER = {"route:intent-routing-collection"}
-
-
-def anomaly_or_red(results: list[dict]) -> tuple[dict | None, list[dict]]:
-    """The anomaly comparison, or one red check saying why it couldn't run. A broken metrics file must never stop
-    Health from being written: it crashed every run for a week (2026-10-09..16) and left health-status.json missing."""
-    try:
-        return record_anomaly_metrics(results), []
-    except Exception as e:  # noqa: BLE001 -- any failure here is reported, never fatal
-        return None, [_result("health:anomaly-metrics", "Health anomaly metrics", "red",
-                              f"couldn't read or write bench/metrics/health-monitor.*: {type(e).__name__}: {e}")]
-
-
-def record_anomaly_metrics(results: list[dict]) -> dict | None:
-    """Any check carrying a numeric `value` gets recorded as a subsystem
-    snapshot via the same baseline/compare primitive metrics_registry.py
-    already provides for ticket code-quality metrics (G-Eskayo/marvin#2) --
-    reused here, not reimplemented, per ADR 0033. A generic deviation from
-    a metric's own rolling baseline is how a storm like #30's (1,139
-    comments) gets flagged without anyone having pre-written a
-    'storm detector' rule."""
-    numeric = {r["id"]: {"value": r["value"], "higher_is_better": r["id"] in HIGHER_IS_BETTER}
-               for r in results if r.get("value") is not None}
-    if not numeric:
-        return None
-    baseline = mr.latest("health-monitor")  # read before this run's own record() below
-    mr.record("health-monitor", numeric)
-    if baseline is None:
-        return None
-    return mr.compare("health-monitor", baseline, numeric)
-
-
 # ── orchestration ────────────────────────────────────────────────────────
 
-def run_all() -> dict:
+# Per-check wall-clock budgets (seconds). The default covers a local check plus a few gh calls; the cross-machine ones get
+# room for three Macs, each behind its own 60 s ssh timeout. A check over budget is cut off and reported, and the sweep
+# moves on (its thread is a daemon, so a hung ssh can't hold the process open either).
+CHECK_BUDGET_S = 60
+CROSS_MACHINE_BUDGET_S = 200
+
+
+def guarded(check_id: str, label: str, fn, budget_s: float = CHECK_BUDGET_S) -> list[dict]:
+    """Run one check so that nothing it does can take the sweep down: an exception, a hang past its budget or a
+    malformed return becomes one "couldn't measure" row with the reason, under the check's own id. Good results pass
+    through unchanged; None means the check has nothing to report on this machine."""
+    box: dict = {}
+
+    def run():
+        try:
+            box["value"] = fn()
+        except BaseException as exc:  # noqa: BLE001 -- any failure of one check is reported, never fatal
+            box["error"] = exc
+
+    t = threading.Thread(target=run, name=f"check:{check_id}", daemon=True)
+    t.start()
+    t.join(budget_s)
+    if t.is_alive():
+        return [_unknown(check_id, label, f"timed out after {budget_s:g} s")]
+    if "error" in box:
+        exc = box["error"]
+        return [_unknown(check_id, label, f"{type(exc).__name__}: {str(exc)[:160]}")]
+    value = box.get("value")
+    if value is None:
+        return []
+    rows = value if isinstance(value, list) else [value]
+    if all(isinstance(r, dict) and r.get("id") and r.get("severity") for r in rows):
+        return rows
+    return [_unknown(check_id, label, f"the check returned something that isn't a result ({type(value).__name__})")]
+
+
+def run_checks(specs) -> list[dict]:
+    """specs: [(id, label, fn, budget_s)], run in order, each guarded."""
     results: list[dict] = []
-    results += check_token_files()
-    results.append(check_intent_routing_collection())
-    results.append(check_dispatch_lock())
-    results += check_ticket_failure_streaks()
-    results.append(check_pipeline_breaker())
-    results += check_sync_stuck()
-    results += check_deploy_steps()
-    results.append(check_parallel_dispatch())
-    results += check_missed_purposes()
-    results += check_output_contracts()
-    results += check_missing_profiles()
-    results.append(check_trigger_coverage())
-    results.append(check_catalog_fresh())
-    results.append(check_project_tags())
-    results.append(check_hold_revisit())
-    results.append(check_github_budget())
-    results.append(check_gh_gate())
-    results.append(check_main_health())
-    seal = check_seal_beta_ingest()
-    if seal:
-        results.append(seal)
+    for check_id, label, fn, budget in specs:
+        results += guarded(check_id, label, fn, budget)
+    return results
+
+
+def _cron_job_logs() -> list[dict]:
     cron_state = ch._load_state()
     cron_now = datetime.now().astimezone()
-    for job in discover_launchd_jobs():
-        r = check_cron_job_log(job, cron_state, cron_now)
-        if r:
-            results.append(r)
+    out = [r for r in (check_cron_job_log(job, cron_state, cron_now) for job in discover_launchd_jobs()) if r]
     ch._save_state(cron_state)
-    for name, rel in SYNCED_REPOS.items():
-        results.append(check_repo_integrity(name, rel))
-    reach_results = check_machine_reachability()
-    results += reach_results
-    results += check_repo_sync_everywhere({r["id"]: r["severity"] for r in reach_results})
-    results += check_machine_state_everywhere({r["id"]: r["severity"] for r in reach_results})
-    error_results, recent_errors = check_recent_errors({r["id"]: r["severity"] for r in reach_results})
-    results += error_results
+    return out
+
+
+def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict] | None = None) -> list[tuple]:
+    """Every check the sweep runs, in the order the Health tab shows them. `reach` maps machine:<id> -> severity from
+    the reachability check, which runs first; `reach_results` are its rows, listed where they always appeared."""
+    reach = reach or {}
+    return [
+        ("token", "Auth tokens", check_token_files, CHECK_BUDGET_S),
+        ("route:intent-routing-collection", "route.py embedding classifier (ChromaDB)", check_intent_routing_collection, CHECK_BUDGET_S),
+        ("dispatch:lock-age", "Local dispatch lock", check_dispatch_lock, CHECK_BUDGET_S),
+        ("pipeline:breaker", "Ticket pipeline circuit breaker", lambda: check_pipeline_breaker(reach), CROSS_MACHINE_BUDGET_S),
+        ("sync:stuck", "Code sync", lambda: check_sync_stuck(reach), CROSS_MACHINE_BUDGET_S),
+        ("dispatch:parallel", "Parallel dispatch keeping up", check_parallel_dispatch, CHECK_BUDGET_S),
+        ("purpose:missed", "Purpose metrics", check_missed_purposes, CHECK_BUDGET_S),
+        ("contract", "Output contracts", check_output_contracts, CHECK_BUDGET_S),
+        ("profile:missing", "Projects without an execution profile", check_missing_profiles, CHECK_BUDGET_S),
+        ("profile:no-machines", "Projects with no machines", check_unrunnable_profiles, CHECK_BUDGET_S),
+        ("triggers:missed", "Dashboard triggers cover every change", check_trigger_coverage, CHECK_BUDGET_S),
+        ("catalog:fresh", "Project catalog is current", check_catalog_fresh, CHECK_BUDGET_S),
+        ("tickets:project-tags", "Tickets are on their project's board", check_project_tags, CHECK_BUDGET_S),
+        ("tickets:hold-revisit", "Hold tickets have revisit dates", check_hold_revisit, CHECK_BUDGET_S),
+        ("github:budget", "GitHub request budget", check_github_budget, CHECK_BUDGET_S),
+        ("github:gate", "GitHub calls go through the gate", check_gh_gate, CHECK_BUDGET_S),
+        ("main:green", "The main branch passes its tests", check_main_health, CHECK_BUDGET_S),
+        ("seal:beta-ingest", "Seal Speak beta reports are picked up", check_seal_beta_ingest, CHECK_BUDGET_S),
+        ("cron", "Cron job logs", _cron_job_logs, CHECK_BUDGET_S),
+        ("machine", "Machine reachability", lambda: list(reach_results or []), CHECK_BUDGET_S),
+        ("repo:sync", "Repo sync", lambda: check_repo_sync_everywhere(reach), CROSS_MACHINE_BUDGET_S),
+        ("machine-state", "Machine state", lambda: check_machine_state_everywhere(reach), CROSS_MACHINE_BUDGET_S),
+    ]
+
+
+def run_all(checks=None, recent_errors=None) -> dict:
+    """One sweep. `checks` / `recent_errors` replace the defaults (tests); the defaults run the reachability check
+    first, so the cross-machine checks skip a Mac that is asleep instead of waiting on it."""
+    results: list[dict] = []
+    if checks is None:
+        reach_results = guarded("machine", "Machine reachability", check_machine_reachability, CROSS_MACHINE_BUDGET_S)
+        reach = {r["id"]: r["severity"] for r in reach_results}
+        results += run_checks(default_checks(reach, reach_results))
+        box: dict = {}
+
+        def errors():
+            rows, box["groups"] = check_recent_errors(reach)
+            return rows
+
+        results += guarded("errors", "Recent errors", errors, CROSS_MACHINE_BUDGET_S)
+        recent_errors = box.get("groups", [])
+    else:
+        results += run_checks(checks)
+        recent_errors = recent_errors or []
 
     cov = coverage(results)
-    anomaly, metric_problems = anomaly_or_red(results)
-    results += metric_problems
-
-    severities = [r["severity"] for r in results]
-    overall = overall_severity(severities)
-
     return {
         "generated_at": _now().isoformat(),
-        "overall": overall,
+        "overall": overall_severity([r["severity"] for r in results]),
         "coverage": cov,
-        "anomaly": anomaly,
         "checks": results,
         "recent_errors": recent_errors[:100],
     }
 
 
 def write_status(status: dict | None = None) -> dict:
+    """Written whole or not at all (temp file + rename): a reader never sees half a file."""
     status = status if status is not None else run_all()
     STATUS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    STATUS_PATH.write_text(json.dumps(status, indent=2))
+    tmp = STATUS_PATH.with_name(STATUS_PATH.name + ".tmp")
+    tmp.write_text(json.dumps(status, indent=2))
+    os.replace(tmp, STATUS_PATH)
     return status
 
 

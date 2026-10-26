@@ -46,13 +46,15 @@ def signature(reason: str) -> str:
     m = re.search(r"final verdict: (\w+)", low)
     if m:
         return f"verdict:{m.group(1)}"
-    if "'claude'" in low and "timed out" in low:
+    if re.search(r"the [\w-]+ model run failed", low):
+        return "model-unavailable"   # usage limit or outage: every ticket fails alike, so three in a row pause dispatch
+    if re.search(r"claude'\s*,", low) and "timed out" in low:   # the path is absolute in real runs (#597)
         return "claude-timeout"
     if "no such file or directory: 'claude'" in low:
         return "claude-not-found"
     if "'npm', 'run', 'build'" in low:
         return "npm-build-failed"
-    if "'git', 'worktree', 'add'" in low or "'git', 'branch'" in low:
+    if "'git', 'worktree', 'add'" in low or "'git', 'branch'" in low or "git worktree add failed" in low:
         return "git-worktree-add-failed"
     cleaned = re.sub(r"/[\w./%#@+-]*", "<path>", low)       # paths
     cleaned = re.sub(r"\d+", "", cleaned)                    # numbers

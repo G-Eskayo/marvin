@@ -3,10 +3,10 @@
 // the root on every call, so pointing HOME at a temp dir is enough.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, chmodSync, realpathSync } from 'fs'
-import { tmpdir, homedir } from 'os'
+import { tmpdir, homedir, userInfo } from 'os'
 import path from 'path'
 import {
-  listOutboxTree, readOutboxFile, readOutboxImage, outboxRevealPath, outboxOpenPath, outboxRoot,
+  listOutboxDir, readOutboxFile, readOutboxImage, outboxRevealPath, outboxOpenPath, outboxRoot,
   MAX_IMAGE_BYTES, MAX_TEXT_BYTES, MAX_PDF_BYTES
 } from '../electron/main/outbox.js'
 
@@ -38,14 +38,14 @@ describe('the sandbox really is a temp HOME', () => {
   it('points the outbox at the temp HOME, not the real one', () => {
     expect(homedir()).toBe(home)
     expect(outboxRoot()).toBe(root)
-    expect(outboxRoot()).not.toContain('/Users/gileskayo/.claude')
+    expect(outboxRoot()).not.toContain(path.join(userInfo().homedir, '.claude')) // the account's real home, whatever HOME says
   })
 })
 
-describe('listOutboxTree', () => {
-  it('returns [] when the outbox does not exist', () => {
+describe('listOutboxDir (one folder at a time, #570)', () => {
+  it('returns no entries when the outbox does not exist', () => {
     rmSync(root, { recursive: true })
-    expect(listOutboxTree()).toEqual([])
+    expect(listOutboxDir()).toEqual({ entries: [], more: 0 })
   })
   it('lists folders first, then files, alphabetically, each file with its kind in plain words', () => {
     put('zeta/a.png', PNG)
@@ -53,11 +53,10 @@ describe('listOutboxTree', () => {
     put('b.csv', 'a,b')
     put('a.pdf', PDF)
     put('c.bin', Buffer.from([0, 1, 2]))
-    const tree = listOutboxTree()
-    expect(tree.map((t) => t.path)).toEqual(['alpha', 'zeta', 'a.pdf', 'b.csv', 'c.bin'])
-    expect(tree[0].children).toEqual([{ path: 'alpha/notes.md', type: 'file', kind: 'markdown', label: 'Markdown' }])
-    expect(tree[1].children[0]).toMatchObject({ kind: 'image', label: 'Image' })
-    expect(tree.slice(2).map((t) => t.label)).toEqual(['PDF', 'Table', 'File'])
+    const { entries } = listOutboxDir()
+    expect(entries.map((t) => t.path)).toEqual(['alpha', 'zeta', 'a.pdf', 'b.csv', 'c.bin'])
+    expect(listOutboxDir('alpha').entries).toEqual([{ path: 'alpha/notes.md', name: 'notes.md', type: 'file', kind: 'markdown', label: 'Markdown' }])
+    expect(entries.slice(2).map((t) => t.label)).toEqual(['PDF', 'Table', 'File'])
   })
 })
 

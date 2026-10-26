@@ -17,6 +17,7 @@ export const ALLOWLIST = {
   // Renderer. Each reads main-process IPC; GitHub-backed IPC answers from github_state's cache (change-ping driven).
   'src/App.jsx': { interval: [2, 'backstops: MR status dot behind mr.onRefresh push (2 min), Health dot reads the local snapshot (60 s)'] },
   'src/components/ActivityBanner.jsx': { interval: [1, 'backstop 60 s over the local health snapshot file; no network'] },
+  'src/components/ChatHelpers.jsx': { interval: [1, 'the other Mac has no push channel (its webhook GET /helpers, 30 s, cached 10 s); this Mac is the agents trigger'] },
   'src/components/DeviceColumns.jsx': { interval: [1, 'remote machines have no push channel (ssh status, 15 s, cached 8 s in devices.js)'] },
   'src/components/DispatchStatusBadge.jsx': { interval: [1, TODO_558] },
   'src/components/HealthDashboard.jsx': { interval: [2, 'backstops: agents list behind the agents trigger, view over the local health snapshot (60 s each)'] },
@@ -29,6 +30,7 @@ export const ALLOWLIST = {
   'src/lib/cdp_capture.js': { 'timeout-loop': [3, 'bounded wait for a local Electron CDP port/window to appear; no event exists'] },
   // Main process.
   'electron/main/boards.js': { ttl: [2, 'cache bounds: cross-project 30 min safety net cleared by change pings (#318); evidence 5 min'] },
+  'electron/main/chat_helpers.js': { ttl: [1, 'read-through cache bound (10 s) on the other Mac\'s GET /helpers; no timer'] },
   'electron/main/devices.js': { ttl: [1, 'read-through cache bound (8 s) on an ssh round-trip; no timer, never triggers a read'] },
   'electron/main/github_state.js': { ttl: [1, 'the cache itself: its 30-min safety lifetime (#557 removed the ttlFor hook)'] },
   'electron/main/index.js': { interval: [1, `starts ${CHECK_WATCH}`] },

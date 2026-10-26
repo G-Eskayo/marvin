@@ -11,7 +11,13 @@ contextBridge.exposeInMainWorld('api', {
     usage: () => ipcRenderer.invoke('metrics:usage')
   },
   decisions: {
-    submit: (payload) => ipcRenderer.invoke('decisions:submit', payload)
+    submit: (payload) => ipcRenderer.invoke('decisions:submit', payload),
+    // The record comment landing after a submit already shown (local-first). callback({repo, number, commentUrl, ...}).
+    onRecorded: (callback) => {
+      const listener = (_e, rec) => callback(rec)
+      ipcRenderer.on('decisions:recorded', listener)
+      return () => ipcRenderer.removeListener('decisions:recorded', listener)
+    }
   },
   mr: {
     list: () => ipcRenderer.invoke('mr:list'),
@@ -46,6 +52,13 @@ contextBridge.exposeInMainWorld('api', {
       const listener = () => callback()
       ipcRenderer.on('mr:refresh', listener)
       return () => ipcRenderer.removeListener('mr:refresh', listener)
+    },
+    // GitHub disagreed with an action already shown, and the view now shows GitHub's version (local-first).
+    // callback({repo, number, url, message}).
+    onCorrected: (callback) => {
+      const listener = (_e, c) => callback(c)
+      ipcRenderer.on('mr:corrected', listener)
+      return () => ipcRenderer.removeListener('mr:corrected', listener)
     }
   },
   dispatch: {
@@ -69,6 +82,18 @@ contextBridge.exposeInMainWorld('api', {
   },
   working: {
     now: () => ipcRenderer.invoke('working:now')
+  },
+  support: {
+    // ADR 0073: the IT button (helped install) and the Support tab (helper install). state() reads the saved cache only.
+    config: () => ipcRenderer.invoke('support:config'),
+    state: () => ipcRenderer.invoke('support:state'),
+    act: (cmd, request) => ipcRenderer.invoke('support:act', cmd, request),
+    // A notice was clicked: { repo, number } of the request to open.
+    onFocus: (callback) => {
+      const listener = (_event, target) => callback(target)
+      ipcRenderer.on('support:focus', listener)
+      return () => ipcRenderer.removeListener('support:focus', listener)
+    }
   },
   marvin: {
     // Opens a MARVIN session in WezTerm on this Mac: { ticket } for its worktree, or no ticket for home.
@@ -96,13 +121,19 @@ contextBridge.exposeInMainWorld('api', {
     refresh: () => ipcRenderer.invoke('docs:refresh'),
     tree: (repo) => ipcRenderer.invoke('docs:tree', repo),
     content: (repo, path) => ipcRenderer.invoke('docs:content', repo, path),
+    revalidate: (repo) => ipcRenderer.invoke('docs:revalidate', repo),
+    freshen: () => ipcRenderer.invoke('docs:freshen'),
+    headings: (repo, paths) => ipcRenderer.invoke('docs:headings', repo, paths),
     search: (query, opts) => ipcRenderer.invoke('docs:search', query, opts),
     files: (query) => ipcRenderer.invoke('docs:files', query),
     reveal: (filePath) => ipcRenderer.invoke('docs:reveal', filePath),
     openLink: (filePath) => ipcRenderer.invoke('docs:openLink', filePath)
   },
   outbox: {
-    tree: () => ipcRenderer.invoke('outbox:tree'),
+    list: (relPath) => ipcRenderer.invoke('outbox:list', relPath),
+    summary: (relPath) => ipcRenderer.invoke('outbox:summary', relPath),
+    preview: (relPath) => ipcRenderer.invoke('outbox:preview', relPath),
+    thumb: (relPath) => ipcRenderer.invoke('outbox:thumb', relPath),
     content: (relPath) => ipcRenderer.invoke('outbox:content', relPath),
     image: (fromRel, src) => ipcRenderer.invoke('outbox:image', fromRel, src),
     reveal: (relPath) => ipcRenderer.invoke('outbox:reveal', relPath),
@@ -161,6 +192,7 @@ contextBridge.exposeInMainWorld('api', {
   activity: {
     list: () => ipcRenderer.invoke('activity:list'),
     timeline: (number, repo) => ipcRenderer.invoke('activity:timeline', number, repo),
+    helpers: () => ipcRenderer.invoke('activity:helpers'),
     overview: () => ipcRenderer.invoke('activity:overview'),
     needsYou: () => ipcRenderer.invoke('activity:needsYou')
   },

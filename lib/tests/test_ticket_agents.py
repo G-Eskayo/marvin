@@ -137,6 +137,44 @@ def test_after_two_re_queues_it_goes_to_a_person_instead_of_looping():
     assert "ready-for-agent" not in {a["arg"] for a in ops(acts, op="add_label")}
 
 
+def test_going_to_a_person_takes_the_ticket_out_of_the_agent_queue_and_drops_its_claim():
+    """#605: refeed added ready-for-human but left ready-for-agent on, so the dispatcher kept starting #218/#81."""
+    t = issue(218, labels=["needs-reengagement", "ready-for-agent", "claimed:mac-mini", "claimed:macbook-pro"])
+    acts = ta.plan_refeed(REPO, [t], counts={218: 2})
+    removed = {a["arg"] for a in ops(acts, op="remove_label")}
+    assert {"needs-reengagement", "ready-for-agent", "claimed:mac-mini", "claimed:macbook-pro"} <= removed
+    assert ops(acts, op="add_label", arg="ready-for-human")
+    assert "It needs a person" in ops(acts, op="comment")[0]["arg"]
+    # never stateless on the way: the person label goes on before the agent label comes off
+    order = [(a["op"], a["arg"]) for a in acts]
+    assert order.index(("add_label", "ready-for-human")) < order.index(("remove_label", "ready-for-agent"))
+
+
+def test_a_ticket_already_with_a_person_is_never_told_so_again():
+    """#81 got "It needs a person" eight times on 2026-10-22: every scan re-sent it back and refeed said it again."""
+    for state in ("ready-for-human", "needs-info"):
+        for count in (0, 1, 2, 9):
+            t = issue(81, labels=["needs-reengagement", state, "ready-for-agent"])
+            acts = ta.plan_refeed(REPO, [t], counts={81: count})
+            assert not ops(acts, op="comment"), (state, count)
+            assert not ops(acts, op="add_label"), (state, count)        # no ready-for-agent, no second ready-for-human
+            assert ops(acts, op="remove_label", arg="needs-reengagement"), (state, count)  # the stray flag goes quietly
+
+
+def test_a_ticket_with_a_person_and_no_sent_back_flag_is_left_alone():
+    assert ta.plan_refeed(REPO, [issue(81, labels=["ready-for-human", "ready-for-agent"])], counts={81: 5}) == []
+
+
+def test_every_hand_off_to_a_person_is_marked_so_the_failure_streak_stops_there():
+    import ticket_policy as pol
+    acts = ta.plan_refeed(REPO, [issue(20, labels=["needs-reengagement"])], counts={20: 2})
+    acts += ta.plan_stale_claims(REPO, [issue(21, labels=["claimed:mac-mini"], updated=7)], set(), NOW, running=set(), releases={21: 2})
+    bodies = [a["arg"] for a in ops(acts, op="comment")]
+    assert len(bodies) == 2 and all(pol.automated_comment(b) == "handoff" for b in bodies)
+    # an ordinary re-queue note is a bot comment, not a hand-off
+    assert pol.automated_comment(ta.AUTOMATED_NOTE(0)) == "bot"
+
+
 # ── running ─────────────────────────────────────────────────────────────────
 
 class FakeGh:
@@ -358,3 +396,131 @@ def test_triage_leaves_a_ticket_the_pipeline_parked_alone():
     well-written parked ticket (another round of builds) nor overwrite the cause with a template complaint (#133)."""
     parked = issue(133, labels=["needs-info", "enhancement"], body=GOOD)
     assert ta.plan_triage(REPO, [parked], owned_needs_info=frozenset()) == []
+
+
+def test_claim_releases_are_applied_before_labels_when_the_budget_is_short(tmp_path):
+    """P6: after 12 days of crashed passes, 100+ priority labels were queued ahead of the stale-claim releases; at 30
+    actions a pass the queue would have stayed frozen for hours. Unfreezing work goes first."""
+    from datetime import datetime, timezone
+    now = datetime(2026, 10, 21, tzinfo=timezone.utc)
+    issues = [{"number": n, "title": f"t{n}", "labels": [{"name": "ready-for-agent"}], "body": "", "createdAt": "2026-01-01T00:00:00Z",
+               "updatedAt": "2026-10-01T00:00:00Z"} for n in range(1, 60)]
+    issues.append({"number": 99, "title": "stuck", "labels": [{"name": "ready-for-agent"}, {"name": "claimed:mac-mini"}],
+                   "body": "", "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-10-10T00:00:00Z"})
+    applied = []
+    res = ta.run({"G-Eskayo/marvin": {"issues": issues, "prs": []}}, lambda args: applied.append(args) or "",
+                 {"mode": "act", "agents": {}}, now, audit_path=tmp_path / "a.jsonl", proposals_path=tmp_path / "p.json",
+                 project_rules={"projects": {}})
+    assert res["by_agent"]["prioritize"]["planned"] > ta.MAX_ACTIONS_PER_RUN
+    assert applied[0][:2] == ["issue", "edit"] and "claimed:mac-mini" in applied[0]
+
+
+# ── dead claims (#453, P6 2026-10-21) ──────────────────────────────────────
+H = 1 / 24   # one hour, in the days issue() takes
+R = "G-Eskayo/marvin"
+
+
+def _claimed(n, idle_h, extra=()):
+    return issue(n, labels=("ready-for-agent", "claimed:mac-mini", *extra), updated=idle_h * H)
+
+
+def test_a_claim_with_no_live_run_is_released_after_hours_not_days():
+    acts = ta.plan_stale_claims(R, [_claimed(454, 7)], in_flight=set(), now=NOW, running=set())
+    assert ops(acts, op="remove_label", arg="claimed:mac-mini") and "no run alive" in acts[0]["why"]
+    assert ops(acts, op="comment") and not ops(acts, op="notify")
+
+
+def test_a_live_run_keeps_its_claim_however_quiet():
+    assert ta.plan_stale_claims(R, [_claimed(454, 30)], set(), NOW, running={454}) == []
+
+
+def test_a_fresh_claim_is_left_alone_even_with_no_run():
+    assert ta.plan_stale_claims(R, [_claimed(454, 2)], set(), NOW, running=set()) == []
+
+
+def test_when_a_machine_cannot_be_read_only_the_two_day_rule_applies():
+    assert ta.plan_stale_claims(R, [_claimed(454, 7)], set(), NOW, running=None) == []
+    assert ops(ta.plan_stale_claims(R, [_claimed(454, 49)], set(), NOW, running=None), op="remove_label")
+
+
+def test_held_pinned_and_in_flight_claims_are_never_released():
+    for t, flight in ((_claimed(1, 99, ("held",)), set()), (_claimed(2, 99, ("pinned",)), set()), (_claimed(3, 99), {3})):
+        assert ta.plan_stale_claims(R, [t], flight, NOW, running=set()) == []
+
+
+def test_a_ticket_released_twice_goes_to_a_person_with_a_notification():
+    acts = ta.plan_stale_claims(R, [_claimed(454, 7)], set(), NOW, running=set(), releases={454: 2})
+    assert ops(acts, op="remove_label", arg="claimed:mac-mini") and ops(acts, op="remove_label", arg="ready-for-agent")
+    assert ops(acts, op="add_label", arg="ready-for-human") and ops(acts, op="notify")
+    assert "released 2 times" in ops(acts, op="comment")[0]["arg"]
+
+
+def test_release_counts_read_only_applied_claim_releases_from_this_repo(tmp_path):
+    a = tmp_path / "audit.jsonl"
+    rows = [{"status": "applied", "agent": "stale_claims", "repo": R, "number": 5, "op": "remove_label", "arg": "claimed:mac-mini"},
+            {"status": "applied", "agent": "stale_claims", "repo": R, "number": 5, "op": "remove_label", "arg": "claimed:macbook-pro"},
+            {"status": "proposed", "agent": "stale_claims", "repo": R, "number": 5, "op": "remove_label", "arg": "claimed:mac-mini"},
+            {"status": "applied", "agent": "stale_claims", "repo": "o/other", "number": 5, "op": "remove_label", "arg": "claimed:mac-mini"},
+            {"status": "applied", "agent": "stale_claims", "repo": R, "number": 5, "op": "comment", "arg": "x"},
+            {"status": "applied", "agent": "refeed", "repo": R, "number": 5, "op": "remove_label", "arg": "claimed:mac-mini"}]
+    a.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    assert ta.release_counts(a, R) == {5: 2}
+    a.write_text("not json\n")
+    assert ta.release_counts(a, R) == {}      # a corrupt audit counts nothing rather than crashing the pass
+    assert ta.release_counts(tmp_path / "missing.jsonl", R) == {}
+
+
+def test_branches_named_for_a_ticket_are_in_flight_and_rescue_refs_are_not():
+    refs = ("x\trefs/heads/fix/457-main-health-single-flight\n"
+            "x\trefs/heads/pipeline/g-eskayo/marvin#218\n"
+            "x\trefs/heads/ticket-336\n"
+            "x\trefs/rescue/pipeline/g-eskayo/marvin#454/20261016T025251Z\n"
+            "x\trefs/heads/fix/p6-dead-claims\n")
+    nums = ta.in_flight_numbers(R, {R: {"prs": [{"body": "Closes #570", "headRefName": "feat/docs-files"}]}}, git_runner=lambda: refs)
+    assert {457, 218, 336, 570} <= nums
+    assert 454 not in nums and 6 not in nums
+
+
+def test_the_gate_agents_457_keeps_its_claim_while_its_branch_is_pushed():
+    refs = "x\trefs/heads/fix/457-main-health-single-flight\n"
+    flight = ta.in_flight_numbers(R, {R: {"prs": []}}, git_runner=lambda: refs)
+    assert ta.plan_stale_claims(R, [_claimed(457, 30)], flight, NOW, running=set()) == []
+
+
+def test_an_unreadable_remote_means_only_open_prs_count():
+    def boom():
+        raise OSError("offline")
+    assert ta.in_flight_numbers(R, {R: {"prs": [{"body": "#9", "headRefName": ""}]}}, git_runner=boom) == {9}
+
+
+def test_the_notify_action_reaches_gil_and_a_broken_notifier_is_recorded_as_a_failed_action(tmp_path, monkeypatch):
+    import mr_notification
+    sent = []
+    monkeypatch.setattr(mr_notification, "notify_needs_you", lambda ref, why, url=None: sent.append((ref, why, url)))
+    snap = {R: {"issues": [_claimed(454, 7)], "prs": []}}
+    res = ta.run(snap, lambda args: "", {"mode": "act", "agents": {"triage": "off", "prioritize": "off"}}, NOW,
+                 audit_path=tmp_path / "a.jsonl", proposals_path=tmp_path / "p.json", project_rules={"projects": {}},
+                 running=lambda repo: set())
+    assert res["applied"] == 2 and sent == []           # first release: back to the queue, nobody bothered
+    (tmp_path / "a.jsonl").write_text("".join(json.dumps({"status": "applied", "agent": "stale_claims", "repo": R, "number": 454,
+                                                         "op": "remove_label", "arg": "claimed:mac-mini"}) + "\n" for _ in range(2)))
+    ta.run(snap, lambda args: "", {"mode": "act", "agents": {"triage": "off", "prioritize": "off"}}, NOW,
+           audit_path=tmp_path / "a.jsonl", proposals_path=tmp_path / "p.json", project_rules={"projects": {}}, running=lambda repo: set())
+    assert sent == [("marvin#454", "claim released 2 times and stuck again", "https://github.com/G-Eskayo/marvin/issues/454")]
+    def broken(*a, **k):
+        raise RuntimeError("notifier gone")
+    monkeypatch.setattr(mr_notification, "notify_needs_you", broken)
+    res = ta.run(snap, lambda args: "", {"mode": "act", "agents": {"triage": "off", "prioritize": "off"}}, NOW,
+                 audit_path=tmp_path / "a.jsonl", proposals_path=tmp_path / "p.json", project_rules={"projects": {}}, running=lambda repo: set())
+    assert res["failed"] == 1   # recorded, and the labels around it still applied
+
+
+def test_in_propose_mode_nothing_is_released_or_notified(tmp_path, monkeypatch):
+    import mr_notification
+    sent = []
+    monkeypatch.setattr(mr_notification, "notify_needs_you", lambda *a, **k: sent.append(a))
+    calls = []
+    res = ta.run({R: {"issues": [_claimed(454, 7)], "prs": []}}, lambda args: calls.append(args) or "",
+                 {"mode": "propose", "agents": {}}, NOW, audit_path=tmp_path / "a.jsonl", proposals_path=tmp_path / "p.json",
+                 project_rules={"projects": {}}, running=lambda repo: set())
+    assert calls == [] and sent == [] and res["by_agent"]["stale_claims"]["planned"] == 2

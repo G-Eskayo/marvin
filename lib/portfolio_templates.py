@@ -193,7 +193,7 @@ def is_shortcode_only(text: str) -> bool:
 
 def export_reference(inventory_dir: Path, templates_root: Path = ROOT) -> list[dict]:
     """Write one reference template per crawled page (templates/reference/<slug>.html) plus an index.
-    Pages whose raw markup could not be read are skipped, never faked."""
+    Pages whose raw markup could not be read are skipped, never faked; if none has any, nothing is written (an error)."""
     inventory_dir, out = Path(inventory_dir), Path(templates_root) / "reference"
     out.mkdir(parents=True, exist_ok=True)
     pages = json.loads((inventory_dir / "inventory.json").read_text())["pages"]
@@ -211,6 +211,8 @@ def export_reference(inventory_dir: Path, templates_root: Path = ROOT) -> list[d
         # a page that is only a navigation parent (e.g. /education/) has genuinely empty content: listed, flagged, not faked
         index.append({"slug": p["slug"], "url": p["url"], "title": p["title"], "type": p["type"],
                       "file": f"reference/{p['slug']}.html", "source": source, "empty": not content.strip() or (source == "raw" and is_shortcode_only(content))})
+    if not index:      # a crawl that reached no WordPress page, not an empty site: keep the index we have (marvin#585)
+        raise RuntimeError(f"no page in {inventory_dir / 'inventory.json'} has raw markup; the reference index was left as it was")
     (out / "index.json").write_text(json.dumps(index, indent=2) + "\n")
     return index
 

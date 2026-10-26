@@ -4,22 +4,16 @@ import MrReview from '@components/MrReview.jsx'
 import HealthDashboard from '@components/HealthDashboard.jsx'
 import BootSequence from '@components/BootSequence.jsx'
 import DocsExplorer from '@components/DocsExplorer.jsx'
-import FilesExplorer from '@components/FilesExplorer.jsx'
+import { warmDocs } from '@components/docs_warm.jsx'
 import ActivityBoard from '@components/ActivityBoard.jsx'
 import PortfolioHub from '@components/PortfolioHub.jsx'
 import DispatchStatusBadge from '@components/DispatchStatusBadge.jsx'
 import MarvinButton from '@components/MarvinButton.jsx'
 import ActivityHover from '@components/ActivityHover.jsx'
+import SupportTab from '@components/SupportTab.jsx'
+import ItButton from '@components/ItButton.jsx'
+import { visibleTabs } from './lib/tabs.js'
 
-const TABS = [
-  { id: 'metrics', label: 'Metrics' },
-  { id: 'mr-review', label: 'MR Review' },
-  { id: 'health', label: 'Health' },
-  { id: 'docs', label: 'Docs' },
-  { id: 'files', label: 'Files' },
-  { id: 'activity', label: 'Activity' },
-  { id: 'portfolio', label: 'Portfolio' }
-]
 
 const DOT_COLOR = {
   red: 'bg-red-500',
@@ -57,7 +51,20 @@ export default function App() {
   }
   const [reviewStatus, setReviewStatus] = useState(null)
   const [healthOverall, setHealthOverall] = useState(null)
+  const [support, setSupport] = useState({ role: null, badge: 0 })
 
+  // Support link (ADR 0073): the role decides the tab or the IT button; the count comes from the saved cache and
+  // refreshes when support.py rewrites it.
+  useEffect(() => {
+    const load = () => window.api.support?.state().then((s) => setSupport({ role: s.role, badge: s.badge })).catch(() => {})
+    load()
+    const offFocus = window.api.support?.onFocus?.((target) => navigate('support', target)) || (() => {})
+    const offTrigger = window.api.triggers.on((t) => t.topic === 'support' && load())
+    return () => { offFocus(); offTrigger() }
+  }, [])
+
+  // Docs speed budget (#570): pdf.js and the markdown renderer are warmed once, when the app is idle after boot.
+  useEffect(() => warmDocs(), [])
   useEffect(() => {
     let cancelled = false
     async function refresh() {
@@ -111,7 +118,7 @@ export default function App() {
       <header className="titlebar flex shrink-0 items-center gap-1 border-b border-neutral-800 px-6 pb-3 pt-12">
         <h1 className="mr-6 text-sm font-semibold tracking-wide text-neutral-400">MARVIN METRICS</h1>
         <nav className="flex gap-1">
-          {TABS.map((tab) => {
+          {visibleTabs(support.role).map((tab) => {
             const dot = tab.id === 'mr-review' ? reviewStatus?.status : tab.id === 'health' ? healthOverall : null
             const dotColorMap = tab.id === 'health' ? HEALTH_DOT_COLOR : DOT_COLOR
             const title = tab.id === 'mr-review' ? STATUS_LABEL[dot] : tab.id === 'health' && dot ? `Overall: ${dot}` : undefined
@@ -128,12 +135,16 @@ export default function App() {
               >
                 {dot && <span className={`h-2 w-2 shrink-0 rounded-full ${dotColorMap[dot]}`} />}
                 {tab.label}
+                {tab.id === 'support' && support.badge > 0 && (
+                  <span className="rounded-full bg-red-600 px-1.5 text-xs font-semibold text-white">{support.badge}</span>
+                )}
               </button>
             )
           })}
         </nav>
         <div className="ml-auto flex items-center gap-3">
           <MarvinButton />
+          {support.role === 'helped' && <ItButton onOpen={(r) => navigate('support', { repo: r.repo, number: r.number })} />}
           <ActivityHover>
             <DispatchStatusBadge onClick={() => navigate('health', { view: 'agents' })} />
           </ActivityHover>
@@ -148,8 +159,8 @@ export default function App() {
           <HealthDashboard nav={nav} />
         ) : activeTab === 'docs' ? (
           <DocsExplorer nav={nav} onOpenBoard={(repo) => navigate('activity', { repo })} onOpenTicket={(repo, number) => navigate('activity', { repo, ticketNumber: number })} onOpenPr={(repo, number) => navigate('mr-review', { prKey: `${repo}#${number}` })} />
-        ) : activeTab === 'files' ? (
-          <FilesExplorer />
+        ) : activeTab === 'support' ? (
+          <SupportTab nav={nav} />
         ) : activeTab === 'portfolio' ? (
           <PortfolioHub />
         ) : (

@@ -275,8 +275,10 @@ class Budget:
         self.left = n
 
 
-def attempt(repo: str, pr: dict, budget: Budget, state_path: Path = STATE_PATH, do_repair=repair) -> dict:
-    """One PR: repair it if this commit hasn't already failed a repair and the scan has budget left."""
+def attempt(repo: str, pr: dict, budget: Budget, state_path: Path | None = None, do_repair=repair) -> dict:
+    """One PR: repair it if this commit hasn't already failed a repair and the scan has budget left.
+    state_path is read at call time: bound as a default it pinned the real file, so tests could not move it."""
+    state_path = STATE_PATH if state_path is None else state_path
     clone, base = where(repo)
     head, sha = pr.get("headRefName"), pr.get("headRefOid") or ""
     if not clone or not head:

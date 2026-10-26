@@ -65,3 +65,29 @@ def test_the_dashboard_preview_of_every_captured_element_matches_the_live_site(e
 def test_samples_that_differ_in_size_from_each_other_are_reported(monkeypatch):
     a, b = {"boxWidth": 280, "boxHeight": 290}, {"boxWidth": 280, "boxHeight": 250}
     assert pp.pe.geometry_close(a, a) and not pp.pe.geometry_close(a, b)
+
+
+# ── a dev site serving some other folder makes every preview look wrong (marvin#585) ──
+# Found 2026-10-21: the Mini's WordPress container had been recreated without compose.local.yml, so it served the repo's
+# stale wordpress/html (a 1,359-byte card stylesheet from 2026-10-02) while the pipeline kept syncing ~/portfolio-dev.
+# project-card parity then failed on a dozen properties with no hint why. Name the cause instead.
+
+def test_dev_site_drift_is_empty_when_the_site_serves_the_synced_files(tmp_path):
+    d = tmp_path / "wp-content" / "other-projects"; d.mkdir(parents=True)
+    (d / "other-projects.css").write_bytes(b".card{}")
+    served = {"http://dev/wp-content/other-projects/other-projects.css": b".card{}"}
+    assert pp.dev_site_drift(tmp_path, "http://dev", fetch=served.get) == []
+
+
+def test_dev_site_drift_names_a_file_the_site_serves_differently_and_how_to_fix_it(tmp_path):
+    d = tmp_path / "wp-content" / "other-projects"; d.mkdir(parents=True)
+    (d / "other-projects.css").write_bytes(b".card{ new }")
+    (d / "project-card.html").write_bytes(b"<div></div>")
+    served = {"http://dev/wp-content/other-projects/other-projects.css": b".card{ old }"}      # card html: not served at all
+    out = pp.dev_site_drift(tmp_path, "http://dev", fetch=served.get)
+    assert len(out) == 2 and all("dev-up.sh" in d for d in out)
+    assert any("other-projects.css" in d for d in out) and any("project-card.html" in d for d in out)
+
+
+def test_dev_site_drift_says_nothing_when_there_is_no_synced_copy_to_compare(tmp_path):
+    assert pp.dev_site_drift(tmp_path / "absent", "http://dev", fetch=lambda u: None) == []

@@ -51,7 +51,7 @@ Write the ISF annotation first, before drafting or updating any skill. If you ca
 
 Omit any line that has nothing to say. At least one line must be present.
 
-Also append a one-line summary to `~/.agents/retrospective-log.md` (cross-skill pattern index):
+Also append a one-line summary to `~/.agents/instance/retrospective-log.md` (cross-skill pattern index; it moved into the private instance under ADR 0071, so the old `~/.agents/retrospective-log.md` path no longer exists):
 ```
 YYYY-MM-DD | <skill-name> | I/S/F | <one-line summary>
 ```

@@ -2,7 +2,8 @@ import { readFileSync } from 'fs'
 import os from 'os'
 import path from 'path'
 import { createServer } from 'http'
-import { mergePr, baselineFailsOnMain, mergesAhead } from './merge.js'
+import { mergePr, baselineFailsOnMain, mergesAhead, execWithGroupTimeout } from './merge.js'
+import { snapshotExec } from './pr_snapshot.js'
 import { createMergeTracker, createInflightStore, takeInterruptedMerges, recordMergeDuration, estimateMergeMs, machineLoad, approveResponder, wantsStream } from './merge_progress.js'
 import { resolveDeviceId } from '../electron/main/device_identity.js'
 import { sendFeedback, dropEntirely } from './deny.js'
@@ -16,6 +17,7 @@ import { appendMerge, readMergeHistory } from './merge_history.js'
 import { appendError } from '../electron/main/error_log.js'
 import { readRebaseStatus } from './rebase_status.js'
 import { readLiveSessions } from './sessions.js'
+import { listHelpers } from './chat_helpers.js'
 import { startChangeWatch, createGithubProbe } from './gh_watch.js'
 import { readRegistry } from '../electron/main/boards.js'
 import { execFile } from 'child_process'
@@ -24,6 +26,7 @@ import { createPortfolio } from '../electron/main/portfolio.js'
 import { handlePortfolioRequest } from '../electron/main/portfolio_remote.js'
 import { resolveServiceDefaults } from '../electron/main/device_identity.js'
 import { createRebuildCheckTrigger } from './rebuild_check.js'
+import { supportRepos, createSupportSync } from './support_sync.js'
 
 // Authenticate gh/git children from the pipeline's shared credential file (see gh_auth.js).
 const ghTokenSource = loadGhToken()
@@ -142,6 +145,12 @@ const server = createServer(async (req, res) => {
     return
   }
 
+  // Chat helpers on this Mac (#612), for the other Mac's Activity tab. Read-only, like /sessions.
+  if (req.method === 'GET' && req.url === '/helpers') {
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ helpers: listHelpers() }))
+    return
+  }
+
   if (req.method !== 'POST' || (req.url !== '/approve' && req.url !== '/deny')) {
     res.writeHead(404).end()
     return
@@ -186,7 +195,8 @@ const server = createServer(async (req, res) => {
       // to re-engagement instead (merged: false, reengaged: true) -- the
       // latter is an expected outcome, not a server error, so it gets a
       // 200 with the real reason attached rather than a bare 500.
-      const result = await mergePr(payload.pr_url, undefined, undefined, undefined, undefined, undefined, undefined, undefined, {
+      // P5: the preflight's seven reads of this PR share one (pr_snapshot.js); merge.js and its checks are unchanged.
+      const result = await mergePr(payload.pr_url, snapshotExec(payload.pr_url, execWithGroupTimeout), undefined, undefined, undefined, undefined, undefined, undefined, {
         baselineFails: (names) => baselineFailsOnMain(names),
         progress: tracker ? tracker.progress : undefined,
         loadNow: () => ({ ...machineLoad(), id: machineId })
@@ -252,10 +262,19 @@ server.listen(PORT, () => {
 
   // Trigger source for GitHub-side changes to any board repo: tell an open dashboard on this
   // machine what changed the moment it does (best-effort, like /mr-ready).
+  // Support repos (ADR 0073) ride the same detector: a change re-syncs the support cache, and on a helper install the
+  // helper's MARVIN takes each request that has just been escalated to it. Once now, so the cache exists at startup.
+  const supportSync = createSupportSync()
+  if (supportRepos().length) supportSync('startup')
   startChangeWatch({
-    getRepos: () => readRegistry().map((b) => b.repo),
+    getRepos: () => [...new Set([...readRegistry().map((b) => b.repo), ...supportRepos()])],
     probe: createGithubProbe(),
     ping: (repo) => {
+      if (supportRepos().includes(repo)) {
+        console.log(`[gh-watch] support change on ${repo} at ${new Date().toISOString()}`)
+        supportSync(repo)
+        return
+      }
       console.log(`[gh-watch] change detected on ${repo} at ${new Date().toISOString()}`)
       if (rebuildCheck(repo)) console.log(`[rebuild-check] started for ${repo}`) // #443: any merge path updates the app
       forwardRefreshPing(DASHBOARD_REFRESH_URL, (url) => postJson(url, { topics: ['activity', 'mr'], source: `github:${repo}` }))
