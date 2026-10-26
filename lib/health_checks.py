@@ -986,24 +986,13 @@ if [ -f "$LEDGER" ]; then echo "disk_ledger=$(tail -14 "$LEDGER" | /usr/bin/tr '
 '''.replace("__ETIME_AWK__", _ETIME_AWK)
 
 
-# Which machine is meant to run each com.marvin.* launchd job. "both" = both machines, "mini" = the primary automation
-# host only (ADR 0032, 0033), "laptop" = only where Gil sits. Edit here when a job is deliberately moved; a job that
-# is not listed is reported as unplaced so a new job cannot silently run on only one machine.
-JOB_PLACEMENT = {
-    "code-sync-push": "both", "cross-machine-merge": "both", "daily-digest": "both", "research-colony": "both",
-    "desktoplive": "both", "dashboard-webhook": "both",  # webhook on both until #112 (ADR 0032)
-    "ticket-pipeline": "both",  # mini scans; the laptop's copy is a standby that scans only if the mini goes quiet (scanner_role.py)
-    "architecture-review": "mini", "auto-fix": "mini", "cron-health": "mini", "health-check": "mini",
-    "process-quarantine-reviews": "mini", "verify-digest-fix": "mini",
-    "usage-scan": "both",  # hourly: each machine scans its own transcripts for the Metrics tab (lib/usage_report.py)
-    "cleanup-sweep": "both",  # daily: each machine sweeps its own pipeline worktrees (lib/cleanup_sweep.py)
-    "machine-resources": "both",  # 30s: samples disk/mem/swap/CPU/GPU for resources panel (#130)
-    "dashboard-launch": "laptop",
-    "morning-brief": "laptop",  # one writer (the brief syncs to the mini via ~/.claude); after the digests (lib/morning_brief.py)
-    # the website map (#189): rebuilt nightly and after MARVIN changes on the mini, where the dev site runs; the nightly
-    # job also publishes it to production (ADR 0057), so it must never run on the laptop
-    "snapshot-deploy-nightly": "mini", "snapshot-deploy-reactive": "mini",
-}
+# Which machine is meant to run each com.marvin.* launchd job: "both", "mini" (the primary automation host, ADR 0032,
+# 0033) or "laptop" (only where Gil sits). Derived from lib/job_catalog.py, which also says what each job is for; edit
+# it there. A loaded job that is not listed is reported as unplaced, so a new job cannot silently run on one machine.
+import job_catalog as _job_catalog  # noqa: E402
+
+JOB_PLACEMENT = {n: j["machine"] for n, j in _job_catalog.JOBS.items()
+                 if j.get("label", f"com.marvin.{n}").startswith("com.marvin.") and j["machine"] != "none"}
 
 
 def evaluate_job_placement(jobs: list[str], role: str) -> tuple[str, str]:
