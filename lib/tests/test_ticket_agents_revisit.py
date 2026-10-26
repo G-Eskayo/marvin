@@ -179,7 +179,7 @@ if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
 
 
-# ── the whole pass, not just the planner (P6, 2026-10-21) ──────────────────
+# ── the whole pass, not only the planner (P6, 2026-10-21) ──────────────────
 # A date-only "Revisit by:" line gives condition None, and run() read it with .get("condition", "").startswith,
 # which crashed every pass for 12 days ("'NoneType' object has no attribute 'startswith'", 270 of 273 scans).
 # The planner tests above never went through run(), so they could not see it.

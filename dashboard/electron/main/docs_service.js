@@ -20,7 +20,7 @@ const copyAge = (copy) => ({ savedAt: copy?.savedAt ?? null, checkedAt: copy?.ch
 export { UNSORTED_ID }
 // `onStatesChanged(id)`: the uncommitted/unpushed badges (local `git status`, 75-100 ms) are read after the tree is
 // drawn, from the last-known states; when they differ, this is called so the open view redraws them in place.
-export function createDocsService({ getCatalog, exec, readMaster, fallbackRepos = () => [], saved = null, deliverables = null, onStatesChanged = () => {} }) {
+export function createDocsService({ getCatalog, exec, readMaster, fallbackRepos = () => [], saved = null, deliverables = null, onStatesChanged = () => {}, midWork = () => false }) {
   const lastStates = new Map() // dir -> { path: state }
   const statesInflight = new Map()
   function refreshStates(id, dir) {
@@ -160,6 +160,16 @@ export function createDocsService({ getCatalog, exec, readMaster, fallbackRepos 
       const dir = dirOf(rec)
       if (!dir) continue
       reposWithLocal.add(rec.id)
+      // #611: a clone with work in it is not fast-forwarded (clone_freshen.js), so search its saved GitHub copy, which
+      // is current. With no saved copy yet, the local files are searched as before: nothing disappears.
+      const copy = midWork(dir) && saved && rec.repo ? saved.peek(rec.repo) : null
+      if (copy?.tree?.length && copy.files) {
+        for (const f of copy.tree.flatMap((e) => (e.section ? e.items : [e]))) {
+          const text = copy.files[f.path]
+          if (typeof text === 'string') docs.push({ repo: rec.id, path: f.path, label: f.label, content: searchableText(f.path, text) })
+        }
+        continue
+      }
       const states = await localFileStates(dir)
       for (const f of listLocalTree(dir).flatMap((e) => (e.section ? e.items : [e]))) {
         try {
@@ -180,7 +190,11 @@ export function createDocsService({ getCatalog, exec, readMaster, fallbackRepos 
     return cat.projects.filter((p) => p.repo && !dirOf(p) && (p.docs.context || p.docs.readme)).map((p) => ({ name: ghName(p), id: p.id, repo: p.repo }))
   }
 
+  // The projects whose local clone the freshener may fast-forward (#611): every catalog project with a GitHub repo.
+  // clone_freshen.js decides which of them are clean, and skips ~/.agents, worktrees and clones open in Xcode.
+  const freshenTargets = () => (catalog()?.projects || []).filter((p) => p.repo)
+
   const localDirs = () => (catalog()?.projects || []).map(dirOf).filter(Boolean)
 
-  return { repos, tree, content, headings, revalidate, localDocs, githubIndexRepos, localDirs }
+  return { repos, tree, content, headings, revalidate, localDocs, githubIndexRepos, localDirs, freshenTargets }
 }

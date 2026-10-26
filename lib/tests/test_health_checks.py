@@ -1259,7 +1259,11 @@ def test_remote_machine_label_strips_the_registry_number():
 
 def test_a_profile_that_can_never_run_is_one_yellow_line(tmp_path):
     import json as _j
-    real = _j.loads((Path(__file__).resolve().parents[2] / "config" / "projects" / "marvin-mobile.json").read_text())
+    import instance
+    src = instance.path("config", "projects", "marvin-mobile.json")  # the owner's real profile, private (ADR 0071)
+    if not src.exists():
+        pytest.skip("needs the owner's instance; runs on the owner's machines")
+    real = _j.loads(src.read_text())
     def prof(repo, dispatch, machines):
         return _j.dumps({**real, "repo": repo, "dispatch": dispatch, "machines": machines})
     (tmp_path / "a.json").write_text(prof("G-Eskayo/marvin-mobile", "on", []))

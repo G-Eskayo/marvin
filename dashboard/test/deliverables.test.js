@@ -221,6 +221,38 @@ describe('search entries', () => {
   })
 })
 
+// #611: a PDF's text is searchable once the background pass has read it (pdf_text.js); until then, its name.
+describe('PDF text in the search (#611)', () => {
+  it('a PDF is found by a word inside it once its text is cached, and the search cache is refreshed', async () => {
+    const { searchDocs } = await import('../electron/main/docs_search.js')
+    put('nourished-architecture-2026-10-22/backend.pdf', '%PDF-1.4 fake')
+    const texts = new Map()
+    const pdfText = { peek: (abs) => texts.get(abs) ?? null }
+    const d = createDeliverables({ getContext: () => context(), cachePath: path.join(home, 'm.json'), pdfText })
+    d.refresh()
+    expect(searchDocs({ docs: d.searchDocs() }, 'supabase')).toEqual([])
+    expect(searchDocs({ docs: d.searchDocs() }, 'backend')[0].path).toBe('outbox/nourished-architecture-2026-10-22/backend.pdf')
+    texts.set(path.join(home, '.claude', 'outbox', 'nourished-architecture-2026-10-22', 'backend.pdf'), 'We store meals in Supabase Postgres.')
+    d.invalidateSearch()
+    const r = searchDocs({ docs: d.searchDocs() }, 'supabase')
+    expect(r[0]).toMatchObject({ path: 'outbox/nourished-architecture-2026-10-22/backend.pdf', kind: 'deliverable' })
+  })
+
+  it('without a PDF reader, PDFs stay name-only and nothing breaks', () => {
+    put('x-2026-10-22/a.pdf', '%PDF-1.4 fake')
+    const d = createDeliverables({ getContext: () => context(), cachePath: path.join(home, 'm.json') })
+    d.refresh()
+    expect(d.searchDocs().filter((x) => x.path === 'outbox/x-2026-10-22/a.pdf')).toHaveLength(1)
+  })
+
+  it('a reader that throws never breaks the search', () => {
+    put('y-2026-10-22/a.pdf', '%PDF-1.4 fake')
+    const d = createDeliverables({ getContext: () => context(), cachePath: path.join(home, 'm.json'), pdfText: { peek: () => { throw new Error('boom') } } })
+    d.refresh()
+    expect(d.searchDocs().some((x) => x.path === 'outbox/y-2026-10-22/a.pdf')).toBe(true)
+  })
+})
+
 describe('search ranking and the number tier over time', () => {
   it('a name hit outranks a long file that merely contains the words, and code is searched by name only', async () => {
     const { searchDocs } = await import('../electron/main/docs_search.js')

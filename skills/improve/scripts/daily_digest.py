@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path.home() / ".agents" / "lib"))
 from notify import notify  # noqa: E402
 import marvin_launcher  # noqa: E402
 
-RESULTS_MD   = Path.home() / "marvin-bench" / "RESULTS.md"
+RESULTS_MD   = Path.home() / ".agents" / "bench" / "RESULTS.md"
 QA_SCRIPTS   = Path.home() / ".agents" / "skills" / "qa-agent" / "scripts"
 SAFETY_MONITOR_SCRIPTS = Path.home() / ".agents" / "skills" / "safety-monitor" / "scripts"
 
@@ -41,6 +41,10 @@ OUT_FILE = DIGEST_DIR / f"{TODAY}.md"
 
 
 # ── context assembly ───────────────────────────────────────────────────────────
+
+def _missing(msg: str) -> str:
+    return f"\n\n❌ **Missing input:** {msg}\n\n"
+
 
 def roadmap_summary() -> str:
     if not ROADMAP.exists():
@@ -79,8 +83,13 @@ def recent_handoffs_summary() -> str:
 
 def bench_summary() -> str:
     if not RESULTS_MD.exists():
-        return "(no bench results)"
-    text = RESULTS_MD.read_text(errors="ignore")
+        return _missing(f"Bench results file not found at {RESULTS_MD}")
+    try:
+        text = RESULTS_MD.read_text(errors="ignore")
+    except OSError as e:
+        return _missing(f"Failed to read {RESULTS_MD}: {e}")
+    if not text.strip():
+        return _missing("Bench results file is empty")
     lines = text.splitlines()
     # grab the last run section (last ~40 lines)
     return "\n".join(lines[-40:])
@@ -135,10 +144,20 @@ def reviewer_health_summary() -> str:
     "=== run <ts> ===" / "=== end (exit N) ===" markers into individual
     runs and classifies each by real exit status, not vibes."""
     if not REVIEWER_LOG.exists():
-        return "No background-reviewer log yet — either no handoff has been written, or the hook has never fired."
+        return _missing(f"Background reviewer log not found at {REVIEWER_LOG}")
 
-    text = REVIEWER_LOG.read_text(errors="ignore")
-    runs = re.split(r"\n(?===[ ]run\s)", text)
+    try:
+        text = REVIEWER_LOG.read_text(errors="ignore")
+    except OSError as e:
+        return _missing(f"Failed to read {REVIEWER_LOG}: {e}")
+
+    if not text.strip():
+        return _missing("Background reviewer log is empty")
+
+    if not re.search(r"=== run \S+ ===", text):
+        return _missing(f"Background reviewer log at {REVIEWER_LOG} has no recognizable run markers")
+
+    runs = re.split(r"\n(?====[ ]run\s)", text)
     cutoff = datetime.now(timezone.utc) - timedelta(days=7)
 
     total, failed, failure_details = 0, 0, []
@@ -167,6 +186,7 @@ def reviewer_health_summary() -> str:
             failure_details.append(f"{ts.strftime('%m-%d %H:%M')}: {reason}")
 
     if total == 0:
+        # Log exists and parses, but no runs in the 7-day window.
         return "No background-reviewer runs in the last 7 days."
 
     summary = f"{total} run(s) in the last 7 days, {total - failed} succeeded, {failed} failed."

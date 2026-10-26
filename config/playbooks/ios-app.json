@@ -1,0 +1,128 @@
+{
+  "_readme": "The iOS app playbook, for code (lib/project_profile.py: load_playbook, executor_notes). The same rules for people and agents are in ios-app.md next to this file; change both together. Design: docs/plans/project-playbooks-2026-10-22.md (decided 2026-10-22). A profile names it with \"playbook\": \"ios-app\" and optionally \"playbook_variant\": \"macos\".",
+  "name": "ios-app",
+  "title": "iOS app",
+  "doc": "config/playbooks/ios-app.md",
+  "stages": [
+    {
+      "id": "ticket",
+      "label": "Idea to ticket",
+      "what": "A ticket in the project repo, labelled project:<id>.",
+      "proof": ["The problem and who it is for", "For any look change, a mock-up image on the ticket"],
+      "machine": "either"
+    },
+    {
+      "id": "design",
+      "label": "Design (only when needed)",
+      "what": "A design doc and ADR draft for anything touching the engine, data, privacy, money or the store listing.",
+      "proof": ["A Decisions block in the PR description", "The same questions asked in chat as tappable options, and the answers written back"],
+      "machine": "either"
+    },
+    {
+      "id": "build",
+      "label": "Build",
+      "what": "Logic in the shared Swift package (for example CaptionCore) with unit tests; a thin SwiftUI layer.",
+      "proof": ["swift test green", "Tests try to break it", "Time and space complexity stated"],
+      "machine": "mac-mini-1",
+      "machine_note": "Full suites on the Mini; the MacBook runs single test files only.",
+      "executor": true
+    },
+    {
+      "id": "app-build",
+      "label": "App build",
+      "what": "XcodeGen generate, then a simulator build.",
+      "proof": ["xcodebuild green (the profile's app-build verify step)"],
+      "machine": "mac-mini-1",
+      "executor": true
+    },
+    {
+      "id": "look-proof",
+      "label": "Look proof",
+      "what": "Any on-screen change.",
+      "proof": ["Simulator screenshots (DeviceHub.app, xcrun simctl io <udid> screenshot)", "A GIF for anything that moves", "Shown in the dashboard's PR detail", "\"You want X, tap Y, you see Z\" for each new capability"],
+      "machine": "mac-mini-1",
+      "executor": true,
+      "executor_with_capture": "The pipeline builds the app for the iOS Simulator and screenshots the profile's scenes itself after you finish, when your change touches the profile's UI paths. You cannot run or tap the app yourself: reach a new screen through a debug-only launch argument and add it as a scene, and say plainly which behaviour is untested.",
+      "executor_without_capture": "No simulator capture is configured for this project, so this run takes no screenshots: say so plainly in the PR, never imply a screen was seen, and say which behaviour is untested."
+    },
+    {
+      "id": "device-check",
+      "label": "Device check (when it matters)",
+      "what": "Battery, heat, latency and memory on Gil's phone.",
+      "proof": ["Numbers against a stated limit (for example Seal hop: Apple + 10% battery/heat over 30 minutes)"],
+      "machine": "owner-phone",
+      "machine_note": "Gil runs it on his phone, guided step by step in chat, with MARVIN reading the numbers (decided 2026-10-22)."
+    },
+    {
+      "id": "merge",
+      "label": "Merge",
+      "what": "Through the merge gate.",
+      "proof": ["Gate green", "Decisions answered", "Images re-pinned after any later look change"],
+      "machine": "merge-gate"
+    },
+    {
+      "id": "ship",
+      "label": "Ship (TestFlight and App Review)",
+      "what": "Version/build bump, archive, upload, TestFlight, App Review.",
+      "proof": ["Each step of the ship checklist ticked"],
+      "machine": "macbook-pro-1",
+      "machine_note": "Signing and upload happen on the MacBook."
+    },
+    {
+      "id": "after-ship",
+      "label": "After ship",
+      "what": "Beta feedback and crash reports.",
+      "proof": ["Ingested from the Xcode cache (~/Library/Developer/Xcode/Products/<bundle>/Feedback)", "Tickets filed by device"],
+      "machine": "mac-mini-1"
+    }
+  ],
+  "ship_checklist": [
+    {"id": "bump", "text": "Bump CURRENT_PROJECT_VERSION in project.yml and rerun the generate script, or the build number goes stale."},
+    {"id": "archive-upload", "text": "xcodebuild archive, then -exportArchive (app-store-connect, upload) on the MacBook. Xcode does not need to be open."},
+    {"id": "testers", "text": "In App Store Connect, expire the old build and add the new one to testers.", "owner_gate": true},
+    {"id": "review", "text": "Submit for review, with expedite text if there is a deadline.", "owner_gate": true},
+    {"id": "listing-shots", "text": "Listing screenshots at the size App Store Connect asks for (6.3\" = 1206x2622).", "owner_gate": true},
+    {"id": "one-at-a-time", "text": "Once a version is out for review, the next one waits for it to be released first (Seal 1.1 waited on 1.0)."}
+  ],
+  "owner_gates": [
+    {"id": "look-change", "text": "Any look change: a mock-up on the ticket and screenshots on the PR"},
+    {"id": "sent-to-apple", "text": "Anything sent to Apple (uploads, TestFlight, App Review)"},
+    {"id": "signing", "text": "Signing, the bundle id, the deployment target and entitlements"},
+    {"id": "deps-network", "text": "New dependencies or network access (privacy, ADR 0007 in clarity-captions)"},
+    {"id": "store-text", "text": "Store listing text"},
+    {"id": "user-feature", "text": "Adding or removing a user feature. Removing means deleting its code too, not just hiding it"}
+  ],
+  "machines": {
+    "mac-mini-1": "Builds, tests, screenshots and long runs.",
+    "macbook-pro-1": "Signing and upload, and single-file tests. Never full suites in parallel (it throttles: use -n 2 and check the 5-minute load first)."
+  },
+  "known_traps": [
+    {"text": "Xcode 27 has no Simulator.app: use DeviceHub.app and xcrun simctl.", "executor": true},
+    {"text": "Don't move or modify a repo that is open in Xcode."},
+    {"text": "TestFlight and Apple mail go to iCloud, not Gmail."},
+    {"text": "The executor can't run the app, so it must say which behaviour is untested.", "executor": true},
+    {"text": "A profile with dispatch on and machines: [] never runs (project_profile.py selftest flags it)."}
+  ],
+  "variants": {
+    "macos": {
+      "label": "macOS app: no TestFlight, no device check (decided 2026-10-22 for killer-sudoku)",
+      "drop_stages": ["device-check", "ship", "after-ship"],
+      "drop_ship_checklist": true,
+      "owner_gate_overrides": {
+        "sent-to-apple": {"text": "Anything sent to Apple (notarization, the Mac App Store)"}
+      },
+      "stage_overrides": {
+        "app-build": {
+          "what": "swift build (a SwiftPM app) or xcodebuild for the macOS destination.",
+          "proof": ["The app builds (the profile's verify step)"]
+        },
+        "look-proof": {
+          "what": "Any on-screen change.",
+          "proof": ["Screenshots of the running macOS app", "A GIF for anything that moves", "\"You want X, click Y, you see Z\" for each new capability"],
+          "executor_with_capture": "",
+          "executor_without_capture": "The pipeline machines don't capture the macOS app, so this run takes no screenshots: say so plainly in the PR, never imply a screen was seen, and say which behaviour is untested; the owner reviews the look by running the app."
+        }
+      }
+    }
+  }
+}

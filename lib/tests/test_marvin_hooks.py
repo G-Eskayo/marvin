@@ -6,8 +6,15 @@ from pathlib import Path
 
 import pytest
 
-import marvin_hooks as mh
-import marvin_launcher as ml
+# This checkout's lib first, and never a marvin_hooks another test loaded from the shared ~/.agents (the test HOME links
+# it): in a worktree that is the code on main, not the code under test (#612 found its new hooks "missing" that way).
+LIB = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(LIB))
+if "marvin_hooks" in sys.modules and Path(sys.modules["marvin_hooks"].__file__).resolve().parent != LIB:
+    del sys.modules["marvin_hooks"]
+
+import marvin_hooks as mh  # noqa: E402
+import marvin_launcher as ml  # noqa: E402
 
 GATE = Path(mh.__file__)
 
@@ -52,6 +59,15 @@ def test_safety_and_telemetry_hooks_run_everywhere_and_session_upkeep_only_inter
         assert by_script[upkeep].kinds == {"interactive"}, upkeep
 
 
+def test_the_session_report_still_runs_when_an_upkeep_step_fails():
+    # 2026-10-25: check_remote_session.py crashed, and with every step joined by && the report never printed, so
+    # the session started without the banner or the docs-placement reminders.
+    chain = mh.session_start_chain(["false", "/bin/sh -c 'exit 3'"], "echo REPORT")
+    out = subprocess.run(["/bin/sh", "-c", chain], capture_output=True, text=True)
+    assert "REPORT" in out.stdout
+    assert mh._SESSION_START.endswith(f"{mh.AGENTS}/lib/session_start_report.py")
+
+
 def _write(path, settings):
     path.write_text(json.dumps(settings, indent=2))
 
@@ -64,7 +80,8 @@ def test_install_moves_hooks_to_user_settings_and_sets_one_memory(tmp_path):
     u, l = json.loads(user.read_text()), json.loads(local.read_text())
     assert u["model"] == "opus" and u["permissions"] == {"allow": ["Read"]}  # nothing else touched
     assert u["autoMemoryDirectory"] == str(tmp_path / "memory")
-    assert set(u["hooks"]) == {"PreToolUse", "PostToolUse", "SessionStart", "UserPromptSubmit"}
+    assert set(u["hooks"]) == {"PreToolUse", "PostToolUse", "SessionStart", "UserPromptSubmit", "SubagentStart",
+                                  "SubagentStop"}
     assert all("marvin_hooks.py gate" in h["command"] for groups in u["hooks"].values()
                for g in groups for h in g["hooks"])
     assert "hooks" not in l and l["permissions"] == {"allow": ["Bash(ls)"]}
@@ -164,10 +181,12 @@ def test_wired_scripts_survives_missing_broken_and_odd_settings(tmp_path):
     assert _wired(tmp_path, user={"hooks": []}) == {}
 
 
-def test_wired_scripts_reads_the_real_installed_hooks():
-    names = {Path(r["path"]).name for r in mh.wired_scripts([mh.HOME / "nonexistent.json"] + [mh.USER_SETTINGS])}
-    if not mh.USER_SETTINGS.exists():
-        pytest.skip("no user settings on this machine")
+def test_wired_scripts_reads_what_install_writes(tmp_path):
+    """Hermetic (#612): it read this Mac's live settings, so every new hook failed it until `install` had run there,
+    the merge gate's machine included."""
+    user = tmp_path / "settings.json"
+    mh.install(user, tmp_path / "settings.local.json", tmp_path / "memory")
+    names = {Path(r["path"]).name for r in mh.wired_scripts([tmp_path / "nonexistent.json", user])}
     for h in mh.HOOKS:  # everything install() writes is found again by wired_scripts
         for token in " ".join(h.command).replace("'", " ").split():
             if token.endswith(".py"):
@@ -184,3 +203,18 @@ def test_auto_fix_never_touches_a_script_a_user_level_hook_runs(tmp_path, monkey
     monkeypatch.setattr(auto_fix, "HOOK_SETTINGS_PATHS", (user, tmp_path / "settings.local.json"))
     monkeypatch.setattr(auto_fix, "LAUNCH_AGENTS_DIR", tmp_path / "none")
     assert auto_fix._core_files() == {script.resolve(), mh.GATE_SCRIPT.resolve()}
+
+
+def test_chat_helpers_are_recorded_for_people_only_and_capped_short():
+    """#612: a chat's helpers get a run log; the hooks run only in a person's session, and give up fast."""
+    hooks = {(h.event, h.command[-1]): h for h in mh.HOOKS if "chat_helpers.py" in " ".join(h.command)}
+    assert set(hooks) == {("SubagentStart", "start"), ("PostToolUse", "launched"), ("PreToolUse", "report"),
+                          ("SubagentStop", "stop")}
+    assert hooks[("PostToolUse", "launched")].matcher == "Agent"
+    assert hooks[("PreToolUse", "report")].matcher == "SubagentHandback"
+    for h in hooks.values():
+        assert h.kinds == {"interactive"} and h.timeout and h.timeout <= 5
+    stop = mh.settings_hooks()["SubagentStop"][0]["hooks"][0]
+    assert stop["timeout"] == 5 and "chat_helpers.py hook stop" in stop["command"]
+    # a hook without a timeout keeps Claude Code's default: no key written
+    assert "timeout" not in mh.settings_hooks()["UserPromptSubmit"][0]["hooks"][0]

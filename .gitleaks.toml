@@ -1,0 +1,7 @@
+# gitleaks config for CI (ADR 0071): the default rules, plus the one known test fixture.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Redaction tests feed fake tokens on purpose"
+paths = ['''brain-map/scripts/test_export_snapshot\.py''']

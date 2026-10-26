@@ -1,5 +1,10 @@
 # Diagnose — Retrospective
 
+## 2026-10-22 — Gate send-backs from machine load, not the PR
+**I:** Added a gotcha: when the gate fails a PR on a test that passes on main and isn't related to the diff, check machine load first. Parallel helpers plus the gate, each running full suites with `-n auto`, pushed the MacBook to load 34–37 on 8 cores. That made `changelog.test.js` flaky and sent back #606. Merging #604 then restarted the webhook and interrupted #606 a second time.
+**S:** For now: put `hold` on the ticket so the pipeline doesn't rebuild a good PR, and re-approve when the machine is quiet.
+**F:** The real fixes (a per-machine test cap from slice E of the memory-search-progress design, and a no-downtime webhook handoff for #578) aren't built, so the gotcha only covers how to diagnose this and the workaround. Left out: ETag→newest-issue change detection (#603, the fix is in the repo); merged design doc D5 being out of date (one-off); unverified Vitals findings (evidence gate).
+
 ## 2026-10-15 — Sync alarms shipped + morning-brief audit
 **I:** Added a gotcha: repeated conflicts on one synced file can mean the same job runs on both machines and writes it. Fixing the conflict handling only treats the symptom; the fix is one owner per job. quarantine.md has conflicted at least four times (07-12, 09-01, 10-10, 10-15), and the audit showed the second Mac's run added nothing.
 **S:** The 10-14 alarm-visibility fix (#426) and the log-after-push fix (#427) are now built TDD in temp repos and verified on both Macs. Marked them verified in the skill, and added #438's twist: a no-op success must also clear an earlier failure.

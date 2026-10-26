@@ -85,3 +85,16 @@ dashboard/node_modules
 # Health's per-machine history: never committed (191 of ~200 auto-sync commits on main were these, 2026-10-17..21).
 # Each Mac keeps its own; code_sync.NEVER_COMMIT refuses them even where still tracked (plan health-metrics-redo P0).
 /bench/metrics/health-monitor.*
+
+# Runtime logs and session transcripts: never public (2026-10-25, a 2 MB transcript was auto-synced here)
+logs/
+*.jsonl.transcript
+
+# ADR 0071: this person's private instance (its own repo, private remote). Never part of the public engine.
+/instance/
+# ADR 0071: the owner's state moved to the private instance. Ignored here so a stale writer on any machine can't
+# republish it. (docs/screenshots and docs/evidence stay committable: ticket PRs still put evidence images there.)
+/bench/metrics/
+/docs/plans/
+/config/projects/
+/retrospective-log.md

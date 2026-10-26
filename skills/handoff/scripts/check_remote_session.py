@@ -124,7 +124,13 @@ def main() -> None:
     # new" comparison misses that as a real update. Since we're already past
     # the freshness gate above, we know a generation happened — take
     # whichever handoff has the newest mtime right now.
-    subprocess.run([VENV_PYTHON, CODE_SYNC, "pull", str(Path.home() / ".claude")], capture_output=True)
+    # Local, no shell: real paths, not the $HOME strings above (those crashed this step, 2026-10-25).
+    agents = Path.home() / ".agents"
+    try:
+        subprocess.run([str(agents / "venv" / "bin" / "python"), str(agents / "lib" / "code_sync.py"), "pull",
+                        str(Path.home() / CLAUDE_DIR_REL)], capture_output=True)
+    except OSError:
+        pass  # fail quiet: surface whatever handoff is already here
     handoffs_dir = Path.home() / ".claude" / "handoffs"
     handoffs = list(handoffs_dir.glob("*.md")) if handoffs_dir.is_dir() else []
     if handoffs:

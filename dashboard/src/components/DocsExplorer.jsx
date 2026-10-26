@@ -5,7 +5,7 @@ import { extractOutline } from '../lib/docs_text.js'
 import { isNotebookPath, notebookToMarkdown } from '../lib/ipynb.js'
 import { docsCacheFrom, savedCopyLine } from '../lib/docs_cache.js'
 import { getCachedFile, putCachedFile, clearCachedFiles, prefetchTextFiles } from '../lib/outbox_text_cache.js'
-import { KINDS, KIND_LABEL, groupTree, visibleKinds, toggleChip, mainView, searchGroups, countLine, overviewPicks, formatDay, matchedBy, deliverableSummary } from '../lib/docs_view.js'
+import { KINDS, KIND_LABEL, groupTree, visibleKinds, toggleChip, mainView, searchGroups, countLine, overviewPicks, formatDay, matchedBy, deliverableSummary, rankedResults } from '../lib/docs_view.js'
 import { formatSize as kindSize } from '../lib/file_kinds.js'
 import { DeliverablesGrid, DeliverableHeader, FolderGrid, TicketChip, Thumbs } from './DocsDeliverables.jsx'
 
@@ -477,7 +477,8 @@ function FilesSection({ files, onOpenProject }) {
   )
 }
 
-// A search: results grouped Docs / Decisions / Deliverables; the chip row (same row, same spot) filters them, and the
+// A search: one list ranked by match, each result tagged with its kind (#611); the chip row (same row, same spot) filters
+// it, and the
 // count line says what it hides (mock-up ticket-403-f-4).
 function SearchResults({ state, query, chips, onOpen, nameOf, files, onOpenProject }) {
   if (!state) return <div className="p-6 text-neutral-500">Searching…</div>
@@ -490,18 +491,14 @@ function SearchResults({ state, query, chips, onOpen, nameOf, files, onOpenProje
         {indexing ? ' · refreshing index…' : indexedAt && !chips.size ? ` · indexed ${formatTimestamp(indexedAt)}` : ''}
       </p>
       {results.length === 0 && <p className="text-neutral-500">Nothing matched. All words must appear in the same section.</p>}
-      {grouped.groups.map((g) => (
-        <div key={g.kind} className="mb-4">
-          {(grouped.groups.length > 1 || chips.size > 0) && <p className="mb-2 text-xs text-neutral-500">{KIND_LABEL[g.kind]} ({g.results.length})</p>}
-          <ul className="flex flex-col gap-2">
-            {g.results.map((r, i) => (
-              <li key={`${r.repo}/${r.path}/${r.headingIndex}/${i}`}>
-                <ResultCard r={r} nameOf={nameOf} onOpen={onOpen} />
-              </li>
-            ))}
-          </ul>
-        </div>
-      ))}
+      {/* One list ranked by match, best first whatever its kind; each card carries its kind's tag (#611). */}
+      <ul className="mb-4 flex flex-col gap-2">
+        {rankedResults(results, chips).map((r, i) => (
+          <li key={`${r.repo}/${r.path}/${r.headingIndex}/${i}`}>
+            <ResultCard r={r} nameOf={nameOf} onOpen={onOpen} />
+          </li>
+        ))}
+      </ul>
       <FilesSection files={files} onOpenProject={onOpenProject} />
     </div>
   )
@@ -526,6 +523,7 @@ function ResultCard({ r, nameOf, onOpen }) {
     <button onClick={() => onOpen(r)} className="w-full rounded-lg border border-neutral-800 bg-neutral-900 p-3 text-left transition-colors hover:border-neutral-600">
       <p className="flex items-center text-xs text-neutral-500">
         {where}
+        {r.tag && <span className="ml-1 shrink-0 rounded bg-neutral-800 px-1 text-[10px] text-neutral-400">{r.tag}</span>}
         <StateBadge state={r.state} />
       </p>
       <p className="mt-0.5 text-sm font-medium text-white">
@@ -605,6 +603,8 @@ export default function DocsExplorer({ nav, onOpenBoard, onOpenTicket, onOpenPr 
 
   useEffect(() => {
     window.api.docs.repos().then((r) => setCache(docsCacheFrom(r))).catch(() => {})
+    // #611: opening Docs fast-forwards clean local clones in the background (at most once per project per 30 min).
+    window.api.docs.freshen?.().catch(() => {})
   }, [])
 
   // Debounced search; a stale response never overwrites a newer query's. Only a new QUERY opens the results: a docs

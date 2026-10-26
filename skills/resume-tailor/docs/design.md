@@ -214,11 +214,11 @@ Format derived from Gil's AI Engineer resume (the resume that landed his current
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-GIL ESKAYO
-AI SOFTWARE ENGINEER
+FULL NAME
+JD-DERIVED TITLE
 
-Portfolio: gileskayo.me  |  geskayo@gmail.com  |  linkedin.com/in/gileskayo
-(000) 000-0000  |  github.com/G-Eskayo  |  U.S. Citizen
+Portfolio: example.com  |  you@example.com  |  linkedin.com/in/you
+(000) 000-0000  |  github.com/you  |  Citizenship
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

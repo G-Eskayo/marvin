@@ -210,3 +210,54 @@ describe('local badges come after the tree (#570)', () => {
       expect(second.tree.find((e) => e.path === 'CONTEXT.md').state).toBe('uncommitted')
     }))
 })
+
+// #611: a clone that is mid-work (dirty, another branch, ahead, diverged, mid-rebase, open in Xcode) is not
+// fast-forwarded, so its search reads the GitHub saved copy instead; with no saved copy yet, its local files still count.
+describe('localDocs: a mid-work clone is searched from its saved GitHub copy (#611)', () => {
+  const copy = {
+    tree: [{ path: 'CONTEXT.md', label: 'CONTEXT.md' }, { section: 'docs/perf/', items: [{ path: 'docs/perf/engine.md', label: 'engine.md' }] }],
+    files: { 'CONTEXT.md': '# ctx from GitHub\n', 'docs/perf/engine.md': '# Engine\n\nParakeet beats Whisper here.\n' }
+  }
+  const saved = (c = copy) => ({ peek: (repo) => (repo === 'G-Eskayo/P_One' ? c : null) })
+
+  it('mid-work + a saved copy: the saved copy is searched, not the stale local files', async () =>
+    withDir(async (dir) => {
+      writeFileSync(path.join(dir, 'CONTEXT.md'), '# ctx local\n')
+      const s = svc(catalog(rec({ localPaths: [dir] })), { saved: saved(), midWork: (d) => d === dir })
+      const { repos, docs } = await s.localDocs()
+      expect([...repos]).toContain('p1') // the GitHub index copy of p1 must not be added a second time
+      const p1 = docs.filter((d) => d.repo === 'p1' && d.path !== 'PROJECT.md')
+      expect(p1.map((d) => d.path).sort()).toEqual(['CONTEXT.md', 'docs/perf/engine.md'])
+      expect(p1.find((d) => d.path === 'CONTEXT.md').content).toContain('from GitHub')
+      expect(p1.find((d) => d.path === 'docs/perf/engine.md').content).toContain('Parakeet')
+    }))
+
+  it('mid-work but no saved copy yet: the local files are still searched (nothing disappears)', async () =>
+    withDir(async (dir) => {
+      writeFileSync(path.join(dir, 'CONTEXT.md'), '# ctx local\n')
+      const s = svc(catalog(rec({ localPaths: [dir] })), { saved: saved(null), midWork: () => true })
+      const { docs } = await s.localDocs()
+      expect(docs.find((d) => d.repo === 'p1' && d.path === 'CONTEXT.md').content).toContain('local')
+    }))
+
+  it('a saved copy with an empty tree counts as no copy', async () =>
+    withDir(async (dir) => {
+      writeFileSync(path.join(dir, 'CONTEXT.md'), '# ctx local\n')
+      const s = svc(catalog(rec({ localPaths: [dir] })), { saved: saved({ tree: [], files: {} }), midWork: () => true })
+      const { docs } = await s.localDocs()
+      expect(docs.find((d) => d.repo === 'p1' && d.path === 'CONTEXT.md').content).toContain('local')
+    }))
+
+  it('a clean clone is still searched from disk', async () =>
+    withDir(async (dir) => {
+      writeFileSync(path.join(dir, 'CONTEXT.md'), '# ctx local\n')
+      const s = svc(catalog(rec({ localPaths: [dir] })), { saved: saved(), midWork: () => false })
+      const { docs } = await s.localDocs()
+      expect(docs.find((d) => d.repo === 'p1' && d.path === 'CONTEXT.md').content).toContain('local')
+    }))
+
+  it('the clones to freshen are the catalog projects with a repo', () => {
+    const s = svc(catalog(rec(), rec({ id: 'p2', repo: null })))
+    expect(s.freshenTargets().map((p) => p.id)).toEqual(['p1'])
+  })
+})

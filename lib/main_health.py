@@ -114,10 +114,10 @@ def needs_suite(changed: list[str] | None, named_by_a_test) -> bool:
     return False
 
 
-def _write(state_path: Path, res: dict) -> None:
+def _write(state_path: Path, health_record: dict) -> None:
     Path(state_path).parent.mkdir(parents=True, exist_ok=True)
     tmp = Path(state_path).with_suffix(".tmp")
-    tmp.write_text(json.dumps({k: v for k, v in res.items() if k != "ran"}))
+    tmp.write_text(json.dumps({k: v for k, v in health_record.items() if k != "ran"}))
     tmp.replace(state_path)  # Health never reads a half-written answer
 
 
