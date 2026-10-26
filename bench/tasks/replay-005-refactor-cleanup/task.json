@@ -1,0 +1,9 @@
+{
+  "id": "replay-005-refactor-cleanup",
+  "type": "replay",
+  "prompt_file": "prompt.md",
+  "base_ref": "placeholder_sha_5",
+  "verify_cmd": ["pytest", "-q"],
+  "timeout": 300,
+  "note": "Refactor to simplify email lookup logic and reduce cyclomatic complexity."
+}

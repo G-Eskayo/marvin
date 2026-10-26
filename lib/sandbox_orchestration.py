@@ -104,7 +104,11 @@ _EXEC_ALLOWED_TOOLS = (
     # allowlisting one exact invocation left it stuck asking a question
     # nobody headless is present to answer.
     "Bash(pytest*),Bash(python -m pytest*),Bash(python3 -m pytest*),"
-    "Bash(npm test*),Bash(npm install*),Bash(npx vitest run*)"
+    "Bash(npm test*),Bash(npm install*),Bash(npx vitest run*),"
+    # Benchmark/local-model runner (marvin#674): narrowly-scoped for energy sampling.
+    # Only probe for sudo; powermetrics sampling is done by energy_apple.py directly,
+    # not via Bash, so no powermetrics wildcard needed.
+    "Bash(sudo -n true)"
 )
 
 

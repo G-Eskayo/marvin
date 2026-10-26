@@ -1,0 +1,9 @@
+{
+  "id": "replay-001-bugfix",
+  "type": "replay",
+  "prompt_file": "prompt.md",
+  "base_ref": "placeholder_sha_1",
+  "verify_cmd": ["pytest", "-q"],
+  "timeout": 300,
+  "note": "Small real bugfix ticket used for local model replay benchmarking. Base ref: pre-fix commit, verify_cmd runs unit tests."
+}

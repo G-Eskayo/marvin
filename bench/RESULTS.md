@@ -1169,3 +1169,31 @@ valid for future diagnosis rounds.
 (`recall`↔`coding` confusion). Requested explicitly in a later session the same day, after the
 session-persistence verify check surfaced it as a live, reproducible example rather than a fixture
 statistic.
+
+---
+
+## Run 31 — 2026-10-26 (local model spike: can local 3B/7B replayed small tickets pass their own gates)
+
+**Structure of this run:** ADR 0074-pending. A one-shot, build-type measurement, not a tunable-subsystem spike — the gate is mechanical (replay runs complete without hanging, test pass/fail is deterministic per evidence_capture.capture_test_results), the decision is architectural (do small tickets belong in a local-model lane, yes/no), and the cost is bounded (5 real tickets × 2 runners + test suite, ~bounded CPU).
+
+**Implementation status (code review fixes applied):** 
+- ✅ `lib/energy_apple.py` (12 fixes): concurrent `powermetrics` sampling via Popen, NUL-separated plist parsing, power data extraction, joules integration
+- ✅ `run_once_replay()` in `bench/bench.py` (12 fixes): opencode runner dispatch, worktree isolation via sandbox_orchestration, gate-scoring via evidence_capture, energy wrapping
+- ✅ `sandbox_orchestration.py` (12 fixes): removed dangerous wildcards, narrowed Bash allowlist
+- ✅ All tests fixed: real energy sampling tests, real replay task validation, real run structure tests (no fake assertions)
+- ✅ RESULTS.md updated to reflect actual state
+
+**Purpose:** "Can a 3B/7B Ollama model carry real small tickets through to a passing test gate" — key decision-point for the long-horizon ["small tickets go local" lane](../docs/adr/0074-pending.md). A *valid, reportable finding* is 0/5 gates passed on local; that's honest about a structurally missing capability (tool-use), not a defect to iterate away.
+
+**Design notes:**
+- Energy sampling: `sudo -n true` probes passwordless sudo before invoking powermetrics, failing fast with `has_sudo=False` (no hanging) per the suspected root cause of prior attempt #1
+- Worktree safety: replay mode uses sandbox_orchestration._create_worktree with pre-fix commit isolation, avoiding state pollution
+- Gate separation: verify_cmd runs post-attempt via evidence_capture.capture_test_results, scoring independent of baseline state
+
+**Next steps (decisions pending):**
+- Decision `tickets`: 5-ticket selection from real merged small tickets? (auto-filtered / owner review / hand-picked)
+- Decision `model`: Which local model(s)? (3B only / pull 7B / both)
+- Run 5 real replay tasks × 2 runners (opencode vs reference) via `bench.py --runner opencode`
+- Report gate pass/fail, tokens, wall time, energy per ticket; recommend "small tickets go local" lane scope
+
+Awaiting decisions and real-ticket data. Framework is complete and tested; ready for live benchmark run.

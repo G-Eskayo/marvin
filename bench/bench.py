@@ -35,6 +35,9 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "lib"))
 from score import parse_stream, score_correctness  # noqa: E402
 from memory_rag import query_memory  # noqa: E402
+from energy_apple import PowerSampler  # noqa: E402
+import sandbox_orchestration as so  # noqa: E402
+import evidence_capture as ec  # noqa: E402
 
 PROFILES = {
     "clean":  ROOT / "profiles" / "clean",           # base Claude Code (control)
@@ -203,6 +206,98 @@ def run_once_ollama(task: dict, profile: str, ollama_model: str,
         "_prompt_tokens": prompt_tokens,
         "_gen_tokens":    gen_tokens,
     }
+
+
+def run_once_replay(task: dict, profile: str, runner: str = "opencode",
+                    ollama_model: str | None = None, model: str | None = None) -> dict | None:
+    """Run a replay task: checkout base_ref, run the chosen runner via prompt,
+    score via verify_cmd, measure energy.
+
+    Replay tasks isolate to the pre-fix commit (base_ref), run the model
+    on the ticket's prompt, then score the gate (pass/fail of verify_cmd).
+
+    Returns None for setup errors (missing binary, ollama down, etc.).
+    """
+    if runner == "opencode":
+        # Create worktree at base_ref
+        try:
+            worktree_path = so._create_worktree(Path.cwd(), task["base_ref"])
+        except Exception as e:
+            return {
+                "profile": profile, "model": model or "default", "runner": runner,
+                "result_text": "", "spawn_error": f"worktree creation failed: {e}",
+                "wall_s": 0.0, "cost_usd": 0.0, "total_tokens": 0, "num_turns": 1,
+                "tool_calls": 0, "correctness": {"score": 0.0},
+            }
+
+        try:
+            config_dir = PROFILES[profile]
+            cmd = ["claude", "-p", task["prompt"],
+                   "--output-format", "stream-json", "--verbose"]
+            if model:
+                cmd += ["--model", model]
+            env = {**os.environ, "CLAUDE_CONFIG_DIR": str(config_dir)}
+            for k in list(env):
+                if k.startswith("CLAUDE_CODE_") or k in ("CLAUDECODE", "CLAUDE_EFFORT"):
+                    env.pop(k, None)
+
+            t0 = time.time()
+            with PowerSampler() as sampler:
+                proc = subprocess.run(cmd, cwd=worktree_path, env=env,
+                                      capture_output=True, text=True,
+                                      timeout=task.get("timeout", 600))
+            wall = time.time() - t0
+            joules_used = sampler.joules()
+
+            parsed = parse_stream(proc.stdout)
+            parsed["wall_s"] = round(wall, 1)
+            parsed["profile"] = profile
+            parsed["model"] = model or "default"
+            parsed["runner"] = runner
+            if proc.returncode != 0 and not parsed.get("result_text"):
+                parsed["spawn_error"] = proc.stderr[-500:]
+
+            # Score via verify_cmd if provided
+            verify_cmd_list = task.get("verify_cmd", "").split()
+            if verify_cmd_list:
+                try:
+                    gate_result = ec.capture_test_results(worktree_path, verify_cmd_list,
+                                                           timeout_s=task.get("verify_timeout", 300))
+                    parsed["correctness"] = {
+                        "score": 1.0 if gate_result.get("passed") else 0.0,
+                        "gate": gate_result,
+                    }
+                except Exception as e:
+                    parsed["correctness"] = {
+                        "score": 0.0,
+                        "gate_error": str(e),
+                    }
+            else:
+                parsed["correctness"] = {"score": None}
+
+            if joules_used is not None:
+                parsed["energy_joules"] = round(joules_used, 2)
+
+            return parsed
+        except subprocess.TimeoutExpired:
+            return {
+                "profile": profile, "model": model or "default", "runner": runner,
+                "result_text": "", "spawn_error": "replay run timeout",
+                "wall_s": 0.0, "cost_usd": 0.0, "total_tokens": 0, "num_turns": 1,
+                "tool_calls": 0, "correctness": {"score": 0.0},
+            }
+        except Exception as e:
+            return {
+                "profile": profile, "model": model or "default", "runner": runner,
+                "result_text": "", "spawn_error": f"replay run failed: {e}",
+                "wall_s": 0.0, "cost_usd": 0.0, "total_tokens": 0, "num_turns": 1,
+                "tool_calls": 0, "correctness": {"score": 0.0},
+            }
+    elif runner == "ollama":
+        # Ollama doesn't support replay mode (requires tool use for file editing)
+        return None
+
+    return None
 
 
 def load_task(task_dir: Path) -> dict:
@@ -527,8 +622,8 @@ def main() -> None:
     ap.add_argument("--model", default=None, metavar="MODEL",
                     help="model ID passed to claude (e.g. claude-haiku-4-5-20251001); "
                          "default = Claude Code's configured default")
-    ap.add_argument("--runner", default="claude", choices=["claude", "ollama"],
-                    help="execution backend: 'claude' (default) or 'ollama' (local model)")
+    ap.add_argument("--runner", default="claude", choices=["claude", "ollama", "opencode"],
+                    help="execution backend: 'claude' (default), 'ollama' (local model), or 'opencode' (headless Claude Code)")
     ap.add_argument("--ollama-model", default="qwen2.5:7b", metavar="MODEL",
                     help="Ollama model to use with --runner ollama (default: qwen2.5:7b)")
     ap.add_argument("--context", default="full", choices=["full", "rag"],
@@ -611,6 +706,17 @@ def main() -> None:
                     run["judge_correctness"] = judge_run(task, run)
                 rows.append(run)
                 all_raw.append(run)
+            elif args.runner == "opencode":
+                if task.get("type") != "replay":
+                    print(f"  skip {task['id']} — opencode runner requires replay-type tasks")
+                    continue
+                print(f"running {task['id']} @ {profile} [opencode/replay] ...", flush=True)
+                run = run_once_replay(task, profile, runner="opencode", model=args.model)
+                if run is None:
+                    print(f"  skip {task['id']} @ {profile} [opencode] — setup failed")
+                    continue
+                rows.append(run)
+                all_raw.append(run)
             elif args.repeat == 1:
                 print(f"running {task['id']} @ {profile} ...", flush=True)
                 run = run_once(task, profile, capture_snapshot=args.judge, model=args.model)
@@ -650,8 +756,11 @@ def main() -> None:
             print(f"  (all profiles skipped for {task['id']} — nothing to display)")
             continue
 
-        runner_tag = (f"ollama/{args.ollama_model}/{args.context}"
-                      if args.runner == "ollama" else None)
+        runner_tag = None
+        if args.runner == "ollama":
+            runner_tag = f"ollama/{args.ollama_model}/{args.context}"
+        elif args.runner == "opencode":
+            runner_tag = "opencode"
         display_id = task["id"]
         if runner_tag:
             display_id = f"{task['id']} [{runner_tag}]"
@@ -662,9 +771,14 @@ def main() -> None:
         stamp = time.strftime("%Y%m%d-%H%M%S")
         model_tag = f"-{_MODEL_SHORT}" if _MODEL_SHORT else ""
         out = ROOT / "results" / f"{task['id']}{model_tag}-{stamp}.json"
+        runner_model = None
+        if args.runner == "ollama":
+            runner_model = args.ollama_model
+        elif args.runner == "opencode":
+            runner_model = args.model or "default"
         out.write_text(json.dumps(
             {"task": task["id"], "runner": args.runner,
-             "model": args.ollama_model if args.runner == "ollama" else (args.model or "default"),
+             "model": runner_model or "default",
              "repeat": args.repeat, "judge": args.judge, "runs": all_raw},
             indent=2, default=str,
         ))

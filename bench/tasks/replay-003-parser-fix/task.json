@@ -1,0 +1,9 @@
+{
+  "id": "replay-003-parser-fix",
+  "type": "replay",
+  "prompt_file": "prompt.md",
+  "base_ref": "placeholder_sha_3",
+  "verify_cmd": ["pytest", "-q"],
+  "timeout": 300,
+  "note": "Parser correctly handles edge case in date format validation."
+}

@@ -1,0 +1,9 @@
+{
+  "id": "replay-002-cache-fix",
+  "type": "replay",
+  "prompt_file": "prompt.md",
+  "base_ref": "placeholder_sha_2",
+  "verify_cmd": ["pytest", "-q"],
+  "timeout": 300,
+  "note": "Cache invalidation bug fix. Small, self-contained ticket."
+}

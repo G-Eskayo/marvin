@@ -1,0 +1,9 @@
+{
+  "id": "replay-004-concurrent-fix",
+  "type": "replay",
+  "prompt_file": "prompt.md",
+  "base_ref": "placeholder_sha_4",
+  "verify_cmd": ["pytest", "-q"],
+  "timeout": 300,
+  "note": "Fix race condition in concurrent inventory updates."
+}
