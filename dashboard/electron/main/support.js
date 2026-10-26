@@ -47,7 +47,7 @@ export function badgeCount(role, state) {
 
 // Arguments for one support.py call, validated before anything runs. repos = this install's support repos.
 export function supportArgs(cmd, { repo, number, file, check, on } = {}, repos = []) {
-  const needsRequest = ['open', 'thread', 'resolve', 'draft', 'reply', 'followup', 'escalate', 'adapt', 'got-it']
+  const needsRequest = ['open', 'thread', 'resolve', 'draft', 'reply', 'followup', 'escalate', 'adapt', 'got-it', 'guide']
   if (cmd === 'sync') return [SUPPORT_CLI, 'sync']
   if (cmd === 'file') return [SUPPORT_CLI, 'file', '--text-file', file]
   if (cmd === 'idea') return [SUPPORT_CLI, 'idea', '--text-file', file]
@@ -57,7 +57,7 @@ export function supportArgs(cmd, { repo, number, file, check, on } = {}, repos =
   const n = Number(number)
   if (!Number.isInteger(n) || n <= 0) throw new Error(`"${number}" isn't a request number`)
   const args = [SUPPORT_CLI, cmd, repo, String(n)]
-  if (cmd === 'reply' || cmd === 'followup' || cmd === 'adapt') args.push('--body-file', file)
+  if (cmd === 'reply' || cmd === 'followup' || cmd === 'adapt' || cmd === 'guide') args.push('--body-file', file)
   if (cmd === 'reply' && typeof check === 'string' && check.trim()) {
     if (check.length > 300) throw new Error('A check is one command, at most 300 characters')
     args.push('--check', check.trim())
@@ -82,7 +82,7 @@ export async function runSupport(cmd, request = {}, { repos = [], run = execFile
   let dir = null
   try {
     let file
-    if (cmd === 'file' || cmd === 'idea' || cmd === 'reply' || cmd === 'followup' || cmd === 'adapt') {
+    if (cmd === 'file' || cmd === 'idea' || cmd === 'reply' || cmd === 'followup' || cmd === 'adapt' || cmd === 'guide') {
       const text = typeof request.text === 'string' ? request.text.trim() : ''
       if (!text) return { ok: false, error: cmd === 'file' ? "Say what's wrong first" : cmd === 'idea' ? 'Say what the idea is first' : 'The reply is empty' }
       dir = mkdtempSync(path.join(tmpdir(), 'marvin-support-'))

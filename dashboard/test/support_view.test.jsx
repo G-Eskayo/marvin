@@ -254,3 +254,17 @@ describe('headless on the helped Mac (views)', () => {
     expect(html).toContain('nothing that deletes your files, needs your password or signs you in')
   })
 })
+
+describe('the helper’s reply box says what each button does', () => {
+  const t = { request: { ...R(1, 'needs-you'), body: 'x', author: 'helped' }, comments: [] }
+  const html = renderToStaticMarkup(<Thread thread={t} role="helper" busy={false} draft="note" setDraft={() => {}} check="" setCheck={() => {}} />)
+  it('offers a plain send, a preview, and handing it back to MARVIN, each explained', () => {
+    for (const label of ['Send to them', 'Preview for them', 'Have MARVIN fix it with this', 'Draft with MARVIN', 'Resolve']) expect(html).toContain(label)
+    expect(html).toContain('posts your reply as you wrote it')
+    expect(html).toContain('comes back to you if that doesn&#x27;t work')
+  })
+  it('a note to MARVIN is labelled as one on both sides', () => {
+    expect(authorLabel('helper', { by: 'helper', guidance: true })).toBe('You, to your MARVIN')
+    expect(authorLabel('helped', { by: 'helper', guidance: true })).toBe("Your helper's note to MARVIN")
+  })
+})

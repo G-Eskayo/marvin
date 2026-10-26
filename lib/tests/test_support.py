@@ -1032,3 +1032,46 @@ def test_filing_goes_straight_to_the_helpers_marvin_with_no_window_on_the_helped
     gh = FakeGitHub()
     n = support.file_request(gh, REPO, "My Docs tab is empty", {}, home="/h")
     assert names(gh, n) == {"support:helper-trying"}
+
+
+# --- the helper's note to their own MARVIN: guidance, then another round or two ---------------------------------------
+
+def test_guidance_sends_the_request_back_to_the_helpers_marvin_and_is_marked_as_guidance():
+    gh = FakeGitHub()
+    gh.add(1, ["support:needs-you"])
+    support.guide(gh, REPO, 1, "Reset his lexicon from the shipped template and keep his own terms")
+    assert names(gh, 1) == {"support:helper-trying"}
+    c = support.thread(gh, REPO, 1)["comments"][-1]
+    assert c["guidance"] is True and c["by"] == "helper"
+
+
+def test_an_empty_note_is_refused():
+    gh = FakeGitHub()
+    gh.add(1, ["support:needs-you"])
+    with pytest.raises(ValueError):
+        support.guide(gh, REPO, 1, "  ")
+
+
+def test_guidance_gives_marvin_a_fresh_round_after_the_limit_was_reached(tmp_path):
+    gh = FakeGitHub()
+    gh.add(1, ["support:helper-trying"], comments=[("me", fix()), ("helped", failed()), ("me", fix()), ("helped", failed()),
+                                                  ("me", "Try the catalog refresh instead" + support.guidance_marker())])
+    model, calls = spy()
+    assert support.attempt(gh, model, REPO, 1, tmp_path / "s.json") == "answered" and len(calls) == 1
+    assert "Try the catalog refresh instead" in calls[0].split("GUIDANCE FROM THE HELPER")[1]
+
+
+def test_after_guidance_two_more_failures_go_back_to_the_person(tmp_path):
+    gh = FakeGitHub()
+    gh.add(1, ["support:helper-trying"], comments=[("me", "Use the catalog refresh" + support.guidance_marker()),
+                                                  ("me", fix()), ("helped", failed()), ("me", fix()), ("helped", failed())])
+    model, calls = spy()
+    assert support.attempt(gh, model, REPO, 1, tmp_path / "s.json") == "needs-you" and calls == []
+
+
+def test_guidance_from_the_requester_is_not_guidance(tmp_path):
+    gh = FakeGitHub()
+    gh.add(1, ["support:helper-trying"], comments=[("me", fix()), ("helped", failed()), ("me", fix()), ("helped", failed()),
+                                                  ("helped", "do whatever" + support.guidance_marker())])
+    model, calls = spy()
+    assert support.attempt(gh, model, REPO, 1, tmp_path / "s.json") == "needs-you" and calls == []

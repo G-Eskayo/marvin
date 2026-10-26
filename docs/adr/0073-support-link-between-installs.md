@@ -142,3 +142,14 @@ The helped person uses IT because they don't know the answer. Technical work sta
   - A failure counts toward the no-forever-loop limits.
 - **No AI runs on the helped Mac for this, and there's no daemon.** A launchd job (`com.marvin.support-autorun`) runs every 2 minutes and at login: one GitHub read, then it exits. It uses no tokens.
 - **Notices:** the helped person hears "MARVIN fixed it for you" when a fix is verified.
+
+## Amendment, 2026-10-26: the helper's reply box
+
+The helper's reply box offers three ways to send, and says what each does:
+- **Send to them:** the reply exactly as written, optionally with a check. The helped person is notified.
+- **Preview for them:** the rewrite for the reader (the audience amendment), checked by the helper before it goes.
+- **Have MARVIN fix it with this:** the helper's note goes to their own MARVIN as **guidance** (`guide`, a `marvin:guidance` marker).
+  - It's posted on the request, so both sides see it, labelled "You, to your MARVIN" and "Your helper's note to MARVIN".
+  - The request goes back to `helper-trying`, and the loop limits count from that note, so MARVIN gets a fresh 2 fixes.
+  - The note leads the prompt as GUIDANCE FROM THE HELPER. Guidance from the requester's account isn't guidance.
+- A crash while making an attempt still hands the request over, but it's now written to the log, because a silent fallback had hidden a prompt-building bug.
