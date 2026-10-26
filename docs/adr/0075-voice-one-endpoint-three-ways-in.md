@@ -42,9 +42,26 @@ Facts that shape it (checked 2026-10-26):
 4. **Use the speech libraries directly, not OpenJarvis as a dependency.** It adds a large framework for a small loop.
    Local first, so voice keeps working after the subscription ends.
 
+5. **Two brains, streamed, against a latency budget** (added 2026-10-26). The full MARVIN session (Claude, tools,
+   memory) is too slow to be the first thing you hear: a tool call takes seconds. So:
+   - **Fast brain:** a small local model, already warm, answers small talk and simple look-ups by itself, and for
+     anything bigger says what it's doing ("checking the board") within a second.
+   - **Deep brain:** the MARVIN session in the Thread does the real work; its answer is spoken when ready, or sent to
+     the phone if it's long. The route classifier decides which brain takes a turn.
+   - **Streaming at every stage:** speech to text streams, the reply streams, and the voice starts at the first
+     finished sentence. Turn-taking uses a turn-detection model (smart-turn), not a fixed silence timer, so MARVIN
+     neither cuts you off mid-thought nor waits 1.5 s after you stop.
+   - **Budget:** under 1 s from the end of your sentence to MARVIN's first sound, measured per stage and logged, so a
+     slow stage is found, not guessed at.
+   - The Mac loop is built on **Pipecat** (open-source voice pipeline framework, BSD-2), whose all-local Mac example
+     (Silero VAD, smart-turn, MLX Whisper, a 4B local model, Kokoro) reports under 800 ms voice to voice, rather than
+     on OpenJarvis's turn-based loop.
+
 ## Consequences
 
 - The HomePods work with MARVIN within days, before the Mac loop exists, and nothing has to be jailbroken.
 - "Hey Siri" stays as the first word on a HomePod until the owner chooses to put a mic-equipped device beside it
   for the Mac loop; that is the price of Apple locking the HomePod's microphone.
 - The endpoint, its Thread and its confirmation path are written once and shared by all three ways in.
+- The Siri doorway cannot stream (a Shortcut waits for the whole reply), so it uses the fast brain's first answer and
+  sends the deep brain's result to the phone when it takes longer than a few seconds.
