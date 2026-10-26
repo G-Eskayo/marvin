@@ -3,7 +3,11 @@
 """
 from __future__ import annotations
 import json
+import os
+import subprocess
 import sys
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -180,19 +184,201 @@ def test_every_measured_category_is_known_to_the_dashboard():
     assert set(dl.measure_categories(du=lambda p: 0)) <= set(dc.CATEGORY_INFO)
 
 
+def _script(tmp_path, name, body):
+    """A stand-in for du or the readability probe: a real executable, so the real spawn, alarm and kill paths run."""
+    f = tmp_path / name
+    f.write_text("#!/bin/sh\n" + body + "\n")
+    f.chmod(0o755)
+    return str(f)
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def _wait_dead(pid: int, within: float) -> bool:
+    end = time.monotonic() + within
+    while time.monotonic() < end:
+        if not _alive(pid):
+            return True
+        time.sleep(0.05)
+    return not _alive(pid)
+
+
 def test_du_keeps_the_total_when_some_folders_are_unreadable(monkeypatch, tmp_path):
     """du exits 1 when one subfolder is off-limits but still prints the total: ~/Library/Developer read as 0, not 33 GB."""
-    class R:
-        returncode, stdout, stderr = 1, f"34603008\t{tmp_path}\n", "du: ./x: Operation not permitted\n"
-    monkeypatch.setattr(dl.subprocess, "run", lambda *a, **k: R())
+    du = _script(tmp_path, "du", 'echo "du: $2/x: Operation not permitted" >&2; printf "34603008\\t%s\\n" "$2"; exit 1')
+    monkeypatch.setattr(dl, "DU_CMD", [du, "-sk"])
     assert dl._default_du_kb(tmp_path) == 34603008
 
 
-def test_du_gets_long_enough_for_a_big_folder(monkeypatch, tmp_path):
+def test_du_gets_long_enough_for_a_big_folder():
     """5 seconds wasn't enough for a 50 GB folder, and a timeout read as 0. The sweep runs at night: give it minutes."""
-    seen = {}
-    class R:
-        returncode, stdout, stderr = 0, f"1\t{tmp_path}\n", ""
-    monkeypatch.setattr(dl.subprocess, "run", lambda *a, **k: seen.update(k) or R())
-    dl._default_du_kb(tmp_path)
-    assert seen["timeout"] >= 300
+    assert dl.DU_TIMEOUT_S >= 300
+
+
+def test_missing_folder_is_zero_without_spawning_anything(monkeypatch, tmp_path):
+    marker = tmp_path / "ran"
+    monkeypatch.setattr(dl, "DU_CMD", [_script(tmp_path, "du", f"touch {marker}"), "-sk"])
+    assert dl._default_du_kb(tmp_path / "nope") == 0
+    assert not marker.exists()
+
+
+# --- #586: du hung for hours on TCC-protected folders, piled up and outlived its parent ---------------------------
+
+def test_a_du_that_never_returns_is_killed_and_reported_not_measured(monkeypatch, tmp_path):
+    """The simulated hang: du blocks forever (as on ~/Library/Containers under launchd). The walk must give up on time,
+    say so, and leave no du behind."""
+    pidfile = tmp_path / "pid"
+    monkeypatch.setattr(dl, "DU_CMD", [_script(tmp_path, "du", f"echo $$ > {pidfile}; exec sleep 3600"), "-sk"])
+    monkeypatch.setattr(dl, "DU_TIMEOUT_S", 1)
+    t0 = time.monotonic()
+    got = dl._default_du_kb(tmp_path)
+    assert time.monotonic() - t0 < 10
+    assert got == dl.NOT_MEASURED_TIMED_OUT
+    assert _wait_dead(int(pidfile.read_text()), 2), "the hung du is still running"
+
+
+def test_the_du_dies_on_its_own_even_when_its_parent_is_killed(tmp_path):
+    """How the orphans happened: the Python that started du was killed (a test timeout cut the worker), so nothing was
+    left to kill du, and it sat under launchd for 15 hours. The time limit must live in du itself."""
+    pidfile = tmp_path / "pid"
+    du = _script(tmp_path, "du", f"echo $$ > {pidfile}; exec sleep 3600")
+    code = (f"import sys; sys.path.insert(0, {str(LIB)!r}); import disk_ledger as dl; dl.DU_CMD = [{du!r}, '-sk']; "
+            f"dl.DU_TIMEOUT_S = 2; dl._default_du_kb(__import__('pathlib').Path({str(tmp_path)!r}))")
+    parent = subprocess.Popen([sys.executable, "-c", code], env={**os.environ, "HOME": str(tmp_path)})
+    end = time.monotonic() + 10
+    while not (pidfile.exists() and pidfile.read_text().strip()) and time.monotonic() < end:
+        time.sleep(0.05)
+    du_pid = int(pidfile.read_text())
+    parent.kill()  # SIGKILL: no cleanup code in the parent runs
+    parent.wait()
+    assert _alive(du_pid), "precondition: du outlived its parent"
+    assert _wait_dead(du_pid, 8), "the orphaned du kept running after its time limit"
+
+
+def test_a_folder_this_job_may_not_read_is_reported_protected_and_never_walked(monkeypatch, tmp_path):
+    marker = tmp_path / "walked"
+    monkeypatch.setattr(dl, "DU_CMD", [_script(tmp_path, "du", f"touch {marker}"), "-sk"])
+    monkeypatch.setattr(dl, "PROBE_CMD", [_script(tmp_path, "ls", 'echo "ls: $1: Operation not permitted" >&2; exit 1')])
+    assert dl._default_du_kb(tmp_path) == dl.NOT_MEASURED_PROTECTED
+    assert not marker.exists()
+
+
+def test_a_probe_that_blocks_on_a_privacy_prompt_counts_as_protected(monkeypatch, tmp_path):
+    """TCC does not always refuse: under launchd the read can just block. The probe must give up in seconds."""
+    pidfile = tmp_path / "pid"
+    monkeypatch.setattr(dl, "PROBE_CMD", [_script(tmp_path, "ls", f"echo $$ > {pidfile}; exec sleep 3600")])
+    monkeypatch.setattr(dl, "PROBE_TIMEOUT_S", 1)
+    t0 = time.monotonic()
+    assert dl._default_du_kb(tmp_path) == dl.NOT_MEASURED_PROTECTED
+    assert time.monotonic() - t0 < 8
+    assert _wait_dead(int(pidfile.read_text()), 2)
+
+
+def test_du_runs_at_low_priority(monkeypatch, tmp_path):
+    out = tmp_path / "nice"
+    monkeypatch.setattr(dl, "DU_CMD", [_script(tmp_path, "du", f'ps -o nice= -p $$ > {out}; printf "1\\t%s\\n" "$2"'), "-sk"])
+    assert dl._default_du_kb(tmp_path) == 1
+    assert int(out.read_text().strip()) >= os.nice(0) + 10
+
+
+def test_garbage_du_output_is_not_measured_not_a_crash(monkeypatch, tmp_path):
+    monkeypatch.setattr(dl, "DU_CMD", [_script(tmp_path, "du", "echo lots of bytes"), "-sk"])
+    assert dl._default_du_kb(tmp_path) == 0
+
+
+def test_a_du_that_cannot_start_is_not_measured(monkeypatch, tmp_path):
+    monkeypatch.setattr(dl, "DU_CMD", [str(tmp_path / "no-such-du"), "-sk"])
+    assert isinstance(dl._default_du_kb(tmp_path), str)
+
+
+def test_unmeasured_folders_are_listed_not_counted_as_zero_bytes(monkeypatch, tmp_path):
+    monkeypatch.setattr(dl, "HOME", tmp_path)
+    lib = tmp_path / "Library"
+    sizes = {lib / "Developer": 5, lib / "Containers": dl.NOT_MEASURED_PROTECTED,
+             tmp_path / "Documents": dl.NOT_MEASURED_TIMED_OUT}
+    skipped = []
+    result = dl.measure_categories(du=lambda p: sizes.get(Path(p), 0), not_measured=skipped)
+    assert result["xcode"] == 5 and result["app_support"] == 0 and result["user_files"] == 0
+    assert {"path": str(lib / "Containers"), "reason": dl.NOT_MEASURED_PROTECTED} in skipped
+    assert {"path": str(tmp_path / "Documents"), "reason": dl.NOT_MEASURED_TIMED_OUT} in skipped
+
+
+def test_the_ledger_entry_says_what_it_could_not_measure(monkeypatch, tmp_path):
+    ledger = tmp_path / "disk-ledger.jsonl"
+    monkeypatch.setattr(dl, "LEDGER_PATH", ledger)
+    monkeypatch.setattr(dl, "HOME", tmp_path)
+    monkeypatch.setattr("machine_profile.registry_id", lambda: "mac-mini")
+    protected = tmp_path / "Library" / "Containers"
+    monkeypatch.setattr(dl, "_default_du_kb", lambda p: dl.NOT_MEASURED_PROTECTED if Path(p) == protected else 1)
+    summary = dl.run_daily_ledger()
+    row = json.loads(ledger.read_text().splitlines()[-1])
+    assert row["not_measured"] == [{"path": str(protected), "reason": dl.NOT_MEASURED_PROTECTED}]
+    assert summary["not_measured"] == row["not_measured"]
+
+
+def test_two_overlapping_runs_the_second_returns_at_once_and_writes_nothing(monkeypatch, tmp_path):
+    """A stuck run must not have the next one pile up behind it (as #457 did for main-health)."""
+    ledger = tmp_path / "disk-ledger.jsonl"
+    monkeypatch.setattr(dl, "LEDGER_PATH", ledger)
+    monkeypatch.setattr(dl, "HOME", tmp_path)
+    monkeypatch.setattr("machine_profile.registry_id", lambda: "mac-mini")
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+
+    def slow_du(p):
+        calls.append(p)
+        entered.set()
+        release.wait(10)
+        return 1
+    monkeypatch.setattr(dl, "_default_du_kb", slow_du)
+    first = {}
+    t = threading.Thread(target=lambda: first.update(dl.run_daily_ledger()))
+    t.start()
+    assert entered.wait(5)
+    t0 = time.monotonic()
+    second = dl.run_daily_ledger()
+    assert time.monotonic() - t0 < 2
+    assert second.get("busy") is True
+    assert not ledger.exists(), "the second run wrote while the first was still measuring"
+    n = len(calls)
+    release.set()
+    t.join(10)
+    assert first.get("categories") and len(ledger.read_text().splitlines()) == 1
+    assert n == 1, "the second run started measuring"
+
+
+def test_a_run_that_crashed_does_not_leave_the_lock_held(monkeypatch, tmp_path):
+    monkeypatch.setattr(dl, "LEDGER_PATH", tmp_path / "disk-ledger.jsonl")
+    monkeypatch.setattr(dl, "HOME", tmp_path)
+    monkeypatch.setattr("machine_profile.registry_id", lambda: "mac-mini")
+
+    def boom(p):
+        raise RuntimeError("disk vanished")
+    monkeypatch.setattr(dl, "_default_du_kb", boom)
+    with pytest.raises(RuntimeError):
+        dl.run_daily_ledger()
+    monkeypatch.setattr(dl, "_default_du_kb", lambda p: 1)
+    assert not dl.run_daily_ledger().get("busy")
+
+
+def test_the_lock_is_held_across_processes(monkeypatch, tmp_path):
+    """The real overlap is two launchd runs, two processes: a lock held by another process means busy."""
+    ledger = tmp_path / "disk-ledger.jsonl"
+    monkeypatch.setattr(dl, "LEDGER_PATH", ledger)
+    lock = ledger.with_suffix(".lock")
+    holder = subprocess.Popen([sys.executable, "-c",
+                               f"import fcntl,time; f=open({str(lock)!r},'a'); fcntl.flock(f, fcntl.LOCK_EX); "
+                               f"print('held', flush=True); time.sleep(30)"], stdout=subprocess.PIPE, text=True)
+    try:
+        assert holder.stdout.readline().strip() == "held"
+        monkeypatch.setattr(dl, "_default_du_kb", lambda p: pytest.fail("measured while another run held the lock"))
+        assert dl.run_daily_ledger().get("busy") is True
+    finally:
+        holder.kill()
+        holder.wait()

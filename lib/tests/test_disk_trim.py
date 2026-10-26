@@ -175,3 +175,17 @@ def test_worktree_build_output_is_measured_before_it_is_removed(tmp_path, monkey
     os.utime(build, (0, 0))
     monkeypatch.setattr(cs, "drop_build_output", lambda path, rels: [__import__("shutil").rmtree(path / r) or r for r in rels if (path / r).exists()])
     assert dt._trim_worktree_build_output({wt}) >= 1024
+
+
+def test_a_hung_du_reads_as_zero_and_does_not_stall_the_trim(monkeypatch, tmp_path):
+    """#586: trim sizes go through the ledger's bounded du, so a folder du can't finish counts 0, not forever."""
+    import time
+    import disk_ledger as dl
+    du = tmp_path / "du"
+    du.write_text("#!/bin/sh\nexec sleep 3600\n")
+    du.chmod(0o755)
+    monkeypatch.setattr(dl, "DU_CMD", [str(du), "-sk"])
+    monkeypatch.setattr(dt, "TRIM_DU_TIMEOUT_S", 1)
+    t0 = time.monotonic()
+    assert dt._get_size_kb(tmp_path) == 0
+    assert time.monotonic() - t0 < 8

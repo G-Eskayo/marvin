@@ -1,5 +1,31 @@
 # Changelog
 
+- Cleanup sweep: back up leftover worktree edits to a branch, then remove the folder (Mini disk full again) ([#630](https://github.com/G-Eskayo/marvin/pull/630))
+
+- About 40% of headless pipeline model runs exit non-zero; classify the causes and fix the top ones ([#598](https://github.com/G-Eskayo/marvin/pull/598))
+
+- Daily digest reads real inputs: the correct bench results path and a working reviewer-log split ([#601](https://github.com/G-Eskayo/marvin/pull/601))
+
+- Docs search: one ranked list with kind tags, freshen clean local clones, index PDF text ([#618](https://github.com/G-Eskayo/marvin/pull/618))
+
+- Docs search: a doc's own name doesn't find it, and long sections outrank it ([#610](https://github.com/G-Eskayo/marvin/pull/610))
+
+- Profiles with dispatch on and no machines: assign the Mini, stop calling marvin unrunnable ([#617](https://github.com/G-Eskayo/marvin/pull/617))
+
+- Project playbooks, slice 1: iOS app playbook, profile playbook field, three profile gaps ([#615](https://github.com/G-Eskayo/marvin/pull/615))
+
+- Ticket pipeline: honour one needs-a-person state, stop bot comments resetting the failure streak, reuse the plan across review rounds ([#606](https://github.com/G-Eskayo/marvin/pull/606))
+
+- Show chat helper agents in the Activity tab ([#614](https://github.com/G-Eskayo/marvin/pull/614))
+
+- Owner decisions on a PR go unanswered: flag them, then file a follow-up ticket after N hours ([#608](https://github.com/G-Eskayo/marvin/pull/608))
+
+- Change-detector fires on ETag churn: decide 'changed' from the newest issue's content, not the ETag ([#604](https://github.com/G-Eskayo/marvin/pull/604))
+
+- Cleanup sweep leaves du processes hung on protected folders (TCC); add timeouts and single-flight ([#589](https://github.com/G-Eskayo/marvin/pull/589))
+
+- Main is red on two portfolio tests (project-card parity, reference templates) ([#588](https://github.com/G-Eskayo/marvin/pull/588))
+
 - Release dead ticket claims automatically, so the queue never freezes on a run that died ([#582](https://github.com/G-Eskayo/marvin/pull/582))
 
 - Docs: fold the Files tab into Docs (chosen layout from #562) ([#579](https://github.com/G-Eskayo/marvin/pull/579))

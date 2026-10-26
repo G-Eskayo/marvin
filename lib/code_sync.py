@@ -453,6 +453,44 @@ def _merge_remote(repo: Path) -> tuple[bool, str]:
     return True, output
 
 
+# Machine-written history that must never ride along in an auto-sync commit, even on a Mac whose checkout still tracks it
+# (one that hasn't pulled the untrack commit) or whose .gitignore was edited. Health's history was 191 of ~200 auto-sync
+# commits on main (2026-10-17..21), each re-running CI and main-health (plan health-metrics-redo-2026-10-21, P0).
+NEVER_COMMIT = ("bench/metrics/health-monitor.*",)
+
+
+def _never_commit(path: str) -> bool:
+    import fnmatch
+    return any(fnmatch.fnmatch(path, pat) for pat in NEVER_COMMIT)
+
+
+def _excluded_pathspecs() -> list[str]:
+    return [f":(exclude,glob){pat}" for pat in NEVER_COMMIT]
+
+
+def _guard_refusal(repo: Path) -> str | None:
+    """ADR 0071: run the repo's own bin/pre-push-guard on what `push origin main` would publish.
+
+    Called directly rather than trusting the git hook, so a clone whose hook was never installed is still checked.
+    Repos without the script (~/.claude, whose remote is self-hosted) are not public and are skipped.
+    Returns the guard's report on refusal, None when the push may go.
+    """
+    guard = repo / "bin" / "pre-push-guard"
+    if not guard.exists():
+        return None
+    local = _git(repo, ["rev-parse", "HEAD"]).strip()
+    remote_ok, remote = _git_ok(repo, ["rev-parse", "--verify", "-q", "origin/main"])
+    remote = remote.strip() if remote_ok and remote.strip() else "0" * 40
+    r = subprocess.run([str(guard), "origin"], cwd=repo, capture_output=True, text=True,
+                       input=f"refs/heads/main {local} refs/heads/main {remote}\n")
+    return None if r.returncode == 0 else (r.stderr.strip() or "pre-push guard refused")
+
+
+def _refuse_push(repo: Path, report: str, files: list[str] | None = None) -> None:
+    _log(repo, "push", f"REFUSING to push — the push guard blocked it; committed locally, NOT pushed:\n{report}", files)
+    notify("MARVIN code-sync BLOCKED", f"Push guard refused a push [{repo.name}] — check sync-log.md", open_target=str(LOG_PATH))
+
+
 def push(repo: Path, now: float | None = None) -> None:
     label = machine_label()
     heal_stale_index_lock(repo)
@@ -474,7 +512,7 @@ def push(repo: Path, now: float | None = None) -> None:
     # after the commit it describes) would make every push think there's
     # real work to do, and would make "nothing to commit" impossible to ever
     # detect once the log has grown at all.
-    real_changes = [f for f in all_changed if f != LOG_PATH.name]
+    real_changes = [f for f in all_changed if f != LOG_PATH.name and not _never_commit(f)]
     if not real_changes:
         # Working tree can be clean while HEAD still holds commits that were
         # never pushed — e.g. a manual conflict-resolution `git commit` made
@@ -487,6 +525,10 @@ def push(repo: Path, now: float | None = None) -> None:
             # (marvin#422) and a no-op push logs nothing, so a fixed push stayed "stuck" forever (marvin#438).
             if _last_own_push_failed(repo):
                 _log(repo, "push", "nothing to push — earlier failure cleared")
+            return
+        refused = _guard_refusal(repo)
+        if refused:
+            _refuse_push(repo, refused)
             return
         push_ok, push_out = _git_ok(repo, ["push", "origin", "main"])
         if push_ok:
@@ -522,8 +564,9 @@ def push(repo: Path, now: float | None = None) -> None:
     # so it would be swept into it instead of trailing in ~/.claude; on 2026-10-14 that line said "committed +
     # pushed" for a push that was rejected and never reached origin. sync-log.md is merge=union now
     # (~/.claude/.gitattributes), so a trailing entry no longer conflicts.
-    changed_files = [line[3:].strip() for line in _git(repo, ["status", "--porcelain", "--ignore-submodules=dirty"]).splitlines() if line.strip()]
-    _git(repo, ["add", "-A"])
+    changed_files = [f for f in (line[3:].strip() for line in _git(repo, ["status", "--porcelain", "--ignore-submodules=dirty"]).splitlines() if line.strip())
+                     if not _never_commit(f)]
+    _git(repo, ["add", "-A", "--", ".", *_excluded_pathspecs()])
     msg = f"auto-sync ({label}): {len(changed_files)} file(s) changed\n\n" + "\n".join(f"- {f}" for f in changed_files[:20])
     # marks its commit for the direct-commit check (#337): never blocked, but code swept up without tests is logged
     commit_ok, commit_out = _git_ok(repo, ["commit", "-m", msg], env={"MARVIN_COMMIT_KIND": "auto-sync"})
@@ -531,6 +574,10 @@ def push(repo: Path, now: float | None = None) -> None:
         _log(repo, "push", f"commit failed:\n{commit_out}", changed_files)
         return
 
+    refused = _guard_refusal(repo)
+    if refused:
+        _refuse_push(repo, refused, changed_files)
+        return
     push_ok, push_out = _git_ok(repo, ["push", "origin", "main"])
     if push_ok:
         _log(repo, "push", f"committed + pushed {len(real_changes)} file(s)", real_changes)
@@ -680,8 +727,18 @@ def main() -> None:
         print("usage: code_sync.py {push|pull|mirror} [repo-path]", file=sys.stderr)
         sys.exit(1)
     repo = Path(sys.argv[2]).expanduser() if len(sys.argv) == 3 else DEFAULT_REPO
-    job_events.step(f"{sys.argv[1]} {repo}")
-    {"push": push, "pull": pull, "mirror": mirror}[sys.argv[1]](repo)
+    action = {"push": push, "pull": pull, "mirror": mirror}[sys.argv[1]]
+    # ADR 0071: the owner's private instance is its own repo nested at <engine>/instance/; it syncs with the engine,
+    # so every existing caller (launchd job, handoff hook) covers it with no config. No instance (a fresh install,
+    # the Kali node by design) syncs exactly as before. try/finally: a failing engine step never strands it.
+    nested = repo / "instance"
+    try:
+        job_events.step(f"{sys.argv[1]} {repo}")
+        action(repo)
+    finally:
+        if (nested / ".git").exists():
+            job_events.step(f"{sys.argv[1]} {nested}")
+            action(nested)
 
 
 if __name__ == "__main__":

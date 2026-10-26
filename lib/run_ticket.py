@@ -115,20 +115,26 @@ def _consecutive_failure_streak(issue_number: int, repo: str = REPO) -> int:
 
 def _trailing_streaks(issue_number: int, repo: str = REPO) -> tuple[int, int]:
     """(failures, verify timeouts) in the trailing run of automated comments, most recent first, up to the first
-    comment from anyone else. Timeouts used to be free and to reset the failure count, so a ticket whose verify
+    comment from a person. Timeouts used to be free and to reset the failure count, so a ticket whose verify
     always times out was retried for ever (#563: three runs in 46 minutes on a loaded M4); now they have their own
     cap (MAX_CONSECUTIVE_RETRIES, with failures). A model-unavailable release is about the service: it is skipped,
-    neither counted nor a reset."""
+    neither counted nor a reset.
+
+    Every other MARVIN comment is skipped the same way (#605): the conflict send-back's and the ticket agents' own
+    comments used to end the run, so #81 failed 5 times before parking. What ends it (ticket_policy.automated_comment):
+    a person's comment, a passing run, or a hand-off to a person (a park or a loop guard: only a person can send it
+    back, and that is a fresh start). O(comments x body length) over the one thread the caller already fetches."""
     failures = timeouts = 0
     for c in reversed(_issue_comments(issue_number, repo) or []):
-        body = str(c.get("body", "")) if isinstance(c, dict) else ""
+        body = c.get("body") if isinstance(c, dict) else None
+        body = body if isinstance(body, str) else ""
         if MODEL_MARKER in body:
             continue
         if FAILURE_MARKER in body:
             failures += 1
         elif TIMEOUT_MARKER in body:
             timeouts += 1
-        else:
+        elif ticket_policy.automated_comment(body) != "bot":
             break
     return failures, timeouts
 
@@ -143,7 +149,7 @@ def _park_stuck_ticket(issue_number: int, streak: int, repo: str = REPO, reason:
 
     needs-info is added before ready-for-agent comes off, so the ticket is never stateless: the triage agent treats
     a ticket with no state label as new, and would put a well-written one straight back to ready-for-agent (another
-    round of builds; this comment resets the failure streak) or bury the cause under a template complaint (#133,
+    round of builds; this comment, a hand-off, ends the failure streak) or bury the cause under a template complaint (#133,
     2026-10-09). Triage only re-checks needs-info it set itself, so this one stays until a person acts."""
     label = _label_for_device(machine_profile.registry_id())
     subprocess.run(
@@ -168,7 +174,7 @@ def _park_stuck_ticket(issue_number: int, streak: int, repo: str = REPO, reason:
         if more:
             lines.append(f"- ... and {more} more")
     lines += ["", "**What it needs:** re-scope or split it, answer what's unclear, or build it by hand. "
-              "To send it back to the pipeline, remove `needs-info` and add `ready-for-agent`."]
+              "To send it back to the pipeline, remove `needs-info` and add `ready-for-agent`.", ticket_policy.HANDOFF_MARKER]
     subprocess.run(
         ["gh", "issue", "comment", str(issue_number), "--repo", repo, "--body", "\n".join(lines)],
         capture_output=True, text=True, timeout=15, check=False,

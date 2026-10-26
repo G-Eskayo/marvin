@@ -74,21 +74,16 @@ def _build_never_trim_worktrees() -> set[Path]:
     return worktrees
 
 
+TRIM_DU_TIMEOUT_S = 60
+
+
 # Allowlist of paths we will trim when disk is low. Each maps to a cleanup function.
 def _get_size_kb(path: Path) -> int:
-    """Get size of path in KB. Every trimmer returns KB, which trim() records as reclaimed_kb."""
-    try:
-        result = subprocess.run(
-            ["du", "-sk", str(path)],
-            capture_output=True, text=True, timeout=5,
-        )
-        if result.returncode == 0:
-            parts = result.stdout.strip().split()
-            if parts and parts[0].isdigit():
-                return int(parts[0])
-    except Exception:
-        pass
-    return 0
+    """Get size of path in KB. Every trimmer returns KB, which trim() records as reclaimed_kb. Uses the ledger's bounded
+    du (#586): a folder it can't read or that won't finish in time counts as 0 instead of hanging the sweep."""
+    import disk_ledger as dl  # noqa: E402 -- lazy: disk_ledger's import chain is heavier than trim needs at load
+    kb = dl.du_kb(path, timeout=TRIM_DU_TIMEOUT_S)
+    return kb if isinstance(kb, int) else 0
 
 
 def _trim_npm():

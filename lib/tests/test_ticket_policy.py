@@ -361,3 +361,23 @@ def test_a_huge_comment_is_scanned_without_trouble():
     now = datetime(2026, 10, 21, 20, 0, tzinfo=timezone.utc)
     big = "<!-- " * 200_000 + tp.retry_marker(now + _td(minutes=5))
     assert tp.retry_not_before([{"body": big}], now) == now + _td(minutes=5)
+
+
+# ── one needs-a-person state, and whose comment it is (#605) ──
+
+def test_needs_person_is_either_label_and_survives_garbage():
+    import ticket_policy as pol
+    assert pol.needs_person({"ready-for-human", "ready-for-agent"}) and pol.needs_person(["needs-info"])
+    assert not pol.needs_person({"ready-for-agent", "needs-reengagement", "hold"})
+    assert not pol.needs_person(None) and not pol.needs_person([])
+
+
+def test_automated_comment_kinds():
+    import ticket_policy as pol
+    assert pol.automated_comment(f"{pol.AGENT_COMMENT_PREFIX} re-queued") == "bot"
+    assert pol.automated_comment(f"  {pol.TRIAGE_DISCLAIMER}\n\nmissing") == "bot"
+    assert pol.automated_comment("PR #3 now conflicts with main. " + pol.SENT_BACK_MARKER + " rebuild") == "bot"
+    assert pol.automated_comment(f"{pol.PASSED_MARKER}: https://x") == "passed"
+    assert pol.automated_comment(f"anything\n{pol.HANDOFF_MARKER}") == "handoff"
+    for person in ("try again", "", None, 7, f"I disagree with: {pol.SENT_BACK_MARKER}", "PR #3 looks fine to me"):
+        assert pol.automated_comment(person) is None, person
