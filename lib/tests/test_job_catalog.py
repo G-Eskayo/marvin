@@ -83,3 +83,9 @@ def test_report_is_plain_text_and_names_every_waste_row():
 
 def test_report_when_nothing_is_wasted():
     assert "nothing" in jc.report([]).lower()
+
+
+def test_auto_fix_reports_through_its_pr_and_gil_reads_it_in_mr_review():
+    """2026-10-26: auto-fix opens one gated PR a day instead of editing the shared checkout, so its output is that PR."""
+    job = jc.JOBS["auto-fix"]
+    assert "PR" in job["reporter"] and "MR Review" in job["consumer"] and "review" not in job
