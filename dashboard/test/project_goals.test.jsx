@@ -4,7 +4,7 @@ import { tmpdir } from 'os'
 import path from 'path'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { readGoals } from '../electron/main/profiles.js'
-import { buildProgressRows, loopingTickets } from '../electron/main/project_progress.js'
+import { buildProgressRows, loopingTickets, createProjectProgress } from '../electron/main/project_progress.js'
 import { arrowOf, statusLabel, shortGoal, clip, isActive } from '../src/lib/project_goals.js'
 import { GoalHeader, ProjectsProgress } from '../src/components/ProjectGoals.jsx'
 
@@ -277,5 +277,42 @@ describe('ProjectsProgress (Activity ▸ Projects)', () => {
     expect(html).toContain('min-w-0')
     expect(html).toContain('truncate')
     expect(html).not.toMatch(/width:\s*\d{3,}px/)
+  })
+})
+
+describe('createProjectProgress (the activity:progress handler)', () => {
+  const goals = () => [{ repo: 'o/a', goal: 'g', signals: [], status: 'active' }]
+  it('peeks the board cache only after the overview has filled it, so held tickets are not missed', async () => {
+    let cache = []
+    const progress = createProjectProgress({
+      goals,
+      overview: async () => {
+        cache = [{ repo: 'o/a', value: { issues: [{ number: 1, state: 'OPEN', labels: [{ name: 'hold' }] }] } }]
+        return {}
+      },
+      peekBoards: () => cache,
+      stagesFor: () => ({}),
+      boards: () => [{ repo: 'o/a', name: 'A' }],
+      savedMerged: () => [],
+      serverMerges: async () => []
+    })
+    expect((await progress()).active[0].stuck.held).toBe(1)
+  })
+  it('every source failing gives rows with zeros, never an error; no goals gives nothing without reading anything', async () => {
+    const boom = () => { throw new Error('boom') }
+    const progress = createProjectProgress({ goals, overview: boom, peekBoards: boom, stagesFor: boom, boards: boom, savedMerged: boom, serverMerges: async () => { throw new Error('offline') } })
+    const out = await progress()
+    expect(out.active).toHaveLength(1)
+    expect(out.active[0]).toMatchObject({ mergedWeek: 0, hasBoard: false, stuck: { total: 0 } })
+    let read = 0
+    const none = createProjectProgress({ goals: () => [], overview: () => read++, peekBoards: () => read++, stagesFor: () => read++, boards: () => read++, savedMerged: () => read++, serverMerges: () => read++ })
+    expect(await none()).toEqual({ active: [], rest: [] })
+    expect(read).toBe(0)
+  })
+  it('merges from the saved list and the merge server count once each', async () => {
+    const url = 'https://github.com/o/a/pull/1'
+    const at = new Date().toISOString()
+    const progress = createProjectProgress({ goals, overview: async () => ({}), peekBoards: () => [], stagesFor: () => ({}), boards: () => [], savedMerged: () => [{ url, at }], serverMerges: async () => [{ url, at }] })
+    expect((await progress()).active[0].mergedWeek).toBe(1)
   })
 })

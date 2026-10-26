@@ -52,7 +52,7 @@ import { createRelationsService } from './relations_service.js'
 import { summarizeBoard, buildCompleted } from './board.js'
 import { createTriggerHub, createReconciler, refetchesGithub } from './triggers.js'
 import { createMrHistory, mergedPrArgs, readSavedMerged } from './mr_history.js'
-import { buildProgressRows } from './project_progress.js'
+import { createProjectProgress } from './project_progress.js'
 import { appendError } from './error_log.js'
 import { listOpenPrsAcrossRepos, prListArgs, normalizeSeen, canMergeFromDashboard, repoFromPrUrl, MARVIN_REPO, pendingCheckHeads } from './mr_repos.js'
 import { createIndexer, buildDocsIndex, loadIndex } from './docs_search.js'
@@ -553,24 +553,19 @@ function registerDocsHandlers() {
   ipcMain.handle('activity:needsYou', () => relations.needsYou())
   // Activity ▸ Projects (marvin#625's progress strip): built from memory and local files only, no GitHub call. Merges
   // are the Merged view's saved list plus the merge server's own record (local HTTP), deduped by URL.
-  ipcMain.handle('activity:progress', async () => {
-    const goals = currentGoals()
-    if (goals.length === 0) return { active: [], rest: [] }
-    const webhookMerges = await fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/merge-history'), { signal: AbortSignal.timeout(3000) })
-      .then((r) => (r.ok ? r.json() : {}))
-      .then((h) => (h.merges || []).map((m) => ({ url: m.pr_url, at: m.t })))
-      .catch(() => [])
-    const issuesByRepo = Object.fromEntries(githubState.peek('board').map(({ repo, value }) => [repo, value?.issues || []]))
-    const stagesByRepo = Object.fromEntries(goals.map((g) => [g.repo, defaultStagesFor(g.repo)]))
-    return buildProgressRows({
-      goals,
-      boards: withProjectStatus(readRegistry(), readCatalog({ deviceId: deviceId() })),
-      overview: await relations.overview().catch(() => ({})),
-      merged: [...readSavedMerged(MR_HISTORY_PATH), ...webhookMerges],
-      issuesByRepo,
-      stagesByRepo
-    })
+  const progress = createProjectProgress({
+    goals: currentGoals,
+    overview: () => relations.overview(),
+    peekBoards: () => githubState.peek('board'),
+    stagesFor: defaultStagesFor,
+    boards: () => withProjectStatus(readRegistry(), readCatalog({ deviceId: deviceId() })),
+    savedMerged: () => readSavedMerged(MR_HISTORY_PATH),
+    serverMerges: () =>
+      fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/merge-history'), { signal: AbortSignal.timeout(3000) })
+        .then((r) => (r.ok ? r.json() : {}))
+        .then((h) => (h.merges || []).map((m) => ({ url: m.pr_url, at: m.t })))
   })
+  ipcMain.handle('activity:progress', () => progress())
   ipcMain.handle('relations:context', (_e, project) => relations.context(String(project)))
 
   let refreshing = null

@@ -60,3 +60,29 @@ export function buildProgressRows({ goals, boards, overview, merged, issuesByRep
     .map(({ sort, ...r }) => r)
   return { active: rows.filter(isActive), rest: rows.filter((r) => !isActive(r)) }
 }
+
+// The 'activity:progress' handler, its sources injected (index.js). Every source failing or missing is an empty input,
+// never an error. The overview is awaited before the board cache is peeked: it reads every board through that cache,
+// so the held tickets are as fresh as the needs-you counts (a peek first missed boards not yet read, 2026-10-26).
+export function createProjectProgress({ goals, overview, peekBoards, stagesFor, boards, savedMerged, serverMerges, now = Date.now }) {
+  const safe = (fn, fallback) => { try { return fn() ?? fallback } catch { return fallback } }
+  return async () => {
+    const list = safe(goals, [])
+    if (!Array.isArray(list) || list.length === 0) return { active: [], rest: [] }
+    const [ov, server] = await Promise.all([
+      Promise.resolve().then(overview).catch(() => ({})),
+      Promise.resolve().then(serverMerges).catch(() => [])
+    ])
+    const issuesByRepo = Object.fromEntries(safe(peekBoards, []).map(({ repo, value }) => [repo, value?.issues || []]))
+    const stagesByRepo = Object.fromEntries(list.map((g) => [g.repo, safe(() => stagesFor(g.repo), {})]))
+    return buildProgressRows({
+      goals: list,
+      boards: safe(boards, []),
+      overview: ov,
+      merged: [...safe(savedMerged, []), ...(Array.isArray(server) ? server : [])],
+      issuesByRepo,
+      stagesByRepo,
+      now: now()
+    })
+  }
+}
