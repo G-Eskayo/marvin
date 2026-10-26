@@ -75,6 +75,7 @@ HOOKS: list[Hook] = [
         "skills/improve/scripts/improvement_sweep.py",
         "skills/self-improve/scripts/background_review.py",
         "skills/handoff/scripts/trigger_code_sync.py",
+        "lib/stale_decision_hook.py",
     )),
     Hook("PostToolUse", _py("brain-map/scripts/skill_activity.py"), _ALL),
     Hook("SessionStart", ("/bin/sh", "-c", _SESSION_START), _INTERACTIVE),

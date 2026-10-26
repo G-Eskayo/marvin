@@ -56,6 +56,10 @@ Also append a one-line summary to `~/.agents/instance/retrospective-log.md` (cro
 YYYY-MM-DD | <skill-name> | I/S/F | <one-line summary>
 ```
 
+## Before outputting results
+
+Check `~/.claude/stale-decisions.md` for pending (unchecked) contradictions. If any exist, surface their count in your final report: "**N stale-decision flags pending review.**" — same lightweight treatment the suggestions queue gets elsewhere. The next session will surface them in the handoff, but surfacing them here keeps them visible even if the next session is far away.
+
 ---
 
 ## Process

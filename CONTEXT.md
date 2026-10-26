@@ -97,6 +97,31 @@ one job, starting with the history store.
   to `suggestions.md` for review, unimplemented — no new dedicated findings file, reusing the
   queue that already exists for exactly this purpose.
 
+## Stale-decision check (built 2026-10-26)
+
+Detects when new claims in memory files, `CONTEXT.md`, or ADRs contradict existing documented
+facts, surfacing contradictions for review before they silently propagate to the next session.
+
+- **Trigger**: `PostToolUse` hook on every `Write`/`Edit`/`MultiEdit` of memory files (in `~/.claude/projects/-Users-gileskayo/memory/`),
+  `CONTEXT.md` at a repo root (must have `.git` sibling or `docs/adr` subdir), or `docs/adr/*.md`.
+  Interactive sessions only (matches `rebuild-manifest.py`/`background_review.py` precedent).
+- **Mechanism**: detached subprocess with per-file cooldown. Extracts key terms from the new text,
+  searches memory files and repo docs for related claims (keyword overlap first, only the narrow
+  set go to the judge), asks a Haiku LLM whether any contradict the new claim, flags positive
+  results in `~/.claude/stale-decisions.md`.
+- **Flags file**: `~/.claude/stale-decisions.md`, in the same format as `quarantine.md` (dated
+  blocks, quoted claims, checkboxes for approve/dismiss). Idempotent append — same contradiction
+  found twice doesn't duplicate.
+- **Resolution**: checked in `handoff` skill before writing "Open questions / next steps" section
+  (unresolved flags block handoff), and reported by `self-improve` skill's final output (pending
+  count surfaces even if no handoff imminent).
+- **Sweep**: `~/.agents/lib/stale_decision_check.py sweep` runs a report-only scan over all memory
+  and repo docs, outputs dated report to `~/.claude/outbox/stale-decisions-sweep-YYYY-MM-DD.md`.
+  Does not modify memory or documentation — for review by Gil, not automation.
+- **Fails open**: any error (network, judge timeout, permission denied) logs via `hook_errors` and
+  skips that check. Never blocks the write that triggered it. Search degrades gracefully (repo side
+  fails, memory-side continues; memory side fails, repo side continues).
+
 ## MARVIN Mobile (in design, not yet built)
 
 - **MARVIN Mobile**: the project and naming-convention name for MARVIN's native iPhone app — used
