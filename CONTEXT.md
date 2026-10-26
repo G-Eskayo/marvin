@@ -107,6 +107,13 @@ one job, starting with the history store.
   All surfaces talk to the same mobile backend; a surface is a view onto MARVIN, not a separate agent.
 - **Voice**: the spoken surface — speech in, speech out. What July's ADRs 0001–0005 called the
   "voice client" is now this surface, not a standalone app.
+- **Voice endpoint** (ADR 0075): the one place spoken words reach MARVIN — words in, a reply written to be spoken out,
+  every exchange in the Thread. The Siri doorway, the Mac voice loop and the Voice surface all call it.
+- **Siri doorway**: "Hey Siri, MARVIN" on a HomePod, iPhone, Watch or car runs a Shortcut that hands the conversation to
+  the voice endpoint. Siri only opens the door. _Avoid_: "Siri integration" (MARVIN doesn't extend Siri, it replaces
+  what Siri answers).
+- **Mac voice loop**: MARVIN's own wake word ("Hey MARVIN"), local speech in and out, on a Mac with a microphone; it
+  can play through the HomePods over AirPlay.
 - **Chat**: the typed conversational surface — what the WhatsApp/Telegram companion idea was
   reaching for, delivered natively instead of through a third-party messenger.
 - **Dashboard**: the phone's view of what the desktop dashboard shows. Same data, phone-shaped
@@ -635,7 +642,7 @@ written. Approve spent 10.4 s re-listing every repo for its order check, and the
   `test/mr_actions.test.js`, which also counts GitHub calls over a boot and a session of clicks).
 - New dashboard actions follow this rule, and the polling guard's header points here.
 
-## Pipeline visibility — stage strip (built 2026-10-09, ADR 0073, ticket #217)
+## Pipeline visibility — stage strip (built 2026-10-09, ADR 0074 (numbered 0073 until 2026-10-26, which the support link also holds), ticket #217)
 
 Gil's problem 2026-10-09: debugging "where is this PR stuck?" required SSH + log archaeology into
 `~/.claude/logs/ticket-stages/`. Pipeline stage events exist, the dashboard reads them, but only in
