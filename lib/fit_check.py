@@ -4,7 +4,7 @@
 A ticket states its north-star fit when it's created (what it reuses, why it's the simplest sufficient approach,
 where it saves or spends tokens). At review time this module sets facts code can measure next to that claim,
 each marked ✅ or ⚠️: whether a fit was stated, new source files, net lines added, whether tests changed with
-the code, and what the ticket's model runs cost. Only when something is flagged does a Judge (clean, no MARVIN
+the code, what the ticket's model runs cost, and (for a fix) whether it carries an outcome check. Only when something is flagged does a Judge (clean, no MARVIN
 context) read the fit and the facts and say whether the flag is explained. "B always, C only when B flags."
 
     fit_check.py <owner/repo#N> <worktree> <pr-url>   # posts the report as a PR comment
@@ -29,6 +29,29 @@ def fit_section(body: str | None) -> str | None:
     m = re.search(r"^##\s*North-star fit\s*$([\s\S]*?)(?=^##\s|\Z)", body or "", re.I | re.M)
     text = m.group(1).strip() if m else ""
     return text or None
+
+
+_FIX_TITLE = re.compile(r"^\s*fix(\(|:|\b)", re.I)
+
+
+def outcome_check(body: str | None, title: str = "", labels: list[str] | None = None) -> dict | None:
+    """Every fix gets an outcome check (Gil, 2026-10-26): a `bug` ticket, or a `fix:` title, must carry a Purpose
+    metric or a Recurrence check (lib/purpose_metrics.py), so the daily outcome check later proves the fix held.
+    A warning, not a block, until Gil decides to hard-block. A malformed one is flagged on any ticket.
+    None when there is nothing to check (not a fix, and no outcome section)."""
+    import purpose_metrics as pm
+    labels = [l for l in (labels or []) if isinstance(l, str)]
+    is_fix = pm.BUG_LABEL in labels or bool(_FIX_TITLE.match(title or ""))
+    gap = pm.outcome_gap(body)
+    if gap and gap.startswith("no outcome check"):
+        return _check("Outcome check", False, f"a fix with {gap} (a warning, not a block)") if is_fix else None
+    if gap:
+        return _check("Outcome check", False, f"{gap} (a warning, not a block)")
+    if not {pm.LABEL, pm.BUG_LABEL} & set(labels):
+        return _check("Outcome check", False, f"valid, but the daily check only reads tickets labelled "
+                                              f"`{pm.LABEL}` or `{pm.BUG_LABEL}`: add `{pm.LABEL}`")
+    spec = pm.parse(body)
+    return _check("Outcome check", True, f"{spec['measure']} on {spec['check_on'][:10]}")
 
 
 def is_test(path: str) -> bool:
@@ -77,10 +100,10 @@ def _check(name: str, ok: bool, detail: str) -> dict:
     return {"name": name, "ok": ok, "detail": detail}
 
 
-def run_checks(facts: dict, fit: str | None, cost_usd: float) -> list[dict]:
+def run_checks(facts: dict, fit: str | None, cost_usd: float, outcome: dict | None = None) -> list[dict]:
     new_src = facts["new_source_files"]
     net = facts["lines_added"] - facts["lines_removed"]
-    return [
+    return [*([outcome] if outcome else []),
         _check("North-star fit stated", bool(fit), "on the ticket" if fit else "the ticket has no North-star fit section"),
         _check("Reuse before adding", len(new_src) <= MAX_NEW_SOURCE_FILES,
                f"{len(new_src)} new source file(s)" + (f": {', '.join(new_src[:5])}" if new_src else "")),
@@ -126,22 +149,30 @@ def judge_if_flagged(checks: list[dict], fit: str | None, facts: dict,
 
 
 def report(ticket_ref: str, worktree: Path, body: str | None, base: str = "origin/main",
-           judge: Callable[[str], str] = _default_judge) -> str:
+           judge: Callable[[str], str] = _default_judge, title: str = "", labels: list[str] | None = None) -> str:
     facts = diff_facts(worktree, base)
     fit = fit_section(body)
-    checks = run_checks(facts, fit, ticket_cost(ticket_ref))
+    checks = run_checks(facts, fit, ticket_cost(ticket_ref), outcome_check(body, title, labels))
     return render(checks, judge_if_flagged(checks, fit, facts, judge=judge))
 
 
-def _ticket_body(ticket_ref: str) -> str:
+def _ticket(ticket_ref: str) -> dict:
+    """The ticket's body, title and label names, in the one gh call the fit check always made."""
     repo, number = ticket_ref.rsplit("#", 1)
-    out = subprocess.run(["gh", "issue", "view", number, "--repo", repo, "--json", "body", "-q", ".body"],
+    out = subprocess.run(["gh", "issue", "view", number, "--repo", repo, "--json", "body,title,labels"],
                          capture_output=True, text=True, timeout=60)
-    return out.stdout if out.returncode == 0 else ""
+    try:
+        data = json.loads(out.stdout) if out.returncode == 0 else {}
+    except json.JSONDecodeError:
+        data = {}
+    data = data if isinstance(data, dict) else {}
+    return {"body": data.get("body") or "", "title": data.get("title") or "",
+            "labels": [l.get("name") for l in data.get("labels") or [] if isinstance(l, dict)]}
 
 
 def post(ticket_ref: str, worktree: Path, pr_url: str) -> None:
-    text = report(ticket_ref, worktree, _ticket_body(ticket_ref))
+    t = _ticket(ticket_ref)
+    text = report(ticket_ref, worktree, t["body"], title=t["title"], labels=t["labels"])
     subprocess.run(["gh", "pr", "comment", pr_url, "--body", text], capture_output=True, text=True, timeout=60)
 
 

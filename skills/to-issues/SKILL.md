@@ -91,6 +91,14 @@ Only when the slice's purpose is measurable (faster, fewer tokens, fewer refusal
 - **Target:** -70%
 - **Check on:** 2026-10-16
 
+## Recurrence check
+
+**Every fix carries an outcome check** (decided 2026-10-26): a `bug` slice has either the Purpose metric above or, when nothing numeric fits, this section. Name a probe registered in `PROBES` in `lib/purpose_metrics.py` (add one there that counts the symptom from a log that already exists; a ticket never supplies a command). The probe looks back 7 days, so set the date at least 7 days after the fix ships. Add the `purpose-metric` label (the daily check also reads `bug` tickets). The PR's fit check warns when a fix has neither.
+
+- **Probe:** ticket-planned-3x-in-24h
+- **Baseline:** 5
+- **Check on:** 2026-11-02: the symptom has not come back
+
 ## How we'll try to break it
 
 Required for every build slice (ADR 0063, `docs/north-stars.md` "Tests try to break it"); triage won't mark the issue ready without it. List the concrete ways a person or the system could use *or misuse* this slice, each of which gets a test written first: bad / empty / huge / malformed input, each dependency failing (network, GitHub refusing, disk, missing or corrupt files), repeats, concurrency and wrong order, wrong permissions or machine, stale state, a person's mistakes. Name the real collaborator to test against where a mock could hide its rules.

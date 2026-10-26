@@ -83,3 +83,66 @@ def test_the_judge_runs_only_when_something_is_flagged():
     assert launched == []
     verdict = fc.judge_if_flagged(fc.run_checks(_facts(test_files_changed=0), "x", 0.1), "x", _facts(), judge=judge)
     assert verdict == "VERDICT: fits" and "Tested" in launched[0]
+
+
+# ── every fix gets an outcome check (2026-10-26): a warning in the fit check, not a block ─────────────────────
+
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+LATER = (datetime.now(timezone.utc) + timedelta(days=10)).date().isoformat()
+FIX_WITH_CHECK = BODY + f"\n## Recurrence check\n- **Probe:** ticket-planned-3x-in-24h\n- **Check on:** {LATER}\n"
+
+
+def _outcome_row(body, labels=("bug",), title="Fix the thing"):
+    rows = [c for c in fc.run_checks(_facts(), "x", 0.1, outcome=fc.outcome_check(body, title, list(labels)))
+            if c["name"] == "Outcome check"]
+    return rows[0] if rows else None
+
+
+def test_a_fix_without_an_outcome_check_is_flagged_as_a_warning():
+    row = _outcome_row(BODY)
+    assert row and not row["ok"] and "no outcome check" in row["detail"]
+    assert "warning" in row["detail"]
+
+
+def test_a_fix_with_a_valid_outcome_check_passes():
+    row = _outcome_row(FIX_WITH_CHECK)
+    assert row and row["ok"]
+
+
+def test_a_conventional_fix_title_counts_as_a_fix_without_the_label():
+    assert not _outcome_row(BODY, labels=(), title="fix(gh): stop the storm")["ok"]
+    assert _outcome_row(BODY, labels=("enhancement",), title="Add a chart") is None   # not a fix: no row
+
+
+def test_a_malformed_outcome_check_is_flagged_even_on_a_feature():
+    row = _outcome_row(BODY + "\n## Purpose metric\n- **Measure:** nope\n", labels=("enhancement",), title="Add")
+    assert row and not row["ok"] and "malformed" in row["detail"]
+
+
+def test_a_valid_check_without_a_label_the_daily_check_reads_is_flagged():
+    row = _outcome_row(BODY + f"\n## Purpose metric\n- **Measure:** github-calls-per-day\n- **Baseline:** 9000\n"
+                       f"- **Target:** -30%\n- **Check on:** {LATER}\n", labels=("enhancement",), title="Fewer calls")
+    assert row and not row["ok"] and "purpose-metric" in row["detail"]
+
+
+def test_the_report_reads_the_tickets_labels_without_an_extra_github_call(tmp_path, monkeypatch):
+    seen = []
+    monkeypatch.setattr(fc, "diff_facts", lambda wt, base="origin/main": _facts())
+    monkeypatch.setattr(fc, "ticket_cost", lambda ref: 0.1)
+    text = fc.report("G-Eskayo/marvin#5", tmp_path, BODY, judge=lambda p: seen.append(p) or "VERDICT: fits",
+                     title="Fix it", labels=["bug"])
+    assert "| ⚠️ | Outcome check" in text and seen and "Outcome check" in seen[0]
+
+
+def test_the_ticket_read_survives_a_bad_gh_answer(monkeypatch):
+    answers = iter([
+        subprocess.CompletedProcess([], 0, json.dumps({"body": "b", "title": "Fix", "labels": [{"name": "bug"}, "x", None]}), ""),
+        subprocess.CompletedProcess([], 0, "not json", ""),
+        subprocess.CompletedProcess([], 0, "[1, 2]", ""),
+        subprocess.CompletedProcess([], 1, "", "offline"),
+    ])
+    monkeypatch.setattr(fc.subprocess, "run", lambda *a, **k: next(answers))
+    assert fc._ticket("G-Eskayo/marvin#5") == {"body": "b", "title": "Fix", "labels": ["bug"]}
+    for _ in range(3):
+        assert fc._ticket("G-Eskayo/marvin#5") == {"body": "", "title": "", "labels": []}

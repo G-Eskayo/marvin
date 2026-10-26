@@ -9,7 +9,16 @@ A ticket whose purpose is measurable (faster, fewer tokens, fewer refusals) carr
     - **Target:** -70%                             (or +N%, "<= N", ">= N"; lower is better unless stated)
     - **Check on:** 2026-10-15
 
-and the `purpose-metric` label. Once the date has passed, the daily outcome check measures it on every Mac,
+and the `purpose-metric` label. A fix (a `bug` ticket) whose effect isn't a number carries a **recurrence check**
+instead: a named probe (a symptom counter registered in PROBES below, never text from the ticket) that passes when
+the symptom has not come back:
+
+    ## Recurrence check
+    - **Probe:** gh-watch-change-storm            (a name from PROBES; its threshold is the target)
+    - **Baseline:** 570                            (optional: the symptom's size when it was fixed)
+    - **Check on:** 2026-11-02: the symptom has not come back   (7+ days after the fix ships: probes look back 7 days)
+
+Every fix carries one or the other (decided 2026-10-26); the PR's fit check warns when it doesn't. Once the date has passed, the daily outcome check measures it on every Mac,
 comments the result on the ticket, and on a miss writes a **missed-purpose diagnosis** (what was intended, what
 was measured, the likely why, the options) and adds the `missed-purpose` label, which Health shows red until
 someone decides. The ticket's own comments are the record, so both Macs can run the check without posting twice.
@@ -23,6 +32,7 @@ import json
 import re
 import subprocess
 import sys
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
@@ -31,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 LABEL = "purpose-metric"
 MISSED_LABEL = "missed-purpose"
+BUG_LABEL = "bug"
 OUTCOME_HEADING = "## Outcome check"
 REPOS = ("G-Eskayo/marvin",)
 SSH_OPTS = ["-o", "ConnectTimeout=5", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"]
@@ -72,10 +83,100 @@ def _headless_bash(days: int = 7) -> tuple[int, int]:
     return denied, total
 
 
+def _cut(now: datetime | None, days: float) -> datetime:
+    return (now or datetime.now(timezone.utc)) - timedelta(days=days)
+
+
+def _when(value) -> datetime | None:
+    try:
+        when = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+
+
+def _github_calls(path: Path | None = None, days: float = 1, now: datetime | None = None) -> float:
+    """North star 1: gh calls through the gate (bin/gh logs every one) over the last day. The log is rewritten with
+    its newer half past 5 MB, so a day is always inside it."""
+    import github_usage
+    cut = _cut(now, days).timestamp()
+    return float(sum(1 for r in github_usage.read_jsonl(path or github_usage.LOGS / "gh-calls.jsonl")
+                     if isinstance(r.get("t"), (int, float)) and r["t"] >= cut))
+
+
+def _failed_headless_runs(path: Path | None = None, days: float = 1, now: datetime | None = None) -> float:
+    """North star 2 (nothing breaks silently): headless runs that ended non-zero over the last day: an error, a timeout
+    (exit 124, recorded since #597), a refusal. exit_cause (#598) says which; any non-zero code counts."""
+    import github_usage
+    import marvin_launcher
+    cut = _cut(now, days)
+    return float(sum(1 for r in github_usage.read_jsonl(path or marvin_launcher.LAUNCH_LOG)
+                     if r.get("exit_code") not in (0, None) and (w := _when(r.get("at"))) and w >= cut))
+
+
 MEASURES: dict[str, Callable[[], float]] = {
     "headless-refusals-per-week": lambda: float(_headless_bash()[0]),
     "headless-bash-calls-per-week": lambda: float(_headless_bash()[1]),
+    "github-calls-per-day": lambda: _github_calls(),
+    "failed-headless-runs-per-day": lambda: _failed_headless_runs(),
 }
+# Not a measure yet: minutes a machine was overloaded. Nothing samples load over time (machine_resources keeps cpu_pct,
+# not the load average, and its collector isn't running on either Mac as of 2026-10-26); run_ticket reads it only live.
+
+
+# ── recurrence probes: did a fixed symptom come back? Each reads a log that already exists; a missing log means the
+# thing that writes the symptom never ran, so the symptom is absent (0), not unknown. ─────────────────────────────
+
+PROBE_WINDOW_DAYS = 7
+_CHANGE_LINE = re.compile(r"\[gh-watch\] change detected on \S+ at (\d{4}-\d{2}-\d{2}T\d{2}):")
+
+
+def _gh_watch_busiest_hour(log: Path | None = None, days: float = PROBE_WINDOW_DAYS, now: datetime | None = None) -> float:
+    """#604: the busiest hour's `[gh-watch] change detected` lines in the dashboard webhook log. The 2026-10-22 storm
+    ran ~570 an hour on one Mac; a normal hour is 0-30. O(log size), read once a day at most."""
+    log = log or Path.home() / ".claude" / "logs" / "dashboard-webhook.log"
+    try:
+        text = log.read_text(errors="ignore")
+    except OSError:
+        return 0.0
+    cut = _cut(now, days).strftime("%Y-%m-%dT%H")
+    hours = Counter(h for h in _CHANGE_LINE.findall(text) if h >= cut)
+    return float(max(hours.values(), default=0))
+
+
+def _replanned_tickets(stages_dir: Path | None = None, days: float = PROBE_WINDOW_DAYS, now: datetime | None = None,
+                       times: int = 3, within: timedelta = timedelta(hours=24)) -> float:
+    """#606: tickets planned `times`+ times inside `within`, from the ticket stages log (one 'planning call' event per
+    plan; a reused plan logs 'planning reused'). On 2026-10-22 five tickets were planned 6-13 times each.
+    O(stage events in the window)."""
+    import ticket_stages
+    stages_dir = stages_dir or ticket_stages.STAGES_DIR
+    cut = _cut(now, days)
+    count = 0
+    for f in (sorted(stages_dir.glob("*.json")) if stages_dir.is_dir() else []):
+        try:
+            events = json.loads(f.read_text())
+        except (OSError, ValueError):
+            continue
+        if not isinstance(events, list):
+            continue
+        plans = sorted(w for e in events if isinstance(e, dict) and e.get("stage") == "executing"
+                       and e.get("status") == "started" and e.get("detail") == "planning call"
+                       and (w := _when(e.get("timestamp"))) and w >= cut)
+        if any(plans[i + times - 1] - plans[i] <= within for i in range(len(plans) - times + 1)):
+            count += 1
+    return float(count)
+
+
+# name -> (symptom counter, the most it may read while the fix holds, what it counts). Summed across Macs like any
+# measure; the logs are per Mac (~/.claude/logs doesn't sync), so nothing is counted twice.
+PROBES: dict[str, tuple[Callable[[], float], float, str]] = {
+    "gh-watch-change-storm": (lambda: _gh_watch_busiest_hour(), 120.0,
+                              "the busiest hour's gh-watch 'change detected' lines over 7 days, all Macs (#604)"),
+    "ticket-planned-3x-in-24h": (lambda: _replanned_tickets(), 0.0,
+                                 "tickets planned 3+ times inside 24 h over 7 days, all Macs (#606)"),
+}
+MEASURES.update({name: fn for name, (fn, _limit, _what) in PROBES.items()})
 # Rates are computed from summed counts across Macs (refusals per 100 headless Bash calls), so more pipeline work
 # doesn't read as a regression and a busy Mac weighs more than an idle one.
 RATES = {"headless-refusal-rate": ("headless-refusals-per-week", "headless-bash-calls-per-week")}
@@ -115,16 +216,71 @@ def measure_everywhere(name: str) -> tuple[float, dict[str, float]]:
 
 # ── tickets ───────────────────────────────────────────────────────────────────────────────────────────────
 
+def _section(body: str | None, heading: str) -> dict | None:
+    m = re.search(rf"^##\s*{heading}\s*$([\s\S]*?)(?=^##\s|\Z)", body if isinstance(body, str) else "", re.I | re.M)
+    return dict((k.lower(), v.strip()) for k, v in re.findall(r"\*\*([\w ]+):\*\*\s*(.+)", m.group(1))) if m else None
+
+
 def parse(body: str | None) -> dict | None:
-    m = re.search(r"^##\s*Purpose metric\s*$([\s\S]*?)(?=^##\s|\Z)", body or "", re.I | re.M)
-    if not m:
+    """The ticket's outcome check: a Purpose metric, else a Recurrence check. None when there is none, or when it
+    can't be read (the fit check says which at PR time: outcome_gap). Only parsed, never executed."""
+    fields = _section(body, "Purpose metric")
+    if fields is not None:
+        try:
+            return {"measure": fields["measure"], "baseline": float(fields["baseline"].replace(",", "")),
+                    "target": fields["target"], "check_on": fields["check on"]}
+        except (KeyError, ValueError):
+            return None
+    fields = _section(body, "Recurrence check")
+    if fields is None or fields.get("probe") not in PROBES or not fields.get("check on"):
         return None
-    fields = dict((k.lower(), v.strip()) for k, v in re.findall(r"\*\*([\w ]+):\*\*\s*(.+)", m.group(1)))
     try:
-        return {"measure": fields["measure"], "baseline": float(fields["baseline"].replace(",", "")),
-                "target": fields["target"], "check_on": fields["check on"]}
-    except (KeyError, ValueError):
+        baseline = float(fields["baseline"].replace(",", "")) if fields.get("baseline") else None
+    except ValueError:
         return None
+    return {"kind": "recurrence", "measure": fields["probe"], "baseline": baseline,
+            "target": f"<= {PROBES[fields['probe']][1]:g}", "check_on": fields["check on"]}
+
+
+def check_date(spec: dict) -> datetime | None:
+    """'Check on: 2026-11-02' or '2026-11-02: the symptom has not come back': the leading date, or None."""
+    m = re.match(r"\s*(\d{4}-\d{2}-\d{2})\b", spec.get("check_on") or "")
+    try:
+        return datetime.fromisoformat(m.group(1)).replace(tzinfo=timezone.utc) if m else None
+    except ValueError:
+        return None
+
+
+def _defang(name: str) -> str:
+    return re.sub(r"[^\w.-]", "?", str(name))[:60]
+
+
+def outcome_gap(body: str | None, now: datetime | None = None) -> str | None:
+    """Why this ticket has no outcome check the daily run can measure, or None when it has one. At PR time a date
+    already passed is a gap too: the check would measure before the fix ran. Names are defanged before quoting."""
+    now = now or datetime.now(timezone.utc)
+    metric, recur = _section(body, "Purpose metric"), _section(body, "Recurrence check")
+    if metric is None and recur is None:
+        return ("no outcome check: add a '## Purpose metric' (a measure from purpose_metrics.MEASURES) or, when "
+                "nothing numeric fits, a '## Recurrence check' (a probe from purpose_metrics.PROBES)")
+    spec = parse(body)
+    if spec is None:
+        if metric is None and recur.get("probe") and recur["probe"] not in PROBES:
+            return f"unknown probe '{_defang(recur['probe'])}': register it in purpose_metrics.PROBES"
+        return ("malformed Purpose metric: needs Measure, Baseline (a number), Target and Check on" if metric is not None
+                else "malformed Recurrence check: needs Probe and Check on (Baseline, if given, a number)")
+    if spec["measure"] not in MEASURES and spec["measure"] not in RATES:
+        return f"unknown measure '{_defang(spec['measure'])}': register it in purpose_metrics.MEASURES"
+    try:
+        target_value(spec)
+    except ValueError:
+        return "unreadable target: use -N%, +N%, '<= N' or '>= N'"
+    due = check_date(spec)
+    if due is None:
+        return "unreadable Check on date: use YYYY-MM-DD"
+    if due <= now:
+        return "Check on is in the past: the check would measure before the fix ran"
+    return None
 
 
 def target_value(spec: dict) -> tuple[str, float]:
@@ -144,13 +300,9 @@ def met(spec: dict, value: float) -> bool:
 
 def is_due(issue: dict, now: datetime) -> bool:
     spec = parse(issue.get("body"))
-    if not spec:
-        return False
-    try:
-        due = datetime.fromisoformat(spec["check_on"]).replace(tzinfo=timezone.utc)
-    except ValueError:
-        return False
-    return now >= due and not any(c.startswith(OUTCOME_HEADING) for c in issue.get("comments", []))
+    due = check_date(spec) if spec else None
+    return bool(due and now >= due) and not any(isinstance(c, str) and c.startswith(OUTCOME_HEADING)
+                                                for c in issue.get("comments", []))
 
 
 def _diagnose(issue: dict, spec: dict, value: float, per: dict) -> str:
@@ -167,6 +319,20 @@ def _diagnose(issue: dict, spec: dict, value: float, per: dict) -> str:
 
 def outcome_text(issue: dict, spec: dict, value: float, per: dict, ok: bool, why: str | None) -> str:
     op, bound = target_value(spec)
+    per_mac = ", ".join(f"{k} {v:g}" for k, v in per.items())
+    if spec.get("kind") == "recurrence":
+        at_fix = f"; {spec['baseline']:g} when it was fixed" if spec.get("baseline") is not None else ""
+        lines = [OUTCOME_HEADING, "",
+                 f"{'✅ Fix held: the symptom has not come back' if ok else '⚠️ Missed purpose: the symptom came back'}: "
+                 f"probe **{spec['measure']}** = **{value:g}** (holds at {op} {bound:g}{at_fix}). "
+                 f"It counts {PROBES[spec['measure']][2]}. Per Mac: {per_mac}."]
+        if not ok:
+            lines += ["", "### Missed-purpose diagnosis", "", f"- **Intended:** the symptom stays at {op} {bound:g}.",
+                      f"- **Measured:** {value:g}.", "", "**Likely why**", "", why or "", "", "**Your options**", "",
+                      "- **Fix:** reopen this or open a follow-up ticket for what the diagnosis found, with its own outcome check.",
+                      "- **Accept:** the symptom is rare enough to live with; remove `missed-purpose` and say why.",
+                      "- **Adjust:** the probe's threshold is wrong; change it in `purpose_metrics.PROBES`."]
+        return "\n".join(lines)
     lines = [OUTCOME_HEADING, "",
              f"{'✅ Purpose met' if ok else '⚠️ Purpose missed'}: **{spec['measure']}** = **{value:g}** "
              f"(target {op} {bound:g}; baseline {spec['baseline']:g}). Per Mac: "
@@ -225,7 +391,16 @@ def run(now: datetime | None = None) -> list[dict]:
     now = now or datetime.now(timezone.utc)
     results = []
     for repo in REPOS:
-        for issue in labelled_issues(repo, LABEL):
+        # Every fix carries an outcome check, so `bug` tickets are read too (the newest 100; one list call each).
+        issues = {}
+        for name in (LABEL, BUG_LABEL):
+            for issue in labelled_issues(repo, name):
+                issues.setdefault(issue["number"], issue)
+        for issue in issues.values():
+            spec = parse(issue.get("body"))
+            due = check_date(spec) if spec else None
+            if not due or now < due:
+                continue  # comments are only fetched for a ticket whose check is due
             issue["comments"] = [c["body"] for c in _gh_json(f"repos/{repo}/issues/{issue['number']}/comments")] \
                 if issue.get("comments") else []
             if is_due(issue, now):

@@ -195,7 +195,8 @@ Several things happen automatically, in order:
 ### 15 · Proves its purpose ⚪
 
 - **What happens:** a ticket that promises something measurable ("fewer GitHub calls", "faster Approve") carries a
-  **purpose metric**. After its date, MARVIN measures it and comments **✅ met** or **❌ missed**.
+  **purpose metric**. After its date, MARVIN measures it and comments **✅ met** or **❌ missed**. Every fix carries
+  one too (2026-10-26), or a **recurrence check**: a registered probe that confirms the symptom hasn't come back.
 - **Loop ↩ the big one:** a missed purpose **becomes a new ticket**, back at step 1. That loop is what turns a pipeline
   into a system that improves itself.
 - **Status:** built (#304), but few tickets carry a metric yet.

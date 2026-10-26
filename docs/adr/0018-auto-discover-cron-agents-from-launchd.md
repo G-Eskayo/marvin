@@ -32,7 +32,8 @@ Alternatives considered:
 `generate.py` scans `~/Library/LaunchAgents/com.marvin.*.plist` at generation time. A plist counts
 as a **recurring agent** iff its `StartCalendarInterval` sets only `Hour`/`Minute` — no
 `Day`/`Month`/`Year`, since launchd only sets those three together for one specific calendar date
-(e.g. `com.marvin.verify-digest-fix`, a one-shot that already fired on 2026-07-07). See
+(e.g. `com.marvin.verify-digest-fix`, a one-shot that already fired on 2026-07-07; retired 2026-10-26, its purpose
+now covered by the standard outcome check in `lib/purpose_metrics.py`). See
 `brain-map/CONTEXT.md` for the term.
 
 For each recurring agent's id (its `Label` with the `com.marvin.` prefix stripped): if
