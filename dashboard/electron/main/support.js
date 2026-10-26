@@ -21,7 +21,7 @@ export function supportRole(config) {
   if (!s || typeof s !== 'object' || Array.isArray(s)) return { role: null, repos: [] }
   const watch = Array.isArray(s.watch) ? s.watch.filter((r) => typeof r === 'string' && REPO.test(r)) : []
   if (watch.length) return { role: 'helper', repos: watch }
-  if (typeof s.repo === 'string' && REPO.test(s.repo)) return { role: 'helped', repos: [s.repo] }
+  if (typeof s.repo === 'string' && REPO.test(s.repo)) return { role: 'helped', repos: [s.repo], autoApply: s.auto_apply === true }
   return { role: null, repos: [] }
 }
 
@@ -46,11 +46,12 @@ export function badgeCount(role, state) {
 }
 
 // Arguments for one support.py call, validated before anything runs. repos = this install's support repos.
-export function supportArgs(cmd, { repo, number, file, check } = {}, repos = []) {
-  const needsRequest = ['open', 'thread', 'resolve', 'draft', 'reply', 'followup', 'escalate', 'adapt']
+export function supportArgs(cmd, { repo, number, file, check, on } = {}, repos = []) {
+  const needsRequest = ['open', 'thread', 'resolve', 'draft', 'reply', 'followup', 'escalate', 'adapt', 'got-it']
   if (cmd === 'sync') return [SUPPORT_CLI, 'sync']
   if (cmd === 'file') return [SUPPORT_CLI, 'file', '--text-file', file]
   if (cmd === 'idea') return [SUPPORT_CLI, 'idea', '--text-file', file]
+  if (cmd === 'auto-apply') return [SUPPORT_CLI, 'auto-apply', on === true ? 'on' : 'off']
   if (!needsRequest.includes(cmd)) throw new Error(`not a support action: ${cmd}`)
   if (typeof repo !== 'string' || !repos.includes(repo)) throw new Error("that isn't one of this install's support repos")
   const n = Number(number)
@@ -112,11 +113,11 @@ export function ensureSupportDir(dir = SUPPORT_DIR) {
 export function supportNotices(prev, next, role) {
   if (!prev) return []
   const TITLES = role === 'helped'
-    ? { answered: 'MARVIN support: a reply is waiting', 'idea-ticket': 'MARVIN: your idea is now a ticket', 'idea-shipped': 'MARVIN: your idea was built' }
+    ? { answered: 'MARVIN support: a reply is waiting', verified: 'MARVIN fixed it for you', 'idea-ticket': 'MARVIN: your idea is now a ticket', 'idea-shipped': 'MARVIN: your idea was built' }
     : role === 'helper' ? { 'needs-you': 'MARVIN support: a request needs you' } : {}
   const before = new Map((prev.requests || []).map((r) => [`${r.repo}#${r.number}`, r]))
   return (next.requests || [])
-    .filter((r) => TITLES[r.state] && (r.open || r.state === 'idea-shipped'))
+    .filter((r) => TITLES[r.state] && (r.open || r.state === 'idea-shipped' || r.state === 'verified'))
     .filter((r) => {
       const was = before.get(`${r.repo}#${r.number}`)
       return !was || was.state !== r.state || (!was.open && r.open)
