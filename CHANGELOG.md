@@ -1,5 +1,7 @@
 # Changelog
 
+- Pipeline stage strip on PR and ticket cards (GitLab-style), showing where it failed ([#368](https://github.com/G-Eskayo/marvin/pull/368))
+
 - Support link: IT button, Support tab and counter (ADR 0073) ([#662](https://github.com/G-Eskayo/marvin/pull/662))
 
 - Cleanup sweep: back up leftover worktree edits to a branch, then remove the folder (Mini disk full again) ([#630](https://github.com/G-Eskayo/marvin/pull/630))
