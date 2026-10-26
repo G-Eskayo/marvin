@@ -153,3 +153,9 @@ The helper's reply box offers three ways to send, and says what each does:
   - The request goes back to `helper-trying`, and the loop limits count from that note, so MARVIN gets a fresh 2 fixes.
   - The note leads the prompt as GUIDANCE FROM THE HELPER. Guidance from the requester's account isn't guidance.
 - A crash while making an attempt still hands the request over, but it's now written to the log, because a silent fallback had hidden a prompt-building bug.
+
+## Amendment, 2026-10-26: act on standing decisions
+
+The helper's MARVIN handed back requests whose answers the helper had already decided ("a judgement call"), and it trusted a misleading health card over the evidence in the request. Now:
+- The private instance file `support-decisions.md` (capped at 4000 characters) leads the prompt as STANDING DECISIONS.
+- The rule changed: solve it whenever possible. What the decisions settle isn't a judgement call. Check facts in the code and the request before relying on a health card. Hand over only for the helper's own accounts or credentials, money, or an irreversible choice no decision covers. A step that needs the person (a deletion, a sign-in) is a you_step, not a hand-over.
