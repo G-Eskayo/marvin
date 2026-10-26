@@ -1520,3 +1520,17 @@ On 2026-10-22 #81, #218, #455, #459 and #563 were each planned 6-13 times (about
 - **Needs a person:** `ready-for-human` or `needs-info` (`ticket_policy.NEEDS_PERSON_LABELS`, `needs_person()`), whatever else the ticket still carries. The dispatcher, the auto send-back (no label, no comment, no paid repair) and refeed all skip it. Refeed at its cap adds `ready-for-human` and takes `ready-for-agent` and every claim off (it used to leave `ready-for-agent`, so #218 ran every ~15 min); a sent-back flag on a ticket already with a person is dropped quietly, so "It needs a person" is posted once. A person sends it back by swapping the label to `ready-for-agent`. Cost: an O(labels) set check per ticket on lists each scan already holds; no new calls.
 - **Failure streak:** `run_ticket._trailing_streaks` skips every MARVIN comment (`ticket_policy.automated_comment`: the ticket agents' prefix, triage's disclaimer, the send-back and repair lines) as it already skipped model-unavailable ones. A person's comment, a passing run (`Verification passed`) or a hand-off to a person (a park or a loop guard, marked `<!-- marvin:handed-to-person -->` from now on; old texts still recognised) ends it. #81 failed 5 times before parking because the conflict lines reset it. Cost: O(comments x body length) over the one thread fetch the run already makes.
 - **One plan per run:** in `_default_executor`, rounds 2-3 of one `execute_ticket` reuse round 1's design doc and task list (on disk in the worktree) and the executor gets the verdict, the metrics that did not improve and the must-fix findings; only a missing or empty task list plans again. Round 1 always plans, so a design doc merged into main is never taken for this run's. Saves up to two flagship planning calls (~$1.20 each) per failed run.
+
+## Engine, instance and the default build (ADR 0071, decided 2026-10-25)
+
+### Language
+
+- **Engine**: the public MARVIN code anyone can download (`G-Eskayo/marvin`). It holds no person's or machine's
+  names, data or state.
+- **Instance**: one owner's private state for an engine: their plans, screenshots, tickets repo, accounts and
+  feature choices. Gil's is `G-Eskayo/marvin-instance`. One engine, many instances.
+- **Default build**: what a stranger gets from a fresh download of the engine with no help from Gil or MARVIN:
+  the engine plus a new, empty instance, reaching what Noah's Mac has (dashboard, the MARVIN button, their own
+  private repo, accounts connected). "Done" means a clean-install test passes in a fresh virtual machine.
+- **Add-on**: a feature that ships in the engine but is off in the default build until the owner turns it on
+  (portfolio, resume-tailor, Seal ingest). A possible paid feature. Shows a "not set up" state when off.
