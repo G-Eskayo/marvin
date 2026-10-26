@@ -215,6 +215,55 @@ Batch-upload offline exchanges. Idempotent deduplication by client-assigned mess
 - Rotation policy (session length threshold) is applied after the review, same as chat turns.
 - Pending summary is NOT consumed by the offline endpoint (only by chat turns).
 
+### `POST /voice`
+
+Send a voice query to be processed by Claude (deep brain) or Ollama (fast brain), receiving streamed text chunks for speech synthesis.
+
+**Request body**:
+```json
+{
+  "text": "<user-query>",
+  "device": "homepod|mac|iphone|watch",
+  "clientId": "<optional-unique-id-for-dedup>",
+  "abilities": "<optional-ability-string>",
+  "stream": true
+}
+```
+
+- `text` (required, string): The voice query to process. Must be non-empty and ≤10,000 characters.
+- `device` (required, enum): The originating device. Case-insensitive: `homepod`, `mac`, `iphone`, or `watch`.
+- `clientId` (optional, string): Unique identifier for deduplication. If a message with this ID already exists in the thread store, the response succeeds but no new brain call is made.
+- `abilities` (optional, string): Comma-separated list of abilities to consider when routing. Reserved for future decision logic.
+- `stream` (optional, boolean): Enable streaming mode. Default `true`. When true, sentence chunks arrive incrementally as newline-delimited JSON.
+
+**Response** (streaming, `application/x-ndjson`):
+
+Each line is a JSON object:
+- `{ "type": "metadata", "turnId": "<id>", "brain": "deep"|"fast", "stream": <bool> }` — initial metadata
+- `{ "type": "sentence", "text": "<spoken-sentence>" }` — a complete sentence, ready for TTS
+- `{ "type": "error", "message": "<reason>", "fallback": "<spoken-fallback>" }` — brain error with fallback sentence
+- `{ "type": "...other-event-types..." }` — other session events (forwarded raw from the brain)
+
+**Semantics**:
+
+- **Brain routing**: `chooseBrain(text, opts)` decides whether to use Claude (deep) or Ollama qwen2.5:3b (fast). Provisional default: always deep (Claude), pending owner decision.
+- **Deep brain path** (Claude): Submits text to `runSession()` with the same rotation/summary handling as chat turns. The `permissionHookPath` is wired to gate side-effecting tool calls.
+- **Fast brain path** (Ollama): POST to Ollama's `/api/chat` (`model: 'qwen2.5:3b'`) and streams the response.
+- **Sentence stream**: All text from the chosen brain is passed through `toSpeakable()` (strips markdown, links, code blocks) and accumulated into `sentence_stream`, which emits complete sentences on `.`, `?`, or `!` boundaries.
+- **Logging**: Four stages are logged to `~/.claude/logs/voice-latency.jsonl`: `received` (timestamp when request arrived), `routed` (before brain call), `first_token` (first text delta), `first_sentence` (first complete sentence). Each line includes `turnId`, `stage`, `tsMs`, and `timestamp`.
+- **Fallback on unreachable brain**: If the chosen brain becomes unavailable (network error, Ollama down, etc.), a plain fallback sentence is emitted and appended to the thread store instead of silence.
+- **Deduplication**: If `clientId` is provided and a message with that ID already exists, the response succeeds immediately with `{ "ok": true, "turnId": "<id>", "deduped": true }` (non-streaming response) with no brain call.
+- **Thread store integration**: User message is appended with `source: "voice"`. Assistant message is appended at the end with the full accumulated text.
+
+**Error responses**:
+- `422 { "ok": false, "error": "Missing or invalid text field" }` — empty or missing text
+- `422 { "ok": false, "error": "Text exceeds maximum length of 10000" }` — text too long
+- `422 { "ok": false, "error": "Invalid or missing device field. Valid: homepod, mac, iphone, watch" }` — invalid device enum
+- `400 { "ok": false, "error": "Invalid JSON" }` — malformed request body
+- `500 { "ok": false, "error": "<message>" }` — server error
+
+**Latency target** (unverified until smoke test): <1s from received to first sentence on the Mini with Ollama (fast brain). Deep brain (Claude) depends on network and model load; no specific target yet.
+
 ## Permission bridge: side-effecting actions
 
 When the mobile client sends a message that triggers a side-effecting tool call (Bash, Edit, Write, etc.), the `permission_hook.js` subprocess intercepts the tool use, creates a pending action, and blocks until the action is approved or denied via these endpoints.

@@ -9,6 +9,7 @@ import { createDashboardApiRouter } from './dashboard_api.js'
 import { createDashboardGhApiRouter } from './dashboard_gh_api.js'
 import { createChatApiRouter } from './chat_api.js'
 import { createOfflineBatchApiRouter } from './offline_batch_api.js'
+import { createVoiceApiRouter } from './voice_api.js'
 import { createThreadStore } from './thread_store.js'
 import { createPendingActionsStore } from './pending_actions.js'
 import { createPermissionApiRouter } from './permission_api.js'
@@ -16,11 +17,15 @@ import { createLiveChannel } from './live_channel.js'
 import { createLiveApiRouter } from './live_api.js'
 import { createActionsApiRouter } from './actions_api.js'
 import { postJson } from './post_json.js'
+import { callFastBrain } from './fast_brain.js'
+import { chooseBrain } from './brain_router.js'
+import { logStage } from './voice_latency.js'
 import { postTicketInput } from '../electron/main/ticket_input.js'
 import { approveMr, denyMr } from '../electron/main/mr_review.js'
 import { resolveServiceDefaults } from '../electron/main/device_identity.js'
 
 const execFileP = promisify(execFile)
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const TAILSCALE_BIN = '/Applications/Tailscale.app/Contents/MacOS/Tailscale'
 const PORT = process.env.PORT || 7880
@@ -59,6 +64,13 @@ const dashboardGhApiRouter = createDashboardGhApiRouter({ mrWebhookUrl: MR_WEBHO
 const threadStore = createThreadStore()
 const chatApiRouter = createChatApiRouter({ threadStore })
 const offlineBatchApiRouter = createOfflineBatchApiRouter({ threadStore })
+const voiceApiRouter = createVoiceApiRouter({
+  threadStore,
+  callFastBrain,
+  chooseBrain,
+  logStage,
+  permissionHookPath: path.join(__dirname, 'permission_hook.js')
+})
 const pendingActionStore = createPendingActionsStore()
 const permissionApiRouter = createPermissionApiRouter({ pendingActionStore })
 const liveChannel = createLiveChannel()
@@ -104,6 +116,10 @@ const server = createServer(async (req, res) => {
 
   // Route through chat API
   handled = await chatApiRouter(req, res)
+  if (handled) return
+
+  // Route through voice API
+  handled = await voiceApiRouter(req, res)
   if (handled) return
 
   // Route through offline batch API
