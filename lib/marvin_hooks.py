@@ -68,7 +68,8 @@ _EDITS = "Write|Edit|MultiEdit|NotebookEdit"
 
 HOOKS: list[Hook] = [
     Hook("PreToolUse", _py("lib/gh_merge_guard.py"), _ALL, "Bash"),
-    *(Hook("PostToolUse", _py(s), _INTERACTIVE, "Write|Edit") for s in (
+    *(Hook("PostToolUse", _py(s), _INTERACTIVE, _EDITS) for s in (
+        "lib/stale_decision_hook.py",
         "skills/self-improve/scripts/rebuild-manifest.py",
         "skills/handoff/scripts/emit-resume-prompt.py",
         "skills/qa-agent/scripts/qa_session_capture.py",

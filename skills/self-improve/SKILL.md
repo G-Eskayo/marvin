@@ -74,6 +74,8 @@ Read [quality-filter.md](quality-filter.md). A new skill must pass all three gat
 - **Evidence gate**: is the approach grounded, not just convenient?
 - **Value gate**: does codifying this meaningfully improve outcomes?
 
+Also check `~/.claude/contradictions.md` for any open flags related to the pattern you're about to codify. If a decision it relies on is flagged as stale or contradicted, resolve that contradiction first — don't lock in a skill that encodes disputed intent.
+
 If it fails any gate, write a brief note on why and stop. Not every pattern is worth locking in.
 
 ### 3. Draft or update the skill
