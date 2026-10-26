@@ -12,9 +12,11 @@ conversation with MARVIN on the Mac, then the Voice surface on the iPhone (decid
 
 Facts that shape it (checked 2026-10-26):
 
-- **A HomePod's microphone answers only to Siri.** No third-party assistant can listen on it, and the hobbyist
-  jailbreak (checkm8 over a hidden port) risks bricking the speaker. A HomePod can still *play* anything over AirPlay 2,
-  and Siri can hand a request to a Shortcut ("personal requests") that calls MARVIN over Tailscale.
+- **A HomePod's microphone answers only to Siri** in Apple's software. A HomePod can *play* anything over AirPlay 2,
+  and Siri can hand a request to a Shortcut ("personal requests") that calls MARVIN over Tailscale. The 1st-gen
+  HomePod can be rooted (checkra1n, a bootrom flaw, since 2020), but only tethered, through a diagnostic port under a
+  glued base and a custom adapter; the risk is mechanical, not a software brick. Owning its microphone that way is a
+  research experiment (#651), so it can't be the first way in.
 - **The M4 Mac mini has no microphone.** The MacBook has one; the Mini needs a USB or Bluetooth mic, or another device
   listening for it.
 - **OpenJarvis (Stanford, Apache-2.0) has a basic voice loop:** record until silence, Whisper, answer, speak. It has no
@@ -60,8 +62,9 @@ Facts that shape it (checked 2026-10-26):
 ## Consequences
 
 - The HomePods work with MARVIN within days, before the Mac loop exists, and nothing has to be jailbroken.
-- "Hey Siri" stays as the first word on a HomePod until the owner chooses to put a mic-equipped device beside it
-  for the Mac loop; that is the price of Apple locking the HomePod's microphone.
+- "Hey Siri" stays as the first word on a HomePod until either a mic-equipped device beside it runs the Mac loop or
+  the #651 root experiment gives MARVIN the HomePod's own microphone. The owner is fine with replacing the OS on the
+  1st-gen HomePods and Apple TV (2026-10-26).
 - The endpoint, its Thread and its confirmation path are written once and shared by all three ways in.
 - The Siri doorway cannot stream (a Shortcut waits for the whole reply), so it uses the fast brain's first answer and
   sends the deep brain's result to the phone when it takes longer than a few seconds.
