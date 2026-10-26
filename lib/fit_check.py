@@ -35,9 +35,9 @@ _FIX_TITLE = re.compile(r"^\s*fix(\(|:|\b)", re.I)
 
 
 def outcome_check(body: str | None, title: str = "", labels: list[str] | None = None) -> dict | None:
-    """Every fix gets an outcome check (Gil, 2026-10-26): a `bug` ticket, or a `fix:` title, must carry a Purpose
+    """Every fix gets an outcome check (decided 2026-10-26): a `bug` ticket, or a `fix:` title, must carry a Purpose
     metric or a Recurrence check (lib/purpose_metrics.py), so the daily outcome check later proves the fix held.
-    A warning, not a block, until Gil decides to hard-block. A malformed one is flagged on any ticket.
+    A warning, not a block, until the owner decides to hard-block. A malformed one is flagged on any ticket.
     None when there is nothing to check (not a fix, and no outcome section)."""
     import purpose_metrics as pm
     labels = [l for l in (labels or []) if isinstance(l, str)]
