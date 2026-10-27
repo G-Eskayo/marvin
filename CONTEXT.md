@@ -1488,6 +1488,10 @@ A GitHub 5xx (`remote: Internal Server Error`, HTTP 500, 503) is classified `GIT
   regression itself and when it couldn't. Measures: `regression-recurrences-30d`, `regression-self-fix-rate`,
   `regression-hours-to-fixed-30d` (from the ladder's log until marvin.db, #621, lands). The fit check suggests (⚠️,
   not a block) `## Watch` and `## First aid` on a `bug` ticket with a Recurrence check.
+- **Rung-3 auto-merge** (ADR 0064 amendment, 2026-10-26): a rung-3 fix PR for a known incident's regression may
+  merge itself even in core areas (not the merge gate or auto-merge itself), with a failing-first regression test,
+  the mutation check, a green main and passing checks, one per incident per day, and an automatic revert if the probe
+  still trips after merge. Shadow mode first (`lib/auto_merge_regression.py`); on only when Gil says yes.
 - **Missed purpose** (decided 2026-10-08): when an outcome check misses its target, MARVIN always writes a
   **diagnosis** (a Background analyst run, full Memory) as a ticket comment: what it was meant to do, what
   happened (numbers), why it fell short (evidence) and the options (iterate with a drafted follow-up,
