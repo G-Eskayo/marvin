@@ -34,7 +34,9 @@ const entries = [
   entry('2026-10-24', 'research_colony', '0.35',
     '## Directly Relevant\n\n**Selective human audits for autonomous loops** — a method for choosing which outputs get a human audit, ' +
     'ranked by how much a label would move the threshold. Worth a read before the next calibration pass. [arxiv](http://arxiv.org/abs/0000.00000)\n\n' +
-    '## Worth Watching\n\n- Fixture item two: a benchmark of small judges against large ones.\n- Fixture item three: <script>alert("entry text is shown as text")</script>',
+    '## Worth Watching\n\n- Fixture item two: a benchmark of small judges against large ones.\n- Fixture item three: <script>alert("entry text is shown as text")</script>\n' +
+    '- Fixture item four: a [javascript: link](javascript:alert(1)) stays plain text.\n\n> A quoted note from the source.\n\n' +
+    '| Source | Items |\n|---|---|\n| arXiv | 12 |\n| GitHub | 7 |',
     'possible unsupported claim'),
   entry('2026-10-25', 'daily_digest', '0.42', '## Feature Combinations\n\nFixture digest text for the second card.', ''),
   ...Array.from({ length: 10 }, (_, i) => entry('2026-10-26', 'self_improve', '0.31', `Fixture retrospective line ${i + 3}.`, 'flagged before landing'))

@@ -32,3 +32,42 @@ export function progressOf(answered, pending) {
 }
 
 export const validNote = (text) => typeof text === 'string' && !!text.trim() && text.length <= NOTE_CAP
+
+// The card's excerpt: the entry's first part as markdown, cut cleanly. Cuts only at line ends, preferring the last
+// paragraph break within `budget` characters; never inside a code fence (a fence still open at the cut is closed).
+// A table or list cut at a line end is still a table or list. One huge line is kept whole; the card clips it.
+const FENCE = /^\s{0,3}(```|~~~)/
+export function excerptMarkdown(body, budget = 400) {
+  if (typeof body !== 'string' || !body) return { text: '', cut: false }
+  const lines = body.split('\n')
+  let inFence = false
+  let fenceMark = '```'
+  let used = 0
+  let lastBreak = -1 // index of the last blank line outside a fence
+  let end = lines.length
+  for (let i = 0; i < lines.length; i++) {
+    const m = FENCE.exec(lines[i])
+    if (m) {
+      if (!inFence) fenceMark = m[1]
+      inFence = !inFence
+    }
+    if (!inFence && !lines[i].trim()) lastBreak = i
+    used += lines[i].length + 1
+    if (used >= budget && i < lines.length - 1) {
+      end = !inFence && lastBreak > 0 ? lastBreak : i + 1
+      break
+    }
+  }
+  if (end >= lines.length) return { text: body, cut: false }
+  const kept = lines.slice(0, end)
+  while (kept.length && !kept[kept.length - 1].trim()) kept.pop()
+  // Re-scan what is kept: a fence open at the cut is closed so the rest never renders as code.
+  let open = false
+  let mark = '```'
+  for (const l of kept) {
+    const m = FENCE.exec(l)
+    if (m) { if (!open) mark = m[1]; open = !open }
+  }
+  if (open) kept.push(mark)
+  return { text: kept.join('\n'), cut: true }
+}

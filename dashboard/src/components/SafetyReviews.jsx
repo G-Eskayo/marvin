@@ -1,9 +1,38 @@
-import { useEffect, useState } from 'react'
-import { sourceLabel, shortDate, fixed2, pickCurrent, progressOf, validNote, NOTE_CAP } from '../lib/safety_reviews.js'
+import { useEffect, useMemo, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import { markdownComponents } from './Markdown.jsx'
+import { safeUrl } from '../lib/issueBody.js'
+import { sourceLabel, shortDate, fixed2, pickCurrent, progressOf, validNote, NOTE_CAP, excerptMarkdown } from '../lib/safety_reviews.js'
 
 // Health ▸ Safety reviews (approved 2026-10-26, ADR 0015's missing review step): the quarantine one card at a time.
 // Fine = approve, Fix it = modify with a note, Block = deny; each answer is recorded as a calibration label at once.
-// Entry text is untrusted model output: every field is rendered as React text, never as HTML or markdown.
+// Entry text is untrusted model output. It is rendered as markdown (Gil, 2026-10-26: "make it the most human readable")
+// with the Docs tab's styles (Markdown.jsx markdownComponents) and the ticket body's URL sanitising (issueBody.safeUrl),
+// and stricter than both: raw HTML shows as escaped text (react-markdown without rehype-raw), no image ever loads (an
+// image is its alt text), and only http(s) and mailto links are links, opened outside the app like Docs links.
+
+const EXTERNAL = /^(https?:|mailto:)/i
+const entryComponents = {
+  ...markdownComponents,
+  a: ({ href, children }) =>
+    href && EXTERNAL.test(href) ? (
+      <a className="text-blue-400 hover:underline" href={href} target="_blank" rel="noreferrer noopener">{children}</a>
+    ) : (
+      <span>{children}</span>
+    ),
+  img: ({ alt }) => <span className="text-neutral-500">[image: {alt || 'no description'}]</span>
+}
+
+export function EntryMarkdown({ text }) {
+  return (
+    <div className="break-words text-sm">
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={entryComponents} urlTransform={(url) => safeUrl(url) ?? ''}>
+        {text}
+      </ReactMarkdown>
+    </div>
+  )
+}
 
 const BTN = 'rounded-md border border-neutral-700 px-3 py-1.5 text-sm text-neutral-200 transition-colors hover:border-neutral-500 disabled:opacity-50'
 
@@ -11,6 +40,7 @@ export function ReviewCard({ entry, onAnswer, busy = false, initialExpanded = fa
   const [expanded, setExpanded] = useState(initialExpanded)
   const [fixing, setFixing] = useState(initialFixing)
   const [note, setNote] = useState('')
+  const excerpt = useMemo(() => excerptMarkdown(entry.body), [entry.body])
   return (
     <article data-review-id={entry.id} className="flex flex-col gap-2 rounded-lg border border-neutral-800 bg-neutral-950/60 p-4">
       <h3 className="text-sm font-medium text-white">{sourceLabel(entry.loop)} · {shortDate(entry.date)}</h3>
@@ -19,11 +49,15 @@ export function ReviewCard({ entry, onAnswer, busy = false, initialExpanded = fa
       </p>
       {entry.reason && <p className="text-xs text-neutral-400">Why held: {entry.reason}</p>}
       {expanded ? (
-        <pre className="mt-2 max-h-[60vh] overflow-auto whitespace-pre-wrap break-words rounded bg-neutral-900 p-3 font-mono text-xs text-neutral-300">
-          {entry.body}{entry.truncated ? '\n…' : ''}
-        </pre>
+        <div className="mt-2 max-h-[60vh] overflow-auto rounded bg-neutral-900 p-3">
+          <EntryMarkdown text={entry.body} />
+          {entry.truncated && <p className="text-neutral-500">…</p>}
+        </div>
       ) : (
-        <p className="mt-2 break-words text-sm text-neutral-200">“{entry.excerpt}”</p>
+        <div className="mt-2 max-h-48 overflow-hidden">
+          <EntryMarkdown text={excerpt.text} />
+          {excerpt.cut && <p className="text-neutral-500">…</p>}
+        </div>
       )}
       <div className="flex justify-end">
         <button type="button" onClick={() => setExpanded(!expanded)} className="text-xs text-neutral-400 hover:text-neutral-200">

@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createSafetyReviews, cleanList } from '../electron/main/safety_reviews.js'
-import { sourceLabel, shortDate, pickCurrent, progressOf, validNote, NOTE_CAP } from '../src/lib/safety_reviews.js'
-import { ReviewCard, SafetyReviewsView } from '../src/components/SafetyReviews.jsx'
+import { sourceLabel, shortDate, pickCurrent, progressOf, validNote, NOTE_CAP, excerptMarkdown } from '../src/lib/safety_reviews.js'
+import { ReviewCard, SafetyReviewsView, EntryMarkdown } from '../src/components/SafetyReviews.jsx'
 
 // Health ▸ Safety reviews (approved 2026-10-26): the quarantine's entries one card at a time; Fine / Fix it / Block
 // tick that entry's box through process_quarantine_reviews.py (its own tests cover the file). These try to break the
@@ -105,7 +105,6 @@ describe('the card', () => {
       'A method for choosing which outputs get a human audit', 'Show full item ▾', 'Fine, let it through', 'Fix it', 'Block']) {
       expect(out).toContain(s)
     }
-    expect(out).not.toContain('in full.')
   })
 
   it('no reason means no "Why held" line', () => {
@@ -131,6 +130,18 @@ describe('the card', () => {
     expect(out).toContain('&lt;script&gt;alert(1)&lt;/script&gt;')
   })
 
+  it('the excerpt and the full item are rendered markdown, not raw text', () => {
+    const md = '## Directly Relevant\n\n**Bold title** — text with a [link](https://example.com/x).\n\n- one\n- two\n\n> quoted'
+    const card = renderToStaticMarkup(<ReviewCard entry={E({ body: md, excerpt: 'plain' })} onAnswer={() => {}} />)
+    expect(card).toMatch(/<h2[^>]*>Directly Relevant<\/h2>/)
+    expect(card).toMatch(/<strong[^>]*>Bold title<\/strong>/)
+    expect(card).not.toContain('**')
+    const full = renderToStaticMarkup(<ReviewCard entry={E({ body: md })} onAnswer={() => {}} initialExpanded />)
+    expect(full).toMatch(/<li[^>]*>one<\/li>/)
+    expect(full).toMatch(/<blockquote[^>]*>/)
+    expect(full).toContain('href="https://example.com/x" target="_blank" rel="noreferrer noopener"')
+  })
+
   it('a huge item is shown cut, saying so', () => {
     expect(html({ entry: E({ truncated: true }), initialExpanded: true })).toContain('…')
   })
@@ -148,5 +159,96 @@ describe('the view', () => {
     expect(renderToStaticMarkup(<SafetyReviewsView data={{ entries: [], pending: 0 }} answered={0} onAnswer={() => {}} />)).toContain('Nothing waiting for review.')
     expect(renderToStaticMarkup(<SafetyReviewsView data={null} answered={0} onAnswer={() => {}} />)).toContain('Loading…')
     expect(renderToStaticMarkup(<SafetyReviewsView data={{ entries: [], pending: 0, error: 'python missing' }} answered={0} onAnswer={() => {}} />)).toContain('python missing')
+  })
+})
+
+describe('entry markdown is untrusted (model output)', () => {
+  const md = (text) => renderToStaticMarkup(<EntryMarkdown text={text} />)
+
+  it('script tags and inline HTML render as escaped text', () => {
+    const out = md('hi <script>alert(1)</script> and <b onclick="x()">b</b>')
+    expect(out).not.toMatch(/<script|<b[ >]|<[^>]*onclick=/i)
+    expect(out).toContain('&lt;script&gt;alert(1)&lt;/script&gt;')
+  })
+
+  it('a raw HTML block renders as text, not elements', () => {
+    const out = md('<div onmouseover="x()"><iframe src="https://evil.example"></iframe></div>\n\n<style>body{display:none}</style>')
+    expect(out).not.toMatch(/<div[^>]*onmouseover|<iframe|<style|<[^>]*onmouseover=/i)
+    expect(out).toContain('&lt;iframe')
+  })
+
+  it('images never load: <img onerror> is text, markdown images show their alt text only', () => {
+    const out = md('<img src=x onerror=alert(1)>\n\n![tracker](https://evil.example/pixel.png) ![d](data:image/png;base64,AAAA)')
+    expect(out).not.toMatch(/<img/i)
+    expect(out).toContain('[image: tracker]')
+    expect(out).toContain('&lt;img src=x onerror=alert(1)&gt;')
+  })
+
+  it('javascript:, data:, file: and vbscript: links are not links', () => {
+    for (const href of ['javascript:alert(1)', 'JaVaScRiPt:alert(1)', 'data:text/html,<script>alert(1)</script>', 'file:///etc/passwd', 'vbscript:x', ' javascript:alert(1)']) {
+      const out = md(`[click](${href})`)
+      expect(out, href).not.toMatch(/<a /)
+      expect(out, href).toContain('click')
+    }
+    expect(md('<javascript:alert(1)>')).not.toMatch(/href="javascript/i)
+  })
+
+  it('in-app links from entry text are not followed (dash://, relative)', () => {
+    expect(md('[t](dash://ticket/o/r/1) [d](docs/x.md)')).not.toMatch(/<a /)
+  })
+
+  it('a huge table renders (as a table) without throwing', () => {
+    const rows = Array.from({ length: 2000 }, (_, i) => `| ${i} | <b>${i}</b> |`).join('\n')
+    const out = md(`| a | b |\n|---|---|\n${rows}`)
+    expect(out).toContain('<table')
+    expect(out).not.toContain('<b>')
+  })
+
+  it('an unclosed code fence and deeply nested quotes stay contained', () => {
+    const fence = md('before\n\n```js\n<script>alert(1)</script>\nno end')
+    expect(fence).toMatch(/<pre/)
+    expect(fence).toContain('&lt;script&gt;')
+    const nested = md('>'.repeat(200) + ' deep')
+    expect(nested).toContain('deep')
+    expect(nested).toMatch(/<blockquote/)
+  })
+})
+
+describe('excerptMarkdown: the first part, cut cleanly', () => {
+  it('a short entry is whole and not cut', () => {
+    expect(excerptMarkdown('## H\n\ntext')).toEqual({ text: '## H\n\ntext', cut: false })
+  })
+
+  it('cuts at a paragraph boundary within the budget', () => {
+    const body = '## H\n\n' + 'a'.repeat(200) + '\n\n' + 'b'.repeat(400) + '\n\nlast'
+    const { text, cut } = excerptMarkdown(body, 300)
+    expect(cut).toBe(true)
+    expect(text).toBe('## H\n\n' + 'a'.repeat(200))
+  })
+
+  it('never cuts inside a code fence; an unclosed fence is closed', () => {
+    const body = 'intro\n\n```\n' + Array.from({ length: 50 }, (_, i) => `line ${i}`).join('\n') + '\n```\n\nafter'
+    const { text } = excerptMarkdown(body, 60)
+    expect(text.match(/```/g).length % 2).toBe(0)
+    const open = excerptMarkdown('```\n' + 'x\n'.repeat(500), 50).text
+    expect(open.match(/```/g).length).toBe(2)
+  })
+
+  it('a huge first table is cut at a row, still a table', () => {
+    const body = '| a | b |\n|---|---|\n' + Array.from({ length: 500 }, (_, i) => `| ${i} | x |`).join('\n')
+    const { text, cut } = excerptMarkdown(body, 200)
+    expect(cut).toBe(true)
+    expect(text.split('\n').every((l) => l.startsWith('|'))).toBe(true)
+    expect(renderToStaticMarkup(<EntryMarkdown text={text} />)).toContain('<table')
+  })
+
+  it('never cuts mid-line: a single huge line is kept whole (the card clips it visually)', () => {
+    const line = '**bold** ' + 'word '.repeat(400)
+    expect(excerptMarkdown(line + '\n\nnext', 100)).toEqual({ text: line, cut: true })
+  })
+
+  it('empty or non-string input is empty', () => {
+    expect(excerptMarkdown('')).toEqual({ text: '', cut: false })
+    expect(excerptMarkdown(null)).toEqual({ text: '', cut: false })
   })
 })
