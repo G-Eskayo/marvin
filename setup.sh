@@ -401,6 +401,14 @@ PATTERNS
     log "Push guard installed: $hook"
 }
 
+# Keeps the graphify code graph current however commits land (marvin#691): post-commit, post-merge (code_sync pulls
+# with git merge), post-rewrite. Only matters where the graph has been built; idempotent.
+install_graphify_hooks() {
+    [[ -d "$MARVIN_DIR/graphify-out" ]] || { info "No graphify-out yet: graph freshness hooks skipped"; return; }
+    "$VENV_PYTHON" "$MARVIN_DIR/lib/graphify_freshness.py" install-hooks "$MARVIN_DIR" \
+        && log "Graph freshness hooks installed" || warn "Graph freshness hooks not installed"
+}
+
 # =============================================================
 # 8. INITIAL MANIFEST + EMBEDDINGS
 # =============================================================
@@ -485,6 +493,7 @@ main() {
     deploy_retrospective_log
     configure_claude
     install_push_guard
+    install_graphify_hooks
     initial_setup
     start_ollama
     pull_model

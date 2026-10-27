@@ -16,7 +16,7 @@ import { prsForOrderCheck, listPipelinePrs, denyMr, fetchTicketContext, sentBack
 import { approveMrStream } from './approve_stream.js'
 import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
 import { readDispatchStatus } from './dispatch_status.js'
-import { readHealthStatus, runHealthCheckNow } from './health.js'
+import { readHealthStatus, runHealthCheckNow, rebuildCodeGraph } from './health.js'
 import { createSafetyReviews } from './safety_reviews.js'
 import { buildBootData, createBootGate } from './boot_data.js'
 import { readOnboardingPlans } from './onboarding.js'
@@ -34,6 +34,7 @@ import { recordRefusal } from '../../webhook-server/refusal_log.js'
 import { sendBackForOptions } from './decisions_submit.js'
 import { createLocalFirst, coalesce, createIssueReader, createRepoHeadCheck } from './local_first.js'
 import { createMrActions } from './mr_actions.js'
+import { createInstanceHandlers } from './instance.js'
 
 const mergeOps = createMergeOps()
 // marvin#568: every change to a merge op is pushed to the renderer (the card subscribes; it reads once on mount).
@@ -317,6 +318,12 @@ function registerSessionHandlers() {
   ipcMain.handle('portfolio:openDevSite', () => openDevSite())
 }
 
+function registerInstanceHandlers() {
+  const handlers = createInstanceHandlers()
+  ipcMain.handle('instance:features', handlers.features)
+  ipcMain.handle('instance:setFeature', handlers.setFeature)
+}
+
 // Boot sequence (#431): plays on the first window load of each app launch; reloads skip it.
 const bootGate = createBootGate()
 
@@ -361,6 +368,10 @@ function registerHealthHandlers() {
   ipcMain.handle('health:refresh', async () => {
     await runHealthCheckNow(execFileAsync)
     return readHealthStatus()
+  })
+  ipcMain.handle('health:rebuildGraph', async () => {
+    const result = await rebuildCodeGraph(execFileAsync)
+    return { ...result, status: readHealthStatus() }
   })
   ipcMain.handle('health:readiness', () => readOnboardingPlans(readRegistry()))
   ipcMain.handle('health:setMergeFromDashboard', async (_event, repo, value) => {
@@ -1096,6 +1107,7 @@ app.whenReady().then(() => {
   registerDispatchHandlers()
   registerHealthHandlers()
   registerSessionHandlers()
+  registerInstanceHandlers()
   registerDocsHandlers()
   registerActivityHandlers()
   createWindow()

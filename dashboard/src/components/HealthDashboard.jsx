@@ -231,6 +231,17 @@ export default function HealthDashboard({ nav }) {
     }
   }
 
+  // marvin#691: rebuild the code graph, then show the re-run check in place (green on success, the error on failure)
+  async function handleRebuildGraph() {
+    const r = await window.api.health.rebuildGraph()
+    if (r?.status) {
+      setStatus(r.status)
+      const fresh = r.status.checks?.find((c) => c.id === selected?.id)
+      if (fresh) setSelected(fresh)
+    }
+    return r
+  }
+
   async function reloadReadinessAndProfiles() {
     const [plans, profsList] = await Promise.all([window.api.health.readiness(), window.api.profiles.list()])
     setReadiness(plans)
@@ -245,7 +256,7 @@ export default function HealthDashboard({ nav }) {
   }
 
   if (selected) {
-    return <HealthDrilldown check={selected} onBack={() => setSelected(null)} />
+    return <HealthDrilldown check={selected} onBack={() => setSelected(null)} onRebuildGraph={handleRebuildGraph} />
   }
 
   const cov = status.coverage

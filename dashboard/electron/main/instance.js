@@ -1,4 +1,4 @@
-import { readFileSync } from 'fs'
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
 import { execFileSync } from 'child_process'
 import { homedir } from 'os'
 import path from 'path'
@@ -59,4 +59,38 @@ export const support = () => supportRole(load().config)
 
 export function reset() {
   cache = null
+}
+
+const KNOWN_ADDONS = ['portfolio', 'resume_tailor', 'seal_ingest']
+
+export function createInstanceHandlers() {
+  return {
+    features: async () => {
+      const features = load().config.features || {}
+      return {
+        portfolio: features.portfolio === true,
+        resume_tailor: features.resume_tailor === true,
+        seal_ingest: features.seal_ingest === true
+      }
+    },
+    setFeature: async (_event, name, value) => {
+      if (!KNOWN_ADDONS.includes(name)) {
+        throw new Error(`Unknown add-on: ${name}`)
+      }
+      const config = load().config
+      if (!config.features) {
+        config.features = {}
+      }
+      config.features[name] = value
+      // Write back to instance.json
+      const configPath = path.join(instanceDir(), 'instance.json')
+      const dir = path.dirname(configPath)
+      if (!existsSync(dir)) {
+        mkdirSync(dir, { recursive: true })
+      }
+      writeFileSync(configPath, JSON.stringify(config, null, 2))
+      reset()  // Clear cache so next read gets fresh data
+      return { ok: true }
+    }
+  }
 }
