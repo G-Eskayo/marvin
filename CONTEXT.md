@@ -78,6 +78,11 @@ one job, starting with the history store.
   Local commits ahead of origin never block. **Fails open** when origin/main can't be read (card shows
   "couldn't measure"), so one git hiccup can't halt every project; a conflict or stash still blocks. Never resolves
   the conflict. Found when a ticket needing a person was rebuilt ~122 times on a Mac three days behind main.
+  **Handover**: a paused scan writes its fix text into the scanner heartbeat (`scanner_role`, `"paused"`), so the
+  standby treats the primary as quiet and scans until the primary writes an unpaused heartbeat. The primary's role
+  never depends on the standby (no ping-pong; both stale = nobody dispatches, both red). In the overlap hour,
+  `ticket_pipeline._claim` re-reads labels after claiming and backs off if another `claimed:*` is present (at most
+  one scanner keeps a ticket; a failed re-read keeps the claim).
 
 - **Intent-vs-reality audit**: comparing documented intent (docstrings, ADRs, roadmap `[decision]`/
   `[research]` markers, memory) against actual current system state to find gaps nobody's reported
