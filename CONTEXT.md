@@ -1230,6 +1230,26 @@ Mac has no push channel. Gil applies the hooks on each Mac with `marvin_hooks.py
   The rows are built from memory and local files only, no GitHub call (`electron/main/project_progress.js`).
   A missing instance dir (public engine install) shows nothing.
 
+## Safety reviews on Health (approved 2026-10-26, ADR 0015's missing review step)
+
+- **Where**: Health ▸ Safety reviews (N), a view beside Checks / Autonomous agents / Project readiness. The approved
+  path was "Vitals ▸ Needs a decision ▸ Safety reviews"; neither Vitals nor a "Needs a decision" area is built yet, so
+  this is the smallest entry point, and moves there when they are.
+- **One card at a time**, every entry (Gil chose to review all of them: no sampling, no archiving): source · date,
+  risk and limit (score, tau), "Why held" when the entry has a flagged reason, an excerpt, "Show full item".
+  **Fine, let it through** = approve, **Fix it** = modify with a note, **Block** = deny. "N of total" counts this
+  session's answers into the total. No undo: an answer is recorded as a calibration label at once and the entry
+  leaves the file, so undoing it would need a second writer for both.
+- **One parser, one writer**: `process_quarantine_reviews.py` (`list`, `answer`). An entry is found by a hash of its
+  header and text (never its position), in the file as it is at write time, under a lock, written by temp file +
+  rename. `verify.quarantine()` appends through the same lock. An answered entry's own lines go but its trailing
+  divider stays, so two Macs answering adjacent entries merge in git without a conflict (tested).
+- **Untrusted text, rendered readable**: entries are model output, rendered as markdown (Gil, 2026-10-26) with the
+  Docs styles and `issueBody.safeUrl`, stricter than Docs: raw HTML shows as escaped text, no image loads, only
+  http(s)/mailto links (opened outside the app). The excerpt is cut at a line end, never inside a code fence. A
+  "modify" note is one line of data, kept with the label in `calibration.jsonl`.
+- **No polling**: read on open and on the `quarantine` file trigger (`triggerHub.watchFiles`, as for goals).
+
 ## Merge order and the sent-back loop (2026-10-05)
 
 - **Order:** a PR waits on every OLDER open PR in its repo that shares a changed file (`dashboard/electron/main/pr_order.js`). Derived from the PRs' file lists each time; the MR list shows it, Approve & Merge is disabled with the reason, and `mr:approve` re-checks it in the main process so a stale screen cannot skip it. Deny stays available.

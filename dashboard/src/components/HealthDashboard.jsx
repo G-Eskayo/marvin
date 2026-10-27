@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import HealthDrilldown from './HealthDrilldown.jsx'
 import AgentsPanel from './AgentsPanel.jsx'
 import ProjectReadinessPanel from './ProjectReadinessPanel.jsx'
+import SafetyReviews from './SafetyReviews.jsx'
 import { healthFocus } from '../lib/boot_view.js'
 
 // How long a check is trusted at full color before it starts visually
@@ -168,6 +169,13 @@ export default function HealthDashboard({ nav }) {
   const [readiness, setReadiness] = useState(null)
   const [profiles, setProfiles] = useState(null)
   const [readinessLoading, setReadinessLoading] = useState(false)
+  // Safety reviews: read on open and whenever quarantine.md changes (the 'quarantine' trigger); the count labels the view.
+  const [reviews, setReviews] = useState(null)
+  const loadReviews = () => window.api.safety.reviews().then(setReviews).catch((err) => setReviews({ entries: [], pending: 0, error: String(err) }))
+  useEffect(() => {
+    loadReviews()
+    return window.api.triggers.on((t) => t.topic === 'quarantine' && loadReviews())
+  }, [])
 
   // Agents refresh by trigger (the run-log folder is watched); the poll is only a backstop.
   useEffect(() => {
@@ -245,8 +253,8 @@ export default function HealthDashboard({ nav }) {
   const agentsRunning = agents?.filter((a) => a.status === 'running').length || 0
   return (
     <div className="p-6">
-      <div className="mb-4 flex gap-1">
-        {[['checks', 'Checks'], ['agents', 'Autonomous agents'], ['readiness', 'Project readiness']].map(([id, label]) => (
+      <div className="mb-4 flex flex-wrap gap-1">
+        {[['checks', 'Checks'], ['agents', 'Autonomous agents'], ['readiness', 'Project readiness'], ['reviews', reviews ? `Safety reviews (${reviews.pending})` : 'Safety reviews']].map(([id, label]) => (
           <button
             key={id}
             onClick={() => setView(id)}
@@ -258,7 +266,9 @@ export default function HealthDashboard({ nav }) {
           </button>
         ))}
       </div>
-      {view === 'agents' ? (
+      {view === 'reviews' ? (
+        <SafetyReviews data={reviews} reload={loadReviews} />
+      ) : view === 'agents' ? (
         <AgentsPanel agents={agents} />
       ) : view === 'readiness' ? (
         <ProjectReadinessPanel plans={readiness} profiles={profiles} loading={readinessLoading} onChanged={reloadReadinessAndProfiles} />
