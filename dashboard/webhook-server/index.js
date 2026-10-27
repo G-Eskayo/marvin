@@ -27,6 +27,7 @@ import { handlePortfolioRequest } from '../electron/main/portfolio_remote.js'
 import { resolveServiceDefaults } from '../electron/main/device_identity.js'
 import { createRebuildCheckTrigger } from './rebuild_check.js'
 import { supportRepos, createSupportSync } from './support_sync.js'
+import { handleSafetyRequest, SAFETY_MAX_BODY } from './safety_labels.js'
 
 // Authenticate gh/git children from the pipeline's shared credential file (see gh_auth.js).
 const ghTokenSource = loadGhToken()
@@ -99,6 +100,25 @@ const server = createServer(async (req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: true }))
     forwardRefreshPing(DASHBOARD_REFRESH_URL, postJson)
     forwardRefreshPing(MOBILE_REFRESH_URL, postJson)
+    return
+  }
+
+  // The safety monitor's shared calibration (safety_labels.js): other Macs deliver review answers, read the tau map.
+  if (req.url === '/safety/label' || req.url === '/safety/taus') {
+    let body = ''
+    if (req.method === 'POST') {
+      try {
+        body = await readBody(req, SAFETY_MAX_BODY)
+      } catch (err) {
+        res.writeHead(413, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ok: false, error: err.message }))
+        return
+      }
+    }
+    const calibrateScript = path.join(os.homedir(), '.agents', 'skills', 'safety-monitor', 'scripts', 'calibrate.py')
+    const python = path.join(os.homedir(), '.agents', 'venv', 'bin', 'python')
+    const run = async (args) => (await promisify(execFile)(python, [calibrateScript, ...args], { timeout: 30_000 })).stdout
+    const { status, json } = await handleSafetyRequest({ method: req.method, url: req.url, body }, run)
+    res.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(json))
     return
   }
 

@@ -42,7 +42,8 @@ from contextlib import contextmanager
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from calibrate import record_label  # noqa: E402
+import calibrate  # noqa: E402
+import shared_labels  # noqa: E402  (records on the primary host, or queues for it)
 
 QUARANTINE_FILE = Path.home() / ".claude" / "quarantine.md"
 
@@ -266,6 +267,21 @@ def answer(eid: str, kind: str, text: str | None = None, path: Path | None = Non
         if len(note) > NOTE_CAP:
             return {"status": "invalid", "reason": "too-long"}
     path = Path(path or QUARANTINE_FILE)
+    res = _answer_locked(eid, kind, note, path)
+    if res.get("status") in ("answered", "already-answered"):
+        _sync()
+    return res
+
+
+def _sync() -> None:
+    # Outside the quarantine lock: delivery may wait on the network (a few seconds at most when the primary is away).
+    try:
+        shared_labels.sync()
+    except Exception as e:  # never lose the answer over a delivery problem: the outbox keeps it
+        print(f"[process-quarantine-reviews] label delivery deferred: {e}", file=sys.stderr)
+
+
+def _answer_locked(eid: str, kind: str, note: str, path: Path) -> dict:
     with locked(path):
         for _ in range(5):
             current = _read(path)
@@ -315,7 +331,13 @@ def _process_unlocked(path: Path) -> tuple[int, int]:
         # dangerous fabrication, at most needed a tweak); deny -> genuinely
         # bad (label 1).
         label = 1 if info["checked"] == "deny" else 0
-        record_label(info["loop_name"], info["score"], label, note=info["note"])
+        try:
+            shared_labels.submit(info["loop_name"], info["score"], label, note=info["note"], entry_id=entry_id(block))
+        except ValueError as e:  # a header the calibration can't take (e.g. a loop name it refuses): left for a person
+            print(f"[process-quarantine-reviews] not recorded ({e}): {block.splitlines()[0][:80]}", file=sys.stderr)
+            out.append(block)
+            remaining += 1
+            continue
         processed += 1
         # Only the entry's own lines go; its trailing divider stays (_tail). Everything else is kept byte for byte,
         # in order: the old rebuild put an extra "---" before every remaining entry, a whole-file rewrite.
@@ -333,9 +355,12 @@ def process(path: Path | None = None) -> tuple[int, int]:
     """Returns (processed_count, remaining_count)."""
     path = Path(path or QUARANTINE_FILE)
     if not path.exists():
+        _sync()
         return 0, 0
     with locked(path):
-        return _process_unlocked(path)
+        result = _process_unlocked(path)
+    _sync()
+    return result
 
 
 @contextmanager
@@ -359,6 +384,8 @@ def _cli_process() -> None:
             def run():
                 p, r = process()
                 job_events.step("Reviews processed", f"{p} processed, {r} still pending")
+                job_events.step("Thresholds", ", ".join(f"{k}={v:.2f}" for k, v in sorted(calibrate.read_taus().items()))
+                                or "default for every loop")
                 return p, r
             processed, remaining = run()
     print(f"[process-quarantine-reviews] {processed} review(s) processed, {remaining} still pending", file=sys.stderr)

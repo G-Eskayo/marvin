@@ -30,7 +30,9 @@ before it writes its output. Nothing runs on a schedule yet.
 | Script | Purpose |
 |--------|---------|
 | `scripts/verify.py` | `verify(text, loop_name) -> float` risk score; `quarantine(...)` writes a flagged item; `pass_or_quarantine(text, loop_name) -> bool` is the one-line integration point |
-| `scripts/calibrate.py` | `get_tau(loop_name) -> float`; `calibrate(...)` recomputes tau from labeled data; `record_label(loop_name, score, label)` for when a review workflow exists to call it |
+| `scripts/calibrate.py` | `get_tau(loop_name) -> float` (this loop's tau, else the global one, else 0.3); `record_label(...)` records one answer (de-duplicated by entry hash) and recomputes the whole per-loop map; `record` / `taus` CLI for the primary's webhook |
+| `scripts/process_quarantine_reviews.py` | Reads ticked entries and records their labels; `list` / `answer` for the dashboard's review cards (Health ▸ Safety reviews) |
+| `scripts/shared_labels.py` | One calibration for every Mac: records on the primary host, or queues in a local outbox and delivers over the primary's webhook (`/safety/label`, `/safety/taus`) |
 | `scripts/rubrics/daily_digest.md` | Rubric for `improve/scripts/daily_digest.py`'s output |
 | `scripts/rubrics/research_colony.md` | Rubric for `research-colony/scripts/research_digest.py`'s output |
 | `scripts/rubrics/self_improve.md` | Rubric for the retrospective-log.md line `background_review.py` appends |
@@ -108,10 +110,11 @@ cat ~/.claude/quarantine.md
 
 - Session-start check for `quarantine.md` is described in `REQUIREMENTS.md`
   (FR6) but not yet added to `~/.claude/CLAUDE.md`'s checklist.
-- Labels are recorded by `process_quarantine_reviews.py` (session start,
-  the 20:00 job, and each dashboard answer), but `calibration.jsonl` is
-  per machine (not synced), so each Mac calibrates from its own answers.
-  Until 20 labels exist for a loop it stays on `DEFAULT_TAU`. Expect
+- Labels from every Mac are recorded into one calibration on the primary
+  host (`shared_labels.py`). A loop gets its own tau at 20 labels; until
+  then it uses the global tau (all loops, also from 20 labels), and until
+  then 0.3. The session-start report already shows the pending count (FR6).
+  Expect
   over-flagging until then — confirmed in testing that
   even a well-constructed, genuinely generalizable retrospective-log entry
   scored above tau; that's the documented cold-start conservatism, not a bug,
