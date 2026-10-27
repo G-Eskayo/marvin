@@ -1369,3 +1369,10 @@ def test_breaker_card_says_couldnt_measure_when_this_macs_freshness_is_unknown(m
 def test_repo_state_script_without_fetch_never_fetches():
     assert "git fetch" in hc.repo_state_script(".agents") and "FETCH=1" in hc.repo_state_script(".agents")
     assert "FETCH=0" in hc.repo_state_script(".agents", fetch=False)
+
+
+def test_memory_lint_is_a_registered_health_check():
+    # marvin#695: broken memory links, index drift and conflict markers show on the Health tab
+    ids = [spec[0] for spec in hc.default_checks()]
+    assert "memory:lint" in ids
+    assert ids.index("memory:lint") == ids.index("main:green") + 1
