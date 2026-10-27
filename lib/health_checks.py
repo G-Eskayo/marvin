@@ -408,6 +408,18 @@ def check_catalog_fresh(path: Path | None = None, now: datetime | None = None) -
     return _result(cid, label, sev, f"{n} projects, built {age_h:.1f}h ago", value=round(age_h, 1))
 
 
+GRAPHIFY_REPO = HOME / ".agents"
+
+
+def check_graphify_fresh() -> dict | None:
+    """The graphify code graph agents are told to query first must match HEAD (marvin#691). Nothing to report on a
+    machine where the repo or its graph doesn't exist."""
+    import graphify_freshness
+    if not (GRAPHIFY_REPO / graphify_freshness.OUT).is_dir():
+        return None
+    return graphify_freshness.check(GRAPHIFY_REPO)
+
+
 GH_CALLS_PATH = Path.home() / ".claude" / "logs" / "gh-calls.jsonl"
 GH_GATE_PATH = Path.home() / ".claude" / "logs" / "gh-gate.json"
 
@@ -1468,6 +1480,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("profile:no-machines", "Projects with no machines", check_unrunnable_profiles, CHECK_BUDGET_S),
         ("triggers:missed", "Dashboard triggers cover every change", check_trigger_coverage, CHECK_BUDGET_S),
         ("catalog:fresh", "Project catalog is current", check_catalog_fresh, CHECK_BUDGET_S),
+        ("graphify:fresh", "Code graph is current", check_graphify_fresh, CHECK_BUDGET_S),
         ("tickets:project-tags", "Tickets are on their project's board", check_project_tags, CHECK_BUDGET_S),
         ("tickets:hold-revisit", "Hold tickets have revisit dates", check_hold_revisit, CHECK_BUDGET_S),
         ("github:budget", "GitHub request budget", check_github_budget, CHECK_BUDGET_S),

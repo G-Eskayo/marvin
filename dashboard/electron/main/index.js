@@ -16,7 +16,7 @@ import { prsForOrderCheck, listPipelinePrs, denyMr, fetchTicketContext, sentBack
 import { approveMrStream } from './approve_stream.js'
 import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
 import { readDispatchStatus } from './dispatch_status.js'
-import { readHealthStatus, runHealthCheckNow } from './health.js'
+import { readHealthStatus, runHealthCheckNow, rebuildCodeGraph } from './health.js'
 import { buildBootData, createBootGate } from './boot_data.js'
 import { readOnboardingPlans } from './onboarding.js'
 import { readCachedRepos } from './docs.js'
@@ -351,6 +351,10 @@ function registerHealthHandlers() {
   ipcMain.handle('health:refresh', async () => {
     await runHealthCheckNow(execFileAsync)
     return readHealthStatus()
+  })
+  ipcMain.handle('health:rebuildGraph', async () => {
+    const result = await rebuildCodeGraph(execFileAsync)
+    return { ...result, status: readHealthStatus() }
   })
   ipcMain.handle('health:readiness', () => readOnboardingPlans(readRegistry()))
   ipcMain.handle('health:setMergeFromDashboard', async (_event, repo, value) => {
