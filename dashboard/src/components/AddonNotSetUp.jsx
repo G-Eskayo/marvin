@@ -16,7 +16,8 @@ export function AddonNotSetUp({ addon, onEnable }) {
     }
   }
 
-  const info = addonInfo[addon]
+  // Own keys only: a name like "__proto__" or "constructor" must not find Object's built-ins and offer an Enable button
+  const info = Object.hasOwn(addonInfo, addon) ? addonInfo[addon] : null
   if (!info) {
     return <div>Unknown add-on: {addon}</div>
   }
