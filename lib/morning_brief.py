@@ -173,6 +173,12 @@ def _auto_merge_report() -> str | None:
     return auto_merge_shadow.report_line_anywhere()
 
 
+def _regressions(now: datetime) -> list[dict]:
+    """Solved problems that came back in the last day: fixed by MARVIN itself, or waiting on you (incident_ladder)."""
+    import incident_ladder
+    return incident_ladder.brief_lines(now=now)
+
+
 def _revisited(now: datetime) -> list[dict]:
     """Tickets returned from hold in the last day (revisit agent)."""
     import ticket_agents
@@ -194,13 +200,14 @@ def default_sources(now: datetime) -> dict[str, Callable]:
             "launches": lambda: _launches(now), "merged": lambda: _merged(now), "revisited": lambda: _revisited(now),
             "deadlines": lambda: _deadlines(now), "top_tickets": _top_tickets, "digest_idea": lambda: _digest_idea(now),
             "research_idea": lambda: _research_idea(now), "late_night": lambda: _late_night(now),
-            "auto_merge": _auto_merge_report}
+            "auto_merge": _auto_merge_report, "regressions": lambda: _regressions(now)}
 
 
 _SOURCE_NAMES = {"open_prs": "open PRs", "red_checks": "Health", "human_tickets": "tickets waiting on you",
                  "launches": "the launch log", "merged": "merged PRs", "revisited": "the revisit agent",
                  "deadlines": "deadlines", "top_tickets": "top tickets", "digest_idea": "the daily digest",
-                 "research_idea": "the research digest", "late_night": "last night's sessions", "auto_merge": "auto-merge's shadow report"}
+                 "research_idea": "the research digest", "late_night": "last night's sessions", "auto_merge": "auto-merge's shadow report",
+                 "regressions": "the incident ladder"}
 
 
 def gather(now: datetime, sources: dict[str, Callable] | None = None) -> dict:
@@ -229,6 +236,8 @@ def render(brief: dict, now: datetime) -> str:
     needs += [f"- Review {_ref(p, pr=True)}" for p in prs if not p.get("waiting_on_marvin")]
     needs += [f"- {c['label']}: {c['detail']}" for c in brief.get("red_checks") or []]
     needs += [f"- Your task: {_ref(t)}" for t in brief.get("human_tickets") or []]
+    regressions = brief.get("regressions") or []
+    needs += [f"- {r['line']}" for r in regressions if r.get("kind") == "needs-you"]
     lines += ["## Needs you", "", *(needs or ["- Nothing is waiting on you."]), ""]
     marvin = [f"- {_ref(p, pr=True)}: your decisions are in{' and you asked a question' if p.get('question') else ''}"
               for p in prs if p.get("waiting_on_marvin")]
@@ -248,6 +257,7 @@ def render(brief: dict, now: datetime) -> str:
                          + f"), ${cost:.2f}")
     overnight += [f"- Merged {_ref(p, pr=True)}" for p in merged]
     overnight += [f"- Returned from hold: {_ref(t)}" for t in revisited]
+    overnight += [f"- {r['line']}" for r in regressions if r.get("kind") != "needs-you"]
     lines += ["## Overnight", "", *(overnight or ["- Quiet: no model runs or merges in the last day."]), ""]
 
     today = []

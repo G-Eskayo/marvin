@@ -160,6 +160,10 @@ def _unclaimed_ready_tickets(repo: str = REPO, issues: list[dict] | None = None)
                 if not ev and _attempts(repo, i["number"]) >= MAX_REENGAGE_ATTEMPTS:
                     print(f"{LOG_PREFIX} skip {repo}#{i['number']}: sent back after {MAX_REENGAGE_ATTEMPTS} reworked PRs, needs a person", file=sys.stderr)
                     continue
+            if "regression" in ticket_policy.label_names(i):
+                # The incident ladder's rung 3 (incident_ladder.py): the original fix's merged PRs and commits are
+                # what regressed, not a sign the work is done. Work in flight still holds it back.
+                ev = [e for e in ev if e["kind"] not in ("commit", "merged-pr")]
             if ticket_evidence.verdict(ev) == "clear":
                 kept.append(i)
             else:
