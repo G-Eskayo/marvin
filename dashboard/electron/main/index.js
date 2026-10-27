@@ -16,7 +16,8 @@ import { prsForOrderCheck, listPipelinePrs, denyMr, fetchTicketContext, sentBack
 import { approveMrStream } from './approve_stream.js'
 import { readSeenNumbers, markSeen, computeReviewStatus } from './mr_seen.js'
 import { readDispatchStatus } from './dispatch_status.js'
-import { readHealthStatus, runHealthCheckNow } from './health.js'
+import { readHealthStatus, runHealthCheckNow, rebuildCodeGraph } from './health.js'
+import { createSafetyReviews } from './safety_reviews.js'
 import { buildBootData, createBootGate } from './boot_data.js'
 import { readOnboardingPlans } from './onboarding.js'
 import { readCachedRepos } from './docs.js'
@@ -33,6 +34,7 @@ import { recordRefusal } from '../../webhook-server/refusal_log.js'
 import { sendBackForOptions } from './decisions_submit.js'
 import { createLocalFirst, coalesce, createIssueReader, createRepoHeadCheck } from './local_first.js'
 import { createMrActions } from './mr_actions.js'
+import { createInstanceHandlers } from './instance.js'
 
 const mergeOps = createMergeOps()
 // marvin#568: every change to a merge op is pushed to the renderer (the card subscribes; it reads once on mount).
@@ -130,6 +132,12 @@ const ghListOpenPrs = (light) => async (repo) => {
 // state of its repo until the change watch says that repo changed, the person's own action needs fresh data, or a
 // 30-minute safety refresh. Tab switches and timers never reach GitHub on their own.
 const githubState = createGithubState()
+// Health ▸ Safety reviews (approved 2026-10-26): runs the safety monitor's own script; read on open and on the
+// 'quarantine' file trigger below, never polled.
+const QUARANTINE_REVIEWS_SCRIPT = join(homedir(), '.agents', 'skills', 'safety-monitor', 'scripts', 'process_quarantine_reviews.py')
+const safetyReviews = createSafetyReviews({
+  run: async (args) => (await execFileAsync(join(homedir(), '.agents', 'venv', 'bin', 'python'), [QUARANTINE_REVIEWS_SCRIPT, ...args], { timeout: 60_000, maxBuffer: 50 * 1024 * 1024 })).stdout
+})
 // Project goals (profiles in the private instance, ADR 0071): read once, and again only after a profile file changes
 // (the 'goals' trigger below). O(projects) per read; no polling. A public engine install has no instance dir: [].
 let goalsCache = null
@@ -310,6 +318,12 @@ function registerSessionHandlers() {
   ipcMain.handle('portfolio:openDevSite', () => openDevSite())
 }
 
+function registerInstanceHandlers() {
+  const handlers = createInstanceHandlers()
+  ipcMain.handle('instance:features', handlers.features)
+  ipcMain.handle('instance:setFeature', handlers.setFeature)
+}
+
 // Boot sequence (#431): plays on the first window load of each app launch; reloads skip it.
 const bootGate = createBootGate()
 
@@ -317,6 +331,9 @@ function registerHealthHandlers() {
   ipcMain.handle('boot:data', () => (bootGate() ? { show: true, data: buildBootData() } : { show: false }))
   ipcMain.handle('health:status', () => readHealthStatus())
   ipcMain.handle('health:agents', () => listAgents())
+  // Health ▸ Safety reviews: the quarantine's parser and one writer are process_quarantine_reviews.py's (list/answer).
+  ipcMain.handle('safety:reviews', () => safetyReviews.list())
+  ipcMain.handle('safety:answer', (_event, id, kind, text) => safetyReviews.answer(id, kind, text))
   // Execution profiles (lib/project_profile.py): which projects the pipeline may work on by itself.
   ipcMain.handle('profiles:list', () => listProfiles())
   ipcMain.handle('profiles:goals', () => currentGoals())
@@ -351,6 +368,10 @@ function registerHealthHandlers() {
   ipcMain.handle('health:refresh', async () => {
     await runHealthCheckNow(execFileAsync)
     return readHealthStatus()
+  })
+  ipcMain.handle('health:rebuildGraph', async () => {
+    const result = await rebuildCodeGraph(execFileAsync)
+    return { ...result, status: readHealthStatus() }
   })
   ipcMain.handle('health:readiness', () => readOnboardingPlans(readRegistry()))
   ipcMain.handle('health:setMergeFromDashboard', async (_event, repo, value) => {
@@ -1086,6 +1107,7 @@ app.whenReady().then(() => {
   registerDispatchHandlers()
   registerHealthHandlers()
   registerSessionHandlers()
+  registerInstanceHandlers()
   registerDocsHandlers()
   registerActivityHandlers()
   createWindow()
@@ -1129,6 +1151,8 @@ app.whenReady().then(() => {
   // Project goals: a profile edit re-reads them once. Registered before the renderer forward so its re-read is fresh.
   triggerHub.watchFiles('goals', [{ dir: PROFILES_DIR, match: (n) => n.endsWith('.json') }])
   triggerHub.onTrigger((t) => t.topic === 'goals' && (goalsCache = null))
+  // The safety monitor's quarantine (Health ▸ Safety reviews): an answer here, a new hold or a sync re-reads it once.
+  triggerHub.watchFiles('quarantine', [{ dir: join(homedir(), '.claude'), match: (n) => n === 'quarantine.md' }])
   triggerHub.onTrigger((t) => mainWindow?.webContents.send('trigger', t))
 
   // External pings (webhook-server): bare = the legacy "MR list changed"; with topics = what changed.

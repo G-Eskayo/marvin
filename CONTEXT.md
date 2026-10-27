@@ -69,6 +69,27 @@ one job, starting with the history store.
   without this check the *next* automated push — including an unattended daily cron — would
   commit and propagate that corruption with nobody watching. See [[0022]] for the real incident
   that motivated this.
+- **Union-merged files** (ADR 0076, 2026-10-26): in the synced Claude dir, the files every machine appends to
+  (`sync-log.md`, `auto-fix-log.md`, `quarantine.md`, `improvement-queue.md`, `projects/*/memory/*.md`) merge with
+  git's `union` driver, so a stash pop on them never stops sync. code_sync writes the rule into the clone's own
+  `.git/info/attributes` before every stash or merge (fresh machines included; never into the engine repo). After a
+  merge it removes exact duplicate memory-index lines and logs them; anything else union got wrong (a changed line
+  kept beside its edit, a doubled heading, one memory linked twice) is a yellow Health card until the file is fixed.
+  Conflicts in any other file still stop for a person. Memory notes left the union rule the same day (ADR 0077).
+- **Drift fixes** (ADR 0077, 2026-10-26; the laptop's Claude dir went 4 days without a push):
+  - **Partial push**: a push commits and pushes every changed file except those under a **live-edit lease** (a live
+    session edited it within `session_work.LIVE_S`) and those still holding conflict markers; held files wait a cycle.
+    The whole push defers only when every changed file is held. A marker file is still refused, per file.
+  - **Commit before merge** (synced Claude dir only): pull commits local work first, then a real `merge --ff`; no stash
+    or pop. The engine and the instance keep stash → merge → pop (their commits are code under extra guards).
+  - **Keep-both resolution**: in the Claude dir, a conflict confined to `suggestions.md` and memory notes is resolved
+    (note: the remote's text, then `## Also from <machine> (<date>)` with this side's other lines; suggestions: entry
+    union, then re-sorted) and shown as an `auto-resolved` item on the `sync:union-review` card. Any other conflict
+    still stops for a person.
+  - **Stuck episode**: a repo failing push or pull for 30 min sends one `notify()`, and one "back in sync" when it
+    clears (`~/.claude/logs/code-sync-stuck.json`, per machine). No per-run failure banners any more.
+  - **Contained stash**: a leftover stash whose every file equals HEAD's is dropped and logged (sha kept in the log);
+    any other stash is kept and the run refuses, as before.
 - **Stale-code dispatch guard** (marvin#458, 2026-10-26): the ticket pipeline refuses to start any new work while
   its own `~/.agents` checkout is stale: behind origin/main by changes that landed on main more than 2 h ago
   (`failure_breaker.CODE_STALE_GRACE_HOURS`, judged by first-parent landing time), or code sync is stuck on a
@@ -78,6 +99,11 @@ one job, starting with the history store.
   Local commits ahead of origin never block. **Fails open** when origin/main can't be read (card shows
   "couldn't measure"), so one git hiccup can't halt every project; a conflict or stash still blocks. Never resolves
   the conflict. Found when a ticket needing a person was rebuilt ~122 times on a Mac three days behind main.
+  **Handover**: a paused scan writes its fix text into the scanner heartbeat (`scanner_role`, `"paused"`), so the
+  standby treats the primary as quiet and scans until the primary writes an unpaused heartbeat. The primary's role
+  never depends on the standby (no ping-pong; both stale = nobody dispatches, both red). In the overlap hour,
+  `ticket_pipeline._claim` re-reads labels after claiming and backs off if another `claimed:*` is present (at most
+  one scanner keeps a ticket; a failed re-read keeps the claim).
 
 - **Intent-vs-reality audit**: comparing documented intent (docstrings, ADRs, roadmap `[decision]`/
   `[research]` markers, memory) against actual current system state to find gaps nobody's reported
@@ -468,6 +494,30 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   generically, without anyone having pre-written a rule naming the specific failure shape — how a
   ticket retry storm's comment-velocity spike would be caught without a "storm detector" ever
   having been written.
+
+## Code graph freshness (built 2026-10-26, marvin#691)
+
+- **Code graph**: graphify's `graphify-out/graph.json`, the graph CLAUDE.md tells agents to query first. It's built by AST
+  parsing only (no LLM), so it is only as good as it is current.
+- **Graph refresh**: `lib/graphify_freshness.py refresh`, the one writer.
+  - It runs `graphify update`, records the result in `graphify-out/.marvin_freshness.json`, and prunes the dated
+    backup snapshots to the newest 7.
+  - It runs from the post-commit, post-merge and post-rewrite hooks, and from the Health drill-down's "Rebuild graph
+    now" button.
+  - Its hook block replaces graphify's own post-commit rebuild, so only one process writes the graph.
+  - Install it with `graphify_freshness.py install-hooks ~/.agents` (setup.sh does this).
+  - Re-running `graphify hook install` puts graphify's own block back, which brings back two writers.
+- **Why a stamp and not `built_at_commit`**: when graphify finds no topology change, it leaves graph.json untouched,
+  so `built_at_commit` lags a graph that is in fact current. The stamp's `last_ok_head` is the truth.
+- **Health check `graphify:fresh`**:
+  - **green:** no graph-tracked file changed since the last good refresh.
+  - **yellow:** behind, under 24 h.
+  - **red:** behind for more than 24 h, the last refresh failed, the hooks are missing, or the build commit isn't in
+    the repo.
+  - It reads only the tail of graph.json plus one `git diff --name-only` (trees, not history, so a build commit off
+    to the side of HEAD still works). Cost is O(changed files).
+- Background: `docs/research/knowledge-graphs-2026-10-26.md`. The graph was 84 commits stale because code_sync lands
+  commits with `git merge`, which never fired graphify's post-commit hook.
 
 ## Memory lint (built 2026-10-26, marvin#695)
 
@@ -1261,6 +1311,31 @@ Mac has no push channel. Gil applies the hooks on each Mac with `marvin_hooks.py
   The rows are built from memory and local files only, no GitHub call (`electron/main/project_progress.js`).
   A missing instance dir (public engine install) shows nothing.
 
+## Safety reviews on Health (approved 2026-10-26, ADR 0015's missing review step)
+
+- **Where**: Health ▸ Safety reviews (N), a view beside Checks / Autonomous agents / Project readiness. The approved
+  path was "Vitals ▸ Needs a decision ▸ Safety reviews"; neither Vitals nor a "Needs a decision" area is built yet, so
+  this is the smallest entry point, and moves there when they are.
+- **One card at a time**, every entry (Gil chose to review all of them: no sampling, no archiving): source · date,
+  risk and limit (score, tau), "Why held" when the entry has a flagged reason, an excerpt, "Show full item".
+  **Fine, let it through** = approve, **Fix it** = modify with a note, **Block** = deny. "N of total" counts this
+  session's answers into the total. No undo: an answer is recorded as a calibration label at once and the entry
+  leaves the file, so undoing it would need a second writer for both.
+- **One parser, one writer**: `process_quarantine_reviews.py` (`list`, `answer`). An entry is found by a hash of its
+  header and text (never its position), in the file as it is at write time, under a lock, written by temp file +
+  rename. `verify.quarantine()` appends through the same lock. An answered entry's own lines go but its trailing
+  divider stays, so two Macs answering adjacent entries merge in git without a conflict (tested).
+- **Untrusted text, rendered readable**: entries are model output, rendered as markdown (Gil, 2026-10-26) with the
+  Docs styles and `issueBody.safeUrl`, stricter than Docs: raw HTML shows as escaped text, no image loads, only
+  http(s)/mailto links (opened outside the app). The excerpt is cut at a line end, never inside a code fence. A
+  "modify" note is one line of data, kept with the label in `calibration.jsonl`.
+- **No polling**: read on open and on the `quarantine` file trigger (`triggerHub.watchFiles`, as for goals).
+- **One calibration, tau per loop** (decided 2026-10-26): answers from any Mac are recorded on the primary host
+  (`shared_labels.py`; the registry's macOS desktop, as the dashboard's webhook default) through its webhook
+  (`POST /safety/label`), queued in a local outbox while it is away and delivered on the next run, de-duplicated by
+  entry hash. Tau is per loop from 20 labels, else the global tau (all loops, from 20), else 0.3, never below 0.3,
+  and the whole map is recomputed on every label (#599). Other Macs cache the primary's map (`GET /safety/taus`).
+
 ## Merge order and the sent-back loop (2026-10-05)
 
 - **Order:** a PR waits on every OLDER open PR in its repo that shares a changed file (`dashboard/electron/main/pr_order.js`). Derived from the PRs' file lists each time; the MR list shows it, Approve & Merge is disabled with the reason, and `mr:approve` re-checks it in the main process so a stale screen cannot skip it. Deny stays available.
@@ -1467,6 +1542,23 @@ A GitHub 5xx (`remote: Internal Server Error`, HTTP 500, 503) is classified `GIT
   ticket text) that counts the fixed symptom in a log that already exists, and passes when it hasn't come back. A
   symptom that came back is a missed purpose. The PR's fit check warns when a fix has neither (a warning, not yet a
   block). This replaced one-off "did the fix hold" scripts such as `verify_digest_fix.py`.
+- **Solved stays solved** (Gil, 2026-10-26; `lib/incident_ladder.py`): a fixed incident's ticket carries an
+  **incident record**: its Recurrence check, `## Root causes`, `## Fixed by`, `## Watch` and `## First aid`, plus the
+  `watch` label. A watched incident is re-measured **every day** after its check date (over the time since its last
+  recorded state), and when its probe trips it climbs the **incident ladder**, each rung only if the one before didn't
+  clear it: **first aid** (registered steps in `purpose_metrics.FIRST_AID`, never ticket text; idempotent, delete
+  nothing not proven redundant), **reopen with evidence** (`regression` label, the probe value, scrubbed log lines,
+  which first aid ran), **diagnose and fix** (the ticket queued for the pipeline with a brief that requires a
+  regression test failing on the current code first; at most one per incident per day) and, last, **you** (one
+  notification saying what's waiting). The ticket's trusted comments are the record: only a change of state is posted,
+  so a second Mac or run posts nothing. Gil hears by a brief line and a phone notification when MARVIN fixed a
+  regression itself and when it couldn't. Measures: `regression-recurrences-30d`, `regression-self-fix-rate`,
+  `regression-hours-to-fixed-30d` (from the ladder's log until marvin.db, #621, lands). The fit check suggests (⚠️,
+  not a block) `## Watch` and `## First aid` on a `bug` ticket with a Recurrence check.
+- **Rung-3 auto-merge** (ADR 0064 amendment, 2026-10-26): a rung-3 fix PR for a known incident's regression may
+  merge itself even in core areas (not the merge gate or auto-merge itself), with a failing-first regression test,
+  the mutation check, a green main and passing checks, one per incident per day, and an automatic revert if the probe
+  still trips after merge. Shadow mode first (`lib/auto_merge_regression.py`); on only when Gil says yes.
 - **Missed purpose** (decided 2026-10-08): when an outcome check misses its target, MARVIN always writes a
   **diagnosis** (a Background analyst run, full Memory) as a ticket comment: what it was meant to do, what
   happened (numbers), why it fell short (evidence) and the options (iterate with a drafted follow-up,

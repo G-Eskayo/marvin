@@ -288,6 +288,23 @@ def check_sync_stuck_from_text(text: str, now: datetime | None = None, dev: str 
     return results
 
 
+def check_union_merge_review() -> dict:
+    """What this machine's union merges of the synced Claude dir left for a person (ADR 0076): a line one side had
+    changed that came back, a doubled heading, a memory listed twice. Yellow while any still shows in its file; it
+    clears by itself once the file is fixed. Exact duplicate index lines never get here: code sync removes them."""
+    cid, label = "sync:union-review", "Code sync: merged lines to check"
+    try:
+        code_sync._review_items_raw()
+    except (OSError, ValueError, AttributeError) as exc:
+        return _result(cid, label, "yellow", f"couldn't read {code_sync._review_path().name}: {type(exc).__name__}")
+    items = code_sync.union_review_open()
+    if not items:
+        return _result(cid, label, "green", "nothing a union merge left needs a look", value=0)
+    shown = "; ".join(code_sync._item_text(i) for i in items[:3]) + (f"; +{len(items) - 3} more" if len(items) > 3 else "")
+    return _result(cid, label, "yellow", f"{len(items)} merged line(s) to check in {Path(items[0]['repo']).name}: {shown}",
+                   value=len(items))
+
+
 def _reachable(reachability: dict[str, str] | None, dev: str) -> bool:
     """None = no reachability known (callers outside the sweep): try every device. Otherwise only devices the
     reachability check found answering. An asleep or unreachable Mac already has its own machine:<id> card."""
@@ -422,6 +439,18 @@ def check_catalog_fresh(path: Path | None = None, now: datetime | None = None) -
     n = len(cat.get("projects", []))
     sev = "green" if age_h <= CATALOG_YELLOW_AFTER_HOURS else "yellow" if age_h <= CATALOG_RED_AFTER_HOURS else "red"
     return _result(cid, label, sev, f"{n} projects, built {age_h:.1f}h ago", value=round(age_h, 1))
+
+
+GRAPHIFY_REPO = HOME / ".agents"
+
+
+def check_graphify_fresh() -> dict | None:
+    """The graphify code graph agents are told to query first must match HEAD (marvin#691). Nothing to report on a
+    machine where the repo or its graph doesn't exist."""
+    import graphify_freshness
+    if not (GRAPHIFY_REPO / graphify_freshness.OUT).is_dir():
+        return None
+    return graphify_freshness.check(GRAPHIFY_REPO)
 
 
 GH_CALLS_PATH = Path.home() / ".claude" / "logs" / "gh-calls.jsonl"
@@ -1490,6 +1519,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("dispatch:lock-age", "Local dispatch lock", check_dispatch_lock, CHECK_BUDGET_S),
         ("pipeline:breaker", "Ticket pipeline circuit breaker", lambda: check_pipeline_breaker(reach), CROSS_MACHINE_BUDGET_S),
         ("sync:stuck", "Code sync", lambda: check_sync_stuck(reach), CROSS_MACHINE_BUDGET_S),
+        ("sync:union-review", "Code sync: merged lines to check", check_union_merge_review, CHECK_BUDGET_S),
         ("dispatch:parallel", "Parallel dispatch keeping up", check_parallel_dispatch, CHECK_BUDGET_S),
         ("purpose:missed", "Purpose metrics", check_missed_purposes, CHECK_BUDGET_S),
         ("contract", "Output contracts", check_output_contracts, CHECK_BUDGET_S),
@@ -1497,6 +1527,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("profile:no-machines", "Projects with no machines", check_unrunnable_profiles, CHECK_BUDGET_S),
         ("triggers:missed", "Dashboard triggers cover every change", check_trigger_coverage, CHECK_BUDGET_S),
         ("catalog:fresh", "Project catalog is current", check_catalog_fresh, CHECK_BUDGET_S),
+        ("graphify:fresh", "Code graph is current", check_graphify_fresh, CHECK_BUDGET_S),
         ("tickets:project-tags", "Tickets are on their project's board", check_project_tags, CHECK_BUDGET_S),
         ("tickets:hold-revisit", "Hold tickets have revisit dates", check_hold_revisit, CHECK_BUDGET_S),
         ("github:budget", "GitHub request budget", check_github_budget, CHECK_BUDGET_S),

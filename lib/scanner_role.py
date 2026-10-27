@@ -7,6 +7,12 @@ is older than STALE_AFTER. Where a ticket then RUNS is unchanged: task_dispatch.
 
 Every scan writes a heartbeat; the standby reads the primary's over ssh. Unknowns fail open (scan): a duplicate scan is safe
 because claim labels stop a ticket being dispatched twice, a missing scan is not.
+
+A scan that refused to dispatch because its own code is stale or its code sync is stuck (marvin#458) says so in the
+heartbeat ("paused": the fix text). The standby treats a paused primary like a quiet one and takes over until the primary
+writes an unpaused heartbeat again. The primary's own role never depends on the standby, so the two cannot ping-pong: a
+stale primary keeps scanning and refusing until it is fixed, then simply resumes. In the hour both may scan, the claim
+check in ticket_pipeline._claim stops them dispatching the same ticket.
 """
 from __future__ import annotations
 import json
@@ -28,15 +34,23 @@ def is_primary(device_id: str) -> bool:
     return device_id.startswith(PRIMARY_PREFIX)
 
 
-def write_heartbeat(device_id: str, now: float | None = None, path: Path = HEARTBEAT_PATH) -> None:
+def write_heartbeat(device_id: str, now: float | None = None, path: Path = HEARTBEAT_PATH, paused: str | None = None) -> None:
+    """paused: why this scan refused to dispatch (stale code), so the standby takes over; None for a working scan."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"device": device_id, "ts": now if now is not None else time.time()}))
+    doc = {"device": device_id, "ts": now if now is not None else time.time()}
+    if paused:
+        doc["paused"] = paused
+    path.write_text(json.dumps(doc))
 
 
-def decide(device_id: str, primary_heartbeat_age: float | None, primary_reachable: bool | None) -> tuple[bool, str]:
-    """(should_scan, reason). Age None = could not read a heartbeat; reachable None = could not tell."""
+def decide(device_id: str, primary_heartbeat_age: float | None, primary_reachable: bool | None,
+           primary_paused: str | None = None) -> tuple[bool, str]:
+    """(should_scan, reason). Age None = could not read a heartbeat; reachable None = could not tell;
+    paused = the primary's last scan refused to dispatch, and why."""
     if is_primary(device_id):
         return True, "primary"
+    if primary_paused and primary_heartbeat_age is not None and primary_heartbeat_age <= STALE_AFTER:
+        return True, f"standby: primary paused dispatch ({primary_paused[:120]})"
     if primary_reachable is False:
         return True, "standby: primary is unreachable"
     if primary_heartbeat_age is None:
@@ -54,23 +68,25 @@ def _primary_device():
     return None, None
 
 
-def check_primary(now: float | None = None, run=subprocess.run) -> tuple[float | None, bool | None]:
-    """(heartbeat age in seconds, reachable) for the primary, read over ssh."""
+def check_primary(now: float | None = None, run=subprocess.run) -> tuple[float | None, bool | None, str | None]:
+    """(heartbeat age in seconds, reachable, paused reason) for the primary, read over ssh."""
     import task_dispatch
     _dev, info = _primary_device()
     if not info:
-        return None, None
+        return None, None, None
     host = info["tailscale_hostname"]
     if host not in task_dispatch._tailscale_online_hosts():
-        return None, False
+        return None, False, None
     try:
         proc = run(["ssh", *task_dispatch.SSH_OPTS, host, REMOTE_HEARTBEAT_COMMAND], capture_output=True, text=True, timeout=15)
         if proc.returncode != 0:
-            return None, None
-        ts = float(json.loads(proc.stdout)["ts"])
-        return (now if now is not None else time.time()) - ts, True
+            return None, None, None
+        doc = json.loads(proc.stdout)
+        ts = float(doc["ts"])
+        paused = doc.get("paused")
+        return (now if now is not None else time.time()) - ts, True, paused if isinstance(paused, str) and paused else None
     except Exception:
-        return None, None
+        return None, None, None
 
 
 def should_scan() -> tuple[bool, str]:
@@ -78,5 +94,4 @@ def should_scan() -> tuple[bool, str]:
     me = machine_profile.registry_id()
     if is_primary(me):
         return True, "primary"
-    age, reachable = check_primary()
-    return decide(me, age, reachable)
+    return decide(me, *check_primary())
