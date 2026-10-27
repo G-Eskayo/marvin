@@ -270,3 +270,12 @@ def _isolate_github_usage(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(github_usage, "CALLS_PATH", d / "gh-calls.jsonl")
     monkeypatch.setattr(github_usage, "BUDGET_PATH", d / "gh-budget.jsonl")
     monkeypatch.setattr(github_usage, "HOURLY_PATH", d / "gh-usage-hourly.json")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_node_modules_cache(tmp_path_factory, monkeypatch):
+    # #687: worktree creation and the install sites seed node_modules from ~/.cache/marvin/node_modules. Never the real
+    # cache from a test (and never a real `node --version` per call).
+    import node_modules_seed
+    monkeypatch.setattr(node_modules_seed, "CACHE_ROOT", tmp_path_factory.mktemp("node-modules-cache"))
+    monkeypatch.setattr(node_modules_seed, "_runtime", lambda: "node-test")
