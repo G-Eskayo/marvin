@@ -217,7 +217,7 @@ def test_a_scan_with_nothing_ready_leaves_a_run_log_saying_so(monkeypatch):
     run = json.loads((job_events.JOBS_DIR / "ticket-pipeline.json").read_text())["runs"][-1]
     assert run["status"] == "passed" and run["summary"] == "no ready tickets"
     steps = [s["step"] for s in run["steps"]]
-    assert steps == ["Board discovery", "Onboarding plans", "Project catalog", "Conflicted PRs", "Owner decisions", "Circuit breaker", "Scanning tickets"]
+    assert steps == ["Code freshness", "Board discovery", "Onboarding plans", "Project catalog", "Conflicted PRs", "Owner decisions", "Circuit breaker", "Scanning tickets"]
 
 
 def test_a_tripped_breaker_is_visible_in_the_run_log(monkeypatch):
@@ -1512,3 +1512,97 @@ def test_live_runs_is_none_when_any_machine_cannot_be_read(monkeypatch):
         raise RuntimeError("ps failed")
     monkeypatch.setattr(running_tickets, "current", boom)
     assert tp._live_runs() is None
+
+
+# ── refuse to dispatch while this Mac's own code is stale (marvin#458) ─────────
+
+def _ready_one(monkeypatch, called):
+    monkeypatch.setattr(tp.failure_breaker, "tripped", lambda now=None, project=None: [])
+    monkeypatch.setattr(tp, "_unclaimed_ready_tickets", lambda repo=None: [{"number": 99, "title": "t", "createdAt": "z", "labels": []}])
+    monkeypatch.setattr(tp, "_select_for_profile", lambda *a, **k: ("this-mac-1", {}))
+    monkeypatch.setattr(tp, "_retry_not_before", lambda *a, **k: None)
+    monkeypatch.setattr(tp, "_claim", lambda *a, **k: called.append("claim") or True)
+    monkeypatch.setattr(tp, "dispatch", lambda *a, **k: called.append("dispatch") or SimpleNamespace(ok=True, error=""))
+    monkeypatch.setattr(sys, "argv", ["ticket_pipeline.py"])
+
+
+def _last_run():
+    import job_events
+    return json.loads((job_events.JOBS_DIR / "ticket-pipeline.json").read_text())["runs"][-1]
+
+
+@pytest.mark.parametrize("freshness", [
+    {"state": "stale", "detail": "", "behind": 5, "oldest_hours": 70.0},
+    {"state": "stuck", "detail": "an unresolved merge conflict is already sitting in the working tree", "behind": None, "oldest_hours": None},
+    {"state": "stuck", "detail": "1 stash(es) left over from a previous failed WIP-restore", "behind": None, "oldest_hours": None},
+])
+def test_stale_or_stuck_code_dispatches_nothing_and_says_why_once(monkeypatch, capsys, freshness):
+    called = []
+    _ready_one(monkeypatch, called)
+    monkeypatch.setattr(tp.failure_breaker, "code_freshness", lambda *a, **k: freshness)
+    tp.main()
+    assert called == []
+    err = [l for l in capsys.readouterr().err.splitlines() if "dispatch PAUSED" in l]
+    assert len(err) == 1 and "code sync is stuck" in err[0] and "repo:sync" in err[0]
+    run = _last_run()
+    assert "stale code" in run["summary"]
+    assert any(s["step"] == "Code freshness" and "PAUSED" in s["detail"] for s in run["steps"])
+
+
+def test_stale_code_pauses_every_project_not_just_marvin(monkeypatch):
+    called = []
+    _ready_one(monkeypatch, called)
+    monkeypatch.setattr(tp.pp, "runnable_repos", lambda: ["someone/other"])
+    monkeypatch.setattr(tp.failure_breaker, "code_freshness", lambda *a, **k: {"state": "stale", "detail": "", "behind": 1, "oldest_hours": 3.0})
+    tp.main()
+    assert called == []
+
+
+def test_the_guard_runs_before_anything_that_changes_github(monkeypatch):
+    # Stale code also decides which PRs to send back and what ticket agents apply: none of it may run.
+    called = []
+    _ready_one(monkeypatch, called)
+    monkeypatch.setattr(tp, "_requeue_all", lambda repos: called.append("requeue") or [])
+    monkeypatch.setattr(tp, "_run_ticket_agents", lambda step, summary: called.append("agents"))
+    monkeypatch.setattr(tp, "_refresh_onboarding_plans", lambda: called.append("onboarding") or "")
+    monkeypatch.setattr(tp.failure_breaker, "code_freshness", lambda *a, **k: {"state": "stale", "detail": "", "behind": 1, "oldest_hours": 3.0})
+    tp.main()
+    assert called == []
+
+
+def test_current_code_dispatches_as_before(monkeypatch):
+    called = []
+    _ready_one(monkeypatch, called)
+    tp.main()
+    assert called == ["claim", "dispatch"]
+    assert any(s["step"] == "Code freshness" and s["detail"].startswith("current") for s in _last_run()["steps"])
+
+
+def test_unknown_freshness_fails_open_with_a_logged_warning(monkeypatch, capsys):
+    called = []
+    _ready_one(monkeypatch, called)
+    monkeypatch.setattr(tp.failure_breaker, "code_freshness", lambda *a, **k: {
+        "state": "unknown", "detail": "no origin/main ref in ~/.agents (never fetched?)", "behind": None, "oldest_hours": None})
+    tp.main()
+    assert called == ["claim", "dispatch"]
+    assert "WARNING" in capsys.readouterr().err and "origin/main" in _last_run()["steps"][0]["detail"]
+
+
+def test_dispatch_resumes_by_itself_once_the_checkout_catches_up(monkeypatch):
+    called = []
+    _ready_one(monkeypatch, called)
+    monkeypatch.setattr(tp.failure_breaker, "code_freshness", lambda *a, **k: {"state": "stale", "detail": "", "behind": 2, "oldest_hours": 9.0})
+    tp.main()
+    assert called == []
+    monkeypatch.setattr(tp.failure_breaker, "code_freshness", lambda *a, **k: {"state": "current", "detail": "", "behind": 0, "oldest_hours": None})
+    tp.main()
+    assert called == ["claim", "dispatch"]
+
+
+def test_dry_run_reports_the_pause_without_recording_anything(monkeypatch, capsys):
+    called = []
+    _ready_one(monkeypatch, called)
+    monkeypatch.setattr(sys, "argv", ["ticket_pipeline.py", "--dry-run"])
+    monkeypatch.setattr(tp.failure_breaker, "code_freshness", lambda *a, **k: {"state": "stale", "detail": "", "behind": 1, "oldest_hours": 3.0})
+    tp.main()
+    assert called == [] and "dispatch PAUSED" in capsys.readouterr().err

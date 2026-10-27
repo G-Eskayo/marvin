@@ -804,12 +804,37 @@ def main() -> None:
     scanner_role.write_heartbeat(machine_profile.registry_id())
 
 
+def _code_is_fresh(step, summary) -> bool:
+    """marvin#458: refuse to start anything while this Mac's own pipeline code is stale or its code sync is stuck
+    (failure_breaker.code_freshness). Runs first, before anything that changes GitHub: stale code also decides which
+    PRs to send back and what the ticket agents apply. Runs already in flight are left alone; the conflict is never
+    touched. Health's pipeline:breaker card shows the same live reading red, and both clear once the checkout
+    catches up. Unknown fails open with a warning (see code_freshness)."""
+    fresh = failure_breaker.code_freshness()
+    trip = failure_breaker.code_trip(freshness=fresh)
+    if trip:
+        print(f"{LOG_PREFIX} dispatch PAUSED on stale code: {trip['fix']}", file=sys.stderr)
+        step("Code freshness", f"PAUSED: {trip['fix']}")
+        summary("dispatch paused: stale code on this Mac (" + trip["fix"].split(": ", 1)[0].removeprefix("this Mac's ") + ")")
+        return False
+    if fresh["state"] == "unknown":
+        print(f"{LOG_PREFIX} WARNING: can't tell whether this Mac's code is current ({fresh['detail']}); dispatching anyway",
+              file=sys.stderr)
+        step("Code freshness", f"unknown, dispatching anyway: {fresh['detail']}")
+        return True
+    step("Code freshness", f"current: {fresh['detail']}")
+    return True
+
+
 def _scan(run, dry_run: bool) -> None:
     """One scan. `run` is the job's run log (job_events): each phase is reported so the
     dashboard's Activity tab can show where this hourly job is and what it decided."""
     step = run.step if hasattr(run, "step") else run
     summary = run.summary if hasattr(run, "summary") else (lambda *a: None)
     fail = run.fail if hasattr(run, "fail") else (lambda *a: None)
+
+    if not _code_is_fresh(step, summary):
+        return
 
     # Hourly run doubles as board discovery, before any early return below, so a
     # project set up anywhere gets its dashboard board without being asked for.
