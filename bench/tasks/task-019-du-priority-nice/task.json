@@ -1,0 +1,10 @@
+{
+  "id": "task-019-du-priority-nice",
+  "type": "real-ticket",
+  "pr_number": 654,
+  "repo": "G-Eskayo/marvin",
+  "base_sha": "0cc413e4f0b2092a6a5d5def6d852247f613b862",
+  "prompt_file": "prompt.md",
+  "timeout": 600,
+  "expect": []
+}

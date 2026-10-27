@@ -1,0 +1,10 @@
+{
+  "id": "task-018-docs-test-race",
+  "type": "real-ticket",
+  "pr_number": 655,
+  "repo": "G-Eskayo/marvin",
+  "base_sha": "f24383175f16070c89af6cdecf5d8252d0b98d59",
+  "prompt_file": "prompt.md",
+  "timeout": 600,
+  "expect": []
+}

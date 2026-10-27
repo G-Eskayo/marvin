@@ -1,0 +1,10 @@
+{
+  "id": "task-020-docs-tab-instance",
+  "type": "real-ticket",
+  "pr_number": 639,
+  "repo": "G-Eskayo/marvin",
+  "base_sha": "12f784de5da5c0323e314f1895c76b915170226a",
+  "prompt_file": "prompt.md",
+  "timeout": 600,
+  "expect": []
+}

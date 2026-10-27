@@ -1169,3 +1169,77 @@ valid for future diagnosis rounds.
 (`recall`↔`coding` confusion). Requested explicitly in a later session the same day, after the
 session-persistence verify check surfaced it as a live, reproducible example rather than a fixture
 statistic.
+
+---
+
+## Local Coding Spike — 2026-10-26 (implementation only, ready for execution)
+
+**Status:** Infrastructure built and tested; ready to run on Mac mini with Ollama + powermetrics.
+
+### Plan
+
+Test whether small real-world tickets can be solved efficiently using a local open-source model (Ollama) rather than cloud Claude. Measures gate verdict (correctness via build metrics), wall time, and energy consumption.
+
+### Implementation Complete
+
+5 real-ticket tasks (task-018 through task-022) created from recent merged PRs:
+
+| Task | PR | Title | Branch | Base SHA |
+|------|----|----|--------|----------|
+| task-018 | #655 | Flaky dashboard CI: docs test git race | fix/docs-test-git-race | f2438317... |
+| task-019 | #654 | Main is falsely red: du priority test | fix/du-nice-cap | 0cc413e4... |
+| task-020 | #639 | Docs tab: find private instance | fix/docs-tab-instance-plans | 12f784de... |
+| task-021 | #627 | docs: record Vitals v4 decisions | docs/vitals-v4-decisions | 3e0288ba... |
+| task-022 | #541 | Dashboard crash: electron-builder null | fix/electron-builder-publish-null | 4fe59d0d... |
+
+**Library modules:**
+- `lib/build_type_measure.py` — baseline metrics (type check, lint, tests, wall time)
+- `lib/energy_apple.py` — power measurement via powermetrics (joules, Wh)
+- `lib/metrics_registry.py` — gate verdict (correctness by build metrics comparison)
+- `lib/evidence_capture.py` — code snapshots (git status/diff before-after)
+
+**Test coverage:** 29 tests across 4 modules covering baseline measurement, energy sampling, gate logic, and evidence capture. Real subprocess/git operations; mocked only where external tools (opencode, models, powermetrics) genuinely unavailable.
+
+**Runner:** `bench/run_local_coding_spike.py` — orchestrates per-ticket: worktree checkout → baseline → opencode run → after-task measure → gate verdict → energy/evidence → results JSON.
+
+### How to Run
+
+**Prerequisites:**
+```bash
+ollama pull qwen2.5:7b  # or your chosen model
+# Optional: ensure mypy, pylint, pytest installed
+```
+
+**Execute:**
+```bash
+cd bench
+python3 run_local_coding_spike.py                   # default model, energy sampling
+python3 run_local_coding_spike.py --skip-energy    # no energy measurement
+python3 run_local_coding_spike.py --model qwen2.5:14b  # larger model
+```
+
+**Output:** Results saved to `results/local-spike-<timestamp>.json`. Summary table printed to stdout.
+
+### Expected Findings
+
+**Viability signals (would support a "small tickets go local" lane):**
+- ✓ Majority of tasks pass gate verdict (correct solution)
+- ✓ Complete within reasonable time (< 2 min for small fixes)
+- ✓ Energy cost lower than cloud (< 1 Wh vs cloud 0.5–2 Wh)
+
+**Non-viable signals (would argue against):**
+- ✗ Most tasks fail gate verdict
+- ✗ Timeouts on half+ of tasks
+- ✗ Energy cost same/higher than cloud
+- ✗ Latency offsets any efficiency gain
+
+### Caveats
+
+- **Model size:** Results specific to qwen2.5:7b (or chosen model)
+- **Single-run:** No repeat/variance analysis. Add `--repeat 3` to bench.py-style runs for that.
+- **Machine-specific:** Results bound to host (CPU, RAM, thermal state)
+- **Small sample:** 5 tasks too small to generalize. Proof-of-concept only.
+- **Energy measurement:** Requires `sudo` and macOS; omitted on other platforms.
+- **Gate verdict:** Measures build metrics (type/lint/tests) only. Does NOT verify semantic correctness beyond what tests catch.
+
+**See SPIKE_PLAN.md for full implementation details.**

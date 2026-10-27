@@ -1,0 +1,10 @@
+{
+  "id": "task-022-dashboard-crash-fix",
+  "type": "real-ticket",
+  "pr_number": 541,
+  "repo": "G-Eskayo/marvin",
+  "base_sha": "4fe59d0d5f5e8569a1a0c2fc07bbdf5d63e55e26",
+  "prompt_file": "prompt.md",
+  "timeout": 600,
+  "expect": []
+}

@@ -1,0 +1,10 @@
+{
+  "id": "task-021-vitals-v4-docs",
+  "type": "real-ticket",
+  "pr_number": 627,
+  "repo": "G-Eskayo/marvin",
+  "base_sha": "3e0288bac85b4f9b7b633c7d5ef2b33dd516bde8",
+  "prompt_file": "prompt.md",
+  "timeout": 600,
+  "expect": []
+}
