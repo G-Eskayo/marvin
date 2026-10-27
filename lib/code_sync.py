@@ -36,7 +36,9 @@ entry *before* committing (optimistically, describing the commit about to
 happen) so it's swept into the same commit instead of trailing. That made the
 log lie when the push then failed (marvin#427, 2026-10-14), and sync-log.md
 has since been made merge=union, so push() now logs only once it knows the
-outcome and lets the entry trail.
+outcome and lets the entry trail. Since 2026-10-26 (ADR 0076) every file both
+machines append to in that dir is union-merged the same way, through a rule
+code_sync writes into the clone's .git/info/attributes itself (ensure_union_rule).
 
 Non-overlapping changes auto-merge (git's own merge machinery). Genuine
 conflicts fail loud — merge aborted, tree left clean, logged clearly — and get
@@ -439,6 +441,266 @@ def _skip_off_main(repo: Path, action: str) -> bool:
     return True
 
 
+# ── union merge for files both machines only add to (ADR 0076) ─────────────────────────────────────────────────────
+# Both Macs append to these in the synced Claude dir; each such stash pop used to conflict and stop sync until a person
+# kept both sides (three times, 2026-10-22..26). git's built-in `union` driver keeps both sides' lines instead. The rule
+# lives in the clone's own .git/info/attributes, written here before every stash or merge: it is in force on a fresh
+# machine before its first pull (a tracked .gitattributes only applies once it has been pulled), it can never conflict
+# between machines itself, and it changes when the engine does. Patterns are anchored to the repo root.
+UNION_REPO_NAME = ".claude"
+UNION_MERGE_PATHS = (
+    "/sync-log.md",
+    "/auto-fix-log.md",
+    "/quarantine.md",
+    "/improvement-queue.md",
+    "/projects/*/memory/*.md",   # the memory index (MEMORY.md) and every memory note
+)
+_UNION_BEGIN = "# >>> code_sync: union merge for files every machine appends to (ADR 0076; managed, edits are replaced)"
+_UNION_END = "# <<< code_sync"
+_UNION_BLOCK_RE = re.compile(re.escape(_UNION_BEGIN) + r".*?" + re.escape(_UNION_END) + r"\n?", re.DOTALL)
+INDEX_LINE_RE = re.compile(r"^\s*[-*] \[[^\]]*\]\(([^)\s]+)\)")
+HEADING_RE = re.compile(r"^#{1,6} \S")
+REVIEW_KINDS = ("kept-changed-line", "heading-twice", "linked-twice")
+
+
+def ensure_union_rule(repo: Path) -> bool:
+    """Make sure this clone's info/attributes carries the union rule. Only the synced Claude dir gets it, never the
+    engine repo, whose code must conflict when two machines change it. Idempotent; a person's own lines in the file
+    are kept. True if the file was written."""
+    repo = Path(repo)
+    if repo.name != UNION_REPO_NAME:
+        return False
+    ok, out = _git_ok(repo, ["rev-parse", "--git-path", "info/attributes"])
+    if not ok or not out.strip():
+        return False
+    path = Path(out.strip().splitlines()[-1])
+    path = path if path.is_absolute() else repo / path
+    try:
+        old = path.read_text() if path.exists() else ""
+    except OSError:
+        return False
+    block = "\n".join([_UNION_BEGIN, *(f"{p} merge=union" for p in UNION_MERGE_PATHS), _UNION_END]) + "\n"
+    rest = _UNION_BLOCK_RE.sub("", old)
+    new = (rest if not rest or rest.endswith("\n") else rest + "\n") + block
+    if new == old:
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(new)
+    return True
+
+
+def _union_files(repo: Path, files: list[str]) -> list[str]:
+    """Which of `files` git itself merges with union -- asked of git, so the answer is exactly what the merge used."""
+    if not files:
+        return []
+    out = _git(repo, ["check-attr", "merge", "--", *files])
+    return [line.rsplit(": merge: ", 1)[0] for line in out.splitlines() if line.endswith(": merge: union")]
+
+
+def _changed(repo: Path, a: str, b: str) -> set[str]:
+    return {f for f in _git(repo, ["diff", "--name-only", "--no-renames", a, b]).splitlines() if f}
+
+
+def _show(repo: Path, rev: str, path: str) -> str:
+    ok, out = _git_ok(repo, ["show", f"{rev}:{path}"])
+    return out if ok else ""
+
+
+def _counts(text: str) -> dict[str, int]:
+    """Lines that carry content (blank and pure-punctuation lines such as `---` repeat legitimately)."""
+    counts: dict[str, int] = {}
+    for line in text.splitlines():
+        if re.search(r"\w", line):
+            counts[line] = counts.get(line, 0) + 1
+    return counts
+
+
+def _review_union_merge(repo: Path, base: str, ours: str, theirs: str, result: str | None) -> list[dict]:
+    """What union could not settle on its own, for the files both sides changed since `base`. `result` is a revision,
+    or None for the working tree (a stash pop). One pass over each such file: O(lines of the files both sides touched).
+      kept-changed-line  a line one side changed or removed is still there (union keeps both hunks whole when an
+                         edit touches the other side's addition, so the old line comes back beside the new one)
+      heading-twice      a markdown heading the merge doubled (two quarantine entries may share one: never removed)
+    Exact duplicate memory-index lines are not reported: _tidy_union_merge removes them."""
+    both = _changed(repo, base, ours) & _changed(repo, base, theirs)
+    items = []
+    for f in _union_files(repo, sorted(both)):
+        if result is None:
+            try:
+                result_text = (repo / f).read_text()
+            except OSError:
+                continue
+        else:
+            result_text = _show(repo, result, f)
+        b, o, t, r = (_counts(x) for x in (_show(repo, base, f), _show(repo, ours, f), _show(repo, theirs, f), result_text))
+        for line, n in r.items():
+            no, nt, nb = o.get(line, 0), t.get(line, 0), b.get(line, 0)
+            if nb > min(no, nt) and n > min(no, nt):
+                items.append({"kind": "kept-changed-line", "file": f, "line": line})
+            elif n > max(no, nt) and HEADING_RE.match(line):
+                items.append({"kind": "heading-twice", "file": f, "line": line, "count": n})
+    return items
+
+
+def _dedupe_index_lines(path: Path) -> list[str]:
+    """Remove exact repeats of memory-index lines (`- [title](file.md) ...`), keeping the first. Nothing else is ever
+    removed: not a near-duplicate, not prose, not a heading, not a blank line. A file still holding conflict markers is
+    left exactly as it is. Returns the removed lines; the file is untouched when there are none."""
+    try:
+        text = path.read_text()
+    except OSError:
+        return []
+    if CONFLICT_MARKER_RE.search(text):
+        return []
+    seen, kept, removed = set(), [], []
+    for line in text.splitlines(keepends=True):
+        bare = line.rstrip("\r\n")
+        if INDEX_LINE_RE.match(bare):
+            if bare in seen:
+                removed.append(bare)
+                continue
+            seen.add(bare)
+        kept.append(line)
+    if removed:
+        path.write_text("".join(kept))
+    return removed
+
+
+def _links_twice(text: str) -> list[str]:
+    seen, twice = set(), []
+    for line in text.splitlines():
+        m = INDEX_LINE_RE.match(line)
+        if m:
+            if m.group(1) in seen and m.group(1) not in twice:
+                twice.append(m.group(1))
+            seen.add(m.group(1))
+    return twice
+
+
+def _review_path() -> Path:
+    """Machine-local (under logs/, which the synced dir never commits): what this machine's merges left for a person."""
+    return LOG_PATH.parent / "logs" / "union-merge-review.json"
+
+
+def _item_holds(item: dict) -> bool:
+    """A live reading: an item stays open only while the file still shows it, so a person fixing the file clears it."""
+    if not isinstance(item, dict) or item.get("kind") not in REVIEW_KINDS or not item.get("repo") or not item.get("file"):
+        return False
+    try:
+        text = (Path(item["repo"]) / item["file"]).read_text()
+    except OSError:
+        return False
+    lines = text.splitlines()
+    if item["kind"] == "kept-changed-line":
+        return item.get("line") in lines
+    if item["kind"] == "heading-twice":
+        return lines.count(item.get("line")) >= int(item.get("count") or 2)
+    return item.get("target") in _links_twice(text)
+
+
+def _review_items_raw() -> list:
+    """Raises on an unreadable file (Health says it couldn't measure); a missing file is no items."""
+    path = _review_path()
+    if not path.exists():
+        return []
+    items = json.loads(path.read_text()).get("items", [])
+    return items if isinstance(items, list) else []
+
+
+def union_review_open() -> list[dict]:
+    """The items still open on this machine. An unreadable review file reads as none here; Health reports it."""
+    try:
+        return [i for i in _review_items_raw() if _item_holds(i)]
+    except (OSError, ValueError, AttributeError):
+        return []
+
+
+def _item_key(item: dict) -> tuple:
+    return (item.get("repo"), item.get("file"), item.get("kind"), item.get("line"), item.get("target"))
+
+
+def _item_text(item: dict) -> str:
+    if item["kind"] == "linked-twice":
+        return f"{item['file']}: the memory {item['target']} is listed twice with different text — keep one"
+    if item["kind"] == "heading-twice":
+        return f"{item['file']}: heading now appears {item['count']} times — check for a doubled entry: {item['line'][:120]}"
+    return f"{item['file']}: kept a line the other side changed or removed: {item['line'][:120]}"
+
+
+def _tidy_union_merge(repo: Path, items: list[dict], touched: set[str]) -> None:
+    """After a merge and any stash pop are done: remove exact duplicate index lines from the memory indexes union
+    touched, then record (and log once) everything else for a person. Never runs between a merge and its stash pop:
+    editing the tree there would make the pop conflict on the edit."""
+    removed = []
+    for f in sorted(touched):
+        if Path(f).name == "MEMORY.md":
+            removed += [f"{f}: {line}" for line in _dedupe_index_lines(repo / f)]
+            try:
+                text = (repo / f).read_text()
+            except OSError:
+                continue
+            items += [{"kind": "linked-twice", "file": f, "target": t} for t in _links_twice(text)]
+    if removed:
+        _log(repo, "union", f"removed {len(removed)} exact duplicate memory index line(s) a union merge left behind", removed)
+
+    items = [{**i, "repo": str(repo)} for i in items]
+    raw = _safe_review_items()
+    current = [i for i in raw if _item_holds(i)]
+    known = {_item_key(i) for i in current}
+    new = []
+    for i in items:
+        if _item_key(i) not in known and _item_holds(i):
+            known.add(_item_key(i))
+            new.append(i)
+    if new:
+        _log(repo, "union", f"needs a look — {len(new)} thing(s) a union merge could not settle on its own "
+                            f"(Health shows them until the file is fixed):", [_item_text(i) for i in new])
+    if new or len(current) != len(raw):   # bounded: items a person has since fixed are dropped on every write
+        path = _review_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"items": current + new}, indent=1, ensure_ascii=False))
+        tmp.replace(path)
+
+
+def _safe_review_items() -> list:
+    try:
+        return _review_items_raw()
+    except (OSError, ValueError, AttributeError):
+        return []
+
+
+def _review_merge_commit(repo: Path, first_parent: str, rev: str = "HEAD") -> tuple[list[dict], set[str]]:
+    """Review `rev` if it is the two-parent merge this run just made on top of `first_parent`. A fast-forward merged
+    nothing here, even onto another machine's merge commit: that machine reviewed its own."""
+    ok, p2 = _git_ok(repo, ["rev-parse", "-q", "--verify", f"{rev}^2"])
+    if not ok:
+        return [], set()
+    p1 = _git(repo, ["rev-parse", f"{rev}^1"]).strip()
+    if p1 != first_parent:
+        return [], set()
+    base = _git(repo, ["merge-base", p1, p2.strip()]).strip()
+    if not base:
+        return [], set()
+    touched = set(_union_files(repo, sorted(_changed(repo, base, p1) & _changed(repo, base, p2.strip()))))
+    return _review_union_merge(repo, base, p1, p2.strip(), rev), touched
+
+
+def _review_stash_pop(repo: Path, stash_rev: str, ours: str) -> tuple[list[dict], set[str]]:
+    """Review a stash just popped onto `ours`: the stash's own parent is the base both sides started from."""
+    base = _git(repo, ["rev-parse", f"{stash_rev}^1"]).strip()
+    if not base:
+        return [], set()
+    touched = set(_union_files(repo, sorted(_changed(repo, base, ours) & _changed(repo, base, stash_rev))))
+    return _review_union_merge(repo, base, ours, stash_rev, None), touched
+
+
+def _after_push_merge(repo: Path, before: str) -> None:
+    items, touched = _review_merge_commit(repo, before)
+    if touched:
+        _tidy_union_merge(repo, items, touched)
+
+
 def _merge_remote(repo: Path) -> tuple[bool, str]:
     """Fetch + merge origin/main. On conflict, aborts the merge (tree left
     clean, nothing partially applied) rather than attempting resolution."""
@@ -494,6 +756,7 @@ def _refuse_push(repo: Path, report: str, files: list[str] | None = None) -> Non
 def push(repo: Path, now: float | None = None) -> None:
     label = machine_label()
     heal_stale_index_lock(repo)
+    ensure_union_rule(repo)   # before any merge below (ADR 0076)
 
     stuck = _stuck_from_previous_run(repo)
     if stuck:
@@ -535,11 +798,13 @@ def push(repo: Path, now: float | None = None) -> None:
             _log(repo, "push", f"pushed {ahead} already-committed change(s) found on a clean working tree")
             notify("MARVIN code-sync", f"Pushed {ahead} pending commit(s) from {label} [{repo.name}]")
             return
+        before_merge = _git(repo, ["rev-parse", "HEAD"]).strip()
         clean, merge_output = _merge_remote(repo)
         if not clean:
             _log(repo, "push", f"CONFLICT merging remote while pushing pre-existing commits — needs manual resolution:\n{merge_output}")
             notify("MARVIN code-sync CONFLICT", f"Push rejected and merge conflicted [{repo.name}] — check sync-log.md", open_target=str(LOG_PATH))
             return
+        _after_push_merge(repo, before_merge)
         retry_ok, retry_out = _git_ok(repo, ["push", "origin", "main"])
         if retry_ok:
             _log(repo, "push", f"pushed {ahead} already-committed change(s) (merged remote changes first)")
@@ -586,12 +851,14 @@ def push(repo: Path, now: float | None = None) -> None:
 
     # Rejected, most likely non-fast-forward — merge the remote's new commits
     # into our newly-made local commit, then retry once.
+    before_merge = _git(repo, ["rev-parse", "HEAD"]).strip()
     clean, merge_output = _merge_remote(repo)
     if not clean:
         _log(repo, "push", f"CONFLICT merging remote after push rejection — committed locally, NOT pushed (origin/main does not have it); local commit preserved, needs manual resolution:\n{push_out}\n{merge_output}", changed_files)
         notify("MARVIN code-sync CONFLICT", f"Push rejected and merge conflicted [{repo.name}] — check sync-log.md", open_target=str(LOG_PATH))
         return
 
+    _after_push_merge(repo, before_merge)
     retry_ok, retry_out = _git_ok(repo, ["push", "origin", "main"])
     if retry_ok:
         _log(repo, "push", f"committed + pushed {len(changed_files)} file(s) (merged remote changes first)", changed_files)
@@ -603,6 +870,7 @@ def push(repo: Path, now: float | None = None) -> None:
 
 def pull(repo: Path) -> None:
     heal_stale_index_lock(repo)
+    ensure_union_rule(repo)   # before the stash, the merge and the pop (ADR 0076): all three honour it
     stuck = _stuck_from_previous_run(repo)
     if stuck:
         _log(repo, "pull", f"REFUSING to run — {stuck}, needs manual resolution before pull can proceed")
@@ -628,8 +896,10 @@ def pull(repo: Path) -> None:
         return
 
     after = _git(repo, ["rev-parse", "HEAD"]).strip()
+    union_items, union_touched = _review_merge_commit(repo, before) if after != before else ([], set())
 
     if stashed:
+        stash_rev = _git(repo, ["rev-parse", "-q", "--verify", "stash@{0}"]).strip()
         pop_ok, pop_out = _git_ok(repo, ["stash", "pop"])
         if not pop_ok:
             if UNTRACKED_OVERWRITE_RE.search(pop_out):
@@ -640,6 +910,12 @@ def pull(repo: Path) -> None:
             _log(repo, "pull", f"pulled cleanly, but restoring local WIP conflicted — stash preserved, resolve by hand (`git stash list` / `git stash pop`):\n{pop_out}")
             notify("MARVIN code-sync CONFLICT", f"WIP restore conflicted after pull [{repo.name}] — check sync-log.md", open_target=str(LOG_PATH))
             return
+        if stash_rev:
+            items, touched = _review_stash_pop(repo, stash_rev, after)
+            union_items, union_touched = union_items + items, union_touched | touched
+
+    if union_touched:
+        _tidy_union_merge(repo, union_items, union_touched)
 
     if before == after and not stashed:
         # Genuinely nothing happened — no merge, no WIP involved. Not worth

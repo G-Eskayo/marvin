@@ -288,6 +288,23 @@ def check_sync_stuck_from_text(text: str, now: datetime | None = None, dev: str 
     return results
 
 
+def check_union_merge_review() -> dict:
+    """What this machine's union merges of the synced Claude dir left for a person (ADR 0076): a line one side had
+    changed that came back, a doubled heading, a memory listed twice. Yellow while any still shows in its file; it
+    clears by itself once the file is fixed. Exact duplicate index lines never get here: code sync removes them."""
+    cid, label = "sync:union-review", "Code sync: merged lines to check"
+    try:
+        code_sync._review_items_raw()
+    except (OSError, ValueError, AttributeError) as exc:
+        return _result(cid, label, "yellow", f"couldn't read {code_sync._review_path().name}: {type(exc).__name__}")
+    items = code_sync.union_review_open()
+    if not items:
+        return _result(cid, label, "green", "nothing a union merge left needs a look", value=0)
+    shown = "; ".join(code_sync._item_text(i) for i in items[:3]) + (f"; +{len(items) - 3} more" if len(items) > 3 else "")
+    return _result(cid, label, "yellow", f"{len(items)} merged line(s) to check in {Path(items[0]['repo']).name}: {shown}",
+                   value=len(items))
+
+
 def _reachable(reachability: dict[str, str] | None, dev: str) -> bool:
     """None = no reachability known (callers outside the sweep): try every device. Otherwise only devices the
     reachability check found answering. An asleep or unreachable Mac already has its own machine:<id> card."""
@@ -1483,6 +1500,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("dispatch:lock-age", "Local dispatch lock", check_dispatch_lock, CHECK_BUDGET_S),
         ("pipeline:breaker", "Ticket pipeline circuit breaker", lambda: check_pipeline_breaker(reach), CROSS_MACHINE_BUDGET_S),
         ("sync:stuck", "Code sync", lambda: check_sync_stuck(reach), CROSS_MACHINE_BUDGET_S),
+        ("sync:union-review", "Code sync: merged lines to check", check_union_merge_review, CHECK_BUDGET_S),
         ("dispatch:parallel", "Parallel dispatch keeping up", check_parallel_dispatch, CHECK_BUDGET_S),
         ("purpose:missed", "Purpose metrics", check_missed_purposes, CHECK_BUDGET_S),
         ("contract", "Output contracts", check_output_contracts, CHECK_BUDGET_S),
