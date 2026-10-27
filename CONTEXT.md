@@ -1244,8 +1244,10 @@ Mac has no push channel. Gil applies the hooks on each Mac with `marvin_hooks.py
   header and text (never its position), in the file as it is at write time, under a lock, written by temp file +
   rename. `verify.quarantine()` appends through the same lock. An answered entry's own lines go but its trailing
   divider stays, so two Macs answering adjacent entries merge in git without a conflict (tested).
-- **Untrusted text**: entries are model output, rendered as text only; a "modify" note is one line of data, kept
-  with the label in `calibration.jsonl`.
+- **Untrusted text, rendered readable**: entries are model output, rendered as markdown (Gil, 2026-10-26) with the
+  Docs styles and `issueBody.safeUrl`, stricter than Docs: raw HTML shows as escaped text, no image loads, only
+  http(s)/mailto links (opened outside the app). The excerpt is cut at a line end, never inside a code fence. A
+  "modify" note is one line of data, kept with the label in `calibration.jsonl`.
 - **No polling**: read on open and on the `quarantine` file trigger (`triggerHub.watchFiles`, as for goals).
 
 ## Merge order and the sent-back loop (2026-10-05)
