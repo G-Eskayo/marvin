@@ -9,6 +9,8 @@ import Markdown from './Markdown.jsx'
 import IssueBody from './IssueBody.jsx'
 import Related, { useRelated } from './Related.jsx'
 import CompletedView from './CompletedView.jsx'
+import StageStrip from './StageStrip.jsx'
+import { deriveStageStrip } from '../lib/stage_strip.js'
 
 // Backstop only: triggers (window.api.triggers) drive refreshes; a poll that
 // finds a change no trigger announced is logged as a gap.
@@ -100,6 +102,15 @@ function Card({ card, repo, onSelect, onOpenMr, activeTags, onTag }) {
         )}
       </p>
       <p className={`mt-1 text-xs ${card.reason && /fail|block|stale|no activity/i.test(card.reason) ? 'text-red-400' : 'text-neutral-500'}`}>{card.reason}</p>
+      {card.events && card.events.length > 0 && (
+        <div className="mt-1">
+          <StageStrip
+            segments={deriveStageStrip({ events: card.events, refusals: [], labels: card.labels }).segments}
+            totalCostUsd={deriveStageStrip({ events: card.events, refusals: [], labels: card.labels }).totalCostUsd}
+            onStageClick={() => {}}
+          />
+        </div>
+      )}
       <div className="mt-2 flex flex-wrap items-center gap-1">
         {card.owner === 'human' && <span className="rounded bg-sky-950 px-1.5 py-0.5 text-[10px] text-sky-300">needs you</span>}
         {card.progress && (

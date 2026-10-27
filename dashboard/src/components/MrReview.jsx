@@ -3,6 +3,8 @@ import { cleanIpcError } from '../lib/ipcError.js'
 import { useEffect, useRef, useState } from 'react'
 import { describePrState } from '../lib/prState.js'
 import MrDetail from './MrDetail.jsx'
+import StageStrip from './StageStrip.jsx'
+import { deriveStageStrip } from '../lib/stage_strip.js'
 
 const MR_LIST_REFRESH_MS = 120000
 
@@ -431,6 +433,15 @@ function PrCard({ pr, parity, onOpenTicket, onApproved, onDenied, onSelect }) {
             <p className="text-xs text-amber-400">No structured evidence — needs a manual look</p>
           )}
           <TicketLine row={parity} onOpenTicket={onOpenTicket} />
+          {parity?.ticket?.events && parity.ticket.events.length > 0 && (
+            <div className="mt-1">
+              <StageStrip
+                segments={deriveStageStrip({ events: parity.ticket.events, refusals: [], labels: parity.ticket.labels || [] }).segments}
+                totalCostUsd={deriveStageStrip({ events: parity.ticket.events, refusals: [], labels: parity.ticket.labels || [] }).totalCostUsd}
+                onStageClick={() => {}}
+              />
+            </div>
+          )}
         </div>
         {/* Approve/Deny live inside the same clickable card -- stop the
             click from also bubbling up to onSelect and opening the detail

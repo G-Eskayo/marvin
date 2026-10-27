@@ -24,6 +24,13 @@ export const plainReason = (code) => REASONS[code] || code
 
 const PR_RE = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)$/
 
+// Extract refusals for a specific PR URL from the history.
+export function refusalsForPr(prUrl, history = {}) {
+  if (!prUrl) return []
+  const refusals = history?.refusals || []
+  return refusals.filter((r) => r.pr_url === prUrl)
+}
+
 export function buildRows(merged, history, openPrs = []) {
   const by = new Map((history?.merges || []).map((m) => [m.pr_url, m.by]))
   const titles = new Map([...(openPrs || []), ...(merged || [])].map((p) => [p.url, p.title]))
