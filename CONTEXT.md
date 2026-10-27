@@ -1171,7 +1171,17 @@ row, Other Projects footer) plus a stack of **sections** after the title card.
   card looked right in one place and stale in another. The version is now the file's mtime, and the dashboard never caches
   dev-site responses.
 
-## Citation-graph knowledge base (in design, not yet built)
+## Citation-graph knowledge base (built 2026-07; ran once, 2026-07-13)
+
+Status, corrected 2026-10-26 (marvin#699):
+- `skills/paper-dive/scripts/paper_graph.py` is built and filled `paper-knowledge` once: 129 papers, 16 seeds, all
+  hop-1 `reference` edges.
+- A seed that Semantic Scholar doesn't index can only get references, never citations.
+- The continuity checker judges both directions, with the earlier paper's claim first:
+  - **citation**: the other paper cites the seed, so it's the later work.
+  - **reference**: the seed cites it, so it's the earlier work.
+- It exits with an error when it finds no pairs, rather than writing an empty report.
+- Only the first edge that discovered a paper is stored ([[0009]]), so the collection is a tree, not a graph.
 
 - **Seed paper**: the paper a citation-graph traversal starts from — all relevance scoring is
   similarity-to-seed, not similarity-to-parent-node.
