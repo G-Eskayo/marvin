@@ -79,6 +79,5 @@ skills/architecture-review/scripts/background_architecture_review.py
 skills/architecture-review/scripts/sort_suggestions.py
 skills/handoff/scripts/find_freshest_session.py
 skills/handoff/scripts/generate_handoff_from_transcript.py
-skills/improve/scripts/auto_fix.py
 skills/improve/scripts/cross_machine_merge.py
 skills/paper-dive/scripts/paper_graph.py

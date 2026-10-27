@@ -91,8 +91,10 @@ one job, starting with the history store.
   safety-netted mechanism for that rather than inventing new fix-application logic — the agent's
   job is discovery and classification (is this fixable within `auto_fix.py`'s existing narrow
   safety boundaries, or does it need real judgment?), not new fixing infrastructure.
-- **Output routing, by risk tier**: low-risk findings it fixes itself go through `auto_fix.py` and
-  land in `auto-fix-log.md`, same as any other auto-fix. Findings needing real judgment (like
+- **Output routing, by risk tier**: low-risk findings it fixes itself go through `auto_fix.py`, which
+  (since 2026-10-26) fixes queued NAMING/VERBOSITY/KISS items in its own worktree on `auto-fix/<date>`, runs the
+  covering tests before and after, and opens one PR a day for Gil's merge gate; it never edits the shared checkout.
+  Each run is logged in `auto-fix-log.md`, same as any other auto-fix. Findings needing real judgment (like
   2026-07-09's rubric/prompt fixes — genuine design decisions, not mechanical pattern-matching) go
   to `suggestions.md` for review, unimplemented — no new dedicated findings file, reusing the
   queue that already exists for exactly this purpose.
