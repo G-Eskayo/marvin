@@ -98,3 +98,6 @@ logs/
 /docs/plans/
 /config/projects/
 /retrospective-log.md
+
+# MARVIN Dictate Swift build output (marvin#730)
+tools/dictate/.build/
