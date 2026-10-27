@@ -201,8 +201,9 @@ def test_an_unresolved_merge_conflict_refuses_even_when_not_behind(repos):
     _git(repos.upstream, "commit", "-q", "-am", "theirs", at=NOW - timedelta(minutes=5))
     _git(repos.upstream, "push", "-q", "origin", "main")
     repos.fetch()
-    r = subprocess.run(["git", "merge", "origin/main"], cwd=repos.checkout, capture_output=True, text=True)
-    assert r.returncode != 0   # the conflict is real and left in place
+    with pytest.raises(subprocess.CalledProcessError):
+        _git(repos.checkout, "merge", "origin/main")   # with an identity: the temp HOME has no global git config
+    assert (repos.checkout / ".git" / "MERGE_HEAD").exists()   # the conflict is real and left in place
     f = freshness()
     assert f["state"] == "stuck" and "merge conflict" in f["detail"]
     trip = fb.code_trip(now=NOW)
