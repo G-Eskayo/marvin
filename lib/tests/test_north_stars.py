@@ -72,3 +72,13 @@ def test_manual_dispatch_and_the_planner_use_the_preamble():
     assert re.search(r'north_stars\.py"? preamble', (AGENTS / "lib" / "dispatch_ticket.sh").read_text())
     assert "delegation_preamble(" in (AGENTS / "lib" / "sandbox_orchestration.py").read_text()
     assert "north_stars.py preamble" in (AGENTS / "docs" / "north-stars.md").read_text()
+
+
+def test_titles_are_read_from_the_doc_in_order(tmp_path):
+    doc = tmp_path / "ns.md"
+    doc.write_text("# North stars\n\nnote\n\n## North stars\n\n1. **First one.** *How.* body\n2. **Second, with a comma.** *Why.*\n\n3. **Third** no dot\n")
+    assert north_stars.titles(doc) == ["First one", "Second, with a comma", "Third"]
+
+
+def test_the_real_doc_has_four_titles():
+    assert len(north_stars.titles()) == 4

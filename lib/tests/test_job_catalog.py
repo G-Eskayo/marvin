@@ -56,7 +56,7 @@ def test_waste_lists_jobs_with_no_goal_or_no_consumer():
     rows = jc.waste(jobs=jobs, loaded={})
     names = {r["job"]: r["why"] for r in rows}
     assert set(names) == {"aimless", "unread"}
-    assert "no goal" in names["aimless"] and "nobody reads" in names["unread"]
+    assert "no goal recorded" in names["aimless"] and "nobody reads" in names["unread"]
 
 
 def test_waste_lists_a_loaded_job_nobody_catalogued():
@@ -67,7 +67,7 @@ def test_waste_lists_a_loaded_job_nobody_catalogued():
 def test_waste_carries_the_review_note():
     jobs = {"old": {"machine": "mini", "goal": "ns1", "reporter": "x", "healthy": "y", "consumer": "Vitals",
                     "review": "ADR 0033 folded it into Health"}}
-    assert jc.waste(jobs=jobs, loaded={}) == [{"job": "old", "why": "flagged for review", "review": "ADR 0033 folded it into Health"}]
+    assert jc.waste(jobs=jobs, loaded={}) == [{"job": "old", "why": "check its purpose: met elsewhere, or falling short?", "review": "ADR 0033 folded it into Health"}]
 
 
 @pytest.mark.parametrize("bad", [None, "", "   ", 42, ["a"], {"x": 1}])
@@ -78,14 +78,26 @@ def test_waste_survives_junk_loaded_lists(bad):
 def test_report_is_plain_text_and_names_every_waste_row():
     text = jc.report(jc.waste(jobs={"a": {"machine": "mini", "goal": None, "reporter": "x", "healthy": "y",
                                           "consumer": "z"}}, loaded={}))
-    assert "a" in text and "no goal" in text
+    assert "a" in text and "no goal recorded" in text
 
 
-def test_report_when_nothing_is_wasted():
-    assert "nothing" in jc.report([]).lower()
+def test_report_when_every_purpose_is_covered():
+    assert "no purpose needs checking" in jc.report([]).lower()
 
 
-def test_auto_fix_reports_through_its_pr_and_gil_reads_it_in_mr_review():
+def test_the_sweep_never_calls_a_job_irrelevant_or_says_remove():
+    # Gil, 2026-10-26: "are these irrelevant or just never met their purpose?" The sweep asks; Gil decides.
+    rows = jc.waste(jobs={"a": {"machine": "mini", "goal": None, "reporter": "x", "healthy": "y", "consumer": "z"},
+                          "b": {"machine": "mini", "goal": "ns1", "reporter": "x", "healthy": "y", "consumer": None},
+                          "c": {"machine": "mini", "goal": "ns1", "reporter": "x", "healthy": "y", "consumer": "z",
+                                "review": "r"}}, loaded={"m": ["d"]})
+    text = jc.report(rows).lower()
+    for word in ("irrelevant", "remove", "waste", "delete", "useless"):
+        assert word not in text, word
+    assert "purpose" in text
+
+
+def test_auto_fix_reports_through_its_pr_and_the_owner_reads_it_in_mr_review():
     """2026-10-26: auto-fix opens one gated PR a day instead of editing the shared checkout, so its output is that PR."""
     job = jc.JOBS["auto-fix"]
     assert "PR" in job["reporter"] and "MR Review" in job["consumer"] and "review" not in job

@@ -511,3 +511,19 @@ def test_a_fixer_that_writes_into_the_shared_checkout_and_then_crashes_is_still_
     env.fixer["fn"] = escapes_then_dies
     run(env)
     assert env.gh.created() == 0 and "shared checkout" in env.log.read_text()
+
+
+def test_a_script_any_launchd_job_runs_is_core_whatever_its_label_prefix(tmp_path, monkeypatch):
+    agents = tmp_path / "agents"
+    (agents / "lib").mkdir(parents=True)
+    script = agents / "lib" / "job.py"
+    script.write_text("")
+    agents_dir = tmp_path / "LaunchAgents"
+    agents_dir.mkdir()
+    (agents_dir / "org.someone.job.plist").write_text(f"<plist><string>{script}</string></plist>")
+    (agents_dir / "com.other.plist").write_text("<plist><string>/elsewhere/x.py</string></plist>")
+    (agents_dir / "broken.plist").write_bytes(b"\xff\xfe\x00")
+    monkeypatch.setattr(af, "AGENTS_DIR", agents)
+    monkeypatch.setattr(af, "LAUNCH_AGENTS_DIR", agents_dir)
+    monkeypatch.setattr(af, "HOOK_SETTINGS_PATHS", (tmp_path / "none.json", tmp_path / "none2.json"))
+    assert af._core_files() == {script.resolve()}

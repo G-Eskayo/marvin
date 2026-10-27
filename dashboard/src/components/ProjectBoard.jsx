@@ -11,6 +11,7 @@ import IssueBody from './IssueBody.jsx'
 import Related, { useRelated } from './Related.jsx'
 import CompletedView from './CompletedView.jsx'
 import StageStrip from './StageStrip.jsx'
+import { GoalHeader, useGoals } from './ProjectGoals.jsx'
 
 // Backstop only: triggers (window.api.triggers) drive refreshes; a poll that
 // finds a change no trigger announced is logged as a gap.
@@ -513,6 +514,7 @@ export default function ProjectBoard({ onOpenMr, onOpenDocs, onOpenTicket, nav }
   const [selected, setSelected] = useState(null)
   const [activeTags, setActiveTags] = useState(new Set())
   const [view, setView] = useState('board') // 'board' | 'completed'
+  const goals = useGoals()
   const toggleTag = (name) =>
     setActiveTags((cur) => {
       const next = new Set(cur)
@@ -619,6 +621,7 @@ export default function ProjectBoard({ onOpenMr, onOpenDocs, onOpenTicket, nav }
           </span>
         )}
       </div>
+      <GoalHeader goal={goals?.find((g) => g.repo === repo) || null} />
       <div className="mb-3 flex gap-1">
         {[['board', 'Board'], ['completed', 'Completed']].map(([id, label]) => (
           <button

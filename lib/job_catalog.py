@@ -4,15 +4,19 @@
 Every launchd job declares five things:
     machine   where it runs: "both", "mini" (the primary automation host, ADR 0032), "laptop" (where Gil sits), or
               "none" (switched off on purpose)
-    goal      the north star or project goal it serves (GOALS); None means it serves nothing, a removal candidate
+    goal      the north star or project goal it serves (GOALS); None means no goal is recorded yet
     reporter  who records its result, ideally the job itself when it happens
     healthy   what passing means for it, so red always comes with a reason
     consumer  who reads its output (Watts check: output nobody consumes fails)
-and optionally `review`: why a person should look at whether it still earns its place.
+and optionally `review`: why a person should check whether its purpose is met.
+
+The sweep never calls a job irrelevant or says to remove it (Gil, 2026-10-26). "Unused" usually means its purpose
+is unmet, not gone. It asks the question; the answer comes from the job's origin (ticket, ADR, plan): either its purpose
+is met elsewhere, or it is falling short and needs work to reach it. Gil decides.
 
 health_checks.JOB_PLACEMENT is derived from this table, so placement is never kept in two places.
 
-    job_catalog.py waste     # jobs on this Mac that serve no goal, have no consumer, are flagged, or aren't catalogued
+    job_catalog.py waste     # jobs on this Mac whose purpose needs checking: no goal recorded, no reader, flagged, or not catalogued
 """
 from __future__ import annotations
 
@@ -20,15 +24,14 @@ import socket
 import subprocess
 import sys
 
+import north_stars
+
 MACHINES = ("both", "mini", "laptop", "none")
 
 # docs/north-stars.md, plus the projects whose goals live in their profiles (config/projects/<repo>.json, "goal").
 GOALS = {
-    "ns1": "Minimise resources, maximise capability and quality",
-    "ns2": "MARVIN becomes the OS of Gil's phone",
-    "ns3": "MARVIN raises the human experience",
-    "ns4": "MARVIN is the best tool for making tools",
-    "project:marvin": "Work gets done without Gil chasing it, cheaply, without the paid subscription",
+    **{f"ns{i}": title for i, title in enumerate(north_stars.titles(), 1)},
+    "project:marvin": "Work gets done without the owner chasing it, cheaply, without the paid subscription",
     "project:clarity-captions": "Any hard-of-hearing person can rely on Seal Speak",
     "project:portfolio-website-updater": "The portfolio lands interviews",
     "project:paper-dive": "Papers understood fast and turned into findings projects use",
@@ -44,7 +47,7 @@ JOBS: dict[str, dict] = {
     "research-colony": {"machine": "both", "goal": "project:paper-dive", "reporter": "its launchd log",
                         "healthy": "a run finished today with at least one source", "consumer": "the daily digest and the brief"},
     "desktoplive": {"machine": "both", "goal": "ns3", "reporter": "Health desktoplive:running",
-                    "healthy": "the wallpaper process is running and drawing", "consumer": "Gil's desktop"},
+                    "healthy": "the wallpaper process is running and drawing", "consumer": "the owner's desktop"},
     "dashboard-webhook": {"machine": "both", "goal": "project:marvin", "reporter": "dashboard-webhook.log",
                           "healthy": "port 7878 answers", "consumer": "the dashboard's Approve and the merge gate"},
     "ticket-pipeline": {"machine": "both", "goal": "project:marvin", "reporter": "ticket stages (ticket_stages.py)",
@@ -52,15 +55,15 @@ JOBS: dict[str, dict] = {
     "architecture-review": {"machine": "mini", "goal": "ns1", "reporter": "suggestions.md",
                             "healthy": "last run exit 0", "consumer": "the session-start report (suggestion count)"},
     "auto-fix": {"machine": "mini", "goal": "ns1", "reporter": "its daily PR (auto-fix/<date>), plus auto-fix-log.md",
-                 "healthy": "last run exit 0", "consumer": "Gil, via MR Review"},
+                 "healthy": "last run exit 0", "consumer": "the owner, via MR Review"},
     "cron-health": {"machine": "mini", "goal": "project:marvin", "reporter": "cron-health log",
                     "healthy": "last run exit 0", "consumer": "Health cron:*",
-                    "review": "ADR 0033 folds cron health into Health, and the Vitals plan drops the cron:* checks"},
+                    "review": "purpose (nothing breaks silently) is falling short: Health missed a 2-day frozen laptop view too. Reached by the Vitals peer heartbeat (P2); this job folds in then"},
     "health-check": {"machine": "mini", "goal": "project:marvin", "reporter": "health-status.json",
                      "healthy": "a sweep in the last 30 min", "consumer": "Vitals on every machine (once peer push lands)"},
     "process-quarantine-reviews": {"machine": "mini", "goal": "ns1", "reporter": "quarantine.md",
                                    "healthy": "last run exit 0", "consumer": "the session-start report",
-                                   "review": "Health contract:safety-monitor: 92 items waiting, never consumed"},
+                                   "review": "purpose (the owner's reviews teach the safety filter, ADR 0015) is falling short: 0 of 97 reviewed. Reached by a tap-to-review card (approved 2026-10-26)"},
     "verify-digest-fix": {"machine": "mini", "goal": "ns1", "reporter": "its launchd log",
                           "healthy": "last run exit 0", "consumer": None,
                           "review": "a check for one past digest fix; is it still needed?"},
@@ -75,9 +78,9 @@ JOBS: dict[str, dict] = {
     "seal-beta-ingest": {"machine": "mini", "goal": "project:clarity-captions", "reporter": "its launchd log",
                          "healthy": "last run exit 0", "consumer": "the Seal Speak beta view and tickets"},
     "dashboard-launch": {"machine": "laptop", "goal": "ns3", "reporter": "none needed (opens the app at login)",
-                         "healthy": "the dashboard is open after login", "consumer": "Gil"},
+                         "healthy": "the dashboard is open after login", "consumer": "the owner"},
     "morning-brief": {"machine": "laptop", "goal": "ns3", "reporter": "the brief file",
-                      "healthy": "a brief built today", "consumer": "Gil, each morning"},
+                      "healthy": "a brief built today", "consumer": "the owner, each morning"},
     "portfolio-dev-tunnel": {"machine": "laptop", "goal": "project:portfolio-website-updater",
                              "reporter": "its launchd log", "healthy": "the tunnel to the Mini's dev site is up",
                              "consumer": "the portfolio dev site on the laptop"},
@@ -88,10 +91,10 @@ JOBS: dict[str, dict] = {
                                  "reporter": "its launchd log", "healthy": "last run exit 0",
                                  "consumer": "the website map (#189)"},
     "open-loops": {"machine": "none", "goal": None, "reporter": None, "healthy": None, "consumer": None,
-                   "review": "off until the goal tracker links loops to project goals (Gil, 2026-10-26)"},
+                   "review": "off until the goal tracker links loops to project goals (approved 2026-10-26)"},
     "tidy-agent": {"label": "com.giles.tidy-agent", "machine": "both", "goal": "ns3",
                    "reporter": "~/.claude/organize/agent.err.log", "healthy": "last run exit 0",
-                   "consumer": "Gil's Downloads and Desktop"},
+                   "consumer": "the owner's Downloads and Desktop"},
 }
 
 
@@ -103,11 +106,11 @@ def waste(jobs: dict | None = None, loaded: dict | None = None) -> list[dict]:
     rows = []
     for name, j in jobs.items():
         if j.get("goal") is None and j.get("machine") != "none":
-            rows.append({"job": name, "why": "no goal: it serves nothing we're aiming at", "review": j.get("review")})
+            rows.append({"job": name, "why": "no goal recorded: what was it built for?", "review": j.get("review")})
         elif j.get("consumer") is None and j.get("machine") != "none":
-            rows.append({"job": name, "why": "nobody reads its output", "review": j.get("review")})
+            rows.append({"job": name, "why": "nobody reads its output: is its purpose met elsewhere, or falling short?", "review": j.get("review")})
         elif j.get("review"):
-            rows.append({"job": name, "why": "flagged for review", "review": j["review"]})
+            rows.append({"job": name, "why": "check its purpose: met elsewhere, or falling short?", "review": j["review"]})
     for machine, names in (loaded or {}).items():
         if not isinstance(names, list):
             continue
@@ -119,8 +122,8 @@ def waste(jobs: dict | None = None, loaded: dict | None = None) -> list[dict]:
 
 def report(rows: list[dict]) -> str:
     if not rows:
-        return "Nothing to remove: every job serves a goal and has a reader."
-    lines = [f"{len(rows)} job(s) to look at:"]
+        return "Every job has a goal and a reader; no purpose needs checking."
+    lines = [f"{len(rows)} job(s) whose purpose needs checking (met elsewhere, or falling short?):"]
     for r in rows:
         lines.append(f"- {r['job']}: {r['why']}" + (f" ({r['review']})" if r.get("review") else ""))
     return "\n".join(lines)

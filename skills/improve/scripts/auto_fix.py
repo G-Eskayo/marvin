@@ -60,7 +60,6 @@ QUEUE_PATH = CLAUDE_DIR / "improvement-queue.md"
 VENV_PYTHON = AGENTS_DIR / "venv" / "bin" / "python"
 GH = AGENTS_DIR / "bin" / "gh"
 LAUNCH_AGENTS_DIR = Path.home() / "Library" / "LaunchAgents"
-REPO = "G-Eskayo/marvin"
 
 SCOPE = ("NAMING", "VERBOSITY", "KISS")
 MAX_ITEMS = 10
@@ -82,24 +81,27 @@ import sandbox_orchestration as so  # noqa: E402
 from build_type_measure import _scope_root  # noqa: E402
 from evidence_capture import capture_test_results, TestTimedOut  # noqa: E402
 import job_events  # noqa: E402  (run log shown in the dashboard's Health tab)
+import instance  # noqa: E402
+
+REPO = instance.engine_repo()  # where the PR goes: this install's own engine repo
 
 HOOK_SETTINGS_PATHS = (marvin_hooks.USER_SETTINGS, marvin_hooks.LOCAL_SETTINGS)
 
 
 def _core_files() -> set[Path]:
     """Every script this system currently depends on to run itself — derived live from what's actually wired up
-    (hooks, com.marvin.* / com.gileskayo.* launchd jobs), not hardcoded, so new ones are excluded automatically."""
+    (hooks and every launchd job's ProgramArguments), not hardcoded, so new ones are excluded automatically."""
     core: set[Path] = set()
     # Hooks: user-level settings.json since #291, so reading settings.local.json alone protected none of them.
     for script in marvin_hooks.wired_scripts(HOOK_SETTINGS_PATHS):
         if script["path"].endswith(".py") and str(AGENTS_DIR) in script["path"]:
             core.add(Path(script["path"]).resolve())
     try:
-        for pattern in ("com.marvin.*.plist", "com.gileskayo.*.plist"):
-            for plist in LAUNCH_AGENTS_DIR.glob(pattern):
-                for match in re.findall(r"<string>([^<]+\.py)</string>", plist.read_text()):
-                    if str(AGENTS_DIR) in match:
-                        core.add(Path(match).resolve())
+        # Every launchd job, whatever its label prefix: only scripts under ~/.agents are kept, so no owner name is needed.
+        for plist in LAUNCH_AGENTS_DIR.glob("*.plist"):
+            for match in re.findall(r"<string>([^<]+\.py)</string>", plist.read_text(errors="replace")):
+                if str(AGENTS_DIR) in match:
+                    core.add(Path(match).resolve())
     except Exception:
         pass
     return core
@@ -374,7 +376,7 @@ def pr_body(today: str, fixed: list[dict], left_out: dict[str, str], cmd: list[s
              f"`auto-fix/{today}` from origin/main; the shared `~/.agents` checkout was not touched. The tests that cover "
              "these files ran before and after the fix and passed both times.",
              "",
-             "Not auto-merged: it goes through the normal merge gate when Gil approves.",
+             "Not auto-merged: it goes through the normal merge gate when the owner approves.",
              "", "## Items fixed", "", *[f"- {i['entry']}" for i in fixed]]
     if left_out:
         lines += ["", "## Left out", "", *[f"- {entry} — {note}" for entry, note in left_out.items()]]
