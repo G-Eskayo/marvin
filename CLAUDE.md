@@ -20,12 +20,11 @@ See `docs/agents/decisions-format.md`.
 
 Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
 
-## graphify
+## Codebase questions: grep first, graphify for structure
 
-This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+Measured on 30 real questions with known answers (`bench/retrieval_eval.py`, marvin#705, `bench/RESULTS.md`): grep put the answer in the top 5 for 67% of questions, `graphify query` 38%; on multi-hop questions grep 3 of 4, graphify 0 of 4.
 
 Rules:
-- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
-- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
-- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
-- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+- For codebase questions, search with grep (`rg`) first.
+- Use graphify for structure questions: who calls or imports X, what a module touches (`graphify path "<A>" "<B>"`, `graphify explain "<concept>"`). `graphify-out/GRAPH_REPORT.md` is for broad architecture review only.
+- The graph rebuilds itself after commits, merges and rebases (`lib/graphify_freshness.py`, marvin#691); the Health card "Code graph is current" shows when it hasn't.

@@ -78,3 +78,49 @@ Full report: [`marvin-surface-display-2026-10-21.md`](marvin-surface-display-202
 - **Confidence:** Strong (AR/HUD context, transferable).
 - **Drives:** MARVIN OS text panels get dark translucent backing plates; the transparency simulator tests them.
 - **Public use:** Yes.
+
+---
+
+## Knowledge graphs, 2026-10-26
+
+Full report: [`knowledge-graphs-2026-10-26.md`](knowledge-graphs-2026-10-26.md).
+
+### E1. Graph retrieval loses to plain RAG on single-hop questions
+- **Source:** [Han et al., RAG vs. GraphRAG](https://arxiv.org/abs/2502.11371);
+  [GraphRAG-Bench](https://arxiv.org/abs/2506.05690).
+- **What we took:** graphs win only on multi-hop questions. Route to them; don't default to them.
+- **Confidence:** Strong.
+- **Drives:** gold-question eval before keeping "graphify first" in CLAUDE.md; graph traversal as an opt-in tool.
+- **Public use:** Yes.
+
+### E2. LLM-judged graph-RAG wins are inflated by position bias
+- **Source:** [Zeng et al.](https://arxiv.org/abs/2506.06331).
+- **What we took:** comparing a system with itself swung win rates by more than 30 points depending on answer order.
+  Use known-answer recall@k.
+- **Confidence:** Strong.
+- **Drives:** the eval scores against ground truth, not an LLM judge.
+- **Public use:** Yes.
+
+### E3. Bi-temporal facts, invalidate instead of delete
+- **Source:** [Zep/Graphiti paper](https://arxiv.org/html/2501.13956v1).
+- **What we took:** facts carry valid/invalid and learned/retired times; contradictions retire old facts.
+- **Confidence:** Strong (design); Moderate (benefit, single vendor paper).
+- **Drives:** proposed `valid_from`/`invalid_at`/`superseded_by` memory frontmatter.
+- **Public use:** Yes.
+
+### E4. Auto-built code graphs go stale and drown in hub files
+- **Source:** [practitioner test of graphify vs ripgrep](https://praveenvijayan.substack.com/p/your-knowledge-graph-is-making-your);
+  our own measurement (graph 84 commits behind HEAD, 242 MB of unpruned snapshots).
+- **What we took:** staleness, not schema, is the main failure of our code graph.
+- **Confidence:** Weak (3 queries) plus Ours.
+- **Drives:** graphify rebuild on merge/rewrite, a stale-graph warning, snapshot pruning.
+- **Public use:** Careful.
+
+### E5. On MARVIN's own questions, keyword grep beats graphify; memory_graph wins on memory
+- **Source:** our retrieval eval, 2026-10-26 (`bench/RESULTS.md`, marvin#705). 30 questions with known answers, no LLM
+  judge.
+- **What we took:** hit@5 was rg 0.67 against graphify 0.38. On multi-hop questions graphify scored 0 of 4 and rg 3
+  of 4. memory_graph related scored 0.83 on memory questions, at about 1/12 of rg's tokens.
+- **Confidence:** Ours (n = 30, one author; a single-pass rg understates an agent's real grep).
+- **Drives:** PR #713's decision on the graphify-first rule in CLAUDE.md; memory_graph as the memory retriever.
+- **Public use:** Careful.

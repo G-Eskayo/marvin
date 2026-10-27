@@ -25,6 +25,10 @@ someone decides. The ticket's own comments are the record, so both Macs can run 
 
     purpose_metrics.py check                 # the daily outcome check (run by the cleanup sweep)
     purpose_metrics.py measure <name> --local  # one measure on this Mac only (how the other Mac is asked over ssh)
+    purpose_metrics.py first-aid <name> --local  # one registered first-aid step on this Mac (asked over ssh)
+
+A watched incident (Recurrence check + the `watch` label) is re-measured every day and, when it trips, climbs the
+incident ladder: first aid, reopen with evidence, a pipeline fix (lib/incident_ladder.py).
 """
 from __future__ import annotations
 
@@ -168,32 +172,134 @@ def _replanned_tickets(stages_dir: Path | None = None, days: float = PROBE_WINDO
     return float(count)
 
 
+_SYNC_HEADER = re.compile(r"^## (\S+) — alert \(([^)]+)\)", re.M)
+
+
+def _sync_stuck_episodes(log: Path | None = None, state: Path | None = None, label: str | None = None,
+                         days: float = PROBE_WINDOW_DAYS, now: datetime | None = None,
+                         after_s: float = 30 * 60) -> float:
+    """#702/#706 (2026-10-26): this Mac's code-sync episodes stuck for 30+ min. Counts its own "sync has been failing"
+    alerts in sync-log.md over the window (the log syncs between Macs, so only this Mac's header counts, and summing
+    across Macs never double-counts), plus an episode still open past `after_s` in code-sync-stuck.json that hasn't
+    alerted yet. Before the fix the MacBook was stuck for 4 days. O(log size)."""
+    import code_sync
+    from machine_profile import machine_label
+    log = log or code_sync.LOG_PATH
+    state = state or code_sync.LOG_PATH.parent / "logs" / "code-sync-stuck.json"
+    label = label or machine_label()
+    now = now or datetime.now(timezone.utc)
+    cut = _cut(now, days)
+    count = 0
+    try:
+        text = log.read_text(errors="replace")
+    except OSError:
+        text = ""
+    for m in _SYNC_HEADER.finditer(text):
+        when = _when(m.group(1))
+        body = text[m.end():m.end() + 300]
+        if m.group(2) == label and when and when >= cut and "sync has been failing" in body.split("\n## ")[0]:
+            count += 1
+    try:
+        st = json.loads(state.read_text())
+    except (OSError, ValueError):
+        st = {}
+    for ep in (st.values() if isinstance(st, dict) else []):
+        if not isinstance(ep, dict):
+            continue
+        try:
+            since = float(ep.get("since"))
+        except (TypeError, ValueError):
+            continue
+        if now.timestamp() - since < after_s:
+            continue
+        # An alerted episode's alert line is already counted when it falls inside the window: it was written at or
+        # after since + after_s, so since + after_s >= cut puts it there. An older one (a short window, as the
+        # re-measure after first aid uses, or an episode open longer than the window) is counted here. Never
+        # undercounts; at worst one late alert counts twice, which only matters to a probe that trips above 0 anyway.
+        if not ep.get("alerted") or since + after_s < cut.timestamp():
+            count += 1
+    return float(count)
+
+
 # name -> (symptom counter, the most it may read while the fix holds, what it counts). Summed across Macs like any
 # measure; the logs are per Mac (~/.claude/logs doesn't sync), so nothing is counted twice.
-PROBES: dict[str, tuple[Callable[[], float], float, str]] = {
-    "gh-watch-change-storm": (lambda: _gh_watch_busiest_hour(), 120.0,
+# Each counter takes `days` (default the 7-day window): a watched incident is re-measured over the time since its last
+# recorded state, and first aid is judged over the minutes since it ran (lib/incident_ladder.py).
+PROBES: dict[str, tuple[Callable[..., float], float, str]] = {
+    "gh-watch-change-storm": (lambda days=PROBE_WINDOW_DAYS: _gh_watch_busiest_hour(days=days), 120.0,
                               "the busiest hour's gh-watch 'change detected' lines over 7 days, all Macs (#604)"),
-    "ticket-planned-3x-in-24h": (lambda: _replanned_tickets(), 0.0,
+    "ticket-planned-3x-in-24h": (lambda days=PROBE_WINDOW_DAYS: _replanned_tickets(days=days), 0.0,
                                  "tickets planned 3+ times inside 24 h over 7 days, all Macs (#606)"),
+    "code-sync-stuck": (lambda days=PROBE_WINDOW_DAYS: _sync_stuck_episodes(days=days), 0.0,
+                        "code-sync episodes stuck 30+ min over 7 days, per Mac, summed (#702, #706)"),
 }
 MEASURES.update({name: fn for name, (fn, _limit, _what) in PROBES.items()})
+
+
+def _ladder(fn: str) -> float:
+    import incident_ladder
+    return getattr(incident_ladder, fn)()
+
+
+# Solved stays solved (lib/incident_ladder.py): read from the ladder's own log on the Mac that runs the daily check
+# (marvin.db, #621, hasn't landed yet); the other Macs read 0, so the sum is that Mac's number.
+MEASURES.update({
+    "regression-recurrences-30d": lambda: _ladder("recurrences"),
+    "regressions-fixed-without-you-30d": lambda: _ladder("fixed_without_you"),
+    "regression-hours-to-fixed-30d": lambda: _ladder("hours_to_fixed"),
+})
 # Rates are computed from summed counts across Macs (refusals per 100 headless Bash calls), so more pipeline work
 # doesn't read as a regression and a busy Mac weighs more than an idle one.
-RATES = {"headless-refusal-rate": ("headless-refusals-per-week", "headless-bash-calls-per-week")}
+RATES = {"headless-refusal-rate": ("headless-refusals-per-week", "headless-bash-calls-per-week"),
+         "regression-self-fix-rate": ("regressions-fixed-without-you-30d", "regression-recurrences-30d")}
 
 
 def _rate(num: float, den: float) -> float:
     return round(100 * num / den, 1) if den else 0.0
 
 
-def measure_here(name: str) -> float:
+def measure_here(name: str, days: float | None = None) -> float:
+    """One measure on this Mac. `days` narrows a probe's window (a watched incident's re-measure); other measures
+    ignore it."""
     if name in RATES:
         num, den = RATES[name]
         return _rate(MEASURES[num](), MEASURES[den]())
+    if days is not None and name in PROBES:
+        return PROBES[name][0](days=_days(days))
     return MEASURES[name]()
 
 
-def measure_everywhere(name: str) -> tuple[float, dict[str, float]]:
+def _days(days) -> float:
+    """A window in days: a finite number in [0, PROBE_WINDOW_DAYS]. Anything else raises (it came over ssh)."""
+    d = float(days)
+    if not 0 <= d <= PROBE_WINDOW_DAYS:
+        raise ValueError(f"window {days!r} days is outside 0..{PROBE_WINDOW_DAYS}")
+    return d
+
+
+_SAFE_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,59}")
+
+
+def _macs(only=None):
+    """(device id, ssh host) for every other registered Mac, or only the ids in `only`."""
+    import machine_profile
+    for device_id, info in machine_profile.remote_devices().items():
+        host = info.get("tailscale_hostname")
+        if not host or info.get("kind") not in (None, "desktop", "laptop") or (only is not None and device_id not in only):
+            continue
+        yield device_id, host
+
+
+def _remote(host: str, verb: str, name: str, extra: str = "", timeout: int = 600) -> subprocess.CompletedProcess:
+    """Run one registered verb on another Mac. The command holds only a registry name (checked against a strict
+    pattern, so nothing a ticket wrote can reach the shell) and a number."""
+    if not _SAFE_NAME.fullmatch(name or ""):
+        raise ValueError(f"not a registered name: {_defang(name)}")
+    cmd = ["ssh", *SSH_OPTS, host, f"~/.agents/venv/bin/python ~/.agents/lib/purpose_metrics.py {verb} {name} --local{extra}"]
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+
+
+def measure_everywhere(name: str, days: float | None = None) -> tuple[float, dict[str, float]]:
     """This Mac plus every other registered Mac over ssh, summed. Raises if any Mac can't be measured: a partial
     number would look like an improvement."""
     if name in RATES:
@@ -201,17 +307,162 @@ def measure_everywhere(name: str) -> tuple[float, dict[str, float]]:
         return _rate(num, den), {k: _rate(per_num[k], per_den[k]) for k in per_num}
     MEASURES[name]  # unknown names fail before anything runs
     import machine_profile
-    per = {machine_profile.registry_id(): measure_here(name)}
-    for device_id, info in machine_profile.remote_devices().items():
-        host = info.get("tailscale_hostname")
-        if not host or info.get("kind") not in (None, "desktop", "laptop"):
-            continue
-        cmd = ["ssh", *SSH_OPTS, host, f"~/.agents/venv/bin/python ~/.agents/lib/purpose_metrics.py measure {name} --local"]
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    extra = f" --days {_days(days):.6f}" if days is not None and name in PROBES else ""
+    per = {machine_profile.registry_id(): measure_here(name, days if extra else None)}
+    for device_id, host in _macs():
+        out = _remote(host, "measure", name, extra)
         if out.returncode != 0:
             raise OSError(f"couldn't measure {name} on {device_id}: {out.stderr.strip()[:200]}")
         per[device_id] = float(out.stdout.strip().splitlines()[-1])
     return sum(per.values()), per
+
+
+# ── first aid: what MARVIN tries, with no model call, when a watched incident's probe trips (lib/incident_ladder.py).
+# Like PROBES, named, reviewed code: a ticket's '## First aid' section lists names from here and nothing else. Every
+# step is idempotent, deletes nothing that isn't proven redundant, and returns {"changed": bool, "detail": str}.
+
+def _stuck_sync(state: Path | None = None) -> list[tuple[Path, list[str]]]:
+    """This Mac's stuck repos and the sync actions that failed in each, from code_sync's own episode file. Only a
+    real git checkout and only 'push' / 'pull' survive; anything else in the file is ignored."""
+    import code_sync
+    state = state or code_sync.LOG_PATH.parent / "logs" / "code-sync-stuck.json"
+    try:
+        st = json.loads(state.read_text())
+    except (OSError, ValueError):
+        return []
+    out = []
+    for key, ep in (st.items() if isinstance(st, dict) else []):
+        repo = Path(str(key))
+        if not isinstance(ep, dict) or not repo.is_absolute() or not (repo / ".git").exists():
+            continue
+        failing = ep.get("failing") if isinstance(ep.get("failing"), dict) else {}
+        actions = [a for a in ("pull", "push") if a in failing] or ["push"]
+        out.append((repo, actions))
+    return out
+
+
+def _code_sync_rerun(state: Path | None = None, run=subprocess.run) -> dict:
+    """#707: run the sync actions that failed again, for each stuck repo (the same command the scheduled job runs)."""
+    stuck = _stuck_sync(state)
+    if not stuck:
+        return {"changed": False, "detail": "no repo is stuck on this Mac"}
+    script = Path(__file__).resolve().parent / "code_sync.py"
+    done = []
+    for repo, actions in stuck:
+        for action in actions:
+            out = run([sys.executable, str(script), action, str(repo)], capture_output=True, text=True, timeout=600)
+            done.append(f"{action} {repo.name}: exit {out.returncode}")
+    return {"changed": True, "detail": "re-ran code sync (" + "; ".join(done) + ")"}
+
+
+def _code_sync_drop_contained_stash(state: Path | None = None, drop=None) -> dict:
+    """#707: drop a leftover stash only when every file in it already matches HEAD (code_sync's #706 containment
+    check); any other stash is kept for a person."""
+    import code_sync
+    drop = drop or code_sync.drop_contained_stashes
+    stuck = _stuck_sync(state)
+    dropped = [f"{repo.name}: {d}" for repo, _a in stuck for d in drop(repo, "first-aid")]
+    return {"changed": bool(dropped),
+            "detail": ("dropped " + ", ".join(dropped)) if dropped else "no leftover stash HEAD already contains"}
+
+
+FIRST_AID: dict[str, tuple[Callable[[], dict], str]] = {
+    "code-sync-drop-contained-stash": (lambda: _code_sync_drop_contained_stash(),
+                                       "drop leftover stashes whose every file already matches HEAD (#706's check)"),
+    "code-sync-rerun": (lambda: _code_sync_rerun(), "re-run the failed code sync for each stuck repo"),
+}
+
+
+def first_aid_here(name: str) -> dict:
+    """One registered step on this Mac. Never raises: a step that throws is a failed step, logged."""
+    if name not in FIRST_AID:
+        return {"step": _defang(name), "ok": False, "changed": False, "detail": "not a registered first-aid step"}
+    try:
+        r = FIRST_AID[name][0]()
+        r = r if isinstance(r, dict) else {}
+        return {"step": name, "ok": True, "changed": bool(r.get("changed")), "detail": str(r.get("detail", ""))[:300]}
+    except Exception as exc:  # noqa: BLE001 -- a broken step must not stop the ladder; the next rung still runs
+        return {"step": name, "ok": False, "changed": False, "detail": f"{type(exc).__name__}: {str(exc)[:200]}"}
+
+
+def first_aid_everywhere(name: str, only=None) -> list[dict]:
+    """The step on this Mac (when it is in `only`, or `only` is None) and on each other Mac in `only`, over ssh.
+    One result per Mac; an unreachable Mac is a failed step, not an exception."""
+    import machine_profile
+    here = machine_profile.registry_id()
+    out = [{**first_aid_here(name), "mac": here}] if only is None or here in only else []
+    for device_id, host in _macs(only):
+        try:
+            r = _remote(host, "first-aid", name, timeout=1200)
+            res = json.loads(r.stdout.strip().splitlines()[-1]) if r.returncode == 0 else None
+        except (OSError, ValueError, IndexError, subprocess.SubprocessError) as exc:
+            res, r = None, exc
+        if not isinstance(res, dict):
+            res = {"step": name, "ok": False, "changed": False, "detail": f"couldn't run on that Mac: {str(getattr(r, 'stderr', r))[:200]}"}
+        out.append({**res, "mac": device_id})
+    return out
+
+
+# ── evidence: the log lines a reopened incident carries (bounded, secrets scrubbed by support.scrub) ─────────────
+
+EVIDENCE_LINES = 40
+EVIDENCE_LINE_CHARS = 240
+
+
+def _sync_evidence(days: float = PROBE_WINDOW_DAYS, log: Path | None = None, state: Path | None = None,
+                   label: str | None = None, now: datetime | None = None) -> list[str]:
+    """This Mac's sync-log entries inside the window, and its open stuck episodes."""
+    import code_sync
+    from machine_profile import machine_label
+    log = log or code_sync.LOG_PATH
+    label = label or machine_label()
+    cut = _cut(now, days)
+    try:
+        text = log.read_text(errors="replace")
+    except OSError:
+        text = ""
+    lines = []
+    for block in re.split(r"\n(?=## )", text):
+        m = re.match(r"## (\S+) — \S+ \(([^)]+)\)", block)
+        if m and m.group(2) == label and (w := _when(m.group(1))) and w >= cut:
+            lines += [l for l in block.splitlines() if l.strip()]
+    for repo, actions in _stuck_sync(state):
+        lines.append(f"still stuck: {repo.name} ({', '.join(actions)} failing)")
+    return lines
+
+
+EVIDENCE: dict[str, Callable[..., list[str]]] = {
+    "code-sync-stuck": lambda days=PROBE_WINDOW_DAYS: _sync_evidence(days=days),
+}
+
+
+def evidence_here(name: str, days: float = PROBE_WINDOW_DAYS) -> list[str]:
+    """The last EVIDENCE_LINES lines, each cut to EVIDENCE_LINE_CHARS and scrubbed. A probe with no evidence source,
+    or one that throws, gives one line saying so."""
+    import support
+    if name not in EVIDENCE:
+        return ["(no log is registered for this probe)"]
+    try:
+        lines = [str(l) for l in EVIDENCE[name](days=_days(days))]
+    except Exception as exc:  # noqa: BLE001
+        return [f"(couldn't read the log: {type(exc).__name__})"]
+    return [support.scrub(l[:EVIDENCE_LINE_CHARS]) for l in lines[-EVIDENCE_LINES:]]
+
+
+def evidence_everywhere(name: str, days: float, only=None) -> dict[str, list[str]]:
+    import machine_profile
+    here = machine_profile.registry_id()
+    out = {here: evidence_here(name, days)} if only is None or here in only else {}
+    for device_id, host in _macs(only):
+        try:
+            r = _remote(host, "evidence", name, f" --days {_days(days):.6f}", timeout=120)
+            lines = json.loads(r.stdout.strip().splitlines()[-1]) if r.returncode == 0 else None
+        except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+            lines = None
+        import support
+        out[device_id] = [support.scrub(str(l)[:EVIDENCE_LINE_CHARS]) for l in lines][-EVIDENCE_LINES:] \
+            if isinstance(lines, list) else ["(couldn't read that Mac's log)"]
+    return out
 
 
 # ── tickets ───────────────────────────────────────────────────────────────────────────────────────────────
@@ -387,16 +638,25 @@ def labelled_issues(repo: str, name: str) -> list[dict]:
     return [i for i in _gh_json(f"repos/{repo}/issues?labels={name}&state=all&per_page=100") if "pull_request" not in i]
 
 
-def run(now: datetime | None = None) -> list[dict]:
+def run(now: datetime | None = None, ladder_step: Callable | None = None) -> list[dict]:
     now = now or datetime.now(timezone.utc)
+    import incident_ladder
+    ladder_step = ladder_step or incident_ladder.step
     results = []
     for repo in REPOS:
         # Every fix carries an outcome check, so `bug` tickets are read too (the newest 100; one list call each).
         issues = {}
-        for name in (LABEL, BUG_LABEL):
+        for name in (LABEL, BUG_LABEL, incident_ladder.WATCH_LABEL):
             for issue in labelled_issues(repo, name):
                 issues.setdefault(issue["number"], issue)
         for issue in issues.values():
+            if incident_ladder.is_watched(issue):
+                # A watched incident is re-measured every day after its check date, not once (the incident ladder).
+                try:
+                    results.append(ladder_step(repo, issue, now))
+                except Exception as exc:  # noqa: BLE001 -- one incident failing never stops the others
+                    print(f"[purpose] #{issue['number']}: watch step failed ({exc})", file=sys.stderr)
+                continue
             spec = parse(issue.get("body"))
             due = check_date(spec) if spec else None
             if not due or now < due:
@@ -419,9 +679,15 @@ def health_findings(missed: list[dict]) -> list[dict]:
 
 if __name__ == "__main__":
     args = sys.argv[1:]
+    days = float(args[args.index("--days") + 1]) if "--days" in args[:-1] else None
     if args[:1] == ["measure"] and len(args) >= 2:
-        print(measure_here(args[1]) if "--local" in args else json.dumps(measure_everywhere(args[1])))
+        print(measure_here(args[1], days) if "--local" in args else json.dumps(measure_everywhere(args[1], days)))
+    elif args[:1] == ["first-aid"] and len(args) >= 2 and "--local" in args:
+        print(json.dumps(first_aid_here(args[1])))
+    elif args[:1] == ["evidence"] and len(args) >= 2 and "--local" in args:
+        print(json.dumps(evidence_here(args[1], PROBE_WINDOW_DAYS if days is None else days)))
     elif args == ["check"]:
         print(json.dumps(run()))
     else:
-        sys.exit("usage: purpose_metrics.py check | measure <name> [--local]")
+        sys.exit("usage: purpose_metrics.py check | measure <name> [--local] [--days N] | first-aid <name> --local | "
+                 "evidence <name> --local [--days N]")

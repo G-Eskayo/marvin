@@ -428,6 +428,10 @@ def _create_worktree(repo_path: Path, ticket_ref: str, base_branch: str = "main"
         # check=True used to hide git's own message behind "exit status 128" (a ticket on the macbook failed that way and
         # nothing said why); the reason has to travel with the failure.
         raise RuntimeError(f"git worktree add failed in {repo_path} (exit {proc.returncode}): {(proc.stderr or '').strip()[-400:]}")
+    # #687: node_modules as a copy-on-write clone of a cached install, so the agent's own `npm install` has nothing to
+    # write (it used to be ~0.8 GB per attempt on the Mac mini). A miss leaves the worktree exactly as before.
+    import node_modules_seed
+    node_modules_seed.seed_tree(worktree_path)
     return worktree_path
 
 

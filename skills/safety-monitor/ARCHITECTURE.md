@@ -80,18 +80,26 @@ This is why the paper's design was chosen over a generic safety classifier: the 
 Per the paper, the threshold isn't chosen by hand — it's picked from a calibration set to guarantee a bound on the false-accept rate (bad things that slip through). Concretely, for each loop:
 
 ```
-calibrate(loop_name) -> float:
-    rows = read_jsonl(calibration.jsonl, filter=loop_name)
-    if len(rows) < 20:
-        return DEFAULT_TAU  # 0.3, conservative
-    # sort candidate thresholds, pick smallest tau such that
+calibrate(loop_name) -> float:            # tau_map() in calibrate.py
+    rows = read_jsonl(calibration.jsonl)                     # ONE file, on the primary host (shared_labels.py)
+    global = risk_controlled(rows) if len(rows) >= 20 else DEFAULT_TAU      # 0.3, conservative
+    mine = rows for this loop
+    return risk_controlled(mine) if len(mine) >= 20 else global
+
+risk_controlled(rows):
+    # pick the LARGEST tau such that
     # fraction of labeled-bad rows with score < tau  <=  target_risk (default 0.05)
-    for tau in sorted(set(r.score for r in rows)):
-        false_accept_rate = fraction(rows, label=1, score < tau)
-        if false_accept_rate <= TARGET_RISK:
-            return tau
-    return 1.0  # nothing passes if we can't hit the bound
+    for tau in sorted(set(r.score for r in rows) | {1.0}, descending):
+        if fraction(rows, label=1, score < tau) <= TARGET_RISK:
+            return max(DEFAULT_TAU, tau)   # labels only come from held items: no evidence below the old threshold
+    return 1.0
 ```
+
+Every recorded label recomputes the whole map into `tau.json` (G-Eskayo/marvin#599: it used to pick the smallest
+tau, which pinned it to the lowest labeled score, and was cached once and never recomputed). Answers given on any Mac
+are delivered to the primary host's webhook (`POST /safety/label`); a Mac that can't reach it queues them in
+`~/.claude/safety-monitor/outbox.jsonl` and delivers on the next run, de-duplicated by entry hash. Other Macs cache
+the primary's map (`GET /safety/taus`).
 
 `tau.json` is per-loop because loops have different risk profiles (a bad research-digest entry costs a few minutes; a bad self-improve skill edit costs a broken routing table).
 

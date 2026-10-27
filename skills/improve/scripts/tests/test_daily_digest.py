@@ -338,11 +338,18 @@ def test_missing_helper_format():
     assert "❌ **Missing input:**" in result
     assert "test message" in result
 
-# ── fallback gate tests (ADR 0067) ─────────────────────────────────────────────
 
-import pytest  # noqa: E402
+"""Tests for daily_digest.py — gate and TOCTOU handling."""
+from datetime import datetime, timezone
+from pathlib import Path
+import sys
+import pytest
+
+# Add paths for imports
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "lib"))
-import brief_fallback  # noqa: E402
+
+import brief_fallback
 
 
 class TestDailyDigestGate:

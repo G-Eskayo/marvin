@@ -230,11 +230,22 @@ def test_missing_attachments_folder_is_its_own_error(tmp_path):
     assert st["ok"] is False and st["error"]["kind"] == "missing"
 
 
-def test_main_exit_codes(paths, monkeypatch):
+def test_main_exit_codes(paths, monkeypatch, tmp_path):
     drop(paths[0], REAL)
+    # Set up instance with seal_ingest enabled
+    inst_dir = tmp_path / "test_instance"
+    inst_dir.mkdir()
+    (inst_dir / "instance.json").write_text('{"features": {"seal_ingest": true}}')
+    monkeypatch.setenv("MARVIN_INSTANCE_DIR", str(inst_dir))
+
+    import instance
+    instance.reset()
+
     assert sbi.main(["run", "--attachments", str(paths[0]), "--store", str(paths[1])]) == 0
     monkeypatch.setattr(sbi.os, "scandir", lambda *a, **k: (_ for _ in ()).throw(PermissionError(1, "denied")))
     assert sbi.main(["run", "--attachments", str(paths[0]), "--store", str(paths[1])]) == 2
+
+    instance.reset()
 
 
 # ── store robustness ────────────────────────────────────────────────────────
@@ -296,6 +307,111 @@ def test_store_is_private_to_the_owner(paths):
 ])
 def test_known_models_get_plain_names(model, name):
     assert sbi.device_name(model) == name
+
+
+# ── feature gate (marvin#647) ───────────────────────────────────────────────
+
+def test_feature_off_returns_skipped_status(paths):
+    """Item 2: ingest() with feature_enabled=lambda n: False returns skipped status."""
+    drop(paths[0], REAL)
+    st = sbi.ingest(attachments_dir=paths[0], store_dir=paths[1], now=NOW,
+                     feature_enabled=lambda n: False)
+    assert st["ok"] is True
+    assert st["skipped"] == "feature_off"
+    assert st["files_found"] == 0
+    assert st["new_conversations"] == 0
+    # No files written to store
+    assert not (paths[1] / "reports.jsonl").exists()
+
+
+def test_feature_on_unchanged_behavior(paths):
+    """Item 3: ingest() with feature enabled behaves normally (regression guard)."""
+    drop(paths[0], REAL)
+    st = sbi.ingest(attachments_dir=paths[0], store_dir=paths[1], now=NOW,
+                     feature_enabled=lambda n: True)
+    assert st["ok"] is True
+    assert not st.get("skipped")
+    assert st["new_conversations"] == 1
+    assert (paths[1] / "reports.jsonl").exists()
+
+
+def test_feature_off_never_checks_permissions(paths, monkeypatch):
+    """Item 4: feature off short-circuits before permission check."""
+    drop(paths[0], REAL)
+    # Create the store first with feature enabled
+    sbi.ingest(attachments_dir=paths[0], store_dir=paths[1], now=NOW,
+               feature_enabled=lambda n: True)
+    before = (paths[1] / "reports.jsonl").read_bytes()
+
+    def deny(*a, **k):
+        raise PermissionError(1, "Operation not permitted")
+    monkeypatch.setattr(sbi.os, "scandir", deny)
+
+    st = sbi.ingest(attachments_dir=paths[0], store_dir=paths[1], now=NOW,
+                     feature_enabled=lambda n: False)
+    # Not a permission error, just skipped
+    assert st["ok"] is True
+    assert st["skipped"] == "feature_off"
+    # Store unchanged
+    assert (paths[1] / "reports.jsonl").read_bytes() == before
+
+
+def test_feature_off_with_corrupt_instance(paths, monkeypatch, tmp_path):
+    """Item 5: malformed instance.json with feature off still skips cleanly."""
+    drop(paths[0], REAL)
+    # Create a corrupt instance.json (invalid JSON)
+    inst_dir = tmp_path / "corrupt_instance"
+    inst_dir.mkdir()
+    (inst_dir / "instance.json").write_text("{invalid json")
+    monkeypatch.setenv("MARVIN_INSTANCE_DIR", str(inst_dir))
+
+    # Import instance after setting env var
+    import instance
+    instance.reset()  # Clear cache to pick up new MARVIN_INSTANCE_DIR
+
+    st = sbi.ingest(attachments_dir=paths[0], store_dir=paths[1], now=NOW,
+                     feature_enabled=instance.feature_enabled)
+    assert st["ok"] is True
+    assert st["skipped"] == "feature_off"
+
+    instance.reset()  # Clean up after test
+
+
+def test_feature_off_concurrent_runs_no_lock(paths):
+    """Item 6: concurrent runs with feature off both skip without taking the lock."""
+    drop(paths[0], REAL)
+    st1 = sbi.ingest(attachments_dir=paths[0], store_dir=paths[1], now=NOW,
+                      feature_enabled=lambda n: False)
+    st2 = sbi.ingest(attachments_dir=paths[0], store_dir=paths[1], now=NOW,
+                      feature_enabled=lambda n: False)
+    # Both return skipped
+    assert st1["skipped"] == "feature_off"
+    assert st2["skipped"] == "feature_off"
+    # Lock file never created
+    assert not (paths[1] / ".lock").exists()
+
+
+def test_cli_main_passes_instance_feature_enabled(paths, monkeypatch, tmp_path):
+    """Item 16 (ratchet): CLI main() passes inst.feature_enabled to ingest(), not the default."""
+    drop(paths[0], REAL)
+    # Create instance dir with seal_ingest off
+    inst_dir = tmp_path / "test_instance"
+    inst_dir.mkdir()
+    (inst_dir / "instance.json").write_text('{"features": {"seal_ingest": false}}')
+    monkeypatch.setenv("MARVIN_INSTANCE_DIR", str(inst_dir))
+
+    # Import instance after setting env var
+    import instance
+    instance.reset()
+
+    # Call main with the test paths (using argv to specify attachments and store)
+    exit_code = sbi.main(["run", "--attachments", str(paths[0]), "--store", str(paths[1])])
+
+    # Should skip (feature off), return exit code 0, no files written
+    assert exit_code == 0
+    assert not (paths[1] / "reports.jsonl").exists()
+
+    instance.reset()  # Clean up after test
 
 
 @pytest.mark.parametrize("model", ["iPhone99,9", "iPad16,3", "", None, 42])

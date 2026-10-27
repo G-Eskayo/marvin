@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted (2026-07-09)
+Accepted (2026-07-09). Amended by [[0077]] (2026-10-26): the synced Claude dir now commits local work before it
+merges instead of stash → pull → pop; a push sends every file except those under a live edit; a stuck sync alerts once.
 
 ## Context
 
