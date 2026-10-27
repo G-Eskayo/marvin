@@ -16,6 +16,12 @@ import pytest
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
+# Another test in the same worker may already have imported these by bare name from a different checkout (the
+# session-start report loads the installed ~/.agents copy): this file tests the ones next to it.
+for _name in ("calibrate", "process_quarantine_reviews", "verify"):
+    _mod = sys.modules.get(_name)
+    if _mod is not None and Path(getattr(_mod, "__file__", "") or "").resolve().parent != SCRIPTS:
+        del sys.modules[_name]
 
 import calibrate  # noqa: E402
 import process_quarantine_reviews as q  # noqa: E402
