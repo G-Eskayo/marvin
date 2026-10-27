@@ -161,14 +161,23 @@ class GitHub:
         except OSError:
             pass  # not there: nothing to remove
 
+    def merged_prs_for(self, n: int, since: datetime) -> list[int]:
+        """Pipeline PRs for this ticket (branch pipeline/<n>) merged at or after `since`: rung 3's fix."""
+        prs = json.loads(self._api(f"repos/{self.repo}/pulls?state=closed&sort=updated&direction=desc&per_page=100"))
+        return [p["number"] for p in prs if isinstance(p, dict) and _pipeline_branch(p, n)
+                and (w := pm._when(p.get("merged_at"))) and w >= since]
+
     def open_prs_for(self, n: int) -> list[int]:
         """Open PRs the pipeline built for this ticket (its branch is pipeline/<n>)."""
         try:
             prs = json.loads(self._api(f"repos/{self.repo}/pulls?state=open&per_page=100"))
         except (OSError, ValueError):
             return []
-        return [p["number"] for p in prs if isinstance(p, dict)
-                and re.fullmatch(rf"pipeline/(?:[\w.-]+/[\w.-]+#)?{n}", (p.get("head") or {}).get("ref", ""))]
+        return [p["number"] for p in prs if isinstance(p, dict) and _pipeline_branch(p, n)]
+
+
+def _pipeline_branch(pr: dict, n: int) -> bool:
+    return bool(re.fullmatch(rf"pipeline/(?:[\w.-]+/[\w.-]+#)?{n}", (pr.get("head") or {}).get("ref", "")))
 
 
 # ── the log (feeds the measures and the brief) ─────────────────────────────────────────────────────────────────────
@@ -195,7 +204,9 @@ def read_log(path: Path | None = None, days: float = MEASURE_DAYS, now: datetime
             if isinstance(e, dict) and (w := pm._when(e.get("at"))) and w >= cut]
 
 
-SELF_FIXERS = {"first-aid", "self-cleared", "rung-3-auto"}
+# Any fix MARVIN made counts (the owner, 2026-10-27): first aid, its own code clearing it, and a rung-3 pipeline PR,
+# whether it merged itself or with the owner's Approve. Only a clearing nobody can tie to MARVIN ("other") doesn't.
+SELF_FIXERS = {"first-aid", "self-cleared", "rung-3-pr", "rung-3-auto"}
 
 
 def recurrences(path: Path | None = None, now: datetime | None = None) -> float:
@@ -204,8 +215,8 @@ def recurrences(path: Path | None = None, now: datetime | None = None) -> float:
 
 
 def fixed_without_you(path: Path | None = None, now: datetime | None = None) -> float:
-    """Of those, the ones MARVIN cleared itself: first aid, the symptom clearing on its own, or a rung-3 PR that
-    auto-merged (higher is better)."""
+    """Of those, the ones MARVIN fixed: first aid, the symptom clearing on its own, or a rung-3 pipeline PR that
+    merged, by itself or with the owner's Approve (higher is better)."""
     return float(sum(1 for e in read_log(path, now=now) if e.get("event") == "cleared" and e.get("fixer") in SELF_FIXERS))
 
 
@@ -330,10 +341,19 @@ def step(repo: str, issue: dict, now: datetime, gh=None, measure: Callable | Non
                        "(`watch`): only a change is posted here.\n" + _mark("pass", now))
             return {"number": n, "action": "first-pass", "value": value}
         hours = round((now - st["at"]).total_seconds() / 3600, 1)
+        try:
+            fixed_by = gh.merged_prs_for(n, st["at"])
+        except Exception:  # noqa: BLE001 -- unknown who fixed it: count it as not MARVIN's
+            fixed_by = []
+        by = f" Fixed by MARVIN's PR {', '.join(f'#{p}' for p in fixed_by)}." if fixed_by else ""
         gh.comment(n, f"## Regression cleared\n\nProbe **{probe}** = **{value:g}** again (holds at {op} {bound:g}), "
-                      f"{hours:g} h after it came back.\n" + _mark("pass", now))
+                      f"{hours:g} h after it came back.{by}\n" + _mark("pass", now))
         gh.remove_label(n, pm.MISSED_LABEL)
-        log("cleared", fixer="other", hours=hours)
+        log("cleared", fixer="rung-3-pr" if fixed_by else "other", hours=hours, prs=fixed_by)
+        if fixed_by:
+            tell("MARVIN fixed a regression itself",
+                 f"MARVIN fixed a regression of #{n} itself: PR {', '.join(f'#{p}' for p in fixed_by)}, and {probe} holds again.",
+                 "fixed")
         return {"number": n, "action": "cleared", "value": value}
 
     # ── it tripped: rung 1, first aid ──

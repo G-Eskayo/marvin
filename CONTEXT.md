@@ -1553,7 +1553,9 @@ A GitHub 5xx (`remote: Internal Server Error`, HTTP 500, 503) is classified `GIT
   notification saying what's waiting). The ticket's trusted comments are the record: only a change of state is posted,
   so a second Mac or run posts nothing. Gil hears by a brief line and a phone notification when MARVIN fixed a
   regression itself and when it couldn't. Measures: `regression-recurrences-30d`, `regression-self-fix-rate`,
-  `regression-hours-to-fixed-30d` (from the ladder's log until marvin.db, #621, lands). The fit check suggests (⚠️,
+  `regression-hours-to-fixed-30d` (from the ladder's log until marvin.db, #621, lands). **Fixed without Gil** counts
+  any fix MARVIN made (Gil, 2026-10-27): first aid, its own code clearing the symptom, or a rung-3 pipeline PR merged
+  since the recurrence, whether it merged itself or with Gil's Approve. The fit check suggests (⚠️,
   not a block) `## Watch` and `## First aid` on a `bug` ticket with a Recurrence check.
 - **Rung-3 auto-merge** (ADR 0064 amendment, 2026-10-26): a rung-3 fix PR for a known incident's regression may
   merge itself even in core areas (not the merge gate or auto-merge itself), with a failing-first regression test,
