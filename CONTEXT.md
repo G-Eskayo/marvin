@@ -69,6 +69,41 @@ one job, starting with the history store.
   without this check the *next* automated push — including an unattended daily cron — would
   commit and propagate that corruption with nobody watching. See [[0022]] for the real incident
   that motivated this.
+- **Union-merged files** (ADR 0076, 2026-10-26): in the synced Claude dir, the files every machine appends to
+  (`sync-log.md`, `auto-fix-log.md`, `quarantine.md`, `improvement-queue.md`, `projects/*/memory/*.md`) merge with
+  git's `union` driver, so a stash pop on them never stops sync. code_sync writes the rule into the clone's own
+  `.git/info/attributes` before every stash or merge (fresh machines included; never into the engine repo). After a
+  merge it removes exact duplicate memory-index lines and logs them; anything else union got wrong (a changed line
+  kept beside its edit, a doubled heading, one memory linked twice) is a yellow Health card until the file is fixed.
+  Conflicts in any other file still stop for a person. Memory notes left the union rule the same day (ADR 0077).
+- **Drift fixes** (ADR 0077, 2026-10-26; the laptop's Claude dir went 4 days without a push):
+  - **Partial push**: a push commits and pushes every changed file except those under a **live-edit lease** (a live
+    session edited it within `session_work.LIVE_S`) and those still holding conflict markers; held files wait a cycle.
+    The whole push defers only when every changed file is held. A marker file is still refused, per file.
+  - **Commit before merge** (synced Claude dir only): pull commits local work first, then a real `merge --ff`; no stash
+    or pop. The engine and the instance keep stash → merge → pop (their commits are code under extra guards).
+  - **Keep-both resolution**: in the Claude dir, a conflict confined to `suggestions.md` and memory notes is resolved
+    (note: the remote's text, then `## Also from <machine> (<date>)` with this side's other lines; suggestions: entry
+    union, then re-sorted) and shown as an `auto-resolved` item on the `sync:union-review` card. Any other conflict
+    still stops for a person.
+  - **Stuck episode**: a repo failing push or pull for 30 min sends one `notify()`, and one "back in sync" when it
+    clears (`~/.claude/logs/code-sync-stuck.json`, per machine). No per-run failure banners any more.
+  - **Contained stash**: a leftover stash whose every file equals HEAD's is dropped and logged (sha kept in the log);
+    any other stash is kept and the run refuses, as before.
+- **Stale-code dispatch guard** (marvin#458, 2026-10-26): the ticket pipeline refuses to start any new work while
+  its own `~/.agents` checkout is stale: behind origin/main by changes that landed on main more than 2 h ago
+  (`failure_breaker.CODE_STALE_GRACE_HOURS`, judged by first-parent landing time), or code sync is stuck on a
+  conflict or leftover stash (`code_sync._stuck_from_previous_run`). It reads origin/main as the last fetch left it
+  (no network) through the same repo-state script `repo:sync` uses. A live reading, never stored: Health's
+  `pipeline:breaker` card is red with the fix text while it holds, and both clear once the checkout catches up.
+  Local commits ahead of origin never block. **Fails open** when origin/main can't be read (card shows
+  "couldn't measure"), so one git hiccup can't halt every project; a conflict or stash still blocks. Never resolves
+  the conflict. Found when a ticket needing a person was rebuilt ~122 times on a Mac three days behind main.
+  **Handover**: a paused scan writes its fix text into the scanner heartbeat (`scanner_role`, `"paused"`), so the
+  standby treats the primary as quiet and scans until the primary writes an unpaused heartbeat. The primary's role
+  never depends on the standby (no ping-pong; both stale = nobody dispatches, both red). In the overlap hour,
+  `ticket_pipeline._claim` re-reads labels after claiming and backs off if another `claimed:*` is present (at most
+  one scanner keeps a ticket; a failed re-read keeps the claim).
 
 - **Intent-vs-reality audit**: comparing documented intent (docstrings, ADRs, roadmap `[decision]`/
   `[research]` markers, memory) against actual current system state to find gaps nobody's reported
@@ -91,8 +126,10 @@ one job, starting with the history store.
   safety-netted mechanism for that rather than inventing new fix-application logic — the agent's
   job is discovery and classification (is this fixable within `auto_fix.py`'s existing narrow
   safety boundaries, or does it need real judgment?), not new fixing infrastructure.
-- **Output routing, by risk tier**: low-risk findings it fixes itself go through `auto_fix.py` and
-  land in `auto-fix-log.md`, same as any other auto-fix. Findings needing real judgment (like
+- **Output routing, by risk tier**: low-risk findings it fixes itself go through `auto_fix.py`, which
+  (since 2026-10-26) fixes queued NAMING/VERBOSITY/KISS items in its own worktree on `auto-fix/<date>`, runs the
+  covering tests before and after, and opens one PR a day for Gil's merge gate; it never edits the shared checkout.
+  Each run is logged in `auto-fix-log.md`, same as any other auto-fix. Findings needing real judgment (like
   2026-07-09's rubric/prompt fixes — genuine design decisions, not mechanical pattern-matching) go
   to `suggestions.md` for review, unimplemented — no new dedicated findings file, reusing the
   queue that already exists for exactly this purpose.
@@ -1230,6 +1267,31 @@ Mac has no push channel. Gil applies the hooks on each Mac with `marvin_hooks.py
 - Cost: profiles read once at load and again only on a profile file change (the `goals` file trigger), O(projects).
   The rows are built from memory and local files only, no GitHub call (`electron/main/project_progress.js`).
   A missing instance dir (public engine install) shows nothing.
+
+## Safety reviews on Health (approved 2026-10-26, ADR 0015's missing review step)
+
+- **Where**: Health ▸ Safety reviews (N), a view beside Checks / Autonomous agents / Project readiness. The approved
+  path was "Vitals ▸ Needs a decision ▸ Safety reviews"; neither Vitals nor a "Needs a decision" area is built yet, so
+  this is the smallest entry point, and moves there when they are.
+- **One card at a time**, every entry (Gil chose to review all of them: no sampling, no archiving): source · date,
+  risk and limit (score, tau), "Why held" when the entry has a flagged reason, an excerpt, "Show full item".
+  **Fine, let it through** = approve, **Fix it** = modify with a note, **Block** = deny. "N of total" counts this
+  session's answers into the total. No undo: an answer is recorded as a calibration label at once and the entry
+  leaves the file, so undoing it would need a second writer for both.
+- **One parser, one writer**: `process_quarantine_reviews.py` (`list`, `answer`). An entry is found by a hash of its
+  header and text (never its position), in the file as it is at write time, under a lock, written by temp file +
+  rename. `verify.quarantine()` appends through the same lock. An answered entry's own lines go but its trailing
+  divider stays, so two Macs answering adjacent entries merge in git without a conflict (tested).
+- **Untrusted text, rendered readable**: entries are model output, rendered as markdown (Gil, 2026-10-26) with the
+  Docs styles and `issueBody.safeUrl`, stricter than Docs: raw HTML shows as escaped text, no image loads, only
+  http(s)/mailto links (opened outside the app). The excerpt is cut at a line end, never inside a code fence. A
+  "modify" note is one line of data, kept with the label in `calibration.jsonl`.
+- **No polling**: read on open and on the `quarantine` file trigger (`triggerHub.watchFiles`, as for goals).
+- **One calibration, tau per loop** (decided 2026-10-26): answers from any Mac are recorded on the primary host
+  (`shared_labels.py`; the registry's macOS desktop, as the dashboard's webhook default) through its webhook
+  (`POST /safety/label`), queued in a local outbox while it is away and delivered on the next run, de-duplicated by
+  entry hash. Tau is per loop from 20 labels, else the global tau (all loops, from 20), else 0.3, never below 0.3,
+  and the whole map is recomputed on every label (#599). Other Macs cache the primary's map (`GET /safety/taus`).
 
 ## Merge order and the sent-back loop (2026-10-05)
 

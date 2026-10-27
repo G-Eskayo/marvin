@@ -581,6 +581,8 @@ def _claim(issue_number: int, label: str, title: str = "", repo: str = REPO, run
     if proc.returncode != 0:
         print(f"{LOG_PREFIX} failed to claim #{issue_number}: {proc.stderr[:300]}", file=sys.stderr)
         return False
+    if not _claim_is_ours_alone(issue_number, label, repo):
+        return False
     # title threaded through from main()'s own GitHub fetch -- the one
     # place in this flow that already has it, so the Activity tab never
     # has to show a bare number (feedback, 2026-10-01).
@@ -588,6 +590,30 @@ def _claim(issue_number: int, label: str, title: str = "", repo: str = REPO, run
                     **({"repo": repo} if repo != REPO else {}))
     _ensure_board(repo)
     return True
+
+
+def _claim_is_ours_alone(issue_number: int, label: str, repo: str) -> bool:
+    """Re-read the labels after adding ours. Another scanner's claim there means two scanners raced for this ticket
+    (the standby taking over from a paused primary, or handing back, marvin#458): back off and remove ours. Each
+    scanner adds before it reads, so whichever reads second always sees the first: at most one keeps the ticket, and
+    when both see each other both back off and the next scan retries. A failed read keeps the claim (the behavior
+    before this check): the check narrows the handover race, it must not stop dispatch on a GitHub hiccup."""
+    view = subprocess.run(["gh", "issue", "view", str(issue_number), "--repo", repo, "--json", "labels"],
+                          capture_output=True, text=True, timeout=15)
+    try:
+        if view.returncode != 0:
+            raise ValueError(view.stderr[:200])
+        names = {l["name"] for l in json.loads(view.stdout)["labels"]}
+    except (ValueError, KeyError, TypeError) as exc:
+        print(f"{LOG_PREFIX} could not verify the claim on #{issue_number} ({exc}); keeping it", file=sys.stderr)
+        return True
+    others = sorted(n for n in names if n.startswith("claimed:") and n != f"claimed:{label}")
+    if not others:
+        return True
+    print(f"{LOG_PREFIX} #{issue_number} is also claimed by {', '.join(others)}: backing off", file=sys.stderr)
+    subprocess.run(["gh", "issue", "edit", str(issue_number), "--repo", repo, "--remove-label", f"claimed:{label}"],
+                   capture_output=True, text=True, timeout=15)
+    return False
 
 
 def _release(issue_number: int, label: str, repo: str = REPO, run_id: str | None = None) -> None:
@@ -800,16 +826,43 @@ def main() -> None:
                 print(f"{LOG_PREFIX} skipped: another scan is running, it covers this one", file=sys.stderr)
                 run.step("Skipped", "another scan is still running; this one would act on the same tickets")
                 return
-            _scan(run, dry_run=False)
-    scanner_role.write_heartbeat(machine_profile.registry_id())
+            paused = _scan(run, dry_run=False)
+    # A scan paused for stale code says so, so the standby takes over while this Mac is fixed (marvin#458).
+    scanner_role.write_heartbeat(machine_profile.registry_id(), paused=paused)
 
 
-def _scan(run, dry_run: bool) -> None:
+def _code_pause(step, summary) -> str | None:
+    """marvin#458: refuse to start anything while this Mac's own pipeline code is stale or its code sync is stuck
+    (failure_breaker.code_freshness). Runs first, before anything that changes GitHub: stale code also decides which
+    PRs to send back and what the ticket agents apply. Runs already in flight are left alone; the conflict is never
+    touched. Health's pipeline:breaker card shows the same live reading red, and both clear once the checkout
+    catches up. Unknown fails open with a warning (see code_freshness)."""
+    fresh = failure_breaker.code_freshness()
+    trip = failure_breaker.code_trip(freshness=fresh)
+    if trip:
+        print(f"{LOG_PREFIX} dispatch PAUSED on stale code: {trip['fix']}", file=sys.stderr)
+        step("Code freshness", f"PAUSED: {trip['fix']}")
+        summary("dispatch paused: stale code on this Mac (" + trip["fix"].split(": ", 1)[0].removeprefix("this Mac's ") + ")")
+        return trip["fix"]
+    if fresh["state"] == "unknown":
+        print(f"{LOG_PREFIX} WARNING: can't tell whether this Mac's code is current ({fresh['detail']}); dispatching anyway",
+              file=sys.stderr)
+        step("Code freshness", f"unknown, dispatching anyway: {fresh['detail']}")
+        return None
+    step("Code freshness", f"current: {fresh['detail']}")
+    return None
+
+
+def _scan(run, dry_run: bool) -> str | None:
     """One scan. `run` is the job's run log (job_events): each phase is reported so the
     dashboard's Activity tab can show where this hourly job is and what it decided."""
     step = run.step if hasattr(run, "step") else run
     summary = run.summary if hasattr(run, "summary") else (lambda *a: None)
     fail = run.fail if hasattr(run, "fail") else (lambda *a: None)
+
+    paused = _code_pause(step, summary)
+    if paused:
+        return paused   # main() puts it in the heartbeat: the standby scans while this Mac is fixed
 
     # Hourly run doubles as board discovery, before any early return below, so a
     # project set up anywhere gets its dashboard board without being asked for.

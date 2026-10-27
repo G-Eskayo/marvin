@@ -1578,3 +1578,14 @@ def test_round_feedback_survives_odd_feedback_shapes():
                                            "ok": {"baseline": 1, "current": 2, "direction": "improved"},
                                            "junk": "not a dict"}})
     assert "pass: 5 -> 3" in text and "ok:" not in text and "no tests changed" in text
+
+
+def test_a_named_branch_gets_the_same_isolated_worktree_from_origin_main(git_repo):
+    """The daily auto-fix batch reuses this helper on auto-fix/<date> instead of a ticket's pipeline/<ref>."""
+    wt = so._create_worktree(git_repo, "unused", branch="auto-fix/2026-10-26")
+    assert wt == so.WORKTREES_ROOT / "auto-fix-2026-10-26"
+    assert subprocess.run(["git", "branch", "--show-current"], cwd=wt, capture_output=True, text=True).stdout.strip() == "auto-fix/2026-10-26"
+    (wt / "README.md").write_text("leftover\n")
+    wt2 = so._create_worktree(git_repo, "unused", branch="auto-fix/2026-10-26")   # same day again
+    assert (wt2 / "README.md").read_text() == "hello\n"
+    assert any("auto-fix/2026-10-26" in r for r in _rescue_refs(git_repo))

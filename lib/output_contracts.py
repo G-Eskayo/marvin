@@ -116,7 +116,7 @@ def _brief() -> tuple[list[datetime], list[datetime]]:
 CONTRACTS: list[Contract] = [
     Contract("architecture-review", "~/.claude/suggestions.md",
              f"ticket promotion (daily, top {PROMOTE_PER_DAY}, as needs-triage tickets) or Gil", 14, _suggestions),
-    Contract("improvement-sweep", "~/.claude/improvement-queue.md", "auto-fix (naming/verbosity) or Gil", 14, _queue),
+    Contract("improvement-sweep", "~/.claude/improvement-queue.md", "auto-fix (naming/verbosity/KISS, as a daily PR) or Gil", 14, _queue),
     Contract("safety-monitor", "~/.claude/quarantine.md", "Gil's approve/deny review", 7, _quarantine),
     Contract("daily-digest", "~/.claude/daily-digest/<day>.md", "the morning brief", 1, _digest("daily-digest")),
     Contract("research-digest", "~/.claude/research-digest/<day>.md", "the morning brief", 1, _digest("research-digest")),

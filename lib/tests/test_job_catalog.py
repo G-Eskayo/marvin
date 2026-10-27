@@ -95,3 +95,9 @@ def test_the_sweep_never_calls_a_job_irrelevant_or_says_remove():
     for word in ("irrelevant", "remove", "waste", "delete", "useless"):
         assert word not in text, word
     assert "purpose" in text
+
+
+def test_auto_fix_reports_through_its_pr_and_the_owner_reads_it_in_mr_review():
+    """2026-10-26: auto-fix opens one gated PR a day instead of editing the shared checkout, so its output is that PR."""
+    job = jc.JOBS["auto-fix"]
+    assert "PR" in job["reporter"] and "MR Review" in job["consumer"] and "review" not in job

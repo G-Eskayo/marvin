@@ -1315,3 +1315,57 @@ def test_graphify_freshness_is_a_registered_health_check():
 def test_graphify_check_reports_nothing_on_a_machine_without_the_graph(tmp_path, monkeypatch):
     monkeypatch.setattr(hc, "GRAPHIFY_REPO", tmp_path / "no-repo")
     assert hc.check_graphify_fresh() is None
+
+
+# ── stale pipeline code shows on the breaker card (marvin#458) ─────────────────
+
+STALE = {"state": "stale", "detail": "3 behind", "behind": 3, "oldest_hours": 72.4}
+
+
+def test_breaker_card_is_red_with_the_fix_text_while_this_macs_code_is_stale(monkeypatch):
+    import failure_breaker as fb
+    monkeypatch.setattr(fb, "tripped", lambda now=None, project=None: [])
+    monkeypatch.setattr(fb, "code_freshness", lambda *a, **k: STALE)
+    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
+    r = hc.check_pipeline_breaker()
+    assert r["severity"] == "red"
+    assert "this Mac's MARVIN code is 3 commits behind main (oldest 72h): code sync is stuck; resolve it (see repo:sync)" in r["detail"]
+
+
+def test_breaker_card_clears_by_itself_once_the_checkout_catches_up(monkeypatch):
+    import failure_breaker as fb
+    monkeypatch.setattr(fb, "tripped", lambda now=None, project=None: [])
+    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
+    monkeypatch.setattr(fb, "code_freshness", lambda *a, **k: STALE)
+    assert hc.check_pipeline_breaker()["severity"] == "red"
+    monkeypatch.setattr(fb, "code_freshness", lambda *a, **k: {"state": "current", "detail": "", "behind": 0, "oldest_hours": None})
+    assert hc.check_pipeline_breaker()["severity"] == "green"
+
+
+def test_breaker_card_keeps_each_macs_stale_code_trip_apart(monkeypatch):
+    # Two Macs stale at once are two problems to fix, not one merged row.
+    import failure_breaker as fb
+    monkeypatch.setattr(fb, "tripped", lambda now=None, project=None: [])
+    monkeypatch.setattr(fb, "code_freshness", lambda *a, **k: STALE)
+    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {"other-mac": {"tailscale_hostname": "other"}})
+    remote_trip = {"project": "*", "signature": fb.CODE_STALE_SIGNATURE, "machine": "other-mac", "tickets": [],
+                   "first_seen": "2026-10-25T00:00:00+00:00", "last_seen": "x",
+                   "fix": "this Mac's MARVIN code sync is stuck (stash); resolve it by hand (see repo:sync)"}
+    r = hc.check_pipeline_breaker(remote=lambda host: [remote_trip])
+    assert r["severity"] == "red" and r["value"] == 2
+    assert "other-mac" in r["detail"] and "stash" in r["detail"] and "3 commits behind" in r["detail"]
+
+
+def test_breaker_card_says_couldnt_measure_when_this_macs_freshness_is_unknown(monkeypatch):
+    # Dispatch fails open on unknown, so the card must not claim all-clear: it says what it couldn't read.
+    import failure_breaker as fb
+    monkeypatch.setattr(fb, "tripped", lambda now=None, project=None: [])
+    monkeypatch.setattr(hc.machine_profile, "remote_devices", lambda: {})
+    monkeypatch.setattr(fb, "code_freshness", lambda *a, **k: {"state": "unknown", "detail": "no origin/main ref", "behind": None, "oldest_hours": None})
+    r = hc.check_pipeline_breaker()
+    assert r["severity"] == hc.UNKNOWN and "origin/main" in r["detail"]
+
+
+def test_repo_state_script_without_fetch_never_fetches():
+    assert "git fetch" in hc.repo_state_script(".agents") and "FETCH=1" in hc.repo_state_script(".agents")
+    assert "FETCH=0" in hc.repo_state_script(".agents", fetch=False)

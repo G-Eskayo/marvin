@@ -1,5 +1,7 @@
 # Changelog
 
+- calibrate() returns lowest labeled score instead of risk-controlled max, and tau never recalculates after new labels ([#703](https://github.com/G-Eskayo/marvin/pull/703))
+
 - Real titles on PRs: ticket title instead of "Implement …#n", repo name on onboarding PRs, repo shown in MR Review ([#590](https://github.com/G-Eskayo/marvin/pull/590))
 
 - Pipeline stage strip on PR and ticket cards (GitLab-style), showing where it failed ([#368](https://github.com/G-Eskayo/marvin/pull/368))

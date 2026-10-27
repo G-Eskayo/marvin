@@ -375,8 +375,11 @@ def _preflight_worktree(worktree_path: Path, ticket_ref: str) -> None:
         raise RuntimeError(f"preflight: {resolved} is on branch {head.stdout.strip() or '(detached)'}, expected {want}")
 
 
-def _create_worktree(repo_path: Path, ticket_ref: str, base_branch: str = "main") -> Path:
-    """Branches explicitly from `origin/main` (fetched fresh first), not
+def _create_worktree(repo_path: Path, ticket_ref: str, base_branch: str = "main", branch: str | None = None) -> Path:
+    """`branch` overrides the ticket's pipeline/<ref> branch for a non-ticket job that wants the same isolation (the
+    daily auto-fix batch, auto-fix/<date>); everything below applies to it unchanged.
+
+    Branches explicitly from `origin/main` (fetched fresh first), not
     repo_path's current HEAD -- repo_path is the same shared checkout an
     interactive session might be using at the same moment, possibly on a
     different branch mid-edit. Branching from whatever happens to be
@@ -405,7 +408,7 @@ def _create_worktree(repo_path: Path, ticket_ref: str, base_branch: str = "main"
     produced is first preserved under refs/rescue/<branch>/<timestamp> (kept
     locally and pushed to origin), and only then is the old state discarded."""
     WORKTREES_ROOT.mkdir(parents=True, exist_ok=True)
-    branch = _branch_for(ticket_ref)
+    branch = branch or _branch_for(ticket_ref)
     # No '#' in the DIRECTORY name (the branch keeps it, cleanup_sweep reads the
     # branch): vite/vitest read '#' in a path as a URL fragment and crash, which
     # silently zeroed every pipeline ticket's vitest count. Worktrees created
