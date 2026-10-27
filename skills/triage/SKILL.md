@@ -24,7 +24,7 @@ Every comment or issue posted to the issue tracker during triage **must** start 
 
 Two **category** roles:
 
-- `bug` — something is broken. Check this on every ticket, whatever it was filed as: a ticket whose Problem describes broken or lost behaviour (a crash, a wrong result, a record that should exist and doesn't) is a `bug`, not an `enhancement`. Bugs are dispatched before features (ADR 0054), so a missed label costs real time.
+- `bug` — something is broken. Check this on every ticket, whatever it was filed as: a ticket whose Problem describes broken or lost behaviour (a crash, a wrong result, a record that should exist and doesn't) is a `bug`, not an `enhancement`. Bugs are dispatched before features (ADR 0054), so a missed label costs real time. A `bug` also needs an **outcome check** before it is `ready-for-agent`: a `## Purpose metric` or a `## Recurrence check` naming a registered probe (`to-issues` template; `lib/purpose_metrics.py`). If none fits, add the probe as part of the fix. The PR's fit check warns when it's missing (a warning for now, not a block).
 - `enhancement` — new feature or improvement
 
 Five **state** roles:

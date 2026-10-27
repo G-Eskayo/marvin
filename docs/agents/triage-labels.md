@@ -23,3 +23,6 @@ not be manually changed.
   how, and what to send back (`human-task-template.md`). Triage enforces it; a person-ticket without it is `needs-info`.
 - Category roles (`bug` / `enhancement`) already exist as GitHub's stock labels on this repo —
   use those as-is, don't create duplicates.
+- A `bug` carries an **outcome check** (decided 2026-10-26): a `## Purpose metric` or a `## Recurrence check`
+  (`skills/to-issues/SKILL.md`, `lib/purpose_metrics.py`). The daily outcome check reads `bug` and `purpose-metric`
+  tickets; the PR's North-star fit check warns when a fix has none.

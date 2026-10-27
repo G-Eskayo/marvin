@@ -91,8 +91,10 @@ one job, starting with the history store.
   safety-netted mechanism for that rather than inventing new fix-application logic — the agent's
   job is discovery and classification (is this fixable within `auto_fix.py`'s existing narrow
   safety boundaries, or does it need real judgment?), not new fixing infrastructure.
-- **Output routing, by risk tier**: low-risk findings it fixes itself go through `auto_fix.py` and
-  land in `auto-fix-log.md`, same as any other auto-fix. Findings needing real judgment (like
+- **Output routing, by risk tier**: low-risk findings it fixes itself go through `auto_fix.py`, which
+  (since 2026-10-26) fixes queued NAMING/VERBOSITY/KISS items in its own worktree on `auto-fix/<date>`, runs the
+  covering tests before and after, and opens one PR a day for Gil's merge gate; it never edits the shared checkout.
+  Each run is logged in `auto-fix-log.md`, same as any other auto-fix. Findings needing real judgment (like
   2026-07-09's rubric/prompt fixes — genuine design decisions, not mechanical pattern-matching) go
   to `suggestions.md` for review, unimplemented — no new dedicated findings file, reusing the
   queue that already exists for exactly this purpose.
@@ -107,6 +109,13 @@ one job, starting with the history store.
   All surfaces talk to the same mobile backend; a surface is a view onto MARVIN, not a separate agent.
 - **Voice**: the spoken surface — speech in, speech out. What July's ADRs 0001–0005 called the
   "voice client" is now this surface, not a standalone app.
+- **Voice endpoint** (ADR 0075): the one place spoken words reach MARVIN — words in, a reply written to be spoken out,
+  every exchange in the Thread. The Siri doorway, the Mac voice loop and the Voice surface all call it.
+- **Siri doorway**: "Hey Siri, MARVIN" on a HomePod, iPhone, Watch or car runs a Shortcut that hands the conversation to
+  the voice endpoint. Siri only opens the door. _Avoid_: "Siri integration" (MARVIN doesn't extend Siri, it replaces
+  what Siri answers).
+- **Mac voice loop**: MARVIN's own wake word ("Hey MARVIN"), local speech in and out, on a Mac with a microphone; it
+  can play through the HomePods over AirPlay.
 - **Chat**: the typed conversational surface — what the WhatsApp/Telegram companion idea was
   reaching for, delivered natively instead of through a third-party messenger.
 - **Dashboard**: the phone's view of what the desktop dashboard shows. Same data, phone-shaped
@@ -635,7 +644,7 @@ written. Approve spent 10.4 s re-listing every repo for its order check, and the
   `test/mr_actions.test.js`, which also counts GitHub calls over a boot and a session of clicks).
 - New dashboard actions follow this rule, and the polling guard's header points here.
 
-## Pipeline visibility — stage strip (built 2026-10-09, ADR 0073, ticket #217)
+## Pipeline visibility — stage strip (built 2026-10-09, ADR 0074 (numbered 0073 until 2026-10-26, which the support link also holds), ticket #217)
 
 Gil's problem 2026-10-09: debugging "where is this PR stuck?" required SSH + log archaeology into
 `~/.claude/logs/ticket-stages/`. Pipeline stage events exist, the dashboard reads them, but only in
@@ -1184,6 +1193,22 @@ except a "Done" state and the ticket chip Markdown uses; they are not counted am
 its webhook server's `GET /helpers` (the `/sessions` channel, #331), read through a 10 s cache with a 30 s backstop, since that
 Mac has no push channel. Gil applies the hooks on each Mac with `marvin_hooks.py install`.
 
+## Project goals on the boards and in Activity (2026-10-26, #625's progress strip)
+
+- Every project profile (`instance/config/projects/<repo>.json`, ADR 0071) carries `goal`, `signals` ([{name, better:
+  up|down}]), optional `status` (active | parked | done (handed off) | archived) and `goal_set`, set by Gil 2026-10-26.
+- **Board top**: "Goal: …" under the project name, then one chip per signal ("name ↑/↓  —"). No project goal → its
+  status (Parked / Done / Archived) instead. **Activity ▸ Projects**: one row per active project (name, first clause of
+  the goal with the full goal as tooltip, signals as "name —", and moving / stuck); parked, done and archived collapse
+  into "N parked or done". Tapping a row opens that board.
+- **Moving** = that repo's PRs merged in the last 7 days (the Merged view's saved list plus the merge server's own
+  record, deduped by URL). **Stuck** = open `hold` tickets + needs-you tickets (the boards' overview) + looping tickets
+  (planned 3+ times in 24 h, from the local stage logs); "held" when every stuck ticket is on hold. Signals are not
+  measured yet: every value is "—", "not measured yet".
+- Cost: profiles read once at load and again only on a profile file change (the `goals` file trigger), O(projects).
+  The rows are built from memory and local files only, no GitHub call (`electron/main/project_progress.js`).
+  A missing instance dir (public engine install) shows nothing.
+
 ## Merge order and the sent-back loop (2026-10-05)
 
 - **Order:** a PR waits on every OLDER open PR in its repo that shares a changed file (`dashboard/electron/main/pr_order.js`). Derived from the PRs' file lists each time; the MR list shows it, Approve & Merge is disabled with the reason, and `mr:approve` re-checks it in the main process so a stale screen cannot skip it. Deny stays available.
@@ -1385,6 +1410,11 @@ A GitHub 5xx (`remote: Internal Server Error`, HTTP 500, 503) is classified `GIT
 - **Outcome check**: the measurement of a purpose metric. It runs **at PR time** when the effect shows in
   the worktree (test speed, bench tokens), or **after merge, on a schedule** when it only shows in live use
   (e.g. #277: refusals over a week). A missed target is flagged, never silently passed.
+- **Every fix gets an outcome check** (Gil, 2026-10-26): a `bug` ticket carries a purpose metric or, when nothing
+  numeric fits, a **recurrence check**: a named probe (registered code in `lib/purpose_metrics.py` `PROBES`, never
+  ticket text) that counts the fixed symptom in a log that already exists, and passes when it hasn't come back. A
+  symptom that came back is a missed purpose. The PR's fit check warns when a fix has neither (a warning, not yet a
+  block). This replaced one-off "did the fix hold" scripts such as `verify_digest_fix.py`.
 - **Missed purpose** (decided 2026-10-08): when an outcome check misses its target, MARVIN always writes a
   **diagnosis** (a Background analyst run, full Memory) as a ticket comment: what it was meant to do, what
   happened (numbers), why it fell short (evidence) and the options (iterate with a drafted follow-up,

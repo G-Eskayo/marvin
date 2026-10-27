@@ -77,6 +77,7 @@ contextBridge.exposeInMainWorld('api', {
   },
   profiles: {
     list: () => ipcRenderer.invoke('profiles:list'),
+    goals: () => ipcRenderer.invoke('profiles:goals'),
     setDispatch: (repo, value) => ipcRenderer.invoke('profiles:setDispatch', repo, value),
     selftest: (repo) => ipcRenderer.invoke('profiles:selftest', repo)
   },
@@ -194,7 +195,8 @@ contextBridge.exposeInMainWorld('api', {
     timeline: (number, repo) => ipcRenderer.invoke('activity:timeline', number, repo),
     helpers: () => ipcRenderer.invoke('activity:helpers'),
     overview: () => ipcRenderer.invoke('activity:overview'),
-    needsYou: () => ipcRenderer.invoke('activity:needsYou')
+    needsYou: () => ipcRenderer.invoke('activity:needsYou'),
+    progress: () => ipcRenderer.invoke('activity:progress')
   },
   triggers: {
     // Fires when something the Activity tab shows has changed (file watch or GitHub ping).

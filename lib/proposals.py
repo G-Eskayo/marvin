@@ -136,8 +136,8 @@ def _read(path: Path) -> dict:
 
 # --- public API -----------------------------------------------------------------------------------------------------
 
-def add(root: Path, data: object, today: date | None = None) -> dict:
-    clean = _validate(data)
+def add(root: Path, submitted: object, today: date | None = None) -> dict:
+    clean = _validate(submitted)
     today = today or date.today()
     root.mkdir(parents=True, exist_ok=True)
     base = _slug(clean["title"])

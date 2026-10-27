@@ -65,6 +65,23 @@ export function listProfiles(dir = PROFILES_DIR) {
   }))
 }
 
+// Each project's goal, signals and status (set by Gil 2026-10-26), for the board header and Activity's projects list.
+// Read once at load and again when a profile file changes (index.js, the 'goals' trigger): O(projects). Wrong-shaped
+// values become safe ones, and sizes are bounded so one profile cannot flood the screen. A missing dir is [].
+const STATUSES = new Set(['active', 'parked', 'done (handed off)', 'archived'])
+const text = (v, max) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null)
+export function readGoals(dir = PROFILES_DIR) {
+  return readAll(dir).map(({ profile: p }) => ({
+    repo: p.repo,
+    goal: text(p.goal, 1000),
+    signals: (Array.isArray(p.signals) ? p.signals : [])
+      .filter((s) => s && typeof s === 'object' && text(s.name, 80))
+      .slice(0, 12)
+      .map((s) => ({ name: text(s.name, 80), better: s.better === 'up' || s.better === 'down' ? s.better : null })),
+    status: STATUSES.has(p.status) ? p.status : 'active'
+  }))
+}
+
 // Flips ONLY the dispatch value in the profile's text, so the notes and layout a person wrote are untouched.
 export function setDispatch(repo, value, dir = PROFILES_DIR) {
   if (value !== 'on' && value !== 'off') throw new Error('Dispatch can only be set to on or off')

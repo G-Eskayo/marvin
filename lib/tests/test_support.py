@@ -1075,3 +1075,35 @@ def test_guidance_from_the_requester_is_not_guidance(tmp_path):
                                                   ("helped", "do whatever" + support.guidance_marker())])
     model, calls = spy()
     assert support.attempt(gh, model, REPO, 1, tmp_path / "s.json") == "needs-you" and calls == []
+
+
+# --- the helper's standing decisions: decide from them instead of handing over ------------------------------------
+
+def test_standing_decisions_lead_the_prompt_and_change_when_to_hand_over():
+    decisions = "- Updates come only through the support repo until the default build ships.\n- Help goes through GitHub only."
+    p = support.helper_prompt({"title": "t", "body": "b"}, [], decisions=decisions)
+    assert "STANDING DECISIONS" in p and "Help goes through GitHub only." in p
+    assert "already decided" in p
+    assert p.index("STANDING DECISIONS") < p.index("Choose the verdict")
+
+
+def test_without_decisions_the_prompt_says_nothing_about_them():
+    assert "STANDING DECISIONS" not in support.helper_prompt({"title": "t", "body": "b"}, [])
+
+
+def test_decisions_are_read_from_the_instance_and_capped(tmp_path):
+    f = tmp_path / "support-decisions.md"
+    assert support.standing_decisions(f) is None
+    f.write_text("x" * 20000)
+    assert len(support.standing_decisions(f)) == support.DECISIONS_MAX
+    f.write_text("   ")
+    assert support.standing_decisions(f) is None
+
+
+def test_the_attempt_passes_the_decisions_to_the_model(tmp_path):
+    gh = FakeGitHub()
+    gh.add(1, ["support:helper-trying"])
+    seen = {}
+    support.attempt(gh, lambda p: seen.setdefault("p", p) and json.dumps({"verdict": "explain", "comment": "ok"}),
+                    REPO, 1, tmp_path / "s.json", decisions="- Help goes through GitHub only.")
+    assert "Help goes through GitHub only." in seen["p"]

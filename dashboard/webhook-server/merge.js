@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'child_process'
 import { promisify } from 'util'
-import { mkdtemp, rm } from 'fs/promises'
+import { mkdtemp, rm, statfs } from 'fs/promises'
 import { readdirSync } from 'fs'
 import { tmpdir } from 'os'
 import path from 'path'
@@ -238,7 +238,22 @@ export async function baselineFailsOnMain(names, exec = execFileAsync, repoPath 
   }
 }
 
-export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = REPO_PATH, runTests = _defaultRunTests, base = 'main', resolveConflicts = null, sleep = null, progress = noProgress) {
+// The gate copies the repo (about 650 MB for marvin) and runs the suite in it, and the baseline check may copy main as
+// well. Below this, tests fail in ways that read as the PR's fault (a write cut short), so the gate refuses first.
+export const MIN_GATE_FREE_BYTES = 5 * 1024 ** 3
+
+export async function freeDiskBytes(dir = tmpdir()) {
+  const s = await statfs(dir)
+  return s.bavail * s.bsize
+}
+
+export async function rebaseAndRetest(headRef, exec = execFileAsync, repoPath = REPO_PATH, runTests = _defaultRunTests, base = 'main', resolveConflicts = null, sleep = null, progress = noProgress, freeBytes = freeDiskBytes) {
+  const free = await freeBytes(tmpdir()).catch(() => null) // unreadable: carry on, as before this check
+  if (free !== null && free < MIN_GATE_FREE_BYTES) {
+    const gb = (n) => `${(n / 1024 ** 3).toFixed(1)} GB`
+    // Worded so summarizeGateFailure files it as GATE_INFRA: the machine, not the PR, and nothing is sent back.
+    return { ok: false, reason: `Disk check before rebasing onto ${base}:\n\nNo space left on device for the check: ${gb(free)} free, the gate needs ${gb(MIN_GATE_FREE_BYTES)}. Free up space on this Mac, then approve again.` }
+  }
   const scratchDir = await mkdtemp(path.join(tmpdir(), 'mr-merge-gate-'))
   progress('rebasing', 'running', { detail: `onto ${base}` })
   try {

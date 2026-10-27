@@ -5,7 +5,8 @@ Domain terms only. No implementation details — see `docs/adr/` for decisions a
 - **Recurring agent**: a `com.marvin.*` launchd job that repeats on a schedule — a daily or weekly
   calendar time, or a fixed interval (e.g. the ticket pipeline every 15 minutes). Distinct from a
   **one-off task**, which sets `Day`/`Month`/`Year` for one specific date (e.g.
-  `com.marvin.verify-digest-fix`, fired once on 2026-07-07), and from an **always-on service**, which
+  `com.marvin.verify-digest-fix`, fired once on 2026-07-07; retired 2026-10-26: "did the fix hold" is now the
+  standard outcome check in `lib/purpose_metrics.py`), and from an **always-on service**, which
   runs continuously with no schedule (e.g. the wallpaper app). Only recurring agents appear under the
   "Autonomous Agents" trunk. (Widened 2026-10-06, #182: interval jobs used to be left out.)
 - **System layer**: the overview — MARVIN's parts (memory, skills, infrastructure, agents,

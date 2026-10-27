@@ -33,12 +33,15 @@ import {
   triggerTicketPipeline,
   isBehindMain,
   rebaseAndRetest,
+  freeDiskBytes,
+  MIN_GATE_FREE_BYTES,
   defaultGateContext,
   _defaultRunTests,
   execWithGroupTimeout,
   assertTargetsBase,
   assertNotSentBack
 } from '../webhook-server/merge.js'
+import { summarizeGateFailure } from '../webhook-server/failure.js'
 import { MergeFailure, refusal, summarizeGateFailure } from '../webhook-server/failure.js'
 
 const realExec = promisify(execFile)
@@ -1179,5 +1182,34 @@ describe('a gate that never finishes is cut off and says so', () => {
     const ok = vi.fn().mockResolvedValue({ ok: true })
     const result = await mergePr(PR, exec(), noopRebuild, noopRedispatch, gate(), ok, vi.fn(), vi.fn(), { gateTimeoutMs: 5000 })
     expect(result.merged).toBe(true)
+  })
+})
+
+
+// 2026-10-26: with the disk full, tests failed in ways that read as the PR's fault (a file write cut short) and four
+// PRs were sent back for rework. A nearly full disk is the machine's problem: refuse before copying anything.
+describe('rebaseAndRetest on a nearly full disk', () => {
+  it('stops before touching git, and the failure reads as the machine (GATE_INFRA), not the PR', async () => {
+    const exec = vi.fn()
+    const runTests = vi.fn()
+    const result = await rebaseAndRetest('feature', exec, '/nowhere', runTests, 'main', null, null, undefined, async () => 1024 ** 3)
+    expect(result.ok).toBe(false)
+    expect(result.reason).toMatch(/no space left on device/i)
+    expect(result.reason).toContain('1.0 GB free')
+    expect(summarizeGateFailure(result.reason).code).toBe('GATE_INFRA')
+    expect(exec).not.toHaveBeenCalled()
+    expect(runTests).not.toHaveBeenCalled()
+  })
+
+  it('carries on when the free space cannot be read (fails open)', async () => {
+    const exec = vi.fn().mockRejectedValue(Object.assign(new Error('fetch failed'), { stderr: 'fetch failed' }))
+    await expect(rebaseAndRetest('feature', exec, '/nowhere', vi.fn(), 'main', null, null, undefined, async () => { throw new Error('statfs') }))
+      .rejects.toThrow('fetch failed')
+    expect(exec).toHaveBeenCalled()
+  })
+
+  it('reads a real number of free bytes, and the floor leaves room for a copy plus its tests', async () => {
+    expect(await freeDiskBytes(tmpdir())).toBeGreaterThan(0)
+    expect(MIN_GATE_FREE_BYTES).toBeGreaterThanOrEqual(3 * 1024 ** 3)
   })
 })
