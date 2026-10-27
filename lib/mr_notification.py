@@ -78,6 +78,12 @@ def notify_needs_you(ticket_ref: str, why: str, url: str | None = None) -> dict:
     return _fire("MARVIN: a ticket needs you", f"Needs you: {ticket_ref}: {why}", url)
 
 
+def notify_regression(title: str, message: str, url: str | None = None) -> dict:
+    """The incident ladder (incident_ladder.py): a solved problem came back, and MARVIN either fixed it itself or
+    couldn't. The same three channels; never raises."""
+    return _fire(title, " ".join(str(message or "").split())[:300], url)
+
+
 def _fire(title: str, message: str, open_target: str | None) -> dict:
     desktop_sent = False
     try:

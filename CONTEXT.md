@@ -1515,6 +1515,19 @@ A GitHub 5xx (`remote: Internal Server Error`, HTTP 500, 503) is classified `GIT
   ticket text) that counts the fixed symptom in a log that already exists, and passes when it hasn't come back. A
   symptom that came back is a missed purpose. The PR's fit check warns when a fix has neither (a warning, not yet a
   block). This replaced one-off "did the fix hold" scripts such as `verify_digest_fix.py`.
+- **Solved stays solved** (Gil, 2026-10-26; `lib/incident_ladder.py`): a fixed incident's ticket carries an
+  **incident record**: its Recurrence check, `## Root causes`, `## Fixed by`, `## Watch` and `## First aid`, plus the
+  `watch` label. A watched incident is re-measured **every day** after its check date (over the time since its last
+  recorded state), and when its probe trips it climbs the **incident ladder**, each rung only if the one before didn't
+  clear it: **first aid** (registered steps in `purpose_metrics.FIRST_AID`, never ticket text; idempotent, delete
+  nothing not proven redundant), **reopen with evidence** (`regression` label, the probe value, scrubbed log lines,
+  which first aid ran), **diagnose and fix** (the ticket queued for the pipeline with a brief that requires a
+  regression test failing on the current code first; at most one per incident per day) and, last, **you** (one
+  notification saying what's waiting). The ticket's trusted comments are the record: only a change of state is posted,
+  so a second Mac or run posts nothing. Gil hears by a brief line and a phone notification when MARVIN fixed a
+  regression itself and when it couldn't. Measures: `regression-recurrences-30d`, `regression-self-fix-rate`,
+  `regression-hours-to-fixed-30d` (from the ladder's log until marvin.db, #621, lands). The fit check suggests (⚠️,
+  not a block) `## Watch` and `## First aid` on a `bug` ticket with a Recurrence check.
 - **Missed purpose** (decided 2026-10-08): when an outcome check misses its target, MARVIN always writes a
   **diagnosis** (a Background analyst run, full Memory) as a ticket comment: what it was meant to do, what
   happened (numbers), why it fell short (evidence) and the options (iterate with a drafted follow-up,
