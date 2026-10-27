@@ -115,3 +115,12 @@ Full report: [`knowledge-graphs-2026-10-26.md`](knowledge-graphs-2026-10-26.md).
 - **Confidence:** Weak (3 queries) plus Ours.
 - **Drives:** graphify rebuild on merge/rewrite, a stale-graph warning, snapshot pruning.
 - **Public use:** Careful.
+
+### E5. On MARVIN's own questions, keyword grep beats graphify; memory_graph wins on memory
+- **Source:** our retrieval eval, 2026-10-26 (`bench/RESULTS.md`, marvin#705). 30 questions with known answers, no LLM
+  judge.
+- **What we took:** hit@5 was rg 0.67 against graphify 0.38. On multi-hop questions graphify scored 0 of 4 and rg 3
+  of 4. memory_graph related scored 0.83 on memory questions, at about 1/12 of rg's tokens.
+- **Confidence:** Ours (n = 30, one author; a single-pass rg understates an agent's real grep).
+- **Drives:** PR #713's decision on the graphify-first rule in CLAUDE.md; memory_graph as the memory retriever.
+- **Public use:** Careful.
