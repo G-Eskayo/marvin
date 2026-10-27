@@ -1486,7 +1486,9 @@ A GitHub 5xx (`remote: Internal Server Error`, HTTP 500, 503) is classified `GIT
   notification saying what's waiting). The ticket's trusted comments are the record: only a change of state is posted,
   so a second Mac or run posts nothing. Gil hears by a brief line and a phone notification when MARVIN fixed a
   regression itself and when it couldn't. Measures: `regression-recurrences-30d`, `regression-self-fix-rate`,
-  `regression-hours-to-fixed-30d` (from the ladder's log until marvin.db, #621, lands). The fit check suggests (⚠️,
+  `regression-hours-to-fixed-30d` (from the ladder's log until marvin.db, #621, lands). **Fixed without Gil** counts
+  any fix MARVIN made (Gil, 2026-10-27): first aid, its own code clearing the symptom, or a rung-3 pipeline PR merged
+  since the recurrence, whether it merged itself or with Gil's Approve. The fit check suggests (⚠️,
   not a block) `## Watch` and `## First aid` on a `bug` ticket with a Recurrence check.
 - **Missed purpose** (decided 2026-10-08): when an outcome check misses its target, MARVIN always writes a
   **diagnosis** (a Background analyst run, full Memory) as a ticket comment: what it was meant to do, what
