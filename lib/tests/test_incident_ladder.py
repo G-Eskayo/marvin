@@ -72,6 +72,13 @@ class FakeGitHub:
     def open_prs_for(self, n):
         return list(self.prs)
 
+    merged: list = []
+
+    def merged_prs_for(self, n, since):
+        if isinstance(self.merged, Exception):
+            raise self.merged
+        return [num for num, at in self.merged if at >= since]
+
     def issue(self):
         return {"number": 707, "title": "Incident: sync drift", "body": BODY, "state": self.state,
                 "labels": [{"name": l} for l in sorted(self.labels)]}
@@ -543,3 +550,40 @@ def test_the_regression_notification_uses_every_channel_and_never_raises(monkeyp
     monkeypatch.setattr(mn, "dashboard_refresh_ping", lambda: sent.append(("ping", None)))
     out = mn.notify_regression("MARVIN fixed a regression itself", "x\n" * 400, "https://example.com/1")
     assert out["desktop_sent"] and not out["push_succeeded"] and len(sent[0][1]) <= 300 and "\n" not in sent[0][1]
+
+
+def test_a_rung3_pr_merged_with_your_approve_counts_as_fixed_without_you(env):
+    """The owner, 2026-10-27: any fix MARVIN wrote counts, approved or not."""
+    gh = FakeGitHub()
+    env["run"](gh, Probe(0))
+    env["run"](gh, Probe(2), now=DAY1 + timedelta(days=1))
+    gh.merged = [(812, DAY1 + timedelta(days=1, hours=5)), (600, DAY1 - timedelta(days=30))]   # 600: an old fix
+    out = env["run"](gh, Probe(0), now=DAY1 + timedelta(days=2))
+    assert out["action"] == "cleared" and "MARVIN's PR #812" in gh.thread[-1]["body"] and "#600" not in gh.thread[-1]["body"]
+    later = DAY1 + timedelta(days=2)
+    assert il.fixed_without_you(env["log"], now=later) == 1 and il.recurrences(env["log"], now=later) == 1
+    assert "fixed a regression of #707 itself: PR #812" in env["told"][-1][1]
+
+
+@pytest.mark.parametrize("merged", [[], OSError("GitHub down")])
+def test_a_clearing_nobody_can_tie_to_marvin_does_not_count(env, merged):
+    gh = FakeGitHub()
+    gh.merged = merged
+    env["run"](gh, Probe(0))
+    env["run"](gh, Probe(2), now=DAY1 + timedelta(days=1))
+    told = len(env["told"])
+    assert env["run"](gh, Probe(0), now=DAY1 + timedelta(days=2))["action"] == "cleared"
+    assert il.fixed_without_you(env["log"], now=DAY1 + timedelta(days=2)) == 0 and len(env["told"]) == told
+
+
+def test_only_the_tickets_own_pipeline_prs_merged_since_the_trip_count(monkeypatch):
+    gh = il.GitHub("o/r")
+    since = datetime(2026, 11, 4, tzinfo=timezone.utc)
+    prs = [{"number": 1, "head": {"ref": "pipeline/707"}, "merged_at": "2026-11-05T00:00:00Z"},
+           {"number": 2, "head": {"ref": "pipeline/7071"}, "merged_at": "2026-11-05T00:00:00Z"},
+           {"number": 3, "head": {"ref": "pipeline/707"}, "merged_at": None},                  # closed unmerged
+           {"number": 4, "head": {"ref": "pipeline/707"}, "merged_at": "2026-11-01T00:00:00Z"},  # before the trip
+           {"number": 5, "head": {"ref": "feat/707"}, "merged_at": "2026-11-05T00:00:00Z"},
+           {"number": 6, "head": {"ref": "pipeline/o/r#707"}, "merged_at": "2026-11-05T00:00:00Z"}, "junk"]
+    monkeypatch.setattr(gh, "_api", lambda *a: json.dumps(prs))
+    assert gh.merged_prs_for(707, since) == [1, 6]
