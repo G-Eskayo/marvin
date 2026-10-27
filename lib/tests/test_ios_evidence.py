@@ -150,3 +150,15 @@ def test_the_pr_body_shows_each_screenshot_from_the_pushed_branch():
 def test_gate_info_carries_the_projects_ui_paths(tmp_path):
     info = pp.gate_info(_profile(), catalog={}, have=lambda *a: True)
     assert info["ui_paths"] == ["Apps/**/*.swift"]
+
+
+def test_the_simulator_build_folder_is_removed_after_capture_and_after_failure(tmp_path):
+    # ~1 GB per build, left in $TMPDIR on every run before 2026-10-27.
+    def derived(run):
+        return [Path(c[c.index("-derivedDataPath") + 1]) for c, _ in run.calls if c[0] == "xcodebuild"]
+    ok = FakeRun()
+    ec.capture_ios_simulator(tmp_path, CFG, run=ok, sleep=lambda s: None)
+    bad = FakeRun(fail_on="screenshot")
+    with pytest.raises(RuntimeError):
+        ec.capture_ios_simulator(tmp_path, CFG, run=bad, sleep=lambda s: None)
+    assert derived(ok) and derived(bad) and not any(d.exists() for d in derived(ok) + derived(bad))

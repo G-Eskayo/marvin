@@ -211,13 +211,24 @@ def _run_checked(run, cmd, cwd=None, **kw):
         raise RuntimeError(f"{cmd[0]} failed: {' / '.join(lines[-2:])[:300]}") from e
 
 
+def _with_build_folder(prefix: str, capture):
+    """Runs capture(derived_data_dir) and always removes the folder: each Xcode build is about 1 GB, and left in $TMPDIR
+    they filled the Mini's disk until the merge gate's disk check refused (2026-10-27)."""
+    import shutil
+    import tempfile
+    derived = Path(tempfile.mkdtemp(prefix=prefix))
+    try:
+        return capture(derived)
+    finally:
+        shutil.rmtree(derived, ignore_errors=True)
+
+
 def capture_ios_simulator(worktree_path: Path, cfg: dict, run=subprocess.run, sleep=None) -> list[dict]:
     """Builds an iOS app for the simulator (signing off), launches each configured scene (launch arguments, e.g. a
     debug-only demo mode) in light and dark, and screenshots it into the worktree, so the images ride along in the
     pipeline's commit. Proven by hand on the Mac Mini on 2026-10-09. Returns [{path (relative), caption}]. Raises
     ValueError for an incomplete config and RuntimeError (with the tool's own error line) when a step fails.
     simctl cannot tap or rotate, so scenes are reached through launch arguments only."""
-    import tempfile
     import time
     sleep = sleep or time.sleep
     required = ("project_dir", "project", "scheme", "simulator", "bundle_id")
@@ -226,8 +237,11 @@ def capture_ios_simulator(worktree_path: Path, cfg: dict, run=subprocess.run, sl
     project_dir = Path(worktree_path) / cfg["project_dir"]
     for cmd in cfg.get("prepare", []):
         _run_checked(run, list(cmd), cwd=project_dir)
+    return _with_build_folder("ios-evidence-", lambda derived: _capture_ios(worktree_path, cfg, project_dir, derived, run, sleep))
+
+
+def _capture_ios(worktree_path: Path, cfg: dict, project_dir: Path, derived: Path, run, sleep) -> list[dict]:
     configuration = cfg.get("configuration", "Debug")
-    derived = Path(tempfile.mkdtemp(prefix="ios-evidence-"))
     _run_checked(run, ["xcodebuild", "-project", cfg["project"], "-scheme", cfg["scheme"],
                        "-destination", f"platform=iOS Simulator,name={cfg['simulator']}", "-configuration", configuration,
                        "CODE_SIGNING_ALLOWED=NO", "-derivedDataPath", str(derived), "build"], cwd=project_dir)
@@ -270,7 +284,6 @@ def capture_macos_app(worktree_path: Path, cfg: dict, run=subprocess.run) -> lis
     (config/onboarding/macos-screenshot/MarvinScreenshot.swift), so no Screen Recording permission or clicking is needed
     and a hidden screen is just another scene. Returns [{path (relative), caption}]. Raises ValueError for an incomplete
     config and RuntimeError when a step fails or the app doesn't keep the contract."""
-    import tempfile
     if not isinstance(cfg, dict) or not cfg.get("scenes"):
         raise ValueError("evidence.dev.macos_app needs at least one scene")
     xcode = bool(cfg.get("project") or cfg.get("scheme"))
@@ -284,9 +297,14 @@ def capture_macos_app(worktree_path: Path, cfg: dict, run=subprocess.run) -> lis
     project_dir = Path(worktree_path) / cfg.get("project_dir", ".")
     for cmd in cfg.get("prepare", []):
         _run_checked(run, list(cmd), cwd=project_dir)
-    configuration = cfg.get("configuration", "Debug")
     if xcode:
-        derived = Path(tempfile.mkdtemp(prefix="macos-evidence-"))
+        return _with_build_folder("macos-evidence-", lambda derived: _capture_macos(worktree_path, cfg, project_dir, run, derived))
+    return _capture_macos(worktree_path, cfg, project_dir, run, None)
+
+
+def _capture_macos(worktree_path: Path, cfg: dict, project_dir: Path, run, derived: Path | None) -> list[dict]:
+    configuration = cfg.get("configuration", "Debug")
+    if derived is not None:
         # Ad-hoc signed: pipeline machines have no signing identity, and an arm64 Mac won't run an unsigned binary.
         _run_checked(run, ["xcodebuild", "-project", cfg["project"], "-scheme", cfg["scheme"], "-destination", "platform=macOS",
                            "-configuration", configuration, "CODE_SIGN_IDENTITY=-", "DEVELOPMENT_TEAM=",

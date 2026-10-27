@@ -163,3 +163,21 @@ def test_the_reference_helper_really_draws_a_swiftui_app_into_a_png(tmp_path):
     light, dark = [(tmp_path / s["path"]).read_bytes() for s in shots]
     assert light[:8] == PNG[:8] and dark[:8] == PNG[:8]
     assert light != dark, "dark appearance must actually change the drawing"
+
+
+def _derived_dirs(run):
+    return [Path(c[c.index("-derivedDataPath") + 1]) for c, _, _ in run.calls if c[0] == "xcodebuild"]
+
+
+def test_the_build_folder_is_removed_after_capture(tmp_path):
+    # Each Xcode build is ~1 GB; left behind they filled the Mini's disk until the merge gate's disk check refused (2026-10-27).
+    run = FakeRun()
+    ec.capture_macos_app(tmp_path, XCODE, run=run)
+    assert _derived_dirs(run) and not any(d.exists() for d in _derived_dirs(run))
+
+
+def test_the_build_folder_is_removed_when_capture_fails_too(tmp_path):
+    run = FakeRun(writes=None)
+    with pytest.raises(RuntimeError):
+        ec.capture_macos_app(tmp_path, XCODE, run=run)
+    assert not any(d.exists() for d in _derived_dirs(run))
