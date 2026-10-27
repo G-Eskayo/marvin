@@ -202,9 +202,9 @@ def changed_files(worktree_path: Path, base_branch: str = "main") -> list[str]:
     return result.stdout.splitlines()
 
 
-def _run_checked(run, cmd, cwd=None):
+def _run_checked(run, cmd, cwd=None, **kw):
     try:
-        return run(cmd, cwd=cwd, check=True, capture_output=True, text=True)
+        return run(cmd, cwd=cwd, check=True, capture_output=True, text=True, **kw)
     except subprocess.CalledProcessError as e:
         detail = "\n".join(str(x) for x in (e.stderr, e.output) if x)
         lines = [l.strip() for l in detail.splitlines() if "error" in l.lower()] or [l.strip() for l in detail.splitlines() if l.strip()]
@@ -255,6 +255,69 @@ def capture_ios_simulator(worktree_path: Path, cfg: dict, run=subprocess.run, sl
             sleep(cfg.get("wait_s", 4))
             rel = out_dir / f"{scene['name']}-{appearance}.png"
             _run_checked(run, ["xcrun", "simctl", "io", "booted", "screenshot", str(Path(worktree_path) / rel)])
+            shots.append({"path": str(rel), "caption": f"{scene['name']}, {appearance}"})
+    return shots
+
+
+_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+_SCENE_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def capture_macos_app(worktree_path: Path, cfg: dict, run=subprocess.run) -> list[dict]:
+    """Builds a Mac app (xcodebuild for `project`+`scheme`, or `swift build` for `swiftpm_product`) and runs each
+    configured scene with `-MarvinScreenshot <png> -MarvinAppearance <light|dark>` in light and dark (marvin #727). The
+    app draws that scene into an off-screen window, writes the PNG and quits
+    (config/onboarding/macos-screenshot/MarvinScreenshot.swift), so no Screen Recording permission or clicking is needed
+    and a hidden screen is just another scene. Returns [{path (relative), caption}]. Raises ValueError for an incomplete
+    config and RuntimeError when a step fails or the app doesn't keep the contract."""
+    import tempfile
+    if not isinstance(cfg, dict) or not cfg.get("scenes"):
+        raise ValueError("evidence.dev.macos_app needs at least one scene")
+    xcode = bool(cfg.get("project") or cfg.get("scheme"))
+    if xcode and not (cfg.get("project") and cfg.get("scheme")):
+        raise ValueError("evidence.dev.macos_app needs both project and scheme for an Xcode app")
+    if not xcode and not cfg.get("swiftpm_product"):
+        raise ValueError("evidence.dev.macos_app needs project+scheme or swiftpm_product")
+    for scene in cfg["scenes"]:
+        if not isinstance(scene, dict) or not _SCENE_NAME.match(str(scene.get("name", ""))):
+            raise ValueError(f"scene name must be letters, digits, - or _: {scene!r}")
+    project_dir = Path(worktree_path) / cfg.get("project_dir", ".")
+    for cmd in cfg.get("prepare", []):
+        _run_checked(run, list(cmd), cwd=project_dir)
+    configuration = cfg.get("configuration", "Debug")
+    if xcode:
+        derived = Path(tempfile.mkdtemp(prefix="macos-evidence-"))
+        # Ad-hoc signed: pipeline machines have no signing identity, and an arm64 Mac won't run an unsigned binary.
+        _run_checked(run, ["xcodebuild", "-project", cfg["project"], "-scheme", cfg["scheme"], "-destination", "platform=macOS",
+                           "-configuration", configuration, "CODE_SIGN_IDENTITY=-", "DEVELOPMENT_TEAM=",
+                           "-derivedDataPath", str(derived), "build"], cwd=project_dir)
+        apps = sorted((derived / "Build" / "Products" / configuration).glob("*.app"))
+        exes = sorted(p for p in (apps[0] / "Contents" / "MacOS").iterdir()) if apps else []
+        if not exes:
+            raise RuntimeError("xcodebuild failed: no .app was built for macOS")
+        exe = exes[0]
+    else:
+        _run_checked(run, ["swift", "build", "--product", cfg["swiftpm_product"]], cwd=project_dir)
+        exe = project_dir / ".build" / "debug" / cfg["swiftpm_product"]
+    out_dir = Path("docs") / "evidence" / Path(worktree_path).name
+    (Path(worktree_path) / out_dir).mkdir(parents=True, exist_ok=True)
+    timeout = cfg.get("timeout_s", 60)
+    shots = []
+    for appearance in cfg.get("appearances", ["light", "dark"]):
+        for scene in cfg["scenes"]:
+            rel = out_dir / f"{scene['name']}-{appearance}.png"
+            target = Path(worktree_path) / rel
+            target.unlink(missing_ok=True)
+            cmd = [str(exe), *scene.get("args", []), "-MarvinScreenshot", str(target.resolve()), "-MarvinAppearance", appearance]
+            try:
+                _run_checked(run, cmd, cwd=project_dir, timeout=timeout)
+            except subprocess.TimeoutExpired as e:
+                raise RuntimeError(f"the app did not finish scene {scene['name']} within {timeout} s") from e
+            if not target.exists():
+                raise RuntimeError(f"the app wrote no screenshot for scene {scene['name']}: does it call "
+                                   "MarvinScreenshot.runIfRequested (the -MarvinScreenshot contract) before starting up?")
+            if target.read_bytes()[:8] != _PNG_MAGIC:
+                raise RuntimeError(f"the file the app wrote for scene {scene['name']} is not a PNG")
             shots.append({"path": str(rel), "caption": f"{scene['name']}, {appearance}"})
     return shots
 

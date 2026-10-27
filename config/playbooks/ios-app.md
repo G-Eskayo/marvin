@@ -82,5 +82,7 @@ Each project's own terms are in its `CONTEXT.md` (a Glossary section is slice 3 
 
 The same playbook without stages 6, 8 and 9 and without the ship checklist: no TestFlight, no device check
 (killer-sudoku is local-only, its ADR 0002). Stage 4 is `swift build` / an `xcodebuild` for the macOS destination.
-Stage 5 is screenshots of the running macOS app: the pipeline machines don't capture it, so the PR says so and
-Gil reviews the look by running the app. "Anything sent to Apple" means notarization or the Mac App Store.
+Stage 5 is screenshots of the macOS app. With `evidence.dev.macos_app` in the profile the pipeline builds the app and
+runs each scene with `-MarvinScreenshot <png>`; the app draws that scene off-screen and quits
+(`config/onboarding/macos-screenshot/MarvinScreenshot.swift`, marvin #727). Without it the PR says no screenshots
+were taken and Gil reviews the look by running the app. "Anything sent to Apple" means notarization or the Mac App Store.

@@ -119,8 +119,8 @@
         "look-proof": {
           "what": "Any on-screen change.",
           "proof": ["Screenshots of the running macOS app", "A GIF for anything that moves", "\"You want X, click Y, you see Z\" for each new capability"],
-          "executor_with_capture": "",
-          "executor_without_capture": "The pipeline machines don't capture the macOS app, so this run takes no screenshots: say so plainly in the PR, never imply a screen was seen, and say which behaviour is untested; the owner reviews the look by running the app."
+          "executor_with_capture": "The pipeline builds the Mac app and screenshots the profile's scenes itself after you finish, when your change touches the profile's UI paths: it runs the app with each scene's launch arguments plus -MarvinScreenshot <png>, and the app draws that scene and quits (MarvinScreenshot.swift, marvin #727). You cannot run or click the app yourself: reach a new screen (a menu, a panel, a pill) through its own launch argument, add it as a scene, and say plainly which behaviour is untested.",
+          "executor_without_capture": "No macOS capture is configured for this project, so this run takes no screenshots: say so plainly in the PR, never imply a screen was seen, and say which behaviour is untested; the owner reviews the look by running the app."
         }
       }
     }
