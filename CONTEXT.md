@@ -1408,6 +1408,11 @@ A GitHub 5xx (`remote: Internal Server Error`, HTTP 500, 503) is classified `GIT
 - **Outcome check**: the measurement of a purpose metric. It runs **at PR time** when the effect shows in
   the worktree (test speed, bench tokens), or **after merge, on a schedule** when it only shows in live use
   (e.g. #277: refusals over a week). A missed target is flagged, never silently passed.
+- **Every fix gets an outcome check** (Gil, 2026-10-26): a `bug` ticket carries a purpose metric or, when nothing
+  numeric fits, a **recurrence check**: a named probe (registered code in `lib/purpose_metrics.py` `PROBES`, never
+  ticket text) that counts the fixed symptom in a log that already exists, and passes when it hasn't come back. A
+  symptom that came back is a missed purpose. The PR's fit check warns when a fix has neither (a warning, not yet a
+  block). This replaced one-off "did the fix hold" scripts such as `verify_digest_fix.py`.
 - **Missed purpose** (decided 2026-10-08): when an outcome check misses its target, MARVIN always writes a
   **diagnosis** (a Background analyst run, full Memory) as a ticket comment: what it was meant to do, what
   happened (numbers), why it fell short (evidence) and the options (iterate with a drafted follow-up,
