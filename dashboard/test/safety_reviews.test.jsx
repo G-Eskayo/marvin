@@ -247,6 +247,11 @@ describe('excerptMarkdown: the first part, cut cleanly', () => {
     expect(excerptMarkdown(line + '\n\nnext', 100)).toEqual({ text: line, cut: true })
   })
 
+  it('does not end on a heading with nothing under it', () => {
+    const body = '## One\n\n' + 'a'.repeat(150) + '\n\n## Two\n\n' + 'b'.repeat(400)
+    expect(excerptMarkdown(body, 200)).toEqual({ text: '## One\n\n' + 'a'.repeat(150), cut: true })
+  })
+
   it('empty or non-string input is empty', () => {
     expect(excerptMarkdown('')).toEqual({ text: '', cut: false })
     expect(excerptMarkdown(null)).toEqual({ text: '', cut: false })

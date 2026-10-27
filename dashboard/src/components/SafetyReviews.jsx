@@ -54,9 +54,11 @@ export function ReviewCard({ entry, onAnswer, busy = false, initialExpanded = fa
           {entry.truncated && <p className="text-neutral-500">…</p>}
         </div>
       ) : (
-        <div className="mt-2 max-h-48 overflow-hidden">
-          <EntryMarkdown text={excerpt.text} />
-          {excerpt.cut && <p className="text-neutral-500">…</p>}
+        <div className="mt-2">
+          <div className="max-h-48 overflow-hidden">
+            <EntryMarkdown text={excerpt.text} />
+          </div>
+          {excerpt.cut && <p className="text-sm text-neutral-500">…</p>}
         </div>
       )}
       <div className="flex justify-end">

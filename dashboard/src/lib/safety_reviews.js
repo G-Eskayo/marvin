@@ -53,14 +53,16 @@ export function excerptMarkdown(body, budget = 400) {
     }
     if (!inFence && !lines[i].trim()) lastBreak = i
     used += lines[i].length + 1
-    if (used >= budget && i < lines.length - 1) {
+    if (used >= budget) {
       end = !inFence && lastBreak > 0 ? lastBreak : i + 1
       break
     }
   }
   if (end >= lines.length) return { text: body, cut: false }
   const kept = lines.slice(0, end)
-  while (kept.length && !kept[kept.length - 1].trim()) kept.pop()
+  // No trailing blank lines, and no heading left with nothing under it.
+  const dangling = () => kept.length > 1 && (!kept[kept.length - 1].trim() || /^\s{0,3}#{1,6}\s/.test(kept[kept.length - 1]))
+  while (dangling()) kept.pop()
   // Re-scan what is kept: a fence open at the cut is closed so the rest never renders as code.
   let open = false
   let mark = '```'
