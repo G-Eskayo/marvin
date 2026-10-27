@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted (2026-07-12)
+Accepted (2026-07-12). Amended by [[0077]] (2026-10-26): the conflict-marker guard now holds back only the files
+that carry markers (the rest is pushed, the entry still reads REFUSING), and this dir pulls by commit-then-merge.
 
 ## Context
 

@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted (2026-10-26; fix approved by the owner the same day)
+Accepted (2026-10-26; fix approved by the owner the same day). Amended by [[0077]] the same day: memory notes
+(`projects/*/memory/*.md` other than `MEMORY.md`) left the union rule; they are edited in place, so they now merge
+3-way and a real overlap is resolved by keeping both sides (shown on the same `sync:union-review` card).
 
 ## Context
 
