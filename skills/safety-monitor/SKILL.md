@@ -43,8 +43,9 @@ is missing. Add a new rubric before wiring a new loop in.
 ## Output files
 
 - `~/.claude/quarantine.md` — human review queue; same approve/modify/deny
-  convention as `improvement-queue.md`. No `/quarantine` review command
-  exists yet — items are reviewed by reading and editing the file directly.
+  convention as `improvement-queue.md`. Reviewed one card at a time in the
+  dashboard (Health ▸ Safety reviews), which ticks a box through
+  `process_quarantine_reviews.py answer` and records the label at once.
 - `~/.claude/safety-monitor/tau.json` — per-loop threshold, created lazily.
 - `~/.claude/safety-monitor/calibration.jsonl` — labeled `{loop, score,
   label}` rows, created lazily by `record_label()`. Empty until a review
@@ -107,9 +108,11 @@ cat ~/.claude/quarantine.md
 
 - Session-start check for `quarantine.md` is described in `REQUIREMENTS.md`
   (FR6) but not yet added to `~/.claude/CLAUDE.md`'s checklist.
-- No `/quarantine` review command yet — `record_label()` exists but nothing
-  calls it, so `calibrate()` will sit on `DEFAULT_TAU` indefinitely until
-  one is built. Expect over-flagging until then — confirmed in testing that
+- Labels are recorded by `process_quarantine_reviews.py` (session start,
+  the 20:00 job, and each dashboard answer), but `calibration.jsonl` is
+  per machine (not synced), so each Mac calibrates from its own answers.
+  Until 20 labels exist for a loop it stays on `DEFAULT_TAU`. Expect
+  over-flagging until then — confirmed in testing that
   even a well-constructed, genuinely generalizable retrospective-log entry
   scored above tau; that's the documented cold-start conservatism, not a bug,
   but it's a real cost until real labels exist.

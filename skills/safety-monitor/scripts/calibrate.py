@@ -35,8 +35,9 @@ def _read_calibration_rows(loop_name: str) -> list[dict]:
     return rows
 
 
-def record_label(loop_name: str, score: float, label: int) -> None:
+def record_label(loop_name: str, score: float, label: int, note: str | None = None) -> None:
     """label: 0 = approved (was actually fine), 1 = denied (was actually bad).
+    note: the reviewer's "modify" text, kept with the label so a typed correction is never thrown away.
 
     Intended caller: the quarantine review workflow, once built — this is
     what lets calibrate() improve over time instead of being stuck on
@@ -44,6 +45,8 @@ def record_label(loop_name: str, score: float, label: int) -> None:
     """
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     row = {"loop": loop_name, "score": score, "label": label}
+    if note:
+        row["note"] = note
     with CALIBRATION_FILE.open("a") as f:
         f.write(json.dumps(row) + "\n")
 

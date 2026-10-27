@@ -108,6 +108,10 @@ contextBridge.exposeInMainWorld('api', {
   boot: {
     data: () => ipcRenderer.invoke('boot:data')
   },
+  safety: {
+    reviews: () => ipcRenderer.invoke('safety:reviews'),
+    answer: (id, kind, text) => ipcRenderer.invoke('safety:answer', id, kind, text)
+  },
   health: {
     status: () => ipcRenderer.invoke('health:status'),
     agents: () => ipcRenderer.invoke('health:agents'),
