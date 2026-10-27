@@ -24,15 +24,14 @@ import socket
 import subprocess
 import sys
 
+import north_stars
+
 MACHINES = ("both", "mini", "laptop", "none")
 
 # docs/north-stars.md, plus the projects whose goals live in their profiles (config/projects/<repo>.json, "goal").
 GOALS = {
-    "ns1": "Minimise resources, maximise capability and quality",
-    "ns2": "MARVIN becomes the OS of Gil's phone",
-    "ns3": "MARVIN raises the human experience",
-    "ns4": "MARVIN is the best tool for making tools",
-    "project:marvin": "Work gets done without Gil chasing it, cheaply, without the paid subscription",
+    **{f"ns{i}": title for i, title in enumerate(north_stars.titles(), 1)},
+    "project:marvin": "Work gets done without the owner chasing it, cheaply, without the paid subscription",
     "project:clarity-captions": "Any hard-of-hearing person can rely on Seal Speak",
     "project:portfolio-website-updater": "The portfolio lands interviews",
     "project:paper-dive": "Papers understood fast and turned into findings projects use",
@@ -48,7 +47,7 @@ JOBS: dict[str, dict] = {
     "research-colony": {"machine": "both", "goal": "project:paper-dive", "reporter": "its launchd log",
                         "healthy": "a run finished today with at least one source", "consumer": "the daily digest and the brief"},
     "desktoplive": {"machine": "both", "goal": "ns3", "reporter": "Health desktoplive:running",
-                    "healthy": "the wallpaper process is running and drawing", "consumer": "Gil's desktop"},
+                    "healthy": "the wallpaper process is running and drawing", "consumer": "the owner's desktop"},
     "dashboard-webhook": {"machine": "both", "goal": "project:marvin", "reporter": "dashboard-webhook.log",
                           "healthy": "port 7878 answers", "consumer": "the dashboard's Approve and the merge gate"},
     "ticket-pipeline": {"machine": "both", "goal": "project:marvin", "reporter": "ticket stages (ticket_stages.py)",
@@ -65,7 +64,7 @@ JOBS: dict[str, dict] = {
                      "healthy": "a sweep in the last 30 min", "consumer": "Vitals on every machine (once peer push lands)"},
     "process-quarantine-reviews": {"machine": "mini", "goal": "ns1", "reporter": "quarantine.md",
                                    "healthy": "last run exit 0", "consumer": "the session-start report",
-                                   "review": "purpose (Gil's reviews teach the safety filter, ADR 0015) is falling short: 0 of 97 reviewed. Reached by a tap-to-review card (approved 2026-10-26)"},
+                                   "review": "purpose (the owner's reviews teach the safety filter, ADR 0015) is falling short: 0 of 97 reviewed. Reached by a tap-to-review card (approved 2026-10-26)"},
     "verify-digest-fix": {"machine": "mini", "goal": "ns1", "reporter": "its launchd log",
                           "healthy": "last run exit 0", "consumer": None,
                           "review": "a check for one past digest fix; is it still needed?"},
@@ -80,9 +79,9 @@ JOBS: dict[str, dict] = {
     "seal-beta-ingest": {"machine": "mini", "goal": "project:clarity-captions", "reporter": "its launchd log",
                          "healthy": "last run exit 0", "consumer": "the Seal Speak beta view and tickets"},
     "dashboard-launch": {"machine": "laptop", "goal": "ns3", "reporter": "none needed (opens the app at login)",
-                         "healthy": "the dashboard is open after login", "consumer": "Gil"},
+                         "healthy": "the dashboard is open after login", "consumer": "the owner"},
     "morning-brief": {"machine": "laptop", "goal": "ns3", "reporter": "the brief file",
-                      "healthy": "a brief built today", "consumer": "Gil, each morning"},
+                      "healthy": "a brief built today", "consumer": "the owner, each morning"},
     "portfolio-dev-tunnel": {"machine": "laptop", "goal": "project:portfolio-website-updater",
                              "reporter": "its launchd log", "healthy": "the tunnel to the Mini's dev site is up",
                              "consumer": "the portfolio dev site on the laptop"},
@@ -93,10 +92,10 @@ JOBS: dict[str, dict] = {
                                  "reporter": "its launchd log", "healthy": "last run exit 0",
                                  "consumer": "the website map (#189)"},
     "open-loops": {"machine": "none", "goal": None, "reporter": None, "healthy": None, "consumer": None,
-                   "review": "off until the goal tracker links loops to project goals (Gil, 2026-10-26)"},
+                   "review": "off until the goal tracker links loops to project goals (approved 2026-10-26)"},
     "tidy-agent": {"label": "com.giles.tidy-agent", "machine": "both", "goal": "ns3",
                    "reporter": "~/.claude/organize/agent.err.log", "healthy": "last run exit 0",
-                   "consumer": "Gil's Downloads and Desktop"},
+                   "consumer": "the owner's Downloads and Desktop"},
 }
 
 

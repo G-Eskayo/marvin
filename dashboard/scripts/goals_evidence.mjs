@@ -11,6 +11,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { captureLaunchEnv } from '../src/lib/screenshot_capture.js'
 import { freePort } from '../src/lib/cdp_capture.js'
+import { owner } from '../electron/main/instance.js'
 
 const APP = path.resolve(import.meta.dirname, '..')
 const [PROFILES, REGISTRY, OUT] = process.argv.slice(2)
@@ -28,16 +29,17 @@ fs.cpSync(PROFILES, path.join(instance, 'config', 'projects'), { recursive: true
 fs.mkdirSync(path.join(HOME, '.claude', 'boards'), { recursive: true })
 fs.copyFileSync(REGISTRY, path.join(HOME, '.claude', 'boards', 'registry.json'))
 const now = Date.now()
+const OWNER = owner() // the fixtures name the registry's repos, so they carry its owner
 const day = (d) => new Date(now - d * 86_400_000).toISOString()
 const issue = (number, title, labels) => ({ number, title, state: 'OPEN', stateReason: null, labels: labels.map((name) => ({ name })), body: '', url: `https://github.com/x/y/issues/${number}`, createdAt: day(3), updatedAt: day(1), closedAt: null })
 const fixtures = {
-  'G-Eskayo/marvin': [issue(901, 'Fixture: needs a person', ['ready-for-human'])],
-  'G-Eskayo/portfolio-website-updater': [issue(902, 'Fixture: on hold', ['hold'])]
+  [`${OWNER}/marvin`]: [issue(901, 'Fixture: needs a person', ['ready-for-human'])],
+  [`${OWNER}/portfolio-website-updater`]: [issue(902, 'Fixture: on hold', ['hold'])]
 }
 for (const [repo, list] of Object.entries(fixtures)) put(path.join(HOME, 'gh-fixtures', `${repo.replace('/', '__')}.json`), JSON.stringify(list))
 put(path.join(HOME, '.claude', 'logs', 'mr-history.json'), JSON.stringify({
   updatedAt: now,
-  merged: [1, 2, 3].map((n) => ({ url: `https://github.com/G-Eskayo/clarity-captions/pull/${900 + n}`, number: 900 + n, title: `Fixture merge ${n}`, repo: 'G-Eskayo/clarity-captions', mergedAt: day(n) })),
+  merged: [1, 2, 3].map((n) => ({ url: `https://github.com/${OWNER}/clarity-captions/pull/${900 + n}`, number: 900 + n, title: `Fixture merge ${n}`, repo: `${OWNER}/clarity-captions`, mergedAt: day(n) })),
   history: { merges: [], refusals: [] },
   open: []
 }))
