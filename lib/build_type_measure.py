@@ -87,10 +87,9 @@ def _ensure_dashboard_deps(worktree_path: Path) -> None:
     dashboard = worktree_path / "dashboard"
     if (dashboard / "node_modules").is_dir():
         return
-    subprocess.run(
-        ["npm", "install", "--no-audit", "--no-fund"],
-        cwd=dashboard, capture_output=True, text=True, timeout=600, check=False,
-    )
+    import node_modules_seed  # #687: seeded from the cache, so the install writes almost nothing
+    node_modules_seed.npm_install(dashboard, ["npm", "install", "--no-audit", "--no-fund"],
+                                  capture_output=True, text=True, timeout=600)
 
 
 def _measure_commands(worktree_path: Path) -> list[list[str]]:

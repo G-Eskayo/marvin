@@ -126,7 +126,9 @@ def test_both_macs_append_different_entries_to_every_scoped_file_and_nothing_is_
         text = (b / rel).read_text()
         assert f"from A: {rel}\n" in text and f"from B: {rel}\n" in text, f"{rel} lost a side:\n{text}"
         assert text.startswith(SEED[rel]), f"{rel} lost its original content"
-    assert cs.union_review_open() == []
+    # a memory note is edited in place, so it is no longer union: both appends at one spot are a real conflict,
+    # auto-resolved by keeping both sides and shown for a person to tidy (the one item)
+    assert [(i["kind"], i["file"]) for i in cs.union_review_open()] == [("auto-resolved", f"{MEM}/alpha.md")]
 
 
 def test_both_macs_commit_appends_and_push_merges_them_without_stopping(macs):
@@ -314,7 +316,9 @@ def test_a_deletion_next_to_the_other_macs_append_is_flagged(macs):
 
 # ── outside the scope a conflict still stops for a person ───────────────────────────────────────────────────────────
 
-def test_a_conflict_outside_the_scope_still_stops_on_stash_pop(macs):
+def test_a_conflict_outside_the_scope_still_stops_for_a_person_with_nothing_lost(macs):
+    """The Claude dir commits local work before merging (no stash): a real conflict aborts the merge, B's edit is safe
+    in its own commit, and every later pull stops again until a person merges it."""
     a, b = macs
     (a / "lexicon.md").write_text(SEED["lexicon.md"].replace("v1", "A's wording"))
     _publish(a)
@@ -322,11 +326,12 @@ def test_a_conflict_outside_the_scope_still_stops_on_stash_pop(macs):
 
     cs.pull(b)
 
-    assert "restoring local WIP conflicted" in _log()
-    assert _git(b, "stash", "list") != "", "B's WIP must be kept in the stash for a person"
-    assert cs._stuck_from_previous_run(b)
+    assert "CONFLICT merging origin/main" in _log() and "committed locally, nothing lost" in _log()
+    assert _git(b, "stash", "list") == "", "no stash on the Claude dir's path"
+    assert "B's wording" in _git(b, "show", "HEAD:lexicon.md")
+    assert not (b / ".git" / "MERGE_HEAD").exists() and _git(b, "status", "--porcelain") == ""
     cs.pull(b)
-    assert "REFUSING to run" in _log()
+    assert _log().count("CONFLICT merging origin/main") == 2, "it must keep stopping, not merge it away"
 
 
 def test_a_conflict_outside_the_scope_still_stops_on_merge_while_scoped_files_alone_would_not(macs):
@@ -407,8 +412,10 @@ def test_dedupe_runs_on_the_index_only_never_on_memory_notes_or_logs(macs):
     cs.pull(b)
 
     _assert_unstuck(b)
-    for rel in (f"{MEM}/alpha.md", "sync-log.md", "quarantine.md"):
+    for rel in ("sync-log.md", "quarantine.md"):
         assert (b / rel).read_text().count(dup) == 2, rel
+    note = (b / MEM / "alpha.md").read_text()   # auto-resolved: A's note, then B's lines A lacks; nothing removed
+    assert dup in note and "\nA\n" in note and "\nB\n" in note
 
 
 # ── the rule is installed on every machine ──────────────────────────────────────────────────────────────────────────
@@ -456,8 +463,8 @@ def test_the_rule_covers_exactly_the_scope(macs):
     _, b = macs
     cs.ensure_union_rule(b)
     union = {"sync-log.md", "auto-fix-log.md", "quarantine.md", "improvement-queue.md",
-             "projects/x/memory/MEMORY.md", "projects/x/memory/project-y.md"}
-    not_union = {"lexicon.md", "CLAUDE.md", "suggestions.md", "projects/x/memory/sub/deep.md",
+             "projects/x/memory/MEMORY.md"}
+    not_union = {"lexicon.md", "CLAUDE.md", "suggestions.md", "projects/x/memory/sub/deep.md", "projects/x/memory/project-y.md",
                  "projects/x/notes.md", "handoffs/quarantine.md", "a/projects/x/memory/MEMORY.md", "projects/x/memory/a.json"}
     for rel in union | not_union:
         out = _git(b, "check-attr", "merge", "--", rel)
@@ -487,7 +494,7 @@ def test_push_installs_the_rule_too(macs):
 
 # ── the stash-pop path with a dirty tree ────────────────────────────────────────────────────────────────────────────
 
-def test_stash_pop_with_staged_unstaged_and_untracked_wip_restores_everything_union_merged(macs):
+def test_pull_with_staged_unstaged_and_untracked_wip_keeps_everything_and_merges_it(macs):
     a, b = macs
     _append(a, f"{MEM}/MEMORY.md", "- [A](a-new.md) — A\n")
     _append(a, "quarantine.md", "A's quarantine\n")
@@ -506,7 +513,7 @@ def test_stash_pop_with_staged_unstaged_and_untracked_wip_restores_everything_un
     assert "A's quarantine" in (b / "quarantine.md").read_text() and "B's quarantine" in (b / "quarantine.md").read_text()
     assert (b / MEM / "b-new.md").read_text() == "B's new note\n"
     assert (b / "handoffs" / "h.md").read_text() == "handoff\n"
-    assert "local WIP restored" in _log()
+    assert "committed 4 local file(s), then merged" in _log()   # no stash on the Claude dir's path any more
 
 
 def test_stash_pop_with_only_a_scoped_file_dirty_and_a_merge_commit_reviews_both(macs):

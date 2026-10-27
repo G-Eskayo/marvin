@@ -18,13 +18,14 @@ SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 # Another test in the same worker may already have imported these by bare name from a different checkout (the
 # session-start report loads the installed ~/.agents copy): this file tests the ones next to it.
-for _name in ("calibrate", "process_quarantine_reviews", "verify"):
+for _name in ("calibrate", "process_quarantine_reviews", "verify", "shared_labels"):
     _mod = sys.modules.get(_name)
     if _mod is not None and Path(getattr(_mod, "__file__", "") or "").resolve().parent != SCRIPTS:
         del sys.modules[_name]
 
 import calibrate  # noqa: E402
 import process_quarantine_reviews as q  # noqa: E402
+import shared_labels  # noqa: E402
 import verify  # noqa: E402
 
 PREAMBLE = "# Quarantine\n\nArtifacts flagged by the safety monitor, awaiting review.\n"
@@ -50,12 +51,15 @@ def qfile(tmp_path, monkeypatch):
     monkeypatch.setattr(calibrate, "STATE_DIR", state)
     monkeypatch.setattr(calibrate, "CALIBRATION_FILE", state / "calibration.jsonl")
     monkeypatch.setattr(calibrate, "TAU_FILE", state / "tau.json")
+    monkeypatch.setattr(shared_labels, "is_primary", lambda: True)  # labels land in this test's own calibration file
     return path
 
 
 def labels(qfile: Path) -> list[dict]:
     f = qfile.parent / "safety-monitor" / "calibration.jsonl"
-    return [json.loads(line) for line in f.read_text().splitlines()] if f.exists() else []
+    # entry_id (the entry's hash, for de-duplication across Macs) is checked in test_calibrate.py; left out here.
+    rows = [json.loads(line) for line in f.read_text().splitlines()] if f.exists() else []
+    return [{k: v for k, v in r.items() if k != "entry_id"} for r in rows]
 
 
 # --- reading -------------------------------------------------------------------------------------------------------
@@ -156,7 +160,8 @@ def test_byte_identical_duplicates_are_answered_one_at_a_time(qfile):
     assert q.list_pending()["pending"] == 1
     assert q.answer(ids[0], "deny")["status"] == "answered"
     assert q.list_pending()["pending"] == 0
-    assert [r["label"] for r in labels(qfile)] == [0, 1]
+    # The same artifact held twice is one label: the first answer counts (the calibration de-duplicates by hash).
+    assert [r["label"] for r in labels(qfile)] == [0]
 
 
 # --- answering -----------------------------------------------------------------------------------------------------
@@ -373,3 +378,21 @@ def test_two_macs_ticking_different_entries_without_processing_merge_cleanly(qfi
     assert _git(repo, "merge", "-q", "mac2", "-m", "sync").returncode == 0
     infos = [q._parse_block(b) for b in q._split_entries(f.read_text())[1]]
     assert [i["checked"] for i in infos] == ["modify", "deny"]
+
+
+def test_on_another_mac_with_the_primary_offline_the_answer_is_kept_in_the_outbox(qfile, monkeypatch):
+    monkeypatch.setattr(shared_labels, "is_primary", lambda: False)
+    monkeypatch.setattr(shared_labels, "base_url", lambda: "http://primary.test:7878")
+
+    def offline(*a, **k):
+        raise OSError("no route to host")
+
+    monkeypatch.setattr(shared_labels, "_post", offline)
+    monkeypatch.setattr(shared_labels, "_get", offline)
+    qfile.write_text(PREAMBLE + entry(body="alpha") + entry(body="beta"))
+    alpha = q.list_pending()["entries"][0]
+    assert q.answer(alpha["id"], "modify", "fix the date")["status"] == "answered"
+    assert [e["body"] for e in q.list_pending()["entries"]] == ["beta"]
+    queued = [json.loads(x) for x in (qfile.parent / "safety-monitor" / "outbox.jsonl").read_text().splitlines()]
+    assert queued == [{"loop": "research_colony", "score": 0.35, "label": 0, "note": "fix the date", "entry_id": alpha["id"]}]
+    assert labels(qfile) == []  # nothing recorded on this Mac: the one calibration is the primary's

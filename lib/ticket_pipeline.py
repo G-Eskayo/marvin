@@ -160,6 +160,10 @@ def _unclaimed_ready_tickets(repo: str = REPO, issues: list[dict] | None = None)
                 if not ev and _attempts(repo, i["number"]) >= MAX_REENGAGE_ATTEMPTS:
                     print(f"{LOG_PREFIX} skip {repo}#{i['number']}: sent back after {MAX_REENGAGE_ATTEMPTS} reworked PRs, needs a person", file=sys.stderr)
                     continue
+            if "regression" in ticket_policy.label_names(i):
+                # The incident ladder's rung 3 (incident_ladder.py): the original fix's merged PRs and commits are
+                # what regressed, not a sign the work is done. Work in flight still holds it back.
+                ev = [e for e in ev if e["kind"] not in ("commit", "merged-pr")]
             if ticket_evidence.verdict(ev) == "clear":
                 kept.append(i)
             else:
@@ -529,6 +533,8 @@ def _auto_merge_shadow(step) -> None:
         seen = auto_merge_shadow.run()
         would = sum(1 for s in seen if s["current"]["verdict"] == "auto")
         step("Auto-merge shadow", f"{len(seen)} open PR(s), {would} it would merge; {auto_merge_shadow.report()['line']}")
+        import auto_merge_regression  # rung 3's own merge for known-incident regressions, shadow too (ADR 0064 amendment)
+        auto_merge_regression.run()
     except Exception as e:  # noqa: BLE001 -- bookkeeping, never blocks dispatch
         print(f"{LOG_PREFIX} auto-merge shadow: {e}", file=sys.stderr)
 

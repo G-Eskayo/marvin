@@ -272,3 +272,44 @@ def test_github_calls_and_failed_headless_runs_per_day(tmp_path):
     assert pm._github_calls(tmp_path / "missing", now=now) == 0.0
     for name in ("github-calls-per-day", "failed-headless-runs-per-day"):
         assert name in pm.MEASURES
+
+
+# ── code-sync-stuck: the 2026-10-26 drift fix (#702, #706) holds ─────────────────────────────────────────────────
+def _synclog(tmp_path, entries):
+    p = tmp_path / "sync-log.md"
+    p.write_text("".join(f"\n## {ts} — {action} ({mac}) [/x/.claude]\n{body}\n" for ts, action, mac, body in entries))
+    return p
+
+
+def test_sync_probe_counts_this_macs_stuck_alerts_in_the_window(tmp_path):
+    now = pm.datetime(2026, 11, 2, tzinfo=pm.timezone.utc)
+    log = _synclog(tmp_path, [
+        ("2026-11-01T10:00:00+00:00", "alert", "mac-a", "told the owner: sync has been failing for 31 min"),
+        ("2026-11-01T11:00:00+00:00", "alert", "mac-a", "told the owner: back in sync after 40 min"),
+        ("2026-11-01T12:00:00+00:00", "alert", "mac-b", "told the owner: sync has been failing for 35 min"),  # other Mac
+        ("2026-10-20T12:00:00+00:00", "alert", "mac-a", "told the owner: sync has been failing for 90 min"),  # too old
+        ("2026-11-01T13:00:00+00:00", "push", "mac-a", "REFUSING to run — an unresolved merge conflict"),   # not an episode
+    ])
+    assert pm._sync_stuck_episodes(log=log, state=tmp_path / "none.json", label="mac-a", now=now) == 1.0
+
+
+def test_sync_probe_counts_an_open_episode_older_than_30_min(tmp_path):
+    now = pm.datetime(2026, 11, 2, 12, tzinfo=pm.timezone.utc)
+    state = tmp_path / "stuck.json"
+    state.write_text(pm.json.dumps({"/x/.claude": {"since": now.timestamp() - 3600, "alerted": False, "failing": {"pull": "x"}},
+                                    "/x/.agents": {"since": now.timestamp() - 60, "alerted": False, "failing": {"push": "y"}}}))
+    assert pm._sync_stuck_episodes(log=tmp_path / "missing.md", state=state, label="mac-a", now=now) == 1.0
+
+
+@pytest.mark.parametrize("junk", ["", "not json", "[1,2]", '{"r": "x"}', '{"r": {"since": "soon"}}'])
+def test_sync_probe_survives_junk(tmp_path, junk):
+    state = tmp_path / "stuck.json"
+    state.write_text(junk)
+    log = tmp_path / "sync-log.md"
+    log.write_text("## garbage — alert (mac-a)\ntold the owner: sync has been failing for 5 min\n" + "\x00" * 10)
+    assert pm._sync_stuck_episodes(log=log, state=state, label="mac-a") == 0.0
+
+
+def test_sync_probe_is_registered_with_a_zero_threshold():
+    fn, limit, what = pm.PROBES["code-sync-stuck"]
+    assert limit == 0.0 and "#706" in what
