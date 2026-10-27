@@ -156,7 +156,8 @@ def _default_capture_screenshot(worktree_path: Path) -> str:
     relative_output = Path("docs") / "evidence" / f"{worktree_path.name}.png"
     output_path = worktree_path / relative_output
 
-    subprocess.run(["npm", "install"], cwd=dashboard_dir, check=True, capture_output=True)
+    import node_modules_seed  # #687: seeded from the cache, so the install writes almost nothing
+    node_modules_seed.npm_install(dashboard_dir, ["npm", "install"], capture_output=True).check_returncode()
     subprocess.run(["npm", "run", "build"], cwd=dashboard_dir, check=True, capture_output=True)
     subprocess.run(
         ["node", "scripts/capture_screenshot.mjs", str(output_path)],

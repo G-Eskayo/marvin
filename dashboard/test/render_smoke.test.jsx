@@ -254,7 +254,17 @@ describe('buildProjectCards', () => {
 
 describe('DashboardHome', () => {
   it('renders a loading state on mount', () => {
-    const html = renderToStaticMarkup(<DashboardHome onOpenProject={() => {}} />)
+    const html = renderToStaticMarkup(<DashboardHome onOpenProject={() => {}} onOpenTicket={() => {}} />)
     expect(html).toContain('Loading projects')
+  })
+})
+
+import NeedsYouList from '../src/components/NeedsYouList.jsx'
+
+describe('NeedsYouList', () => {
+  it('renders empty state initially with collapsible section', () => {
+    const html = renderToStaticMarkup(<NeedsYouList boards={[]} onOpenTicket={() => {}} />)
+    expect(html).toContain('Needs you')
+    expect(html).toContain('Nothing needs you')
   })
 })

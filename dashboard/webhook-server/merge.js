@@ -26,6 +26,15 @@ const TICKET_PIPELINE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'ticke
 const VENV_PYTHON = path.resolve(__dirname, '..', '..', 'venv', 'bin', 'python')
 const PROFILE_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'project_profile.py')
 const GENERATED_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'generated_paths.py')
+const NODE_MODULES_SEED_SCRIPT = path.resolve(__dirname, '..', '..', 'lib', 'node_modules_seed.py')
+
+// #687: a gate copy gets node_modules as a copy-on-write clone of a cached install (lib/node_modules_seed.py), so the
+// `npm install` below finds everything in place instead of writing ~0.8 GB. Best effort: a miss or an error just means
+// npm installs as before, and the seed never runs through the gate's own exec (its clock and its command log).
+export const nodeModulesCache = {
+  seed: (dir) => execFileAsync(VENV_PYTHON, [NODE_MODULES_SEED_SCRIPT, 'seed', dir], { timeout: 120_000 }).catch(() => {}),
+  store: (dir) => execFileAsync(VENV_PYTHON, [NODE_MODULES_SEED_SCRIPT, 'store', dir], { timeout: 120_000 }).catch(() => {})
+}
 // The per-command limit for commands run OUTSIDE the merge gate (gh reads, post-merge checks). Inside the gate the gate
 // owns the clock (pipeline review 2026-10-21, F3): this 20-minute kill used to fire first, so #568's load-aware
 // extension of the 40-minute gate limit could never apply, and a hung test was a silent 20-minute GATE_INFRA. Now a
@@ -169,7 +178,7 @@ export async function pytestParallelArgs(python = VENV_PYTHON, run = execFileAsy
   }
 }
 
-export async function _defaultRunTests(cwd, exec, progress = noProgress, parallelArgs = pytestParallelArgs) {
+export async function _defaultRunTests(cwd, exec, progress = noProgress, parallelArgs = pytestParallelArgs, cache = nodeModulesCache) {
   const dashboardDir = path.join(cwd, 'dashboard')
   // Each output chunk is a heartbeat for the gate's time limit; the parsers turn the runners' own lines into counts.
   const watch = (runner, label, totalFiles = 0) => {
@@ -186,8 +195,10 @@ export async function _defaultRunTests(cwd, exec, progress = noProgress, paralle
   // reusing the real checkout's node_modules, but a scratch worktree is a
   // separate filesystem location so nothing can be shared/symlinked in
   // safely without risking the exact collision this isolation exists to
-  // avoid.
+  // avoid. (#687: a copy-on-write clone is that safe way: the copy shares the cache's blocks but is its own files.)
+  await cache.seed(dashboardDir)
   await exec('npm', ['install'], { cwd: dashboardDir, onOutput: () => progress('installing', 'output') })
+  await cache.store(dashboardDir)
   progress('installing', 'done')
   const parallel = await parallelArgs()
   progress('tests', 'running', { detail: parallel.length ? 'Python' : 'Python (serial: pytest-xdist missing)', logDetail: !parallel.length })

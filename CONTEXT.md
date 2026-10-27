@@ -495,6 +495,73 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   ticket retry storm's comment-velocity spike would be caught without a "storm detector" ever
   having been written.
 
+## Code graph freshness (built 2026-10-26, marvin#691)
+
+- **Code graph**: graphify's `graphify-out/graph.json`, the graph CLAUDE.md tells agents to query first. It's built by AST
+  parsing only (no LLM), so it is only as good as it is current.
+- **Graph refresh**: `lib/graphify_freshness.py refresh`, the one writer.
+  - It runs `graphify update`, records the result in `graphify-out/.marvin_freshness.json`, and prunes the dated
+    backup snapshots to the newest 7.
+  - It runs from the post-commit, post-merge and post-rewrite hooks, and from the Health drill-down's "Rebuild graph
+    now" button.
+  - Its hook block replaces graphify's own post-commit rebuild, so only one process writes the graph.
+  - Install it with `graphify_freshness.py install-hooks ~/.agents` (setup.sh does this).
+  - Re-running `graphify hook install` puts graphify's own block back, which brings back two writers.
+- **Why a stamp and not `built_at_commit`**: when graphify finds no topology change, it leaves graph.json untouched,
+  so `built_at_commit` lags a graph that is in fact current. The stamp's `last_ok_head` is the truth.
+- **Health check `graphify:fresh`**:
+  - **green:** no graph-tracked file changed since the last good refresh.
+  - **yellow:** behind, under 24 h.
+  - **red:** behind for more than 24 h, the last refresh failed, the hooks are missing, or the build commit isn't in
+    the repo.
+  - It reads only the tail of graph.json plus one `git diff --name-only` (trees, not history, so a build commit off
+    to the side of HEAD still works). Cost is O(changed files).
+- Background: `docs/research/knowledge-graphs-2026-10-26.md`. The graph was 84 commits stale because code_sync lands
+  commits with `git merge`, which never fired graphify's post-commit hook.
+
+## Memory lint (built 2026-10-26, marvin#695)
+
+- **Memory lint**: `lib/memory_lint.py` checks the memory folder.
+  - It finds broken `[[links]]` (with a suggestion), links broken across a line, notes with no inbound link, git
+    conflict markers, bad frontmatter, and MEMORY.md index drift in both directions.
+  - It reports and suggests; it never edits a note.
+  - The first step of the knowledge-graph follow-ups (#695–#699, `docs/research/knowledge-graphs-2026-10-26.md`).
+- **Link resolution**: a link resolves by a note's file stem or its `name:`, case-insensitively. An alias (`|label`)
+  or heading (`#Why`) is ignored, and links inside code are not links.
+  - MEMORY.md is the index, not a note, so its entries never count as inbound links.
+  - A suggestion is offered only for a typo (at most 2 edits) or a missing type prefix (`catch-x` for
+    `feedback-catch-x`). A similarity ratio is not enough, because names share long prefixes.
+- **Health check `memory:lint`**: red on conflict markers; yellow on broken links, index drift or bad frontmatter.
+  Notes with no inbound link are counted but stay green. Cost: O(notes + links), about 0.05 s for 164 notes.
+- `node_type` and `modified` are optional fields written by tooling, not required.
+
+## Memory graph (built 2026-10-26, marvin#696)
+
+- **Memory graph**: `lib/memory_graph.py` follows memory's `[[links]]` instead of grepping for them. It is built
+  fresh from the files on every call, using memory_lint's parsing and resolution with dangling links dropped, so there
+  is no stored graph to go stale. About 0.3 s for 164 notes, including the Python start.
+  - `neighbors <note>`: links in and out.
+  - `path <a> <b>`: the shortest chain of links, in either direction.
+  - `related "<query>"`: Personalized PageRank seeded from the notes whose name or description matches the query.
+- **Why the blend in `related`**: plain PPR ranks the middle of a chain above the note that matched, because it
+  collects mass from both sides. The score is half the direct match and half PPR closeness. Notes the seeds can't reach
+  score nothing, so popularity alone never surfaces a note.
+- When to use it: "what's connected to X", or finding notes near a topic. Grep is still the tool for an exact string.
+
+## Replaced memory facts (built 2026-10-26, marvin#698)
+
+- **Replaced fact**: a memory note whose fact no longer holds. It is never deleted, and never left standing beside its
+  replacement as if both were true. Its `metadata` block says so with optional fields:
+  - `superseded_by: <slug>`: the note that replaced it.
+  - `invalid_at: YYYY-MM-DD`: the day it stopped holding, for a fact that ended with no replacement (a dropped plan).
+  - `valid_from: YYYY-MM-DD`: when it started holding.
+- **Current**: a note that is neither superseded nor past its `invalid_at`. `memory_graph related` ranks a replaced
+  note at a quarter of its score and marks it, so it remains findable as history but is never the first answer.
+- Pattern: the bi-temporal "invalidate, don't delete" approach of Zep/Graphiti
+  (`docs/research/knowledge-graphs-2026-10-26.md`, pattern 5).
+- The memory lint flags: a `superseded_by` that names no note, two notes replacing each other, and dates that aren't
+  `YYYY-MM-DD`. A `superseded_by` counts as a link, so the replacement is never an orphan.
+
 ## Dashboard app — Docs tab (built 2026-10-01)
 
 - **Docs tab**: a read-only, cross-project viewer onto `CONTEXT.md` + `docs/adr/*.md` + `README.md`,
@@ -1490,6 +1557,10 @@ A GitHub 5xx (`remote: Internal Server Error`, HTTP 500, 503) is classified `GIT
   any fix MARVIN made (Gil, 2026-10-27): first aid, its own code clearing the symptom, or a rung-3 pipeline PR merged
   since the recurrence, whether it merged itself or with Gil's Approve. The fit check suggests (⚠️,
   not a block) `## Watch` and `## First aid` on a `bug` ticket with a Recurrence check.
+- **Rung-3 auto-merge** (ADR 0064 amendment, 2026-10-26): a rung-3 fix PR for a known incident's regression may
+  merge itself even in core areas (not the merge gate or auto-merge itself), with a failing-first regression test,
+  the mutation check, a green main and passing checks, one per incident per day, and an automatic revert if the probe
+  still trips after merge. Shadow mode first (`lib/auto_merge_regression.py`); on only when Gil says yes.
 - **Missed purpose** (decided 2026-10-08): when an outcome check misses its target, MARVIN always writes a
   **diagnosis** (a Background analyst run, full Memory) as a ticket comment: what it was meant to do, what
   happened (numbers), why it fell short (evidence) and the options (iterate with a drafted follow-up,

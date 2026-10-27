@@ -176,7 +176,13 @@ def _auto_merge_report() -> str | None:
 def _regressions(now: datetime) -> list[dict]:
     """Solved problems that came back in the last day: fixed by MARVIN itself, or waiting on you (incident_ladder)."""
     import incident_ladder
-    return incident_ladder.brief_lines(now=now)
+    lines = incident_ladder.brief_lines(now=now)
+    try:
+        import auto_merge_regression  # what rung 3's auto-merge would have done, while it shadows
+        shadow = auto_merge_regression.report()["line"]
+    except Exception:  # noqa: BLE001 -- the ladder's own lines still show
+        shadow = None
+    return lines + ([{"kind": "needs-you", "line": shadow}] if shadow else [])
 
 
 def _revisited(now: datetime) -> list[dict]:

@@ -30,7 +30,7 @@ export default function ActivityBoard({ onOpenMr, onOpenDocs, onOpenTicket, onOp
       {view === 'home' ? (
         <>
           <ProjectsProgressView onOpen={onOpenProject} />
-          <DashboardHome onOpenProject={onOpenProject} />
+          <DashboardHome onOpenProject={onOpenProject} onOpenTicket={onOpenTicket} />
         </>
       ) : (
         <>
