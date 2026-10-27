@@ -67,21 +67,60 @@ def _claude_install_method(claude_path: str) -> str:
     return "unknown"
 
 
-def _mobility_class(hw_model: str) -> str:
-    # Apple's model-identifier scheme doesn't reliably distinguish desktop
-    # families by number (Mac16,x spans mini/Studio/iMac), but every mobile
-    # Mac has always been named MacBook* — that substring is the stable signal.
-    return "mobile" if "MacBook" in hw_model else "stationary"
+def _has_battery() -> bool:
+    """Detects whether this machine has an internal battery from pmset output."""
+    out = _run(["pmset", "-g", "batt"])
+    return "InternalBattery" in out
 
 
-def _label(hw_model: str) -> str:
-    return "macbook-pro" if "MacBook" in hw_model else "mac-mini"
+def _mobility_class(has_battery: bool) -> str:
+    # Batteries are the stable signal: every mobile Mac has one, no desktop does.
+    return "mobile" if has_battery else "stationary"
+
+
+def _get_model_name() -> str:
+    """Get human-readable model name from system_profiler (handles both Intel and Apple Silicon)."""
+    out = _run(["system_profiler", "SPHardwareDataType"])
+    for line in out.splitlines():
+        if "Model Name:" in line:
+            # Example: "Model Name: MacBook Pro (14-inch, 2023, M3)"
+            return line.split("Model Name:")[-1].strip()
+    return ""
+
+
+def _label(is_mobile: bool, hw_model: str) -> str:
+    """Precise label from mobility and model substring matching.
+
+    Mobile (has battery): MacBookPro/MacBook Pro → macbook-pro, MacBookAir/MacBook Air → macbook-air,
+    plain MacBook → macbook, unknown → macbook.
+    Stationary: → mac-mini.
+    """
+    if not is_mobile:
+        return "mac-mini"
+
+    # First check hw_model for Intel patterns
+    if "MacBookPro" in hw_model:
+        return "macbook-pro"
+    if "MacBookAir" in hw_model:
+        return "macbook-air"
+
+    # For Apple Silicon, check system_profiler's human-readable model name
+    model_name = _get_model_name()
+    if "MacBook Pro" in model_name:
+        return "macbook-pro"
+    if "MacBook Air" in model_name:
+        return "macbook-air"
+    if "MacBook" in model_name:
+        return "macbook"
+
+    return "macbook"
 
 
 def build_profile() -> dict:
     if host_os.os_name() == "linux":
         return _build_linux_profile()
     hw_model = _run(["/usr/sbin/sysctl", "-n", "hw.model"])
+    has_battery = _has_battery()
     claude_path = _run(["bash", "-lc", "readlink -f $(which claude) 2>/dev/null || which claude"])
     venv_python = str(Path.home() / ".agents" / "venv" / "bin" / "python")
 
@@ -96,12 +135,12 @@ def build_profile() -> dict:
         pass
 
     return {
-        "label": _label(hw_model),
+        "label": _label(has_battery, hw_model),
         "hostname": _run(["/usr/sbin/scutil", "--get", "ComputerName"]),
         "hardware_uuid": _hardware_uuid(),
         "serial": _serial(),
         "hw_model": hw_model,
-        "mobility_class": _mobility_class(hw_model),
+        "mobility_class": _mobility_class(has_battery),
         "chip_arch": _run(["uname", "-m"]),
         "macos_version": _run(["sw_vers", "-productVersion"]),
         "claude_version": _run(["bash", "-lc", "claude --version"]),

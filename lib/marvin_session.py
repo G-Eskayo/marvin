@@ -166,15 +166,19 @@ def open_in_wezterm(directory: Path, wezterm: str | None = None, run: Callable =
     with open(state_file.with_suffix(".lock"), "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)  # two quick presses must not both decide "no window yet"
         gui = identity(run)
-        window = _saved_window(state_file, gui, set(_windows(wezterm, run).values()))
-        spawned = _spawn(wezterm, ["--window-id", str(window)], directory, program, run) if window is not None \
-            else None
-        if spawned is None or spawned.returncode != 0:  # no window yet, or it closed since we looked
-            spawned = _spawn(wezterm, ["--new-window"], directory, program, run)
-        if spawned.returncode == 0:
-            _remember(state_file, gui, spawned.stdout, wezterm, run)
-            return
-        state_file.unlink(missing_ok=True)  # a freshly started WezTerm has none of the old windows
+        if gui is None:
+            # No running WezTerm; skip spawn attempts and start fresh
+            state_file.unlink(missing_ok=True)
+        else:
+            window = _saved_window(state_file, gui, set(_windows(wezterm, run).values()))
+            spawned = _spawn(wezterm, ["--window-id", str(window)], directory, program, run) if window is not None \
+                else None
+            if spawned is None or spawned.returncode != 0:  # no window yet, or it closed since we looked
+                spawned = _spawn(wezterm, ["--new-window"], directory, program, run)
+            if spawned.returncode == 0:
+                _remember(state_file, gui, spawned.stdout, wezterm, run)
+                return
+            state_file.unlink(missing_ok=True)  # a freshly started WezTerm has none of the old windows
     try:
         start([wezterm, "start", "--cwd", str(directory), "--", *program])
     except OSError as exc:

@@ -60,6 +60,7 @@ def test_the_shell_script_sets_its_own_environment_and_keeps_the_token_off_the_c
 
 
 def test_spawns_into_the_running_wezterm_and_falls_back_to_starting_it(tmp_path):
+    """When gui_identity returns None (no running WezTerm), skip spawn and start fresh."""
     calls = []
 
     def run(cmd, **kw):
@@ -69,8 +70,10 @@ def test_spawns_into_the_running_wezterm_and_falls_back_to_starting_it(tmp_path)
     started = []
     ms.open_in_wezterm(tmp_path, wezterm="/x/wezterm", run=run, start=lambda cmd: started.append(cmd),
                        state_file=tmp_path / "window.json", identity=lambda run: None)
-    spawn = next(c for c in calls if c[1:3] == ["cli", "spawn"])
-    assert spawn[:4] == ["/x/wezterm", "cli", "spawn", "--new-window"]
+    # When gui is None, spawn should NOT be called (plan §2 restructure)
+    spawn_calls = [c for c in calls if c[1:3] == ["cli", "spawn"]]
+    assert not spawn_calls, "When gui_identity returns None, spawn should be skipped"
+    # start() should be called directly
     assert started and started[0][:2] == ["/x/wezterm", "start"]
 
 

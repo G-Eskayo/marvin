@@ -28,6 +28,7 @@ pointing a tool like Plash at for a live desktop wallpaper.
 from __future__ import annotations
 import json
 import math
+import sys
 import plistlib
 import re
 import subprocess
@@ -879,9 +880,40 @@ def _compute_code_layer(graph: dict, ownership_path: str) -> dict:
     }
 
 
+def _load_enrichment() -> dict:
+    """Load enrichment.json with safe fallbacks for the 7 unconditionally-indexed top-level keys.
+    Returns empty dict with defaults on any parse error or if not a dict."""
+    data = {}
+    if not ENRICHMENT_PATH.exists():
+        # File missing is expected and safe; no log needed
+        pass
+    else:
+        try:
+            loaded = json.loads(ENRICHMENT_PATH.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                data = loaded
+            else:
+                print(f"WARNING: enrichment.json is not a dict (got {type(loaded).__name__}); using defaults", file=sys.stderr)
+        except json.JSONDecodeError as e:
+            print(f"WARNING: enrichment.json parse failed ({e}); using defaults", file=sys.stderr)
+        except Exception as e:
+            print(f"WARNING: enrichment.json read failed ({e}); using defaults", file=sys.stderr)
+
+    # Set safe defaults for the 7 keys always accessed without existence checks
+    data.setdefault("skill_categories", {})
+    data.setdefault("category_order", [])
+    data.setdefault("category_labels", {})
+    data.setdefault("skills_trunk_desc", "")
+    data.setdefault("structural", [])
+    data.setdefault("root", {"id": "root", "desc": ""})
+    data.setdefault("plain", {})
+    data.setdefault("skill_desc_overrides", {})
+    return data
+
+
 def main() -> None:
     manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-    enrichment = json.loads(ENRICHMENT_PATH.read_text(encoding="utf-8"))
+    enrichment = _load_enrichment()
 
     tree = build_tree(manifest, enrichment)
     attach_layout(tree)
