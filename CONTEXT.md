@@ -69,6 +69,15 @@ one job, starting with the history store.
   without this check the *next* automated push — including an unattended daily cron — would
   commit and propagate that corruption with nobody watching. See [[0022]] for the real incident
   that motivated this.
+- **Stale-code dispatch guard** (marvin#458, 2026-10-26): the ticket pipeline refuses to start any new work while
+  its own `~/.agents` checkout is stale: behind origin/main by changes that landed on main more than 2 h ago
+  (`failure_breaker.CODE_STALE_GRACE_HOURS`, judged by first-parent landing time), or code sync is stuck on a
+  conflict or leftover stash (`code_sync._stuck_from_previous_run`). It reads origin/main as the last fetch left it
+  (no network) through the same repo-state script `repo:sync` uses. A live reading, never stored: Health's
+  `pipeline:breaker` card is red with the fix text while it holds, and both clear once the checkout catches up.
+  Local commits ahead of origin never block. **Fails open** when origin/main can't be read (card shows
+  "couldn't measure"), so one git hiccup can't halt every project; a conflict or stash still blocks. Never resolves
+  the conflict. Found when a ticket needing a person was rebuilt ~122 times on a Mac three days behind main.
 
 - **Intent-vs-reality audit**: comparing documented intent (docstrings, ADRs, roadmap `[decision]`/
   `[research]` markers, memory) against actual current system state to find gaps nobody's reported

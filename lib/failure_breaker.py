@@ -18,7 +18,14 @@ works again. Deterministic and token-free.
 State is a per-machine append-only log (~/.claude/logs/pipeline-failures.jsonl),
 so each machine judges the dispatches it ran itself.
 
-CLI:  failure_breaker.py status | clear
+Stale code (marvin#458) is the other environment fault that pauses dispatch. On 2026-10-24/25 a ticket needing a
+person was rebuilt ~122 times: the fix that skips such tickets had been on main for three days, but that Mac's
+~/.agents code sync was stuck on an unresolved merge conflict, so the pipeline ran three-day-old code and nobody was
+told. code_trip() is a live reading, not a log entry (nothing is stored): the checkout is behind origin/main by
+changes that landed more than CODE_STALE_GRACE_HOURS ago, or code sync is stuck on a conflict or leftover stash. It
+pauses every project (the scanner's own code is suspect) and clears by itself once the checkout catches up.
+
+CLI:  failure_breaker.py status | clear     (status and --json include the stale-code trip)
 """
 from __future__ import annotations
 import json
@@ -129,6 +136,87 @@ def tripped(now: datetime | None = None, project: str | None = None) -> list[dic
     return result
 
 
+# ── stale code (marvin#458) ──────────────────────────────────────────────
+
+CODE_STALE_SIGNATURE = "code-stale"
+ALL_PROJECTS = "*"            # a stale-code trip pauses every project: it is the scanner's own code that is old
+CODE_STALE_GRACE_HOURS = 2    # code sync runs every 30 min: four missed cycles is stuck, not drift
+CODE_REPO_REL = ".agents"     # the checkout that runs the pipeline, relative to $HOME (code_sync's ~/.agents)
+
+
+def code_freshness(repo_rel: str = CODE_REPO_REL, now: datetime | None = None,
+                   grace_hours: float = CODE_STALE_GRACE_HOURS) -> dict:
+    """How current the pipeline's own checkout is. {state, detail, behind, oldest_hours}, state one of
+    current | stale | stuck | unknown. Reads origin/main as the last fetch left it (code sync and the health sweep
+    already fetch): no network. Never raises. Reuses health_checks' repo-state script (the same measurement the
+    repo:sync card shows) and code_sync's own stuck-tree test (the same one that makes sync refuse).
+
+    unknown fails OPEN: if origin/main can't be read we can't tell stale from fine, and halting every project on
+    any git hiccup would make this guard the single point that stops all work. The caller logs a warning. A
+    conflict or stash is local, certain evidence, so `stuck` is judged first and does not need origin/main."""
+    now = now or _now()
+    out = {"state": "unknown", "detail": "", "behind": None, "oldest_hours": None}
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import code_sync
+        import health_checks
+        repo = Path.home() / repo_rel
+        if not (repo / ".git").exists():
+            out["detail"] = f"~/{repo_rel} is not a git checkout"
+            return out
+        stuck = code_sync._stuck_from_previous_run(repo)
+        if stuck:
+            return {**out, "state": "stuck", "detail": stuck}
+        state = health_checks.parse_repo_state(health_checks._run_repo_state(None, repo_rel, fetch=False))
+    except Exception as exc:  # noqa: BLE001 -- the guard must never take the scan down
+        out["detail"] = f"could not read ~/{repo_rel}: {type(exc).__name__}: {exc}"
+        return out
+    if not state["head"]:
+        out["detail"] = f"could not read HEAD of ~/{repo_rel}"
+        return out
+    if not state["origin_ok"]:
+        out["detail"] = f"no origin/main ref in ~/{repo_rel} (never fetched?)"
+        return out
+    behind = state["behind"]
+    out["behind"] = behind
+    if not behind:
+        return {**out, "state": "current", "detail": "up to date with origin/main (as of the last fetch)"}
+    ts = state["behind_oldest_ts"]
+    if ts is None:
+        out["detail"] = f"{behind} commit(s) behind origin/main, but their age could not be read"
+        return out
+    hours = (now - datetime.fromtimestamp(ts, tz=timezone.utc)).total_seconds() / 3600
+    out["oldest_hours"] = hours
+    if hours < grace_hours:
+        return {**out, "state": "current", "detail": f"{behind} behind, oldest {hours:.1f}h: within the {grace_hours:g}h grace"}
+    return {**out, "state": "stale", "detail": f"{behind} commit(s) behind origin/main, oldest {hours:.0f}h"}
+
+
+def _machine() -> str:
+    try:
+        import machine_profile
+        return machine_profile.registry_id()
+    except Exception:  # noqa: BLE001
+        return "this Mac"
+
+
+def code_trip(repo_rel: str = CODE_REPO_REL, now: datetime | None = None,
+              grace_hours: float = CODE_STALE_GRACE_HOURS, freshness: dict | None = None) -> dict | None:
+    """A breaker-shaped trip while the pipeline's code is stale or its sync is stuck, else None."""
+    now = now or _now()
+    f = freshness or code_freshness(repo_rel, now, grace_hours)
+    if f["state"] == "stale":
+        n = f["behind"]
+        fix = (f"this Mac's MARVIN code is {n} commit{'s' if n != 1 else ''} behind main (oldest {f['oldest_hours']:.0f}h): "
+               "code sync is stuck; resolve it (see repo:sync)")
+    elif f["state"] == "stuck":
+        fix = f"this Mac's MARVIN code sync is stuck ({f['detail']}); resolve it by hand (see repo:sync)"
+    else:
+        return None
+    return {"project": ALL_PROJECTS, "signature": CODE_STALE_SIGNATURE, "machine": _machine(), "tickets": [],
+            "first_seen": now.isoformat(), "last_seen": now.isoformat(), "example": fix, "fix": fix}
+
+
 def main() -> None:
     cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
     if cmd == "clear":
@@ -136,12 +224,18 @@ def main() -> None:
         print("breaker cleared")
         return
     trips = tripped()
+    stale = code_trip()
+    if stale:
+        trips.append(stale)
     if "--json" in sys.argv:
         print(json.dumps(trips, indent=2))
         return
     if not trips:
         print("breaker: not tripped")
     for t in trips:
+        if t.get("fix"):
+            print(f"TRIPPED {t['signature']}: {t['fix']}")
+            continue
         print(f"TRIPPED {t['signature']} across tickets {t['tickets']} since {t['first_seen']}\n  e.g. {t['example'][:160]}")
 
 

@@ -349,8 +349,13 @@ def check_pipeline_breaker(reachability: dict[str, str] | None = None, remote=No
     import failure_breaker
     cid, label = "pipeline:breaker", "Ticket pipeline circuit breaker"
 
-    # Local machine trips.
+    # Local machine trips, plus this Mac's own stale code (marvin#458): a live reading, so it clears by itself.
     all_trips = failure_breaker.tripped()
+    fresh = failure_breaker.code_freshness()
+    stale = failure_breaker.code_trip(freshness=fresh)
+    if stale:
+        all_trips.append(stale)
+    unknown_here = fresh["detail"] if fresh["state"] == "unknown" else None
 
     # Remote machine trips (only Macs answering: an asleep laptop is skipped, not waited on).
     remote = remote or _run_failure_breaker_remote
@@ -365,25 +370,36 @@ def check_pipeline_breaker(reachability: dict[str, str] | None = None, remote=No
             unread.append(f"{device_id} ({type(exc).__name__})")
 
     if not all_trips:
+        if unknown_here:
+            return _unknown(cid, label, f"whether this Mac's code is current ({unknown_here}); dispatch carries on"
+                            + (", and breaker state on " + ", ".join(unread) if unread else "") + "; not tripped otherwise")
         if unread:
             return _unknown(cid, label, "breaker state on " + ", ".join(unread) + "; not tripped on the rest")
         return _result(cid, label, "green", "not tripped")
 
-    # Merge trips by (project, signature), keeping earliest first_seen for display.
+    # Merge trips by (project, signature), keeping earliest first_seen for display. A stale-code trip is per Mac.
     trips_by_key = {}
     for t in all_trips:
-        key = (t.get("project", "G-Eskayo/marvin"), t["signature"])
+        key = (t.get("project", "G-Eskayo/marvin"), t["signature"], t.get("machine") if t.get("fix") else None)
         if key not in trips_by_key or t["first_seen"] < trips_by_key[key]["first_seen"]:
             trips_by_key[key] = t
 
     trips = list(trips_by_key.values())
     detail_parts = []
     for t in trips:
+        if t.get("fix"):
+            detail_parts.append(f"{t.get('machine', '?')}: {t['fix']}")
+            continue
         first_seen = t["first_seen"]
         tickets = t["tickets"]
         sig = t["signature"]
         detail_parts.append(f"{sig} across tickets {tickets} (since {first_seen})")
-    detail = "dispatch paused by the circuit breaker — " + "; ".join(detail_parts) + ". Fix the cause, then `failure_breaker.py clear`"
+    counted = [t for t in trips if not t.get("fix")]
+    detail = "dispatch paused by the circuit breaker — " + "; ".join(detail_parts)
+    if counted:
+        detail += ". Fix the cause, then `failure_breaker.py clear`"
+    else:
+        detail += ". Clears by itself once the checkout catches up"
     return _result(cid, label, "red", detail, value=len(trips))
 
 
@@ -816,8 +832,9 @@ SYNC_RED_AFTER_HOURS = 24
 
 _REPO_STATE_BODY = r'''
 cd "$HOME/$REPO_REL" 2>/dev/null || { echo "fetch_ok=0"; echo "head="; exit 0; }
-git fetch -q origin >/dev/null 2>&1 && echo "fetch_ok=1" || echo "fetch_ok=0"
+if [ "$FETCH" = 1 ]; then git fetch -q origin >/dev/null 2>&1 && echo "fetch_ok=1" || echo "fetch_ok=0"; fi
 echo "head=$(git rev-parse --short HEAD 2>/dev/null)"
+git rev-parse -q --verify origin/main >/dev/null 2>&1 && echo "origin_ok=1" || echo "origin_ok=0"
 echo "stashes=$(git stash list 2>/dev/null | wc -l | tr -d ' ')"
 # Extract tracked files from stash@{0}
 if git rev-parse stash@{0} >/dev/null 2>&1; then
@@ -829,16 +846,20 @@ else
 fi
 echo "conflicts=$(git status --porcelain 2>/dev/null | grep -cE '^(UU|AA|DD) ')"
 echo "behind=$(git rev-list --count HEAD..origin/main 2>/dev/null)"
-echo "behind_oldest_ts=$(git log --format=%ct HEAD..origin/main 2>/dev/null | tail -1)"
+# --first-parent: when each change LANDED on main (the merge commit), not when its branch commits were written; a PR
+# whose commits are days old must not read as "days behind" in the minutes before the next sync pulls it (marvin#458).
+echo "behind_oldest_ts=$(git log --first-parent --format=%ct HEAD..origin/main 2>/dev/null | tail -1)"
 echo "ahead=$(git rev-list --count origin/main..HEAD 2>/dev/null)"
 echo "ahead_oldest_ts=$(git log --format=%ct origin/main..HEAD 2>/dev/null | tail -1)"
 '''
 
 
-def repo_state_script(rel_path: str) -> str:
+def repo_state_script(rel_path: str, fetch: bool = True) -> str:
     """The one script that reads a repo's sync state. Run as-is locally or piped
-    to `ssh host bash -s`, so both machines are judged by identical logic."""
-    return f"REPO_REL={shlex.quote(rel_path)}\n" + _REPO_STATE_BODY
+    to `ssh host bash -s`, so both machines are judged by identical logic.
+    fetch=False reads origin/main as the last fetch left it: no network (the
+    ticket pipeline's stale-code guard, failure_breaker.code_freshness)."""
+    return f"REPO_REL={shlex.quote(rel_path)}\nFETCH={1 if fetch else 0}\n" + _REPO_STATE_BODY
 
 
 def parse_repo_state(text: str) -> dict:
@@ -858,6 +879,7 @@ def parse_repo_state(text: str) -> dict:
         "stash_files": stash_files,
         "conflicts": num("conflicts") or 0,
         "fetch_ok": raw.get("fetch_ok", "0").strip() == "1",
+        "origin_ok": raw.get("origin_ok", "0").strip() == "1",
         "behind": num("behind") or 0,
         "behind_oldest_ts": num("behind_oldest_ts"),
         "ahead": num("ahead") or 0,
@@ -904,9 +926,9 @@ def evaluate_repo_sync(state: dict, now: datetime) -> tuple[str, str, int | None
     return worst, "; ".join(d for _, d in findings), state["stashes"] or None
 
 
-def _run_repo_state(target: str | None, rel_path: str) -> str:
+def _run_repo_state(target: str | None, rel_path: str, fetch: bool = True) -> str:
     """target None = this machine, else an ssh host."""
-    script = repo_state_script(rel_path)
+    script = repo_state_script(rel_path, fetch)
     cmd = ["bash", "-s"] if target is None else ["ssh", *SSH_OPTS, target, "bash -s"]
     proc = subprocess.run(cmd, input=script, capture_output=True, text=True, timeout=60)
     return proc.stdout
