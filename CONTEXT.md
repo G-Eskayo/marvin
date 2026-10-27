@@ -75,7 +75,21 @@ one job, starting with the history store.
   `.git/info/attributes` before every stash or merge (fresh machines included; never into the engine repo). After a
   merge it removes exact duplicate memory-index lines and logs them; anything else union got wrong (a changed line
   kept beside its edit, a doubled heading, one memory linked twice) is a yellow Health card until the file is fixed.
-  Conflicts in any other file still stop for a person.
+  Conflicts in any other file still stop for a person. Memory notes left the union rule the same day (ADR 0077).
+- **Drift fixes** (ADR 0077, 2026-10-26; the laptop's Claude dir went 4 days without a push):
+  - **Partial push**: a push commits and pushes every changed file except those under a **live-edit lease** (a live
+    session edited it within `session_work.LIVE_S`) and those still holding conflict markers; held files wait a cycle.
+    The whole push defers only when every changed file is held. A marker file is still refused, per file.
+  - **Commit before merge** (synced Claude dir only): pull commits local work first, then a real `merge --ff`; no stash
+    or pop. The engine and the instance keep stash → merge → pop (their commits are code under extra guards).
+  - **Keep-both resolution**: in the Claude dir, a conflict confined to `suggestions.md` and memory notes is resolved
+    (note: the remote's text, then `## Also from <machine> (<date>)` with this side's other lines; suggestions: entry
+    union, then re-sorted) and shown as an `auto-resolved` item on the `sync:union-review` card. Any other conflict
+    still stops for a person.
+  - **Stuck episode**: a repo failing push or pull for 30 min sends one `notify()`, and one "back in sync" when it
+    clears (`~/.claude/logs/code-sync-stuck.json`, per machine). No per-run failure banners any more.
+  - **Contained stash**: a leftover stash whose every file equals HEAD's is dropped and logged (sha kept in the log);
+    any other stash is kept and the run refuses, as before.
 - **Stale-code dispatch guard** (marvin#458, 2026-10-26): the ticket pipeline refuses to start any new work while
   its own `~/.agents` checkout is stale: behind origin/main by changes that landed on main more than 2 h ago
   (`failure_breaker.CODE_STALE_GRACE_HOURS`, judged by first-parent landing time), or code sync is stuck on a
