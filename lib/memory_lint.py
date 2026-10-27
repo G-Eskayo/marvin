@@ -27,6 +27,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 CHECK_ID, CHECK_LABEL = "memory:lint", "Memory links and index are sound"
 INDEX = "MEMORY.md"
 TYPES = ("user", "feedback", "project", "reference")
+# Read from the metadata block alongside `type` (marvin#698): when a fact held, and what replaced it. Optional.
+VALIDITY = ("valid_from", "invalid_at", "superseded_by")
+_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 _FENCE = re.compile(r"```.*?```", re.DOTALL)
 _INLINE = re.compile(r"`[^`\n]*`")
@@ -56,7 +59,7 @@ def _frontmatter(text: str) -> tuple[dict, str | None]:
         if not m:
             continue
         indent, key, value = m.groups()
-        if not indent or key == "type":
+        if not indent or key == "type" or key in VALIDITY:
             v = value.strip()
             if len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"":
                 v = v[1:-1]  # a quoted YAML scalar
@@ -133,7 +136,10 @@ def lint(memory_dir: Path) -> dict:
             report["frontmatter"].append({"file": p.name, "problem": "unreadable (not UTF-8)"})
             continue
         fields, problem = _frontmatter(text)
-        report["meta"][p.stem] = {k: fields.get(k, "") for k in ("name", "description", "type")}
+        report["meta"][p.stem] = {k: fields.get(k, "") for k in ("name", "description", "type", *VALIDITY)}
+        for k in ("valid_from", "invalid_at"):
+            if fields.get(k) and not _DATE.match(fields[k]):
+                report["frontmatter"].append({"file": p.name, "problem": f"{k} '{fields[k]}' is not YYYY-MM-DD"})
         if fields.get("name"):
             keys.setdefault(fields["name"].lower(), p.stem)
         if problem:
@@ -164,6 +170,23 @@ def lint(memory_dir: Path) -> dict:
                 continue
             report["dangling"].append({"file": p.name, "line": line, "target": target, "split": split,
                                        "suggestion": stem or _suggest(target.lower(), keys)})
+    # superseded_by is a link too: the replacement must exist, and a pair can't replace each other
+    replaced: dict[str, str] = {}
+    for stem, meta in report["meta"].items():
+        ref = meta.get("superseded_by")
+        if not ref:
+            continue
+        new = keys.get(ref.lower())
+        if new is None:
+            report["frontmatter"].append({"file": f"{stem}.md", "problem": f"superseded_by '{ref}' is not a note"})
+            continue
+        replaced[stem] = new
+        if new != stem:
+            inbound[new].add(stem)
+            edges.add((stem, new))
+    for old, new in replaced.items():
+        if replaced.get(new) == old and old < new:
+            report["frontmatter"].append({"file": f"{old}.md", "problem": f"{old} and {new} replace each other"})
     report["orphans"] = sorted(s for s, srcs in inbound.items() if not srcs)
     report["edges"] = sorted(edges)  # resolved note -> note links, self-links dropped (memory_graph.py builds on these)
 
@@ -174,6 +197,16 @@ def lint(memory_dir: Path) -> dict:
         report["unindexed"] = sorted(p.stem for p in notes if p.name not in listed)
         report["index_missing"] = sorted(t for t in listed if t not in names)
     return report
+
+
+def is_current(meta: dict, today=None) -> bool:
+    """False once a note is superseded, or its invalid_at date has arrived. A replaced fact stays readable (history);
+    it just stops being the answer."""
+    from datetime import date
+    if meta.get("superseded_by"):
+        return False
+    inv = meta.get("invalid_at") or ""
+    return not (_DATE.match(inv) and inv <= (today or date.today()).isoformat())
 
 
 def _plural(n: int, word: str) -> str:
