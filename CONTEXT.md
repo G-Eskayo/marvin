@@ -474,6 +474,35 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   ticket retry storm's comment-velocity spike would be caught without a "storm detector" ever
   having been written.
 
+## Entity IDs (in design, 2026-10-26, marvin#697)
+
+- **Entity ID**: the one name every part of MARVIN uses for the same thing (an ADR, a ticket, a project, a memory note).
+  It has the form `kind:key`, for example `adr:0070` or `ticket:G-Eskayo/marvin#691`. It is **derived** from what a
+  system already holds (a path, the text "ADR 0070", a ticket reference). It is never assigned or stored.
+- **Alias**: another name for an entity that can't be derived, for example "Seal Speak" for `project:clarity-captions`.
+  There is no central alias table. Each project declares its own aliases in a small `marvin.json` at its repo root,
+  next to the code it names. Everything that can be derived stays out of it.
+- **Project ID**: `project:<repo-name>`, derived from the project's GitHub repo name. A project that exists only as a
+  memory note (an idea with no repo yet) is known by its note, `memory:<slug>`. When it gets a repo, the repo's
+  `marvin.json` lists that memory ID as an alias, so earlier links still land on the project.
+- **ADR ID**: `adr:<repo>/<NNNN>`, because ADR numbers are only unique within one repo. A bare "ADR 0070" means the
+  ADR of the repo the text lives in. A memory note belongs to no repo, so a bare ADR reference there is ambiguous and
+  must name the repo. Two ADRs in one repo must never share a number.
+- **Kinds (v1)**: a fixed vocabulary.
+  - Work: `ticket:<owner>/<repo>#<n>`, `pr:<owner>/<repo>#<n>`, `adr:<repo>/<NNNN>`, `doc:<repo>/<path>`.
+  - Things: `project:<repo>`, `skill:<name>`, `machine:<id>`.
+  - Knowledge: `memory:<slug>`, `paper:<doi>`.
+  - Code: `code:<repo>/<path>`, one per file.
+  - Stores: `qa:<id>`, `feed:<id>`. These are qa-knowledge lessons and research-feed items, named by their
+    existing store IDs.
+  Tickets and PRs carry the owner because other people's repos are in scope (the universal and marketplace plans).
+- **Mentions**: the entity IDs a piece of text refers to, derived when it's written. A lesson or feed item carries its
+  mentions, so it links into the rest of the graph. A research-feed correlation names the lesson it matched by ID,
+  never by a copy of its text.
+- **Why code IDs are files, not symbols (v1)**: a symbol's ID disappears when it is renamed or moved, which breaks every
+  link to it. Files are steadier, and git's rename detection lets links follow a moved file. Symbol IDs wait until
+  renames can be followed.
+
 ## Dashboard app — Docs tab (built 2026-10-01)
 
 - **Docs tab**: a read-only, cross-project viewer onto `CONTEXT.md` + `docs/adr/*.md` + `README.md`,
