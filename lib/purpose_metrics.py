@@ -168,6 +168,48 @@ def _replanned_tickets(stages_dir: Path | None = None, days: float = PROBE_WINDO
     return float(count)
 
 
+_SYNC_HEADER = re.compile(r"^## (\S+) — alert \(([^)]+)\)", re.M)
+
+
+def _sync_stuck_episodes(log: Path | None = None, state: Path | None = None, label: str | None = None,
+                         days: float = PROBE_WINDOW_DAYS, now: datetime | None = None,
+                         after_s: float = 30 * 60) -> float:
+    """#702/#706 (2026-10-26): this Mac's code-sync episodes stuck for 30+ min. Counts its own "sync has been failing"
+    alerts in sync-log.md over the window (the log syncs between Macs, so only this Mac's header counts, and summing
+    across Macs never double-counts), plus an episode still open past `after_s` in code-sync-stuck.json that hasn't
+    alerted yet. Before the fix the MacBook was stuck for 4 days. O(log size)."""
+    import code_sync
+    from machine_profile import machine_label
+    log = log or code_sync.LOG_PATH
+    state = state or code_sync.LOG_PATH.parent / "logs" / "code-sync-stuck.json"
+    label = label or machine_label()
+    now = now or datetime.now(timezone.utc)
+    cut = _cut(now, days)
+    count = 0
+    try:
+        text = log.read_text(errors="replace")
+    except OSError:
+        text = ""
+    for m in _SYNC_HEADER.finditer(text):
+        when = _when(m.group(1))
+        body = text[m.end():m.end() + 300]
+        if m.group(2) == label and when and when >= cut and "sync has been failing" in body.split("\n## ")[0]:
+            count += 1
+    try:
+        st = json.loads(state.read_text())
+    except (OSError, ValueError):
+        st = {}
+    for ep in (st.values() if isinstance(st, dict) else []):
+        if isinstance(ep, dict) and not ep.get("alerted"):
+            try:
+                since = float(ep.get("since"))
+            except (TypeError, ValueError):
+                continue
+            if now.timestamp() - since >= after_s:
+                count += 1
+    return float(count)
+
+
 # name -> (symptom counter, the most it may read while the fix holds, what it counts). Summed across Macs like any
 # measure; the logs are per Mac (~/.claude/logs doesn't sync), so nothing is counted twice.
 PROBES: dict[str, tuple[Callable[[], float], float, str]] = {
@@ -175,6 +217,8 @@ PROBES: dict[str, tuple[Callable[[], float], float, str]] = {
                               "the busiest hour's gh-watch 'change detected' lines over 7 days, all Macs (#604)"),
     "ticket-planned-3x-in-24h": (lambda: _replanned_tickets(), 0.0,
                                  "tickets planned 3+ times inside 24 h over 7 days, all Macs (#606)"),
+    "code-sync-stuck": (lambda: _sync_stuck_episodes(), 0.0,
+                        "code-sync episodes stuck 30+ min over 7 days, per Mac, summed (#702, #706)"),
 }
 MEASURES.update({name: fn for name, (fn, _limit, _what) in PROBES.items()})
 # Rates are computed from summed counts across Macs (refusals per 100 headless Bash calls), so more pipeline work
