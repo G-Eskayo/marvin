@@ -879,9 +879,19 @@ def _compute_code_layer(graph: dict, ownership_path: str) -> dict:
     }
 
 
+def load_enrichment() -> dict:
+    """Load enrichment.json, degrading gracefully to {} on missing/corrupt/wrong-shaped input.
+    Matches lib/instance.py:_config()'s robustness pattern."""
+    try:
+        data = json.loads(ENRICHMENT_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def main() -> None:
     manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-    enrichment = json.loads(ENRICHMENT_PATH.read_text(encoding="utf-8"))
+    enrichment = load_enrichment()
 
     tree = build_tree(manifest, enrichment)
     attach_layout(tree)

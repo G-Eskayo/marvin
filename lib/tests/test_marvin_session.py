@@ -64,13 +64,16 @@ def test_spawns_into_the_running_wezterm_and_falls_back_to_starting_it(tmp_path)
 
     def run(cmd, **kw):
         calls.append(cmd)
-        return subprocess.CompletedProcess(cmd, 1 if cmd[1:3] == ["cli", "spawn"] else 0, "", "no mux")
+        # cli list, cli spawn, etc. fail (mux not available)
+        return subprocess.CompletedProcess(cmd, 1 if cmd[1:3] in (["cli", "list"], ["cli", "spawn"]) else 0, "", "no mux")
 
     started = []
+    # With a valid GUI identity, we attempt spawn; when it fails, we fall back to wezterm start
     ms.open_in_wezterm(tmp_path, wezterm="/x/wezterm", run=run, start=lambda cmd: started.append(cmd),
-                       state_file=tmp_path / "window.json", identity=lambda run: None)
-    spawn = next(c for c in calls if c[1:3] == ["cli", "spawn"])
-    assert spawn[:4] == ["/x/wezterm", "cli", "spawn", "--new-window"]
+                       state_file=tmp_path / "window.json", identity=lambda run: "2279 x")
+    spawn_calls = [c for c in calls if len(c) > 2 and c[1:3] == ["cli", "spawn"]]
+    assert len(spawn_calls) > 0, "Should attempt spawn when gui_identity is present"
+    assert spawn_calls[0][:4] == ["/x/wezterm", "cli", "spawn", "--new-window"]
     assert started and started[0][:2] == ["/x/wezterm", "start"]
 
 

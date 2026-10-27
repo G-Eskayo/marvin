@@ -163,9 +163,19 @@ def open_in_wezterm(directory: Path, wezterm: str | None = None, run: Callable =
     wezterm = wezterm or find_wezterm()
     program = ["/bin/zsh", "-c", shell_script(directory, prompt_file)]
     state_file.parent.mkdir(parents=True, exist_ok=True)
+
+    # If WezTerm GUI is not running (identity is None), skip spawn attempts entirely
+    gui = identity(run)
+    if gui is None:
+        state_file.unlink(missing_ok=True)
+        try:
+            start([wezterm, "start", "--cwd", str(directory), "--", *program])
+        except OSError as exc:
+            raise SessionError(f"WezTerm isn't running and couldn't be started: {exc}") from exc
+        return
+
     with open(state_file.with_suffix(".lock"), "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)  # two quick presses must not both decide "no window yet"
-        gui = identity(run)
         window = _saved_window(state_file, gui, set(_windows(wezterm, run).values()))
         spawned = _spawn(wezterm, ["--window-id", str(window)], directory, program, run) if window is not None \
             else None

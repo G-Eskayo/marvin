@@ -67,15 +67,44 @@ def _claude_install_method(claude_path: str) -> str:
     return "unknown"
 
 
-def _mobility_class(hw_model: str) -> str:
-    # Apple's model-identifier scheme doesn't reliably distinguish desktop
-    # families by number (Mac16,x spans mini/Studio/iMac), but every mobile
-    # Mac has always been named MacBook* — that substring is the stable signal.
-    return "mobile" if "MacBook" in hw_model else "stationary"
+def _has_battery() -> bool:
+    """Detect if this Mac has an internal battery. Reliable signal for mobility class."""
+    out = _run(["pmset", "-g", "batt"])
+    # Battery output contains "InternalBattery" or similar for mobile Macs
+    return "Battery" in out or "battery" in out
+
+
+def _mobility_class(hw_model: str = "") -> str:
+    # Use battery presence as the reliable signal: mobile Macs have batteries,
+    # stationary ones don't (desktops, studios, etc.). Model name is secondary only.
+    return "mobile" if _has_battery() else "stationary"
 
 
 def _label(hw_model: str) -> str:
-    return "macbook-pro" if "MacBook" in hw_model else "mac-mini"
+    # Detect device type from hardware model name
+    if not hw_model:
+        return "unknown-mac"
+
+    # Check for MacBook variants (always mobile)
+    if "MacBook" in hw_model:
+        if "Pro" in hw_model:
+            return "macbook-pro"
+        elif "Air" in hw_model:
+            return "macbook-air"
+        else:
+            return "macbook"
+
+    # Desktop/stationary models
+    if "Mac13" in hw_model or "Mac14" in hw_model or "Mac15" in hw_model:
+        return "mac-studio"
+    if "Macmini" in hw_model or "Mac6" in hw_model or "Mac9" in hw_model:
+        return "mac-mini"
+    if "iMac" in hw_model or "Mac16" in hw_model or "Mac17" in hw_model:
+        return "imac"
+    if "MacPro" in hw_model or "Mac7" in hw_model:
+        return "mac-pro"
+
+    return "unknown-mac"
 
 
 def build_profile() -> dict:

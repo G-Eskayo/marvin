@@ -1493,10 +1493,11 @@ MARVIN-as-OS north star).
   (4) **security tool results** (scan findings). Speed numbers for model calls are not in scope here: models run
   elsewhere, so this box measures quality, not model speed.
 - **Disposable VM** (decided 2026-10-16): how test runs are kept apart. Each (b1) or (b2) run gets a throwaway copy
-  of a frozen **golden image**, runs, records its results, and is deleted. Two golden images: **marvin-test** (clean
-  MARVIN, never touches untrusted code) and **quarantine** (bare Debian for untrusted code: no MARVIN, no sudo, its own
-  SSH key, never handed a secret). The host OS itself is the
-  trusted control layer, and untrusted code never runs on it directly. Roughly 2 test VMs at once with Whonix up.
+  of a frozen **golden image**, runs, records its results, and is deleted. Two golden images on the x86 libvirt systems:
+  **marvin-test** (clean MARVIN, never touches untrusted code) and **quarantine** (bare Debian for untrusted code: no
+  MARVIN, no sudo, its own SSH key, never handed a secret). The M4 Mini uses **tart** instead of libvirt, with corresponding
+  golden images (**macOS-13-golden** for setup.sh clean-install tests). The host OS itself is the trusted control layer,
+  and untrusted code never runs on it directly. Roughly 2 test VMs at once with Whonix up (or 1 tart VM on the M4 Mini).
   The quarantine VM's network is decided later. Until then it is **isolated**: no route out, and the only thing it can
   reach on the box is DHCP/DNS.
 - **Work tags** (decided 2026-10-16): how dispatch knows which work a device may take. Each registry entry lists
