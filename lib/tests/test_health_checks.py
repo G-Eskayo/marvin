@@ -1305,6 +1305,18 @@ def test_the_machine_script_reads_a_real_process_uptime_with_this_machines_ps():
         child.kill()
 
 
+def test_graphify_freshness_is_a_registered_health_check():
+    # marvin#691: the code graph's staleness shows on the Health tab, next to the catalog check
+    ids = [spec[0] for spec in hc.default_checks()]
+    assert "graphify:fresh" in ids
+    assert ids.index("graphify:fresh") == ids.index("catalog:fresh") + 1
+
+
+def test_graphify_check_reports_nothing_on_a_machine_without_the_graph(tmp_path, monkeypatch):
+    monkeypatch.setattr(hc, "GRAPHIFY_REPO", tmp_path / "no-repo")
+    assert hc.check_graphify_fresh() is None
+
+
 # ── stale pipeline code shows on the breaker card (marvin#458) ─────────────────
 
 STALE = {"state": "stale", "detail": "3 behind", "behind": 3, "oldest_hours": 72.4}

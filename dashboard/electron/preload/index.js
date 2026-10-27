@@ -117,6 +117,7 @@ contextBridge.exposeInMainWorld('api', {
     agents: () => ipcRenderer.invoke('health:agents'),
     ticketAgents: () => ipcRenderer.invoke('health:ticketAgents'),
     refresh: () => ipcRenderer.invoke('health:refresh'),
+    rebuildGraph: () => ipcRenderer.invoke('health:rebuildGraph'),
     readiness: () => ipcRenderer.invoke('health:readiness'),
     setMergeFromDashboard: (repo, value) => ipcRenderer.invoke('health:setMergeFromDashboard', repo, value),
     setDispatch: (repo, value) => ipcRenderer.invoke('health:setDispatch', repo, value)

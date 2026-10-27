@@ -495,6 +495,30 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   ticket retry storm's comment-velocity spike would be caught without a "storm detector" ever
   having been written.
 
+## Code graph freshness (built 2026-10-26, marvin#691)
+
+- **Code graph**: graphify's `graphify-out/graph.json`, the graph CLAUDE.md tells agents to query first. It's built by AST
+  parsing only (no LLM), so it is only as good as it is current.
+- **Graph refresh**: `lib/graphify_freshness.py refresh`, the one writer.
+  - It runs `graphify update`, records the result in `graphify-out/.marvin_freshness.json`, and prunes the dated
+    backup snapshots to the newest 7.
+  - It runs from the post-commit, post-merge and post-rewrite hooks, and from the Health drill-down's "Rebuild graph
+    now" button.
+  - Its hook block replaces graphify's own post-commit rebuild, so only one process writes the graph.
+  - Install it with `graphify_freshness.py install-hooks ~/.agents` (setup.sh does this).
+  - Re-running `graphify hook install` puts graphify's own block back, which brings back two writers.
+- **Why a stamp and not `built_at_commit`**: when graphify finds no topology change, it leaves graph.json untouched,
+  so `built_at_commit` lags a graph that is in fact current. The stamp's `last_ok_head` is the truth.
+- **Health check `graphify:fresh`**:
+  - **green:** no graph-tracked file changed since the last good refresh.
+  - **yellow:** behind, under 24 h.
+  - **red:** behind for more than 24 h, the last refresh failed, the hooks are missing, or the build commit isn't in
+    the repo.
+  - It reads only the tail of graph.json plus one `git diff --name-only` (trees, not history, so a build commit off
+    to the side of HEAD still works). Cost is O(changed files).
+- Background: `docs/research/knowledge-graphs-2026-10-26.md`. The graph was 84 commits stale because code_sync lands
+  commits with `git merge`, which never fired graphify's post-commit hook.
+
 ## Dashboard app — Docs tab (built 2026-10-01)
 
 - **Docs tab**: a read-only, cross-project viewer onto `CONTEXT.md` + `docs/adr/*.md` + `README.md`,
