@@ -127,7 +127,6 @@ def quarantine(artifact_text: str, score: float, loop_name: str, tau: float,
               f"already queued for '{loop_name}'", file=sys.stderr)
         return
 
-    QUARANTINE_FILE.parent.mkdir(parents=True, exist_ok=True)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     quoted = "\n".join(f"> {line}" for line in full_text.splitlines())
 
@@ -139,6 +138,14 @@ def quarantine(artifact_text: str, score: float, loop_name: str, tau: float,
         block += f"Flagged reason: {reason}\n\n"
     block += "- [ ] approve (ships as-is)\n- [ ] modify: ____________\n- [ ] deny\n"
 
+    # The same lock and atomic replace as the dashboard's review answers (process_quarantine_reviews.py): an append
+    # racing an answer must not drop either one.
+    from process_quarantine_reviews import locked
+    with locked(QUARANTINE_FILE):
+        _append_locked(block)
+
+
+def _append_locked(block: str) -> None:
     if QUARANTINE_FILE.exists():
         existing = QUARANTINE_FILE.read_text()
     else:
@@ -149,7 +156,8 @@ def quarantine(artifact_text: str, score: float, loop_name: str, tau: float,
             "correction), or deny (discarded, and — if the review workflow "
             "is wired up — recorded as a label for calibration).\n"
         )
-    QUARANTINE_FILE.write_text(existing + block)
+    from process_quarantine_reviews import atomic_write
+    atomic_write(QUARANTINE_FILE, existing + block)
 
 
 def pass_or_quarantine(artifact_text: str, loop_name: str, source_context: str = "") -> bool:

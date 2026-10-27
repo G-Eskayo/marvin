@@ -1,3 +1,5 @@
+import { useState } from 'react'
+
 const SEVERITY_LABEL = {
   red: 'Broken',
   yellow: 'Degraded',
@@ -15,7 +17,37 @@ function formatTimestamp(iso) {
   }
 }
 
-export default function HealthDrilldown({ check, onBack }) {
+// marvin#691: the one check you can act on from here. The rebuild runs the same refresh the git hooks run.
+function RebuildGraphButton({ onRebuildGraph }) {
+  const [busy, setBusy] = useState(false)
+  const [failure, setFailure] = useState(null)
+  async function run() {
+    setBusy(true)
+    setFailure(null)
+    try {
+      const r = await onRebuildGraph()
+      if (r && r.ok === false) setFailure(r.output || 'rebuild failed')
+    } catch (err) {
+      setFailure(String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="mt-4">
+      <button
+        onClick={run}
+        disabled={busy}
+        className="rounded-md border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-700 disabled:opacity-50"
+      >
+        {busy ? 'Rebuilding…' : 'Rebuild graph now'}
+      </button>
+      {failure && <p className="mt-2 whitespace-pre-wrap font-mono text-xs text-red-400">{failure}</p>}
+    </div>
+  )
+}
+
+export default function HealthDrilldown({ check, onBack, onRebuildGraph }) {
   return (
     <div className="p-6">
       <button onClick={onBack} className="mb-4 text-sm text-neutral-400 hover:text-neutral-200">
@@ -43,6 +75,8 @@ export default function HealthDrilldown({ check, onBack }) {
         <h3 className="mb-2 text-xs uppercase tracking-wide text-neutral-500">Detail</h3>
         <p className="whitespace-pre-wrap font-mono text-sm text-neutral-200">{check.detail}</p>
       </div>
+
+      {check.id === 'graphify:fresh' && onRebuildGraph && <RebuildGraphButton onRebuildGraph={onRebuildGraph} />}
     </div>
   )
 }

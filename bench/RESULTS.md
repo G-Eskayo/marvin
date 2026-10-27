@@ -1169,3 +1169,45 @@ valid for future diagnosis rounds.
 (`recall`↔`coding` confusion). Requested explicitly in a later session the same day, after the
 session-persistence verify check surfaced it as a live, reproducible example rather than a fixture
 statistic.
+
+## Retrieval eval — 2026-10-26 (marvin#705): does `graphify query` beat `rg` for MARVIN questions?
+
+30 real questions with known answers: 12 code location, 8 decisions (ADRs), 6 memory, and 4 multi-hop (two-file
+answers). The question set is private (`instance/bench/retrieval-questions.json`) because it names memory notes. It
+was scored against the known answers only, with no LLM judge (`bench/retrieval_eval.py`). The code graph was rebuilt
+to HEAD first. One run; every retriever is deterministic.
+
+| Retriever | Questions | hit@1 | hit@5 | recall@5 | MRR | Mean tokens |
+|---|---|---|---|---|---|---|
+| rg (keyword, ranked by distinct-keyword matches) | 30 | 0.10 | **0.67** | **0.62** | 0.29 | 14,729 |
+| graphify query | 24 | 0.12 | 0.38 | 0.35 | 0.20 | **1,648** |
+| hybrid (RRF of rg + graphify) | 24 | **0.25** | 0.46 | 0.44 | **0.35** | 18,412 |
+| memory_graph related (memory only) | 6 | **0.67** | **0.83** | **0.83** | **0.75** | 544 |
+
+hit@5 by question kind:
+
+| Kind | rg | graphify | hybrid | memory_graph |
+|---|---|---|---|---|
+| code (12) | 0.67 | 0.42 | 0.58 | – |
+| decision (8) | 0.62 | 0.50 | 0.50 | – |
+| memory (6) | 0.67 | – | – | 0.83 |
+| multi-hop (4) | **0.75** | **0.00** | 0.00 | – |
+
+### Findings
+1. **Graphify-first is not supported for this repo.** Plain keyword `rg` found the answer in the top 5 for 67% of
+   questions, against 38% for `graphify query`. On multi-hop questions, the case a graph is meant to win, graphify
+   found **none** and rg found 3 of 4. This matches the practitioner test in the research (graphify precision about
+   5%) and the literature's single-hop result.
+2. **Graphify is cheap, and that's its one advantage.** Its output is capped at about 2k tokens. rg's token figure is
+   high because CONTEXT.md matches nearly every keyword, ranks first, and is very long. A smarter rg ranking, for
+   example down-weighting files that match everything, is the obvious next improvement.
+3. **Fusion helps the ranking.** Hybrid doubled hit@1 (0.25 against 0.10 and 0.12) and had the best MRR. It also
+   lowered hit@5 against rg alone, because graphify's misses push rg's hits down.
+4. **memory_graph is the best memory retriever measured.** It found the answer in the top 5 for 5 of 6 questions,
+   at about 1/12 of rg's tokens.
+
+### Caveats
+- n = 30, written by one person who knew the answers. The questions avoid exact identifiers, but this is a small
+  sample.
+- rg here is a single pass. A real agent greps iteratively, so this understates rg.
+- graphify was called with its defaults (BFS depth 2, about 2k token budget). Larger budgets weren't tried.

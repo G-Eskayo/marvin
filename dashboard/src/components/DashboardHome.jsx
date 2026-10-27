@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { cleanIpcError } from '../lib/ipcError.js'
+import NeedsYouList from './NeedsYouList.jsx'
 
 // Format ISO timestamp relative to now: "just now", "5m ago", "2h ago", "3d ago", "2w ago", or short date
 export function formatRelativeTime(iso, now = Date.now()) {
@@ -93,7 +94,7 @@ function ProjectCard({ card, onOpen }) {
   )
 }
 
-export default function DashboardHome({ onOpenProject }) {
+export default function DashboardHome({ onOpenProject, onOpenTicket }) {
   // Every hook before any early return: a hook after the "no boards yet" return ran only once boards loaded, and
   // React blanked the Activity tab (error #310, 2026-10-09).
   const [showArchived, setShowArchived] = useState(false)
@@ -139,62 +140,60 @@ export default function DashboardHome({ onOpenProject }) {
     load()
   }, [])
 
-  if (loading) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <p className="text-neutral-500">Loading projects…</p>
-      </div>
-    )
-  }
-
-  if (error) {
-    return (
-      <div className="p-6">
-        <p className="text-red-400">Failed to load projects: {error}</p>
-      </div>
-    )
-  }
-
-  if (!boards || boards.length === 0) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <p className="text-neutral-500">No project boards yet</p>
-      </div>
-    )
-  }
-
-  const cards = buildProjectCards(boards, overview, summaries)
-  const active = cards.filter((c) => !c.isArchived)
-  const archived = cards.filter((c) => c.isArchived)
-
   return (
-    <div className="max-w-6xl space-y-6 p-6">
-      <div>
-        <h1 className="mb-4 text-2xl font-semibold text-white">Project Boards</h1>
-        <div className="grid auto-fit gap-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))' }}>
-          {active.map((card) => (
-            <ProjectCard key={card.repo} card={card} onOpen={onOpenProject} />
-          ))}
-        </div>
-      </div>
+    <div className="space-y-6">
+      <NeedsYouList boards={boards || []} onOpenTicket={onOpenTicket} />
 
-      {archived.length > 0 && (
-        <div>
-          <button
-            onClick={() => setShowArchived(!showArchived)}
-            className="mb-3 flex items-center gap-2 text-sm text-neutral-500 hover:text-neutral-300"
-          >
-            <span>{showArchived ? '▾' : '▸'}</span>
-            <span>Archived ({archived.length})</span>
-          </button>
-          {showArchived && (
-            // The same card as an active project, dimmed: one look for every board (Gil, 2026-10-09).
-            <div className="grid auto-fit gap-4 opacity-60" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))' }}>
-              {archived.map((card) => (
-                <ProjectCard key={card.repo} card={card} onOpen={onOpenProject} />
-              ))}
-            </div>
-          )}
+      {loading ? (
+        <div className="flex h-96 items-center justify-center">
+          <p className="text-neutral-500">Loading projects…</p>
+        </div>
+      ) : error ? (
+        <div className="max-w-6xl p-6">
+          <p className="text-red-400">Failed to load projects: {error}</p>
+        </div>
+      ) : !boards || boards.length === 0 ? (
+        <div className="flex h-96 items-center justify-center">
+          <p className="text-neutral-500">No project boards yet</p>
+        </div>
+      ) : (
+        <div className="max-w-6xl space-y-6 p-6">
+          {(() => {
+            const cards = buildProjectCards(boards, overview, summaries)
+            const active = cards.filter((c) => !c.isArchived)
+            const archived = cards.filter((c) => c.isArchived)
+            return (
+              <>
+                <div>
+                  <h1 className="mb-4 text-2xl font-semibold text-white">Project Boards</h1>
+                  <div className="grid auto-fit gap-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))' }}>
+                    {active.map((card) => (
+                      <ProjectCard key={card.repo} card={card} onOpen={onOpenProject} />
+                    ))}
+                  </div>
+                </div>
+
+                {archived.length > 0 && (
+                  <div>
+                    <button
+                      onClick={() => setShowArchived(!showArchived)}
+                      className="mb-3 flex items-center gap-2 text-sm text-neutral-500 hover:text-neutral-300"
+                    >
+                      <span>{showArchived ? '▾' : '▸'}</span>
+                      <span>Archived ({archived.length})</span>
+                    </button>
+                    {showArchived && (
+                      <div className="grid auto-fit gap-4 opacity-60" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))' }}>
+                        {archived.map((card) => (
+                          <ProjectCard key={card.repo} card={card} onOpen={onOpenProject} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            )
+          })()}
         </div>
       )}
     </div>

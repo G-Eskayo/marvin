@@ -14,6 +14,9 @@ stores it on the Mac under ~/Library/Messages/Attachments/<xx>/<yy>/<UUID>/. Thi
 Reading ~/Library/Messages needs Full Disk Access for the interpreter launchd runs. A Homebrew Python upgrade resets
 that grant, so a denied read is a loud failure (exit 2, status `ok: false`), never "0 reports".
 
+Feature gate (marvin#647): the ingest() function checks feature_enabled("seal_ingest") before accessing the filesystem.
+If disabled, returns cleanly with {"ok": True, "skipped": "feature_off", ...} and does no work.
+
     ~/.agents/venv/bin/python seal_beta_ingest.py run        # ingest (what launchd runs)
     ~/.agents/venv/bin/python seal_beta_ingest.py summary    # print the per-device table
 """
@@ -28,6 +31,8 @@ import statistics
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+import instance as inst
 
 ATTACHMENTS_DIR = Path.home() / "Library" / "Messages" / "Attachments"
 STORE_DIR = Path.home() / ".claude" / "seal-beta"
@@ -321,10 +326,23 @@ def _latest(stamps: list[str]) -> str | None:
 
 # ── the run ─────────────────────────────────────────────────────────────────
 
-def ingest(attachments_dir: Path | None = None, store_dir: Path | None = None, now: datetime | None = None) -> dict:
+def ingest(attachments_dir: Path | None = None, store_dir: Path | None = None, now: datetime | None = None,
+           feature_enabled=None) -> dict:
+    # Gate: if feature_enabled not provided, default to enabled (backward compatibility with existing tests).
+    # Production code should pass inst.feature_enabled to honor the real feature gate.
+    if feature_enabled is None:
+        feature_enabled = lambda name: True
+
+    now = now or datetime.now(timezone.utc)
+
+    # Gate: feature off, skip all work
+    if not feature_enabled("seal_ingest"):
+        return {"generated_at": now.isoformat(), "ok": True, "skipped": "feature_off", "error": None,
+                "files_found": 0, "new_conversations": 0, "total_conversations": 0, "invalid": [],
+                "last_report_at": None, "store_bad_lines": 0}
+
     att = Path(attachments_dir or ATTACHMENTS_DIR)
     store = Path(store_dir or STORE_DIR)
-    now = now or datetime.now(timezone.utc)
     _private_dir(store)
     with os.fdopen(os.open(store / ".lock", os.O_WRONLY | os.O_CREAT, 0o600), "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)  # one run at a time: read-dedupe-append must not interleave
@@ -428,7 +446,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.cmd == "summary":
         print_summary(Path(a.store or STORE_DIR))
         return 0
-    st = ingest(attachments_dir=a.attachments, store_dir=a.store)
+    st = ingest(attachments_dir=a.attachments, store_dir=a.store, feature_enabled=inst.feature_enabled)
     if not st["ok"]:
         print(f"seal-beta-ingest: {st['error']['kind']}: {st['error']['detail']}", file=sys.stderr)
         return 2 if st["error"]["kind"] == "permission" else 1

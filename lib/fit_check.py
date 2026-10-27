@@ -54,6 +54,21 @@ def outcome_check(body: str | None, title: str = "", labels: list[str] | None = 
     return _check("Outcome check", True, f"{spec['measure']} on {spec['check_on'][:10]}")
 
 
+def incident_record_check(body: str | None, labels: list[str] | None = None) -> dict | None:
+    """Solved stays solved (lib/incident_ladder.py): a `bug` ticket with a Recurrence check should also carry
+    '## Watch' (re-measured daily after its check date, with the `watch` label) and '## First aid' (registered steps
+    MARVIN tries before reopening it). A suggestion, never a block. None when it doesn't apply."""
+    import purpose_metrics as pm
+    if pm.BUG_LABEL not in [l for l in (labels or []) if isinstance(l, str)] or pm._section(body, "Recurrence check") is None:
+        return None
+    text = body or ""
+    missing = [h for h in ("Watch", "First aid") if not re.search(rf"^##\s*{h}\s*$", text, re.I | re.M)]
+    if not missing:
+        return _check("Incident record", True, "Watch and First aid sections present")
+    return _check("Incident record", False, "a fix with a Recurrence check but no " + " or ".join(f"'## {h}'" for h in missing)
+                  + ": add them so a regression is watched daily and first aid runs before it's reopened (a suggestion)")
+
+
 def is_test(path: str) -> bool:
     name = Path(path).name
     return bool(re.search(r"(^|/)(tests?|Tests)/", path) or name.startswith("test_")
@@ -153,6 +168,8 @@ def report(ticket_ref: str, worktree: Path, body: str | None, base: str = "origi
     facts = diff_facts(worktree, base)
     fit = fit_section(body)
     checks = run_checks(facts, fit, ticket_cost(ticket_ref), outcome_check(body, title, labels))
+    if (incident := incident_record_check(body, labels)) is not None:
+        checks.insert(1 if checks and checks[0]["name"] == "Outcome check" else 0, incident)
     return render(checks, judge_if_flagged(checks, fit, facts, judge=judge))
 
 

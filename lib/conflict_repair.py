@@ -120,10 +120,14 @@ def default_tests(repo: str, cwd: str, changed: list[str]) -> tuple[bool, str]:
                 return False, p.stdout[-1500:]
             if any(f.startswith("dashboard/") for f in changed):
                 dash = Path(cwd) / "dashboard"
-                for cmd in (["npm", "install", "--no-audit", "--no-fund"], ["npx", "vitest", "run"]):
-                    p = subprocess.run(cmd, cwd=dash, capture_output=True, text=True, timeout=TEST_TIMEOUT_S)
-                    if p.returncode != 0:
-                        return False, (p.stdout + p.stderr)[-1500:]
+                import node_modules_seed  # #687: seeded from the cache, so the install writes almost nothing
+                p = node_modules_seed.npm_install(dash, ["npm", "install", "--no-audit", "--no-fund"],
+                                                  capture_output=True, text=True, timeout=TEST_TIMEOUT_S)
+                if p.returncode != 0:
+                    return False, (p.stdout + p.stderr)[-1500:]
+                p = subprocess.run(["npx", "vitest", "run"], cwd=dash, capture_output=True, text=True, timeout=TEST_TIMEOUT_S)
+                if p.returncode != 0:
+                    return False, (p.stdout + p.stderr)[-1500:]
             return True, ""
         p = subprocess.run([VENV_PYTHON, str(HOME / ".agents" / "lib" / "project_profile.py"), "verify", repo, cwd],
                            capture_output=True, text=True, timeout=TEST_TIMEOUT_S)

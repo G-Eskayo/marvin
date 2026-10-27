@@ -7,8 +7,8 @@ tool, see issue #26).
 
 v1 scope (2026-08-31): hand-picked seed papers only, examining citers found
 via the citation-graph edges already present in paper-knowledge. For each seed,
-pulls its citers (edge_type=="citation", parent_doi==seed) and classifies the
-continuity relationship between each seed-citer pair.
+pulls every paper linked to it in either direction (a citer is later, a reference
+is earlier) and classifies the continuity relationship of each pair.
 
 Model choice (unvalidated on real abstracts, noted in docstring): qwen2.5:14b
 for judgment, same caliber as logic_auditor's classification task.
@@ -56,7 +56,7 @@ def extract_core_claim(title: str, abstract: str, chat_fn=None) -> str:
     return response.strip().strip('"')
 
 
-CONTINUITY_PROMPT = """Below are two academic papers' core claims. The first (EARLIER) is the seed paper. The second (LATER) cites the first. Classify the continuity relationship:
+CONTINUITY_PROMPT = """Below are two academic papers' core claims. The first (EARLIER) is the earlier paper. The second (LATER) cites it. Classify the continuity relationship:
 
 - CONSISTENT: The later paper builds on or extends the earlier claim. It engages with the earlier work's core assertion, even if critical of it.
 - GAP: The later paper claims to build on the earlier work (via citation) but doesn't actually engage with its core claim. The papers address different questions or use different premises.
@@ -97,17 +97,25 @@ def _parse_continuity_result(response: str) -> dict[str, str]:
     return result
 
 
+# How each stored edge orients a continuity pair (marvin#699). paper_graph stores a non-seed paper with the edge that
+# found it: "citation" = it cites its parent (it is the later work); "reference" = its parent cites it (it is earlier).
+_DIRECTION = {"citation": "cited_by", "reference": "cites"}
+
+
 def find_citation_pairs(collection, seed_slugs: list[str]) -> list[dict]:
-    """For each seed, find all papers that cite it (edge_type=='citation',
-    parent_doi==seed). Returns list of {seed_doi, citer_doi} pairs."""
+    """Every (earlier, later) pair between a seed and a paper linked to it, in both directions. A seed that Semantic
+    Scholar doesn't index only ever gets reference edges (paper_graph can't find who cites it), so a citers-only filter
+    found nothing for the one real run (2026-07-13). Returns {seed_doi, other_doi, direction, earlier_doi, later_doi}."""
     data = collection.get(include=["metadatas"])
     pairs = []
 
     for doi, meta in zip(data["ids"], data["metadatas"]):
         parent = meta.get("parent_doi")
-        edge_type = meta.get("edge_type")
-        if parent in seed_slugs and edge_type == "citation":
-            pairs.append({"seed_doi": parent, "citer_doi": doi})
+        direction = _DIRECTION.get(meta.get("edge_type"))
+        if parent in seed_slugs and direction:
+            earlier, later = (parent, doi) if direction == "cited_by" else (doi, parent)
+            pairs.append({"seed_doi": parent, "other_doi": doi, "direction": direction,
+                          "earlier_doi": earlier, "later_doi": later})
 
     return pairs
 
@@ -117,46 +125,40 @@ def build_continuity_report(
     seed_slugs: list[str],
     chat_fn=None,
 ) -> list[dict]:
-    """For each seed and its citers, extracts claims and classifies continuity.
-    Returns list of {seed_doi, citer_doi, seed_claim, citer_claim, verdict, rationale}."""
+    """For each seed and each paper linked to it, extracts both claims and classifies continuity, always earlier claim
+    first. Returns list of {seed_*, other_*, direction, earlier_doi, later_doi, verdict, rationale}."""
     data = collection.get(include=["documents", "metadatas"])
     by_id = {i: (doc, meta) for i, doc, meta in zip(data["ids"], data["documents"], data["metadatas"])}
 
-    pairs = find_citation_pairs(collection, seed_slugs)
+    claims: dict[str, str] = {}
+
+    def claim(doi: str) -> tuple[str, str]:
+        doc, meta = by_id[doi]
+        title = meta.get("title") or doi
+        if doi not in claims:
+            claims[doi] = extract_core_claim(title, doc, chat_fn=chat_fn)
+        return title, claims[doi]
+
     result = []
-
-    # Cache seed claims to avoid re-extracting
-    seed_claims = {}
-
-    for pair in pairs:
-        seed_id = pair["seed_doi"]
-        citer_id = pair["citer_doi"]
-
-        if seed_id not in by_id or citer_id not in by_id:
+    for pair in find_citation_pairs(collection, seed_slugs):
+        seed_id, other_id = pair["seed_doi"], pair["other_doi"]
+        if seed_id not in by_id or other_id not in by_id:
             continue
-
-        seed_doc, seed_meta = by_id[seed_id]
-        citer_doc, citer_meta = by_id[citer_id]
-
-        seed_title = seed_meta.get("title") or seed_id
-        citer_title = citer_meta.get("title") or citer_id
-
-        # Extract seed claim once and cache
-        if seed_id not in seed_claims:
-            seed_claims[seed_id] = extract_core_claim(seed_title, seed_doc, chat_fn=chat_fn)
-        seed_claim = seed_claims[seed_id]
-
-        citer_claim = extract_core_claim(citer_title, citer_doc, chat_fn=chat_fn)
-
-        continuity = classify_continuity(seed_claim, citer_claim, chat_fn=chat_fn)
-
+        seed_title, seed_claim = claim(seed_id)
+        other_title, other_claim = claim(other_id)
+        earlier_claim, later_claim = ((seed_claim, other_claim) if pair["direction"] == "cited_by"
+                                      else (other_claim, seed_claim))
+        continuity = classify_continuity(earlier_claim, later_claim, chat_fn=chat_fn)
         result.append({
             "seed_doi": seed_id,
             "seed_title": seed_title,
             "seed_claim": seed_claim,
-            "citer_doi": citer_id,
-            "citer_title": citer_title,
-            "citer_claim": citer_claim,
+            "other_doi": other_id,
+            "other_title": other_title,
+            "other_claim": other_claim,
+            "direction": pair["direction"],
+            "earlier_doi": pair["earlier_doi"],
+            "later_doi": pair["later_doi"],
             "verdict": continuity.get("verdict", "unknown"),
             "rationale": continuity.get("rationale", ""),
         })
@@ -191,10 +193,11 @@ def render_markdown(report: list[dict]) -> str:
         for entry in entries:
             verdict = entry["verdict"]
             flag = "⚠️ " if verdict in ["CONTRADICTS", "GAP"] else ""
-            lines.append(f"### {flag}{entry['citer_title']}")
+            how = "cites this seed" if entry["direction"] == "cited_by" else "is cited by this seed"
+            lines.append(f"### {flag}{entry['other_title']} ({how})")
             lines.append(f"**Verdict**: {verdict}")
             lines.append(f"**Rationale**: {entry['rationale']}")
-            lines.append(f"**Later Claim**: {entry['citer_claim']}")
+            lines.append(f"**Its Claim**: {entry['other_claim']}")
             lines.append("")
 
         lines.append("---")
@@ -219,6 +222,11 @@ def main() -> None:
     collection = client.get_or_create_collection(COLLECTION_NAME)
 
     report = build_continuity_report(collection, seed_slugs=list(seed_titles.keys()))
+    if not report:
+        # An empty report used to exit 0 and look like a clean result (marvin#699)
+        print(f"[continuity-checker] no citation or reference edges found for {len(seed_titles)} seed(s) in "
+              f"{COLLECTION_NAME}; nothing was checked. Run paper_graph.py on these seeds first.", file=sys.stderr)
+        sys.exit(1)
 
     Path(args.out_json).write_text(json.dumps(report, indent=2))
     Path(args.out_markdown).write_text(render_markdown(report))

@@ -62,5 +62,26 @@
   "new_top_level_per_week": 3,
   "always_ask_authors": [
     "MARVIN-bot-gil"
-  ]
+  ],
+  "known_incident_regressions": {
+    "_readme": "ADR 0064 amendment (2026-10-26): a rung-3 fix for a regression of a watched incident (lib/auto_merge_regression.py) may merge itself even in core areas, except the paths in still_core (the merge gate and auto-merge itself, so a fix can never loosen the rules that let it merge). It also needs a failing-first regression test, the mutation check, a green main and passing checks, and is re-measured after merge (reverted if the probe still trips). Shadow mode until the owner switches auto-merge on.",
+    "core_ok": true,
+    "still_core": [
+      "config/auto_merge.json",
+      "lib/auto_merge_policy.py",
+      "lib/trust_ramp.py",
+      "lib/auto_merge*.py",
+      "dashboard/webhook-server/merge.js",
+      "dashboard/webhook-server/post_merge_rebase.js",
+      "dashboard/webhook-server/merge_queue*.js",
+      "dashboard/webhook-server/auto_merge*.js",
+      "lib/gh_merge_guard.py",
+      "lib/mutation_check.py",
+      "lib/main_health.py",
+      "**/*secret*",
+      "**/*token*",
+      "**/*.pem",
+      "**/*.key"
+    ]
+  }
 }

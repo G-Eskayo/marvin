@@ -13,6 +13,23 @@ export async function runHealthCheckNow(execFileAsync) {
   await execFileAsync(VENV_PYTHON, [HEALTH_CHECKS_SCRIPT], { timeout: 60_000 })
 }
 
+// marvin#691: the Health drill-down's "Rebuild graph now" runs the same refresh the git hooks run (one writer), then
+// re-runs the checks so the card shows the result. A failure is returned, never swallowed: the card shows it too.
+const AGENTS_REPO = path.join(homedir(), '.agents')
+const GRAPHIFY_FRESHNESS_SCRIPT = path.join(AGENTS_REPO, 'lib', 'graphify_freshness.py')
+
+export async function rebuildCodeGraph(execFileAsync) {
+  let result
+  try {
+    const { stdout } = await execFileAsync(VENV_PYTHON, [GRAPHIFY_FRESHNESS_SCRIPT, 'refresh', AGENTS_REPO], { timeout: 900_000 })
+    result = { ok: true, output: String(stdout || '') }
+  } catch (err) {
+    result = { ok: false, output: String(err.stdout || err.stderr || err.message) }
+  }
+  await runHealthCheckNow(execFileAsync)
+  return result
+}
+
 // health_checks.py's own output file (ADR 0033) -- a scheduled launchd job
 // (com.marvin.health-check, every 15 minutes) writes this; the dashboard is
 // a read-only viewer onto it, same ownership split as metrics.js onto
