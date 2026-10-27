@@ -1,8 +1,8 @@
-# 0076 — Entity IDs are derived, never stored; aliases live in each project's repo
+# 0079 — Entity IDs are derived, never stored; aliases live in each project's repo
 
 ## Status
 
-Proposed (2026-10-26). Grill session with the owner on marvin#697; awaiting the owner's acceptance.
+Accepted (2026-10-27, by the owner on PR #704). Grilled with the owner on marvin#697. Numbered 0076 while in review; 0076 went to union merge first.
 
 ## Context
 
@@ -50,8 +50,8 @@ Rules:
 - **Unlocks:** links that cross systems. "Everything that references adr:marvin/0070" becomes one query across tickets,
   PRs, docs, memory and lessons. The memory graph (#696) and relations.js can merge into one picture.
 - **Cost:** one large change touching every system at once. That includes backfilling mentions on about 5,200 Chroma
-  entries (O(entries), one pass, local), and renumbering the duplicate marvin ADR 0074, with a redirect note in the
-  renamed file.
+  entries (O(entries), one pass, local), and renumbering the duplicate marvin ADR 0074 (done 2026-10-27: test-exactly-what-lands became 0078, with a note
+  in the renamed file).
 - **Risk:** a derivation bug is everywhere at once. The shared example file is the guard; every new reference shape
   found in the wild is added there first.
 - **Gaps left open:**

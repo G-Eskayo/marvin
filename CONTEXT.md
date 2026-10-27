@@ -495,7 +495,7 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   ticket retry storm's comment-velocity spike would be caught without a "storm detector" ever
   having been written.
 
-## Entity IDs (in design, 2026-10-26, marvin#697)
+## Entity IDs (ADR 0079, accepted 2026-10-27, marvin#697)
 
 - **Entity ID**: the one name every part of MARVIN uses for the same thing (an ADR, a ticket, a project, a memory note).
   It has the form `kind:key`, for example `adr:0070` or `ticket:G-Eskayo/marvin#691`. It is **derived** from what a
