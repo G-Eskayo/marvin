@@ -1,0 +1,9 @@
+1. Write the design doc at `~/.agents/instance/docs/plans/apple-release-maintainer-2026-10-27.md`, following the `project-playbooks-2026-10-22.md` shape (Why → North-star fit → mechanism → rollout slices → complexity → Decisions block above), covering: the verified Apple releases RSS feed as the trigger; the two-stage fetch (feed poll for new items → release-notes page fetch only on a new item, for the Speech/audio flag); generalization via `project_profile.all_profiles()` filtered to the `ios-app` playbook; the MacBook-targeted probe build via `task_dispatch.dispatch()`; ticket filing via the `to-issues` template + `board_registry.py ensure`; space/time cost.
+2. Get Gil's answers to the Decisions block (doc isn't actionable until answered, same as #613's precedent).
+3. File ticket slices on `G-Eskayo/marvin` (this is MARVIN infra, not clarity-captions code) via the `to-issues` template, in dependency order:
+   - [ ] Slice A — `fetch_apple_releases()` + seen-GUID dedupe state, wired into `run_colony.py`'s existing daily call.
+   - [ ] Slice B — release-notes page fetch + Speech/audio keyword flag on new items.
+   - [ ] Slice C — cross-profile probe runner: `all_profiles()` filtered to `ios-app` playbook + `xcode` requirement, `build_env()` override for the new Xcode, `have()` EnvMissing guard, dispatched to the MacBook.
+   - [ ] Slice D — ticket filing for real breaks and the flag surface (per the Decisions answers), with existing-open-ticket dedupe.
+   - [ ] Slice E — `known_traps` entry on `config/playbooks/ios-app.md`/`.json` for non-default beta-Xcode paths.
+4. Run `~/.agents/venv/bin/python ~/.agents/lib/board_registry.py ensure G-Eskayo/marvin` so the new slices show on the dashboard board.
