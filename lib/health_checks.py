@@ -538,6 +538,13 @@ def check_main_health(path: Path | None = None, now: datetime | None = None) -> 
     return _result(cid, label, "green", f"main @ {d.get('sha', '?')}: {d.get('summary', 'passing')}")
 
 
+def check_memory_lint() -> dict:
+    """Memory's [[links]], MEMORY.md index and frontmatter (marvin#695): red on git conflict markers, yellow on broken
+    links, index drift or bad frontmatter. Reports only; memory_lint never edits a note."""
+    import memory_lint
+    return memory_lint.check()
+
+
 SEAL_BETA_STATUS_PATH = Path.home() / ".claude" / "seal-beta" / "status.json"
 SEAL_BETA_PLIST = "com.marvin.seal-beta-ingest.plist"
 SEAL_BETA_STALE_MINUTES = 60      # the job runs every 10 minutes
@@ -1495,6 +1502,7 @@ def default_checks(reach: dict[str, str] | None = None, reach_results: list[dict
         ("github:budget", "GitHub request budget", check_github_budget, CHECK_BUDGET_S),
         ("github:gate", "GitHub calls go through the gate", check_gh_gate, CHECK_BUDGET_S),
         ("main:green", "The main branch passes its tests", check_main_health, CHECK_BUDGET_S),
+        ("memory:lint", "Memory links and index are sound", check_memory_lint, CHECK_BUDGET_S),
         ("seal:beta-ingest", "Seal Speak beta reports are picked up", check_seal_beta_ingest, CHECK_BUDGET_S),
         ("cron", "Cron job logs", _cron_job_logs, CHECK_BUDGET_S),
         ("machine", "Machine reachability", lambda: list(reach_results or []), CHECK_BUDGET_S),
