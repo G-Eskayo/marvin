@@ -634,6 +634,20 @@ describe('_defaultRunTests', () => {
     expect(installIndex).toBeGreaterThanOrEqual(0)
     expect(vitestIndex).toBeGreaterThan(installIndex)
   })
+
+  it('#687: seeds node_modules from the cache before npm install and stores the result after, in the dashboard dir', async () => {
+    const order = []
+    const exec = vi.fn(async (cmd, args) => { order.push(cmd === 'npm' ? 'install' : cmd); return { stdout: '', stderr: '' } })
+    const cache = { seed: vi.fn(async (d) => order.push(`seed ${d}`)), store: vi.fn(async (d) => order.push(`store ${d}`)) }
+    await _defaultRunTests('/repo', exec, undefined, async () => [], cache)
+    expect(order.slice(0, 3)).toEqual(['seed /repo/dashboard', 'install', 'store /repo/dashboard'])
+  })
+
+  it('#687: the default cache swallows a missing or broken seeder instead of throwing', async () => {
+    const { nodeModulesCache } = await import('../webhook-server/merge.js')
+    await expect(nodeModulesCache.seed('/no/such/dir/at/all')).resolves.toBeUndefined()
+    await expect(nodeModulesCache.store('/no/such/dir/at/all')).resolves.toBeUndefined()
+  })
 })
 
 describe('execWithGroupTimeout', () => {
