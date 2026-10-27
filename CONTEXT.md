@@ -548,6 +548,20 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   score nothing, so popularity alone never surfaces a note.
 - When to use it: "what's connected to X", or finding notes near a topic. Grep is still the tool for an exact string.
 
+## Replaced memory facts (built 2026-10-26, marvin#698)
+
+- **Replaced fact**: a memory note whose fact no longer holds. It is never deleted, and never left standing beside its
+  replacement as if both were true. Its `metadata` block says so with optional fields:
+  - `superseded_by: <slug>`: the note that replaced it.
+  - `invalid_at: YYYY-MM-DD`: the day it stopped holding, for a fact that ended with no replacement (a dropped plan).
+  - `valid_from: YYYY-MM-DD`: when it started holding.
+- **Current**: a note that is neither superseded nor past its `invalid_at`. `memory_graph related` ranks a replaced
+  note at a quarter of its score and marks it, so it remains findable as history but is never the first answer.
+- Pattern: the bi-temporal "invalidate, don't delete" approach of Zep/Graphiti
+  (`docs/research/knowledge-graphs-2026-10-26.md`, pattern 5).
+- The memory lint flags: a `superseded_by` that names no note, two notes replacing each other, and dates that aren't
+  `YYYY-MM-DD`. A `superseded_by` counts as a link, so the replacement is never an orphan.
+
 ## Dashboard app — Docs tab (built 2026-10-01)
 
 - **Docs tab**: a read-only, cross-project viewer onto `CONTEXT.md` + `docs/adr/*.md` + `README.md`,

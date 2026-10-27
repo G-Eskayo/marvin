@@ -71,7 +71,10 @@ def _words(text: str) -> set[str]:
     return {w for w in re.findall(r"[a-z0-9]+", text.lower()) if len(w) >= 3}
 
 
-def related(g: nx.DiGraph, query: str, k: int = 10) -> list[dict]:
+REPLACED_WEIGHT = 0.25  # a replaced note still shows (history), well below what replaced it
+
+
+def related(g: nx.DiGraph, query: str, k: int = 10, today=None) -> list[dict]:
     q = _words(query)
     seeds = {}
     for stem, data in g.nodes(data=True):
@@ -89,8 +92,11 @@ def related(g: nx.DiGraph, query: str, k: int = 10) -> list[dict]:
     # from both sides). Half how well the note matches the query, half how close it is to the notes that do.
     top_pr, top_hits = max(pr[s] for s in reach), max(seeds.values())
     score = {s: 0.5 * seeds.get(s, 0) / top_hits + 0.5 * pr[s] / top_pr for s in reach if pr[s] > 0}
+    current = {s: memory_lint.is_current(g.nodes[s], today=today) for s in score}
+    score = {s: v if current[s] else v * REPLACED_WEIGHT for s, v in score.items()}
     ranked = sorted(score.items(), key=lambda x: (-x[1], x[0]))[:k]
-    return [{"note": s, "score": round(v, 3), "description": g.nodes[s].get("description", "")} for s, v in ranked]
+    return [{"note": s, "score": round(v, 3), "description": g.nodes[s].get("description", ""), "current": current[s],
+             "replaced_by": g.nodes[s].get("superseded_by") or None} for s, v in ranked]
 
 
 def _cli(argv: list[str]) -> int:
@@ -115,7 +121,8 @@ def _cli(argv: list[str]) -> int:
             print(" → ".join(p) if p else f"no chain of links between {argv[1]} and {argv[2]}")
         else:
             for r in related(g, " ".join(argv[1:]), k=k):
-                print(f"{r['score']:.2f}  {r['note']}  — {r['description']}")
+                gone = "" if r["current"] else f"  [replaced{' by ' + r['replaced_by'] if r['replaced_by'] else ''}]"
+                print(f"{r['score']:.2f}  {r['note']}  — {r['description']}{gone}")
     except UnknownNote as e:
         print(str(e), file=sys.stderr)
         return 1
