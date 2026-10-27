@@ -22,6 +22,7 @@ fits every stage.
 from __future__ import annotations
 import json
 import re
+import string
 import sys
 import urllib.request
 from pathlib import Path
@@ -335,13 +336,44 @@ def _parse_findings(response: str) -> list[str]:
     return cleaned
 
 
-def judge_extraction(extraction: dict[str, str], paper_type: str, chat_fn=None) -> list[str]:
+def _safe_format_prompt(template: str, fallacies: str, fields: dict[str, str]) -> str:
+    """Safely format a prompt template with fallacies and extraction fields.
+    Raises ValueError if formatting fails (malformed template or missing fields)."""
+    try:
+        # Extract field names from template using Formatter.parse to detect both
+        # missing fields and malformed templates (unmatched braces).
+        formatter = string.Formatter()
+        field_names = {field_name for _, field_name, _, _ in formatter.parse(template)
+                      if field_name is not None and field_name != "fallacies"}
+
+        # Check that all required fields exist in the extraction
+        available = set(fields.keys()) | {"fallacies"}
+        missing = field_names - available
+        if missing:
+            raise ValueError(f"template requires fields {missing} but extraction only has {set(fields.keys())}")
+
+        # Format using format_map with the field-name whitelist check above
+        # to prevent unwanted attribute/index traversal attacks.
+        safe_fields = dict(fields)
+        safe_fields["fallacies"] = fallacies
+        return template.format_map(safe_fields)
+    except (KeyError, ValueError, IndexError) as e:
+        raise ValueError(f"prompt formatting failed: {e}")
+
+
+def judge_extraction(extraction: dict[str, str], paper_type: str, chat_fn=None, prompt_override: str | None = None) -> list[str]:
     """Judges a type-adaptive extraction (from extract_structure) against its
     type-specific rubric plus the general fallacy checklist. Reads the
     EXTRACTION, never the raw abstract directly -- per the visible-extraction
     principle, judgment happens against the reviewable intermediate artifact,
     not straight from source text. Returns a list of specific findings, never
-    a bare score; an empty list means no issues found."""
+    a bare score; an empty list means no issues found.
+
+    prompt_override: if provided, replaces the type-specific judgment prompt
+    entirely. Used for tuning/testing alternative prompts without modifying
+    the standard ones. Must only reference fields available for this paper_type,
+    plus 'fallacies'. Raises ValueError if override is malformed or requires
+    unavailable fields."""
     if paper_type not in _JUDGMENT_PROMPTS:
         raise ValueError(f"unknown paper_type {paper_type!r} -- expected one of {PAPER_TYPES}")
 
@@ -356,15 +388,23 @@ def judge_extraction(extraction: dict[str, str], paper_type: str, chat_fn=None) 
         name.lower(): extraction.get(name.lower(), "(not extracted)")
         for name in EXTRACTION_FIELDS[paper_type]
     }
-    prompt = _JUDGMENT_PROMPTS[paper_type].format(fallacies=_GENERAL_FALLACY_CHECKLIST, **fields)
+
+    if prompt_override is not None:
+        prompt = _safe_format_prompt(prompt_override, _GENERAL_FALLACY_CHECKLIST, fields)
+    else:
+        prompt = _JUDGMENT_PROMPTS[paper_type].format(fallacies=_GENERAL_FALLACY_CHECKLIST, **fields)
+
     response = chat_fn([{"role": "user", "content": prompt}])
     return _parse_findings(response)
 
 
-def judge_all(papers: dict[str, tuple[dict, str]], chat_fn=None) -> dict[str, list[str]]:
-    """papers: {slug: (extraction_dict, paper_type)}. Returns {slug: findings_list}."""
+def judge_all(papers: dict[str, tuple[dict, str]], chat_fn=None, prompt_override: str | None = None) -> dict[str, list[str]]:
+    """papers: {slug: (extraction_dict, paper_type)}. Returns {slug: findings_list}.
+
+    prompt_override: if provided, replaces the type-specific judgment prompts for
+    all papers. Used for tuning/testing alternative prompts."""
     return {
-        slug: judge_extraction(extraction, paper_type, chat_fn=chat_fn)
+        slug: judge_extraction(extraction, paper_type, chat_fn=chat_fn, prompt_override=prompt_override)
         for slug, (extraction, paper_type) in papers.items()
     }
 

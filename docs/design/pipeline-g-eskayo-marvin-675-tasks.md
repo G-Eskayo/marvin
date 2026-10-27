@@ -1,0 +1,11 @@
+1. Add `prompt_override: str | None = None` to `logic_auditor.judge_extraction`, threaded through `judge_all`; unchanged behavior when `None`.
+2. Write the benchmark-sample loader: resolve seed papers (no `discovered_via`) from the `paper-knowledge` Chroma collection + matching `~/.claude/paper-sessions/*/state.json`, freeze a tuning/holdout split to a committed manifest (`bench/results/spec-search-paper-dive-judgment-sample.json`), reusing it on later runs instead of redrawing.
+3. Build the teacher-call helper (gold labeling, agreement scoring, edit proposals) on `judge_run`'s subprocess shape + `score.parse_stream`, wrapped with `_check_quota` preflight and infra-error abort.
+4. Measure the baseline: student (`qwen2.5:3b` via injected `chat_fn`) vs teacher gold, over tuning + holdout, per the Decisions answer for what "today's setup" means.
+5. Build the bounded spec-search loop: teacher proposes one prompt edit from tuning-set misses → apply via `prompt_override` → re-measure tuning accuracy → keep only on no-regression, else discard and continue/stop (cap rounds, e.g. 5).
+6. Evaluate the final kept spec on the frozen holdout set only, for the reported accuracy number.
+7. Sum cost_usd/wall_s across every teacher call in the whole search; write the `## Run N` entry into `bench/RESULTS.md` following the existing convention (method, results table, Findings, Caveats, Next priorities — listing triage classification and the daily digest as next candidate jobs).
+8. Add a results JSON trace file under `bench/results/`, mirroring `select_model.py`'s output convention.
+9. Add the concurrency guard (atomic/locked write) for the split manifest and the `RESULTS.md` append.
+10. Per the `wire-in` Decision: either update `logic_auditor.py`'s default judgment path + `config/models.json`'s `local-judge-medium` capability to the tuned spec, or file the follow-up ticket and leave production code untouched.
+11. Write the 18 tests above against the new/changed code, run them, and run the full existing `test_logic_auditor.py` suite to confirm no regression from the `prompt_override` addition.
