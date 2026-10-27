@@ -36,9 +36,14 @@ QUESTION = {"notes": {"text": "Do you think this is a good way to visualize this
 
 # ── status ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
-def test_decisions_then_a_commit_is_not_flagged():
+def test_a_commit_alone_is_not_an_answer_the_owner_can_see():
+    # marvin #733: on clarity-captions #155 a fix landed as a commit and the owner couldn't tell whether the screenshots
+    # were redone. Only a reply saying what changed counts; the commit is recorded so the follow-up can say so.
     s = od.pr_status(pr([decisions()], last_commit=T0 + timedelta(hours=1)), T0 + timedelta(hours=10), 4)
-    assert s["addressed_by"] == "commit" and not s["overdue"]
+    assert s["addressed_by"] is None and s["overdue"] and s["committed_since"]
+    marked = comment(f"Done.\n{od.ADDRESSED_MARKER}", T0 + timedelta(hours=2))
+    s = od.pr_status(pr([decisions(), marked], last_commit=T0 + timedelta(hours=1)), T0 + timedelta(hours=10), 4)
+    assert s["addressed_by"] == "reply" and not s["overdue"]
 
 
 def test_decisions_then_nothing_is_flagged_only_after_n_hours():
@@ -191,10 +196,18 @@ def test_overdue_decisions_file_one_ready_for_agent_follow_up_linked_to_the_pr()
     assert r["filed"][0]["result"].startswith("filed")
 
 
-def test_decisions_then_a_commit_files_nothing():
+def test_a_commit_without_a_reply_files_a_follow_up_that_asks_for_the_reply():
     gh = FakeGitHub([pr([decisions()], last_commit=T0 + timedelta(minutes=30))])
     od.sync([REPO], now=LATE, run=gh, grace=4)
-    assert gh.issues == [] and ["issue", "create"] not in gh.calls
+    body = gh.issues[0]["body"]
+    assert "already has commits" in body and "what changed" in body.lower() and "screenshots" in body.lower()
+
+
+def test_the_follow_up_asks_whether_screenshots_were_retaken_and_pinned():
+    gh = FakeGitHub([pr([decisions()])])
+    od.sync([REPO], now=LATE, run=gh, grace=4)
+    body = gh.issues[0]["body"].lower()
+    assert "screenshots" in body and "pinned" in body and "why not" in body
 
 
 def test_not_yet_overdue_files_nothing():
@@ -228,12 +241,15 @@ def test_a_follow_up_closed_as_done_is_never_refiled_for_the_same_comment():
     assert len(gh.issues) == 1
 
 
-def test_follow_up_closes_itself_when_a_commit_lands():
+def test_follow_up_closes_itself_when_the_reply_lands_not_on_a_bare_commit():
     p = pr([decisions()])
     gh = FakeGitHub([p])
     od.sync([REPO], now=LATE, run=gh, grace=4)
     p["last_commit_at"] = iso(LATE + timedelta(minutes=5))
-    r = od.sync([REPO], now=LATE + timedelta(hours=1), run=gh, grace=4)
+    od.sync([REPO], now=LATE + timedelta(hours=1), run=gh, grace=4)
+    assert len(gh.open_followups()) == 1
+    p["comments"].append(comment(f"Changed X; screenshots retaken.\n{od.ADDRESSED_MARKER}", LATE + timedelta(minutes=10)))
+    r = od.sync([REPO], now=LATE + timedelta(hours=2), run=gh, grace=4)
     assert gh.open_followups() == [] and "addressed" in r["closed"][0]["why"]
 
 

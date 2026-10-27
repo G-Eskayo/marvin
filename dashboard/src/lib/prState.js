@@ -9,7 +9,7 @@
 
 // Refusals the screen already explains with a state of its own. If one of these is left over from an earlier
 // click it is stale as soon as the state changes, so it is never shown as an error.
-const MIRRORED_REFUSALS = /^(SENT_BACK|CI_PENDING|CI_FAILED|WRONG_BASE|NO_UI_EVIDENCE|DECISIONS_PENDING|DECISIONS_UNSTRUCTURED)\b/
+const MIRRORED_REFUSALS = /^(SENT_BACK|CI_PENDING|CI_FAILED|WRONG_BASE|NO_UI_EVIDENCE|IMAGES_UNPINNED|IMAGES_STALE|DECISIONS_PENDING|DECISIONS_UNSTRUCTURED)\b/
 
 export function describePrState(pr, { status = 'idle', errorMessage = null, progress = false } = {}) {
   const ci = pr.checks || { state: 'none', failing: [], pending: [] }
@@ -76,6 +76,11 @@ export function describePrState(pr, { status = 'idle', errorMessage = null, prog
   if (pr.needsImages) {
     const files = pr.needsImages.files || []
     const shown = files.slice(0, 3).join(', ') + (files.length > 3 ? ` and ${files.length - 3} more` : '')
+    if (pr.needsImages.unpinned?.length) {
+      return base('needs-images', 'blocked', 'Needs images',
+        `It changes how the app looks${shown ? ` (${shown})` : ''}, but its screenshots aren't pinned to a commit, so you may be seeing old copies. ` +
+          'Link them by the commit they were taken at, and Approve appears here.', 'hidden', 'enabled')
+    }
     return base('needs-images', 'blocked', 'Needs images',
       `It changes how the app looks${shown ? ` (${shown})` : ''} but its description shows no screenshots. ` +
         'Add images of the changed screens to the PR, and Approve appears here.', 'hidden', 'enabled')

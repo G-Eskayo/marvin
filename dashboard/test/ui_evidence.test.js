@@ -4,7 +4,7 @@ vi.mock('../webhook-server/ticket_stages.js', () => ({ recordStage: vi.fn() }))
 vi.mock('../webhook-server/failure_log.js', () => ({ recordFailure: vi.fn() }))
 vi.mock('../webhook-server/rebase_status.js', () => ({ writeRebaseStatus: vi.fn(), readRebaseStatus: vi.fn(() => ({})) }))
 
-import { touchesUi, uiFiles, hasImage, assertUiEvidence, globToRegExp, DEFAULT_UI_PATTERNS } from '../webhook-server/ui_evidence.js'
+import { touchesUi, uiFiles, hasImage, assertUiEvidence, globToRegExp, DEFAULT_UI_PATTERNS, imageUrls, unpinnedImages, imageShas } from '../webhook-server/ui_evidence.js'
 import { mergePr } from '../webhook-server/merge.js'
 import { describePrState } from '../src/lib/prState.js'
 
@@ -90,19 +90,93 @@ describe('does the PR body show an image', () => {
 })
 
 const PR = 'https://github.com/G-Eskayo/clarity-captions/pull/95'
-function ghView({ files = [], body = '', fails = false } = {}) {
+function ghView({ files = [], body = '', fails = false, head = HEAD, compare = {} } = {}) {
   return vi.fn(async (cmd, args) => {
-    if (cmd === 'gh' && args[1] === 'view' && args.includes('files,body')) {
+    if (cmd === 'gh' && args[1] === 'view' && args.includes('files,body,headRefOid')) {
       if (fails) throw Object.assign(new Error('Command failed: gh pr view'), { stderr: 'HTTP 502: Bad Gateway' })
-      return { stdout: JSON.stringify({ files: files.map((path) => ({ path })), body }), stderr: '' }
+      return { stdout: JSON.stringify({ files: files.map((path) => ({ path })), body, headRefOid: head }), stderr: '' }
+    }
+    if (cmd === 'gh' && args[0] === 'api' && /\/compare\//.test(args[1] || '')) {
+      const base = args[1].split('/compare/')[1].split('...')[0]
+      if (!(base in compare)) throw Object.assign(new Error('Command failed: gh api'), { stderr: 'HTTP 404: No common ancestor' })
+      return { stdout: JSON.stringify(compare[base]), stderr: '' }
     }
     return { stdout: JSON.stringify({ baseRefName: 'main', isDraft: false }), stderr: '' }
   })
 }
 
+const HEAD = 'f'.repeat(40)
+const OLD = '1c7c6a786452732c40d10230ea92a84c9231de2e'
+const pinned = (sha, name = 's') => `![${name}](https://raw.githubusercontent.com/G-Eskayo/clarity-captions/${sha}/docs/${name}.png)`
+
+describe('which images are pinned to a commit (marvin #733)', () => {
+  it('finds markdown and HTML image targets', () => {
+    expect(imageUrls('![a](https://x/a.png) <img src="https://x/b.png"> [link](https://x/c.png)')).toEqual(['https://x/a.png', 'https://x/b.png'])
+  })
+
+  it('a branch-name link is unpinned: GitHub and the dashboard keep serving the old image after a retake (#171)', () => {
+    const body = '![a](https://github.com/G-Eskayo/clarity-captions/blob/feature/37-53/docs/a.png?raw=true) ![r](a.png)'
+    expect(unpinnedImages(body)).toEqual(['https://github.com/G-Eskayo/clarity-captions/blob/feature/37-53/docs/a.png?raw=true', 'a.png'])
+  })
+
+  it('a full commit SHA, or a GitHub upload (never changes), is pinned', () => {
+    const body = pinned(OLD) + ' ![u](https://github.com/user-attachments/assets/8f1c2d3e-aaaa-bbbb-cccc-1234567890ab)' +
+      ' ![v](https://private-user-images.githubusercontent.com/1/2-3.png?jwt=x) ![b](https://github.com/o/r/blob/' + OLD + '/a.png?raw=true)'
+    expect(unpinnedImages(body)).toEqual([])
+    expect(imageShas(body)).toEqual([OLD])
+  })
+
+  it('a short SHA or a 40-letter word that is not hex is not a pin', () => {
+    expect(unpinnedImages('![a](https://raw.githubusercontent.com/o/r/1c7c6a7/a.png)')).toHaveLength(1)
+    expect(imageShas('![a](https://raw.githubusercontent.com/o/r/' + 'z'.repeat(40) + '/a.png)')).toEqual([])
+  })
+})
+
+describe('the approve gate refuses unpinned or stale images (marvin #733)', () => {
+  const ui = ['Apps/A/SettingsView.swift']
+
+  it('unpinned images on a UI change: IMAGES_UNPINNED, naming them', async () => {
+    const p = assertUiEvidence(PR, ghView({ files: ui, body: '![a](https://github.com/o/r/blob/main/a.png?raw=true)' }))
+    await expect(p).rejects.toMatchObject({ payload: { code: 'IMAGES_UNPINNED', message: expect.stringContaining('blob/main/a.png') } })
+  })
+
+  it('images pinned to a commit after which a UI file changed: IMAGES_STALE, naming the file', async () => {
+    const exec = ghView({ files: ui, body: pinned(OLD), compare: { [OLD]: { files: [{ filename: 'Apps/A/SettingsView.swift' }, { filename: 'lib/x.py' }] } } })
+    await expect(assertUiEvidence(PR, exec)).rejects.toMatchObject({
+      payload: { code: 'IMAGES_STALE', message: expect.stringContaining('SettingsView.swift') }
+    })
+  })
+
+  it('only logic changed since the images: still current (#155: no new screenshots needed)', async () => {
+    const exec = ghView({ files: ui, body: pinned(OLD), compare: { [OLD]: { files: [{ filename: 'Packages/Core/Logic.swift' }] } } })
+    await expect(assertUiEvidence(PR, exec)).resolves.toBeUndefined()
+  })
+
+  it('images pinned to the head commit need no comparison', async () => {
+    const exec = ghView({ files: ui, body: pinned(HEAD) })
+    await expect(assertUiEvidence(PR, exec)).resolves.toBeUndefined()
+    expect(exec.mock.calls.some((c) => c[0] === 'gh' && c[1][0] === 'api')).toBe(false)
+  })
+
+  it('one stale set among several is enough to refuse', async () => {
+    const NEW = 'a'.repeat(40)
+    const exec = ghView({ files: ui, body: pinned(NEW, 'n') + pinned(OLD, 'o'),
+      compare: { [NEW]: { files: [] }, [OLD]: { files: [{ filename: 'Apps/A/SettingsView.swift' }] } } })
+    await expect(assertUiEvidence(PR, exec)).rejects.toMatchObject({ payload: { code: 'IMAGES_STALE' } })
+  })
+
+  it('a commit GitHub can\'t compare (rewritten history) fails closed', async () => {
+    await expect(assertUiEvidence(PR, ghView({ files: ui, body: pinned(OLD) }))).rejects.toMatchObject({ payload: { code: 'UI_EVIDENCE_UNCHECKED' } })
+  })
+
+  it('a non-UI PR is never asked about its images', async () => {
+    await expect(assertUiEvidence(PR, ghView({ files: ['lib/x.py'], body: '![a](a.png)' }))).resolves.toBeUndefined()
+  })
+})
+
 describe('the approve gate refuses a UI change with no image', () => {
   it('UI change with an image: ok', async () => {
-    await expect(assertUiEvidence(PR, ghView({ files: ['Apps/A/SettingsView.swift'], body: '![s](a.png)' }))).resolves.toBeUndefined()
+    await expect(assertUiEvidence(PR, ghView({ files: ['Apps/A/SettingsView.swift'], body: pinned(HEAD) }))).resolves.toBeUndefined()
   })
 
   it('UI change without an image: NO_UI_EVIDENCE, naming the files', async () => {
@@ -159,12 +233,21 @@ describe('the PR list flags UI changes without images', async () => {
   it('needsImages only for a UI change with no image, using the project\'s own paths', async () => {
     const prs = [
       pr(1, ['Apps/Spike/Sources/SettingsSheet.swift'], 'no pictures'),
-      pr(2, ['Apps/Spike/Sources/SettingsSheet.swift'], '![s](a.png)'),
+      pr(2, ['Apps/Spike/Sources/SettingsSheet.swift'], '![s](https://raw.githubusercontent.com/G-Eskayo/clarity-captions/1c7c6a786452732c40d10230ea92a84c9231de2e/docs/s.png)'),
       pr(3, ['lib/x.py'], 'nothing'),
       { ...pr(4, [], 'x'), files: undefined }
     ]
     const out = await listPipelinePrs(async () => prs, { uiPathsFor: (repo) => (repo === 'G-Eskayo/clarity-captions' ? ['Apps/**/*.swift'] : []) })
     expect(out.map((p) => p.needsImages)).toEqual([{ files: ['Apps/Spike/Sources/SettingsSheet.swift'] }, null, null, null])
+  })
+
+  it('unpinned images also need fixing, with the reason on the card (marvin #733)', async () => {
+    const body = '![a](https://github.com/G-Eskayo/clarity-captions/blob/feature/x/a.png?raw=true)'
+    const out = await listPipelinePrs(async () => [pr(1, ['Apps/A/HomeView.swift'], body)], {})
+    expect(out[0].needsImages).toMatchObject({ files: ['Apps/A/HomeView.swift'], unpinned: [expect.stringContaining('blob/feature/x')] })
+    const s = describePrState({ needsImages: out[0].needsImages })
+    expect(s.approve).toBe('hidden')
+    expect(s.detail).toMatch(/pinned to a commit/i)
   })
 
   it('a broken profile lookup never hides or flags a PR wrongly', async () => {
