@@ -6,6 +6,7 @@ north stars is the drift this module exists to prevent.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 NORTH_STARS_DOC = Path(__file__).resolve().parents[1] / "docs" / "north-stars.md"
@@ -16,6 +17,11 @@ def load(path: Path = NORTH_STARS_DOC) -> str:
     text = Path(path).read_text()
     start = text.find("\n## ")
     return text[start + 1:].strip() if start != -1 else text.strip()
+
+
+def titles(path: Path = NORTH_STARS_DOC) -> list[str]:
+    """Each north star's bold title, in order, without its closing full stop (for labels such as the job catalog's)."""
+    return [m.group(1).rstrip(".") for m in re.finditer(r"^\d+\. \*\*(.+?)\*\*", Path(path).read_text(), re.M)]
 
 
 def delegation_preamble(repo: str | None = None) -> str:

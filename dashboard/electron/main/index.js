@@ -51,7 +51,8 @@ import { readRegistry, loadBoard, fetchBoardData, fetchCompletedData, withProjec
 import { createRelationsService } from './relations_service.js'
 import { summarizeBoard, buildCompleted } from './board.js'
 import { createTriggerHub, createReconciler, refetchesGithub } from './triggers.js'
-import { createMrHistory, mergedPrArgs } from './mr_history.js'
+import { createMrHistory, mergedPrArgs, readSavedMerged } from './mr_history.js'
+import { createProjectProgress } from './project_progress.js'
 import { appendError } from './error_log.js'
 import { listOpenPrsAcrossRepos, prListArgs, normalizeSeen, canMergeFromDashboard, repoFromPrUrl, MARVIN_REPO, pendingCheckHeads } from './mr_repos.js'
 import { createIndexer, buildDocsIndex, loadIndex } from './docs_search.js'
@@ -59,7 +60,7 @@ import { createDocsService, MASTER_ID } from './docs_service.js'
 import { createCloneFreshener } from './clone_freshen.js'
 import { createPdfText } from './pdf_text.js'
 import { createSavedDocs } from './docs_saved.js'
-import { readMergeableRepos, readUiPaths, listProfiles, setDispatch, setMergeFromDashboard } from './profiles.js'
+import { readMergeableRepos, readUiPaths, listProfiles, setDispatch, setMergeFromDashboard, readGoals, PROFILES_DIR } from './profiles.js'
 import { searchFiles, isRevealable, isLinkable, linkAction } from './files_search.js'
 import { safeExternalUrl } from '../../src/lib/pdf_nav.js'
 import { openLink, windowOpenHandler } from './external_links.js'
@@ -129,6 +130,11 @@ const ghListOpenPrs = (light) => async (repo) => {
 // state of its repo until the change watch says that repo changed, the person's own action needs fresh data, or a
 // 30-minute safety refresh. Tab switches and timers never reach GitHub on their own.
 const githubState = createGithubState()
+// Project goals (profiles in the private instance, ADR 0071): read once, and again only after a profile file changes
+// (the 'goals' trigger below). O(projects) per read; no polling. A public engine install has no instance dir: [].
+let goalsCache = null
+const currentGoals = () => (goalsCache ||= readGoals())
+const MR_HISTORY_PATH = join(homedir(), '.claude', 'logs', 'mr-history.json')
 // A change somewhere: re-read just that repo when the ping says which, else everything.
 function githubChanged(source) {
   const repo = repoOfSource(source)
@@ -313,6 +319,7 @@ function registerHealthHandlers() {
   ipcMain.handle('health:agents', () => listAgents())
   // Execution profiles (lib/project_profile.py): which projects the pipeline may work on by itself.
   ipcMain.handle('profiles:list', () => listProfiles())
+  ipcMain.handle('profiles:goals', () => currentGoals())
   ipcMain.handle('profiles:setDispatch', async (_event, repo, value) => {
     if (value === 'on') {
       // Same native-dialog defense as Approve: turning this on spends model usage and opens PRs by itself.
@@ -544,6 +551,21 @@ function registerDocsHandlers() {
   ipcMain.handle('mr:parity', () => relations.parity())
   ipcMain.handle('activity:overview', () => relations.overview())
   ipcMain.handle('activity:needsYou', () => relations.needsYou())
+  // Activity ▸ Projects (marvin#625's progress strip): built from memory and local files only, no GitHub call. Merges
+  // are the Merged view's saved list plus the merge server's own record (local HTTP), deduped by URL.
+  const progress = createProjectProgress({
+    goals: currentGoals,
+    overview: () => relations.overview(),
+    peekBoards: () => githubState.peek('board'),
+    stagesFor: defaultStagesFor,
+    boards: () => withProjectStatus(readRegistry(), readCatalog({ deviceId: deviceId() })),
+    savedMerged: () => readSavedMerged(MR_HISTORY_PATH),
+    serverMerges: () =>
+      fetch(MR_WEBHOOK_URL.replace(/\/approve$/, '/merge-history'), { signal: AbortSignal.timeout(3000) })
+        .then((r) => (r.ok ? r.json() : {}))
+        .then((h) => (h.merges || []).map((m) => ({ url: m.pr_url, at: m.t })))
+  })
+  ipcMain.handle('activity:progress', () => progress())
   ipcMain.handle('relations:context', (_e, project) => relations.context(String(project)))
 
   let refreshing = null
@@ -1104,6 +1126,9 @@ app.whenReady().then(() => {
       .then((token) => startAppSupportWatch({ repos: () => instance.support().repos, token, startChangeWatch, createGithubProbe }))
   }
   triggerHub.watchFiles('agents', [{ dir: JOBS_DIR, match: (n) => n.endsWith('.json') && !n.startsWith('.') }])
+  // Project goals: a profile edit re-reads them once. Registered before the renderer forward so its re-read is fresh.
+  triggerHub.watchFiles('goals', [{ dir: PROFILES_DIR, match: (n) => n.endsWith('.json') }])
+  triggerHub.onTrigger((t) => t.topic === 'goals' && (goalsCache = null))
   triggerHub.onTrigger((t) => mainWindow?.webContents.send('trigger', t))
 
   // External pings (webhook-server): bare = the legacy "MR list changed"; with topics = what changed.

@@ -144,3 +144,14 @@ def test_repo_with_no_branch_info_at_all_never_raises(tmp_path, monkeypatch):
     plain.mkdir()
     cs.push(plain)
     cs.pull(plain)
+
+
+def test_an_auto_fix_branch_is_never_swept_into_an_auto_sync_commit(tmp_path, monkeypatch):
+    """auto_fix.py works in its own worktree on auto-fix/<date>; even if code_sync were pointed at that checkout, it
+    must commit nothing there. The shared checkout itself never holds auto-fix edits (test_auto_fix.py asserts it)."""
+    clone, log = _setup(tmp_path, monkeypatch, branch="auto-fix/2026-10-26")
+    (clone / "file.md").write_text("an auto-fix edit awaiting its PR\n")
+    head, origin = _out(clone, "rev-parse", "HEAD"), _origin_head(tmp_path)
+    cs.push(clone)
+    assert _out(clone, "rev-parse", "HEAD") == head and _origin_head(tmp_path) == origin
+    assert "auto-fix/2026-10-26" in _log(log)
