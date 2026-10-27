@@ -519,6 +519,22 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
 - Background: `docs/research/knowledge-graphs-2026-10-26.md`. The graph was 84 commits stale because code_sync lands
   commits with `git merge`, which never fired graphify's post-commit hook.
 
+## Memory lint (built 2026-10-26, marvin#695)
+
+- **Memory lint**: `lib/memory_lint.py` checks the memory folder.
+  - It finds broken `[[links]]` (with a suggestion), links broken across a line, notes with no inbound link, git
+    conflict markers, bad frontmatter, and MEMORY.md index drift in both directions.
+  - It reports and suggests; it never edits a note.
+  - The first step of the knowledge-graph follow-ups (#695–#699, `docs/research/knowledge-graphs-2026-10-26.md`).
+- **Link resolution**: a link resolves by a note's file stem or its `name:`, case-insensitively. An alias (`|label`)
+  or heading (`#Why`) is ignored, and links inside code are not links.
+  - MEMORY.md is the index, not a note, so its entries never count as inbound links.
+  - A suggestion is offered only for a typo (at most 2 edits) or a missing type prefix (`catch-x` for
+    `feedback-catch-x`). A similarity ratio is not enough, because names share long prefixes.
+- **Health check `memory:lint`**: red on conflict markers; yellow on broken links, index drift or bad frontmatter.
+  Notes with no inbound link are counted but stay green. Cost: O(notes + links), about 0.05 s for 164 notes.
+- `node_type` and `modified` are optional fields written by tooling, not required.
+
 ## Dashboard app — Docs tab (built 2026-10-01)
 
 - **Docs tab**: a read-only, cross-project viewer onto `CONTEXT.md` + `docs/adr/*.md` + `README.md`,
