@@ -69,6 +69,13 @@ one job, starting with the history store.
   without this check the *next* automated push — including an unattended daily cron — would
   commit and propagate that corruption with nobody watching. See [[0022]] for the real incident
   that motivated this.
+- **Union-merged files** (ADR 0076, 2026-10-26): in the synced Claude dir, the files every machine appends to
+  (`sync-log.md`, `auto-fix-log.md`, `quarantine.md`, `improvement-queue.md`, `projects/*/memory/*.md`) merge with
+  git's `union` driver, so a stash pop on them never stops sync. code_sync writes the rule into the clone's own
+  `.git/info/attributes` before every stash or merge (fresh machines included; never into the engine repo). After a
+  merge it removes exact duplicate memory-index lines and logs them; anything else union got wrong (a changed line
+  kept beside its edit, a doubled heading, one memory linked twice) is a yellow Health card until the file is fixed.
+  Conflicts in any other file still stop for a person.
 - **Stale-code dispatch guard** (marvin#458, 2026-10-26): the ticket pipeline refuses to start any new work while
   its own `~/.agents` checkout is stale: behind origin/main by changes that landed on main more than 2 h ago
   (`failure_breaker.CODE_STALE_GRACE_HOURS`, judged by first-parent landing time), or code sync is stuck on a
