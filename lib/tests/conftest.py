@@ -113,6 +113,17 @@ def _isolate_failure_breaker_log(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _real_checkout_never_judged(request, monkeypatch):
+    # marvin#458: the pipeline and Health read how current ~/.agents is. A test must never judge the real checkout
+    # (it would pass or fail with the machine's sync state); test_code_stale_guard builds its own repos in a temp HOME.
+    if request.module.__name__.rsplit(".", 1)[-1] == "test_code_stale_guard":
+        return
+    import failure_breaker
+    monkeypatch.setattr(failure_breaker, "code_freshness", lambda *a, **k: {
+        "state": "current", "detail": "test default", "behind": 0, "oldest_hours": None})
+
+
+@pytest.fixture(autouse=True)
 def _isolate_board_registry(tmp_path_factory, monkeypatch):
     # _claim() registers a dashboard board; tests must never write the real, synced registry.
     import board_registry
