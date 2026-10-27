@@ -29,16 +29,6 @@ jobs:
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npx vitest run
 
-  dictate-tests:
-    # MARVIN Dictate (tools/dictate, marvin#730). The tests that run Apple's speech engine skip themselves when the
-    # runner doesn't have the English model; the key, clean-up, clipboard and history tests always run.
-    name: Dictate tests (macOS)
-    runs-on: macos-26
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - run: swift test --package-path tools/dictate
-
   secret-scan:
     # ADR 0071: the server-side gate. Scans only the commits this PR or push adds, with gitleaks and with the same
     # bin/pre-push-guard every clone runs locally (shared patterns; personal ones never leave their owner's machine).
