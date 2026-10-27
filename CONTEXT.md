@@ -535,6 +535,19 @@ ever been closed unmerged. Gil approves almost everything; the wait is the cost.
   Notes with no inbound link are counted but stay green. Cost: O(notes + links), about 0.05 s for 164 notes.
 - `node_type` and `modified` are optional fields written by tooling, not required.
 
+## Memory graph (built 2026-10-26, marvin#696)
+
+- **Memory graph**: `lib/memory_graph.py` follows memory's `[[links]]` instead of grepping for them. It is built
+  fresh from the files on every call, using memory_lint's parsing and resolution with dangling links dropped, so there
+  is no stored graph to go stale. About 0.3 s for 164 notes, including the Python start.
+  - `neighbors <note>`: links in and out.
+  - `path <a> <b>`: the shortest chain of links, in either direction.
+  - `related "<query>"`: Personalized PageRank seeded from the notes whose name or description matches the query.
+- **Why the blend in `related`**: plain PPR ranks the middle of a chain above the note that matched, because it
+  collects mass from both sides. The score is half the direct match and half PPR closeness. Notes the seeds can't reach
+  score nothing, so popularity alone never surfaces a note.
+- When to use it: "what's connected to X", or finding notes near a topic. Grep is still the tool for an exact string.
+
 ## Dashboard app — Docs tab (built 2026-10-01)
 
 - **Docs tab**: a read-only, cross-project viewer onto `CONTEXT.md` + `docs/adr/*.md` + `README.md`,

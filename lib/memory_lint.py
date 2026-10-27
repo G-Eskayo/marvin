@@ -57,7 +57,10 @@ def _frontmatter(text: str) -> tuple[dict, str | None]:
             continue
         indent, key, value = m.groups()
         if not indent or key == "type":
-            fields.setdefault(key, value.strip())
+            v = value.strip()
+            if len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"":
+                v = v[1:-1]  # a quoted YAML scalar
+            fields.setdefault(key, v)
     for key in ("name", "description"):
         if not fields.get(key):
             return fields, f"missing {key}"
@@ -113,7 +116,7 @@ def lint(memory_dir: Path) -> dict:
     files = sorted(p for p in d.glob("*.md") if p.is_file())
     texts: dict[str, str | None] = {}
     report = {"notes": 0, "links": 0, "dangling": [], "orphans": [], "conflicts": [], "frontmatter": [],
-              "unindexed": [], "index_missing": []}
+              "unindexed": [], "index_missing": [], "edges": [], "meta": {}}
     for p in files:
         try:
             texts[p.name] = p.read_text(encoding="utf-8")
@@ -130,6 +133,7 @@ def lint(memory_dir: Path) -> dict:
             report["frontmatter"].append({"file": p.name, "problem": "unreadable (not UTF-8)"})
             continue
         fields, problem = _frontmatter(text)
+        report["meta"][p.stem] = {k: fields.get(k, "") for k in ("name", "description", "type")}
         if fields.get("name"):
             keys.setdefault(fields["name"].lower(), p.stem)
         if problem:
@@ -140,6 +144,7 @@ def lint(memory_dir: Path) -> dict:
             report["conflicts"] += [{"file": name, "line": n} for n in _conflicts(text)]
 
     inbound: dict[str, set[str]] = {p.stem: set() for p in notes}
+    edges: set[tuple[str, str]] = set()
     for p in notes:
         text = texts[p.name]
         if not text:
@@ -155,10 +160,12 @@ def lint(memory_dir: Path) -> dict:
             if stem and not split:
                 if stem != p.stem:
                     inbound[stem].add(p.stem)
+                    edges.add((p.stem, stem))
                 continue
             report["dangling"].append({"file": p.name, "line": line, "target": target, "split": split,
                                        "suggestion": stem or _suggest(target.lower(), keys)})
     report["orphans"] = sorted(s for s, srcs in inbound.items() if not srcs)
+    report["edges"] = sorted(edges)  # resolved note -> note links, self-links dropped (memory_graph.py builds on these)
 
     idx = texts.get(INDEX)
     if idx is not None:

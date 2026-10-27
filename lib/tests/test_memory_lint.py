@@ -211,3 +211,9 @@ def test_check_shape_for_the_health_tab(tmp_path):
     c = ml.check(healthy(tmp_path))
     assert c["id"] == "memory:lint" and c["label"] == "Memory links and index are sound"
     assert isinstance(c["value"], int)
+
+
+def test_quoted_descriptions_lose_their_quotes(tmp_path):
+    d = healthy(tmp_path)
+    note(d, "gamma", "[[alpha]]", frontmatter='---\nname: gamma\ndescription: "a quoted one"\nmetadata:\n  type: user\n---\n')
+    assert ml.lint(d)["meta"]["gamma"]["description"] == "a quoted one"
