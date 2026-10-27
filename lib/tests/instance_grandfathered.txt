@@ -48,6 +48,7 @@ lib/failure_breaker.py
 lib/generated_paths.py
 lib/gh_merge_guard.py
 lib/health_checks.py
+lib/job_catalog.py
 lib/marvin_session.py
 lib/migrate_ticket_stages.py
 lib/morning_brief.py

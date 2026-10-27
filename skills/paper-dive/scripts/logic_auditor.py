@@ -335,13 +335,17 @@ def _parse_findings(response: str) -> list[str]:
     return cleaned
 
 
-def judge_extraction(extraction: dict[str, str], paper_type: str, chat_fn=None) -> list[str]:
+def judge_extraction(extraction: dict[str, str], paper_type: str, chat_fn=None, prompt_template: str | None = None) -> list[str]:
     """Judges a type-adaptive extraction (from extract_structure) against its
     type-specific rubric plus the general fallacy checklist. Reads the
     EXTRACTION, never the raw abstract directly -- per the visible-extraction
     principle, judgment happens against the reviewable intermediate artifact,
     not straight from source text. Returns a list of specific findings, never
-    a bare score; an empty list means no issues found."""
+    a bare score; an empty list means no issues found.
+
+    prompt_template: optional override for the judgment prompt. If provided,
+    must be a string with field placeholders that match the extraction's keys
+    plus "fallacies". If None, uses the type-specific default from _JUDGMENT_PROMPTS."""
     if paper_type not in _JUDGMENT_PROMPTS:
         raise ValueError(f"unknown paper_type {paper_type!r} -- expected one of {PAPER_TYPES}")
 
@@ -356,7 +360,8 @@ def judge_extraction(extraction: dict[str, str], paper_type: str, chat_fn=None) 
         name.lower(): extraction.get(name.lower(), "(not extracted)")
         for name in EXTRACTION_FIELDS[paper_type]
     }
-    prompt = _JUDGMENT_PROMPTS[paper_type].format(fallacies=_GENERAL_FALLACY_CHECKLIST, **fields)
+    template = prompt_template if prompt_template is not None else _JUDGMENT_PROMPTS[paper_type]
+    prompt = template.format(fallacies=_GENERAL_FALLACY_CHECKLIST, **fields)
     response = chat_fn([{"role": "user", "content": prompt}])
     return _parse_findings(response)
 

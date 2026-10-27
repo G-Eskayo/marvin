@@ -217,6 +217,25 @@ then) — a real, current fragility, not a hypothetical one.
   triggering) and only acts if it hasn't, proceeding with whatever's available, same graceful-
   degradation behavior `cross_machine_merge.py` already has for a genuinely unreachable machine.
 
+## Specification search (v1 built 2026-10-26, used for judgment tuning)
+
+- **Specification search** (`lib/spec_search.py`): teacher/student pattern for iteratively improving a
+  specification (prompt template, model parameters) against a gold-standard benchmark. The student applies
+  the spec to test cases; the teacher observes failures and proposes better specs; the loop continues until
+  accuracy is perfect or max iterations reached. Keep-only-non-regressing-edit strategy: proposed changes
+  are kept only if they improve or maintain accuracy.
+- **Evaluation** (`evaluate()`): scores a spec against samples by calling the student function once per
+  sample, then using the score function to check correctness. Returns accuracy as a decimal.
+- **Teacher** (`propose_edit()`, wired to `teacher_fn`): receives failing samples and the current spec,
+  returns JSON-formatted proposed spec edits. Returns None if the response is invalid/empty JSON (no-op).
+- **Search loop** (`search()`): iterates student evaluation → teacher proposal → re-evaluation, keeping edits
+  that don't regress, stopping early on perfect score (1.0) or after max iterations. Returns final spec,
+  accuracy, iteration count, and full history.
+- **Use case**: paper-dive judgment extraction tuning. `judgment_benchmark.py` uses spec_search to find
+  better prompt templates and model parameters for the judge_extraction task, evaluated against real
+  gold-standard reliability levels from `marvin_launcher`. Manual/optional tier, never required by the
+  merge gate — results inform recommendations for which specs to ship in `logic_auditor.py`'s defaults.
+
 ## MR pipeline (in design, 2026-08-19)
 
 - **MR pipeline**: the mechanism by which MARVIN's own autonomous/background-initiated work (self-
