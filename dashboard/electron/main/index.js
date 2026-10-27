@@ -34,6 +34,7 @@ import { recordRefusal } from '../../webhook-server/refusal_log.js'
 import { sendBackForOptions } from './decisions_submit.js'
 import { createLocalFirst, coalesce, createIssueReader, createRepoHeadCheck } from './local_first.js'
 import { createMrActions } from './mr_actions.js'
+import { createInstanceHandlers } from './instance.js'
 
 const mergeOps = createMergeOps()
 // marvin#568: every change to a merge op is pushed to the renderer (the card subscribes; it reads once on mount).
@@ -315,6 +316,12 @@ function registerSessionHandlers() {
   // The Portfolio tab's "Open dev site" button (marvin#377): reuses the dev site's Chrome tab if one is open. The
   // renderer sends no URL; only the dev site can be opened this way.
   ipcMain.handle('portfolio:openDevSite', () => openDevSite())
+}
+
+function registerInstanceHandlers() {
+  const handlers = createInstanceHandlers()
+  ipcMain.handle('instance:features', handlers.features)
+  ipcMain.handle('instance:setFeature', handlers.setFeature)
 }
 
 // Boot sequence (#431): plays on the first window load of each app launch; reloads skip it.
@@ -1100,6 +1107,7 @@ app.whenReady().then(() => {
   registerDispatchHandlers()
   registerHealthHandlers()
   registerSessionHandlers()
+  registerInstanceHandlers()
   registerDocsHandlers()
   registerActivityHandlers()
   createWindow()

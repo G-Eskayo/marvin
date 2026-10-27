@@ -37,3 +37,26 @@ systems ("things that don't affect core files or deleting my files", 2026-07-08)
 - Most owned-area PRs merge within minutes of turning green; Gil reviews summaries, not every PR.
 - Mutation checks add minutes to each PR and need tests that genuinely try to break the code (ADR 0063).
 - The core list, the rules file and the brake are what keep this safe; none of them can change without Gil.
+
+## Amendment (2026-10-26, Gil): a known incident's regression fix may merge itself, core areas included
+
+Part of "solved problems stay solved" (`lib/incident_ladder.py`, CONTEXT.md). When a watched incident regresses and
+first aid doesn't clear it, the ladder's rung 3 queues the incident for a pipeline build. Gil chose (Decisions,
+`core-scope`): **that PR may merge without his Approve even when it touches a core area** (sync, hooks/settings,
+deletion code), for **regressions of a known incident only**, with the auto-revert kept. Everything else here still
+holds. The rules live in `config/auto_merge.json` (`known_incident_regressions`) and `lib/auto_merge_regression.py`:
+
+- **Only a known incident's regression:** the PR was built for a ticket labelled `watch` and `regression`.
+- **A failing-first regression test:** the PR's test files are run against the base commit (they must run and fail;
+  a collection error doesn't count) and against the PR's head (they must pass).
+- **The rest of this ADR:** mutation score ≥ 80 % (ADR 0063), a green main, passing checks, an open trust ramp; no
+  dependency change, the size cap, plain paths, finance-os never.
+- **Still core, even then (`still_core`):** the merge gate and auto-merge itself (this rules file, the policy, the
+  trust ramp, the mutation check, main-health, the merge server) and secrets. A fix can never loosen the rules that
+  let it merge.
+- **One per incident per day.** After merge the incident's probe is re-measured over the time since the merge (after
+  2 h); if it still trips, the merge is reverted (this ADR's revert path) and the trust ramp resets.
+- **Rollout:** shadow first, like this ADR: each rung-3 PR records what it *would* do (merge; then keep or revert), and
+  the morning brief carries the report. It switches on with this ADR's own switch, only when Gil says yes. Until then
+  rung-3 PRs wait for his Approve like any core change.
+- **Telling Gil:** a brief line and a phone notification when MARVIN fixed a regression itself, and when it couldn't.
