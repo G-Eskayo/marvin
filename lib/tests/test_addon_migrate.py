@@ -97,7 +97,7 @@ class TestCli:
     """Item 16: ratchet test — no hard-coded home paths."""
 
     def test_cli_with_custom_instance_dir(self, tmp_path):
-        """CLI accepts --instance-dir, never hard-codes /Users/gileskayo."""
+        """CLI accepts --instance-dir, never hard-codes the owner's home directory."""
         instance_dir = tmp_path / "instance"
         instance_dir.mkdir()
         instance_json = instance_dir / "instance.json"
