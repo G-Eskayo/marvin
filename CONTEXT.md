@@ -26,7 +26,8 @@ one job, starting with the history store.
 - **History store**: one queryable record of what MARVIN did on both Macs: pipeline runs and failures, launches,
   GitHub calls, errors, health checks, the disk ledger, usage. It makes the dashboard faster and gives MARVIN's
   tools real history to query, instead of each feature parsing ~20 JSON/JSONL files per Mac (over ssh for the
-  other Mac). Built first.
+  other Mac). Built first. Since #621 (ADR 0080) it's `~/.agents/var/marvin.db`, the **one store per Mac** that
+  also takes health, run costs and search; the old `~/.claude/history.db` is copied in once and left as a backup.
 - **Pattern store**: what worked and why, so builds and designs draw on proven solutions instead of improvising.
   Overlaps the qa-agent knowledge base (Chroma, `~/.claude/chroma`), memory files and the XERJ research ticket
   (#441). Designed after the history store; not to be confused with it (history = what happened, pattern = what

@@ -301,8 +301,8 @@ def report(now: datetime | None = None, calls_path: Path | None = None, budget_p
     logs directly as before."""
     now = now or datetime.now(timezone.utc)
     opened = None
-    if db is None and calls_path is None and budget_path is None and hs.DB_PATH.exists():
-        db = opened = hs.connect(hs.DB_PATH)
+    if db is None and calls_path is None and budget_path is None and (hs.DB_PATH.exists() or hs.OLD_DB_PATH.exists()):
+        db = opened = hs.connect()  # this Mac's store; the first open moves an old history.db in (#621)
     try:
         if db is not None:
             if device is None:
