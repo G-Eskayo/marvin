@@ -5,6 +5,12 @@ answer, and it can't be approved until the required ones are answered. Asking in
 "Open questions" heading, a checklist item ending in "?") is **too vague**: the dashboard shows *Too vague: needs
 options*, hides Approve, and the merge server refuses it (`DECISIONS_UNSTRUCTURED`).
 
+`bin/gh` holds the rule for every chat and agent (rule I2, ADR 0080, marvin#742): `pr create|edit|comment` and
+`issue create|edit|comment` are refused when the body has a heading that asks (`## Decisions`, `## Open questions`,
+`## Choose`, ...) but no `<!-- marvin:decisions -->` block (`DECISIONS_NOT_ASKABLE`), or a block that doesn't parse
+(`DECISIONS_UNPARSED`). A heading that only reports, like `## Decisions recorded`, is fine. If a person agrees a body
+isn't a question to the owner, `MARVIN_DECISIONS_OK="<reason>"` lets that one call through, and it is logged.
+
 Put every question the owner must answer in one **Decisions** section:
 
 ```markdown
